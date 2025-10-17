@@ -1,6 +1,6 @@
 # Tachyon Book
 
-This is the source repository for the [official Tachyon book](https://tachyon.z.cash/_book/).
+This is the source repository for the [official Tachyon book](https://tachyon.z.cash/_book/). **Do not share this URL publicly yet.**
 
 ## Development
 
