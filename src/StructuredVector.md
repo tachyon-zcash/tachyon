@@ -1,0 +1,43 @@
+# Structured Vectors and Polynomials
+
+Ragu uses a particular arrangement for vectors to encode witness data and various polynomials in its construction: a _structured vector_ $\v{r} \in \F^{4n}$ can be written as the concatenation
+
+$$
+\v{c} || \v{\hat{b}} || \v{a} || \v{\hat{d}}
+$$
+
+for some vectors $\v{a}, \v{b}, \v{c}, \v{d} \in \F^n$. These vectors have the property that $\v{\hat{r}}$ can be written
+
+$$
+\v{d} || \v{\hat{a}} || \v{b} || \v{\hat{c}}
+$$
+
+which remains a structured vector but with $\v{a}$ swapped with $\v{b}$ and $\v{c}$ swapped with $\v{d}$.
+
+## Mirrored Dot Product
+
+The mirrored (or reversed) dot product $\revdot{\v{a}}{\v{b}} = \dot{\v{a}}{\v{\hat{b}}} = \dot{\v{\hat{a}}}{\v{b}}$ is a central component of Ragu's accumulation-based recursive SNARK protocol because it is trivial to reduce into claims about univariate polynomials: given two polynomials $a, b \in \F[X]$ defined by the coefficient vectors $\v{a}, \v{b} \in \F^n$ (respectively), the $n - 1$ degree coefficient of the product polynomial $a \cdot b$ is $\revdot{\v{a}}{\v{b}}$. Further, because a structured vector $\v{r}$ contains terms involving $\v{a}_i \cdot \v{b}_i$ within the expansion of $\revdot{\v{r}}{\v{\hat{r}}}$ we can cleanly encode multiplication constraints into claims about such vectors.
+
+### Folding
+
+It is trivial to accumulate multiple instances $(\v{a_i}, \v{b_i}, c_i)$ of the claim $c_i = \revdot{\v{a_i}}{\v{b_i}}$ together by leveraging the linearity of inner products. The accumulation prover commits to the "error" matrix $E$ where $E_{i j} = \revdot{\v{a_i}}{\v{b_j}}$, except that the verifier enforces the diagonal $E_{i i} = c_i \forall i$. The verifier samples random challenges $\mu, \nu \in \F$ and computes the reduced claim $(\v{a'}, \v{b'}, c')$ as
+
+$$
+\begin{array}{lllll}
+&\v{a'}&=& \sum_{i} (\mu\nu)^i \mathbf{a_i} \\
+&\v{b'}&=& \sum_{j} \mu^{-j} \mathbf{b_i} \\
+&c'&=& \sum_{i,j} \mu^{i - j} \nu^i E_{i j}
+\end{array}
+$$
+
+### Reduction to Polynomial Interactive Oracles
+
+Given a claim $(\v{a}, \v{b}, c)$ where $a, b \in \F[X]$ are polynomials described by the respective coefficient vectors $\v{a}, \v{b} \in \F^{n}$, the product polynomial $a \cdot b$ can be written as
+
+$$
+X^{n - 1} p(1 / X) + X^n q(X)
+$$
+
+for $p, q \in F[X]$ of maximal degree $n - 1$. The prover can commit to $p, q$ and the verifier can test at a random point to ensure correctness. The claim is then reduced to the equality $p(0) = c$.
+
+> This reduction requires the prover to compute $a \cdot b$, which can be done efficiently with an FFT, but should still be performed as infrequently as possible. Ragu only requires this computation to be performed at terminal locations in the PCD tree, particularly when succinctness is required.
