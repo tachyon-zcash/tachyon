@@ -11,10 +11,10 @@ $$
 \sum_{j=0}^{4n - 1} y^j \v{k}_j
 $$
 
-holds, then with high probability the above $4n$ linear constraints are all satisfied as well. After some trivial manipulation, it is possible to define a vector $\v{s}$ such that this is equivalent to
+holds, then with high probability the $4n$ linear constraints ([mentioned previously](ArithmeticCircuits.md#constraints)) are all satisfied as well. After some trivial manipulation, it is possible to define a vector $\v{s}$ such that this is equivalent to
 
 $$
 \revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^{4n}}}
 $$
 
-where the witness vector $\v{r} \in \F^{4n}$ is defined by the concatenation $\v{c} || \v{\hat{b}} || \v{a} || \v{0^n}$.
+for the [witness](ArithmeticCircuits.md#witness-structure) vector $\v{r}$.

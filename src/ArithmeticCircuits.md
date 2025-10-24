@@ -1,6 +1,6 @@
-# Circuit Model
+# Arithmetic Circuits
 
-Arithmetic circuits in Ragu are reduced into a set of constraints over a witness assignment $\v{r} \in \F^{4n}$ where $n = 2^k$ is parameterized by a positive integer $k$. As a simplification, we assume all circuits are parameterized over the same value of $k$ even though individual circuits will vary by the minimum value of $k$ necessary for their reduction.
+Ragu reduces arithmetic circuits into a set of constraints over a witness assignment $\v{r} \in \F^{4n}$ where $n = 2^k$ is parameterized by a positive integer $k$. As a simplification, we assume all circuits are parameterized over the same value of $k$ even though individual circuits will vary by the minimum value of $k$ necessary for their reduction.
 
 The prover demonstrates knowledge of a witness for a given public input vector $\v{k}$ that encodes the instance of the satisfiability problem.
 
@@ -23,15 +23,15 @@ $$
 
 for some (sparse) public input vector $\v{k}$ and fixed matrices $\v{u}, \v{v}, \v{w} \in \F^{n \times 4n}$. Because $n$ is fixed, individual circuits vary only by these matrices after this reduction.
 
+#### Special Constraints
+
+Circuits always have the specially-labeled `ONE` wire $\v{c}_0 = 1$. This is enforced with the linear constraint $\v{c}_0 = \v{k}_0 = 1$.
+
 ### Virtual Wires
 
 The left hand side of all linear constraints are linear combinations of elements within $\v{a}, \v{b}, \v{c}$. Any linear combination of wires can itself be considered a _virtual_ wire (as opposed to an allocated wire) which impose no cost on the protocol.
 
-### Special Constraints
-
-Circuits always have the specially-labeled `ONE` wire $\v{c}_0 = 1$. This is enforced with the special linear constraint $\v{c}_0 = \v{k}_0 = 1$.
-
-# OLD:::::
+<!-- # OLD:::::
 
 ---
 
@@ -45,7 +45,7 @@ $$
 
 $$
 \revdot{\v{r}}{\v{t}} = -\sum_{i = 0}^{n - 1} \v{c}_i \underline{\big( z^{2n - 1 - i} + z^{2n + i} \big)}.
-$$
+$$ -->
 
 <!-- ### Example Protocol
 

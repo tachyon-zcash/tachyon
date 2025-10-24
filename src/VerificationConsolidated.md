@@ -1,6 +1,6 @@
-# Consolidated Verification Logic
+# Consolidated Verification Equation
 
-The two equations can be combined into a single equation
+The equation for enforcing [multiplication constraints](MultiplicationConstraints.md) (using random challenge $z$) and [linear constraints](LinearConstraints.md) (using random challenge $y$) can be combined into a single equation
 
 $$
 \revdot{\v{r}}{\v{s} + \v{r} \circ{\v{z^{4n}}} - \v{t}} = \dot{\v{k}}{\v{y^{4n}}}

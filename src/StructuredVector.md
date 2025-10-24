@@ -25,7 +25,7 @@ It is trivial to accumulate multiple instances $(\v{a_i}, \v{b_i}, c_i)$ of the 
 $$
 \begin{array}{lllll}
 &\v{a'}&=& \sum_{i} (\mu\nu)^i \mathbf{a_i} \\
-&\v{b'}&=& \sum_{j} \mu^{-j} \mathbf{b_i} \\
+&\v{b'}&=& \sum_{j} \mu^{-j} \mathbf{b_j} \\
 &c'&=& \sum_{i,j} \mu^{i - j} \nu^i E_{i j}
 \end{array}
 $$
@@ -40,4 +40,4 @@ $$
 
 for $p, q \in F[X]$ of maximal degree $n - 1$. The prover can commit to $p, q$ and the verifier can test at a random point to ensure correctness. The claim is then reduced to the equality $p(0) = c$.
 
-> This reduction requires the prover to compute $a \cdot b$, which can be done efficiently with an FFT, but should still be performed as infrequently as possible. Ragu only requires this computation to be performed at terminal locations in the PCD tree, particularly when succinctness is required.
+> This reduction requires the prover to compute $a \cdot b$, which can be done efficiently with an FFT, but should still be performed as infrequently as possible. Ragu only requires this computation to be performed at locations in the PCD tree where succinctness is required.
