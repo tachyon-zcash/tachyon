@@ -8,3 +8,5 @@
   - [Enforcing Linear Constraints](LinearConstraints.md)
   - [Consolidated Verification Equation](VerificationConsolidated.md)
   - [Circuit Polynomials](CircuitPolynomials.md)
+  - [WIP Recursion](RecursionExplanation.md)
+  - [Staging Polynomials](StagingPolynomials.md)
