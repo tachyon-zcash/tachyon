@@ -7,3 +7,4 @@
 \dot:\langle #1 , #2 \rangle
 \revdot:\, \langle \kern-0.5em \langle \kern0.1em #1, #2 \kern0.1em \rangle \kern-0.5em \rangle \,
 \conv:\revdot{#1}{#2}
+
