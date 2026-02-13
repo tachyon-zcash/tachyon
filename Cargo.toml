@@ -1,0 +1,109 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.93.1"
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+# --- safety & correctness ---
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+let_underscore_drop = "deny"
+non_ascii_idents = "forbid"
+keyword_idents = { level = "forbid", priority = -1 }
+elided_lifetimes_in_paths = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unreachable_pub = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+unused_qualifications = "warn"
+variant_size_differences = "warn"
+
+# --- future-proofing ---
+future_incompatible = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+# --- nuclear option: start from the top ---
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+complexity = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+style = { level = "deny", priority = -1 }
+
+todo = "allow"
+
+unwrap_used = "warn"
+panic = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+mem_forget = "deny"
+large_stack_arrays = "warn"
+large_types_passed_by_value = "warn"
+fn_to_numeric_cast_any = "deny"
+as_conversions = "warn"
+cast_possible_truncation = "warn"
+cast_precision_loss = "warn"
+cast_sign_loss = "warn"
+checked_conversions = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+needless_pass_by_value = "warn"
+str_to_string = "warn"
+trait_duplication_in_bounds = "warn"
+type_repetition_in_bounds = "warn"
+uninlined_format_args = "warn"
+unnecessary_wraps = "warn"
+used_underscore_binding = "warn"
+verbose_file_reads = "warn"
+wildcard_imports = "deny"
+
+# --- allow a few pedantic ones that are more noise than signal ---
+module_name_repetitions = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+doc_markdown = "allow"           # https://github.com/rust-lang/rust-clippy/issues/7273
+expect_used = "allow"
+#must_use_candidate = "warn"
+
+# --- dependencies ---
+multiple_crate_versions = "warn"
+
+[workspace.dependencies]
+rand = "0.9"
+proptest = "1.7.0"
+gungraun = "0.17.0"
+blake2b_simd = "1.0"
+ragu_pcd = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
+ragu_gadgets = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
+ragu_primitives = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
+ragu_core = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
+ragu_pasta = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
+ragu_arithmetic = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
+
+[patch.crates-io]
+# `ebfull/addchain` branch `bump-num-bigint` is a replica of
+# https://github.com/str4d/addchain/pull/3
+# that updates `addchain` to use `num_bigint 0.4`
+addchain = { git = "https://github.com/ebfull/addchain", rev = "da4099a81bc29c895f3ca0ebcaae21c860494c12" }
+
+# `ebfull/ff` branch `release-0.14.0` is a fork of
+# https://github.com/zkcrypto/ff/pull/130
+# which updates `ff` to bump `num-bigint` and `syn`
+# dependencies to align with our local usage in `ragu_macros`
+ff = { git = "https://github.com/ebfull/ff", rev = "e46e1d268bc026708c8ddeb2d49766ea49f9e70e" }
+
+# `ebfull/pasta_curves` branch `ff-0.14` is a replica of
+# https://github.com/zcash/pasta_curves/pull/86
+# that updates `pasta_curves` to use `ff`/`group` `0.14.0-pre.0`
+pasta_curves = { git = "https://github.com/ebfull/pasta_curves", rev = "32152d552b1c39fb3ffab8f0d8646f946c4adecc" }

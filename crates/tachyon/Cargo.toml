@@ -1,0 +1,44 @@
+[package]
+name = "tachyon"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The Tachyon shielded transaction protocol (stub)"
+readme = "README.md"
+repository = "https://github.com/turbocrime/tachyon"
+categories = ["cryptography::cryptocurrencies"]
+keywords = ["zcash", "tachyon"]
+
+[dependencies]
+bitvec = "1.0.1"
+core2 = { version = "0.4.0", default-features = false, features = ["alloc"] }
+
+addchain = { git = "https://github.com/ebfull/addchain", rev = "da4099a81bc29c895f3ca0ebcaae21c860494c12" }
+ff = { git = "https://github.com/ebfull/ff", rev = "e46e1d268bc026708c8ddeb2d49766ea49f9e70e" }
+pasta_curves = { git = "https://github.com/ebfull/pasta_curves", rev = "32152d552b1c39fb3ffab8f0d8646f946c4adecc" }
+
+blake2b_simd.workspace = true
+ragu_arithmetic.workspace = true
+ragu_core.workspace = true
+ragu_gadgets.workspace = true
+ragu_pasta.workspace = true
+ragu_pcd.workspace = true
+ragu_primitives.workspace = true
+rand.workspace = true
+reddsa = { git = "https://github.com/turbocrime/reddsa", branch = "tachyon" }
+ragu_circuits = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
+
+[dev-dependencies]
+proptest.workspace = true
+gungraun.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+bench = false
+
+[features]
+default = ["std"]
+std = ["core2/std"]
