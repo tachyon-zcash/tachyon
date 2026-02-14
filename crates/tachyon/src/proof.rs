@@ -69,13 +69,12 @@ impl Proof {
     /// to tachygrams via the `actions_acc` and `tachygram_acc`
     /// accumulators.
     #[must_use]
-    pub const fn create(
+    pub fn create(
         _witnesses: &[ActionWitness],
         _actions: &[Action],
         _anchor: &Anchor,
     ) -> (Self, Vec<Tachygram>) {
-        // TODO: Ragu PCD — tachygrams from witnesses become
-        // the stamp's tachygram list
+        todo!("Ragu PCD — tachygrams from witnesses become the stamp's tachygram list");
         (Self(Vec::new()), Vec::new())
     }
 
@@ -84,7 +83,8 @@ impl Proof {
     /// Used during aggregation to combine stamps from multiple bundles.
     #[must_use]
     pub fn merge(_left: Self, _right: Self) -> Self {
-        todo!("Ragu PCD fuse")
+        todo!("Ragu PCD fuse — merge two proofs into one");
+        _left
     }
 
     /// Verifies this proof by reconstructing the PCD header from public data.
@@ -99,12 +99,12 @@ impl Proof {
     /// only if the anchor range contains it.
     pub fn verify(
         &self,
-        _actions: Vec<Action>,
-        _tachygrams: Vec<Tachygram>,
+        _actions: &[Action],
+        _tachygrams: &[Tachygram],
         _anchor: Anchor,
         _landing_epoch: Fp,
     ) -> Result<(), ValidationError> {
-        // TODO: Ragu verification:
+        todo!("Ragu verification — reconstruct the PCD header from public data");
         // 1. Recompute actions_acc from actions
         // 2. Recompute tachygram_acc from tachygrams
         // 3. Construct StampDigest { actions_acc, tachygram_acc, anchor }

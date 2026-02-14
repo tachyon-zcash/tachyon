@@ -99,7 +99,7 @@ impl Anchor {
     ///
     // FIXME: actual accumulator merge — for now returns self (assumes self is later).
     #[must_use]
-    pub const fn accumulate(self, _other: Self) -> Self {
+    pub fn accumulate(self, _other: Self) -> Self {
         self
     }
 }

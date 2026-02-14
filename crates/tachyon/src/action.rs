@@ -2,24 +2,23 @@
 
 //! Tachyon Action descriptions.
 
-use std::iter::Sum;
 use std::ops;
 use std::sync::LazyLock;
 
 use ff::Field;
 use pasta_curves::group::GroupEncoding;
-use pasta_curves::group::prime::PrimeCurveAffine;
 use pasta_curves::{arithmetic::CurveExt, pallas};
 use rand::{CryptoRng, RngCore};
 
 use crate::circuit::ActionWitness;
-use crate::constants::VALUE_COMMITMENT_DOMAIN;
+use crate::constants::{SPEND_AUTH_PERSONALIZATION, VALUE_COMMITMENT_DOMAIN};
 use crate::keys::{
-    Binding, RandomizedSigningKey, RandomizedVerificationKey, SpendAuthRandomizer,
-    SpendAuthSignature, SpendAuthorizingKey, VerificationKey,
+    BindingVerificationKey, RandomizedSigningKey, RandomizedVerificationKey, SpendAuthRandomizer,
+    SpendAuthSignature, SpendAuthorizingKey,
 };
-use crate::note::{Note, Nullifier};
+use crate::note::{self, Note};
 use crate::primitives::{EpAffine, Epoch, Fq};
+use crate::value;
 
 /// A Tachyon Action description.
 ///
@@ -59,15 +58,17 @@ impl Action {
         cv: ValueCommitment,
         rng: &mut R,
     ) -> Self {
-        let rk = RandomizedVerificationKey::from(rsk);
+        let rk = rsk.verification_key();
 
+        // H("Tachyon-SpendSig", cv || rk) — domain-separated signing message
         let msg = {
-            let cv_bytes: [u8; 32] = cv.0.to_bytes();
-            let rk_bytes: [u8; 32] = rk.to_bytes();
-            let mut msg = [0u8; 64];
-            msg[..32].copy_from_slice(&cv_bytes);
-            msg[32..].copy_from_slice(&rk_bytes);
-            msg
+            let mut state = blake2b_simd::Params::new()
+                .hash_length(64)
+                .personal(SPEND_AUTH_PERSONALIZATION)
+                .to_state();
+            state.update(&EpAffine::from(cv).to_bytes());
+            state.update(&<[u8; 32]>::from(&rk));
+            *state.finalize().as_array()
         };
 
         Self {
@@ -82,7 +83,7 @@ impl Action {
     pub fn spend<R: RngCore + CryptoRng>(
         ask: &SpendAuthorizingKey,
         note: Note,
-        nf: Nullifier,
+        nf: note::Nullifier,
         flavor: Epoch,
         rng: &mut R,
     ) -> (Self, ActionWitness) {
@@ -157,8 +158,8 @@ impl ValueCommitment {
     ///
     /// Positive for spends (balance contributed), negative for outputs (balance exhausted).
     #[allow(non_snake_case)]
-    pub fn commit(v: i64, rng: &mut impl RngCore) -> (Fq, Self) {
-        let rcv = Fq::random(&mut *rng);
+    pub fn commit(v: i64, rng: &mut impl RngCore) -> (value::CommitmentTrapdoor, Self) {
+        let rcv = value::CommitmentTrapdoor::random(&mut *rng);
 
         let scalar = if v >= 0 {
             Fq::from(v.cast_unsigned())
@@ -166,9 +167,10 @@ impl ValueCommitment {
             -Fq::from((-v).cast_unsigned())
         };
 
+        let rcv_scalar: Fq = rcv.into();
         (
             rcv,
-            Self((*VALUE_COMMIT_V * scalar + *VALUE_COMMIT_R * rcv).into()),
+            Self((*VALUE_COMMIT_V * scalar + *VALUE_COMMIT_R * rcv_scalar).into()),
         )
     }
 
@@ -192,9 +194,9 @@ impl ValueCommitment {
     }
 }
 
-impl Into<VerificationKey<Binding>> for ValueCommitment {
-    fn into(self) -> VerificationKey<Binding> {
-        VerificationKey::<Binding>::try_from(self.0.to_bytes())
+impl Into<BindingVerificationKey> for ValueCommitment {
+    fn into(self) -> BindingVerificationKey {
+        BindingVerificationKey::try_from(self.0.to_bytes())
             .expect("valid curve point yields valid verification key")
     }
 }
@@ -218,11 +220,5 @@ impl ops::Sub for ValueCommitment {
 
     fn sub(self, rhs: Self) -> Self::Output {
         Self((self.0 - rhs.0).into())
-    }
-}
-
-impl Sum for ValueCommitment {
-    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Self(EpAffine::identity()), ops::Add::add)
     }
 }

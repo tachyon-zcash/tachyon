@@ -28,7 +28,6 @@ ragu_primitives.workspace = true
 rand.workspace = true
 reddsa = { git = "https://github.com/turbocrime/reddsa", branch = "tachyon" }
 ragu_circuits = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
-
 [dev-dependencies]
 proptest.workspace = true
 gungraun.workspace = true

@@ -14,11 +14,18 @@
 /// Matches Zcash's `PRF^expand` pattern (§5.4.2 of the protocol spec).
 pub const PRF_EXPAND_PERSONALIZATION: &[u8; 16] = b"Zcash_ExpandSeed";
 
+/// BLAKE2b-512 personalization for the spend authorization signing message.
+///
+/// The action signature signs `H("Tachyon-SpendSig", cv || rk)` rather than
+/// raw `cv || rk`, providing domain separation.
+pub const SPEND_AUTH_PERSONALIZATION: &[u8; 16] = b"Tachyon-SpendSig";
+
 /// BLAKE2b-512 personalization for the binding sighash.
 ///
-/// Tachyon-specific: the binding sighash covers `(cv, rk, sig)` tuples
-/// and value balance, but NOT the stamp (which is stripped during
-/// aggregation).
+/// Tachyon-specific: the binding sighash covers action signatures and
+/// value balance. Each signature already binds its `cv` and `rk` via
+/// the spend auth message, so they are not repeated here. The stamp
+/// is excluded because it is stripped during aggregation.
 pub const BINDING_SIGHASH_PERSONALIZATION: &[u8; 16] = b"Tachyon-BindHash";
 
 // =============================================================================

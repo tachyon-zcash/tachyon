@@ -106,11 +106,11 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for ActionLeaf<'_, C> {
             .map(|w| {
                 (
                     Fp::from(w.note.value),
-                    w.note.psi,
+                    w.note.psi.into(),
                     w.note.pk.into(),
-                    extract_endoscalar(w.note.rcm),
+                    extract_endoscalar::<Fq>(w.note.rcm.into()),
                     extract_endoscalar::<Fq>(w.alpha.into()),
-                    extract_endoscalar(w.rcv),
+                    extract_endoscalar::<Fq>(w.rcv.into()),
                     w.flavor.into(),
                     w.tachygram,
                 )

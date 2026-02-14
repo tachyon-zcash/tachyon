@@ -51,13 +51,14 @@
 
 #![allow(clippy::from_over_into)]
 
-mod redpallas;
-
 use crate::constants::PRF_EXPAND_PERSONALIZATION;
 use ff::{Field, FromUniformBytes, PrimeField};
 pub use ragu_pasta::{Fp, Fq};
 use rand::RngCore;
-pub use redpallas::{Binding, Signature, SigningKey, SpendAuth, VerificationKey};
+
+// Private type aliases — reddsa internals, not part of the public API.
+use reddsa::orchard::Binding;
+use reddsa::orchard::SpendAuth;
 
 /// PRF^expand: domain-separated key expansion from a spending key.
 ///
@@ -81,8 +82,25 @@ fn prf_expand(sk: &[u8; 32], t: &[u8]) -> [u8; 64] {
         .as_array()
 }
 
-/// A spend authorization signature
-pub type SpendAuthSignature = Signature<SpendAuth>;
+// =============================================================================
+// Spend authorization signature
+// =============================================================================
+
+/// A spend authorization signature (RedPallas over SpendAuth).
+#[derive(Debug, Clone, Copy)]
+pub struct SpendAuthSignature(reddsa::Signature<SpendAuth>);
+
+impl From<[u8; 64]> for SpendAuthSignature {
+    fn from(bytes: [u8; 64]) -> Self {
+        Self(bytes.into())
+    }
+}
+
+impl Into<[u8; 64]> for SpendAuthSignature {
+    fn into(self) -> [u8; 64] {
+        self.0.into()
+    }
+}
 
 // =============================================================================
 // Spending key and child key derivation
@@ -115,7 +133,7 @@ impl Into<SpendAuthorizingKey> for SpendingKey {
         let ask_scalar = Fq::from_uniform_bytes(&expanded);
         #[allow(clippy::expect_used)]
         SpendAuthorizingKey(
-            SigningKey::<SpendAuth>::try_from(ask_scalar.to_repr())
+            reddsa::SigningKey::<SpendAuth>::try_from(ask_scalar.to_repr())
                 .expect("PRF output yields valid signing key"),
         )
     }
@@ -151,20 +169,22 @@ impl Into<PaymentKey> for SpendingKey {
 /// [`RandomizedSigningKey`] (`rsk`), which can then sign.
 ///
 /// This prevents accidentally using the long-lived key for signing.
-#[derive(Clone, Debug)]
-pub struct SpendAuthorizingKey(SigningKey<SpendAuth>);
+#[derive(Clone, Debug, Copy)]
+pub struct SpendAuthorizingKey(reddsa::SigningKey<SpendAuth>);
 
 impl SpendAuthorizingKey {
+    /// Derive the spend validating key: `ak = [ask]G`.
+    #[must_use]
+    pub fn validating_key(&self) -> SpendValidatingKey {
+        // reddsa::VerificationKey::from(&signing_key) performs [sk]G
+        // (scalar-times-basepoint), not a trivial type conversion.
+        SpendValidatingKey(reddsa::VerificationKey::from(&self.0))
+    }
+
     /// Randomize this key: `rsk = ask + alpha`.
     #[must_use]
     pub fn randomize(&self, alpha: &SpendAuthRandomizer) -> RandomizedSigningKey {
         RandomizedSigningKey(self.0.randomize(&alpha.0))
-    }
-}
-
-impl From<&SpendAuthorizingKey> for SpendValidatingKey {
-    fn from(ask: &SpendAuthorizingKey) -> Self {
-        Self((&ask.0).into())
     }
 }
 
@@ -180,8 +200,8 @@ impl From<&SpendAuthorizingKey> for SpendValidatingKey {
 /// [`RandomizedVerificationKey`] (`rk`), which can then verify.
 ///
 /// `ak` goes into [`ProofAuthorizingKey`] for proof delegation.
-#[derive(Clone, Debug)]
-pub struct SpendValidatingKey(VerificationKey<SpendAuth>);
+#[derive(Clone, Debug, Copy)]
+pub struct SpendValidatingKey(reddsa::VerificationKey<SpendAuth>);
 
 impl SpendValidatingKey {
     /// Randomize this key: `rk = ak + [alpha]G`.
@@ -229,12 +249,12 @@ impl Into<Fq> for SpendAuthRandomizer {
 /// [`SpendAuthorizingKey::randomize`] (spends) or
 /// [`for_output`](Self::for_output) (outputs).
 #[derive(Debug)]
-pub struct RandomizedSigningKey(SigningKey<SpendAuth>);
+pub struct RandomizedSigningKey(reddsa::SigningKey<SpendAuth>);
 
 impl RandomizedSigningKey {
     /// Sign `msg` with this randomized key.
     pub fn sign(&self, rng: &mut impl rand::CryptoRng, msg: &[u8]) -> SpendAuthSignature {
-        self.0.sign(rng, msg)
+        SpendAuthSignature(self.0.sign(rng, msg))
     }
 
     /// Construct `rsk` for an output action (identity `ask`).
@@ -244,15 +264,17 @@ impl RandomizedSigningKey {
     #[must_use]
     pub fn for_output(alpha: &SpendAuthRandomizer) -> Self {
         Self(
-            SigningKey::<SpendAuth>::try_from(alpha.0.to_repr())
+            reddsa::SigningKey::<SpendAuth>::try_from(alpha.0.to_repr())
                 .expect("random scalar yields valid signing key"),
         )
     }
-}
 
-impl From<&RandomizedSigningKey> for RandomizedVerificationKey {
-    fn from(rsk: &RandomizedSigningKey) -> Self {
-        Self((&rsk.0).into())
+    /// Derive the verification key: `rk = [rsk]G`.
+    #[must_use]
+    pub fn verification_key(&self) -> RandomizedVerificationKey {
+        // reddsa::VerificationKey::from(&signing_key) performs [sk]G
+        // (scalar-times-basepoint), not a trivial type conversion.
+        RandomizedVerificationKey(reddsa::VerificationKey::from(&self.0))
     }
 }
 
@@ -266,18 +288,18 @@ impl From<&RandomizedSigningKey> for RandomizedVerificationKey {
 /// Goes into [`Action`](crate::Action). Terminal type — no further
 /// derivation.
 #[derive(Clone, Debug)]
-pub struct RandomizedVerificationKey(VerificationKey<SpendAuth>);
+pub struct RandomizedVerificationKey(reddsa::VerificationKey<SpendAuth>);
 
 impl RandomizedVerificationKey {
-    /// Serialize to 32 bytes for sighash construction.
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; 32] {
-        (&self.0).into()
-    }
-
     /// Verify a spend authorization signature.
     pub fn verify(&self, msg: &[u8], sig: &SpendAuthSignature) -> Result<(), reddsa::Error> {
-        self.0.verify(msg, sig)
+        self.0.verify(msg, &sig.0)
+    }
+}
+
+impl From<&RandomizedVerificationKey> for [u8; 32] {
+    fn from(rk: &RandomizedVerificationKey) -> [u8; 32] {
+        rk.0.into()
     }
 }
 
@@ -296,7 +318,7 @@ impl RandomizedVerificationKey {
 ///
 /// `nk` alone does NOT confer spend authority — it only allows observing
 /// spend status and constructing proofs (when combined with `ak`).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub struct NullifierKey(Fp);
 
 impl Into<Fp> for NullifierKey {
@@ -318,7 +340,7 @@ impl Into<Fp> for NullifierKey {
 /// The recipient's `pk` appears in the note and is committed to in the
 /// note commitment. It is NOT an on-chain address; payment coordination
 /// happens out-of-band (e.g. URI encapsulated payments, payment requests).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub struct PaymentKey(Fp);
 
 impl Into<Fp> for PaymentKey {
@@ -339,10 +361,90 @@ impl Into<Fp> for PaymentKey {
 ///
 /// Derived from [`SpendAuthorizingKey`] $\to$ [`SpendValidatingKey`] and
 /// [`NullifierKey`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub struct ProofAuthorizingKey {
     /// The spend validating key `ak = [ask] G`.
-    pub(crate) ak: SpendValidatingKey,
+    ak: SpendValidatingKey,
     /// The nullifier deriving key.
-    pub(crate) nk: NullifierKey,
+    nk: NullifierKey,
+}
+
+impl From<(SpendValidatingKey, NullifierKey)> for ProofAuthorizingKey {
+    fn from((ak, nk): (SpendValidatingKey, NullifierKey)) -> Self {
+        Self { ak, nk }
+    }
+}
+
+impl Into<[u8; 64]> for ProofAuthorizingKey {
+    fn into(self) -> [u8; 64] {
+        let mut bytes = [0u8; 64];
+        bytes[..32].copy_from_slice(&<[u8; 32]>::from(self.ak.0));
+        bytes[32..].copy_from_slice(&<[u8; 32]>::from(self.nk.0));
+        bytes
+    }
+}
+
+// =============================================================================
+// Binding signing key
+// =============================================================================
+
+/// Binding signing key — derived from the sum of value commitment trapdoors.
+///
+/// Only used internally to sign the binding sighash during bundle construction.
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct BindingSigningKey(reddsa::SigningKey<Binding>);
+
+impl BindingSigningKey {
+    /// Sign the binding sighash.
+    pub(crate) fn sign(&self, rng: &mut impl rand::CryptoRng, msg: &[u8]) -> BindingSignature {
+        BindingSignature(self.0.sign(rng, msg))
+    }
+}
+
+impl From<Fq> for BindingSigningKey {
+    fn from(f: Fq) -> Self {
+        Self(
+            reddsa::SigningKey::<Binding>::try_from(f.to_repr())
+                .expect("valid scalar yields valid signing key"),
+        )
+    }
+}
+
+// =============================================================================
+// Binding verification key
+// =============================================================================
+
+/// Binding verification key — derived from value commitments.
+///
+/// Used by validators: `bvk = sum(cv_i) - ValueCommitment::balance(value_balance)`
+#[derive(Clone, Debug, Copy)]
+pub struct BindingVerificationKey(reddsa::VerificationKey<Binding>);
+
+impl BindingVerificationKey {
+    /// Verify a binding signature.
+    pub fn verify(&self, msg: &[u8], sig: &BindingSignature) -> Result<(), reddsa::Error> {
+        self.0.verify(msg, &sig.0)
+    }
+}
+
+impl TryFrom<[u8; 32]> for BindingVerificationKey {
+    type Error = reddsa::Error;
+
+    fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
+        reddsa::VerificationKey::<Binding>::try_from(bytes).map(Self)
+    }
+}
+
+// =============================================================================
+// Binding signature
+// =============================================================================
+
+/// A binding signature for value balance verification (RedPallas over Binding).
+#[derive(Debug, Clone, Copy)]
+pub struct BindingSignature(reddsa::Signature<Binding>);
+
+impl From<[u8; 64]> for BindingSignature {
+    fn from(bytes: [u8; 64]) -> Self {
+        Self(bytes.into())
+    }
 }

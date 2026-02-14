@@ -35,6 +35,12 @@
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 
+macro_rules! todo {
+    ($($args:tt)*) => {
+        println!("TODO: {}", $($args)*);
+    };
+}
+
 pub mod action;
 pub mod bundle;
 pub mod circuit;
@@ -44,14 +50,15 @@ pub mod note;
 pub mod primitives;
 pub mod proof;
 pub mod stamp;
+pub mod value;
 
 pub use action::Action;
-pub use bundle::{BindingSignature, Bundle, Stamped, Stripped};
+pub use bundle::{Bundle, Stamped, Stripped};
 pub use keys::{
-    Binding, RandomizedVerificationKey, SigningKey, SpendAuth, SpendAuthRandomizer,
-    SpendAuthSignature, SpendAuthorizingKey, SpendValidatingKey, VerificationKey,
+    BindingSignature, BindingVerificationKey, RandomizedVerificationKey, SpendAuthRandomizer,
+    SpendAuthSignature, SpendAuthorizingKey, SpendValidatingKey,
 };
-pub use note::{Note, NoteCommitment, Nullifier};
+pub use note::Note;
 pub use primitives::{Anchor, Epoch, Tachygram};
 pub use proof::Proof;
 pub use stamp::Stamp;

@@ -1,6 +1,7 @@
 use crate::keys::SpendAuthRandomizer;
+use crate::value;
 use crate::note::Note;
-use crate::primitives::{Epoch, Fp, Fq};
+use crate::primitives::{Epoch, Fp};
 
 // =============================================================================
 // Circuit witnesses (prover-side)
@@ -42,8 +43,8 @@ pub struct ActionWitness {
     /// - Output: `rsk = alpha`, `rk = [alpha]G`
     pub alpha: SpendAuthRandomizer,
 
-    /// Value commitment randomness.
-    pub rcv: Fq,
+    /// Value commitment trapdoor.
+    pub rcv: value::CommitmentTrapdoor,
 
     /// Accumulator epoch (doubles as nullifier flavor).
     pub flavor: Epoch,
