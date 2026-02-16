@@ -1,5 +1,4 @@
 use crate::primitives::Fp;
-use ragu_arithmetic::CurveAffine;
 use ragu_core::Result;
 use ragu_core::drivers::{Driver, DriverValue};
 use ragu_core::gadgets::{GadgetKind, Kind};

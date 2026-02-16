@@ -70,7 +70,7 @@ impl Stamp {
     /// circuit.
     #[must_use]
     pub fn merge(self, other: Self) -> Self {
-        let anchor = self.anchor.accumulate(other.anchor);
+        let anchor = self.anchor.max(other.anchor);
         let mut tachygrams = self.tachygrams;
         tachygrams.extend(other.tachygrams);
         let proof = Proof::merge(self.proof, other.proof);

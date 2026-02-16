@@ -2,14 +2,6 @@
 
 //! Tachyon Action descriptions.
 
-use std::ops;
-use std::sync::LazyLock;
-
-use ff::Field;
-use pasta_curves::group::GroupEncoding;
-use pasta_curves::{arithmetic::CurveExt, pallas};
-use rand::{CryptoRng, RngCore};
-
 use crate::circuit::ActionWitness;
 use crate::constants::{SPEND_AUTH_PERSONALIZATION, VALUE_COMMITMENT_DOMAIN};
 use crate::keys::{
@@ -17,8 +9,11 @@ use crate::keys::{
     SpendAuthSignature, SpendAuthorizingKey,
 };
 use crate::note::{self, Note};
-use crate::primitives::{EpAffine, Epoch, Fq};
+use crate::primitives::{CurveExt, EpAffine, Epoch, Field, Fq, GroupEncoding, pallas};
 use crate::value;
+use rand::{CryptoRng, RngCore};
+use std::ops;
+use std::sync::LazyLock;
 
 /// A Tachyon Action description.
 ///

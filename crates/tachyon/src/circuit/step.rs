@@ -4,21 +4,16 @@
 // Action Leaf  (Index 0)
 // ═══════════════════════════════════════════════════════════════════════
 
-use ff::Field;
-use pasta_curves::group::prime::PrimeCurveAffine;
-
-use crate::primitives::{Fp, Fq};
+use super::header::{StampDigest, StampDigestGadget};
+use super::witnesses::{ActionWitness, MergeWitness};
+use crate::primitives::{EpAffine, Field, Fp, Fq, PrimeCurveAffine};
 use ragu_arithmetic::Cycle;
 use ragu_core::Result;
 use ragu_core::drivers::{Driver, DriverValue};
 use ragu_core::maybe::Maybe;
-use ragu_pasta::EpAffine;
 use ragu_pcd::step::{Encoded, Index, Step};
 use ragu_primitives::poseidon::Sponge;
 use ragu_primitives::{Element, Endoscalar, Point, extract_endoscalar};
-
-use super::header::{StampDigest, StampDigestGadget};
-use super::witnesses::{ActionWitness, MergeWitness};
 
 /// Leaf step that verifies a single tachyaction (spend or output).
 ///

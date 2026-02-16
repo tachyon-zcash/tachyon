@@ -52,8 +52,7 @@
 #![allow(clippy::from_over_into)]
 
 use crate::constants::PRF_EXPAND_PERSONALIZATION;
-use ff::{Field, FromUniformBytes, PrimeField};
-pub use ragu_pasta::{Fp, Fq};
+use crate::primitives::{Field, Fp, Fq, FromUniformBytes, PrimeField};
 use rand::{CryptoRng, RngCore};
 
 // Private type aliases — reddsa internals, not part of the public API.

@@ -32,11 +32,8 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
-
-use ff::Field;
-
 use crate::keys::{NullifierKey, PaymentKey};
-use crate::primitives::{Epoch, Fp, Fq, Tachygram};
+use crate::primitives::{Epoch, Field, Fp, Fq, Tachygram};
 
 // =============================================================================
 // Note trapdoors

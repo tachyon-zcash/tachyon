@@ -13,10 +13,8 @@ use crate::action::Action;
 use crate::circuit::ActionWitness;
 use crate::constants::BINDING_SIGHASH_PERSONALIZATION;
 use crate::keys::{BindingSignature, BindingSigningKey};
-use crate::primitives::Anchor;
+use crate::primitives::{Anchor, Field, Fq};
 use crate::stamp::{Stamp, Stampless};
-use ff::Field;
-use ragu_pasta::Fq;
 use rand::{CryptoRng, RngCore};
 
 /// A Tachyon transaction bundle parameterized by stamp state `S` and value

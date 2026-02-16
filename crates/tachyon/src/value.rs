@@ -5,12 +5,9 @@
 
 #![allow(clippy::from_over_into)]
 
-use std::ops;
-
-use ff::Field;
+use crate::primitives::{Field, Fq};
 use rand::RngCore;
-
-use crate::primitives::Fq;
+use std::ops;
 
 // =============================================================================
 // Value commitment trapdoor (rcv)
