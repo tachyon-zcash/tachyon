@@ -10,11 +10,11 @@
 
 use crate::Proof;
 use crate::action::Action;
-use crate::circuit::ActionWitness;
 use crate::constants::BINDING_SIGHASH_PERSONALIZATION;
 use crate::keys::{BindingSignature, BindingSigningKey};
 use crate::primitives::{Anchor, Field, Fq};
 use crate::stamp::{Stamp, Stampless};
+use crate::witness::ActionPrivate;
 use rand::{CryptoRng, RngCore};
 
 /// A Tachyon transaction bundle parameterized by stamp state `S` and value
@@ -75,7 +75,7 @@ impl Stamped<i64> {
     /// circular dependency. The stamp is excluded from the sighash because
     /// it is stripped during aggregation.
     pub fn build<R: RngCore + CryptoRng>(
-        tachyactions: Vec<(Action, ActionWitness)>,
+        tachyactions: Vec<(Action, ActionPrivate)>,
         value_balance: i64,
         anchor: Anchor,
         rng: &mut R,

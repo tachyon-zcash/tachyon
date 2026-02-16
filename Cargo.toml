@@ -86,10 +86,3 @@ ff = "0.13"
 group = "0.13"
 proptest = "1.7.0"
 pasta_curves = "0.5.1"
-ragu_arithmetic = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
-ragu_circuits = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
-ragu_core = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
-ragu_gadgets = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
-ragu_pasta = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
-ragu_pcd = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
-ragu_primitives = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }

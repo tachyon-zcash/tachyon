@@ -23,8 +23,8 @@
 //! inputs that the circuit checks against the public action and tachygram.
 
 use crate::action::Action;
-use crate::circuit::ActionWitness;
 use crate::primitives::{Anchor, Fp, Tachygram};
+use crate::witness::ActionPrivate;
 
 /// Ragu proof for Tachyon transactions.
 ///
@@ -70,7 +70,7 @@ impl Proof {
     /// accumulators.
     #[must_use]
     pub fn create(
-        _witnesses: &[ActionWitness],
+        _witnesses: &[ActionPrivate],
         _actions: &[Action],
         _anchor: &Anchor,
     ) -> (Self, Vec<Tachygram>) {

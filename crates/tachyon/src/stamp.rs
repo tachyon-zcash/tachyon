@@ -13,9 +13,9 @@
 //! to Ragu `verify()`.
 
 use crate::action::Action;
-use crate::circuit::ActionWitness;
 use crate::primitives::{Anchor, Tachygram};
 use crate::proof::Proof;
+use crate::witness::ActionPrivate;
 
 /// Marker for the absence of a stamp.
 #[derive(Clone, Debug)]
@@ -52,7 +52,7 @@ impl Stamp {
     /// recomputes them outside the circuit from public data at verification
     /// time.
     #[must_use]
-    pub fn prove(witnesses: &[ActionWitness], actions: &[Action], anchor: Anchor) -> Self {
+    pub fn prove(witnesses: &[ActionPrivate], actions: &[Action], anchor: Anchor) -> Self {
         let (proof, tachygrams) = Proof::create(witnesses, actions, &anchor);
         Self {
             tachygrams,

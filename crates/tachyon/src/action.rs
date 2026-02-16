@@ -2,7 +2,6 @@
 
 //! Tachyon Action descriptions.
 
-use crate::circuit::ActionWitness;
 use crate::constants::{SPEND_AUTH_PERSONALIZATION, VALUE_COMMITMENT_DOMAIN};
 use crate::keys::{
     BindingVerificationKey, RandomizedSigningKey, RandomizedVerificationKey, SpendAuthRandomizer,
@@ -11,6 +10,7 @@ use crate::keys::{
 use crate::note::{self, Note};
 use crate::primitives::{CurveExt, EpAffine, Epoch, Field, Fq, GroupEncoding, pallas};
 use crate::value;
+use crate::witness::ActionPrivate;
 use rand::{CryptoRng, RngCore};
 use std::ops;
 use std::sync::LazyLock;
@@ -81,7 +81,7 @@ impl Action {
         nf: note::Nullifier,
         flavor: Epoch,
         rng: &mut R,
-    ) -> (Self, ActionWitness) {
+    ) -> (Self, ActionPrivate) {
         let alpha = SpendAuthRandomizer::random(&mut *rng);
         let rsk = ask.randomize(&alpha);
         let value = i64::try_from(note.value).expect("value fits in i64");
@@ -89,7 +89,7 @@ impl Action {
 
         (
             Self::new(&rsk, cv, rng),
-            ActionWitness {
+            ActionPrivate {
                 tachygram: nf.into(),
                 alpha,
                 flavor,
@@ -105,7 +105,7 @@ impl Action {
         note: Note,
         flavor: Epoch,
         rng: &mut R,
-    ) -> (Self, ActionWitness) {
+    ) -> (Self, ActionPrivate) {
         let alpha = SpendAuthRandomizer::random(&mut *rng);
         let rsk = RandomizedSigningKey::for_output(&alpha);
         let value = -i64::try_from(note.value).expect("value fits in i64");
@@ -113,7 +113,7 @@ impl Action {
 
         (
             Self::new(&rsk, cv, rng),
-            ActionWitness {
+            ActionPrivate {
                 tachygram: note.commitment().into(),
                 alpha,
                 flavor,

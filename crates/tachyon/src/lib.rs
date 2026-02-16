@@ -43,7 +43,6 @@ macro_rules! todo {
 
 pub mod action;
 pub mod bundle;
-pub mod circuit;
 pub mod constants;
 pub mod keys;
 pub mod note;
@@ -51,6 +50,7 @@ pub mod primitives;
 pub mod proof;
 pub mod stamp;
 pub mod value;
+pub mod witness;
 
 pub use action::Action;
 pub use bundle::{Bundle, Stamped, Stripped};

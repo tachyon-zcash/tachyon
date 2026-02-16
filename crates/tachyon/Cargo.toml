@@ -16,13 +16,6 @@ core2 = { version = "0.4.0", default-features = false, features = ["alloc"] }
 blake2b_simd.workspace = true
 ff.workspace = true
 pasta_curves.workspace = true
-ragu_arithmetic.workspace = true
-ragu_circuits.workspace = true
-ragu_core.workspace = true
-ragu_gadgets.workspace = true
-ragu_pasta.workspace = true
-ragu_pcd.workspace = true
-ragu_primitives.workspace = true
 rand.workspace = true
 reddsa = "0.5.1"
 

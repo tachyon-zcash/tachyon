@@ -1,7 +1,15 @@
+//! Private witnesses (prover secrets) for building Tachyon stamp proofs.
+//!
+//! - **[`MergeWitness`]** — witness for the stamp-merge step: anchor quotient
+//!   proving the left epoch anchor state is a superset of the right.
+//! - **[`ActionWitness`]** — witness for a single action: note, spend-auth
+//!   randomizer, value commitment trapdoor, epoch (flavor), and the resulting tachygram
+//!   (nullifier or note commitment).
+
 use crate::keys::SpendAuthRandomizer;
-use crate::value;
 use crate::note::Note;
-use crate::primitives::{Epoch, Fp};
+use crate::primitives::{Epoch, Fp, Tachygram};
+use crate::value;
 
 // =============================================================================
 // Circuit witnesses (prover-side)
@@ -21,7 +29,7 @@ use crate::primitives::{Epoch, Fp};
 ///
 /// For same-epoch merges the quotient is `Fp::one()`.
 #[derive(Clone, Debug)]
-pub struct MergeWitness {
+pub struct MergePrivate {
     /// `left_anchor / right_anchor` in the accumulator's field.
     ///
     /// Proves the left accumulator state is a superset of the right.
@@ -34,7 +42,7 @@ pub struct MergeWitness {
 /// for both accumulator membership (`cmx ∈ acc(flavor)`) and nullifier
 /// derivation (`mk = KDF(ψ, nk)`, then `nf = F_mk(flavor)`).
 #[derive(Clone, Debug)]
-pub struct ActionWitness {
+pub struct ActionPrivate {
     /// The note being spent or created.
     pub note: Note, // { pk, v, psi, rcm }
 
@@ -53,5 +61,5 @@ pub struct ActionWitness {
     /// Computed from note fields and key material with no additional randomness.
     /// - Spend: $\mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$ where $mk = \text{KDF}(\psi, nk)$
     /// - Output: $\mathsf{cmx} = \text{NoteCommit}(pk, v, \psi, rcm)$
-    pub tachygram: Fp,
+    pub tachygram: Tachygram,
 }
