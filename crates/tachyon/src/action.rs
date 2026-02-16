@@ -210,6 +210,22 @@ impl From<ValueCommitment> for EpAffine {
     }
 }
 
+impl From<EpAffine> for ValueCommitment {
+    fn from(affine: EpAffine) -> Self {
+        Self(affine)
+    }
+}
+
+impl TryFrom<&[u8; 32]> for ValueCommitment {
+    type Error = &'static str;
+    fn try_from(bytes: &[u8; 32]) -> Result<Self, Self::Error> {
+        EpAffine::from_bytes(bytes)
+            .into_option()
+            .ok_or("invalid curve point")
+            .map(Self)
+    }
+}
+
 impl ops::Add for ValueCommitment {
     type Output = Self;
 

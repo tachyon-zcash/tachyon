@@ -96,8 +96,7 @@ impl Stamped<i64> {
         for (action, witness) in tachyactions {
             rcv_sum += witness.rcv;
 
-            let sig_bytes: [u8; 64] = action.sig.into();
-            sig_hash.update(&sig_bytes);
+            sig_hash.update(&<[u8; 64]>::from(&action.sig));
 
             actions.push(action);
             witnesses.push(witness);

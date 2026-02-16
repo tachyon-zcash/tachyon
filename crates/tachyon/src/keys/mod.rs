@@ -92,13 +92,13 @@ pub struct SpendAuthSignature(reddsa::Signature<SpendAuth>);
 
 impl From<[u8; 64]> for SpendAuthSignature {
     fn from(bytes: [u8; 64]) -> Self {
-        Self(bytes.into())
+        Self(reddsa::Signature::<SpendAuth>::from(bytes))
     }
 }
 
-impl Into<[u8; 64]> for SpendAuthSignature {
-    fn into(self) -> [u8; 64] {
-        self.0.into()
+impl From<&SpendAuthSignature> for [u8; 64] {
+    fn from(sig: &SpendAuthSignature) -> [u8; 64] {
+        <[u8; 64]>::from(sig.0)
     }
 }
 
@@ -303,6 +303,13 @@ impl From<&RandomizedVerificationKey> for [u8; 32] {
     }
 }
 
+impl TryFrom<[u8; 32]> for RandomizedVerificationKey {
+    type Error = reddsa::Error;
+    fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
+        reddsa::VerificationKey::<SpendAuth>::try_from(bytes).map(Self)
+    }
+}
+
 // =============================================================================
 // Nullifier key
 // =============================================================================
@@ -450,5 +457,11 @@ pub struct BindingSignature(reddsa::Signature<Binding>);
 impl From<[u8; 64]> for BindingSignature {
     fn from(bytes: [u8; 64]) -> Self {
         Self(bytes.into())
+    }
+}
+
+impl From<BindingSignature> for [u8; 64] {
+    fn from(sig: BindingSignature) -> Self {
+        sig.0.into()
     }
 }
