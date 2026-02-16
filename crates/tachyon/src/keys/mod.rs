@@ -54,7 +54,7 @@
 use crate::constants::PRF_EXPAND_PERSONALIZATION;
 use ff::{Field, FromUniformBytes, PrimeField};
 pub use ragu_pasta::{Fp, Fq};
-use rand::RngCore;
+use rand::{CryptoRng, RngCore};
 
 // Private type aliases — reddsa internals, not part of the public API.
 use reddsa::orchard::Binding;
@@ -227,7 +227,7 @@ pub struct SpendAuthRandomizer(Fq);
 
 impl SpendAuthRandomizer {
     /// Generate a fresh random spend auth randomizer.
-    pub fn random(rng: &mut impl RngCore) -> Self {
+    pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
         Self(Fq::random(rng))
     }
 }
@@ -253,7 +253,7 @@ pub struct RandomizedSigningKey(reddsa::SigningKey<SpendAuth>);
 
 impl RandomizedSigningKey {
     /// Sign `msg` with this randomized key.
-    pub fn sign(&self, rng: &mut impl rand::CryptoRng, msg: &[u8]) -> SpendAuthSignature {
+    pub fn sign(&self, rng: &mut (impl RngCore + CryptoRng), msg: &[u8]) -> SpendAuthSignature {
         SpendAuthSignature(self.0.sign(rng, msg))
     }
 
@@ -396,7 +396,11 @@ pub(crate) struct BindingSigningKey(reddsa::SigningKey<Binding>);
 
 impl BindingSigningKey {
     /// Sign the binding sighash.
-    pub(crate) fn sign(&self, rng: &mut impl rand::CryptoRng, msg: &[u8]) -> BindingSignature {
+    pub(crate) fn sign(
+        &self,
+        rng: &mut (impl RngCore + CryptoRng),
+        msg: &[u8],
+    ) -> BindingSignature {
         BindingSignature(self.0.sign(rng, msg))
     }
 }

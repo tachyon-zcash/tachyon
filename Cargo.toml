@@ -80,30 +80,16 @@ expect_used = "allow"
 multiple_crate_versions = "warn"
 
 [workspace.dependencies]
-rand = "0.9"
-proptest = "1.7.0"
-gungraun = "0.17.0"
 blake2b_simd = "1.0"
-ragu_pcd = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
-ragu_gadgets = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
-ragu_primitives = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
-ragu_core = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
-ragu_pasta = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
-ragu_arithmetic = { git = "http://github.com/tachyon-zcash/ragu", version = "0.0.0" }
-
-[patch.crates-io]
-# `ebfull/addchain` branch `bump-num-bigint` is a replica of
-# https://github.com/str4d/addchain/pull/3
-# that updates `addchain` to use `num_bigint 0.4`
-addchain = { git = "https://github.com/ebfull/addchain", rev = "da4099a81bc29c895f3ca0ebcaae21c860494c12" }
-
-# `ebfull/ff` branch `release-0.14.0` is a fork of
-# https://github.com/zkcrypto/ff/pull/130
-# which updates `ff` to bump `num-bigint` and `syn`
-# dependencies to align with our local usage in `ragu_macros`
-ff = { git = "https://github.com/ebfull/ff", rev = "e46e1d268bc026708c8ddeb2d49766ea49f9e70e" }
-
-# `ebfull/pasta_curves` branch `ff-0.14` is a replica of
-# https://github.com/zcash/pasta_curves/pull/86
-# that updates `pasta_curves` to use `ff`/`group` `0.14.0-pre.0`
-pasta_curves = { git = "https://github.com/ebfull/pasta_curves", rev = "32152d552b1c39fb3ffab8f0d8646f946c4adecc" }
+rand = "0.8"
+ff = "0.13"
+group = "0.13"
+proptest = "1.7.0"
+pasta_curves = "0.5.1"
+ragu_arithmetic = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
+ragu_circuits = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
+ragu_core = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
+ragu_gadgets = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
+ragu_pasta = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
+ragu_pcd = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }
+ragu_primitives = { git = "http://github.com/turbocrime/ragu", branch = "rm-patches" }

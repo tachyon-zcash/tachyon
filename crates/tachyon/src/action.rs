@@ -158,7 +158,10 @@ impl ValueCommitment {
     ///
     /// Positive for spends (balance contributed), negative for outputs (balance exhausted).
     #[allow(non_snake_case)]
-    pub fn commit(v: i64, rng: &mut impl RngCore) -> (value::CommitmentTrapdoor, Self) {
+    pub fn commit(
+        v: i64,
+        rng: &mut (impl RngCore + CryptoRng),
+    ) -> (value::CommitmentTrapdoor, Self) {
         let rcv = value::CommitmentTrapdoor::random(&mut *rng);
 
         let scalar = if v >= 0 {
