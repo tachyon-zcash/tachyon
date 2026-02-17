@@ -1,0 +1,21 @@
+[package]
+name = "zcash_tachyon"
+version = "0.0.0"
+authors = ["Sean Bowe <ewillbefull@gmail.com>"]
+description = """
+WIP
+"""
+license = "MIT OR Apache-2.0"
+edition = "2024"
+rust-version = "1.85"
+
+readme = "README.md"
+repository = "https://github.com/tachyon-zcash/tachyon"
+documentation = "https://docs.rs/zcash_tachyon"
+categories = []
+keywords = []
+
+[features]
+default = []
+
+[dependencies]
