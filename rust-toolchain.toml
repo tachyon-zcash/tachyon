@@ -1,0 +1,8 @@
+[toolchain]
+channel = "stable"
+components = [
+    "cargo",
+    "clippy",
+    "rustc",
+    "rust-analyzer",
+]

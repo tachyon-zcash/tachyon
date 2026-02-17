@@ -1,0 +1,114 @@
+//! Protocol-wide domain separators and personalizations.
+//!
+//! All BLAKE2b personalizations are exactly 16 bytes (the BLAKE2b
+//! personal field width). Hash-to-curve and Poseidon domains use
+//! variable-length strings under the `z.cash:` namespace.
+
+/// BLAKE2b-512 personalization for `PRF^expand`: key expansion from
+/// a spending key to child keys (`ask`, `nk`, `pk`).
+///
+/// Matches Zcash's `PRF^expand` pattern (§5.4.2 of the protocol spec).
+pub const PRF_EXPAND_PERSONALIZATION: &[u8; 16] = b"Zcash_ExpandSeed";
+
+/// BLAKE2b-512 personalization for the spend authorization signing message.
+///
+/// The action signature signs `H("Tachyon-SpendSig", cv || rk)` rather than
+/// raw `cv || rk`, providing domain separation.
+pub const SPEND_AUTH_PERSONALIZATION: &[u8; 16] = b"Tachyon-SpendSig";
+
+/// BLAKE2b-512 personalization for the binding sighash.
+///
+/// Tachyon-specific: the binding sighash covers action signatures and
+/// value balance. Each signature already binds its `cv` and `rk` via
+/// the spend auth message, so they are not repeated here. The stamp
+/// is excluded because it is stripped during aggregation.
+pub const BINDING_SIGHASH_PERSONALIZATION: &[u8; 16] = b"Tachyon-BindHash";
+
+/// BLAKE2b-512 personalization for deterministic alpha derivation.
+///
+/// $\alpha = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-AlphaDrv"},\;
+/// \theta \| \mathsf{cmx}))$
+///
+/// Binds `alpha` to per-action randomness (`theta`) and the note commitment,
+/// enabling hardware wallet signing decoupled from proof generation.
+pub const ALPHA_PERSONALIZATION: &[u8; 16] = b"Tachyon-AlphaDrv";
+
+/// Domain for value commitment generators `V` and `R`.
+///
+/// Shared with Orchard to reuse `reddsa::orchard::Binding` — same
+/// generators, same basepoint, same binding signature verification.
+pub const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
+
+/// Domain for nullifier derivation (Poseidon).
+pub const NULLIFIER_DOMAIN: &str = "z.cash:Tachyon-nf";
+
+/// Domain for note commitments.
+pub const NOTE_COMMITMENT_DOMAIN: &str = "z.cash:Tachyon-NoteCommit";
+
+/// Domain for the polynomial accumulator hash-to-curve.
+pub const ACCUMULATOR_DOMAIN: &str = "z.cash:Tachyon-acc";
+
+/// Maximum note value in zatoshis (§5.3 of the protocol spec)
+pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
+
+/// Domain-separated key expansion from a spending key.
+///
+/// `PRF^expand_sk(t) = BLAKE2b-512("Zcash_ExpandSeed", sk || t)`
+///
+/// Mirrors `zcash_spec::PrfExpand`: a struct with a single-byte domain
+/// separator and associated constants for each child key derivation.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PrfExpand {
+    domain_separator: u8,
+}
+
+impl PrfExpand {
+    // Domain separators 0x00–0x05 are Sapling, 0x06–0x08 are Orchard.
+    // Tachyon allocates 0x09+ to avoid collisions.
+
+    /// `[0x09]` -> `ask` (spend authorizing key, scalar field)
+    pub(crate) const ASK: Self = Self {
+        domain_separator: 0x09,
+    };
+    /// `[0x0a]` -> `nk` (nullifier key, base field)
+    pub(crate) const NK: Self = Self {
+        domain_separator: 0x0a,
+    };
+    /// `[0x0b]` -> `pk` (payment key, base field)
+    pub(crate) const PK: Self = Self {
+        domain_separator: 0x0b,
+    };
+
+    /// Evaluate the PRF: `BLAKE2b-512("Zcash_ExpandSeed", sk || domain_sep)`.
+    ///
+    /// Returns 64 bytes suitable for unbiased reduction into either field
+    /// via `FromUniformBytes`.
+    pub(crate) fn with(self, sk: &[u8; 32]) -> [u8; 64] {
+        *blake2b_simd::Params::new()
+            .hash_length(64)
+            .personal(PRF_EXPAND_PERSONALIZATION)
+            .to_state()
+            .update(sk)
+            .update(&[self.domain_separator])
+            .finalize()
+            .as_array()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Same key, different domain separators -> different outputs.
+    /// This is the core property that makes child key derivation safe.
+    #[test]
+    fn prf_expand_domain_separators_independent() {
+        let sk = [0x42u8; 32];
+        let ask = PrfExpand::ASK.with(&sk);
+        let nk = PrfExpand::NK.with(&sk);
+        let pk = PrfExpand::PK.with(&sk);
+        assert_ne!(ask, nk);
+        assert_ne!(ask, pk);
+        assert_ne!(nk, pk);
+    }
+}
