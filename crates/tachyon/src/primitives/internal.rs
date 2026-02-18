@@ -64,7 +64,7 @@ impl From<Epoch> for Fp {
 /// epoch window for the landing block) is performed by the consensus
 /// layer outside the circuit.
 #[derive(Clone, Copy, Debug, Ord, PartialOrd, PartialEq, Eq)]
-pub struct Anchor(Fp);
+pub struct Anchor(pub Fp);
 
 impl From<Fp> for Anchor {
     fn from(f: Fp) -> Self {

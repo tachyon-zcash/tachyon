@@ -286,7 +286,7 @@ impl RandomizedSigningKey {
 /// This is the only key type that **can verify** action signatures.
 /// Goes into [`Action`](crate::Action). Terminal type — no further
 /// derivation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RandomizedVerificationKey(reddsa::VerificationKey<SpendAuth>);
 
 impl RandomizedVerificationKey {
