@@ -160,9 +160,9 @@ impl ValueCommitment {
         let rcv = value::CommitmentTrapdoor::random(&mut *rng);
 
         let scalar = if v >= 0 {
-            Fq::from(v.cast_unsigned())
+            Fq::from(v as u64)
         } else {
-            -Fq::from((-v).cast_unsigned())
+            -Fq::from((-v) as u64)
         };
 
         let rcv_scalar: Fq = rcv.into();
@@ -183,9 +183,9 @@ impl ValueCommitment {
         let rcv = Fq::ZERO;
 
         let scalar = if v >= 0 {
-            Fq::from(v.cast_unsigned())
+            Fq::from(v as u64)
         } else {
-            -Fq::from((-v).cast_unsigned())
+            -Fq::from((-v) as u64)
         };
 
         Self((*VALUE_COMMIT_V * scalar + *VALUE_COMMIT_R * rcv).into())
