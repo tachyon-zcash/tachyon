@@ -11,7 +11,7 @@ use crate::{
     Proof,
     action::Action,
     constants::BINDING_SIGHASH_PERSONALIZATION,
-    keys::{BindingSignature, BindingSigningKey, BindingVerificationKey, ProvingKey},
+    keys::{ProvingKey, private::BindingSigningKey, public::BindingVerificationKey},
     primitives::Anchor,
     stamp::{Stamp, Stampless},
     witness::ActionPrivate,
@@ -28,7 +28,7 @@ pub struct Bundle<S, V> {
     pub value_balance: V,
 
     /// Binding signature over actions and value balance.
-    pub binding_sig: BindingSignature,
+    pub binding_sig: Signature,
 
     /// Stamp state: `Stamp` when present, `Stampless` when stripped.
     pub stamp: S,
@@ -39,6 +39,17 @@ pub type Stamped<V> = Bundle<Stamp, V>;
 
 /// A bundle whose stamp has been stripped — depends on a stamped bundle.
 pub type Stripped<V> = Bundle<Stampless, V>;
+
+/// A BLAKE2b-512 hash of the binding sighash message.
+#[derive(Clone, Copy, Debug)]
+pub struct SigHash([u8; 64]);
+
+#[expect(clippy::from_over_into, reason = "restrict conversion")]
+impl Into<[u8; 64]> for SigHash {
+    fn into(self) -> [u8; 64] {
+        self.0
+    }
+}
 
 /// Compute the Tachyon binding sighash.
 ///
@@ -52,7 +63,8 @@ pub type Stripped<V> = Bundle<Stampless, V>;
 ///   not repeated here.
 /// - The binding sig must be computable without the full transaction.
 /// - The stamp is excluded because it is stripped during aggregation.
-fn binding_sighash(value_balance: i64, actions: &[Action]) -> [u8; 64] {
+#[must_use]
+pub fn sighash(value_balance: i64, action_sigs: &[[u8; 64]]) -> SigHash {
     let mut state = blake2b_simd::Params::new()
         .hash_length(64)
         .personal(BINDING_SIGHASH_PERSONALIZATION)
@@ -61,11 +73,11 @@ fn binding_sighash(value_balance: i64, actions: &[Action]) -> [u8; 64] {
     #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
     state.update(&value_balance.to_le_bytes());
 
-    for action in actions {
-        state.update(&<[u8; 64]>::from(action.sig));
+    for sig in action_sigs {
+        state.update(sig);
     }
 
-    *state.finalize().as_array()
+    SigHash(*state.finalize().as_array())
 }
 
 impl<V> Stamped<V> {
@@ -137,13 +149,16 @@ impl Stamped<i64> {
         // bvk (Σcvᵢ - ValueCommit₀(v_balance)). A mismatch indicates a
         // bug in value commitment or trapdoor accumulation.
         debug_assert_eq!(
-            bsk.verification_key(),
+            bsk.derive_binding_public(),
             BindingVerificationKey::derive(&actions, value_balance),
             "BSK/BVK mismatch: binding key derivation is inconsistent"
         );
 
-        let sighash = binding_sighash(value_balance, &actions);
-        let binding_sig = bsk.sign(rng, &sighash);
+        let action_sigs = actions
+            .iter()
+            .map(|action| <[u8; 64]>::from(action.sig))
+            .collect::<Vec<[u8; 64]>>();
+        let binding_sig = bsk.sign(rng, sighash(value_balance, &action_sigs));
 
         let (proof, tachygrams) = Proof::create(&actions, &witnesses, &anchor, pak);
 
@@ -161,6 +176,18 @@ impl Stamped<i64> {
 }
 
 impl<S> Bundle<S, i64> {
+    /// Compute the Tachyon binding sighash.
+    /// See [`sighash`] for more details.
+    #[must_use]
+    pub fn sighash(&self) -> SigHash {
+        let action_sigs = self
+            .actions
+            .iter()
+            .map(|action| <[u8; 64]>::from(action.sig))
+            .collect::<Vec<[u8; 64]>>();
+        sighash(self.value_balance, &action_sigs)
+    }
+
     /// Verify the bundle's binding signature and all action signatures.
     ///
     /// This checks:
@@ -181,16 +208,46 @@ impl<S> Bundle<S, i64> {
         let bvk = BindingVerificationKey::derive(&self.actions, self.value_balance);
 
         // 2-3. Recompute sighash and verify binding signature
-        let sighash = binding_sighash(self.value_balance, &self.actions);
-        bvk.verify(&sighash, &self.binding_sig)?;
+        bvk.verify(self.sighash(), &self.binding_sig)?;
 
         // 4. Verify each action's spend auth signature
         for action in &self.actions {
-            let msg = action.sig_message();
-            action.rk.verify(&msg, &action.sig)?;
+            action.rk.verify(action.sighash(), &action.sig)?;
         }
 
         Ok(())
+    }
+}
+
+use reddsa::orchard::Binding;
+/// A binding signature (RedPallas over the Binding group).
+///
+/// Proves the signer knew the opening $\mathsf{bsk}$ of the Pedersen
+/// commitment $\mathsf{bvk}$ to value 0. By the **binding property**
+/// of the commitment scheme, it is infeasible to find
+/// $(v^*, \mathsf{bsk}')$ such that
+/// $\mathsf{bvk} = \text{ValueCommit}_{\mathsf{bsk}'}(v^*)$ for
+/// $v^* \neq 0$ — so value balance is enforced.
+///
+/// In Tachyon, the signed message is:
+/// `BLAKE2b-512("Tachyon-BindHash", value_balance || action_sigs)`
+///
+/// The validator checks:
+/// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{sighash},
+///   \text{bindingSig}) = 1$
+#[derive(Clone, Copy, Debug)]
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct Signature(pub(crate) reddsa::Signature<Binding>);
+
+impl From<[u8; 64]> for Signature {
+    fn from(bytes: [u8; 64]) -> Self {
+        Self(bytes.into())
+    }
+}
+
+impl From<Signature> for [u8; 64] {
+    fn from(sig: Signature) -> Self {
+        sig.0.into()
     }
 }
 
@@ -202,36 +259,35 @@ mod tests {
 
     use super::*;
     use crate::{
-        keys::SpendingKey,
+        keys::private,
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
-        primitives::{Epoch, SpendAuthEntropy},
+        primitives::Epoch,
     };
 
     fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Stamped<i64> {
-        let sk = SpendingKey::from([0x42u8; 32]);
-        let ask = sk.spend_authorizing_key();
-        let nk = sk.nullifier_key();
-        let ak = ask.validating_key();
-        let pak = ProvingKey::from((ak, nk));
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let pak = sk.derive_proving_key();
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(Fp::ONE);
 
         let spend_note = Note {
-            pk: sk.payment_key(),
+            pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
             psi: NullifierTrapdoor::from(Fp::ZERO),
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let output_note = Note {
-            pk: sk.payment_key(),
+            pk: sk.derive_payment_key(),
             value: note::Value::from(700u64),
             psi: NullifierTrapdoor::from(Fp::ONE),
             rcm: CommitmentTrapdoor::from(Fq::ONE),
         };
 
-        let theta_spend = SpendAuthEntropy::random(&mut *rng);
-        let theta_output = SpendAuthEntropy::random(&mut *rng);
+        let theta_spend = private::ActionEntropy::random(&mut *rng);
+        let theta_output = private::ActionEntropy::random(&mut *rng);
 
+        let nk = sk.derive_nullifier_key();
         let nf = spend_note.nullifier(&nk, epoch);
         let spend = Action::spend(&ask, spend_note, nf, epoch, &theta_spend, rng);
         let output = Action::output(output_note, epoch, &theta_output, rng);

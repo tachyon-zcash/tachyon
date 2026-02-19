@@ -9,8 +9,9 @@
 use pasta_curves::Fp;
 
 use crate::{
+    keys::private::ActionRandomizer,
     note::Note,
-    primitives::{Epoch, SpendAuthRandomizer, Tachygram},
+    primitives::{Epoch, Tachygram},
     value,
 };
 
@@ -51,7 +52,7 @@ pub struct ActionPrivate {
     /// Spend authorization randomizer `alpha`.
     /// - Spend: `rsk = ask + alpha`, `rk = ak + [alpha]G`
     /// - Output: `rsk = alpha`, `rk = [alpha]G`
-    pub alpha: SpendAuthRandomizer,
+    pub alpha: ActionRandomizer,
 
     /// Accumulator epoch (doubles as nullifier flavor).
     pub flavor: Epoch,

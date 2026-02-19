@@ -38,7 +38,6 @@ perf = { level = "deny", priority = -1 }
 style = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 
-unwrap_in_result = "forbid"
 
 doc_markdown = "allow"       # https://github.com/rust-lang/rust-clippy/issues/7273
 missing_errors_doc = "allow"
@@ -48,48 +47,112 @@ panic = "warn"
 print_stderr = "warn"
 print_stdout = "warn"
 
-unwrap_used = "deny"
+# -- forbid: error handling --------------------------------------------------
+# unwrap() is always wrong; use expect() for a reason string.
+unwrap_used = "forbid"
+# expect() is a speed bump; allowed in tests via clippy.toml.
+expect_used = "deny"
+# result-returning fns must not panic or unwrap/expect internally.
+panic_in_result_fn = "forbid"
+unwrap_in_result = "forbid"
+# .get_unwrap() defeats the point of .get().
+get_unwrap = "forbid"
+# silently discarding Result with .ok() hides errors.
+unused_result_ok = "forbid"
+# Error types named "Error" are useless in multi-crate projects.
+error_impl_error = "forbid"
+# std::process::exit bypasses destructors and cleanup.
+exit = "forbid"
+# .and_then(|x| ...) where .map() suffices obscures intent.
+return_and_then = "forbid"
 
-# restrictions
+# -- forbid: type coercion ---------------------------------------------------
+# use From/TryFrom.
+as_conversions = "forbid"
+as_underscore = "forbid"
+as_pointer_underscore = "forbid"
+fn_to_numeric_cast_any = "forbid" # casting function pointers to integers is never appropriate.
+
+# -- forbid: no floats -------------------------------------------------------
+# this is an integer/curve-arithmetic crate. no floating point, ever.
+float_arithmetic = "forbid"
+float_cmp_const = "forbid"
+lossy_float_literal = "forbid"
+
+# -- forbid: memory safety ---------------------------------------------------
+mem_forget = "forbid" 
+multiple_unsafe_ops_per_block = "forbid" # one unsafe op per block for auditability.
+undocumented_unsafe_blocks = "forbid" # every unsafe block must be documented.
+default_union_representation = "forbid" # unions must have explicit repr.
+
+# -- forbid: no panicking indexing -------------------------------------------
+indexing_slicing = "forbid" # use .get() or iterators. test/const exceptions via clippy.toml.
+string_slice = "forbid" # string slicing can panic on char boundaries.
+# &container[..] instead of &*container obscures intent.
+deref_by_slicing = "forbid"
+
+# -- forbid: no shadowing ----------------------------------------------------
+# shadowing makes code harder to follow in a crypto crate.
+shadow_reuse = "forbid"
+shadow_same = "forbid"
+shadow_unrelated = "forbid"
+
+# -- forbid: core-first architecture ----------------------------------------
+# architectural decision: use core/alloc over std where possible.
+std_instead_of_core = "forbid"
+std_instead_of_alloc = "forbid"
+alloc_instead_of_core = "forbid"
+
+# -- forbid: identifier hygiene ---------------------------------------------
+# pairs with rustc non_ascii_idents = "forbid".
+non_ascii_literal = "forbid"
+disallowed_script_idents = "forbid"
+# descriptive lifetime names always.
+single_char_lifetime_names = "forbid"
+
+# -- forbid: attribute discipline --------------------------------------------
+# #[expect] over #[allow]; expect warns when the lint no longer fires.
+allow_attributes = "forbid"
+# every #[expect] must carry a reason string.
+allow_attributes_without_reason = "forbid"
+
+# -- forbid: code organization ----------------------------------------------
+# tests belong in #[cfg(test)] modules.
+tests_outside_test_module = "forbid"
+# ^ is XOR, not exponentiation. critical in a math-heavy crate.
+suspicious_xor_used_as_pow = "forbid"
+# match arms must be exhaustive, no wildcards.
+wildcard_enum_match_arm = "forbid"
+# else-if chains must have a final else.
+else_if_without_else = "forbid"
+
+# -- forbid: platform safety ------------------------------------------------
+# no inline assembly.
+inline_asm_x86_att_syntax = "forbid"
+inline_asm_x86_intel_syntax = "forbid"
+# Rc is not Send/Sync; use Arc or owned types.
+rc_buffer = "forbid"
+rc_mutex = "forbid"
+
+# -- deny: restrictions (may need localized #[expect]) -----------------------
 absolute_paths = "deny"
-alloc_instead_of_core = "deny"
-allow_attributes = "deny"
-allow_attributes_without_reason = "deny"
-as_conversions = "deny"
-as_pointer_underscore = "deny"
-as_underscore = "deny"
 assertions_on_result_states = "deny"
 big_endian_bytes = "deny"
 cfg_not_test = "deny"
 clone_on_ref_ptr = "deny"
 cognitive_complexity = "deny"
 create_dir = "deny"
-dbg_macro = "deny"
 decimal_literal_representation = "deny"
 default_numeric_fallback = "deny"
-default_union_representation = "deny"
-deref_by_slicing = "deny"
-disallowed_script_idents = "deny"
 doc_include_without_cfg = "deny"
-else_if_without_else = "deny"
 empty_drop = "deny"
 empty_enum_variants_with_brackets = "deny"
 empty_structs_with_brackets = "deny"
-error_impl_error = "deny"
-exit = "deny"
-expect_used = "deny"
 field_scoped_visibility_modifiers = "deny"
 filetype_is_file = "deny"
-float_arithmetic = "deny"
-float_cmp_const = "deny"
-fn_to_numeric_cast_any = "deny"
-get_unwrap = "deny"
 host_endian_bytes = "deny"
 if_then_some_else_none = "deny"
-indexing_slicing = "deny"
 infinite_loop = "deny"
-inline_asm_x86_att_syntax = "deny"
-inline_asm_x86_intel_syntax = "deny"
 integer_division = "deny"
 integer_division_remainder_used = "deny"
 iter_over_hash_type = "deny"
@@ -97,10 +160,8 @@ large_include_file = "deny"
 let_underscore_must_use = "deny"
 let_underscore_untyped = "deny"
 little_endian_bytes = "deny"
-lossy_float_literal = "deny"
 map_err_ignore = "deny"
 map_with_unused_argument_over_ranges = "deny"
-mem_forget = "deny"
 min_ident_chars = "deny"
 missing_assert_message = "deny"
 missing_asserts_for_indexing = "deny"
@@ -109,13 +170,10 @@ mixed_read_write_in_expression = "deny"
 module_name_repetitions = "deny"
 modulo_arithmetic = "deny"
 multiple_inherent_impl = "deny"
-multiple_unsafe_ops_per_block = "deny"
 mutex_atomic = "deny"
 mutex_integer = "deny"
 needless_raw_strings = "deny"
-non_ascii_literal = "deny"
 non_zero_suggestions = "deny"
-panic_in_result_fn = "deny"
 partial_pub_fields = "deny"
 pathbuf_init_then_push = "deny"
 pattern_type_mismatch = "deny"
@@ -123,42 +181,27 @@ pointer_format = "deny"
 precedence_bits = "deny"
 pub_use = "deny"
 pub_without_shorthand = "deny"
-rc_buffer = "deny"
-rc_mutex = "deny"
 redundant_test_prefix = "deny"
 redundant_type_annotations = "deny"
 ref_patterns = "deny"
 renamed_function_params = "deny"
 rest_pat_in_fully_bound_structs = "deny"
-return_and_then = "deny"
 same_name_method = "deny"
 self_named_module_files = "deny"
 semicolon_inside_block = "deny"
 separated_literal_suffix = "deny"
-shadow_reuse = "deny"
-shadow_same = "deny"
-shadow_unrelated = "deny"
-single_char_lifetime_names = "deny"
-std_instead_of_alloc = "deny"
-std_instead_of_core = "deny"
 str_to_string = "deny"
 string_add = "deny"
 string_lit_chars_any = "deny"
-string_slice = "deny"
-suspicious_xor_used_as_pow = "deny"
-tests_outside_test_module = "deny"
 try_err = "deny"
-undocumented_unsafe_blocks = "deny"
 unnecessary_safety_comment = "deny"
 unnecessary_safety_doc = "deny"
 unnecessary_self_imports = "deny"
 unneeded_field_pattern = "deny"
 unreachable = "deny"
-unused_result_ok = "deny"
 unused_trait_names = "deny"
 use_debug = "deny"
 verbose_file_reads = "deny"
-wildcard_enum_match_arm = "deny"
 
 # deny later
 arbitrary_source_item_ordering = "allow"
@@ -168,3 +211,4 @@ exhaustive_structs = "allow"
 missing_inline_in_public_items = "allow"
 todo = "allow"
 unimplemented = "allow"
+dbg_macro = "warn"

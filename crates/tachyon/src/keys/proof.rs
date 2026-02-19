@@ -1,8 +1,8 @@
 //! Proof-related keys: ProvingKey.
 
-#![allow(clippy::from_over_into, reason = "restricted conversions")]
-
-use super::{note::NullifierKey, public::SpendValidatingKey};
+use super::note::NullifierKey;
+use super::{private, public};
+use reddsa::orchard::SpendAuth;
 
 /// The proving key (`ak` + `nk`).
 ///
@@ -21,11 +21,12 @@ use super::{note::NullifierKey, public::SpendValidatingKey};
 // TODO: add proof-construction methods (e.g., create_action_proof, create_merge_proof)
 // once the Ragu circuit API is available.
 #[derive(Clone, Copy, Debug)]
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct ProvingKey {
     /// The spend validating key `ak = [ask] G`.
-    ak: SpendValidatingKey,
+    pub(super) ak: SpendValidatingKey,
     /// The nullifier deriving key.
-    nk: NullifierKey,
+    pub(super) nk: NullifierKey,
 }
 
 impl ProvingKey {
@@ -42,12 +43,7 @@ impl ProvingKey {
     }
 }
 
-impl From<(SpendValidatingKey, NullifierKey)> for ProvingKey {
-    fn from((ak, nk): (SpendValidatingKey, NullifierKey)) -> Self {
-        Self { ak, nk }
-    }
-}
-
+#[expect(clippy::from_over_into, reason = "restrict conversion")]
 impl Into<[u8; 64]> for ProvingKey {
     fn into(self) -> [u8; 64] {
         let mut bytes = [0u8; 64];
@@ -56,5 +52,60 @@ impl Into<[u8; 64]> for ProvingKey {
         bytes[..32].copy_from_slice(&ak_bytes);
         bytes[32..].copy_from_slice(&nk_bytes);
         bytes
+    }
+}
+
+/// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\,\mathcal{G}$ —
+/// the long-lived public counterpart of
+/// [`SpendAuthorizingKey`](super::SpendAuthorizingKey).
+///
+/// Named "spend validating key" in the Zcash protocol spec (Orchard
+/// §4.2.3). NOT an "Action*" type — `ak` is long-lived and pairs with
+/// `SpendAuthorizingKey`, unlike the per-action ephemeral types
+/// ([`ActionSigningKey`](super::ActionSigningKey),
+/// [`ActionVerificationKey`](super::public::ActionVerificationKey)).
+///
+/// `ak` **cannot verify action signatures directly**. The prover uses
+/// [`derive_action_public`](Self::derive_action_public) to compute the
+/// per-action [`ActionVerificationKey`](super::public::ActionVerificationKey)
+/// (`rk`) for the proof witness.
+///
+/// ## Current uses
+///
+/// - Component of [`ProvingKey`](super::ProvingKey) (proof delegation without
+///   spend authority)
+///
+/// ## Planned uses
+///
+/// - **Proof-side `rk` derivation**: the prover obtains $\alpha$ from
+///   [`ActionEntropy::authorize_spend`](crate::keys::ActionEntropy::authorize_spend),
+///   then derives $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$ via
+///   [`derive_action_public`](Self::derive_action_public).
+#[derive(Clone, Copy, Debug)]
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct SpendValidatingKey(pub(super) reddsa::VerificationKey<SpendAuth>);
+
+impl SpendValidatingKey {
+    /// Derive the per-action public (verification) key: $\mathsf{rk} =
+    /// \mathsf{ak} + [\alpha]\,\mathcal{G}$.
+    ///
+    /// Used by the prover (who has [`ProvingKey`](super::ProvingKey) containing
+    /// `ak`) to compute the `rk` that the Ragu circuit constrains. During
+    /// action construction the signer derives `rk` via
+    /// [`ActionSigningKey::derive_action_public`](super::ActionSigningKey::derive_action_public)
+    /// instead.
+    #[must_use]
+    pub fn derive_action_public(
+        &self,
+        alpha: &private::ActionRandomizer,
+    ) -> public::ActionVerificationKey {
+        public::ActionVerificationKey(self.0.randomize(alpha.inner()))
+    }
+}
+
+#[expect(clippy::from_over_into, reason = "restrict conversion")]
+impl Into<[u8; 32]> for SpendValidatingKey {
+    fn into(self) -> [u8; 32] {
+        self.0.into()
     }
 }

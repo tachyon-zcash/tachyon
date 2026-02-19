@@ -1,1 +1,8 @@
-allow-unwrap-in-tests = true
+# fewer restrictions in test code
+allow-expect-in-tests = true # expect_used: allow expect() in test code.
+allow-unwrap-in-tests = true # unwrap_used: allow unwrap() in test code.
+allow-indexing-slicing-in-tests = true # indexing_slicing: allow [] indexing in test code.
+
+
+# const slices ok
+suppress-restriction-lint-in-const = true # indexing_slicing: suppress in const contexts where .get() is unavailable.
