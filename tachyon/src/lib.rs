@@ -34,17 +34,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(clippy::pub_use, reason = "exporting items for consumers")]
 
-/// Crate-local `todo!` override: prints a message and **continues**
-/// (does NOT panic). Code after a `todo!()` call executes with stub
-/// values. This enables the crate to compile and run end-to-end during
-/// development, but all `todo!()` sites produce incorrect results.
-///
-/// Because this shadows the standard `todo!()`, contributors may not
-/// realize that stub code actually executes. Grep for `todo!` to find
-/// all incomplete implementations.
-// TODO: remove this macro once all stubs are replaced with real
-// implementations. Consider using `tracing::warn!` instead of
-// `println!` to avoid polluting stdout in library code.
+/// `todo!` macro: code after a `todo!()` call executes with stub values.
 macro_rules! todo {
     ($($args:tt)*) => {
         println!("TODO: {}", $($args)*);
@@ -56,20 +46,16 @@ pub mod bundle;
 pub mod constants;
 pub mod keys;
 pub mod note;
-mod primitives;
 pub mod proof;
 pub mod stamp;
 pub mod value;
 pub mod witness;
 
+mod primitives;
+
 pub use action::Action;
 pub use bundle::{Bundle, Stamped, Stripped};
-pub use keys::{
-    BindingSignature, BindingSigningKey, BindingVerificationKey, NullifierKey, PaymentKey,
-    ProvingKey, RandomizedSigningKey, RandomizedVerificationKey, SpendAuthSignature,
-    SpendAuthorizingKey, SpendValidatingKey, SpendingKey,
-};
 pub use note::Note;
-pub use primitives::{Anchor, Epoch, SpendAuthEntropy, SpendAuthRandomizer, Tachygram};
+pub use primitives::{Anchor, Epoch, Tachygram};
 pub use proof::Proof;
 pub use stamp::Stamp;

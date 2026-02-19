@@ -119,8 +119,8 @@ impl From<u64> for Value {
 #[expect(clippy::from_over_into, reason = "restrict conversion")]
 impl Into<i64> for Value {
     fn into(self) -> i64 {
-        #[expect(clippy::unwrap_used, reason = "specified behavior")]
-        i64::try_from(self.0).unwrap()
+        #[expect(clippy::expect_used, reason = "specified behavior")]
+        i64::try_from(self.0).expect("value fits in i64")
     }
 }
 

@@ -3,14 +3,13 @@
 use core::ops::Neg as _;
 
 use rand::{CryptoRng, RngCore};
+use reddsa::orchard::SpendAuth;
 
 use crate::{
     constants::SPEND_AUTH_PERSONALIZATION,
-    keys::{
-        RandomizedSigningKey, RandomizedVerificationKey, SpendAuthSignature, SpendAuthorizingKey,
-    },
+    keys::{private, public},
     note::{self, Note},
-    primitives::{Epoch, SpendAuthEntropy, SpendAuthRandomizer},
+    primitives::Epoch,
     value,
     witness::ActionPrivate,
 };
@@ -41,11 +40,22 @@ pub struct Action {
 
     /// Randomized spend authorization key
     /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$ (EpAffine).
-    pub rk: RandomizedVerificationKey,
+    pub rk: public::ActionVerificationKey,
 
     /// RedPallas spend auth signature over
     /// $H(\text{"Tachyon-SpendSig"},\; \mathsf{cv} \| \mathsf{rk})$.
-    pub sig: SpendAuthSignature,
+    pub sig: Signature,
+}
+
+/// A BLAKE2b-512 hash of the spend auth signing message.
+#[derive(Clone, Copy, Debug)]
+pub struct SigHash([u8; 64]);
+
+#[expect(clippy::from_over_into, reason = "restrict conversion")]
+impl Into<[u8; 64]> for SigHash {
+    fn into(self) -> [u8; 64] {
+        self.0
+    }
 }
 
 /// Compute the spend auth signing/verification message.
@@ -57,37 +67,36 @@ pub struct Action {
 /// randomized verification key. This binds the signature to the
 /// specific (`cv`, `rk`) pair.
 #[must_use]
-pub fn spend_auth_message(cv: &value::Commitment, rk: &RandomizedVerificationKey) -> [u8; 64] {
+pub fn sighash(cv: value::Commitment, rk: public::ActionVerificationKey) -> SigHash {
     let mut state = blake2b_simd::Params::new()
         .hash_length(64)
         .personal(SPEND_AUTH_PERSONALIZATION)
         .to_state();
-    let cv_bytes: [u8; 32] = (*cv).into();
+    let cv_bytes: [u8; 32] = cv.into();
     state.update(&cv_bytes);
-    let rk_bytes: [u8; 32] = (*rk).into();
+    let rk_bytes: [u8; 32] = rk.into();
     state.update(&rk_bytes);
-    *state.finalize().as_array()
+    SigHash(*state.finalize().as_array())
 }
 
 impl Action {
-    /// The spend auth message for this action's `(cv, rk)` pair.
+    /// Compute the spend auth signing/verification message.
+    /// See [`sighash`] for more details.
     #[must_use]
-    pub fn sig_message(&self) -> [u8; 64] {
-        spend_auth_message(&self.cv, &self.rk)
+    pub fn sighash(&self) -> SigHash {
+        sighash(self.cv, self.rk)
     }
 
     fn new<R: RngCore + CryptoRng>(
-        rsk: &RandomizedSigningKey,
+        rsk: &private::ActionSigningKey,
         cv: value::Commitment,
         rng: &mut R,
     ) -> Self {
-        let rk = rsk.public();
-        let msg = spend_auth_message(&cv, &rk);
-
+        let rk = rsk.derive_action_public();
         Self {
             cv,
             rk,
-            sig: rsk.sign(rng, &msg),
+            sig: rsk.sign(rng, sighash(cv, rk)),
         }
     }
 
@@ -97,16 +106,15 @@ impl Action {
     // needs a variant or additional flavor parameter to produce the second
     // nullifier.
     pub fn spend<R: RngCore + CryptoRng>(
-        ask: &SpendAuthorizingKey,
+        ask: &private::SpendAuthorizingKey,
         note: Note,
         nf: note::Nullifier,
         flavor: Epoch,
-        theta: &SpendAuthEntropy,
+        theta: &private::ActionEntropy,
         rng: &mut R,
     ) -> (Self, ActionPrivate) {
         let cmx = note.commitment();
-        let alpha = SpendAuthRandomizer::derive(theta, &cmx);
-        let rsk = ask.derive_action_private(&alpha);
+        let (alpha, rsk) = theta.authorize_spend(ask, &cmx);
         let value: i64 = note.value.into();
         let (rcv, cv) = value::Commitment::commit(value, rng);
 
@@ -126,12 +134,11 @@ impl Action {
     pub fn output<R: RngCore + CryptoRng>(
         note: Note,
         flavor: Epoch,
-        theta: &SpendAuthEntropy,
+        theta: &private::ActionEntropy,
         rng: &mut R,
     ) -> (Self, ActionPrivate) {
         let cmx = note.commitment();
-        let alpha = SpendAuthRandomizer::derive(theta, &cmx);
-        let rsk = RandomizedSigningKey::for_output(&alpha);
+        let (alpha, rsk) = theta.authorize_output(&cmx);
         let value: i64 = note.value.into();
         let (rcv, cv) = value::Commitment::commit(value.neg(), rng);
 
@@ -148,6 +155,23 @@ impl Action {
     }
 }
 
+/// A spend authorization signature (RedPallas over SpendAuth).
+#[derive(Clone, Copy, Debug)]
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct Signature(pub(crate) reddsa::Signature<SpendAuth>);
+
+impl From<[u8; 64]> for Signature {
+    fn from(bytes: [u8; 64]) -> Self {
+        Self(reddsa::Signature::<SpendAuth>::from(bytes))
+    }
+}
+
+impl From<Signature> for [u8; 64] {
+    fn from(sig: Signature) -> [u8; 64] {
+        <[u8; 64]>::from(sig.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
@@ -156,7 +180,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        keys::SpendingKey,
+        keys::private,
         note::{CommitmentTrapdoor, NullifierTrapdoor},
     };
 
@@ -164,42 +188,46 @@ mod tests {
     #[test]
     fn spend_sig_round_trip() {
         let mut rng = StdRng::seed_from_u64(0);
-        let sk = SpendingKey::from([0x42u8; 32]);
-        let ask = sk.spend_authorizing_key();
-        let nk = sk.nullifier_key();
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let nk = sk.derive_nullifier_key();
         let note = Note {
-            pk: sk.payment_key(),
+            pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
             psi: NullifierTrapdoor::from(Fp::ZERO),
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let flavor = Epoch::from(Fp::ONE);
         let nf = note.nullifier(&nk, flavor);
-        let theta = SpendAuthEntropy::random(&mut rng);
+        let theta = private::ActionEntropy::random(&mut rng);
 
         let (action, _witness) = Action::spend(&ask, note, nf, flavor, &theta, &mut rng);
 
-        let msg = action.sig_message();
-        action.rk.verify(&msg, &action.sig).unwrap();
+        action
+            .rk
+            .verify(sighash(action.cv, action.rk), &action.sig)
+            .unwrap();
     }
 
     /// An output action's signature must verify against its own rk.
     #[test]
     fn output_sig_round_trip() {
         let mut rng = StdRng::seed_from_u64(0);
-        let sk = SpendingKey::from([0x42u8; 32]);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
         let note = Note {
-            pk: sk.payment_key(),
+            pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
             psi: NullifierTrapdoor::from(Fp::ZERO),
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let flavor = Epoch::from(Fp::ONE);
-        let theta = SpendAuthEntropy::random(&mut rng);
+        let theta = private::ActionEntropy::random(&mut rng);
 
         let (action, _witness) = Action::output(note, flavor, &theta, &mut rng);
 
-        let msg = action.sig_message();
-        action.rk.verify(&msg, &action.sig).unwrap();
+        action
+            .rk
+            .verify(sighash(action.cv, action.rk), &action.sig)
+            .unwrap();
     }
 }

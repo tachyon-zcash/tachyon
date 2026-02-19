@@ -1,82 +1,50 @@
-#![expect(
-    clippy::field_scoped_visibility_modifiers,
-    reason = "implement key relationships within submodule"
-)]
-
 //! Public (verification) keys.
-
-#![allow(clippy::from_over_into, reason = "restricted conversions")]
 
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 use reddsa::orchard::{Binding, SpendAuth};
 
-use super::signature::{BindingSignature, SpendAuthSignature};
-use crate::{primitives::SpendAuthRandomizer, value};
-
-/// The spend validating key `ak = [ask]G` — the public counterpart of
-/// [`SpendAuthorizingKey`](super::SpendAuthorizingKey).
-///
-/// `ak` **cannot verify action signatures directly**. The prover uses
-/// [`derive_action_public`](Self::derive_action_public) to compute the
-/// per-action [`RandomizedVerificationKey`] (`rk`) for the proof witness.
-///
-/// ## Current uses
-///
-/// - Component of [`ProvingKey`](super::ProvingKey) (proof delegation without
-///   spend authority)
-///
-/// ## Planned uses
-///
-/// - **Proof-side `rk` derivation**: the prover recomputes $\alpha =
-///   \text{derive}(\theta, \mathsf{cmx})$ via [`SpendAuthRandomizer::derive`],
-///   then derives $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$ via
-///   [`derive_action_public`](Self::derive_action_public).
-#[derive(Clone, Copy, Debug)]
-pub struct SpendValidatingKey(pub(super) reddsa::VerificationKey<SpendAuth>);
-
-impl SpendValidatingKey {
-    /// Derive the per-action public (verification) key: $\mathsf{rk} =
-    /// \mathsf{ak} + [\alpha]\,\mathcal{G}$.
-    ///
-    /// Used by the prover (who has [`ProvingKey`](super::ProvingKey) containing
-    /// `ak`) to compute the `rk` that the Ragu circuit constrains. During
-    /// action construction the signer derives `rk` via
-    /// [`RandomizedSigningKey::public`](super::RandomizedSigningKey::public)
-    /// instead.
-    #[must_use]
-    pub fn derive_action_public(&self, alpha: &SpendAuthRandomizer) -> RandomizedVerificationKey {
-        RandomizedVerificationKey(self.0.randomize(alpha.inner()))
-    }
-}
-
-impl Into<[u8; 32]> for SpendValidatingKey {
-    fn into(self) -> [u8; 32] {
-        self.0.into()
-    }
-}
+use crate::{action, action::Action, bundle, value};
 
 /// Randomized verification key `rk = ak + [alpha]G` — per-action, public.
 ///
 /// This is the only key type that **can verify** action signatures.
 /// Goes into [`Action`](crate::Action). Terminal type — no further
 /// derivation.
+///
+/// Both spend and output actions produce an `rk`
+/// ("Tachyaction at a Distance", Bowe 2025):
+///
+/// - **Spend**: re-randomizes $\mathsf{ak}$ to get $\mathsf{rk}$ —
+///   requires knowledge of $\mathsf{ask}$
+/// - **Output**: re-randomizes a generator $\mathcal{G}$ — no spending
+///   authority needed
+///
+/// This unification lets consensus treat all actions identically while
+/// the type system enforces the authority boundary at construction time.
 #[derive(Clone, Copy, Debug)]
-pub struct RandomizedVerificationKey(pub(super) reddsa::VerificationKey<SpendAuth>);
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct ActionVerificationKey(pub(super) reddsa::VerificationKey<SpendAuth>);
 
-impl RandomizedVerificationKey {
-    /// Verify a spend authorization signature.
-    pub fn verify(&self, msg: &[u8], sig: &SpendAuthSignature) -> Result<(), reddsa::Error> {
-        self.0.verify(msg, &sig.0)
+impl ActionVerificationKey {
+    /// Verify an action signature.
+    pub fn verify(
+        &self,
+        sighash: action::SigHash,
+        sig: &action::Signature,
+    ) -> Result<(), reddsa::Error> {
+        let msg: [u8; 64] = sighash.into();
+        self.0.verify(&msg, &sig.0)
     }
 }
 
-impl Into<[u8; 32]> for RandomizedVerificationKey {
+#[expect(clippy::from_over_into, reason = "restrict conversion")]
+impl Into<[u8; 32]> for ActionVerificationKey {
     fn into(self) -> [u8; 32] {
         self.0.into()
     }
 }
 
-impl TryFrom<[u8; 32]> for RandomizedVerificationKey {
+impl TryFrom<[u8; 32]> for ActionVerificationKey {
     type Error = reddsa::Error;
 
     fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
@@ -111,6 +79,7 @@ impl TryFrom<[u8; 32]> for RandomizedVerificationKey {
 /// Wraps `reddsa::VerificationKey<Binding>`, which internally stores
 /// a Pallas curve point (EpAffine, encoded as 32 compressed bytes).
 #[derive(Clone, Copy, Debug)]
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct BindingVerificationKey(pub(super) reddsa::VerificationKey<Binding>);
 
 impl BindingVerificationKey {
@@ -123,7 +92,7 @@ impl BindingVerificationKey {
     /// result should equal $[\mathsf{bsk}]\,\mathcal{R}$ when the signer
     /// constructed the bundle correctly.
     #[must_use]
-    pub fn derive(actions: &[crate::Action], value_balance: i64) -> Self {
+    pub fn derive(actions: &[Action], value_balance: i64) -> Self {
         let cv_sum: value::Commitment = actions.iter().map(|action| action.cv).sum();
         let balance_commit = value::Commitment::balance(value_balance);
         let bvk_point: EpAffine = (cv_sum - balance_commit).into();
@@ -137,8 +106,13 @@ impl BindingVerificationKey {
     }
 
     /// Verify a binding signature.
-    pub fn verify(&self, msg: &[u8], sig: &BindingSignature) -> Result<(), reddsa::Error> {
-        self.0.verify(msg, &sig.0)
+    pub fn verify(
+        &self,
+        sighash: bundle::SigHash,
+        sig: &bundle::Signature,
+    ) -> Result<(), reddsa::Error> {
+        let msg: [u8; 64] = sighash.into();
+        self.0.verify(&msg, &sig.0)
     }
 }
 
