@@ -34,6 +34,7 @@ use crate::{
 /// This separation allows the stamp to be stripped during aggregation
 /// while the action (with its authorization) remains in the transaction.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Action {
     /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
     /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).

@@ -18,6 +18,23 @@ impl From<SpendAuthSignature> for [u8; 64] {
     }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for SpendAuthSignature {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let bytes: [u8; 64] = (*self).into();
+        serde_big_array::BigArray::serialize(&bytes, serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+#[expect(clippy::missing_trait_methods, reason = "serde default is sufficient")]
+impl<'de> serde::Deserialize<'de> for SpendAuthSignature {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let bytes: [u8; 64] = serde_big_array::BigArray::deserialize(deserializer)?;
+        Ok(Self::from(bytes))
+    }
+}
+
 /// A binding signature (RedPallas over the Binding group).
 ///
 /// Proves the signer knew the opening $\mathsf{bsk}$ of the Pedersen
@@ -45,5 +62,22 @@ impl From<[u8; 64]> for BindingSignature {
 impl From<BindingSignature> for [u8; 64] {
     fn from(sig: BindingSignature) -> Self {
         sig.0.into()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for BindingSignature {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let bytes: [u8; 64] = (*self).into();
+        serde_big_array::BigArray::serialize(&bytes, serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+#[expect(clippy::missing_trait_methods, reason = "serde default is sufficient")]
+impl<'de> serde::Deserialize<'de> for BindingSignature {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let bytes: [u8; 64] = serde_big_array::BigArray::deserialize(deserializer)?;
+        Ok(Self::from(bytes))
     }
 }

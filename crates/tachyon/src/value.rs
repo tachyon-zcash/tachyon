@@ -86,6 +86,8 @@ impl Into<Fq> for CommitmentTrapdoor {
 ///
 /// An EpAffine (Pallas affine curve point, 32 compressed bytes).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(into = "[u8; 32]", try_from = "[u8; 32]"))]
 pub struct Commitment(EpAffine);
 
 impl Commitment {
@@ -150,6 +152,14 @@ impl TryFrom<&[u8; 32]> for Commitment {
             .into_option()
             .ok_or("invalid curve point")
             .map(Self)
+    }
+}
+
+impl TryFrom<[u8; 32]> for Commitment {
+    type Error = &'static str;
+
+    fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
+        Self::try_from(&bytes)
     }
 }
 

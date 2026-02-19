@@ -12,11 +12,10 @@
 //!
 //! ## Bundle States
 //!
-//! [`Bundle<S, V>`](Bundle) uses type parameters to track stamp disposition
-//! and value balance type:
+//! [`Bundle<S>`](Bundle) uses a type parameter to track stamp disposition:
 //!
-//! - [`Stamped<V>`] (`Bundle<Stamp, V>`) — self-contained with stamp
-//! - [`Stripped<V>`] (`Bundle<Stampless, V>`) — stamp stripped, depends on
+//! - [`Stamped`] (`Bundle<Stamp>`) — self-contained with stamp
+//! - [`Stripped`] (`Bundle<Stampless>`) — stamp stripped, depends on
 //!   aggregate
 //!
 //! ## Block Structure

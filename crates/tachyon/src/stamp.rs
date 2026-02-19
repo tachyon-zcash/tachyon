@@ -20,8 +20,23 @@ use crate::{
     witness::{ActionPrivate, MergePrivate},
 };
 
+mod sealed {
+    /// Sealed trait preventing external implementations of [`State`](super::State).
+    pub trait Sealed {}
+    impl Sealed for super::Stamp {}
+    impl Sealed for super::Stampless {}
+}
+
+/// Trait constraining the stamp parameter of [`Bundle`](crate::Bundle).
+///
+/// Only [`Stamp`] and [`Stampless`] implement this trait (sealed).
+pub trait Presence: sealed::Sealed {}
+impl Presence for Stamp {}
+impl Presence for Stampless {}
+
 /// Marker for the absence of a stamp.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Stampless;
 
 /// A stamp carrying tachygrams, anchor, and proof.
@@ -34,6 +49,7 @@ pub struct Stampless;
 /// The accumulators are recomputed by the verifier from public data
 /// and passed as the header to Ragu `verify()`.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     ///

@@ -61,6 +61,8 @@ impl Into<[u8; 32]> for SpendValidatingKey {
 /// Goes into [`Action`](crate::Action). Terminal type — no further
 /// derivation.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(into = "[u8; 32]", try_from = "[u8; 32]"))]
 pub struct RandomizedVerificationKey(pub(super) reddsa::VerificationKey<SpendAuth>);
 
 impl RandomizedVerificationKey {

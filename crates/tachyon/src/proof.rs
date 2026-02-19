@@ -144,3 +144,22 @@ impl TryFrom<&[u8; 192]> for Proof {
         Ok(Self)
     }
 }
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Proof {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let bytes: [u8; 192] = (*self).into();
+        serde_big_array::BigArray::serialize(&bytes, serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+#[expect(clippy::missing_trait_methods, reason = "serde default is sufficient")]
+impl<'de> serde::Deserialize<'de> for Proof {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+
+        let bytes: [u8; 192] = serde_big_array::BigArray::deserialize(deserializer)?;
+        Self::try_from(&bytes).map_err(D::Error::custom)
+    }
+}
