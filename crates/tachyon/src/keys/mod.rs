@@ -12,8 +12,8 @@
 //!     ak[SpendValidatingKey ak]
 //!     nk[NullifierKey nk]
 //!     pk[PaymentKey pk]
-//!     rsk[RandomizedSigningKey rsk]
-//!     rk[RandomizedVerificationKey rk]
+//!     rsk[ActionSigningKey rsk]
+//!     rk[ActionVerificationKey rk]
 //!     pak[ProvingKey]
 //!     sk --> ask & nk & pk
 //!     ask --> ak

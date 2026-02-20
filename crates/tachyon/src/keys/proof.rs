@@ -1,8 +1,8 @@
 //! Proof-related keys: ProvingKey.
 
-use super::note::NullifierKey;
-use super::{private, public};
 use reddsa::orchard::SpendAuth;
+
+use super::{note::NullifierKey, private, public};
 
 /// The proving key (`ak` + `nk`).
 ///
@@ -56,31 +56,18 @@ impl Into<[u8; 64]> for ProvingKey {
 }
 
 /// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\,\mathcal{G}$ —
-/// the long-lived public counterpart of
+/// the long-lived counterpart of
 /// [`SpendAuthorizingKey`](super::SpendAuthorizingKey).
 ///
-/// Named "spend validating key" in the Zcash protocol spec (Orchard
-/// §4.2.3). NOT an "Action*" type — `ak` is long-lived and pairs with
-/// `SpendAuthorizingKey`, unlike the per-action ephemeral types
-/// ([`ActionSigningKey`](super::ActionSigningKey),
-/// [`ActionVerificationKey`](super::public::ActionVerificationKey)).
+/// Corresponds to the "spend validating key" in Orchard (§4.2.3).
+/// Constrains per-action `rk` in the proof, tying accumulator activity
+/// to the holder of `ask`.
 ///
-/// `ak` **cannot verify action signatures directly**. The prover uses
+/// `ak` **cannot verify action signatures directly** — the prover uses
 /// [`derive_action_public`](Self::derive_action_public) to compute the
-/// per-action [`ActionVerificationKey`](super::public::ActionVerificationKey)
-/// (`rk`) for the proof witness.
-///
-/// ## Current uses
-///
-/// - Component of [`ProvingKey`](super::ProvingKey) (proof delegation without
-///   spend authority)
-///
-/// ## Planned uses
-///
-/// - **Proof-side `rk` derivation**: the prover obtains $\alpha$ from
-///   [`ActionEntropy::authorize_spend`](crate::keys::ActionEntropy::authorize_spend),
-///   then derives $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$ via
-///   [`derive_action_public`](Self::derive_action_public).
+/// per-action `rk` for the proof witness. Component of
+/// [`ProvingKey`](super::ProvingKey) for proof delegation without spend
+/// authority.
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct SpendValidatingKey(pub(super) reddsa::VerificationKey<SpendAuth>);

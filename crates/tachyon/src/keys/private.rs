@@ -11,7 +11,6 @@ use super::{
     note::{NullifierKey, PaymentKey},
     proof, public,
 };
-
 use crate::{
     action, bundle,
     constants::{ALPHA_PERSONALIZATION, PrfExpand},
@@ -136,13 +135,20 @@ impl SpendingKey {
 /// The spend authorizing key `ask` — a long-lived signing key derived
 /// from [`SpendingKey`].
 ///
-/// `ask` **cannot sign directly**. It must first produce a per-action
-/// [`RandomizedSigningKey`] (`rsk`) via
-/// [`derive_action_private`](Self::derive_action_private), which can then sign.
+/// Corresponds to the "spend authorizing key" in Orchard (§4.2.3).
+/// Only used for spend actions — output actions do not require `ask`.
 ///
-/// This prevents accidentally using the long-lived key for signing.
+/// `ask` **cannot sign directly**. It must first be randomized into a
+/// per-action [`ActionSigningKey`] (`rsk`) via
+/// [`derive_action_private`](Self::derive_action_private), which can then
+/// sign. Per-action randomization ensures each `rk` is unlinkable to
+/// `ak`, so observers cannot correlate actions to the same spending
+/// authority.
+///
+/// `ask` derives [`SpendValidatingKey`](super::proof::SpendValidatingKey)
+/// (`ak`) via [`derive_auth_public`](Self::derive_auth_public) — the
+/// circuit witness that validates spend authorization.
 #[derive(Clone, Copy, Debug)]
-
 pub struct SpendAuthorizingKey(reddsa::SigningKey<SpendAuth>);
 
 impl SpendAuthorizingKey {
@@ -162,7 +168,10 @@ impl SpendAuthorizingKey {
     }
 }
 
-/// Randomized signing key `rsk = ask + alpha` — per-action, ephemeral.
+/// The randomized action signing key `rsk` — per-action, ephemeral.
+///
+/// For spends: $\mathsf{rsk} = \mathsf{ask} + \alpha$. For outputs:
+/// $\mathsf{rsk} = \alpha$ (no spend authority).
 ///
 /// This is the only key type that **can sign**. Produced by
 /// [`ActionEntropy::authorize_spend`](crate::keys::ActionEntropy::authorize_spend)
@@ -347,7 +356,7 @@ impl ActionEntropy {
     }
 }
 
-/// Per-action spend authorization randomizer $\alpha$.
+/// Per-action authorization randomizer $\alpha$.
 ///
 /// Deterministically derived from [`ActionEntropy`] and a note commitment:
 ///
