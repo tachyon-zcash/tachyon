@@ -60,7 +60,7 @@ impl Into<[u8; 32]> for SpendValidatingKey {
 /// This is the only key type that **can verify** action signatures.
 /// Goes into [`Action`](crate::Action). Terminal type — no further
 /// derivation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RandomizedVerificationKey(pub(super) reddsa::VerificationKey<SpendAuth>);
 
 impl RandomizedVerificationKey {
@@ -69,6 +69,8 @@ impl RandomizedVerificationKey {
         self.0.verify(msg, &sig.0)
     }
 }
+
+impl Eq for RandomizedVerificationKey {}
 
 impl Into<[u8; 32]> for RandomizedVerificationKey {
     fn into(self) -> [u8; 32] {
