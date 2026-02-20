@@ -1,7 +1,7 @@
 //! Tachyon transaction bundles.
 //!
-//! A bundle is parameterized by its stamp state. Actions are constant through
-//! state transitions; only the stamp is stripped or merged.
+//! A bundle uses `Option<Stamp>` to track stamp disposition. Actions are
+//! constant through state transitions; only the stamp is stripped or merged.
 
 use ff::Field as _;
 use pasta_curves::Fq;
@@ -13,14 +13,14 @@ use crate::{
     constants::BINDING_SIGHASH_PERSONALIZATION,
     keys::{ProofAuthorizingKey, private::BindingSigningKey, public::BindingVerificationKey},
     primitives::Anchor,
-    stamp::{Stamp, Stampless},
+    stamp::Stamp,
     witness::ActionPrivate,
 };
 
-/// A Tachyon transaction bundle parameterized by stamp state `S` and value
-/// balance type `V` representing the net pool effect.
+/// A Tachyon transaction bundle with value balance type `V` representing 
+/// the net pool effect.
 #[derive(Clone, Debug)]
-pub struct Bundle<S, V> {
+pub struct Bundle<V> {
     /// Actions (cv, rk, sig).
     pub actions: Vec<Action>,
 
@@ -30,15 +30,10 @@ pub struct Bundle<S, V> {
     /// Binding signature over actions and value balance.
     pub binding_sig: Signature,
 
-    /// Stamp state: `Stamp` when present, `Stampless` when stripped.
-    pub stamp: S,
+    /// Stamp: `Some(Stamp)` when present, `None` when stripped.
+    pub stamp: Option<Stamp>,
 }
 
-/// A bundle with a stamp — can stand alone or cover adjunct bundles.
-pub type Stamped<V> = Bundle<Stamp, V>;
-
-/// A bundle whose stamp has been stripped — depends on a stamped bundle.
-pub type Stripped<V> = Bundle<Stampless, V>;
 
 /// A BLAKE2b-512 hash of the binding sighash message.
 #[derive(Clone, Copy, Debug)]
@@ -113,24 +108,28 @@ pub fn sighash(value_balance: i64, action_sigs: &[[u8; 64]]) -> SigHash {
     SigHash(*state.finalize().as_array())
 }
 
-impl<V> Stamped<V> {
+impl<V> Bundle<V> {
     /// Strips the stamp, producing a stripped bundle and the extracted stamp.
     ///
     /// The stamp should be merged into an aggregate's stamped bundle.
-    pub fn strip(self) -> (Stripped<V>, Stamp) {
-        (
-            Bundle {
-                actions: self.actions,
-                value_balance: self.value_balance,
-                binding_sig: self.binding_sig,
-                stamp: Stampless,
-            },
-            self.stamp,
-        )
+    /// Returns None if the bundle has no stamp.
+    pub fn strip(mut self) -> (Bundle<V>, Option<Stamp>) {
+        let stamp = self.stamp.take();
+        (self, stamp)
+    }
+
+    /// Returns true if the bundle has a stamp.
+    pub fn is_stamped(&self) -> bool {
+        self.stamp.is_some()
+    }
+
+    /// Returns true if the bundle has no stamp.
+    pub fn is_stampless(&self) -> bool {
+        self.stamp.is_none()
     }
 }
 
-impl Stamped<i64> {
+impl Bundle<i64> {
     /// Builds a stamped bundle from action pairs.
     ///
     /// ## Build order: stamp before binding signature
@@ -229,12 +228,12 @@ impl Stamped<i64> {
             actions,
             value_balance,
             binding_sig,
-            stamp,
+            stamp: Some(stamp),
         })
     }
 }
 
-impl<S> Bundle<S, i64> {
+impl Bundle<i64> {
     /// Compute the Tachyon binding sighash.
     /// See [`sighash`] for more details.
     #[must_use]
@@ -323,7 +322,7 @@ mod tests {
         value,
     };
 
-    fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Stamped<i64> {
+    fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Bundle<i64> {
         let sk = private::SpendingKey::from([0x42u8; 32]);
         let ask = sk.derive_auth_private();
         let pak = sk.derive_proof_private();
@@ -350,7 +349,7 @@ mod tests {
         let output = Action::output(output_note, &theta_output, rng);
 
         // value_balance = 1000 - 700 = 300
-        Stamped::build(vec![spend, output], 300, anchor, &pak, rng).unwrap()
+        Bundle::build(vec![spend, output], 300, anchor, &pak, rng).unwrap()
     }
 
     /// A correctly built bundle must pass signature verification.
@@ -385,7 +384,7 @@ mod tests {
     /// exercising each delegation boundary independently.
     ///
     /// This uses no convenience wrappers (`Action::spend/output`,
-    /// `Stamped::build`). Every step is called individually, matching
+    /// `Bundle::build`). Every step is called individually, matching
     /// the custody-delegated flow from the protocol spec.
     #[test]
     #[expect(
@@ -487,11 +486,11 @@ mod tests {
         let binding_sig = bsk.sign(&mut rng, sighash(value_balance, &action_sigs));
 
         // Assemble
-        let bundle: Stamped<i64> = Bundle {
+        let bundle: Bundle<i64> = Bundle {
             actions,
             value_balance,
             binding_sig,
-            stamp,
+            stamp: Some(stamp),
         };
 
         bundle.verify_signatures().unwrap();
