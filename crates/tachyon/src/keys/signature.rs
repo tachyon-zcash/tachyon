@@ -33,7 +33,7 @@ impl From<SpendAuthSignature> for [u8; 64] {
 /// The validator checks:
 /// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{sighash},
 ///   \text{bindingSig}) = 1$
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BindingSignature(pub reddsa::Signature<Binding>);
 
 impl From<[u8; 64]> for BindingSignature {
