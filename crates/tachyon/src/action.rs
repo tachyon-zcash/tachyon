@@ -32,7 +32,7 @@ use crate::{
 ///
 /// This separation allows the stamp to be stripped during aggregation
 /// while the action (with its authorization) remains in the transaction.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Action {
     /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
     /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
@@ -167,7 +167,7 @@ impl Action {
 }
 
 /// A spend authorization signature (RedPallas over SpendAuth).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct Signature(pub(crate) reddsa::Signature<SpendAuth>);
 
