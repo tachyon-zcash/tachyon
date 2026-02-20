@@ -33,7 +33,7 @@ pub struct Stampless;
 /// `tachygram_acc`, and `anchor`, but only the anchor is stored here.
 /// The accumulators are recomputed by the verifier from public data
 /// and passed as the header to Ragu `verify()`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     ///

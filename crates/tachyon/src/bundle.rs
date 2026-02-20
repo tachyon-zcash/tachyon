@@ -293,7 +293,7 @@ impl<S> Bundle<S, i64> {
 /// The validator checks:
 /// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{sighash},
 ///   \text{bindingSig}) = 1$
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct Signature(pub(crate) reddsa::Signature<Binding>);
 
