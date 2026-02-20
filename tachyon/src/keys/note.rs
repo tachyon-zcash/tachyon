@@ -18,11 +18,11 @@ use pasta_curves::Fp;
 /// ## Capabilities
 ///
 /// - **Nullifier derivation**: detecting when a note has been spent
-/// - **Oblivious sync delegation** (Nullifier Derivation Scheme doc):
-///   the master root key $\mathsf{mk} = \text{KDF}(\Psi, \mathsf{nk})$
-///   seeds a GGM tree PRF; prefix keys $\Psi_t$ permit evaluating the
-///   PRF only for epochs $e \leq t$, enabling range-restricted delegation
-///   without revealing spend capability
+/// - **Oblivious sync delegation** (Nullifier Derivation Scheme doc): the
+///   master root key $\mathsf{mk} = \text{KDF}(\Psi, \mathsf{nk})$ seeds a GGM
+///   tree PRF; prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
+///   $e \leq t$, enabling range-restricted delegation without revealing spend
+///   capability
 ///
 /// `nk` alone does NOT confer spend authority — it only allows observing
 /// spend status and constructing proofs (when combined with `ak`).

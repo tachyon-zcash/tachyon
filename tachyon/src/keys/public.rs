@@ -5,7 +5,7 @@ use reddsa::orchard::{Binding, SpendAuth};
 
 use crate::{action, action::Action, bundle, value};
 
-/// Randomized verification key `rk = ak + [alpha]G` — per-action, public.
+/// The randomized action verification key `rk` — per-action, public.
 ///
 /// This is the only key type that **can verify** action signatures.
 /// Goes into [`Action`](crate::Action). Terminal type — no further
@@ -14,10 +14,10 @@ use crate::{action, action::Action, bundle, value};
 /// Both spend and output actions produce an `rk`
 /// ("Tachyaction at a Distance", Bowe 2025):
 ///
-/// - **Spend**: re-randomizes $\mathsf{ak}$ to get $\mathsf{rk}$ —
-///   requires knowledge of $\mathsf{ask}$
-/// - **Output**: re-randomizes a generator $\mathcal{G}$ — no spending
-///   authority needed
+/// - **Spend**: $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$ — requires
+///   knowledge of $\mathsf{ask}$
+/// - **Output**: $\mathsf{rk} = [\alpha]\,\mathcal{G}$ — no spending authority
+///   needed
 ///
 /// This unification lets consensus treat all actions identically while
 /// the type system enforces the authority boundary at construction time.

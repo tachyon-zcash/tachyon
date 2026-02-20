@@ -38,8 +38,7 @@ pub struct Action {
     /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
     pub cv: value::Commitment,
 
-    /// Randomized spend authorization key
-    /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$ (EpAffine).
+    /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
     pub rk: public::ActionVerificationKey,
 
     /// RedPallas spend auth signature over
