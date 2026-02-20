@@ -3,7 +3,7 @@
 use reddsa::orchard::{Binding, SpendAuth};
 
 /// A spend authorization signature (RedPallas over SpendAuth).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpendAuthSignature(pub reddsa::Signature<SpendAuth>);
 
 impl From<[u8; 64]> for SpendAuthSignature {
