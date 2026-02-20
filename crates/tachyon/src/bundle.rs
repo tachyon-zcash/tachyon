@@ -13,14 +13,14 @@ use crate::{
     constants::BINDING_SIGHASH_PERSONALIZATION,
     keys::{BindingSignature, BindingSigningKey, BindingVerificationKey, ProvingKey},
     primitives::Anchor,
-    stamp::{Stamp, Stampless},
+    stamp::Stamp,
     witness::ActionPrivate,
 };
 
-/// A Tachyon transaction bundle parameterized by stamp state `S` and value
-/// balance type `V` representing the net pool effect.
+/// A Tachyon transaction bundle with value balance type `V` representing 
+/// the net pool effect.
 #[derive(Clone, Debug)]
-pub struct Bundle<S, V> {
+pub struct Bundle<V> {
     /// Actions (cv, rk, sig).
     pub actions: Vec<Action>,
 
@@ -30,15 +30,10 @@ pub struct Bundle<S, V> {
     /// Binding signature over actions and value balance.
     pub binding_sig: BindingSignature,
 
-    /// Stamp state: `Stamp` when present, `Stampless` when stripped.
-    pub stamp: S,
+    /// Stamp: `Some(Stamp)` when present, `None` when stripped.
+    pub stamp: Option<Stamp>,
 }
 
-/// A bundle with a stamp — can stand alone or cover adjunct bundles.
-pub type Stamped<V> = Bundle<Stamp, V>;
-
-/// A bundle whose stamp has been stripped — depends on a stamped bundle.
-pub type Stripped<V> = Bundle<Stampless, V>;
 
 /// Compute the Tachyon binding sighash.
 ///
@@ -68,24 +63,28 @@ fn binding_sighash(value_balance: i64, actions: &[Action]) -> [u8; 64] {
     *state.finalize().as_array()
 }
 
-impl<V> Stamped<V> {
+impl<V> Bundle<V> {
     /// Strips the stamp, producing a stripped bundle and the extracted stamp.
     ///
     /// The stamp should be merged into an aggregate's stamped bundle.
-    pub fn strip(self) -> (Stripped<V>, Stamp) {
-        (
-            Bundle {
-                actions: self.actions,
-                value_balance: self.value_balance,
-                binding_sig: self.binding_sig,
-                stamp: Stampless,
-            },
-            self.stamp,
-        )
+    /// Returns None if the bundle has no stamp.
+    pub fn strip(mut self) -> (Bundle<V>, Option<Stamp>) {
+        let stamp = self.stamp.take();
+        (self, stamp)
+    }
+
+    /// Returns true if the bundle has a stamp.
+    pub fn is_stamped(&self) -> bool {
+        self.stamp.is_some()
+    }
+
+    /// Returns true if the bundle has no stamp.
+    pub fn is_stampless(&self) -> bool {
+        self.stamp.is_none()
     }
 }
 
-impl Stamped<i64> {
+impl Bundle<i64> {
     /// Builds a stamped bundle from action pairs.
     ///
     /// ## Binding signature scheme
@@ -151,16 +150,16 @@ impl Stamped<i64> {
             actions,
             value_balance,
             binding_sig,
-            stamp: Stamp {
+            stamp: Some(Stamp {
                 tachygrams,
                 anchor,
                 proof,
-            },
+            }),
         }
     }
 }
 
-impl<S> Bundle<S, i64> {
+impl Bundle<i64> {
     /// Verify the bundle's binding signature and all action signatures.
     ///
     /// This checks:
@@ -207,7 +206,7 @@ mod tests {
         primitives::{Epoch, SpendAuthEntropy},
     };
 
-    fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Stamped<i64> {
+    fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Bundle<i64> {
         let sk = SpendingKey::from([0x42u8; 32]);
         let ask = sk.spend_authorizing_key();
         let nk = sk.nullifier_key();
@@ -237,7 +236,7 @@ mod tests {
         let output = Action::output(output_note, epoch, &theta_output, rng);
 
         // value_balance = 1000 - 700 = 300
-        Stamped::build(vec![spend, output], 300, anchor, &pak, rng)
+        Bundle::build(vec![spend, output], 300, anchor, &pak, rng)
     }
 
     /// A correctly built bundle must pass signature verification.
