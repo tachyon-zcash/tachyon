@@ -110,7 +110,7 @@ impl Action {
         // 2. Value commitment (signer picks rcv)
         let value: i64 = note.value.into();
         let rcv = value::CommitmentTrapdoor::random(&mut *rng);
-        let cv = value::Commitment::new(value, rcv);
+        let cv = rcv.commit(value);
 
         // 3. Alpha (user device derives for proof witness)
         let alpha = theta.spend_randomizer(&cmx);
@@ -145,7 +145,7 @@ impl Action {
         // 2. Value commitment (signer picks rcv; negative for outputs)
         let value: i64 = note.value.into();
         let rcv = value::CommitmentTrapdoor::random(&mut *rng);
-        let cv = value::Commitment::new(value.neg(), rcv);
+        let cv = rcv.commit(value.neg());
 
         // 3. Alpha (for proof witness and output signing key)
         let alpha = theta.output_randomizer(&cmx);
@@ -208,8 +208,7 @@ mod tests {
         };
         let theta = private::ActionEntropy::random(&mut rng);
 
-        let (action, _witness) =
-            Action::spend(&local, note, &theta, &mut rng).unwrap();
+        let (action, _witness) = Action::spend(&local, note, &theta, &mut rng).unwrap();
 
         action
             .rk

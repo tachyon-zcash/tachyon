@@ -124,7 +124,7 @@ mod tests {
         let cmx = note.commitment();
         let note_value: i64 = note.value.into();
         let rcv = value::CommitmentTrapdoor::random(&mut rng);
-        let cv = value::Commitment::new(note_value, rcv);
+        let cv = rcv.commit(note_value);
         let theta = private::ActionEntropy::random(&mut rng);
 
         let (rk, sig) = custody.authorize_spend(cv, &theta, &cmx, &mut rng).unwrap();
