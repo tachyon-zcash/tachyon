@@ -1,4 +1,4 @@
-//! Proof-related keys: ProvingKey.
+//! Proof-related keys: ProofAuthorizingKey.
 
 use reddsa::orchard::SpendAuth;
 
@@ -22,14 +22,14 @@ use super::{note::NullifierKey, private, public};
 // once the Ragu circuit API is available.
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct ProvingKey {
+pub struct ProofAuthorizingKey {
     /// The spend validating key `ak = [ask] G`.
     pub(super) ak: SpendValidatingKey,
     /// The nullifier deriving key.
     pub(super) nk: NullifierKey,
 }
 
-impl ProvingKey {
+impl ProofAuthorizingKey {
     /// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\,\mathcal{G}$.
     #[must_use]
     pub const fn ak(&self) -> &SpendValidatingKey {
@@ -44,7 +44,7 @@ impl ProvingKey {
 }
 
 #[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 64]> for ProvingKey {
+impl Into<[u8; 64]> for ProofAuthorizingKey {
     fn into(self) -> [u8; 64] {
         let mut bytes = [0u8; 64];
         let ak_bytes: [u8; 32] = self.ak.into();
@@ -66,7 +66,7 @@ impl Into<[u8; 64]> for ProvingKey {
 /// `ak` **cannot verify action signatures directly** — the prover uses
 /// [`derive_action_public`](Self::derive_action_public) to compute the
 /// per-action `rk` for the proof witness. Component of
-/// [`ProvingKey`](super::ProvingKey) for proof delegation without spend
+/// [`ProofAuthorizingKey`](super::ProofAuthorizingKey) for proof delegation without spend
 /// authority.
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
@@ -76,7 +76,7 @@ impl SpendValidatingKey {
     /// Derive the per-action public (verification) key: $\mathsf{rk} =
     /// \mathsf{ak} + [\alpha]\,\mathcal{G}$.
     ///
-    /// Used by the prover (who has [`ProvingKey`](super::ProvingKey) containing
+    /// Used by the prover (who has [`ProofAuthorizingKey`](super::ProofAuthorizingKey) containing
     /// `ak`) to compute the `rk` that the Ragu circuit constrains. During
     /// action construction the signer derives `rk` via
     /// [`ActionSigningKey::derive_action_public`](super::ActionSigningKey::derive_action_public)
@@ -86,7 +86,7 @@ impl SpendValidatingKey {
         &self,
         alpha: &private::ActionRandomizer,
     ) -> public::ActionVerificationKey {
-        public::ActionVerificationKey(self.0.randomize(alpha.inner()))
+        public::ActionVerificationKey(self.0.randomize(&alpha.0))
     }
 }
 
