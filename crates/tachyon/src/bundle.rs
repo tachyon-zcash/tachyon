@@ -6,6 +6,7 @@
 use ff::Field as _;
 use pasta_curves::Fq;
 use rand::{CryptoRng, RngCore};
+use reddsa::orchard::Binding;
 
 use crate::{
     action::Action,
@@ -277,7 +278,6 @@ impl<S> Bundle<S, i64> {
     }
 }
 
-use reddsa::orchard::Binding;
 /// A binding signature (RedPallas over the Binding group).
 ///
 /// Proves the signer knew the opening $\mathsf{bsk}$ of the Pedersen
@@ -420,7 +420,7 @@ mod tests {
         // 2. Value commitment (user device picks rcv)
         let spend_value: i64 = spend_note.value.into();
         let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
-        let spend_cv = value::Commitment::new(spend_value, spend_rcv);
+        let spend_cv = spend_rcv.commit(spend_value);
 
         // 3. Authorization (custody device: theta + ask + cmx + cv → rk, sig)
         let spend_theta = private::ActionEntropy::random(&mut rng);
@@ -444,7 +444,7 @@ mod tests {
         let output_cmx = output_note.commitment();
         let output_value: i64 = output_note.value.into();
         let output_rcv = value::CommitmentTrapdoor::random(&mut rng);
-        let output_cv = value::Commitment::new(-output_value, output_rcv);
+        let output_cv = output_rcv.commit(-output_value);
 
         let output_theta = private::ActionEntropy::random(&mut rng);
         let output_alpha = output_theta.output_randomizer(&output_cmx);

@@ -57,8 +57,31 @@ pub struct CommitmentTrapdoor(Fq);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
-    pub fn random(rng: &mut impl RngCore) -> Self {
+    pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
         Self(Fq::random(rng))
+    }
+
+    /// Commit to a value with this trapdoor.
+    ///
+    /// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
+    ///
+    /// Positive $v$ for spends (balance contributed), negative for
+    /// outputs (balance exhausted).
+    #[must_use]
+    pub fn commit(self, value: i64) -> Commitment {
+        let committed: EpAffine = {
+            let commit_value: Ep = *VALUE_COMMIT_V * signed_to_scalar(value);
+            let commit_trapdoor: Ep = *VALUE_COMMIT_R * self.0;
+            (commit_value + commit_trapdoor).into()
+        };
+
+        Commitment(committed)
+    }
+}
+
+impl Default for CommitmentTrapdoor {
+    fn default() -> Self {
+        Self(Fq::ZERO)
     }
 }
 
@@ -86,40 +109,10 @@ impl Into<Fq> for CommitmentTrapdoor {
 ///
 /// An EpAffine (Pallas affine curve point, 32 compressed bytes).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Commitment(EpAffine);
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct Commitment(pub(super) EpAffine);
 
 impl Commitment {
-    /// Create a value commitment from a signed value and a provided
-    /// trapdoor.
-    ///
-    /// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
-    ///
-    /// Positive $v$ for spends (balance contributed), negative for
-    /// outputs (balance exhausted).
-    ///
-    /// Enables delegation: the signer picks $\mathsf{rcv}$
-    /// independently and can reconstruct $\mathsf{cv}$ without the
-    /// prover's RNG.
-    #[must_use]
-    pub fn new(value: i64, rcv: CommitmentTrapdoor) -> Self {
-        let committed = {
-            let commit_value: Ep = *VALUE_COMMIT_V * signed_to_scalar(value);
-            let commit_rand: Ep = *VALUE_COMMIT_R * Into::<Fq>::into(rcv);
-            commit_value + commit_rand
-        };
-
-        Self(committed.into())
-    }
-
-    /// Create a value commitment with fresh randomness.
-    ///
-    /// Convenience wrapper: generates $\mathsf{rcv}$ then calls
-    /// [`new`](Self::new).
-    pub fn commit(value: i64, rng: &mut (impl RngCore + CryptoRng)) -> (CommitmentTrapdoor, Self) {
-        let rcv = CommitmentTrapdoor::random(&mut *rng);
-        (rcv, Self::new(value, rcv))
-    }
-
     /// Create the value balance commitment
     /// $\text{ValueCommit}_0(\mathsf{v\_{balance}})$.
     ///
@@ -133,13 +126,7 @@ impl Commitment {
     ///   \ominus \text{ValueCommit}_0(\mathsf{v\_{balance}})$$
     #[must_use]
     pub fn balance(value: i64) -> Self {
-        let committed = {
-            let commit_value: Ep = *VALUE_COMMIT_V * signed_to_scalar(value);
-            let commit_zero: Ep = *VALUE_COMMIT_R * Fq::ZERO;
-            commit_value + commit_zero
-        };
-
-        Self(committed.into())
+        CommitmentTrapdoor::default().commit(value)
     }
 }
 
@@ -216,16 +203,22 @@ mod tests {
     /// and the R-component has zero scalar.
     #[test]
     fn balance_zero_is_identity() {
-        assert_eq!(Commitment::balance(0), Commitment(EpAffine::identity()));
+        assert_eq!(
+            CommitmentTrapdoor::default().commit(0),
+            Commitment(EpAffine::identity())
+        );
     }
 
     /// The binding property: `cv_a + cv_b - balance(a+b) = [rcv_a + rcv_b]R`.
     /// The V-components cancel, leaving only the R-component.
+    /// TODO: so... a bundle with a single action would reveal an individual rcv?
     #[test]
     fn commit_homomorphic_binding_property() {
         let mut rng = StdRng::seed_from_u64(0);
-        let (rcv_a, cv_a) = Commitment::commit(100, &mut rng);
-        let (rcv_b, cv_b) = Commitment::commit(200, &mut rng);
+        let rcv_a = CommitmentTrapdoor::random(&mut rng);
+        let cv_a = rcv_a.commit(100);
+        let rcv_b = CommitmentTrapdoor::random(&mut rng);
+        let cv_b = rcv_b.commit(200);
 
         let remainder = cv_a + cv_b - Commitment::balance(300);
 

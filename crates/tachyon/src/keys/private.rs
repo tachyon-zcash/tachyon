@@ -377,16 +377,6 @@ impl Into<ActionRandomizer> for SpendRandomizer {
 }
 
 impl SpendRandomizer {
-    /// Produce the per-action signing key:
-    /// $\mathsf{rsk} = \mathsf{ask} + \alpha$.
-    ///
-    /// The spend-side counterpart of `OutputRandomizer::derive_action_private`,
-    /// which produces $\mathsf{rsk} = \alpha$ (no spend authority).
-    #[must_use]
-    fn derive_action_private(self, ask: &SpendAuthorizingKey) -> ActionSigningKey {
-        ActionSigningKey(ask.0.randomize(&self.0))
-    }
-
     /// Sign with $\mathsf{rsk} = \mathsf{ask} + \alpha$ and return
     /// $(\mathsf{rk}, \text{sig})$.
     ///
@@ -399,7 +389,8 @@ impl SpendRandomizer {
         cv: value::Commitment,
         rng: &mut R,
     ) -> (public::ActionVerificationKey, action::Signature) {
-        let rsk = self.derive_action_private(ask);
+        let rsk = ask.derive_action_private(&self);
+
         let rk = rsk.derive_action_public();
         let sig = rsk.sign(rng, action::sighash(cv, rk));
         (rk, sig)
@@ -423,19 +414,6 @@ impl Into<ActionRandomizer> for OutputRandomizer {
 }
 
 impl OutputRandomizer {
-    /// Produce the per-action signing key: $\mathsf{rsk} = \alpha$.
-    ///
-    /// The output-side counterpart of `SpendRandomizer::derive_action_private`,
-    /// which produces $\mathsf{rsk} = \mathsf{ask} + \alpha$ for spends.
-    #[must_use]
-    #[expect(clippy::expect_used, reason = "BLAKE2b-derived scalar is valid")]
-    fn derive_action_private(self) -> ActionSigningKey {
-        ActionSigningKey(
-            reddsa::SigningKey::<SpendAuth>::try_from(self.0.to_repr())
-                .expect("BLAKE2b-derived scalar yields valid signing key"),
-        )
-    }
-
     /// Sign with $\mathsf{rsk} = \alpha$ and return
     /// $(\mathsf{rk}, \text{sig})$.
     ///
@@ -447,7 +425,12 @@ impl OutputRandomizer {
         cv: value::Commitment,
         rng: &mut R,
     ) -> (public::ActionVerificationKey, action::Signature) {
-        let rsk = self.derive_action_private();
+        #[expect(clippy::expect_used, reason = "specified behavior")]
+        let rsk = ActionSigningKey(
+            reddsa::SigningKey::<SpendAuth>::try_from(self.0.to_repr())
+                .expect("BLAKE2b-derived scalar yields valid signing key"),
+        );
+
         let rk = rsk.derive_action_public();
         let sig = rsk.sign(rng, action::sighash(cv, rk));
         (rk, sig)

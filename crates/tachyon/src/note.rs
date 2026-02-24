@@ -70,6 +70,24 @@ impl Into<Fp> for NullifierTrapdoor {
 #[derive(Clone, Copy, Debug)]
 pub struct CommitmentTrapdoor(Fq);
 
+impl CommitmentTrapdoor {
+    /// Computes the note commitment `cmx`.
+    ///
+    /// Commits to $(pk, v, \psi)$ with randomness $rcm$
+    #[must_use]
+    pub fn commit(self, _v: Value, _pk: &PaymentKey, _psi: &NullifierTrapdoor) -> Commitment {
+        // TODO: Implement note commitment
+        // $cmx = \text{NoteCommit}_{rcm}(\text{"z.cash:Tachyon-NoteCommit"}, pk \| v \|
+        // \psi)$
+        //
+        // CORRECTNESS: the crate-local `todo!` macro prints and continues
+        // (does not panic). This stub returns Fp::ZERO for every note,
+        // making all output tachygrams identical.
+        todo!("note commitment");
+        Commitment::from(Fp::ZERO)
+    }
+}
+
 impl From<Fq> for CommitmentTrapdoor {
     fn from(fq: Fq) -> Self {
         Self(fq)
@@ -137,15 +155,7 @@ impl Note {
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$
     #[must_use]
     pub fn commitment(&self) -> Commitment {
-        // TODO: Implement note commitment
-        // $cmx = \text{NoteCommit}_{rcm}(\text{"z.cash:Tachyon-NoteCommit"}, pk \| v \|
-        // \psi)$
-        //
-        // CORRECTNESS: the crate-local `todo!` macro prints and continues
-        // (does not panic). This stub returns Fp::ZERO for every note,
-        // making all output tachygrams identical.
-        todo!("note commitment");
-        Commitment::from(Fp::ZERO)
+        self.rcm.commit(self.value, &self.pk, &self.psi)
     }
 
     /// Derives a nullifier for this note at the given flavor (epoch).
