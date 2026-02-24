@@ -1,9 +1,0 @@
-{
-  /* MD013 */ "line-length": false,
-  /* MD029 */ "ol-prefix": { "style": "ordered" },
-  /* MD042 */ "no-empty-links": false,
-  /* MD047 */ "single-trailing-newline": true,
-  /* MD048 */ "code-fence-style": { "style": "backtick" },
-  /* MD055 */ "table-pipe-style": { "style": "leading_and_trailing" },
-  /* MD060 */ "table-column-style": { "aligned_delimiter": true, "style": "aligned" }
-}

@@ -211,7 +211,6 @@ mod tests {
 
     /// The binding property: `cv_a + cv_b - balance(a+b) = [rcv_a + rcv_b]R`.
     /// The V-components cancel, leaving only the R-component.
-    /// TODO: so... a bundle with a single action would reveal an individual rcv?
     #[test]
     fn commit_homomorphic_binding_property() {
         let mut rng = StdRng::seed_from_u64(0);
