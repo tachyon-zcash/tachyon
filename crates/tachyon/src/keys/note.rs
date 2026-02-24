@@ -29,8 +29,9 @@ use crate::{
 ///   $e \leq t$, enabling range-restricted delegation without revealing spend
 ///   capability
 ///
-/// `nk` alone does NOT confer spend authority — it only allows observing
-/// spend status and constructing proofs (when combined with `ak`).
+/// `nk` alone does NOT confer spend authority — combined with `ak` it
+/// forms the proof authorizing key `pak`, enabling proof construction
+/// and nullifier derivation without signing capability.
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct NullifierKey(pub(super) Fp);

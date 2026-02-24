@@ -4,11 +4,11 @@ use reddsa::orchard::SpendAuth;
 
 use super::{note::NullifierKey, private, public};
 
-/// The proving key (`ak` + `nk`).
+/// The proof authorizing key (`ak` + `nk`).
 ///
-/// Allows constructing proofs without spend authority. This might be delegated
-/// to a service that constructs non-membership proofs for nullifiers without
-/// learning the wallet's spending key.
+/// Authorizes proof construction without spend authority. The holder can
+/// construct proofs for all notes (since `nk` is wallet-wide) but cannot
+/// sign actions.
 ///
 /// Derived from [`SpendAuthorizingKey`](super::SpendAuthorizingKey) $\to$
 /// [`SpendValidatingKey`] and [`NullifierKey`].
@@ -66,7 +66,7 @@ impl Into<[u8; 64]> for ProofAuthorizingKey {
 /// `ak` **cannot verify action signatures directly** — the prover uses
 /// [`derive_action_public`](Self::derive_action_public) to compute the
 /// per-action `rk` for the proof witness. Component of
-/// [`ProofAuthorizingKey`](super::ProofAuthorizingKey) for proof delegation without spend
+/// [`ProofAuthorizingKey`](super::ProofAuthorizingKey) for proof authorization without spend
 /// authority.
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
