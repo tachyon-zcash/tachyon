@@ -1,0 +1,14 @@
+[book]
+authors = ["Sean Bowe"]
+language = "en"
+src = "src"
+title = "The Tachyon Book"
+
+[preprocessor.katex]
+macros = "macros.txt"
+after = ["links"]
+
+# Enable these to generate links with mdbook-rustdoc-link
+# Do not check in these uncommented.
+# [preprocessor.rustdoc-link]
+# after = ["links"]
