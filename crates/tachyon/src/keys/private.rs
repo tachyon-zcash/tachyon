@@ -31,7 +31,7 @@ use crate::{
 /// - [`derive_nullifier_key`](Self::derive_nullifier_key) → [`NullifierKey`]
 ///   (`nk`)
 /// - [`derive_payment_key`](Self::derive_payment_key) → [`PaymentKey`] (`pk`)
-/// - [`derive_proving_key`](Self::derive_proving_key) → [`ProvingKey`] (`ak` +
+/// - [`derive_proof_authorizing_key`](Self::derive_proof_authorizing_key) → [`ProofAuthorizingKey`] (`ak` +
 ///   `nk`)
 #[derive(Clone, Copy, Debug)]
 pub struct SpendingKey([u8; 32]);
@@ -98,7 +98,7 @@ impl SpendingKey {
     ///
     /// `nk = ToBase(PRF^expand_sk([0x0a]))` — BLAKE2b-512 reduced to Fp.
     #[must_use]
-    pub fn derive_nullifier_key(&self) -> NullifierKey {
+    pub fn derive_nullifier_private(&self) -> NullifierKey {
         NullifierKey(Fp::from_uniform_bytes(&PrfExpand::NK.with(&self.0)))
     }
 
@@ -119,16 +119,17 @@ impl SpendingKey {
         PaymentKey(Fp::from_uniform_bytes(&PrfExpand::PK.with(&self.0)))
     }
 
-    /// Derive the proving key (`ak` + `nk`) for delegated proof construction.
+    /// Derive the proof authorizing key (`ak` + `nk`) for delegated proof
+    /// construction.
     ///
     /// Combines [`derive_auth_private`](Self::derive_auth_private)
     /// → [`SpendAuthorizingKey::derive_auth_public`] with
     /// [`derive_nullifier_key`](Self::derive_nullifier_key).
     #[must_use]
-    pub fn derive_proving_key(&self) -> proof::ProvingKey {
+    pub fn derive_proof_private(&self) -> proof::ProofAuthorizingKey {
         let ak = self.derive_auth_private().derive_auth_public();
-        let nk = self.derive_nullifier_key();
-        proof::ProvingKey { ak, nk }
+        let nk = self.derive_nullifier_private();
+        proof::ProofAuthorizingKey { ak, nk }
     }
 }
 
@@ -163,8 +164,8 @@ impl SpendAuthorizingKey {
     /// Derive the per-action private (signing) key: $\mathsf{rsk} =
     /// \mathsf{ask} + \alpha$.
     #[must_use]
-    pub(crate) fn derive_action_private(&self, alpha: &ActionRandomizer) -> ActionSigningKey {
-        ActionSigningKey(self.0.randomize(alpha.inner()))
+    pub fn derive_action_private(&self, alpha: &SpendRandomizer) -> ActionSigningKey {
+        ActionSigningKey(self.0.randomize(&alpha.0))
     }
 }
 
@@ -173,11 +174,9 @@ impl SpendAuthorizingKey {
 /// For spends: $\mathsf{rsk} = \mathsf{ask} + \alpha$. For outputs:
 /// $\mathsf{rsk} = \alpha$ (no spend authority).
 ///
-/// This is the only key type that **can sign**. Produced by
-/// [`ActionEntropy::authorize_spend`](crate::keys::ActionEntropy::authorize_spend)
-/// (spends) or
-/// [`ActionEntropy::authorize_output`](crate::keys::ActionEntropy::authorize_output)
-/// (outputs).
+/// Public for flexibility, but intended for internal use. External callers
+/// obtain `(rk, sig)` via [`SpendRandomizer::authorize`] or
+/// [`OutputRandomizer::authorize`].
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct ActionSigningKey(pub(super) reddsa::SigningKey<SpendAuth>);
@@ -304,7 +303,9 @@ impl TryFrom<Fq> for BindingSigningKey {
 /// Per-action entropy $\theta$ chosen by the signer (e.g. hardware wallet).
 ///
 /// 32 bytes of randomness combined with a note commitment to
-/// deterministically derive [`ActionRandomizer`] ($\alpha$).
+/// deterministically derive $\alpha$ via
+/// [`spend_randomizer`](Self::spend_randomizer) or
+/// [`output_randomizer`](Self::output_randomizer).
 /// The signer picks $\theta$ once; any device with $\theta$ and the
 /// note can independently reconstruct $\alpha$.
 ///
@@ -325,87 +326,145 @@ impl ActionEntropy {
         Self(bytes)
     }
 
-    /// Authorize a spend action: derive $\alpha$ and $\mathsf{rsk} =
-    /// \mathsf{ask} + \alpha$.
+    /// Derive $\alpha$ for a spend action.
     ///
-    /// Returns `(alpha, rsk)` — alpha for the proof witness, rsk for
-    /// signing. Requires the spend authorizing key (`ask`).
+    /// The resulting randomizer produces an [`ActionSigningKey`] when
+    /// combined with a [`SpendAuthorizingKey`] via
+    /// [`derive_action_private`](SpendRandomizer::derive_action_private).
     #[must_use]
-    pub fn authorize_spend(
-        &self,
-        ask: &SpendAuthorizingKey,
-        cmx: &note::Commitment,
-    ) -> (ActionRandomizer, ActionSigningKey) {
-        let alpha = ActionRandomizer::derive(self, cmx);
-        let rsk = ask.derive_action_private(&alpha);
-        (alpha, rsk)
+    pub fn spend_randomizer(&self, cmx: &note::Commitment) -> SpendRandomizer {
+        SpendRandomizer(derive_alpha(self, cmx))
     }
 
-    /// Authorize an output action: derive $\alpha$ and $\mathsf{rsk} =
-    /// \alpha$ (no spending authority).
+    /// Derive $\alpha$ for an output action.
     ///
-    /// Returns `(alpha, rsk)` — alpha for the proof witness, rsk for
-    /// signing. For outputs there is no `ask`; `rsk = alpha` directly.
+    /// The resulting randomizer produces an [`ActionSigningKey`] directly
+    /// via [`derive_action_private`](OutputRandomizer::derive_action_private):
+    /// $\mathsf{rsk} = \alpha$ (no spend authority).
     #[must_use]
-    #[expect(clippy::expect_used, reason = "random scalar yields valid signing key")]
-    pub fn authorize_output(&self, cmx: &note::Commitment) -> (ActionRandomizer, ActionSigningKey) {
-        let alpha = ActionRandomizer::derive(self, cmx);
-        let sk = reddsa::SigningKey::<SpendAuth>::try_from(alpha.inner().to_repr())
-            .expect("random scalar yields valid signing key");
-        (alpha, ActionSigningKey(sk))
+    pub fn output_randomizer(&self, cmx: &note::Commitment) -> OutputRandomizer {
+        OutputRandomizer(derive_alpha(self, cmx))
     }
 }
 
-/// Per-action authorization randomizer $\alpha$.
+/// Per-action authorization randomizer $\alpha$ — generic witness form.
 ///
-/// Deterministically derived from [`ActionEntropy`] and a note commitment:
+/// Stores the raw scalar for use in circuit witnesses and prover-side
+/// `rk` derivation via
+/// [`SpendValidatingKey::derive_action_public`](super::proof::SpendValidatingKey::derive_action_public).
+///
+/// Obtain from [`SpendRandomizer::into_witness`] or
+/// [`OutputRandomizer::into_witness`].
+#[derive(Clone, Copy, Debug)]
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct ActionRandomizer(pub(super) Fq);
+
+/// Spend-side authorization randomizer $\alpha$.
+///
+/// Derived from [`ActionEntropy::spend_randomizer`].
+/// Produces an [`ActionSigningKey`] when combined with a
+/// [`SpendAuthorizingKey`] via
+/// [`derive_action_private`](Self::derive_action_private):
+/// $\mathsf{rsk} = \mathsf{ask} + \alpha$.
+#[derive(Clone, Copy, Debug)]
+pub struct SpendRandomizer(Fq);
+
+#[expect(clippy::from_over_into, reason = "restrict conversion")]
+impl Into<ActionRandomizer> for SpendRandomizer {
+    fn into(self) -> ActionRandomizer {
+        ActionRandomizer(self.0)
+    }
+}
+
+impl SpendRandomizer {
+    /// Produce the per-action signing key:
+    /// $\mathsf{rsk} = \mathsf{ask} + \alpha$.
+    ///
+    /// The spend-side counterpart of `OutputRandomizer::derive_action_private`,
+    /// which produces $\mathsf{rsk} = \alpha$ (no spend authority).
+    #[must_use]
+    fn derive_action_private(self, ask: &SpendAuthorizingKey) -> ActionSigningKey {
+        ActionSigningKey(ask.0.randomize(&self.0))
+    }
+
+    /// Sign with $\mathsf{rsk} = \mathsf{ask} + \alpha$ and return
+    /// $(\mathsf{rk}, \text{sig})$.
+    ///
+    /// Symmetric with [`OutputRandomizer::authorize`]: both accept a value
+    /// commitment and return $(\mathsf{rk}, \text{sig})$; the spend side
+    /// additionally requires `ask`.
+    pub fn authorize<R: RngCore + CryptoRng>(
+        self,
+        ask: &SpendAuthorizingKey,
+        cv: value::Commitment,
+        rng: &mut R,
+    ) -> (public::ActionVerificationKey, action::Signature) {
+        let rsk = self.derive_action_private(ask);
+        let rk = rsk.derive_action_public();
+        let sig = rsk.sign(rng, action::sighash(cv, rk));
+        (rk, sig)
+    }
+}
+
+/// Output-side authorization randomizer $\alpha$.
+///
+/// Derived from [`ActionEntropy::output_randomizer`].
+/// Produces an [`ActionSigningKey`] directly via
+/// [`derive_action_private`](Self::derive_action_private):
+/// $\mathsf{rsk} = \alpha$ (no spend authority).
+#[derive(Clone, Copy, Debug)]
+pub struct OutputRandomizer(Fq);
+
+#[expect(clippy::from_over_into, reason = "restrict conversion")]
+impl Into<ActionRandomizer> for OutputRandomizer {
+    fn into(self) -> ActionRandomizer {
+        ActionRandomizer(self.0)
+    }
+}
+
+impl OutputRandomizer {
+    /// Produce the per-action signing key: $\mathsf{rsk} = \alpha$.
+    ///
+    /// The output-side counterpart of `SpendRandomizer::derive_action_private`,
+    /// which produces $\mathsf{rsk} = \mathsf{ask} + \alpha$ for spends.
+    #[must_use]
+    #[expect(clippy::expect_used, reason = "BLAKE2b-derived scalar is valid")]
+    fn derive_action_private(self) -> ActionSigningKey {
+        ActionSigningKey(
+            reddsa::SigningKey::<SpendAuth>::try_from(self.0.to_repr())
+                .expect("BLAKE2b-derived scalar yields valid signing key"),
+        )
+    }
+
+    /// Sign with $\mathsf{rsk} = \alpha$ and return
+    /// $(\mathsf{rk}, \text{sig})$.
+    ///
+    /// Symmetric with [`SpendRandomizer::authorize`]: both accept a value
+    /// commitment and return $(\mathsf{rk}, \text{sig})$; the output side
+    /// requires no `ask` because $\mathsf{rsk} = \alpha$.
+    pub fn authorize<R: RngCore + CryptoRng>(
+        self,
+        cv: value::Commitment,
+        rng: &mut R,
+    ) -> (public::ActionVerificationKey, action::Signature) {
+        let rsk = self.derive_action_private();
+        let rk = rsk.derive_action_public();
+        let sig = rsk.sign(rng, action::sighash(cv, rk));
+        (rk, sig)
+    }
+}
+
+/// Derive the raw $\alpha$ scalar from $\theta$ and $\mathsf{cmx}$.
 ///
 /// $$\alpha = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-AlphaDrv"},\;
 ///   \theta \| \mathsf{cmx}))$$
-///
-/// This binding lets a hardware wallet sign ($\mathsf{rsk} = \mathsf{ask} +
-/// \alpha$) independently of the proof, which can be constructed later on a
-/// separate device that knows $\theta$ and $\mathsf{cmx}$.
-///
-/// Produced internally by [`ActionEntropy::authorize_spend`] and
-/// [`ActionEntropy::authorize_output`]. Returned in the tuple for use
-/// as a proof witness and for prover-side `rk` derivation via
-/// [`SpendValidatingKey::derive_action_public`](super::proof::SpendValidatingKey::derive_action_public).
-///
-/// Each action gets a fresh $\alpha$, ensuring $\mathsf{rk}$ is unlinkable to
-/// $\mathsf{ak}$.
-#[derive(Clone, Copy, Debug)]
-pub struct ActionRandomizer(Fq);
-
-impl ActionRandomizer {
-    /// Access the inner scalar (crate-internal).
-    pub(crate) const fn inner(&self) -> &Fq {
-        &self.0
-    }
-
-    /// Derive $\alpha$ deterministically from per-action randomness and
-    /// a note commitment.
-    ///
-    /// $$\alpha =
-    /// \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-AlphaDrv"},\;
-    ///   \theta \| \mathsf{cmx}))$$
-    #[must_use]
-    fn derive(theta: &ActionEntropy, cmx: &note::Commitment) -> Self {
-        let hash = blake2b_simd::Params::new()
-            .hash_length(64)
-            .personal(ALPHA_PERSONALIZATION)
-            .to_state()
-            .update(&theta.0)
-            .update(&Fp::from(*cmx).to_repr())
-            .finalize();
-        Self(Fq::from_uniform_bytes(hash.as_array()))
-    }
-}
-
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<Fq> for ActionRandomizer {
-    /// Extract the raw scalar for circuit witness extraction.
-    fn into(self) -> Fq {
-        self.0
-    }
+fn derive_alpha(theta: &ActionEntropy, cmx: &note::Commitment) -> Fq {
+    let hash = blake2b_simd::Params::new()
+        .hash_length(64)
+        .personal(ALPHA_PERSONALIZATION)
+        .to_state()
+        .update(&theta.0)
+        .update(&Fp::from(*cmx).to_repr())
+        .finalize();
+    Fq::from_uniform_bytes(hash.as_array())
 }

@@ -12,15 +12,16 @@
 //!     ak[SpendValidatingKey ak]
 //!     nk[NullifierKey nk]
 //!     pk[PaymentKey pk]
-//!     rsk[ActionSigningKey rsk]
+//!     rk_sig["(rk, sig)"]
 //!     rk[ActionVerificationKey rk]
-//!     pak[ProvingKey]
+//!     pak[ProofAuthorizingKey]
 //!     sk --> ask & nk & pk
 //!     ask --> ak
-//!     theta["ActionEntropy theta"] -- "authorize_spend(ask, cmx)" --> rsk
-//!     theta -- "authorize_output(cmx)" --> rsk
+//!     theta["ActionEntropy theta"] -- spend_randomizer --> spend_alpha["SpendRandomizer"]
+//!     theta -- output_randomizer --> output_alpha["OutputRandomizer"]
+//!     spend_alpha -- "authorize(ask, cv)" --> rk_sig
+//!     output_alpha -- "authorize(cv)" --> rk_sig
 //!     ak -- "+alpha" --> rk
-//!     rsk --> rk
 //!     ak & nk --> pak
 //! ```
 //!
@@ -28,7 +29,6 @@
 //!
 //! - `sk`: Root spending key (full authority)
 //! - `ask`: Authorizes spends (long-lived, cannot sign directly)
-//! - `rsk = ask + alpha`: Per-action signing key (can sign)
 //! - `bsk = Σrcvᵢ`: Binding signing key (per-bundle)
 //!
 //! ### Public keys ([`public`])
@@ -69,8 +69,8 @@ mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use note::{NullifierKey, PaymentKey};
-pub use proof::ProvingKey;
+pub use note::{NoteDelegateKey, NoteMasterKey, NullifierKey, PaymentKey};
+pub use proof::ProofAuthorizingKey;
 
 #[cfg(test)]
 mod tests {
@@ -126,7 +126,7 @@ mod tests {
     fn child_keys_independent() {
         let sk = private::SpendingKey::from([0x42u8; 32]);
         let ask_bytes: [u8; 32] = sk.derive_auth_private().derive_auth_public().0.into();
-        let nk: Fp = sk.derive_nullifier_key().0;
+        let nk: Fp = sk.derive_nullifier_private().0;
         let pk: Fp = sk.derive_payment_key().0;
 
         assert_ne!(ask_bytes, nk.to_repr());
@@ -150,10 +150,12 @@ mod tests {
         };
         let cmx = note.commitment();
         let theta = private::ActionEntropy::random(&mut rng);
-        let (alpha, rsk) = theta.authorize_spend(&ask, &cmx);
+        let alpha = theta.spend_randomizer(&cmx);
+        let rsk = ask.derive_action_private(&alpha);
+        let witness_alpha: private::ActionRandomizer = alpha.into();
 
         let rk_from_signer: [u8; 32] = rsk.derive_action_public().into();
-        let rk_from_prover: [u8; 32] = ak.derive_action_public(&alpha).into();
+        let rk_from_prover: [u8; 32] = ak.derive_action_public(&witness_alpha).into();
 
         assert_eq!(rk_from_signer, rk_from_prover);
     }

@@ -89,22 +89,35 @@ impl Into<Fq> for CommitmentTrapdoor {
 pub struct Commitment(EpAffine);
 
 impl Commitment {
-    /// Create a value commitment from a signed value and randomness.
+    /// Create a value commitment from a signed value and a provided
+    /// trapdoor.
     ///
     /// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
     ///
     /// Positive $v$ for spends (balance contributed), negative for
     /// outputs (balance exhausted).
-    pub fn commit(value: i64, rng: &mut (impl RngCore + CryptoRng)) -> (CommitmentTrapdoor, Self) {
-        let rcv = CommitmentTrapdoor::random(&mut *rng);
-
-        let commited = {
+    ///
+    /// Enables delegation: the signer picks $\mathsf{rcv}$
+    /// independently and can reconstruct $\mathsf{cv}$ without the
+    /// prover's RNG.
+    #[must_use]
+    pub fn new(value: i64, rcv: CommitmentTrapdoor) -> Self {
+        let committed = {
             let commit_value: Ep = *VALUE_COMMIT_V * signed_to_scalar(value);
             let commit_rand: Ep = *VALUE_COMMIT_R * Into::<Fq>::into(rcv);
             commit_value + commit_rand
         };
 
-        (rcv, Self(commited.into()))
+        Self(committed.into())
+    }
+
+    /// Create a value commitment with fresh randomness.
+    ///
+    /// Convenience wrapper: generates $\mathsf{rcv}$ then calls
+    /// [`new`](Self::new).
+    pub fn commit(value: i64, rng: &mut (impl RngCore + CryptoRng)) -> (CommitmentTrapdoor, Self) {
+        let rcv = CommitmentTrapdoor::random(&mut *rng);
+        (rcv, Self::new(value, rcv))
     }
 
     /// Create the value balance commitment
