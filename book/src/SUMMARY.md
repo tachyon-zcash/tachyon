@@ -8,7 +8,13 @@
 
 ## Protocol
 
-- [Keys and Authorization](keys.md)
-- [Shielded Data Construction](construction.md)
-- [Transactions](transactions.md)
+- [Bundles](bundle.md)
+- [Tachygrams](tachygrams.md)
+- [Key Hierarchy](keys.md)
+- [Notes](notes.md)
+- [Authorization](authorization.md)
 - [Aggregation](aggregation.md)
+
+## Reference
+
+- [Domain Separators](domain-separators.md)

@@ -33,7 +33,7 @@ Aggregates may be further named:
 - *based* aggregate proving its own Tachyon actions.  
   For example, a miner's coin*base* transaction might be an aggregate, and also output miner rewards via Tachyon action.
 
-[^bundle-format]: See [Transactions](./transactions.md) to understand bundle format.
+[^bundle-format]: See [Bundles](./bundle.md) to understand bundle format.
 
 ## Aggregation Process
 
