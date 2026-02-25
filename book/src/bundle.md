@@ -1,4 +1,4 @@
-# Tachyon Bundle
+# Bundles
 
 This document describes the structure of Tachyon shielded bundles.
 

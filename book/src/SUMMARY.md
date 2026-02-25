@@ -2,18 +2,18 @@
 
 [Introduction](introduction.md)
 
-# Tachyon
+## Tachyon
 
-- [Nullifier Derivation](nullifier-derivation.md)
-
-## Protocol
-
-- [Bundles](bundle.md)
-- [Tachygrams](tachygrams.md)
-- [Key Hierarchy](keys.md)
-- [Notes](notes.md)
-- [Authorization](authorization.md)
-- [Aggregation](aggregation.md)
+- [Data Model]()
+  - [Bundles](bundle.md)
+  - [Tachygrams](tachygrams.md)
+- [Cryptographic Primitives]()
+  - [Key Hierarchy](keys.md)
+  - [Notes](notes.md)
+  - [Nullifier Derivation](nullifier-derivation.md)
+- [Protocol]()
+  - [Authorization](authorization.md)
+  - [Aggregation](aggregation.md)
 
 ## Reference
 

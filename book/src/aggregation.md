@@ -1,4 +1,4 @@
-# Tachyon Aggregation
+# Aggregation
 
 Instead of verifying each transaction individually, transaction proofs may be recursively merged into a single proof that covers many transactions.
 This is how Tachyon seeks to reduce chain costs.

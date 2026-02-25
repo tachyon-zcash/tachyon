@@ -1,4 +1,4 @@
-# Tachygram Design: Binding, Accumulators, and Overlap
+# Tachygrams
 
 ## What is a tachygram?
 
