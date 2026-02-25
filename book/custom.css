@@ -1,0 +1,9 @@
+.chapter-item > div {
+    font-weight: bold;
+    color: var(--sidebar-fg);
+}
+
+/* Center mermaid diagrams */
+.mermaid {
+    text-align: center;
+}
