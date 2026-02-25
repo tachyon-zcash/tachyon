@@ -1,6 +1,7 @@
 # Tachyon Aggregation
 
-Instead of verifying each transaction individually, transaction proofs may be recursively merged into a single proof that covers many transactions. This is how Tachyon seeks to reduce chain costs.
+Instead of verifying each transaction individually, transaction proofs may be recursively merged into a single proof that covers many transactions.
+This is how Tachyon seeks to reduce chain costs.
 
 The act of merging proofs is **aggregation**, and **aggregators** are nodes enganged in this activity creating **aggregate** transactions.
 
@@ -8,23 +9,20 @@ Miners are likely to vertically integrate aggregation.
 
 ## Bundle States
 
-TODO: is 'innocent' the same as 'headless'? should this be supported?
-
-----
-
 Transactions with no Tachyon bundle[^bundle-format] are not covered here.
 
-Aggregation creation of a new transaction with a proof that can replace the proof in a selection of other transactions. To create a valid block with a given aggregate, a miner must include all of those other transactions, sans their now-redundant proofs.
+Aggregation creation of a new transaction with a proof that can replace the proof in a selection of other transactions.
+To create a valid block with a given aggregate, a miner must include all of those other transactions, sans their now-redundant proofs.
 
 So Tachyon bundles have two main states: **stamped** or **stripped**.
 
 These two states do not correspond perfectly with 'aggregate' and 'not aggregate', so we establish some nomenclature:
 
-| Term | State | Provenance | Validation |
-| ---- | ------ | ---------- | ---------- |
-| **autonome** | stamped | wallet | Complete proof with all inputs |
-| **aggregate** | stamped | aggregator | Merged proof needs input from other transactions |
-| **adjunct** | stripped | miner | Input to merged proof from another transaction |
+| Term          | State    | Provenance | Validation                                       |
+| ------------- | -------- | ---------- | ------------------------------------------------ |
+| **autonome**  | stamped  | wallet     | Complete proof with all inputs                   |
+| **aggregate** | stamped  | aggregator | Merged proof needs input from other transactions |
+| **adjunct**   | stripped | miner      | Input to merged proof from another transaction   |
 
 Aggregates may be further named:
 
@@ -42,27 +40,28 @@ Aggregates may be further named:
 A proof's wire format is compressed for bandwidth efficiency.
 Aggregators must decompress proofs to a mutable format in order to merge proofs, and then re-compress to broadcast.
 
-Aggregators collect autonomes or existing aggregates[^agg-limits] and merge their stamps:
+Aggregators collect autonomes or existing aggregates and merge their stamps:
 
 1. Select transactions
 2. Deserialize and decompress stamps
 3. Merge stamps
-   - Merge tachygrams (set union[^tachygram-union])
-   - Merge anchors (range intersection[^epoch-intersection])
+   - Merge tachygrams (set union)
+   - Merge anchors (range intersection)
    - Merge proofs (proof recursion)
 4. Serialize and compress the merged stamp
 5. Publish aggregate transaction
 
-[^tachygram-union]: TODO explain validation algorithm
-[^epoch-intersection]: TODO explain accumulation algorithm
+```admonish todo
+- Explain tachygram set union validation algorithm
+- Explain epoch range intersection accumulation algorithm
+- Define aggregation limits
+```
 
 ### Strip to produce Adjuncts
 
 Miners obtain the broadcast aggregates, or by vertically integrating as aggregators.
 
 When authoring a block, miners remove stamps from transactions covered by an aggregate, to produce appropriate adjuncts.
-
-[^agg-limits]: TODO
 
 ```mermaid
 ---
@@ -141,24 +140,21 @@ Adjuncts may be identified by the presence of a Tachyon bundle containing action
 
 The relevant aggregate is the last preceding bundle that contained a stamp.
 
-This positional correspondence makes aggregate-adjunct relationships implicit, so no explicit references are needed. Non-tachyon transactions can appear anywhere without disrupting this correspondence.
+This positional correspondence makes aggregate-adjunct relationships implicit, so no explicit references are needed.
+Non-tachyon transactions can appear anywhere without disrupting this correspondence.
 
-| idx | tachyactions | tachygrams | description |
-| --- | ------------ | ---------- | ----------- |
-| 0 | 1 | 7 | aggregate |
-| 1 | 2 | - | adjunct to 0 |
-| 2 | - | - | no tachyon bundle |
-| 3 | 2 | - | adjunct to 0 |
-| 4 | 2 | - | adjunct to 0 |
-| 5 | - | 8 | aggregate |
-| 6 | 4 | - | adjunct to 5 |
-| 7 | 4 | - | adjunct to 5 |
+| idx | tachyactions | tachygrams | description       |
+| --- | ------------ | ---------- | ----------------- |
+| 0   | 1            | 7          | aggregate         |
+| 1   | 2            | -          | adjunct to 0      |
+| 2   | -            | -          | no tachyon bundle |
+| 3   | 2            | -          | adjunct to 0      |
+| 4   | 2            | -          | adjunct to 0      |
+| 5   | -            | 8          | aggregate         |
+| 6   | 4            | -          | adjunct to 5      |
+| 7   | 4            | -          | adjunct to 5      |
 
-### Validation
-
-TODO
-
-----
+### Simplistic Validation Algorithm
 
 If a Tachyon stamp appears, close validation of any last seen stamp and open validation of the new stamp.
 
@@ -189,45 +185,22 @@ if last_stamp {
 }
 ```
 
-## Incentive Questions
+```admonish todo
 
-TODO agg limits
 
-**p2p aggregation gossip is a secondary objective** and aggregation has some complex constraints.  
+**p2p aggregation gossip is a secondary objective** and aggregation has some complex constraints.
 
-- stamps with intersecting tachygram sets cannot (should not?) be merged (how is this enforced or validated?)
 - aggregate size is limited by commitment size before block size (on the order of thousands of actions)
 - desirable to reduce the number of stamps in tx, for size, bandwidth, and validation cost
 - merging to one aggregate cannot be parallelized, but multiple aggregates may be built in parallel
 - serialization/deserialization is expensive and stamps are only mutable when 'decompressed'
 - does ser/de cost scale with size?
 - 'merge small autonome stamp' and 'merge large aggregate stamp' are about the same cost
-- does merging require possession of relevant tx acts, or just the stamp?
-
-----
 
 1. Are there some 'optimal' qualities for aggregates?
-
 2. Will miners prefer to rely on p2p, or integrate aggregation?
-
 3. Will miners selecting aggregates from p2p prefer certain qualities?
-
 4. Will miners selecting aggregates from p2p prefer to:
    - select aggregates and then seek the related transactions, or
    - select transactions and then seek an appropriate aggregate?
-
-## Validation Questions
-
-TODO: some answers
-
-1. Blocks *can* contain more tachygrams than tachyactions, and *this is encouraged*.
-
-2. Inputs are not positional. This question may not be valid.
-
-----
-
-1. Specify the validation behavior for a block containing more tachygrams than tachyactions.
-
-2. Specify the validation behavior for a block containing a transaction with:
-   - `tachygrams.length < tachyactions.length` (adjunct to an aggregate)
-   - `tachygrams.length > 0` (contains own stamp)
+```

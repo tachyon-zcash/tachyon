@@ -4,6 +4,10 @@ language = "en"
 src = "src"
 title = "The Tachyon Book"
 
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.0.2"
+
 [preprocessor.katex]
 macros = "macros.txt"
 after = ["links"]

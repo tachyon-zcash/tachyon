@@ -1,0 +1,12 @@
+[book]
+authors = ["Sean Bowe"]
+language = "en"
+src = "src"
+title = "The Tachyon Book"
+
+[preprocessor.katex]
+macros = "macros.txt"
+after = ["links"]
+
+[output.html]
+additional-js = ["mermaid-init.js"]
