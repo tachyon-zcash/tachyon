@@ -148,9 +148,8 @@ mod tests {
             psi: NullifierTrapdoor::from(Fp::ZERO),
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
-        let cmx = note.commitment();
         let theta = private::ActionEntropy::random(&mut rng);
-        let alpha = theta.spend_randomizer(&cmx);
+        let alpha = theta.spend_randomizer(&note.commitment());
         let rsk = ask.derive_action_private(&alpha);
         let witness_alpha: private::ActionRandomizer = alpha.into();
 

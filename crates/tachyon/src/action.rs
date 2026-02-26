@@ -105,7 +105,7 @@ impl Action {
         rng: &mut R,
     ) -> Result<(Self, ActionPrivate), C::Error> {
         // 1. Note commitment
-        let cmx = note.commitment();
+        let cm = note.commitment();
 
         // 2. Value commitment (signer picks rcv)
         let value: i64 = note.value.into();
@@ -113,10 +113,10 @@ impl Action {
         let cv = rcv.commit(value);
 
         // 3. Alpha (user device derives for proof witness)
-        let alpha = theta.spend_randomizer(&cmx);
+        let alpha = theta.spend_randomizer(&cm);
 
         // 4. Spend authorization (custody derives alpha independently)
-        let (rk, sig) = custody.authorize_spend(cv, theta, &cmx, rng)?;
+        let (rk, sig) = custody.authorize_spend(cv, theta, &cm, rng)?;
 
         Ok((
             Self { cv, rk, sig },
@@ -140,7 +140,7 @@ impl Action {
         rng: &mut R,
     ) -> (Self, ActionPrivate) {
         // 1. Note commitment
-        let cmx = note.commitment();
+        let cm = note.commitment();
 
         // 2. Value commitment (signer picks rcv; negative for outputs)
         let value: i64 = note.value.into();
@@ -148,7 +148,7 @@ impl Action {
         let cv = rcv.commit(value.neg());
 
         // 3. Alpha (for proof witness and output signing key)
-        let alpha = theta.output_randomizer(&cmx);
+        let alpha = theta.output_randomizer(&cm);
 
         // 4. Output authorization (rsk = alpha, no custody)
         let (rk, sig) = alpha.authorize(cv, rng);
