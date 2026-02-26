@@ -18,11 +18,11 @@ So Tachyon bundles have two main states: **stamped** or **stripped**.
 
 These two states do not correspond perfectly with 'aggregate' and 'not aggregate', so we establish some nomenclature:
 
-| Term          | State    | Provenance | Validation                                       |
-| ------------- | -------- | ---------- | ------------------------------------------------ |
-| **autonome**  | stamped  | wallet     | Complete proof with all inputs                   |
-| **aggregate** | stamped  | aggregator | Merged proof needs input from other transactions |
-| **adjunct**   | stripped | miner      | Input to merged proof from another transaction   |
+| Term | State | Provenance | Validation |
+| ---- | ----- | ---------- | ---------- |
+| **autonome** | stamped | wallet | Complete proof with all inputs |
+| **aggregate** | stamped | aggregator | Merged proof needs input from other transactions |
+| **adjunct** | stripped | miner | Input to merged proof from another transaction |
 
 Aggregates may be further named:
 
@@ -143,16 +143,16 @@ The relevant aggregate is the last preceding bundle that contained a stamp.
 This positional correspondence makes aggregate-adjunct relationships implicit, so no explicit references are needed.
 Non-tachyon transactions can appear anywhere without disrupting this correspondence.
 
-| idx | tachyactions | tachygrams | description       |
-| --- | ------------ | ---------- | ----------------- |
-| 0   | 1            | 7          | aggregate         |
-| 1   | 2            | -          | adjunct to 0      |
-| 2   | -            | -          | no tachyon bundle |
-| 3   | 2            | -          | adjunct to 0      |
-| 4   | 2            | -          | adjunct to 0      |
-| 5   | -            | 8          | aggregate         |
-| 6   | 4            | -          | adjunct to 5      |
-| 7   | 4            | -          | adjunct to 5      |
+| idx | tachyactions | tachygrams | description |
+| --- | ------------ | ---------- | ----------- |
+| 0 | 1 | 7 | aggregate |
+| 1 | 2 | - | adjunct to 0 |
+| 2 | - | - | no tachyon bundle |
+| 3 | 2 | - | adjunct to 0 |
+| 4 | 2 | - | adjunct to 0 |
+| 5 | - | 8 | aggregate |
+| 6 | 4 | - | adjunct to 5 |
+| 7 | 4 | - | adjunct to 5 |
 
 ### Simplistic Validation Algorithm
 

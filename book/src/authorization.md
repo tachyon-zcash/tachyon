@@ -56,12 +56,12 @@ $$\text{sighash} = \text{BLAKE2b-512}(\text{"Tachyon-SpendSig"},\; \mathsf{cv} \
 
 The signature binds ($\mathsf{cv}$, $\mathsf{rk}$) together. Since $\mathsf{rk}$ is itself a commitment to $\mathsf{cmx}$ (via $\alpha$'s derivation from $\theta$ and $\mathsf{cmx}$), the signature transitively binds the action to its tachygram without the tachygram appearing in the action.
 
-| Key | Lifetime | Can sign? | Can verify? |
-| --- | -------- | --------- | ----------- |
-| $\mathsf{ask}$ | Long-lived | No | — |
-| $\mathsf{ak}$ | Long-lived | — | No |
-| $\mathsf{rsk}$ | Per-action | **Yes** | — |
-| $\mathsf{rk}$ | Per-action | — | **Yes** |
+| Key            | Lifetime   | Can sign? | Can verify? |
+| -------------- | ---------- | --------- | ----------- |
+| $\mathsf{ask}$ | Long-lived | No        | —           |
+| $\mathsf{ak}$  | Long-lived | —         | No          |
+| $\mathsf{rsk}$ | Per-action | **Yes**   | —           |
+| $\mathsf{rk}$  | Per-action | —         | **Yes**     |
 
 ## Value Balance
 

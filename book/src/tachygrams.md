@@ -43,11 +43,11 @@ An observer sees a bag of actions and a bag of tachygrams with no individual cor
 
 The proof's public output `StampDigest` may carry five field elements:
 
-| Field           | Type                  | Elements | Description                       |
-| --------------- | --------------------- | -------- | --------------------------------- |
-| `actions_acc`   | Pallas point          | 2 (x,y)  | Pedersen hash over action digests |
-| `tachygram_acc` | Pallas point          | 2 (x,y)  | Pedersen hash over tachygrams     |
-| `anchor`        | $\mathbb{F}_p$ scalar | 1        | Accumulator state reference       |
+| Field | Type | Elements | Description |
+| ----- | ---- | -------- | ----------- |
+| `actions_acc` | Pallas point | 2 (x,y) | Pedersen hash over action digests |
+| `tachygram_acc` | Pallas point | 2 (x,y) | Pedersen hash over tachygrams |
+| `anchor` | $\mathbb{F}_p$ scalar | 1 | Accumulator state reference |
 
 Both accumulators are Pedersen multiset hashes.
 Each element is hashed (Poseidon) then mapped to a Pallas point via scalar multiplication against a
