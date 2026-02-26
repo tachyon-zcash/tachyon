@@ -186,8 +186,6 @@ if last_stamp {
 ```
 
 ```admonish todo
-
-
 **p2p aggregation gossip is a secondary objective** and aggregation has some complex constraints.
 
 - aggregate size is limited by commitment size before block size (on the order of thousands of actions)
