@@ -6,12 +6,12 @@
 use ff::Field as _;
 use pasta_curves::Fq;
 use rand::{CryptoRng, RngCore};
+use reddsa::orchard::Binding;
 
 use crate::{
-    Proof,
     action::Action,
     constants::BINDING_SIGHASH_PERSONALIZATION,
-    keys::{ProvingKey, private::BindingSigningKey, public::BindingVerificationKey},
+    keys::{ProofAuthorizingKey, private::BindingSigningKey, public::BindingVerificationKey},
     primitives::Anchor,
     stamp::{Stamp, Stampless},
     witness::ActionPrivate,
@@ -49,6 +49,39 @@ impl Into<[u8; 64]> for SigHash {
     fn into(self) -> [u8; 64] {
         self.0
     }
+}
+
+/// Errors during bundle construction.
+///
+/// Covers both value balance failures (binding key derivation) and stamp
+/// verification failures (Ragu proof mismatch).
+#[derive(Clone, Copy, Debug)]
+pub enum BuildError {
+    /// The sum of value commitment trapdoors produced an invalid binding
+    /// signing key (e.g. the zero scalar).
+    BalanceKey,
+
+    /// Ragu proof verification failed against expected accumulators.
+    ///
+    /// The verifier reconstructed `(tachygram_acc, action_acc, anchor)`
+    /// from public data and the proof did not verify against them.
+    ProofInvalid,
+}
+
+/// Verifies the stamp by reconstructing the expected accumulators and
+/// checking the Ragu proof against them.
+///
+/// Reconstruction (same logic as consensus verification):
+/// 1. `tachygram_acc = sum[H(tg_i)] * G_acc`
+/// 2. `action_acc = sum[action_digest_i] * G_acc`  where `action_digest_i =
+///    H(cv_i, rk_i)`
+/// 3. `anchor` — already known
+/// 4. Verify Ragu proof against `(tachygram_acc, action_acc, anchor)`
+pub fn verify_stamp(stamp: &Stamp, actions: &[Action]) -> Result<(), BuildError> {
+    stamp
+        .proof
+        .verify(actions, &stamp.tachygrams, stamp.anchor)
+        .map_err(|_err| BuildError::ProofInvalid)
 }
 
 /// Compute the Tachyon binding sighash.
@@ -100,6 +133,17 @@ impl<V> Stamped<V> {
 impl Stamped<i64> {
     /// Builds a stamped bundle from action pairs.
     ///
+    /// ## Build order: stamp before binding signature
+    ///
+    /// The stamp is created and verified **before** the binding signature.
+    /// This ensures the signer withholds authorization until confirming
+    /// the stamp correctly reflects the expected tachygrams and actions.
+    /// Without the binding signature, no valid transaction can be broadcast.
+    ///
+    /// 1. Prove: `Stamp::prove` runs the ACTION STEP per action
+    /// 2. Verify: reconstruct expected accumulators, check Ragu proof
+    /// 3. Sign: create binding signature over `v_balance || sigs`
+    ///
     /// ## Binding signature scheme
     ///
     /// The binding signature enforces value balance (§4.14). The signer:
@@ -123,9 +167,9 @@ impl Stamped<i64> {
         tachyactions: Vec<(Action, ActionPrivate)>,
         value_balance: i64,
         anchor: Anchor,
-        pak: &ProvingKey,
+        pak: &ProofAuthorizingKey,
         rng: &mut R,
-    ) -> Self {
+    ) -> Result<Self, BuildError> {
         let mut actions = Vec::new();
         let mut witnesses = Vec::new();
 
@@ -138,9 +182,7 @@ impl Stamped<i64> {
             witnesses.push(witness);
         }
 
-        #[expect(clippy::expect_used, reason = "specified behavior")]
-        let bsk =
-            BindingSigningKey::try_from(rcv_sum).expect("sum of trapdoors is a valid signing key");
+        let bsk = BindingSigningKey::try_from(rcv_sum).map_err(|_err| BuildError::BalanceKey)?;
 
         // §4.14 implementation fault check:
         // DerivePublic(bsk) == bvk
@@ -154,24 +196,41 @@ impl Stamped<i64> {
             "BSK/BVK mismatch: binding key derivation is inconsistent"
         );
 
+        // 1. Create stamp FIRST (ACTION STEP per action, then merge)
+        let mut stamps: Vec<Stamp> = actions
+            .iter()
+            .zip(&witnesses)
+            .map(|(action, witness)| Stamp::prove_action(witness, action, anchor, pak))
+            .collect();
+        while stamps.len() > 1 {
+            let right = stamps.pop();
+            let left = stamps.pop();
+            // Both unwraps are safe: len > 1 guarantees two elements.
+            #[expect(clippy::expect_used, reason = "len > 1 guarantees two elements")]
+            let merged = left
+                .expect("left stamp")
+                .prove_merge(right.expect("right stamp"));
+            stamps.push(merged);
+        }
+        #[expect(clippy::expect_used, reason = "at least one action")]
+        let stamp = stamps.pop().expect("at least one action");
+
+        // 2. Verify stamp against expected accumulators
+        verify_stamp(&stamp, &actions)?;
+
+        // 3. THEN create binding signature (signer withholds until stamp verified)
         let action_sigs = actions
             .iter()
             .map(|action| <[u8; 64]>::from(action.sig))
             .collect::<Vec<[u8; 64]>>();
         let binding_sig = bsk.sign(rng, sighash(value_balance, &action_sigs));
 
-        let (proof, tachygrams) = Proof::create(&actions, &witnesses, &anchor, pak);
-
-        Self {
+        Ok(Self {
             actions,
             value_balance,
             binding_sig,
-            stamp: Stamp {
-                tachygrams,
-                anchor,
-                proof,
-            },
-        }
+            stamp,
+        })
     }
 }
 
@@ -219,7 +278,6 @@ impl<S> Bundle<S, i64> {
     }
 }
 
-use reddsa::orchard::Binding;
 /// A binding signature (RedPallas over the Binding group).
 ///
 /// Proves the signer knew the opening $\mathsf{bsk}$ of the Pedersen
@@ -259,17 +317,17 @@ mod tests {
 
     use super::*;
     use crate::{
+        custody,
         keys::private,
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
-        primitives::Epoch,
+        value,
     };
 
     fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Stamped<i64> {
         let sk = private::SpendingKey::from([0x42u8; 32]);
         let ask = sk.derive_auth_private();
-        let pak = sk.derive_proving_key();
+        let pak = sk.derive_proof_private();
         let anchor = Anchor::from(Fp::ZERO);
-        let epoch = Epoch::from(Fp::ONE);
 
         let spend_note = Note {
             pk: sk.derive_payment_key(),
@@ -287,13 +345,12 @@ mod tests {
         let theta_spend = private::ActionEntropy::random(&mut *rng);
         let theta_output = private::ActionEntropy::random(&mut *rng);
 
-        let nk = sk.derive_nullifier_key();
-        let nf = spend_note.nullifier(&nk, epoch);
-        let spend = Action::spend(&ask, spend_note, nf, epoch, &theta_spend, rng);
-        let output = Action::output(output_note, epoch, &theta_output, rng);
+        let local = custody::Local::new(ask);
+        let spend = Action::spend(&local, spend_note, &theta_spend, rng).unwrap();
+        let output = Action::output(output_note, &theta_output, rng);
 
         // value_balance = 1000 - 700 = 300
-        Stamped::build(vec![spend, output], 300, anchor, &pak, rng)
+        Stamped::build(vec![spend, output], 300, anchor, &pak, rng).unwrap()
     }
 
     /// A correctly built bundle must pass signature verification.
@@ -322,5 +379,121 @@ mod tests {
 
         let (stripped, _stamp) = bundle.strip();
         stripped.verify_signatures().unwrap();
+    }
+
+    /// Composable flow: construct actions and bundle step-by-step,
+    /// exercising each delegation boundary independently.
+    ///
+    /// This uses no convenience wrappers (`Action::spend/output`,
+    /// `Stamped::build`). Every step is called individually, matching
+    /// the custody-delegated flow from the protocol spec.
+    #[test]
+    #[expect(
+        clippy::similar_names,
+        reason = "protocol variable names: cv/rcv, rk/rsk"
+    )]
+    fn composable_delegation_flow() {
+        let mut rng = StdRng::seed_from_u64(1);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let pak = sk.derive_proof_private();
+        let anchor = Anchor::from(Fp::ZERO);
+
+        let spend_note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(1000u64),
+            psi: NullifierTrapdoor::from(Fp::ZERO),
+            rcm: CommitmentTrapdoor::from(Fq::ZERO),
+        };
+        let output_note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(700u64),
+            psi: NullifierTrapdoor::from(Fp::ONE),
+            rcm: CommitmentTrapdoor::from(Fq::ONE),
+        };
+
+        // === Spend action (composable steps) ===
+
+        // 1. Note commitment (user device)
+        let spend_cm = spend_note.commitment();
+
+        // 2. Value commitment (user device picks rcv)
+        let spend_value: i64 = spend_note.value.into();
+        let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
+        let spend_cv = spend_rcv.commit(spend_value);
+
+        // 3. Authorization (custody device: theta + ask + cm + cv → rk, sig)
+        let spend_theta = private::ActionEntropy::random(&mut rng);
+        let spend_alpha = spend_theta.spend_randomizer(&spend_cm);
+        let (spend_rk, spend_sig) = spend_alpha.authorize(&ask, spend_cv, &mut rng);
+
+        // 4. Assembly (user device)
+        let spend_action = Action {
+            cv: spend_cv,
+            rk: spend_rk,
+            sig: spend_sig,
+        };
+        let spend_witness = ActionPrivate {
+            alpha: spend_alpha.into(),
+            note: spend_note,
+            rcv: spend_rcv,
+        };
+
+        // === Output action (composable steps, no custody) ===
+
+        let output_cm = output_note.commitment();
+        let output_value: i64 = output_note.value.into();
+        let output_rcv = value::CommitmentTrapdoor::random(&mut rng);
+        let output_cv = output_rcv.commit(-output_value);
+
+        let output_theta = private::ActionEntropy::random(&mut rng);
+        let output_alpha = output_theta.output_randomizer(&output_cm);
+        let (output_rk, output_sig) = output_alpha.authorize(output_cv, &mut rng);
+
+        let output_action = Action {
+            cv: output_cv,
+            rk: output_rk,
+            sig: output_sig,
+        };
+        let output_witness = ActionPrivate {
+            alpha: output_alpha.into(),
+            note: output_note,
+            rcv: output_rcv,
+        };
+
+        // === Bundle assembly (composable steps) ===
+
+        let actions = vec![spend_action, output_action];
+        let value_balance: i64 = 300;
+
+        // Binding key (user device: accumulate rcv trapdoors)
+        let bsk: BindingSigningKey = [spend_witness.rcv, output_witness.rcv].into_iter().sum();
+        debug_assert_eq!(
+            bsk.derive_binding_public(),
+            BindingVerificationKey::derive(&actions, value_balance),
+        );
+
+        // Stamp (per-action proofs, then merge)
+        let spend_stamp = Stamp::prove_action(&spend_witness, &spend_action, anchor, &pak);
+        let output_stamp = Stamp::prove_action(&output_witness, &output_action, anchor, &pak);
+        let stamp = spend_stamp.prove_merge(output_stamp);
+        verify_stamp(&stamp, &actions).unwrap();
+
+        // Binding signature (user device: withheld until stamp verified)
+        let action_sigs: Vec<[u8; 64]> = actions
+            .iter()
+            .map(|action| <[u8; 64]>::from(action.sig))
+            .collect();
+        let binding_sig = bsk.sign(&mut rng, sighash(value_balance, &action_sigs));
+
+        // Assemble
+        let bundle: Stamped<i64> = Bundle {
+            actions,
+            value_balance,
+            binding_sig,
+            stamp,
+        };
+
+        bundle.verify_signatures().unwrap();
     }
 }
