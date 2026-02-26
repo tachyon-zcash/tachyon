@@ -14,17 +14,19 @@ flowchart TB
     cm["cm (note commitment)"]
     hash(("hash(theta, cm)"))
 
-    theta & cm --- hash 
-    
-    hash -->|"Tachyon-Spend"| spend_alpha 
+    theta & cm --- hash
+
+    hash -->|"Tachyon-Spend"| spend_alpha
     hash -->|"Tachyon-Output"| output_alpha
 
-    spend_alpha["alpha (SpendRandomizer)"]
-    output_alpha["alpha (OutputRandomizer)"]
+    spend_alpha["alpha (ActionRandomizer&lt;Spend&gt;)"]
+    output_alpha["alpha (ActionRandomizer&lt;Output&gt;)"]
 
     spend_alpha -->|"rsk = ask.derive(alpha)"| rsk
+    output_alpha -->|"rsk = alpha"| rsk
 
-    output_alpha -->|"rsk = alpha"| rsk -->|"rsk.sign(cv, rk)"| action(cv, rk, sig)
+    rsk -->|"phase 1: derive rk"| unsigned["UnsignedAction(cv, rk)"]
+    unsigned -->|"phase 2: sign(sighash)"| action["Action(cv, rk, sig)"]
 ```
 
 ### ActionEntropy ($\theta$)
@@ -42,17 +44,16 @@ This design enables **hardware wallet signing without proof construction**: the 
 
 ### Spend vs Output
 
-Both paths produce $(\mathsf{rk}, \text{sig})$ — the per-action verification key and its signature.
-The randomizer $\alpha$ is retained separately as a proof witness.
-Internally, $\mathsf{rsk}$ is derived and used for signing, but never exposed.
+Both paths produce $\mathsf{rk}$ during the assembly phase, then sign the transaction-wide sighash during the authorization phase.
+The randomizer $\alpha$ is retained separately as a proof witness (`ActionRandomizer<Witness>`).
 
 **Spend** — requires spending authority:
 
 $$\mathsf{rsk} = \mathsf{ask} + \alpha$$
 
 The resulting $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$ is a re-randomization of the spend validating key.
-The custody device derives $\alpha$ from $(\theta, \mathsf{cm})$, computes $\mathsf{rsk}$, signs, and returns $(\mathsf{rk}, \text{sig})$.
-The user device independently derives the same $\alpha$ for the proof witness.
+During assembly, the user device derives $\mathsf{rk}$ from the public key $\mathsf{ak}$ (no $\mathsf{ask}$ needed).
+During authorization, the custody device derives $\alpha$, computes $\mathsf{rsk}$, and signs the sighash.
 
 **Output** — no spending authority needed:
 
@@ -64,14 +65,17 @@ No custody device is involved.
 Both produce an $\mathsf{rk}$ that can verify a signature, but only the spend's $\mathsf{rk}$ requires knowledge of $\mathsf{ask}$.
 This unification lets consensus treat all tachyactions identically.
 
-### Action sighash
+### Transaction sighash
 
-Each tachyaction carries a RedPallas signature over a domain-separated hash of the action's public data:
+All signatures (action and binding) sign the same transaction-wide digest:
 
-$$\text{sighash} = \text{BLAKE2b-512}(\text{"Tachyon-SpendSig"},\; \mathsf{cv} \| \mathsf{rk})$$
+$$\text{sighash} = \text{BLAKE2b-512}(\text{"Tachyon-TxDigest"},\; \mathsf{cv}_1 \| \mathsf{rk}_1 \| \cdots \| \mathsf{cv}_n \| \mathsf{rk}_n \| \mathsf{v\_balance})$$
 
-The signature binds ($\mathsf{cv}$, $\mathsf{rk}$) together.
-Since $\mathsf{rk}$ is itself a commitment to $\mathsf{cm}$ (via $\alpha$'s derivation from $\theta$ and $\mathsf{cm}$), the signature transitively binds the action to its tachygram without the tachygram appearing in the action.
+This binds every signature to the complete set of effecting data.
+The stamp is excluded because it is stripped during [aggregation](./aggregation.md).
+Signatures are excluded because the sighash is what gets signed.
+
+Since $\mathsf{rk}$ is itself a commitment to $\mathsf{cm}$ (via $\alpha$'s derivation from $\theta$ and $\mathsf{cm}$), the signature transitively binds each action to its tachygram without the tachygram appearing in the action.
 
 | Key            | Lifetime   | Can sign? | Can verify? |
 | -------------- | ---------- | --------- | ----------- |
@@ -124,21 +128,12 @@ The validator recomputes $\mathsf{bvk}$ from public data (action value commitmen
 
 $$\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{sighash}, \text{bindingSig}) = 1$$
 
-### Binding sighash
-
-Tachyon signs:
-
-$$\text{sighash} = \text{BLAKE2b-512}(\text{"Tachyon-BindHash"},\; \mathsf{v\_balance} \| \mathsf{sig}_1 \| \cdots \| \mathsf{sig}_n)$$
-
-This differs from Orchard's `SIGHASH_ALL` transaction hash because:
-
-- Action signatures already bind $\mathsf{cv}$ and $\mathsf{rk}$ via $H(\text{"Tachyon-SpendSig"},\; \mathsf{cv} \| \mathsf{rk})$
-- The binding signature must be computable without the full transaction
-- The stamp is excluded because it is stripped during [aggregation](./aggregation.md)
+Both the binding signature and all action signatures sign the same transaction-wide sighash described above.
 
 ## End-to-end Flow
 
-The following diagram traces the complete authorization pipeline across trust boundaries: action construction and signing on the user device (with custody device involvement for spends), proof construction and stamping, and finally binding and submission to consensus.
+The following diagram traces the complete authorization pipeline across trust boundaries.
+Transaction construction is split into two phases: **assembly** (compute all `cv`, `rk` pairs) and **authorization** (compute the transaction-wide sighash, sign everything).
 
 A single user device may act as custody and stamper, but the trust boundary is only required to cover custody and the user device.
 
@@ -152,6 +147,8 @@ end
 
 rect rgb(255, 0, 255, 0.1)
 activate User
+
+note over User: === Phase 1: Assembly ===
 
 loop per action
 
@@ -169,20 +166,32 @@ loop per action
 
     note over User: random theta
     alt spend
-        User ->> Custody: cv, theta, cm
-        note over Custody: alpha = theta.derive(cm)
-        note over Custody: rsk = ask.randomize(alpha)
-        note over Custody: rk = public(rsk)
-        note over Custody: sig = rsk.sign(digest(cv, rk))
-        destroy Custody
-        Custody ->> User: rk, sig
+        note over User: alpha = theta.spend_randomizer(cm)
+        note over User: rk = ak.derive_action_public(alpha)
     else output
-        note over User: alpha = theta.derive(cm)
-        note over User: rk = public(alpha)
-        note over User: sig = alpha.sign(digest(cv, rk))
+        note over User: alpha = theta.output_randomizer(cm)
+        note over User: rk = alpha.derive_rk()
     end
-    note over User: rcv, alpha, action { cv, rk, sig }
+    note over User: unsigned_action { cv, rk }
 end
+
+note over User: === Phase 2: Authorization ===
+note over User: sighash = H("Tachyon-TxDigest", cv_1 || rk_1 || ... || cv_n || rk_n || v_balance)
+
+User ->> Custody: unsigned_actions[], value_balance, spend_requests[]
+note over Custody: recompute sighash
+loop per spend
+    note over Custody: alpha = theta.spend_randomizer(cm)
+    note over Custody: rsk = ask + alpha
+    note over Custody: sig = rsk.sign(sighash)
+end
+destroy Custody
+Custody ->> User: spend_sigs[]
+
+loop per output
+    note over User: sig = alpha.sign(sighash)
+end
+note over User: actions[] = unsigned_actions[].sign(sigs[])
 
 note over User: select anchor
 
@@ -224,7 +233,7 @@ break
     note over User: verify stamp(tachygram_acc, action_acc, anchor)
 end
 note over User: bsk = sum(rcv_i)
-note over User: binding_sig = bsk.sign(actions, value_balance)
+note over User: binding_sig = bsk.sign(sighash)
 deactivate User
 end
 
@@ -232,8 +241,9 @@ participant Consensus
 destroy User
 User ->> Consensus: actions[], value_balance, binding_sig, tachygrams, anchor, stamp
 break
-    note over Consensus: check action_sigs
-    note over Consensus: check binding_sig
+    note over Consensus: sighash = H(cv_1 || rk_1 || ... || v_balance)
+    note over Consensus: check action_sigs against sighash
+    note over Consensus: check binding_sig against sighash
     note over Consensus: verify stamp(tachygram_acc, action_acc, anchor)
 end
 ```

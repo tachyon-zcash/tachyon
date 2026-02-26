@@ -3,8 +3,7 @@
 | Constant         | Value                       | Purpose                                                            |
 | ---------------- | --------------------------- | ------------------------------------------------------------------ |
 | PRF expansion    | `Zcash_ExpandSeed`          | Key derivation from $\mathsf{sk}$ (shared with Sapling/Orchard)    |
-| Action sighash   | `Tachyon-SpendSig`          | Action signature message: $H(\mathsf{cv} \| \mathsf{rk})$          |
-| Binding sighash  | `Tachyon-BindHash`          | Binding signature message: $H(\mathsf{v\_balance} \| \text{sigs})$ |
+| Transaction sighash | `Tachyon-TxDigest`       | Unified sighash: $H(\mathsf{cv}_1 \| \mathsf{rk}_1 \| \cdots \| \mathsf{cv}_n \| \mathsf{rk}_n \| \mathsf{v\_balance})$ |
 | Spend alpha      | `Tachyon-Spend`             | Spend-side randomizer: $H(\theta \| \mathsf{cm})$                 |
 | Output alpha     | `Tachyon-Output`            | Output-side randomizer: $H(\theta \| \mathsf{cm})$                |
 | Value commitment | `z.cash:Orchard-cv`         | Generators $\mathcal{V}$, $\mathcal{R}$ (shared with Orchard)      |

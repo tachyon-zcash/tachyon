@@ -54,7 +54,7 @@ pub mod witness;
 
 mod primitives;
 
-pub use action::Action;
+pub use action::{Action, UnsignedAction};
 pub use bundle::{Bundle, Stamped, Stripped};
 pub use note::Note;
 pub use primitives::{Anchor, Epoch, Tachygram};

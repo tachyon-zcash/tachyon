@@ -12,16 +12,19 @@
 //!     ak[SpendValidatingKey ak]
 //!     nk[NullifierKey nk]
 //!     pk[PaymentKey pk]
-//!     rk_sig["(rk, sig)"]
 //!     rk[ActionVerificationKey rk]
+//!     sig["sig (action::Signature)"]
 //!     pak[ProofAuthorizingKey]
+//!     sighash["SigHash (transaction-wide)"]
 //!     sk --> ask & nk & pk
 //!     ask --> ak
 //!     theta["ActionEntropy theta"] -- spend_randomizer --> spend_alpha["SpendRandomizer"]
 //!     theta -- output_randomizer --> output_alpha["OutputRandomizer"]
-//!     spend_alpha -- "authorize(ask, cv)" --> rk_sig
-//!     output_alpha -- "authorize(cv)" --> rk_sig
 //!     ak -- "+alpha" --> rk
+//!     output_alpha -- "derive_rk()" --> rk
+//!     rk --> sighash
+//!     spend_alpha -- "sign(ask, sighash)" --> sig
+//!     output_alpha -- "sign(sighash)" --> sig
 //!     ak & nk --> pak
 //! ```
 //!
@@ -151,10 +154,9 @@ mod tests {
         let theta = private::ActionEntropy::random(&mut rng);
         let alpha = theta.spend_randomizer(&note.commitment());
         let rsk = ask.derive_action_private(&alpha);
-        let witness_alpha: private::ActionRandomizer = alpha.into();
 
         let rk_from_signer: [u8; 32] = rsk.derive_action_public().into();
-        let rk_from_prover: [u8; 32] = ak.derive_action_public(&witness_alpha).into();
+        let rk_from_prover: [u8; 32] = ak.derive_action_public(&alpha).into();
 
         assert_eq!(rk_from_signer, rk_from_prover);
     }

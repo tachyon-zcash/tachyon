@@ -83,9 +83,9 @@ impl SpendValidatingKey {
     /// [`ActionSigningKey::derive_action_public`](super::ActionSigningKey::derive_action_public)
     /// instead.
     #[must_use]
-    pub fn derive_action_public(
+    pub fn derive_action_public<Kind>(
         &self,
-        alpha: &private::ActionRandomizer,
+        alpha: &private::ActionRandomizer<Kind>,
     ) -> public::ActionVerificationKey {
         public::ActionVerificationKey(self.0.randomize(&alpha.0))
     }

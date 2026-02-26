@@ -4,7 +4,11 @@
 //!   randomizer, and value commitment trapdoor. The circuit derives the
 //!   tachygram and flavor internally.
 
-use crate::{keys::private::ActionRandomizer, note::Note, value};
+use crate::{
+    keys::private::{ActionRandomizer, Witness},
+    note::Note,
+    value,
+};
 
 /// Private witness for a single action.
 ///
@@ -21,7 +25,7 @@ pub struct ActionPrivate {
     /// Spend authorization randomizer `alpha`.
     /// - Spend: `rsk = ask + alpha`, `rk = ak + [alpha]G`
     /// - Output: `rsk = alpha`, `rk = [alpha]G`
-    pub alpha: ActionRandomizer,
+    pub alpha: ActionRandomizer<Witness>,
 
     /// The note being spent or created.
     pub note: Note, // { pk, v, psi, rcm }
