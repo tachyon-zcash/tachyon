@@ -7,11 +7,11 @@
 //!
 //! ## Protocol
 //!
-//! The user device picks $\theta$ and sends `(cv, theta, cmx)` to custody.
+//! The user device picks $\theta$ and sends `(cv, theta, cm)` to custody.
 //! The custody device returns `(rk, sig)`:
 //!
 //! 1. $\alpha = \text{BLAKE2b}(\text{"Tachyon-AlphaDrv"},\; \theta \|
-//!    \mathsf{cmx})$
+//!    \mathsf{cm})$
 //! 2. $\mathsf{rsk} = \mathsf{ask} + \alpha$
 //! 3. $\mathsf{rk} = [\mathsf{rsk}]\,\mathcal{G}$
 //! 4. $\text{sig} = \mathsf{rsk}.\text{sign}(H(\mathsf{cv} \|
@@ -19,7 +19,7 @@
 //!
 //! The caller derives $\alpha$ independently via
 //! [`ActionEntropy::spend_randomizer`](crate::keys::private::ActionEntropy::spend_randomizer)
-//! from `theta` and `cmx`.
+//! from `theta` and `cm`.
 //!
 //! Outputs do not involve custody — they use
 //! [`ActionEntropy::output_randomizer`](crate::keys::private::ActionEntropy::output_randomizer)
@@ -37,14 +37,6 @@ use crate::{action, keys::private, keys::public, note, value};
 /// A custody device holds the spend authorizing key (`ask`) and performs
 /// per-action authorization: given a value commitment, per-action entropy,
 /// and note commitment, it returns the verification key and signature.
-///
-/// ## Implementations
-///
-/// - [`Local`]: wraps [`SpendAuthorizingKey`](private::SpendAuthorizingKey)
-///   in memory
-/// - **Hardware wallet**: sends `(cv, theta, cmx)` to the device over
-///   USB/BLE
-/// - **Threshold**: distributes authorization across multiple parties
 pub trait Custody {
     /// Error type for authorization failures.
     type Error;
@@ -52,7 +44,7 @@ pub trait Custody {
     /// Authorize a spend action.
     ///
     /// The custody device independently derives $\alpha$ from `theta` and
-    /// `cmx`, computes $\mathsf{rsk} = \mathsf{ask} + \alpha$, and signs
+    /// `cm`, computes $\mathsf{rsk} = \mathsf{ask} + \alpha$, and signs
     /// the action. Returns $(\mathsf{rk}, \text{sig})$.
     ///
     /// `cv` is needed to compute the sighash
@@ -61,7 +53,7 @@ pub trait Custody {
         &self,
         cv: value::Commitment,
         theta: &private::ActionEntropy,
-        cmx: &note::Commitment,
+        cm: &note::Commitment,
         rng: &mut R,
     ) -> Result<(public::ActionVerificationKey, action::Signature), Self::Error>;
 }
@@ -91,10 +83,10 @@ impl Custody for Local {
         &self,
         cv: value::Commitment,
         theta: &private::ActionEntropy,
-        cmx: &note::Commitment,
+        cm: &note::Commitment,
         rng: &mut R,
     ) -> Result<(public::ActionVerificationKey, action::Signature), Self::Error> {
-        let alpha = theta.spend_randomizer(cmx);
+        let alpha = theta.spend_randomizer(cm);
         Ok(alpha.authorize(&self.ask, cv, rng))
     }
 }
@@ -121,13 +113,13 @@ mod tests {
             psi: NullifierTrapdoor::from(Fp::ZERO),
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
-        let cmx = note.commitment();
+        let cm = note.commitment();
         let note_value: i64 = note.value.into();
         let rcv = value::CommitmentTrapdoor::random(&mut rng);
         let cv = rcv.commit(note_value);
         let theta = private::ActionEntropy::random(&mut rng);
 
-        let (rk, sig) = custody.authorize_spend(cv, &theta, &cmx, &mut rng).unwrap();
+        let (rk, sig) = custody.authorize_spend(cv, &theta, &cm, &mut rng).unwrap();
 
         rk.verify(action::sighash(cv, rk), &sig).unwrap();
     }

@@ -27,7 +27,7 @@ pub const BINDING_SIGHASH_PERSONALIZATION: &[u8; 16] = b"Tachyon-BindHash";
 /// BLAKE2b-512 personalization for deterministic alpha derivation.
 ///
 /// $\alpha = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-AlphaDrv"},\;
-/// \theta \| \mathsf{cmx}))$
+/// \theta \| \mathsf{cm}))$
 ///
 /// Binds `alpha` to per-action randomness (`theta`) and the note commitment,
 /// enabling hardware wallet signing decoupled from proof generation.

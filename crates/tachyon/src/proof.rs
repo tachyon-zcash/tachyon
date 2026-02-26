@@ -73,9 +73,9 @@ impl Proof {
         _pak: &ProofAuthorizingKey,
     ) -> (Self, Vec<Tachygram>) {
         todo!("Ragu PCD");
-        // The circuit computes tachygrams internally from witness fields
-        // (nf = F_nk(psi, flavor) for spends, cmx = NoteCommit(...) for
-        // outputs) and returns them as public outputs.
+        // The circuit computes tachygrams internally from witness fields (nf =
+        // F_nk(psi, flavor) for spends, cm = NoteCommit(...) for outputs) and
+        // returns them as public outputs.
         (Self, Vec::new())
     }
 

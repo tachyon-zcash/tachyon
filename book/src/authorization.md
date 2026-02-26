@@ -1,18 +1,20 @@
 # Authorization
 
-A Tachyon bundle requires three layers of authorization: per-action signatures that bind each tachyaction to its tachygram, value commitments that hide individual values while preserving their algebraic sum, and a binding signature that proves the declared balance is correct. This chapter covers each layer, then shows the complete flow from action creation through consensus.
+A Tachyon bundle requires three layers of authorization: per-action signatures that bind each tachyaction to its tachygram, value commitments that hide individual values while preserving their algebraic sum, and a binding signature that proves the declared balance is correct.
+This chapter covers each layer, then shows the complete flow from action creation through consensus.
 
 ## Per-action Signing
 
-Each tachyaction requires a fresh randomized key pair. The authorization flow starts with per-action entropy $\theta$ and diverges based on whether the action is a spend or output.
+Each tachyaction requires a fresh randomized key pair.
+The authorization flow starts with per-action entropy $\theta$ and diverges based on whether the action is a spend or output.
 
 ```mermaid
 flowchart TB
     theta["theta (ActionEntropy)"]
-    cmx["cmx (note commitment)"]
-    hash(("derive(theta, cmx)"))
+    cm["cm (note commitment)"]
+    hash(("derive(theta, cm)"))
 
-    theta & cmx --- hash --> spend_alpha & output_alpha
+    theta & cm --- hash --> spend_alpha & output_alpha
 
     spend_alpha["alpha (SpendRandomizer)"]
     output_alpha["alpha (OutputRandomizer)"]
@@ -24,29 +26,36 @@ flowchart TB
 
 ### ActionEntropy ($\theta$)
 
-32 bytes of randomness chosen by the signer. Combined with a note commitment to deterministically derive the randomizer $\alpha$:
+32 bytes of randomness chosen by the signer.
+Combined with a note commitment to deterministically derive the randomizer $\alpha$:
 
-$$\alpha = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-AlphaDrv"},\; \theta \| \mathsf{cmx}))$$
+$$\alpha = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-AlphaDrv"},\; \theta \| \mathsf{cm}))$$
 
-This design enables **hardware wallet signing without proof construction**: the hardware wallet holds $\mathsf{ask}$ and $\theta$, signs with $\mathsf{rsk} = \mathsf{ask} + \alpha$, and a separate device constructs the proof later using $\theta$ and $\mathsf{cmx}$ to recover $\alpha$.
+This design enables **hardware wallet signing without proof construction**: the hardware wallet holds $\mathsf{ask}$ and $\theta$, signs with $\mathsf{rsk} = \mathsf{ask} + \alpha$, and a separate device constructs the proof later using $\theta$ and $\mathsf{cm}$ to recover $\alpha$.
 
 ### Spend vs Output
 
-Both paths produce $(\mathsf{rk}, \text{sig})$ — the per-action verification key and its signature. The randomizer $\alpha$ is retained separately as a proof witness. Internally, $\mathsf{rsk}$ is derived and used for signing, but never exposed.
+Both paths produce $(\mathsf{rk}, \text{sig})$ — the per-action verification key and its signature.
+The randomizer $\alpha$ is retained separately as a proof witness.
+Internally, $\mathsf{rsk}$ is derived and used for signing, but never exposed.
 
 **Spend** — requires spending authority:
 
 $$\mathsf{rsk} = \mathsf{ask} + \alpha$$
 
-The resulting $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$ is a re-randomization of the spend validating key. The custody device derives $\alpha$ from $(\theta, \mathsf{cmx})$, computes $\mathsf{rsk}$, signs, and returns $(\mathsf{rk}, \text{sig})$. The user device independently derives the same $\alpha$ for the proof witness.
+The resulting $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$ is a re-randomization of the spend validating key.
+The custody device derives $\alpha$ from $(\theta, \mathsf{cm})$, computes $\mathsf{rsk}$, signs, and returns $(\mathsf{rk}, \text{sig})$.
+The user device independently derives the same $\alpha$ for the proof witness.
 
 **Output** — no spending authority needed:
 
 $$\mathsf{rsk} = \alpha$$
 
-The resulting $\mathsf{rk} = [\alpha]\,\mathcal{G}$ is a re-randomization of the generator itself. No custody device is involved.
+The resulting $\mathsf{rk} = [\alpha]\,\mathcal{G}$ is a re-randomization of the generator itself.
+No custody device is involved.
 
-Both produce an $\mathsf{rk}$ that can verify a signature, but only the spend's $\mathsf{rk}$ requires knowledge of $\mathsf{ask}$. This unification lets consensus treat all tachyactions identically.
+Both produce an $\mathsf{rk}$ that can verify a signature, but only the spend's $\mathsf{rk}$ requires knowledge of $\mathsf{ask}$.
+This unification lets consensus treat all tachyactions identically.
 
 ### Action sighash
 
@@ -54,7 +63,8 @@ Each tachyaction carries a RedPallas signature over a domain-separated hash of t
 
 $$\text{sighash} = \text{BLAKE2b-512}(\text{"Tachyon-SpendSig"},\; \mathsf{cv} \| \mathsf{rk})$$
 
-The signature binds ($\mathsf{cv}$, $\mathsf{rk}$) together. Since $\mathsf{rk}$ is itself a commitment to $\mathsf{cmx}$ (via $\alpha$'s derivation from $\theta$ and $\mathsf{cmx}$), the signature transitively binds the action to its tachygram without the tachygram appearing in the action.
+The signature binds ($\mathsf{cv}$, $\mathsf{rk}$) together.
+Since $\mathsf{rk}$ is itself a commitment to $\mathsf{cm}$ (via $\alpha$'s derivation from $\theta$ and $\mathsf{cm}$), the signature transitively binds the action to its tachygram without the tachygram appearing in the action.
 
 | Key            | Lifetime   | Can sign? | Can verify? |
 | -------------- | ---------- | --------- | ----------- |
@@ -71,7 +81,8 @@ $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
 
 where $v$ is the signed integer value (positive for spends, negative for outputs) and $\mathsf{rcv}$ is a random trapdoor in $\mathbb{F}_q$.
 
-The generators $\mathcal{V}$ and $\mathcal{R}$ are shared with Orchard, derived from the domain `z.cash:Orchard-cv`. This reuse is intentional — the binding signature scheme uses `reddsa::orchard::Binding` which hardcodes $\mathcal{R}$ as its basepoint.
+The generators $\mathcal{V}$ and $\mathcal{R}$ are shared with Orchard, derived from the domain `z.cash:Orchard-cv`.
+This reuse is intentional — the binding signature scheme uses `reddsa::orchard::Binding` which hardcodes $\mathcal{R}$ as its basepoint.
 
 ### Homomorphic property
 
@@ -97,7 +108,8 @@ $$= \bigl[\sum_i v_i - \mathsf{v\_balance}\bigr]\,\mathcal{V} + \bigl[\sum_i \ma
 
 $$= [0]\,\mathcal{V} + [\mathsf{bsk}]\,\mathcal{R} \qquad (\text{when } \sum_i v_i = \mathsf{v\_balance})$$
 
-The binding signature proves knowledge of $\mathsf{bsk}$, which is an opening of the Pedersen commitment $\mathsf{bvk}$ to value 0. By the binding property of the commitment scheme, it is infeasible to find another opening to a different value — so value balance is enforced.
+The binding signature proves knowledge of $\mathsf{bsk}$, which is an opening of the Pedersen commitment $\mathsf{bvk}$ to value 0.
+By the binding property of the commitment scheme, it is infeasible to find another opening to a different value — so value balance is enforced.
 
 The validator recomputes $\mathsf{bvk}$ from public data (action value commitments and declared value balance) and verifies:
 
@@ -144,19 +156,19 @@ loop per action
       note over User: create note { pk, psi, rcm, v }
       note over User: cv = rcv.commit(-v)
     end
-    note over User: cmx = rcm.commit(pk, psi, v)
+    note over User: cm = rcm.commit(pk, psi, v)
 
     note over User: random theta
     alt spend
-        User ->> Custody: cv, theta, cmx
-        note over Custody: alpha = theta.derive(cmx)
+        User ->> Custody: cv, theta, cm
+        note over Custody: alpha = theta.derive(cm)
         note over Custody: rsk = ask.randomize(alpha)
         note over Custody: rk = public(rsk)
         note over Custody: sig = rsk.sign(digest(cv, rk))
         destroy Custody
         Custody ->> User: rk, sig
     else output
-        note over User: alpha = theta.derive(cmx)
+        note over User: alpha = theta.derive(cm)
         note over User: rk = public(alpha)
         note over User: sig = alpha.sign(digest(cv, rk))
     end
@@ -177,8 +189,8 @@ loop per action
             note over User: tachygram_acc = nf
         else output
             User --> User: rk == public(alpha)
-            note over User: cmx = rcm.commit(pk, psi, v)
-            note over User: tachygram_acc = cmx
+            note over User: cm = rcm.commit(pk, psi, v)
+            note over User: tachygram_acc = cm
         end
         note over User: action_acc = digest(cv, rk)
         note over User: pcd: leaf stamp(action_acc, tachygram_acc, anchor)

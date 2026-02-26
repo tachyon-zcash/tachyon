@@ -415,16 +415,16 @@ mod tests {
         // === Spend action (composable steps) ===
 
         // 1. Note commitment (user device)
-        let spend_cmx = spend_note.commitment();
+        let spend_cm = spend_note.commitment();
 
         // 2. Value commitment (user device picks rcv)
         let spend_value: i64 = spend_note.value.into();
         let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
         let spend_cv = spend_rcv.commit(spend_value);
 
-        // 3. Authorization (custody device: theta + ask + cmx + cv → rk, sig)
+        // 3. Authorization (custody device: theta + ask + cm + cv → rk, sig)
         let spend_theta = private::ActionEntropy::random(&mut rng);
-        let spend_alpha = spend_theta.spend_randomizer(&spend_cmx);
+        let spend_alpha = spend_theta.spend_randomizer(&spend_cm);
         let (spend_rk, spend_sig) = spend_alpha.authorize(&ask, spend_cv, &mut rng);
 
         // 4. Assembly (user device)
@@ -441,13 +441,13 @@ mod tests {
 
         // === Output action (composable steps, no custody) ===
 
-        let output_cmx = output_note.commitment();
+        let output_cm = output_note.commitment();
         let output_value: i64 = output_note.value.into();
         let output_rcv = value::CommitmentTrapdoor::random(&mut rng);
         let output_cv = output_rcv.commit(-output_value);
 
         let output_theta = private::ActionEntropy::random(&mut rng);
-        let output_alpha = output_theta.output_randomizer(&output_cmx);
+        let output_alpha = output_theta.output_randomizer(&output_cm);
         let (output_rk, output_sig) = output_alpha.authorize(output_cv, &mut rng);
 
         let output_action = Action {

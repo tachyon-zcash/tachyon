@@ -5,10 +5,10 @@
 A tachygram is a deterministic field element ($\mathbb{F}_p$) derived from a note:
 
 - **Spend**: nullifier $\mathsf{tg} = \mathsf{nf} = F_{\mathsf{nk}}(\psi \| \text{flavor})$
-- **Output**: commitment $\mathsf{tg} = \mathsf{cmx} = \text{NoteCommit}(pk, v, \psi, rcm)$
+- **Output**: commitment $\mathsf{tg} = \mathsf{cm} = \text{NoteCommit}(pk, v, \psi, rcm)$
 
 The circuit computes both values with the constraint that a witness tachygram
-matches one of them: $(\mathsf{tg} - \mathsf{nf})(\mathsf{tg} - \mathsf{cmx}) = 0$.
+matches one of them: $(\mathsf{tg} - \mathsf{nf})(\mathsf{tg} - \mathsf{cm}) = 0$.
 
 Tachygrams are opaque to observers: you can't tell if any given tachygram is a
 nullifier or a commitment.

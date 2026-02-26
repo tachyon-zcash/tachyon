@@ -313,7 +313,7 @@ impl TryFrom<Fq> for BindingSigningKey {
 /// construction**: the hardware wallet holds $\mathsf{ask}$ and $\theta$,
 /// signs with $\mathsf{rsk} = \mathsf{ask} + \alpha$, and a separate
 /// (possibly untrusted) device constructs the proof later using $\theta$
-/// and $\mathsf{cmx}$ to recover $\alpha$
+/// and $\mathsf{cm}$ to recover $\alpha$
 /// ("Tachyaction at a Distance", Bowe 2025).
 #[derive(Clone, Copy, Debug)]
 pub struct ActionEntropy([u8; 32]);
@@ -332,8 +332,8 @@ impl ActionEntropy {
     /// combined with a [`SpendAuthorizingKey`] via
     /// [`derive_action_private`](SpendRandomizer::derive_action_private).
     #[must_use]
-    pub fn spend_randomizer(&self, cmx: &note::Commitment) -> SpendRandomizer {
-        SpendRandomizer(derive_alpha(self, cmx))
+    pub fn spend_randomizer(&self, cm: &note::Commitment) -> SpendRandomizer {
+        SpendRandomizer(derive_alpha(self, cm))
     }
 
     /// Derive $\alpha$ for an output action.
@@ -342,8 +342,8 @@ impl ActionEntropy {
     /// via [`derive_action_private`](OutputRandomizer::derive_action_private):
     /// $\mathsf{rsk} = \alpha$ (no spend authority).
     #[must_use]
-    pub fn output_randomizer(&self, cmx: &note::Commitment) -> OutputRandomizer {
-        OutputRandomizer(derive_alpha(self, cmx))
+    pub fn output_randomizer(&self, cm: &note::Commitment) -> OutputRandomizer {
+        OutputRandomizer(derive_alpha(self, cm))
     }
 }
 
@@ -437,17 +437,18 @@ impl OutputRandomizer {
     }
 }
 
-/// Derive the raw $\alpha$ scalar from $\theta$ and $\mathsf{cmx}$.
+/// Derive the raw $\alpha$ scalar from $\theta$ and $\mathsf{cm}$.
 ///
-/// $$\alpha = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-AlphaDrv"},\;
-///   \theta \| \mathsf{cmx}))$$
-fn derive_alpha(theta: &ActionEntropy, cmx: &note::Commitment) -> Fq {
+/// $$
+///   \alpha = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-AlphaDrv"},\; \theta \| \mathsf{cm}))
+/// $$
+fn derive_alpha(theta: &ActionEntropy, cm: &note::Commitment) -> Fq {
     let hash = blake2b_simd::Params::new()
         .hash_length(64)
         .personal(ALPHA_PERSONALIZATION)
         .to_state()
         .update(&theta.0)
-        .update(&Fp::from(*cmx).to_repr())
+        .update(&Fp::from(*cm).to_repr())
         .finalize();
     Fq::from_uniform_bytes(hash.as_array())
 }
