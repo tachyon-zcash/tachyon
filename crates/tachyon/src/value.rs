@@ -58,6 +58,10 @@ pub struct CommitmentTrapdoor(Fq);
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
+        // TODO: the selection of `rcv` may be revised to incorporate a hash of
+        // the note commitment or other action-specific data, possibly
+        // tied to alpha/theta derivation.
+        todo!("random commitment trapdoor");
         Self(Fq::random(rng))
     }
 
