@@ -41,7 +41,8 @@ impl NullifierKey {
     /// \mathsf{nk})$.
     ///
     /// `mk` is the root of the GGM tree for one note. It is used to:
-    /// - Derive nullifiers directly: $\mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$
+    /// - Derive nullifiers directly: $\mathsf{nf} =
+    ///   F_{\mathsf{mk}}(\text{flavor})$
     /// - Derive epoch-restricted prefix keys $\Psi_t$ for OSS delegation
     #[must_use]
     pub fn derive_note_private(&self, _psi: &NullifierTrapdoor) -> NoteMasterKey {

@@ -73,8 +73,8 @@ pub enum BuildError {
 ///
 /// Reconstruction (same logic as consensus verification):
 /// 1. `tachygram_acc = sum[H(tg_i)] * G_acc`
-/// 2. `action_acc = sum[action_digest_i] * G_acc`  where
-///    `action_digest_i = H(cv_i, rk_i)`
+/// 2. `action_acc = sum[action_digest_i] * G_acc`  where `action_digest_i =
+///    H(cv_i, rk_i)`
 /// 3. `anchor` — already known
 /// 4. Verify Ragu proof against `(tachygram_acc, action_acc, anchor)`
 pub fn verify_stamp(stamp: &Stamp, actions: &[Action]) -> Result<(), BuildError> {

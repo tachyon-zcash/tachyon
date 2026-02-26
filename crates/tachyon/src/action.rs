@@ -94,8 +94,10 @@ impl Action {
     ///
     /// 1. Note commitment: [`Note::commitment`]
     /// 2. Value commitment: [`value::Commitment::new`]
-    /// 3. Alpha derivation: [`ActionEntropy::spend_randomizer`](private::ActionEntropy::spend_randomizer)
-    /// 4. Spend authorization: [`Custody::authorize_spend`](crate::custody::Custody::authorize_spend)
+    /// 3. Alpha derivation:
+    ///    [`ActionEntropy::spend_randomizer`](private::ActionEntropy::spend_randomizer)
+    /// 4. Spend authorization:
+    ///    [`Custody::authorize_spend`](crate::custody::Custody::authorize_spend)
     /// 5. Assembly: `Action { cv, rk, sig }` +
     ///    [`ActionPrivate`](crate::witness::ActionPrivate)
     pub fn spend<R: RngCore + CryptoRng, C: Custody>(
