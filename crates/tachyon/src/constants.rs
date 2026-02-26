@@ -24,14 +24,21 @@ pub const SPEND_AUTH_PERSONALIZATION: &[u8; 16] = b"Tachyon-SpendSig";
 /// is excluded because it is stripped during aggregation.
 pub const BINDING_SIGHASH_PERSONALIZATION: &[u8; 16] = b"Tachyon-BindHash";
 
-/// BLAKE2b-512 personalization for deterministic alpha derivation.
+/// BLAKE2b-512 personalization for spend-side alpha derivation.
 ///
-/// $\alpha = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-AlphaDrv"},\;
-/// \theta \| \mathsf{cm}))$
+/// $$\alpha_{\text{spend}} = \text{ToScalar}(\text{BLAKE2b-512}(
+/// \text{"Tachyon-Spend"},\; \theta \| \mathsf{cm}))$$
 ///
-/// Binds `alpha` to per-action randomness (`theta`) and the note commitment,
-/// enabling hardware wallet signing decoupled from proof generation.
-pub const ALPHA_PERSONALIZATION: &[u8; 16] = b"Tachyon-AlphaDrv";
+/// Domain-separated from output alpha to prevent cross-context reuse.
+pub const SPEND_ALPHA_PERSONALIZATION: &[u8; 13] = b"Tachyon-Spend";
+
+/// BLAKE2b-512 personalization for output-side alpha derivation.
+///
+/// $$\alpha_{\text{output}} = \text{ToScalar}(\text{BLAKE2b-512}(
+/// \text{"Tachyon-Output"},\; \theta \| \mathsf{cm}))$$
+///
+/// Domain-separated from spend alpha to prevent cross-context reuse.
+pub const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
 
 /// Domain for value commitment generators `V` and `R`.
 ///
