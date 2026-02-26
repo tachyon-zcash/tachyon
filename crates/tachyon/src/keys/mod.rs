@@ -44,8 +44,8 @@
 //!
 //! ### Proof keys ([`proof`])
 //!
-//! - `pak`: `ak` + `nk` (proof authorizing key): Authorizes proof
-//!   construction without spend authority
+//! - `pak`: `ak` + `nk` (proof authorizing key): Authorizes proof construction
+//!   without spend authority
 //!
 //! ## Nullifier Derivation
 //!

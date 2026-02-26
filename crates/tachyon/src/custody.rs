@@ -14,8 +14,7 @@
 //!    \mathsf{cm})$
 //! 2. $\mathsf{rsk} = \mathsf{ask} + \alpha$
 //! 3. $\mathsf{rk} = [\mathsf{rsk}]\,\mathcal{G}$
-//! 4. $\text{sig} = \mathsf{rsk}.\text{sign}(H(\mathsf{cv} \|
-//!    \mathsf{rk}))$
+//! 4. $\text{sig} = \mathsf{rsk}.\text{sign}(H(\mathsf{cv} \| \mathsf{rk}))$
 //!
 //! The caller derives $\alpha$ independently via
 //! [`ActionEntropy::spend_randomizer`](crate::keys::private::ActionEntropy::spend_randomizer)
@@ -30,7 +29,11 @@ use core::convert::Infallible;
 
 use rand::{CryptoRng, RngCore};
 
-use crate::{action, keys::private, keys::public, note, value};
+use crate::{
+    action,
+    keys::{private, public},
+    note, value,
+};
 
 /// Custody device abstraction for spend authorization.
 ///

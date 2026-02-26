@@ -66,8 +66,8 @@ impl Into<[u8; 64]> for ProofAuthorizingKey {
 /// `ak` **cannot verify action signatures directly** — the prover uses
 /// [`derive_action_public`](Self::derive_action_public) to compute the
 /// per-action `rk` for the proof witness. Component of
-/// [`ProofAuthorizingKey`](super::ProofAuthorizingKey) for proof authorization without spend
-/// authority.
+/// [`ProofAuthorizingKey`](super::ProofAuthorizingKey) for proof authorization
+/// without spend authority.
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct SpendValidatingKey(pub(super) reddsa::VerificationKey<SpendAuth>);
@@ -76,8 +76,9 @@ impl SpendValidatingKey {
     /// Derive the per-action public (verification) key: $\mathsf{rk} =
     /// \mathsf{ak} + [\alpha]\,\mathcal{G}$.
     ///
-    /// Used by the prover (who has [`ProofAuthorizingKey`](super::ProofAuthorizingKey) containing
-    /// `ak`) to compute the `rk` that the Ragu circuit constrains. During
+    /// Used by the prover (who has
+    /// [`ProofAuthorizingKey`](super::ProofAuthorizingKey) containing `ak`)
+    /// to compute the `rk` that the Ragu circuit constrains. During
     /// action construction the signer derives `rk` via
     /// [`ActionSigningKey::derive_action_public`](super::ActionSigningKey::derive_action_public)
     /// instead.

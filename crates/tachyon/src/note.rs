@@ -77,8 +77,8 @@ impl CommitmentTrapdoor {
     #[must_use]
     pub fn commit(self, _v: Value, _pk: &PaymentKey, _psi: &NullifierTrapdoor) -> Commitment {
         // TODO: Implement note commitment
-        // $cm = \text{NoteCommit}_{rcm}(\text{"z.cash:Tachyon-NoteCommit"}, pk \| v \| \psi)$
-        // This stub returns Fp::ZERO for every note, making all output
+        // $cm = \text{NoteCommit}_{rcm}(\text{"z.cash:Tachyon-NoteCommit"}, pk \| v \|
+        // \psi)$ This stub returns Fp::ZERO for every note, making all output
         // tachygrams identical.
         todo!("note commitment");
         Commitment::from(Fp::ZERO)
