@@ -1,14 +1,14 @@
-//! Proof-related keys: ProofAuthorizingKey.
+//! Proof-related keys: ProvingKey.
 
 use reddsa::orchard::SpendAuth;
 
 use super::{note::NullifierKey, private, public};
 
-/// The proof authorizing key (`ak` + `nk`).
+/// The proving key (`ak` + `nk`).
 ///
-/// Authorizes proof construction without spend authority. The holder can
-/// construct proofs for all notes (since `nk` is wallet-wide) but cannot
-/// sign actions.
+/// Allows constructing proofs without spend authority. This might be delegated
+/// to a service that constructs non-membership proofs for nullifiers without
+/// learning the wallet's spending key.
 ///
 /// Derived from [`SpendAuthorizingKey`](super::SpendAuthorizingKey) $\to$
 /// [`SpendValidatingKey`] and [`NullifierKey`].
@@ -22,14 +22,14 @@ use super::{note::NullifierKey, private, public};
 // once the Ragu circuit API is available.
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct ProofAuthorizingKey {
+pub struct ProvingKey {
     /// The spend validating key `ak = [ask] G`.
     pub(super) ak: SpendValidatingKey,
     /// The nullifier deriving key.
     pub(super) nk: NullifierKey,
 }
 
-impl ProofAuthorizingKey {
+impl ProvingKey {
     /// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\,\mathcal{G}$.
     #[must_use]
     pub const fn ak(&self) -> &SpendValidatingKey {
@@ -44,7 +44,7 @@ impl ProofAuthorizingKey {
 }
 
 #[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 64]> for ProofAuthorizingKey {
+impl Into<[u8; 64]> for ProvingKey {
     fn into(self) -> [u8; 64] {
         let mut bytes = [0u8; 64];
         let ak_bytes: [u8; 32] = self.ak.into();
@@ -66,8 +66,8 @@ impl Into<[u8; 64]> for ProofAuthorizingKey {
 /// `ak` **cannot verify action signatures directly** — the prover uses
 /// [`derive_action_public`](Self::derive_action_public) to compute the
 /// per-action `rk` for the proof witness. Component of
-/// [`ProofAuthorizingKey`](super::ProofAuthorizingKey) for proof authorization
-/// without spend authority.
+/// [`ProvingKey`](super::ProvingKey) for proof delegation without spend
+/// authority.
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct SpendValidatingKey(pub(super) reddsa::VerificationKey<SpendAuth>);
@@ -76,9 +76,8 @@ impl SpendValidatingKey {
     /// Derive the per-action public (verification) key: $\mathsf{rk} =
     /// \mathsf{ak} + [\alpha]\,\mathcal{G}$.
     ///
-    /// Used by the prover (who has
-    /// [`ProofAuthorizingKey`](super::ProofAuthorizingKey) containing `ak`)
-    /// to compute the `rk` that the Ragu circuit constrains. During
+    /// Used by the prover (who has [`ProvingKey`](super::ProvingKey) containing
+    /// `ak`) to compute the `rk` that the Ragu circuit constrains. During
     /// action construction the signer derives `rk` via
     /// [`ActionSigningKey::derive_action_public`](super::ActionSigningKey::derive_action_public)
     /// instead.
@@ -87,7 +86,7 @@ impl SpendValidatingKey {
         &self,
         alpha: &private::ActionRandomizer,
     ) -> public::ActionVerificationKey {
-        public::ActionVerificationKey(self.0.randomize(&alpha.0))
+        public::ActionVerificationKey(self.0.randomize(alpha.inner()))
     }
 }
 

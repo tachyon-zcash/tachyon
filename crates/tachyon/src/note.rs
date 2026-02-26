@@ -29,7 +29,7 @@
 //!
 //! ## Note Commitment
 //!
-//! A commitment over the note fields, producing a `cm` tachygram that
+//! A commitment over the note fields, producing a `cmx` tachygram that
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
@@ -69,21 +69,6 @@ impl Into<Fp> for NullifierTrapdoor {
 /// Can be derived from a shared secret negotiated out-of-band.
 #[derive(Clone, Copy, Debug)]
 pub struct CommitmentTrapdoor(Fq);
-
-impl CommitmentTrapdoor {
-    /// Computes the note commitment `cm`.
-    ///
-    /// Commits to $(pk, v, \psi)$ with randomness $rcm$
-    #[must_use]
-    pub fn commit(self, _v: Value, _pk: &PaymentKey, _psi: &NullifierTrapdoor) -> Commitment {
-        // TODO: Implement note commitment
-        // $cm = \text{NoteCommit}_{rcm}(\text{"z.cash:Tachyon-NoteCommit"}, pk \| v \|
-        // \psi)$ This stub returns Fp::ZERO for every note, making all output
-        // tachygrams identical.
-        todo!("note commitment");
-        Commitment::from(Fp::ZERO)
-    }
-}
 
 impl From<Fq> for CommitmentTrapdoor {
     fn from(fq: Fq) -> Self {
@@ -147,12 +132,20 @@ impl Into<u64> for Value {
 }
 
 impl Note {
-    /// Computes the note commitment `cm`.
+    /// Computes the note commitment `cmx`.
     ///
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$
     #[must_use]
     pub fn commitment(&self) -> Commitment {
-        self.rcm.commit(self.value, &self.pk, &self.psi)
+        // TODO: Implement note commitment
+        // $cmx = \text{NoteCommit}_{rcm}(\text{"z.cash:Tachyon-NoteCommit"}, pk \| v \|
+        // \psi)$
+        //
+        // CORRECTNESS: the crate-local `todo!` macro prints and continues
+        // (does not panic). This stub returns Fp::ZERO for every note,
+        // making all output tachygrams identical.
+        todo!("note commitment");
+        Commitment::from(Fp::ZERO)
     }
 
     /// Derives a nullifier for this note at the given flavor (epoch).
@@ -181,12 +174,13 @@ impl Note {
     }
 }
 
-/// A Tachyon note commitment (`cm`).
+/// A Tachyon note commitment (`cmx`).
 ///
 /// A field element produced by committing to the note fields. This is
 /// the value that becomes a tachygram:
-/// - For **output** operations, `cm` IS the tachygram directly.
-/// - For **spend** operations, `cm` is a private witness.
+/// - For **output** operations, `cmx` IS the tachygram directly.
+/// - For **spend** operations, `cmx` is a private witness; the tachygram is the
+///   derived nullifier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Commitment(Fp);
 

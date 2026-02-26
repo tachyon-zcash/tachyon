@@ -14,10 +14,10 @@
 
 use crate::{
     action::Action,
-    keys::ProofAuthorizingKey,
+    keys::ProvingKey,
     primitives::{Anchor, Tachygram},
     proof::{Proof, ValidationError},
-    witness::ActionPrivate,
+    witness::{ActionPrivate, MergePrivate},
 };
 
 /// Marker for the absence of a stamp.
@@ -48,22 +48,20 @@ pub struct Stamp {
 }
 
 impl Stamp {
-    /// Creates a leaf stamp for a single action (ACTION STEP).
+    /// Creates a stamp by running the proof over action witnesses.
     ///
     /// The proof system produces the accumulators (`actions_acc`,
     /// `tachygram_acc`) but these are not stored on the stamp. The verifier
     /// recomputes them outside the circuit from public data at verification
     /// time.
-    ///
-    /// Leaf stamps are combined via [`prove_merge`](Self::prove_merge).
     #[must_use]
-    pub fn prove_action(
-        witness: &ActionPrivate,
-        action: &Action,
+    pub fn prove(
+        witnesses: &[ActionPrivate],
+        actions: &[Action],
         anchor: Anchor,
-        pak: &ProofAuthorizingKey,
+        pak: &ProvingKey,
     ) -> Self {
-        let (proof, tachygrams) = Proof::create(&[*action], &[*witness], &anchor, pak);
+        let (proof, tachygrams) = Proof::create(actions, witnesses, &anchor, pak);
         Self {
             tachygrams,
             anchor,
@@ -80,11 +78,11 @@ impl Stamp {
     /// circuit. [`Proof::merge`] enforces non-overlapping tachygram sets and
     /// the anchor subset relationship via the merge witness.
     #[must_use]
-    pub fn prove_merge(self, other: Self) -> Self {
+    pub fn merge(self, other: Self, witness: MergePrivate) -> Self {
         let anchor = self.anchor.max(other.anchor);
         let mut tachygrams = self.tachygrams;
         tachygrams.extend(other.tachygrams);
-        let proof = Proof::merge(self.proof, other.proof);
+        let proof = Proof::merge(self.proof, other.proof, witness);
         Self {
             tachygrams,
             anchor,

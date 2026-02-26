@@ -57,35 +57,8 @@ pub struct CommitmentTrapdoor(Fq);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
-    pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
-        // TODO: the selection of `rcv` may be revised to incorporate a hash of
-        // the note commitment or other action-specific data, possibly
-        // tied to alpha/theta derivation.
-        todo!("random commitment trapdoor");
+    pub fn random(rng: &mut impl RngCore) -> Self {
         Self(Fq::random(rng))
-    }
-
-    /// Commit to a value with this trapdoor.
-    ///
-    /// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
-    ///
-    /// Positive $v$ for spends (balance contributed), negative for
-    /// outputs (balance exhausted).
-    #[must_use]
-    pub fn commit(self, value: i64) -> Commitment {
-        let committed: EpAffine = {
-            let commit_value: Ep = *VALUE_COMMIT_V * signed_to_scalar(value);
-            let commit_trapdoor: Ep = *VALUE_COMMIT_R * self.0;
-            (commit_value + commit_trapdoor).into()
-        };
-
-        Commitment(committed)
-    }
-}
-
-impl Default for CommitmentTrapdoor {
-    fn default() -> Self {
-        Self(Fq::ZERO)
     }
 }
 
@@ -113,10 +86,27 @@ impl Into<Fq> for CommitmentTrapdoor {
 ///
 /// An EpAffine (Pallas affine curve point, 32 compressed bytes).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct Commitment(pub(super) EpAffine);
+pub struct Commitment(EpAffine);
 
 impl Commitment {
+    /// Create a value commitment from a signed value and randomness.
+    ///
+    /// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
+    ///
+    /// Positive $v$ for spends (balance contributed), negative for
+    /// outputs (balance exhausted).
+    pub fn commit(value: i64, rng: &mut (impl RngCore + CryptoRng)) -> (CommitmentTrapdoor, Self) {
+        let rcv = CommitmentTrapdoor::random(&mut *rng);
+
+        let commited = {
+            let commit_value: Ep = *VALUE_COMMIT_V * signed_to_scalar(value);
+            let commit_rand: Ep = *VALUE_COMMIT_R * Into::<Fq>::into(rcv);
+            commit_value + commit_rand
+        };
+
+        (rcv, Self(commited.into()))
+    }
+
     /// Create the value balance commitment
     /// $\text{ValueCommit}_0(\mathsf{v\_{balance}})$.
     ///
@@ -130,7 +120,13 @@ impl Commitment {
     ///   \ominus \text{ValueCommit}_0(\mathsf{v\_{balance}})$$
     #[must_use]
     pub fn balance(value: i64) -> Self {
-        CommitmentTrapdoor::default().commit(value)
+        let committed = {
+            let commit_value: Ep = *VALUE_COMMIT_V * signed_to_scalar(value);
+            let commit_zero: Ep = *VALUE_COMMIT_R * Fq::ZERO;
+            commit_value + commit_zero
+        };
+
+        Self(committed.into())
     }
 }
 
@@ -207,10 +203,7 @@ mod tests {
     /// and the R-component has zero scalar.
     #[test]
     fn balance_zero_is_identity() {
-        assert_eq!(
-            CommitmentTrapdoor::default().commit(0),
-            Commitment(EpAffine::identity())
-        );
+        assert_eq!(Commitment::balance(0), Commitment(EpAffine::identity()));
     }
 
     /// The binding property: `cv_a + cv_b - balance(a+b) = [rcv_a + rcv_b]R`.
@@ -218,10 +211,8 @@ mod tests {
     #[test]
     fn commit_homomorphic_binding_property() {
         let mut rng = StdRng::seed_from_u64(0);
-        let rcv_a = CommitmentTrapdoor::random(&mut rng);
-        let cv_a = rcv_a.commit(100);
-        let rcv_b = CommitmentTrapdoor::random(&mut rng);
-        let cv_b = rcv_b.commit(200);
+        let (rcv_a, cv_a) = Commitment::commit(100, &mut rng);
+        let (rcv_b, cv_b) = Commitment::commit(200, &mut rng);
 
         let remainder = cv_a + cv_b - Commitment::balance(300);
 
