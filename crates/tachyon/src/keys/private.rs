@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     action, bundle,
-    constants::{ALPHA_PERSONALIZATION, PrfExpand},
+    constants::{OUTPUT_ALPHA_PERSONALIZATION, PrfExpand, SPEND_ALPHA_PERSONALIZATION},
     note, value,
 };
 
@@ -333,7 +333,7 @@ impl ActionEntropy {
     /// [`derive_action_private`](SpendRandomizer::derive_action_private).
     #[must_use]
     pub fn spend_randomizer(&self, cm: &note::Commitment) -> SpendRandomizer {
-        SpendRandomizer(derive_alpha(self, cm))
+        SpendRandomizer(derive_alpha(SPEND_ALPHA_PERSONALIZATION, self, cm))
     }
 
     /// Derive $\alpha$ for an output action.
@@ -343,7 +343,7 @@ impl ActionEntropy {
     /// $\mathsf{rsk} = \alpha$ (no spend authority).
     #[must_use]
     pub fn output_randomizer(&self, cm: &note::Commitment) -> OutputRandomizer {
-        OutputRandomizer(derive_alpha(self, cm))
+        OutputRandomizer(derive_alpha(OUTPUT_ALPHA_PERSONALIZATION, self, cm))
     }
 }
 
@@ -438,14 +438,19 @@ impl OutputRandomizer {
 }
 
 /// Derive the raw $\alpha$ scalar from $\theta$ and $\mathsf{cm}$.
-///
-/// $$
-///   \alpha = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-AlphaDrv"},\; \theta \| \mathsf{cm}))
-/// $$
-fn derive_alpha(theta: &ActionEntropy, cm: &note::Commitment) -> Fq {
+/// $$\alpha_{\text{spend}} = \text{ToScalar}(\text{BLAKE2b-512}(
+///   \text{"Tachyon-Spend"},\; \theta \| \mathsf{cm}))$$
+/// $$\alpha_{\text{output}} = \text{ToScalar}(\text{BLAKE2b-512}(
+///   \text{"Tachyon-Output"},\; \theta \| \mathsf{cm}))$$
+fn derive_alpha(personalization: &[u8], theta: &ActionEntropy, cm: &note::Commitment) -> Fq {
+    assert!(
+        personalization == SPEND_ALPHA_PERSONALIZATION
+            || personalization == OUTPUT_ALPHA_PERSONALIZATION,
+        "invalid personalization: {personalization:?}",
+    );
     let hash = blake2b_simd::Params::new()
         .hash_length(64)
-        .personal(ALPHA_PERSONALIZATION)
+        .personal(personalization)
         .to_state()
         .update(&theta.0)
         .update(&Fp::from(*cm).to_repr())

@@ -12,9 +12,12 @@ The authorization flow starts with per-action entropy $\theta$ and diverges base
 flowchart TB
     theta["theta (ActionEntropy)"]
     cm["cm (note commitment)"]
-    hash(("derive(theta, cm)"))
+    hash(("hash(theta, cm)"))
 
-    theta & cm --- hash --> spend_alpha & output_alpha
+    theta & cm --- hash 
+    
+    hash -->|"Tachyon-Spend"| spend_alpha 
+    hash -->|"Tachyon-Output"| output_alpha
 
     spend_alpha["alpha (SpendRandomizer)"]
     output_alpha["alpha (OutputRandomizer)"]
@@ -29,7 +32,11 @@ flowchart TB
 32 bytes of randomness chosen by the signer.
 Combined with a note commitment to deterministically derive the randomizer $\alpha$:
 
-$$\alpha = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-AlphaDrv"},\; \theta \| \mathsf{cm}))$$
+$$\alpha_{\text{spend}} = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-Spend"},\; \theta \| \mathsf{cm}))$$
+
+$$\alpha_{\text{output}} = \text{ToScalar}(\text{BLAKE2b-512}(\text{"Tachyon-Output"},\; \theta \| \mathsf{cm}))$$
+
+Distinct personalizations prevent the same $(\theta, \mathsf{cm})$ pair from producing identical $\alpha$ values for spend and output actions.
 
 This design enables **hardware wallet signing without proof construction**: the hardware wallet holds $\mathsf{ask}$ and $\theta$, signs with $\mathsf{rsk} = \mathsf{ask} + \alpha$, and a separate device constructs the proof later using $\theta$ and $\mathsf{cm}$ to recover $\alpha$.
 
