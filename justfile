@@ -20,7 +20,7 @@ _install_binstall:
     cargo-binstall -V || cargo install cargo-binstall
 
 _book_setup: _install_binstall
-    cargo binstall mdbook@0.4.52 mdbook-katex@0.9.4 mdbook-mermaid@0.16.2 mdbook-admonish@1.20.0
+    cargo binstall mdbook@0.4.52 mdbook-katex@0.9.4 mdbook-mermaid@0.16.2
 
 # locally [build | serve | watch] the Tachyon book
 book COMMAND: _book_setup
