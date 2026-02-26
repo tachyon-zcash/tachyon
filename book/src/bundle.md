@@ -144,13 +144,3 @@ end
 Users create transactions containing their individual actions and individual stamp, known as **autonomes**. These are broadcast to the p2p network. Before block inclusion, aggregators strip and merge stamps from selected transactions, producing **aggregates** (transactions carrying merged stamps) and **adjuncts** (transactions stripped of their stamp).
 
 See [Aggregation](./aggregation.md) for transaction categories, block layout, and validation.
-
-## Key Differences from Other Shielded Protocols
-
-| Aspect | Sapling | Orchard | Tachyon |
-| ------ | ------- | ------- | ------- |
-| Operation Model | Separate Spend/Output | Unified Action | **Tachyaction** |
-| Accumulator | Merkle tree | Merkle tree | **Polynomial accumulator** |
-| Proving System | Groth16 | Halo 2 | **Ragu** |
-| Proof Location | Per transaction | Per transaction | **Aggregated** |
-| Ciphertexts | On-chain | On-chain | **Out-of-band or PIR (TBD)** |
