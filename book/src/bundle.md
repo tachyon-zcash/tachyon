@@ -115,7 +115,6 @@ subgraph shielded_data["tachyon::ShieldedData"]
         end
     end
 
-
     subgraph tachystamp
         anchor@{shape: odd}
         proof@{shape: notch-rect}
@@ -124,7 +123,6 @@ subgraph shielded_data["tachyon::ShieldedData"]
         anchor ---> proof
         tachygram_vec ---> proof
     end
-
 
     rk1 & rk2 & rk3 -.- tachygram_vec
     cv1 & cv2 & cv3 ---> proof

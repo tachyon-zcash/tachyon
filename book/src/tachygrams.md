@@ -68,10 +68,10 @@ PCD soundness means the only way to produce a valid
 proof is through `seed` + `fuse`, so an attacker cannot skip leaf circuits or
 strip duplicate contributions between steps.
 
-```admonish todo
+<!-- TODO
 The number of tachygrams in a stamp can be greater than the number of actions.
 This will require an additional leaf step that can accept the 'bonus' tachygram and provide it to the accumulator.
-```
+-->
 
 ## Verification
 
@@ -87,9 +87,9 @@ tachygrams $tg_i$, the anchor, and the proof bytes.
    - **Recompute tachygram_acc**: $\sum[\text{Poseidon}(tg_i)] \cdot G_\text{acc}$ from listed tachygrams
 6. **Verify proof**: call Ragu `verify(Pcd { proof, data: header })`
 
-```admonish todo
+<!-- TODO
 Anchor range: Or check the block's epoch is within the anchor window?
-```
+-->
 
 The verifier constructs the header from scratch.
 If the proof was computed over different accumulators (e.g. from a double-spend), the reconstructed header won't match and verification fails.
@@ -154,9 +154,9 @@ The proofs may be 'valid' in both cases, if you repeat accumulation of $tg$ when
 
 The distinction is *intent*, but that intent isn't observable post-aggregation, because you can't correlate or identify the behavior of the actions.
 
-```admonish todo
+<!-- TODO
 An extraction circuit may be able to remove overlap before merging.
-```
+-->
 
 ### Implications
 

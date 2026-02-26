@@ -51,11 +51,11 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 4. Serialize and compress the merged stamp
 5. Publish aggregate transaction
 
-```admonish todo
+<!-- TODO
 - Explain tachygram set union validation algorithm
 - Explain epoch range intersection accumulation algorithm
 - Define aggregation limits
-```
+-->
 
 ### Strip to produce Adjuncts
 
@@ -185,7 +185,7 @@ if last_stamp {
 }
 ```
 
-```admonish todo
+<!-- TODO
 **p2p aggregation gossip is a secondary objective** and aggregation has some complex constraints.
 
 - aggregate size is limited by commitment size before block size (on the order of thousands of actions)
@@ -201,4 +201,4 @@ if last_stamp {
 4. Will miners selecting aggregates from p2p prefer to:
    - select aggregates and then seek the related transactions, or
    - select transactions and then seek an appropriate aggregate?
-```
+-->
