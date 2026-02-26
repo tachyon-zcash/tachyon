@@ -26,7 +26,7 @@ pub struct Stampless;
 
 /// A stamp carrying tachygrams, anchor, and proof.
 ///
-/// Present in [`StampedBundle`](crate::StampedBundle) bundles.
+/// Present in [`Stamped`](crate::Stamped) bundles.
 /// Stripped during aggregation and merged into the aggregate's stamp.
 ///
 /// The PCD proof's [`StampDigest`] header contains `actions_acc`,

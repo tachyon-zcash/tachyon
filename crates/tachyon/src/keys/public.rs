@@ -37,6 +37,10 @@ impl ActionVerificationKey {
     }
 }
 
+#[expect(
+    clippy::missing_trait_methods,
+    reason = "default assert_receiver_is_total_eq is correct"
+)]
 impl Eq for ActionVerificationKey {}
 
 #[expect(clippy::from_over_into, reason = "restrict conversion")]

@@ -12,15 +12,16 @@
 //!
 //! ## Bundle States
 //!
-//! [`Bundle<V>`](Bundle) uses an `Option<Stamp>` to track stamp disposition:
+//! [`Bundle<S>`](Bundle) is parameterized by stamp state `S: StampState`:
 //!
-//! - `Bundle<V>` with `stamp: Some(Stamp)` — self-contained with stamp
-//! - `Bundle<V>` with `stamp: None` — stamp stripped, depends on aggregate
+//! - [`Stamped`] — `Bundle<Stamp>`, self-contained with stamp
+//! - [`Stripped`] — `Bundle<Stampless>`, stamp stripped, depends on aggregate
+//! - `Bundle<Option<Stamp>>` — erased stamp state for mixed contexts
 //!
 //! ## Block Structure
 //!
 //! A block contains stamped and stripped bundles. An aggregate contains
-//! stamped bundles whose stamps cover both their own actions and those 
+//! stamped bundles whose stamps cover both their own actions and those
 //! of stripped bundles.
 //!
 //!
@@ -53,7 +54,7 @@ pub mod witness;
 mod primitives;
 
 pub use action::Action;
-pub use bundle::Bundle;
+pub use bundle::{Bundle, Stamped, Stripped};
 pub use note::Note;
 pub use primitives::{Anchor, Epoch, Tachygram};
 pub use proof::Proof;
