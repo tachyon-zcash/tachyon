@@ -7,7 +7,7 @@ A Tachyon bundle requires three layers of authorization: per-action signatures t
 Each tachyaction requires a fresh randomized key pair. The authorization flow starts with per-action entropy $\theta$ and diverges based on whether the action is a spend or output.
 
 ```mermaid
-flowchart LR
+flowchart TB
     theta["theta (ActionEntropy)"]
     cmx["cmx (note commitment)"]
     hash(("derive(theta, cmx)"))
