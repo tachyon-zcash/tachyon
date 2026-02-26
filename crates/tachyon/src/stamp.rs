@@ -63,7 +63,7 @@ impl Stamp {
         anchor: Anchor,
         pak: &ProofAuthorizingKey,
     ) -> Self {
-        let (proof, tachygrams) = Proof::create(&[*action], &[*witness], &anchor, pak);
+        let (proof, tachygrams) = Proof::create(vec![*action], vec![*witness], &anchor, pak);
         Self {
             tachygrams,
             anchor,
@@ -81,14 +81,10 @@ impl Stamp {
     /// the anchor subset relationship via the merge witness.
     #[must_use]
     pub fn prove_merge(self, other: Self) -> Self {
-        let anchor = self.anchor.max(other.anchor);
-        let mut tachygrams = self.tachygrams;
-        tachygrams.extend(other.tachygrams);
-        let proof = Proof::merge(self.proof, other.proof);
         Self {
-            tachygrams,
-            anchor,
-            proof,
+            tachygrams: [self.tachygrams, other.tachygrams].concat(),
+            anchor: self.anchor.max(other.anchor),
+            proof: Proof::merge(self.proof, other.proof),
         }
     }
 

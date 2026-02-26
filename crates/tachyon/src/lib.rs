@@ -54,9 +54,9 @@ pub mod witness;
 
 mod primitives;
 
-pub use action::Action;
-pub use bundle::{Bundle, Stamped, Stripped};
+pub use action::{Action, Plan as ActionPlan};
+pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped};
 pub use note::Note;
-pub use primitives::{Anchor, Epoch, Tachygram};
+pub use primitives::{ActionDigest, Anchor, Epoch, Tachygram};
 pub use proof::Proof;
 pub use stamp::Stamp;

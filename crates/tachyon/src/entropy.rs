@@ -75,8 +75,7 @@ pub struct OutputRandomizer(pub(crate) Fq);
 ///
 /// Spend and output are indistinguishable at the witness level.
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct ActionRandomizer(pub(crate) Fq);
+pub struct ActionRandomizer(Fq);
 
 impl From<ActionRandomizer> for Fq {
     fn from(randomizer: ActionRandomizer) -> Self {

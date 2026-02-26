@@ -26,14 +26,9 @@ use crate::{action, action::Action, bundle, value};
 pub struct ActionVerificationKey(pub(super) reddsa::VerificationKey<SpendAuth>);
 
 impl ActionVerificationKey {
-    /// Verify an action signature.
-    pub fn verify(
-        &self,
-        sighash: action::SigHash,
-        sig: &action::Signature,
-    ) -> Result<(), reddsa::Error> {
-        let msg: [u8; 64] = sighash.into();
-        self.0.verify(&msg, &sig.0)
+    /// Verify an action signature against a transaction sighash.
+    pub fn verify(&self, sighash: &[u8; 32], sig: &action::Signature) -> Result<(), reddsa::Error> {
+        self.0.verify(sighash, &sig.0)
     }
 }
 
@@ -58,6 +53,24 @@ impl TryFrom<[u8; 32]> for ActionVerificationKey {
     }
 }
 
+/// Derive the binding verification key from public bundle data.
+///
+/// $$\mathsf{bvk} = \left(\bigoplus_i \mathsf{cv}_i\right) \ominus
+///   \text{ValueCommit}_0\!\left(\mathsf{v\_{balance}}\right)$$
+///
+/// The result should equal $[\mathsf{bsk}]\,\mathcal{R}$ if the signer
+/// constructed the bundle correctly, similar to Orchard's binding key
+/// derivation (Protocol §4.14)
+#[must_use]
+pub fn derive_bvk(
+    action_cvs: impl Iterator<Item = value::Commitment>,
+    value_balance: i64,
+) -> EpAffine {
+    let cv_sum: value::Commitment = action_cvs.sum();
+    let cb0 = value::Commitment::balance(value_balance);
+    EpAffine::from(cv_sum - cb0)
+}
+
 /// Binding verification key $\mathsf{bvk}$ — derived from value
 /// commitments.
 ///
@@ -77,7 +90,7 @@ impl TryFrom<[u8; 32]> for ActionVerificationKey {
 /// $[\sum_i \mathsf{rcv}_i]\,\mathcal{R} = [\mathsf{bsk}]\,\mathcal{R}$.
 ///
 /// A validator checks balance by verifying:
-/// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{sighash},
+/// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\mathsf{sighash},
 ///   \text{bindingSig}) = 1$
 ///
 /// ## Type representation
@@ -99,26 +112,19 @@ impl BindingVerificationKey {
     /// constructed the bundle correctly.
     #[must_use]
     pub fn derive(actions: &[Action], value_balance: i64) -> Self {
-        let cv_sum: value::Commitment = actions.iter().map(|action| action.cv).sum();
-        let balance_commit = value::Commitment::balance(value_balance);
-        let bvk_point: EpAffine = (cv_sum - balance_commit).into();
+        let bvk_point: EpAffine = derive_bvk(actions.iter().map(|act| act.cv), value_balance);
         let bvk_bytes: [u8; 32] = bvk_point.to_bytes();
 
         #[expect(clippy::expect_used, reason = "specified behavior")]
         Self(
             reddsa::VerificationKey::<Binding>::try_from(bvk_bytes)
-                .expect("derived bvk is a valid verification key"),
+                .expect("cv sum minus balance should be a valid RedPallas verification key"),
         )
     }
 
-    /// Verify a binding signature.
-    pub fn verify(
-        &self,
-        sighash: bundle::SigHash,
-        sig: &bundle::Signature,
-    ) -> Result<(), reddsa::Error> {
-        let msg: [u8; 64] = sighash.into();
-        self.0.verify(&msg, &sig.0)
+    /// Verify a binding signature against a transaction sighash.
+    pub fn verify(&self, sighash: &[u8; 32], sig: &bundle::Signature) -> Result<(), reddsa::Error> {
+        self.0.verify(sighash, &sig.0)
     }
 }
 

@@ -3,7 +3,7 @@
 use reddsa::orchard::SpendAuth;
 
 use super::{note::NullifierKey, public};
-use crate::entropy;
+use crate::entropy::SpendRandomizer;
 
 /// The proof authorizing key (`ak` + `nk`).
 ///
@@ -77,17 +77,18 @@ impl SpendValidatingKey {
     /// Derive the per-action public (verification) key: $\mathsf{rk} =
     /// \mathsf{ak} + [\alpha]\,\mathcal{G}$.
     ///
+    /// Only accepts [`SpendRandomizer`] — output actions derive `rk` via
+    /// [`ActionSigningKey<Output>::derive_action_public`](super::private::ActionSigningKey::derive_action_public)
+    /// instead.
+    ///
     /// Used by the prover (who has
     /// [`ProofAuthorizingKey`](super::ProofAuthorizingKey) containing `ak`)
     /// to compute the `rk` that the Ragu circuit constrains. During
     /// action construction the signer derives `rk` via
-    /// [`ActionSigningKey::derive_action_public`](super::ActionSigningKey::derive_action_public)
+    /// [`ActionSigningKey<Spend>::derive_action_public`](super::private::ActionSigningKey::derive_action_public)
     /// instead.
     #[must_use]
-    pub fn derive_action_public(
-        &self,
-        alpha: &entropy::ActionRandomizer,
-    ) -> public::ActionVerificationKey {
+    pub fn derive_action_public(&self, alpha: &SpendRandomizer) -> public::ActionVerificationKey {
         public::ActionVerificationKey(self.0.randomize(&alpha.0))
     }
 }

@@ -67,8 +67,8 @@ impl Proof {
     ///   F_{\text{KDF}(\psi, nk)}(\text{flavor})$)
     #[must_use]
     pub fn create(
-        _actions: &[Action],
-        _witnesses: &[ActionPrivate],
+        _actions: Vec<Action>,
+        _witnesses: Vec<ActionPrivate>,
         _anchor: &Anchor,
         _pak: &ProofAuthorizingKey,
     ) -> (Self, Vec<Tachygram>) {
@@ -108,8 +108,8 @@ impl Proof {
     /// execution — a mismatched header causes verification failure.
     pub fn verify(
         &self,
-        _actions: &[Action],
-        _tachygrams: &[Tachygram],
+        _actions: Vec<Action>,
+        _tachygrams: Vec<Tachygram>,
         _anchor: Anchor,
     ) -> Result<(), ValidationError> {
         todo!("Ragu verification \u{2014} reconstruct the PCD header from public data");
