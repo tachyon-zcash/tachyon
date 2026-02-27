@@ -1,12 +1,15 @@
 //! Tachyon Action descriptions.
 
-use core::ops::Neg as _;
+use core::{marker::PhantomData, ops::Neg as _};
 
 use rand::{CryptoRng, RngCore};
 use reddsa::orchard::SpendAuth;
 
 use crate::{
-    keys::{ProofAuthorizingKey, private, public},
+    keys::{
+        ProofAuthorizingKey, public,
+        randomizer::{ActionEntropy, ActionRandomizer, Output, Spend, Witness},
+    },
     note::Note,
     value,
     witness::ActionPrivate,
@@ -14,119 +17,122 @@ use crate::{
 
 /// An unsigned Tachyon action — assembled but not yet authorized.
 ///
-/// Contains the public effecting data `(cv, rk)` for a single action.
-/// Produced during the assembly phase of transaction construction.
-/// After computing the transaction-wide [`SigHash`](crate::bundle::SigHash),
-/// each unsigned action is signed to produce a full [`Action`].
+/// Parameterized by kind ([`Spend`] or [`Output`]) to enforce that
+/// spends and outputs have different signing requirements:
 ///
-/// ## Fields
+/// - `UnsignedAction<Spend>` — signed via custody with
+///   [`ActionRandomizer<Spend>::sign`]
+/// - `UnsignedAction<Output>` — signed directly with
+///   [`ActionRandomizer<Output>::sign`]
 ///
-/// - `cv`: Commitment to a net value effect
-/// - `rk`: Public key (randomized counterpart to `rsk`)
+/// Carries the full per-action material: public effecting data
+/// (`cv`, `rk`), the note, per-action entropy (`theta`), and the
+/// value commitment trapdoor (`rcv`).
 ///
-/// ## Note
-///
-/// The tachygram (nullifier or note commitment) is NOT part of the action.
-/// Tachygrams are collected separately in the [`Stamp`](crate::Stamp).
-/// However, `rk` is not a direct input to the Ragu proof — each `rk` is
-/// cryptographically bound to its corresponding tachygram, which *is* a proof
-/// input, so the proof validates `rk` transitively.
-///
-/// This separation allows the stamp to be stripped during aggregation
-/// while the action (with its authorization) remains in the transaction.
+/// The tachygram (nullifier or note commitment) is NOT part of the
+/// action. Tachygrams are collected separately in the
+/// [`Stamp`](crate::Stamp).
 #[derive(Clone, Copy, Debug)]
 #[expect(
     clippy::module_name_repetitions,
     reason = "UnsignedAction is the natural name for unsigned actions"
 )]
-pub struct UnsignedAction {
-    /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
-    /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
+#[expect(
+    clippy::partial_pub_fields,
+    reason = "PhantomData kind marker is an implementation detail"
+)]
+pub struct UnsignedAction<Kind> {
+    /// Value commitment.
     pub cv: value::Commitment,
 
-    /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
+    /// Randomized action verification key.
     pub rk: public::ActionVerificationKey,
+
+    /// The note being spent or created.
+    pub note: Note,
+
+    /// Per-action entropy for alpha derivation.
+    pub theta: ActionEntropy,
+
+    /// Value commitment trapdoor.
+    pub rcv: value::CommitmentTrapdoor,
+
+    /// Kind marker (zero-sized).
+    _kind: PhantomData<Kind>,
 }
 
-impl UnsignedAction {
+impl<Kind> UnsignedAction<Kind> {
+    /// The effecting data pair `(cv, rk)` for sighash computation.
+    #[must_use]
+    pub const fn effecting_data(&self) -> (value::Commitment, public::ActionVerificationKey) {
+        (self.cv, self.rk)
+    }
+
+    /// Convert into a proof witness, erasing the spend/output kind.
+    ///
+    /// The caller supplies the alpha (as [`ActionRandomizer<Witness>`])
+    /// obtained by erasing the kind-specific randomizer.
+    #[must_use]
+    pub const fn into_witness(self, alpha: ActionRandomizer<Witness>) -> ActionPrivate {
+        ActionPrivate {
+            alpha,
+            note: self.note,
+            rcv: self.rcv,
+        }
+    }
+}
+
+impl UnsignedAction<Spend> {
     /// Assemble an unsigned spend action.
     ///
     /// Computes the value commitment and derives `rk` from the spend
     /// validating key `ak` and the per-action randomizer. No signing
     /// key (`ask`) is needed — `rk` is derived from the public key:
     /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
-    ///
-    /// The returned [`ActionPrivate`] contains the proof witness
-    /// (alpha, note, rcv) needed for stamp construction.
-    pub fn spend<R: RngCore + CryptoRng>(
+    pub fn new<R: RngCore + CryptoRng>(
         note: Note,
-        theta: &private::ActionEntropy,
+        theta: ActionEntropy,
         pak: &ProofAuthorizingKey,
         rng: &mut R,
-    ) -> (Self, ActionPrivate) {
-        // 1. Note commitment
+    ) -> Self {
         let cm = note.commitment();
-
-        // 2. Value commitment (signer picks rcv)
         let value: i64 = note.value.into();
         let rcv = value::CommitmentTrapdoor::random(&mut *rng);
         let cv = rcv.commit(value);
-
-        // 3. Alpha derivation + rk computation (from public key ak)
         let alpha = theta.spend_randomizer(&cm);
         let rk = pak.ak().derive_action_public(&alpha);
 
-        (
-            Self { cv, rk },
-            ActionPrivate {
-                alpha: alpha.into(),
-                note,
-                rcv,
-            },
-        )
+        Self {
+            cv,
+            rk,
+            note,
+            theta,
+            rcv,
+            _kind: PhantomData,
+        }
     }
+}
 
+impl UnsignedAction<Output> {
     /// Assemble an unsigned output action.
     ///
     /// Computes the value commitment (negated for outputs) and derives
     /// $\mathsf{rk} = [\alpha]\,\mathcal{G}$ (no spending authority).
-    ///
-    /// The returned [`ActionPrivate`] contains the proof witness
-    /// (alpha, note, rcv) needed for stamp construction.
-    pub fn output<R: RngCore + CryptoRng>(
-        note: Note,
-        theta: &private::ActionEntropy,
-        rng: &mut R,
-    ) -> (Self, ActionPrivate) {
-        // 1. Note commitment
+    pub fn new<R: RngCore + CryptoRng>(note: Note, theta: ActionEntropy, rng: &mut R) -> Self {
         let cm = note.commitment();
-
-        // 2. Value commitment (signer picks rcv; negative for outputs)
         let value: i64 = note.value.into();
         let rcv = value::CommitmentTrapdoor::random(&mut *rng);
         let cv = rcv.commit(value.neg());
-
-        // 3. Alpha derivation + rk = [alpha]G
         let alpha = theta.output_randomizer(&cm);
         let rk = alpha.derive_rk();
 
-        (
-            Self { cv, rk },
-            ActionPrivate {
-                alpha: alpha.into(),
-                note,
-                rcv,
-            },
-        )
-    }
-
-    /// Attach a signature to produce a signed [`Action`].
-    #[must_use]
-    pub const fn sign(self, sig: Signature) -> Action {
-        Action {
-            cv: self.cv,
-            rk: self.rk,
-            sig,
+        Self {
+            cv,
+            rk,
+            note,
+            theta,
+            rcv,
+            _kind: PhantomData,
         }
     }
 }
@@ -137,8 +143,8 @@ impl UnsignedAction {
 ///
 /// - `cv`: Commitment to a net value effect
 /// - `rk`: Public key (randomized counterpart to `rsk`)
-/// - `sig`: Signature by private key (single-use `rsk`) over the
-///   transaction-wide [`SigHash`](crate::bundle::SigHash)
+/// - `sig`: Signature by private key (single-use `rsk`) over the bundle
+///   [`SigHash`](crate::bundle::SigHash)
 #[derive(Clone, Copy, Debug)]
 pub struct Action {
     /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
@@ -148,7 +154,7 @@ pub struct Action {
     /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
     pub rk: public::ActionVerificationKey,
 
-    /// RedPallas spend auth signature over the transaction-wide
+    /// RedPallas spend auth signature over the bundle
     /// [`SigHash`](crate::bundle::SigHash).
     pub sig: Signature,
 }
@@ -179,11 +185,12 @@ mod tests {
     use super::*;
     use crate::{
         bundle,
-        custody::{self, Custody as _, SpendRequest},
+        custody::{self, Custody as _},
+        keys::private,
         note::{self, CommitmentTrapdoor, NullifierTrapdoor},
     };
 
-    /// A spend action's signature must verify against the transaction-wide
+    /// A spend action's signature must verify against the bundle
     /// sighash using its own rk.
     #[test]
     fn spend_sig_round_trip() {
@@ -196,32 +203,23 @@ mod tests {
             psi: NullifierTrapdoor::from(Fp::ZERO),
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
-        let theta = private::ActionEntropy::random(&mut rng);
+        let theta = ActionEntropy::random(&mut rng);
 
         // Phase 1: assemble unsigned action
-        let (unsigned, _witness) = UnsignedAction::spend(note, &theta, &pak, &mut rng);
+        let unsigned = UnsignedAction::<Spend>::new(note, theta, &pak, &mut rng);
 
         // Phase 2: compute sighash, sign via custody
-        let sighash = bundle::sighash(&[unsigned], 1000);
+        let pairs = [unsigned.effecting_data()];
+        let sighash = bundle::sighash(&pairs, 1000);
         let local = custody::Local::new(sk.derive_auth_private());
-        let cm = note.commitment();
-        let sigs = local
-            .authorize(
-                &[unsigned],
-                1000,
-                &[SpendRequest {
-                    action_index: 0,
-                    theta,
-                    cm,
-                }],
-                &mut rng,
-            )
+        let actions = local
+            .authorize(&pairs, 1000, &[unsigned], &mut rng)
             .unwrap();
 
-        unsigned.rk.verify(sighash, &sigs[0]).unwrap();
+        actions[0].rk.verify(sighash, &actions[0].sig).unwrap();
     }
 
-    /// An output action's signature must verify against the transaction-wide
+    /// An output action's signature must verify against the bundle
     /// sighash using its own rk.
     #[test]
     fn output_sig_round_trip() {
@@ -233,17 +231,18 @@ mod tests {
             psi: NullifierTrapdoor::from(Fp::ZERO),
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
-        let theta = private::ActionEntropy::random(&mut rng);
+        let theta = ActionEntropy::random(&mut rng);
 
         // Phase 1: assemble unsigned action
-        let (unsigned, _witness) = UnsignedAction::output(note, &theta, &mut rng);
+        let unsigned = UnsignedAction::<Output>::new(note, theta, &mut rng);
 
         // Phase 2: compute sighash, sign with output randomizer
-        let sighash = bundle::sighash(&[unsigned], -1000);
+        let pairs = [unsigned.effecting_data()];
+        let sighash = bundle::sighash(&pairs, -1000);
         let cm = note.commitment();
         let alpha = theta.output_randomizer(&cm);
-        let sig = alpha.sign(sighash, &mut rng);
+        let action = alpha.sign(unsigned.cv, unsigned.rk, sighash, &mut rng);
 
-        unsigned.rk.verify(sighash, &sig).unwrap();
+        action.rk.verify(sighash, &action.sig).unwrap();
     }
 }

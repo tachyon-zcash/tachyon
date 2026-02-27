@@ -5,7 +5,7 @@
 //!   tachygram and flavor internally.
 
 use crate::{
-    keys::private::{ActionRandomizer, Witness},
+    keys::randomizer::{ActionRandomizer, Witness},
     note::Note,
     value,
 };
@@ -20,6 +20,9 @@ use crate::{
 /// all actions and passed separately via
 /// [`ProofAuthorizingKey`](crate::keys::ProofAuthorizingKey)
 /// to [`Proof::create`](crate::proof::Proof::create).
+///
+/// Produced from
+/// [`UnsignedAction::into_witness`](crate::action::UnsignedAction::into_witness).
 #[derive(Clone, Copy, Debug)]
 pub struct ActionPrivate {
     /// Spend authorization randomizer `alpha`.

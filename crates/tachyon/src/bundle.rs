@@ -9,11 +9,14 @@ use rand::{CryptoRng, RngCore};
 use reddsa::orchard::Binding;
 
 use crate::{
-    action::{Action, UnsignedAction},
+    action::Action,
     constants::SIGHASH_PERSONALIZATION,
-    keys::{ProofAuthorizingKey, private::BindingSigningKey, public::BindingVerificationKey},
+    keys::{
+        ProofAuthorizingKey, private::BindingSigningKey, public, public::BindingVerificationKey,
+    },
     primitives::Anchor,
     stamp::{Stamp, Stampless},
+    value,
     witness::ActionPrivate,
 };
 
@@ -86,10 +89,10 @@ pub fn verify_stamp(stamp: &Stamp, actions: &[Action]) -> Result<(), BuildError>
         .map_err(|_err| BuildError::ProofInvalid)
 }
 
-/// Compute the unified Tachyon transaction sighash.
+/// Compute the Tachyon bundle sighash.
 ///
 /// $$\text{sighash} = \text{BLAKE2b-512}(
-///   \text{"Tachyon-TxDigest"},\;
+///   \text{"Tachyon-BndlHash"},\;
 ///   \mathsf{cv}_1 \| \mathsf{rk}_1 \| \cdots \|
 ///   \mathsf{cv}_n \| \mathsf{rk}_n \|
 ///   \mathsf{v\_balance})$$
@@ -97,17 +100,24 @@ pub fn verify_stamp(stamp: &Stamp, actions: &[Action]) -> Result<(), BuildError>
 /// All signatures (action and binding) sign this same digest.
 /// The stamp is excluded because it is stripped during aggregation.
 /// Signatures are excluded because the sighash is what gets signed.
+///
+/// Accepts `(cv, rk)` pairs from any source — unsigned actions (typed
+/// by [`Spend`](crate::keys::randomizer::Spend) or
+/// [`Output`](crate::keys::randomizer::Output)) or signed [`Action`]s.
 #[must_use]
-pub fn sighash(unsigned_actions: &[UnsignedAction], value_balance: i64) -> SigHash {
+pub fn sighash(
+    effecting_data: &[(value::Commitment, public::ActionVerificationKey)],
+    value_balance: i64,
+) -> SigHash {
     let mut state = blake2b_simd::Params::new()
         .hash_length(64)
         .personal(SIGHASH_PERSONALIZATION)
         .to_state();
 
-    for unsigned in unsigned_actions {
-        let cv_bytes: [u8; 32] = unsigned.cv.into();
+    for &(cv, rk) in effecting_data {
+        let cv_bytes: [u8; 32] = cv.into();
         state.update(&cv_bytes);
-        let rk_bytes: [u8; 32] = unsigned.rk.into();
+        let rk_bytes: [u8; 32] = rk.into();
         state.update(&rk_bytes);
     }
 
@@ -123,16 +133,9 @@ pub fn sighash(unsigned_actions: &[UnsignedAction], value_balance: i64) -> SigHa
 /// are already available.
 #[must_use]
 pub fn sighash_from_actions(actions: &[Action], value_balance: i64) -> SigHash {
-    let unsigned: Vec<UnsignedAction> = actions
-        .iter()
-        .map(|act| {
-            UnsignedAction {
-                cv: act.cv,
-                rk: act.rk,
-            }
-        })
-        .collect();
-    sighash(&unsigned, value_balance)
+    let pairs: Vec<(value::Commitment, public::ActionVerificationKey)> =
+        actions.iter().map(|act| (act.cv, act.rk)).collect();
+    sighash(&pairs, value_balance)
 }
 
 impl<V> Stamped<V> {
@@ -171,7 +174,7 @@ impl Stamped<i64> {
     /// All signatures (action and binding) sign the same transaction-wide
     /// digest:
     ///
-    /// $$\text{sighash} = \text{BLAKE2b-512}(\text{"Tachyon-TxDigest"},\;
+    /// $$\text{sighash} = \text{BLAKE2b-512}(\text{"Tachyon-BndlHash"},\;
     ///   \mathsf{cv}_1 \| \mathsf{rk}_1 \| \cdots \|
     ///   \mathsf{cv}_n \| \mathsf{rk}_n \|
     ///   \mathsf{v\_balance})$$
@@ -303,7 +306,7 @@ impl<S> Bundle<S, i64> {
 /// $v^* \neq 0$ — so value balance is enforced.
 ///
 /// In Tachyon, the signed message is the unified transaction sighash:
-/// `BLAKE2b-512("Tachyon-TxDigest", cv_1 || rk_1 || ... || cv_n || rk_n ||
+/// `BLAKE2b-512("Tachyon-BndlHash", cv_1 || rk_1 || ... || cv_n || rk_n ||
 /// value_balance)`
 ///
 /// The validator checks:
@@ -333,12 +336,16 @@ mod tests {
 
     use super::*;
     use crate::{
-        custody::{self, Custody as _, SpendRequest},
-        keys::private,
+        action::UnsignedAction,
+        custody::{self, Custody as _},
+        keys::{
+            private,
+            randomizer::{ActionEntropy, Output, Spend},
+        },
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
-        value,
     };
 
+    /// Build a test bundle using the custody trait for spend signing.
     fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Stamped<i64> {
         let sk = private::SpendingKey::from([0x42u8; 32]);
         let pak = sk.derive_proof_private();
@@ -357,47 +364,36 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ONE),
         };
 
-        let theta_spend = private::ActionEntropy::random(&mut *rng);
-        let theta_output = private::ActionEntropy::random(&mut *rng);
+        let theta_spend = ActionEntropy::random(&mut *rng);
+        let theta_output = ActionEntropy::random(&mut *rng);
 
         // Phase 1: assemble unsigned actions
-        let (spend_unsigned, spend_witness) =
-            UnsignedAction::spend(spend_note, &theta_spend, &pak, &mut *rng);
-        let (output_unsigned, output_witness) =
-            UnsignedAction::output(output_note, &theta_output, &mut *rng);
+        let spend = UnsignedAction::<Spend>::new(spend_note, theta_spend, &pak, &mut *rng);
+        let output = UnsignedAction::<Output>::new(output_note, theta_output, &mut *rng);
 
-        // Phase 2: compute sighash, sign all actions
+        // Collect effecting data for sighash
         let value_balance: i64 = 300;
-        let sh = sighash(&[spend_unsigned, output_unsigned], value_balance);
+        let pairs = [spend.effecting_data(), output.effecting_data()];
 
-        // Spend: sign via custody
+        // Phase 2: sign via custody (spends) and randomizer (outputs)
         let local = custody::Local::new(sk.derive_auth_private());
-        let spend_cm = spend_note.commitment();
-        let spend_sigs = local
-            .authorize(
-                &[spend_unsigned, output_unsigned],
-                value_balance,
-                &[SpendRequest {
-                    action_index: 0,
-                    theta: theta_spend,
-                    cm: spend_cm,
-                }],
-                rng,
-            )
+        let spend_actions = local
+            .authorize(&pairs, value_balance, &[spend], rng)
             .unwrap();
 
-        // Output: sign with output randomizer
         let output_cm = output_note.commitment();
         let output_alpha = theta_output.output_randomizer(&output_cm);
-        let output_sig = output_alpha.sign(sh, &mut *rng);
+        let sh = sighash(&pairs, value_balance);
+        let output_action = output_alpha.sign(output.cv, output.rk, sh, &mut *rng);
 
-        // Assemble signed actions
-        let spend_action = spend_unsigned.sign(spend_sigs[0]);
-        let output_action = output_unsigned.sign(output_sig);
+        // Witnesses for stamp construction
+        let spend_alpha = theta_spend.spend_randomizer(&spend_note.commitment());
+        let spend_witness = spend.into_witness(spend_alpha.into());
+        let output_witness = output.into_witness(output_alpha.into());
 
         Stamped::build(
             vec![
-                (spend_action, spend_witness),
+                (spend_actions[0], spend_witness),
                 (output_action, output_witness),
             ],
             value_balance,
@@ -439,7 +435,7 @@ mod tests {
     /// Composable flow: construct actions and bundle step-by-step,
     /// exercising each delegation boundary independently.
     ///
-    /// This uses no convenience wrappers (`UnsignedAction::spend/output`,
+    /// This uses no convenience wrappers (`UnsignedAction::new`,
     /// `Stamped::build`). Every step is called individually, matching
     /// the custody-delegated flow from the protocol spec.
     #[test]
@@ -474,54 +470,45 @@ mod tests {
         let spend_value: i64 = spend_note.value.into();
         let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
         let spend_cv = spend_rcv.commit(spend_value);
-        let spend_theta = private::ActionEntropy::random(&mut rng);
+        let spend_theta = ActionEntropy::random(&mut rng);
         let spend_alpha = spend_theta.spend_randomizer(&spend_cm);
         let spend_rk = pak.ak().derive_action_public(&spend_alpha);
-        let spend_unsigned = UnsignedAction {
-            cv: spend_cv,
-            rk: spend_rk,
-        };
-        let spend_witness = ActionPrivate {
-            alpha: spend_alpha.into(),
-            note: spend_note,
-            rcv: spend_rcv,
-        };
 
         // Output action assembly (user device, no custody)
         let output_cm = output_note.commitment();
         let output_value: i64 = output_note.value.into();
         let output_rcv = value::CommitmentTrapdoor::random(&mut rng);
         let output_cv = output_rcv.commit(-output_value);
-        let output_theta = private::ActionEntropy::random(&mut rng);
+        let output_theta = ActionEntropy::random(&mut rng);
         let output_alpha = output_theta.output_randomizer(&output_cm);
         let output_rk = output_alpha.derive_rk();
-        let output_unsigned = UnsignedAction {
-            cv: output_cv,
-            rk: output_rk,
+
+        let value_balance: i64 = 300;
+
+        // === Phase 2: Compute SigHash and sign all actions ===
+
+        let pairs = [(spend_cv, spend_rk), (output_cv, output_rk)];
+        let sh = sighash(&pairs, value_balance);
+
+        // Spend: sign with rsk = ask + alpha
+        let spend_action = spend_alpha.sign(&ask, spend_cv, spend_rk, sh, &mut rng);
+
+        // Output: sign with rsk = alpha
+        let output_action = output_alpha.sign(output_cv, output_rk, sh, &mut rng);
+
+        let actions = vec![spend_action, output_action];
+
+        // Witnesses for stamp construction
+        let spend_witness = ActionPrivate {
+            alpha: spend_alpha.into(),
+            note: spend_note,
+            rcv: spend_rcv,
         };
         let output_witness = ActionPrivate {
             alpha: output_alpha.into(),
             note: output_note,
             rcv: output_rcv,
         };
-
-        let value_balance: i64 = 300;
-
-        // === Phase 2: Compute SigHash and sign all actions ===
-
-        let sh = sighash(&[spend_unsigned, output_unsigned], value_balance);
-
-        // Spend: custody signs (custody derives alpha independently, signs sighash)
-        let spend_sig = spend_alpha.sign(&ask, sh, &mut rng);
-
-        // Output: user device signs (rsk = alpha)
-        let output_sig = output_alpha.sign(sh, &mut rng);
-
-        // Assemble signed actions
-        let spend_action = spend_unsigned.sign(spend_sig);
-        let output_action = output_unsigned.sign(output_sig);
-
-        let actions = vec![spend_action, output_action];
 
         // === Bundle assembly (composable steps) ===
 

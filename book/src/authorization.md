@@ -25,8 +25,8 @@ flowchart TB
     spend_alpha -->|"rsk = ask.derive(alpha)"| rsk
     output_alpha -->|"rsk = alpha"| rsk
 
-    rsk -->|"phase 1: derive rk"| unsigned["UnsignedAction(cv, rk)"]
-    unsigned -->|"phase 2: sign(sighash)"| action["Action(cv, rk, sig)"]
+    rsk -->|"phase 1: derive rk"| unsigned["UnsignedAction&lt;K&gt;(cv, rk, note, theta, rcv)"]
+    unsigned -->|"phase 2: alpha.sign(sighash)"| action["Action(cv, rk, sig)"]
 ```
 
 ### ActionEntropy ($\theta$)
@@ -65,11 +65,11 @@ No custody device is involved.
 Both produce an $\mathsf{rk}$ that can verify a signature, but only the spend's $\mathsf{rk}$ requires knowledge of $\mathsf{ask}$.
 This unification lets consensus treat all tachyactions identically.
 
-### Transaction sighash
+### Bundle sighash
 
-All signatures (action and binding) sign the same transaction-wide digest:
+All signatures (action and binding) sign the same bundle-wide digest:
 
-$$\text{sighash} = \text{BLAKE2b-512}(\text{"Tachyon-TxDigest"},\; \mathsf{cv}_1 \| \mathsf{rk}_1 \| \cdots \| \mathsf{cv}_n \| \mathsf{rk}_n \| \mathsf{v\_balance})$$
+$$\text{sighash} = \text{BLAKE2b-512}(\text{"Tachyon-BndlHash"},\; \mathsf{cv}_1 \| \mathsf{rk}_1 \| \cdots \| \mathsf{cv}_n \| \mathsf{rk}_n \| \mathsf{v\_balance})$$
 
 This binds every signature to the complete set of effecting data.
 The stamp is excluded because it is stripped during [aggregation](./aggregation.md).
@@ -176,7 +176,7 @@ loop per action
 end
 
 note over User: === Phase 2: Authorization ===
-note over User: sighash = H("Tachyon-TxDigest", cv_1 || rk_1 || ... || cv_n || rk_n || v_balance)
+note over User: sighash = H("Tachyon-BndlHash", cv_1 || rk_1 || ... || cv_n || rk_n || v_balance)
 
 User ->> Custody: unsigned_actions[], value_balance, spend_requests[]
 note over Custody: recompute sighash

@@ -1,6 +1,6 @@
-//! Private (signing) keys and randomizers.
+//! Private (signing) keys.
 
-use core::{iter, marker::PhantomData};
+use core::iter;
 
 use ff::{Field as _, FromUniformBytes as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
@@ -10,12 +10,9 @@ use reddsa::orchard::{Binding, SpendAuth};
 use super::{
     note::{NullifierKey, PaymentKey},
     proof, public,
+    randomizer::{ActionRandomizer, Spend},
 };
-use crate::{
-    action, bundle,
-    constants::{OUTPUT_ALPHA_PERSONALIZATION, PrfExpand, SPEND_ALPHA_PERSONALIZATION},
-    note, value,
-};
+use crate::{action, bundle, constants::PrfExpand, value};
 
 /// A Tachyon spending key — raw 32-byte entropy.
 ///
@@ -175,14 +172,15 @@ impl SpendAuthorizingKey {
 /// $\mathsf{rsk} = \alpha$ (no spend authority).
 ///
 /// Public for flexibility, but intended for internal use. External callers
-/// obtain signatures via [`ActionRandomizer<Spend>::sign`] or
-/// [`ActionRandomizer<Output>::sign`].
+/// obtain signed [`Action`](action::Action)s via
+/// [`ActionRandomizer<Spend>::sign`] or
+/// [`ActionRandomizer<Output>::sign`](super::randomizer::ActionRandomizer<Output>::sign).
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct ActionSigningKey(pub(super) reddsa::SigningKey<SpendAuth>);
 
 impl ActionSigningKey {
-    /// Sign the transaction-wide sighash with this randomized key.
+    /// Sign the bundle sighash with this randomized key.
     pub fn sign(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
@@ -200,6 +198,18 @@ impl ActionSigningKey {
         let vk = reddsa::VerificationKey::from(&self.0);
         public::ActionVerificationKey(vk)
     }
+
+    /// Construct from a raw output alpha scalar ($\mathsf{rsk} = \alpha$).
+    ///
+    /// Used by [`ActionRandomizer<Output>`](super::randomizer::ActionRandomizer)
+    /// methods where $\mathsf{rsk}$ is the alpha itself (no spend authority).
+    #[expect(clippy::expect_used, reason = "specified behavior")]
+    pub(super) fn from_output_alpha(alpha: Fq) -> Self {
+        Self(
+            reddsa::SigningKey::<SpendAuth>::try_from(alpha.to_repr())
+                .expect("BLAKE2b-derived scalar yields valid signing key"),
+        )
+    }
 }
 
 /// Binding signing key $\mathsf{bsk}$ — the scalar sum of all value
@@ -209,50 +219,26 @@ impl ActionSigningKey {
 ///
 /// (sum in $\mathbb{F}_q$, the Pallas scalar field)
 ///
-/// The signer knows each $\mathsf{rcv}_i$ because they constructed
-/// the actions. $\mathsf{bsk}$ is the discrete log of $\mathsf{bvk}$
-/// with respect to $\mathcal{R}$ (the randomness generator from
-/// [`VALUE_COMMITMENT_DOMAIN`]), because:
-///
-/// $$\mathsf{bvk} = \bigoplus_i \mathsf{cv}_i \ominus
-///   \text{ValueCommit}_0(\mathsf{v\_{balance}})$$
-/// $$= \sum_i \bigl([v_i]\,\mathcal{V} + [\mathsf{rcv}_i]\,\mathcal{R}\bigr) -
-/// [\mathsf{v\_{balance}}]\,\mathcal{V}$$
-///
-/// $$= \bigl[\sum_i v_i - \mathsf{v\_{balance}}\bigr]\,\mathcal{V} +
-/// \bigl[\sum_i \mathsf{rcv}_i\bigr]\,\mathcal{R}$$
-///
-/// $$= [0]\,\mathcal{V} + [\mathsf{bsk}]\,\mathcal{R} \qquad(\text{when }
-/// \sum_i v_i = \mathsf{v\_{balance}})$$
-///
 /// The binding signature proves knowledge of $\mathsf{bsk}$, which is
 /// an opening of the Pedersen commitment $\mathsf{bvk}$ to value 0.
 /// By the **binding property** of the commitment scheme, it is
 /// infeasible to find another opening to a different value — so value
 /// balance is enforced.
 ///
-/// ## Unified sighash
+/// ## Bundle sighash
 ///
 /// Both action signatures and the binding signature sign the same
-/// transaction-wide digest:
+/// bundle-level digest:
 ///
-/// `BLAKE2b-512("Tachyon-TxDigest", cv_1 || rk_1 || ... || cv_n || rk_n ||
+/// `BLAKE2b-512("Tachyon-BndlHash", cv_1 || rk_1 || ... || cv_n || rk_n ||
 /// value_balance)`
 ///
 /// The stamp is excluded because it is stripped during aggregation.
-///
-/// ## Type representation
-///
-/// Wraps `reddsa::SigningKey<Binding>`, which internally stores an
-/// $\mathbb{F}_q$ scalar. The `Binding` parameterization uses
-/// $\mathcal{R}^{\mathsf{Orchard}}$ as its generator (not the standard
-/// basepoint $\mathcal{G}$), so
-/// $[\mathsf{bsk}]\,\mathcal{R}$ yields $\mathsf{bvk}$.
 #[derive(Clone, Copy, Debug)]
 pub struct BindingSigningKey(reddsa::SigningKey<Binding>);
 
 impl BindingSigningKey {
-    /// Sign the unified transaction sighash.
+    /// Sign the bundle sighash.
     pub fn sign(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
@@ -264,16 +250,8 @@ impl BindingSigningKey {
 
     /// Derive the binding verification (public) key:
     /// $\mathsf{bvk} = [\mathsf{bsk}]\,\mathcal{R}$.
-    ///
-    /// Used for the §4.14 implementation fault check: the signer
-    /// SHOULD verify that
-    /// $\text{DerivePublic}(\mathsf{bsk}) = \mathsf{bvk}$ (i.e. the
-    /// key derived from trapdoor sums matches the key derived from
-    /// value commitments).
     #[must_use]
     pub fn derive_binding_public(&self) -> public::BindingVerificationKey {
-        // reddsa::VerificationKey::from(&signing_key) computes [sk] P_G
-        // where P_G = R^Orchard for the Binding parameterization.
         public::BindingVerificationKey(reddsa::VerificationKey::from(&self.0))
     }
 }
@@ -295,185 +273,4 @@ impl TryFrom<Fq> for BindingSigningKey {
         let inner = reddsa::SigningKey::<Binding>::try_from(el.to_repr())?;
         Ok(Self(inner))
     }
-}
-
-/// Per-action entropy $\theta$ chosen by the signer (e.g. hardware wallet).
-///
-/// 32 bytes of randomness combined with a note commitment to
-/// deterministically derive $\alpha$ via
-/// [`spend_randomizer`](Self::spend_randomizer) or
-/// [`output_randomizer`](Self::output_randomizer).
-/// The signer picks $\theta$ once; any device with $\theta$ and the
-/// note can independently reconstruct $\alpha$.
-///
-/// This separation enables **hardware wallet signing without proof
-/// construction**: the hardware wallet holds $\mathsf{ask}$ and $\theta$,
-/// signs with $\mathsf{rsk} = \mathsf{ask} + \alpha$, and a separate
-/// (possibly untrusted) device constructs the proof later using $\theta$
-/// and $\mathsf{cm}$ to recover $\alpha$
-/// ("Tachyaction at a Distance", Bowe 2025).
-#[derive(Clone, Copy, Debug)]
-pub struct ActionEntropy([u8; 32]);
-
-impl ActionEntropy {
-    /// Sample fresh per-action entropy.
-    pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
-        let mut bytes = [0u8; 32];
-        rng.fill_bytes(&mut bytes);
-        Self(bytes)
-    }
-
-    /// Derive $\alpha$ for a spend action.
-    ///
-    /// The resulting randomizer signs the transaction-wide sighash when
-    /// combined with a [`SpendAuthorizingKey`] via
-    /// [`ActionRandomizer<Spend>::sign`].
-    #[must_use]
-    pub fn spend_randomizer(&self, cm: &note::Commitment) -> ActionRandomizer<Spend> {
-        ActionRandomizer::new(derive_alpha(SPEND_ALPHA_PERSONALIZATION, self, cm))
-    }
-
-    /// Derive $\alpha$ for an output action.
-    ///
-    /// The resulting randomizer can derive `rk` via
-    /// [`ActionRandomizer<Output>::derive_rk`] and sign the
-    /// transaction-wide sighash via [`ActionRandomizer<Output>::sign`]:
-    /// $\mathsf{rsk} = \alpha$ (no spend authority).
-    #[must_use]
-    pub fn output_randomizer(&self, cm: &note::Commitment) -> ActionRandomizer<Output> {
-        ActionRandomizer::new(derive_alpha(OUTPUT_ALPHA_PERSONALIZATION, self, cm))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ActionRandomizer<K>: parameterized per-action authorization randomizer
-// ---------------------------------------------------------------------------
-
-/// Marker: spend-side randomizer ($\mathsf{rsk} = \mathsf{ask} + \alpha$).
-#[derive(Clone, Copy, Debug)]
-pub struct Spend;
-
-/// Marker: output-side randomizer ($\mathsf{rsk} = \alpha$).
-#[derive(Clone, Copy, Debug)]
-pub struct Output;
-
-/// Marker: erased kind for proof witnesses.
-///
-/// An `ActionRandomizer<Witness>` can derive `rk` via
-/// [`SpendValidatingKey::derive_action_public`](super::proof::SpendValidatingKey::derive_action_public)
-/// but **cannot sign** — the signing path requires knowing whether the
-/// action is a spend or output.
-#[derive(Clone, Copy, Debug)]
-pub struct Witness;
-
-/// Per-action authorization randomizer $\alpha$, parameterized by kind.
-///
-/// - [`ActionRandomizer<Spend>`] — derived from spend entropy, signs with
-///   $\mathsf{rsk} = \mathsf{ask} + \alpha$ via
-///   [`sign`](ActionRandomizer<Spend>::sign)
-/// - [`ActionRandomizer<Output>`] — derived from output entropy, derives
-///   $\mathsf{rk} = [\alpha]\mathcal{G}$ and signs with $\mathsf{rsk} = \alpha$
-/// - [`ActionRandomizer<Witness>`] — erased kind for proof construction; can
-///   derive `rk` but cannot sign
-///
-/// Use [`From`] to erase into the witness kind.
-#[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct ActionRandomizer<Kind>(pub(super) Fq, PhantomData<Kind>);
-
-impl<Kind> ActionRandomizer<Kind> {
-    /// Construct from a raw scalar (private to the keys module).
-    const fn new(scalar: Fq) -> Self {
-        Self(scalar, PhantomData)
-    }
-}
-
-/// Erase a spend randomizer to the witness kind.
-impl From<ActionRandomizer<Spend>> for ActionRandomizer<Witness> {
-    fn from(alpha: ActionRandomizer<Spend>) -> Self {
-        Self::new(alpha.0)
-    }
-}
-
-/// Erase an output randomizer to the witness kind.
-impl From<ActionRandomizer<Output>> for ActionRandomizer<Witness> {
-    fn from(alpha: ActionRandomizer<Output>) -> Self {
-        Self::new(alpha.0)
-    }
-}
-
-impl ActionRandomizer<Spend> {
-    /// Sign the transaction-wide sighash with $\mathsf{rsk} =
-    /// \mathsf{ask} + \alpha$.
-    ///
-    /// This is the same signing primitive used by
-    /// [`Custody`](crate::custody::Custody) implementations. The sighash
-    /// must be computed from all unsigned actions and `value_balance`
-    /// before calling this method.
-    pub fn sign<R: RngCore + CryptoRng>(
-        self,
-        ask: &SpendAuthorizingKey,
-        sighash: bundle::SigHash,
-        rng: &mut R,
-    ) -> action::Signature {
-        let rsk = ask.derive_action_private(&self);
-        rsk.sign(rng, sighash)
-    }
-}
-
-impl ActionRandomizer<Output> {
-    /// Derive $\mathsf{rk} = [\alpha]\,\mathcal{G}$ for the assembly
-    /// phase.
-    ///
-    /// Used during phase 1 of transaction construction before the
-    /// sighash is known. The resulting `rk` is placed into the
-    /// [`UnsignedAction`](crate::action::UnsignedAction).
-    #[must_use]
-    pub fn derive_rk(&self) -> public::ActionVerificationKey {
-        #[expect(clippy::expect_used, reason = "specified behavior")]
-        let rsk = ActionSigningKey(
-            reddsa::SigningKey::<SpendAuth>::try_from(self.0.to_repr())
-                .expect("BLAKE2b-derived scalar yields valid signing key"),
-        );
-        rsk.derive_action_public()
-    }
-
-    /// Sign the transaction-wide sighash with $\mathsf{rsk} = \alpha$.
-    ///
-    /// Output-side counterpart of [`ActionRandomizer<Spend>::sign`]:
-    /// both sign the same transaction-wide sighash, but the output side
-    /// requires no `ask` because $\mathsf{rsk} = \alpha$.
-    pub fn sign<R: RngCore + CryptoRng>(
-        self,
-        sighash: bundle::SigHash,
-        rng: &mut R,
-    ) -> action::Signature {
-        #[expect(clippy::expect_used, reason = "specified behavior")]
-        let rsk = ActionSigningKey(
-            reddsa::SigningKey::<SpendAuth>::try_from(self.0.to_repr())
-                .expect("BLAKE2b-derived scalar yields valid signing key"),
-        );
-        rsk.sign(rng, sighash)
-    }
-}
-
-/// Derive the raw $\alpha$ scalar from $\theta$ and $\mathsf{cm}$.
-/// $$\alpha_{\text{spend}} = \text{ToScalar}(\text{BLAKE2b-512}(
-///   \text{"Tachyon-Spend"},\; \theta \| \mathsf{cm}))$$
-/// $$\alpha_{\text{output}} = \text{ToScalar}(\text{BLAKE2b-512}(
-///   \text{"Tachyon-Output"},\; \theta \| \mathsf{cm}))$$
-fn derive_alpha(personalization: &[u8], theta: &ActionEntropy, cm: &note::Commitment) -> Fq {
-    assert!(
-        personalization == SPEND_ALPHA_PERSONALIZATION
-            || personalization == OUTPUT_ALPHA_PERSONALIZATION,
-        "invalid personalization: {personalization:?}",
-    );
-    let hash = blake2b_simd::Params::new()
-        .hash_length(64)
-        .personal(personalization)
-        .to_state()
-        .update(&theta.0)
-        .update(&Fp::from(*cm).to_repr())
-        .finalize();
-    Fq::from_uniform_bytes(hash.as_array())
 }

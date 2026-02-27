@@ -15,11 +15,11 @@
 //!     rk[ActionVerificationKey rk]
 //!     sig["sig (action::Signature)"]
 //!     pak[ProofAuthorizingKey]
-//!     sighash["SigHash (transaction-wide)"]
+//!     sighash["SigHash (bundle-wide)"]
 //!     sk --> ask & nk & pk
 //!     ask --> ak
-//!     theta["ActionEntropy theta"] -- spend_randomizer --> spend_alpha["SpendRandomizer"]
-//!     theta -- output_randomizer --> output_alpha["OutputRandomizer"]
+//!     theta["ActionEntropy theta"] -- spend_randomizer --> spend_alpha["ActionRandomizer&lt;Spend&gt;"]
+//!     theta -- output_randomizer --> output_alpha["ActionRandomizer&lt;Output&gt;"]
 //!     ak -- "+alpha" --> rk
 //!     output_alpha -- "derive_rk()" --> rk
 //!     rk --> sighash
@@ -67,6 +67,7 @@
 
 pub mod private;
 pub mod public;
+pub mod randomizer;
 
 mod note;
 mod proof;
@@ -151,7 +152,7 @@ mod tests {
             psi: NullifierTrapdoor::from(Fp::ZERO),
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
-        let theta = private::ActionEntropy::random(&mut rng);
+        let theta = super::randomizer::ActionEntropy::random(&mut rng);
         let alpha = theta.spend_randomizer(&note.commitment());
         let rsk = ask.derive_action_private(&alpha);
 
