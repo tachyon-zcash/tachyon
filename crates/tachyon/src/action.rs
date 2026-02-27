@@ -20,9 +20,9 @@ use crate::{
 /// Parameterized by kind ([`Spend`] or [`Output`]) to enforce that
 /// spends and outputs have different signing requirements:
 ///
-/// - `ActionPlan<Spend>` — signed via custody with
+/// - `Plan<Spend>` — signed via custody with
 ///   [`ActionRandomizer<Spend>::sign`]
-/// - `ActionPlan<Output>` — signed directly with
+/// - `Plan<Output>` — signed directly with
 ///   [`ActionRandomizer<Output>::sign`]
 ///
 /// Carries the full per-action material: public effecting data
@@ -34,14 +34,10 @@ use crate::{
 /// [`Stamp`](crate::Stamp).
 #[derive(Clone, Copy, Debug)]
 #[expect(
-    clippy::module_name_repetitions,
-    reason = "ActionPlan is the natural name for action plans"
-)]
-#[expect(
     clippy::partial_pub_fields,
     reason = "PhantomData kind marker is an implementation detail"
 )]
-pub struct ActionPlan<Kind> {
+pub struct Plan<Kind> {
     /// Value commitment.
     pub cv: value::Commitment,
 
@@ -61,7 +57,7 @@ pub struct ActionPlan<Kind> {
     _kind: PhantomData<Kind>,
 }
 
-impl<Kind> ActionPlan<Kind> {
+impl<Kind> Plan<Kind> {
     /// The effecting data pair `(cv, rk)` for sighash computation.
     #[must_use]
     pub const fn effecting_data(&self) -> (value::Commitment, public::ActionVerificationKey) {
@@ -82,7 +78,7 @@ impl<Kind> ActionPlan<Kind> {
     }
 }
 
-impl ActionPlan<Spend> {
+impl Plan<Spend> {
     /// Assemble a spend action plan.
     ///
     /// Computes the value commitment and derives `rk` from the spend
@@ -113,7 +109,7 @@ impl ActionPlan<Spend> {
     }
 }
 
-impl ActionPlan<Output> {
+impl Plan<Output> {
     /// Assemble an output action plan.
     ///
     /// Computes the value commitment (negated for outputs) and derives
@@ -184,7 +180,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        bundle::BundlePlan,
+        bundle,
         custody::{self, Custody as _},
         keys::private,
         note::{self, CommitmentTrapdoor, NullifierTrapdoor},
@@ -204,9 +200,9 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let unsigned = ActionPlan::<Spend>::new(note, theta, &pak, &mut rng);
+        let unsigned = Plan::<Spend>::new(note, theta, &pak, &mut rng);
 
-        let plan = BundlePlan::new(vec![unsigned], vec![], 1000);
+        let plan = bundle::Plan::new(vec![unsigned], vec![], 1000);
         let sighash = plan.sighash();
         let local = custody::Local::new(sk.derive_auth_private());
         let auth = local.authorize(&plan, &mut rng).unwrap();
@@ -227,9 +223,9 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let unsigned = ActionPlan::<Output>::new(note, theta, &mut rng);
+        let unsigned = Plan::<Output>::new(note, theta, &mut rng);
 
-        let plan = BundlePlan::new(vec![], vec![unsigned], -1000);
+        let plan = bundle::Plan::new(vec![], vec![unsigned], -1000);
         let sighash = plan.sighash();
         let local = custody::Local::new(sk.derive_auth_private());
         let auth = local.authorize(&plan, &mut rng).unwrap();

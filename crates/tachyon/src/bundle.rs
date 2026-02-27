@@ -9,7 +9,7 @@ use rand::{CryptoRng, RngCore};
 use reddsa::orchard::Binding;
 
 use crate::{
-    action::{self, Action, ActionPlan},
+    action::{self, Action},
     constants::SIGHASH_PERSONALIZATION,
     keys::{
         ProofAuthorizingKey,
@@ -106,7 +106,7 @@ pub fn verify_stamp(stamp: &Stamp, actions: &[Action]) -> Result<(), BuildError>
 /// All signatures (action and binding) sign this same digest.
 /// The stamp is excluded because it is stripped during aggregation.
 ///
-/// Accepts `(cv, rk)` pairs from any source — unsigned actions (typed
+/// Accepts `(cv, rk)` pairs from any source — action plans (typed
 /// by [`Spend`](crate::keys::randomizer::Spend) or
 /// [`Output`](crate::keys::randomizer::Output)) or signed [`Action`]s.
 #[must_use]
@@ -134,14 +134,14 @@ pub fn sighash(
 
 /// A bundle plan — all actions assembled, awaiting authorization.
 ///
-/// Collects typed [`ActionPlan<Spend>`] and [`ActionPlan<Output>`],
+/// Collects typed [`action::Plan<Spend>`] and [`action::Plan<Output>`],
 /// then the plan is authorized by a [`Custody`](crate::custody::Custody)
 /// device to produce [`AuthorizationData`]. Finally,
 /// [`build`](Self::build) consumes the plan and auth data to produce a
 /// [`Stamped`] bundle.
 ///
 /// ```text
-/// let plan = BundlePlan::new(spends, outputs, value_balance);
+/// let plan = bundle::Plan::new(spends, outputs, value_balance);
 /// let auth = custody.authorize(&plan, rng)?;
 /// let stamped = plan.build(auth, anchor, &pak, rng)?;
 /// ```
@@ -150,27 +150,23 @@ pub fn sighash(
 /// directly: [`ActionRandomizer::sign`](crate::keys::randomizer::ActionRandomizer),
 /// [`Stamped::build`].
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::module_name_repetitions,
-    reason = "BundlePlan is the natural name in this context"
-)]
-pub struct BundlePlan {
-    /// Spend actions (unsigned).
-    pub spends: Vec<ActionPlan<Spend>>,
+pub struct Plan {
+    /// Spend action plans.
+    pub spends: Vec<action::Plan<Spend>>,
 
-    /// Output actions (unsigned).
-    pub outputs: Vec<ActionPlan<Output>>,
+    /// Output action plans.
+    pub outputs: Vec<action::Plan<Output>>,
 
     /// Net value of spends minus outputs (plaintext integer).
     pub value_balance: i64,
 }
 
-impl BundlePlan {
-    /// Create a new bundle plan from assembled unsigned actions.
+impl Plan {
+    /// Create a new bundle plan from assembled action plans.
     #[must_use]
     pub const fn new(
-        spends: Vec<ActionPlan<Spend>>,
-        outputs: Vec<ActionPlan<Output>>,
+        spends: Vec<action::Plan<Spend>>,
+        outputs: Vec<action::Plan<Output>>,
         value_balance: i64,
     ) -> Self {
         Self {
@@ -185,8 +181,8 @@ impl BundlePlan {
     pub fn effecting_data(&self) -> Vec<(value::Commitment, public::ActionVerificationKey)> {
         self.spends
             .iter()
-            .map(ActionPlan::effecting_data)
-            .chain(self.outputs.iter().map(ActionPlan::effecting_data))
+            .map(action::Plan::effecting_data)
+            .chain(self.outputs.iter().map(action::Plan::effecting_data))
             .collect()
     }
 
@@ -198,7 +194,7 @@ impl BundlePlan {
 
     /// Build a stamped bundle from the plan and authorization data.
     ///
-    /// Pairs each unsigned action with its signature, builds witnesses
+    /// Pairs each action plan with its signature, builds witnesses
     /// (re-deriving alpha from theta + cm), then delegates to
     /// [`Stamped::build`] for proving and the binding signature.
     pub fn build<R: RngCore + CryptoRng>(
@@ -255,7 +251,7 @@ impl BundlePlan {
     }
 }
 
-/// Signatures authorizing a [`BundlePlan`] — one per action, spends
+/// Signatures authorizing a [`Plan`] — one per action, spends
 /// then outputs, in the same order as the plan.
 #[derive(Clone, Debug)]
 pub struct AuthorizationData {
@@ -462,7 +458,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        action::ActionPlan,
+        action,
         custody::{self, Custody as _},
         keys::{
             private,
@@ -471,7 +467,7 @@ mod tests {
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
     };
 
-    /// Build a test bundle using `BundlePlan` + `Custody` for authorization.
+    /// Build a test bundle using `bundle::Plan` + `Custody` for authorization.
     fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Stamped<i64> {
         let sk = private::SpendingKey::from([0x42u8; 32]);
         let pak = sk.derive_proof_private();
@@ -493,10 +489,10 @@ mod tests {
         let theta_spend = ActionEntropy::random(&mut *rng);
         let theta_output = ActionEntropy::random(&mut *rng);
 
-        let spend = ActionPlan::<Spend>::new(spend_note, theta_spend, &pak, &mut *rng);
-        let output = ActionPlan::<Output>::new(output_note, theta_output, &mut *rng);
+        let spend = action::Plan::<Spend>::new(spend_note, theta_spend, &pak, &mut *rng);
+        let output = action::Plan::<Output>::new(output_note, theta_output, &mut *rng);
 
-        let plan = BundlePlan::new(vec![spend], vec![output], 300);
+        let plan = Plan::new(vec![spend], vec![output], 300);
         let local = custody::Local::new(sk.derive_auth_private());
         let auth = local.authorize(&plan, rng).unwrap();
 
@@ -534,7 +530,7 @@ mod tests {
     /// Composable flow: construct actions and bundle step-by-step,
     /// exercising each delegation boundary independently.
     ///
-    /// This uses no convenience wrappers (`ActionPlan::new`,
+    /// This uses no convenience wrappers (`action::Plan::new`,
     /// `Stamped::build`). Every step is called individually, matching
     /// the custody-delegated flow from the protocol spec.
     #[test]
@@ -562,7 +558,7 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ONE),
         };
 
-        // === Phase 1: Assemble all unsigned actions ===
+        // === Phase 1: Assemble all action plans ===
 
         // Spend action assembly (user device)
         let spend_cm = spend_note.commitment();

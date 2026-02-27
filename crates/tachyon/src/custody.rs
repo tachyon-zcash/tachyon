@@ -1,13 +1,13 @@
 //! Custody abstraction for bundle authorization.
 //!
 //! A custody device holds the spend authorizing key (`ask`) and authorizes
-//! a [`BundlePlan`] **after seeing all effecting data**. The [`Custody`]
+//! a [`bundle::Plan`] **after seeing all effecting data**. The [`Custody`]
 //! trait enables hardware wallets, software wallets, and test
 //! implementations behind a common interface.
 //!
 //! ## Protocol
 //!
-//! 1. The user device assembles all action plans into a [`BundlePlan`].
+//! 1. The user device assembles all action plans into a [`bundle::Plan`].
 //!
 //! 2. The custody device authorizes the plan:
 //!    - Computes the bundle [`sighash`](crate::bundle::sighash)
@@ -17,7 +17,7 @@
 //!    - Returns [`AuthorizationData`] containing all signatures
 //!
 //! 3. The user device builds the stamped bundle:
-//!    [`BundlePlan::build`](BundlePlan::build)
+//!    [`bundle::Plan::build`](Plan::build)
 
 use core::convert::Infallible;
 
@@ -25,7 +25,7 @@ use rand::{CryptoRng, RngCore};
 
 use crate::{
     action,
-    bundle::{AuthorizationData, BundlePlan},
+    bundle::{AuthorizationData, Plan},
     keys::private,
 };
 
@@ -53,7 +53,7 @@ pub trait Custody {
     /// (spends first, then outputs).
     fn authorize<R: RngCore + CryptoRng>(
         &self,
-        plan: &BundlePlan,
+        plan: &Plan,
         rng: &mut R,
     ) -> Result<AuthorizationData, Self::Error>;
 }
@@ -81,7 +81,7 @@ impl Custody for Local {
 
     fn authorize<R: RngCore + CryptoRng>(
         &self,
-        plan: &BundlePlan,
+        plan: &Plan,
         rng: &mut R,
     ) -> Result<AuthorizationData, Self::Error> {
         let sighash = plan.sighash();
@@ -115,7 +115,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        action::ActionPlan,
+        action,
         keys::randomizer::{ActionEntropy, Spend},
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
     };
@@ -136,9 +136,9 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let unsigned = ActionPlan::<Spend>::new(note, theta, &pak, &mut rng);
+        let unsigned = action::Plan::<Spend>::new(note, theta, &pak, &mut rng);
 
-        let plan = BundlePlan::new(vec![unsigned], vec![], 1000);
+        let plan = Plan::new(vec![unsigned], vec![], 1000);
         let sighash = plan.sighash();
 
         let auth = custody.authorize(&plan, &mut rng).unwrap();
