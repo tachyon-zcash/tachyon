@@ -2,6 +2,7 @@
 
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 use reddsa::orchard::{Binding, SpendAuth};
+use serde::{Deserialize, Serialize};
 
 use crate::{action, action::Action, bundle, value};
 
@@ -24,6 +25,30 @@ use crate::{action, action::Action, bundle, value};
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct ActionVerificationKey(pub(super) reddsa::VerificationKey<SpendAuth>);
+
+impl PartialEq for ActionVerificationKey {
+    fn eq(&self, other: &Self) -> bool {
+        let self_bytes: [u8; 32] = (*self).into();
+        let other_bytes: [u8; 32] = (*other).into();
+        self_bytes == other_bytes
+    }
+}
+
+impl Eq for ActionVerificationKey {}
+
+impl serde::Serialize for ActionVerificationKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let bytes: [u8; 32] = (*self).into();
+        bytes.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ActionVerificationKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let bytes = <[u8; 32]>::deserialize(deserializer)?;
+        Self::try_from(bytes).map_err(serde::de::Error::custom)
+    }
+}
 
 impl ActionVerificationKey {
     /// Verify an action signature.

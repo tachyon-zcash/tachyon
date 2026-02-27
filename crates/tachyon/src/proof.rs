@@ -29,6 +29,8 @@ use crate::{
     witness::{ActionPrivate, MergePrivate},
 };
 
+use serde::{Deserialize, Serialize};
+
 /// Ragu proof for Tachyon transactions.
 ///
 /// Covers all actions in an aggregate. The internal structure will be
@@ -37,8 +39,45 @@ use crate::{
 ///
 /// The proof's public output is a PCD header containing
 /// `actions_acc`, `tachygram_acc`, and `anchor`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Proof;
+
+impl serde::Serialize for Proof {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let bytes: [u8; 192] = (*self).into();
+        bytes.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Proof {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{Error, SeqAccess, Visitor};
+        use std::fmt;
+        
+        struct ArrayVisitor;
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 192];
+            
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of 192 bytes")
+            }
+            
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 192];
+                for i in 0..192 {
+                    arr[i] = seq.next_element()?.ok_or_else(|| Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+        
+        let bytes = deserializer.deserialize_seq(ArrayVisitor)?;
+        Self::try_from(&bytes).map_err(serde::de::Error::custom)
+    }
+}
 
 /// An error returned when proof verification fails.
 #[derive(Clone, Copy, Debug)]

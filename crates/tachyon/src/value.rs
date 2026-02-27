@@ -14,6 +14,7 @@ use pasta_curves::{
     pallas,
 };
 use rand::{CryptoRng, RngCore};
+use serde::{Deserialize, Serialize};
 
 use crate::constants::VALUE_COMMITMENT_DOMAIN;
 
@@ -87,6 +88,20 @@ impl Into<Fq> for CommitmentTrapdoor {
 /// An EpAffine (Pallas affine curve point, 32 compressed bytes).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Commitment(EpAffine);
+
+impl serde::Serialize for Commitment {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let bytes = self.0.to_bytes();
+        bytes.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Commitment {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let bytes = <[u8; 32]>::deserialize(deserializer)?;
+        Self::try_from(&bytes).map_err(serde::de::Error::custom)
+    }
+}
 
 impl Commitment {
     /// Create a value commitment from a signed value and randomness.

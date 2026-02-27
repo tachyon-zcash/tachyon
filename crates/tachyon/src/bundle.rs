@@ -6,6 +6,7 @@
 use ff::Field as _;
 use pasta_curves::Fq;
 use rand::{CryptoRng, RngCore};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     Proof,
@@ -238,6 +239,53 @@ use reddsa::orchard::Binding;
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct Signature(pub(crate) reddsa::Signature<Binding>);
+
+impl PartialEq for Signature {
+    fn eq(&self, other: &Self) -> bool {
+        let self_bytes: [u8; 64] = (*self).into();
+        let other_bytes: [u8; 64] = (*other).into();
+        self_bytes == other_bytes
+    }
+}
+
+impl Eq for Signature {}
+
+impl serde::Serialize for Signature {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let bytes: [u8; 64] = (*self).into();
+        bytes.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Signature {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{Error, SeqAccess, Visitor};
+        use std::fmt;
+        
+        struct ArrayVisitor;
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 64];
+            
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of 64 bytes")
+            }
+            
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 64];
+                for i in 0..64 {
+                    arr[i] = seq.next_element()?.ok_or_else(|| Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+        
+        let bytes = deserializer.deserialize_seq(ArrayVisitor)?;
+        Ok(Self::from(bytes))
+    }
+}
 
 impl From<[u8; 64]> for Signature {
     fn from(bytes: [u8; 64]) -> Self {

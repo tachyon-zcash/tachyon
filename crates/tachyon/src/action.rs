@@ -4,6 +4,7 @@ use core::ops::Neg as _;
 
 use rand::{CryptoRng, RngCore};
 use reddsa::orchard::SpendAuth;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     constants::SPEND_AUTH_PERSONALIZATION,
@@ -32,7 +33,7 @@ use crate::{
 ///
 /// This separation allows the stamp to be stripped during aggregation
 /// while the action (with its authorization) remains in the transaction.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Action {
     /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
     /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
@@ -159,6 +160,16 @@ impl Action {
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct Signature(pub(crate) reddsa::Signature<SpendAuth>);
 
+impl PartialEq for Signature {
+    fn eq(&self, other: &Self) -> bool {
+        let self_bytes: [u8; 64] = (*self).into();
+        let other_bytes: [u8; 64] = (*other).into();
+        self_bytes == other_bytes
+    }
+}
+
+impl Eq for Signature {}
+
 impl From<[u8; 64]> for Signature {
     fn from(bytes: [u8; 64]) -> Self {
         Self(reddsa::Signature::<SpendAuth>::from(bytes))
@@ -168,6 +179,43 @@ impl From<[u8; 64]> for Signature {
 impl From<Signature> for [u8; 64] {
     fn from(sig: Signature) -> [u8; 64] {
         <[u8; 64]>::from(sig.0)
+    }
+}
+
+impl serde::Serialize for Signature {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let bytes: [u8; 64] = (*self).into();
+        bytes.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Signature {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{Error, SeqAccess, Visitor};
+        use std::fmt;
+        
+        struct ArrayVisitor;
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 64];
+            
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an array of 64 bytes")
+            }
+            
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 64];
+                for i in 0..64 {
+                    arr[i] = seq.next_element()?.ok_or_else(|| Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+        
+        let bytes = deserializer.deserialize_seq(ArrayVisitor)?;
+        Ok(Self::from(bytes))
     }
 }
 

@@ -12,6 +12,8 @@
 //! public data (actions and tachygrams) and passes them as the header
 //! to Ragu `verify()`.
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     action::Action,
     keys::ProvingKey,
@@ -33,7 +35,7 @@ pub struct Stampless;
 /// `tachygram_acc`, and `anchor`, but only the anchor is stored here.
 /// The accumulators are recomputed by the verifier from public data
 /// and passed as the header to Ragu `verify()`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     ///
