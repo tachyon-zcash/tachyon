@@ -20,10 +20,11 @@
 //!
 //! ## Block Structure
 //!
-//! A block contains stamped and stripped bundles. An aggregate contains
-//! stamped bundles whose stamps cover both their own actions and those
-//! of stripped bundles.
+//! A block may contain stamped and stripped bundles. A stamped bundle's stamp
+//! covers its own actions and those of associated stripped bundles.
 //!
+//! TODO: Block layout is not yet finalized, but provisionally: all adjuncts
+//! should immediately follow the aggregate.
 //!
 //! ## Nomenclature
 //!

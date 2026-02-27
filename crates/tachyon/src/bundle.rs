@@ -67,7 +67,7 @@ impl From<Stamped> for Bundle<Option<Stamp>> {
 }
 
 impl TryFrom<Bundle<Option<Stamp>>> for Stripped {
-    type Error = &'static str;
+    type Error = Stamped;
 
     fn try_from(bundle: Bundle<Option<Stamp>>) -> Result<Self, Self::Error> {
         match bundle.stamp {
@@ -79,7 +79,14 @@ impl TryFrom<Bundle<Option<Stamp>>> for Stripped {
                     stamp: Stampless,
                 })
             },
-            | Some(_) => Err("stamp is present"),
+            | Some(stamp) => {
+                Err(Stamped {
+                    actions: bundle.actions,
+                    value_balance: bundle.value_balance,
+                    binding_sig: bundle.binding_sig,
+                    stamp,
+                })
+            },
         }
     }
 }
@@ -99,7 +106,7 @@ impl From<Stripped> for Bundle<Option<Stamp>> {
 }
 
 impl TryFrom<Bundle<Option<Stamp>>> for Stamped {
-    type Error = &'static str;
+    type Error = Stripped;
 
     fn try_from(bundle: Bundle<Option<Stamp>>) -> Result<Self, Self::Error> {
         match bundle.stamp {
@@ -111,7 +118,14 @@ impl TryFrom<Bundle<Option<Stamp>>> for Stamped {
                     stamp,
                 })
             },
-            | None => Err("stamp is stripped"),
+            | None => {
+                Err(Stripped {
+                    actions: bundle.actions,
+                    value_balance: bundle.value_balance,
+                    binding_sig: bundle.binding_sig,
+                    stamp: Stampless,
+                })
+            },
         }
     }
 }
