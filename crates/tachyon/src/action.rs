@@ -62,7 +62,7 @@ pub struct UnsignedAction<Kind> {
 }
 
 impl<Kind> UnsignedAction<Kind> {
-    /// The effecting data pair `(cv, rk)` for sighash computation.
+    /// The effecting data pair `(cv, rk)` for effect hash computation.
     #[must_use]
     pub const fn effecting_data(&self) -> (value::Commitment, public::ActionVerificationKey) {
         (self.cv, self.rk)
@@ -144,7 +144,7 @@ impl UnsignedAction<Output> {
 /// - `cv`: Commitment to a net value effect
 /// - `rk`: Public key (randomized counterpart to `rsk`)
 /// - `sig`: Signature by private key (single-use `rsk`) over the bundle
-///   [`SigHash`](crate::bundle::SigHash)
+///   [`EffectHash`](crate::bundle::EffectHash)
 #[derive(Clone, Copy, Debug)]
 pub struct Action {
     /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
@@ -155,7 +155,7 @@ pub struct Action {
     pub rk: public::ActionVerificationKey,
 
     /// RedPallas spend auth signature over the bundle
-    /// [`SigHash`](crate::bundle::SigHash).
+    /// [`EffectHash`](crate::bundle::EffectHash).
     pub sig: Signature,
 }
 
@@ -184,14 +184,14 @@ mod tests {
 
     use super::*;
     use crate::{
-        bundle,
+        bundle::BundlePlan,
         custody::{self, Custody as _},
         keys::private,
         note::{self, CommitmentTrapdoor, NullifierTrapdoor},
     };
 
     /// A spend action's signature must verify against the bundle
-    /// sighash using its own rk.
+    /// effect hash using its own rk.
     #[test]
     fn spend_sig_round_trip() {
         let mut rng = StdRng::seed_from_u64(0);
@@ -204,23 +204,18 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-
-        // Phase 1: assemble unsigned action
         let unsigned = UnsignedAction::<Spend>::new(note, theta, &pak, &mut rng);
 
-        // Phase 2: compute sighash, sign via custody
-        let pairs = [unsigned.effecting_data()];
-        let sighash = bundle::sighash(&pairs, 1000);
+        let plan = BundlePlan::new(vec![unsigned], vec![], 1000);
+        let eh = plan.effect_hash();
         let local = custody::Local::new(sk.derive_auth_private());
-        let actions = local
-            .authorize(&pairs, 1000, &[unsigned], &mut rng)
-            .unwrap();
+        let auth = local.authorize(&plan, &mut rng).unwrap();
 
-        actions[0].rk.verify(sighash, &actions[0].sig).unwrap();
+        plan.spends[0].rk.verify(eh, &auth.sigs[0]).unwrap();
     }
 
     /// An output action's signature must verify against the bundle
-    /// sighash using its own rk.
+    /// effect hash using its own rk.
     #[test]
     fn output_sig_round_trip() {
         let mut rng = StdRng::seed_from_u64(0);
@@ -232,17 +227,13 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-
-        // Phase 1: assemble unsigned action
         let unsigned = UnsignedAction::<Output>::new(note, theta, &mut rng);
 
-        // Phase 2: compute sighash, sign with output randomizer
-        let pairs = [unsigned.effecting_data()];
-        let sighash = bundle::sighash(&pairs, -1000);
-        let cm = note.commitment();
-        let alpha = theta.output_randomizer(&cm);
-        let action = alpha.sign(unsigned.cv, unsigned.rk, sighash, &mut rng);
+        let plan = BundlePlan::new(vec![], vec![unsigned], -1000);
+        let eh = plan.effect_hash();
+        let local = custody::Local::new(sk.derive_auth_private());
+        let auth = local.authorize(&plan, &mut rng).unwrap();
 
-        action.rk.verify(sighash, &action.sig).unwrap();
+        plan.outputs[0].rk.verify(eh, &auth.sigs[0]).unwrap();
     }
 }

@@ -15,16 +15,16 @@
 //!     rk[ActionVerificationKey rk]
 //!     sig["sig (action::Signature)"]
 //!     pak[ProofAuthorizingKey]
-//!     sighash["SigHash (bundle-wide)"]
+//!     effect_hash["EffectHash (bundle-wide)"]
 //!     sk --> ask & nk & pk
 //!     ask --> ak
 //!     theta["ActionEntropy theta"] -- spend_randomizer --> spend_alpha["ActionRandomizer&lt;Spend&gt;"]
 //!     theta -- output_randomizer --> output_alpha["ActionRandomizer&lt;Output&gt;"]
 //!     ak -- "+alpha" --> rk
 //!     output_alpha -- "derive_rk()" --> rk
-//!     rk --> sighash
-//!     spend_alpha -- "sign(ask, sighash)" --> sig
-//!     output_alpha -- "sign(sighash)" --> sig
+//!     rk --> effect_hash
+//!     spend_alpha -- "sign(ask, effect_hash)" --> sig
+//!     output_alpha -- "sign(effect_hash)" --> sig
 //!     ak & nk --> pak
 //! ```
 //!

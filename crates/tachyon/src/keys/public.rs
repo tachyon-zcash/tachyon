@@ -3,7 +3,7 @@
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 use reddsa::orchard::{Binding, SpendAuth};
 
-use crate::{action, action::Action, bundle, bundle::SigHash, value};
+use crate::{action, action::Action, bundle, bundle::EffectHash, value};
 
 /// The randomized action verification key `rk` — per-action, public.
 ///
@@ -26,9 +26,9 @@ use crate::{action, action::Action, bundle, bundle::SigHash, value};
 pub struct ActionVerificationKey(pub(super) reddsa::VerificationKey<SpendAuth>);
 
 impl ActionVerificationKey {
-    /// Verify an action signature against the transaction-wide sighash.
-    pub fn verify(&self, sighash: SigHash, sig: &action::Signature) -> Result<(), reddsa::Error> {
-        let msg: [u8; 64] = sighash.into();
+    /// Verify an action signature against the transaction-wide effect hash.
+    pub fn verify(&self, effect_hash: EffectHash, sig: &action::Signature) -> Result<(), reddsa::Error> {
+        let msg: [u8; 64] = effect_hash.into();
         self.0.verify(&msg, &sig.0)
     }
 }
@@ -67,7 +67,7 @@ impl TryFrom<[u8; 32]> for ActionVerificationKey {
 /// $[\sum_i \mathsf{rcv}_i]\,\mathcal{R} = [\mathsf{bsk}]\,\mathcal{R}$.
 ///
 /// A validator checks balance by verifying:
-/// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{sighash},
+/// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{effect\_hash},
 ///   \text{bindingSig}) = 1$
 ///
 /// ## Type representation
@@ -102,8 +102,8 @@ impl BindingVerificationKey {
     }
 
     /// Verify a binding signature.
-    pub fn verify(&self, sighash: SigHash, sig: &bundle::Signature) -> Result<(), reddsa::Error> {
-        let msg: [u8; 64] = sighash.into();
+    pub fn verify(&self, effect_hash: EffectHash, sig: &bundle::Signature) -> Result<(), reddsa::Error> {
+        let msg: [u8; 64] = effect_hash.into();
         self.0.verify(&msg, &sig.0)
     }
 }

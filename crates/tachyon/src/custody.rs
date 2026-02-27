@@ -1,74 +1,63 @@
-//! Custody abstraction for spend authorization.
+//! Custody abstraction for bundle authorization.
 //!
 //! A custody device holds the spend authorizing key (`ask`) and authorizes
-//! spend actions **after seeing all effecting data**. The [`Custody`] trait
-//! enables hardware wallets, software wallets, and test implementations
-//! behind a common interface.
+//! a [`BundlePlan`] **after seeing all effecting data**. The [`Custody`]
+//! trait enables hardware wallets, software wallets, and test
+//! implementations behind a common interface.
 //!
-//! ## Protocol (two-phase)
+//! ## Protocol
 //!
-//! 1. The user device assembles all unsigned actions (phase 1):
-//!    - Computes each `cv` and `rk` (using `ak`, not `ask`)
-//!    - Collects typed [`UnsignedAction<Spend>`] and
-//!      [`UnsignedAction<Output>`](crate::action::UnsignedAction)
+//! 1. The user device assembles all unsigned actions into a
+//!    [`BundlePlan`].
 //!
-//! 2. The custody device authorizes spends (phase 2):
-//!    - Receives all `(cv, rk)` pairs (for sighash) plus
-//!      [`UnsignedAction<Spend>`]s with full note and theta
-//!    - Computes the bundle sighash
+//! 2. The custody device authorizes the plan:
+//!    - Computes the bundle [`effect_hash`](crate::bundle::effect_hash)
 //!    - For each spend: derives $\alpha$, signs with $\mathsf{rsk} =
 //!      \mathsf{ask} + \alpha$
-//!    - Returns signed [`Action`]s
+//!    - For each output: derives $\alpha$, signs with $\mathsf{rsk} =
+//!      \alpha$ (no spend authority)
+//!    - Returns [`AuthorizationData`] containing all signatures
 //!
-//! Outputs do not involve custody — they use
-//! [`ActionRandomizer<Output>::sign`](crate::keys::randomizer::ActionRandomizer)
-//! directly.
+//! 3. The user device builds the stamped bundle:
+//!    [`BundlePlan::build`](BundlePlan::build)
 
 use core::convert::Infallible;
 
 use rand::{CryptoRng, RngCore};
 
 use crate::{
-    action::{self, UnsignedAction},
-    bundle,
-    keys::{private, public, randomizer::Spend},
-    value,
+    action,
+    bundle::{AuthorizationData, BundlePlan},
+    keys::private,
 };
 
-/// Custody device abstraction for spend authorization.
+/// Custody device abstraction for bundle authorization.
 ///
 /// The custody device holds the spend authorizing key (`ask`) and
-/// authorizes spend actions after seeing the full bundle context.
-/// This ensures custody can verify the bundle's intent before signing.
+/// authorizes a bundle plan after seeing the full context. This
+/// ensures custody can verify the bundle's intent before signing.
 ///
 /// ## Composability
 ///
 /// The [`Local`] implementation calls
-/// [`ActionRandomizer<Spend>::sign`](crate::keys::randomizer::ActionRandomizer)
+/// [`ActionRandomizer::sign`](crate::keys::randomizer::ActionRandomizer)
 /// — the same primitive available for direct use in composable
 /// construction flows.
 pub trait Custody {
     /// Error type for authorization failures.
     type Error;
 
-    /// Authorize all spend actions in a bundle.
+    /// Authorize a bundle plan.
     ///
-    /// The custody device receives:
-    /// - `effecting_data`: all `(cv, rk)` pairs from every action (spends and
-    ///   outputs) for sighash computation
-    /// - `value_balance`: the declared net pool effect
-    /// - `spends`: the full [`UnsignedAction<Spend>`]s, each carrying the note,
-    ///   theta, and rcv — custody can verify intent
-    ///
-    /// Returns one signed [`Action`](action::Action) per spend, in the
-    /// same order as `spends`.
+    /// The custody device sees the full plan (all spends, outputs, and
+    /// value balance), computes the effect hash, and signs every action.
+    /// Returns [`AuthorizationData`] with one signature per action
+    /// (spends first, then outputs).
     fn authorize<R: RngCore + CryptoRng>(
         &self,
-        effecting_data: &[(value::Commitment, public::ActionVerificationKey)],
-        value_balance: i64,
-        spends: &[UnsignedAction<Spend>],
+        plan: &BundlePlan,
         rng: &mut R,
-    ) -> Result<Vec<action::Action>, Self::Error>;
+    ) -> Result<AuthorizationData, Self::Error>;
 }
 
 /// Software custody — holds the spend authorizing key in memory.
@@ -94,26 +83,29 @@ impl Custody for Local {
 
     fn authorize<R: RngCore + CryptoRng>(
         &self,
-        effecting_data: &[(value::Commitment, public::ActionVerificationKey)],
-        value_balance: i64,
-        spends: &[UnsignedAction<Spend>],
+        plan: &BundlePlan,
         rng: &mut R,
-    ) -> Result<Vec<action::Action>, Self::Error> {
-        // Compute the bundle sighash from all effecting data.
-        let sighash = bundle::sighash(effecting_data, value_balance);
+    ) -> Result<AuthorizationData, Self::Error> {
+        let eh = plan.effect_hash();
+        let mut sigs: Vec<action::Signature> = Vec::new();
 
-        // Sign each spend using the same ActionRandomizer<Spend>::sign
-        // primitive that is available for direct composable use.
-        let actions = spends
-            .iter()
-            .map(|spend| {
-                let cm = spend.note.commitment();
-                let alpha = spend.theta.spend_randomizer(&cm);
-                alpha.sign(&self.ask, spend.cv, spend.rk, sighash, rng)
-            })
-            .collect();
+        // Spends: rsk = ask + alpha
+        for spend in &plan.spends {
+            let cm = spend.note.commitment();
+            let alpha = spend.theta.spend_randomizer(&cm);
+            let rsk = self.ask.derive_action_private(&alpha);
+            sigs.push(rsk.sign(rng, eh));
+        }
 
-        Ok(actions)
+        // Outputs: sign with rsk = alpha (no spend authority)
+        for output in &plan.outputs {
+            let cm = output.note.commitment();
+            let alpha = output.theta.output_randomizer(&cm);
+            let signed = alpha.sign(output.cv, output.rk, eh, rng);
+            sigs.push(signed.sig);
+        }
+
+        Ok(AuthorizationData { sigs })
     }
 }
 
@@ -125,12 +117,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        keys::randomizer::ActionEntropy,
+        action::UnsignedAction,
+        keys::randomizer::{ActionEntropy, Spend},
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
     };
 
     /// Software custody authorization must produce valid signatures
-    /// that verify against the bundle sighash.
+    /// that verify against the bundle effect hash.
     #[test]
     fn software_custody_sig_round_trip() {
         let mut rng = StdRng::seed_from_u64(0);
@@ -147,13 +140,14 @@ mod tests {
         let theta = ActionEntropy::random(&mut rng);
         let unsigned = UnsignedAction::<Spend>::new(note, theta, &pak, &mut rng);
 
-        let pairs = [unsigned.effecting_data()];
-        let sighash = bundle::sighash(&pairs, 1000);
+        let plan = BundlePlan::new(vec![unsigned], vec![], 1000);
+        let eh = plan.effect_hash();
 
-        let actions = custody
-            .authorize(&pairs, 1000, &[unsigned], &mut rng)
+        let auth = custody.authorize(&plan, &mut rng).unwrap();
+
+        plan.spends[0]
+            .rk
+            .verify(eh, &auth.sigs[0])
             .unwrap();
-
-        actions[0].rk.verify(sighash, &actions[0].sig).unwrap();
     }
 }
