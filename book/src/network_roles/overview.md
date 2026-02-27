@@ -4,30 +4,38 @@ Without Tachyon, the ZCash transaction lifecycle is similar to other blockchains
 
 ```mermaid
 sequenceDiagram
-    participant Wallet as User's Wallet
-    participant RPC
-    participant Network as ZCash Network
-    participant Miner as ZCash Miner
+    participant Wallet
+    box ZCash Network
+        participant Mempool
+        participant Miner
+    end
+    participant Chain
 
-    Wallet->>RPC: Transaction
-    RPC->>Network: Transaction propagated to<br/>network via gossip
-    Network->>Miner: Miner builds block with<br/>transactions from mempool
+    note over Wallet: Create transaction
+    Wallet ->> Mempool: Wallet RPC
+    Mempool -->> Miner: Gossip
+    note over Miner: Select transactions
+    Miner ->> Chain: Mine Block
 ```
 
 Tachyon introduces shielded transaction aggregates, which introduce a new network role, called an _aggregator_:
 
 ```mermaid
 sequenceDiagram
-    participant Wallet as User's Wallet
-    participant RPC as Aggregation RPC
-    participant Network as Aggregation Network
-    participant Aggregator
-    participant Miner as ZCash Miner
-    participant Legacy as Legacy P2P
+    participant Wallet
+    box ZCash Network
+        participant Mempool
+        participant Aggregator
+        participant Miner
+    end
+    participant Chain
 
-    Wallet->>RPC: Sends Tachyon Transaction
-    RPC->>Network: Gossips to P2P<br/>Aggregation Network
-    Network->>Aggregator: Collects transactions from<br/>P2P network and builds<br/>transaction aggregates
-    Aggregator->>Miner: Selects one transaction<br/>aggregate to include per block
-    Miner<<->>Legacy: Legacy P2P<br/>connections + logic
+    note over Wallet: Create transaction
+    Wallet ->> Mempool: Wallet RPC
+    Mempool -->> Aggregator: Gossip
+    note over Aggregator: Aggregate transactions
+    Aggregator -->> Mempool: Gossip
+    Mempool -->> Miner: Gossip
+    note over Miner: Select transactions
+    Miner->>Chain: Mine Block
 ```
