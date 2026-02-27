@@ -1,7 +1,11 @@
 //! Tachyon transaction bundles.
 //!
-//! A bundle is parameterized by its stamp state. Actions are constant through
-//! state transitions; only the stamp is stripped or merged.
+//! A bundle is parameterized by stamp state `S: StampState`.
+//! Actions are constant through state transitions; only the stamp changes.
+//!
+//! - [`Stamped`] — self-contained bundle with a stamp
+//! - [`Stripped`] — stamp removed, depends on an aggregate
+//! - `Bundle<Option<Stamp>>` — erased stamp state for mixed contexts
 
 use ff::Field as _;
 use pasta_curves::Fq;
@@ -17,15 +21,29 @@ use crate::{
     witness::ActionPrivate,
 };
 
-/// A Tachyon transaction bundle parameterized by stamp state `S` and value
-/// balance type `V` representing the net pool effect.
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Trait constraining the stamp state parameter of [`Bundle`].
+pub trait StampState: sealed::Sealed {}
+
+impl sealed::Sealed for Stamp {}
+impl sealed::Sealed for Stampless {}
+impl sealed::Sealed for Option<Stamp> {}
+
+impl StampState for Stamp {}
+impl StampState for Stampless {}
+impl StampState for Option<Stamp> {}
+
+/// A Tachyon transaction bundle parameterized by stamp state `S`.
 #[derive(Clone, Debug)]
-pub struct Bundle<S, V> {
+pub struct Bundle<S: StampState> {
     /// Actions (cv, rk, sig).
     pub actions: Vec<Action>,
 
     /// Net value of spends minus outputs (plaintext integer).
-    pub value_balance: V,
+    pub value_balance: i64,
 
     /// Binding signature over actions and value balance.
     pub binding_sig: Signature,
@@ -35,10 +53,82 @@ pub struct Bundle<S, V> {
 }
 
 /// A bundle with a stamp — can stand alone or cover adjunct bundles.
-pub type Stamped<V> = Bundle<Stamp, V>;
+pub type Stamped = Bundle<Stamp>;
+
+impl From<Stamped> for Bundle<Option<Stamp>> {
+    fn from(bundle: Stamped) -> Self {
+        Self {
+            actions: bundle.actions,
+            value_balance: bundle.value_balance,
+            binding_sig: bundle.binding_sig,
+            stamp: Some(bundle.stamp),
+        }
+    }
+}
+
+impl TryFrom<Bundle<Option<Stamp>>> for Stripped {
+    type Error = Stamped;
+
+    fn try_from(bundle: Bundle<Option<Stamp>>) -> Result<Self, Self::Error> {
+        match bundle.stamp {
+            | None => {
+                Ok(Self {
+                    actions: bundle.actions,
+                    value_balance: bundle.value_balance,
+                    binding_sig: bundle.binding_sig,
+                    stamp: Stampless,
+                })
+            },
+            | Some(stamp) => {
+                Err(Stamped {
+                    actions: bundle.actions,
+                    value_balance: bundle.value_balance,
+                    binding_sig: bundle.binding_sig,
+                    stamp,
+                })
+            },
+        }
+    }
+}
 
 /// A bundle whose stamp has been stripped — depends on a stamped bundle.
-pub type Stripped<V> = Bundle<Stampless, V>;
+pub type Stripped = Bundle<Stampless>;
+
+impl From<Stripped> for Bundle<Option<Stamp>> {
+    fn from(bundle: Stripped) -> Self {
+        Self {
+            actions: bundle.actions,
+            value_balance: bundle.value_balance,
+            binding_sig: bundle.binding_sig,
+            stamp: None,
+        }
+    }
+}
+
+impl TryFrom<Bundle<Option<Stamp>>> for Stamped {
+    type Error = Stripped;
+
+    fn try_from(bundle: Bundle<Option<Stamp>>) -> Result<Self, Self::Error> {
+        match bundle.stamp {
+            | Some(stamp) => {
+                Ok(Self {
+                    actions: bundle.actions,
+                    value_balance: bundle.value_balance,
+                    binding_sig: bundle.binding_sig,
+                    stamp,
+                })
+            },
+            | None => {
+                Err(Stripped {
+                    actions: bundle.actions,
+                    value_balance: bundle.value_balance,
+                    binding_sig: bundle.binding_sig,
+                    stamp: Stampless,
+                })
+            },
+        }
+    }
+}
 
 /// A BLAKE2b-512 hash of the binding sighash message.
 #[derive(Clone, Copy, Debug)]
@@ -113,11 +203,12 @@ pub fn sighash(value_balance: i64, action_sigs: &[[u8; 64]]) -> SigHash {
     SigHash(*state.finalize().as_array())
 }
 
-impl<V> Stamped<V> {
+impl Stamped {
     /// Strips the stamp, producing a stripped bundle and the extracted stamp.
     ///
     /// The stamp should be merged into an aggregate's stamped bundle.
-    pub fn strip(self) -> (Stripped<V>, Stamp) {
+    #[must_use]
+    pub fn strip(self) -> (Stripped, Stamp) {
         (
             Bundle {
                 actions: self.actions,
@@ -128,9 +219,7 @@ impl<V> Stamped<V> {
             self.stamp,
         )
     }
-}
 
-impl Stamped<i64> {
     /// Builds a stamped bundle from action pairs.
     ///
     /// ## Build order: stamp before binding signature
@@ -234,7 +323,7 @@ impl Stamped<i64> {
     }
 }
 
-impl<S> Bundle<S, i64> {
+impl<S: StampState> Bundle<S> {
     /// Compute the Tachyon binding sighash.
     /// See [`sighash`] for more details.
     #[must_use]
@@ -293,7 +382,7 @@ impl<S> Bundle<S, i64> {
 /// The validator checks:
 /// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{sighash},
 ///   \text{bindingSig}) = 1$
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct Signature(pub(crate) reddsa::Signature<Binding>);
 
@@ -323,7 +412,7 @@ mod tests {
         value,
     };
 
-    fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Stamped<i64> {
+    fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Stamped {
         let sk = private::SpendingKey::from([0x42u8; 32]);
         let ask = sk.derive_auth_private();
         let pak = sk.derive_proof_private();
@@ -487,7 +576,7 @@ mod tests {
         let binding_sig = bsk.sign(&mut rng, sighash(value_balance, &action_sigs));
 
         // Assemble
-        let bundle: Stamped<i64> = Bundle {
+        let bundle: Stamped = Bundle {
             actions,
             value_balance,
             binding_sig,

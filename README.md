@@ -16,9 +16,9 @@ aggregation while actions retain their authorization.
 
 ```mermaid
 classDiagram
-    class Bundle["Bundle&lt;Stamp, V&gt;"] {
+    class Bundle["Bundle&lt;Stamp&gt;"] {
         actions: Action[]
-        value_balance: V
+        value_balance: i64
         binding_sig: BindingSignature
         stamp: Stamp
     }

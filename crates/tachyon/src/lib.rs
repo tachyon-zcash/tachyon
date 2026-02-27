@@ -12,19 +12,19 @@
 //!
 //! ## Bundle States
 //!
-//! [`Bundle<S, V>`](Bundle) uses type parameters to track stamp disposition
-//! and value balance type:
+//! [`Bundle<S>`](Bundle) is parameterized by stamp state `S: StampState`:
 //!
-//! - [`Stamped<V>`] (`Bundle<Stamp, V>`) — self-contained with stamp
-//! - [`Stripped<V>`] (`Bundle<Stampless, V>`) — stamp stripped, depends on
-//!   aggregate
+//! - [`Stamped`] — `Bundle<Stamp>`, self-contained with stamp
+//! - [`Stripped`] — `Bundle<Stampless>`, stamp stripped, depends on aggregate
+//! - `Bundle<Option<Stamp>>` — erased stamp state for mixed contexts
 //!
 //! ## Block Structure
 //!
-//! A block contains stamped and stripped bundles. An aggregate is a
-//! `(Stamped, Vec<Stripped>)` — the stamped bundle's stamp
-//! covers both its own actions and those of the stripped bundles.
+//! A block may contain stamped and stripped bundles. A stamped bundle's stamp
+//! covers its own actions and those of associated stripped bundles.
 //!
+//! TODO: Block layout is not yet finalized, but provisionally: all adjuncts
+//! should immediately follow the aggregate.
 //!
 //! ## Nomenclature
 //!

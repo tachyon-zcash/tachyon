@@ -27,7 +27,7 @@ blake2b_simd = "1.0"
 ff = "0.13"
 group = "0.13"
 pasta_curves = "0.5.1"
-proptest = "1.7.0"
+proptest = "1"
 rand = "0.8"
 reddsa = "0.5.1"
 

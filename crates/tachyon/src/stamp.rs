@@ -26,14 +26,14 @@ pub struct Stampless;
 
 /// A stamp carrying tachygrams, anchor, and proof.
 ///
-/// Present in [`StampedBundle`](crate::StampedBundle) bundles.
+/// Present in [`Stamped`](crate::Stamped) bundles.
 /// Stripped during aggregation and merged into the aggregate's stamp.
 ///
 /// The PCD proof's [`StampDigest`] header contains `actions_acc`,
 /// `tachygram_acc`, and `anchor`, but only the anchor is stored here.
 /// The accumulators are recomputed by the verifier from public data
 /// and passed as the header to Ragu `verify()`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     ///
