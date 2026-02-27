@@ -14,6 +14,14 @@
 - [Protocol]()
   - [Authorization](authorization.md)
   - [Aggregation](aggregation.md)
+- [Network Roles]()
+  - [Overview](network_roles/overview.md)
+  - [Oblivious Sync Service]()
+  - [Aggregator]()
+  - [ZCash Miner]()
+- [Tachyon Testnet]()
+- [Extensions]()
+  - [Oblivious Message Retrieval]()
 
 ## Reference
 
