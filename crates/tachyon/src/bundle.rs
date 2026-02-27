@@ -10,9 +10,12 @@ use reddsa::orchard::Binding;
 
 use crate::{
     action::{self, Action, UnsignedAction},
-    constants::EFFECT_HASH_PERSONALIZATION,
+    constants::SIGHASH_PERSONALIZATION,
     keys::{
-        ProofAuthorizingKey, private::BindingSigningKey, public, public::BindingVerificationKey,
+        ProofAuthorizingKey,
+        private::BindingSigningKey,
+        public,
+        public::BindingVerificationKey,
         randomizer::{Output, Spend},
     },
     primitives::Anchor,
@@ -31,7 +34,7 @@ pub struct Bundle<S, V> {
     /// Net value of spends minus outputs (plaintext integer).
     pub value_balance: V,
 
-    /// Binding signature over the transaction-wide effect hash.
+    /// Binding signature over the transaction-wide sighash.
     pub binding_sig: Signature,
 
     /// Stamp state: `Stamp` when present, `Stampless` when stripped.
@@ -46,16 +49,14 @@ pub type Stripped<V> = Bundle<Stampless, V>;
 
 /// A BLAKE2b-512 hash committing to the bundle's observable effect.
 ///
-/// All signatures (action and binding) sign this same digest. This is
-/// what Zcash/Bitcoin literature calls the "sighash" — we use "effect
-/// hash" to emphasize that the signed message commits to the bundle's
-/// effect (all `(cv, rk)` pairs and `value_balance`), not to individual
-/// actions.
+/// All signatures (action and binding) sign this same digest Commits to all
+/// `(cv, rk)` pairs and `value_balance`, binding signatures to the bundle's
+/// full effect.
 #[derive(Clone, Copy, Debug)]
-pub struct EffectHash([u8; 64]);
+pub struct SigHash([u8; 64]);
 
 #[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 64]> for EffectHash {
+impl Into<[u8; 64]> for SigHash {
     fn into(self) -> [u8; 64] {
         self.0
     }
@@ -94,9 +95,9 @@ pub fn verify_stamp(stamp: &Stamp, actions: &[Action]) -> Result<(), BuildError>
         .map_err(|_err| BuildError::ProofInvalid)
 }
 
-/// Compute the Tachyon bundle effect hash.
+/// Compute the Tachyon bundle sighash.
 ///
-/// $$\text{effect\_hash} = \text{BLAKE2b-512}(
+/// $$\text{sighash} = \text{BLAKE2b-512}(
 ///   \text{"Tachyon-BndlHash"},\;
 ///   \mathsf{cv}_1 \| \mathsf{rk}_1 \| \cdots \|
 ///   \mathsf{cv}_n \| \mathsf{rk}_n \|
@@ -104,19 +105,18 @@ pub fn verify_stamp(stamp: &Stamp, actions: &[Action]) -> Result<(), BuildError>
 ///
 /// All signatures (action and binding) sign this same digest.
 /// The stamp is excluded because it is stripped during aggregation.
-/// Signatures are excluded because the effect hash is what gets signed.
 ///
 /// Accepts `(cv, rk)` pairs from any source — unsigned actions (typed
 /// by [`Spend`](crate::keys::randomizer::Spend) or
 /// [`Output`](crate::keys::randomizer::Output)) or signed [`Action`]s.
 #[must_use]
-pub fn effect_hash(
+pub fn sighash(
     effecting_data: &[(value::Commitment, public::ActionVerificationKey)],
     value_balance: i64,
-) -> EffectHash {
+) -> SigHash {
     let mut state = blake2b_simd::Params::new()
         .hash_length(64)
-        .personal(EFFECT_HASH_PERSONALIZATION)
+        .personal(SIGHASH_PERSONALIZATION)
         .to_state();
 
     for &(cv, rk) in effecting_data {
@@ -129,7 +129,7 @@ pub fn effect_hash(
     #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
     state.update(&value_balance.to_le_bytes());
 
-    EffectHash(*state.finalize().as_array())
+    SigHash(*state.finalize().as_array())
 }
 
 /// A bundle plan — all actions assembled, awaiting authorization.
@@ -190,10 +190,10 @@ impl BundlePlan {
             .collect()
     }
 
-    /// The bundle effect hash — the digest that all signatures cover.
+    /// The bundle sighash — the digest that all signatures cover.
     #[must_use]
-    pub fn effect_hash(&self) -> EffectHash {
-        effect_hash(&self.effecting_data(), self.value_balance)
+    pub fn sighash(&self) -> SigHash {
+        sighash(&self.effecting_data(), self.value_balance)
     }
 
     /// Build a stamped bundle from the plan and authorization data.
@@ -221,7 +221,14 @@ impl BundlePlan {
                 note: spend.note,
                 rcv: spend.rcv,
             };
-            tachyactions.push((Action { cv: spend.cv, rk: spend.rk, sig }, witness));
+            tachyactions.push((
+                Action {
+                    cv: spend.cv,
+                    rk: spend.rk,
+                    sig,
+                },
+                witness,
+            ));
         }
 
         for output in self.outputs {
@@ -234,7 +241,14 @@ impl BundlePlan {
                 note: output.note,
                 rcv: output.rcv,
             };
-            tachyactions.push((Action { cv: output.cv, rk: output.rk, sig }, witness));
+            tachyactions.push((
+                Action {
+                    cv: output.cv,
+                    rk: output.rk,
+                    sig,
+                },
+                witness,
+            ));
         }
 
         Stamped::build(tachyactions, self.value_balance, anchor, pak, rng)
@@ -278,21 +292,21 @@ impl Stamped<i64> {
     ///
     /// 1. Prove: `Stamp::prove` runs the ACTION STEP per action
     /// 2. Verify: reconstruct expected accumulators, check Ragu proof
-    /// 3. Sign: create binding signature over the effect hash
+    /// 3. Sign: create binding signature over the sighash
     ///
-    /// ## Effect hash
+    /// ## Sighash
     ///
     /// All signatures (action and binding) sign the same transaction-wide
     /// digest:
     ///
-    /// $$\text{effect\_hash} = \text{BLAKE2b-512}(\text{"Tachyon-BndlHash"},\;
+    /// $$\text{sighash} = \text{BLAKE2b-512}(\text{"Tachyon-BndlHash"},\;
     ///   \mathsf{cv}_1 \| \mathsf{rk}_1 \| \cdots \|
     ///   \mathsf{cv}_n \| \mathsf{rk}_n \|
     ///   \mathsf{v\_balance})$$
     ///
-    /// The caller is responsible for computing the effect hash during the
+    /// The caller is responsible for computing the sighash during the
     /// authorization phase and signing all actions before calling `build`.
-    /// The binding signature is computed here using the same effect hash.
+    /// The binding signature is computed here using the same sighash.
     pub fn build<R: RngCore + CryptoRng>(
         tachyactions: Vec<(Action, ActionPrivate)>,
         value_balance: i64,
@@ -349,9 +363,9 @@ impl Stamped<i64> {
         verify_stamp(&stamp, &actions)?;
 
         // 3. THEN create binding signature (signer withholds until stamp verified).
-        //    Uses the same effect hash that action sigs signed.
+        //    Uses the same sighash that action sigs signed.
         let pairs: Vec<_> = actions.iter().map(|act| (act.cv, act.rk)).collect();
-        let sh = effect_hash(&pairs, value_balance);
+        let sh = sighash(&pairs, value_balance);
         let binding_sig = bsk.sign(rng, sh);
 
         Ok(Self {
@@ -364,26 +378,26 @@ impl Stamped<i64> {
 }
 
 impl<S> Bundle<S, i64> {
-    /// Compute the bundle effect hash.
-    /// See [`effect_hash`] for more details.
+    /// Compute the bundle sighash.
+    /// See [`sighash`] for more details.
     #[must_use]
-    pub fn effect_hash(&self) -> EffectHash {
+    pub fn sighash(&self) -> SigHash {
         let pairs: Vec<_> = self.actions.iter().map(|act| (act.cv, act.rk)).collect();
-        effect_hash(&pairs, self.value_balance)
+        sighash(&pairs, self.value_balance)
     }
 
     /// Verify the bundle's binding signature and all action signatures.
     ///
-    /// All signatures are verified against the same effect hash:
+    /// All signatures are verified against the same sighash:
     ///
     /// 1. Recompute $\mathsf{bvk}$ from public action data (§4.14):
     ///    $\mathsf{bvk} = (\bigoplus_i \mathsf{cv}_i) \ominus
     ///    \text{ValueCommit}_0(\mathsf{v\_{balance}})$
-    /// 2. Compute the effect hash
-    /// 3. Verify $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{effect\_hash},
+    /// 2. Compute the sighash
+    /// 3. Verify $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{sighash},
     ///    \text{bindingSig}) = 1$
-    /// 4. Verify each action's spend auth signature against the same effect hash:
-    ///    $\text{SpendAuthSig.Validate}_{\mathsf{rk}}(\text{effect\_hash}, \sigma) =
+    /// 4. Verify each action's spend auth signature against the same sighash:
+    ///    $\text{SpendAuthSig.Validate}_{\mathsf{rk}}(\text{sighash}, \sigma) =
     ///    1$
     ///
     /// Full bundle verification also requires Ragu PCD proof
@@ -393,15 +407,15 @@ impl<S> Bundle<S, i64> {
         // 1. Derive bvk from public data (validator-side, §4.14)
         let bvk = BindingVerificationKey::derive(&self.actions, self.value_balance);
 
-        // 2. Compute effect hash
-        let sh = self.effect_hash();
+        // 2. Compute sighash
+        let sighash = self.sighash();
 
-        // 3. Verify binding signature against effect hash
-        bvk.verify(sh, &self.binding_sig)?;
+        // 3. Verify binding signature against sighash
+        bvk.verify(sighash, &self.binding_sig)?;
 
-        // 4. Verify each action's spend auth signature against the SAME effect hash
+        // 4. Verify each action's spend auth signature against the SAME sighash
         for action in &self.actions {
-            action.rk.verify(sh, &action.sig)?;
+            action.rk.verify(sighash, &action.sig)?;
         }
 
         Ok(())
@@ -417,12 +431,12 @@ impl<S> Bundle<S, i64> {
 /// $\mathsf{bvk} = \text{ValueCommit}_{\mathsf{bsk}'}(v^*)$ for
 /// $v^* \neq 0$ — so value balance is enforced.
 ///
-/// In Tachyon, the signed message is the bundle effect hash:
+/// In Tachyon, the signed message is the bundle sighash:
 /// `BLAKE2b-512("Tachyon-BndlHash", cv_1 || rk_1 || ... || cv_n || rk_n ||
 /// value_balance)`
 ///
 /// The validator checks:
-/// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{effect\_hash},
+/// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{sighash},
 ///   \text{bindingSig}) = 1$
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
@@ -570,10 +584,10 @@ mod tests {
 
         let value_balance: i64 = 300;
 
-        // === Phase 2: Compute effect hash and sign all actions ===
+        // === Phase 2: Compute sighash and sign all actions ===
 
         let pairs = [(spend_cv, spend_rk), (output_cv, output_rk)];
-        let sh = effect_hash(&pairs, value_balance);
+        let sh = sighash(&pairs, value_balance);
 
         // Spend: sign with rsk = ask + alpha
         let spend_action = spend_alpha.sign(&ask, spend_cv, spend_rk, sh, &mut rng);

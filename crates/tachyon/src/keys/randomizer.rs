@@ -57,7 +57,7 @@ impl ActionEntropy {
 
     /// Derive $\alpha$ for a spend action.
     ///
-    /// The resulting randomizer signs the bundle effect hash when combined
+    /// The resulting randomizer signs the bundle sighash when combined
     /// with a [`SpendAuthorizingKey`](private::SpendAuthorizingKey) via
     /// [`ActionRandomizer<Spend>::sign`].
     #[must_use]
@@ -67,9 +67,8 @@ impl ActionEntropy {
 
     /// Derive $\alpha$ for an output action.
     ///
-    /// The resulting randomizer can derive `rk` via
-    /// [`ActionRandomizer<Output>::derive_rk`] and sign the bundle
-    /// effect hash via [`ActionRandomizer<Output>::sign`]:
+    /// The resulting randomizer signs the bundle sighash directly and provides
+    /// the public `rk` via [`ActionRandomizer<Output>::derive_rk`].
     /// $\mathsf{rsk} = \alpha$ (no spend authority).
     #[must_use]
     pub fn output_randomizer(&self, cm: &note::Commitment) -> ActionRandomizer<Output> {
@@ -134,22 +133,21 @@ impl From<ActionRandomizer<Output>> for ActionRandomizer<Witness> {
 }
 
 impl ActionRandomizer<Spend> {
-    /// Sign the bundle effect hash with $\mathsf{rsk} = \mathsf{ask} + \alpha$,
+    /// Sign the bundle sighash with $\mathsf{rsk} = \mathsf{ask} + \alpha$,
     /// producing a signed [`Action`](action::Action).
     ///
-    /// This is the same signing primitive used by
-    /// [`Custody`](crate::custody::Custody) implementations. The effect hash
-    /// must be computed from all effecting data before calling this method.
+    /// The sighash must be computed from all effecting data before calling this
+    /// method.
     pub fn sign<R: RngCore + CryptoRng>(
         self,
         ask: &private::SpendAuthorizingKey,
         cv: value::Commitment,
         rk: public::ActionVerificationKey,
-        effect_hash: bundle::EffectHash,
+        sighash: bundle::SigHash,
         rng: &mut R,
     ) -> action::Action {
         let rsk = ask.derive_action_private(&self);
-        let sig = rsk.sign(rng, effect_hash);
+        let sig = rsk.sign(rng, sighash);
         action::Action { cv, rk, sig }
     }
 }
@@ -157,30 +155,27 @@ impl ActionRandomizer<Spend> {
 impl ActionRandomizer<Output> {
     /// Derive $\mathsf{rk} = [\alpha]\,\mathcal{G}$ for the assembly
     /// phase.
-    ///
-    /// Used during phase 1 of transaction construction before the
-    /// effect hash is known.
     #[must_use]
     pub fn derive_rk(&self) -> public::ActionVerificationKey {
         let rsk = private::ActionSigningKey::from_output_alpha(self.0);
         rsk.derive_action_public()
     }
 
-    /// Sign the bundle effect hash with $\mathsf{rsk} = \alpha$,
+    /// Sign the bundle sighash with $\mathsf{rsk} = \alpha$,
     /// producing a signed [`Action`](action::Action).
     ///
     /// Output-side counterpart of [`ActionRandomizer<Spend>::sign`]:
-    /// both sign the same bundle effect hash, but the output side requires
+    /// both sign the same bundle sighash, but the output side requires
     /// no `ask` because $\mathsf{rsk} = \alpha$.
     pub fn sign<R: RngCore + CryptoRng>(
         self,
         cv: value::Commitment,
         rk: public::ActionVerificationKey,
-        effect_hash: bundle::EffectHash,
+        sighash: bundle::SigHash,
         rng: &mut R,
     ) -> action::Action {
         let rsk = private::ActionSigningKey::from_output_alpha(self.0);
-        let sig = rsk.sign(rng, effect_hash);
+        let sig = rsk.sign(rng, sighash);
         action::Action { cv, rk, sig }
     }
 }

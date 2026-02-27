@@ -3,7 +3,7 @@
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 use reddsa::orchard::{Binding, SpendAuth};
 
-use crate::{action, action::Action, bundle, bundle::EffectHash, value};
+use crate::{action, action::Action, bundle, bundle::SigHash, value};
 
 /// The randomized action verification key `rk` — per-action, public.
 ///
@@ -26,9 +26,9 @@ use crate::{action, action::Action, bundle, bundle::EffectHash, value};
 pub struct ActionVerificationKey(pub(super) reddsa::VerificationKey<SpendAuth>);
 
 impl ActionVerificationKey {
-    /// Verify an action signature against the transaction-wide effect hash.
-    pub fn verify(&self, effect_hash: EffectHash, sig: &action::Signature) -> Result<(), reddsa::Error> {
-        let msg: [u8; 64] = effect_hash.into();
+    /// Verify an action signature.
+    pub fn verify(&self, sighash: SigHash, sig: &action::Signature) -> Result<(), reddsa::Error> {
+        let msg: [u8; 64] = sighash.into();
         self.0.verify(&msg, &sig.0)
     }
 }
@@ -102,8 +102,8 @@ impl BindingVerificationKey {
     }
 
     /// Verify a binding signature.
-    pub fn verify(&self, effect_hash: EffectHash, sig: &bundle::Signature) -> Result<(), reddsa::Error> {
-        let msg: [u8; 64] = effect_hash.into();
+    pub fn verify(&self, sighash: SigHash, sig: &bundle::Signature) -> Result<(), reddsa::Error> {
+        let msg: [u8; 64] = sighash.into();
         self.0.verify(&msg, &sig.0)
     }
 }

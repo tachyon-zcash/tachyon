@@ -180,13 +180,13 @@ impl SpendAuthorizingKey {
 pub struct ActionSigningKey(pub(super) reddsa::SigningKey<SpendAuth>);
 
 impl ActionSigningKey {
-    /// Sign the bundle effect hash with this randomized key.
+    /// Sign a sighash with this action key.
     pub fn sign(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
-        effect_hash: bundle::EffectHash,
+        sighash: bundle::SigHash,
     ) -> action::Signature {
-        let msg: [u8; 64] = effect_hash.into();
+        let msg: [u8; 64] = sighash.into();
         action::Signature(self.0.sign(rng, &msg))
     }
 
@@ -225,7 +225,7 @@ impl ActionSigningKey {
 /// infeasible to find another opening to a different value — so value
 /// balance is enforced.
 ///
-/// ## Bundle effect hash
+/// ## Bundle sighash
 ///
 /// Both action signatures and the binding signature sign the same
 /// bundle-level digest:
@@ -238,13 +238,13 @@ impl ActionSigningKey {
 pub struct BindingSigningKey(reddsa::SigningKey<Binding>);
 
 impl BindingSigningKey {
-    /// Sign the bundle effect hash.
+    /// Sign a sighash with this binding key.
     pub fn sign(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
-        effect_hash: bundle::EffectHash,
+        sighash: bundle::SigHash,
     ) -> bundle::Signature {
-        let msg: [u8; 64] = effect_hash.into();
+        let msg: [u8; 64] = sighash.into();
         bundle::Signature(self.0.sign(rng, &msg))
     }
 

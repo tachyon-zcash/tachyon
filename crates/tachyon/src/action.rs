@@ -62,7 +62,7 @@ pub struct UnsignedAction<Kind> {
 }
 
 impl<Kind> UnsignedAction<Kind> {
-    /// The effecting data pair `(cv, rk)` for effect hash computation.
+    /// The effecting data pair `(cv, rk)` for sighash computation.
     #[must_use]
     pub const fn effecting_data(&self) -> (value::Commitment, public::ActionVerificationKey) {
         (self.cv, self.rk)
@@ -144,7 +144,7 @@ impl UnsignedAction<Output> {
 /// - `cv`: Commitment to a net value effect
 /// - `rk`: Public key (randomized counterpart to `rsk`)
 /// - `sig`: Signature by private key (single-use `rsk`) over the bundle
-///   [`EffectHash`](crate::bundle::EffectHash)
+///   [`SigHash`](crate::bundle::SigHash)
 #[derive(Clone, Copy, Debug)]
 pub struct Action {
     /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
@@ -155,7 +155,7 @@ pub struct Action {
     pub rk: public::ActionVerificationKey,
 
     /// RedPallas spend auth signature over the bundle
-    /// [`EffectHash`](crate::bundle::EffectHash).
+    /// [`SigHash`](crate::bundle::SigHash).
     pub sig: Signature,
 }
 
@@ -191,7 +191,7 @@ mod tests {
     };
 
     /// A spend action's signature must verify against the bundle
-    /// effect hash using its own rk.
+    /// sighash using its own rk.
     #[test]
     fn spend_sig_round_trip() {
         let mut rng = StdRng::seed_from_u64(0);
@@ -207,15 +207,15 @@ mod tests {
         let unsigned = UnsignedAction::<Spend>::new(note, theta, &pak, &mut rng);
 
         let plan = BundlePlan::new(vec![unsigned], vec![], 1000);
-        let eh = plan.effect_hash();
+        let sighash = plan.sighash();
         let local = custody::Local::new(sk.derive_auth_private());
         let auth = local.authorize(&plan, &mut rng).unwrap();
 
-        plan.spends[0].rk.verify(eh, &auth.sigs[0]).unwrap();
+        plan.spends[0].rk.verify(sighash, &auth.sigs[0]).unwrap();
     }
 
     /// An output action's signature must verify against the bundle
-    /// effect hash using its own rk.
+    /// sighash using its own rk.
     #[test]
     fn output_sig_round_trip() {
         let mut rng = StdRng::seed_from_u64(0);
@@ -230,10 +230,10 @@ mod tests {
         let unsigned = UnsignedAction::<Output>::new(note, theta, &mut rng);
 
         let plan = BundlePlan::new(vec![], vec![unsigned], -1000);
-        let eh = plan.effect_hash();
+        let sighash = plan.sighash();
         let local = custody::Local::new(sk.derive_auth_private());
         let auth = local.authorize(&plan, &mut rng).unwrap();
 
-        plan.outputs[0].rk.verify(eh, &auth.sigs[0]).unwrap();
+        plan.outputs[0].rk.verify(sighash, &auth.sigs[0]).unwrap();
     }
 }

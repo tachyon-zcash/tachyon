@@ -7,15 +7,13 @@
 //!
 //! ## Protocol
 //!
-//! 1. The user device assembles all unsigned actions into a
-//!    [`BundlePlan`].
+//! 1. The user device assembles all unsigned actions into a [`BundlePlan`].
 //!
 //! 2. The custody device authorizes the plan:
-//!    - Computes the bundle [`effect_hash`](crate::bundle::effect_hash)
+//!    - Computes the bundle [`sighash`](crate::bundle::sighash)
 //!    - For each spend: derives $\alpha$, signs with $\mathsf{rsk} =
 //!      \mathsf{ask} + \alpha$
-//!    - For each output: derives $\alpha$, signs with $\mathsf{rsk} =
-//!      \alpha$ (no spend authority)
+//!    - For each output: derives $\alpha$, signs with $\mathsf{rsk} = \alpha$
 //!    - Returns [`AuthorizationData`] containing all signatures
 //!
 //! 3. The user device builds the stamped bundle:
@@ -50,7 +48,7 @@ pub trait Custody {
     /// Authorize a bundle plan.
     ///
     /// The custody device sees the full plan (all spends, outputs, and
-    /// value balance), computes the effect hash, and signs every action.
+    /// value balance), computes the sighash, and signs every action.
     /// Returns [`AuthorizationData`] with one signature per action
     /// (spends first, then outputs).
     fn authorize<R: RngCore + CryptoRng>(
@@ -86,7 +84,7 @@ impl Custody for Local {
         plan: &BundlePlan,
         rng: &mut R,
     ) -> Result<AuthorizationData, Self::Error> {
-        let eh = plan.effect_hash();
+        let sighash = plan.sighash();
         let mut sigs: Vec<action::Signature> = Vec::new();
 
         // Spends: rsk = ask + alpha
@@ -94,14 +92,14 @@ impl Custody for Local {
             let cm = spend.note.commitment();
             let alpha = spend.theta.spend_randomizer(&cm);
             let rsk = self.ask.derive_action_private(&alpha);
-            sigs.push(rsk.sign(rng, eh));
+            sigs.push(rsk.sign(rng, sighash));
         }
 
         // Outputs: sign with rsk = alpha (no spend authority)
         for output in &plan.outputs {
             let cm = output.note.commitment();
             let alpha = output.theta.output_randomizer(&cm);
-            let signed = alpha.sign(output.cv, output.rk, eh, rng);
+            let signed = alpha.sign(output.cv, output.rk, sighash, rng);
             sigs.push(signed.sig);
         }
 
@@ -123,7 +121,7 @@ mod tests {
     };
 
     /// Software custody authorization must produce valid signatures
-    /// that verify against the bundle effect hash.
+    /// that verify against the bundle sighash.
     #[test]
     fn software_custody_sig_round_trip() {
         let mut rng = StdRng::seed_from_u64(0);
@@ -141,13 +139,10 @@ mod tests {
         let unsigned = UnsignedAction::<Spend>::new(note, theta, &pak, &mut rng);
 
         let plan = BundlePlan::new(vec![unsigned], vec![], 1000);
-        let eh = plan.effect_hash();
+        let sighash = plan.sighash();
 
         let auth = custody.authorize(&plan, &mut rng).unwrap();
 
-        plan.spends[0]
-            .rk
-            .verify(eh, &auth.sigs[0])
-            .unwrap();
+        plan.spends[0].rk.verify(sighash, &auth.sigs[0]).unwrap();
     }
 }

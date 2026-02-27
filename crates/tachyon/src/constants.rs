@@ -10,21 +10,16 @@
 /// Matches Zcash's `PRF^expand` pattern (§5.4.2 of the protocol spec).
 pub const PRF_EXPAND_PERSONALIZATION: &[u8; 16] = b"Zcash_ExpandSeed";
 
-/// BLAKE2b-512 personalization for the bundle effect hash.
+/// BLAKE2b-512 personalization for the bundle sighash.
 ///
-/// All signatures (action and binding) sign this same digest. The hash
-/// covers all effecting data: interleaved `(cv, rk)` pairs from every
-/// action plus `value_balance`. The stamp is excluded because it is
-/// stripped during aggregation.
+/// All signatures (action and binding) sign this same digest. The hash covers
+/// all effecting data: interleaved `(cv, rk)` pairs from every action plus
+/// `value_balance`. The stamp is excluded because it is stripped during
+/// aggregation.
 ///
-/// The effect hash is what Zcash/Bitcoin literature calls the "sighash"
-/// — the message that all signatures cover. We use "effect hash" to
-/// emphasize that the signed message commits to the bundle's observable
-/// effect, not to individual actions.
-///
-/// Follows the Zcash convention where personalizations describe the
-/// hash being computed (cf. `ZTxIdOrchardHash` in ZIP-244).
-pub const EFFECT_HASH_PERSONALIZATION: &[u8; 16] = b"Tachyon-BndlHash";
+/// The sighash is the message that all signatures (action and binding) cover —
+/// a commitment to the entire bundle.
+pub const SIGHASH_PERSONALIZATION: &[u8; 16] = b"Tachyon-BndlHash";
 
 /// BLAKE2b-512 personalization for spend-side alpha derivation.
 ///
