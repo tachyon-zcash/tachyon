@@ -22,7 +22,7 @@ use crate::{
 /// to [`Proof::create`](crate::proof::Proof::create).
 ///
 /// Produced from
-/// [`UnsignedAction::into_witness`](crate::action::UnsignedAction::into_witness).
+/// [`ActionPlan::into_witness`](crate::action::ActionPlan::into_witness).
 #[derive(Clone, Copy, Debug)]
 pub struct ActionPrivate {
     /// Spend authorization randomizer `alpha`.

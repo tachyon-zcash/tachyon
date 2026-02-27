@@ -7,7 +7,7 @@
 //!
 //! ## Protocol
 //!
-//! 1. The user device assembles all unsigned actions into a [`BundlePlan`].
+//! 1. The user device assembles all action plans into a [`BundlePlan`].
 //!
 //! 2. The custody device authorizes the plan:
 //!    - Computes the bundle [`sighash`](crate::bundle::sighash)
@@ -115,7 +115,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        action::UnsignedAction,
+        action::ActionPlan,
         keys::randomizer::{ActionEntropy, Spend},
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
     };
@@ -136,7 +136,7 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let unsigned = UnsignedAction::<Spend>::new(note, theta, &pak, &mut rng);
+        let unsigned = ActionPlan::<Spend>::new(note, theta, &pak, &mut rng);
 
         let plan = BundlePlan::new(vec![unsigned], vec![], 1000);
         let sighash = plan.sighash();

@@ -9,7 +9,7 @@ use rand::{CryptoRng, RngCore};
 use reddsa::orchard::Binding;
 
 use crate::{
-    action::{self, Action, UnsignedAction},
+    action::{self, Action, ActionPlan},
     constants::SIGHASH_PERSONALIZATION,
     keys::{
         ProofAuthorizingKey,
@@ -134,7 +134,7 @@ pub fn sighash(
 
 /// A bundle plan — all actions assembled, awaiting authorization.
 ///
-/// Collects typed [`UnsignedAction<Spend>`] and [`UnsignedAction<Output>`],
+/// Collects typed [`ActionPlan<Spend>`] and [`ActionPlan<Output>`],
 /// then the plan is authorized by a [`Custody`](crate::custody::Custody)
 /// device to produce [`AuthorizationData`]. Finally,
 /// [`build`](Self::build) consumes the plan and auth data to produce a
@@ -156,10 +156,10 @@ pub fn sighash(
 )]
 pub struct BundlePlan {
     /// Spend actions (unsigned).
-    pub spends: Vec<UnsignedAction<Spend>>,
+    pub spends: Vec<ActionPlan<Spend>>,
 
     /// Output actions (unsigned).
-    pub outputs: Vec<UnsignedAction<Output>>,
+    pub outputs: Vec<ActionPlan<Output>>,
 
     /// Net value of spends minus outputs (plaintext integer).
     pub value_balance: i64,
@@ -169,8 +169,8 @@ impl BundlePlan {
     /// Create a new bundle plan from assembled unsigned actions.
     #[must_use]
     pub const fn new(
-        spends: Vec<UnsignedAction<Spend>>,
-        outputs: Vec<UnsignedAction<Output>>,
+        spends: Vec<ActionPlan<Spend>>,
+        outputs: Vec<ActionPlan<Output>>,
         value_balance: i64,
     ) -> Self {
         Self {
@@ -185,8 +185,8 @@ impl BundlePlan {
     pub fn effecting_data(&self) -> Vec<(value::Commitment, public::ActionVerificationKey)> {
         self.spends
             .iter()
-            .map(UnsignedAction::effecting_data)
-            .chain(self.outputs.iter().map(UnsignedAction::effecting_data))
+            .map(ActionPlan::effecting_data)
+            .chain(self.outputs.iter().map(ActionPlan::effecting_data))
             .collect()
     }
 
@@ -462,7 +462,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        action::UnsignedAction,
+        action::ActionPlan,
         custody::{self, Custody as _},
         keys::{
             private,
@@ -493,8 +493,8 @@ mod tests {
         let theta_spend = ActionEntropy::random(&mut *rng);
         let theta_output = ActionEntropy::random(&mut *rng);
 
-        let spend = UnsignedAction::<Spend>::new(spend_note, theta_spend, &pak, &mut *rng);
-        let output = UnsignedAction::<Output>::new(output_note, theta_output, &mut *rng);
+        let spend = ActionPlan::<Spend>::new(spend_note, theta_spend, &pak, &mut *rng);
+        let output = ActionPlan::<Output>::new(output_note, theta_output, &mut *rng);
 
         let plan = BundlePlan::new(vec![spend], vec![output], 300);
         let local = custody::Local::new(sk.derive_auth_private());
@@ -534,7 +534,7 @@ mod tests {
     /// Composable flow: construct actions and bundle step-by-step,
     /// exercising each delegation boundary independently.
     ///
-    /// This uses no convenience wrappers (`UnsignedAction::new`,
+    /// This uses no convenience wrappers (`ActionPlan::new`,
     /// `Stamped::build`). Every step is called individually, matching
     /// the custody-delegated flow from the protocol spec.
     #[test]

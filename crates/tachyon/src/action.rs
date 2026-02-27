@@ -15,14 +15,14 @@ use crate::{
     witness::ActionPrivate,
 };
 
-/// An unsigned Tachyon action — assembled but not yet authorized.
+/// A planned Tachyon action — assembled but not yet authorized.
 ///
 /// Parameterized by kind ([`Spend`] or [`Output`]) to enforce that
 /// spends and outputs have different signing requirements:
 ///
-/// - `UnsignedAction<Spend>` — signed via custody with
+/// - `ActionPlan<Spend>` — signed via custody with
 ///   [`ActionRandomizer<Spend>::sign`]
-/// - `UnsignedAction<Output>` — signed directly with
+/// - `ActionPlan<Output>` — signed directly with
 ///   [`ActionRandomizer<Output>::sign`]
 ///
 /// Carries the full per-action material: public effecting data
@@ -35,13 +35,13 @@ use crate::{
 #[derive(Clone, Copy, Debug)]
 #[expect(
     clippy::module_name_repetitions,
-    reason = "UnsignedAction is the natural name for unsigned actions"
+    reason = "ActionPlan is the natural name for action plans"
 )]
 #[expect(
     clippy::partial_pub_fields,
     reason = "PhantomData kind marker is an implementation detail"
 )]
-pub struct UnsignedAction<Kind> {
+pub struct ActionPlan<Kind> {
     /// Value commitment.
     pub cv: value::Commitment,
 
@@ -61,7 +61,7 @@ pub struct UnsignedAction<Kind> {
     _kind: PhantomData<Kind>,
 }
 
-impl<Kind> UnsignedAction<Kind> {
+impl<Kind> ActionPlan<Kind> {
     /// The effecting data pair `(cv, rk)` for sighash computation.
     #[must_use]
     pub const fn effecting_data(&self) -> (value::Commitment, public::ActionVerificationKey) {
@@ -82,8 +82,8 @@ impl<Kind> UnsignedAction<Kind> {
     }
 }
 
-impl UnsignedAction<Spend> {
-    /// Assemble an unsigned spend action.
+impl ActionPlan<Spend> {
+    /// Assemble a spend action plan.
     ///
     /// Computes the value commitment and derives `rk` from the spend
     /// validating key `ak` and the per-action randomizer. No signing
@@ -113,8 +113,8 @@ impl UnsignedAction<Spend> {
     }
 }
 
-impl UnsignedAction<Output> {
-    /// Assemble an unsigned output action.
+impl ActionPlan<Output> {
+    /// Assemble an output action plan.
     ///
     /// Computes the value commitment (negated for outputs) and derives
     /// $\mathsf{rk} = [\alpha]\,\mathcal{G}$ (no spending authority).
@@ -204,7 +204,7 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let unsigned = UnsignedAction::<Spend>::new(note, theta, &pak, &mut rng);
+        let unsigned = ActionPlan::<Spend>::new(note, theta, &pak, &mut rng);
 
         let plan = BundlePlan::new(vec![unsigned], vec![], 1000);
         let sighash = plan.sighash();
@@ -227,7 +227,7 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let unsigned = UnsignedAction::<Output>::new(note, theta, &mut rng);
+        let unsigned = ActionPlan::<Output>::new(note, theta, &mut rng);
 
         let plan = BundlePlan::new(vec![], vec![unsigned], -1000);
         let sighash = plan.sighash();
