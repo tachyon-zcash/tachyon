@@ -30,7 +30,7 @@ Each **tachyaction** indistinguishably represents either the creation or destruc
 
 - `cv` - a 32-byte homomorphic commitment to the note's created or destroyed value
 - `rk` - a 32-byte public key[^ragu-rerandomization] bound to one tachygram
-- `act` - a 64-byte RedPallas[^redpallas] authorization by `rk`
+- `sig` - a 64-byte RedPallas[^redpallas] signature by `rk` over the transaction-wide sighash
 
 [^ragu-rerandomization]: Ragu's [proof rerandomization](https://tachyon.z.cash/ragu/implementation/proofs.html#rerandomization) conceals private proof inputs by selecting new unrelated proof inputs that verify identically.
 
@@ -70,7 +70,7 @@ A Tachyon bundle collects tachyactions with authorization data:
 
 - `tachyactions` - the tachyactions
 - `value_balance` - integer net pool effect
-- `binding_sig` - signature over actions and value balance
+- `binding_sig` - signature over the transaction-wide sighash (same digest as action sigs)
 - `tachystamp` - anchor, proof, tachygrams (may be aggregated)
 
 ```mermaid
