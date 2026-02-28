@@ -10,11 +10,12 @@
 //! 1. The user device assembles all action plans into a [`bundle::Plan`].
 //!
 //! 2. The custody device authorizes the plan:
+//!    - Generates value commitments via [`Plan::commit`]
 //!    - Computes the bundle [`sighash`](crate::bundle::sighash)
 //!    - For each spend: derives $\alpha$, signs with $\mathsf{rsk} =
 //!      \mathsf{ask} + \alpha$
 //!    - For each output: derives $\alpha$, signs with $\mathsf{rsk} = \alpha$
-//!    - Returns [`AuthorizationData`] containing all signatures
+//!    - Returns [`AuthorizationData`] containing signatures and commitments
 //!
 //! 3. The user device builds the stamped bundle:
 //!    [`bundle::Plan::build`](Plan::build)
@@ -38,8 +39,9 @@ use crate::{
 /// ## Composability
 ///
 /// The [`Local`] implementation calls
-/// [`ActionRandomizer::sign`](crate::keys::randomizer::ActionRandomizer)
-/// — the same primitive available for direct use in composable
+/// [`SpendRandomizer::sign`](crate::keys::randomizer::SpendRandomizer::sign)
+/// and [`OutputSigningKey::sign`](crate::keys::private::OutputSigningKey::sign)
+/// — the same primitives available for direct use in composable
 /// construction flows.
 pub trait Custody {
     /// Error type for authorization failures.
@@ -47,10 +49,10 @@ pub trait Custody {
 
     /// Authorize a bundle plan.
     ///
-    /// The custody device sees the full plan (all spends, outputs, and
-    /// value balance), computes the sighash, and signs every action.
-    /// Returns [`AuthorizationData`] with one signature per action
-    /// (spends first, then outputs).
+    /// The custody device sees the full plan (all actions and value
+    /// balance), generates value commitments, computes the sighash,
+    /// and signs every action. Returns [`AuthorizationData`] with
+    /// signatures and `(cv, rcv)` commitment pairs.
     fn authorize<R: RngCore + CryptoRng>(
         &self,
         plan: &Plan,
@@ -84,26 +86,26 @@ impl Custody for Local {
         plan: &Plan,
         rng: &mut R,
     ) -> Result<AuthorizationData, Self::Error> {
-        let sighash = plan.sighash();
+        let commitments = plan.commit(rng);
+        let sighash = plan.sighash(&commitments);
+
         let mut sigs: Vec<action::Signature> = Vec::new();
-
-        // Spends: rsk = ask + alpha
-        for spend in &plan.spends {
-            let cm = spend.note.commitment();
-            let alpha = spend.theta.spend_randomizer(&cm);
-            let rsk = self.ask.derive_action_private(&alpha);
-            sigs.push(rsk.sign(rng, sighash));
+        for action_plan in &plan.actions {
+            let cm = action_plan.note.commitment();
+            let sig = match action_plan.effect {
+                | action::Effect::Spend => {
+                    let alpha = action_plan.theta.spend_randomizer(&cm);
+                    alpha.sign(&self.ask, sighash, rng)
+                },
+                | action::Effect::Output => {
+                    let alpha = action_plan.theta.output_randomizer(&cm);
+                    private::OutputSigningKey::from(alpha).sign(rng, sighash)
+                },
+            };
+            sigs.push(sig);
         }
 
-        // Outputs: sign with rsk = alpha (no spend authority)
-        for output in &plan.outputs {
-            let cm = output.note.commitment();
-            let alpha = output.theta.output_randomizer(&cm);
-            let signed = alpha.sign(output.cv, output.rk, sighash, rng);
-            sigs.push(signed.sig);
-        }
-
-        Ok(AuthorizationData { sigs })
+        Ok(AuthorizationData { sigs, commitments })
     }
 }
 
@@ -116,7 +118,7 @@ mod tests {
     use super::*;
     use crate::{
         action,
-        keys::randomizer::{ActionEntropy, Spend},
+        keys::randomizer::ActionEntropy,
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
     };
 
@@ -136,13 +138,12 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let unsigned = action::Plan::<Spend>::new(note, theta, &pak, &mut rng);
+        let unsigned = action::Plan::spend(note, theta, pak.ak());
 
-        let plan = Plan::new(vec![unsigned], vec![], 1000);
-        let sighash = plan.sighash();
-
+        let plan = Plan::new(vec![unsigned], 1000);
         let auth = custody.authorize(&plan, &mut rng).unwrap();
 
-        plan.spends[0].rk.verify(sighash, &auth.sigs[0]).unwrap();
+        let sighash = plan.sighash(&auth.commitments);
+        plan.actions[0].rk.verify(sighash, &auth.sigs[0]).unwrap();
     }
 }

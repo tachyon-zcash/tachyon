@@ -18,13 +18,14 @@
 //!     sighash["SigHash"]
 //!     sk --> ask & nk & pk
 //!     ask --> ak
-//!     theta["ActionEntropy theta"] -- spend_randomizer --> spend_alpha["ActionRandomizer&lt;Spend&gt;"]
-//!     theta -- output_randomizer --> output_alpha["ActionRandomizer&lt;Output&gt;"]
+//!     theta["ActionEntropy theta"] -- spend_randomizer --> spend_alpha["SpendRandomizer"]
+//!     theta -- output_randomizer --> output_alpha["OutputRandomizer"]
+//!     output_alpha -- "From" --> osk["OutputSigningKey"]
 //!     ak -- "+alpha" --> rk
-//!     output_alpha -- "derive_rk()" --> rk
+//!     osk -- "derive_action_public()" --> rk
 //!     rk --> sighash
 //!     spend_alpha -- "sign(ask, sighash)" --> sig
-//!     output_alpha -- "sign(sighash)" --> sig
+//!     osk -- "sign(sighash)" --> sig
 //!     ak & nk --> pak
 //! ```
 //!
@@ -74,7 +75,7 @@ mod proof;
 
 // Re-exports: public API surface.
 pub use note::{NoteDelegateKey, NoteMasterKey, NullifierKey, PaymentKey};
-pub use proof::ProofAuthorizingKey;
+pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]
 mod tests {

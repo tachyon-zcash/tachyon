@@ -12,11 +12,7 @@ use crate::{
     action::{self, Action},
     constants::SIGHASH_PERSONALIZATION,
     keys::{
-        ProofAuthorizingKey,
-        private::BindingSigningKey,
-        public,
-        public::BindingVerificationKey,
-        randomizer::{Output, Spend},
+        ProofAuthorizingKey, private::BindingSigningKey, public, public::BindingVerificationKey,
     },
     primitives::Anchor,
     stamp::{Stamp, Stampless},
@@ -49,7 +45,7 @@ pub type Stripped<V> = Bundle<Stampless, V>;
 
 /// A BLAKE2b-512 hash committing to the bundle's observable effect.
 ///
-/// All signatures (action and binding) sign this same digest Commits to all
+/// All signatures (action and binding) sign this same digest. Commits to all
 /// `(cv, rk)` pairs and `value_balance`, binding signatures to the bundle's
 /// full effect.
 #[derive(Clone, Copy, Debug)]
@@ -106,9 +102,8 @@ pub fn verify_stamp(stamp: &Stamp, actions: &[Action]) -> Result<(), BuildError>
 /// All signatures (action and binding) sign this same digest.
 /// The stamp is excluded because it is stripped during aggregation.
 ///
-/// Accepts `(cv, rk)` pairs from any source — action plans (typed
-/// by [`Spend`](crate::keys::randomizer::Spend) or
-/// [`Output`](crate::keys::randomizer::Output)) or signed [`Action`]s.
+/// Accepts `(cv, rk)` pairs from any source — [`Plan::commit`] data
+/// or signed [`Action`]s.
 #[must_use]
 pub fn sighash(
     effecting_data: &[(value::Commitment, public::ActionVerificationKey)],
@@ -134,28 +129,25 @@ pub fn sighash(
 
 /// A bundle plan — all actions assembled, awaiting authorization.
 ///
-/// Collects typed [`action::Plan<Spend>`] and [`action::Plan<Output>`],
-/// then the plan is authorized by a [`Custody`](crate::custody::Custody)
-/// device to produce [`AuthorizationData`]. Finally,
-/// [`build`](Self::build) consumes the plan and auth data to produce a
-/// [`Stamped`] bundle.
+/// Collects [`action::Plan`]s (spend and output), then the plan is
+/// authorized by a [`Custody`](crate::custody::Custody) device to
+/// produce [`AuthorizationData`]. Finally, [`build`](Self::build)
+/// consumes the plan and auth data to produce a [`Stamped`] bundle.
 ///
 /// ```text
-/// let plan = bundle::Plan::new(spends, outputs, value_balance);
+/// let plan = bundle::Plan::new(vec![spend, output], value_balance);
 /// let auth = custody.authorize(&plan, rng)?;
 /// let stamped = plan.build(auth, anchor, &pak, rng)?;
 /// ```
 ///
 /// For full manual control over each step, use the composable primitives
-/// directly: [`ActionRandomizer::sign`](crate::keys::randomizer::ActionRandomizer),
+/// directly: [`SpendRandomizer::sign`](crate::keys::randomizer::SpendRandomizer::sign),
+/// [`OutputSigningKey::sign`](crate::keys::private::OutputSigningKey::sign),
 /// [`Stamped::build`].
 #[derive(Clone, Debug)]
 pub struct Plan {
-    /// Spend action plans.
-    pub spends: Vec<action::Plan<Spend>>,
-
-    /// Output action plans.
-    pub outputs: Vec<action::Plan<Output>>,
+    /// Action plans (spends and outputs, in order).
+    pub actions: Vec<action::Plan>,
 
     /// Net value of spends minus outputs (plaintext integer).
     pub value_balance: i64,
@@ -164,38 +156,61 @@ pub struct Plan {
 impl Plan {
     /// Create a new bundle plan from assembled action plans.
     #[must_use]
-    pub const fn new(
-        spends: Vec<action::Plan<Spend>>,
-        outputs: Vec<action::Plan<Output>>,
-        value_balance: i64,
-    ) -> Self {
+    pub const fn new(actions: Vec<action::Plan>, value_balance: i64) -> Self {
         Self {
-            spends,
-            outputs,
+            actions,
             value_balance,
         }
     }
 
-    /// The effecting data pairs `(cv, rk)` from all actions, spends first.
-    #[must_use]
-    pub fn effecting_data(&self) -> Vec<(value::Commitment, public::ActionVerificationKey)> {
-        self.spends
+    /// Generate value commitments for all actions.
+    ///
+    /// Returns `(cv, rcv)` per action: the value commitment and its
+    /// trapdoor. Spends commit to positive value, outputs to negated
+    /// value.
+    ///
+    /// The custody device calls this to produce the `cv` values that
+    /// enter the sighash before signing.
+    pub fn commit<R: RngCore + CryptoRng>(
+        &self,
+        rng: &mut R,
+    ) -> Vec<(value::Commitment, value::CommitmentTrapdoor)> {
+        self.actions
             .iter()
-            .map(action::Plan::effecting_data)
-            .chain(self.outputs.iter().map(action::Plan::effecting_data))
+            .map(|action| {
+                let rcv = value::CommitmentTrapdoor::random(&mut *rng);
+                let cv = match action.effect {
+                    | action::Effect::Spend => rcv.commit_spend(action.note),
+                    | action::Effect::Output => rcv.commit_output(action.note),
+                };
+                (cv, rcv)
+            })
             .collect()
     }
 
     /// The bundle sighash — the digest that all signatures cover.
+    ///
+    /// `commitments` must be the `(cv, rcv)` pairs from
+    /// [`commit`](Self::commit), in the same order as the plan's actions.
     #[must_use]
-    pub fn sighash(&self) -> SigHash {
-        sighash(&self.effecting_data(), self.value_balance)
+    pub fn sighash(
+        &self,
+        commitments: &[(value::Commitment, value::CommitmentTrapdoor)],
+    ) -> SigHash {
+        let effecting_data: Vec<(value::Commitment, public::ActionVerificationKey)> = self
+            .actions
+            .iter()
+            .zip(commitments)
+            .map(|(action, &(cv, _rcv))| (cv, action.rk))
+            .collect();
+        sighash(&effecting_data, self.value_balance)
     }
 
     /// Build a stamped bundle from the plan and authorization data.
     ///
-    /// Pairs each action plan with its signature, builds witnesses
-    /// (re-deriving alpha from theta + cm), then delegates to
+    /// Pairs each action plan with its signature and commitment,
+    /// builds witnesses (re-deriving alpha from theta + cm via
+    /// [`action::Plan::into_witness`]), then delegates to
     /// [`Stamped::build`] for proving and the binding signature.
     pub fn build<R: RngCore + CryptoRng>(
         self,
@@ -204,59 +219,49 @@ impl Plan {
         pak: &ProofAuthorizingKey,
         rng: &mut R,
     ) -> Result<Stamped<i64>, BuildError> {
-        let mut tachyactions = Vec::new();
-        let mut sig_iter = auth.sigs.into_iter();
+        let actions_witnesses: Vec<_> = self
+            .actions
+            .into_iter()
+            .zip(auth.sigs)
+            .zip(auth.commitments)
+            .map(|((planned, sig), (cv, rcv))| {
+                let rk = planned.rk;
+                let witness = ActionPrivate {
+                    rcv,
+                    note: planned.note,
+                    alpha: match planned.effect {
+                        | action::Effect::Spend => planned
+                            .theta
+                            .spend_randomizer(&planned.note.commitment())
+                            .into(),
+                        | action::Effect::Output => planned
+                            .theta
+                            .output_randomizer(&planned.note.commitment())
+                            .into(),
+                    },
+                };
+                (Action { cv, rk, sig }, witness)
+            })
+            .collect();
 
-        for spend in self.spends {
-            #[expect(clippy::expect_used, reason = "signature count matches action count")]
-            let sig = sig_iter.next().expect("one signature per action");
-            let cm = spend.note.commitment();
-            let alpha = spend.theta.spend_randomizer(&cm);
-            let witness = ActionPrivate {
-                alpha: alpha.into(),
-                note: spend.note,
-                rcv: spend.rcv,
-            };
-            tachyactions.push((
-                Action {
-                    cv: spend.cv,
-                    rk: spend.rk,
-                    sig,
-                },
-                witness,
-            ));
-        }
-
-        for output in self.outputs {
-            #[expect(clippy::expect_used, reason = "signature count matches action count")]
-            let sig = sig_iter.next().expect("one signature per action");
-            let cm = output.note.commitment();
-            let alpha = output.theta.output_randomizer(&cm);
-            let witness = ActionPrivate {
-                alpha: alpha.into(),
-                note: output.note,
-                rcv: output.rcv,
-            };
-            tachyactions.push((
-                Action {
-                    cv: output.cv,
-                    rk: output.rk,
-                    sig,
-                },
-                witness,
-            ));
-        }
-
-        Stamped::build(tachyactions, self.value_balance, anchor, pak, rng)
+        Stamped::build(actions_witnesses, self.value_balance, anchor, pak, rng)
     }
 }
 
-/// Signatures authorizing a [`Plan`] — one per action, spends
-/// then outputs, in the same order as the plan.
+/// Authorization data produced by a [`Custody`](crate::custody::Custody)
+/// device.
+///
+/// Contains one signature and one `(cv, rcv)` commitment pair per action,
+/// in the same order as the plan.
 #[derive(Clone, Debug)]
 pub struct AuthorizationData {
-    /// One signature per action (spends first, then outputs).
+    /// One signature per action, in plan order.
     pub sigs: Vec<action::Signature>,
+
+    /// Value commitments and trapdoors, in plan order.
+    ///
+    /// Produced by [`Plan::commit`] during authorization.
+    pub commitments: Vec<(value::Commitment, value::CommitmentTrapdoor)>,
 }
 
 impl<V> Stamped<V> {
@@ -304,7 +309,7 @@ impl Stamped<i64> {
     /// authorization phase and signing all actions before calling `build`.
     /// The binding signature is computed here using the same sighash.
     pub fn build<R: RngCore + CryptoRng>(
-        tachyactions: Vec<(Action, ActionPrivate)>,
+        actions_witnesses: Vec<(Action, ActionPrivate)>,
         value_balance: i64,
         anchor: Anchor,
         pak: &ProofAuthorizingKey,
@@ -316,8 +321,8 @@ impl Stamped<i64> {
         // bsk = ⊞ᵢ rcvᵢ  (Fq scalar sum)
         let mut rcv_sum: Fq = Fq::ZERO;
 
-        for (action, witness) in tachyactions {
-            rcv_sum += &witness.rcv.into();
+        for (action, witness) in actions_witnesses {
+            rcv_sum += &Into::<Fq>::into(witness.rcv);
             actions.push(action);
             witnesses.push(witness);
         }
@@ -461,8 +466,8 @@ mod tests {
         action,
         custody::{self, Custody as _},
         keys::{
-            private,
-            randomizer::{ActionEntropy, Output, Spend},
+            private::{self, OutputSigningKey},
+            randomizer::{ActionEntropy, ActionRandomizer},
         },
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
     };
@@ -489,10 +494,10 @@ mod tests {
         let theta_spend = ActionEntropy::random(&mut *rng);
         let theta_output = ActionEntropy::random(&mut *rng);
 
-        let spend = action::Plan::<Spend>::new(spend_note, theta_spend, &pak, &mut *rng);
-        let output = action::Plan::<Output>::new(output_note, theta_output, &mut *rng);
+        let spend = action::Plan::spend(spend_note, theta_spend, pak.ak());
+        let output = action::Plan::output(output_note, theta_output);
 
-        let plan = Plan::new(vec![spend], vec![output], 300);
+        let plan = Plan::new(vec![spend, output], 300);
         let local = custody::Local::new(sk.derive_auth_private());
         let auth = local.authorize(&plan, rng).unwrap();
 
@@ -530,7 +535,7 @@ mod tests {
     /// Composable flow: construct actions and bundle step-by-step,
     /// exercising each delegation boundary independently.
     ///
-    /// This uses no convenience wrappers (`action::Plan::new`,
+    /// This uses no convenience wrappers (`action::Plan::spend`,
     /// `Stamped::build`). Every step is called individually, matching
     /// the custody-delegated flow from the protocol spec.
     #[test]
@@ -562,21 +567,20 @@ mod tests {
 
         // Spend action assembly (user device)
         let spend_cm = spend_note.commitment();
-        let spend_value: i64 = spend_note.value.into();
         let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
-        let spend_cv = spend_rcv.commit(spend_value);
+        let spend_cv = spend_rcv.commit_spend(spend_note);
         let spend_theta = ActionEntropy::random(&mut rng);
         let spend_alpha = spend_theta.spend_randomizer(&spend_cm);
         let spend_rk = pak.ak().derive_action_public(&spend_alpha);
 
         // Output action assembly (user device, no custody)
         let output_cm = output_note.commitment();
-        let output_value: i64 = output_note.value.into();
         let output_rcv = value::CommitmentTrapdoor::random(&mut rng);
-        let output_cv = output_rcv.commit(-output_value);
+        let output_cv = output_rcv.commit_output(output_note);
         let output_theta = ActionEntropy::random(&mut rng);
         let output_alpha = output_theta.output_randomizer(&output_cm);
-        let output_rk = output_alpha.derive_rk();
+        let output_rsk = OutputSigningKey::from(output_alpha);
+        let output_rk = output_rsk.derive_action_public();
 
         let value_balance: i64 = 300;
 
@@ -586,21 +590,31 @@ mod tests {
         let sh = sighash(&pairs, value_balance);
 
         // Spend: sign with rsk = ask + alpha
-        let spend_action = spend_alpha.sign(&ask, spend_cv, spend_rk, sh, &mut rng);
+        let spend_sig = spend_alpha.sign(&ask, sh, &mut rng);
+        let spend_action = Action {
+            cv: spend_cv,
+            rk: spend_rk,
+            sig: spend_sig,
+        };
 
         // Output: sign with rsk = alpha
-        let output_action = output_alpha.sign(output_cv, output_rk, sh, &mut rng);
+        let output_sig = output_rsk.sign(&mut rng, sh);
+        let output_action = Action {
+            cv: output_cv,
+            rk: output_rk,
+            sig: output_sig,
+        };
 
         let actions = vec![spend_action, output_action];
 
         // Witnesses for stamp construction
         let spend_witness = ActionPrivate {
-            alpha: spend_alpha.into(),
+            alpha: ActionRandomizer::from(spend_alpha),
             note: spend_note,
             rcv: spend_rcv,
         };
         let output_witness = ActionPrivate {
-            alpha: output_alpha.into(),
+            alpha: ActionRandomizer::from(output_alpha),
             note: output_note,
             rcv: output_rcv,
         };

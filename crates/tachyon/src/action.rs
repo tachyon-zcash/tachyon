@@ -1,134 +1,83 @@
 //! Tachyon Action descriptions.
 
-use core::{marker::PhantomData, ops::Neg as _};
-
-use rand::{CryptoRng, RngCore};
 use reddsa::orchard::SpendAuth;
 
 use crate::{
-    keys::{
-        ProofAuthorizingKey, public,
-        randomizer::{ActionEntropy, ActionRandomizer, Output, Spend, Witness},
-    },
+    keys::{SpendValidatingKey, private::OutputSigningKey, public, randomizer::ActionEntropy},
     note::Note,
     value,
-    witness::ActionPrivate,
 };
+
+/// Whether an action plan represents a spend or an output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Effect {
+    /// Spend — signed via custody with
+    /// [`SpendRandomizer::sign`](crate::keys::randomizer::SpendRandomizer::sign).
+    Spend,
+    /// Output — signed via
+    /// [`OutputSigningKey::sign`](crate::keys::private::OutputSigningKey::sign).
+    Output,
+}
 
 /// A planned Tachyon action — assembled but not yet authorized.
 ///
-/// Parameterized by kind ([`Spend`] or [`Output`]) to enforce that
-/// spends and outputs have different signing requirements:
+/// Carries the per-action randomized verification key `rk`, the note,
+/// per-action entropy `theta`, and an [`Effect`] discriminant.
 ///
-/// - `Plan<Spend>` — signed via custody with
-///   [`ActionRandomizer<Spend>::sign`]
-/// - `Plan<Output>` — signed directly with
-///   [`ActionRandomizer<Output>::sign`]
-///
-/// Carries the full per-action material: public effecting data
-/// (`cv`, `rk`), the note, per-action entropy (`theta`), and the
-/// value commitment trapdoor (`rcv`).
+/// Value commitments (`cv`, `rcv`) are deferred to build time — the plan
+/// captures only spending authority (`rk`) and the note.
 ///
 /// The tachygram (nullifier or note commitment) is NOT part of the
 /// action. Tachygrams are collected separately in the
 /// [`Stamp`](crate::Stamp).
 #[derive(Clone, Copy, Debug)]
-#[expect(
-    clippy::partial_pub_fields,
-    reason = "PhantomData kind marker is an implementation detail"
-)]
-pub struct Plan<Kind> {
-    /// Value commitment.
-    pub cv: value::Commitment,
-
+pub struct Plan {
     /// Randomized action verification key.
     pub rk: public::ActionVerificationKey,
-
     /// The note being spent or created.
     pub note: Note,
-
     /// Per-action entropy for alpha derivation.
     pub theta: ActionEntropy,
-
-    /// Value commitment trapdoor.
-    pub rcv: value::CommitmentTrapdoor,
-
-    /// Kind marker (zero-sized).
-    _kind: PhantomData<Kind>,
+    /// Spend or output.
+    pub effect: Effect,
 }
 
-impl<Kind> Plan<Kind> {
-    /// The effecting data pair `(cv, rk)` for sighash computation.
-    #[must_use]
-    pub const fn effecting_data(&self) -> (value::Commitment, public::ActionVerificationKey) {
-        (self.cv, self.rk)
-    }
-
-    /// Convert into a proof witness, erasing the spend/output kind.
-    ///
-    /// The caller supplies the alpha (as [`ActionRandomizer<Witness>`])
-    /// obtained by erasing the kind-specific randomizer.
-    #[must_use]
-    pub const fn into_witness(self, alpha: ActionRandomizer<Witness>) -> ActionPrivate {
-        ActionPrivate {
-            alpha,
-            note: self.note,
-            rcv: self.rcv,
-        }
-    }
-}
-
-impl Plan<Spend> {
+impl Plan {
     /// Assemble a spend action plan.
     ///
-    /// Computes the value commitment and derives `rk` from the spend
-    /// validating key `ak` and the per-action randomizer. No signing
-    /// key (`ask`) is needed — `rk` is derived from the public key:
+    /// Derives `rk` from the spend validating key `ak` and the per-action
+    /// randomizer. No signing key (`ask`) is needed — `rk` is derived from
+    /// the public key:
     /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
-    pub fn new<R: RngCore + CryptoRng>(
-        note: Note,
-        theta: ActionEntropy,
-        pak: &ProofAuthorizingKey,
-        rng: &mut R,
-    ) -> Self {
+    #[must_use]
+    pub fn spend(note: Note, theta: ActionEntropy, ak: &SpendValidatingKey) -> Self {
         let cm = note.commitment();
-        let value: i64 = note.value.into();
-        let rcv = value::CommitmentTrapdoor::random(&mut *rng);
-        let cv = rcv.commit(value);
         let alpha = theta.spend_randomizer(&cm);
-        let rk = pak.ak().derive_action_public(&alpha);
+        let rk = ak.derive_action_public(&alpha);
 
         Self {
-            cv,
             rk,
             note,
             theta,
-            rcv,
-            _kind: PhantomData,
+            effect: Effect::Spend,
         }
     }
-}
 
-impl Plan<Output> {
     /// Assemble an output action plan.
     ///
-    /// Computes the value commitment (negated for outputs) and derives
-    /// $\mathsf{rk} = [\alpha]\,\mathcal{G}$ (no spending authority).
-    pub fn new<R: RngCore + CryptoRng>(note: Note, theta: ActionEntropy, rng: &mut R) -> Self {
+    /// Derives $\mathsf{rk} = [\alpha]\,\mathcal{G}$ (no spending authority).
+    #[must_use]
+    pub fn output(note: Note, theta: ActionEntropy) -> Self {
         let cm = note.commitment();
-        let value: i64 = note.value.into();
-        let rcv = value::CommitmentTrapdoor::random(&mut *rng);
-        let cv = rcv.commit(value.neg());
         let alpha = theta.output_randomizer(&cm);
-        let rk = alpha.derive_rk();
+        let rsk = OutputSigningKey::from(alpha);
+        let rk = rsk.derive_action_public();
 
         Self {
-            cv,
             rk,
             note,
             theta,
-            rcv,
-            _kind: PhantomData,
+            effect: Effect::Output,
         }
     }
 }
@@ -200,14 +149,14 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let unsigned = Plan::<Spend>::new(note, theta, &pak, &mut rng);
+        let spend = Plan::spend(note, theta, pak.ak());
 
-        let plan = bundle::Plan::new(vec![unsigned], vec![], 1000);
-        let sighash = plan.sighash();
+        let plan = bundle::Plan::new(vec![spend], 1000);
         let local = custody::Local::new(sk.derive_auth_private());
         let auth = local.authorize(&plan, &mut rng).unwrap();
 
-        plan.spends[0].rk.verify(sighash, &auth.sigs[0]).unwrap();
+        let sighash = plan.sighash(&auth.commitments);
+        plan.actions[0].rk.verify(sighash, &auth.sigs[0]).unwrap();
     }
 
     /// An output action's signature must verify against the bundle
@@ -223,13 +172,13 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let unsigned = Plan::<Output>::new(note, theta, &mut rng);
+        let output = Plan::output(note, theta);
 
-        let plan = bundle::Plan::new(vec![], vec![unsigned], -1000);
-        let sighash = plan.sighash();
+        let plan = bundle::Plan::new(vec![output], -1000);
         let local = custody::Local::new(sk.derive_auth_private());
         let auth = local.authorize(&plan, &mut rng).unwrap();
 
-        plan.outputs[0].rk.verify(sighash, &auth.sigs[0]).unwrap();
+        let sighash = plan.sighash(&auth.commitments);
+        plan.actions[0].rk.verify(sighash, &auth.sigs[0]).unwrap();
     }
 }

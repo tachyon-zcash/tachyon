@@ -1,6 +1,6 @@
 //! Private (signing) keys.
 
-use core::iter;
+use core::{iter, marker::PhantomData};
 
 use ff::{Field as _, FromUniformBytes as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
@@ -10,7 +10,7 @@ use reddsa::orchard::{Binding, SpendAuth};
 use super::{
     note::{NullifierKey, PaymentKey},
     proof, public,
-    randomizer::{ActionRandomizer, Spend},
+    randomizer::{OutputRandomizer, SpendRandomizer},
 };
 use crate::{action, bundle, constants::PrfExpand, value};
 
@@ -137,7 +137,7 @@ impl SpendingKey {
 /// Only used for spend actions — output actions do not require `ask`.
 ///
 /// `ask` **cannot sign directly**. It must first be randomized into a
-/// per-action [`ActionSigningKey`] (`rsk`) via
+/// per-action [`SpendSigningKey`] (`rsk`) via
 /// [`derive_action_private`](Self::derive_action_private), which can then
 /// sign. Per-action randomization ensures each `rk` is unlinkable to
 /// `ak`, so observers cannot correlate actions to the same spending
@@ -160,26 +160,52 @@ impl SpendAuthorizingKey {
 
     /// Derive the per-action private (signing) key: $\mathsf{rsk} =
     /// \mathsf{ask} + \alpha$.
+    ///
+    /// Only accepts [`SpendRandomizer`] — passing an output randomizer is
+    /// a compile error.
     #[must_use]
-    pub fn derive_action_private(&self, alpha: &ActionRandomizer<Spend>) -> ActionSigningKey {
-        ActionSigningKey(self.0.randomize(&alpha.0))
+    pub fn derive_action_private(&self, alpha: &SpendRandomizer) -> ActionSigningKey<Spend> {
+        ActionSigningKey(self.0.randomize(&alpha.0), PhantomData)
     }
 }
 
-/// The randomized action signing key `rsk` — per-action, ephemeral.
+/// Marker type for spend-side action signing keys.
 ///
-/// For spends: $\mathsf{rsk} = \mathsf{ask} + \alpha$. For outputs:
-/// $\mathsf{rsk} = \alpha$ (no spend authority).
-///
-/// Public for flexibility, but intended for internal use. External callers
-/// obtain signed [`Action`](action::Action)s via
-/// [`ActionRandomizer<Spend>::sign`] or
-/// [`ActionRandomizer<Output>::sign`](super::randomizer::ActionRandomizer<Output>::sign).
+/// $\mathsf{rsk} = \mathsf{ask} + \alpha$ — requires spend authority.
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct ActionSigningKey(pub(super) reddsa::SigningKey<SpendAuth>);
+pub struct Spend;
 
-impl ActionSigningKey {
+/// Marker type for output-side action signing keys.
+///
+/// $\mathsf{rsk} = \alpha$ — no spend authority.
+#[derive(Clone, Copy, Debug)]
+pub struct Output;
+
+/// The per-action signing key `rsk` — ephemeral, parameterized by kind.
+///
+/// - [`ActionSigningKey<Spend>`] (alias [`SpendSigningKey`]): $\mathsf{rsk} =
+///   \mathsf{ask} + \alpha$ — derived from
+///   [`SpendAuthorizingKey::derive_action_private`]
+/// - [`ActionSigningKey<Output>`] (alias [`OutputSigningKey`]): $\mathsf{rsk} =
+///   \alpha$ — derived from [`OutputRandomizer`]
+///
+/// Both variants sign via [`sign`](Self::sign) and derive `rk` via
+/// [`derive_action_public`](Self::derive_action_public).
+#[derive(Clone, Copy, Debug)]
+pub struct ActionSigningKey<K>(reddsa::SigningKey<SpendAuth>, PhantomData<K>);
+
+/// Spend-side per-action signing key: $\mathsf{rsk} = \mathsf{ask} +
+/// \alpha$.
+///
+/// Derived from [`SpendAuthorizingKey::derive_action_private`].
+pub type SpendSigningKey = ActionSigningKey<Spend>;
+
+/// Output-side per-action signing key: $\mathsf{rsk} = \alpha$.
+///
+/// Derived from [`OutputRandomizer`] via [`From`].
+pub type OutputSigningKey = ActionSigningKey<Output>;
+
+impl<K> ActionSigningKey<K> {
     /// Sign a sighash with this action key.
     pub fn sign(
         &self,
@@ -198,16 +224,15 @@ impl ActionSigningKey {
         let vk = reddsa::VerificationKey::from(&self.0);
         public::ActionVerificationKey(vk)
     }
+}
 
-    /// Construct from a raw output alpha scalar ($\mathsf{rsk} = \alpha$).
-    ///
-    /// Used by [`ActionRandomizer<Output>`](super::randomizer::ActionRandomizer)
-    /// methods where $\mathsf{rsk}$ is the alpha itself (no spend authority).
-    #[expect(clippy::expect_used, reason = "specified behavior")]
-    pub(super) fn from_output_alpha(alpha: Fq) -> Self {
+impl From<OutputRandomizer> for ActionSigningKey<Output> {
+    fn from(alpha: OutputRandomizer) -> Self {
+        #[expect(clippy::expect_used, reason = "specified behavior")]
         Self(
-            reddsa::SigningKey::<SpendAuth>::try_from(alpha.to_repr())
+            reddsa::SigningKey::<SpendAuth>::try_from(alpha.0.to_repr())
                 .expect("BLAKE2b-derived scalar yields valid signing key"),
+            PhantomData,
         )
     }
 }
