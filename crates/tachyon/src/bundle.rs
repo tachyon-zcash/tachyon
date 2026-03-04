@@ -22,19 +22,18 @@ use crate::{
 };
 
 mod sealed {
-    pub trait Sealed {}
+    trait Sealed {}
+    impl Sealed for super::Stamp {}
+    impl Sealed for super::Stampless {}
+    impl Sealed for Option<super::Stamp> {}
+
+    /// Sealed trait constraining stamp state types.
+    #[expect(private_bounds, reason = "sealed trait pattern")]
+    pub trait StampState: Sealed {}
+    impl<T: Sealed> StampState for T {}
 }
 
-/// Trait constraining the stamp state parameter of [`Bundle`].
-pub trait StampState: sealed::Sealed {}
-
-impl sealed::Sealed for Stamp {}
-impl sealed::Sealed for Stampless {}
-impl sealed::Sealed for Option<Stamp> {}
-
-impl StampState for Stamp {}
-impl StampState for Stampless {}
-impl StampState for Option<Stamp> {}
+pub use sealed::StampState;
 
 /// A Tachyon transaction bundle parameterized by stamp state `S`.
 #[derive(Clone, Debug)]
