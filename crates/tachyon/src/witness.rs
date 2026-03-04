@@ -4,7 +4,7 @@
 //!   randomizer, and value commitment trapdoor. The circuit derives the
 //!   tachygram and flavor internally.
 
-use crate::{keys::private::ActionRandomizer, note::Note, value};
+use crate::{entropy::ActionRandomizer, note::Note, value};
 
 /// Private witness for a single action.
 ///

@@ -405,7 +405,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        custody,
+        custody, entropy,
         keys::private,
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
         value,
@@ -430,8 +430,8 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fq::ONE),
         };
 
-        let theta_spend = private::ActionEntropy::random(&mut *rng);
-        let theta_output = private::ActionEntropy::random(&mut *rng);
+        let theta_spend = entropy::ActionEntropy::random(&mut *rng);
+        let theta_output = entropy::ActionEntropy::random(&mut *rng);
 
         let local = custody::Local::new(ask);
         let spend = Action::spend(&local, spend_note, &theta_spend, rng).unwrap();
@@ -511,7 +511,7 @@ mod tests {
         let spend_cv = spend_rcv.commit(spend_value);
 
         // 3. Authorization (custody device: theta + ask + cm + cv → rk, sig)
-        let spend_theta = private::ActionEntropy::random(&mut rng);
+        let spend_theta = entropy::ActionEntropy::random(&mut rng);
         let spend_alpha = spend_theta.spend_randomizer(&spend_cm);
         let (spend_rk, spend_sig) = spend_alpha.authorize(&ask, spend_cv, &mut rng);
 
@@ -534,7 +534,7 @@ mod tests {
         let output_rcv = value::CommitmentTrapdoor::random(&mut rng);
         let output_cv = output_rcv.commit(-output_value);
 
-        let output_theta = private::ActionEntropy::random(&mut rng);
+        let output_theta = entropy::ActionEntropy::random(&mut rng);
         let output_alpha = output_theta.output_randomizer(&output_cm);
         let (output_rk, output_sig) = output_alpha.authorize(output_cv, &mut rng);
 

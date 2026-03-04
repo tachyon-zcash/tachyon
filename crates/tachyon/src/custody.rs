@@ -17,20 +17,20 @@
 //! 4. $\text{sig} = \mathsf{rsk}.\text{sign}(H(\mathsf{cv} \| \mathsf{rk}))$
 //!
 //! The caller derives $\alpha$ independently via
-//! [`ActionEntropy::spend_randomizer`](crate::keys::private::ActionEntropy::spend_randomizer)
+//! [`ActionEntropy::spend_randomizer`](crate::entropy::ActionEntropy::spend_randomizer)
 //! from `theta` and `cm`.
 //!
 //! Outputs do not involve custody — they use
-//! [`ActionEntropy::output_randomizer`](crate::keys::private::ActionEntropy::output_randomizer)
+//! [`ActionEntropy::output_randomizer`](crate::entropy::ActionEntropy::output_randomizer)
 //! followed by
-//! [`derive_action_private`](crate::keys::private::OutputRandomizer::derive_action_private).
+//! [`OutputRandomizer::authorize`](crate::entropy::OutputRandomizer).
 
 use core::convert::Infallible;
 
 use rand::{CryptoRng, RngCore};
 
 use crate::{
-    action,
+    action, entropy,
     keys::{private, public},
     note, value,
 };
@@ -55,7 +55,7 @@ pub trait Custody {
     fn authorize_spend<R: RngCore + CryptoRng>(
         &self,
         cv: value::Commitment,
-        theta: &private::ActionEntropy,
+        theta: &entropy::ActionEntropy,
         cm: &note::Commitment,
         rng: &mut R,
     ) -> Result<(public::ActionVerificationKey, action::Signature), Self::Error>;
@@ -85,7 +85,7 @@ impl Custody for Local {
     fn authorize_spend<R: RngCore + CryptoRng>(
         &self,
         cv: value::Commitment,
-        theta: &private::ActionEntropy,
+        theta: &entropy::ActionEntropy,
         cm: &note::Commitment,
         rng: &mut R,
     ) -> Result<(public::ActionVerificationKey, action::Signature), Self::Error> {
@@ -120,7 +120,7 @@ mod tests {
         let note_value: i64 = note.value.into();
         let rcv = value::CommitmentTrapdoor::random(&mut rng);
         let cv = rcv.commit(note_value);
-        let theta = private::ActionEntropy::random(&mut rng);
+        let theta = entropy::ActionEntropy::random(&mut rng);
 
         let (rk, sig) = custody.authorize_spend(cv, &theta, &cm, &mut rng).unwrap();
 

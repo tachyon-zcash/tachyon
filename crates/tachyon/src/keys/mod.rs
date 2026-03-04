@@ -80,6 +80,7 @@ mod tests {
 
     use crate::{
         constants::PrfExpand,
+        entropy,
         keys::private,
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
     };
@@ -148,10 +149,10 @@ mod tests {
             psi: NullifierTrapdoor::from(Fp::ZERO),
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
-        let theta = private::ActionEntropy::random(&mut rng);
+        let theta = entropy::ActionEntropy::random(&mut rng);
         let alpha = theta.spend_randomizer(&note.commitment());
         let rsk = ask.derive_action_private(&alpha);
-        let witness_alpha: private::ActionRandomizer = alpha.into();
+        let witness_alpha: entropy::ActionRandomizer = alpha.into();
 
         let rk_from_signer: [u8; 32] = rsk.derive_action_public().into();
         let rk_from_prover: [u8; 32] = ak.derive_action_public(&witness_alpha).into();

@@ -8,7 +8,8 @@ use reddsa::orchard::SpendAuth;
 use crate::{
     constants::SPEND_AUTH_PERSONALIZATION,
     custody::Custody,
-    keys::{private, public},
+    entropy,
+    keys::public,
     note::Note,
     value,
     witness::ActionPrivate,
@@ -95,7 +96,7 @@ impl Action {
     /// 1. Note commitment: [`Note::commitment`]
     /// 2. Value commitment: [`value::Commitment::new`]
     /// 3. Alpha derivation:
-    ///    [`ActionEntropy::spend_randomizer`](private::ActionEntropy::spend_randomizer)
+    ///    [`ActionEntropy::spend_randomizer`](entropy::ActionEntropy::spend_randomizer)
     /// 4. Spend authorization:
     ///    [`Custody::authorize_spend`](crate::custody::Custody::authorize_spend)
     /// 5. Assembly: `Action { cv, rk, sig }` +
@@ -103,7 +104,7 @@ impl Action {
     pub fn spend<R: RngCore + CryptoRng, C: Custody>(
         custody: &C,
         note: Note,
-        theta: &private::ActionEntropy,
+        theta: &entropy::ActionEntropy,
         rng: &mut R,
     ) -> Result<(Self, ActionPrivate), C::Error> {
         // 1. Note commitment
@@ -138,7 +139,7 @@ impl Action {
     /// steps.
     pub fn output<R: RngCore + CryptoRng>(
         note: Note,
-        theta: &private::ActionEntropy,
+        theta: &entropy::ActionEntropy,
         rng: &mut R,
     ) -> (Self, ActionPrivate) {
         // 1. Note commitment
@@ -208,7 +209,7 @@ mod tests {
             psi: NullifierTrapdoor::from(Fp::ZERO),
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
-        let theta = private::ActionEntropy::random(&mut rng);
+        let theta = entropy::ActionEntropy::random(&mut rng);
 
         let (action, _witness) = Action::spend(&local, note, &theta, &mut rng).unwrap();
 
@@ -229,7 +230,7 @@ mod tests {
             psi: NullifierTrapdoor::from(Fp::ZERO),
             rcm: CommitmentTrapdoor::from(Fq::ZERO),
         };
-        let theta = private::ActionEntropy::random(&mut rng);
+        let theta = entropy::ActionEntropy::random(&mut rng);
 
         let (action, _witness) = Action::output(note, &theta, &mut rng);
 
