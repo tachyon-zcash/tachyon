@@ -258,7 +258,9 @@ mod tests {
             .expect("seed should succeed");
         let pcd = proof.carry::<TestHeader>(TestHeaderData { value: 42 });
 
-        let valid = app.verify(&pcd, thread_rng()).expect("verify should succeed");
+        let valid = app
+            .verify(&pcd, thread_rng())
+            .expect("verify should succeed");
         assert!(valid, "proof should verify against matching header data");
     }
 
@@ -276,7 +278,9 @@ mod tests {
         // Carry wrong data
         let pcd = proof.carry::<TestHeader>(TestHeaderData { value: 999 });
 
-        let valid = app.verify(&pcd, thread_rng()).expect("verify should succeed");
+        let valid = app
+            .verify(&pcd, thread_rng())
+            .expect("verify should succeed");
         assert!(!valid, "proof should reject mismatched header data");
     }
 
@@ -290,10 +294,14 @@ mod tests {
             .finalize()
             .expect("finalize should succeed");
 
-        let (proof_a, ()) = app.seed(&mut thread_rng(), &SeedStep, 10u64).expect("seed a");
+        let (proof_a, ()) = app
+            .seed(&mut thread_rng(), &SeedStep, 10u64)
+            .expect("seed a");
         let pcd_a = proof_a.carry::<TestHeader>(TestHeaderData { value: 10 });
 
-        let (proof_b, ()) = app.seed(&mut thread_rng(), &SeedStep, 20u64).expect("seed b");
+        let (proof_b, ()) = app
+            .seed(&mut thread_rng(), &SeedStep, 20u64)
+            .expect("seed b");
         let pcd_b = proof_b.carry::<TestHeader>(TestHeaderData { value: 20 });
 
         let (merged_proof, ()) = app

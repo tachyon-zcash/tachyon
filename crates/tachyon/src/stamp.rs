@@ -6,17 +6,23 @@
 //! - **Anchor**: Accumulator state reference (epoch)
 //! - **Proof**: The Ragu PCD proof (rerandomized)
 //!
-//! The PCD proof's public output ([`StampDigest`]) contains
-//! `action_acc`, `tachygram_acc`, and `anchor`. These accumulators are
+//! The PCD proof's public output ([`StampDigest`](crate::proof::StampDigest))
+//! contains `action_acc`, `tachygram_acc`, and `anchor`. These accumulators are
 //! **not serialized** on the stamp — the verifier recomputes them from
 //! public data (actions and tachygrams) and passes them as the header
 //! to Ragu `verify()`.
 
+extern crate alloc;
+
+use alloc::vec::Vec;
+
+use rand::CryptoRng;
+
 use crate::{
-    action::Action,
+    action::{Action, Effect},
     keys::ProofAuthorizingKey,
     primitives::{Anchor, Tachygram},
-    proof::{Proof, ValidationError},
+    proof::{ActionStep, ActionWitness, MergeStep, Proof, StampDigest, StampHeader, mock_app},
     witness::ActionPrivate,
 };
 
@@ -29,11 +35,17 @@ pub struct Stampless;
 /// Present in [`Stamped`](crate::Stamped) bundles.
 /// Stripped during aggregation and merged into the aggregate's stamp.
 ///
-/// The PCD proof's [`StampDigest`] header contains `action_acc`,
-/// `tachygram_acc`, and `anchor`, but only the anchor is stored here.
-/// The accumulators are recomputed by the verifier from public data
-/// and passed as the header to Ragu `verify()`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// The PCD proof's [`StampDigest`](crate::proof::StampDigest) header
+/// contains `action_acc`, `tachygram_acc`, and `anchor`, but only the
+/// anchor is stored here. The accumulators are recomputed by the
+/// verifier from public data and passed as the header to Ragu
+/// `verify()`.
+#[derive(Clone, Debug)]
+#[expect(
+    clippy::field_scoped_visibility_modifiers,
+    clippy::partial_pub_fields,
+    reason = "digest is crate-internal for fuse"
+)]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     ///
@@ -45,29 +57,48 @@ pub struct Stamp {
 
     /// The Ragu proof bytes.
     pub proof: Proof,
+
+    /// PCD header digest — used internally for fuse operations.
+    ///
+    /// Not serialized on the wire.
+    pub(crate) digest: StampDigest,
 }
 
 impl Stamp {
     /// Creates a leaf stamp for a single action (ACTION STEP).
     ///
-    /// The proof system produces the accumulators (`action_acc`,
-    /// `tachygram_acc`) but these are not stored on the stamp. The verifier
-    /// recomputes them outside the circuit from public data at verification
-    /// time.
+    /// The proof system derives the tachygram internally from the witness:
+    /// - Spend: $\mathsf{nf} = F_{\text{KDF}(\psi, nk)}(\text{flavor})$
+    /// - Output: $\mathsf{cm} = \text{NoteCommit}(\ldots)$
     ///
     /// Leaf stamps are combined via [`prove_merge`](Self::prove_merge).
+    #[expect(clippy::expect_used, reason = "mock proving is infallible")]
     #[must_use]
-    pub fn prove_action(
+    pub fn prove_action<RNG: CryptoRng>(
+        rng: &mut RNG,
         witness: &ActionPrivate,
         action: &Action,
+        effect: Effect,
         anchor: Anchor,
         pak: &ProofAuthorizingKey,
     ) -> Self {
-        let (proof, tachygrams) = Proof::create(vec![*action], vec![*witness], &anchor, pak);
+        let app = mock_app();
+        let action_witness = ActionWitness {
+            action,
+            witness,
+            effect,
+            anchor,
+            pak,
+        };
+        let (proof, (tachygrams, digest)) = app
+            .seed(rng, &ActionStep, action_witness)
+            .expect("seed should not fail in mock");
+
         Self {
             tachygrams,
             anchor,
-            proof,
+            proof: Proof(proof),
+            digest,
         }
     }
 
@@ -77,33 +108,28 @@ impl Stamp {
     /// be a superset of an earlier anchor.
     ///
     /// The accumulators (`action_acc`, `tachygram_acc`) are merged inside the
-    /// circuit. [`Proof::merge`] enforces non-overlapping tachygram sets and
-    /// the anchor subset relationship via the merge witness.
+    /// circuit. [`MergeStep`] combines non-overlapping tachygram sets and
+    /// the anchor subset relationship.
+    #[expect(clippy::expect_used, reason = "mock fuse is infallible")]
     #[must_use]
-    pub fn prove_merge(self, other: Self) -> Self {
+    pub fn prove_merge<RNG: CryptoRng>(self, other: Self, rng: &mut RNG) -> Self {
+        let app = mock_app();
+
+        let left_pcd = self.proof.0.carry::<StampHeader>(self.digest);
+        let right_pcd = other.proof.0.carry::<StampHeader>(other.digest);
+
+        let (proof, merged_digest) = app
+            .fuse(rng, &MergeStep, (), left_pcd, right_pcd)
+            .expect("fuse should not fail in mock");
+
+        let merged_anchor = self.anchor.max(other.anchor);
+        let merged_tachygrams = [self.tachygrams, other.tachygrams].concat();
+
         Self {
-            tachygrams: [self.tachygrams, other.tachygrams].concat(),
-            anchor: self.anchor.max(other.anchor),
-            proof: Proof::merge(self.proof, other.proof),
+            tachygrams: merged_tachygrams,
+            anchor: merged_anchor,
+            proof: Proof(proof),
+            digest: merged_digest,
         }
-    }
-
-    /// Compresses this stamp for on-chain serialization.
-    ///
-    /// Stamps appearing in blocks MUST be compressed per the wire format
-    /// specification. The compression scheme is TBD (depends on the Ragu
-    /// proof encoding and tachygram batching strategy).
-    #[must_use]
-    pub fn compress(&self) -> Vec<u8> {
-        todo!("stamp compression for wire format");
-        Vec::new()
-    }
-
-    /// Decompresses a stamp from on-chain bytes.
-    ///
-    /// Inverse of [`compress`](Self::compress).
-    pub fn decompress(_bytes: &[u8]) -> Result<Self, ValidationError> {
-        todo!("stamp decompression from wire format");
-        Err(ValidationError)
     }
 }

@@ -381,9 +381,23 @@ mod tests {
             rcv: output_plan.rcv,
         };
 
-        let spend_stamp = Stamp::prove_action(&spend_witness, &spend_action, anchor, &pak);
-        let output_stamp = Stamp::prove_action(&output_witness, &output_action, anchor, &pak);
-        let stamp = spend_stamp.prove_merge(output_stamp);
+        let spend_stamp = Stamp::prove_action(
+            &mut *rng,
+            &spend_witness,
+            &spend_action,
+            action::Effect::Spend,
+            anchor,
+            &pak,
+        );
+        let output_stamp = Stamp::prove_action(
+            &mut *rng,
+            &output_witness,
+            &output_action,
+            action::Effect::Output,
+            anchor,
+            &pak,
+        );
+        let stamp = spend_stamp.prove_merge(output_stamp, &mut *rng);
 
         // Binding signature
         let bsk = bundle_plan.derive_bsk_private();
