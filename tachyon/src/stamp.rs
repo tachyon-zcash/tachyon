@@ -14,10 +14,10 @@
 
 use crate::{
     action::Action,
-    keys::ProvingKey,
+    keys::ProofAuthorizingKey,
     primitives::{Anchor, Tachygram},
     proof::{Proof, ValidationError},
-    witness::{ActionPrivate, MergePrivate},
+    witness::ActionPrivate,
 };
 
 /// Marker for the absence of a stamp.
@@ -27,7 +27,7 @@ pub struct Stampless;
 
 /// A stamp carrying tachygrams, anchor, and proof.
 ///
-/// Present in [`StampedBundle`](crate::StampedBundle) bundles.
+/// Present in [`Stamped`](crate::Stamped) bundles.
 /// Stripped during aggregation and merged into the aggregate's stamp.
 ///
 /// The PCD proof's [`StampDigest`] header contains `actions_acc`,
@@ -50,20 +50,22 @@ pub struct Stamp {
 }
 
 impl Stamp {
-    /// Creates a stamp by running the proof over action witnesses.
+    /// Creates a leaf stamp for a single action (ACTION STEP).
     ///
     /// The proof system produces the accumulators (`actions_acc`,
     /// `tachygram_acc`) but these are not stored on the stamp. The verifier
     /// recomputes them outside the circuit from public data at verification
     /// time.
+    ///
+    /// Leaf stamps are combined via [`prove_merge`](Self::prove_merge).
     #[must_use]
-    pub fn prove(
-        witnesses: &[ActionPrivate],
-        actions: &[Action],
+    pub fn prove_action(
+        witness: &ActionPrivate,
+        action: &Action,
         anchor: Anchor,
-        pak: &ProvingKey,
+        pak: &ProofAuthorizingKey,
     ) -> Self {
-        let (proof, tachygrams) = Proof::create(actions, witnesses, &anchor, pak);
+        let (proof, tachygrams) = Proof::create(&[*action], &[*witness], &anchor, pak);
         Self {
             tachygrams,
             anchor,
@@ -80,11 +82,11 @@ impl Stamp {
     /// circuit. [`Proof::merge`] enforces non-overlapping tachygram sets and
     /// the anchor subset relationship via the merge witness.
     #[must_use]
-    pub fn merge(self, other: Self, witness: MergePrivate) -> Self {
+    pub fn prove_merge(self, other: Self) -> Self {
         let anchor = self.anchor.max(other.anchor);
         let mut tachygrams = self.tachygrams;
         tachygrams.extend(other.tachygrams);
-        let proof = Proof::merge(self.proof, other.proof, witness);
+        let proof = Proof::merge(self.proof, other.proof);
         Self {
             tachygrams,
             anchor,
