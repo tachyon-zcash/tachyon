@@ -405,7 +405,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        custody, entropy,
+        entropy,
         keys::private,
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
         value,
@@ -433,8 +433,7 @@ mod tests {
         let theta_spend = entropy::ActionEntropy::random(&mut *rng);
         let theta_output = entropy::ActionEntropy::random(&mut *rng);
 
-        let local = custody::Local::new(ask);
-        let spend = Action::spend(&local, spend_note, &theta_spend, rng).unwrap();
+        let spend = Action::spend(&ask, spend_note, &theta_spend, rng);
         let output = Action::output(output_note, &theta_output, rng);
 
         // value_balance = 1000 - 700 = 300

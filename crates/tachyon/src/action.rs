@@ -7,9 +7,8 @@ use reddsa::orchard::SpendAuth;
 
 use crate::{
     constants::SPEND_AUTH_PERSONALIZATION,
-    custody::Custody,
     entropy,
-    keys::public,
+    keys::{private, public},
     note::Note,
     value,
     witness::ActionPrivate,
@@ -98,15 +97,15 @@ impl Action {
     /// 3. Alpha derivation:
     ///    [`ActionEntropy::spend_randomizer`](entropy::ActionEntropy::spend_randomizer)
     /// 4. Spend authorization:
-    ///    [`Custody::authorize_spend`](crate::custody::Custody::authorize_spend)
+    ///    [`SpendRandomizer::authorize`](crate::entropy::SpendRandomizer::authorize)
     /// 5. Assembly: `Action { cv, rk, sig }` +
     ///    [`ActionPrivate`](crate::witness::ActionPrivate)
-    pub fn spend<R: RngCore + CryptoRng, C: Custody>(
-        custody: &C,
+    pub fn spend<R: RngCore + CryptoRng>(
+        ask: &private::SpendAuthorizingKey,
         note: Note,
         theta: &entropy::ActionEntropy,
         rng: &mut R,
-    ) -> Result<(Self, ActionPrivate), C::Error> {
+    ) -> (Self, ActionPrivate) {
         // 1. Note commitment
         let cm = note.commitment();
 
@@ -118,17 +117,17 @@ impl Action {
         // 3. Alpha (user device derives for proof witness)
         let alpha = theta.spend_randomizer(&cm);
 
-        // 4. Spend authorization (custody derives alpha independently)
-        let (rk, sig) = custody.authorize_spend(cv, theta, &cm, rng)?;
+        // 4. Spend authorization
+        let (rk, sig) = alpha.authorize(ask, cv, rng);
 
-        Ok((
+        (
             Self { cv, rk, sig },
             ActionPrivate {
                 alpha: alpha.into(),
                 note,
                 rcv,
             },
-        ))
+        )
     }
 
     /// Create a note.
@@ -192,7 +191,6 @@ mod tests {
 
     use super::*;
     use crate::{
-        custody,
         keys::private,
         note::{self, CommitmentTrapdoor, NullifierTrapdoor},
     };
@@ -202,7 +200,7 @@ mod tests {
     fn spend_sig_round_trip() {
         let mut rng = StdRng::seed_from_u64(0);
         let sk = private::SpendingKey::from([0x42u8; 32]);
-        let local = custody::Local::new(sk.derive_auth_private());
+        let ask = sk.derive_auth_private();
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
@@ -211,7 +209,7 @@ mod tests {
         };
         let theta = entropy::ActionEntropy::random(&mut rng);
 
-        let (action, _witness) = Action::spend(&local, note, &theta, &mut rng).unwrap();
+        let (action, _witness) = Action::spend(&ask, note, &theta, &mut rng);
 
         action
             .rk
