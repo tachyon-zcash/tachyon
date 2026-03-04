@@ -3,7 +3,7 @@
 //! A value commitment hides the value transferred in an action:
 //! `cv = [v]V + [rcv]R` where `rcv` is the [`CommitmentTrapdoor`].
 
-use core::{iter, ops};
+use core::{iter, ops, ops::Neg as _};
 use std::sync::LazyLock;
 
 use ff::Field as _;
@@ -15,19 +15,7 @@ use pasta_curves::{
 };
 use rand::{CryptoRng, RngCore};
 
-use crate::constants::VALUE_COMMITMENT_DOMAIN;
-
-/// Convert a signed integer to an $\mathbb{F}_q$ element.
-///
-/// `Fq` only implements `From<u64>`, so negative values are handled
-/// via field negation: $-|v| \pmod{r_q}$.
-fn signed_to_scalar(value: i64) -> Fq {
-    if value >= 0 {
-        Fq::from(value.unsigned_abs())
-    } else {
-        -Fq::from(value.unsigned_abs())
-    }
-}
+use crate::{Note, constants::VALUE_COMMITMENT_DOMAIN};
 
 /// Generator $\mathcal{V}$ for value commitments.
 static VALUE_COMMIT_V: LazyLock<pallas::Point> =
@@ -65,6 +53,29 @@ impl CommitmentTrapdoor {
         Self(Fq::random(rng))
     }
 
+    /// Commit to spend a value with this trapdoor.
+    ///
+    /// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
+    ///
+    /// Positive $v$ for spends (balance contributed), negative for
+    /// outputs (balance exhausted).
+    #[must_use]
+    pub fn commit_spend(self, note: Note) -> Commitment {
+        let value: i64 = note.value.into();
+        self.commit(value)
+    }
+
+    /// Commit to output a value with this trapdoor.
+    ///
+    /// $$\mathsf{cv} = [-v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
+    ///
+    /// Negative $v$ for outputs (balance exhausted).
+    #[must_use]
+    pub fn commit_output(self, note: Note) -> Commitment {
+        let value: i64 = note.value.into();
+        self.commit(value.neg())
+    }
+
     /// Commit to a value with this trapdoor.
     ///
     /// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
@@ -72,9 +83,16 @@ impl CommitmentTrapdoor {
     /// Positive $v$ for spends (balance contributed), negative for
     /// outputs (balance exhausted).
     #[must_use]
-    pub fn commit(self, value: i64) -> Commitment {
+    pub fn commit(self, raw_value: i64) -> Commitment {
+        let value_abs: Fq = Fq::from(raw_value.unsigned_abs());
+        let value_fq = if raw_value >= 0 {
+            value_abs
+        } else {
+            value_abs.neg()
+        };
+
         let committed: EpAffine = {
-            let commit_value: Ep = *VALUE_COMMIT_V * signed_to_scalar(value);
+            let commit_value: Ep = *VALUE_COMMIT_V * value_fq;
             let commit_trapdoor: Ep = *VALUE_COMMIT_R * self.0;
             (commit_value + commit_trapdoor).into()
         };
@@ -84,6 +102,7 @@ impl CommitmentTrapdoor {
 }
 
 impl Default for CommitmentTrapdoor {
+    /// Generate an identity trapdoor.
     fn default() -> Self {
         Self(Fq::ZERO)
     }
@@ -190,18 +209,9 @@ impl iter::Sum for Commitment {
 
 #[cfg(test)]
 mod tests {
-    use ff::Field as _;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-
-    /// $v + (-v) = 0$ in the scalar field, regardless of sign encoding.
-    #[test]
-    fn signed_to_scalar_negation_cancels() {
-        let pos = signed_to_scalar(42);
-        let neg = signed_to_scalar(-42);
-        assert_eq!(pos + neg, Fq::ZERO);
-    }
 
     /// balance(0) must be the identity point — the V-component cancels
     /// and the R-component has zero scalar.
