@@ -14,8 +14,6 @@
 //! ## Utilities
 //!
 //! - [`accumulator`]: XOR-fold mock vector commitments
-//! - [`hash`]: BLAKE2b-based mock Poseidon for note commitment and nullifier
-//!   derivation
 
 // Lints that don't apply to a mock crate mirroring an external API.
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -36,7 +34,6 @@ pub use step::{Index, Step};
 pub mod accumulator;
 pub mod application;
 pub mod error;
-pub mod hash;
 pub mod header;
 pub mod proof;
 pub mod step;
