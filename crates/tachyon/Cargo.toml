@@ -33,6 +33,7 @@ blake2b_simd = "1.0"
 ff = "0.13"
 group = "0.13"
 halo2_poseidon = "0.1"
+mock_ragu = { path = "../mock_ragu" }
 pasta_curves = "0.5.1"
 proptest = "1"
 rand = "0.8"

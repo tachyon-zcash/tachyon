@@ -867,6 +867,7 @@ dependencies = [
  "ff",
  "group",
  "halo2_poseidon",
+ "mock_ragu",
  "pasta_curves",
  "proptest",
  "rand 0.8.5",
