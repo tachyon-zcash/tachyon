@@ -21,7 +21,8 @@ use crate::{
 };
 
 /// Marker for the absence of a stamp.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Stampless;
 
 /// A stamp carrying tachygrams, anchor, and proof.
@@ -33,7 +34,8 @@ pub struct Stampless;
 /// `tachygram_acc`, and `anchor`, but only the anchor is stored here.
 /// The accumulators are recomputed by the verifier from public data
 /// and passed as the header to Ragu `verify()`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     ///

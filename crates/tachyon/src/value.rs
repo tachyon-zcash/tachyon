@@ -222,3 +222,57 @@ mod tests {
         assert_eq!(remainder, Commitment(expected));
     }
 }
+
+// Custom serde implementation for Commitment
+#[cfg(feature = "serde")]
+impl serde::Serialize for Commitment {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use group::GroupEncoding;
+        let bytes = self.0.to_bytes();
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Commitment {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use group::GroupEncoding;
+        
+        struct ByteArrayVisitor;
+        
+        impl<'de> serde::de::Visitor<'de> for ByteArrayVisitor {
+            type Value = [u8; 32];
+            
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("32 bytes")
+            }
+            
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v.len() == 32 {
+                    let mut bytes = [0u8; 32];
+                    bytes.copy_from_slice(v);
+                    Ok(bytes)
+                } else {
+                    Err(E::invalid_length(v.len(), &self))
+                }
+            }
+        }
+        
+        let bytes = deserializer.deserialize_bytes(ByteArrayVisitor)?;
+        let point_option = EpAffine::from_bytes(&bytes);
+        if point_option.is_some().into() {
+            Ok(Self(point_option.unwrap()))
+        } else {
+            Err(serde::de::Error::custom("invalid commitment point"))
+        }
+    }
+}

@@ -21,7 +21,7 @@ use crate::{action, action::Action, bundle, value};
 ///
 /// This unification lets consensus treat all actions identically while
 /// the type system enforces the authority boundary at construction time.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct ActionVerificationKey(pub(super) reddsa::VerificationKey<SpendAuth>);
 
@@ -49,6 +49,53 @@ impl TryFrom<[u8; 32]> for ActionVerificationKey {
 
     fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
         reddsa::VerificationKey::<SpendAuth>::try_from(bytes).map(Self)
+    }
+}
+
+// Custom serde implementation for ActionVerificationKey
+#[cfg(feature = "serde")]
+impl serde::Serialize for ActionVerificationKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let bytes: [u8; 32] = (*self).into();
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ActionVerificationKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ByteArrayVisitor;
+        
+        impl<'de> serde::de::Visitor<'de> for ByteArrayVisitor {
+            type Value = [u8; 32];
+            
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("32 bytes")
+            }
+            
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v.len() == 32 {
+                    let mut bytes = [0u8; 32];
+                    bytes.copy_from_slice(v);
+                    Ok(bytes)
+                } else {
+                    Err(E::invalid_length(v.len(), &self))
+                }
+            }
+        }
+        
+        let bytes = deserializer.deserialize_bytes(ByteArrayVisitor)?;
+        Self::try_from(bytes)
+            .map_err(|_| serde::de::Error::custom("invalid action verification key"))
     }
 }
 
