@@ -37,7 +37,8 @@ use crate::{
 ///
 /// The proof's public output is a PCD header containing
 /// `actions_acc`, `tachygram_acc`, and `anchor`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Proof;
 
 /// An error returned when proof verification fails.
