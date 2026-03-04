@@ -1,9 +1,15 @@
 [package]
-categories = ["cryptography::cryptocurrencies"]
+categories = [
+    "cryptography::cryptocurrencies",
+]
 description = """
 BLAKE2b-based mock of the Ragu PCD proof system for testing.
 """
-keywords = ["zcash", "tachyon", "mock"]
+keywords = [
+    "zcash",
+    "tachyon",
+    "mock",
+]
 name = "mock_ragu"
 version = "0.0.0"
 
@@ -18,6 +24,7 @@ workspace = true
 blake2b_simd = "1.0"
 ff = "0.13"
 pasta_curves = "0.5.1"
+rand = "0.9"
 
 [lib]
 bench = false

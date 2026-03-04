@@ -4,7 +4,7 @@
 //! synthesis via a `Driver`, the mock step computes output header data
 //! directly from the witness and input header data.
 
-use crate::header::Header;
+use crate::{error::ValidationError, header::Header};
 
 /// Unique index identifying a [`Step`] within an
 /// [`Application`](crate::Application).
@@ -28,8 +28,8 @@ impl Index {
 /// - Output header (`Output`) — what data the step produces
 /// - Witness and auxiliary data types
 ///
-/// In real Ragu, `witness()` synthesizes a circuit. In the mock,
-/// [`synthesize()`](Step::synthesize) computes the output directly.
+/// In real Ragu, [`witness()`](Step::witness) synthesizes constraints
+/// inside a `Driver`. In the mock, it computes the output directly.
 pub trait Step: Sized + Send + Sync {
     /// Unique index for this step.
     const INDEX: Index;
@@ -49,14 +49,15 @@ pub trait Step: Sized + Send + Sync {
     /// Output header type.
     type Output: Header;
 
-    /// Mock circuit synthesis.
+    /// Mock circuit witness generation.
     ///
     /// Computes the output header data from the witness and input headers.
-    /// In real Ragu, this would synthesize constraints inside a `Driver`.
-    fn synthesize<'source>(
+    /// In real Ragu, this synthesizes constraints inside a `Driver` and
+    /// returns encoded headers. The mock computes the output directly.
+    fn witness<'source>(
         &self,
         witness: Self::Witness<'source>,
         left: <Self::Left as Header>::Data<'source>,
         right: <Self::Right as Header>::Data<'source>,
-    ) -> (<Self::Output as Header>::Data<'source>, Self::Aux<'source>);
+    ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>), ValidationError>;
 }

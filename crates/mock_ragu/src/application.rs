@@ -4,10 +4,12 @@
 //! The builder pattern registers steps, then finalizes into an application
 //! that can seed, fuse, and verify proofs.
 
+use rand::CryptoRng;
+
 use crate::{
     error::ValidationError,
     header::Header,
-    proof::{self, Pcd, Proof},
+    proof::{self, PROOF_SIZE, Pcd, Proof},
     step::Step,
 };
 
@@ -60,14 +62,15 @@ impl Application {
     /// Mirrors `ragu_pcd::Application::seed`. The step's `Left` and `Right`
     /// must both be `()` (trivial header), since there are no input proofs.
     ///
-    /// Calls the step's [`synthesize`](Step::synthesize) to compute the
-    /// output header data, then constructs a proof binding that data.
-    pub fn seed<'source, S: Step<Left = (), Right = ()>>(
+    /// Calls the step's [`witness`](Step::witness) to compute the output
+    /// header data, then constructs a proof binding that data.
+    pub fn seed<'source, RNG: CryptoRng, S: Step<Left = (), Right = ()>>(
         &self,
+        _rng: &mut RNG,
         step: &S,
         witness: S::Witness<'source>,
     ) -> Result<(Proof, S::Aux<'source>), ValidationError> {
-        let (output_data, aux) = step.synthesize(witness, (), ());
+        let (output_data, aux) = step.witness(witness, (), ())?;
 
         let encoded = S::Output::encode(&output_data);
         let header_hash = proof::compute_header_hash(&encoded);
@@ -82,8 +85,9 @@ impl Application {
     ///
     /// Mirrors `ragu_pcd::Application::fuse`. Takes two input PCDs and
     /// a merge step, producing a combined proof.
-    pub fn fuse<'source, S: Step>(
+    pub fn fuse<'source, RNG: CryptoRng, S: Step>(
         &self,
+        _rng: &mut RNG,
         step: &S,
         witness: S::Witness<'source>,
         left: Pcd<'source, S::Left>,
@@ -91,14 +95,14 @@ impl Application {
     ) -> Result<(Proof, S::Aux<'source>), ValidationError> {
         let left_proof = left.proof;
         let right_proof = right.proof;
-        let (output_data, aux) = step.synthesize(witness, left.data, right.data);
+        let (output_data, aux) = step.witness(witness, left.data, right.data)?;
 
         let encoded = S::Output::encode(&output_data);
         let header_hash = proof::compute_header_hash(&encoded);
 
         // Witness hash: hash both child proofs
-        let left_bytes: [u8; 192] = left_proof.into();
-        let right_bytes: [u8; 192] = right_proof.into();
+        let left_bytes: [u8; PROOF_SIZE] = left_proof.into();
+        let right_bytes: [u8; PROOF_SIZE] = right_proof.into();
         let witness_hash_val = blake2b_simd::Params::new()
             .hash_length(32)
             .personal(b"MkRagu_Witness_\0")
@@ -120,7 +124,11 @@ impl Application {
     ///
     /// Mirrors `ragu_pcd::Application::verify`. Recomputes the header
     /// hash from the PCD's data and checks the proof's binding.
-    pub fn verify<H: Header>(&self, pcd: &Pcd<'_, H>) -> Result<bool, ValidationError> {
+    pub fn verify<RNG: CryptoRng, H: Header>(
+        &self,
+        pcd: &Pcd<'_, H>,
+        _rng: RNG,
+    ) -> Result<bool, ValidationError> {
         // Recompute header hash from the carried data
         let encoded = H::encode(&pcd.data);
         let expected_header_hash = proof::compute_header_hash(&encoded);
@@ -143,9 +151,10 @@ impl Application {
     ///
     /// In real Ragu, this rerandomizes polynomial commitments for
     /// unlinkability. The mock returns the same PCD unchanged.
-    pub fn rerandomize<'source, H: Header>(
+    pub fn rerandomize<'source, RNG: CryptoRng, H: Header>(
         &self,
         pcd: Pcd<'source, H>,
+        _rng: &mut RNG,
     ) -> Result<Pcd<'source, H>, ValidationError> {
         Ok(pcd)
     }
@@ -156,6 +165,8 @@ mod tests {
     extern crate alloc;
 
     use alloc::vec::Vec;
+
+    use rand::rng;
 
     use super::*;
     use crate::{header::Suffix, step::Index};
@@ -194,13 +205,14 @@ mod tests {
 
         const INDEX: Index = Index::new(0);
 
-        fn synthesize<'source>(
+        fn witness<'source>(
             &self,
             witness: Self::Witness<'source>,
             _left: <Self::Left as Header>::Data<'source>,
             _right: <Self::Right as Header>::Data<'source>,
-        ) -> (<Self::Output as Header>::Data<'source>, Self::Aux<'source>) {
-            (TestHeaderData { value: witness }, ())
+        ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>), ValidationError>
+        {
+            Ok((TestHeaderData { value: witness }, ()))
         }
     }
 
@@ -217,18 +229,19 @@ mod tests {
 
         const INDEX: Index = Index::new(1);
 
-        fn synthesize<'source>(
+        fn witness<'source>(
             &self,
             _witness: Self::Witness<'source>,
             left: <Self::Left as Header>::Data<'source>,
             right: <Self::Right as Header>::Data<'source>,
-        ) -> (<Self::Output as Header>::Data<'source>, Self::Aux<'source>) {
-            (
+        ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>), ValidationError>
+        {
+            Ok((
                 TestHeaderData {
                     value: left.value + right.value,
                 },
                 (),
-            )
+            ))
         }
     }
 
@@ -240,10 +253,12 @@ mod tests {
             .finalize()
             .expect("finalize should succeed");
 
-        let (proof, ()) = app.seed(&SeedStep, 42u64).expect("seed should succeed");
+        let (proof, ()) = app
+            .seed(&mut rng(), &SeedStep, 42u64)
+            .expect("seed should succeed");
         let pcd = proof.carry::<TestHeader>(TestHeaderData { value: 42 });
 
-        let valid = app.verify(&pcd).expect("verify should succeed");
+        let valid = app.verify(&pcd, rng()).expect("verify should succeed");
         assert!(valid, "proof should verify against matching header data");
     }
 
@@ -255,11 +270,13 @@ mod tests {
             .finalize()
             .expect("finalize should succeed");
 
-        let (proof, ()) = app.seed(&SeedStep, 42u64).expect("seed should succeed");
+        let (proof, ()) = app
+            .seed(&mut rng(), &SeedStep, 42u64)
+            .expect("seed should succeed");
         // Carry wrong data
         let pcd = proof.carry::<TestHeader>(TestHeaderData { value: 999 });
 
-        let valid = app.verify(&pcd).expect("verify should succeed");
+        let valid = app.verify(&pcd, rng()).expect("verify should succeed");
         assert!(!valid, "proof should reject mismatched header data");
     }
 
@@ -273,18 +290,20 @@ mod tests {
             .finalize()
             .expect("finalize should succeed");
 
-        let (proof_a, ()) = app.seed(&SeedStep, 10u64).expect("seed a");
+        let (proof_a, ()) = app.seed(&mut rng(), &SeedStep, 10u64).expect("seed a");
         let pcd_a = proof_a.carry::<TestHeader>(TestHeaderData { value: 10 });
 
-        let (proof_b, ()) = app.seed(&SeedStep, 20u64).expect("seed b");
+        let (proof_b, ()) = app.seed(&mut rng(), &SeedStep, 20u64).expect("seed b");
         let pcd_b = proof_b.carry::<TestHeader>(TestHeaderData { value: 20 });
 
         let (merged_proof, ()) = app
-            .fuse(&MergeStep, (), pcd_a, pcd_b)
+            .fuse(&mut rng(), &MergeStep, (), pcd_a, pcd_b)
             .expect("fuse should succeed");
         let merged_pcd = merged_proof.carry::<TestHeader>(TestHeaderData { value: 30 });
 
-        let valid = app.verify(&merged_pcd).expect("verify should succeed");
+        let valid = app
+            .verify(&merged_pcd, rng())
+            .expect("verify should succeed");
         assert!(valid, "merged proof should verify");
     }
 
@@ -296,11 +315,17 @@ mod tests {
             .finalize()
             .expect("finalize should succeed");
 
-        let (proof, ()) = app.seed(&SeedStep, 42u64).expect("seed should succeed");
+        let (proof, ()) = app
+            .seed(&mut rng(), &SeedStep, 42u64)
+            .expect("seed should succeed");
         let pcd = proof.carry::<TestHeader>(TestHeaderData { value: 42 });
 
-        let rerand_pcd = app.rerandomize(pcd).expect("rerandomize should succeed");
-        let valid = app.verify(&rerand_pcd).expect("verify should succeed");
+        let rerand_pcd = app
+            .rerandomize(pcd, &mut rng())
+            .expect("rerandomize should succeed");
+        let valid = app
+            .verify(&rerand_pcd, rng())
+            .expect("verify should succeed");
         assert!(valid, "rerandomized proof should still verify");
     }
 }

@@ -8,7 +8,7 @@
 //! - [`Header`] trait: defines data carried by proofs
 //! - [`Step`] trait: defines computation nodes in the PCD graph
 //! - [`ApplicationBuilder`] / [`Application`]: build and use a PCD application
-//! - [`Proof`]: the proof bytes (192 bytes)
+//! - [`Proof`]: the proof bytes (128 bytes)
 //! - [`Pcd`]: proof + header data bundle
 //!
 //! ## Utilities

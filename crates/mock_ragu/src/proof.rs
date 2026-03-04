@@ -1,4 +1,4 @@
-//! Mock PCD proof (192 bytes) and proof-carrying data.
+//! Mock PCD proof (128 bytes) and proof-carrying data.
 //!
 //! ## Proof layout
 //!
@@ -8,7 +8,6 @@
 //! | 32..64 | 32 | witness hash |
 //! | 64..96 | 32 | merge tag (zero for leaf) |
 //! | 96..128 | 32 | binding hash |
-//! | 128..192 | 64 | reserved (zeros) |
 //!
 //! The binding hash ties the other components together:
 //! `binding = BLAKE2b("MkRagu_Binding_\0", header_hash || witness_hash ||
@@ -17,7 +16,7 @@
 use crate::{error::ValidationError, header::Header};
 
 /// Size of the mock proof in bytes.
-const PROOF_SIZE: usize = 192;
+pub const PROOF_SIZE: usize = 128;
 
 /// A mock PCD proof.
 ///
