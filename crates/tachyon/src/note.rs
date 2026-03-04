@@ -35,6 +35,7 @@
 //! Ragu circuits and is TBD.
 use ff::Field as _;
 use pasta_curves::{Fp, Fq};
+use rand::{CryptoRng, RngCore};
 
 use crate::{
     constants::NOTE_VALUE_MAX,
@@ -49,6 +50,13 @@ use crate::{
 /// Prefix keys derived from $mk$ enable range-restricted delegation.
 #[derive(Clone, Copy, Debug)]
 pub struct NullifierTrapdoor(Fp);
+
+impl NullifierTrapdoor {
+    /// Generate a fresh random trapdoor.
+    pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
+        Self(Fp::random(rng))
+    }
+}
 
 impl From<Fp> for NullifierTrapdoor {
     fn from(fp: Fp) -> Self {
@@ -82,6 +90,11 @@ impl CommitmentTrapdoor {
         // tachygrams identical.
         todo!("note commitment");
         Commitment::from(Fp::ZERO)
+    }
+
+    /// Generate a fresh random trapdoor.
+    pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
+        Self(Fq::random(rng))
     }
 }
 
@@ -135,7 +148,7 @@ impl From<u64> for Value {
 impl Into<i64> for Value {
     fn into(self) -> i64 {
         #[expect(clippy::expect_used, reason = "specified behavior")]
-        i64::try_from(self.0).expect("value fits in i64")
+        i64::try_from(self.0).expect("note value should fit in i64 (max 2.1e15 < i64::MAX)")
     }
 }
 
