@@ -21,6 +21,8 @@ use crate::{
     witness::ActionPrivate,
 };
 
+/// A Tachyon transaction bundle parameterized by stamp state `S` and value
+/// balance type `V` representing the net pool effect.
 mod sealed {
     pub trait Sealed {}
 }
@@ -37,7 +39,8 @@ impl StampState for Stampless {}
 impl StampState for Option<Stamp> {}
 
 /// A Tachyon transaction bundle parameterized by stamp state `S`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Bundle<S: StampState> {
     /// Actions (cv, rk, sig).
     pub actions: Vec<Action>,
@@ -382,7 +385,7 @@ impl<S: StampState> Bundle<S> {
 /// The validator checks:
 /// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\text{sighash},
 ///   \text{bindingSig}) = 1$
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct Signature(pub(crate) reddsa::Signature<Binding>);
 
@@ -395,6 +398,52 @@ impl From<[u8; 64]> for Signature {
 impl From<Signature> for [u8; 64] {
     fn from(sig: Signature) -> Self {
         sig.0.into()
+    }
+}
+
+// Custom serde implementation for binding Signature
+#[cfg(feature = "serde")]
+impl serde::Serialize for Signature {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let bytes: [u8; 64] = (*self).into();
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Signature {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ByteArrayVisitor;
+        
+        impl<'de> serde::de::Visitor<'de> for ByteArrayVisitor {
+            type Value = [u8; 64];
+            
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("64 bytes")
+            }
+            
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v.len() == 64 {
+                    let mut bytes = [0u8; 64];
+                    bytes.copy_from_slice(v);
+                    Ok(bytes)
+                } else {
+                    Err(E::invalid_length(v.len(), &self))
+                }
+            }
+        }
+        
+        let bytes = deserializer.deserialize_bytes(ByteArrayVisitor)?;
+        Ok(Self::from(bytes))
     }
 }
 

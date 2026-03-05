@@ -32,7 +32,8 @@ use crate::{
 ///
 /// This separation allows the stamp to be stripped during aggregation
 /// while the action (with its authorization) remains in the transaction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Action {
     /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
     /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
@@ -167,7 +168,7 @@ impl Action {
 }
 
 /// A spend authorization signature (RedPallas over SpendAuth).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct Signature(pub(crate) reddsa::Signature<SpendAuth>);
 
@@ -180,6 +181,52 @@ impl From<[u8; 64]> for Signature {
 impl From<Signature> for [u8; 64] {
     fn from(sig: Signature) -> [u8; 64] {
         <[u8; 64]>::from(sig.0)
+    }
+}
+
+// Custom serde implementation for Signature
+#[cfg(feature = "serde")]
+impl serde::Serialize for Signature {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let bytes: [u8; 64] = (*self).into();
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Signature {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ByteArrayVisitor;
+        
+        impl<'de> serde::de::Visitor<'de> for ByteArrayVisitor {
+            type Value = [u8; 64];
+            
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("64 bytes")
+            }
+            
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v.len() == 64 {
+                    let mut bytes = [0u8; 64];
+                    bytes.copy_from_slice(v);
+                    Ok(bytes)
+                } else {
+                    Err(E::invalid_length(v.len(), &self))
+                }
+            }
+        }
+        
+        let bytes = deserializer.deserialize_bytes(ByteArrayVisitor)?;
+        Ok(Self::from(bytes))
     }
 }
 

@@ -848,6 +848,7 @@ dependencies = [
  "proptest",
  "rand 0.8.5",
  "reddsa",
+ "serde",
 ]
 
 [[package]]
