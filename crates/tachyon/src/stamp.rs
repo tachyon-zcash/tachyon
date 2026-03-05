@@ -7,7 +7,7 @@
 //! - **Proof**: The Ragu PCD proof (rerandomized)
 //!
 //! The PCD proof's public output ([`StampDigest`]) contains
-//! `actions_acc`, `tachygram_acc`, and `anchor`. These accumulators are
+//! `action_acc`, `tachygram_acc`, and `anchor`. These accumulators are
 //! **not serialized** on the stamp — the verifier recomputes them from
 //! public data (actions and tachygrams) and passes them as the header
 //! to Ragu `verify()`.
@@ -29,7 +29,7 @@ pub struct Stampless;
 /// Present in [`Stamped`](crate::Stamped) bundles.
 /// Stripped during aggregation and merged into the aggregate's stamp.
 ///
-/// The PCD proof's [`StampDigest`] header contains `actions_acc`,
+/// The PCD proof's [`StampDigest`] header contains `action_acc`,
 /// `tachygram_acc`, and `anchor`, but only the anchor is stored here.
 /// The accumulators are recomputed by the verifier from public data
 /// and passed as the header to Ragu `verify()`.
@@ -50,7 +50,7 @@ pub struct Stamp {
 impl Stamp {
     /// Creates a leaf stamp for a single action (ACTION STEP).
     ///
-    /// The proof system produces the accumulators (`actions_acc`,
+    /// The proof system produces the accumulators (`action_acc`,
     /// `tachygram_acc`) but these are not stored on the stamp. The verifier
     /// recomputes them outside the circuit from public data at verification
     /// time.
@@ -76,7 +76,7 @@ impl Stamp {
     /// Assuming the anchor is an append-only accumulator, a later anchor should
     /// be a superset of an earlier anchor.
     ///
-    /// The accumulators (`actions_acc`, `tachygram_acc`) are merged inside the
+    /// The accumulators (`action_acc`, `tachygram_acc`) are merged inside the
     /// circuit. [`Proof::merge`] enforces non-overlapping tachygram sets and
     /// the anchor subset relationship via the merge witness.
     #[must_use]
