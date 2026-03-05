@@ -4,28 +4,23 @@
 //!   randomizer, and value commitment trapdoor. The circuit derives the
 //!   tachygram and flavor internally.
 
-use crate::{keys::private::ActionRandomizer, note::Note, value};
+use crate::{entropy::ActionRandomizer, note::Note, value};
 
 /// Private witness for a single action.
 ///
-/// Contains the per-action circuit inputs. The circuit derives `flavor`
-/// from the shared `anchor` and computes the tachygram (nullifier or
-/// note commitment) internally.
+/// The [`ActionRandomizer`] is a bare $\alpha$ scalar — spend and output
+/// are intentionally indistinguishable at the witness level.
 ///
 /// Per-wallet key material ($\mathsf{ak}$, $\mathsf{nk}$) is shared across
 /// all actions and passed separately via
 /// [`ProofAuthorizingKey`](crate::keys::ProofAuthorizingKey)
-/// to [`Proof::create`](crate::proof::Proof::create).
+/// to [`Stamp::prove_action`](crate::stamp::Stamp::prove_action).
 #[derive(Clone, Copy, Debug)]
 pub struct ActionPrivate {
-    /// Spend authorization randomizer `alpha`.
-    /// - Spend: `rsk = ask + alpha`, `rk = ak + [alpha]G`
-    /// - Output: `rsk = alpha`, `rk = [alpha]G`
+    /// Action randomizer $\alpha$ with derivation path.
     pub alpha: ActionRandomizer,
-
     /// The note being spent or created.
-    pub note: Note, // { pk, v, psi, rcm }
-
+    pub note: Note,
     /// Value commitment trapdoor.
     pub rcv: value::CommitmentTrapdoor,
 }

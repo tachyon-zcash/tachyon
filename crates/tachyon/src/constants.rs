@@ -10,19 +10,15 @@
 /// Matches Zcash's `PRF^expand` pattern (§5.4.2 of the protocol spec).
 pub const PRF_EXPAND_PERSONALIZATION: &[u8; 16] = b"Zcash_ExpandSeed";
 
-/// BLAKE2b-512 personalization for the spend authorization signing message.
+/// BLAKE2b-512 personalization for the bundle commitment.
 ///
-/// The action signature signs `H("Tachyon-SpendSig", cv || rk)` rather than
-/// raw `cv || rk`, providing domain separation.
-pub const SPEND_AUTH_PERSONALIZATION: &[u8; 16] = b"Tachyon-SpendSig";
-
-/// BLAKE2b-512 personalization for the binding sighash.
+/// $$\mathsf{bundle\_commitment} =
+/// \text{BLAKE2b-512}(\text{"Tachyon-BndlHash"},\;   \mathsf{action\_acc} \|
+/// \mathsf{v\_balance})$$
 ///
-/// Tachyon-specific: the binding sighash covers action signatures and
-/// value balance. Each signature already binds its `cv` and `rk` via
-/// the spend auth message, so they are not repeated here. The stamp
-/// is excluded because it is stripped during aggregation.
-pub const BINDING_SIGHASH_PERSONALIZATION: &[u8; 16] = b"Tachyon-BindHash";
+/// Commits to the bundle's effecting data. The digest contributes to the
+/// transaction-level sighash, which is what signatures actually sign.
+pub const BUNDLE_COMMITMENT_PERSONALIZATION: &[u8; 16] = b"Tachyon-BndlHash";
 
 /// BLAKE2b-512 personalization for spend-side alpha derivation.
 ///
@@ -46,11 +42,14 @@ pub const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
 /// generators, same basepoint, same binding signature verification.
 pub const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
 
-/// Domain for nullifier derivation (Poseidon).
-pub const NULLIFIER_DOMAIN: &str = "z.cash:Tachyon-nf";
+/// Poseidon domain tag for nullifier derivation (GGM tree steps + mk KDF).
+pub(crate) const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 
-/// Domain for note commitments.
-pub const NOTE_COMMITMENT_DOMAIN: &str = "z.cash:Tachyon-NoteCommit";
+/// Poseidon domain tag for note commitments.
+pub(crate) const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-NoteCmmt";
+
+/// Poseidon domain tag for action digests.
+pub(crate) const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
 
 /// Domain for the polynomial accumulator hash-to-curve.
 pub const ACCUMULATOR_DOMAIN: &str = "z.cash:Tachyon-acc";
