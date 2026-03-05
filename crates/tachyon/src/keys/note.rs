@@ -4,8 +4,10 @@ use ff::PrimeField as _;
 use pasta_curves::Fp;
 
 use crate::{
+    ggm,
     note::{Nullifier, NullifierTrapdoor},
-    primitives::{self, Epoch},
+    poseidon,
+    primitives::Epoch,
 };
 
 /// A Tachyon nullifier deriving key.
@@ -47,7 +49,7 @@ impl NullifierKey {
     #[must_use]
     pub fn derive_note_private(&self, psi: &NullifierTrapdoor) -> NoteMasterKey {
         let psi_fp: Fp = (*psi).into();
-        NoteMasterKey(primitives::hash_2(psi_fp, self.0))
+        NoteMasterKey(poseidon::hash([psi_fp, self.0]))
     }
 }
 
@@ -85,10 +87,7 @@ impl NoteMasterKey {
     /// instead (restricted to authorized epochs).
     #[must_use]
     pub fn derive_nullifier(&self, flavor: Epoch) -> Nullifier {
-        let epoch_u32 = flavor
-            .as_u32()
-            .expect("epoch must fit in u32 for GGM tree");
-        Nullifier::from(primitives::ggm_evaluate(self.0, epoch_u32))
+        Nullifier::from(ggm::evaluate(self.0, u32::from(flavor)))
     }
 
     /// Derive an epoch-restricted prefix key $\Psi_t$ for OSS delegation.
@@ -100,20 +99,19 @@ impl NoteMasterKey {
     /// When the chain advances past $t$, the user device sends a delta
     /// prefix key covering the new range $(t..t']$.
     #[must_use]
+    #[expect(clippy::expect_used, reason = "infallible usize/u8 conversions")]
     pub fn derive_note_delegate(&self, epoch: Epoch) -> NoteDelegateKey {
-        let t = epoch
-            .as_u32()
-            .expect("epoch must fit in u32 for GGM tree");
-        // Number of MSB left-child descents = leading zeros of t.
-        // For t=0, the prefix covers only leaf 0 (full depth).
-        let depth = if t == 0 {
-            primitives::GGM_TREE_DEPTH
+        let bound = u32::from(epoch);
+        // Number of MSB left-child descents = leading zeros of bound.
+        // For bound=0, the prefix covers only leaf 0 (full depth).
+        let depth = if bound == 0 {
+            ggm::TREE_DEPTH
         } else {
-            t.leading_zeros() as usize
+            usize::try_from(bound.leading_zeros()).expect("leading_zeros fits in usize")
         };
         NoteDelegateKey {
-            node: primitives::ggm_prefix_node(self.0, depth),
-            depth: depth as u8,
+            node: ggm::prefix_node(self.0, depth),
+            depth: u8::try_from(depth).expect("depth <= 32"),
         }
     }
 }
@@ -156,13 +154,10 @@ impl NoteDelegateKey {
     /// $e \leq t$.
     #[must_use]
     pub fn derive_nullifier(&self, flavor: Epoch) -> Nullifier {
-        let epoch_u32 = flavor
-            .as_u32()
-            .expect("epoch must fit in u32 for GGM tree");
-        Nullifier::from(primitives::ggm_evaluate_from(
+        Nullifier::from(ggm::evaluate_from(
             self.node,
-            epoch_u32,
-            self.depth as usize,
+            u32::from(flavor),
+            usize::from(self.depth),
         ))
     }
 }
@@ -221,9 +216,9 @@ mod tests {
     fn derive_note_private_deterministic() {
         let nk = NullifierKey(Fp::from(42u64));
         let psi = NullifierTrapdoor::from(Fp::from(99u64));
-        let b1: [u8; 32] = nk.derive_note_private(&psi).into();
-        let b2: [u8; 32] = nk.derive_note_private(&psi).into();
-        assert_eq!(b1, b2);
+        let bytes_1: [u8; 32] = nk.derive_note_private(&psi).into();
+        let bytes_2: [u8; 32] = nk.derive_note_private(&psi).into();
+        assert_eq!(bytes_1, bytes_2);
     }
 
     #[test]
@@ -260,11 +255,11 @@ mod tests {
         let bound = Epoch::from(15u32); // covers 0..16
         let dk = mk.derive_note_delegate(bound);
 
-        for e in 0..=15u32 {
+        for epoch in 0..=15u32 {
             assert_eq!(
-                mk.derive_nullifier(Epoch::from(e)),
-                dk.derive_nullifier(Epoch::from(e)),
-                "mismatch at epoch {e}"
+                mk.derive_nullifier(Epoch::from(epoch)),
+                dk.derive_nullifier(Epoch::from(epoch)),
+                "mismatch at epoch {epoch}"
             );
         }
     }

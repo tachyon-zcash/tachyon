@@ -152,7 +152,7 @@ mod tests {
             pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
             psi: NullifierTrapdoor::from(Fp::ZERO),
-            rcm: CommitmentTrapdoor::from(Fq::ZERO),
+            rcm: CommitmentTrapdoor::from(Fp::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
         let alpha = theta.spend_randomizer(&note.commitment());

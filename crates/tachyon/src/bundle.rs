@@ -284,7 +284,7 @@ impl From<Signature> for [u8; 64] {
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
-    use pasta_curves::{Fp, Fq};
+    use pasta_curves::Fp;
     use rand::{CryptoRng, RngCore, SeedableRng as _, rngs::StdRng};
 
     use super::*;
@@ -324,13 +324,13 @@ mod tests {
             pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
             psi: note::NullifierTrapdoor::from(Fp::ZERO),
-            rcm: note::CommitmentTrapdoor::from(Fq::ZERO),
+            rcm: note::CommitmentTrapdoor::from(Fp::ZERO),
         };
         let output_note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(700u64),
             psi: note::NullifierTrapdoor::from(Fp::ONE),
-            rcm: note::CommitmentTrapdoor::from(Fq::ONE),
+            rcm: note::CommitmentTrapdoor::from(Fp::ONE),
         };
 
         let theta_spend = ActionEntropy::random(&mut *rng);

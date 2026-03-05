@@ -34,13 +34,14 @@
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
 use ff::Field as _;
-use pasta_curves::{Fp, Fq};
+use pasta_curves::Fp;
 use rand::{CryptoRng, RngCore};
 
 use crate::{
     constants::NOTE_VALUE_MAX,
     keys::{NullifierKey, PaymentKey},
-    primitives::{self, Epoch, Tachygram},
+    poseidon,
+    primitives::{Epoch, Tachygram},
 };
 
 /// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
@@ -49,7 +50,8 @@ use crate::{
 /// The GGM tree PRF then evaluates $nf = F_{mk}(\text{flavor})$.
 /// Prefix keys derived from $mk$ enable range-restricted delegation.
 #[derive(Clone, Copy, Debug)]
-pub struct NullifierTrapdoor(Fp);
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct NullifierTrapdoor(pub(super) Fp);
 
 impl NullifierTrapdoor {
     /// Generate a fresh random trapdoor.
@@ -76,7 +78,7 @@ impl Into<Fp> for NullifierTrapdoor {
 ///
 /// Can be derived from a shared secret negotiated out-of-band.
 #[derive(Clone, Copy, Debug)]
-pub struct CommitmentTrapdoor(Fq);
+pub struct CommitmentTrapdoor(Fp);
 
 impl CommitmentTrapdoor {
     /// Computes the note commitment `cm`.
@@ -87,29 +89,25 @@ impl CommitmentTrapdoor {
     ///
     /// Domain separation is implicit via `ConstantLength<4>`.
     #[must_use]
-    pub fn commit(self, v: Value, pk: &PaymentKey, psi: &NullifierTrapdoor) -> Commitment {
-        let rcm_fp = primitives::fq_to_fp(self.0);
-        let pk_fp: Fp = pk.0;
-        let v_fp = Fp::from(Into::<u64>::into(v));
-        let psi_fp: Fp = (*psi).into();
-        Commitment::from(primitives::hash_4(rcm_fp, pk_fp, v_fp, psi_fp))
+    pub fn commit(self, value: Value, pk: &PaymentKey, psi: &NullifierTrapdoor) -> Commitment {
+        Commitment::from(poseidon::hash([self.0, pk.0, Fp::from(value.0), psi.0]))
     }
 
     /// Generate a fresh random trapdoor.
     pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
-        Self(Fq::random(rng))
+        Self(Fp::random(rng))
     }
 }
 
-impl From<Fq> for CommitmentTrapdoor {
-    fn from(fq: Fq) -> Self {
-        Self(fq)
+impl From<Fp> for CommitmentTrapdoor {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
 #[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<Fq> for CommitmentTrapdoor {
-    fn into(self) -> Fq {
+impl Into<Fp> for CommitmentTrapdoor {
+    fn into(self) -> Fp {
         self.0
     }
 }
@@ -135,7 +133,8 @@ pub struct Note {
 
 /// A note value, less than 2.1e15 zatoshis
 #[derive(Clone, Copy, Debug)]
-pub struct Value(u64);
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct Value(pub(super) u64);
 
 impl From<u64> for Value {
     fn from(value: u64) -> Self {
@@ -268,16 +267,15 @@ mod tests {
     fn distinct_rcm_distinct_commitments() {
         let pk = PaymentKey(Fp::from(1u64));
         let psi = NullifierTrapdoor::from(Fp::from(2u64));
-        let cm1 = CommitmentTrapdoor::from(Fq::from(3u64)).commit(Value::from(100u64), &pk, &psi);
-        let cm2 = CommitmentTrapdoor::from(Fq::from(4u64)).commit(Value::from(100u64), &pk, &psi);
+        let cm1 = CommitmentTrapdoor::from(Fp::from(3u64)).commit(Value::from(100u64), &pk, &psi);
+        let cm2 = CommitmentTrapdoor::from(Fp::from(4u64)).commit(Value::from(100u64), &pk, &psi);
         assert_ne!(cm1, cm2);
     }
 
     /// `Note::nullifier` delegates correctly to key derivation.
     #[test]
     fn note_nullifier_matches_key_derivation() {
-        use crate::keys::private::SpendingKey;
-        use crate::primitives::Epoch;
+        use crate::{keys::private::SpendingKey, primitives::Epoch};
 
         let sk = SpendingKey::from([0x42u8; 32]);
         let nk = sk.derive_nullifier_private();
@@ -286,7 +284,7 @@ mod tests {
             pk: sk.derive_payment_key(),
             value: Value::from(100u64),
             psi,
-            rcm: CommitmentTrapdoor::from(Fq::ZERO),
+            rcm: CommitmentTrapdoor::from(Fp::ZERO),
         };
         let flavor = Epoch::from(5u32);
 

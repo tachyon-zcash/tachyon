@@ -1,28 +1,37 @@
 use core::{iter, ops};
 
 use ff::{Field as _, PrimeField as _};
-use pasta_curves::Fp;
+use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
 
-use crate::{Action, action::Plan as ActionPlan, keys::public, value};
-
-/// Convert a 32-byte representation to `Fp` via `from_raw` (auto-reduces).
-fn bytes_to_fp(bytes: &[u8; 32]) -> Fp {
-    let mut limbs = [0u64; 4];
-    for (i, chunk) in bytes.chunks_exact(8).enumerate() {
-        limbs[i] = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
-    }
-    Fp::from_raw(limbs)
-}
+use crate::{Action, action::Plan as ActionPlan, keys::public, poseidon, value};
 
 /// Digest a single action's `(cv, rk)` pair via Poseidon.
 ///
 /// The digest may be accumulated via field addition (commutative,
 /// order-independent).
+///
+/// # Panics
+///
+/// Panics if either point is the identity (which should never happen
+/// for action commitments or verification keys).
 #[must_use]
+#[expect(clippy::expect_used, reason = "specified behavior")]
 fn digest_action(cv: value::Commitment, rk: public::ActionVerificationKey) -> Fp {
-    let cv_bytes: [u8; 32] = cv.into();
-    let rk_bytes: [u8; 32] = rk.into();
-    super::hash_2(bytes_to_fp(&cv_bytes), bytes_to_fp(&rk_bytes))
+    let cv_coords =
+        cv.0.coordinates()
+            .into_option()
+            .expect("action value commitment must not be the identity point");
+    let rk_point: EpAffine = rk.into();
+    let rk_coords = rk_point
+        .coordinates()
+        .into_option()
+        .expect("verification key must not be the identity point");
+    poseidon::hash([
+        *cv_coords.x(),
+        *cv_coords.y(),
+        *rk_coords.x(),
+        *rk_coords.y(),
+    ])
 }
 
 /// Order-independent digest of one or more actions.
@@ -108,7 +117,7 @@ impl TryFrom<&[u8; 32]> for ActionDigest {
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
-    use pasta_curves::{Fp, Fq};
+    use pasta_curves::Fp;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
@@ -125,7 +134,7 @@ mod tests {
         sk: &private::SpendingKey,
         val: u64,
         psi: Fp,
-        rcm: Fq,
+        rcm: Fp,
     ) -> (value::Commitment, public::ActionVerificationKey) {
         let note = Note {
             pk: sk.derive_payment_key(),
@@ -147,8 +156,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(200);
         let sk = private::SpendingKey::from([0x42u8; 32]);
 
-        let (cv_a, rk_a) = make_action_parts(&mut rng, &sk, 1000, Fp::ZERO, Fq::ZERO);
-        let (cv_b, rk_b) = make_action_parts(&mut rng, &sk, 700, Fp::ONE, Fq::ONE);
+        let (cv_a, rk_a) = make_action_parts(&mut rng, &sk, 1000, Fp::ZERO, Fp::ZERO);
+        let (cv_b, rk_b) = make_action_parts(&mut rng, &sk, 700, Fp::ONE, Fp::ONE);
 
         let digest_a = ActionDigest::new(cv_a, rk_a);
         let digest_b = ActionDigest::new(cv_b, rk_b);
@@ -162,8 +171,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(201);
         let sk = private::SpendingKey::from([0x42u8; 32]);
 
-        let (cv_a, rk_a) = make_action_parts(&mut rng, &sk, 1000, Fp::ZERO, Fq::ZERO);
-        let (cv_b, rk_b) = make_action_parts(&mut rng, &sk, 700, Fp::ONE, Fq::ONE);
+        let (cv_a, rk_a) = make_action_parts(&mut rng, &sk, 1000, Fp::ZERO, Fp::ZERO);
+        let (cv_b, rk_b) = make_action_parts(&mut rng, &sk, 700, Fp::ONE, Fp::ONE);
 
         assert_ne!(ActionDigest::new(cv_a, rk_a), ActionDigest::new(cv_b, rk_b));
     }
