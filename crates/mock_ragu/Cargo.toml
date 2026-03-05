@@ -3,40 +3,28 @@ categories = [
     "cryptography::cryptocurrencies",
 ]
 description = """
-WIP
+BLAKE2b-based mock of the Ragu PCD proof system for testing.
 """
 keywords = [
     "zcash",
     "tachyon",
+    "mock",
 ]
-name = "zcash_tachyon"
+name = "mock_ragu"
 version = "0.0.0"
-
-documentation = "https://docs.rs/zcash_tachyon"
-readme = "README.md"
-repository = "https://github.com/tachyon-zcash/tachyon"
 
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-[features]
-default = [
-]
-
 [lints]
 workspace = true
 
 [dependencies]
-bitvec = "1.0.1"
 blake2b_simd = "1.0"
 ff = "0.13"
-group = "0.13"
-halo2_poseidon = "0.1"
 pasta_curves = "0.5.1"
-proptest = "1"
 rand = "0.8"
-reddsa = "0.5.1"
 
 [lib]
 bench = false

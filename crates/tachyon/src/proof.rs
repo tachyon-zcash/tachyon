@@ -9,9 +9,9 @@
 //! The header is not transmitted on the wire. The verifier reconstructs the PCD
 //! header from public data according to consensus rules.
 //!
-//! 1. Recompute `actions_acc` from the bundle's actions
+//! 1. Recompute `action_acc` from the bundle's actions
 //! 2. Recompute `tachygram_acc` from the listed tachygrams
-//! 3. Construct the PCD header (`actions_acc`, `tachygram_acc`, `anchor`)
+//! 3. Construct the PCD header (`action_acc`, `tachygram_acc`, `anchor`)
 //! 4. Call Ragu `verify(Pcd { proof, data: header })`
 //!
 //! A successful verification with a reconstructed header demonstrates that
@@ -36,7 +36,7 @@ use crate::{
 /// marking the design boundary.
 ///
 /// The proof's public output is a PCD header containing
-/// `actions_acc`, `tachygram_acc`, and `anchor`.
+/// `action_acc`, `tachygram_acc`, and `anchor`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Proof;
 
@@ -51,7 +51,7 @@ impl Proof {
     /// spends, note commitment for outputs). The proof binds actions
     /// to tachygrams via two accumulators:
     ///
-    /// - **`actions_acc`**: Each action produces a digest $D_i =
+    /// - **`action_acc`**: Each action produces a digest $D_i =
     ///   H(\mathsf{cv}_i, \mathsf{rk}_i)$. The accumulator is
     ///   $\text{VectorCommit}(D_1, \ldots, D_n)$.
     /// - **`tachygram_acc`**: $\text{VectorCommit}(\text{tachygrams})$.
@@ -67,8 +67,8 @@ impl Proof {
     ///   F_{\text{KDF}(\psi, nk)}(\text{flavor})$)
     #[must_use]
     pub fn create(
-        _actions: &[Action],
-        _witnesses: &[ActionPrivate],
+        _actions: Vec<Action>,
+        _witnesses: Vec<ActionPrivate>,
         _anchor: &Anchor,
         _pak: &ProofAuthorizingKey,
     ) -> (Self, Vec<Tachygram>) {
@@ -91,7 +91,7 @@ impl Proof {
     ///   $\text{left\_anchor} = \text{right\_anchor} \times \text{quotient}$
     ///   (the left accumulator state is a superset of the right's). For
     ///   same-epoch merges the quotient is 1.
-    /// - **Accumulator combination**: the merged proof's `actions_acc` and
+    /// - **Accumulator combination**: the merged proof's `action_acc` and
     ///   `tachygram_acc` are the unions of the left and right accumulators.
     #[must_use]
     pub fn merge(left: Self, _right: Self) -> Self {
@@ -101,22 +101,22 @@ impl Proof {
 
     /// Verifies this proof by reconstructing the PCD header from public data.
     ///
-    /// The verifier recomputes `actions_acc` and `tachygram_acc` from the
+    /// The verifier recomputes `action_acc` and `tachygram_acc` from the
     /// public actions and tachygrams, constructs the PCD header,
     /// and calls Ragu `verify(Pcd { proof, data: header })`. The proof
     /// only verifies against the header that matches the circuit's honest
     /// execution — a mismatched header causes verification failure.
     pub fn verify(
         &self,
-        _actions: &[Action],
-        _tachygrams: &[Tachygram],
+        _actions: Vec<Action>,
+        _tachygrams: Vec<Tachygram>,
         _anchor: Anchor,
     ) -> Result<(), ValidationError> {
         todo!("Ragu verification \u{2014} reconstruct the PCD header from public data");
-        // 1. Recompute actions_acc: D_i = H(cv_i, rk_i) for each action actions_acc =
+        // 1. Recompute action_acc: D_i = H(cv_i, rk_i) for each action action_acc =
         //    VectorCommit(D_1, ..., D_n)
         // 2. Recompute tachygram_acc = VectorCommit(tachygrams)
-        // 3. Construct PCD header { actions_acc, tachygram_acc, anchor }
+        // 3. Construct PCD header { action_acc, tachygram_acc, anchor }
         // 4. verify(Pcd { proof: self, data: header })
         // 5. TODO: Anchor range check — validate that `anchor` falls within the
         //    acceptable range for the landing block. The exact semantics (epoch window,

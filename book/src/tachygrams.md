@@ -45,7 +45,7 @@ The proof's public output `StampDigest` may carry five field elements:
 
 | Field | Type | Elements | Description |
 | ----- | ---- | -------- | ----------- |
-| `actions_acc` | Pallas point | 2 (x,y) | Pedersen hash over action digests |
+| `action_acc` | Pallas point | 2 (x,y) | Pedersen hash over action digests |
 | `tachygram_acc` | Pallas point | 2 (x,y) | Pedersen hash over tachygrams |
 | `anchor` | $\mathbb{F}_p$ scalar | 1 | Accumulator state reference |
 
@@ -82,8 +82,8 @@ tachygrams $tg_i$, the anchor, and the proof bytes.
 2. **No duplicate tachygrams**: check the tachygram list for repeats
 3. **Action sigs**: verify each $sig_i$ against $rk_i$ (RedPallas)
 4. **Binding sig**: verify against $\sum cv_i$
-5. **Reconstruct header**: build `StampDigest { anchor, actions_acc, tachygram_acc }`
-   - **Recompute actions_acc**: $\sum[\text{Poseidon}(rk_i \| cv_i)] \cdot G_\text{acc}$ from visible actions
+5. **Reconstruct header**: build `StampDigest { anchor, action_acc, tachygram_acc }`
+   - **Recompute action_acc**: $\sum[\text{Poseidon}(rk_i \| cv_i)] \cdot G_\text{acc}$ from visible actions
    - **Recompute tachygram_acc**: $\sum[\text{Poseidon}(tg_i)] \cdot G_\text{acc}$ from listed tachygrams
 6. **Verify proof**: call Ragu `verify(Pcd { proof, data: header })`
 
