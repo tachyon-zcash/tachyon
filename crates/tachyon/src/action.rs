@@ -8,7 +8,7 @@ use reddsa::orchard::SpendAuth;
 use crate::{
     constants::SPEND_AUTH_PERSONALIZATION,
     entropy,
-    keys::{private, public},
+    keys::{custody, public},
     note::Note,
     value,
     witness::ActionPrivate,
@@ -101,7 +101,7 @@ impl Action {
     /// 5. Assembly: `Action { cv, rk, sig }` +
     ///    [`ActionPrivate`](crate::witness::ActionPrivate)
     pub fn spend<R: RngCore + CryptoRng>(
-        ask: &private::SpendAuthorizingKey,
+        ask: &custody::SpendAuthorizingKey,
         note: Note,
         theta: &entropy::ActionEntropy,
         rng: &mut R,
@@ -191,7 +191,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        keys::private,
+        keys::custody,
         note::{self, CommitmentTrapdoor, NullifierTrapdoor},
     };
 
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn spend_sig_round_trip() {
         let mut rng = StdRng::seed_from_u64(0);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let ask = sk.derive_auth_private();
         let note = Note {
             pk: sk.derive_payment_key(),
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn output_sig_round_trip() {
         let mut rng = StdRng::seed_from_u64(0);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),

@@ -14,7 +14,7 @@
 
 use crate::{
     action::Action,
-    keys::ProofAuthorizingKey,
+    keys::delegated::ProofAuthorizingKey,
     primitives::{Anchor, Tachygram},
     proof::{Proof, ValidationError},
     witness::ActionPrivate,

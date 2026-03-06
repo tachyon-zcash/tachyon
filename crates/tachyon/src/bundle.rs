@@ -15,7 +15,7 @@ use reddsa::orchard::Binding;
 use crate::{
     action::Action,
     constants::BINDING_SIGHASH_PERSONALIZATION,
-    keys::{ProofAuthorizingKey, private::BindingSigningKey, public::BindingVerificationKey},
+    keys::{custody::BindingSigningKey, delegated::ProofAuthorizingKey, public::BindingVerificationKey},
     primitives::Anchor,
     stamp::{Stamp, Stampless},
     witness::ActionPrivate,
@@ -406,13 +406,13 @@ mod tests {
     use super::*;
     use crate::{
         entropy,
-        keys::private,
+        keys::custody,
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
         value,
     };
 
     fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Stamped {
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let ask = sk.derive_auth_private();
         let pak = sk.derive_proof_private();
         let anchor = Anchor::from(Fp::ZERO);
@@ -481,7 +481,7 @@ mod tests {
     )]
     fn composable_delegation_flow() {
         let mut rng = StdRng::seed_from_u64(1);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let ask = sk.derive_auth_private();
         let pak = sk.derive_proof_private();
         let anchor = Anchor::from(Fp::ZERO);

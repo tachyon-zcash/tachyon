@@ -39,7 +39,7 @@ use rand::{CryptoRng, RngCore};
 
 use crate::{
     constants::NOTE_VALUE_MAX,
-    keys::{NullifierKey, PaymentKey},
+    keys::{private::NullifierKey, public::PaymentKey},
     primitives::{Epoch, Tachygram},
 };
 

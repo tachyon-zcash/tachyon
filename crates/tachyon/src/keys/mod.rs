@@ -25,27 +25,39 @@
 //!     ak & nk --> pak
 //! ```
 //!
-//! ### Private keys ([`private`])
+//! ### Custody keys ([`custody`])
+//!
+//! Keys that never leave the signing device.  Compromise means fund loss.
 //!
 //! - `sk`: Root spending key (full authority)
 //! - `ask`: Authorizes spends (long-lived, cannot sign directly)
+//! - `rsk`: Per-action signing key (ephemeral)
 //! - `bsk = Σrcvᵢ`: Binding signing key (per-bundle)
 //!
-//! ### Public keys ([`public`])
+//! ### Private keys ([`private`])
+//!
+//! User-device confidential keys, not delegated.  Compromise means privacy
+//! loss.
 //!
 //! - `ak`: Public counterpart of `ask` (long-lived, cannot verify action sigs)
-//! - `rk = ak + [alpha]G`: Per-action verification key (can verify, public)
-//! - `bvk`: Binding verification key (derived from value commitments)
-//!
-//! ### Note keys ([`note`])
-//!
 //! - `nk`: Observes when funds are spent (nullifier derivation)
-//! - `pk`: Used in note construction and out-of-band payment protocols
+//! - `mk`: Per-note master root key (ephemeral, on-device)
 //!
-//! ### Proof keys ([`proof`])
+//! ### Delegated keys ([`delegated`])
+//!
+//! Confidential material shared with trusted parties (provers, OSS).
 //!
 //! - `pak`: `ak` + `nk` (proof authorizing key): Authorizes proof construction
 //!   without spend authority
+//! - `psi_t`: Epoch-restricted prefix key for oblivious sync delegation
+//!
+//! ### Public keys ([`public`])
+//!
+//! On-chain or freely shareable.  No confidentiality requirement.
+//!
+//! - `rk = ak + [alpha]G`: Per-action verification key (can verify, public)
+//! - `bvk`: Binding verification key (derived from value commitments)
+//! - `pk`: Used in note construction and out-of-band payment protocols
 //!
 //! ## Nullifier Derivation
 //!
@@ -62,15 +74,10 @@
 //! $e \leq t$, enabling range-restricted delegation without revealing
 //! spend capability.
 
+pub mod custody;
+pub mod delegated;
 pub mod private;
 pub mod public;
-
-mod note;
-mod proof;
-
-// Re-exports: public API surface.
-pub use note::{NoteDelegateKey, NoteMasterKey, NullifierKey, PaymentKey};
-pub use proof::ProofAuthorizingKey;
 
 #[cfg(test)]
 mod tests {
@@ -81,7 +88,7 @@ mod tests {
     use crate::{
         constants::PrfExpand,
         entropy,
-        keys::private,
+        keys::custody,
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
     };
 
@@ -111,7 +118,7 @@ mod tests {
             }
 
             // Verify normalization produces tilde_y = 0.
-            let sk = private::SpendingKey::from(sk_bytes);
+            let sk = custody::SpendingKey::from(sk_bytes);
             let ak = sk.derive_auth_private().derive_auth_public();
             let ak_bytes: [u8; 32] = ak.0.into();
             assert_eq!(ak_bytes[31] >> 7u8, 0u8, "ak sign bit must be 0");
@@ -125,7 +132,7 @@ mod tests {
     /// (different domain separators produce independent keys).
     #[test]
     fn child_keys_independent() {
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let ask_bytes: [u8; 32] = sk.derive_auth_private().derive_auth_public().0.into();
         let nk: Fp = sk.derive_nullifier_private().0;
         let pk: Fp = sk.derive_payment_key().0;
@@ -140,7 +147,7 @@ mod tests {
     #[test]
     fn rsk_public_equals_ak_derive_action_public() {
         let mut rng = StdRng::seed_from_u64(0);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let ask = sk.derive_auth_private();
         let ak = ask.derive_auth_public();
         let note = Note {

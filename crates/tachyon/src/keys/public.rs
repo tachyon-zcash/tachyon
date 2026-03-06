@@ -1,6 +1,7 @@
 //! Public (verification) keys.
 
-use pasta_curves::{EpAffine, group::GroupEncoding as _};
+use ff::PrimeField as _;
+use pasta_curves::{EpAffine, Fp, group::GroupEncoding as _};
 use reddsa::orchard::{Binding, SpendAuth};
 
 use crate::{action, action::Action, bundle, value};
@@ -149,5 +150,44 @@ impl TryFrom<[u8; 32]> for BindingVerificationKey {
 
     fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
         reddsa::VerificationKey::<Binding>::try_from(bytes).map(Self)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Payment key (pk)
+// ---------------------------------------------------------------------------
+
+/// A Tachyon payment key — static per-spending-key recipient identifier.
+///
+/// Replaces Orchard's diversified transmission key $\mathsf{pk_d}$ and
+/// the entire diversified address system. Tachyon removes the diversifier
+/// $d$ because payment addresses are removed from the on-chain protocol
+/// ("Tachyaction at a Distance", Bowe 2025):
+///
+/// > "The transmission key $\mathsf{pk_d}$ is substituted with a payment
+/// > key $\mathsf{pk}$."
+///
+/// ## Derivation
+///
+/// Deterministic per-`sk`: $\mathsf{pk} =
+/// \text{ToBase}(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([0\text{x}0b]))$.
+/// Every note from the same spending key shares the same `pk`. There is
+/// no per-note diversification — unlinkability is the wallet layer's
+/// responsibility, not the core protocol's.
+///
+/// ## Usage
+///
+/// The recipient's `pk` appears in the note and is committed to in the
+/// note commitment. It is NOT an on-chain address; payment coordination
+/// happens out-of-band via higher-level protocols (ZIP 321 payment
+/// requests, ZIP 324 URI encapsulated payments).
+#[derive(Clone, Copy, Debug)]
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct PaymentKey(pub(super) Fp);
+
+#[expect(clippy::from_over_into, reason = "restrict conversion")]
+impl Into<[u8; 32]> for PaymentKey {
+    fn into(self) -> [u8; 32] {
+        self.0.to_repr()
     }
 }
