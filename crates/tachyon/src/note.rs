@@ -417,10 +417,7 @@ mod tests {
     }
 
     /// `Note::nullifier` delegates correctly to key derivation.
-    ///
-    /// Requires GGM tree PRF — tested after that lands.
     #[test]
-    #[ignore = "requires GGM tree PRF"]
     fn note_nullifier_matches_key_derivation() {
         use crate::{keys::private::SpendingKey, primitives::Epoch};
 
@@ -433,7 +430,7 @@ mod tests {
             psi,
             rcm: CommitmentTrapdoor::from(Fp::ZERO),
         };
-        let flavor = Epoch::from(Fp::from(5u64));
+        let flavor = Epoch::from(5u32);
 
         let mk = nk.derive_note_private(&psi);
         assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));

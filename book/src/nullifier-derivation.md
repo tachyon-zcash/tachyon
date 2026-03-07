@@ -10,7 +10,7 @@ $$\text{nf} = \text{Extract}_P((F_{nk}(\rho) + \psi \mod p) \cdot G + cm)$$
 
 $$\text{nf} = F_{nk}(\Psi \parallel \text{flavor})$$
 
-where $\Psi$ is the nullifier trapdoor (user-controlled randomness) and *flavor* is simply interpreted as an epoch-id. The observation here is that unlike the existing nullifier derivation in Orchard which requires a globally unique $\rho$ to the output note being spent, this simpler derivation doesn't require that and $\Psi$ is also not required to be unique.
+where $F$ is a keyed PRF (Poseidon with domain tag `Tachyon-NfDerive`), $\Psi$ is the nullifier trapdoor (user-controlled randomness), and *flavor* is simply interpreted as an epoch-id. The observation here is that unlike the existing nullifier derivation in Orchard which requires a globally unique $\rho$ to the output note being spent, this simpler derivation doesn't require that and $\Psi$ is also not required to be unique.
 
 ## Proposed: Nullifier Derivation Scheme
 
@@ -31,7 +31,7 @@ This seems like a suitable candidate that satisfies the aforementioned requireme
 
 ## API Design
 
-Let $F_K$ be a GGM tree PRF instantiated from a Poseidon algebraic sponge construction. The wallet derives the master root key, $mk$, for the GGM tree as $mk = \text{KDF}(\psi, nk)$.
+Let $F_K$ be a GGM tree PRF instantiated from Poseidon (P128Pow5T3, domain tag `Tachyon-NfDerive`). Each tree step computes $\text{Poseidon}(\text{tag}, \text{node}, \text{bit})$. The wallet derives the master root key as $mk = \text{Poseidon}_\text{Tachyon-NfDerive}(\psi, nk)$.
 
 1. **Compute the minimal prefix cover of [0..t].**
 

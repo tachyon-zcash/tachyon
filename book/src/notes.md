@@ -33,7 +33,7 @@ The same note spent in different epochs produces different nullifiers. This is e
 
 ### Oblivious sync delegation
 
-The master root key $\mathsf{mk} = \text{KDF}(\Psi, \mathsf{nk})$ seeds a GGM (Goldreich-Goldwasser-Micali) tree PRF. Prefix keys $\Psi_t$ permit evaluating the PRF only for epochs $e \leq t$, enabling range-restricted delegation to an untrusted service (OSS) for non-inclusion proving without revealing spend capability.
+The master root key $\mathsf{mk} = \text{Poseidon}_\text{Tachyon-NfDerive}(\Psi, \mathsf{nk})$ seeds a GGM (Goldreich-Goldwasser-Micali) tree PRF. Prefix keys $\Psi_t$ permit evaluating the PRF only for epochs $e \leq t$, enabling range-restricted delegation to an untrusted service (OSS) for non-inclusion proving without revealing spend capability.
 
 ```mermaid
 flowchart TB
@@ -41,8 +41,8 @@ flowchart TB
     psi["ψ (NullifierTrapdoor)"]
     mk["mk (NoteMasterKey)"]
     nf["nf (Nullifier)"]
-    psi_t["ψ_t (NoteDelegateKey)"]
-    kdf(("derive(ψ, nk)"))
+    psi_t["ψ_t (NoteKey‹Prefixed›)"]
+    kdf(("Poseidon(ψ, nk)"))
 
     nk & psi ---  kdf --> mk
     mk -->|"F_mk(flavor)"| nf
@@ -53,6 +53,6 @@ flowchart TB
 | Key | Rust type | Holder | Capability |
 | --- | --------- | ------ | ---------- |
 | $\mathsf{mk}$ | `NoteMasterKey` | User device | Derive nullifiers for any epoch; derive delegate keys |
-| $\Psi_t$ | `NoteDelegateKey` | OSS | Derive nullifiers for epochs $e \leq t$ only |
+| $\Psi_t$ | `NoteKey<Prefixed>` | OSS | Derive nullifiers for epochs $e \leq t$ only |
 
 $\mathsf{mk}$ is ephemeral — the user device derives it from $(\mathsf{nk}, \Psi)$ when needed, never stores or transmits it. The OSS receives only delegate keys, which cannot recover $\mathsf{mk}$ or $\mathsf{nk}$.

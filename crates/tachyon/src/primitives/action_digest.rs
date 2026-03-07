@@ -274,7 +274,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(204);
         let sk = private::SpendingKey::from([0x42u8; 32]);
         let (cv, _) = make_action_parts(&mut rng, &sk, 500, Fp::ZERO, Fp::ZERO);
-        let rk = public::ActionVerificationKey::try_from([0u8; 32]).unwrap();
+        let rk =
+            public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());
         assert!(matches!(
             ActionDigest::new(cv, rk),
             Err(ActionDigestError::IdentityRk)

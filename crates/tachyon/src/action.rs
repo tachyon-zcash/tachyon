@@ -185,7 +185,8 @@ impl TryFrom<&[u8; 128]> for Action {
             return Err(DeserializeError::IdentityCv);
         }
 
-        let rk = public::ActionVerificationKey::try_from(rk_raw)
+        let rk = reddsa::VerificationKey::<SpendAuth>::try_from(rk_raw)
+            .map(public::ActionVerificationKey)
             .map_err(|_reddsa_err| DeserializeError::InvalidRk)?;
 
         if bool::from(EpAffine::from(rk).is_identity()) {

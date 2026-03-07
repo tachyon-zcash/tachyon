@@ -1,12 +1,33 @@
-# Domain Separators
+# Hash Functions and Domain Separators
 
-| Constant         | Value                       | Purpose                                                            |
-| ---------------- | --------------------------- | ------------------------------------------------------------------ |
-| PRF expansion    | `Zcash_ExpandSeed`          | Key derivation from $\mathsf{sk}$ (shared with Sapling/Orchard)    |
-| Bundle commitment | `Tachyon-BndlHash`          | Bundle commitment: $H(\mathsf{action\_acc} \| \mathsf{v\_balance})$ |
-| Spend alpha      | `Tachyon-Spend`             | Spend-side randomizer: $H(\theta \| \mathsf{cm})$                 |
-| Output alpha     | `Tachyon-Output`            | Output-side randomizer: $H(\theta \| \mathsf{cm})$                |
-| Value commitment | `z.cash:Orchard-cv`         | Generators $\mathcal{V}$, $\mathcal{R}$ (shared with Orchard)      |
-| Nullifier        | `z.cash:Tachyon-nf`         | Nullifier PRF domain                                               |
-| Note commitment  | `z.cash:Tachyon-NoteCommit` | Note commitment scheme                                             |
-| Accumulator      | `z.cash:Tachyon-acc`        | Polynomial accumulator hash-to-curve                               |
+Tachyon uses two hash families, chosen by context:
+
+- **BLAKE2b-512** for byte-oriented operations outside circuits: key derivation, alpha randomizers, and the bundle commitment that feeds the transaction sighash.
+- **Poseidon** (P128Pow5T3, constant-length) for field-arithmetic operations that must be efficient inside Ragu circuits: nullifier derivation, note commitments, and action digests.
+
+All BLAKE2b personalizations are exactly 16 bytes. Poseidon domain tags are 16-byte strings interpreted as little-endian $\mathbb{F}_p$ elements via `Fp::from_u128`.
+
+## BLAKE2b-512
+
+| Constant | Value | Formula |
+| --- | --- | --- |
+| PRF expansion | `Zcash_ExpandSeed` | $\text{BLAKE2b-512}(\mathsf{sk} \| t)$ — key derivation (shared with Sapling/Orchard) |
+| Spend alpha | `Tachyon-Spend` | $\alpha_\text{spend} = \text{BLAKE2b-512}(\theta \| \mathsf{cm})$ |
+| Output alpha | `Tachyon-Output` | $\alpha_\text{output} = \text{BLAKE2b-512}(\theta \| \mathsf{cm})$ |
+| Bundle commitment | `Tachyon-BndlHash` | $\text{BLAKE2b-512}(\mathsf{action\_acc} \| \mathsf{v\_balance})$ |
+
+## Poseidon
+
+| Constant | Value | Formula |
+| --- | --- | --- |
+| Nullifier | `Tachyon-NfDerive` | $\mathsf{mk} = \text{Poseidon}(\mathsf{tag}, \Psi, \mathsf{nk})$ — master key KDF; also each GGM tree step |
+| Note commitment | `Tachyon-NoteCmmt` | $\mathsf{cm} = \text{Poseidon}(\mathsf{tag}, \mathsf{rcm}, \mathsf{pk}, v, \Psi)$ |
+| Action digest | `Tachyon-ActnDgst` | $\text{Poseidon}(\mathsf{tag}, \mathsf{cv}_x, \mathsf{cv}_y, \mathsf{rk}_x, \mathsf{rk}_y) + 1$ |
+| Tachygram digest | `Tachyon-TgrmDgst` | $\text{Poseidon}(\mathsf{tag}, \mathsf{tg}) + 1$ |
+
+## Other
+
+| Constant | Value | Purpose |
+| --- | --- | --- |
+| Value commitment | `z.cash:Orchard-cv` | Hash-to-curve generators $\mathcal{V}$, $\mathcal{R}$ (shared with Orchard) |
+| Accumulator | `z.cash:Tachyon-acc` | Polynomial accumulator hash-to-curve |

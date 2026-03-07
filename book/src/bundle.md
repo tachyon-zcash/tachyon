@@ -53,7 +53,7 @@ The proof establishes:
 - tachygrams are correctly bound to action keys
 - action balance effect matches pool balance effect
 
-The nullifier derivation is
+The nullifier derivation uses a Poseidon-based GGM tree PRF (domain `Tachyon-NfDerive`):
 
 $$ \mathsf{nf} = F_{\mathsf{nk}}(\Psi \parallel \tau) $$
 

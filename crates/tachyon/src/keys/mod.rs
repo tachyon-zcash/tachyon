@@ -70,11 +70,12 @@
 pub mod private;
 pub mod public;
 
+mod ggm;
 mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use note::{NoteDelegateKey, NoteMasterKey, NullifierKey, PaymentKey};
+pub use note::{NoteMasterKey, NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]
