@@ -38,10 +38,20 @@ impl ActionVerificationKey {
 )]
 impl Eq for ActionVerificationKey {}
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 32]> for ActionVerificationKey {
-    fn into(self) -> [u8; 32] {
-        self.0.into()
+/// Decompress the verification key to an affine curve point.
+#[expect(clippy::expect_used, reason = "specified behavior")]
+impl From<ActionVerificationKey> for EpAffine {
+    fn from(key: ActionVerificationKey) -> Self {
+        let bytes: [u8; 32] = key.0.into();
+        Self::from_bytes(&bytes)
+            .into_option()
+            .expect("verification key is a valid curve point")
+    }
+}
+
+impl From<ActionVerificationKey> for [u8; 32] {
+    fn from(key: ActionVerificationKey) -> Self {
+        key.0.into()
     }
 }
 

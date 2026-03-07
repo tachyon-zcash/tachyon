@@ -33,12 +33,13 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
-use ff::Field as _;
-use pasta_curves::{Fp, Fq};
+use ff::{Field as _, PrimeField as _};
+use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
+use pasta_curves::Fp;
 use rand::{CryptoRng, RngCore};
 
 use crate::{
-    constants::NOTE_VALUE_MAX,
+    constants::{NOTE_COMMITMENT_DOMAIN, NOTE_VALUE_MAX},
     keys::{NullifierKey, PaymentKey},
     primitives::{Epoch, Tachygram},
 };
@@ -49,7 +50,8 @@ use crate::{
 /// The GGM tree PRF then evaluates $nf = F_{mk}(\text{flavor})$.
 /// Prefix keys derived from $mk$ enable range-restricted delegation.
 #[derive(Clone, Copy, Debug)]
-pub struct NullifierTrapdoor(Fp);
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct NullifierTrapdoor(pub(super) Fp);
 
 impl NullifierTrapdoor {
     /// Generate a fresh random trapdoor.
@@ -64,10 +66,9 @@ impl From<Fp> for NullifierTrapdoor {
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<Fp> for NullifierTrapdoor {
-    fn into(self) -> Fp {
-        self.0
+impl From<NullifierTrapdoor> for Fp {
+    fn from(trapdoor: NullifierTrapdoor) -> Self {
+        trapdoor.0
     }
 }
 
@@ -76,38 +77,46 @@ impl Into<Fp> for NullifierTrapdoor {
 ///
 /// Can be derived from a shared secret negotiated out-of-band.
 #[derive(Clone, Copy, Debug)]
-pub struct CommitmentTrapdoor(Fq);
+pub struct CommitmentTrapdoor(Fp);
 
 impl CommitmentTrapdoor {
     /// Computes the note commitment `cm`.
     ///
-    /// Commits to $(pk, v, \psi)$ with randomness $rcm$
+    /// Commits to $(pk, v, \psi)$ with randomness $rcm$:
+    ///
+    /// $cm = \text{Poseidon}(rcm, pk, v, \psi)$
+    ///
+    /// Domain separation is implicit via `ConstantLength<4>`.
     #[must_use]
-    pub fn commit(self, _v: Value, _pk: &PaymentKey, _psi: &NullifierTrapdoor) -> Commitment {
-        // TODO: Implement note commitment
-        // $cm = \text{NoteCommit}_{rcm}(\text{"z.cash:Tachyon-NoteCommit"}, pk \| v \|
-        // \psi)$ This stub returns Fp::ZERO for every note, making all output
-        // tachygrams identical.
-        todo!("note commitment");
-        Commitment::from(Fp::ZERO)
+    pub fn commit(self, value: Value, pk: &PaymentKey, psi: &NullifierTrapdoor) -> Commitment {
+        #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
+        let domain = Fp::from_u128(u128::from_le_bytes(*NOTE_COMMITMENT_DOMAIN));
+        Commitment::from(
+            Hash::<_, P128Pow5T3, ConstantLength<5>, 3, 2>::init().hash([
+                domain,
+                self.0,
+                pk.0,
+                Fp::from(value.0),
+                psi.0,
+            ]),
+        )
     }
 
     /// Generate a fresh random trapdoor.
     pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
-        Self(Fq::random(rng))
+        Self(Fp::random(rng))
     }
 }
 
-impl From<Fq> for CommitmentTrapdoor {
-    fn from(fq: Fq) -> Self {
-        Self(fq)
+impl From<Fp> for CommitmentTrapdoor {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<Fq> for CommitmentTrapdoor {
-    fn into(self) -> Fq {
-        self.0
+impl From<CommitmentTrapdoor> for Fp {
+    fn from(trapdoor: CommitmentTrapdoor) -> Self {
+        trapdoor.0
     }
 }
 
@@ -132,7 +141,8 @@ pub struct Note {
 
 /// A note value, less than 2.1e15 zatoshis
 #[derive(Clone, Copy, Debug)]
-pub struct Value(u64);
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct Value(pub(super) u64);
 
 impl From<u64> for Value {
     fn from(value: u64) -> Self {
@@ -144,18 +154,16 @@ impl From<u64> for Value {
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<i64> for Value {
-    fn into(self) -> i64 {
-        #[expect(clippy::expect_used, reason = "specified behavior")]
-        i64::try_from(self.0).expect("note value should fit in i64 (max 2.1e15 < i64::MAX)")
+#[expect(clippy::expect_used, reason = "specified behavior")]
+impl From<Value> for i64 {
+    fn from(value: Value) -> Self {
+        Self::try_from(value.0).expect("note value should fit in i64 (max 2.1e15 < i64::MAX)")
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<u64> for Value {
-    fn into(self) -> u64 {
-        self.0
+impl From<Value> for u64 {
+    fn from(value: Value) -> Self {
+        value.0
     }
 }
 
@@ -176,21 +184,9 @@ impl Note {
     ///
     /// The same note at different flavors produces different nullifiers.
     #[must_use]
-    pub fn nullifier(&self, _nk: &NullifierKey, _flavor: Epoch) -> Nullifier {
-        // TODO: GGM tree PRF nullifier derivation
-        //   mk = Poseidon(self.psi, nk.inner())
-        //   for i in 0..GGM_TREE_DEPTH:
-        //       bit = (flavor_int >> i) & 1
-        //       node = Poseidon(node, bit)
-        //   nf = final node
-        //
-        // Requires native Poseidon with parameters matching the circuit Sponge.
-        //
-        // CORRECTNESS: the crate-local `todo!` macro prints and continues
-        // (does not panic). This stub returns Fp::ZERO for every note,
-        // making all spend nullifiers identical (double-spend detection broken).
-        todo!("GGM tree PRF nullifier derivation");
-        Nullifier::from(Fp::ZERO)
+    pub fn nullifier(&self, nk: &NullifierKey, flavor: Epoch) -> Nullifier {
+        let mk = nk.derive_note_private(&self.psi);
+        mk.derive_nullifier(flavor)
     }
 }
 
@@ -215,10 +211,9 @@ impl From<Commitment> for Fp {
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<Tachygram> for Commitment {
-    fn into(self) -> Tachygram {
-        Tachygram::from(self.0)
+impl From<Commitment> for Tachygram {
+    fn from(commitment: Commitment) -> Self {
+        Self::from(commitment.0)
     }
 }
 
@@ -247,10 +242,9 @@ impl From<Nullifier> for Fp {
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<Tachygram> for Nullifier {
-    fn into(self) -> Tachygram {
-        Tachygram::from(self.0)
+impl From<Nullifier> for Tachygram {
+    fn from(nullifier: Nullifier) -> Self {
+        Self::from(nullifier.0)
     }
 }
 
@@ -270,5 +264,35 @@ mod tests {
     #[should_panic(expected = "note value must not exceed maximum")]
     fn value_rejects_overflow() {
         let _val: Value = Value::from(NOTE_VALUE_MAX + 1);
+    }
+
+    /// Different trapdoors produce different commitments.
+    #[test]
+    fn distinct_rcm_distinct_commitments() {
+        let pk = PaymentKey(Fp::from(1u64));
+        let psi = NullifierTrapdoor::from(Fp::from(2u64));
+        let cm1 = CommitmentTrapdoor::from(Fp::from(3u64)).commit(Value::from(100u64), &pk, &psi);
+        let cm2 = CommitmentTrapdoor::from(Fp::from(4u64)).commit(Value::from(100u64), &pk, &psi);
+        assert_ne!(cm1, cm2);
+    }
+
+    /// `Note::nullifier` delegates correctly to key derivation.
+    #[test]
+    fn note_nullifier_matches_key_derivation() {
+        use crate::{keys::private::SpendingKey, primitives::Epoch};
+
+        let sk = SpendingKey::from([0x42u8; 32]);
+        let nk = sk.derive_nullifier_private();
+        let psi = NullifierTrapdoor::from(Fp::from(99u64));
+        let note = Note {
+            pk: sk.derive_payment_key(),
+            value: Value::from(100u64),
+            psi,
+            rcm: CommitmentTrapdoor::from(Fp::ZERO),
+        };
+        let flavor = Epoch::from(5u32);
+
+        let mk = nk.derive_note_private(&psi);
+        assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));
     }
 }

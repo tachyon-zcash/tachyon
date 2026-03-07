@@ -90,7 +90,7 @@ An $\mathbb{F}_p$ element used in nullifier derivation. Tachyon simplifies Orcha
 
 $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
 
-where $F$ is a keyed PRF (Poseidon), $\Psi$ is the note's nullifier trapdoor, and flavor is the epoch-id. See [Notes](./notes.md#nullifier-derivation).
+where $F$ is a keyed PRF (Poseidon with domain tag `Tachyon-NfDerive`), $\Psi$ is the note's nullifier trapdoor, and flavor is the epoch-id. See [Notes](./notes.md#nullifier-derivation).
 
 $\mathsf{nk}$ alone does NOT confer spend authority — combined with $\mathsf{ak}$ it forms the proof authorizing key $\mathsf{pak}$, enabling proof construction and nullifier derivation without signing capability.
 
@@ -121,4 +121,4 @@ $\mathsf{pak}$ covers **all notes** because $\mathsf{nk}$ is wallet-wide. For na
 | per-note | $(\mathsf{ak}, \mathsf{mk})$ | Per-note prover | One note, all epochs |
 | delegate | $(\mathsf{ak}, \Psi_t)$ | OSS | One note, epochs $e \leq t$ |
 
-The per-note master key $\mathsf{mk} = \text{KDF}(\Psi, \mathsf{nk})$ and delegate key $\Psi_t = \text{GGM}(\mathsf{mk}, t)$ are described in [Notes](./notes.md#oblivious-sync-delegation).
+The per-note master key $\mathsf{mk} = \text{Poseidon}_\text{Tachyon-NfDerive}(\Psi, \mathsf{nk})$ and delegate key $\Psi_t = \text{GGM}(\mathsf{mk}, t)$ (also Poseidon-based) are described in [Notes](./notes.md#oblivious-sync-delegation).

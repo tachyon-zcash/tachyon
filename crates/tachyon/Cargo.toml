@@ -1,9 +1,14 @@
 [package]
-categories = ["cryptography::cryptocurrencies"]
+categories = [
+    "cryptography::cryptocurrencies",
+]
 description = """
 WIP
 """
-keywords = ["zcash", "tachyon"]
+keywords = [
+    "zcash",
+    "tachyon",
+]
 name = "zcash_tachyon"
 version = "0.0.0"
 
@@ -16,7 +21,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-default = []
+default = [
+]
 
 [lints]
 workspace = true
@@ -26,6 +32,7 @@ bitvec = "1.0.1"
 blake2b_simd = "1.0"
 ff = "0.13"
 group = "0.13"
+halo2_poseidon = "0.1"
 pasta_curves = "0.5.1"
 proptest = "1"
 rand = "0.8"

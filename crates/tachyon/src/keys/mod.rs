@@ -70,11 +70,12 @@
 pub mod private;
 pub mod public;
 
+mod ggm;
 mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use note::{NoteDelegateKey, NoteMasterKey, NullifierKey, PaymentKey};
+pub use note::{NoteMasterKey, NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]
@@ -152,7 +153,7 @@ mod tests {
             pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
             psi: NullifierTrapdoor::from(Fp::ZERO),
-            rcm: CommitmentTrapdoor::from(Fq::ZERO),
+            rcm: CommitmentTrapdoor::from(Fp::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
         let alpha = theta.spend_randomizer(&note.commitment());
