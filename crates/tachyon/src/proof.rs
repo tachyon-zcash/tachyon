@@ -53,9 +53,11 @@ impl Proof {
     /// to tachygrams via two accumulators:
     ///
     /// - **`action_acc`**: Each action produces a digest $D_i =
-    ///   H(\mathsf{cv}_i, \mathsf{rk}_i)$. The accumulator is
-    ///   $\text{VectorCommit}(D_1, \ldots, D_n)$.
-    /// - **`tachygram_acc`**: $\text{VectorCommit}(\text{tachygrams})$.
+    ///   \text{Poseidon}(\mathsf{cv}_i, \mathsf{rk}_i) + 1$. The accumulator is
+    ///   $\prod_i D_i$ (multiplicative, order-independent).
+    /// - **`tachygram_acc`**: Each tachygram is hashed via Poseidon and
+    ///   accumulated multiplicatively: $\prod_i (\text{Poseidon}(\mathsf{tg}_i)
+    ///   + 1)$.
     ///
     /// The circuit constrains that every $(D_i, \text{tachygram}_i)$ pair
     /// is consistent with the witness (note fields, alpha, rcv).
@@ -118,9 +120,8 @@ impl Proof {
         _anchor: Anchor,
     ) -> Result<(), ValidationError> {
         todo!("Ragu verification \u{2014} reconstruct the PCD header from public data");
-        // 1. Recompute action_acc: D_i = H(cv_i, rk_i) for each action action_acc =
-        //    VectorCommit(D_1, ..., D_n)
-        // 2. Recompute tachygram_acc = VectorCommit(tachygrams)
+        // 1. Recompute action_acc = ∏ (Poseidon(cv_i, rk_i) + 1)
+        // 2. Recompute tachygram_acc = ∏ (Poseidon(tg_i) + 1)
         // 3. Construct PCD header { action_acc, tachygram_acc, anchor }
         // 4. verify(Pcd { proof: self, data: header })
         // 5. TODO: Anchor range check — validate that `anchor` falls within the

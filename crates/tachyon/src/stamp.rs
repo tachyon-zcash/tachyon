@@ -79,8 +79,9 @@ impl Stamp {
     /// be a superset of an earlier anchor.
     ///
     /// The accumulators (`action_acc`, `tachygram_acc`) are merged inside the
-    /// circuit. [`Proof::merge`] enforces non-overlapping tachygram sets and
-    /// the anchor subset relationship via the merge witness.
+    /// circuit via multiplicative combination. [`Proof::merge`] enforces
+    /// non-overlapping tachygram sets and the anchor subset relationship via
+    /// the merge witness.
     #[must_use]
     pub fn prove_merge(self, other: Self) -> Self {
         Self {

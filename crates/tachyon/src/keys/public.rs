@@ -53,6 +53,17 @@ impl TryFrom<[u8; 32]> for ActionVerificationKey {
     }
 }
 
+/// Decompress the verification key to an affine curve point.
+#[expect(clippy::expect_used, reason = "specified behavior")]
+impl From<ActionVerificationKey> for EpAffine {
+    fn from(key: ActionVerificationKey) -> Self {
+        let bytes: [u8; 32] = key.0.into();
+        Self::from_bytes(&bytes)
+            .into_option()
+            .expect("verification key is a valid curve point")
+    }
+}
+
 /// Derive the binding verification key from public bundle data.
 ///
 /// $$\mathsf{bvk} = \left(\bigoplus_i \mathsf{cv}_i\right) \ominus

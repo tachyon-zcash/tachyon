@@ -1,5 +1,9 @@
 //! Tachyon Action descriptions.
 
+use pasta_curves::{
+    EpAffine,
+    group::{GroupEncoding as _, prime::PrimeCurveAffine as _},
+};
 use reddsa::orchard::SpendAuth;
 
 use crate::{
@@ -126,5 +130,148 @@ impl From<[u8; 64]> for Signature {
 impl From<Signature> for [u8; 64] {
     fn from(sig: Signature) -> [u8; 64] {
         <[u8; 64]>::from(sig.0)
+    }
+}
+
+/// Errors from action deserialization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeserializeError {
+    /// `cv` bytes are not a valid curve point.
+    InvalidCv,
+    /// `cv` is the identity point.
+    IdentityCv,
+    /// `rk` bytes are not a valid verification key.
+    InvalidRk,
+    /// `rk` is the identity point.
+    IdentityRk,
+}
+
+impl From<&Action> for [u8; 128] {
+    fn from(action: &Action) -> Self {
+        let mut out = [0u8; 128];
+        let cv_bytes: [u8; 32] = action.cv.into();
+        let rk_bytes: [u8; 32] = action.rk.into();
+        let sig_bytes: [u8; 64] = action.sig.into();
+        out[..32].copy_from_slice(&cv_bytes);
+        out[32..64].copy_from_slice(&rk_bytes);
+        out[64..].copy_from_slice(&sig_bytes);
+        out
+    }
+}
+
+impl TryFrom<&[u8; 128]> for Action {
+    type Error = DeserializeError;
+
+    /// Deserialize an action from `cv (32) || rk (32) || sig (64)`.
+    ///
+    /// Rejects identity points for `cv` and `rk`, which would panic
+    /// in [`ActionDigest`](crate::ActionDigest) computation.
+    fn try_from(bytes: &[u8; 128]) -> Result<Self, Self::Error> {
+        let cv_raw: &[u8; 32] = &bytes[..32]
+            .try_into()
+            .map_err(|_err| DeserializeError::InvalidCv)?;
+        let rk_raw: [u8; 32] = bytes[32..64]
+            .try_into()
+            .map_err(|_err| DeserializeError::InvalidRk)?;
+        let sig_raw: [u8; 64] = bytes[64..]
+            .try_into()
+            .map_err(|_err| DeserializeError::InvalidCv)?;
+
+        let cv_point = EpAffine::from_bytes(cv_raw)
+            .into_option()
+            .ok_or(DeserializeError::InvalidCv)?;
+
+        if bool::from(cv_point.is_identity()) {
+            return Err(DeserializeError::IdentityCv);
+        }
+
+        let rk = public::ActionVerificationKey::try_from(rk_raw)
+            .map_err(|_reddsa_err| DeserializeError::InvalidRk)?;
+
+        if bool::from(EpAffine::from(rk).is_identity()) {
+            return Err(DeserializeError::IdentityRk);
+        }
+
+        Ok(Self {
+            cv: value::Commitment::from(cv_point),
+            rk,
+            sig: Signature::from(sig_raw),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ff::Field as _;
+    use pasta_curves::Fp;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use super::*;
+    use crate::{
+        entropy::ActionEntropy,
+        keys::private,
+        note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
+        value,
+    };
+
+    /// Build a valid serialized action (128 bytes).
+    fn make_valid_action_bytes() -> [u8; 128] {
+        let mut rng = StdRng::seed_from_u64(300);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(1000u64),
+            psi: NullifierTrapdoor::from(Fp::ZERO),
+            rcm: CommitmentTrapdoor::from(Fp::ZERO),
+        };
+        let rcv = value::CommitmentTrapdoor::random(&mut rng);
+        let cv = rcv.commit_spend(note);
+        let theta = ActionEntropy::random(&mut rng);
+        let alpha = theta.output_randomizer(&note.commitment());
+        let rsk = private::ActionSigningKey::new(alpha);
+        let rk = rsk.derive_action_public();
+        let sig = rsk.sign(&mut rng, &[0u8; 32]);
+        let action = Action { cv, rk, sig };
+        <[u8; 128]>::from(&action)
+    }
+
+    /// Valid bytes round-trip through deserialization.
+    #[test]
+    fn deserialize_valid_round_trips() {
+        let bytes = make_valid_action_bytes();
+        Action::try_from(&bytes).unwrap();
+    }
+
+    /// All-zero cv (identity point) is rejected.
+    #[test]
+    fn deserialize_rejects_identity_cv() {
+        let mut bytes = make_valid_action_bytes();
+        bytes[..32].fill(0);
+        assert_eq!(
+            Action::try_from(&bytes).unwrap_err(),
+            DeserializeError::IdentityCv
+        );
+    }
+
+    /// Invalid cv bytes are rejected.
+    #[test]
+    fn deserialize_rejects_invalid_cv() {
+        let mut bytes = make_valid_action_bytes();
+        bytes[..32].fill(0xFF);
+        assert_eq!(
+            Action::try_from(&bytes).unwrap_err(),
+            DeserializeError::InvalidCv
+        );
+    }
+
+    /// Invalid rk bytes are rejected.
+    #[test]
+    fn deserialize_rejects_invalid_rk() {
+        let mut bytes = make_valid_action_bytes();
+        bytes[32..64].fill(0xFF);
+        assert_eq!(
+            Action::try_from(&bytes).unwrap_err(),
+            DeserializeError::InvalidRk
+        );
     }
 }

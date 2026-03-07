@@ -8,7 +8,8 @@ use std::sync::LazyLock;
 
 use ff::Field as _;
 use pasta_curves::{
-    Ep, EpAffine, Fq, arithmetic::CurveExt as _, group::prime::PrimeCurveAffine as _, pallas,
+    Ep, EpAffine, Fq, arithmetic::CurveExt as _, group::GroupEncoding as _,
+    group::prime::PrimeCurveAffine as _, pallas,
 };
 use rand::{CryptoRng, RngCore};
 
@@ -128,10 +129,9 @@ impl<'de> serde::Deserialize<'de> for CommitmentTrapdoor {
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<Fq> for CommitmentTrapdoor {
-    fn into(self) -> Fq {
-        self.0
+impl From<CommitmentTrapdoor> for Fq {
+    fn from(trapdoor: CommitmentTrapdoor) -> Self {
+        trapdoor.0
     }
 }
 
@@ -175,6 +175,12 @@ impl Commitment {
 impl From<Commitment> for EpAffine {
     fn from(cv: Commitment) -> Self {
         cv.0
+    }
+}
+
+impl From<Commitment> for [u8; 32] {
+    fn from(cv: Commitment) -> Self {
+        cv.0.to_bytes()
     }
 }
 

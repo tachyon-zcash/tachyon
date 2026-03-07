@@ -42,11 +42,17 @@ pub const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
 /// generators, same basepoint, same binding signature verification.
 pub const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
 
-/// Domain for nullifier derivation (Poseidon).
-pub const NULLIFIER_DOMAIN: &str = "z.cash:Tachyon-nf";
+/// Poseidon domain tag for nullifier derivation (GGM tree steps + mk KDF).
+pub const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 
-/// Domain for note commitments.
-pub const NOTE_COMMITMENT_DOMAIN: &str = "z.cash:Tachyon-NoteCommit";
+/// Poseidon domain tag for note commitments.
+pub const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-NoteCmmt";
+
+/// Poseidon domain tag for action digests.
+pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
+
+/// Poseidon domain tag for tachygram digests (accumulator pre-image hash).
+pub const TACHYGRAM_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-TgrmDgst";
 
 /// Domain for the polynomial accumulator hash-to-curve.
 pub const ACCUMULATOR_DOMAIN: &str = "z.cash:Tachyon-acc";
