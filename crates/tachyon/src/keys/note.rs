@@ -1,9 +1,11 @@
 //! Note-related keys: NullifierKey, MasterRootKey, PrefixKey, PaymentKey.
 
 use ff::{Field as _, PrimeField as _};
+use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::Fp;
 
 use crate::{
+    constants::NULLIFIER_DOMAIN,
     note::{Nullifier, NullifierTrapdoor},
     primitives::Epoch,
 };
@@ -45,9 +47,16 @@ impl NullifierKey {
     ///   F_{\mathsf{mk}}(\text{flavor})$
     /// - Derive epoch-restricted prefix keys $\Psi_t$ for OSS delegation
     #[must_use]
-    pub fn derive_note_private(&self, _psi: &NullifierTrapdoor) -> NoteMasterKey {
-        todo!("Poseidon KDF");
-        NoteMasterKey(Fp::ZERO)
+    pub fn derive_note_private(&self, psi: &NullifierTrapdoor) -> NoteMasterKey {
+        #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
+        let personalization = Fp::from_u128(u128::from_le_bytes(*NULLIFIER_DOMAIN));
+        NoteMasterKey(
+            Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
+                personalization,
+                psi.0,
+                self.0,
+            ]),
+        )
     }
 }
 
@@ -175,11 +184,37 @@ impl Into<[u8; 32]> for NoteDelegateKey {
 /// requests, ZIP 324 URI encapsulated payments).
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct PaymentKey(pub(super) Fp);
+pub struct PaymentKey(pub(crate) Fp);
 
 #[expect(clippy::from_over_into, reason = "restrict conversion")]
 impl Into<[u8; 32]> for PaymentKey {
     fn into(self) -> [u8; 32] {
         self.0.to_repr()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derive_note_private_deterministic() {
+        let nk = NullifierKey(Fp::from(42u64));
+        let psi = NullifierTrapdoor::from(Fp::from(99u64));
+        let bytes_1: [u8; 32] = nk.derive_note_private(&psi).into();
+        let bytes_2: [u8; 32] = nk.derive_note_private(&psi).into();
+        assert_eq!(bytes_1, bytes_2);
+    }
+
+    #[test]
+    fn different_psi_different_mk() {
+        let nk = NullifierKey(Fp::from(42u64));
+        let mk1: [u8; 32] = nk
+            .derive_note_private(&NullifierTrapdoor::from(Fp::from(1u64)))
+            .into();
+        let mk2: [u8; 32] = nk
+            .derive_note_private(&NullifierTrapdoor::from(Fp::from(2u64)))
+            .into();
+        assert_ne!(mk1, mk2);
     }
 }
