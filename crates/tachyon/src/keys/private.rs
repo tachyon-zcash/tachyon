@@ -31,17 +31,14 @@ pub struct SpendAuthority;
 pub struct OutputAuthority;
 
 mod sealed {
-    trait Sealed {}
+    pub trait Sealed {}
     impl Sealed for super::SpendAuthority {}
     impl Sealed for super::OutputAuthority {}
-
-    /// Sealed trait constraining signing authority.
-    #[expect(private_bounds, reason = "sealed trait pattern")]
-    pub trait ActionAuthority: Sealed {}
-    impl<T: Sealed> ActionAuthority for T {}
 }
 
-pub use sealed::ActionAuthority;
+/// Sealed trait constraining signing authority.
+pub trait ActionAuthority: sealed::Sealed {}
+impl<T: sealed::Sealed> ActionAuthority for T {}
 
 /// A Tachyon spending key — raw 32-byte entropy.
 ///

@@ -107,10 +107,9 @@ impl Default for CommitmentTrapdoor {
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<Fq> for CommitmentTrapdoor {
-    fn into(self) -> Fq {
-        self.0
+impl From<CommitmentTrapdoor> for Fq {
+    fn from(trapdoor: CommitmentTrapdoor) -> Self {
+        trapdoor.0
     }
 }
 
@@ -131,8 +130,7 @@ impl Into<Fq> for CommitmentTrapdoor {
 ///
 /// An EpAffine (Pallas affine curve point, 32 compressed bytes).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct Commitment(pub(super) EpAffine);
+pub struct Commitment(EpAffine);
 
 impl Commitment {
     /// Create the value balance commitment
@@ -175,10 +173,9 @@ impl TryFrom<&[u8; 32]> for Commitment {
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 32]> for Commitment {
-    fn into(self) -> [u8; 32] {
-        self.0.to_bytes()
+impl From<Commitment> for [u8; 32] {
+    fn from(commitment: Commitment) -> Self {
+        commitment.0.to_bytes()
     }
 }
 
