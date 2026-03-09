@@ -53,6 +53,8 @@ pub mod value;
 pub mod witness;
 
 mod primitives;
+#[cfg(feature = "serde")]
+mod serde_helpers;
 
 pub use action::{Action, Plan as ActionPlan};
 pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped};

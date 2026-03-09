@@ -22,8 +22,9 @@ use crate::{action, action::Action, bundle, value};
 /// This unification lets consensus treat all actions identically while
 /// the type system enforces the authority boundary at construction time.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct ActionVerificationKey(pub(super) reddsa::VerificationKey<SpendAuth>);
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct ActionVerificationKey(pub(crate) reddsa::VerificationKey<SpendAuth>);
 
 impl ActionVerificationKey {
     /// Verify an action signature against a transaction sighash.
@@ -37,21 +38,6 @@ impl ActionVerificationKey {
     reason = "default assert_receiver_is_total_eq is correct"
 )]
 impl Eq for ActionVerificationKey {}
-
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 32]> for ActionVerificationKey {
-    fn into(self) -> [u8; 32] {
-        self.0.into()
-    }
-}
-
-impl TryFrom<[u8; 32]> for ActionVerificationKey {
-    type Error = reddsa::Error;
-
-    fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
-        reddsa::VerificationKey::<SpendAuth>::try_from(bytes).map(Self)
-    }
-}
 
 /// Derive the binding verification key from public bundle data.
 ///
@@ -98,7 +84,6 @@ pub fn derive_bvk(
 /// Wraps `reddsa::VerificationKey<Binding>`, which internally stores
 /// a Pallas curve point (EpAffine, encoded as 32 compressed bytes).
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct BindingVerificationKey(pub(super) reddsa::VerificationKey<Binding>);
 
 impl BindingVerificationKey {
@@ -143,17 +128,3 @@ impl PartialEq for BindingVerificationKey {
     reason = "default assert_receiver_is_total_eq is correct"
 )]
 impl Eq for BindingVerificationKey {}
-
-impl From<BindingVerificationKey> for [u8; 32] {
-    fn from(bvk: BindingVerificationKey) -> Self {
-        bvk.0.into()
-    }
-}
-
-impl TryFrom<[u8; 32]> for BindingVerificationKey {
-    type Error = reddsa::Error;
-
-    fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
-        reddsa::VerificationKey::<Binding>::try_from(bytes).map(Self)
-    }
-}

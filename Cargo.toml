@@ -39,13 +39,11 @@ style = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 
 
-doc_markdown = "allow"       # https://github.com/rust-lang/rust-clippy/issues/7273
+doc_markdown = "allow"          # https://github.com/rust-lang/rust-clippy/issues/7273
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
-
 panic = "warn"
-print_stderr = "warn"
-print_stdout = "warn"
+redundant_pub_crate = "allow"   # pub(crate) in private modules is fine
 
 # -- forbid: error handling --------------------------------------------------
 # unwrap() is always wrong; use expect() for a reason string.
@@ -148,7 +146,6 @@ doc_include_without_cfg = "deny"
 empty_drop = "deny"
 empty_enum_variants_with_brackets = "deny"
 empty_structs_with_brackets = "deny"
-field_scoped_visibility_modifiers = "deny"
 filetype_is_file = "deny"
 host_endian_bytes = "deny"
 if_then_some_else_none = "deny"
@@ -165,7 +162,6 @@ map_with_unused_argument_over_ranges = "deny"
 min_ident_chars = "deny"
 missing_assert_message = "deny"
 missing_asserts_for_indexing = "deny"
-missing_trait_methods = "deny"
 mixed_read_write_in_expression = "deny"
 module_name_repetitions = "deny"
 modulo_arithmetic = "deny"

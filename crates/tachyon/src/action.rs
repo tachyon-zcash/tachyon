@@ -11,6 +11,7 @@ use crate::{
 
 /// Whether an action plan represents a spend or an output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Effect {
     /// Spend — signed with
     /// [`SpendAuthorizingKey::derive_action_private`](private::SpendAuthorizingKey::derive_action_private).
@@ -22,6 +23,7 @@ pub enum Effect {
 
 /// A planned Tachyon action, not yet authorized.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Plan {
     /// Randomized action verification key.
     pub rk: public::ActionVerificationKey,
@@ -95,7 +97,8 @@ impl Plan {
 /// - `cv`: Commitment to a value effect
 /// - `rk`: Public key (randomized counterpart to `rsk`)
 /// - `sig`: Signature (by single-use `rsk`) over transaction sighash
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Action {
     /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
     /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
@@ -109,8 +112,9 @@ pub struct Action {
 }
 
 /// A spend authorization signature (RedPallas over SpendAuth).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Signature(pub(crate) reddsa::Signature<SpendAuth>);
 
 impl From<[u8; 64]> for Signature {

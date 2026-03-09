@@ -22,7 +22,7 @@ use crate::entropy::SpendRandomizer;
 // TODO: add proof-construction methods (e.g., create_action_proof, create_merge_proof)
 // once the Ragu circuit API is available.
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ProofAuthorizingKey {
     /// The spend validating key `ak = [ask] G`.
     pub(super) ak: SpendValidatingKey,
@@ -44,18 +44,6 @@ impl ProofAuthorizingKey {
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 64]> for ProofAuthorizingKey {
-    fn into(self) -> [u8; 64] {
-        let mut bytes = [0u8; 64];
-        let ak_bytes: [u8; 32] = self.ak.into();
-        let nk_bytes: [u8; 32] = self.nk.into();
-        bytes[..32].copy_from_slice(&ak_bytes);
-        bytes[32..].copy_from_slice(&nk_bytes);
-        bytes
-    }
-}
-
 /// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\,\mathcal{G}$ —
 /// the long-lived counterpart of
 /// [`SpendAuthorizingKey`](super::SpendAuthorizingKey).
@@ -70,7 +58,8 @@ impl Into<[u8; 64]> for ProofAuthorizingKey {
 /// [`ProofAuthorizingKey`](super::ProofAuthorizingKey) for proof authorization
 /// without spend authority.
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct SpendValidatingKey(pub(super) reddsa::VerificationKey<SpendAuth>);
 
 impl SpendValidatingKey {
@@ -90,12 +79,5 @@ impl SpendValidatingKey {
     #[must_use]
     pub fn derive_action_public(&self, alpha: &SpendRandomizer) -> public::ActionVerificationKey {
         public::ActionVerificationKey(self.0.randomize(&alpha.0))
-    }
-}
-
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 32]> for SpendValidatingKey {
-    fn into(self) -> [u8; 32] {
-        self.0.into()
     }
 }

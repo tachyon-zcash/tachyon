@@ -32,7 +32,8 @@ mod sealed {
 pub use sealed::StampState;
 
 /// A Tachyon transaction bundle parameterized by stamp state `S`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Bundle<S: StampState> {
     /// Actions (cv, rk, sig).
     pub actions: Vec<Action>,
@@ -169,6 +170,7 @@ pub fn commit_bundle_digest(
 
 /// A complete bundle plan, awaiting authorization.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Plan {
     /// Action plans (spends and outputs, in order).
     pub actions: Vec<action::Plan>,
@@ -265,8 +267,9 @@ impl<S: StampState> Bundle<S> {
 /// digest computed at the transaction layer. The validator checks:
 /// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\mathsf{sighash},
 ///   \text{bindingSig}) = 1$
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Signature(pub(crate) reddsa::Signature<Binding>);
 
 impl From<[u8; 64]> for Signature {
@@ -472,7 +475,9 @@ mod tests {
             binding_sig: Signature::from([0u8; 64]),
             stamp: Stamp::prove_action(
                 &ActionPrivate {
-                    alpha: ActionRandomizer::from(theta_spend.spend_randomizer(&spend_note.commitment())),
+                    alpha: ActionRandomizer::from(
+                        theta_spend.spend_randomizer(&spend_note.commitment()),
+                    ),
                     note: spend_note,
                     rcv: spend_rcv,
                 },

@@ -23,3 +23,26 @@ impl From<Epoch> for Fp {
         ec.0
     }
 }
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Epoch {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use ff::PrimeField as _;
+        serializer.serialize_bytes(&self.0.to_repr())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Epoch {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use crate::serde_helpers::FpVisitor;
+
+        deserializer.deserialize_bytes(FpVisitor).map(Self)
+    }
+}

@@ -1,6 +1,6 @@
 //! Note-related keys: NullifierKey, MasterRootKey, PrefixKey, PaymentKey.
 
-use ff::{Field as _, PrimeField as _};
+use ff::Field as _;
 use pasta_curves::Fp;
 
 use crate::{
@@ -33,8 +33,13 @@ use crate::{
 /// forms the proof authorizing key `pak`, enabling proof construction
 /// and nullifier derivation without signing capability.
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct NullifierKey(pub(super) Fp);
+pub struct NullifierKey(
+    #[cfg_attr(
+        all(not(feature = "serde"), not(test)),
+        expect(dead_code, reason = "field read by serde impls and tests")
+    )]
+    pub(super) Fp,
+);
 
 impl NullifierKey {
     /// Derive the per-note master root key: $\mathsf{mk} = \text{KDF}(\psi,
@@ -51,10 +56,27 @@ impl NullifierKey {
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 32]> for NullifierKey {
-    fn into(self) -> [u8; 32] {
-        self.0.to_repr()
+#[cfg(feature = "serde")]
+impl serde::Serialize for NullifierKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use ff::PrimeField as _;
+
+        serializer.serialize_bytes(&self.0.to_repr())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for NullifierKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use crate::serde_helpers::FpVisitor;
+
+        deserializer.deserialize_bytes(FpVisitor).map(Self)
     }
 }
 
@@ -74,7 +96,13 @@ impl Into<[u8; 32]> for NullifierKey {
 /// `mk` is not stored or transmitted — the user device derives it
 /// ephemerally when needed. The OSS receives only the prefix keys.
 #[derive(Clone, Copy, Debug)]
-pub struct NoteMasterKey(Fp);
+pub struct NoteMasterKey(
+    #[cfg_attr(
+        not(feature = "serde"),
+        expect(dead_code, reason = "field read by serde impls")
+    )]
+    Fp,
+);
 
 impl NoteMasterKey {
     /// Derive a nullifier for a specific epoch: $\mathsf{nf} =
@@ -104,10 +132,27 @@ impl NoteMasterKey {
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 32]> for NoteMasterKey {
-    fn into(self) -> [u8; 32] {
-        self.0.to_repr()
+#[cfg(feature = "serde")]
+impl serde::Serialize for NoteMasterKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use ff::PrimeField as _;
+
+        serializer.serialize_bytes(&self.0.to_repr())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for NoteMasterKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use crate::serde_helpers::FpVisitor;
+
+        deserializer.deserialize_bytes(FpVisitor).map(Self)
     }
 }
 
@@ -125,7 +170,13 @@ impl Into<[u8; 32]> for NoteMasterKey {
 /// - **Cannot**: recover `mk` or `nk` from the prefix key
 /// - **Cannot**: derive prefix keys for other notes
 #[derive(Clone, Copy, Debug)]
-pub struct NoteDelegateKey(Fp);
+pub struct NoteDelegateKey(
+    #[cfg_attr(
+        not(feature = "serde"),
+        expect(dead_code, reason = "field read by serde impls")
+    )]
+    Fp,
+);
 
 impl NoteDelegateKey {
     /// Derive a nullifier for an epoch within the authorized range:
@@ -142,10 +193,27 @@ impl NoteDelegateKey {
     }
 }
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 32]> for NoteDelegateKey {
-    fn into(self) -> [u8; 32] {
-        self.0.to_repr()
+#[cfg(feature = "serde")]
+impl serde::Serialize for NoteDelegateKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use ff::PrimeField as _;
+
+        serializer.serialize_bytes(&self.0.to_repr())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for NoteDelegateKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use crate::serde_helpers::FpVisitor;
+
+        deserializer.deserialize_bytes(FpVisitor).map(Self)
     }
 }
 
@@ -174,12 +242,34 @@ impl Into<[u8; 32]> for NoteDelegateKey {
 /// happens out-of-band via higher-level protocols (ZIP 321 payment
 /// requests, ZIP 324 URI encapsulated payments).
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct PaymentKey(pub(super) Fp);
+pub struct PaymentKey(
+    #[cfg_attr(
+        all(not(feature = "serde"), not(test)),
+        expect(dead_code, reason = "field read by serde impls and tests")
+    )]
+    pub(super) Fp,
+);
 
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 32]> for PaymentKey {
-    fn into(self) -> [u8; 32] {
-        self.0.to_repr()
+#[cfg(feature = "serde")]
+impl serde::Serialize for PaymentKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use ff::PrimeField as _;
+
+        serializer.serialize_bytes(&self.0.to_repr())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for PaymentKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use crate::serde_helpers::FpVisitor;
+
+        deserializer.deserialize_bytes(FpVisitor).map(Self)
     }
 }

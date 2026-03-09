@@ -24,3 +24,27 @@ impl From<Tachygram> for Fp {
         tg.0
     }
 }
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Tachygram {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use ff::PrimeField as _;
+
+        serializer.serialize_bytes(&self.0.to_repr())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Tachygram {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use crate::serde_helpers::FpVisitor;
+
+        deserializer.deserialize_bytes(FpVisitor).map(Self)
+    }
+}

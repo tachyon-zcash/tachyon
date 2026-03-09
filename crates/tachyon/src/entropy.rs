@@ -29,6 +29,8 @@ use crate::{
 /// and $\mathsf{cm}$ to recover $\alpha$
 /// ("Tachyaction at a Distance", Bowe 2025).
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 #[expect(
     clippy::module_name_repetitions,
     reason = "ActionEntropy is the established protocol name"
@@ -61,14 +63,12 @@ impl ActionEntropy {
 /// $\mathsf{rsk} = \mathsf{ask} + \alpha$, $\mathsf{rk} = \mathsf{ak} +
 /// [\alpha]\,\mathcal{G}$.
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct SpendRandomizer(pub(crate) Fq);
 
 /// Output-side randomizer $\alpha$ derived with output personalization.
 ///
 /// $\mathsf{rsk} = \alpha$.
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct OutputRandomizer(pub(crate) Fq);
 
 /// Bare $\alpha$ scalar for proof witness storage.

@@ -5,6 +5,7 @@ fmt:
     cargo +nightly fmt --all
 
 lint:
+    cargo +nightly clippy --workspace --all-targets # without features
     cargo +nightly clippy --workspace --all-targets --all-features
 
 test:
@@ -14,6 +15,7 @@ doc:
     cargo doc --workspace --no-deps
 
 check:
+    cargo check --workspace --all-targets # without features
     cargo check --workspace --all-targets --all-features
 
 _install_binstall:

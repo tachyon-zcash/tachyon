@@ -1,9 +1,14 @@
 [package]
-categories = ["cryptography::cryptocurrencies"]
+categories = [
+    "cryptography::cryptocurrencies",
+]
 description = """
 WIP
 """
-keywords = ["zcash", "tachyon"]
+keywords = [
+    "zcash",
+    "tachyon",
+]
 name = "zcash_tachyon"
 version = "0.0.0"
 
@@ -16,7 +21,12 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-default = []
+default = [
+]
+serde = [
+    "dep:serde",
+    "reddsa/serde",
+]
 
 [lints]
 workspace = true
@@ -30,6 +40,9 @@ pasta_curves = "0.5.1"
 proptest = "1"
 rand = "0.8"
 reddsa = "0.5.1"
+serde = { version = "1.0", features = [
+    "derive",
+], optional = true }
 
 [lib]
 bench = false

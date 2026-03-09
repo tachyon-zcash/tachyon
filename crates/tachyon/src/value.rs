@@ -8,10 +8,7 @@ use std::sync::LazyLock;
 
 use ff::Field as _;
 use pasta_curves::{
-    Ep, EpAffine, Fq,
-    arithmetic::CurveExt as _,
-    group::{GroupEncoding as _, prime::PrimeCurveAffine as _},
-    pallas,
+    Ep, EpAffine, Fq, arithmetic::CurveExt as _, group::prime::PrimeCurveAffine as _, pallas,
 };
 use rand::{CryptoRng, RngCore};
 
@@ -107,6 +104,30 @@ impl Default for CommitmentTrapdoor {
     }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for CommitmentTrapdoor {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use ff::PrimeField as _;
+
+        serializer.serialize_bytes(&self.0.to_repr())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for CommitmentTrapdoor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use crate::serde_helpers::FqVisitor;
+
+        deserializer.deserialize_bytes(FqVisitor).map(Self)
+    }
+}
+
 #[expect(clippy::from_over_into, reason = "restrict conversion")]
 impl Into<Fq> for CommitmentTrapdoor {
     fn into(self) -> Fq {
@@ -131,7 +152,6 @@ impl Into<Fq> for CommitmentTrapdoor {
 ///
 /// An EpAffine (Pallas affine curve point, 32 compressed bytes).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct Commitment(pub(super) EpAffine);
 
 impl Commitment {
@@ -164,24 +184,6 @@ impl From<EpAffine> for Commitment {
     }
 }
 
-impl TryFrom<&[u8; 32]> for Commitment {
-    type Error = &'static str;
-
-    fn try_from(bytes: &[u8; 32]) -> Result<Self, Self::Error> {
-        EpAffine::from_bytes(bytes)
-            .into_option()
-            .ok_or("invalid curve point")
-            .map(Self)
-    }
-}
-
-#[expect(clippy::from_over_into, reason = "restrict conversion")]
-impl Into<[u8; 32]> for Commitment {
-    fn into(self) -> [u8; 32] {
-        self.0.to_bytes()
-    }
-}
-
 impl ops::Add for Commitment {
     type Output = Self;
 
@@ -203,6 +205,30 @@ impl iter::Sum for Commitment {
     /// commitments. Identity element is the point at infinity.
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self(EpAffine::identity()), |acc, cv| acc + cv)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Commitment {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use group::GroupEncoding as _;
+
+        serializer.serialize_bytes(&self.0.to_bytes())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Commitment {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use crate::serde_helpers::EpAffineVisitor;
+
+        deserializer.deserialize_bytes(EpAffineVisitor).map(Self)
     }
 }
 

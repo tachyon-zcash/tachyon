@@ -158,8 +158,8 @@ mod tests {
         let alpha = theta.spend_randomizer(&note.commitment());
         let rsk = ask.derive_action_private(&alpha);
 
-        let rk_from_signer: [u8; 32] = rsk.derive_action_public().into();
-        let rk_from_prover: [u8; 32] = ak.derive_action_public(&alpha).into();
+        let rk_from_signer: [u8; 32] = rsk.derive_action_public().0.into();
+        let rk_from_prover: [u8; 32] = ak.derive_action_public(&alpha).0.into();
 
         assert_eq!(rk_from_signer, rk_from_prover);
     }

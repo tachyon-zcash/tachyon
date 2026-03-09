@@ -26,8 +26,8 @@ use crate::{Action, action::Plan as ActionPlan, keys::public, value};
 #[must_use]
 fn digest_action(cv: value::Commitment, rk: public::ActionVerificationKey) -> EpAffine {
     let hasher = pallas::Point::hash_to_curve("just pretend this is poseidon");
-    let cv_bytes: [u8; 32] = cv.into();
-    let rk_bytes: [u8; 32] = rk.into();
+    let cv_bytes: [u8; 32] = EpAffine::from(cv).to_bytes();
+    let rk_bytes: [u8; 32] = rk.0.into();
     let msg = [cv_bytes, rk_bytes].concat();
     let hash = hasher(&msg);
     hash.into()
