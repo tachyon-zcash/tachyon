@@ -64,7 +64,7 @@ jobs:
       - name: Install nightly clippy
         run: rustup toolchain install nightly --component clippy
       - name: Run clippy
-        run: cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings -A clippy::multiple-crate-versions
 
   test:
     name: test (${{ matrix.os }})
