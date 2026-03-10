@@ -18,6 +18,13 @@ check:
     cargo check --workspace --all-targets # without features
     cargo check --workspace --all-targets --all-features
 
+# run all CI checks locally
+ci:
+    cargo +nightly fmt --all -- --check
+    cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings -A clippy::multiple-crate-versions
+    cargo test --release --all --locked --all-features
+    cargo doc --no-deps --all --locked --document-private-items
+
 _install_binstall:
     cargo-binstall -V || cargo install cargo-binstall
 
