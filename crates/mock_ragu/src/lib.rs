@@ -23,11 +23,13 @@
 pub use application::{Application, ApplicationBuilder};
 pub use error::{Error, Result};
 pub use header::{Header, Suffix};
+pub use polynomial::{Commitment, Polynomial};
 pub use proof::{Pcd, Proof};
 pub use step::{Index, Step};
 
 pub mod application;
 pub mod error;
 pub mod header;
+pub mod polynomial;
 pub mod proof;
 pub mod step;
