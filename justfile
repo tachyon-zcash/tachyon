@@ -2,10 +2,10 @@ default:
     @just --list
 
 fmt:
-    cargo +nightly fmt --all
+    cargo +nightly-2026-02-28 fmt --all
 
 lint:
-    cargo +nightly clippy --workspace --all-targets --all-features
+    cargo clippy --workspace --all-targets --all-features
     cargo doc --workspace --no-deps --document-private-items
 
 test:
@@ -19,8 +19,8 @@ check:
 
 # run all CI checks locally
 ci:
-    cargo +nightly fmt --all -- --check
-    cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings -A clippy::multiple-crate-versions
+    cargo +nightly-2026-02-28 fmt --all -- --check
+    cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::multiple-crate-versions
     cargo test --release --all --locked --all-features
     cargo doc --no-deps --all --locked --document-private-items
 

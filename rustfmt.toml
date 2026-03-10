@@ -15,7 +15,7 @@ merge_derives = true
 force_explicit_abi = true
 
 # cargo +nightly fmt
-required_version = "1.8.0"
+required_version = "1.9.0"
 unstable_features = true
 
 group_imports = "StdExternalCrate"
