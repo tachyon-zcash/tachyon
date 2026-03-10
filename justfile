@@ -7,6 +7,7 @@ fmt:
 lint:
     cargo +nightly clippy --workspace --all-targets # without features
     cargo +nightly clippy --workspace --all-targets --all-features
+    cargo doc --workspace --no-deps --document-private-items
 
 test:
     cargo test --workspace --all-features
