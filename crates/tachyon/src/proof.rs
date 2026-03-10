@@ -90,7 +90,7 @@ impl Proof {
     /// - **Non-overlapping tachygram sets**: the left and right tachygram
     ///   accumulators must be disjoint. Overlapping aggregates would create
     ///   duplicate nullifiers in the combined set.
-    /// - **Anchor subset**: the `anchor_quotient` in [`MergePrivate`] proves
+    /// - **Anchor subset**: the `anchor_quotient` in `MergePrivate` proves
     ///   $\text{left\_anchor} = \text{right\_anchor} \times \text{quotient}$
     ///   (the left accumulator state is a superset of the right's). For
     ///   same-epoch merges the quotient is 1.

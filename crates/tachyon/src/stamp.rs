@@ -6,7 +6,7 @@
 //! - **Anchor**: Accumulator state reference (epoch)
 //! - **Proof**: The Ragu PCD proof (rerandomized)
 //!
-//! The PCD proof's public output ([`StampDigest`]) contains
+//! The PCD proof's public output (`StampDigest`) contains
 //! `action_acc`, `tachygram_acc`, and `anchor`. These accumulators are
 //! **not serialized** on the stamp — the verifier recomputes them from
 //! public data (actions and tachygrams) and passes them as the header
@@ -30,7 +30,7 @@ pub struct Stampless;
 /// Present in [`Stamped`](crate::Stamped) bundles.
 /// Stripped during aggregation and merged into the aggregate's stamp.
 ///
-/// The PCD proof's [`StampDigest`] header contains `action_acc`,
+/// The PCD proof's `StampDigest` header contains `action_acc`,
 /// `tachygram_acc`, and `anchor`, but only the anchor is stored here.
 /// The accumulators are recomputed by the verifier from public data
 /// and passed as the header to Ragu `verify()`.

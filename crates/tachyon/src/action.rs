@@ -100,8 +100,8 @@ impl Plan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Action {
-    /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
-    /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
+    /// Value commitment $\mathsf{cv} = \[v\]\,\mathcal{V}
+    /// + \[\mathsf{rcv}\]\,\mathcal{R}$ (EpAffine).
     pub cv: value::Commitment,
 
     /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
