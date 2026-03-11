@@ -21,15 +21,17 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["std"]
-std = [
-    "blake2b_simd/std",
-    "rand_core/std",
-    "reddsa/std",
+default = [
+    "std",
 ]
 serde = [
     "dep:serde",
     "reddsa/serde",
+]
+std = [
+    "blake2b_simd/std",
+    "rand_core/std",
+    "reddsa/std",
 ]
 
 [lints]
@@ -39,7 +41,11 @@ workspace = true
 blake2b_simd = { version = "1.0", default-features = false }
 ff = "0.13"
 group = "0.13"
-lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
+halo2_poseidon = "0.1"
+lazy_static = { version = "1", default-features = false, features = [
+    "spin_no_std",
+] }
+mock_ragu = { path = "../mock_ragu" }
 pasta_curves = "0.5.1"
 rand_core = { version = "0.6", default-features = false }
 reddsa = { version = "0.5.1", default-features = false }
