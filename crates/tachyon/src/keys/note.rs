@@ -85,6 +85,54 @@ impl From<NoteKey<Prefixed>> for [u8; 37] {
     }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for NoteKey<Prefixed> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let bytes: [u8; 37] = (*self).into();
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for NoteKey<Prefixed> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use core::fmt;
+
+        use serde::de;
+
+        struct NoteKeyVisitor;
+
+        impl de::Visitor<'_> for NoteKeyVisitor {
+            type Value = NoteKey<Prefixed>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("37 bytes encoding a NoteKey<Prefixed>")
+            }
+
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v.len() != 37 {
+                    return Err(E::invalid_length(v.len(), &self));
+                }
+                let mut bytes = [0u8; 37];
+                bytes.copy_from_slice(v);
+                NoteKey::<Prefixed>::try_from(bytes)
+                    .map_err(|_err| de::Error::custom("invalid NoteKey<Prefixed>"))
+            }
+        }
+
+        deserializer.deserialize_bytes(NoteKeyVisitor)
+    }
+}
+
 /// A Tachyon nullifier deriving key.
 ///
 /// Tachyon simplifies Orchard's nullifier construction

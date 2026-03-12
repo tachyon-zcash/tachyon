@@ -32,7 +32,6 @@ impl<T: sealed::Sealed> StampState for T {}
 
 /// A Tachyon transaction bundle parameterized by stamp state `S`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Bundle<S: StampState> {
     /// Actions (cv, rk, sig).
     pub actions: Vec<Action>,
