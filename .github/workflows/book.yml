@@ -4,16 +4,24 @@ on:
   push:
     branches: [main]
   pull_request:
+    paths:
+      - 'book/**'
+      - '.github/workflows/book.yml'
+
+# Cancel in-progress runs when a new commit is pushed to the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   build:
     name: Build book
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install mdbook and plugins
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@a37010ded18ff788be4440302bd6830b1ae50d8b # v2
         with:
           tool: mdbook@0.4.52,mdbook-katex@0.9.4,mdbook-mermaid@0.16.2
 
@@ -27,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger repository_dispatch in website
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3
         with:
           token: ${{ secrets.REPO_DISPATCH_TOKEN }}
           repository: tachyon-zcash/website

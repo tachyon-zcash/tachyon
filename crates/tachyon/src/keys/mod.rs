@@ -42,12 +42,12 @@
 //! - `rk = ak + [alpha]G`: Per-action verification key (can verify, public)
 //! - `bvk`: Binding verification key (derived from value commitments)
 //!
-//! ### Note keys ([`note`])
+//! ### Note keys (`note`)
 //!
 //! - `nk`: Observes when funds are spent (nullifier derivation)
 //! - `pk`: Used in note construction and out-of-band payment protocols
 //!
-//! ### Proof keys ([`proof`])
+//! ### Proof keys (`proof`)
 //!
 //! - `pak`: `ak` + `nk` (proof authorizing key): Authorizes proof construction
 //!   without spend authority

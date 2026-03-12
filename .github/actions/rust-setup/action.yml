@@ -1,0 +1,88 @@
+name: Rust Setup
+description: Install pinned Rust toolchain, cache Cargo artifacts, and print versions
+inputs:
+  components:
+    description: Optional Rust components to install (comma-separated)
+    required: false
+    default: ""
+  targets:
+    description: Additional targets to install
+    required: false
+    default: ""
+  apt-packages:
+    description: Additional apt packages to install (space-separated)
+    required: false
+    default: ""
+  cargo-tools:
+    description: Cargo tools to install
+    required: false
+    default: ""
+  cache-suffix:
+    description: Optional suffix to differentiate cache keys between jobs
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Install additional packages
+      if: runner.os == 'Linux' && inputs.apt-packages
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ${{ inputs.apt-packages }}
+
+    - name: Install Rust toolchain (from rust-toolchain.toml)
+      uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      with:
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+
+    # Cache cargo registry and git separately (shared across all jobs)
+    - name: Cache cargo registry
+      id: registry-cache
+      uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-registry-
+
+    # Cache target directory (job-specific due to different build configurations)
+    # Includes source file hash to avoid stale incremental compilation artifacts
+    - name: Cache target directory
+      uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
+      with:
+        path: target
+        key: ${{ runner.os }}-target-${{ inputs.targets }}-${{ inputs.cache-suffix }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('crates/**/src/**/*.rs') }}
+        restore-keys: |
+          ${{ runner.os }}-target-${{ inputs.targets }}-${{ inputs.cache-suffix }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}-
+          ${{ runner.os }}-target-${{ inputs.targets }}-${{ inputs.cache-suffix }}-${{ hashFiles('rust-toolchain.toml') }}-
+
+    - name: Fetch dependencies
+      if: steps.registry-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: cargo fetch --locked
+
+    # Clean workspace crates to ensure fresh builds (keeps dependency artifacts)
+    - name: Clean workspace crates (keep deps)
+      shell: bash
+      run: |
+        set -euo pipefail
+        pkgs=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import sys,json; print("\n".join(p["name"] for p in json.load(sys.stdin)["packages"]))')
+        for p in $pkgs; do
+          cargo clean -p "$p" --release 2>/dev/null || true
+          cargo clean -p "$p" 2>/dev/null || true
+        done
+
+    - name: Install cargo tools
+      if: inputs.cargo-tools != ''
+      uses: taiki-e/install-action@a37010ded18ff788be4440302bd6830b1ae50d8b # v2
+      with:
+        tool: ${{ inputs.cargo-tools }}
+
+    - name: Show toolchain
+      shell: bash
+      run: rustc -Vv && cargo -Vv

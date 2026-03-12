@@ -58,7 +58,7 @@ pub use sealed::ActionAuthority;
 ///   [`NullifierKey`] (`nk`)
 /// - [`derive_payment_key`](Self::derive_payment_key) → [`PaymentKey`] (`pk`)
 /// - [`derive_proof_private`](Self::derive_proof_private) →
-///   [`ProofAuthorizingKey`] (`ak` + `nk`)
+///   [`ProofAuthorizingKey`](super::ProofAuthorizingKey) (`ak` + `nk`)
 #[derive(Clone, Copy, Debug)]
 pub struct SpendingKey([u8; 32]);
 

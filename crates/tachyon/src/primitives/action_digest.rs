@@ -57,7 +57,7 @@ fn digest_action(cv: value::Commitment, rk: public::ActionVerificationKey) -> Ep
 /// ## Hash function
 ///
 /// Currently uses hash-to-curve as a placeholder. The final
-/// implementation will use Poseidon (see [`digest_action`] for
+/// implementation will use Poseidon (see `digest_action` for
 /// details). The type, traits, and call sites are stable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ActionDigest(EpAffine);
@@ -65,7 +65,7 @@ pub struct ActionDigest(EpAffine);
 impl ActionDigest {
     /// Digest a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
     ///
-    /// See [`digest_action`] for the hash function.
+    /// See `digest_action` for the hash function.
     #[must_use]
     pub fn new(cv: value::Commitment, rk: public::ActionVerificationKey) -> Self {
         Self(digest_action(cv, rk))
