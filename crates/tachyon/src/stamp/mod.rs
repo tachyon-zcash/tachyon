@@ -218,3 +218,143 @@ impl Stamp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ff::Field as _;
+    use pasta_curves::Fp;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use super::*;
+    use crate::{
+        action,
+        entropy::{ActionEntropy, ActionRandomizer},
+        keys::private,
+        note::{self, Note},
+        value,
+    };
+
+    fn make_action_and_witness(
+        rng: &mut StdRng,
+        sk: &private::SpendingKey,
+        value_amount: u64,
+        effect: Effect,
+    ) -> (Action, ActionPrivate) {
+        let pak = sk.derive_proof_private();
+        let note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(value_amount),
+            psi: note::NullifierTrapdoor::from(Fp::ZERO),
+            rcm: note::CommitmentTrapdoor::from(Fp::ZERO),
+        };
+        let rcv = value::CommitmentTrapdoor::random(rng);
+        let theta = ActionEntropy::random(rng);
+
+        let plan = match effect {
+            | Effect::Spend => action::Plan::spend(note, theta, rcv, pak.ak()),
+            | Effect::Output => action::Plan::output(note, theta, rcv),
+        };
+
+        let action = Action {
+            cv: plan.cv(),
+            rk: plan.rk,
+            sig: action::Signature::from([0u8; 64]),
+        };
+
+        let witness = ActionPrivate {
+            alpha: ActionRandomizer::from(theta.spend_randomizer(&note.commitment())),
+            note,
+            rcv,
+        };
+
+        (action, witness)
+    }
+
+    #[test]
+    fn prove_action_then_verify() {
+        let mut rng = StdRng::seed_from_u64(0);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let pak = sk.derive_proof_private();
+        let anchor = Anchor::from(Fp::ZERO);
+
+        let (action, witness) = make_action_and_witness(&mut rng, &sk, 500, Effect::Spend);
+        let (stamp, _accs) =
+            Stamp::prove_action(&mut rng, &witness, &action, Effect::Spend, anchor, &pak)
+                .expect("prove_action");
+
+        stamp.verify(&[action]).expect("verify should succeed");
+    }
+
+    #[test]
+    fn verify_rejects_wrong_action() {
+        let mut rng = StdRng::seed_from_u64(1);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let pak = sk.derive_proof_private();
+        let anchor = Anchor::from(Fp::ZERO);
+
+        let (action_a, witness_a) = make_action_and_witness(&mut rng, &sk, 500, Effect::Spend);
+        let (stamp, _accs) =
+            Stamp::prove_action(&mut rng, &witness_a, &action_a, Effect::Spend, anchor, &pak)
+                .expect("prove_action");
+
+        let (action_b, _witness_b) = make_action_and_witness(&mut rng, &sk, 200, Effect::Output);
+
+        assert!(
+            stamp.verify(&[action_b]).is_err(),
+            "verify with wrong action must fail"
+        );
+    }
+
+    #[test]
+    fn prove_merge_then_verify() {
+        let mut rng = StdRng::seed_from_u64(2);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let pak = sk.derive_proof_private();
+        let anchor = Anchor::from(Fp::ZERO);
+
+        let (action_a, witness_a) = make_action_and_witness(&mut rng, &sk, 500, Effect::Spend);
+        let (stamp_a, accs_a) =
+            Stamp::prove_action(&mut rng, &witness_a, &action_a, Effect::Spend, anchor, &pak)
+                .expect("prove_action a");
+
+        let (action_b, witness_b) = make_action_and_witness(&mut rng, &sk, 200, Effect::Output);
+        let (stamp_b, accs_b) =
+            Stamp::prove_action(&mut rng, &witness_b, &action_b, Effect::Output, anchor, &pak)
+                .expect("prove_action b");
+
+        let (merged, _merged_accs) = stamp_a
+            .prove_merge(accs_a, stamp_b, accs_b, &mut rng)
+            .expect("prove_merge");
+
+        merged
+            .verify(&[action_a, action_b])
+            .expect("merged stamp should verify");
+    }
+
+    #[test]
+    fn merged_stamp_rejects_partial_actions() {
+        let mut rng = StdRng::seed_from_u64(3);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let pak = sk.derive_proof_private();
+        let anchor = Anchor::from(Fp::ZERO);
+
+        let (action_a, witness_a) = make_action_and_witness(&mut rng, &sk, 500, Effect::Spend);
+        let (stamp_a, accs_a) =
+            Stamp::prove_action(&mut rng, &witness_a, &action_a, Effect::Spend, anchor, &pak)
+                .expect("prove_action a");
+
+        let (action_b, witness_b) = make_action_and_witness(&mut rng, &sk, 200, Effect::Output);
+        let (stamp_b, accs_b) =
+            Stamp::prove_action(&mut rng, &witness_b, &action_b, Effect::Output, anchor, &pak)
+                .expect("prove_action b");
+
+        let (merged, _merged_accs) = stamp_a
+            .prove_merge(accs_a, stamp_b, accs_b, &mut rng)
+            .expect("prove_merge");
+
+        assert!(
+            merged.verify(&[action_a]).is_err(),
+            "verify with partial actions must fail"
+        );
+    }
+}
