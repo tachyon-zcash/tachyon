@@ -521,6 +521,26 @@ mod tests {
         assert_eq!(plan_commitment, bundle.commitment().unwrap());
     }
 
+    /// A zero-action bundle with zero balance must verify correctly.
+    ///
+    /// This exercises the edge case where `BindingVerificationKey::derive`
+    /// receives an empty action slice and value_balance = 0, producing the
+    /// identity point as `bvk`.
+    #[test]
+    fn zero_action_bundle_is_valid() {
+        let mut rng = StdRng::seed_from_u64(0xdead);
+
+        let bsk = private::BindingSigningKey::from([].as_slice());
+        let bundle: Stripped = Bundle {
+            actions: alloc::vec![],
+            value_balance: 0,
+            binding_sig: bsk.sign(&mut rng, &[0u8; 32]),
+            stamp: Stampless,
+        };
+
+        bundle.verify_signatures(&[0u8; 32]).unwrap();
+    }
+
     /// A tampered action signature must cause verification to fail.
     #[test]
     fn invalid_action_sig_fails_verification() {
