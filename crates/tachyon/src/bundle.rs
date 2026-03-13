@@ -290,7 +290,7 @@ mod tests {
         entropy::{ActionEntropy, ActionRandomizer},
         keys::private,
         note::{self, Note},
-        primitives::{Anchor, Epoch},
+        primitives::{ActionDigest, Anchor, Epoch, multiset::Multiset},
         stamp::Stamp,
         value,
         witness::ActionPrivate,
@@ -539,6 +539,171 @@ mod tests {
         };
 
         bundle.verify_signatures(&[0u8; 32]).unwrap();
+    }
+
+    /// Build a stamped bundle, returning the bundle and its action multiset
+    /// accumulator (needed for stamp merging).
+    fn build_test_bundle_with_accs(
+        rng: &mut (impl RngCore + CryptoRng),
+        spend_value: u64,
+        output_value: u64,
+    ) -> (Stamped, Multiset<ActionDigest>) {
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let pak = sk.derive_proof_private();
+        let anchor = Anchor::from(Fp::ZERO);
+        let epoch = Epoch::from(0u32);
+
+        let spend_note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(spend_value),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut *rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut *rng)),
+        };
+        let output_note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(output_value),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut *rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut *rng)),
+        };
+
+        let theta_spend = ActionEntropy::random(&mut *rng);
+        let theta_output = ActionEntropy::random(&mut *rng);
+        let spend_rcv = value::CommitmentTrapdoor::random(&mut *rng);
+        let output_rcv = value::CommitmentTrapdoor::random(&mut *rng);
+
+        let spend_plan = action::Plan::spend(spend_note, theta_spend, spend_rcv, pak.ak());
+        let output_plan = action::Plan::output(output_note, theta_output, output_rcv);
+
+        let value_balance: i64 = i64::try_from(spend_value).expect("spend_value fits")
+            - i64::try_from(output_value).expect("output_value fits");
+
+        let bundle_plan = Plan::new(alloc::vec![spend_plan, output_plan], value_balance);
+        let sighash = mock_sighash(bundle_plan.commitment());
+
+        let spend_cm = spend_note.commitment();
+        let spend_alpha = theta_spend.spend_randomizer(&spend_cm);
+        let spend_sig = ask
+            .derive_action_private(&spend_alpha)
+            .sign(&mut *rng, &sighash);
+
+        let output_cm = output_note.commitment();
+        let output_alpha = theta_output.output_randomizer(&output_cm);
+        let output_rsk = private::ActionSigningKey::new(output_alpha);
+        let output_sig = output_rsk.sign(&mut *rng, &sighash);
+
+        let spend_action = Action {
+            cv: spend_plan.cv(),
+            rk: spend_plan.rk,
+            sig: spend_sig,
+        };
+        let output_action = Action {
+            cv: output_plan.cv(),
+            rk: output_plan.rk,
+            sig: output_sig,
+        };
+        let actions = alloc::vec![spend_action, output_action];
+
+        let spend_witness = ActionPrivate {
+            alpha: ActionRandomizer::from(spend_alpha),
+            note: spend_note,
+            rcv: spend_plan.rcv,
+        };
+        let output_witness = ActionPrivate {
+            alpha: ActionRandomizer::from(output_alpha),
+            note: output_note,
+            rcv: output_plan.rcv,
+        };
+
+        let (spend_stamp, (spend_action_acc, _spend_tg)) = Stamp::prove_action(
+            &mut *rng,
+            &spend_witness,
+            &spend_action,
+            action::Effect::Spend,
+            anchor,
+            epoch,
+            &pak,
+        )
+        .expect("prove_action (spend)");
+        let (output_stamp, (output_action_acc, _output_tg)) = Stamp::prove_action(
+            &mut *rng,
+            &output_witness,
+            &output_action,
+            action::Effect::Output,
+            anchor,
+            epoch,
+            &pak,
+        )
+        .expect("prove_action (output)");
+        let (stamp, (action_acc, _tg_acc)) = Stamp::prove_merge(
+            &mut *rng,
+            spend_stamp,
+            spend_action_acc,
+            output_stamp,
+            output_action_acc,
+        )
+        .expect("prove_merge");
+
+        let bsk = bundle_plan.derive_bsk_private();
+        let binding_sig = bsk.sign(&mut *rng, &sighash);
+
+        let bundle: Stamped = Bundle {
+            actions,
+            value_balance,
+            binding_sig,
+            stamp,
+        };
+
+        bundle.verify_signatures(&sighash).unwrap();
+
+        (bundle, action_acc)
+    }
+
+    /// Merge stamps from two bundles into a zero-action aggregate bundle.
+    ///
+    /// Two stamped bundles are built, their stamps merged via `prove_merge`,
+    /// and the result placed in a new bundle with no actions and zero balance.
+    /// The merged stamp verifies against actions collected from both source
+    /// bundles.
+    #[test]
+    fn merged_stamp_in_zero_action_bundle() {
+        let mut rng = StdRng::seed_from_u64(0xCAFE);
+
+        let (bundle_a, action_acc_a) =
+            build_test_bundle_with_accs(&mut rng, 1000, 700);
+        let (bundle_b, action_acc_b) =
+            build_test_bundle_with_accs(&mut rng, 500, 200);
+
+        let (merged_stamp, _merged_accs) = Stamp::prove_merge(
+            &mut rng,
+            bundle_a.stamp,
+            action_acc_a,
+            bundle_b.stamp,
+            action_acc_b,
+        )
+        .expect("prove_merge (cross-bundle)");
+
+        // Zero-action aggregate bundle carries only the merged stamp.
+        let bsk = private::BindingSigningKey::from([].as_slice());
+        let aggregate_sighash = [0u8; 32];
+        let aggregate: Stamped = Bundle {
+            actions: alloc::vec![],
+            value_balance: 0,
+            binding_sig: bsk.sign(&mut rng, &aggregate_sighash),
+            stamp: merged_stamp,
+        };
+
+        aggregate
+            .verify_signatures(&aggregate_sighash)
+            .expect("zero-action binding sig should verify");
+
+        // Collect all actions from both source bundles for stamp verification.
+        let all_actions: Vec<Action> =
+            [bundle_a.actions, bundle_b.actions].concat();
+        aggregate
+            .stamp
+            .verify(&all_actions, &mut rng)
+            .expect("merged stamp should verify against combined actions");
     }
 
     /// A tampered action signature must cause verification to fail.
