@@ -1,9 +1,12 @@
 //! Note-related keys: NullifierKey, MasterRootKey, PrefixKey, PaymentKey.
 
-use ff::Field as _;
+use ff::{Field as _, PrimeField as _};
+// TODO(#39): replace halo2_poseidon with Ragu Poseidon params
+use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::Fp;
 
 use crate::{
+    constants::NOTE_MASTER_DOMAIN,
     note::{Nullifier, NullifierTrapdoor},
     primitives::Epoch,
 };
@@ -33,13 +36,7 @@ use crate::{
 /// forms the proof authorizing key `pak`, enabling proof construction
 /// and nullifier derivation without signing capability.
 #[derive(Clone, Copy, Debug)]
-pub struct NullifierKey(
-    #[cfg_attr(
-        all(not(feature = "serde"), not(test)),
-        expect(dead_code, reason = "field read by serde impls and tests")
-    )]
-    pub(super) Fp,
-);
+pub struct NullifierKey(pub(super) Fp);
 
 impl NullifierKey {
     /// Derive the per-note master root key: $\mathsf{mk} = \text{KDF}(\psi,
@@ -50,9 +47,16 @@ impl NullifierKey {
     ///   F_{\mathsf{mk}}(\text{flavor})$
     /// - Derive epoch-restricted prefix keys $\Psi_t$ for OSS delegation
     #[must_use]
-    pub fn derive_note_private(&self, _psi: &NullifierTrapdoor) -> NoteMasterKey {
-        todo!("Poseidon KDF");
-        NoteMasterKey(Fp::ZERO)
+    pub fn derive_note_private(&self, psi: &NullifierTrapdoor) -> NoteMasterKey {
+        #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
+        let personalization = Fp::from_u128(u128::from_le_bytes(*NOTE_MASTER_DOMAIN));
+        NoteMasterKey(
+            Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
+                personalization,
+                psi.0,
+                self.0,
+            ]),
+        )
     }
 }
 
@@ -95,14 +99,8 @@ impl<'de> serde::Deserialize<'de> for NullifierKey {
 ///
 /// `mk` is not stored or transmitted — the user device derives it
 /// ephemerally when needed. The OSS receives only the prefix keys.
-#[derive(Clone, Copy, Debug)]
-pub struct NoteMasterKey(
-    #[cfg_attr(
-        not(feature = "serde"),
-        expect(dead_code, reason = "field read by serde impls")
-    )]
-    Fp,
-);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoteMasterKey(Fp);
 
 impl NoteMasterKey {
     /// Derive a nullifier for a specific epoch: $\mathsf{nf} =
@@ -242,13 +240,8 @@ impl<'de> serde::Deserialize<'de> for NoteDelegateKey {
 /// happens out-of-band via higher-level protocols (ZIP 321 payment
 /// requests, ZIP 324 URI encapsulated payments).
 #[derive(Clone, Copy, Debug)]
-pub struct PaymentKey(
-    #[cfg_attr(
-        all(not(feature = "serde"), not(test)),
-        expect(dead_code, reason = "field read by serde impls and tests")
-    )]
-    pub(super) Fp,
-);
+#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
+pub struct PaymentKey(pub(crate) Fp);
 
 #[cfg(feature = "serde")]
 impl serde::Serialize for PaymentKey {
@@ -271,5 +264,27 @@ impl<'de> serde::Deserialize<'de> for PaymentKey {
         use crate::serde_helpers::FpVisitor;
 
         deserializer.deserialize_bytes(FpVisitor).map(Self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derive_note_private_deterministic() {
+        let nk = NullifierKey(Fp::from(42u64));
+        let psi = NullifierTrapdoor::from(Fp::from(99u64));
+        let mk1 = nk.derive_note_private(&psi);
+        let mk2 = nk.derive_note_private(&psi);
+        assert_eq!(mk1, mk2);
+    }
+
+    #[test]
+    fn different_psi_different_mk() {
+        let nk = NullifierKey(Fp::from(42u64));
+        let mk1 = nk.derive_note_private(&NullifierTrapdoor::from(Fp::from(1u64)));
+        let mk2 = nk.derive_note_private(&NullifierTrapdoor::from(Fp::from(2u64)));
+        assert_ne!(mk1, mk2);
     }
 }

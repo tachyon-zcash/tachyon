@@ -1,6 +1,8 @@
 //! Mock PCD application — mirrors `ragu_pcd::Application`.
 
-use rand::CryptoRng;
+use alloc::vec::Vec;
+
+use rand_core::CryptoRng;
 
 use crate::{
     error::Result,

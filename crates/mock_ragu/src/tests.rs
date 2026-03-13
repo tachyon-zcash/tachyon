@@ -1,5 +1,3 @@
-extern crate alloc;
-
 use alloc::vec::Vec;
 use core::ops::Neg as _;
 
@@ -12,7 +10,7 @@ use super::{
     error::Result,
     header::{Header, Suffix},
     polynomial::*,
-    proof::{Pcd, Proof, PROOF_SIZE_COMPRESSED},
+    proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof},
     step::{Index, Step},
 };
 
@@ -385,7 +383,7 @@ fn different_merge_trees_same_header() {
 
 // -- Steps with aux --
 
-/// Header value is `witness²`, aux is `vec![witness²]`.
+/// Header value is `witness²`, aux is `alloc::vec![witness²]`.
 struct AuxSeedStep;
 
 impl Step for AuxSeedStep {
@@ -404,7 +402,7 @@ impl Step for AuxSeedStep {
         _right: <Self::Right as Header>::Data<'source>,
     ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         let squared = witness * witness;
-        Ok((TestHeaderData { value: squared }, vec![squared]))
+        Ok((TestHeaderData { value: squared }, alloc::vec![squared]))
     }
 }
 
@@ -450,12 +448,12 @@ fn aux_data_flows_through_seed_and_fuse() {
     let (proof_a, aux_a) = app
         .seed(&mut thread_rng(), &AuxSeedStep, 3u64)
         .expect("seed a");
-    assert_eq!(aux_a, vec![9]);
+    assert_eq!(aux_a, alloc::vec![9]);
 
     let (proof_b, aux_b) = app
         .seed(&mut thread_rng(), &AuxSeedStep, 4u64)
         .expect("seed b");
-    assert_eq!(aux_b, vec![16]);
+    assert_eq!(aux_b, alloc::vec![16]);
 
     let pcd_a = proof_a.carry::<TestHeader>(TestHeaderData { value: 9 });
     let pcd_b = proof_b.carry::<TestHeader>(TestHeaderData { value: 16 });
@@ -469,7 +467,7 @@ fn aux_data_flows_through_seed_and_fuse() {
         )
         .expect("fuse");
 
-    assert_eq!(merged_aux, vec![9, 16]);
+    assert_eq!(merged_aux, alloc::vec![9, 16]);
 
     let reconstructed_value: u64 = merged_aux.iter().sum();
     assert_eq!(reconstructed_value, 25);

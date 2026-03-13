@@ -1,7 +1,5 @@
 //! Mock PCD header — mirrors `ragu_pcd::Header`.
 
-extern crate alloc;
-
 use alloc::vec::Vec;
 
 /// Mirrors `ragu_pcd::header::Suffix`.

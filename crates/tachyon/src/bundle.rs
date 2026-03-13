@@ -15,23 +15,20 @@ use crate::{
     action::{self, Action},
     constants::BUNDLE_COMMITMENT_PERSONALIZATION,
     keys::{private, public},
-    primitives::ActionDigest,
+    primitives::{ActionDigest, ActionDigestError, multiset::Multiset},
     stamp::{Stamp, Stampless},
 };
 
 mod sealed {
-    trait Sealed {}
+    pub trait Sealed {}
     impl Sealed for super::Stamp {}
     impl Sealed for super::Stampless {}
     impl Sealed for Option<super::Stamp> {}
-
-    /// Sealed trait constraining stamp state types.
-    #[expect(private_bounds, reason = "sealed trait pattern")]
-    pub trait StampState: Sealed {}
-    impl<T: Sealed> StampState for T {}
 }
 
-pub use sealed::StampState;
+/// Sealed trait constraining stamp state types.
+pub trait StampState: sealed::Sealed {}
+impl<T: sealed::Sealed> StampState for T {}
 
 /// A Tachyon transaction bundle parameterized by stamp state `S`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,32 +139,30 @@ pub enum BuildError {
 ///
 /// This contributes to the transaction sighash.
 ///
-/// $$\mathsf{bundle\_commitment} = \text{BLAKE2b-512}(
-///   \text{"Tachyon-BndlHash"},\;
-///   \mathsf{action\_acc} \| \mathsf{v\_balance})$$
+/// $$ \mathsf{bundle\_commitment} = \text{BLAKE2b-512}(
+/// \text{"Tachyon-BndlHash"},\; \mathsf{action\_commitment} \|
+/// \mathsf{value\_balance}) $$
 ///
-/// where $\mathsf{action\_acc}$ is an [`ActionDigest`] — the
-/// order-independent digest of all actions in the bundle.
+/// where $\mathsf{action\_commitment}$ is the multiset polynomial commitment
+/// over all action digests — order-independent by construction.
 ///
 /// The stamp is excluded because it is stripped during aggregation.
-#[must_use]
-pub fn commit_bundle_digest(
-    action_digests: impl Iterator<Item = ActionDigest>,
+#[expect(clippy::module_name_repetitions, reason = "consistent naming")]
+pub fn digest_bundle(
+    action_acc: &Multiset<ActionDigest>,
     value_balance: i64,
-) -> [u8; 64] {
-    let action_acc: ActionDigest = action_digests.sum();
-    let acc_bytes: [u8; 32] = action_acc.into();
-
+) -> Result<[u8; 64], ActionDigestError> {
     let mut state = blake2b_simd::Params::new()
         .hash_length(64)
         .personal(BUNDLE_COMMITMENT_PERSONALIZATION)
         .to_state();
-    state.update(&acc_bytes);
+
+    state.update(&<[u8; 32]>::from(action_acc.commit()));
 
     #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
     state.update(&value_balance.to_le_bytes());
 
-    *state.finalize().as_array()
+    Ok(*state.finalize().as_array())
 }
 
 /// A complete bundle plan, awaiting authorization.
@@ -195,11 +190,10 @@ impl Plan {
     /// See [`commit_bundle_digest`].
     #[must_use]
     pub fn commitment(&self) -> [u8; 64] {
-        let action_digests = self
-            .actions
-            .iter()
-            .map(|plan| ActionDigest::new(plan.cv(), plan.rk));
-        commit_bundle_digest(action_digests, self.value_balance)
+        #[expect(clippy::expect_used, reason = "don't plan invalid actions")]
+        Multiset::try_from(self.actions.as_slice())
+            .and_then(|action_acc| digest_bundle(&action_acc, self.value_balance))
+            .expect("don't plan invalid actions")
     }
 
     /// Derive the binding signing key, which is the scalar sum of value
@@ -233,10 +227,9 @@ impl Stamped {
 
 impl<S: StampState> Bundle<S> {
     /// See [`commit_bundle_digest`].
-    #[must_use]
-    pub fn commitment(&self) -> [u8; 64] {
-        let action_digests = self.actions.iter().map(ActionDigest::from);
-        commit_bundle_digest(action_digests, self.value_balance)
+    pub fn commitment(&self) -> Result<[u8; 64], ActionDigestError> {
+        let action_acc = Multiset::try_from(self.actions.as_slice())?;
+        digest_bundle(&action_acc, self.value_balance)
     }
 
     /// Verify the bundle's binding signature and all action signatures.
@@ -289,7 +282,7 @@ impl From<Signature> for [u8; 64] {
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
-    use pasta_curves::{Fp, Fq};
+    use pasta_curves::Fp;
     use rand::{CryptoRng, RngCore, SeedableRng as _, rngs::StdRng};
 
     use super::*;
@@ -329,13 +322,13 @@ mod tests {
             pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
             psi: note::NullifierTrapdoor::from(Fp::ZERO),
-            rcm: note::CommitmentTrapdoor::from(Fq::ZERO),
+            rcm: note::CommitmentTrapdoor::from(Fp::ZERO),
         };
         let output_note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(700u64),
             psi: note::NullifierTrapdoor::from(Fp::ONE),
-            rcm: note::CommitmentTrapdoor::from(Fq::ONE),
+            rcm: note::CommitmentTrapdoor::from(Fp::ONE),
         };
 
         let theta_spend = ActionEntropy::random(&mut *rng);
@@ -410,7 +403,7 @@ mod tests {
     fn wrong_value_balance_fails_verification() {
         let mut rng = StdRng::seed_from_u64(0);
         let mut bundle = build_test_bundle(&mut rng);
-        let sighash = mock_sighash(bundle.commitment());
+        let sighash = mock_sighash(bundle.commitment().unwrap());
 
         bundle.value_balance = 999;
         assert!(bundle.verify_signatures(&sighash).is_err());
@@ -421,7 +414,7 @@ mod tests {
     fn stripped_bundle_retains_signatures() {
         let mut rng = StdRng::seed_from_u64(0);
         let bundle = build_test_bundle(&mut rng);
-        let sighash = mock_sighash(bundle.commitment());
+        let sighash = mock_sighash(bundle.commitment().unwrap());
 
         let (stripped, _stamp) = bundle.strip();
         stripped.verify_signatures(&sighash).unwrap();
@@ -438,13 +431,13 @@ mod tests {
             pk: sk.derive_payment_key(),
             value: note::Value::from(500u64),
             psi: note::NullifierTrapdoor::from(Fp::ZERO),
-            rcm: note::CommitmentTrapdoor::from(Fq::ZERO),
+            rcm: note::CommitmentTrapdoor::from(Fp::ZERO),
         };
         let output_note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(200u64),
             psi: note::NullifierTrapdoor::from(Fp::ONE),
-            rcm: note::CommitmentTrapdoor::from(Fq::ONE),
+            rcm: note::CommitmentTrapdoor::from(Fp::ONE),
         };
 
         let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
@@ -493,7 +486,7 @@ mod tests {
             ),
         };
 
-        assert_eq!(plan_commitment, bundle.commitment());
+        assert_eq!(plan_commitment, bundle.commitment().unwrap());
     }
 
     /// A tampered action signature must cause verification to fail.
@@ -501,7 +494,7 @@ mod tests {
     fn invalid_action_sig_fails_verification() {
         let mut rng = StdRng::seed_from_u64(11);
         let mut bundle = build_test_bundle(&mut rng);
-        let sighash = mock_sighash(bundle.commitment());
+        let sighash = mock_sighash(bundle.commitment().unwrap());
 
         let mut sig_bytes: [u8; 64] = bundle.actions[0].sig.into();
         sig_bytes[0] ^= 0xFF;

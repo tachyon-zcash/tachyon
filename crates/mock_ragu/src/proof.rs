@@ -10,6 +10,8 @@
 //! | 96..128 | 32 | rerandomization tag |
 //! | 128..23000 | 22872 | zero padding |
 
+use alloc::boxed::Box;
+
 use crate::header::Header;
 
 /// Compressed proof size in bytes.

@@ -2,42 +2,42 @@
 //!
 //! Real Pedersen crypto on Vesta. Only the proof system is mocked.
 
-extern crate alloc;
-
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use core::ops::Neg;
-use std::sync::LazyLock;
 
 use ff::Field;
+use lazy_static::lazy_static;
 use pasta_curves::{Eq, EqAffine, Fp};
 
 const MAX_GENERATORS: usize = 256;
 
-/// Coefficient generators `g[0..n]`.
-static GENERATORS: LazyLock<Vec<EqAffine>> = LazyLock::new(|| {
-    use pasta_curves::{arithmetic::CurveExt as _, group::Curve as _};
-    let hasher = Eq::hash_to_curve("mock_ragu:generators");
-    (0..MAX_GENERATORS)
-        .map(|i| {
-            #[expect(clippy::little_endian_bytes, reason = "deterministic derivation")]
-            let point = hasher(&i.to_le_bytes());
-            point.to_affine()
-        })
-        .collect()
-});
+lazy_static! {
+    /// Coefficient generators `g[0..n]`.
+    static ref GENERATORS: Vec<EqAffine> = {
+        use pasta_curves::{arithmetic::CurveExt as _, group::Curve as _};
+        let hasher = Eq::hash_to_curve("mock_ragu:generators");
+        (0..MAX_GENERATORS)
+            .map(|i| {
+                #[expect(clippy::little_endian_bytes, reason = "deterministic derivation")]
+                let point = hasher(&i.to_le_bytes());
+                point.to_affine()
+            })
+            .collect()
+    };
 
-/// Blinding generator `h` (unknown discrete log relative to `g`).
-static BLINDING_GENERATOR: LazyLock<EqAffine> = LazyLock::new(|| {
-    use pasta_curves::{arithmetic::CurveExt as _, group::Curve as _};
-    Eq::hash_to_curve("mock_ragu:blinding")(b"h").to_affine()
-});
+    /// Blinding generator `h` (unknown discrete log relative to `g`).
+    static ref BLINDING_GENERATOR: EqAffine = {
+        use pasta_curves::{arithmetic::CurveExt as _, group::Curve as _};
+        Eq::hash_to_curve("mock_ragu:blinding")(b"h").to_affine()
+    };
+}
 
 /// Mirrors `ragu_arithmetic::poly_with_roots`.
 #[must_use]
 pub fn poly_with_roots(roots: &[Fp]) -> Vec<Fp> {
-    let mut coeffs = vec![Fp::ONE];
+    let mut coeffs = alloc::vec![Fp::ONE];
     for &root in roots {
-        let mut new_coeffs = vec![Fp::ZERO; coeffs.len() + 1];
+        let mut new_coeffs = alloc::vec![Fp::ZERO; coeffs.len() + 1];
         for (i, &c) in coeffs.iter().enumerate() {
             new_coeffs[i + 1] += c;
             new_coeffs[i] += c * root.neg();
@@ -65,7 +65,7 @@ impl Polynomial {
     #[must_use]
     pub fn multiply(&self, other: &Self) -> Self {
         let result_len = self.0.len() + other.0.len() - 1;
-        let mut result = vec![Fp::ZERO; result_len];
+        let mut result = alloc::vec![Fp::ZERO; result_len];
         for (i, &a) in self.0.iter().enumerate() {
             for (j, &b) in other.0.iter().enumerate() {
                 result[i + j] += a * b;
@@ -104,7 +104,7 @@ impl Polynomial {
 
 impl Default for Polynomial {
     fn default() -> Self {
-        Self(vec![Fp::ONE])
+        Self(alloc::vec![Fp::ONE])
     }
 }
 

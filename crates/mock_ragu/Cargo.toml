@@ -19,10 +19,25 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = [
+    "std",
+]
+std = [
+    "blake2b_simd/std",
+    "rand_core/std",
+]
+
 [dependencies]
-blake2b_simd = "1.0"
+blake2b_simd = { version = "1.0", default-features = false }
 ff = "0.13"
+lazy_static = { version = "1", default-features = false, features = [
+    "spin_no_std",
+] }
 pasta_curves = "0.5.1"
+rand_core = { version = "0.6", default-features = false }
+
+[dev-dependencies]
 rand = "0.8"
 
 [lib]
