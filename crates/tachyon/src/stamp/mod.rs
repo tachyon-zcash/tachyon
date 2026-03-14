@@ -201,14 +201,12 @@ impl Stamp {
     /// execution — a mismatched header causes verification failure.
     pub fn verify(
         &self,
-        actions: &[Action],
+        actions: &Multiset<ActionDigest>,
         rng: &mut impl CryptoRng,
     ) -> Result<(), VerificationError> {
         let app = &PROOF_SYSTEM;
 
-        let action_commitment = <Multiset<ActionDigest>>::try_from(actions)
-            .map_err(VerificationError::ActionDigest)?
-            .commit();
+        let action_commitment = actions.commit();
 
         let tachygram_commitment = <Multiset<Tachygram>>::from(self.tachygrams.as_slice()).commit();
 
@@ -262,8 +260,8 @@ mod tests {
         let theta = ActionEntropy::random(rng);
 
         let plan = match effect {
-            | Effect::Spend => action::Plan::spend(note, theta, rcv, pak.ak()),
-            | Effect::Output => action::Plan::output(note, theta, rcv),
+            | Effect::Spend => action::Plan::spend_with(note, theta, rcv, pak.ak()),
+            | Effect::Output => action::Plan::output_with(note, theta, rcv),
         };
 
         let action = Action {
@@ -302,7 +300,10 @@ mod tests {
         .expect("prove_action");
 
         stamp
-            .verify(&[action], &mut rng)
+            .verify(
+                &Multiset::try_from([action].as_slice()).expect("valid"),
+                &mut rng,
+            )
             .expect("verify should succeed");
     }
 
@@ -329,7 +330,12 @@ mod tests {
         let (action_b, _witness_b) = make_action_and_witness(&mut rng, &sk, 200, Effect::Output);
 
         assert!(
-            stamp.verify(&[action_b], &mut rng).is_err(),
+            stamp
+                .verify(
+                    &Multiset::try_from([action_b].as_slice()).expect("valid"),
+                    &mut rng
+                )
+                .is_err(),
             "verify with wrong action must fail"
         );
     }
@@ -371,7 +377,10 @@ mod tests {
                 .expect("prove_merge");
 
         merged
-            .verify(&[action_a, action_b], &mut rng)
+            .verify(
+                &Multiset::try_from([action_a, action_b].as_slice()).expect("valid"),
+                &mut rng,
+            )
             .expect("merged stamp should verify");
     }
 
@@ -411,8 +420,11 @@ mod tests {
             Stamp::prove_merge(&mut rng, stamp_a, accs_a.0, stamp_b, accs_b.0)
                 .expect("prove_merge");
 
+        let action_a_acc: Multiset<ActionDigest> =
+            Multiset::try_from([action_a].as_slice()).expect("valid");
+
         assert!(
-            merged.verify(&[action_a], &mut rng).is_err(),
+            merged.verify(&action_a_acc, &mut rng).is_err(),
             "verify with partial actions must fail"
         );
     }

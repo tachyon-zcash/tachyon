@@ -3,10 +3,11 @@
 use reddsa::orchard::SpendAuth;
 
 use crate::{
-    entropy::ActionEntropy,
+    entropy::{ActionEntropy, ActionRandomizer},
     keys::{SpendValidatingKey, private, public},
     note::Note,
     value,
+    witness::ActionPrivate,
 };
 
 /// Whether an action plan represents a spend or an output.
@@ -38,11 +39,9 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Assemble a spend action plan.
-    ///
-    /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
+    /// Assemble a spend action plan with given entropy and trapdoor.
     #[must_use]
-    pub fn spend(
+    pub fn spend_with(
         note: Note,
         theta: ActionEntropy,
         rcv: value::CommitmentTrapdoor,
@@ -61,11 +60,9 @@ impl Plan {
         }
     }
 
-    /// Assemble an output action plan.
-    ///
-    /// $\mathsf{rk} = [\alpha]\,\mathcal{G}$.
+    /// Assemble an output action plan with given entropy and trapdoor.
     #[must_use]
-    pub fn output(note: Note, theta: ActionEntropy, rcv: value::CommitmentTrapdoor) -> Self {
+    pub fn output_with(note: Note, theta: ActionEntropy, rcv: value::CommitmentTrapdoor) -> Self {
         let cm = note.commitment();
         let alpha = theta.output_randomizer(&cm);
         let rsk = private::ActionSigningKey::new(alpha);
@@ -77,6 +74,44 @@ impl Plan {
             theta,
             rcv,
             effect: Effect::Output,
+        }
+    }
+
+    /// Assemble a spend action plan with random entropy and trapdoor.
+    pub fn spend(
+        rng: &mut (impl rand_core::RngCore + rand_core::CryptoRng),
+        note: Note,
+        ak: &SpendValidatingKey,
+    ) -> Self {
+        Self::spend_with(
+            note,
+            ActionEntropy::random(&mut *rng),
+            value::CommitmentTrapdoor::random(rng),
+            ak,
+        )
+    }
+
+    /// Assemble an output action plan with random entropy and trapdoor.
+    pub fn output(rng: &mut (impl rand_core::RngCore + rand_core::CryptoRng), note: Note) -> Self {
+        Self::output_with(
+            note,
+            ActionEntropy::random(&mut *rng),
+            value::CommitmentTrapdoor::random(rng),
+        )
+    }
+
+    /// Assemble the proof witness for this action plan.
+    #[must_use]
+    pub fn witness(&self) -> ActionPrivate {
+        let cm = self.note.commitment();
+        let alpha = match self.effect {
+            | Effect::Spend => ActionRandomizer::from(self.theta.spend_randomizer(&cm)),
+            | Effect::Output => ActionRandomizer::from(self.theta.output_randomizer(&cm)),
+        };
+        ActionPrivate {
+            alpha,
+            note: self.note,
+            rcv: self.rcv,
         }
     }
 

@@ -37,8 +37,18 @@ mod sealed {
 }
 
 /// Sealed trait constraining signing authority.
-pub trait ActionAuthority: sealed::Sealed {}
-impl<T: sealed::Sealed> ActionAuthority for T {}
+pub trait ActionAuthority: sealed::Sealed {
+    /// The action effect this authority corresponds to.
+    const EFFECT: action::Effect;
+}
+
+impl ActionAuthority for SpendAuthority {
+    const EFFECT: action::Effect = action::Effect::Spend;
+}
+
+impl ActionAuthority for OutputAuthority {
+    const EFFECT: action::Effect = action::Effect::Output;
+}
 
 /// A Tachyon spending key — raw 32-byte entropy.
 ///
@@ -220,6 +230,28 @@ impl<K: ActionAuthority> ActionSigningKey<K> {
         sighash: &[u8; 32],
     ) -> action::Signature {
         action::Signature(self.0.sign(rng, sighash))
+    }
+
+    /// Sign an action plan, producing an authorized action.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the plan's effect does not match this key's authority.
+    pub fn sign_plan(
+        &self,
+        rng: &mut (impl RngCore + CryptoRng),
+        plan: &action::Plan,
+        sighash: &[u8; 32],
+    ) -> action::Action {
+        assert!(
+            plan.effect == K::EFFECT,
+            "plan effect must match signing key authority"
+        );
+        action::Action {
+            cv: plan.cv(),
+            rk: plan.rk,
+            sig: self.sign(rng, sighash),
+        }
     }
 
     /// Derive the per-action verification (public) key: `rk = [rsk]G`.
