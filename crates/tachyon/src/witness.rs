@@ -14,7 +14,7 @@ use crate::{
 ///
 /// Per-wallet key material ($\mathsf{ak}$, $\mathsf{nk}$) is shared across
 /// all actions and passed separately via
-/// [`ProofAuthorizingKey`](crate::keys::ProofAuthorizingKey)
+/// [`ProofAuthorizingKey`](crate::keys::delegate::ProofAuthorizingKey)
 /// to [`Stamp::prove_action`](crate::stamp::Stamp::prove_action).
 #[derive(Clone, Copy, Debug)]
 pub struct ActionPrivate {

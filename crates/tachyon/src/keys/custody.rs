@@ -1,21 +1,25 @@
-//! Private (signing) keys.
+//! Custody keys — signing-device-only keys whose compromise means fund loss.
+//!
+//! These keys live on the signing device (e.g. hardware wallet) and never
+//! leave it. They derive per-action signing keys and produce signatures.
 
 use core::marker::PhantomData;
 
-use ff::{Field as _, FromUniformBytes as _, PrimeField as _};
+use ff::{FromUniformBytes as _, PrimeField as _};
+// TODO(#39): replace halo2_poseidon with Ragu Poseidon params
+use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::{Fp, Fq};
-use rand_core::{CryptoRng, RngCore};
 
 use super::{
-    note::{NullifierKey, PaymentKey},
-    proof, public,
+    note::{Master, NoteKey},
+    planner::{self, ActionSigningKey, NoteMasterKey},
 };
 use crate::{
-    action, bundle,
-    constants::PrfExpand,
+    constants::{NOTE_MASTER_DOMAIN, PrfExpand},
     entropy::ActionRandomizer,
-    primitives::{Effect, Output, Spend},
-    reddsa, value,
+    note::NullifierTrapdoor,
+    primitives::effect,
+    reddsa,
 };
 
 /// A Tachyon spending key — raw 32-byte entropy.
@@ -31,9 +35,8 @@ use crate::{
 ///   [`SpendAuthorizingKey`] (`ask`)
 /// - [`derive_nullifier_private`](Self::derive_nullifier_private) →
 ///   [`NullifierKey`] (`nk`)
-/// - [`derive_payment_key`](Self::derive_payment_key) → [`PaymentKey`] (`pk`)
-/// - [`derive_proof_private`](Self::derive_proof_private) →
-///   [`ProofAuthorizingKey`] (`ak` + `nk`)
+/// - [`derive_payment_key`](Self::derive_payment_key) →
+///   [`PaymentKey`](planner::PaymentKey) (`pk`)
 #[derive(Clone, Copy, Debug)]
 pub struct SpendingKey([u8; 32]);
 
@@ -118,21 +121,8 @@ impl SpendingKey {
     /// protocol; the wallet layer handles unlinkability via out-of-band
     /// payment protocols ("Tachyaction at a Distance", Bowe 2025).
     #[must_use]
-    pub fn derive_payment_key(&self) -> PaymentKey {
-        PaymentKey(Fp::from_uniform_bytes(&PrfExpand::PK.with(&self.0)))
-    }
-
-    /// Derive the proof authorizing key (`ak` + `nk`) for delegated proof
-    /// construction.
-    ///
-    /// Combines [`derive_auth_private`](Self::derive_auth_private)
-    /// → [`SpendAuthorizingKey::derive_auth_public`] with
-    /// [`derive_nullifier_private`](Self::derive_nullifier_private).
-    #[must_use]
-    pub fn derive_proof_private(&self) -> proof::ProofAuthorizingKey {
-        let ak = self.derive_auth_private().derive_auth_public();
-        let nk = self.derive_nullifier_private();
-        proof::ProofAuthorizingKey { ak, nk }
+    pub fn derive_payment_key(&self) -> planner::PaymentKey {
+        planner::PaymentKey(Fp::from_uniform_bytes(&PrfExpand::PK.with(&self.0)))
     }
 }
 
@@ -149,7 +139,7 @@ impl SpendingKey {
 /// `ak`, so observers cannot correlate actions to the same spending
 /// authority.
 ///
-/// `ask` derives [`SpendValidatingKey`](super::proof::SpendValidatingKey)
+/// `ask` derives [`SpendValidatingKey`](private::SpendValidatingKey)
 /// (`ak`) via [`derive_auth_public`](Self::derive_auth_public) — the
 /// circuit witness that validates spend authorization.
 #[derive(Clone, Copy, Debug)]
@@ -158,129 +148,82 @@ pub struct SpendAuthorizingKey(reddsa::SigningKey<reddsa::ActionAuth>);
 impl SpendAuthorizingKey {
     /// Derive the spend validating (public) key: `ak = [ask]G`.
     #[must_use]
-    pub fn derive_auth_public(&self) -> proof::SpendValidatingKey {
+    pub fn derive_auth_public(&self) -> planner::SpendValidatingKey {
         // reddsa::VerificationKey::from(&signing_key) performs [sk]G
         // (scalar-times-basepoint), not a trivial type conversion.
-        proof::SpendValidatingKey(reddsa::VerificationKey::from(&self.0))
+        planner::SpendValidatingKey(reddsa::VerificationKey::from(&self.0))
     }
 
     /// Derive the per-action private (signing) key: $\mathsf{rsk} =
     /// \mathsf{ask} + \alpha$.
     ///
-    /// Only accepts [`ActionRandomizer<Spend>`] — passing an output
-    /// randomizer is a compile error.
+    /// Only accepts [`ActionRandomizer<Spend>`] — passing an output randomizer
+    /// is a compile error.
     #[must_use]
     pub fn derive_action_private(
         &self,
-        alpha: &ActionRandomizer<Spend>,
-    ) -> ActionSigningKey<Spend> {
+        alpha: &ActionRandomizer<effect::Spend>,
+    ) -> ActionSigningKey<effect::Spend> {
         ActionSigningKey(self.0.randomize(&alpha.0), PhantomData)
     }
 }
 
-/// The per-action signing key `rsk` — ephemeral, parameterized by effect.
+/// A Tachyon nullifier deriving key.
 ///
-/// - [`ActionSigningKey<Spend>`]: $\mathsf{rsk} = \mathsf{ask} + \alpha$ —
-///   derived from [`SpendAuthorizingKey::derive_action_private`]
-/// - [`ActionSigningKey<Output>`]: $\mathsf{rsk} = \alpha$ — derived from
-///   [`ActionRandomizer<Output>`]
+/// Wallet-wide secret that derives per-note master keys. Its compromise
+/// reveals all spending activity — it belongs on the custody device
+/// alongside [`SpendingKey`].
 ///
-/// Both variants sign via [`sign`](Self::sign) and derive `rk` via
-/// [`derive_action_public`](Self::derive_action_public).
+/// $$\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk})$$
+///
+/// The custody device derives `mk` from `nk` and the note's $\psi$
+/// trapdoor, then hands `mk` to the planner.
 #[derive(Clone, Copy, Debug)]
-pub struct ActionSigningKey<E: Effect>(reddsa::SigningKey<reddsa::ActionAuth>, PhantomData<E>);
+pub struct NullifierKey(pub(super) Fp);
 
-impl<E: Effect> ActionSigningKey<E> {
-    /// Sign a transaction sighash with this action key.
-    pub fn sign(
-        &self,
-        rng: &mut (impl RngCore + CryptoRng),
-        sighash: &[u8; 32],
-    ) -> action::Signature {
-        action::Signature(self.0.sign(rng, sighash))
-    }
-
-    /// Derive the per-action verification (public) key: `rk = [rsk]G`.
-    #[must_use]
-    pub fn derive_action_public(&self) -> public::ActionVerificationKey {
-        // reddsa::VerificationKey::from(&signing_key) performs [sk]G
-        // (scalar-times-basepoint), not a trivial type conversion.
-        let vk = reddsa::VerificationKey::from(&self.0);
-        public::ActionVerificationKey(vk)
-    }
-}
-
-impl ActionSigningKey<Output> {
-    /// Create a new output action signing key from an output randomizer.
-    #[must_use]
-    pub fn new(alpha: &ActionRandomizer<Output>) -> Self {
-        #[expect(clippy::expect_used, reason = "specified behavior")]
-        Self(
-            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(alpha.0.to_repr())
-                .expect("output randomizer should be a valid RedPallas signing key"),
-            PhantomData,
-        )
-    }
-}
-
-/// BindingAuth signing key $\mathsf{bsk}$ — the scalar sum of all value
-/// commitment trapdoors in a bundle.
-///
-/// $$\mathsf{bsk} := \boxplus_i \mathsf{rcv}_i$$
-///
-/// (sum in $\mathbb{F}_q$, the Pallas scalar field)
-///
-/// The binding signature proves knowledge of $\mathsf{bsk}$, which is
-/// an opening of the Pedersen commitment $\mathsf{bvk}$ to value 0.
-/// By the **binding property** of the commitment scheme, it is
-/// infeasible to find another opening to a different value — so value
-/// balance is enforced.
-///
-/// ## Sighash
-///
-/// Both action signatures and the binding signature sign the same
-/// transaction-level sighash. The sighash incorporates the bundle
-/// commitment (and commitments from other pools). The stamp is
-/// excluded from the bundle commitment because it is stripped during
-/// aggregation.
-#[derive(Clone, Copy, Debug)]
-pub struct BindingSigningKey(reddsa::SigningKey<reddsa::BindingAuth>);
-
-impl BindingSigningKey {
-    /// Sign a transaction sighash with this binding key.
-    pub fn sign(
-        &self,
-        rng: &mut (impl RngCore + CryptoRng),
-        sighash: &[u8; 32],
-    ) -> bundle::Signature {
-        bundle::Signature(self.0.sign(rng, sighash))
-    }
-
-    /// Derive the binding verification (public) key:
-    /// $\mathsf{bvk} = [\mathsf{bsk}]\,\mathcal{R}$.
-    #[must_use]
-    pub fn derive_binding_public(&self) -> public::BindingVerificationKey {
-        public::BindingVerificationKey(reddsa::VerificationKey::from(&self.0))
-    }
-}
-
-impl From<&[value::CommitmentTrapdoor]> for BindingSigningKey {
-    /// BindingAuth signing key is the scalar sum of all value commitment
-    /// trapdoors.
+impl NullifierKey {
+    /// Derive the per-note master root key: $\mathsf{mk} = \text{KDF}(\psi,
+    /// \mathsf{nk})$.
     ///
-    /// Every Pallas scalar field element, including zero, is a valid binding
-    /// signing key. See Zcash protocol §4.14.
-    fn from(trapdoors: &[value::CommitmentTrapdoor]) -> Self {
-        let sum: Fq = trapdoors
-            .iter()
-            .fold(Fq::ZERO, |acc, rcv| acc + Into::<Fq>::into(*rcv));
-        #[expect(
-            clippy::expect_used,
-            reason = "all Fq are valid RedPallas signing keys"
-        )]
-        Self(
-            reddsa::SigningKey::<reddsa::BindingAuth>::try_from(sum.to_repr())
-                .expect("all Fq are valid RedPallas signing keys"),
-        )
+    /// `mk` is the root of the GGM tree for one note. It is used to:
+    /// - Derive nullifiers directly: $\mathsf{nf} =
+    ///   F_{\mathsf{mk}}(\text{flavor})$
+    /// - Derive epoch-restricted prefix keys $\Psi_t$ for OSS delegation
+    #[must_use]
+    pub fn derive_note_private(&self, psi: &NullifierTrapdoor) -> NoteMasterKey {
+        #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
+        let personalization = Fp::from_u128(u128::from_le_bytes(*NOTE_MASTER_DOMAIN));
+        NoteKey {
+            inner: Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
+                personalization,
+                psi.0,
+                self.0,
+            ]),
+            prefix: Master,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for NullifierKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use ff::PrimeField as _;
+
+        serializer.serialize_bytes(&self.0.to_repr())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for NullifierKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use crate::serde_helpers::FpVisitor;
+
+        deserializer.deserialize_bytes(FpVisitor).map(Self)
     }
 }

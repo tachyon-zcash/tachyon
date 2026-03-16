@@ -41,7 +41,7 @@ flowchart TB
     psi["ψ (NullifierTrapdoor)"]
     mk["mk (NoteMasterKey)"]
     nf["nf (Nullifier)"]
-    psi_t["ψ_t (NoteKey‹Prefixed›)"]
+    psi_t["ψ_t (NoteKey‹Prefix›)"]
     kdf(("Poseidon(ψ, nk)"))
 
     nk & psi ---  kdf --> mk
@@ -53,6 +53,6 @@ flowchart TB
 | Key | Rust type | Holder | Capability |
 | --- | --------- | ------ | ---------- |
 | $\mathsf{mk}$ | `NoteMasterKey` | User device | Derive nullifiers for any epoch; derive delegate keys |
-| $\Psi_t$ | `NoteKey<Prefixed>` | OSS | Derive nullifiers for epochs $e \leq t$ only |
+| $\Psi_t$ | `NoteKey<Prefix>` | OSS | Derive nullifiers for epochs $e \leq t$ only |
 
 $\mathsf{mk}$ is ephemeral — the user device derives it from $(\mathsf{nk}, \Psi)$ when needed, never stores or transmits it. The OSS receives only delegate keys, which cannot recover $\mathsf{mk}$ or $\mathsf{nk}$.

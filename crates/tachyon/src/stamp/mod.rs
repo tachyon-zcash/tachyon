@@ -20,14 +20,13 @@ use core::{error::Error, fmt};
 
 use lazy_static::lazy_static;
 use mock_ragu::{Application, ApplicationBuilder};
-pub use proof::Proof;
 use rand_core::CryptoRng;
 
 use self::proof::{ActionStep, ActionWitness, MergeStep, MergeWitness, StampHeader};
 use crate::{
     ActionDigest, Epoch,
     action::Action,
-    keys::ProofAuthorizingKey,
+    keys::delegate::ProofAuthorizingKey,
     primitives::{ActionDigestError, Anchor, Tachygram, multiset::Multiset},
     witness::ActionPrivate,
 };
@@ -38,7 +37,11 @@ pub struct Stampless;
 
 /// Error during stamp verification.
 #[derive(Clone, Debug)]
-pub enum VerificationError {
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "distinct from ragu VerificationError"
+)]
+pub enum StampVerificationError {
     /// An action's cv or rk is the identity point.
     ActionDigest(ActionDigestError),
     /// The proof system returned an error.
@@ -47,7 +50,7 @@ pub enum VerificationError {
     Disproved,
 }
 
-impl fmt::Display for VerificationError {
+impl fmt::Display for StampVerificationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             | &Self::ActionDigest(err) => write!(f, "action digest error: {err}"),
@@ -57,7 +60,7 @@ impl fmt::Display for VerificationError {
     }
 }
 
-impl Error for VerificationError {}
+impl Error for StampVerificationError {}
 
 /// A stamp carrying tachygrams, anchor, and proof.
 ///
@@ -78,14 +81,15 @@ pub struct Stamp {
     pub anchor: Anchor,
 
     /// The Ragu proof bytes.
-    pub proof: Proof,
+    pub proof: mock_ragu::Proof,
 }
 
 impl Stamp {
     /// Creates a leaf stamp for a single action (ACTION STEP).
     ///
-    /// The circuit infers spend vs output by testing `rk` against `[alpha]G`.
-    /// The proof is rerandomized before returning.
+    /// The circuit derives the tachygram and returns it through `Aux` for
+    /// data availability on the stamp. The proof is rerandomized before
+    /// returning.
     ///
     /// Leaf stamps are combined via [`prove_merge`](Self::prove_merge).
     #[expect(clippy::type_complexity, reason = "deal with it")]
@@ -95,7 +99,7 @@ impl Stamp {
         action: &Action,
         anchor: Anchor,
         epoch: Epoch,
-        pak: &ProofAuthorizingKey,
+        proof_key: &ProofAuthorizingKey,
     ) -> Result<(Self, (Multiset<ActionDigest>, Multiset<Tachygram>)), mock_ragu::Error> {
         let app = &PROOF_SYSTEM;
         let (proof, (tachygram, action_acc, tachygram_acc)) = app.seed(
@@ -103,12 +107,12 @@ impl Stamp {
             &ActionStep,
             ActionWitness {
                 action,
-                alpha: witness.alpha,
+                alpha: witness.alpha.into(),
                 note: witness.note,
                 rcv: witness.rcv,
                 anchor,
                 epoch,
-                pak,
+                proof_key,
             },
         )?;
 
@@ -202,11 +206,11 @@ impl Stamp {
         &self,
         actions: &[Action],
         rng: &mut impl CryptoRng,
-    ) -> Result<(), VerificationError> {
+    ) -> Result<(), StampVerificationError> {
         let app = &PROOF_SYSTEM;
 
         let action_commitment = <Multiset<ActionDigest>>::try_from(actions)
-            .map_err(VerificationError::ActionDigest)?
+            .map_err(StampVerificationError::ActionDigest)?
             .commit();
 
         let tachygram_commitment = <Multiset<Tachygram>>::from(self.tachygrams.as_slice()).commit();
@@ -219,12 +223,12 @@ impl Stamp {
 
         let valid = app
             .verify(&pcd, rng)
-            .map_err(|_err| VerificationError::ProofSystem)?;
+            .map_err(|_err| StampVerificationError::ProofSystem)?;
 
         if valid {
             Ok(())
         } else {
-            Err(VerificationError::Disproved)
+            Err(StampVerificationError::Disproved)
         }
     }
 }
@@ -238,71 +242,83 @@ mod tests {
     use super::*;
     use crate::{
         action,
-        keys::private,
+        keys::{custody, delegate::ProofAuthorizingKey},
         note::{self, Note},
-        value,
     };
 
     fn make_spend(
         rng: &mut StdRng,
-        sk: &private::SpendingKey,
+        sk: &custody::SpendingKey,
         value_amount: u64,
-    ) -> (Action, ActionPrivate) {
-        let pak = sk.derive_proof_private();
+    ) -> (Action, ActionPrivate, ProofAuthorizingKey) {
+        let ak = sk.derive_auth_private().derive_auth_public();
+        let nk = sk.derive_nullifier_private();
+        let psi = note::NullifierTrapdoor::from(Fp::ZERO);
+        let mk = nk.derive_note_private(&psi);
+        let epoch = Epoch::from(0u32);
+        let leaf_key = ProofAuthorizingKey {
+            ak,
+            node: mk.derive_leaf(epoch),
+        };
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(value_amount),
-            psi: note::NullifierTrapdoor::from(Fp::ZERO),
+            psi,
             rcm: note::CommitmentTrapdoor::from(Fp::ZERO),
         };
-        let rcv = value::CommitmentTrapdoor::random(rng);
-        let theta = crate::entropy::ActionEntropy::random(rng);
-        let plan = action::Plan::spend(note, theta, rcv, pak.ak());
 
+        let plan = action::Plan::spend(rng, note, &ak);
         let action = Action {
             cv: plan.cv(),
             rk: plan.rk,
             sig: action::Signature::from([0u8; 64]),
         };
 
-        (action, plan.witness())
+        (action, plan.witness(), leaf_key)
     }
 
     fn make_output(
         rng: &mut StdRng,
-        sk: &private::SpendingKey,
+        sk: &custody::SpendingKey,
         value_amount: u64,
-    ) -> (Action, ActionPrivate) {
+    ) -> (Action, ActionPrivate, ProofAuthorizingKey) {
+        let ak = sk.derive_auth_private().derive_auth_public();
+        let nk = sk.derive_nullifier_private();
+        let psi = note::NullifierTrapdoor::from(Fp::ZERO);
+        let mk = nk.derive_note_private(&psi);
+        let epoch = Epoch::from(0u32);
+        let leaf_key = ProofAuthorizingKey {
+            ak,
+            node: mk.derive_leaf(epoch),
+        };
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(value_amount),
-            psi: note::NullifierTrapdoor::from(Fp::ZERO),
+            psi,
             rcm: note::CommitmentTrapdoor::from(Fp::ZERO),
         };
-        let rcv = value::CommitmentTrapdoor::random(rng);
-        let theta = crate::entropy::ActionEntropy::random(rng);
-        let plan = action::Plan::output(note, theta, rcv);
 
+        let plan = action::Plan::output(rng, note);
         let action = Action {
             cv: plan.cv(),
             rk: plan.rk,
             sig: action::Signature::from([0u8; 64]),
         };
 
-        (action, plan.witness())
+        (action, plan.witness(), leaf_key)
     }
 
     #[test]
     fn prove_action_then_verify() {
         let mut rng = StdRng::seed_from_u64(0);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
-        let pak = sk.derive_proof_private();
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action, witness) = make_spend(&mut rng, &sk, 500);
-        let (stamp, _accs) = Stamp::prove_action(&mut rng, &witness, &action, anchor, epoch, &pak)
-            .expect("prove_action");
+        let (action, witness, leaf_key) = make_spend(&mut rng, &sk, 500);
+        let (stamp, _accs) =
+            Stamp::prove_action(&mut rng, &witness, &action, anchor, epoch, &leaf_key)
+                .expect("prove_action");
 
         stamp
             .verify(&[action], &mut rng)
@@ -312,17 +328,16 @@ mod tests {
     #[test]
     fn verify_rejects_wrong_action() {
         let mut rng = StdRng::seed_from_u64(1);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
-        let pak = sk.derive_proof_private();
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action_a, witness_a) = make_spend(&mut rng, &sk, 500);
+        let (action_a, witness_a, leaf_key) = make_spend(&mut rng, &sk, 500);
         let (stamp, _accs) =
-            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &pak)
+            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &leaf_key)
                 .expect("prove_action");
 
-        let (action_b, _witness_b) = make_output(&mut rng, &sk, 200);
+        let (action_b, ..) = make_output(&mut rng, &sk, 200);
 
         assert!(
             stamp.verify(&[action_b], &mut rng).is_err(),
@@ -333,19 +348,18 @@ mod tests {
     #[test]
     fn prove_merge_then_verify() {
         let mut rng = StdRng::seed_from_u64(2);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
-        let pak = sk.derive_proof_private();
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action_a, witness_a) = make_spend(&mut rng, &sk, 500);
+        let (action_a, witness_a, leaf_key) = make_spend(&mut rng, &sk, 500);
         let (stamp_a, accs_a) =
-            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &pak)
+            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &leaf_key)
                 .expect("prove_action a");
 
-        let (action_b, witness_b) = make_output(&mut rng, &sk, 200);
+        let (action_b, witness_b, leaf_key_b) = make_output(&mut rng, &sk, 200);
         let (stamp_b, accs_b) =
-            Stamp::prove_action(&mut rng, &witness_b, &action_b, anchor, epoch, &pak)
+            Stamp::prove_action(&mut rng, &witness_b, &action_b, anchor, epoch, &leaf_key_b)
                 .expect("prove_action b");
 
         let (merged, _merged_accs) =
@@ -360,19 +374,18 @@ mod tests {
     #[test]
     fn merged_stamp_rejects_partial_actions() {
         let mut rng = StdRng::seed_from_u64(3);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
-        let pak = sk.derive_proof_private();
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action_a, witness_a) = make_spend(&mut rng, &sk, 500);
+        let (action_a, witness_a, leaf_key) = make_spend(&mut rng, &sk, 500);
         let (stamp_a, accs_a) =
-            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &pak)
+            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &leaf_key)
                 .expect("prove_action a");
 
-        let (action_b, witness_b) = make_output(&mut rng, &sk, 200);
+        let (action_b, witness_b, leaf_key_b) = make_output(&mut rng, &sk, 200);
         let (stamp_b, accs_b) =
-            Stamp::prove_action(&mut rng, &witness_b, &action_b, anchor, epoch, &pak)
+            Stamp::prove_action(&mut rng, &witness_b, &action_b, anchor, epoch, &leaf_key_b)
                 .expect("prove_action b");
 
         let (merged, _merged_accs) =

@@ -20,37 +20,39 @@
 //!     ask --> ak
 //!     theta["ActionEntropy theta"] -- "randomizer::&lt;Spend&gt;" --> spend_alpha["ActionRandomizer&lt;Spend&gt;"]
 //!     theta -- "randomizer::&lt;Output&gt;" --> output_alpha["ActionRandomizer&lt;Output&gt;"]
-//!     ask -- "derive_action_private(alpha)" --> spend_rsk["ActionSigningKey&lt;Spend&gt;"]
-//!     output_alpha -- "new" --> output_rsk["ActionSigningKey&lt;Output&gt;"]
+//!     ask -- "derive_action_private(alpha)" --> rsk["ActionSigningKey"]
+//!     output_alpha -- "From" --> output_rsk["ActionSigningKey"]
 //!     ak -- "+alpha" --> rk
-//!     spend_rsk -- "derive_action_public()" --> rk
+//!     rsk -- "derive_action_public()" --> rk
 //!     output_rsk -- "derive_action_public()" --> rk
-//!     spend_rsk -- "sign(sighash)" --> sig
+//!     rsk -- "sign(sighash)" --> sig
 //!     output_rsk -- "sign(sighash)" --> sig
 //!     ak & nk --> pak
 //! ```
 //!
-//! ### Private keys ([`private`])
+//! ### Custody keys ([`custody`])
 //!
 //! - `sk`: Root spending key (full authority)
 //! - `ask`: Authorizes spends (long-lived, cannot sign directly)
+//!
+//! ### Planner keys ([`planner`])
+//!
+//! - `ak`: Public counterpart of `ask` (long-lived, cannot verify action sigs)
+//! - `nk`: Observes when funds are spent (nullifier derivation)
+//! - `mk`: Per-note master root key (GGM tree root)
+//! - `pk`: Used in note construction and out-of-band payment protocols
 //! - `bsk = Σrcvᵢ`: Binding signing key (per-bundle)
 //!
 //! ### Public keys ([`public`])
 //!
-//! - `ak`: Public counterpart of `ask` (long-lived, cannot verify action sigs)
 //! - `rk = ak + [alpha]G`: Per-action verification key (can verify, public)
 //! - `bvk`: Binding verification key (derived from value commitments)
 //!
-//! ### Note keys ([`note`])
-//!
-//! - `nk`: Observes when funds are spent (nullifier derivation)
-//! - `pk`: Used in note construction and out-of-band payment protocols
-//!
-//! ### Proof keys ([`proof`])
+//! ### Delegated keys ([`delegate`])
 //!
 //! - `pak`: `ak` + `nk` (proof authorizing key): Authorizes proof construction
 //!   without spend authority
+//! - `ψ_t`: GGM prefix key for epoch-restricted oblivious sync delegation
 //!
 //! ## Nullifier Derivation
 //!
@@ -67,16 +69,13 @@
 //! $e \leq t$, enabling range-restricted delegation without revealing
 //! spend capability.
 
-pub mod private;
+pub mod custody;
+pub mod delegate;
+pub mod planner;
 pub mod public;
 
-mod ggm;
 mod note;
 mod proof;
-
-// Re-exports: public API surface.
-pub use note::{NoteMasterKey, NullifierKey, PaymentKey};
-pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]
 mod tests {
@@ -87,10 +86,9 @@ mod tests {
     use crate::{
         constants::PrfExpand,
         entropy::ActionEntropy,
-        keys::private,
+        keys::custody,
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
-        primitives::Spend,
-        reddsa,
+        primitives::effect,
     };
 
     /// RedPallas requires ak to have tilde_y = 0 (sign bit cleared).
@@ -100,6 +98,8 @@ mod tests {
     #[test]
     fn ask_sign_normalization() {
         use ff::FromUniformBytes as _;
+
+        use crate::reddsa;
 
         let mut rng = StdRng::seed_from_u64(0);
         let mut flipped = 0u32;
@@ -118,7 +118,7 @@ mod tests {
             }
 
             // Verify normalization produces tilde_y = 0.
-            let sk = private::SpendingKey::from(sk_bytes);
+            let sk = custody::SpendingKey::from(sk_bytes);
             let ak = sk.derive_auth_private().derive_auth_public();
             let ak_bytes: [u8; 32] = ak.0.into();
             assert_eq!(ak_bytes[31] >> 7u8, 0u8, "ak sign bit must be 0");
@@ -132,7 +132,7 @@ mod tests {
     /// (different domain separators produce independent keys).
     #[test]
     fn child_keys_independent() {
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let ask_bytes: [u8; 32] = sk.derive_auth_private().derive_auth_public().0.into();
         let nk: Fp = sk.derive_nullifier_private().0;
         let pk: Fp = sk.derive_payment_key().0;
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn rsk_public_equals_ak_derive_action_public() {
         let mut rng = StdRng::seed_from_u64(0);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let ask = sk.derive_auth_private();
         let ak = ask.derive_auth_public();
         let note = Note {
@@ -157,7 +157,7 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fp::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let alpha = theta.randomizer::<Spend>(&note.commitment());
+        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
         let rsk = ask.derive_action_private(&alpha);
 
         let rk_from_signer: [u8; 32] = rsk.derive_action_public().0.into();

@@ -1,4 +1,4 @@
-//! Public (verification) keys.
+//! Public (verification) keys — consensus-visible types.
 
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 

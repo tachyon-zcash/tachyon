@@ -28,17 +28,16 @@ use alloc::vec::Vec;
 use core::{marker::PhantomData, ops::Neg as _};
 
 use ff::PrimeField as _;
-pub use mock_ragu::Proof;
 use mock_ragu::{self, Header, Index, Step, Suffix};
-use pasta_curves::{EqAffine, Fp, group::GroupEncoding as _};
+use pasta_curves::{EqAffine, Fp, Fq, group::GroupEncoding as _};
 
 use crate::{
     action::Action,
-    entropy::{ActionRandomizer, Witness},
-    keys::{ProofAuthorizingKey, private::ActionSigningKey},
+    entropy::ActionRandomizer,
+    keys::{delegate::ProofAuthorizingKey, planner::ActionSigningKey},
     note::Note,
     primitives::{
-        ActionDigest, Anchor, Epoch, Output, Spend, Tachygram,
+        ActionDigest, Anchor, Epoch, Tachygram, effect,
         multiset::{self, Multiset},
     },
     value,
@@ -78,8 +77,8 @@ impl Header for StampHeader {
 pub(crate) struct ActionWitness<'action> {
     /// The authorized action (cv, rk, sig).
     pub(crate) action: &'action Action,
-    /// Action randomizer $\alpha$.
-    pub(crate) alpha: ActionRandomizer<Witness>,
+    /// Action randomizer $\alpha$ for rk derivation (raw scalar).
+    pub(crate) alpha: Fq,
     /// The note being spent or created.
     pub(crate) note: Note,
     /// Value commitment trapdoor.
@@ -88,8 +87,8 @@ pub(crate) struct ActionWitness<'action> {
     pub(crate) anchor: Anchor,
     /// Epoch index for nullifier derivation.
     pub(crate) epoch: Epoch,
-    /// Wallet-wide proof authorizing key.
-    pub(crate) pak: &'action ProofAuthorizingKey,
+    /// Per-note proof key evaluated to a leaf — no tree walking in-circuit.
+    pub(crate) proof_key: &'action ProofAuthorizingKey,
 }
 
 /// Leaf step: produces a proof for a single action.
@@ -112,25 +111,33 @@ impl Step for ActionStep {
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         let note_value: i64 = witness.note.value.into();
 
+        // Constrain epoch: the pre-evaluated leaf must match the claimed epoch.
+        if u32::from(witness.epoch) != witness.proof_key.node.prefix.epoch() {
+            return Err(mock_ragu::Error);
+        }
+
         // output: rk == [alpha]G
         let is_output = witness.action.rk
-            == ActionSigningKey::new(&ActionRandomizer::<Output>(witness.alpha.0, PhantomData))
-                .derive_action_public();
+            == ActionSigningKey::new(&ActionRandomizer::<effect::Output>(
+                witness.alpha,
+                PhantomData,
+            ))
+            .derive_action_public();
 
         // spend: rk == ak + [alpha]G
         let is_spend = witness.action.rk
             == witness
-                .pak
-                .ak()
-                .derive_action_public(&ActionRandomizer::<Spend>(witness.alpha.0, PhantomData));
+                .proof_key
+                .ak
+                .derive_action_public(&ActionRandomizer::<effect::Spend>(
+                    witness.alpha,
+                    PhantomData,
+                ));
 
         let (tachygram, check_cv): (Tachygram, value::Commitment) = match (is_spend, is_output) {
             | (true, false) => {
                 Ok((
-                    witness
-                        .note
-                        .nullifier(witness.pak.nk(), witness.epoch)
-                        .into(),
+                    witness.proof_key.node.derive_nullifier().into(),
                     witness.rcv.commit(note_value),
                 ))
             },

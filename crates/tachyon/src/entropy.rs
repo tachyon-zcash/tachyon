@@ -13,7 +13,7 @@ use rand_core::{CryptoRng, RngCore};
 use crate::{
     constants::{OUTPUT_ALPHA_PERSONALIZATION, SPEND_ALPHA_PERSONALIZATION},
     note,
-    primitives::{Effect, Output, Spend},
+    primitives::effect::{self, Effect},
 };
 
 /// Per-action entropy $\theta$ chosen by the signer (e.g. hardware wallet).
@@ -53,14 +53,14 @@ impl ActionEntropy {
     /// ensure the two randomizers are independent.
     #[must_use]
     #[expect(clippy::unreachable, reason = "Effect is sealed to Spend and Output")]
-    pub fn randomizer<E: Effect>(&self, cm: &note::Commitment) -> ActionRandomizer<E> {
-        if TypeId::of::<E>() == TypeId::of::<Spend>() {
+    pub fn randomizer<E: Effect + 'static>(&self, cm: &note::Commitment) -> ActionRandomizer<E> {
+        if TypeId::of::<E>() == TypeId::of::<effect::Spend>() {
             return ActionRandomizer(
                 derive_alpha(SPEND_ALPHA_PERSONALIZATION, self, cm),
                 PhantomData,
             );
         }
-        if TypeId::of::<E>() == TypeId::of::<Output>() {
+        if TypeId::of::<E>() == TypeId::of::<effect::Output>() {
             return ActionRandomizer(
                 derive_alpha(OUTPUT_ALPHA_PERSONALIZATION, self, cm),
                 PhantomData,
@@ -78,7 +78,7 @@ impl ActionEntropy {
 pub struct Witness;
 
 mod sealed {
-    use crate::primitives::Effect;
+    use crate::primitives::effect::Effect;
 
     pub trait RandomizerState: Copy {}
     impl<T: Effect> RandomizerState for T {}
@@ -149,8 +149,8 @@ mod tests {
         let theta = ActionEntropy::random(&mut rng);
         let cm = test_cm();
 
-        let spend_alpha: Fq = theta.randomizer::<Spend>(&cm).into();
-        let output_alpha: Fq = theta.randomizer::<Output>(&cm).into();
+        let spend_alpha: Fq = theta.randomizer::<effect::Spend>(&cm).into();
+        let output_alpha: Fq = theta.randomizer::<effect::Output>(&cm).into();
 
         assert_ne!(spend_alpha, output_alpha);
     }
@@ -163,12 +163,12 @@ mod tests {
         let cm = test_cm();
 
         // Deterministic: same theta twice
-        let first: Fq = theta_a.randomizer::<Spend>(&cm).into();
-        let second: Fq = theta_a.randomizer::<Spend>(&cm).into();
+        let first: Fq = theta_a.randomizer::<effect::Spend>(&cm).into();
+        let second: Fq = theta_a.randomizer::<effect::Spend>(&cm).into();
         assert_eq!(first, second);
 
         // Sensitive: different theta
-        let other: Fq = theta_b.randomizer::<Spend>(&cm).into();
+        let other: Fq = theta_b.randomizer::<effect::Spend>(&cm).into();
         assert_ne!(first, other);
     }
 }

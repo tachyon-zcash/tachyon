@@ -41,7 +41,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::{
     constants::{NOTE_COMMITMENT_DOMAIN, NOTE_VALUE_MAX},
-    keys::{NullifierKey, PaymentKey},
+    keys::planner::{NoteMasterKey, PaymentKey},
     primitives::{Epoch, Tachygram},
 };
 
@@ -261,14 +261,13 @@ impl Note {
 
     /// Derives a nullifier for this note at the given flavor (epoch).
     ///
-    /// GGM tree PRF:
-    /// 1. $mk = \text{Poseidon}(\psi, nk)$ — master root key (per-note)
-    /// 2. $nf = F_{mk}(\text{flavor})$ — tree walk with bits of flavor
+    /// The master key `mk` is derived by the custody device from `nk` and
+    /// this note's $\psi$ trapdoor. The GGM tree PRF then evaluates:
+    /// $\mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$
     ///
     /// The same note at different flavors produces different nullifiers.
     #[must_use]
-    pub fn nullifier(&self, nk: &NullifierKey, flavor: Epoch) -> Nullifier {
-        let mk = nk.derive_note_private(&self.psi);
+    pub fn nullifier(&self, mk: &NoteMasterKey, flavor: Epoch) -> Nullifier {
         mk.derive_nullifier(flavor)
     }
 }
@@ -420,7 +419,7 @@ mod tests {
     /// `Note::nullifier` delegates correctly to key derivation.
     #[test]
     fn note_nullifier_matches_key_derivation() {
-        use crate::{keys::private::SpendingKey, primitives::Epoch};
+        use crate::{keys::custody::SpendingKey, primitives::Epoch};
 
         let sk = SpendingKey::from([0x42u8; 32]);
         let nk = sk.derive_nullifier_private();
@@ -434,6 +433,6 @@ mod tests {
         let flavor = Epoch::from(5u32);
 
         let mk = nk.derive_note_private(&psi);
-        assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));
+        assert_eq!(note.nullifier(&mk, flavor), mk.derive_nullifier(flavor));
     }
 }
