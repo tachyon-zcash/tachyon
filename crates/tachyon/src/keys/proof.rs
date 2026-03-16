@@ -3,7 +3,7 @@
 use reddsa::orchard::SpendAuth;
 
 use super::{note::NullifierKey, public};
-use crate::entropy::SpendRandomizer;
+use crate::entropy::Randomizer;
 
 /// The proof authorizing key (`ak` + `nk`).
 ///
@@ -66,7 +66,7 @@ impl SpendValidatingKey {
     /// Derive the per-action public (verification) key: $\mathsf{rk} =
     /// \mathsf{ak} + [\alpha]\,\mathcal{G}$.
     ///
-    /// Only accepts [`SpendRandomizer`] — output actions derive `rk` via
+    /// Only accepts [`Randomizer<Spend>`] — output actions derive `rk` via
     /// [`ActionSigningKey<Output>::derive_action_public`](super::private::ActionSigningKey::derive_action_public)
     /// instead.
     ///
@@ -77,7 +77,10 @@ impl SpendValidatingKey {
     /// [`ActionSigningKey<Spend>::derive_action_public`](super::private::ActionSigningKey::derive_action_public)
     /// instead.
     #[must_use]
-    pub fn derive_action_public(&self, alpha: &SpendRandomizer) -> public::ActionVerificationKey {
+    pub fn derive_action_public(
+        &self,
+        alpha: &Randomizer<crate::action::Spend>,
+    ) -> public::ActionVerificationKey {
         public::ActionVerificationKey(self.0.randomize(&alpha.0))
     }
 }

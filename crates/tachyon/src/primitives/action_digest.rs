@@ -9,8 +9,7 @@ use pasta_curves::{
 };
 
 use crate::{
-    Action, action::Plan as ActionPlan, constants::ACTION_DIGEST_PERSONALIZATION, keys::public,
-    value,
+    Action, action, constants::ACTION_DIGEST_PERSONALIZATION, keys::public, value,
 };
 
 /// Digest a single action into the accumulation domain.
@@ -87,20 +86,19 @@ impl From<ActionDigest> for Fp {
     }
 }
 
-impl TryFrom<&ActionPlan> for ActionDigest {
+impl TryFrom<&action::Plan<action::Spend>> for ActionDigest {
     type Error = ActionDigestError;
 
-    fn try_from(plan: &ActionPlan) -> Result<Self, Self::Error> {
-        let cv_coords = EpAffine::from(plan.cv())
-            .coordinates()
-            .into_option()
-            .ok_or(ActionDigestError::IdentityCv)?;
-        let rk_coords = EpAffine::from(plan.rk)
-            .coordinates()
-            .into_option()
-            .ok_or(ActionDigestError::IdentityRk)?;
+    fn try_from(plan: &action::Plan<action::Spend>) -> Result<Self, Self::Error> {
+        ActionDigest::new(plan.cv(), plan.rk)
+    }
+}
 
-        Ok(digest_action(cv_coords, rk_coords))
+impl TryFrom<&action::Plan<action::Output>> for ActionDigest {
+    type Error = ActionDigestError;
+
+    fn try_from(plan: &action::Plan<action::Output>) -> Result<Self, Self::Error> {
+        ActionDigest::new(plan.cv(), plan.rk)
     }
 }
 
@@ -188,10 +186,11 @@ mod tests {
             rcm: CommitmentTrapdoor::from(rcm),
         };
         let rcv = value::CommitmentTrapdoor::random(rng);
-        let cv = rcv.commit_spend(note);
+        let value: i64 = note.value.into();
+        let cv = rcv.commit(value);
         let theta = ActionEntropy::random(rng);
         let alpha = theta.output_randomizer(&note.commitment());
-        let rk = private::ActionSigningKey::new(alpha).derive_action_public();
+        let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         (cv, rk)
     }
 

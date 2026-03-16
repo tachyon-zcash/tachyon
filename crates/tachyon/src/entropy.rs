@@ -1,14 +1,17 @@
 //! Per-action randomizers and entropy.
 //!
 //! [`ActionEntropy`] ($\theta$) is per-action randomness chosen by the signer.
-//! Combined with a note commitment it deterministically derives
-//! [`SpendRandomizer`] or [`OutputRandomizer`].
+//! Combined with a note commitment it deterministically derives a
+//! [`Randomizer`].
+
+use core::marker::PhantomData;
 
 use ff::{FromUniformBytes as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
+    primitives::{Output, Effect, Spend},
     constants::{OUTPUT_ALPHA_PERSONALIZATION, SPEND_ALPHA_PERSONALIZATION},
     note,
 };
@@ -47,51 +50,28 @@ impl ActionEntropy {
 
     /// Derive $\alpha$ for a spend action.
     #[must_use]
-    pub fn spend_randomizer(&self, cm: &note::Commitment) -> SpendRandomizer {
-        SpendRandomizer(derive_alpha(SPEND_ALPHA_PERSONALIZATION, self, cm))
+    pub fn spend_randomizer(&self, cm: &note::Commitment) -> Randomizer<Spend> {
+        Randomizer(derive_alpha(SPEND_ALPHA_PERSONALIZATION, self, cm), PhantomData)
     }
 
     /// Derive $\alpha$ for an output action.
     #[must_use]
-    pub fn output_randomizer(&self, cm: &note::Commitment) -> OutputRandomizer {
-        OutputRandomizer(derive_alpha(OUTPUT_ALPHA_PERSONALIZATION, self, cm))
+    pub fn output_randomizer(&self, cm: &note::Commitment) -> Randomizer<Output> {
+        Randomizer(derive_alpha(OUTPUT_ALPHA_PERSONALIZATION, self, cm), PhantomData)
     }
 }
 
-/// Spend-side randomizer $\alpha$ derived with spend personalization.
+/// Per-action randomizer $\alpha$, parameterized by plan effect.
 ///
-/// $\mathsf{rsk} = \mathsf{ask} + \alpha$, $\mathsf{rk} = \mathsf{ak} +
-/// [\alpha]\,\mathcal{G}$.
+/// - [`Randomizer<Spend>`]: $\mathsf{rsk} = \mathsf{ask} + \alpha$,
+///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
+/// - [`Randomizer<Output>`]: $\mathsf{rsk} = \alpha$.
 #[derive(Clone, Copy, Debug)]
-pub struct SpendRandomizer(pub(crate) Fq);
+pub struct Randomizer<E: Effect>(pub(crate) Fq, pub(crate) PhantomData<E>);
 
-/// Output-side randomizer $\alpha$ derived with output personalization.
-///
-/// $\mathsf{rsk} = \alpha$.
-#[derive(Clone, Copy, Debug)]
-pub struct OutputRandomizer(pub(crate) Fq);
-
-/// Bare $\alpha$ scalar for proof witness storage.
-///
-/// Spend and output are indistinguishable at the witness level.
-#[derive(Clone, Copy, Debug)]
-pub struct ActionRandomizer(Fq);
-
-impl From<ActionRandomizer> for Fq {
-    fn from(randomizer: ActionRandomizer) -> Self {
+impl<E: Effect> From<Randomizer<E>> for Fq {
+    fn from(randomizer: Randomizer<E>) -> Self {
         randomizer.0
-    }
-}
-
-impl From<SpendRandomizer> for ActionRandomizer {
-    fn from(alpha: SpendRandomizer) -> Self {
-        Self(alpha.0)
-    }
-}
-
-impl From<OutputRandomizer> for ActionRandomizer {
-    fn from(alpha: OutputRandomizer) -> Self {
-        Self(alpha.0)
     }
 }
 
@@ -120,7 +100,7 @@ fn derive_alpha(personalization: &[u8], theta: &ActionEntropy, cm: &note::Commit
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
-    use pasta_curves::{Fp, Fq};
+    use pasta_curves::Fq;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
@@ -138,8 +118,8 @@ mod tests {
         let theta = ActionEntropy::random(&mut rng);
         let cm = test_cm();
 
-        let spend_alpha: Fq = ActionRandomizer::from(theta.spend_randomizer(&cm)).into();
-        let output_alpha: Fq = ActionRandomizer::from(theta.output_randomizer(&cm)).into();
+        let spend_alpha: Fq = theta.spend_randomizer(&cm).into();
+        let output_alpha: Fq = theta.output_randomizer(&cm).into();
 
         assert_ne!(spend_alpha, output_alpha);
     }
@@ -152,12 +132,12 @@ mod tests {
         let cm = test_cm();
 
         // Deterministic: same theta twice
-        let first: Fq = ActionRandomizer::from(theta_a.spend_randomizer(&cm)).into();
-        let second: Fq = ActionRandomizer::from(theta_a.spend_randomizer(&cm)).into();
+        let first: Fq = theta_a.spend_randomizer(&cm).into();
+        let second: Fq = theta_a.spend_randomizer(&cm).into();
         assert_eq!(first, second);
 
         // Sensitive: different theta
-        let other: Fq = ActionRandomizer::from(theta_b.spend_randomizer(&cm)).into();
+        let other: Fq = theta_b.spend_randomizer(&cm).into();
         assert_ne!(first, other);
     }
 }

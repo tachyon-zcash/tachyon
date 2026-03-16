@@ -19,8 +19,8 @@
 //!
 //! ## Proving
 //!
-//! The prover supplies an [`ActionPrivate`] per action, containing private
-//! inputs that the circuit checks against the public action and tachygram.
+//! The prover supplies private inputs (note, value commitment trapdoor) per
+//! action that the circuit checks against the public action and tachygram.
 
 extern crate alloc;
 
@@ -31,14 +31,18 @@ pub use mock_ragu::Proof;
 use mock_ragu::{self, Header, Index, Step, Suffix};
 use pasta_curves::{EqAffine, Fp, group::GroupEncoding as _};
 
+use pasta_curves::Fq;
+
 use crate::{
-    action::{Action, Effect},
-    keys::ProofAuthorizingKey,
+    action::{self, Action},
+    entropy::Randomizer,
+    keys::{ProofAuthorizingKey, private},
+    note::Note,
     primitives::{
         ActionDigest, Anchor, Epoch, Tachygram,
         multiset::{self, Multiset},
     },
-    witness::ActionPrivate,
+    value,
 };
 
 /// PCD header type for Tachyon stamps.
@@ -75,10 +79,12 @@ impl Header for StampHeader {
 pub(crate) struct ActionWitness<'action> {
     /// The authorized action (cv, rk, sig).
     pub(crate) action: &'action Action,
-    /// Private witness (note, alpha, rcv).
-    pub(crate) witness: &'action ActionPrivate,
-    /// Whether this is a spend or output.
-    pub(crate) effect: Effect,
+    /// Action randomizer $\alpha$ for rk derivation (raw scalar).
+    pub(crate) alpha: Fq,
+    /// The note being spent or created.
+    pub(crate) note: Note,
+    /// Value commitment trapdoor.
+    pub(crate) rcv: value::CommitmentTrapdoor,
     /// Accumulator state reference.
     pub(crate) anchor: Anchor,
     /// Epoch index for nullifier derivation.
@@ -105,20 +111,39 @@ impl Step for ActionStep {
         _left: <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        // Derive tachygram (the raw value stays inside the circuit; the caller
-        // receives it through Aux for data availability on the stamp).
-        let tachygram: Tachygram = match witness.effect {
-            | Effect::Spend => {
-                let nf = witness
-                    .witness
-                    .note
-                    .nullifier(witness.pak.nk(), witness.epoch);
-                nf.into()
-            },
-            | Effect::Output => {
-                let cm = witness.witness.note.commitment();
-                cm.into()
-            },
+        // Determine effect from the sign of the value commitment.
+        // Exactly one must match (XOR).
+        let value: i64 = witness.note.value.into();
+        let is_spend = witness.rcv.commit(value) == witness.action.cv;
+        let is_output = witness.rcv.commit(-value) == witness.action.cv;
+        assert!(
+            is_spend ^ is_output,
+            "cv must match exactly one of spend or output commitment"
+        );
+
+        // Verify rk derivation from alpha.
+        let expected_rk = if is_spend {
+            // rk = ak + [alpha]G
+            let alpha = Randomizer::<action::Spend>(witness.alpha, core::marker::PhantomData);
+            witness.pak.ak().derive_action_public(&alpha)
+        } else {
+            // rk = [alpha]G
+            let alpha = Randomizer::<action::Output>(witness.alpha, core::marker::PhantomData);
+            private::ActionSigningKey::new(&alpha).derive_action_public()
+        };
+        assert!(
+            witness.action.rk == expected_rk,
+            "rk must match derivation from alpha"
+        );
+
+        let tachygram: Tachygram = if is_spend {
+            let nf = witness
+                .note
+                .nullifier(witness.pak.nk(), witness.epoch);
+            nf.into()
+        } else {
+            let cm = witness.note.commitment();
+            cm.into()
         };
 
         let action_acc = ActionDigest::try_from(witness.action)

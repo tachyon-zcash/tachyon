@@ -90,11 +90,10 @@ impl Stamp {
     ///
     /// Leaf stamps are combined via [`prove_merge`](Self::prove_merge).
     #[expect(clippy::type_complexity, reason = "deal with it")]
-    pub fn prove_action<RNG: CryptoRng>(
+    pub fn prove_action<E: Effect, RNG: CryptoRng>(
         rng: &mut RNG,
-        witness: &ActionPrivate,
+        witness: &ActionPrivate<E>,
         action: &Action,
-        effect: Effect,
         anchor: Anchor,
         epoch: Epoch,
         pak: &ProofAuthorizingKey,
@@ -105,8 +104,9 @@ impl Stamp {
             &ActionStep,
             ActionWitness {
                 action,
-                witness,
-                effect,
+                alpha: witness.alpha.0,
+                note: witness.note,
+                rcv: witness.rcv,
                 anchor,
                 epoch,
                 pak,
@@ -236,47 +236,55 @@ mod tests {
 
     use super::*;
     use crate::{
-        action,
-        entropy::{ActionEntropy, ActionRandomizer},
+        action::{self, Spend, Output},
+        entropy::ActionEntropy,
         keys::private,
         note::{self, Note},
         value,
     };
 
-    fn make_action_and_witness(
-        rng: &mut StdRng,
-        sk: &private::SpendingKey,
-        value_amount: u64,
-        effect: Effect,
-    ) -> (Action, ActionPrivate) {
-        let pak = sk.derive_proof_private();
-        let note = Note {
+    fn test_note(sk: &private::SpendingKey, value_amount: u64) -> Note {
+        Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(value_amount),
             psi: note::NullifierTrapdoor::from(Fp::ZERO),
             rcm: note::CommitmentTrapdoor::from(Fp::ZERO),
-        };
+        }
+    }
+
+    fn make_spend(
+        rng: &mut StdRng,
+        sk: &private::SpendingKey,
+        value_amount: u64,
+    ) -> (Action, ActionPrivate<Spend>) {
+        let pak = sk.derive_proof_private();
+        let note = test_note(sk, value_amount);
         let rcv = value::CommitmentTrapdoor::random(rng);
         let theta = ActionEntropy::random(rng);
-
-        let plan = match effect {
-            | Effect::Spend => action::Plan::spend_with(note, theta, rcv, pak.ak()),
-            | Effect::Output => action::Plan::output_with(note, theta, rcv),
-        };
-
+        let plan = action::Plan::spend_with(note, theta, rcv, pak.ak());
         let action = Action {
             cv: plan.cv(),
             rk: plan.rk,
             sig: action::Signature::from([0u8; 64]),
         };
+        (action, plan.witness())
+    }
 
-        let witness = ActionPrivate {
-            alpha: ActionRandomizer::from(theta.spend_randomizer(&note.commitment())),
-            note,
-            rcv,
+    fn make_output(
+        rng: &mut StdRng,
+        sk: &private::SpendingKey,
+        value_amount: u64,
+    ) -> (Action, ActionPrivate<Output>) {
+        let note = test_note(sk, value_amount);
+        let rcv = value::CommitmentTrapdoor::random(rng);
+        let theta = ActionEntropy::random(rng);
+        let plan = action::Plan::output_with(note, theta, rcv);
+        let action = Action {
+            cv: plan.cv(),
+            rk: plan.rk,
+            sig: action::Signature::from([0u8; 64]),
         };
-
-        (action, witness)
+        (action, plan.witness())
     }
 
     #[test]
@@ -287,17 +295,10 @@ mod tests {
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action, witness) = make_action_and_witness(&mut rng, &sk, 500, Effect::Spend);
-        let (stamp, _accs) = Stamp::prove_action(
-            &mut rng,
-            &witness,
-            &action,
-            Effect::Spend,
-            anchor,
-            epoch,
-            &pak,
-        )
-        .expect("prove_action");
+        let (action, witness) = make_spend(&mut rng, &sk, 500);
+        let (stamp, _accs) =
+            Stamp::prove_action(&mut rng, &witness, &action, anchor, epoch, &pak)
+                .expect("prove_action");
 
         stamp
             .verify(
@@ -315,19 +316,12 @@ mod tests {
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action_a, witness_a) = make_action_and_witness(&mut rng, &sk, 500, Effect::Spend);
-        let (stamp, _accs) = Stamp::prove_action(
-            &mut rng,
-            &witness_a,
-            &action_a,
-            Effect::Spend,
-            anchor,
-            epoch,
-            &pak,
-        )
-        .expect("prove_action");
+        let (action_a, witness_a) = make_spend(&mut rng, &sk, 500);
+        let (stamp, _accs) =
+            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &pak)
+                .expect("prove_action");
 
-        let (action_b, _witness_b) = make_action_and_witness(&mut rng, &sk, 200, Effect::Output);
+        let (action_b, _witness_b) = make_output(&mut rng, &sk, 200);
 
         assert!(
             stamp
@@ -348,29 +342,15 @@ mod tests {
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action_a, witness_a) = make_action_and_witness(&mut rng, &sk, 500, Effect::Spend);
-        let (stamp_a, accs_a) = Stamp::prove_action(
-            &mut rng,
-            &witness_a,
-            &action_a,
-            Effect::Spend,
-            anchor,
-            epoch,
-            &pak,
-        )
-        .expect("prove_action a");
+        let (action_a, witness_a) = make_spend(&mut rng, &sk, 500);
+        let (stamp_a, accs_a) =
+            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &pak)
+                .expect("prove_action a");
 
-        let (action_b, witness_b) = make_action_and_witness(&mut rng, &sk, 200, Effect::Output);
-        let (stamp_b, accs_b) = Stamp::prove_action(
-            &mut rng,
-            &witness_b,
-            &action_b,
-            Effect::Output,
-            anchor,
-            epoch,
-            &pak,
-        )
-        .expect("prove_action b");
+        let (action_b, witness_b) = make_output(&mut rng, &sk, 200);
+        let (stamp_b, accs_b) =
+            Stamp::prove_action(&mut rng, &witness_b, &action_b, anchor, epoch, &pak)
+                .expect("prove_action b");
 
         let (merged, _merged_accs) =
             Stamp::prove_merge(&mut rng, stamp_a, accs_a.0, stamp_b, accs_b.0)
@@ -392,29 +372,15 @@ mod tests {
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action_a, witness_a) = make_action_and_witness(&mut rng, &sk, 500, Effect::Spend);
-        let (stamp_a, accs_a) = Stamp::prove_action(
-            &mut rng,
-            &witness_a,
-            &action_a,
-            Effect::Spend,
-            anchor,
-            epoch,
-            &pak,
-        )
-        .expect("prove_action a");
+        let (action_a, witness_a) = make_spend(&mut rng, &sk, 500);
+        let (stamp_a, accs_a) =
+            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &pak)
+                .expect("prove_action a");
 
-        let (action_b, witness_b) = make_action_and_witness(&mut rng, &sk, 200, Effect::Output);
-        let (stamp_b, accs_b) = Stamp::prove_action(
-            &mut rng,
-            &witness_b,
-            &action_b,
-            Effect::Output,
-            anchor,
-            epoch,
-            &pak,
-        )
-        .expect("prove_action b");
+        let (action_b, witness_b) = make_output(&mut rng, &sk, 200);
+        let (stamp_b, accs_b) =
+            Stamp::prove_action(&mut rng, &witness_b, &action_b, anchor, epoch, &pak)
+                .expect("prove_action b");
 
         let (merged, _merged_accs) =
             Stamp::prove_merge(&mut rng, stamp_a, accs_a.0, stamp_b, accs_b.0)

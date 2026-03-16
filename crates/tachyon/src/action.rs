@@ -1,33 +1,23 @@
 //! Tachyon Action descriptions.
 
-use core::{error::Error, fmt};
+use core::marker::PhantomData;
 
 use reddsa::orchard::SpendAuth;
 
+pub use crate::primitives::{Effect, Output, Spend};
 use crate::{
-    entropy::{ActionEntropy, ActionRandomizer},
+    entropy::ActionEntropy,
     keys::{SpendValidatingKey, private, public},
     note::Note,
     value,
     witness::ActionPrivate,
 };
 
-/// Whether an action plan represents a spend or an output.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Effect {
-    /// Spend — signed with
-    /// [`SpendAuthorizingKey::derive_action_private`](private::SpendAuthorizingKey::derive_action_private).
-    Spend,
-    /// Output — signed via
-    /// [`ActionSigningKey<Output>::sign`](private::ActionSigningKey::sign).
-    Output,
-}
-
 /// A planned Tachyon action, not yet authorized.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Plan {
+#[cfg_attr(feature = "serde", serde(bound = ""))]
+pub struct Plan<E: Effect> {
     /// Randomized action verification key.
     pub rk: public::ActionVerificationKey,
     /// The note being spent or created.
@@ -36,11 +26,17 @@ pub struct Plan {
     pub theta: ActionEntropy,
     /// Value commitment trapdoor.
     pub rcv: value::CommitmentTrapdoor,
-    /// Spend or output.
-    pub effect: Effect,
+    _effect: PhantomData<E>,
 }
 
-impl Plan {
+impl Plan<Spend> {
+    /// Derive the value commitment: $\mathsf{cv} = [+v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$.
+    #[must_use]
+    pub fn cv(&self) -> value::Commitment {
+        let value: i64 = self.note.value.into();
+        self.rcv.commit(value)
+    }
+
     /// Assemble a spend action plan with given entropy and trapdoor.
     #[must_use]
     pub fn spend_with(
@@ -58,24 +54,7 @@ impl Plan {
             note,
             theta,
             rcv,
-            effect: Effect::Spend,
-        }
-    }
-
-    /// Assemble an output action plan with given entropy and trapdoor.
-    #[must_use]
-    pub fn output_with(note: Note, theta: ActionEntropy, rcv: value::CommitmentTrapdoor) -> Self {
-        let cm = note.commitment();
-        let alpha = theta.output_randomizer(&cm);
-        let rsk = private::ActionSigningKey::new(alpha);
-        let rk = rsk.derive_action_public();
-
-        Self {
-            rk,
-            note,
-            theta,
-            rcv,
-            effect: Effect::Output,
+            _effect: PhantomData,
         }
     }
 
@@ -93,6 +72,43 @@ impl Plan {
         )
     }
 
+    /// Assemble the proof witness for this action plan.
+    #[must_use]
+    pub fn witness(&self) -> ActionPrivate<Spend> {
+        let cm = self.note.commitment();
+        ActionPrivate {
+            alpha: self.theta.spend_randomizer(&cm),
+            note: self.note,
+            rcv: self.rcv,
+        }
+    }
+}
+
+impl Plan<Output> {
+    /// Derive the value commitment: $\mathsf{cv} = [-v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$.
+    #[must_use]
+    pub fn cv(&self) -> value::Commitment {
+        let value: i64 = self.note.value.into();
+        self.rcv.commit(-value)
+    }
+
+    /// Assemble an output action plan with given entropy and trapdoor.
+    #[must_use]
+    pub fn output_with(note: Note, theta: ActionEntropy, rcv: value::CommitmentTrapdoor) -> Self {
+        let cm = note.commitment();
+        let alpha = theta.output_randomizer(&cm);
+        let rsk = private::ActionSigningKey::new(&alpha);
+        let rk = rsk.derive_action_public();
+
+        Self {
+            rk,
+            note,
+            theta,
+            rcv,
+            _effect: PhantomData,
+        }
+    }
+
     /// Assemble an output action plan with random entropy and trapdoor.
     pub fn output(rng: &mut (impl rand_core::RngCore + rand_core::CryptoRng), note: Note) -> Self {
         Self::output_with(
@@ -104,42 +120,15 @@ impl Plan {
 
     /// Assemble the proof witness for this action plan.
     #[must_use]
-    pub fn witness(&self) -> ActionPrivate {
+    pub fn witness(&self) -> ActionPrivate<Output> {
         let cm = self.note.commitment();
-        let alpha = match self.effect {
-            | Effect::Spend => ActionRandomizer::from(self.theta.spend_randomizer(&cm)),
-            | Effect::Output => ActionRandomizer::from(self.theta.output_randomizer(&cm)),
-        };
         ActionPrivate {
-            alpha,
+            alpha: self.theta.output_randomizer(&cm),
             note: self.note,
             rcv: self.rcv,
         }
     }
-
-    /// Derive the value commitment of this action plan.
-    ///
-    /// $$\mathsf{cv} = [\pm v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
-    #[must_use]
-    pub fn cv(&self) -> value::Commitment {
-        match self.effect {
-            | Effect::Spend => self.rcv.commit_spend(self.note),
-            | Effect::Output => self.rcv.commit_output(self.note),
-        }
-    }
 }
-
-/// The plan's effect does not match the signing key's authority.
-#[derive(Clone, Copy, Debug)]
-pub struct EffectMismatch;
-
-impl fmt::Display for EffectMismatch {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "plan effect does not match signing key authority")
-    }
-}
-
-impl Error for EffectMismatch {}
 
 /// An authorized Tachyon action.
 ///

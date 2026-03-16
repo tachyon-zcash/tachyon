@@ -18,10 +18,10 @@
 //!     sighash["sighash &amp;[u8; 32]"]
 //!     sk --> ask & nk & pk
 //!     ask --> ak
-//!     theta["ActionEntropy theta"] -- spend_randomizer --> spend_alpha["SpendRandomizer"]
-//!     theta -- output_randomizer --> output_alpha["OutputRandomizer"]
+//!     theta["ActionEntropy theta"] -- spend_randomizer --> spend_alpha["Randomizer&lt;Spend&gt;"]
+//!     theta -- output_randomizer --> output_alpha["Randomizer&lt;Output&gt;"]
 //!     ask -- "derive_action_private(alpha)" --> spend_rsk["ActionSigningKey&lt;Spend&gt;"]
-//!     output_alpha -- "From" --> output_rsk["ActionSigningKey&lt;Output&gt;"]
+//!     output_alpha -- "new" --> output_rsk["ActionSigningKey&lt;Output&gt;"]
 //!     ak -- "+alpha" --> rk
 //!     spend_rsk -- "derive_action_public()" --> rk
 //!     output_rsk -- "derive_action_public()" --> rk
