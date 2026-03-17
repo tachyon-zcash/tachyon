@@ -25,6 +25,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::{marker::PhantomData, ops::Neg as _};
 
 use ff::PrimeField as _;
 pub use mock_ragu::Proof;
@@ -32,13 +33,15 @@ use mock_ragu::{self, Header, Index, Step, Suffix};
 use pasta_curves::{EqAffine, Fp, group::GroupEncoding as _};
 
 use crate::{
-    action::{Action, Effect},
-    keys::ProofAuthorizingKey,
+    action::Action,
+    entropy::{ActionRandomizer, Witness},
+    keys::{ProofAuthorizingKey, private::ActionSigningKey},
+    note::Note,
     primitives::{
-        ActionDigest, Anchor, Epoch, Tachygram,
+        ActionDigest, Anchor, Epoch, Output, Spend, Tachygram,
         multiset::{self, Multiset},
     },
-    witness::ActionPrivate,
+    value,
 };
 
 /// PCD header type for Tachyon stamps.
@@ -75,10 +78,12 @@ impl Header for StampHeader {
 pub(crate) struct ActionWitness<'action> {
     /// The authorized action (cv, rk, sig).
     pub(crate) action: &'action Action,
-    /// Private witness (note, alpha, rcv).
-    pub(crate) witness: &'action ActionPrivate,
-    /// Whether this is a spend or output.
-    pub(crate) effect: Effect,
+    /// Action randomizer $\alpha$.
+    pub(crate) alpha: ActionRandomizer<Witness>,
+    /// The note being spent or created.
+    pub(crate) note: Note,
+    /// Value commitment trapdoor.
+    pub(crate) rcv: value::CommitmentTrapdoor,
     /// Accumulator state reference.
     pub(crate) anchor: Anchor,
     /// Epoch index for nullifier derivation.
@@ -105,32 +110,55 @@ impl Step for ActionStep {
         _left: <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        // Derive tachygram (the raw value stays inside the circuit; the caller
-        // receives it through Aux for data availability on the stamp).
-        let tachygram: Tachygram = match witness.effect {
-            | Effect::Spend => {
-                let nf = witness
-                    .witness
-                    .note
-                    .nullifier(witness.pak.nk(), witness.epoch);
-                nf.into()
+        let note_value: i64 = witness.note.value.into();
+
+        // output: rk == [alpha]G
+        let is_output = witness.action.rk
+            == ActionSigningKey::new(&ActionRandomizer::<Output>(witness.alpha.0, PhantomData))
+                .derive_action_public();
+
+        // spend: rk == ak + [alpha]G
+        let is_spend = witness.action.rk
+            == witness
+                .pak
+                .ak()
+                .derive_action_public(&ActionRandomizer::<Spend>(witness.alpha.0, PhantomData));
+
+        let (tachygram, check_cv): (Tachygram, value::Commitment) = match (is_spend, is_output) {
+            | (true, false) => {
+                Ok((
+                    witness
+                        .note
+                        .nullifier(witness.pak.nk(), witness.epoch)
+                        .into(),
+                    witness.rcv.commit(note_value),
+                ))
             },
-            | Effect::Output => {
-                let cm = witness.witness.note.commitment();
-                cm.into()
+            | (false, true) => {
+                // constrain cv: output commits negative value
+                Ok((
+                    witness.note.commitment().into(),
+                    witness.rcv.commit(note_value.neg()),
+                ))
             },
-        };
+            | (true, true) | (false, false) => Err(mock_ragu::Error),
+        }?;
+
+        // constrain cv
+        if witness.action.cv != check_cv {
+            return Err(mock_ragu::Error);
+        }
 
         let action_acc = ActionDigest::try_from(witness.action)
             .map(Multiset::<ActionDigest>::from)
             .map_err(|_err| mock_ragu::Error)?;
-        let action_commitment = action_acc.commit();
 
         let tachygram_acc = Multiset::<Tachygram>::from(tachygram);
-        let tachygram_commitment = tachygram_acc.commit();
 
-        let header = (action_commitment, tachygram_commitment, witness.anchor);
-        Ok((header, (tachygram, action_acc, tachygram_acc)))
+        Ok((
+            (action_acc.commit(), tachygram_acc.commit(), witness.anchor),
+            (tachygram, action_acc, tachygram_acc),
+        ))
     }
 }
 

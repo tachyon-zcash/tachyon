@@ -1,9 +1,7 @@
 //! Proof-related keys: ProofAuthorizingKey.
 
-use reddsa::orchard::SpendAuth;
-
 use super::{note::NullifierKey, public};
-use crate::entropy::SpendRandomizer;
+use crate::{entropy::ActionRandomizer, primitives::Spend, reddsa};
 
 /// The proof authorizing key (`ak` + `nk`).
 ///
@@ -11,7 +9,8 @@ use crate::entropy::SpendRandomizer;
 /// construct proofs for all notes (since `nk` is wallet-wide) but cannot
 /// sign actions.
 ///
-/// Derived from [`SpendAuthorizingKey`](super::SpendAuthorizingKey) $\to$
+/// Derived from
+/// [`reddsa::ActionAuthorizingKey`](super::reddsa::ActionAuthorizingKey) $\to$
 /// [`SpendValidatingKey`] and [`NullifierKey`].
 ///
 /// ## Status
@@ -46,7 +45,7 @@ impl ProofAuthorizingKey {
 
 /// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\,\mathcal{G}$ —
 /// the long-lived counterpart of
-/// [`SpendAuthorizingKey`](super::SpendAuthorizingKey).
+/// [`reddsa::ActionAuthorizingKey`](super::reddsa::ActionAuthorizingKey).
 ///
 /// Corresponds to the "spend validating key" in Orchard (§4.2.3).
 /// Constrains per-action `rk` in the proof, tying accumulator activity
@@ -60,13 +59,14 @@ impl ProofAuthorizingKey {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct SpendValidatingKey(pub(super) reddsa::VerificationKey<SpendAuth>);
+pub struct SpendValidatingKey(pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>);
 
 impl SpendValidatingKey {
     /// Derive the per-action public (verification) key: $\mathsf{rk} =
     /// \mathsf{ak} + [\alpha]\,\mathcal{G}$.
     ///
-    /// Only accepts [`SpendRandomizer`] — output actions derive `rk` via
+    /// Only accepts [`ActionRandomizer<Spend>`] — output actions derive `rk`
+    /// via
     /// [`ActionSigningKey<Output>::derive_action_public`](super::private::ActionSigningKey::derive_action_public)
     /// instead.
     ///
@@ -77,7 +77,10 @@ impl SpendValidatingKey {
     /// [`ActionSigningKey<Spend>::derive_action_public`](super::private::ActionSigningKey::derive_action_public)
     /// instead.
     #[must_use]
-    pub fn derive_action_public(&self, alpha: &SpendRandomizer) -> public::ActionVerificationKey {
+    pub fn derive_action_public(
+        &self,
+        alpha: &ActionRandomizer<Spend>,
+    ) -> public::ActionVerificationKey {
         public::ActionVerificationKey(self.0.randomize(&alpha.0))
     }
 }

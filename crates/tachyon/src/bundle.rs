@@ -9,13 +9,12 @@
 
 use alloc::vec::Vec;
 
-use reddsa::orchard::Binding;
-
 use crate::{
     action::{self, Action},
     constants::BUNDLE_COMMITMENT_PERSONALIZATION,
     keys::{private, public},
-    primitives::{ActionDigest, ActionDigestError, multiset::Multiset},
+    primitives::{ActionDigest, ActionDigestError, Output, Spend, multiset::Multiset},
+    reddsa,
     stamp::{Stamp, Stampless},
 };
 
@@ -168,8 +167,11 @@ pub fn digest_bundle(
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Plan {
-    /// Action plans (spends and outputs, in order).
-    pub actions: Vec<action::Plan>,
+    /// Spend action plans.
+    pub spends: Vec<action::Plan<Spend>>,
+
+    /// Output action plans.
+    pub outputs: Vec<action::Plan<Output>>,
 
     /// Net value of spends minus outputs (plaintext integer).
     pub value_balance: i64,
@@ -178,19 +180,42 @@ pub struct Plan {
 impl Plan {
     /// Create a new bundle plan from assembled action plans.
     #[must_use]
-    pub const fn new(actions: Vec<action::Plan>, value_balance: i64) -> Self {
+    pub const fn new(
+        spends: Vec<action::Plan<Spend>>,
+        outputs: Vec<action::Plan<Output>>,
+        value_balance: i64,
+    ) -> Self {
         Self {
-            actions,
+            spends,
+            outputs,
             value_balance,
         }
     }
 
     /// Compute the bundle commitment.
-    /// See [`commit_bundle_digest`].
+    /// See [`digest_bundle`].
     #[must_use]
     pub fn commitment(&self) -> [u8; 64] {
+        let actions: Vec<Action> = self
+            .spends
+            .iter()
+            .map(|plan| {
+                Action {
+                    cv: plan.cv(),
+                    rk: plan.rk,
+                    sig: action::Signature::from([0u8; 64]),
+                }
+            })
+            .chain(self.outputs.iter().map(|plan| {
+                Action {
+                    cv: plan.cv(),
+                    rk: plan.rk,
+                    sig: action::Signature::from([0u8; 64]),
+                }
+            }))
+            .collect();
         #[expect(clippy::expect_used, reason = "don't plan invalid actions")]
-        Multiset::try_from(self.actions.as_slice())
+        Multiset::try_from(actions.as_slice())
             .and_then(|action_acc| digest_bundle(&action_acc, self.value_balance))
             .expect("don't plan invalid actions")
     }
@@ -201,7 +226,12 @@ impl Plan {
     /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i$.
     #[must_use]
     pub fn derive_bsk_private(&self) -> private::BindingSigningKey {
-        let trapdoors: Vec<_> = self.actions.iter().map(|plan| plan.rcv).collect();
+        let trapdoors: Vec<_> = self
+            .spends
+            .iter()
+            .map(|plan| plan.rcv)
+            .chain(self.outputs.iter().map(|plan| plan.rcv))
+            .collect();
         private::BindingSigningKey::from(trapdoors.as_slice())
     }
 }
@@ -225,7 +255,7 @@ impl Stamped {
 }
 
 impl<S: StampState> Bundle<S> {
-    /// See [`commit_bundle_digest`].
+    /// See [`digest_bundle`].
     pub fn commitment(&self) -> Result<[u8; 64], ActionDigestError> {
         let action_acc = Multiset::try_from(self.actions.as_slice())?;
         digest_bundle(&action_acc, self.value_balance)
@@ -264,7 +294,7 @@ impl<S: StampState> Bundle<S> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct Signature(pub(crate) reddsa::Signature<Binding>);
+pub struct Signature(pub(crate) reddsa::Signature<reddsa::BindingAuth>);
 
 impl From<[u8; 64]> for Signature {
     fn from(bytes: [u8; 64]) -> Self {
@@ -287,13 +317,12 @@ mod tests {
     use super::*;
     use crate::{
         action,
-        entropy::{ActionEntropy, ActionRandomizer},
+        entropy::ActionEntropy,
         keys::private,
         note::{self, Note},
         primitives::{Anchor, Epoch},
         stamp::Stamp,
         value,
-        witness::ActionPrivate,
     };
 
     /// Normally, data from other parts of the transaction is included in the
@@ -339,19 +368,23 @@ mod tests {
         let output_plan = action::Plan::output(output_note, theta_output, output_rcv);
         let value_balance: i64 = 300;
 
-        let bundle_plan = Plan::new(alloc::vec![spend_plan, output_plan], value_balance);
+        let bundle_plan = Plan::new(
+            alloc::vec![spend_plan],
+            alloc::vec![output_plan],
+            value_balance,
+        );
         let sighash = mock_sighash(bundle_plan.commitment());
 
         // Sign each action
         let spend_cm = spend_note.commitment();
-        let spend_alpha = theta_spend.spend_randomizer(&spend_cm);
+        let spend_alpha = theta_spend.randomizer::<Spend>(&spend_cm);
         let spend_sig = ask
             .derive_action_private(&spend_alpha)
             .sign(&mut *rng, &sighash);
 
         let output_cm = output_note.commitment();
-        let output_alpha = theta_output.output_randomizer(&output_cm);
-        let output_rsk = private::ActionSigningKey::new(output_alpha);
+        let output_alpha = theta_output.randomizer::<Output>(&output_cm);
+        let output_rsk = private::ActionSigningKey::new(&output_alpha);
         let output_sig = output_rsk.sign(&mut *rng, &sighash);
 
         // Materialize actions, build witnesses, prove leaf stamps
@@ -367,23 +400,14 @@ mod tests {
         };
         let actions = alloc::vec![spend_action, output_action];
 
-        let spend_witness = ActionPrivate {
-            alpha: ActionRandomizer::from(spend_alpha),
-            note: spend_note,
-            rcv: spend_plan.rcv,
-        };
-        let output_witness = ActionPrivate {
-            alpha: ActionRandomizer::from(output_alpha),
-            note: output_note,
-            rcv: output_plan.rcv,
-        };
+        let spend_witness = spend_plan.witness();
+        let output_witness = output_plan.witness();
 
         let epoch = Epoch::from(0u32);
         let (spend_stamp, (spend_actions, _spend_tachygrams)) = Stamp::prove_action(
             &mut *rng,
             &spend_witness,
             &spend_action,
-            action::Effect::Spend,
             anchor,
             epoch,
             &pak,
@@ -393,7 +417,6 @@ mod tests {
             &mut *rng,
             &output_witness,
             &output_action,
-            action::Effect::Output,
             anchor,
             epoch,
             &pak,
@@ -474,7 +497,11 @@ mod tests {
         let output_plan = action::Plan::output(output_note, theta_output, output_rcv);
         let value_balance: i64 = 300;
 
-        let bundle_plan = Plan::new(alloc::vec![spend_plan, output_plan], value_balance);
+        let bundle_plan = Plan::new(
+            alloc::vec![spend_plan],
+            alloc::vec![output_plan],
+            value_balance,
+        );
         let plan_commitment = bundle_plan.commitment();
 
         // Materialize actions from the same plans
@@ -496,19 +523,12 @@ mod tests {
             stamp: {
                 let (stamp, _stamp_state) = Stamp::prove_action(
                     &mut rng,
-                    &ActionPrivate {
-                        alpha: ActionRandomizer::from(
-                            theta_spend.spend_randomizer(&spend_note.commitment()),
-                        ),
-                        note: spend_note,
-                        rcv: spend_rcv,
-                    },
+                    &spend_plan.witness(),
                     &Action {
                         cv: spend_plan.cv(),
                         rk: spend_plan.rk,
                         sig: action::Signature::from([0u8; 64]),
                     },
-                    action::Effect::Spend,
                     Anchor::from(Fp::ZERO),
                     Epoch::from(0u32),
                     &pak,

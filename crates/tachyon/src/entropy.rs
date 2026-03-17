@@ -1,8 +1,10 @@
 //! Per-action randomizers and entropy.
 //!
 //! [`ActionEntropy`] ($\theta$) is per-action randomness chosen by the signer.
-//! Combined with a note commitment it deterministically derives
-//! [`SpendRandomizer`] or [`OutputRandomizer`].
+//! Combined with a note commitment it deterministically derives an
+//! [`ActionRandomizer`].
+
+use core::{any::TypeId, marker::PhantomData};
 
 use ff::{FromUniformBytes as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
@@ -11,14 +13,14 @@ use rand_core::{CryptoRng, RngCore};
 use crate::{
     constants::{OUTPUT_ALPHA_PERSONALIZATION, SPEND_ALPHA_PERSONALIZATION},
     note,
+    primitives::{Effect, Output, Spend},
 };
 
 /// Per-action entropy $\theta$ chosen by the signer (e.g. hardware wallet).
 ///
 /// 32 bytes of randomness combined with a note commitment to
 /// deterministically derive $\alpha$ via
-/// [`spend_randomizer`](Self::spend_randomizer) or
-/// [`output_randomizer`](Self::output_randomizer).
+/// [`randomizer`](Self::randomizer).
 /// The signer picks $\theta$ once; any device with $\theta$ and the
 /// note can independently reconstruct $\alpha$.
 ///
@@ -45,53 +47,62 @@ impl ActionEntropy {
         Self(bytes)
     }
 
-    /// Derive $\alpha$ for a spend action.
+    /// Derive the action randomizer $\alpha$ for effect `E`.
+    ///
+    /// Uses distinct BLAKE2b personalizations for spend vs output to
+    /// ensure the two randomizers are independent.
     #[must_use]
-    pub fn spend_randomizer(&self, cm: &note::Commitment) -> SpendRandomizer {
-        SpendRandomizer(derive_alpha(SPEND_ALPHA_PERSONALIZATION, self, cm))
-    }
-
-    /// Derive $\alpha$ for an output action.
-    #[must_use]
-    pub fn output_randomizer(&self, cm: &note::Commitment) -> OutputRandomizer {
-        OutputRandomizer(derive_alpha(OUTPUT_ALPHA_PERSONALIZATION, self, cm))
+    #[expect(clippy::unreachable, reason = "Effect is sealed to Spend and Output")]
+    pub fn randomizer<E: Effect>(&self, cm: &note::Commitment) -> ActionRandomizer<E> {
+        if TypeId::of::<E>() == TypeId::of::<Spend>() {
+            return ActionRandomizer(
+                derive_alpha(SPEND_ALPHA_PERSONALIZATION, self, cm),
+                PhantomData,
+            );
+        }
+        if TypeId::of::<E>() == TypeId::of::<Output>() {
+            return ActionRandomizer(
+                derive_alpha(OUTPUT_ALPHA_PERSONALIZATION, self, cm),
+                PhantomData,
+            );
+        }
+        unreachable!("Effect is sealed to Spend and Output")
     }
 }
 
-/// Spend-side randomizer $\alpha$ derived with spend personalization.
+/// Effect-erased marker for [`ActionRandomizer`].
 ///
-/// $\mathsf{rsk} = \mathsf{ask} + \alpha$, $\mathsf{rk} = \mathsf{ak} +
-/// [\alpha]\,\mathcal{G}$.
+/// Used in proof witness storage where the effect is inferred from
+/// the value commitment rather than carried in the type.
 #[derive(Clone, Copy, Debug)]
-pub struct SpendRandomizer(pub(crate) Fq);
+pub struct Witness;
 
-/// Output-side randomizer $\alpha$ derived with output personalization.
+mod sealed {
+    use crate::primitives::Effect;
+
+    pub trait RandomizerState: Copy {}
+    impl<T: Effect> RandomizerState for T {}
+    impl RandomizerState for super::Witness {}
+}
+
+/// Per-action randomizer $\alpha$, parameterized by effect state.
 ///
-/// $\mathsf{rsk} = \alpha$.
+/// - [`ActionRandomizer<Spend>`]: $\mathsf{rsk} = \mathsf{ask} + \alpha$,
+///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
+/// - [`ActionRandomizer<Output>`]: $\mathsf{rsk} = \alpha$.
+/// - [`ActionRandomizer<Witness>`]: effect-erased, used in proof witnesses.
 #[derive(Clone, Copy, Debug)]
-pub struct OutputRandomizer(pub(crate) Fq);
+pub struct ActionRandomizer<S: sealed::RandomizerState>(pub(crate) Fq, pub(crate) PhantomData<S>);
 
-/// Bare $\alpha$ scalar for proof witness storage.
-///
-/// Spend and output are indistinguishable at the witness level.
-#[derive(Clone, Copy, Debug)]
-pub struct ActionRandomizer(Fq);
-
-impl From<ActionRandomizer> for Fq {
-    fn from(randomizer: ActionRandomizer) -> Self {
+impl<S: sealed::RandomizerState> From<ActionRandomizer<S>> for Fq {
+    fn from(randomizer: ActionRandomizer<S>) -> Self {
         randomizer.0
     }
 }
 
-impl From<SpendRandomizer> for ActionRandomizer {
-    fn from(alpha: SpendRandomizer) -> Self {
-        Self(alpha.0)
-    }
-}
-
-impl From<OutputRandomizer> for ActionRandomizer {
-    fn from(alpha: OutputRandomizer) -> Self {
-        Self(alpha.0)
+impl<E: Effect> From<ActionRandomizer<E>> for ActionRandomizer<Witness> {
+    fn from(randomizer: ActionRandomizer<E>) -> Self {
+        Self(randomizer.0, PhantomData)
     }
 }
 
@@ -138,8 +149,8 @@ mod tests {
         let theta = ActionEntropy::random(&mut rng);
         let cm = test_cm();
 
-        let spend_alpha: Fq = ActionRandomizer::from(theta.spend_randomizer(&cm)).into();
-        let output_alpha: Fq = ActionRandomizer::from(theta.output_randomizer(&cm)).into();
+        let spend_alpha: Fq = theta.randomizer::<Spend>(&cm).into();
+        let output_alpha: Fq = theta.randomizer::<Output>(&cm).into();
 
         assert_ne!(spend_alpha, output_alpha);
     }
@@ -152,12 +163,12 @@ mod tests {
         let cm = test_cm();
 
         // Deterministic: same theta twice
-        let first: Fq = ActionRandomizer::from(theta_a.spend_randomizer(&cm)).into();
-        let second: Fq = ActionRandomizer::from(theta_a.spend_randomizer(&cm)).into();
+        let first: Fq = theta_a.randomizer::<Spend>(&cm).into();
+        let second: Fq = theta_a.randomizer::<Spend>(&cm).into();
         assert_eq!(first, second);
 
         // Sensitive: different theta
-        let other: Fq = ActionRandomizer::from(theta_b.spend_randomizer(&cm)).into();
+        let other: Fq = theta_b.randomizer::<Spend>(&cm).into();
         assert_ne!(first, other);
     }
 }
