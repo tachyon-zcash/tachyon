@@ -9,8 +9,8 @@ use pasta_curves::{
 };
 
 use crate::{
-    Action, action::Plan as ActionPlan, constants::ACTION_DIGEST_PERSONALIZATION, keys::public,
-    value,
+    Action, action, constants::ACTION_DIGEST_PERSONALIZATION, keys::public,
+    primitives::effect::Effect, value,
 };
 
 /// Digest a single action into the accumulation domain.
@@ -87,10 +87,10 @@ impl From<ActionDigest> for Fp {
     }
 }
 
-impl TryFrom<&ActionPlan> for ActionDigest {
+impl<E: Effect + 'static> TryFrom<&action::Plan<E>> for ActionDigest {
     type Error = ActionDigestError;
 
-    fn try_from(plan: &ActionPlan) -> Result<Self, Self::Error> {
+    fn try_from(plan: &action::Plan<E>) -> Result<Self, Self::Error> {
         let cv_coords = EpAffine::from(plan.cv())
             .coordinates()
             .into_option()
@@ -168,15 +168,16 @@ mod tests {
     use super::*;
     use crate::{
         entropy::ActionEntropy,
-        keys::private,
+        keys::{custody, planner},
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
+        primitives::effect,
         value,
     };
 
     /// Build a (cv, rk) pair from a note, random rcv, and random theta.
     fn make_action_parts(
         rng: &mut StdRng,
-        sk: &private::SpendingKey,
+        sk: &custody::SpendingKey,
         val: u64,
         psi: Fp,
         rcm: Fp,
@@ -188,10 +189,11 @@ mod tests {
             rcm: CommitmentTrapdoor::from(rcm),
         };
         let rcv = value::CommitmentTrapdoor::random(rng);
-        let cv = rcv.commit_spend(note);
+        let value: i64 = note.value.into();
+        let cv = rcv.commit(value);
         let theta = ActionEntropy::random(rng);
-        let alpha = theta.output_randomizer(&note.commitment());
-        let rk = private::ActionSigningKey::new(alpha).derive_action_public();
+        let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+        let rk = planner::ActionSigningKey::new(&alpha).derive_action_public();
         (cv, rk)
     }
 
@@ -199,7 +201,7 @@ mod tests {
     #[test]
     fn distinct_actions_distinct_digests() {
         let mut rng = StdRng::seed_from_u64(201);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
 
         let (cv_a, rk_a) = make_action_parts(&mut rng, &sk, 1000, Fp::ZERO, Fp::ZERO);
         let (cv_b, rk_b) = make_action_parts(&mut rng, &sk, 700, Fp::ONE, Fp::ONE);
@@ -216,7 +218,7 @@ mod tests {
         use pasta_curves::group::prime::PrimeCurveAffine as _;
 
         let mut rng = StdRng::seed_from_u64(203);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let (_, rk) = make_action_parts(&mut rng, &sk, 500, Fp::ZERO, Fp::ZERO);
         let cv = value::Commitment::from(EpAffine::identity());
         assert!(matches!(
@@ -229,7 +231,7 @@ mod tests {
     #[test]
     fn digest_rejects_identity_rk() {
         let mut rng = StdRng::seed_from_u64(204);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let sk = custody::SpendingKey::from([0x42u8; 32]);
         let (cv, _) = make_action_parts(&mut rng, &sk, 500, Fp::ZERO, Fp::ZERO);
         let rk =
             public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());

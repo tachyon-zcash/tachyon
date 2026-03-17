@@ -33,7 +33,6 @@
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![allow(clippy::pub_use, reason = "exporting items for consumers")]
 
 #[cfg(feature = "std")]
 extern crate std;
@@ -59,14 +58,32 @@ pub mod value;
 pub mod witness;
 
 mod primitives;
+mod reddsa;
 #[cfg(feature = "serde")]
 mod serde_helpers;
 
+#[expect(clippy::useless_attribute, reason = "clippy issue")]
+#[expect(clippy::pub_use, reason = "public API")]
 pub use action::{Action, Plan as ActionPlan};
-pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped};
+#[expect(clippy::useless_attribute, reason = "clippy issue")]
+#[expect(clippy::pub_use, reason = "public API")]
+pub use bundle::{BuildError, Bundle, Plan as BundlePlan, Stamped, Stripped};
+#[expect(clippy::useless_attribute, reason = "clippy issue")]
+#[expect(clippy::pub_use, reason = "public API")]
+pub use keys::{delegate::PrefixError, planner::NoteKeyError};
+#[expect(clippy::useless_attribute, reason = "clippy issue")]
+#[expect(clippy::pub_use, reason = "public API")]
 pub use note::Note;
+#[expect(clippy::useless_attribute, reason = "clippy issue")]
+#[expect(clippy::pub_use, reason = "public API")]
+pub use primitives::effect;
+#[expect(clippy::useless_attribute, reason = "clippy issue")]
+#[expect(clippy::pub_use, reason = "public API")]
 pub use primitives::{
     ActionDigest, ActionDigestError, Anchor, Epoch, Tachygram,
+    effect::{Effect, Output, Spend},
     multiset::{self, Multiset},
 };
-pub use stamp::{Stamp, proof::Proof};
+#[expect(clippy::useless_attribute, reason = "clippy issue")]
+#[expect(clippy::pub_use, reason = "public API")]
+pub use stamp::{Stamp, StampVerificationError};

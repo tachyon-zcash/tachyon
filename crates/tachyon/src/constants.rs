@@ -43,13 +43,16 @@ pub const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
 pub const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
 
 /// Poseidon domain tag for note master derivation: $mk = \text{KDF}(\psi, nk)$.
-pub const NOTE_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-MkDerive";
+pub const NOTE_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NtMaster";
 
-/// Poseidon domain tag for nullifier derivation (GGM tree steps).
-pub const NOTE_NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
+/// Poseidon domain tag for GGM tree prefix steps (intermediate nodes).
+pub const NOTE_PREFIX_DOMAIN: &[u8; 16] = b"Tachyon-NtPrefix";
+
+/// Poseidon domain tag for the final leaf-to-nullifier derivation.
+pub const NOTE_NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NtNullif";
 
 /// Poseidon domain tag for note commitments.
-pub const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-NoteCmmt";
+pub const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-NtCommit";
 
 /// Poseidon domain tag for action digests.
 pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
