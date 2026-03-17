@@ -5,7 +5,6 @@ use core::marker::PhantomData;
 use ff::{Field as _, FromUniformBytes as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
 use rand_core::{CryptoRng, RngCore};
-use reddsa::orchard::{Binding, SpendAuth};
 
 use super::{
     note::{NullifierKey, PaymentKey},
@@ -14,31 +13,10 @@ use super::{
 use crate::{
     action, bundle,
     constants::PrfExpand,
-    entropy::{OutputRandomizer, SpendRandomizer},
-    value,
+    entropy::ActionRandomizer,
+    primitives::{Effect, effect},
+    reddsa, value,
 };
-
-/// Marker type for spend-side action signing keys.
-///
-/// $\mathsf{rsk} = \mathsf{ask} + \alpha$ — requires spend authority.
-#[derive(Clone, Copy, Debug)]
-pub struct SpendAuthority;
-
-/// Marker type for output-side action signing keys.
-///
-/// $\mathsf{rsk} = \alpha$ — no spend authority.
-#[derive(Clone, Copy, Debug)]
-pub struct OutputAuthority;
-
-mod sealed {
-    pub trait Sealed {}
-    impl Sealed for super::SpendAuthority {}
-    impl Sealed for super::OutputAuthority {}
-}
-
-/// Sealed trait constraining signing authority.
-pub trait ActionAuthority: sealed::Sealed {}
-impl<T: sealed::Sealed> ActionAuthority for T {}
 
 /// A Tachyon spending key — raw 32-byte entropy.
 ///
@@ -86,7 +64,7 @@ impl SpendingKey {
     /// $\mathsf{ask}$: $[-\mathsf{ask}]\,\mathcal{G} =
     /// -[\mathsf{ask}]\,\mathcal{G}$ flips the y-coordinate sign.
     ///
-    /// The SpendAuth basepoint $\mathcal{G}$ is hash-derived
+    /// The reddsa::ActionAuth basepoint $\mathcal{G}$ is hash-derived
     /// (`hash_to_curve("z.cash:Orchard")(b"G")`) and sealed inside
     /// reddsa's `private::Sealed` trait, so we must construct a
     /// `SigningKey` (which internally computes $[\mathsf{ask}]\,\mathcal{G}$)
@@ -104,7 +82,7 @@ impl SpendingKey {
         // Compute ak = [ask]G via reddsa (basepoint is sealed) and check
         // the y-sign bit (byte 31, bit 7 of the compressed encoding).
         let ak: [u8; 32] = reddsa::VerificationKey::from(
-            &reddsa::SigningKey::<SpendAuth>::try_from(ask.to_repr())
+            &reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask.to_repr())
                 .expect("PRF-derived ask should be a valid RedPallas scalar"),
         )
         .into();
@@ -114,7 +92,7 @@ impl SpendingKey {
 
         // Build the final key from the sign-normalized scalar.
         SpendAuthorizingKey(
-            reddsa::SigningKey::<SpendAuth>::try_from(ask.to_repr())
+            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask.to_repr())
                 .expect("sign-normalized ask should be a valid RedPallas scalar"),
         )
     }
@@ -175,7 +153,7 @@ impl SpendingKey {
 /// (`ak`) via [`derive_auth_public`](Self::derive_auth_public) — the
 /// circuit witness that validates spend authorization.
 #[derive(Clone, Copy, Debug)]
-pub struct SpendAuthorizingKey(reddsa::SigningKey<SpendAuth>);
+pub struct SpendAuthorizingKey(reddsa::SigningKey<reddsa::ActionAuth>);
 
 impl SpendAuthorizingKey {
     /// Derive the spend validating (public) key: `ak = [ask]G`.
@@ -189,30 +167,30 @@ impl SpendAuthorizingKey {
     /// Derive the per-action private (signing) key: $\mathsf{rsk} =
     /// \mathsf{ask} + \alpha$.
     ///
-    /// Only accepts [`SpendRandomizer`] — passing an output randomizer is
-    /// a compile error.
+    /// Only accepts [`ActionRandomizer<Spend>`] — passing an output
+    /// randomizer is a compile error.
     #[must_use]
     pub fn derive_action_private(
         &self,
-        alpha: &SpendRandomizer,
-    ) -> ActionSigningKey<SpendAuthority> {
+        alpha: &ActionRandomizer<effect::Spend>,
+    ) -> ActionSigningKey<effect::Spend> {
         ActionSigningKey(self.0.randomize(&alpha.0), PhantomData)
     }
 }
 
-/// The per-action signing key `rsk` — ephemeral, parameterized by kind.
+/// The per-action signing key `rsk` — ephemeral, parameterized by effect.
 ///
-/// - [`ActionSigningKey<effect::Spend>`]: $\mathsf{rsk} = \mathsf{ask} +
-///   \alpha$ — derived from [`SpendAuthorizingKey::derive_action_private`]
-/// - [`ActionSigningKey<effect::Output>`]: $\mathsf{rsk} = \alpha$ — derived
-///   from [`OutputRandomizer`]
+/// - [`ActionSigningKey<Spend>`]: $\mathsf{rsk} = \mathsf{ask} + \alpha$ —
+///   derived from [`SpendAuthorizingKey::derive_action_private`]
+/// - [`ActionSigningKey<Output>`]: $\mathsf{rsk} = \alpha$ — derived from
+///   [`ActionRandomizer<Output>`]
 ///
 /// Both variants sign via [`sign`](Self::sign) and derive `rk` via
 /// [`derive_action_public`](Self::derive_action_public).
 #[derive(Clone, Copy, Debug)]
-pub struct ActionSigningKey<K: ActionAuthority>(reddsa::SigningKey<SpendAuth>, PhantomData<K>);
+pub struct ActionSigningKey<E: Effect>(reddsa::SigningKey<reddsa::ActionAuth>, PhantomData<E>);
 
-impl<K: ActionAuthority> ActionSigningKey<K> {
+impl<E: Effect> ActionSigningKey<E> {
     /// Sign a transaction sighash with this action key.
     pub fn sign(
         &self,
@@ -232,26 +210,20 @@ impl<K: ActionAuthority> ActionSigningKey<K> {
     }
 }
 
-impl ActionSigningKey<OutputAuthority> {
+impl ActionSigningKey<effect::Output> {
     /// Create a new output action signing key from an output randomizer.
     #[must_use]
-    pub fn new(alpha: OutputRandomizer) -> Self {
-        alpha.into()
-    }
-}
-
-impl From<OutputRandomizer> for ActionSigningKey<OutputAuthority> {
-    fn from(alpha: OutputRandomizer) -> Self {
+    pub fn new(alpha: &ActionRandomizer<effect::Output>) -> Self {
         #[expect(clippy::expect_used, reason = "specified behavior")]
         Self(
-            reddsa::SigningKey::<SpendAuth>::try_from(alpha.0.to_repr())
+            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(alpha.0.to_repr())
                 .expect("output randomizer should be a valid RedPallas signing key"),
             PhantomData,
         )
     }
 }
 
-/// Binding signing key $\mathsf{bsk}$ — the scalar sum of all value
+/// BindingAuth signing key $\mathsf{bsk}$ — the scalar sum of all value
 /// commitment trapdoors in a bundle.
 ///
 /// $$\mathsf{bsk} := \boxplus_i \mathsf{rcv}_i$$
@@ -272,7 +244,7 @@ impl From<OutputRandomizer> for ActionSigningKey<OutputAuthority> {
 /// excluded from the bundle commitment because it is stripped during
 /// aggregation.
 #[derive(Clone, Copy, Debug)]
-pub struct BindingSigningKey(reddsa::SigningKey<Binding>);
+pub struct BindingSigningKey(reddsa::SigningKey<reddsa::BindingAuth>);
 
 impl BindingSigningKey {
     /// Sign a transaction sighash with this binding key.
@@ -293,7 +265,8 @@ impl BindingSigningKey {
 }
 
 impl From<&[value::CommitmentTrapdoor]> for BindingSigningKey {
-    /// Binding signing key is the scalar sum of all value commitment trapdoors.
+    /// BindingAuth signing key is the scalar sum of all value commitment
+    /// trapdoors.
     ///
     /// Every Pallas scalar field element, including zero, is a valid binding
     /// signing key. See Zcash protocol §4.14.
@@ -306,7 +279,7 @@ impl From<&[value::CommitmentTrapdoor]> for BindingSigningKey {
             reason = "all Fq are valid RedPallas signing keys"
         )]
         Self(
-            reddsa::SigningKey::<Binding>::try_from(sum.to_repr())
+            reddsa::SigningKey::<reddsa::BindingAuth>::try_from(sum.to_repr())
                 .expect("all Fq are valid RedPallas signing keys"),
         )
     }

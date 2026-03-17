@@ -108,13 +108,16 @@ impl<'de> serde::Deserialize<'de> for Proof {
             }
 
             fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Proof, E> {
-                let arr: &[u8; PROOF_SIZE_COMPRESSED] = v.try_into().map_err(|_| {
-                    E::invalid_length(v.len(), &self)
-                })?;
+                let arr: &[u8; PROOF_SIZE_COMPRESSED] = v
+                    .try_into()
+                    .map_err(|_| E::invalid_length(v.len(), &self))?;
                 Proof::try_from(arr).map_err(|_| E::custom("invalid proof binding"))
             }
 
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Proof, A::Error> {
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Proof, A::Error> {
                 let mut bytes = [0u8; PROOF_SIZE_COMPRESSED];
                 for (i, byte) in bytes.iter_mut().enumerate() {
                     *byte = seq

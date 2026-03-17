@@ -1,9 +1,8 @@
 //! Public (verification) keys.
 
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
-use reddsa::orchard::{Binding, SpendAuth};
 
-use crate::{action, action::Action, bundle, value};
+use crate::{action, action::Action, bundle, reddsa, value};
 
 /// The randomized action verification key `rk` — per-action, public.
 ///
@@ -24,7 +23,7 @@ use crate::{action, action::Action, bundle, value};
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct ActionVerificationKey(pub(crate) reddsa::VerificationKey<SpendAuth>);
+pub struct ActionVerificationKey(pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>);
 
 impl ActionVerificationKey {
     /// Verify an action signature against a transaction sighash.
@@ -49,7 +48,7 @@ impl TryFrom<[u8; 32]> for ActionVerificationKey {
     type Error = reddsa::Error;
 
     fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
-        reddsa::VerificationKey::<SpendAuth>::try_from(bytes).map(Self)
+        reddsa::VerificationKey::<reddsa::ActionAuth>::try_from(bytes).map(Self)
     }
 }
 
@@ -106,10 +105,10 @@ pub fn derive_bvk(
 ///
 /// ## Type representation
 ///
-/// Wraps `reddsa::VerificationKey<Binding>`, which internally stores
-/// a Pallas curve point (EpAffine, encoded as 32 compressed bytes).
+/// Wraps `reddsa::VerificationKey<reddsa::BindingAuth>`, which internally
+/// stores a Pallas curve point (EpAffine, encoded as 32 compressed bytes).
 #[derive(Clone, Copy, Debug)]
-pub struct BindingVerificationKey(pub(super) reddsa::VerificationKey<Binding>);
+pub struct BindingVerificationKey(pub(super) reddsa::VerificationKey<reddsa::BindingAuth>);
 
 impl BindingVerificationKey {
     /// Derive the binding verification key from public action data.
@@ -127,7 +126,7 @@ impl BindingVerificationKey {
 
         #[expect(clippy::expect_used, reason = "specified behavior")]
         Self(
-            reddsa::VerificationKey::<Binding>::try_from(bvk_bytes)
+            reddsa::VerificationKey::<reddsa::BindingAuth>::try_from(bvk_bytes)
                 .expect("cv sum minus balance should be a valid RedPallas verification key"),
         )
     }
