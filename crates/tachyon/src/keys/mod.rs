@@ -18,10 +18,10 @@
 //!     sighash["sighash &amp;[u8; 32]"]
 //!     sk --> ask & nk & pk
 //!     ask --> ak
-//!     theta["ActionEntropy theta"] -- spend_randomizer --> spend_alpha["SpendRandomizer"]
-//!     theta -- output_randomizer --> output_alpha["OutputRandomizer"]
+//!     theta["ActionEntropy theta"] -- "randomizer::&lt;Spend&gt;" --> spend_alpha["ActionRandomizer&lt;Spend&gt;"]
+//!     theta -- "randomizer::&lt;Output&gt;" --> output_alpha["ActionRandomizer&lt;Output&gt;"]
 //!     ask -- "derive_action_private(alpha)" --> spend_rsk["ActionSigningKey&lt;Spend&gt;"]
-//!     output_alpha -- "From" --> output_rsk["ActionSigningKey&lt;Output&gt;"]
+//!     output_alpha -- "new" --> output_rsk["ActionSigningKey&lt;Output&gt;"]
 //!     ak -- "+alpha" --> rk
 //!     spend_rsk -- "derive_action_public()" --> rk
 //!     output_rsk -- "derive_action_public()" --> rk
@@ -89,6 +89,8 @@ mod tests {
         entropy::ActionEntropy,
         keys::private,
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
+        primitives::Spend,
+        reddsa,
     };
 
     /// RedPallas requires ak to have tilde_y = 0 (sign bit cleared).
@@ -98,7 +100,6 @@ mod tests {
     #[test]
     fn ask_sign_normalization() {
         use ff::FromUniformBytes as _;
-        use reddsa::orchard::SpendAuth;
 
         let mut rng = StdRng::seed_from_u64(0);
         let mut flipped = 0u32;
@@ -109,7 +110,7 @@ mod tests {
             // Check the raw (pre-normalization) sign bit.
             let ask_scalar = Fq::from_uniform_bytes(&PrfExpand::ASK.with(&sk_bytes));
             let unnormalized_ak: [u8; 32] = reddsa::VerificationKey::from(
-                &reddsa::SigningKey::<SpendAuth>::try_from(ask_scalar.to_repr()).unwrap(),
+                &reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask_scalar.to_repr()).unwrap(),
             )
             .into();
             if unnormalized_ak[31] >> 7u8 == 1u8 {
@@ -156,7 +157,7 @@ mod tests {
             rcm: CommitmentTrapdoor::from(Fp::ZERO),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let alpha = theta.spend_randomizer(&note.commitment());
+        let alpha = theta.randomizer::<Spend>(&note.commitment());
         let rsk = ask.derive_action_private(&alpha);
 
         let rk_from_signer: [u8; 32] = rsk.derive_action_public().0.into();

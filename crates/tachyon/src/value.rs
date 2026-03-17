@@ -15,7 +15,7 @@ use pasta_curves::{
 };
 use rand_core::{CryptoRng, RngCore};
 
-use crate::{Note, constants::VALUE_COMMITMENT_DOMAIN};
+use crate::constants::VALUE_COMMITMENT_DOMAIN;
 
 lazy_static! {
     /// Generator $\mathcal{V}$ for value commitments.
@@ -53,28 +53,6 @@ impl CommitmentTrapdoor {
         // tied to alpha/theta derivation.
         todo!("random commitment trapdoor");
         Self(Fq::random(rng))
-    }
-
-    /// Commit to spend a value with this trapdoor.
-    ///
-    /// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
-    ///
-    /// Positive $v$ for spends (balance contributed).
-    #[must_use]
-    pub fn commit_spend(self, note: Note) -> Commitment {
-        let value: i64 = note.value.into();
-        self.commit(value)
-    }
-
-    /// Commit to output a value with this trapdoor.
-    ///
-    /// $$\mathsf{cv} = [-v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
-    ///
-    /// Negative $v$ for outputs (balance exhausted).
-    #[must_use]
-    pub fn commit_output(self, note: Note) -> Commitment {
-        let value: i64 = note.value.into();
-        self.commit(value.neg())
     }
 
     /// Commit to a value with this trapdoor.

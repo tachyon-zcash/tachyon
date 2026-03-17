@@ -10,7 +10,7 @@ use pasta_curves::{
 
 use crate::{
     Action, action::Plan as ActionPlan, constants::ACTION_DIGEST_PERSONALIZATION, keys::public,
-    value,
+    primitives::Effect, value,
 };
 
 /// Digest a single action into the accumulation domain.
@@ -87,10 +87,10 @@ impl From<ActionDigest> for Fp {
     }
 }
 
-impl TryFrom<&ActionPlan> for ActionDigest {
+impl<E: Effect> TryFrom<&ActionPlan<E>> for ActionDigest {
     type Error = ActionDigestError;
 
-    fn try_from(plan: &ActionPlan) -> Result<Self, Self::Error> {
+    fn try_from(plan: &ActionPlan<E>) -> Result<Self, Self::Error> {
         let cv_coords = EpAffine::from(plan.cv())
             .coordinates()
             .into_option()
@@ -188,10 +188,10 @@ mod tests {
             rcm: CommitmentTrapdoor::from(rcm),
         };
         let rcv = value::CommitmentTrapdoor::random(rng);
-        let cv = rcv.commit_spend(note);
+        let cv = rcv.commit(i64::from(note.value));
         let theta = ActionEntropy::random(rng);
-        let alpha = theta.output_randomizer(&note.commitment());
-        let rk = private::ActionSigningKey::new(alpha).derive_action_public();
+        let alpha = theta.randomizer::<crate::primitives::Output>(&note.commitment());
+        let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         (cv, rk)
     }
 
@@ -231,8 +231,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(204);
         let sk = private::SpendingKey::from([0x42u8; 32]);
         let (cv, _) = make_action_parts(&mut rng, &sk, 500, Fp::ZERO, Fp::ZERO);
-        let rk =
-            public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());
+        let rk = public::ActionVerificationKey(
+            crate::reddsa::VerificationKey::try_from([0u8; 32]).unwrap(),
+        );
         assert!(matches!(
             ActionDigest::new(cv, rk),
             Err(ActionDigestError::IdentityRk)

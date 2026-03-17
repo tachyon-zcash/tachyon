@@ -1,30 +1,20 @@
 //! Tachyon Action descriptions.
 
-use reddsa::orchard::SpendAuth;
+use core::{any::TypeId, marker::PhantomData};
 
 use crate::{
     entropy::ActionEntropy,
     keys::{SpendValidatingKey, private, public},
     note::Note,
-    value,
+    primitives::{Effect, Output, Spend},
+    reddsa, value,
+    witness::ActionPrivate,
 };
-
-/// Whether an action plan represents a spend or an output.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Effect {
-    /// Spend — signed with
-    /// [`SpendAuthorizingKey::derive_action_private`](private::SpendAuthorizingKey::derive_action_private).
-    Spend,
-    /// Output — signed via
-    /// [`ActionSigningKey<Output>::sign`](private::ActionSigningKey::sign).
-    Output,
-}
 
 /// A planned Tachyon action, not yet authorized.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Plan {
+pub struct Plan<E: Effect> {
     /// Randomized action verification key.
     pub rk: public::ActionVerificationKey,
     /// The note being spent or created.
@@ -33,11 +23,11 @@ pub struct Plan {
     pub theta: ActionEntropy,
     /// Value commitment trapdoor.
     pub rcv: value::CommitmentTrapdoor,
-    /// Spend or output.
-    pub effect: Effect,
+    /// Effect marker (zero-sized).
+    pub _effect: PhantomData<E>,
 }
 
-impl Plan {
+impl Plan<Spend> {
     /// Assemble a spend action plan.
     ///
     /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
@@ -49,7 +39,7 @@ impl Plan {
         ak: &SpendValidatingKey,
     ) -> Self {
         let cm = note.commitment();
-        let alpha = theta.spend_randomizer(&cm);
+        let alpha = theta.randomizer::<Spend>(&cm);
         let rk = ak.derive_action_public(&alpha);
 
         Self {
@@ -57,18 +47,31 @@ impl Plan {
             note,
             theta,
             rcv,
-            effect: Effect::Spend,
+            _effect: PhantomData,
         }
     }
 
+    /// Assemble the proof witness for this spend plan.
+    #[must_use]
+    pub fn witness(&self) -> ActionPrivate {
+        let cm = self.note.commitment();
+        ActionPrivate {
+            alpha: self.theta.randomizer::<Spend>(&cm).into(),
+            note: self.note,
+            rcv: self.rcv,
+        }
+    }
+}
+
+impl Plan<Output> {
     /// Assemble an output action plan.
     ///
     /// $\mathsf{rk} = [\alpha]\,\mathcal{G}$.
     #[must_use]
     pub fn output(note: Note, theta: ActionEntropy, rcv: value::CommitmentTrapdoor) -> Self {
         let cm = note.commitment();
-        let alpha = theta.output_randomizer(&cm);
-        let rsk = private::ActionSigningKey::new(alpha);
+        let alpha = theta.randomizer::<Output>(&cm);
+        let rsk = private::ActionSigningKey::new(&alpha);
         let rk = rsk.derive_action_public();
 
         Self {
@@ -76,19 +79,37 @@ impl Plan {
             note,
             theta,
             rcv,
-            effect: Effect::Output,
+            _effect: PhantomData,
         }
     }
 
+    /// Assemble the proof witness for this output plan.
+    #[must_use]
+    pub fn witness(&self) -> ActionPrivate {
+        let cm = self.note.commitment();
+        ActionPrivate {
+            alpha: self.theta.randomizer::<Output>(&cm).into(),
+            note: self.note,
+            rcv: self.rcv,
+        }
+    }
+}
+
+impl<E: Effect> Plan<E> {
     /// Derive the value commitment of this action plan.
     ///
     /// $$\mathsf{cv} = [\pm v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
     #[must_use]
+    #[expect(clippy::unreachable, reason = "Effect is sealed to Spend and Output")]
     pub fn cv(&self) -> value::Commitment {
-        match self.effect {
-            | Effect::Spend => self.rcv.commit_spend(self.note),
-            | Effect::Output => self.rcv.commit_output(self.note),
+        let value: i64 = self.note.value.into();
+        if TypeId::of::<E>() == TypeId::of::<Spend>() {
+            return self.rcv.commit(value);
         }
+        if TypeId::of::<E>() == TypeId::of::<Output>() {
+            return self.rcv.commit(-value);
+        }
+        unreachable!("Effect is sealed to Spend and Output")
     }
 }
 
@@ -111,15 +132,15 @@ pub struct Action {
     pub sig: Signature,
 }
 
-/// A spend authorization signature (RedPallas over SpendAuth).
+/// A spend authorization signature (RedPallas over reddsa::ActionAuth).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct Signature(pub(crate) reddsa::Signature<SpendAuth>);
+pub struct Signature(pub(crate) reddsa::Signature<reddsa::ActionAuth>);
 
 impl From<[u8; 64]> for Signature {
     fn from(bytes: [u8; 64]) -> Self {
-        Self(reddsa::Signature::<SpendAuth>::from(bytes))
+        Self(reddsa::Signature::<reddsa::ActionAuth>::from(bytes))
     }
 }
 
