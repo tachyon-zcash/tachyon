@@ -9,6 +9,7 @@
 
 use alloc::vec::Vec;
 
+use lazy_static::lazy_static;
 use reddsa::orchard::Binding;
 
 use crate::{
@@ -164,6 +165,22 @@ pub fn digest_bundle(
     Ok(*state.finalize().as_array())
 }
 
+lazy_static! {
+    /// Commitment for the absence of a Tachyon bundle in a transaction.
+    ///
+    /// Personalized BLAKE2b-512 finalized with no data, distinct from the
+    /// commitment of an empty bundle (which hashes the identity accumulator
+    /// commitment and a zero value balance).
+    ///
+    /// Follows ZIP-244's pattern for absent pool commitments.
+    static ref COMMIT_NO_BUNDLE: [u8; 64] = *blake2b_simd::Params::new()
+        .hash_length(64)
+        .personal(BUNDLE_COMMITMENT_PERSONALIZATION)
+        .to_state()
+        .finalize()
+        .as_array();
+}
+
 /// A complete bundle plan, awaiting authorization.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -310,124 +327,11 @@ mod tests {
         out
     }
 
-    /// Build a test bundle using direct signing primitives.
-    fn build_test_bundle(rng: &mut (impl RngCore + CryptoRng)) -> Stamped {
-        let sk = private::SpendingKey::from([0x42u8; 32]);
-        let ask = sk.derive_auth_private();
-        let pak = sk.derive_proof_private();
-        let anchor = Anchor::from(Fp::ZERO);
-
-        let spend_note = Note {
-            pk: sk.derive_payment_key(),
-            value: note::Value::from(1000u64),
-            psi: note::NullifierTrapdoor::from(Fp::ZERO),
-            rcm: note::CommitmentTrapdoor::from(Fp::ZERO),
-        };
-        let output_note = Note {
-            pk: sk.derive_payment_key(),
-            value: note::Value::from(700u64),
-            psi: note::NullifierTrapdoor::from(Fp::ONE),
-            rcm: note::CommitmentTrapdoor::from(Fp::ONE),
-        };
-
-        let theta_spend = ActionEntropy::random(&mut *rng);
-        let theta_output = ActionEntropy::random(&mut *rng);
-        let spend_rcv = value::CommitmentTrapdoor::random(&mut *rng);
-        let output_rcv = value::CommitmentTrapdoor::random(&mut *rng);
-
-        let spend_plan = action::Plan::spend(spend_note, theta_spend, spend_rcv, pak.ak());
-        let output_plan = action::Plan::output(output_note, theta_output, output_rcv);
-        let value_balance: i64 = 300;
-
-        let bundle_plan = Plan::new(alloc::vec![spend_plan, output_plan], value_balance);
-        let sighash = mock_sighash(bundle_plan.commitment());
-
-        // Sign each action
-        let spend_cm = spend_note.commitment();
-        let spend_alpha = theta_spend.spend_randomizer(&spend_cm);
-        let spend_sig = ask
-            .derive_action_private(&spend_alpha)
-            .sign(&mut *rng, &sighash);
-
-        let output_cm = output_note.commitment();
-        let output_alpha = theta_output.output_randomizer(&output_cm);
-        let output_rsk = private::ActionSigningKey::new(output_alpha);
-        let output_sig = output_rsk.sign(&mut *rng, &sighash);
-
-        // Materialize actions, build witnesses, prove leaf stamps
-        let spend_action = Action {
-            cv: spend_plan.cv(),
-            rk: spend_plan.rk,
-            sig: spend_sig,
-        };
-        let output_action = Action {
-            cv: output_plan.cv(),
-            rk: output_plan.rk,
-            sig: output_sig,
-        };
-        let actions = alloc::vec![spend_action, output_action];
-
-        let spend_witness = ActionPrivate {
-            alpha: ActionRandomizer::from(spend_alpha),
-            note: spend_note,
-            rcv: spend_plan.rcv,
-        };
-        let output_witness = ActionPrivate {
-            alpha: ActionRandomizer::from(output_alpha),
-            note: output_note,
-            rcv: output_plan.rcv,
-        };
-
-        let epoch = Epoch::from(0u32);
-        let (spend_stamp, (spend_actions, _spend_tachygrams)) = Stamp::prove_action(
-            &mut *rng,
-            &spend_witness,
-            &spend_action,
-            action::Effect::Spend,
-            anchor,
-            epoch,
-            &pak,
-        )
-        .expect("prove_action (spend)");
-        let (output_stamp, (output_actions, _output_tachygrams)) = Stamp::prove_action(
-            &mut *rng,
-            &output_witness,
-            &output_action,
-            action::Effect::Output,
-            anchor,
-            epoch,
-            &pak,
-        )
-        .expect("prove_action (output)");
-        let (stamp, _stamp_state) = Stamp::prove_merge(
-            &mut *rng,
-            spend_stamp,
-            spend_actions,
-            output_stamp,
-            output_actions,
-        )
-        .expect("prove_merge");
-
-        // Binding signature
-        let bsk = bundle_plan.derive_bsk_private();
-        let binding_sig = bsk.sign(&mut *rng, &sighash);
-
-        let bundle: Stamped = Bundle {
-            actions,
-            value_balance,
-            binding_sig,
-            stamp,
-        };
-
-        bundle.verify_signatures(&sighash).unwrap();
-        bundle
-    }
-
     /// A wrong value_balance makes binding sig verification fail.
     #[test]
     fn wrong_value_balance_fails_verification() {
         let mut rng = StdRng::seed_from_u64(0);
-        let mut bundle = build_test_bundle(&mut rng);
+        let mut bundle = build_autonome(&mut rng, 1000, 700);
         let sighash = mock_sighash(bundle.commitment().unwrap());
 
         bundle.value_balance = 999;
@@ -438,7 +342,7 @@ mod tests {
     #[test]
     fn stripped_bundle_retains_signatures() {
         let mut rng = StdRng::seed_from_u64(0);
-        let bundle = build_test_bundle(&mut rng);
+        let bundle = build_autonome(&mut rng, 1000, 700);
         let sighash = mock_sighash(bundle.commitment().unwrap());
 
         let (stripped, _stamp) = bundle.strip();
@@ -455,14 +359,14 @@ mod tests {
         let spend_note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(500u64),
-            psi: note::NullifierTrapdoor::from(Fp::ZERO),
-            rcm: note::CommitmentTrapdoor::from(Fp::ZERO),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
         };
         let output_note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(200u64),
-            psi: note::NullifierTrapdoor::from(Fp::ONE),
-            rcm: note::CommitmentTrapdoor::from(Fp::ONE),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
         };
 
         let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
@@ -472,42 +376,42 @@ mod tests {
 
         let spend_plan = action::Plan::spend(spend_note, theta_spend, spend_rcv, pak.ak());
         let output_plan = action::Plan::output(output_note, theta_output, output_rcv);
-        let value_balance: i64 = 300;
 
-        let bundle_plan = Plan::new(alloc::vec![spend_plan, output_plan], value_balance);
-        let plan_commitment = bundle_plan.commitment();
+        let bundle_plan = Plan::new(alloc::vec![spend_plan, output_plan], 300);
+        let sighash = mock_sighash(bundle_plan.commitment());
+        let ask = sk.derive_auth_private();
 
-        // Materialize actions from the same plans
+        let spend_alpha = theta_spend.spend_randomizer(&spend_note.commitment());
+        let spend_rsk = ask.derive_action_private(&spend_alpha);
+        let spend_action = Action {
+            cv: spend_plan.cv(),
+            rk: spend_plan.rk,
+            sig: spend_rsk.sign(&mut rng, &sighash),
+        };
+
+        let output_alpha = theta_output.output_randomizer(&output_note.commitment());
+        let output_rsk = private::ActionSigningKey::new(output_alpha);
+        let output_action = Action {
+            cv: output_plan.cv(),
+            rk: output_plan.rk,
+            sig: output_rsk.sign(&mut rng, &sighash),
+        };
+
+        let spend_witness = ActionPrivate {
+            alpha: ActionRandomizer::from(spend_alpha),
+            note: spend_note,
+            rcv: spend_rcv,
+        };
+
         let bundle: Stamped = Bundle {
-            actions: alloc::vec![
-                Action {
-                    cv: spend_plan.cv(),
-                    rk: spend_plan.rk,
-                    sig: action::Signature::from([0u8; 64]),
-                },
-                Action {
-                    cv: output_plan.cv(),
-                    rk: output_plan.rk,
-                    sig: action::Signature::from([0u8; 64]),
-                },
-            ],
-            value_balance,
-            binding_sig: Signature::from([0u8; 64]),
+            actions: alloc::vec![spend_action, output_action],
+            value_balance: 300,
+            binding_sig: bundle_plan.derive_bsk_private().sign(&mut rng, &sighash),
             stamp: {
-                let (stamp, _stamp_state) = Stamp::prove_action(
+                let (stamp, _) = Stamp::prove_action(
                     &mut rng,
-                    &ActionPrivate {
-                        alpha: ActionRandomizer::from(
-                            theta_spend.spend_randomizer(&spend_note.commitment()),
-                        ),
-                        note: spend_note,
-                        rcv: spend_rcv,
-                    },
-                    &Action {
-                        cv: spend_plan.cv(),
-                        rk: spend_plan.rk,
-                        sig: action::Signature::from([0u8; 64]),
-                    },
+                    &spend_witness,
+                    &spend_action,
                     action::Effect::Spend,
                     Anchor::from(Fp::ZERO),
                     Epoch::from(0u32),
@@ -518,14 +422,297 @@ mod tests {
             },
         };
 
-        assert_eq!(plan_commitment, bundle.commitment().unwrap());
+        assert_eq!(bundle_plan.commitment(), bundle.commitment().unwrap());
+    }
+
+    /// The "no bundle" commitment must differ from an empty bundle's
+    /// commitment (identity accumulator + zero balance).
+    #[test]
+    fn no_bundle_commitment_differs_from_empty_bundle() {
+        let empty_plan = Plan::new(alloc::vec![], 0);
+        assert_ne!(
+            *COMMIT_NO_BUNDLE,
+            empty_plan.commitment(),
+            "absent bundle must differ from empty bundle"
+        );
+    }
+
+    /// A zero-action bundle with zero balance must verify correctly.
+    ///
+    /// This exercises the edge case where `BindingVerificationKey::derive`
+    /// receives an empty action slice and value_balance = 0, producing the
+    /// identity point as `bvk`.
+    #[test]
+    fn zero_action_bundle_is_valid() {
+        let mut rng = StdRng::seed_from_u64(0xdead);
+        let plan = Plan::new(alloc::vec![], 0);
+        let sighash = mock_sighash(plan.commitment());
+
+        let bundle: Stripped = Bundle {
+            actions: alloc::vec![],
+            value_balance: 0,
+            binding_sig: plan.derive_bsk_private().sign(&mut rng, &sighash),
+            stamp: Stampless,
+        };
+
+        bundle.verify_signatures(&sighash).unwrap();
+    }
+
+    /// Build an autonome bundle for testing.
+    fn build_autonome(
+        rng: &mut (impl RngCore + CryptoRng),
+        spend_value: u64,
+        output_value: u64,
+    ) -> Stamped {
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let pak = sk.derive_proof_private();
+        let anchor = Anchor::from(Fp::ZERO);
+        let epoch = Epoch::from(0u32);
+
+        let spend_note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(spend_value),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut *rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut *rng)),
+        };
+        let output_note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(output_value),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut *rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut *rng)),
+        };
+
+        let theta_spend = ActionEntropy::random(&mut *rng);
+        let theta_output = ActionEntropy::random(&mut *rng);
+        let spend_rcv = value::CommitmentTrapdoor::random(&mut *rng);
+        let output_rcv = value::CommitmentTrapdoor::random(&mut *rng);
+
+        let spend_plan = action::Plan::spend(spend_note, theta_spend, spend_rcv, pak.ak());
+        let output_plan = action::Plan::output(output_note, theta_output, output_rcv);
+        let value_balance =
+            i64::try_from(spend_value).expect("fits") - i64::try_from(output_value).expect("fits");
+
+        let bundle_plan = Plan::new(alloc::vec![spend_plan, output_plan], value_balance);
+        let sighash = mock_sighash(bundle_plan.commitment());
+
+        // Sign each action
+        let spend_alpha = theta_spend.spend_randomizer(&spend_note.commitment());
+        let spend_sig = ask
+            .derive_action_private(&spend_alpha)
+            .sign(&mut *rng, &sighash);
+        let output_alpha = theta_output.output_randomizer(&output_note.commitment());
+        let output_rsk = private::ActionSigningKey::new(output_alpha);
+        let output_sig = output_rsk.sign(&mut *rng, &sighash);
+
+        // Materialize actions
+        let spend_action = Action {
+            cv: spend_plan.cv(),
+            rk: spend_plan.rk,
+            sig: spend_sig,
+        };
+        let output_action = Action {
+            cv: output_plan.cv(),
+            rk: output_plan.rk,
+            sig: output_sig,
+        };
+
+        // Build witnesses and prove leaf stamps
+        let spend_witness = ActionPrivate {
+            alpha: ActionRandomizer::from(spend_alpha),
+            note: spend_note,
+            rcv: spend_rcv,
+        };
+        let output_witness = ActionPrivate {
+            alpha: ActionRandomizer::from(output_alpha),
+            note: output_note,
+            rcv: output_rcv,
+        };
+
+        let (spend_stamp, (spend_acc, _)) = Stamp::prove_action(
+            &mut *rng,
+            &spend_witness,
+            &spend_action,
+            action::Effect::Spend,
+            anchor,
+            epoch,
+            &pak,
+        )
+        .expect("prove_action (spend)");
+
+        let (output_stamp, (output_acc, _)) = Stamp::prove_action(
+            &mut *rng,
+            &output_witness,
+            &output_action,
+            action::Effect::Output,
+            anchor,
+            epoch,
+            &pak,
+        )
+        .expect("prove_action (output)");
+
+        let bundle: Stamped = {
+            let (stamp, _accs) =
+                Stamp::prove_merge(&mut *rng, spend_stamp, spend_acc, output_stamp, output_acc)
+                    .expect("prove_merge");
+
+            Bundle {
+                actions: alloc::vec![spend_action, output_action],
+                value_balance,
+                binding_sig: bundle_plan.derive_bsk_private().sign(&mut *rng, &sighash),
+                stamp,
+            }
+        };
+
+        bundle.verify_signatures(&sighash).unwrap();
+        bundle
+    }
+
+    /// An innocent aggregate merges stamps from two autonomes.
+    ///
+    /// Two autonomes are built, their stamps merged via `prove_merge`,
+    /// and the result placed in a new bundle with no actions and zero
+    /// balance. The merged stamp verifies against actions collected from
+    /// both autonomes (which become adjuncts once stripped).
+    #[test]
+    fn innocent_aggregate_from_two_autonomes() {
+        let mut rng = StdRng::seed_from_u64(0xCAFE);
+
+        let autonome_a = build_autonome(&mut rng, 1000, 700);
+        let autonome_b = build_autonome(&mut rng, 500, 200);
+        let acc_a = Multiset::try_from(autonome_a.actions.as_slice()).expect("valid");
+        let acc_b = Multiset::try_from(autonome_b.actions.as_slice()).expect("valid");
+
+        let (adjunct_a, stamp_a) = autonome_a.strip();
+        let (adjunct_b, stamp_b) = autonome_b.strip();
+
+        let innocent: Stamped = {
+            let innocent_plan = Plan::new(alloc::vec![], 0);
+            let innocent_sighash = mock_sighash(innocent_plan.commitment());
+
+            let (stamp, _accs) =
+                Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("prove_merge");
+
+            Bundle {
+                actions: alloc::vec![],
+                value_balance: 0,
+                binding_sig: innocent_plan
+                    .derive_bsk_private()
+                    .sign(&mut rng, &innocent_sighash),
+                stamp,
+            }
+        };
+
+        innocent
+            .verify_signatures(&mock_sighash(innocent.commitment().unwrap()))
+            .expect("innocent binding sig should verify");
+
+        let adjunct_actions: Vec<Action> = [adjunct_a.actions, adjunct_b.actions].concat();
+        innocent
+            .stamp
+            .verify(
+                &Multiset::try_from(adjunct_actions.as_slice()).expect("valid"),
+                &mut rng,
+            )
+            .expect("innocent stamp should verify against adjunct actions");
+    }
+
+    /// A based aggregate proves its own actions and covers two adjuncts.
+    ///
+    /// The two contributing autonomes are first merged into an innocent
+    /// aggregate, which is then aggregated into the based autonome.
+    /// After stripping, the innocent's binding signature still holds.
+    #[test]
+    fn based_aggregate_with_two_adjuncts() {
+        let mut rng = StdRng::seed_from_u64(0xBEEF);
+
+        let mut becomes_based = build_autonome(&mut rng, 800, 400);
+        let autonome_a = build_autonome(&mut rng, 1000, 700);
+        let autonome_b = build_autonome(&mut rng, 500, 200);
+
+        let acc_a = Multiset::try_from(autonome_a.actions.as_slice()).expect("valid");
+        let acc_b = Multiset::try_from(autonome_b.actions.as_slice()).expect("valid");
+
+        let sighash = mock_sighash(becomes_based.commitment().unwrap());
+
+        let (adjunct_a, stamp_a) = autonome_a.strip();
+        let (adjunct_b, stamp_b) = autonome_b.strip();
+
+        // Build the innocent aggregate as a full stamped bundle.
+        let (innocent, innocent_accs) = {
+            let innocent_plan = Plan::new(alloc::vec![], 0);
+            let innocent_sighash = mock_sighash(innocent_plan.commitment());
+
+            let (stamp, accs) = Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b)
+                .expect("innocent merge");
+
+            let innocent: Stamped = Bundle {
+                actions: alloc::vec![],
+                value_balance: 0,
+                binding_sig: innocent_plan
+                    .derive_bsk_private()
+                    .sign(&mut rng, &innocent_sighash),
+                stamp,
+            };
+
+            (innocent, accs)
+        };
+
+        innocent
+            .verify_signatures(&mock_sighash(innocent.commitment().unwrap()))
+            .expect("innocent aggregate binding sig should verify before stripping");
+
+        // Strip the innocent — its stamp merges into the based aggregate.
+        let (stripped_innocent, stripped_innocent_stamp) = innocent.strip();
+
+        stripped_innocent
+            .verify_signatures(&mock_sighash(stripped_innocent.commitment().unwrap()))
+            .expect("stripped innocent binding sig should still verify");
+
+        // Merge own stamp with innocent stamp → based aggregate.
+        let (based_stamp, based_accs) = Stamp::prove_merge(
+            &mut rng,
+            becomes_based.stamp,
+            Multiset::try_from(becomes_based.actions.as_slice()).expect("valid"),
+            stripped_innocent_stamp,
+            innocent_accs.0,
+        )
+        .expect("based merge");
+
+        becomes_based.stamp = based_stamp;
+
+        becomes_based
+            .verify_signatures(&sighash)
+            .expect("based aggregate binding sig should verify");
+
+        // Stamp covers all six actions.
+        let all_actions: Vec<Action> = [
+            becomes_based.actions.clone(),
+            adjunct_a.actions,
+            adjunct_b.actions,
+        ]
+        .concat();
+
+        let all_actions_acc =
+            <Multiset<ActionDigest>>::try_from(all_actions.as_slice()).expect("valid");
+
+        assert_eq!(
+            all_actions_acc.commit(),
+            based_accs.0.commit(),
+            "all actions acc should match"
+        );
+
+        becomes_based
+            .stamp
+            .verify(&all_actions_acc, &mut rng)
+            .expect("based aggregate stamp should verify against all actions");
     }
 
     /// A tampered action signature must cause verification to fail.
     #[test]
     fn invalid_action_sig_fails_verification() {
         let mut rng = StdRng::seed_from_u64(11);
-        let mut bundle = build_test_bundle(&mut rng);
+        let mut bundle = build_autonome(&mut rng, 1000, 700);
         let sighash = mock_sighash(bundle.commitment().unwrap());
 
         let mut sig_bytes: [u8; 64] = bundle.actions[0].sig.into();

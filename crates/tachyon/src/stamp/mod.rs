@@ -201,14 +201,12 @@ impl Stamp {
     /// execution — a mismatched header causes verification failure.
     pub fn verify(
         &self,
-        actions: &[Action],
+        actions: &Multiset<ActionDigest>,
         rng: &mut impl CryptoRng,
     ) -> Result<(), VerificationError> {
         let app = &PROOF_SYSTEM;
 
-        let action_commitment = <Multiset<ActionDigest>>::try_from(actions)
-            .map_err(VerificationError::ActionDigest)?
-            .commit();
+        let action_commitment = actions.commit();
 
         let tachygram_commitment = <Multiset<Tachygram>>::from(self.tachygrams.as_slice()).commit();
 
@@ -302,7 +300,10 @@ mod tests {
         .expect("prove_action");
 
         stamp
-            .verify(&[action], &mut rng)
+            .verify(
+                &Multiset::try_from([action].as_slice()).expect("valid"),
+                &mut rng,
+            )
             .expect("verify should succeed");
     }
 
@@ -329,7 +330,12 @@ mod tests {
         let (action_b, _witness_b) = make_action_and_witness(&mut rng, &sk, 200, Effect::Output);
 
         assert!(
-            stamp.verify(&[action_b], &mut rng).is_err(),
+            stamp
+                .verify(
+                    &Multiset::try_from([action_b].as_slice()).expect("valid"),
+                    &mut rng
+                )
+                .is_err(),
             "verify with wrong action must fail"
         );
     }
@@ -371,7 +377,10 @@ mod tests {
                 .expect("prove_merge");
 
         merged
-            .verify(&[action_a, action_b], &mut rng)
+            .verify(
+                &Multiset::try_from([action_a, action_b].as_slice()).expect("valid"),
+                &mut rng,
+            )
             .expect("merged stamp should verify");
     }
 
@@ -412,7 +421,12 @@ mod tests {
                 .expect("prove_merge");
 
         assert!(
-            merged.verify(&[action_a], &mut rng).is_err(),
+            merged
+                .verify(
+                    &Multiset::try_from([action_a].as_slice()).expect("valid"),
+                    &mut rng
+                )
+                .is_err(),
             "verify with partial actions must fail"
         );
     }
