@@ -13,7 +13,10 @@
 
 extern crate alloc;
 
+mod batch;
 pub mod proof;
+
+pub use batch::BatchValidator;
 
 use alloc::vec::Vec;
 use core::{error::Error, fmt};
@@ -430,6 +433,7 @@ mod tests {
             "verify with partial actions must fail"
         );
     }
+
 }
 
 lazy_static! {

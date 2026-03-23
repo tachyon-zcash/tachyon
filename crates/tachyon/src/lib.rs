@@ -69,4 +69,4 @@ pub use primitives::{
     ActionDigest, ActionDigestError, Anchor, Epoch, Tachygram,
     multiset::{self, Multiset},
 };
-pub use stamp::{Stamp, proof::Proof};
+pub use stamp::{BatchValidator, Stamp, proof::Proof};
