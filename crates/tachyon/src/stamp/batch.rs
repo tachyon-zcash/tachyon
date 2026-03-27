@@ -32,12 +32,6 @@ impl BatchValidator {
     }
 
     /// Batch-validates the accumulated bundles.
-    ///
-    /// Returns `true` if every proof in every bundle added to the batch
-    /// validator is valid, or `false` if one or more are invalid. No attempt
-    /// is made to figure out which of the accumulated bundles might be
-    /// invalid; if that information is desired, construct separate
-    /// [`BatchValidator`]s for sub-batches of the bundles.
     pub fn validate<R: CryptoRng>(self, mut rng: R) -> bool {
         if self.items.is_empty() {
             return true;
