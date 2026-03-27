@@ -33,7 +33,7 @@ use crate::{
 };
 
 /// Marker for the absence of a stamp.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stampless;
 
 /// Error during stamp verification.
@@ -67,7 +67,7 @@ impl Error for VerificationError {}
 /// The PCD header `(action_acc, tachygram_acc, anchor)` is not stored
 /// here — the verifier reconstructs it from public data and passes it as
 /// the header to Ragu `verify()`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     ///
