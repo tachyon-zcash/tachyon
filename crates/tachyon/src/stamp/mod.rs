@@ -34,6 +34,7 @@ use crate::{
 
 /// Marker for the absence of a stamp.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Stampless;
 
 /// Error during stamp verification.
@@ -68,6 +69,7 @@ impl Error for VerificationError {}
 /// here — the verifier reconstructs it from public data and passes it as
 /// the header to Ragu `verify()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     ///
