@@ -61,30 +61,6 @@ impl NullifierTrapdoor {
     }
 }
 
-#[cfg(feature = "serde")]
-impl serde::Serialize for NullifierTrapdoor {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use ff::PrimeField as _;
-
-        serializer.serialize_bytes(&self.0.to_repr())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for NullifierTrapdoor {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use crate::serde_helpers::FpVisitor;
-
-        deserializer.deserialize_bytes(FpVisitor).map(Self)
-    }
-}
-
 impl From<Fp> for NullifierTrapdoor {
     fn from(fp: Fp) -> Self {
         Self(fp)
@@ -103,30 +79,6 @@ impl From<NullifierTrapdoor> for Fp {
 /// Can be derived from a shared secret negotiated out-of-band.
 #[derive(Clone, Copy, Debug)]
 pub struct CommitmentTrapdoor(Fp);
-
-#[cfg(feature = "serde")]
-impl serde::Serialize for CommitmentTrapdoor {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use ff::PrimeField as _;
-
-        serializer.serialize_bytes(&self.0.to_repr())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for CommitmentTrapdoor {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use crate::serde_helpers::FpVisitor;
-
-        deserializer.deserialize_bytes(FpVisitor).map(Self)
-    }
-}
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
@@ -166,53 +118,7 @@ pub struct Note {
     pub rcm: CommitmentTrapdoor,
 }
 
-#[cfg(feature = "serde")]
-impl serde::Serialize for Note {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct as _;
-
-        let mut state = serializer.serialize_struct("Note", 4)?;
-        state.serialize_field("pk", &self.pk)?;
-        state.serialize_field("value", &self.value.0)?;
-        state.serialize_field("psi", &self.psi)?;
-        state.serialize_field("rcm", &self.rcm)?;
-        state.end()
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for Note {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de;
-
-        #[derive(serde::Deserialize)]
-        struct NoteFields {
-            pk: PaymentKey,
-            value: u64,
-            psi: NullifierTrapdoor,
-            rcm: CommitmentTrapdoor,
-        }
-
-        let fields = NoteFields::deserialize(deserializer)?;
-        if fields.value > NOTE_VALUE_MAX {
-            return Err(de::Error::custom("note value exceeds maximum"));
-        }
-        Ok(Self {
-            pk: fields.pk,
-            value: Value(fields.value),
-            psi: fields.psi,
-            rcm: fields.rcm,
-        })
-    }
-}
-
-/// A note value, less than 2.1e15 zatoshis
+/// A note value, less than 2.1e15 zatoshis.
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct Value(pub(super) u64);
@@ -328,52 +234,6 @@ impl From<Nullifier> for Fp {
 impl From<Nullifier> for Tachygram {
     fn from(nullifier: Nullifier) -> Self {
         Self::from(nullifier.0)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl serde::Serialize for Commitment {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use ff::PrimeField as _;
-        serializer.serialize_bytes(&self.0.to_repr())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for Commitment {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use crate::serde_helpers::FpVisitor;
-
-        deserializer.deserialize_bytes(FpVisitor).map(Self)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl serde::Serialize for Nullifier {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use ff::PrimeField as _;
-        serializer.serialize_bytes(&self.0.to_repr())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for Nullifier {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use crate::serde_helpers::FpVisitor;
-
-        deserializer.deserialize_bytes(FpVisitor).map(Self)
     }
 }
 

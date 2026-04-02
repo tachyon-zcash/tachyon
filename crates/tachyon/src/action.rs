@@ -3,17 +3,15 @@
 use core::marker::PhantomData;
 
 use crate::{
-    entropy::ActionEntropy,
-    keys::{SpendValidatingKey, private, public},
+    entropy::{ActionEntropy, ActionRandomizer},
+    keys::{private, public},
     note::Note,
     primitives::{Effect, effect},
     reddsa, value,
-    witness::ActionPrivate,
 };
 
 /// A planned Tachyon action, not yet authorized.
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Plan<E: Effect> {
     /// Randomized action verification key.
     pub rk: public::ActionVerificationKey,
@@ -30,35 +28,23 @@ pub struct Plan<E: Effect> {
 impl Plan<effect::Spend> {
     /// Assemble a spend action plan.
     ///
-    /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
+    /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$
     #[must_use]
     pub fn spend(
         note: Note,
         theta: ActionEntropy,
         rcv: value::CommitmentTrapdoor,
-        ak: &SpendValidatingKey,
+        derive_rk: impl FnOnce(ActionRandomizer<effect::Spend>) -> public::ActionVerificationKey,
     ) -> Self {
         let cm = note.commitment();
         let alpha = theta.randomizer::<effect::Spend>(&cm);
-        let rk = ak.derive_action_public(&alpha);
 
         Self {
-            rk,
+            rk: derive_rk(alpha),
             note,
             theta,
             rcv,
             _effect: PhantomData,
-        }
-    }
-
-    /// Assemble the proof witness for this spend plan.
-    #[must_use]
-    pub fn witness(&self) -> ActionPrivate {
-        let cm = self.note.commitment();
-        ActionPrivate {
-            alpha: self.theta.randomizer::<effect::Spend>(&cm).into(),
-            note: self.note,
-            rcv: self.rcv,
         }
     }
 }
@@ -72,25 +58,13 @@ impl Plan<effect::Output> {
         let cm = note.commitment();
         let alpha = theta.randomizer::<effect::Output>(&cm);
         let rsk = private::ActionSigningKey::new(&alpha);
-        let rk = rsk.derive_action_public();
 
         Self {
-            rk,
+            rk: rsk.derive_action_public(),
             note,
             theta,
             rcv,
             _effect: PhantomData,
-        }
-    }
-
-    /// Assemble the proof witness for this output plan.
-    #[must_use]
-    pub fn witness(&self) -> ActionPrivate {
-        let cm = self.note.commitment();
-        ActionPrivate {
-            alpha: self.theta.randomizer::<effect::Output>(&cm).into(),
-            note: self.note,
-            rcv: self.rcv,
         }
     }
 }
@@ -111,7 +85,6 @@ impl<E: Effect> Plan<E> {
 /// - `rk`: Public key (randomized counterpart to `rsk`)
 /// - `sig`: Signature (by single-use `rsk`) over transaction sighash
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Action {
     /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
     /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
@@ -126,8 +99,6 @@ pub struct Action {
 
 /// A spend authorization signature (RedPallas over reddsa::ActionAuth).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Signature(pub(crate) reddsa::Signature<reddsa::ActionAuth>);
 
 impl From<[u8; 64]> for Signature {

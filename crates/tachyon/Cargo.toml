@@ -24,16 +24,14 @@ rust-version.workspace = true
 default = [
     "std",
 ]
-serde = [
-    "dep:serde",
-    "mock_ragu/serde",
-    "reddsa/serde",
-]
 std = [
     "blake2b_simd/std",
     "mock_ragu/std",
     "rand_core/std",
     "reddsa/std",
+    "zcash_primitives/std",
+    "zcash_encoding/std",
+    "core2/std",
 ]
 
 [lints]
@@ -41,6 +39,9 @@ workspace = true
 
 [dependencies]
 blake2b_simd = { version = "1.0", default-features = false }
+core2 = { version = "0.3", default-features = false, features = [
+    "alloc",
+] }
 ff = "0.13"
 group = "0.13"
 halo2_poseidon = "0.1"
@@ -51,9 +52,8 @@ mock_ragu = { path = "../mock_ragu", default-features = false }
 pasta_curves = "0.5.1"
 rand_core = { version = "0.6", default-features = false }
 reddsa = { version = "0.5.1", default-features = false }
-serde = { version = "1.0", features = [
-    "derive",
-], optional = true }
+zcash_encoding = { version = "0.3", default-features = false }
+zcash_primitives = { version = "0.26.4", default-features = false }
 
 [dev-dependencies]
 rand = "0.8"

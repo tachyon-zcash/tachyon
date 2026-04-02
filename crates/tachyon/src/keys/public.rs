@@ -21,8 +21,6 @@ use crate::{action, action::Action, bundle, reddsa, value};
 /// This unification lets consensus treat all actions identically while
 /// the type system enforces the authority boundary at construction time.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct ActionVerificationKey(pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>);
 
 impl ActionVerificationKey {
@@ -121,19 +119,25 @@ impl BindingVerificationKey {
     /// constructed the bundle correctly.
     #[must_use]
     pub fn derive(actions: &[Action], value_balance: i64) -> Self {
-        let bvk_point: EpAffine = derive_bvk(actions.iter().map(|act| act.cv), value_balance);
-        let bvk_bytes: [u8; 32] = bvk_point.to_bytes();
-
-        #[expect(clippy::expect_used, reason = "specified behavior")]
-        Self(
-            reddsa::VerificationKey::<reddsa::BindingAuth>::try_from(bvk_bytes)
-                .expect("cv sum minus balance should be a valid RedPallas verification key"),
-        )
+        let cvs = actions.iter().map(|action| action.cv);
+        Self::from(derive_bvk(cvs, value_balance))
     }
 
     /// Verify a binding signature against a transaction sighash.
     pub fn verify(&self, sighash: &[u8; 32], sig: &bundle::Signature) -> Result<(), reddsa::Error> {
         self.0.verify(sighash, &sig.0)
+    }
+}
+
+impl From<EpAffine> for BindingVerificationKey {
+    fn from(point: EpAffine) -> Self {
+        let bvk_bytes: [u8; 32] = point.to_bytes();
+
+        #[expect(clippy::expect_used, reason = "specified behavior")]
+        Self(
+            reddsa::VerificationKey::<reddsa::BindingAuth>::try_from(bvk_bytes)
+                .expect("EpAffine point should be a valid RedPallas verification key"),
+        )
     }
 }
 

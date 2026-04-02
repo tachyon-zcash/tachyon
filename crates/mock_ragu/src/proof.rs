@@ -87,52 +87,6 @@ impl Proof {
     }
 }
 
-#[cfg(feature = "serde")]
-impl serde::Serialize for Proof {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let bytes = Self::serialize(self);
-        serializer.serialize_bytes(bytes.as_ref())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for Proof {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct ProofVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for ProofVisitor {
-            type Value = Proof;
-
-            fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-                write!(f, "{} bytes for a mock ragu proof", PROOF_SIZE_COMPRESSED)
-            }
-
-            fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Proof, E> {
-                let arr: &[u8; PROOF_SIZE_COMPRESSED] = v
-                    .try_into()
-                    .map_err(|_| E::invalid_length(v.len(), &self))?;
-                Proof::try_from(arr).map_err(|_| E::custom("invalid proof binding"))
-            }
-
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut seq: A,
-            ) -> Result<Proof, A::Error> {
-                let mut bytes = [0u8; PROOF_SIZE_COMPRESSED];
-                for (i, byte) in bytes.iter_mut().enumerate() {
-                    *byte = seq
-                        .next_element()?
-                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
-                }
-                Proof::try_from(&bytes)
-                    .map_err(|_| serde::de::Error::custom("invalid proof binding"))
-            }
-        }
-
-        deserializer.deserialize_bytes(ProofVisitor)
-    }
-}
-
 impl From<Proof> for [u8; PROOF_SIZE_COMPRESSED] {
     fn from(proof: Proof) -> [u8; PROOF_SIZE_COMPRESSED] {
         *proof.serialize()

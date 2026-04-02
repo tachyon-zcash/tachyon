@@ -14,8 +14,9 @@
 //!
 //! [`Bundle<S>`](Bundle) is parameterized by stamp state `S: StampState`:
 //!
-//! - [`Stamped`] — `Bundle<Stamp>`, self-contained with stamp
-//! - [`Stripped`] — `Bundle<Stampless>`, stamp stripped, depends on aggregate
+//! - `Bundle<Unproven>` — actions signed but no proof yet
+//! - [`Stamped`] — `Bundle<Stamp>`, aggregate or self-contained with stamp
+//! - [`Stripped`] — `Bundle<Adjunct>`, stamp stripped, depends on aggregate
 //! - `Bundle<Option<Stamp>>` — erased stamp state for mixed contexts
 //!
 //! ## Block Structure
@@ -57,11 +58,9 @@ pub mod note;
 pub mod reddsa;
 pub mod stamp;
 pub mod value;
-pub mod witness;
 
 mod primitives;
-#[cfg(feature = "serde")]
-mod serde_helpers;
+mod serialization;
 
 pub use action::Action;
 pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped};

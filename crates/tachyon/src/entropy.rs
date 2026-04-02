@@ -27,8 +27,6 @@ use crate::{note, primitives::Effect};
 /// and $\mathsf{cm}$ to recover $\alpha$
 /// ("Tachyaction at a Distance", Bowe 2025).
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
 #[expect(
     clippy::module_name_repetitions,
     reason = "ActionEntropy is the established protocol name"
@@ -36,6 +34,12 @@ use crate::{note, primitives::Effect};
 pub struct ActionEntropy([u8; 32]);
 
 impl ActionEntropy {
+    /// Parse action entropy from 32 bytes.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     /// Sample fresh per-action entropy.
     pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
         let mut bytes = [0u8; 32];

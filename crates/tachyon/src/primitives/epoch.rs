@@ -21,23 +21,3 @@ impl From<Epoch> for u32 {
         epoch.0
     }
 }
-
-#[cfg(feature = "serde")]
-impl serde::Serialize for Epoch {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_u32(self.0)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for Epoch {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        u32::deserialize(deserializer).map(Self)
-    }
-}

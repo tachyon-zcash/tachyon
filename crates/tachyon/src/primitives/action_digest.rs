@@ -91,16 +91,7 @@ impl<E: Effect> TryFrom<&ActionPlan<E>> for ActionDigest {
     type Error = ActionDigestError;
 
     fn try_from(plan: &ActionPlan<E>) -> Result<Self, Self::Error> {
-        let cv_coords = EpAffine::from(plan.cv())
-            .coordinates()
-            .into_option()
-            .ok_or(ActionDigestError::IdentityCv)?;
-        let rk_coords = EpAffine::from(plan.rk)
-            .coordinates()
-            .into_option()
-            .ok_or(ActionDigestError::IdentityRk)?;
-
-        Ok(digest_action(cv_coords, rk_coords))
+        Self::new(plan.cv(), plan.rk)
     }
 }
 
@@ -108,15 +99,7 @@ impl TryFrom<&Action> for ActionDigest {
     type Error = ActionDigestError;
 
     fn try_from(action: &Action) -> Result<Self, Self::Error> {
-        let cv_coords = EpAffine::from(action.cv)
-            .coordinates()
-            .into_option()
-            .ok_or(ActionDigestError::IdentityCv)?;
-        let rk_coords = EpAffine::from(action.rk)
-            .coordinates()
-            .into_option()
-            .ok_or(ActionDigestError::IdentityRk)?;
-        Ok(digest_action(cv_coords, rk_coords))
+        Self::new(action.cv, action.rk)
     }
 }
 
@@ -132,30 +115,6 @@ impl TryFrom<&[u8; 32]> for ActionDigest {
     fn try_from(bytes: &[u8; 32]) -> Result<Self, Self::Error> {
         let fp: Fp = Option::from(Fp::from_repr(*bytes)).ok_or("invalid field element")?;
         Ok(Self(fp))
-    }
-}
-
-#[cfg(feature = "serde")]
-impl serde::Serialize for ActionDigest {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use ff::PrimeField as _;
-
-        serializer.serialize_bytes(&self.0.to_repr())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for ActionDigest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use crate::serde_helpers::FpVisitor;
-
-        deserializer.deserialize_bytes(FpVisitor).map(Self)
     }
 }
 
