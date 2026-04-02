@@ -38,12 +38,13 @@ perf = { level = "deny", priority = -1 }
 style = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 
-
-doc_markdown = "allow"          # https://github.com/rust-lang/rust-clippy/issues/7273
+multiple_crate_versions = "allow"   # todo
+doc_markdown = "allow"              # https://github.com/rust-lang/rust-clippy/issues/7273
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 panic = "warn"
-redundant_pub_crate = "allow"   # pub(crate) in private modules is fine
+redundant_pub_crate = "allow"       # pub(crate) in private modules is fine
+little_endian_bytes = "allow"       # many specified conversions
 
 # -- forbid: error handling --------------------------------------------------
 # unwrap() is always wrong; use expect() for a reason string.
@@ -156,7 +157,6 @@ iter_over_hash_type = "deny"
 large_include_file = "deny"
 let_underscore_must_use = "deny"
 let_underscore_untyped = "deny"
-little_endian_bytes = "deny"
 map_err_ignore = "deny"
 map_with_unused_argument_over_ranges = "deny"
 min_ident_chars = "deny"

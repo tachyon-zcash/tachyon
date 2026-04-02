@@ -1,8 +1,4 @@
 //! Spend nullifier and action-binding headers and steps.
-#![expect(
-    clippy::module_name_repetitions,
-    reason = "header/step names are intentional"
-)]
 
 extern crate alloc;
 
@@ -17,7 +13,7 @@ use crate::{
     entropy::ActionRandomizer,
     keys::ProofAuthorizingKey,
     note::{Note, Nullifier},
-    primitives::{ActionDigest, Epoch, NoteId, effect},
+    primitives::{ActionDigest, EpochIndex, NoteId, effect},
     value,
 };
 
@@ -27,7 +23,7 @@ pub struct SpendNullifierHeader;
 
 impl Header for SpendNullifierHeader {
     // (nf0, nf1, epoch, note_id)
-    type Data<'source> = (Nullifier, Nullifier, Epoch, NoteId);
+    type Data<'source> = (Nullifier, Nullifier, EpochIndex, NoteId);
 
     const SUFFIX: Suffix = Suffix::new(8);
 
@@ -35,7 +31,7 @@ impl Header for SpendNullifierHeader {
         let mut out = Vec::with_capacity(32 * 2 + 4 + 32);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1).to_repr());
-        #[expect(clippy::little_endian_bytes, reason = "specified encoding")]
+
         out.extend_from_slice(&data.2.0.to_le_bytes());
         out.extend_from_slice(&Fp::from(data.3).to_repr());
         out
@@ -48,7 +44,7 @@ pub struct SpendHeader;
 
 impl Header for SpendHeader {
     // (action_digest, nullifiers, epoch, note_id)
-    type Data<'source> = (Fp, [Nullifier; 2], Epoch, NoteId);
+    type Data<'source> = (Fp, [Nullifier; 2], EpochIndex, NoteId);
 
     const SUFFIX: Suffix = Suffix::new(9);
 
@@ -57,7 +53,7 @@ impl Header for SpendHeader {
         out.extend_from_slice(&data.0.to_repr());
         out.extend_from_slice(&Fp::from(data.1[0]).to_repr());
         out.extend_from_slice(&Fp::from(data.1[1]).to_repr());
-        #[expect(clippy::little_endian_bytes, reason = "specified encoding")]
+
         out.extend_from_slice(&data.2.0.to_le_bytes());
         out.extend_from_slice(&Fp::from(data.3).to_repr());
         out
@@ -73,7 +69,7 @@ impl Step for SpendNullifier {
     type Left = ();
     type Output = SpendNullifierHeader;
     type Right = ();
-    type Witness<'source> = (Note, ProofAuthorizingKey, Epoch);
+    type Witness<'source> = (Note, ProofAuthorizingKey, EpochIndex);
 
     const INDEX: Index = Index::new(3);
 
@@ -89,7 +85,7 @@ impl Step for SpendNullifier {
 
         let note_id = note.id(pak.nk());
         let nf0 = note.nullifier(pak.nk(), target_epoch);
-        let nf1 = note.nullifier(pak.nk(), Epoch(target_epoch.0 + 1));
+        let nf1 = note.nullifier(pak.nk(), EpochIndex(target_epoch.0 + 1));
 
         Ok(((nf0, nf1, target_epoch, note_id), ()))
     }

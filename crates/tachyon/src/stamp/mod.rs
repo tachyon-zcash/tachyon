@@ -11,40 +11,36 @@
 //! public data and passes them as the header to Ragu `verify()`.
 
 #![allow(clippy::type_complexity, reason = "todo")]
+#![allow(clippy::module_name_repetitions, reason = "intentional names")]
 
 extern crate alloc;
 
-pub mod delegation;
-pub mod header;
-pub mod pool;
 pub mod proof;
-pub mod spend;
-pub mod spendable;
 
 use alloc::vec::Vec;
 use core::{error::Error, fmt};
 
 use core2::io::{self, Read, Write};
+use ff::Field as _;
 use mock_ragu::{self, proof::PROOF_SIZE_COMPRESSED};
 use pasta_curves::Fp;
+use proof::{
+    PROOF_SYSTEM,
+    header::{MergeStamp, OutputStamp, SpendStamp, StampHeader},
+};
 use rand_core::CryptoRng;
 
-pub use self::proof::compute_action_acc;
-use self::{
-    header::{MergeStamp, OutputStamp, SpendStamp, StampHeader},
-    proof::{PROOF_SYSTEM, compute_tachygram_acc},
-};
 use crate::{
     Note,
     action::Action,
     effect,
     entropy::ActionRandomizer,
-    keys::{ProofAuthorizingKey, private, public},
-    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram},
-    stamp::{
-        spend::{SpendBind, SpendNullifierHeader},
-        spendable::SpendableHeader,
+    keys::{ProofAuthorizingKey, public},
+    primitives::{
+        ActionCommit, ActionDigest, ActionDigestError, ActionSet, Anchor, Tachygram, TachygramAcc,
+        TachygramCommit,
     },
+    stamp::proof::{compute_action_acc, spend, spendable},
     value,
 };
 
@@ -198,13 +194,14 @@ impl Plan {
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            mock_ragu::Pcd<'source, SpendNullifierHeader>,
-            mock_ragu::Pcd<'source, SpendableHeader>,
+            mock_ragu::Pcd<'source, spend::SpendNullifierHeader>,
+            mock_ragu::Pcd<'source, spendable::SpendableHeader>,
         )>,
     ) -> Result<Stamp, ProveError> {
-        // Each entry is (stamp, action_acc). action_acc is ephemeral —
-        // needed to reconstruct PCD headers during merge, never stored.
-        let mut entries: Vec<(Stamp, Fp)> = Vec::new();
+        // Each entry is (stamp, action_digests). The digest list is ephemeral —
+        // needed to reconstruct the PCD header's action multiset during merge,
+        // never stored.
+        let mut entries: Vec<(Stamp, Vec<Fp>)> = Vec::new();
 
         if self.spends.len() != spend_pcds.len() {
             return Err(ProveError::SpendableMismatch);
@@ -225,7 +222,7 @@ impl Plan {
             let (bind_proof, ()) = app
                 .fuse(
                     rng,
-                    &SpendBind,
+                    &spend::SpendBind,
                     (rcv, alpha, *pak, note),
                     nf_pcd,
                     mock_ragu::Pcd {
@@ -250,7 +247,7 @@ impl Plan {
             let stamp = Stamp::prove_spend(rng, bind_pcd, spendable_pcd, tachygrams)
                 .map_err(|_err| ProveError::ProofFailed)?;
 
-            entries.push((stamp, Fp::from(action_digest)));
+            entries.push((stamp, alloc::vec![Fp::from(action_digest)]));
         }
 
         for ((cv, rk), (alpha, note, rcv)) in self.outputs {
@@ -260,7 +257,7 @@ impl Plan {
             let stamp = Stamp::prove_output(rng, rcv, alpha, note, self.anchor)
                 .map_err(|_err| ProveError::ProofFailed)?;
 
-            entries.push((stamp, Fp::from(action_digest)));
+            entries.push((stamp, alloc::vec![Fp::from(action_digest)]));
         }
 
         if entries.is_empty() {
@@ -269,17 +266,18 @@ impl Plan {
 
         // Merge pairwise.
         while entries.len() > 1 {
-            let (right, right_acc) = entries.pop().ok_or(ProveError::NoActions)?;
-            let (left, left_acc) = entries.pop().ok_or(ProveError::NoActions)?;
-            let merged = Stamp::prove_merge(rng, left, left_acc, right, right_acc)
+            let (right, right_digests) = entries.pop().ok_or(ProveError::NoActions)?;
+            let (left, left_digests) = entries.pop().ok_or(ProveError::NoActions)?;
+            let merged = Stamp::prove_merge(rng, left, &left_digests, right, &right_digests)
                 .map_err(|_err| ProveError::MergeFailed)?;
-            let merged_acc = left_acc * right_acc;
-            entries.push((merged, merged_acc));
+            let mut merged_digests = left_digests;
+            merged_digests.extend_from_slice(&right_digests);
+            entries.push((merged, merged_digests));
         }
 
         entries
             .pop()
-            .map(|(stamp, _acc)| stamp)
+            .map(|(stamp, _digests)| stamp)
             .ok_or(ProveError::NoActions)
     }
 }
@@ -345,16 +343,14 @@ impl Stamp {
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let tachygram = Tachygram::from(Fp::from(note.commitment()));
-        let cv = rcv.commit(-i64::from(note.value));
-        let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
-        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| mock_ragu::Error)?;
-        let action_acc = Fp::from(action_digest);
-        let tachygram_acc = Fp::from(tachygram);
+        let (proof, (action_acc, tachygram_acc, tachygram)) =
+            app.seed(rng, &OutputStamp, (rcv, alpha, note, anchor))?;
 
-        let header = (action_acc, tachygram_acc, anchor);
-
-        let (proof, _tg) = app.seed(rng, &OutputStamp, (rcv, alpha, note, anchor))?;
+        let header = (
+            ActionCommit(action_acc.0.commit(Fp::ZERO)),
+            TachygramCommit(tachygram_acc.0.commit(Fp::ZERO)),
+            anchor,
+        );
         let pcd = proof.carry::<StampHeader>(header);
         let rerand = app.rerandomize(pcd, rng)?;
 
@@ -374,18 +370,21 @@ impl Stamp {
     pub fn prove_spend<'source, RNG: CryptoRng>(
         rng: &mut RNG,
         spend_pcd: mock_ragu::Pcd<'source, spend::SpendHeader>,
-        spendable_pcd: mock_ragu::Pcd<'source, SpendableHeader>,
+        spendable_pcd: mock_ragu::Pcd<'source, spendable::SpendableHeader>,
         tachygrams: Vec<Tachygram>,
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let action_acc = spend_pcd.data.0;
-        let tachygram_acc = compute_tachygram_acc(&tachygrams);
         let anchor = spendable_pcd.data.2;
 
-        let (proof, ()) = app.fuse(rng, &SpendStamp, (), spend_pcd, spendable_pcd)?;
+        let (proof, (action_acc, tachygram_acc)) =
+            app.fuse(rng, &SpendStamp, (), spend_pcd, spendable_pcd)?;
 
-        let header = (action_acc, tachygram_acc, anchor);
+        let header = (
+            ActionCommit(action_acc.0.commit(Fp::ZERO)),
+            TachygramCommit(tachygram_acc.0.commit(Fp::ZERO)),
+            anchor,
+        );
 
         let pcd = proof.carry::<StampHeader>(header);
         let rerand = app.rerandomize(pcd, rng)?;
@@ -401,35 +400,63 @@ impl Stamp {
     ///
     /// Both stamps must share the same anchor (use StampLift to align first).
     ///
-    /// `left_action_acc` and `right_action_acc` are the Fp product accumulators
-    /// over each side's actions. The caller reconstructs these from public data
-    /// (they are never stored on the stamp).
+    /// `left_action_digests` and `right_action_digests` are each side's action
+    /// digests (as Fp). The caller reconstructs these from public data — they
+    /// are never stored on the stamp. Used to rebuild the `ActionCommit`
+    /// multisets that the `MergeStamp` step verifies via Schwartz-Zippel.
     pub fn prove_merge<RNG: CryptoRng>(
         rng: &mut RNG,
         left: Self,
-        left_action_acc: Fp,
+        left_action_digests: &[Fp],
         right: Self,
-        right_action_acc: Fp,
+        right_action_digests: &[Fp],
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let left_tachygram_acc = compute_tachygram_acc(&left.tachygrams);
-        let right_tachygram_acc = compute_tachygram_acc(&right.tachygrams);
+        let left_action = ActionSet(mock_ragu::Polynomial::from_roots(left_action_digests));
+        let right_action = ActionSet(mock_ragu::Polynomial::from_roots(right_action_digests));
+        let left_tachygram = TachygramAcc::from(&*left.tachygrams);
+        let right_tachygram = TachygramAcc::from(&*right.tachygrams);
 
-        let left_header = (left_action_acc, left_tachygram_acc, left.anchor);
-        let right_header = (right_action_acc, right_tachygram_acc, right.anchor);
+        let left_header = (
+            ActionCommit(left_action.0.commit(Fp::ZERO)),
+            TachygramCommit(left_tachygram.0.commit(Fp::ZERO)),
+            left.anchor,
+        );
+        let right_header = (
+            ActionCommit(right_action.0.commit(Fp::ZERO)),
+            TachygramCommit(right_tachygram.0.commit(Fp::ZERO)),
+            right.anchor,
+        );
 
         let left_pcd = left.proof.carry::<StampHeader>(left_header);
         let right_pcd = right.proof.carry::<StampHeader>(right_header);
 
-        let (proof, ()) = app.fuse(rng, &MergeStamp, (), left_pcd, right_pcd)?;
-
-        let action_acc = left_action_acc * right_action_acc;
         let anchor = left.anchor;
-        let tachygrams = [left.tachygrams, right.tachygrams].concat();
-        let tachygram_acc = compute_tachygram_acc(&tachygrams);
+        let mut tachygrams = left.tachygrams;
+        tachygrams.extend(right.tachygrams.iter().copied());
 
-        let merged_header = (action_acc, tachygram_acc, anchor);
+        let merged_action = left_action.0.multiply(&right_action.0);
+        let merged_tachygram = left_tachygram.0.multiply(&right_tachygram.0);
+
+        let (proof, ()) = app.fuse(
+            rng,
+            &MergeStamp,
+            (
+                left_action.into(),
+                right_action.into(),
+                left_tachygram.into(),
+                right_tachygram.into(),
+            ),
+            left_pcd,
+            right_pcd,
+        )?;
+
+        let merged_header = (
+            ActionCommit(merged_action.commit(Fp::ZERO)),
+            TachygramCommit(merged_tachygram.commit(Fp::ZERO)),
+            anchor,
+        );
         let carried = proof.carry::<StampHeader>(merged_header);
         let rerand = app.rerandomize(carried, rng)?;
 
@@ -453,9 +480,13 @@ impl Stamp {
         let app = &*PROOF_SYSTEM;
 
         let action_acc = compute_action_acc(actions).map_err(VerificationError::ActionDigest)?;
-        let tachygram_acc = compute_tachygram_acc(&self.tachygrams);
+        let tachygram_acc = TachygramAcc::from(&*self.tachygrams);
 
-        let header = (action_acc, tachygram_acc, self.anchor);
+        let header = (
+            ActionCommit(action_acc.0.commit(Fp::ZERO)),
+            TachygramCommit(tachygram_acc.0.commit(Fp::ZERO)),
+            self.anchor,
+        );
 
         let pcd = self.proof.clone().carry::<StampHeader>(header);
 

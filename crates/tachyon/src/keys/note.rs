@@ -49,7 +49,6 @@ impl NullifierKey {
     /// - Derive epoch-restricted prefix keys $\Psi_t$ for OSS delegation
     #[must_use]
     pub fn derive_note_private(&self, psi: &note::NullifierTrapdoor) -> NoteMasterKey {
-        #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
         let personalization = Fp::from_u128(u128::from_le_bytes(*NOTE_MASTER_DOMAIN));
         NoteMasterKey(
             Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
@@ -119,7 +118,6 @@ impl PaymentKey {
         reason = "sign-normalized ak (tilde_y=0) is always a valid Fp repr"
     )]
     pub fn derive(ak: &SpendValidatingKey, nk: &NullifierKey) -> Self {
-        #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
         let domain = Fp::from_u128(u128::from_le_bytes(*PAYMENT_KEY_DOMAIN));
 
         let ak_bytes: [u8; 32] = ak.0.into();
@@ -133,7 +131,7 @@ impl PaymentKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitives::Epoch;
+    use crate::primitives::EpochIndex;
 
     #[test]
     fn derive_note_private_deterministic() {
@@ -158,8 +156,8 @@ mod tests {
         let psi = note::NullifierTrapdoor::from(Fp::from(99u64));
         let mk = nk.derive_note_private(&psi);
         assert_ne!(
-            mk.derive_nullifier(Epoch(0u32)),
-            mk.derive_nullifier(Epoch(1u32)),
+            mk.derive_nullifier(EpochIndex(0u32)),
+            mk.derive_nullifier(EpochIndex(1u32)),
         );
     }
 
@@ -173,8 +171,8 @@ mod tests {
         for dk in &mk.derive_note_delegates(0..=99) {
             for epoch in dk.range() {
                 assert_eq!(
-                    mk.derive_nullifier(Epoch(epoch)),
-                    dk.derive_nullifier(Epoch(epoch)),
+                    mk.derive_nullifier(EpochIndex(epoch)),
+                    dk.derive_nullifier(EpochIndex(epoch)),
                     "mismatch at epoch {epoch} with delegate {dk:?}"
                 );
             }
@@ -192,6 +190,6 @@ mod tests {
         // Delegate covering [0..=63]
         let dk = &mk.derive_note_delegates(0..=63)[0];
         // epoch 64 is outside the authorized range
-        let _compute = dk.derive_nullifier(Epoch(64u32));
+        let _compute = dk.derive_nullifier(EpochIndex(64u32));
     }
 }

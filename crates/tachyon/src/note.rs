@@ -42,7 +42,7 @@ use rand_core::{CryptoRng, RngCore};
 use crate::{
     constants::{NOTE_COMMITMENT_DOMAIN, NOTE_VALUE_MAX},
     keys::{NullifierKey, PaymentKey},
-    primitives::{Epoch, NoteId, Tachygram},
+    primitives::{EpochIndex, NoteId, Tachygram},
 };
 
 /// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
@@ -152,7 +152,6 @@ impl Note {
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$
     #[must_use]
     pub fn commitment(&self) -> Commitment {
-        #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
         let domain = Fp::from_u128(u128::from_le_bytes(*NOTE_COMMITMENT_DOMAIN));
         Commitment::from(
             Hash::<_, P128Pow5T3, ConstantLength<5>, 3, 2>::init().hash([
@@ -179,7 +178,7 @@ impl Note {
     ///
     /// The same note at different flavors produces different nullifiers.
     #[must_use]
-    pub fn nullifier(&self, nk: &NullifierKey, flavor: Epoch) -> Nullifier {
+    pub fn nullifier(&self, nk: &NullifierKey, flavor: EpochIndex) -> Nullifier {
         let mk = nk.derive_note_private(&self.psi);
         mk.derive_nullifier(flavor)
     }
@@ -286,7 +285,7 @@ mod tests {
     /// `Note::nullifier` delegates correctly to key derivation.
     #[test]
     fn note_nullifier_matches_key_derivation() {
-        use crate::{keys::private::SpendingKey, primitives::Epoch};
+        use crate::{keys::private::SpendingKey, primitives::EpochIndex};
 
         let sk = SpendingKey::from([0x42u8; 32]);
         let nk = sk.derive_nullifier_private();
@@ -297,7 +296,7 @@ mod tests {
             psi,
             rcm: CommitmentTrapdoor::from(Fp::ZERO),
         };
-        let flavor = Epoch(5u32);
+        let flavor = EpochIndex(5u32);
 
         let mk = nk.derive_note_private(&psi);
         assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));

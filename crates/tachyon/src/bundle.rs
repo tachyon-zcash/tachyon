@@ -11,8 +11,9 @@ use alloc::vec::Vec;
 use core::{error::Error, fmt};
 
 use core2::io::{self, Read, Write};
-use ff::{Field as _, PrimeField as _};
+use ff::Field as _;
 use lazy_static::lazy_static;
+use mock_ragu::Polynomial;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 use zcash_encoding::CompactSize;
@@ -21,9 +22,9 @@ use crate::{
     action::{self, Action},
     constants::BUNDLE_COMMITMENT_PERSONALIZATION,
     keys::{private, public},
-    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram, effect},
+    primitives::{ActionCommit, ActionDigest, ActionDigestError, Anchor, Tachygram, effect},
     reddsa,
-    stamp::{self, Adjunct, Stamp, Unproven},
+    stamp::{self, Adjunct, Stamp, Unproven, proof::compute_action_acc},
     value,
 };
 
@@ -175,21 +176,22 @@ impl Error for SignError {}
 /// \text{"Tachyon-BndlHash"},\; \mathsf{action\_acc} \|
 /// \mathsf{value\_balance}) $$
 ///
-/// where $\mathsf{action\_acc}$ is the raw Fp product of action digests —
-/// order-independent by construction.
+/// where $\mathsf{action\_acc}$ is the 32-byte commitment to the action
+/// digest multiset `∏(X - action_digest_i)` — order-independent by
+/// construction since the polynomial is invariant under root permutation.
 ///
 /// The stamp is excluded because it is stripped during aggregation.
-#[expect(clippy::module_name_repetitions, reason = "consistent naming")]
+#[expect(clippy::module_name_repetitions, reason = "intentional name")]
 #[must_use]
-pub fn digest_bundle(action_acc: Fp, value_balance: i64) -> [u8; 64] {
+pub fn digest_bundle(action_acc: &ActionCommit, value_balance: i64) -> [u8; 64] {
     let mut state = blake2b_simd::Params::new()
         .hash_length(64)
         .personal(BUNDLE_COMMITMENT_PERSONALIZATION)
         .to_state();
 
-    state.update(&action_acc.to_repr());
+    let action_bytes: [u8; 32] = action_acc.0.into();
+    state.update(&action_bytes);
 
-    #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
     state.update(&value_balance.to_le_bytes());
 
     *state.finalize().as_array()
@@ -268,14 +270,16 @@ impl Plan {
     #[must_use]
     #[expect(clippy::expect_used, reason = "todo")]
     pub fn commitment(&self) -> [u8; 64] {
-        let action_acc = self
+        let roots: Vec<Fp> = self
             .iter_actions(
                 |plan| ActionDigest::try_from(plan).expect("don't plan invalid spends"),
                 |plan| ActionDigest::try_from(plan).expect("don't plan invalid outputs"),
             )
-            .fold(Fp::ONE, |acc, digest| acc * Fp::from(digest));
+            .map(Fp::from)
+            .collect();
+        let action_acc = ActionCommit(Polynomial::from_roots(&roots).commit(Fp::ZERO));
 
-        digest_bundle(action_acc, self.value_balance())
+        digest_bundle(&action_acc, self.value_balance())
     }
 
     /// Build a [`stamp::Plan`] from this bundle plan.
@@ -456,7 +460,7 @@ fn read_bundle<R: Read>(reader: &mut R) -> io::Result<(Vec<Action>, i64, Signatu
 
     let mut vb_bytes = [0u8; 8];
     reader.read_exact(&mut vb_bytes)?;
-    #[expect(clippy::little_endian_bytes, reason = "specified wire format")]
+
     let value_balance = i64::from_le_bytes(vb_bytes);
 
     let mut actions = Vec::with_capacity(n_actions);
@@ -491,7 +495,6 @@ fn write_bundle<W: Write>(
         writer.write_all(&rk_bytes)?;
     }
 
-    #[expect(clippy::little_endian_bytes, reason = "specified wire format")]
     writer.write_all(&value_balance.to_le_bytes())?;
 
     for action in actions {
@@ -672,8 +675,8 @@ impl Stripped {
 impl<S: StampState> Bundle<S> {
     /// See [`digest_bundle`].
     pub fn commitment(&self) -> Result<[u8; 64], ActionDigestError> {
-        let action_acc = stamp::compute_action_acc(&self.actions)?;
-        Ok(digest_bundle(action_acc, self.value_balance))
+        let action_acc = ActionCommit(compute_action_acc(&self.actions)?.0.commit(Fp::ZERO));
+        Ok(digest_bundle(&action_acc, self.value_balance))
     }
 
     /// Verify the bundle's binding signature and all action signatures.
@@ -724,6 +727,7 @@ impl From<Signature> for [u8; 64] {
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
+    use mock_ragu::Polynomial;
     use pasta_curves::Fp;
     use rand::{CryptoRng, RngCore, SeedableRng as _, rngs::StdRng};
 
@@ -733,7 +737,7 @@ mod tests {
         entropy::ActionEntropy,
         keys::private,
         note::{self, Note},
-        primitives::{Anchor, BlockHeight},
+        primitives::{BlockHeight, PoolCommit},
         stamp::Stamp,
         value,
     };
@@ -768,9 +772,17 @@ mod tests {
         let plan = action::Plan::output(note, theta, rcv);
         let alpha = theta.randomizer::<effect::Output>(&note.commitment());
 
-        let stamp =
-            Stamp::prove_output(&mut *rng, rcv, alpha, note, Anchor::genesis(BlockHeight(0)))
-                .expect("prove_output");
+        let stamp = Stamp::prove_output(
+            &mut *rng,
+            rcv,
+            alpha,
+            note,
+            Anchor(
+                BlockHeight(0),
+                PoolCommit(Polynomial::default().commit(Fp::ZERO)),
+            ),
+        )
+        .expect("prove_output");
 
         let action = Action {
             cv: plan.cv(),
@@ -834,7 +846,10 @@ mod tests {
             spend_rcv,
             spend_alpha,
             spend_note,
-            Anchor::genesis(BlockHeight(0)),
+            Anchor(
+                BlockHeight(0),
+                PoolCommit(Polynomial::default().commit(Fp::ZERO)),
+            ),
         )
         .expect("prove_output (spend-value)");
 
@@ -843,14 +858,24 @@ mod tests {
             output_rcv,
             output_alpha,
             output_note,
-            Anchor::genesis(BlockHeight(0)),
+            Anchor(
+                BlockHeight(0),
+                PoolCommit(Polynomial::default().commit(Fp::ZERO)),
+            ),
         )
         .expect("prove_output (output-value)");
 
-        let spend_acc = stamp::compute_action_acc(&[spend_action]).unwrap();
-        let output_acc = stamp::compute_action_acc(&[output_action]).unwrap();
-        let stamp = Stamp::prove_merge(&mut *rng, spend_stamp, spend_acc, output_stamp, output_acc)
-            .expect("prove_merge");
+        let spend_digests = alloc::vec![Fp::from(ActionDigest::try_from(&spend_action).unwrap(),)];
+        let output_digests =
+            alloc::vec![Fp::from(ActionDigest::try_from(&output_action).unwrap(),)];
+        let stamp = Stamp::prove_merge(
+            &mut *rng,
+            spend_stamp,
+            &spend_digests,
+            output_stamp,
+            &output_digests,
+        )
+        .expect("prove_merge");
 
         let bundle: Stamped = Bundle {
             actions: alloc::vec![spend_action, output_action],
@@ -957,6 +982,13 @@ mod tests {
         bundle.verify_signatures(&sighash).unwrap();
     }
 
+    fn action_digests(actions: &[Action]) -> Vec<Fp> {
+        actions
+            .iter()
+            .map(|action| Fp::from(ActionDigest::try_from(action).unwrap()))
+            .collect()
+    }
+
     #[test]
     fn innocent_aggregate_from_two_autonomes() {
         let mut rng = StdRng::seed_from_u64(0xCAFE);
@@ -964,8 +996,8 @@ mod tests {
         let autonome_a = build_autonome(&mut rng, 1000, 700);
         let autonome_b = build_autonome(&mut rng, 500, 200);
 
-        let acc_a = stamp::compute_action_acc(&autonome_a.actions).unwrap();
-        let acc_b = stamp::compute_action_acc(&autonome_b.actions).unwrap();
+        let digests_a = action_digests(&autonome_a.actions);
+        let digests_b = action_digests(&autonome_b.actions);
         let (adjunct_a, stamp_a) = autonome_a.strip();
         let (adjunct_b, stamp_b) = autonome_b.strip();
 
@@ -973,8 +1005,8 @@ mod tests {
             let innocent_plan = Plan::new(alloc::vec![], alloc::vec![]);
             let innocent_sighash = mock_sighash(innocent_plan.commitment());
 
-            let stamp =
-                Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("prove_merge");
+            let stamp = Stamp::prove_merge(&mut rng, stamp_a, &digests_a, stamp_b, &digests_b)
+                .expect("prove_merge");
 
             Bundle {
                 actions: alloc::vec![],
@@ -1007,23 +1039,24 @@ mod tests {
 
         let sighash = mock_sighash(becomes_based.commitment().unwrap());
 
-        let based_acc = stamp::compute_action_acc(&becomes_based.actions).unwrap();
-        let acc_a = stamp::compute_action_acc(&autonome_a.actions).unwrap();
-        let acc_b = stamp::compute_action_acc(&autonome_b.actions).unwrap();
+        let based_digests = action_digests(&becomes_based.actions);
+        let digests_a = action_digests(&autonome_a.actions);
+        let digests_b = action_digests(&autonome_b.actions);
 
         let (adjunct_a, stamp_a) = autonome_a.strip();
         let (adjunct_b, stamp_b) = autonome_b.strip();
 
-        let innocent_acc = acc_a * acc_b;
-        let innocent_stamp =
-            Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("innocent merge");
+        let mut innocent_digests = digests_a.clone();
+        innocent_digests.extend_from_slice(&digests_b);
+        let innocent_stamp = Stamp::prove_merge(&mut rng, stamp_a, &digests_a, stamp_b, &digests_b)
+            .expect("innocent merge");
 
         let based_stamp = Stamp::prove_merge(
             &mut rng,
             becomes_based.stamp,
-            based_acc,
+            &based_digests,
             innocent_stamp,
-            innocent_acc,
+            &innocent_digests,
         )
         .expect("based merge");
 
@@ -1076,10 +1109,10 @@ mod tests {
             .sign(&sighash, &ask, &mut rng)
             .expect("sign should succeed");
 
-        let acc_a = stamp::compute_action_acc(&[action_a]).unwrap();
-        let acc_b = stamp::compute_action_acc(&[action_b]).unwrap();
-        let stamp =
-            Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("prove_merge");
+        let digests_a = action_digests(&[action_a]);
+        let digests_b = action_digests(&[action_b]);
+        let stamp = Stamp::prove_merge(&mut rng, stamp_a, &digests_a, stamp_b, &digests_b)
+            .expect("prove_merge");
         let stamped = unproven.stamp(stamp);
 
         stamped
@@ -1116,7 +1149,10 @@ mod tests {
         let plan_b = action::Plan::output(note_b, theta_b, rcv_b);
 
         let bundle_plan = Plan::new(alloc::vec![], alloc::vec![plan_a, plan_b]);
-        let anchor = Anchor::genesis(BlockHeight(0));
+        let anchor = Anchor(
+            BlockHeight(0),
+            PoolCommit(Polynomial::default().commit(Fp::ZERO)),
+        );
 
         let stamp_plan = bundle_plan.stamp_plan(anchor);
         let stamp = stamp_plan

@@ -19,7 +19,6 @@ use crate::{
 /// \bigl(\text{Poseidon}_\text{Tachyon-ActnDgst}(\mathsf{cv}_i \|
 /// \mathsf{rk}_i) + 1\bigr) $$
 fn digest_action(cv: Coordinates<EpAffine>, rk: Coordinates<EpAffine>) -> ActionDigest {
-    #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
     let personalization = Fp::from_u128(u128::from_le_bytes(*ACTION_DIGEST_PERSONALIZATION));
 
     let hash = Hash::<_, P128Pow5T3, ConstantLength<5>, 3, 2>::init().hash([

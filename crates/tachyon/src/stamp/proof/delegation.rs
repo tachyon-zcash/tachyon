@@ -1,8 +1,4 @@
 //! GGM delegation headers and steps.
-#![expect(
-    clippy::module_name_repetitions,
-    reason = "header/step names are intentional"
-)]
 
 extern crate alloc;
 
@@ -15,7 +11,7 @@ use pasta_curves::Fp;
 use crate::{
     keys::{GGM_TREE_DEPTH, NotePrefixedKey, ProofAuthorizingKey},
     note::{Note, Nullifier},
-    primitives::{Epoch, NoteId},
+    primitives::{EpochIndex, NoteId},
 };
 
 /// Marker type for PCD headers carrying delegation state.
@@ -30,9 +26,9 @@ impl Header for DelegationHeader {
     fn encode(&(key, id): &Self::Data<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 4 + 4 + 32);
         out.extend_from_slice(&key.inner.to_repr());
-        #[expect(clippy::little_endian_bytes, reason = "specified encoding")]
+
         out.extend_from_slice(&key.depth.get().to_le_bytes());
-        #[expect(clippy::little_endian_bytes, reason = "specified encoding")]
+
         out.extend_from_slice(&key.index.to_le_bytes());
         out.extend_from_slice(&Fp::from(id).to_repr());
         out
@@ -45,14 +41,14 @@ pub struct NullifierHeader;
 
 impl Header for NullifierHeader {
     // (nf, epoch, note_id)
-    type Data<'source> = (Nullifier, Epoch, NoteId);
+    type Data<'source> = (Nullifier, EpochIndex, NoteId);
 
     const SUFFIX: Suffix = Suffix::new(4);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 4 + 32);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
-        #[expect(clippy::little_endian_bytes, reason = "specified encoding")]
+
         out.extend_from_slice(&data.1.0.to_le_bytes());
         out.extend_from_slice(&Fp::from(data.2).to_repr());
         out
@@ -137,8 +133,8 @@ impl Step for NullifierStep {
             return Err(mock_ragu::Error);
         }
 
-        let epoch = Epoch(key.index);
-        let nullifier = key.derive_nullifier(Epoch(key.index));
+        let epoch = EpochIndex(key.index);
+        let nullifier = key.derive_nullifier(EpochIndex(key.index));
 
         Ok(((nullifier, epoch, note_id), ()))
     }

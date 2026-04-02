@@ -27,10 +27,7 @@ use crate::{note, primitives::Effect};
 /// and $\mathsf{cm}$ to recover $\alpha$
 /// ("Tachyaction at a Distance", Bowe 2025).
 #[derive(Clone, Copy, Debug)]
-#[expect(
-    clippy::module_name_repetitions,
-    reason = "ActionEntropy is the established protocol name"
-)]
+#[expect(clippy::module_name_repetitions, reason = "intentional name")]
 pub struct ActionEntropy([u8; 32]);
 
 impl ActionEntropy {
