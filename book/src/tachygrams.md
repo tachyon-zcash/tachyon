@@ -41,13 +41,13 @@ An observer sees a bag of actions and a bag of tachygrams with no individual cor
 
 ## Public Data
 
-The PCD header carries two polynomial commitments and one scalar:
+The PCD header carries two polynomial commitments and an anchor:
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| `action_acc` | EC point (Vesta) | Pedersen vector commitment to the action accumulator polynomial |
-| `tachygram_acc` | EC point (Vesta) | Pedersen vector commitment to the tachygram accumulator polynomial |
-| `anchor` | $\mathbb{F}_p$ scalar | Accumulator state reference |
+| `action_acc` | EC point (Pallas) | Pedersen vector commitment to the action accumulator polynomial |
+| `tachygram_acc` | EC point (Pallas) | Pedersen vector commitment to the tachygram accumulator polynomial |
+| `anchor` | `(BlockHeight, PoolCommit)` | block height and the pool multiset commitment at that block (see [Proof Pipeline](./proof-pipeline.md#anchor)) |
 
 Both accumulators use polynomial commitments.
 Each element is hashed (Poseidon, domain-separated) into a root $r_i \in \mathbb{F}_p$.
@@ -72,8 +72,9 @@ The stamp carries only tachygrams, anchor, and proof bytes.
 The verifier reconstructs the full header following appropriate rules.
 This way, the verifier knows a consensus-valid set of tachygrams was used in proof generation.
 
-Each `ActionStep` seed builds a degree-1 polynomial from one root and commits it;
-`MergeStep` multiplies the polynomials together and recommits.
+Each leaf step (`OutputStamp`, `SpendStamp`) builds a degree-1 polynomial from one root and commits it;
+`MergeStamp` multiplies the polynomials together and recommits.
+See the [Proof Pipeline](./proof-pipeline.md#step-types) step table for the full set of seeds, transforms, and fuses.
 PCD soundness means the only way to produce a valid
 proof is through `seed` + `fuse`, so an attacker cannot skip leaf circuits or
 strip duplicate contributions between steps.
@@ -88,7 +89,7 @@ This will require an additional leaf step that can accept the 'bonus' tachygram 
 The verifier has: the public actions $(rk_i, cv_i, sig_i)$, the listed
 tachygrams $tg_i$, the anchor, and the proof bytes.
 
-1. **Anchor range**: check anchor is within valid epoch window
+1. **Anchor**: check `pool_commit` matches a recent consensus-blessed pool state at `block_height`
 2. **No duplicate tachygrams**: check the tachygram list for repeats
 3. **Action sigs**: verify each $sig_i$ against $rk_i$ (RedPallas)
 4. **Binding sig**: verify against $\sum cv_i$
@@ -96,10 +97,6 @@ tachygrams $tg_i$, the anchor, and the proof bytes.
    - **Recompute action_acc**: build polynomial from roots $\text{Poseidon}(\mathsf{cv}_i \| \mathsf{rk}_i)$, commit
    - **Recompute tachygram_acc**: build polynomial from roots $\text{Poseidon}(\mathsf{tg}_i)$, commit
 6. **Verify proof**: call Ragu `verify(Pcd { proof, data: header })`
-
-<!-- TODO
-Anchor range: Or check the block's epoch is within the anchor window?
--->
 
 The verifier constructs the header from scratch.
 If the proof was computed over different accumulators (e.g. from a double-spend), the reconstructed header won't match and verification fails.
@@ -113,7 +110,7 @@ produce $\{a,b,c\}$?
 
 The polynomial accumulator encodes multiplicity, committing to *how many times* each element appears.
 In the formulas below, $r(x) = \text{Poseidon}(x)$ denotes the root derived from element $x$.
-When `MergeStep` multiplies two intersecting polynomials, the intersection is evident:
+When `MergeStamp` multiplies two intersecting polynomials, the intersection is evident:
 
 $$\text{merged} = (X - r(a))(X - r(b))(X - r(b))(X - r(c)) \quad (b \text{ counted twice})$$
 

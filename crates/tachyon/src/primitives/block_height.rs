@@ -1,6 +1,4 @@
-use crate::primitives::Epoch;
-
-const EPOCH_SHIFT: u32 = 12;
+use crate::{constants::EPOCH_SHIFT, primitives::EpochIndex};
 
 /// A block height in the pool chain.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -21,8 +19,8 @@ impl BlockHeight {
 
     /// Epoch index for this block height.
     #[must_use]
-    pub const fn epoch(self) -> Epoch {
-        Epoch(self.0 >> EPOCH_SHIFT)
+    pub const fn epoch(self) -> EpochIndex {
+        EpochIndex(self.0 >> EPOCH_SHIFT)
     }
 
     /// Whether this is the last block of its epoch.

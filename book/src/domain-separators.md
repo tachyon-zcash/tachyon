@@ -24,6 +24,9 @@ All BLAKE2b personalizations are exactly 16 bytes. Poseidon domain tags are 16-b
 | Nullifier | `Tachyon-NfDerive` | $\text{Poseidon}(\mathsf{tag}, \mathsf{node}, \mathsf{bit})$ — GGM tree steps |
 | Note commitment | `Tachyon-NoteCmmt` | $\mathsf{cm} = \text{Poseidon}(\mathsf{tag}, \mathsf{rcm}, \mathsf{pk}, v, \Psi)$ |
 | Action digest | `Tachyon-ActnDgst` | $\text{Poseidon}(\mathsf{tag}, \mathsf{cv}_x, \mathsf{cv}_y, \mathsf{rk}_x, \mathsf{rk}_y)$ |
+| Payment key | `Tachyon-PkDerive` | $\mathsf{pk} = \text{Poseidon}(\mathsf{tag}, \mathsf{ak}_x, \mathsf{nk})$ |
+| Delegation id | `Tachyon-Delegate` | $\text{DelegationId} = \text{Poseidon}(\mathsf{tag}, \mathsf{mk}, \mathsf{cm}, \mathsf{trapdoor})$ — per-delegation note binding |
+| Epoch seed | `Tachyon-EpchSeed` | $\text{epoch\_seed} = \text{Poseidon}(\mathsf{tag}, \mathsf{pool\_commit}_x, \mathsf{pool\_commit}_y)$ — seed inserted at epoch boundary |
 
 ## Other
 

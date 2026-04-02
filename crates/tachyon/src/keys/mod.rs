@@ -175,8 +175,8 @@ mod tests {
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
-            psi: note::NullifierTrapdoor::from(Fp::ZERO), // TODO: don't use zero
-            rcm: note::CommitmentTrapdoor::from(Fp::ZERO), // TODO: don't use zero
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
         };
         let theta = ActionEntropy::random(&mut rng);
         let alpha = theta.randomizer::<effect::Spend>(&note.commitment());

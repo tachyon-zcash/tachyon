@@ -74,10 +74,12 @@ Then during authorization, the custody device is able to confirm correctness of 
 The bundle commitment is a digest of the bundle's effect.
 
 $$ d_i = \text{Poseidon}_\text{Tachyon-ActnDgst}(\mathsf{cv}_i \| \mathsf{rk}_i) $$
-$$ \text{BLAKE2b-512}_\text{Tachyon-BndlHash}( d_1 \| d_2 \| \ldots \| d_n \| \mathsf{value\_balance}) $$
+$$ \mathsf{action\_acc} = \text{Commit}\Bigl(\prod_i \bigl(X - d_i\bigr)\Bigr) $$
+$$ \text{BLAKE2b-512}_\text{Tachyon-BndlHash}( \mathsf{action\_acc} \| \mathsf{value\_balance}) $$
 
-The bundle commitment hashes the individual action digests in order.
-The same action digests are used as polynomial roots in the PCD stamp header's accumulator commitment, binding the stamp to the same set of actions as the signatures.
+The bundle commitment hashes the 32-byte Pedersen commitment to the action-digest multiset together with the value balance. Because the commitment is over the polynomial $\prod (X - d_i)$, action order doesn't matter — consensus can reconstruct $\mathsf{action\_acc}$ from visible actions in any order and recover the same digest.
+
+The same $\mathsf{action\_acc}$ appears publicly on the PCD stamp header, binding the stamp to the same set of actions as the signatures.
 
 The stamp is excluded because it is stripped during [aggregation](./aggregation.md).
 
@@ -89,6 +91,28 @@ The tachyon crate contributes its bundle commitment; a transaction-level crate c
 
 This binds every signature to the complete set of effecting data across all pools.
 Since `rk` is itself a commitment to `cm` (via `alpha`'s derivation from `theta` and `cm`), the signature transitively binds each action to its tachygram without the tachygram appearing in the action.
+
+### Tachyon `auth_digest` contribution
+
+Zcash's transaction-level `auth_digest` commits to authorization data — the half of `wtxid = txid || auth_digest` that changes when an authorization form changes ([ZIP-239](https://zips.z.cash/zip-0239), [ZIP-244](https://zips.z.cash/zip-0244)).
+Tachyon's bundle contributes on both sides:
+
+- **Effecting data → `txid`.** Tachyon's contribution is the bundle commitment defined above — `action_acc || value_balance`.
+- **Authorization data → `auth_digest`.** Tachyon's contribution hashes action signatures, the binding signature, and the bundle's stamp trailer:
+
+$$
+\mathsf{auth\_digest\_contribution} =
+\text{BLAKE2b-256}_{\text{``ZTxAuthTachyHash''}}\bigl(\\
+\quad \mathsf{vActionSigs} \,\|\, \mathsf{bindingSig} \\
+\quad\|\,\begin{cases}
+    \text{anchor}_h \,\|\, \text{anchor}_{\text{pc}} \,\|\, \text{nTachygrams} \,\|\, \text{vTachygrams} \,\|\, \text{proof} & \text{if stamped}\\
+    \text{stampWtxid}_{64} & \text{if stripped}
+\end{cases}\bigr)
+$$
+
+A stamped bundle's trailer is its stamp (anchor + tachygrams + proof); a stripped bundle's trailer is the 64-byte `wtxid` of the covering aggregate. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
+
+See [Aggregation](./aggregation.md) for why the inputs depend on stamp state — the stamp mutates under aggregation and the adjunct's covering-aggregate reference must be a `wtxid`, not a `txid`, to disambiguate across physical auth forms.
 
 ## Value Balance
 
@@ -275,7 +299,8 @@ par Authorizing
             end
             note over Custody: action_digest_i = Poseidon(cv || rk)
         end
-        note over Custody: bundle_commitment = Blake2b(d_1 || ... || d_n || value_balance)
+        note over Custody: action_acc = Commit(prod (X - action_digest_i))
+        note over Custody: bundle_commitment = Blake2b(action_acc || value_balance)
         note over Custody: compute sighash
 
         break
@@ -321,9 +346,10 @@ and Proving
 
         loop while stamps > 1
             critical left(action_poly, tg_poly, anchor), right(action_poly, tg_poly, anchor)
+                note over Stamper: StampLift each side to a common anchor
+                note over Stamper: assert left.anchor == right.anchor
                 note over Stamper: merged_action = left.action_poly * right.action_poly
                 note over Stamper: merged_tg = left.tg_poly * right.tg_poly
-                note over Stamper: anchor = max(left.anchor, right.anchor)
                 note over Stamper: pcd: stamp(Commit(merged_action), Commit(merged_tg), anchor)
             end
         end
@@ -345,7 +371,8 @@ destroy User
 User ->> Consensus: transaction
 break
     note over Consensus: action_digest_i = Poseidon(cv_i || rk_i)
-    note over Consensus: bundle_commitment = Blake2b(d_1 || ... || d_n || value_balance)
+    note over Consensus: action_acc = Commit(prod (X - action_digest_i))
+    note over Consensus: bundle_commitment = Blake2b(action_acc || value_balance)
     note over Consensus: compute sighash
     note over Consensus: check action sigs against sighash
     note over Consensus: check binding sig against sighash

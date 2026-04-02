@@ -26,24 +26,12 @@ use crate::{entropy::ActionRandomizer, primitives::effect, reddsa};
 #[derive(Clone, Copy, Debug)]
 pub struct ProofAuthorizingKey {
     /// The spend validating key `ak = [ask] G`.
-    pub(super) ak: SpendValidatingKey,
+    pub ak: SpendValidatingKey,
     /// The nullifier deriving key.
-    pub(super) nk: NullifierKey,
+    pub nk: NullifierKey,
 }
 
 impl ProofAuthorizingKey {
-    /// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\,\mathcal{G}$.
-    #[must_use]
-    pub const fn ak(&self) -> &SpendValidatingKey {
-        &self.ak
-    }
-
-    /// The nullifier deriving key $\mathsf{nk}$.
-    #[must_use]
-    pub const fn nk(&self) -> &NullifierKey {
-        &self.nk
-    }
-
     /// Derive the payment key $\mathsf{pk}$ from `ak` and `nk`.
     ///
     /// Allows the pak holder to compute `pk` without access to `sk`.

@@ -27,10 +27,7 @@ use crate::{note, primitives::Effect};
 /// and $\mathsf{cm}$ to recover $\alpha$
 /// ("Tachyaction at a Distance", Bowe 2025).
 #[derive(Clone, Copy, Debug)]
-#[expect(
-    clippy::module_name_repetitions,
-    reason = "ActionEntropy is the established protocol name"
-)]
+#[expect(clippy::module_name_repetitions, reason = "intentional name")]
 pub struct ActionEntropy([u8; 32]);
 
 impl ActionEntropy {
@@ -94,7 +91,7 @@ pub(crate) fn derive_alpha(
         .personal(personalization)
         .to_state()
         .update(&theta.0)
-        .update(&Fp::from(*cm).to_repr())
+        .update(&Fp::from(cm).to_repr())
         .finalize();
     Fq::from_uniform_bytes(hash.as_array())
 }
@@ -108,17 +105,13 @@ mod tests {
     use super::*;
     use crate::{note, primitives::effect};
 
-    fn test_cm() -> note::Commitment {
-        note::Commitment::from(Fp::ZERO)
-    }
-
     /// Distinct BLAKE2b personalizations must yield distinct alpha scalars
     /// for the same (theta, cm).
     #[test]
     fn spend_and_output_randomizers_differ() {
         let mut rng = StdRng::seed_from_u64(100);
         let theta = ActionEntropy::random(&mut rng);
-        let cm = test_cm();
+        let cm = note::Commitment::from(&Fp::random(&mut rng));
 
         let spend_alpha: Fq = theta.randomizer::<effect::Spend>(&cm).into();
         let output_alpha: Fq = theta.randomizer::<effect::Output>(&cm).into();
@@ -131,7 +124,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(101);
         let theta_a = ActionEntropy::random(&mut rng);
         let theta_b = ActionEntropy::random(&mut rng);
-        let cm = test_cm();
+        let cm = note::Commitment::from(&Fp::random(&mut rng));
 
         // Deterministic: same theta twice
         let first: Fq = theta_a.randomizer::<effect::Spend>(&cm).into();

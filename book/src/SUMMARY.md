@@ -13,6 +13,7 @@
   - [Nullifier Derivation](nullifier-derivation.md)
 - [Protocol]()
   - [Authorization](authorization.md)
+  - [Proof Pipeline](proof-pipeline.md)
   - [Aggregation](aggregation.md)
 - [Network Roles]()
   - [Overview](network_roles/overview.md)

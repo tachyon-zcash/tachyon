@@ -20,6 +20,14 @@ pub const PRF_EXPAND_PERSONALIZATION: &[u8; 16] = b"Zcash_ExpandSeed";
 /// transaction-level sighash, which is what signatures actually sign.
 pub const BUNDLE_COMMITMENT_PERSONALIZATION: &[u8; 16] = b"Tachyon-BndlHash";
 
+/// BLAKE2b-256 personalization for the Tachyon auth-digest contribution.
+///
+/// Placeholder until a Tachyon ZIP-244 amendment fixes a canonical string.
+/// Commits to per-bundle authorization data (action sigs, binding sig) plus
+/// the stamp or stamp-wtxid reference; contributes to the transaction-level
+/// `auth_digest` which is half of `wtxid`.
+pub const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
+
 /// BLAKE2b-512 personalization for spend-side alpha derivation.
 ///
 /// $$\alpha_{\text{spend}} = \text{ToScalar}(\text{BLAKE2b-512}(
@@ -52,7 +60,7 @@ pub const NOTE_NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 pub const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-NoteCmmt";
 
 /// Poseidon domain tag for note identity binding: `H(domain, mk, cm)`.
-pub const NOTE_ID_DOMAIN: &[u8; 16] = b"Tachyon-NoteMkCm";
+pub const DELEGATION_ID_DOMAIN: &[u8; 16] = b"Tachyon-Delegate";
 
 /// Poseidon domain tag for action digests.
 pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
@@ -61,14 +69,23 @@ pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
 /// \text{Poseidon}(\text{domain}, ak_x, nk)$.
 pub const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
-/// Poseidon domain tag for epoch chain hashing.
-pub const EPOCH_CHAIN_HASH_DOMAIN: &[u8; 16] = b"Tachyon-EpchHash";
-
-/// Poseidon domain tag for block chain hashing.
-pub const BLOCK_CHAIN_HASH_DOMAIN: &[u8; 16] = b"Tachyon-BlkCHash";
+/// Poseidon domain tag for the epoch-boundary seed root.
+///
+/// At each epoch boundary, consensus inserts
+/// `epoch_seed_hash(prev_pool_commit)` as a root of E+1's pool multiset.
+/// `SpendableEpochLift` queries the seed to prove E+1 is derived from E's final
+/// state.
+pub const EPOCH_SEED_DOMAIN: &[u8; 16] = b"Tachyon-EpchSeed";
 
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)
 pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
+
+/// Log2 of the epoch size in blocks. Compile-time constant so the whole crate
+/// sees the same epoch boundaries; tests override it to a small value.
+pub(crate) const EPOCH_SHIFT: u32 = if cfg!(test) { 4 } else { 12 };
+
+/// Number of blocks per epoch.
+pub const EPOCH_SIZE: u32 = 1 << EPOCH_SHIFT;
 
 /// Domain-separated key expansion from a spending key.
 ///

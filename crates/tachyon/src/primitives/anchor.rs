@@ -1,67 +1,68 @@
 use core2::io::{self, Read, Write};
-use ff::Field as _;
-use pasta_curves::Fp;
+use mock_ragu::Commitment;
 
-use super::{BlockChainHash, BlockCommit, BlockHeight, EpochChainHash, PoolCommit};
-use crate::serialization;
+use super::{BlockHeight, PoolCommit};
 
-/// Pool state at a specific block.
+/// Pool state at a specific block. Wire format is 64 bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Anchor {
-    /// Block height in the pool chain.
-    pub block_height: BlockHeight,
-    /// Per-block tachygram set commitment.
-    pub block_commit: BlockCommit,
-    /// Cumulative epoch tachygram commitment.
-    pub pool_commit: PoolCommit,
-    /// Running block chain hash.
-    pub block_chain: BlockChainHash,
-    /// Running epoch chain hash.
-    pub epoch_chain: EpochChainHash,
-}
+#[expect(clippy::partial_pub_fields, reason = "todo")]
+pub struct Anchor(pub(crate) BlockHeight, pub PoolCommit);
 
 impl Anchor {
-    /// Genesis anchor from the activation height.
-    #[must_use]
-    pub fn genesis(activation_height: BlockHeight) -> Self {
-        Self {
-            block_height: activation_height,
-            block_commit: BlockCommit::from(Fp::ZERO),
-            pool_commit: PoolCommit::from(Fp::ZERO),
-            block_chain: BlockChainHash::genesis(activation_height),
-            epoch_chain: EpochChainHash::genesis(activation_height),
-        }
-    }
-
-    /// Read an anchor from the wire format.
+    /// Read a 64-byte anchor.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let mut height_slot = [0u8; 32];
+        reader.read_exact(&mut height_slot)?;
+        if height_slot[4..].iter().any(|&pad| pad != 0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "anchor height exceeds u32",
+            ));
+        }
         let mut height_bytes = [0u8; 4];
-        reader.read_exact(&mut height_bytes)?;
-        #[expect(clippy::little_endian_bytes, reason = "specified wire format")]
-        let block_height = BlockHeight(u32::from_le_bytes(height_bytes));
+        height_bytes.copy_from_slice(&height_slot[..4]);
+        let height = BlockHeight(u32::from_le_bytes(height_bytes));
 
-        let block_commit = serialization::read_fp(&mut reader)?.into();
-        let pool_commit = serialization::read_fp(&mut reader)?.into();
-        let block_chain = serialization::read_fp(&mut reader)?.into();
-        let epoch_chain = serialization::read_fp(&mut reader)?.into();
+        let mut commit_bytes = [0u8; 32];
+        reader.read_exact(&mut commit_bytes)?;
+        let commit = PoolCommit(
+            Commitment::try_from(&commit_bytes)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
+        );
 
-        Ok(Self {
-            block_height,
-            block_commit,
-            pool_commit,
-            block_chain,
-            epoch_chain,
-        })
+        Ok(Self(height, commit))
     }
 
-    /// Write an anchor in the wire format.
+    /// Write a 64-byte anchor.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        #[expect(clippy::little_endian_bytes, reason = "specified wire format")]
-        writer.write_all(&u32::from(self.block_height).to_le_bytes())?;
-        serialization::write_fp(&mut writer, &self.block_commit.into())?;
-        serialization::write_fp(&mut writer, &self.pool_commit.into())?;
-        serialization::write_fp(&mut writer, &self.block_chain.into())?;
-        serialization::write_fp(&mut writer, &self.epoch_chain.into())?;
-        Ok(())
+        let mut height_slot = [0u8; 32];
+        height_slot[..4].copy_from_slice(&u32::from(self.0).to_le_bytes());
+        writer.write_all(&height_slot)?;
+        let commit_bytes: [u8; 32] = self.1.0.into();
+        writer.write_all(&commit_bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use ff::Field as _;
+    use mock_ragu::Polynomial;
+    use pasta_curves::Fp;
+
+    use super::{Anchor, BlockHeight, PoolCommit};
+
+    #[test]
+    fn anchor_wire_is_64_bytes_round_trip() {
+        let anchor = Anchor(
+            BlockHeight(0x1234_5678),
+            PoolCommit(Polynomial::default().commit(Fp::ZERO)),
+        );
+        let mut bytes = Vec::new();
+        anchor.write(&mut bytes).unwrap();
+        assert_eq!(bytes.len(), 64, "anchor wire must be 64 bytes");
+        let decoded = Anchor::read(bytes.as_slice()).unwrap();
+        assert_eq!(decoded, anchor);
     }
 }

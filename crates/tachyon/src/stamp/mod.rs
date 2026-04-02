@@ -11,40 +11,36 @@
 //! public data and passes them as the header to Ragu `verify()`.
 
 #![allow(clippy::type_complexity, reason = "todo")]
+#![allow(clippy::module_name_repetitions, reason = "intentional names")]
 
 extern crate alloc;
 
-pub mod delegation;
-pub mod header;
-pub mod pool;
 pub mod proof;
-pub mod spend;
-pub mod spendable;
 
 use alloc::vec::Vec;
 use core::{error::Error, fmt};
 
 use core2::io::{self, Read, Write};
+use ff::Field as _;
 use mock_ragu::{self, proof::PROOF_SIZE_COMPRESSED};
 use pasta_curves::Fp;
+use proof::{
+    PROOF_SYSTEM,
+    stamp::{MergeStamp, OutputStamp, SpendStamp, StampHeader},
+};
 use rand_core::CryptoRng;
 
-pub use self::proof::compute_action_acc;
-use self::{
-    header::{MergeStamp, OutputStamp, SpendStamp, StampHeader},
-    proof::{PROOF_SYSTEM, compute_tachygram_acc},
-};
 use crate::{
     Note,
     action::Action,
     effect,
     entropy::ActionRandomizer,
-    keys::{ProofAuthorizingKey, private, public},
-    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram},
-    stamp::{
-        spend::{SpendBind, SpendNullifierHeader},
-        spendable::SpendableHeader,
+    keys::{ProofAuthorizingKey, public},
+    primitives::{
+        ActionCommit, ActionDigest, ActionDigestError, ActionSet, Anchor, DelegationTrapdoor,
+        Tachygram, TachygramAcc, TachygramCommit,
     },
+    stamp::proof::{compute_action_acc, delegation, spend, spendable},
     value,
 };
 
@@ -55,45 +51,23 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Unproven;
 
-/// Marker for a stripped bundle that depends on an aggregate stamp.
-///
-/// Carries an optional index referencing the stamped bundle on the surrounding
-/// block that covers this bundle's tachygrams.  Assigned by the miner during
-/// block assembly; defaults to `None`.
-///
-/// Serialization will fail if the index has not been assigned.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Adjunct(Option<u8>);
+/// Marker for a stripped bundle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Adjunct {
+    /// 64-byte `wtxid` (`txid || auth_digest`) of the covering aggregate in
+    /// the block. Assigned by the miner during block assembly; defaults to
+    /// all-zero bytes.
+    ///
+    /// The ref is the aggregate's wtxid (not txid) so it uniquely pins the
+    /// covering aggregate's physical auth form — different stamps on the
+    /// same effecting data produce different wtxids, so this ref remains
+    /// unambiguous even across aggregation forms.
+    pub wtxid: [u8; 64],
+}
 
-impl Adjunct {
-    /// Create a new `Adjunct` with the given `stamp_index`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the index is greater than 0xFC.
-    #[must_use]
-    pub fn new(stamp_index: u8) -> Self {
-        assert!(stamp_index <= 0xFC, "stamp index must be <= 0xFC");
-        Self(Some(stamp_index))
-    }
-
-    /// Set `stamp_index` to associate a stripped adjunct with an aggregate
-    /// stamp in the same block.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the index is greater than 0xFC.
-    pub fn set_index(&mut self, set_index: u8) {
-        assert!(set_index <= 0xFC, "stamp index must be <= 0xFC");
-        self.0 = Some(set_index);
-    }
-
-    /// Get the `stamp_index` associated with this stripped adjunct.
-    ///
-    /// Returns `None` if the `stamp_index` has not been assigned.
-    #[must_use]
-    pub const fn get_index(&self) -> Option<u8> {
-        self.0
+impl Default for Adjunct {
+    fn default() -> Self {
+        Self { wtxid: [0u8; 64] }
     }
 }
 
@@ -138,6 +112,7 @@ pub struct Plan {
             ActionRandomizer<effect::Spend>,
             Note,
             value::CommitmentTrapdoor,
+            DelegationTrapdoor,
         ),
     )>,
     outputs: Vec<(
@@ -155,7 +130,10 @@ impl Plan {
     /// Create a stamp plan from paired action descriptors and witnesses.
     ///
     /// The caller is responsible for deriving alpha from theta (or
-    /// obtaining it through other means).
+    /// obtaining it through other means). Each spend witness carries the
+    /// `DelegationTrapdoor` that was used to construct the corresponding
+    /// nullifier-header PCDs, so `SpendBind` can recompute and equality-check
+    /// the `DelegationId`.
     #[must_use]
     pub const fn new(
         spends: Vec<(
@@ -164,6 +142,7 @@ impl Plan {
                 ActionRandomizer<effect::Spend>,
                 Note,
                 value::CommitmentTrapdoor,
+                DelegationTrapdoor,
             ),
         )>,
         outputs: Vec<(
@@ -198,59 +177,58 @@ impl Plan {
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            mock_ragu::Pcd<'source, SpendNullifierHeader>,
-            mock_ragu::Pcd<'source, SpendableHeader>,
+            mock_ragu::Pcd<'source, delegation::NullifierHeader>,
+            mock_ragu::Pcd<'source, delegation::NullifierHeader>,
+            mock_ragu::Pcd<'source, spendable::SpendableHeader>,
         )>,
     ) -> Result<Stamp, ProveError> {
-        // Each entry is (stamp, action_acc). action_acc is ephemeral —
-        // needed to reconstruct PCD headers during merge, never stored.
-        let mut entries: Vec<(Stamp, Fp)> = Vec::new();
+        // Each entry is (stamp, action_digests). The digest list is ephemeral —
+        // needed to reconstruct the PCD header's action multiset during merge,
+        // never stored.
+        let mut entries: Vec<(Stamp, Vec<ActionDigest>)> = Vec::new();
 
         if self.spends.len() != spend_pcds.len() {
             return Err(ProveError::SpendableMismatch);
         }
 
-        for (((cv, rk), (alpha, note, rcv)), (nf_pcd, spendable_pcd)) in
-            self.spends.into_iter().zip(spend_pcds.into_iter())
+        for (
+            ((cv, rk), (alpha, note, rcv, delegation_trap)),
+            (nf_now_pcd, nf_next_pcd, spendable_pcd),
+        ) in self.spends.into_iter().zip(spend_pcds.into_iter())
         {
             let action_digest =
                 ActionDigest::new(cv, rk).map_err(|_err| ProveError::ProofFailed)?;
 
-            // Extract nullifier data before fuse consumes the PCD.
-            let (nf0, nf1, epoch, note_id) = nf_pcd.data;
+            // Extract nullifier data before fuse consumes the PCDs.
+            let (nf0, epoch, delegation_id) = nf_now_pcd.data;
+            let nf1 = nf_next_pcd.data.0;
 
             let app = &*PROOF_SYSTEM;
 
-            // SpendBind: fuse nullifier header with action data
+            // SpendBind: fuse two epoch-adjacent nullifier headers with action data
             let (bind_proof, ()) = app
                 .fuse(
                     rng,
-                    &SpendBind,
-                    (rcv, alpha, *pak, note),
-                    nf_pcd,
-                    mock_ragu::Pcd {
-                        proof: mock_ragu::Proof::trivial(),
-                        data: (),
-                    },
+                    &spend::SpendBind,
+                    (rcv, alpha, *pak, note, delegation_trap),
+                    nf_now_pcd,
+                    nf_next_pcd,
                 )
                 .map_err(|_err| ProveError::ProofFailed)?;
 
             let bind_pcd = bind_proof.carry::<spend::SpendHeader>((
-                Fp::from(action_digest),
+                action_digest,
                 [nf0, nf1],
                 epoch,
-                note_id,
+                delegation_id,
             ));
 
             // SpendStamp: fuse spend with spendable chain
-            let tachygrams = alloc::vec![
-                Tachygram::from(Fp::from(nf0)),
-                Tachygram::from(Fp::from(nf1)),
-            ];
+            let tachygrams = alloc::vec![Tachygram::from(&nf0), Tachygram::from(&nf1),];
             let stamp = Stamp::prove_spend(rng, bind_pcd, spendable_pcd, tachygrams)
                 .map_err(|_err| ProveError::ProofFailed)?;
 
-            entries.push((stamp, Fp::from(action_digest)));
+            entries.push((stamp, alloc::vec![action_digest]));
         }
 
         for ((cv, rk), (alpha, note, rcv)) in self.outputs {
@@ -260,7 +238,7 @@ impl Plan {
             let stamp = Stamp::prove_output(rng, rcv, alpha, note, self.anchor)
                 .map_err(|_err| ProveError::ProofFailed)?;
 
-            entries.push((stamp, Fp::from(action_digest)));
+            entries.push((stamp, alloc::vec![action_digest]));
         }
 
         if entries.is_empty() {
@@ -269,17 +247,18 @@ impl Plan {
 
         // Merge pairwise.
         while entries.len() > 1 {
-            let (right, right_acc) = entries.pop().ok_or(ProveError::NoActions)?;
-            let (left, left_acc) = entries.pop().ok_or(ProveError::NoActions)?;
-            let merged = Stamp::prove_merge(rng, left, left_acc, right, right_acc)
+            let (right, right_digests) = entries.pop().ok_or(ProveError::NoActions)?;
+            let (left, left_digests) = entries.pop().ok_or(ProveError::NoActions)?;
+            let merged = Stamp::prove_merge(rng, (left, &left_digests), (right, &right_digests))
                 .map_err(|_err| ProveError::MergeFailed)?;
-            let merged_acc = left_acc * right_acc;
-            entries.push((merged, merged_acc));
+            let mut merged_digests = left_digests;
+            merged_digests.extend_from_slice(&right_digests);
+            entries.push((merged, merged_digests));
         }
 
         entries
             .pop()
-            .map(|(stamp, _acc)| stamp)
+            .map(|(stamp, _digests)| stamp)
             .ok_or(ProveError::NoActions)
     }
 }
@@ -345,16 +324,14 @@ impl Stamp {
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let tachygram = Tachygram::from(Fp::from(note.commitment()));
-        let cv = rcv.commit(-i64::from(note.value));
-        let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
-        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| mock_ragu::Error)?;
-        let action_acc = Fp::from(action_digest);
-        let tachygram_acc = Fp::from(tachygram);
+        let (proof, (action_acc, tachygram_acc, tachygram)) =
+            app.seed(rng, &OutputStamp, (rcv, alpha, note, anchor))?;
 
-        let header = (action_acc, tachygram_acc, anchor);
-
-        let (proof, _tg) = app.seed(rng, &OutputStamp, (rcv, alpha, note, anchor))?;
+        let header = (
+            ActionCommit(action_acc.0.commit(Fp::ZERO)),
+            TachygramCommit(tachygram_acc.0.commit(Fp::ZERO)),
+            anchor,
+        );
         let pcd = proof.carry::<StampHeader>(header);
         let rerand = app.rerandomize(pcd, rng)?;
 
@@ -374,18 +351,21 @@ impl Stamp {
     pub fn prove_spend<'source, RNG: CryptoRng>(
         rng: &mut RNG,
         spend_pcd: mock_ragu::Pcd<'source, spend::SpendHeader>,
-        spendable_pcd: mock_ragu::Pcd<'source, SpendableHeader>,
+        spendable_pcd: mock_ragu::Pcd<'source, spendable::SpendableHeader>,
         tachygrams: Vec<Tachygram>,
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let action_acc = spend_pcd.data.0;
-        let tachygram_acc = compute_tachygram_acc(&tachygrams);
         let anchor = spendable_pcd.data.2;
 
-        let (proof, ()) = app.fuse(rng, &SpendStamp, (), spend_pcd, spendable_pcd)?;
+        let (proof, (action_acc, tachygram_acc)) =
+            app.fuse(rng, &SpendStamp, (), spend_pcd, spendable_pcd)?;
 
-        let header = (action_acc, tachygram_acc, anchor);
+        let header = (
+            ActionCommit(action_acc.0.commit(Fp::ZERO)),
+            TachygramCommit(tachygram_acc.0.commit(Fp::ZERO)),
+            anchor,
+        );
 
         let pcd = proof.carry::<StampHeader>(header);
         let rerand = app.rerandomize(pcd, rng)?;
@@ -401,35 +381,63 @@ impl Stamp {
     ///
     /// Both stamps must share the same anchor (use StampLift to align first).
     ///
-    /// `left_action_acc` and `right_action_acc` are the Fp product accumulators
-    /// over each side's actions. The caller reconstructs these from public data
-    /// (they are never stored on the stamp).
+    /// Each side is `(stamp, &[ActionDigest])` — the digest list reconstructs
+    /// the `ActionCommit` multiset that `MergeStamp` verifies via
+    /// Schwartz-Zippel. Digests are derived from public action data by the
+    /// caller and are never stored on the stamp.
     pub fn prove_merge<RNG: CryptoRng>(
         rng: &mut RNG,
-        left: Self,
-        left_action_acc: Fp,
-        right: Self,
-        right_action_acc: Fp,
+        (left, left_digests): (Self, &[ActionDigest]),
+        (right, right_digests): (Self, &[ActionDigest]),
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let left_tachygram_acc = compute_tachygram_acc(&left.tachygrams);
-        let right_tachygram_acc = compute_tachygram_acc(&right.tachygrams);
+        let left_fps: Vec<Fp> = left_digests.iter().map(Fp::from).collect();
+        let right_fps: Vec<Fp> = right_digests.iter().map(Fp::from).collect();
+        let left_action = ActionSet(mock_ragu::Polynomial::from_roots(&left_fps));
+        let right_action = ActionSet(mock_ragu::Polynomial::from_roots(&right_fps));
+        let left_tachygram = TachygramAcc::from(&*left.tachygrams);
+        let right_tachygram = TachygramAcc::from(&*right.tachygrams);
 
-        let left_header = (left_action_acc, left_tachygram_acc, left.anchor);
-        let right_header = (right_action_acc, right_tachygram_acc, right.anchor);
+        let left_header = (
+            ActionCommit(left_action.0.commit(Fp::ZERO)),
+            TachygramCommit(left_tachygram.0.commit(Fp::ZERO)),
+            left.anchor,
+        );
+        let right_header = (
+            ActionCommit(right_action.0.commit(Fp::ZERO)),
+            TachygramCommit(right_tachygram.0.commit(Fp::ZERO)),
+            right.anchor,
+        );
 
         let left_pcd = left.proof.carry::<StampHeader>(left_header);
         let right_pcd = right.proof.carry::<StampHeader>(right_header);
 
-        let (proof, ()) = app.fuse(rng, &MergeStamp, (), left_pcd, right_pcd)?;
-
-        let action_acc = left_action_acc * right_action_acc;
         let anchor = left.anchor;
-        let tachygrams = [left.tachygrams, right.tachygrams].concat();
-        let tachygram_acc = compute_tachygram_acc(&tachygrams);
+        let mut tachygrams = left.tachygrams;
+        tachygrams.extend(right.tachygrams.iter().copied());
 
-        let merged_header = (action_acc, tachygram_acc, anchor);
+        let merged_action = left_action.0.multiply(&right_action.0);
+        let merged_tachygram = left_tachygram.0.multiply(&right_tachygram.0);
+
+        let (proof, ()) = app.fuse(
+            rng,
+            &MergeStamp,
+            (
+                left_action.into(),
+                right_action.into(),
+                left_tachygram.into(),
+                right_tachygram.into(),
+            ),
+            left_pcd,
+            right_pcd,
+        )?;
+
+        let merged_header = (
+            ActionCommit(merged_action.commit(Fp::ZERO)),
+            TachygramCommit(merged_tachygram.commit(Fp::ZERO)),
+            anchor,
+        );
         let carried = proof.carry::<StampHeader>(merged_header);
         let rerand = app.rerandomize(carried, rng)?;
 
@@ -453,9 +461,13 @@ impl Stamp {
         let app = &*PROOF_SYSTEM;
 
         let action_acc = compute_action_acc(actions).map_err(VerificationError::ActionDigest)?;
-        let tachygram_acc = compute_tachygram_acc(&self.tachygrams);
+        let tachygram_acc = TachygramAcc::from(&*self.tachygrams);
 
-        let header = (action_acc, tachygram_acc, self.anchor);
+        let header = (
+            ActionCommit(action_acc.0.commit(Fp::ZERO)),
+            TachygramCommit(tachygram_acc.0.commit(Fp::ZERO)),
+            self.anchor,
+        );
 
         let pcd = self.proof.clone().carry::<StampHeader>(header);
 
@@ -471,7 +483,7 @@ impl Stamp {
     }
 }
 
-/// The serialized size of a proof, for the `stampTachyon` compactsize.
+/// The serialized size of a proof, written raw without a length prefix.
 pub(crate) const fn proof_serialized_size() -> usize {
     PROOF_SIZE_COMPRESSED
 }

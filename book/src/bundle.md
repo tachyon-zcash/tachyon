@@ -40,16 +40,16 @@ The **tachystamp** is a recursive zero-knowledge proof that all related tachyact
 
 It contains:
 
-- `anchor` - a recent epoch range[^anchor]
+- `anchor` - a consensus-blessed pool checkpoint[^anchor]
 - `proof` - the recursive proof (which may be aggregated)
 - `tachygrams` - nullifiers and commitments for each action
 
 [^protocol-spec]: The [Zcash Protocol Specification](https://zips.z.cash/protocol/protocol.pdf) lists the cryptographic properties a shielded pool must preserve.
-[^anchor]: Unlike Sapling/Orchard anchors which reference a single tree root, Tachyon anchors represent epoch *ranges* used for non-inclusion proofs. See [Tachyaction at a Distance §5](https://seanbowe.com/blog/tachyaction-at-a-distance/#5).
+[^anchor]: Unlike Sapling/Orchard anchors which reference a single tree root, a Tachyon anchor is a `(BlockHeight, PoolCommit)` pair naming the pool's multiset commitment at a specific block. Non-inclusion proofs are scoped to that checkpoint. See [Proof Pipeline](./proof-pipeline.md#anchor) and [Tachyaction at a Distance §5](https://seanbowe.com/blog/tachyaction-at-a-distance/#5).
 
 The proof establishes:
 
-- tachygrams are not duplicated within the epoch range
+- tachygrams are not duplicated within the stamp
 - tachygrams are correctly bound to action keys
 - action balance effect matches pool balance effect
 
@@ -60,7 +60,7 @@ $$ \mathsf{nf} = F_{\mathsf{nk}}(\Psi \parallel \tau) $$
 where
 
 - $\Psi$ is the nullifier trapdoor[^commitment]
-- $\tau$ is an epoch range
+- $\tau$ is an epoch index
 
 [^commitment]: User-controlled randomness [commitment trapdoor](https://zips.z.cash/protocol/protocol.pdf#commitment)
 
@@ -136,6 +136,8 @@ subgraph shielded_data["tachyon::ShieldedData"]
     tachyaction_vec ===> sig_binding
 end
 ```
+
+The recursive structure of the `tachystamp` itself — how spend-side and output-side PCDs feed into a single stamp — is covered in [Proof Pipeline](./proof-pipeline.md).
 
 ## Lifecycle
 
