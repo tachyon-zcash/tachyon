@@ -56,3 +56,11 @@ flowchart TB
 | $\Psi_t$ | `NoteKey<Prefixed>` | OSS | Derive nullifiers for epochs $e \leq t$ only |
 
 $\mathsf{mk}$ is ephemeral — the user device derives it from $(\mathsf{nk}, \Psi)$ when needed, never stores or transmits it. The OSS receives only delegate keys, which cannot recover $\mathsf{mk}$ or $\mathsf{nk}$.
+
+## Identity Binding
+
+The proof pipeline threads a single field element called `bind_note` through all steps for a given note:
+
+$$\mathsf{bind\_note} = \text{Poseidon}_\text{Tachyon-BindNote}(\mathsf{mk}, \mathsf{cm})$$
+
+This binds the note's identity (via master key $\mathsf{mk}$) to its value commitment $\mathsf{cm}$. Every step in the spend pipeline — delegation, nullifier derivation, inclusion, membership, and spend binding — carries the same `bind_note`, and fuse steps verify that left and right inputs agree on it. This prevents cross-note substitution attacks where an adversary splices proof fragments from different notes.

@@ -11,7 +11,9 @@ use alloc::vec::Vec;
 use core::{error::Error, fmt};
 
 use core2::io::{self, Read, Write};
+use ff::{Field as _, PrimeField as _};
 use lazy_static::lazy_static;
+use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 use zcash_encoding::CompactSize;
 
@@ -19,7 +21,7 @@ use crate::{
     action::{self, Action},
     constants::BUNDLE_COMMITMENT_PERSONALIZATION,
     keys::{private, public},
-    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram, effect, multiset::Multiset},
+    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram, effect},
     reddsa,
     stamp::{self, Adjunct, Stamp, Unproven},
     value,
@@ -49,7 +51,7 @@ pub struct Bundle<S: StampState> {
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
 
-    /// Stamp state: `Stamp` when present, `Stampless` when stripped.
+    /// Stamp state: `Stamp` when present, `Adjunct` when stripped.
     pub stamp: S,
 }
 
@@ -72,22 +74,18 @@ impl TryFrom<Bundle<Option<Stamp>>> for Stripped {
 
     fn try_from(bundle: Bundle<Option<Stamp>>) -> Result<Self, Self::Error> {
         match bundle.stamp {
-            | None => {
-                Ok(Self {
-                    actions: bundle.actions,
-                    value_balance: bundle.value_balance,
-                    binding_sig: bundle.binding_sig,
-                    stamp: Adjunct::default(),
-                })
-            },
-            | Some(stamp) => {
-                Err(Stamped {
-                    actions: bundle.actions,
-                    value_balance: bundle.value_balance,
-                    binding_sig: bundle.binding_sig,
-                    stamp,
-                })
-            },
+            | None => Ok(Self {
+                actions: bundle.actions,
+                value_balance: bundle.value_balance,
+                binding_sig: bundle.binding_sig,
+                stamp: Adjunct::default(),
+            }),
+            | Some(stamp) => Err(Stamped {
+                actions: bundle.actions,
+                value_balance: bundle.value_balance,
+                binding_sig: bundle.binding_sig,
+                stamp,
+            }),
         }
     }
 }
@@ -111,22 +109,18 @@ impl TryFrom<Bundle<Option<Stamp>>> for Stamped {
 
     fn try_from(bundle: Bundle<Option<Stamp>>) -> Result<Self, Self::Error> {
         match bundle.stamp {
-            | Some(stamp) => {
-                Ok(Self {
-                    actions: bundle.actions,
-                    value_balance: bundle.value_balance,
-                    binding_sig: bundle.binding_sig,
-                    stamp,
-                })
-            },
-            | None => {
-                Err(Stripped {
-                    actions: bundle.actions,
-                    value_balance: bundle.value_balance,
-                    binding_sig: bundle.binding_sig,
-                    stamp: Adjunct::default(),
-                })
-            },
+            | Some(stamp) => Ok(Self {
+                actions: bundle.actions,
+                value_balance: bundle.value_balance,
+                binding_sig: bundle.binding_sig,
+                stamp,
+            }),
+            | None => Err(Stripped {
+                actions: bundle.actions,
+                value_balance: bundle.value_balance,
+                binding_sig: bundle.binding_sig,
+                stamp: Adjunct::default(),
+            }),
         }
     }
 }
@@ -170,29 +164,27 @@ impl Error for SignError {}
 /// This contributes to the transaction sighash.
 ///
 /// $$ \mathsf{bundle\_commitment} = \text{BLAKE2b-512}(
-/// \text{"Tachyon-BndlHash"},\; \mathsf{action\_commitment} \|
+/// \text{"Tachyon-BndlHash"},\; \mathsf{action\_acc} \|
 /// \mathsf{value\_balance}) $$
 ///
-/// where $\mathsf{action\_commitment}$ is the multiset polynomial commitment
-/// over all action digests — order-independent by construction.
+/// where $\mathsf{action\_acc}$ is the raw Fp product of action digests —
+/// order-independent by construction.
 ///
 /// The stamp is excluded because it is stripped during aggregation.
 #[expect(clippy::module_name_repetitions, reason = "consistent naming")]
-pub fn digest_bundle(
-    action_acc: &Multiset<ActionDigest>,
-    value_balance: i64,
-) -> Result<[u8; 64], ActionDigestError> {
+#[must_use]
+pub fn digest_bundle(action_acc: Fp, value_balance: i64) -> [u8; 64] {
     let mut state = blake2b_simd::Params::new()
         .hash_length(64)
         .personal(BUNDLE_COMMITMENT_PERSONALIZATION)
         .to_state();
 
-    state.update(&<[u8; 32]>::from(action_acc.commit()));
+    state.update(&action_acc.to_repr());
 
     #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
     state.update(&value_balance.to_le_bytes());
 
-    Ok(*state.finalize().as_array())
+    *state.finalize().as_array()
 }
 
 lazy_static! {
@@ -268,16 +260,14 @@ impl Plan {
     #[must_use]
     #[expect(clippy::expect_used, reason = "todo")]
     pub fn commitment(&self) -> [u8; 64] {
-        let digests: Vec<ActionDigest> = self
+        let action_acc = self
             .iter_actions(
                 |plan| ActionDigest::try_from(plan).expect("don't plan invalid spends"),
                 |plan| ActionDigest::try_from(plan).expect("don't plan invalid outputs"),
             )
-            .collect();
+            .fold(Fp::ONE, |acc, digest| acc * Fp::from(digest));
 
-        let action_acc = Multiset::from(digests.as_slice());
-
-        digest_bundle(&action_acc, self.value_balance()).expect("don't plan invalid actions")
+        digest_bundle(action_acc, self.value_balance())
     }
 
     /// Build a [`stamp::Plan`] from this bundle plan.
@@ -286,25 +276,26 @@ impl Plan {
     /// witnesses. The returned plan is ready to prove with
     /// [`stamp::Plan::prove`].
     #[must_use]
-    pub fn stamp_plan(&self, anchor: Anchor, epoch: crate::Epoch) -> stamp::Plan {
-        let actions = self
-            .iter_actions(
-                |plan| {
-                    let alpha = plan
-                        .theta
-                        .randomizer::<effect::Spend>(&plan.note.commitment());
-                    ((plan.cv(), plan.rk), (alpha.into(), plan.note, plan.rcv))
-                },
-                |plan| {
-                    let alpha = plan
-                        .theta
-                        .randomizer::<effect::Output>(&plan.note.commitment());
-                    ((plan.cv(), plan.rk), (alpha.into(), plan.note, plan.rcv))
-                },
-            )
+    pub fn stamp_plan(&self, anchor: Anchor) -> stamp::Plan {
+        let spends = self
+            .spends
+            .iter()
+            .map(|plan| {
+                let alpha = plan.theta.randomizer(&plan.note.commitment());
+                ((plan.cv(), plan.rk), (alpha, plan.note, plan.rcv))
+            })
             .collect();
 
-        stamp::Plan::new(actions, anchor, epoch)
+        let outputs = self
+            .outputs
+            .iter()
+            .map(|plan| {
+                let alpha = plan.theta.randomizer(&plan.note.commitment());
+                ((plan.cv(), plan.rk), (alpha, plan.note, plan.rcv))
+            })
+            .collect();
+
+        stamp::Plan::new(spends, outputs, anchor)
     }
 
     /// Derive the binding signing key, which is the scalar sum of value
@@ -555,7 +546,8 @@ impl Stamped {
     /// | `vTachygrams`      | 32 * nTachygrams    | tachygrams for this proof         |
     /// | `proofTachyon`     | stampTachyon bytes  | a serialized proof, ~23 kilobytes |
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let (actions, value_balance, binding_sig) = read_bundle(&mut reader)?;
+        let (actions, value_balance, binding_sig): (Vec<Action>, i64, Signature) =
+            read_bundle(&mut reader)?;
 
         let stamp_size = CompactSize::read_t::<_, usize>(&mut reader)?;
         if stamp_size <= 0xFC {
@@ -573,6 +565,13 @@ impl Stamped {
         }
         let proof = stamp::read_proof_sized(&mut reader, stamp_size)?;
 
+        // Reconstruct accumulators from deserialized data.
+        let action_acc = stamp::compute_action_acc(&actions)
+            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "action digest error"))?;
+        let tachygram_acc = tachygrams
+            .iter()
+            .fold(Fp::ONE, |acc, tg| acc * Fp::from(*tg));
+
         Ok(Self {
             actions,
             value_balance,
@@ -581,6 +580,8 @@ impl Stamped {
                 tachygrams,
                 anchor,
                 proof,
+                action_acc,
+                tachygram_acc,
             },
         })
     }
@@ -672,8 +673,8 @@ impl Stripped {
 impl<S: StampState> Bundle<S> {
     /// See [`digest_bundle`].
     pub fn commitment(&self) -> Result<[u8; 64], ActionDigestError> {
-        let action_acc = Multiset::try_from(self.actions.as_slice())?;
-        digest_bundle(&action_acc, self.value_balance)
+        let action_acc = stamp::compute_action_acc(&self.actions)?;
+        Ok(digest_bundle(action_acc, self.value_balance))
     }
 
     /// Verify the bundle's binding signature and all action signatures.
@@ -733,7 +734,7 @@ mod tests {
         entropy::ActionEntropy,
         keys::private,
         note::{self, Note},
-        primitives::{Anchor, Epoch},
+        primitives::{Anchor, BlockHeight},
         stamp::Stamp,
         value,
     };
@@ -752,7 +753,116 @@ mod tests {
         out
     }
 
-    /// A wrong value_balance makes binding sig verification fail.
+    fn make_output_stamp(
+        rng: &mut (impl RngCore + CryptoRng),
+        sk: &private::SpendingKey,
+        value_amount: u64,
+    ) -> (Stamp, Action, action::Plan<effect::Output>) {
+        let note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(value_amount),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut *rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut *rng)),
+        };
+        let rcv = value::CommitmentTrapdoor::random(&mut *rng);
+        let theta = ActionEntropy::random(&mut *rng);
+        let plan = action::Plan::output(note, theta, rcv);
+        let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+
+        let stamp =
+            Stamp::prove_output(&mut *rng, rcv, alpha, note, Anchor::genesis(BlockHeight(0)))
+                .expect("prove_output");
+
+        let action = Action {
+            cv: plan.cv(),
+            rk: plan.rk,
+            sig: action::Signature::from([0u8; 64]),
+        };
+
+        (stamp, action, plan)
+    }
+
+    fn build_autonome(
+        rng: &mut (impl RngCore + CryptoRng),
+        spend_value: u64,
+        output_value: u64,
+    ) -> Stamped {
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+
+        let spend_note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(spend_value),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut *rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut *rng)),
+        };
+        let output_note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(output_value),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut *rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut *rng)),
+        };
+
+        let spend_rcv = value::CommitmentTrapdoor::random(&mut *rng);
+        let output_rcv = value::CommitmentTrapdoor::random(&mut *rng);
+        let theta_spend = ActionEntropy::random(&mut *rng);
+        let theta_output = ActionEntropy::random(&mut *rng);
+
+        let spend_plan = action::Plan::output(spend_note, theta_spend, spend_rcv);
+        let output_plan = action::Plan::output(output_note, theta_output, output_rcv);
+
+        let bundle_plan = Plan::new(alloc::vec![], alloc::vec![spend_plan, output_plan]);
+        let sighash = mock_sighash(bundle_plan.commitment());
+
+        let spend_alpha = theta_spend.randomizer::<effect::Output>(&spend_note.commitment());
+        let output_alpha = theta_output.randomizer::<effect::Output>(&output_note.commitment());
+
+        let spend_rsk = private::ActionSigningKey::new(&spend_alpha);
+        let output_rsk = private::ActionSigningKey::new(&output_alpha);
+
+        let spend_action = Action {
+            cv: spend_plan.cv(),
+            rk: spend_plan.rk,
+            sig: spend_rsk.sign(&mut *rng, &sighash),
+        };
+        let output_action = Action {
+            cv: output_plan.cv(),
+            rk: output_plan.rk,
+            sig: output_rsk.sign(&mut *rng, &sighash),
+        };
+
+        let spend_stamp = Stamp::prove_output(
+            &mut *rng,
+            spend_rcv,
+            spend_alpha,
+            spend_note,
+            Anchor::genesis(BlockHeight(0)),
+        )
+        .expect("prove_output (spend-value)");
+
+        let output_stamp = Stamp::prove_output(
+            &mut *rng,
+            output_rcv,
+            output_alpha,
+            output_note,
+            Anchor::genesis(BlockHeight(0)),
+        )
+        .expect("prove_output (output-value)");
+
+        let stamp = Stamp::prove_merge(&mut *rng, spend_stamp, output_stamp).expect("prove_merge");
+
+        let bundle: Stamped = Bundle {
+            actions: alloc::vec![spend_action, output_action],
+            value_balance: bundle_plan.value_balance(),
+            binding_sig: bundle_plan.derive_bsk_private().sign(&mut *rng, &sighash),
+            stamp,
+        };
+
+        bundle
+            .verify_signatures(&sighash)
+            .expect("autonome signatures should verify");
+        bundle
+    }
+
     #[test]
     fn wrong_value_balance_fails_verification() {
         let mut rng = StdRng::seed_from_u64(0);
@@ -779,66 +889,34 @@ mod tests {
     fn plan_commitment_matches_bundle_commitment() {
         let mut rng = StdRng::seed_from_u64(42);
         let sk = private::SpendingKey::from([0x42u8; 32]);
-        let pak = sk.derive_proof_private();
 
-        let spend_note = Note {
-            pk: sk.derive_payment_key(),
-            value: note::Value::from(500u64),
-            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
-            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
-        };
-        let output_note = Note {
-            pk: sk.derive_payment_key(),
-            value: note::Value::from(200u64),
-            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
-            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
-        };
+        let (stamp, output_action, output_plan) = make_output_stamp(&mut rng, &sk, 200);
 
-        let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
-        let output_rcv = value::CommitmentTrapdoor::random(&mut rng);
-        let theta_spend = ActionEntropy::random(&mut rng);
-        let theta_output = ActionEntropy::random(&mut rng);
-
-        let derive_rk = { move |alpha| pak.ak().derive_action_public(&alpha) };
-        let spend_plan = action::Plan::spend(spend_note, theta_spend, spend_rcv, derive_rk);
-        let output_plan = action::Plan::output(output_note, theta_output, output_rcv);
-
-        let bundle_plan = Plan::new(alloc::vec![spend_plan], alloc::vec![output_plan]);
+        let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
         let sighash = mock_sighash(bundle_plan.commitment());
-        let ask = sk.derive_auth_private();
 
-        let spend_alpha = theta_spend.randomizer::<effect::Spend>(&spend_note.commitment());
-        let spend_rsk = ask.derive_action_private(&spend_alpha);
-        let spend_action = Action {
-            cv: spend_plan.cv(),
-            rk: spend_plan.rk,
-            sig: spend_rsk.sign(&mut rng, &sighash),
-        };
-
-        let output_alpha = theta_output.randomizer::<effect::Output>(&output_note.commitment());
-        let output_rsk = private::ActionSigningKey::new(&output_alpha);
-        let output_action = Action {
-            cv: output_plan.cv(),
-            rk: output_plan.rk,
+        let output_rsk = private::ActionSigningKey::new(
+            &ActionEntropy::random(&mut rng).randomizer::<effect::Output>(
+                &Note {
+                    pk: sk.derive_payment_key(),
+                    value: note::Value::from(200u64),
+                    psi: note::NullifierTrapdoor::from(Fp::ZERO),
+                    rcm: note::CommitmentTrapdoor::from(Fp::ZERO),
+                }
+                .commitment(),
+            ),
+        );
+        let signed_action = Action {
+            cv: output_action.cv,
+            rk: output_action.rk,
             sig: output_rsk.sign(&mut rng, &sighash),
         };
 
         let bundle: Stamped = Bundle {
-            actions: alloc::vec![spend_action, output_action],
-            value_balance: 300,
+            actions: alloc::vec![signed_action],
+            value_balance: bundle_plan.value_balance(),
             binding_sig: bundle_plan.derive_bsk_private().sign(&mut rng, &sighash),
-            stamp: {
-                let (stamp, _) = Stamp::prove_action(
-                    &mut rng,
-                    (spend_action.cv, spend_action.rk),
-                    (spend_alpha.into(), spend_note, spend_rcv),
-                    Anchor::from(Fp::ZERO),
-                    Epoch::from(0u32),
-                    &pak,
-                )
-                .expect("prove_action");
-                stamp
-            },
+            stamp,
         };
 
         assert_eq!(bundle_plan.commitment(), bundle.commitment().unwrap());
@@ -877,114 +955,12 @@ mod tests {
         bundle.verify_signatures(&sighash).unwrap();
     }
 
-    /// Build an autonome bundle for testing.
-    fn build_autonome(
-        rng: &mut (impl RngCore + CryptoRng),
-        spend_value: u64,
-        output_value: u64,
-    ) -> Stamped {
-        let sk = private::SpendingKey::from([0x42u8; 32]);
-        let ask = sk.derive_auth_private();
-        let pak = sk.derive_proof_private();
-        let anchor = Anchor::from(Fp::ZERO);
-        let epoch = Epoch::from(0u32);
-
-        let spend_note = Note {
-            pk: sk.derive_payment_key(),
-            value: note::Value::from(spend_value),
-            psi: note::NullifierTrapdoor::from(Fp::random(&mut *rng)),
-            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut *rng)),
-        };
-        let output_note = Note {
-            pk: sk.derive_payment_key(),
-            value: note::Value::from(output_value),
-            psi: note::NullifierTrapdoor::from(Fp::random(&mut *rng)),
-            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut *rng)),
-        };
-
-        let theta_spend = ActionEntropy::random(&mut *rng);
-        let theta_output = ActionEntropy::random(&mut *rng);
-        let spend_rcv = value::CommitmentTrapdoor::random(&mut *rng);
-        let output_rcv = value::CommitmentTrapdoor::random(&mut *rng);
-
-        let derive_rk = { move |alpha| pak.ak().derive_action_public(&alpha) };
-        let spend_plan = action::Plan::spend(spend_note, theta_spend, spend_rcv, derive_rk);
-        let output_plan = action::Plan::output(output_note, theta_output, output_rcv);
-        let bundle_plan = Plan::new(alloc::vec![spend_plan], alloc::vec![output_plan]);
-        let sighash = mock_sighash(bundle_plan.commitment());
-
-        // Sign each action
-        let spend_alpha = theta_spend.randomizer::<effect::Spend>(&spend_note.commitment());
-        let spend_sig = ask
-            .derive_action_private(&spend_alpha)
-            .sign(&mut *rng, &sighash);
-        let output_alpha = theta_output.randomizer::<effect::Output>(&output_note.commitment());
-        let output_rsk = private::ActionSigningKey::new(&output_alpha);
-        let output_sig = output_rsk.sign(&mut *rng, &sighash);
-
-        // Materialize actions
-        let spend_action = Action {
-            cv: spend_plan.cv(),
-            rk: spend_plan.rk,
-            sig: spend_sig,
-        };
-        let output_action = Action {
-            cv: output_plan.cv(),
-            rk: output_plan.rk,
-            sig: output_sig,
-        };
-
-        let (spend_stamp, (spend_acc, _)) = Stamp::prove_action(
-            &mut *rng,
-            (spend_action.cv, spend_action.rk),
-            (spend_alpha.into(), spend_note, spend_rcv),
-            anchor,
-            epoch,
-            &pak,
-        )
-        .expect("prove_action (spend)");
-
-        let (output_stamp, (output_acc, _)) = Stamp::prove_action(
-            &mut *rng,
-            (output_action.cv, output_action.rk),
-            (output_alpha.into(), output_note, output_rcv),
-            anchor,
-            epoch,
-            &pak,
-        )
-        .expect("prove_action (output)");
-
-        let bundle: Stamped = {
-            let (stamp, _accs) =
-                Stamp::prove_merge(&mut *rng, spend_stamp, spend_acc, output_stamp, output_acc)
-                    .expect("prove_merge");
-
-            Bundle {
-                actions: alloc::vec![spend_action, output_action],
-                value_balance: bundle_plan.value_balance(),
-                binding_sig: bundle_plan.derive_bsk_private().sign(&mut *rng, &sighash),
-                stamp,
-            }
-        };
-
-        bundle.verify_signatures(&sighash).unwrap();
-        bundle
-    }
-
-    /// An innocent aggregate merges stamps from two autonomes.
-    ///
-    /// Two autonomes are built, their stamps merged via `prove_merge`,
-    /// and the result placed in a new bundle with no actions and zero
-    /// balance. The merged stamp verifies against actions collected from
-    /// both autonomes (which become adjuncts once stripped).
     #[test]
     fn innocent_aggregate_from_two_autonomes() {
         let mut rng = StdRng::seed_from_u64(0xCAFE);
 
         let autonome_a = build_autonome(&mut rng, 1000, 700);
         let autonome_b = build_autonome(&mut rng, 500, 200);
-        let acc_a = Multiset::try_from(autonome_a.actions.as_slice()).expect("valid");
-        let acc_b = Multiset::try_from(autonome_b.actions.as_slice()).expect("valid");
 
         let (adjunct_a, stamp_a) = autonome_a.strip();
         let (adjunct_b, stamp_b) = autonome_b.strip();
@@ -993,8 +969,7 @@ mod tests {
             let innocent_plan = Plan::new(alloc::vec![], alloc::vec![]);
             let innocent_sighash = mock_sighash(innocent_plan.commitment());
 
-            let (stamp, _accs) =
-                Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("prove_merge");
+            let stamp = Stamp::prove_merge(&mut rng, stamp_a, stamp_b).expect("prove_merge");
 
             Bundle {
                 actions: alloc::vec![],
@@ -1013,18 +988,10 @@ mod tests {
         let adjunct_actions: Vec<Action> = [adjunct_a.actions, adjunct_b.actions].concat();
         innocent
             .stamp
-            .verify(
-                &Multiset::try_from(adjunct_actions.as_slice()).expect("valid"),
-                &mut rng,
-            )
+            .verify(&adjunct_actions, &mut rng)
             .expect("innocent stamp should verify against adjunct actions");
     }
 
-    /// A based aggregate proves its own actions and covers two adjuncts.
-    ///
-    /// The two contributing autonomes are first merged into an innocent
-    /// aggregate, which is then aggregated into the based autonome.
-    /// After stripping, the innocent's binding signature still holds.
     #[test]
     fn based_aggregate_with_two_adjuncts() {
         let mut rng = StdRng::seed_from_u64(0xBEEF);
@@ -1033,54 +1000,16 @@ mod tests {
         let autonome_a = build_autonome(&mut rng, 1000, 700);
         let autonome_b = build_autonome(&mut rng, 500, 200);
 
-        let acc_a = Multiset::try_from(autonome_a.actions.as_slice()).expect("valid");
-        let acc_b = Multiset::try_from(autonome_b.actions.as_slice()).expect("valid");
-
         let sighash = mock_sighash(becomes_based.commitment().unwrap());
 
         let (adjunct_a, stamp_a) = autonome_a.strip();
         let (adjunct_b, stamp_b) = autonome_b.strip();
 
-        // Build the innocent aggregate as a full stamped bundle.
-        let (innocent, innocent_accs) = {
-            let innocent_plan = Plan::new(alloc::vec![], alloc::vec![]);
-            let innocent_sighash = mock_sighash(innocent_plan.commitment());
+        let innocent_stamp =
+            Stamp::prove_merge(&mut rng, stamp_a, stamp_b).expect("innocent merge");
 
-            let (stamp, accs) = Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b)
-                .expect("innocent merge");
-
-            let innocent: Stamped = Bundle {
-                actions: alloc::vec![],
-                value_balance: 0,
-                binding_sig: innocent_plan
-                    .derive_bsk_private()
-                    .sign(&mut rng, &innocent_sighash),
-                stamp,
-            };
-
-            (innocent, accs)
-        };
-
-        innocent
-            .verify_signatures(&mock_sighash(innocent.commitment().unwrap()))
-            .expect("innocent aggregate binding sig should verify before stripping");
-
-        // Strip the innocent — its stamp merges into the based aggregate.
-        let (stripped_innocent, stripped_innocent_stamp) = innocent.strip();
-
-        stripped_innocent
-            .verify_signatures(&mock_sighash(stripped_innocent.commitment().unwrap()))
-            .expect("stripped innocent binding sig should still verify");
-
-        // Merge own stamp with innocent stamp → based aggregate.
-        let (based_stamp, based_accs) = Stamp::prove_merge(
-            &mut rng,
-            becomes_based.stamp,
-            Multiset::try_from(becomes_based.actions.as_slice()).expect("valid"),
-            stripped_innocent_stamp,
-            innocent_accs.0,
-        )
-        .expect("based merge");
+        let based_stamp =
+            Stamp::prove_merge(&mut rng, becomes_based.stamp, innocent_stamp).expect("based merge");
 
         becomes_based.stamp = based_stamp;
 
@@ -1088,7 +1017,6 @@ mod tests {
             .verify_signatures(&sighash)
             .expect("based aggregate binding sig should verify");
 
-        // Stamp covers all six actions.
         let all_actions: Vec<Action> = [
             becomes_based.actions.clone(),
             adjunct_a.actions,
@@ -1096,22 +1024,12 @@ mod tests {
         ]
         .concat();
 
-        let all_actions_acc =
-            <Multiset<ActionDigest>>::try_from(all_actions.as_slice()).expect("valid");
-
-        assert_eq!(
-            all_actions_acc.commit(),
-            based_accs.0.commit(),
-            "all actions acc should match"
-        );
-
         becomes_based
             .stamp
-            .verify(&all_actions_acc, &mut rng)
+            .verify(&all_actions, &mut rng)
             .expect("based aggregate stamp should verify against all actions");
     }
 
-    /// A tampered action signature must cause verification to fail.
     #[test]
     fn invalid_action_sig_fails_verification() {
         let mut rng = StdRng::seed_from_u64(11);
@@ -1123,39 +1041,5 @@ mod tests {
         bundle.actions[0].sig = action::Signature::from(sig_bytes);
 
         assert!(bundle.verify_signatures(&sighash).is_err());
-    }
-
-    /// A stamped bundle round-trips through the wire format.
-    #[test]
-    fn round_trip_stamped_bundle() {
-        let mut rng = StdRng::seed_from_u64(500);
-        let bundle = build_autonome(&mut rng, 1000, 700);
-
-        let mut buf = Vec::new();
-        bundle.write(&mut buf).expect("write");
-        let recovered = Stamped::read(buf.as_slice()).expect("read");
-
-        assert_eq!(bundle.actions, recovered.actions);
-        assert_eq!(bundle.value_balance, recovered.value_balance);
-        assert_eq!(bundle.binding_sig, recovered.binding_sig);
-        assert_eq!(bundle.stamp, recovered.stamp);
-    }
-
-    /// A stripped bundle round-trips through the wire format.
-    #[test]
-    fn round_trip_stripped_bundle() {
-        let mut rng = StdRng::seed_from_u64(501);
-        let stamped = build_autonome(&mut rng, 1000, 700);
-        let (mut stripped, _stamp) = stamped.strip();
-        stripped.stamp.set_index(42);
-
-        let mut buf = Vec::new();
-        stripped.write(&mut buf).expect("write");
-        let recovered = Stripped::read(buf.as_slice()).expect("read");
-
-        assert_eq!(stripped.actions, recovered.actions);
-        assert_eq!(stripped.value_balance, recovered.value_balance);
-        assert_eq!(stripped.binding_sig, recovered.binding_sig);
-        assert_eq!(recovered.stamp.get_index(), Some(42));
     }
 }

@@ -44,12 +44,13 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 
 1. Select transactions
 2. Deserialize and decompress stamps
-3. Merge stamps
+3. Align anchors — `MergeStamp` requires exact anchor equality. Use `StampLift` to advance each stamp to a common block within the same epoch before merging.
+4. Merge stamps
    - Merge tachygrams (set union)
-   - Merge anchors (range intersection)
-   - Merge proofs (proof recursion)
-4. Serialize and compress the merged stamp
-5. Publish aggregate transaction
+   - Merge accumulators ($\mathsf{action\_acc}$ and $\mathsf{tachygram\_acc}$ via $\mathbb{F}_p$ multiplication)
+   - Merge proofs (proof recursion via `MergeStamp`)
+5. Serialize and compress the merged stamp
+6. Publish aggregate transaction
 
 <!-- TODO
 - Explain tachygram set union validation algorithm

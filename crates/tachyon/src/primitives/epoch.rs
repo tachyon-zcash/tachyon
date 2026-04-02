@@ -8,16 +8,4 @@
 /// Different epochs produce different nullifiers for the same note,
 /// enabling range-restricted delegation via the GGM tree PRF.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Epoch(u32);
-
-impl From<u32> for Epoch {
-    fn from(val: u32) -> Self {
-        Self(val)
-    }
-}
-
-impl From<Epoch> for u32 {
-    fn from(epoch: Epoch) -> Self {
-        epoch.0
-    }
-}
+pub struct Epoch(pub u32);

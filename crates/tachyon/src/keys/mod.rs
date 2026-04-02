@@ -89,7 +89,7 @@ mod tests {
         constants::PrfExpand,
         entropy::ActionEntropy,
         keys::private,
-        note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
+        note::{self, Note},
         primitives::effect,
         reddsa,
     };
@@ -154,8 +154,8 @@ mod tests {
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
-            psi: NullifierTrapdoor::from(Fp::ZERO),
-            rcm: CommitmentTrapdoor::from(Fp::ZERO),
+            psi: note::NullifierTrapdoor::from(Fp::ZERO), // TODO: don't use zero
+            rcm: note::CommitmentTrapdoor::from(Fp::ZERO), // TODO: don't use zero
         };
         let theta = ActionEntropy::random(&mut rng);
         let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
