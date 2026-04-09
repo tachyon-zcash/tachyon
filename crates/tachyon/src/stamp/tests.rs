@@ -222,7 +222,9 @@ fn merge_two_outputs_then_verify() {
     let (stamp_a, action_a) = make_output_stamp(&mut rng, &sk);
     let (stamp_b, action_b) = make_output_stamp(&mut rng, &sk);
 
-    let merged = Stamp::prove_merge(&mut rng, stamp_a, stamp_b).expect("prove_merge");
+    let acc_a = compute_action_acc(&[action_a]).unwrap();
+    let acc_b = compute_action_acc(&[action_b]).unwrap();
+    let merged = Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("prove_merge");
 
     merged
         .verify(&[action_a, action_b], &mut rng)
@@ -235,9 +237,11 @@ fn merged_stamp_rejects_partial_actions() {
     let sk = private::SpendingKey::from([0x42u8; 32]);
 
     let (stamp_a, action_a) = make_output_stamp(&mut rng, &sk);
-    let (stamp_b, _action_b) = make_output_stamp(&mut rng, &sk);
+    let (stamp_b, action_b) = make_output_stamp(&mut rng, &sk);
 
-    let merged = Stamp::prove_merge(&mut rng, stamp_a, stamp_b).expect("prove_merge");
+    let acc_a = compute_action_acc(&[action_a]).unwrap();
+    let acc_b = compute_action_acc(&[action_b]).unwrap();
+    let merged = Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("prove_merge");
 
     assert!(
         merged.verify(&[action_a], &mut rng).is_err(),
@@ -524,13 +528,22 @@ fn stamp_lift_within_epoch() {
     let rcv = value::CommitmentTrapdoor::random(&mut rng);
     let theta = ActionEntropy::random(&mut rng);
     let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+    let plan = action::Plan::output(note, theta, rcv);
+    let action = Action {
+        cv: plan.cv(),
+        rk: plan.rk,
+        sig: action::Signature::from([0u8; 64]),
+    };
     let stamp = Stamp::prove_output(&mut rng, rcv, alpha, note, anchor_5).expect("prove_output");
+
+    let action_acc = compute_action_acc(&[action]).unwrap();
+    let tachygram_acc = compute_tachygram_acc(&stamp.tachygrams);
 
     // Build pool to block 10 (same epoch)
     let (pool_proof_10, anchor_10) = build_pool_chain(&mut rng, *app, 10);
 
     // StampLift from block 5 -> block 10
-    let stamp_hdr = (stamp.action_acc, stamp.tachygram_acc, anchor_5);
+    let stamp_hdr = (action_acc, tachygram_acc, anchor_5);
     let stamp_pcd = stamp.proof.carry::<StampHeader>(stamp_hdr);
     let pool_pcd_10 = pool_proof_10.carry::<pool::PoolHeader>(anchor_10);
 
@@ -538,7 +551,7 @@ fn stamp_lift_within_epoch() {
         .fuse(&mut rng, &header::StampLift, (), stamp_pcd, pool_pcd_10)
         .expect("stamp lift");
 
-    let lifted_hdr = (stamp.action_acc, stamp.tachygram_acc, anchor_10);
+    let lifted_hdr = (action_acc, tachygram_acc, anchor_10);
     let lifted_pcd = lifted_proof.carry::<StampHeader>(lifted_hdr);
     app.rerandomize(lifted_pcd, &mut rng)
         .expect("rerandomize lifted stamp");
@@ -551,7 +564,8 @@ fn merge_stamp_rejects_mismatched_anchors() {
     let sk = private::SpendingKey::from([0x42u8; 32]);
 
     // Stamp A at genesis anchor
-    let (stamp_a, _action_a) = make_output_stamp(&mut rng, &sk);
+    let (stamp_a, action_a) = make_output_stamp(&mut rng, &sk);
+    let acc_a = compute_action_acc(&[action_a]).unwrap();
 
     // Stamp B at a different anchor (block 5)
     let app = &*PROOF_SYSTEM;
@@ -565,13 +579,20 @@ fn merge_stamp_rejects_mismatched_anchors() {
     };
     let rcv_b = value::CommitmentTrapdoor::random(&mut rng);
     let theta_b = ActionEntropy::random(&mut rng);
+    let plan_b = action::Plan::output(note_b, theta_b, rcv_b);
     let alpha_b = theta_b.randomizer::<effect::Output>(&note_b.commitment());
+    let acc_b = compute_action_acc(&[Action {
+        cv: plan_b.cv(),
+        rk: plan_b.rk,
+        sig: action::Signature::from([0u8; 64]),
+    }])
+    .unwrap();
     let stamp_b = Stamp::prove_output(&mut rng, rcv_b, alpha_b, note_b, anchor_5)
         .expect("prove_output at block 5");
 
     // Merge should fail -- different anchors
     assert!(
-        Stamp::prove_merge(&mut rng, stamp_a, stamp_b).is_err(),
+        Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).is_err(),
         "merge with mismatched anchors must fail"
     );
 }
@@ -793,13 +814,22 @@ fn stamp_lift_rejects_cross_epoch() {
     let rcv = value::CommitmentTrapdoor::random(&mut rng);
     let theta = ActionEntropy::random(&mut rng);
     let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+    let plan = action::Plan::output(note, theta, rcv);
+    let action = Action {
+        cv: plan.cv(),
+        rk: plan.rk,
+        sig: action::Signature::from([0u8; 64]),
+    };
     let stamp = Stamp::prove_output(&mut rng, rcv, alpha, note, anchor_5).expect("prove_output");
+
+    let action_acc = compute_action_acc(&[action]).unwrap();
+    let tachygram_acc = compute_tachygram_acc(&stamp.tachygrams);
 
     // Build pool into epoch 1 (block 4096)
     let (pool_proof_e1, anchor_e1) = build_pool_chain(&mut rng, *app, 4096);
 
     // StampLift from block 5 -> block 4096 should fail (cross-epoch)
-    let stamp_hdr = (stamp.action_acc, stamp.tachygram_acc, anchor_5);
+    let stamp_hdr = (action_acc, tachygram_acc, anchor_5);
     let stamp_pcd = stamp.proof.carry::<StampHeader>(stamp_hdr);
     let pool_pcd_e1 = pool_proof_e1.carry::<pool::PoolHeader>(anchor_e1);
 

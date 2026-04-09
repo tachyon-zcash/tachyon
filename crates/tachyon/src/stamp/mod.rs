@@ -202,7 +202,9 @@ impl Plan {
             mock_ragu::Pcd<'source, SpendableHeader>,
         )>,
     ) -> Result<Stamp, ProveError> {
-        let mut stamps: Vec<Stamp> = Vec::new();
+        // Each entry is (stamp, action_acc). action_acc is ephemeral —
+        // needed to reconstruct PCD headers during merge, never stored.
+        let mut entries: Vec<(Stamp, Fp)> = Vec::new();
 
         if self.spends.len() != spend_pcds.len() {
             return Err(ProveError::SpendableMismatch);
@@ -248,11 +250,7 @@ impl Plan {
             let stamp = Stamp::prove_spend(rng, bind_pcd, spendable_pcd, tachygrams)
                 .map_err(|_err| ProveError::ProofFailed)?;
 
-            if Fp::from(action_digest) != stamp.action_acc {
-                return Err(ProveError::ActionDigestMismatch);
-            }
-
-            stamps.push(stamp);
+            entries.push((stamp, Fp::from(action_digest)));
         }
 
         for ((cv, rk), (alpha, note, rcv)) in self.outputs {
@@ -262,27 +260,27 @@ impl Plan {
             let stamp = Stamp::prove_output(rng, rcv, alpha, note, self.anchor)
                 .map_err(|_err| ProveError::ProofFailed)?;
 
-            if Fp::from(action_digest) != stamp.action_acc {
-                return Err(ProveError::ActionDigestMismatch);
-            }
-
-            stamps.push(stamp);
+            entries.push((stamp, Fp::from(action_digest)));
         }
 
-        if stamps.is_empty() {
+        if entries.is_empty() {
             return Err(ProveError::NoActions);
         }
 
         // Merge pairwise.
-        while stamps.len() > 1 {
-            let right = stamps.pop().ok_or(ProveError::NoActions)?;
-            let left = stamps.pop().ok_or(ProveError::NoActions)?;
-            let merged =
-                Stamp::prove_merge(rng, left, right).map_err(|_err| ProveError::MergeFailed)?;
-            stamps.push(merged);
+        while entries.len() > 1 {
+            let (right, right_acc) = entries.pop().ok_or(ProveError::NoActions)?;
+            let (left, left_acc) = entries.pop().ok_or(ProveError::NoActions)?;
+            let merged = Stamp::prove_merge(rng, left, left_acc, right, right_acc)
+                .map_err(|_err| ProveError::MergeFailed)?;
+            let merged_acc = left_acc * right_acc;
+            entries.push((merged, merged_acc));
         }
 
-        stamps.pop().ok_or(ProveError::NoActions)
+        entries
+            .pop()
+            .map(|(stamp, _acc)| stamp)
+            .ok_or(ProveError::NoActions)
     }
 }
 
@@ -290,9 +288,6 @@ impl Plan {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ProveError {
-    /// The single-action stamp's action accumulator does not match the expected
-    /// action digest.
-    ActionDigestMismatch,
     /// The plan has no actions to prove.
     NoActions,
     /// Proof creation failed for an action.
@@ -306,7 +301,6 @@ pub enum ProveError {
 impl fmt::Display for ProveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            | Self::ActionDigestMismatch => write!(f, "action digest mismatch"),
             | Self::NoActions => write!(f, "no actions to prove"),
             | Self::ProofFailed => write!(f, "action proof failed"),
             | Self::MergeFailed => write!(f, "stamp merge failed"),
@@ -335,12 +329,6 @@ pub struct Stamp {
 
     /// The Ragu proof bytes.
     pub proof: mock_ragu::Proof,
-
-    /// Raw Fp product of action digests (for proof aggregation).
-    pub action_acc: Fp,
-
-    /// Raw Fp product of tachygrams (for proof aggregation).
-    pub tachygram_acc: Fp,
 }
 
 impl Stamp {
@@ -374,8 +362,6 @@ impl Stamp {
             tachygrams: alloc::vec![tachygram],
             anchor,
             proof: rerand.proof,
-            action_acc,
-            tachygram_acc,
         })
     }
 
@@ -408,33 +394,40 @@ impl Stamp {
             tachygrams,
             anchor,
             proof: rerand.proof,
-            action_acc,
-            tachygram_acc,
         })
     }
 
     /// Merges two stamps, combining tachygrams and proofs.
     ///
     /// Both stamps must share the same anchor (use StampLift to align first).
+    ///
+    /// `left_action_acc` and `right_action_acc` are the Fp product accumulators
+    /// over each side's actions. The caller reconstructs these from public data
+    /// (they are never stored on the stamp).
     pub fn prove_merge<RNG: CryptoRng>(
         rng: &mut RNG,
         left: Self,
+        left_action_acc: Fp,
         right: Self,
+        right_action_acc: Fp,
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let left_header = (left.action_acc, left.tachygram_acc, left.anchor);
-        let right_header = (right.action_acc, right.tachygram_acc, right.anchor);
+        let left_tachygram_acc = compute_tachygram_acc(&left.tachygrams);
+        let right_tachygram_acc = compute_tachygram_acc(&right.tachygrams);
+
+        let left_header = (left_action_acc, left_tachygram_acc, left.anchor);
+        let right_header = (right_action_acc, right_tachygram_acc, right.anchor);
 
         let left_pcd = left.proof.carry::<StampHeader>(left_header);
         let right_pcd = right.proof.carry::<StampHeader>(right_header);
 
         let (proof, ()) = app.fuse(rng, &MergeStamp, (), left_pcd, right_pcd)?;
 
-        let action_acc = left.action_acc * right.action_acc;
-        let tachygram_acc = left.tachygram_acc * right.tachygram_acc;
+        let action_acc = left_action_acc * right_action_acc;
         let anchor = left.anchor;
         let tachygrams = [left.tachygrams, right.tachygrams].concat();
+        let tachygram_acc = compute_tachygram_acc(&tachygrams);
 
         let merged_header = (action_acc, tachygram_acc, anchor);
         let carried = proof.carry::<StampHeader>(merged_header);
@@ -444,8 +437,6 @@ impl Stamp {
             tachygrams,
             anchor,
             proof: rerand.proof,
-            action_acc,
-            tachygram_acc,
         })
     }
 

@@ -573,13 +573,6 @@ impl Stamped {
         }
         let proof = stamp::read_proof_sized(&mut reader, stamp_size)?;
 
-        // Reconstruct accumulators from deserialized data.
-        let action_acc = stamp::compute_action_acc(&actions)
-            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "action digest error"))?;
-        let tachygram_acc = tachygrams
-            .iter()
-            .fold(Fp::ONE, |acc, tg| acc * Fp::from(*tg));
-
         Ok(Self {
             actions,
             value_balance,
@@ -588,8 +581,6 @@ impl Stamped {
                 tachygrams,
                 anchor,
                 proof,
-                action_acc,
-                tachygram_acc,
             },
         })
     }
@@ -856,7 +847,10 @@ mod tests {
         )
         .expect("prove_output (output-value)");
 
-        let stamp = Stamp::prove_merge(&mut *rng, spend_stamp, output_stamp).expect("prove_merge");
+        let spend_acc = stamp::compute_action_acc(&[spend_action]).unwrap();
+        let output_acc = stamp::compute_action_acc(&[output_action]).unwrap();
+        let stamp = Stamp::prove_merge(&mut *rng, spend_stamp, spend_acc, output_stamp, output_acc)
+            .expect("prove_merge");
 
         let bundle: Stamped = Bundle {
             actions: alloc::vec![spend_action, output_action],
@@ -970,6 +964,8 @@ mod tests {
         let autonome_a = build_autonome(&mut rng, 1000, 700);
         let autonome_b = build_autonome(&mut rng, 500, 200);
 
+        let acc_a = stamp::compute_action_acc(&autonome_a.actions).unwrap();
+        let acc_b = stamp::compute_action_acc(&autonome_b.actions).unwrap();
         let (adjunct_a, stamp_a) = autonome_a.strip();
         let (adjunct_b, stamp_b) = autonome_b.strip();
 
@@ -977,7 +973,8 @@ mod tests {
             let innocent_plan = Plan::new(alloc::vec![], alloc::vec![]);
             let innocent_sighash = mock_sighash(innocent_plan.commitment());
 
-            let stamp = Stamp::prove_merge(&mut rng, stamp_a, stamp_b).expect("prove_merge");
+            let stamp =
+                Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("prove_merge");
 
             Bundle {
                 actions: alloc::vec![],
@@ -1010,14 +1007,25 @@ mod tests {
 
         let sighash = mock_sighash(becomes_based.commitment().unwrap());
 
+        let based_acc = stamp::compute_action_acc(&becomes_based.actions).unwrap();
+        let acc_a = stamp::compute_action_acc(&autonome_a.actions).unwrap();
+        let acc_b = stamp::compute_action_acc(&autonome_b.actions).unwrap();
+
         let (adjunct_a, stamp_a) = autonome_a.strip();
         let (adjunct_b, stamp_b) = autonome_b.strip();
 
+        let innocent_acc = acc_a * acc_b;
         let innocent_stamp =
-            Stamp::prove_merge(&mut rng, stamp_a, stamp_b).expect("innocent merge");
+            Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("innocent merge");
 
-        let based_stamp =
-            Stamp::prove_merge(&mut rng, becomes_based.stamp, innocent_stamp).expect("based merge");
+        let based_stamp = Stamp::prove_merge(
+            &mut rng,
+            becomes_based.stamp,
+            based_acc,
+            innocent_stamp,
+            innocent_acc,
+        )
+        .expect("based merge");
 
         becomes_based.stamp = based_stamp;
 
@@ -1058,8 +1066,8 @@ mod tests {
         let sk = private::SpendingKey::from([0x42u8; 32]);
         let ask = sk.derive_auth_private();
 
-        let (stamp_a, _action_a, plan_a) = make_output_stamp(&mut rng, &sk, 200);
-        let (stamp_b, _action_b, plan_b) = make_output_stamp(&mut rng, &sk, 300);
+        let (stamp_a, action_a, plan_a) = make_output_stamp(&mut rng, &sk, 200);
+        let (stamp_b, action_b, plan_b) = make_output_stamp(&mut rng, &sk, 300);
 
         let bundle_plan = Plan::new(alloc::vec![], alloc::vec![plan_a, plan_b]);
         let sighash = mock_sighash(bundle_plan.commitment());
@@ -1068,7 +1076,10 @@ mod tests {
             .sign(&sighash, &ask, &mut rng)
             .expect("sign should succeed");
 
-        let stamp = Stamp::prove_merge(&mut rng, stamp_a, stamp_b).expect("prove_merge");
+        let acc_a = stamp::compute_action_acc(&[action_a]).unwrap();
+        let acc_b = stamp::compute_action_acc(&[action_b]).unwrap();
+        let stamp =
+            Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("prove_merge");
         let stamped = unproven.stamp(stamp);
 
         stamped
@@ -1155,11 +1166,6 @@ mod tests {
             deserialized.stamp.tachygrams.len()
         );
         assert_eq!(original.stamp.anchor, deserialized.stamp.anchor);
-        assert_eq!(original.stamp.action_acc, deserialized.stamp.action_acc);
-        assert_eq!(
-            original.stamp.tachygram_acc,
-            deserialized.stamp.tachygram_acc
-        );
 
         // Verify the deserialized bundle is still valid
         let sighash = mock_sighash(deserialized.commitment().unwrap());
