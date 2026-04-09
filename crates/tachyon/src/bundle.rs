@@ -74,18 +74,22 @@ impl TryFrom<Bundle<Option<Stamp>>> for Stripped {
 
     fn try_from(bundle: Bundle<Option<Stamp>>) -> Result<Self, Self::Error> {
         match bundle.stamp {
-            | None => Ok(Self {
-                actions: bundle.actions,
-                value_balance: bundle.value_balance,
-                binding_sig: bundle.binding_sig,
-                stamp: Adjunct::default(),
-            }),
-            | Some(stamp) => Err(Stamped {
-                actions: bundle.actions,
-                value_balance: bundle.value_balance,
-                binding_sig: bundle.binding_sig,
-                stamp,
-            }),
+            | None => {
+                Ok(Self {
+                    actions: bundle.actions,
+                    value_balance: bundle.value_balance,
+                    binding_sig: bundle.binding_sig,
+                    stamp: Adjunct::default(),
+                })
+            },
+            | Some(stamp) => {
+                Err(Stamped {
+                    actions: bundle.actions,
+                    value_balance: bundle.value_balance,
+                    binding_sig: bundle.binding_sig,
+                    stamp,
+                })
+            },
         }
     }
 }
@@ -109,18 +113,22 @@ impl TryFrom<Bundle<Option<Stamp>>> for Stamped {
 
     fn try_from(bundle: Bundle<Option<Stamp>>) -> Result<Self, Self::Error> {
         match bundle.stamp {
-            | Some(stamp) => Ok(Self {
-                actions: bundle.actions,
-                value_balance: bundle.value_balance,
-                binding_sig: bundle.binding_sig,
-                stamp,
-            }),
-            | None => Err(Stripped {
-                actions: bundle.actions,
-                value_balance: bundle.value_balance,
-                binding_sig: bundle.binding_sig,
-                stamp: Adjunct::default(),
-            }),
+            | Some(stamp) => {
+                Ok(Self {
+                    actions: bundle.actions,
+                    value_balance: bundle.value_balance,
+                    binding_sig: bundle.binding_sig,
+                    stamp,
+                })
+            },
+            | None => {
+                Err(Stripped {
+                    actions: bundle.actions,
+                    value_balance: bundle.value_balance,
+                    binding_sig: bundle.binding_sig,
+                    stamp: Adjunct::default(),
+                })
+            },
         }
     }
 }
@@ -1041,5 +1049,158 @@ mod tests {
         bundle.actions[0].sig = action::Signature::from(sig_bytes);
 
         assert!(bundle.verify_signatures(&sighash).is_err());
+    }
+
+    /// Plan::sign produces a verifiable bundle.
+    #[test]
+    fn plan_sign_and_verify() {
+        let mut rng = StdRng::seed_from_u64(700);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+
+        let (stamp_a, _action_a, plan_a) = make_output_stamp(&mut rng, &sk, 200);
+        let (stamp_b, _action_b, plan_b) = make_output_stamp(&mut rng, &sk, 300);
+
+        let bundle_plan = Plan::new(alloc::vec![], alloc::vec![plan_a, plan_b]);
+        let sighash = mock_sighash(bundle_plan.commitment());
+
+        let unproven = bundle_plan
+            .sign(&sighash, &ask, &mut rng)
+            .expect("sign should succeed");
+
+        let stamp = Stamp::prove_merge(&mut rng, stamp_a, stamp_b).expect("prove_merge");
+        let stamped = unproven.stamp(stamp);
+
+        stamped
+            .verify_signatures(&sighash)
+            .expect("signed bundle should verify");
+    }
+
+    /// Plan::stamp_plan → stamp::Plan::prove → verify end-to-end.
+    #[test]
+    fn plan_stamp_plan_produces_valid_stamp() {
+        let mut rng = StdRng::seed_from_u64(701);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let pak = sk.derive_proof_private();
+
+        let note_a = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(200u64),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+        };
+        let note_b = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(300u64),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+        };
+
+        let rcv_a = value::CommitmentTrapdoor::random(&mut rng);
+        let rcv_b = value::CommitmentTrapdoor::random(&mut rng);
+        let theta_a = ActionEntropy::random(&mut rng);
+        let theta_b = ActionEntropy::random(&mut rng);
+
+        let plan_a = action::Plan::output(note_a, theta_a, rcv_a);
+        let plan_b = action::Plan::output(note_b, theta_b, rcv_b);
+
+        let bundle_plan = Plan::new(alloc::vec![], alloc::vec![plan_a, plan_b]);
+        let anchor = Anchor::genesis(BlockHeight(0));
+
+        let stamp_plan = bundle_plan.stamp_plan(anchor);
+        let stamp = stamp_plan
+            .prove(&mut rng, &pak, alloc::vec![])
+            .expect("stamp plan prove");
+
+        // Build actions to verify against
+        let actions: Vec<Action> = bundle_plan
+            .iter_actions(
+                |plan| {
+                    Action {
+                        cv: plan.cv(),
+                        rk: plan.rk,
+                        sig: action::Signature::from([0u8; 64]),
+                    }
+                },
+                |plan| {
+                    Action {
+                        cv: plan.cv(),
+                        rk: plan.rk,
+                        sig: action::Signature::from([0u8; 64]),
+                    }
+                },
+            )
+            .collect();
+
+        stamp
+            .verify(&actions, &mut rng)
+            .expect("stamp_plan-produced stamp should verify");
+    }
+
+    /// Stamped::write → Stamped::read preserves all fields.
+    #[test]
+    fn stamped_read_write_round_trip() {
+        let mut rng = StdRng::seed_from_u64(800);
+        let original = build_autonome(&mut rng, 1000, 700);
+
+        let mut buf = Vec::new();
+        original.write(&mut buf).expect("write should succeed");
+
+        let deserialized = Stamped::read(&*buf).expect("read should succeed");
+
+        assert_eq!(original.actions.len(), deserialized.actions.len());
+        assert_eq!(original.value_balance, deserialized.value_balance);
+        assert_eq!(
+            original.stamp.tachygrams.len(),
+            deserialized.stamp.tachygrams.len()
+        );
+        assert_eq!(original.stamp.anchor, deserialized.stamp.anchor);
+        assert_eq!(original.stamp.action_acc, deserialized.stamp.action_acc);
+        assert_eq!(
+            original.stamp.tachygram_acc,
+            deserialized.stamp.tachygram_acc
+        );
+
+        // Verify the deserialized bundle is still valid
+        let sighash = mock_sighash(deserialized.commitment().unwrap());
+        deserialized
+            .verify_signatures(&sighash)
+            .expect("deserialized bundle should verify");
+    }
+
+    /// Stripped::write → Stripped::read preserves all fields including adjunct
+    /// index.
+    #[test]
+    fn stripped_read_write_round_trip() {
+        let mut rng = StdRng::seed_from_u64(801);
+        let autonome = build_autonome(&mut rng, 1000, 700);
+        let (mut stripped, _stamp) = autonome.strip();
+        stripped.stamp.set_index(42);
+
+        let mut buf = Vec::new();
+        stripped.write(&mut buf).expect("write should succeed");
+
+        let deserialized = Stripped::read(&*buf).expect("read should succeed");
+
+        assert_eq!(stripped.actions.len(), deserialized.actions.len());
+        assert_eq!(stripped.value_balance, deserialized.value_balance);
+        assert_eq!(
+            deserialized.stamp.get_index(),
+            Some(42),
+            "adjunct index must survive round-trip"
+        );
+    }
+
+    /// Stripped::write fails when the adjunct index hasn't been assigned.
+    #[test]
+    fn stripped_write_rejects_unset_index() {
+        let mut rng = StdRng::seed_from_u64(802);
+        let autonome = build_autonome(&mut rng, 1000, 700);
+        let (stripped, _stamp) = autonome.strip();
+
+        // Adjunct index is None by default after strip
+        let mut buf = Vec::new();
+        let result = stripped.write(&mut buf);
+        assert!(result.is_err(), "write must fail when stamp_index is unset");
     }
 }

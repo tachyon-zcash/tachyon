@@ -5,10 +5,16 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use super::*;
 use crate::{
     action,
-    entropy::ActionEntropy,
-    keys::{GGM_TREE_DEPTH, NullifierKey, SpendValidatingKey, private},
+    entropy::{ActionEntropy, ActionRandomizer},
+    keys::{GGM_TREE_DEPTH, NullifierKey, SpendValidatingKey, private, public},
     note::{self, Note, Nullifier},
     primitives::{BlockCommit, BlockHeight, Epoch, NoteId, PoolCommit},
+    stamp::{
+        spend::SpendHeader,
+        spendable::{
+            SpendableEpochLift, SpendableLift, SpendableRollover, SpendableRolloverHeader,
+        },
+    },
     value,
 };
 
@@ -123,11 +129,11 @@ fn build_spend_pcd(
         .seed(rng, &spend::SpendNullifier, (note, nk, target_epoch))
         .expect("spend nullifier");
     let snf_hdr = (nf0, nf1, target_epoch, note_id);
-    let snf_pcd = snf_proof.carry::<spend::SpendNullifierHeader>(snf_hdr);
+    let snf_pcd = snf_proof.carry::<SpendNullifierHeader>(snf_hdr);
     let (sb_proof, ()) = app
         .fuse(
             rng,
-            &spend::SpendBind,
+            &SpendBind,
             (rcv, spend_alpha, ak, note, nk),
             snf_pcd,
             mock_ragu::Proof::trivial().carry::<()>(()),
@@ -184,8 +190,6 @@ fn build_pool_chain(
     (proof, anchor)
 }
 
-// ---- Output path tests ----
-
 #[test]
 fn output_stamp_then_verify() {
     let mut rng = StdRng::seed_from_u64(0);
@@ -241,8 +245,6 @@ fn merged_stamp_rejects_partial_actions() {
     );
 }
 
-// ---- Spend path tests ----
-
 /// Full spend pipeline: delegation -> nullifier -> spendable -> spend stamp.
 #[test]
 fn full_spend_pipeline() {
@@ -272,12 +274,12 @@ fn full_spend_pipeline() {
     // SpendableInit (NullifierHeader x PoolHeader -> SpendableHeader)
     let (spendable_proof, spendable_hdr) =
         build_spendable(&mut rng, *app, note, nk, nf_proof, &nf_hdr);
-    let spendable_pcd = spendable_proof.carry::<spendable::SpendableHeader>(spendable_hdr);
+    let spendable_pcd = spendable_proof.carry::<SpendableHeader>(spendable_hdr);
 
     // SpendNullifier -> SpendBind
     let (sb_proof, sp_hdr, spend_action) =
         build_spend_pcd(&mut rng, *app, note, nk, ak, target_epoch);
-    let sp_pcd = sb_proof.carry::<spend::SpendHeader>(sp_hdr);
+    let sp_pcd = sb_proof.carry::<SpendHeader>(sp_hdr);
 
     // SpendStamp -> verify
     let tachygram_nf0 = Tachygram::from(Fp::from(nf0));
@@ -293,8 +295,6 @@ fn full_spend_pipeline() {
         .verify(&[spend_action], &mut rng)
         .expect("spend stamp should verify");
 }
-
-// ---- SpendNullifierFuse test ----
 
 /// SpendNullifierFuse: two NullifierHeaders (E, E+1) -> SpendNullifierHeader.
 #[test]
@@ -345,12 +345,10 @@ fn spend_nullifier_fuse_from_two_delegation_chains() {
     assert_eq!(fused_hdr.0, expected_nf0);
     assert_eq!(fused_hdr.1, expected_nf1);
 
-    let pcd = fused_proof.carry::<spend::SpendNullifierHeader>(fused_hdr);
+    let pcd = fused_proof.carry::<SpendNullifierHeader>(fused_hdr);
     app.rerandomize(pcd, &mut rng)
         .expect("rerandomize fused spend nullifier");
 }
-
-// ---- Epoch transition tests ----
 
 /// SpendableEpochLift: epoch-final SpendableHeader x SpendableRolloverHeader.
 #[test]
@@ -384,8 +382,7 @@ fn spendable_epoch_lift_across_boundary() {
 
     // Construct spendable at epoch-final (SpendableLift has TODO stubs)
     let spendable_hdr_final = (note_id, nf_hdr_0.0, anchor_final);
-    let spendable_pcd_final =
-        spendable_proof_0.carry::<spendable::SpendableHeader>(spendable_hdr_final);
+    let spendable_pcd_final = spendable_proof_0.carry::<SpendableHeader>(spendable_hdr_final);
 
     // Build pool at first block of epoch 1
     let (pool_proof_e1, anchor_e1) = build_pool_chain(&mut rng, *app, epoch_size);
@@ -399,22 +396,16 @@ fn spendable_epoch_lift_across_boundary() {
     // SpendableRollover at epoch 1
     let pool_pcd_e1 = pool_proof_e1.carry::<pool::PoolHeader>(anchor_e1);
     let (rollover_proof, ()) = app
-        .fuse(
-            &mut rng,
-            &spendable::SpendableRollover,
-            (),
-            nf_pcd_1,
-            pool_pcd_e1,
-        )
+        .fuse(&mut rng, &SpendableRollover, (), nf_pcd_1, pool_pcd_e1)
         .expect("spendable rollover");
     let rollover_hdr = (note_id, nf_hdr_1.0, anchor_e1);
-    let rollover_pcd = rollover_proof.carry::<spendable::SpendableRolloverHeader>(rollover_hdr);
+    let rollover_pcd = rollover_proof.carry::<SpendableRolloverHeader>(rollover_hdr);
 
     // SpendableEpochLift: epoch-final x rollover -> new spendable
     let (lift_proof, ()) = app
         .fuse(
             &mut rng,
-            &spendable::SpendableEpochLift,
+            &SpendableEpochLift,
             (),
             spendable_pcd_final,
             rollover_pcd,
@@ -422,12 +413,10 @@ fn spendable_epoch_lift_across_boundary() {
         .expect("spendable epoch lift");
 
     let lifted_hdr = (note_id, nf_hdr_1.0, anchor_e1);
-    let lifted_pcd = lift_proof.carry::<spendable::SpendableHeader>(lifted_hdr);
+    let lifted_pcd = lift_proof.carry::<SpendableHeader>(lifted_hdr);
     app.rerandomize(lifted_pcd, &mut rng)
         .expect("rerandomize lifted spendable");
 }
-
-// ---- SpendableLift test ----
 
 /// SpendableLift: advances spendable anchor within the same epoch.
 #[test]
@@ -459,17 +448,11 @@ fn spendable_lift_within_epoch() {
     let (pool_proof_5, anchor_5) = build_pool_chain(&mut rng, *app, 5);
 
     // SpendableLift from genesis -> block 5
-    let spendable_pcd = spendable_proof.carry::<spendable::SpendableHeader>(spendable_hdr);
+    let spendable_pcd = spendable_proof.carry::<SpendableHeader>(spendable_hdr);
     let pool_pcd_5 = pool_proof_5.carry::<pool::PoolHeader>(anchor_5);
 
     let (lifted_proof, ()) = app
-        .fuse(
-            &mut rng,
-            &spendable::SpendableLift,
-            (),
-            spendable_pcd,
-            pool_pcd_5,
-        )
+        .fuse(&mut rng, &SpendableLift, (), spendable_pcd, pool_pcd_5)
         .expect("spendable lift");
 
     let lifted_hdr = (
@@ -480,7 +463,7 @@ fn spendable_lift_within_epoch() {
             ..anchor_5
         },
     );
-    let lifted_pcd = lifted_proof.carry::<spendable::SpendableHeader>(lifted_hdr);
+    let lifted_pcd = lifted_proof.carry::<SpendableHeader>(lifted_hdr);
     app.rerandomize(lifted_pcd, &mut rng)
         .expect("rerandomize lifted spendable");
 }
@@ -511,23 +494,15 @@ fn spendable_lift_rejects_cross_epoch() {
     // Build pool into epoch 1 (block 4096)
     let (pool_proof_e1, anchor_e1) = build_pool_chain(&mut rng, *app, 4096);
 
-    let spendable_pcd = spendable_proof.carry::<spendable::SpendableHeader>(spendable_hdr);
+    let spendable_pcd = spendable_proof.carry::<SpendableHeader>(spendable_hdr);
     let pool_pcd_e1 = pool_proof_e1.carry::<pool::PoolHeader>(anchor_e1);
 
-    let result = app.fuse(
-        &mut rng,
-        &spendable::SpendableLift,
-        (),
-        spendable_pcd,
-        pool_pcd_e1,
-    );
+    let result = app.fuse(&mut rng, &SpendableLift, (), spendable_pcd, pool_pcd_e1);
     assert!(
         result.is_err(),
         "spendable lift across epoch boundary must fail"
     );
 }
-
-// ---- StampLift test ----
 
 /// StampLift: advances stamp anchor to a later block in the same epoch.
 #[test]
@@ -569,8 +544,6 @@ fn stamp_lift_within_epoch() {
         .expect("rerandomize lifted stamp");
 }
 
-// ---- Anchor enforcement test ----
-
 /// MergeStamp rejects mismatched anchors.
 #[test]
 fn merge_stamp_rejects_mismatched_anchors() {
@@ -600,5 +573,239 @@ fn merge_stamp_rejects_mismatched_anchors() {
     assert!(
         Stamp::prove_merge(&mut rng, stamp_a, stamp_b).is_err(),
         "merge with mismatched anchors must fail"
+    );
+}
+
+/// Builds a SpendNullifierHeader PCD (stops before SpendBind).
+///
+/// Returns the PCD plus the action::Plan for the spend so the caller can
+/// construct the stamp::Plan entry.
+fn build_spend_nullifier_pcd(
+    rng: &mut StdRng,
+    app: mock_ragu::Application,
+    note: Note,
+    nk: NullifierKey,
+    target_epoch: Epoch,
+) -> (mock_ragu::Proof, (Nullifier, Nullifier, Epoch, NoteId)) {
+    let note_id = note.id(&nk);
+    let nf0 = note.nullifier(&nk, target_epoch);
+    let nf1 = note.nullifier(&nk, Epoch(target_epoch.0 + 1));
+    let (snf_proof, ()) = app
+        .seed(rng, &spend::SpendNullifier, (note, nk, target_epoch))
+        .expect("spend nullifier");
+    let snf_hdr = (nf0, nf1, target_epoch, note_id);
+    (snf_proof, snf_hdr)
+}
+
+/// Helper: create an output action descriptor + witness for stamp::Plan.
+fn make_output_plan_entry(
+    rng: &mut StdRng,
+    sk: &private::SpendingKey,
+    value_amount: u64,
+) -> (
+    (value::Commitment, public::ActionVerificationKey),
+    (
+        ActionRandomizer<effect::Output>,
+        Note,
+        value::CommitmentTrapdoor,
+    ),
+    Action,
+) {
+    let note = Note {
+        pk: sk.derive_payment_key(),
+        value: note::Value::from(value_amount),
+        psi: note::NullifierTrapdoor::from(Fp::random(&mut *rng)),
+        rcm: note::CommitmentTrapdoor::from(Fp::random(&mut *rng)),
+    };
+    let rcv = value::CommitmentTrapdoor::random(&mut *rng);
+    let theta = ActionEntropy::random(&mut *rng);
+    let plan = action::Plan::output(note, theta, rcv);
+    let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+
+    let action = Action {
+        cv: plan.cv(),
+        rk: plan.rk,
+        sig: action::Signature::from([0u8; 64]),
+    };
+
+    ((plan.cv(), plan.rk), (alpha, note, rcv), action)
+}
+
+/// Plan::prove with outputs only — the simplest path.
+#[test]
+fn plan_prove_outputs_only() {
+    let mut rng = StdRng::seed_from_u64(600);
+    let sk = private::SpendingKey::from([0x42u8; 32]);
+    let pak = sk.derive_proof_private();
+    let anchor = Anchor::genesis(BlockHeight(0));
+
+    let (desc_a, wit_a, action_a) = make_output_plan_entry(&mut rng, &sk, 200);
+    let (desc_b, wit_b, action_b) = make_output_plan_entry(&mut rng, &sk, 300);
+
+    let plan = Plan::new(
+        alloc::vec![],
+        alloc::vec![(desc_a, wit_a), (desc_b, wit_b)],
+        anchor,
+    );
+
+    let stamp = plan
+        .prove(&mut rng, &pak, alloc::vec![])
+        .expect("plan prove outputs only");
+
+    stamp
+        .verify(&[action_a, action_b], &mut rng)
+        .expect("plan-produced stamp should verify");
+}
+
+/// Plan::prove with one spend and one output.
+#[test]
+fn plan_prove_spend_and_output() {
+    let mut rng = StdRng::seed_from_u64(601);
+    let sk = private::SpendingKey::from([0x42u8; 32]);
+    let pak = sk.derive_proof_private();
+    let nk = *pak.nk();
+    let ak = *pak.ak();
+    let app = &*PROOF_SYSTEM;
+    let anchor = Anchor::genesis(BlockHeight(0));
+    let target_epoch = Epoch(0);
+
+    // -- Spend side --
+    let spend_note = Note {
+        pk: sk.derive_payment_key(),
+        value: note::Value::from(500u64),
+        psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+        rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+    };
+    let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
+    let spend_theta = ActionEntropy::random(&mut rng);
+    let spend_alpha = spend_theta.randomizer::<effect::Spend>(&spend_note.commitment());
+    let spend_plan = action::Plan::spend(spend_note, spend_theta, spend_rcv, |alpha| {
+        ak.derive_action_public(&alpha)
+    });
+    let spend_action = Action {
+        cv: spend_plan.cv(),
+        rk: spend_plan.rk,
+        sig: action::Signature::from([0u8; 64]),
+    };
+    let spend_desc = (spend_plan.cv(), spend_plan.rk);
+    let spend_wit = (spend_alpha, spend_note, spend_rcv);
+
+    // Build SpendNullifierHeader PCD (what sync service provides)
+    let (snf_proof, snf_hdr) =
+        build_spend_nullifier_pcd(&mut rng, *app, spend_note, nk, target_epoch);
+    let snf_pcd = snf_proof.carry::<SpendNullifierHeader>(snf_hdr);
+
+    // Build SpendableHeader PCD (what sync service provides)
+    let note_id = spend_note.id(&nk);
+    let (nf_proof, nf_hdr, _) =
+        build_delegation_to_nullifier(&mut rng, *app, spend_note, nk, note_id, target_epoch);
+    let (spendable_proof, spendable_hdr) =
+        build_spendable(&mut rng, *app, spend_note, nk, nf_proof, &nf_hdr);
+    let spendable_pcd = spendable_proof.carry::<SpendableHeader>(spendable_hdr);
+
+    // -- Output side --
+    let (output_desc, output_wit, output_action) = make_output_plan_entry(&mut rng, &sk, 200);
+
+    // -- Build and prove the plan --
+    let plan = Plan::new(
+        alloc::vec![(spend_desc, spend_wit)],
+        alloc::vec![(output_desc, output_wit)],
+        anchor,
+    );
+
+    let stamp = plan
+        .prove(&mut rng, &pak, alloc::vec![(snf_pcd, spendable_pcd)])
+        .expect("plan prove spend+output");
+
+    stamp
+        .verify(&[spend_action, output_action], &mut rng)
+        .expect("mixed spend+output stamp should verify");
+}
+
+/// Plan::prove with no actions returns NoActions.
+#[test]
+fn plan_prove_rejects_empty() {
+    let mut rng = StdRng::seed_from_u64(602);
+    let sk = private::SpendingKey::from([0x42u8; 32]);
+    let pak = sk.derive_proof_private();
+    let anchor = Anchor::genesis(BlockHeight(0));
+
+    let plan = Plan::new(alloc::vec![], alloc::vec![], anchor);
+
+    let result = plan.prove(&mut rng, &pak, alloc::vec![]);
+    assert!(
+        matches!(result, Err(ProveError::NoActions)),
+        "empty plan must return NoActions"
+    );
+}
+
+/// Plan::prove rejects mismatched spend PCD count.
+#[test]
+fn plan_prove_rejects_pcd_count_mismatch() {
+    let mut rng = StdRng::seed_from_u64(603);
+    let sk = private::SpendingKey::from([0x42u8; 32]);
+    let pak = sk.derive_proof_private();
+    let ak = *pak.ak();
+    let anchor = Anchor::genesis(BlockHeight(0));
+
+    // Build a spend entry for the plan
+    let spend_note = Note {
+        pk: sk.derive_payment_key(),
+        value: note::Value::from(500u64),
+        psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+        rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+    };
+    let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
+    let spend_theta = ActionEntropy::random(&mut rng);
+    let spend_alpha = spend_theta.randomizer::<effect::Spend>(&spend_note.commitment());
+    let spend_plan = action::Plan::spend(spend_note, spend_theta, spend_rcv, |alpha| {
+        ak.derive_action_public(&alpha)
+    });
+    let spend_desc = (spend_plan.cv(), spend_plan.rk);
+    let spend_wit = (spend_alpha, spend_note, spend_rcv);
+
+    // Plan has 1 spend but 0 PCDs
+    let plan = Plan::new(alloc::vec![(spend_desc, spend_wit)], alloc::vec![], anchor);
+    let result = plan.prove(&mut rng, &pak, alloc::vec![]);
+    assert!(
+        matches!(result, Err(ProveError::SpendableMismatch)),
+        "1 spend with 0 PCDs must return SpendableMismatch"
+    );
+}
+
+/// StampLift rejects target in a different epoch.
+#[test]
+fn stamp_lift_rejects_cross_epoch() {
+    let mut rng = StdRng::seed_from_u64(604);
+    let sk = private::SpendingKey::from([0x42u8; 32]);
+    let app = &*PROOF_SYSTEM;
+
+    // Build pool to block 5
+    let (_pool_proof_5, anchor_5) = build_pool_chain(&mut rng, *app, 5);
+
+    // Make an output stamp anchored at block 5
+    let note = Note {
+        pk: sk.derive_payment_key(),
+        value: note::Value::from(200u64),
+        psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+        rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+    };
+    let rcv = value::CommitmentTrapdoor::random(&mut rng);
+    let theta = ActionEntropy::random(&mut rng);
+    let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+    let stamp = Stamp::prove_output(&mut rng, rcv, alpha, note, anchor_5).expect("prove_output");
+
+    // Build pool into epoch 1 (block 4096)
+    let (pool_proof_e1, anchor_e1) = build_pool_chain(&mut rng, *app, 4096);
+
+    // StampLift from block 5 -> block 4096 should fail (cross-epoch)
+    let stamp_hdr = (stamp.action_acc, stamp.tachygram_acc, anchor_5);
+    let stamp_pcd = stamp.proof.carry::<StampHeader>(stamp_hdr);
+    let pool_pcd_e1 = pool_proof_e1.carry::<pool::PoolHeader>(anchor_e1);
+
+    let result = app.fuse(&mut rng, &header::StampLift, (), stamp_pcd, pool_pcd_e1);
+    assert!(
+        result.is_err(),
+        "stamp lift across epoch boundary must fail"
     );
 }

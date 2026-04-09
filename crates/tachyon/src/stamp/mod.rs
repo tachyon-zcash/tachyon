@@ -41,6 +41,10 @@ use crate::{
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, private, public},
     primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram},
+    stamp::{
+        spend::{SpendBind, SpendNullifierHeader},
+        spendable::SpendableHeader,
+    },
     value,
 };
 
@@ -179,26 +183,23 @@ impl Plan {
         }
     }
 
-    /// Execute the proof, producing a [`Stamp`].
+    /// Prove a single [`Stamp`] for this plan.
     ///
-    /// For each action, determines spend vs output by testing `rk`:
-    /// - **Output**: `rk == [alpha]G` — proves via [`Stamp::prove_output`]
-    /// - **Spend**: `rk == ak + [alpha]G` — binds nullifiers to action
-    ///   data ([`SpendBind`]), then fuses with the spendable chain
-    ///   ([`SpendStamp`]) to produce a stamp
+    /// For each **spend**, uses [`SpendBind`] to prepare PCD inputs, then runs
+    /// [`SpendStamp`] to attach the spendable chain.
     ///
-    /// `spend_inputs` are consumed in order for each spend action
-    /// encountered. The caller must provide exactly as many as there are
-    /// spends. Each element is a `(Pcd<SpendNullifierHeader>,
-    /// Pcd<SpendableHeader>)` pair — typically obtained from a sync
-    /// service.
+    /// For each **output**, runs [`OutputStamp`] with no PCD inputs.
+    ///
+    /// Stamps are recursively merged via [`MergeStamp`] into a single stamp.
+    ///
+    /// `spend_pcds` items must correspond to each planned spend, in order.
     pub fn prove<'source, RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            mock_ragu::Pcd<'source, spend::SpendNullifierHeader>,
-            mock_ragu::Pcd<'source, spendable::SpendableHeader>,
+            mock_ragu::Pcd<'source, SpendNullifierHeader>,
+            mock_ragu::Pcd<'source, SpendableHeader>,
         )>,
     ) -> Result<Stamp, ProveError> {
         let mut stamps: Vec<Stamp> = Vec::new();
@@ -222,7 +223,7 @@ impl Plan {
             let (bind_proof, ()) = app
                 .fuse(
                     rng,
-                    &spend::SpendBind,
+                    &SpendBind,
                     (rcv, alpha, *pak.ak(), note, *pak.nk()),
                     nf_pcd,
                     mock_ragu::Pcd {
@@ -289,7 +290,8 @@ impl Plan {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ProveError {
-    /// The single-action stamp's action accumulator does not match the expected action digest.
+    /// The single-action stamp's action accumulator does not match the expected
+    /// action digest.
     ActionDigestMismatch,
     /// The plan has no actions to prove.
     NoActions,
@@ -386,7 +388,7 @@ impl Stamp {
     pub fn prove_spend<'source, RNG: CryptoRng>(
         rng: &mut RNG,
         spend_pcd: mock_ragu::Pcd<'source, spend::SpendHeader>,
-        spendable_pcd: mock_ragu::Pcd<'source, spendable::SpendableHeader>,
+        spendable_pcd: mock_ragu::Pcd<'source, SpendableHeader>,
         tachygrams: Vec<Tachygram>,
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
