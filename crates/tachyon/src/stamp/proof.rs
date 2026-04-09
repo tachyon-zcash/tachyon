@@ -14,12 +14,24 @@ use crate::{
     primitives::{ActionDigest, ActionDigestError, Tachygram},
     stamp::{
         delegation::{DelegationSeed, DelegationStep, NullifierStep},
+        exclusion::{
+            ExclusionFuse, ExclusionLeaf, ExclusionSetExtract, ExclusionSetFuse,
+            ExclusionSetLeaf, NullifierExclusionFuse, SpendableExclusionFuse,
+        },
         header::{MergeStamp, OutputStamp, SpendStamp, StampLift},
         pool::{PoolSeed, PoolStep},
         spend::{SpendBind, SpendNullifier, SpendNullifierFuse},
-        spendable::{SpendableEpochLift, SpendableInit, SpendableLift, SpendableRollover},
+        spendable::{
+            SpendableEpochLift, SpendableInit, SpendableLift, SpendableRollover,
+        },
     },
 };
+
+/// Fixed block-polynomial size for `SpendableInit` and exclusion leaves.
+pub(crate) const BLOCK_POLY_N: usize = 512;
+
+/// Fixed nullifier batch size for the sync-service exclusion set path.
+pub(crate) const BATCH_M: usize = 64;
 
 /// Compute the raw Fp product accumulator over action digests.
 pub fn compute_action_acc(actions: &[Action]) -> Result<Fp, ActionDigestError> {
@@ -58,12 +70,12 @@ lazy_static! {
             .expect("register PoolStep")
             .register(SpendBind)
             .expect("register SpendBind")
-            .register(SpendableInit)
+            .register(SpendableInit::<BLOCK_POLY_N>)
             .expect("register SpendableInit")
-            .register(SpendableRollover)
-            .expect("register SpendableRollover")
             .register(SpendableLift)
             .expect("register SpendableLift")
+            .register(SpendableRollover)
+            .expect("register SpendableRollover")
             .register(SpendableEpochLift)
             .expect("register SpendableEpochLift")
             .register(SpendNullifierFuse)
@@ -74,6 +86,20 @@ lazy_static! {
             .expect("register MergeStamp")
             .register(StampLift)
             .expect("register StampLift")
+            .register(ExclusionLeaf::<BLOCK_POLY_N>)
+            .expect("register ExclusionLeaf")
+            .register(ExclusionFuse)
+            .expect("register ExclusionFuse")
+            .register(ExclusionSetLeaf::<BLOCK_POLY_N, BATCH_M>)
+            .expect("register ExclusionSetLeaf")
+            .register(ExclusionSetFuse::<BATCH_M>)
+            .expect("register ExclusionSetFuse")
+            .register(ExclusionSetExtract::<BATCH_M>)
+            .expect("register ExclusionSetExtract")
+            .register(NullifierExclusionFuse)
+            .expect("register NullifierExclusionFuse")
+            .register(SpendableExclusionFuse)
+            .expect("register SpendableExclusionFuse")
             .finalize()
             .expect("finalize")
     };

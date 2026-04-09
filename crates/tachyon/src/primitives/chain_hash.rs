@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use ff::{Field as _, PrimeField as _};
 use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
-use pasta_curves::Fp;
+use pasta_curves::Fq;
 
 use super::{BlockCommit, BlockHeight, PoolCommit};
 use crate::constants::{BLOCK_CHAIN_HASH_DOMAIN, EPOCH_CHAIN_HASH_DOMAIN};
@@ -16,10 +16,10 @@ pub trait ChainDomain: sealed::Sealed {
     /// Poseidon domain tag.
     const TAG: &'static [u8; 16];
     /// Type of value chained at each step.
-    type Value: Into<Fp> + Copy;
+    type Value: Into<Fq> + Copy;
 }
 
-/// Block-level chain: `H(prev, block_commit)` every block.
+/// Block-level chain: `H(prev, block_commit.x)` every block.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlockChain;
 impl sealed::Sealed for BlockChain {}
@@ -29,7 +29,7 @@ impl ChainDomain for BlockChain {
     const TAG: &'static [u8; 16] = BLOCK_CHAIN_HASH_DOMAIN;
 }
 
-/// Epoch-level chain: `H(prev, pool_commit)` at epoch boundaries.
+/// Epoch-level chain: `H(prev, pool_commit.x)` at epoch boundaries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EpochChain;
 impl sealed::Sealed for EpochChain {}
@@ -40,27 +40,30 @@ impl ChainDomain for EpochChain {
 }
 
 /// Running chain hash parameterized by domain.
+///
+/// Operates over Fq (Vesta base field) because commitment x-coordinates
+/// are Fq values.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ChainHash<D: ChainDomain>(Fp, PhantomData<D>);
+pub struct ChainHash<D: ChainDomain>(Fq, PhantomData<D>);
 
 impl<D: ChainDomain> ChainHash<D> {
     /// Genesis chain hash from the activation height.
     #[must_use]
     pub fn genesis(activation_height: BlockHeight) -> Self {
         #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
-        let domain = Fp::from_u128(u128::from_le_bytes(*D::TAG));
-        let height = Fp::from(u64::from(u32::from(activation_height)));
+        let domain = Fq::from_u128(u128::from_le_bytes(*D::TAG));
+        let height = Fq::from(u64::from(u32::from(activation_height)));
         Self(
-            Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([domain, Fp::ZERO, height]),
+            Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([domain, Fq::ZERO, height]),
             PhantomData,
         )
     }
 
-    /// Compute the next chain hash: `H(self, value)`.
+    /// Compute the next chain hash: `H(self, value.x)`.
     #[must_use]
     pub fn chain(self, value: D::Value) -> Self {
         #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
-        let domain = Fp::from_u128(u128::from_le_bytes(*D::TAG));
+        let domain = Fq::from_u128(u128::from_le_bytes(*D::TAG));
         Self(
             Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
                 domain,
@@ -72,15 +75,15 @@ impl<D: ChainDomain> ChainHash<D> {
     }
 }
 
-impl<D: ChainDomain> From<ChainHash<D>> for Fp {
+impl<D: ChainDomain> From<ChainHash<D>> for Fq {
     fn from(ch: ChainHash<D>) -> Self {
         ch.0
     }
 }
 
-impl<D: ChainDomain> From<Fp> for ChainHash<D> {
-    fn from(fp: Fp) -> Self {
-        Self(fp, PhantomData::<D>)
+impl<D: ChainDomain> From<Fq> for ChainHash<D> {
+    fn from(fq: Fq) -> Self {
+        Self(fq, PhantomData::<D>)
     }
 }
 

@@ -35,12 +35,7 @@ impl Header for StampHeader {
         let mut out = Vec::with_capacity(32 * 2 + 4 + 32 * 4);
         out.extend_from_slice(&action_acc.to_repr());
         out.extend_from_slice(&tachygram_acc.to_repr());
-        #[expect(clippy::little_endian_bytes, reason = "specified encoding")]
-        out.extend_from_slice(&u32::from(anchor.block_height).to_le_bytes());
-        out.extend_from_slice(&Fp::from(anchor.block_commit).to_repr());
-        out.extend_from_slice(&Fp::from(anchor.pool_commit).to_repr());
-        out.extend_from_slice(&Fp::from(anchor.block_chain).to_repr());
-        out.extend_from_slice(&Fp::from(anchor.epoch_chain).to_repr());
+        out.extend_from_slice(&anchor.encode_for_header());
         out
     }
 }
@@ -146,7 +141,10 @@ impl Step for MergeStamp {
 }
 
 /// Advances a stamp's anchor to a later block within the same epoch.
-// TODO: intermediate_block_commits
+///
+/// Only checks that the new anchor is later, same epoch, same epoch_chain.
+/// Pool state continuity (block_chain) is verified by consensus outside
+/// the proof — the stamp just needs to adopt a superset state.
 #[derive(Debug)]
 pub struct StampLift;
 
@@ -174,9 +172,6 @@ impl Step for StampLift {
         if left_anchor.epoch_chain != right.epoch_chain {
             return Err(mock_ragu::Error);
         }
-
-        // TODO: block_chain continuity from left to right
-        todo!("block_chain continuity verification");
 
         Ok(((action_acc, tachygram_acc, right), ()))
     }

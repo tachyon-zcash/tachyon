@@ -7,8 +7,6 @@
 //!   proof per block
 //! - **Delegated Synchronization**: Wallets can outsource sync to untrusted
 //!   services
-//! - **Polynomial Accumulators**: Unified tracking of commitments and
-//!   nullifiers via tachygrams
 //!
 //! ## Bundle States
 //!
@@ -67,6 +65,6 @@ pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped};
 pub use note::Note;
 pub use primitives::{
     ActionDigest, ActionDigestError, Anchor, BlockChainHash, BlockCommit, BlockHeight, Effect,
-    Epoch, EpochChainHash, NoteId, PoolCommit, Tachygram, effect,
+    Epoch, EpochChainHash, NoteId, PoolCommit, SetCommit, Tachygram, effect,
 };
 pub use stamp::Stamp;

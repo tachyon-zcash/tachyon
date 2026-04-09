@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use ff::Field as _;
 use pasta_curves::Fp;
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -8,8 +10,17 @@ use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{GGM_TREE_DEPTH, NullifierKey, SpendValidatingKey, private, public},
     note::{self, Note, Nullifier},
-    primitives::{BlockCommit, BlockHeight, Epoch, NoteId, PoolCommit},
+    primitives::{
+        BlockChainHash, BlockCommit, BlockHeight, Epoch, EpochChainHash, NoteId, PoolCommit,
+        SetCommit, Tachygram, polynomial,
+    },
     stamp::{
+        exclusion::{
+            ExclusionFuse, ExclusionHeader, ExclusionLeaf, ExclusionSetExtract,
+            ExclusionSetFuse, ExclusionSetHeader, ExclusionSetLeaf,
+            NullifierExclusionFuse, NullifierExclusionHeader, SpendableExclusionFuse,
+            SpendableExclusionHeader,
+        },
         spend::SpendHeader,
         spendable::{
             SpendableEpochLift, SpendableLift, SpendableRollover, SpendableRolloverHeader,
@@ -17,6 +28,13 @@ use crate::{
     },
     value,
 };
+
+fn pad_tachygrams<const N: usize>(tgs: &[Tachygram]) -> [Tachygram; N] {
+    assert!(tgs.len() <= N, "tachygrams must fit within {N} size");
+    let mut arr = [Tachygram::from(Fp::ZERO); N];
+    arr[..tgs.len()].copy_from_slice(tgs);
+    arr
+}
 
 fn make_output_stamp(rng: &mut StdRng, sk: &private::SpendingKey) -> (Stamp, Action) {
     let note = Note {
@@ -81,6 +99,27 @@ fn build_delegation_to_nullifier(
     (nf_proof, nf_hdr, nk_node.inner)
 }
 
+/// Build an exclusion proof (single leaf) for a nullifier against a set of
+/// tachygrams.
+/// Small subset size for tests (real system uses up to 4095).
+const TEST_N: usize = 8;
+
+/// Batch size used by batch-path tests.
+const TEST_M: usize = 4;
+
+/// Pad an M-element nullifier vector from a list of real nullifiers.
+fn pad_nullifiers<const M: usize>(nfs: &[Fp]) -> [Fp; M] {
+    assert!(nfs.len() <= M, "nullifiers must fit within {M} size");
+    let mut arr = [Fp::ZERO; M];
+    arr[..nfs.len()].copy_from_slice(nfs);
+    arr
+}
+
+/// Build a SpendableHeader at block 0 for a newly-created note.
+///
+/// The creation block is a synthetic block with the note's commitment as
+/// its sole tachygram (padded to `TEST_N`). SpendableInit binds the
+/// witness to the PoolHeader via the block polynomial commitment.
 fn build_spendable(
     rng: &mut StdRng,
     app: mock_ragu::Application,
@@ -89,7 +128,23 @@ fn build_spendable(
     nf_proof: mock_ragu::Proof,
     nf_hdr: &(Nullifier, Epoch, NoteId),
 ) -> (mock_ragu::Proof, (NoteId, Nullifier, Anchor)) {
-    let anchor = Anchor::genesis(BlockHeight(0));
+    let cm = note.commitment();
+    let cm_tg = Tachygram::from(Fp::from(cm));
+    let block_tachygrams = pad_tachygrams::<TEST_N>(&[cm_tg]);
+
+    let roots: Vec<Fp> = block_tachygrams.iter().map(|tg| Fp::from(*tg)).collect();
+    let block_commit = BlockCommit(SetCommit::from(polynomial::pedersen_commit(
+        &polynomial::poly_from_roots(&roots),
+    )));
+    let pool_commit = PoolCommit(SetCommit::identity() + block_commit.0);
+
+    let anchor = Anchor {
+        block_height: BlockHeight(0),
+        block_commit,
+        pool_commit,
+        block_chain: BlockChainHash::genesis(BlockHeight(0)),
+        epoch_chain: EpochChainHash::genesis(BlockHeight(0)),
+    };
 
     let (pool_proof, ()) = app
         .seed(rng, &pool::PoolSeed, BlockHeight(0))
@@ -99,7 +154,13 @@ fn build_spendable(
     let nf_pcd = nf_proof.carry::<delegation::NullifierHeader>(*nf_hdr);
 
     let (spendable_proof, ()) = app
-        .fuse(rng, &spendable::SpendableInit, (note, nk), nf_pcd, pool_pcd)
+        .fuse(
+            rng,
+            &spendable::SpendableInit::<TEST_N>,
+            (note, nk, &block_tachygrams, 0usize),
+            nf_pcd,
+            pool_pcd,
+        )
         .expect("spendable init");
 
     let spendable_hdr = (nf_hdr.2, nf_hdr.0, anchor);
@@ -163,8 +224,18 @@ fn build_pool_chain(
 
     for _ in 0..num_blocks {
         let new_height = anchor.block_height.next();
-        let block_cm = BlockCommit::from(Fp::from(u64::from(u32::from(new_height))));
-        let pool_cm = PoolCommit::from(Fp::from(u64::from(u32::from(new_height)) + 1000));
+        // Synthetic block from a deterministic tachygram, padded to full subset.
+        let tg = Tachygram::from(Fp::from(u64::from(u32::from(new_height)) * 1000 + 1));
+        let block_arr = pad_tachygrams::<TEST_N>(&[tg]);
+        let roots: Vec<Fp> = block_arr.iter().map(|elem| Fp::from(*elem)).collect();
+        let block_cm = BlockCommit(SetCommit::from(polynomial::pedersen_commit(
+            &polynomial::poly_from_roots(&roots),
+        )));
+        let pool_cm = if new_height.is_epoch_boundary() {
+            PoolCommit(block_cm.0)
+        } else {
+            PoolCommit(anchor.pool_commit.0 + block_cm.0)
+        };
         let new_block_chain = anchor.block_chain.chain(anchor.block_commit);
         let new_epoch_chain = if new_height.is_epoch_boundary() {
             anchor.epoch_chain.chain(anchor.pool_commit)
@@ -354,7 +425,61 @@ fn spend_nullifier_fuse_from_two_delegation_chains() {
         .expect("rerandomize fused spend nullifier");
 }
 
+/// Helper: build an ExclusionHeader for a nullifier against a set of
+/// tachygrams (single leaf, padded to TEST_N).
+fn build_exclusion_proof(
+    rng: &mut StdRng,
+    app: mock_ragu::Application,
+    nf: Nullifier,
+    tachygrams: &[Tachygram],
+) -> (mock_ragu::Proof, (Nullifier, SetCommit)) {
+    let arr = pad_tachygrams::<TEST_N>(tachygrams);
+
+    let roots: Vec<Fp> = arr.iter().map(|tg| Fp::from(*tg)).collect();
+    let coeffs = polynomial::poly_from_roots(&roots);
+    let scope = SetCommit::from(polynomial::pedersen_commit(&coeffs));
+
+    let (proof, ()) = app
+        .seed(rng, &ExclusionLeaf::<TEST_N>, (nf, &arr))
+        .expect("exclusion leaf");
+
+    (proof, (nf, scope))
+}
+
+/// Helper: build a partitioned exclusion proof from multiple subsets,
+/// fused into one ExclusionHeader.
+fn build_partitioned_exclusion(
+    rng: &mut StdRng,
+    app: mock_ragu::Application,
+    nf: Nullifier,
+    subsets: &[&[Tachygram]],
+) -> (mock_ragu::Proof, (Nullifier, SetCommit)) {
+    let mut proofs: Vec<(mock_ragu::Proof, (Nullifier, SetCommit))> = Vec::new();
+    for tgs in subsets {
+        let (proof, hdr) = build_exclusion_proof(rng, app, nf, tgs);
+        proofs.push((proof, hdr));
+    }
+
+    while proofs.len() > 1 {
+        let (right_proof, right_hdr) = proofs.pop().expect("non-empty");
+        let (left_proof, left_hdr) = proofs.pop().expect("non-empty");
+        let left_pcd = left_proof.carry::<ExclusionHeader>(left_hdr);
+        let right_pcd = right_proof.carry::<ExclusionHeader>(right_hdr);
+        let (fused_proof, ()) = app
+            .fuse(rng, &ExclusionFuse, (), left_pcd, right_pcd)
+            .expect("exclusion fuse");
+        let fused_scope = left_hdr.1 + right_hdr.1;
+        proofs.push((fused_proof, (nf, fused_scope)));
+    }
+
+    proofs.pop().expect("at least one subset")
+}
+
 /// SpendableEpochLift: epoch-final SpendableHeader x SpendableRolloverHeader.
+///
+/// Rollover built via ExclusionLeaf + NullifierExclusionFuse +
+/// SpendableRollover. The new epoch's pool is a single synthetic block,
+/// so one ExclusionLeaf covers the full epoch.
 #[test]
 fn spendable_epoch_lift_across_boundary() {
     let mut rng = StdRng::seed_from_u64(300);
@@ -384,23 +509,39 @@ fn spendable_epoch_lift_across_boundary() {
     // SpendableInit at epoch 0 genesis
     let (spendable_proof_0, _) = build_spendable(&mut rng, *app, note, nk, nf_proof_0, &nf_hdr_0);
 
-    // Construct spendable at epoch-final (SpendableLift has TODO stubs)
+    // Construct spendable at epoch-final
     let spendable_hdr_final = (note_id, nf_hdr_0.0, anchor_final);
     let spendable_pcd_final = spendable_proof_0.carry::<SpendableHeader>(spendable_hdr_final);
 
-    // Build pool at first block of epoch 1
+    // Build pool at first block of epoch 1.
     let (pool_proof_e1, anchor_e1) = build_pool_chain(&mut rng, *app, epoch_size);
 
     // Build nullifier for epoch 1
     let epoch_1 = Epoch(1);
     let (nf_proof_1, nf_hdr_1, _) =
         build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch_1);
-    let nf_pcd_1 = nf_proof_1.carry::<delegation::NullifierHeader>(nf_hdr_1);
 
-    // SpendableRollover at epoch 1
+    // Exclusion proof for epoch 1. Must cover the actual tachygrams
+    // of block `epoch_size` (which build_pool_chain created) so that
+    // scope == pool_commit. Pool resets at boundary, so pool_commit
+    // is just this one block's polynomial commitment.
+    let e1_tg = Tachygram::from(Fp::from(u64::from(epoch_size) * 1000 + 1));
+    let (excl_proof_1, excl_hdr_1) =
+        build_exclusion_proof(&mut rng, *app, nf_hdr_1.0, &[e1_tg]);
+
+    // NullifierExclusionFuse: bind nullifier to exclusion.
+    let nf_pcd_1 = nf_proof_1.carry::<delegation::NullifierHeader>(nf_hdr_1);
+    let excl_pcd_1 = excl_proof_1.carry::<ExclusionHeader>(excl_hdr_1);
+    let (nexcl_proof_1, ()) = app
+        .fuse(&mut rng, &NullifierExclusionFuse, (), nf_pcd_1, excl_pcd_1)
+        .expect("nullifier exclusion fuse e1");
+    let nexcl_hdr_1 = (nf_hdr_1.0, nf_hdr_1.1, nf_hdr_1.2, excl_hdr_1.1);
+    let nexcl_pcd_1 = nexcl_proof_1.carry::<NullifierExclusionHeader>(nexcl_hdr_1);
+
+    // SpendableRollover
     let pool_pcd_e1 = pool_proof_e1.carry::<pool::PoolHeader>(anchor_e1);
     let (rollover_proof, ()) = app
-        .fuse(&mut rng, &SpendableRollover, (), nf_pcd_1, pool_pcd_e1)
+        .fuse(&mut rng, &SpendableRollover, (), nexcl_pcd_1, pool_pcd_e1)
         .expect("spendable rollover");
     let rollover_hdr = (note_id, nf_hdr_1.0, anchor_e1);
     let rollover_pcd = rollover_proof.carry::<SpendableRolloverHeader>(rollover_hdr);
@@ -422,7 +563,11 @@ fn spendable_epoch_lift_across_boundary() {
         .expect("rerandomize lifted spendable");
 }
 
-/// SpendableLift: advances spendable anchor within the same epoch.
+/// SpendableLift via ExclusionLeaf path: delta non-membership.
+///
+/// User builds SpendableInit at block 0, then an exclusion proof
+/// covering blocks 1-3 (partitioned), binds via SpendableExclusionFuse,
+/// and lifts to block 3.
 #[test]
 fn spendable_lift_within_epoch() {
     let mut rng = StdRng::seed_from_u64(350);
@@ -440,31 +585,89 @@ fn spendable_lift_within_epoch() {
     let note_id = note.id(&nk);
     let epoch_0 = Epoch(0);
 
-    // Build nullifier for epoch 0
     let (nf_proof, nf_hdr, _) =
         build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch_0);
-
-    // SpendableInit at genesis
     let (spendable_proof, spendable_hdr) =
         build_spendable(&mut rng, *app, note, nk, nf_proof, &nf_hdr);
+    let start_anchor = spendable_hdr.2;
 
-    // Build pool to block 5 (same epoch)
-    let (pool_proof_5, anchor_5) = build_pool_chain(&mut rng, *app, 5);
+    // Build a pool chain from start_anchor to block 3.
+    let mut anchor = start_anchor;
+    let mut pool_proof = {
+        let (proof, ()) = app
+            .seed(&mut rng, &pool::PoolSeed, BlockHeight(0))
+            .expect("pool seed");
+        proof
+    };
+    for i in 1..=3u32 {
+        let tg = Tachygram::from(Fp::from(u64::from(i) * 100));
+        let block_arr = pad_tachygrams::<TEST_N>(&[tg]);
+        let roots: Vec<Fp> = block_arr.iter().map(|elem| Fp::from(*elem)).collect();
+        let bc = BlockCommit(SetCommit::from(polynomial::pedersen_commit(
+            &polynomial::poly_from_roots(&roots),
+        )));
+        let pc = PoolCommit(anchor.pool_commit.0 + bc.0);
+        let new_height = anchor.block_height.next();
+        let new_block_chain = anchor.block_chain.chain(anchor.block_commit);
+        let new_epoch_chain = if new_height.is_epoch_boundary() {
+            anchor.epoch_chain.chain(anchor.pool_commit)
+        } else {
+            anchor.epoch_chain
+        };
 
-    // SpendableLift from genesis -> block 5
+        let pcd = pool_proof.carry::<pool::PoolHeader>(anchor);
+        let trivial = mock_ragu::Proof::trivial().carry::<()>(());
+        let (next_proof, ()) = app
+            .fuse(&mut rng, &pool::PoolStep, (bc, pc), pcd, trivial)
+            .expect("pool step");
+
+        anchor = Anchor {
+            block_height: new_height,
+            block_commit: bc,
+            pool_commit: pc,
+            block_chain: new_block_chain,
+            epoch_chain: new_epoch_chain,
+        };
+        pool_proof = next_proof;
+    }
+    let target_anchor = anchor;
+
+    // Partitioned exclusion proof covering the delta (blocks 1-3).
+    let delta_tgs: [&[Tachygram]; 3] = [
+        &[Tachygram::from(Fp::from(100u64))],
+        &[Tachygram::from(Fp::from(200u64))],
+        &[Tachygram::from(Fp::from(300u64))],
+    ];
+    let (excl_proof, excl_hdr) =
+        build_partitioned_exclusion(&mut rng, *app, nf_hdr.0, &delta_tgs);
+    let excl_pcd = excl_proof.carry::<ExclusionHeader>(excl_hdr);
+
+    // SpendableExclusionFuse: bind spendable to exclusion.
     let spendable_pcd = spendable_proof.carry::<SpendableHeader>(spendable_hdr);
-    let pool_pcd_5 = pool_proof_5.carry::<pool::PoolHeader>(anchor_5);
+    let (sexcl_proof, ()) = app
+        .fuse(
+            &mut rng,
+            &SpendableExclusionFuse,
+            (),
+            spendable_pcd,
+            excl_pcd,
+        )
+        .expect("spendable exclusion fuse");
+    let sexcl_hdr = (note_id, nf_hdr.0, start_anchor, excl_hdr.1);
+    let sexcl_pcd = sexcl_proof.carry::<SpendableExclusionHeader>(sexcl_hdr);
 
+    // SpendableLift
+    let pool_pcd = pool_proof.carry::<pool::PoolHeader>(target_anchor);
     let (lifted_proof, ()) = app
-        .fuse(&mut rng, &SpendableLift, (), spendable_pcd, pool_pcd_5)
+        .fuse(&mut rng, &SpendableLift, (), sexcl_pcd, pool_pcd)
         .expect("spendable lift");
 
     let lifted_hdr = (
         note_id,
         nf_hdr.0,
         Anchor {
-            epoch_chain: spendable_hdr.2.epoch_chain,
-            ..anchor_5
+            epoch_chain: start_anchor.epoch_chain,
+            ..target_anchor
         },
     );
     let lifted_pcd = lifted_proof.carry::<SpendableHeader>(lifted_hdr);
@@ -472,36 +675,33 @@ fn spendable_lift_within_epoch() {
         .expect("rerandomize lifted spendable");
 }
 
-/// SpendableLift rejects target in a different epoch.
+/// SpendableLift rejects cross-epoch delta.
 #[test]
 fn spendable_lift_rejects_cross_epoch() {
-    let mut rng = StdRng::seed_from_u64(351);
-    let sk = private::SpendingKey::from([0x42u8; 32]);
-    let pak = sk.derive_proof_private();
-    let nk = *pak.nk();
-    let app = &*PROOF_SYSTEM;
+    use mock_ragu::Step as _;
 
-    let note = Note {
-        pk: sk.derive_payment_key(),
-        value: note::Value::from(500u64),
-        psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
-        rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+    let nf = Nullifier::from(Fp::from(42u64));
+    let scope = SetCommit::identity(); // doesn't matter for this test
+
+    let left_anchor = Anchor {
+        block_height: BlockHeight(0), // epoch 0
+        block_commit: BlockCommit(SetCommit::identity()),
+        pool_commit: PoolCommit(SetCommit::identity()),
+        block_chain: BlockChainHash::genesis(BlockHeight(0)),
+        epoch_chain: EpochChainHash::genesis(BlockHeight(0)),
     };
-    let note_id = note.id(&nk);
-    let epoch_0 = Epoch(0);
+    let right_anchor = Anchor {
+        block_height: BlockHeight(4096), // epoch 1
+        block_commit: BlockCommit(SetCommit::identity()),
+        pool_commit: PoolCommit(SetCommit::identity()),
+        block_chain: BlockChainHash::genesis(BlockHeight(0)),
+        epoch_chain: EpochChainHash::genesis(BlockHeight(0)),
+    };
 
-    let (nf_proof, nf_hdr, _) =
-        build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch_0);
-    let (spendable_proof, spendable_hdr) =
-        build_spendable(&mut rng, *app, note, nk, nf_proof, &nf_hdr);
+    let left = (NoteId::from(Fp::ZERO), nf, left_anchor, scope);
+    let right = right_anchor;
 
-    // Build pool into epoch 1 (block 4096)
-    let (pool_proof_e1, anchor_e1) = build_pool_chain(&mut rng, *app, 4096);
-
-    let spendable_pcd = spendable_proof.carry::<SpendableHeader>(spendable_hdr);
-    let pool_pcd_e1 = pool_proof_e1.carry::<pool::PoolHeader>(anchor_e1);
-
-    let result = app.fuse(&mut rng, &SpendableLift, (), spendable_pcd, pool_pcd_e1);
+    let result = SpendableLift.witness((), left, right);
     assert!(
         result.is_err(),
         "spendable lift across epoch boundary must fail"
@@ -687,7 +887,6 @@ fn plan_prove_spend_and_output() {
     let nk = *pak.nk();
     let ak = *pak.ak();
     let app = &*PROOF_SYSTEM;
-    let anchor = Anchor::genesis(BlockHeight(0));
     let target_epoch = Epoch(0);
 
     // -- Spend side --
@@ -722,16 +921,18 @@ fn plan_prove_spend_and_output() {
         build_delegation_to_nullifier(&mut rng, *app, spend_note, nk, note_id, target_epoch);
     let (spendable_proof, spendable_hdr) =
         build_spendable(&mut rng, *app, spend_note, nk, nf_proof, &nf_hdr);
+    let spendable_anchor = spendable_hdr.2;
     let spendable_pcd = spendable_proof.carry::<SpendableHeader>(spendable_hdr);
 
     // -- Output side --
     let (output_desc, output_wit, output_action) = make_output_plan_entry(&mut rng, &sk, 200);
 
     // -- Build and prove the plan --
+    // Use the spendable anchor so output stamps match spend stamps.
     let plan = Plan::new(
         alloc::vec![(spend_desc, spend_wit)],
         alloc::vec![(output_desc, output_wit)],
-        anchor,
+        spendable_anchor,
     );
 
     let stamp = plan
@@ -839,3 +1040,132 @@ fn stamp_lift_rejects_cross_epoch() {
         "stamp lift across epoch boundary must fail"
     );
 }
+
+// ---- ExclusionSet (multi-nullifier batch) path ----
+
+/// ExclusionSetLeaf + ExclusionSetFuse + ExclusionSetExtract roundtrip.
+///
+/// Two subsets, two nullifiers. Leaf each subset, fuse, extract each
+/// nullifier into ExclusionHeader.
+#[test]
+fn exclusion_set_roundtrip() {
+    let mut rng = StdRng::seed_from_u64(700);
+    let app = &*PROOF_SYSTEM;
+    let nf_a = Fp::from(555u64);
+    let nf_b = Fp::from(777u64);
+    let nullifiers = pad_nullifiers::<TEST_M>(&[nf_a, nf_b]);
+
+    // Two distinct subsets of tachygrams.
+    let tgs_1 = pad_tachygrams::<TEST_N>(&[
+        Tachygram::from(Fp::from(10u64)),
+        Tachygram::from(Fp::from(20u64)),
+    ]);
+    let tgs_2 = pad_tachygrams::<TEST_N>(&[
+        Tachygram::from(Fp::from(30u64)),
+        Tachygram::from(Fp::from(40u64)),
+    ]);
+
+    // Leaf 1
+    let (leaf1_proof, ()) = app
+        .seed(&mut rng, &ExclusionSetLeaf::<TEST_N, TEST_M>, (&tgs_1, &nullifiers))
+        .expect("exclusion set leaf 1");
+    let roots1: Vec<Fp> = tgs_1.iter().map(|tg| Fp::from(*tg)).collect();
+    let coeffs1 = polynomial::poly_from_roots(&roots1);
+    let scope1 = SetCommit::from(polynomial::pedersen_commit(&coeffs1));
+    let products1: Vec<Fp> = nullifiers.iter().map(|&nf| polynomial::poly_eval(&coeffs1, nf)).collect();
+    let nf_set = polynomial::pedersen_commit(nullifiers.as_slice());
+    let prod_set1 = polynomial::pedersen_commit(&products1);
+    let leaf1_pcd = leaf1_proof.carry::<ExclusionSetHeader<TEST_M>>((nf_set, prod_set1, scope1));
+
+    // Leaf 2
+    let (leaf2_proof, ()) = app
+        .seed(&mut rng, &ExclusionSetLeaf::<TEST_N, TEST_M>, (&tgs_2, &nullifiers))
+        .expect("exclusion set leaf 2");
+    let roots2: Vec<Fp> = tgs_2.iter().map(|tg| Fp::from(*tg)).collect();
+    let coeffs2 = polynomial::poly_from_roots(&roots2);
+    let scope2 = SetCommit::from(polynomial::pedersen_commit(&coeffs2));
+    let products2: Vec<Fp> = nullifiers.iter().map(|&nf| polynomial::poly_eval(&coeffs2, nf)).collect();
+    let prod_set2 = polynomial::pedersen_commit(&products2);
+    let leaf2_pcd = leaf2_proof.carry::<ExclusionSetHeader<TEST_M>>((nf_set, prod_set2, scope2));
+
+    // Fuse
+    let prods1_arr: [Fp; TEST_M] = products1.try_into().unwrap();
+    let prods2_arr: [Fp; TEST_M] = products2.try_into().unwrap();
+    let (fused_proof, ()) = app
+        .fuse(
+            &mut rng,
+            &ExclusionSetFuse::<TEST_M>,
+            (&prods1_arr, &prods2_arr),
+            leaf1_pcd,
+            leaf2_pcd,
+        )
+        .expect("exclusion set fuse");
+    let merged_products: Vec<Fp> = prods1_arr
+        .iter()
+        .zip(prods2_arr.iter())
+        .map(|(&lp, &rp)| lp * rp)
+        .collect();
+    let merged_scope = scope1 + scope2;
+    let merged_prod_set = polynomial::pedersen_commit(&merged_products);
+
+    // Extract nullifier A (index 0)
+    let merged_products_arr: [Fp; TEST_M] = merged_products.try_into().unwrap();
+    let fused_hdr = (nf_set, merged_prod_set, merged_scope);
+    let fused_pcd_a = fused_proof.carry::<ExclusionSetHeader<TEST_M>>(fused_hdr);
+    let (extract_a_proof, ()) = app
+        .fuse(
+            &mut rng,
+            &ExclusionSetExtract::<TEST_M>,
+            (&nullifiers, &merged_products_arr, 0usize),
+            fused_pcd_a,
+            mock_ragu::Proof::trivial().carry::<()>(()),
+        )
+        .expect("extract nullifier A");
+    let excl_a_hdr = (Nullifier::from(nf_a), merged_scope);
+    let excl_a_pcd = extract_a_proof.carry::<ExclusionHeader>(excl_a_hdr);
+    app.rerandomize(excl_a_pcd, &mut rng)
+        .expect("rerandomize exclusion A");
+}
+
+/// ExclusionSetExtract rejects when the product at the indexed slot is zero.
+#[test]
+fn exclusion_set_extract_rejects_zero_product() {
+    use mock_ragu::Step as _;
+
+    let nf_fp = Fp::from(42u64);
+    let nullifiers = pad_nullifiers::<TEST_M>(&[nf_fp]);
+    let mut products = [Fp::ONE; TEST_M];
+    products[0] = Fp::ZERO; // nf is in the covered set
+
+    let nf_set = polynomial::pedersen_commit(nullifiers.as_slice());
+    let prod_set = polynomial::pedersen_commit(products.as_slice());
+    let scope = SetCommit::identity();
+
+    let left = (nf_set, prod_set, scope);
+    let result = ExclusionSetExtract::<TEST_M>.witness(
+        (&nullifiers, &products, 0usize),
+        left,
+        (),
+    );
+    assert!(
+        result.is_err(),
+        "extract must reject when product at indexed slot is zero"
+    );
+}
+
+/// ExclusionLeaf rejects when nf IS a root (membership, not exclusion).
+#[test]
+fn exclusion_leaf_rejects_member() {
+    use mock_ragu::Step as _;
+
+    let member_tg = Tachygram::from(Fp::from(42u64));
+    let nf = Nullifier::from(Fp::from(42u64)); // same value — is a root
+    let tgs = pad_tachygrams::<TEST_N>(&[member_tg]);
+
+    let result = ExclusionLeaf::<TEST_N>.witness((nf, &tgs), (), ());
+    assert!(
+        result.is_err(),
+        "exclusion leaf must reject when nf is a root"
+    );
+}
+

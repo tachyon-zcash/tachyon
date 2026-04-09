@@ -1,8 +1,11 @@
-use core2::io::{self, Read, Write};
-use ff::Field as _;
-use pasta_curves::Fp;
+extern crate alloc;
 
-use super::{BlockChainHash, BlockCommit, BlockHeight, EpochChainHash, PoolCommit};
+use alloc::vec::Vec;
+
+use core2::io::{self, Read, Write};
+use pasta_curves::EqAffine;
+
+use super::{BlockChainHash, BlockCommit, BlockHeight, EpochChainHash, PoolCommit, SetCommit};
 use crate::serialization;
 
 /// Pool state at a specific block.
@@ -10,13 +13,13 @@ use crate::serialization;
 pub struct Anchor {
     /// Block height in the pool chain.
     pub block_height: BlockHeight,
-    /// Per-block tachygram set commitment.
+    /// Per-block polynomial commitment (Vesta point).
     pub block_commit: BlockCommit,
-    /// Cumulative epoch tachygram commitment.
+    /// Cumulative epoch polynomial commitment (Vesta point).
     pub pool_commit: PoolCommit,
-    /// Running block chain hash.
+    /// Running block chain hash (Fq).
     pub block_chain: BlockChainHash,
-    /// Running epoch chain hash.
+    /// Running epoch chain hash (Fq).
     pub epoch_chain: EpochChainHash,
 }
 
@@ -26,11 +29,26 @@ impl Anchor {
     pub fn genesis(activation_height: BlockHeight) -> Self {
         Self {
             block_height: activation_height,
-            block_commit: BlockCommit::from(Fp::ZERO),
-            pool_commit: PoolCommit::from(Fp::ZERO),
+            block_commit: BlockCommit(SetCommit::identity()),
+            pool_commit: PoolCommit(SetCommit::identity()),
             block_chain: BlockChainHash::genesis(activation_height),
             epoch_chain: EpochChainHash::genesis(activation_height),
         }
+    }
+
+    /// Encode an anchor for PCD header encoding.
+    #[must_use]
+    pub fn encode_for_header(&self) -> Vec<u8> {
+        use ff::PrimeField as _;
+        use pasta_curves::{Fq, group::GroupEncoding as _};
+        let mut out = Vec::with_capacity(4 + 32 * 4);
+        #[expect(clippy::little_endian_bytes, reason = "specified encoding")]
+        out.extend_from_slice(&u32::from(self.block_height).to_le_bytes());
+        out.extend_from_slice(&EqAffine::from(self.block_commit.0).to_bytes());
+        out.extend_from_slice(&EqAffine::from(self.pool_commit.0).to_bytes());
+        out.extend_from_slice(&Fq::from(self.block_chain).to_repr());
+        out.extend_from_slice(&Fq::from(self.epoch_chain).to_repr());
+        out
     }
 
     /// Read an anchor from the wire format.
@@ -40,10 +58,10 @@ impl Anchor {
         #[expect(clippy::little_endian_bytes, reason = "specified wire format")]
         let block_height = BlockHeight(u32::from_le_bytes(height_bytes));
 
-        let block_commit = serialization::read_fp(&mut reader)?.into();
-        let pool_commit = serialization::read_fp(&mut reader)?.into();
-        let block_chain = serialization::read_fp(&mut reader)?.into();
-        let epoch_chain = serialization::read_fp(&mut reader)?.into();
+        let block_commit = BlockCommit(serialization::read_eq_affine(&mut reader)?.into());
+        let pool_commit = PoolCommit(serialization::read_eq_affine(&mut reader)?.into());
+        let block_chain = serialization::read_fq(&mut reader)?.into();
+        let epoch_chain = serialization::read_fq(&mut reader)?.into();
 
         Ok(Self {
             block_height,
@@ -58,10 +76,10 @@ impl Anchor {
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         #[expect(clippy::little_endian_bytes, reason = "specified wire format")]
         writer.write_all(&u32::from(self.block_height).to_le_bytes())?;
-        serialization::write_fp(&mut writer, &self.block_commit.into())?;
-        serialization::write_fp(&mut writer, &self.pool_commit.into())?;
-        serialization::write_fp(&mut writer, &self.block_chain.into())?;
-        serialization::write_fp(&mut writer, &self.epoch_chain.into())?;
+        serialization::write_eq_affine(&mut writer, &EqAffine::from(self.block_commit.0))?;
+        serialization::write_eq_affine(&mut writer, &EqAffine::from(self.pool_commit.0))?;
+        serialization::write_fq(&mut writer, &self.block_chain.into())?;
+        serialization::write_fq(&mut writer, &self.epoch_chain.into())?;
         Ok(())
     }
 }

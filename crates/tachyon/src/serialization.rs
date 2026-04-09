@@ -8,7 +8,7 @@
 
 use core2::io::{self, Read, Write};
 use ff::PrimeField as _;
-use pasta_curves::{EpAffine, Fp, Fq, group::GroupEncoding as _};
+use pasta_curves::{EpAffine, EqAffine, Fp, Fq, group::GroupEncoding as _};
 
 use crate::reddsa;
 
@@ -48,6 +48,19 @@ pub(crate) fn read_ep_affine<R: Read>(mut reader: R) -> io::Result<EpAffine> {
 
 /// Write a Pallas affine curve point (`EpAffine`) as 32 compressed bytes.
 pub(crate) fn write_ep_affine<W: Write>(mut writer: W, point: &EpAffine) -> io::Result<()> {
+    writer.write_all(&point.to_bytes())
+}
+
+/// Read a Vesta affine curve point (`EqAffine`) from 32 compressed bytes.
+pub(crate) fn read_eq_affine<R: Read>(mut reader: R) -> io::Result<EqAffine> {
+    let mut bytes = [0u8; 32];
+    reader.read_exact(&mut bytes)?;
+    Option::from(EqAffine::from_bytes(&bytes))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid Vesta point encoding"))
+}
+
+/// Write a Vesta affine curve point (`EqAffine`) as 32 compressed bytes.
+pub(crate) fn write_eq_affine<W: Write>(mut writer: W, point: &EqAffine) -> io::Result<()> {
     writer.write_all(&point.to_bytes())
 }
 

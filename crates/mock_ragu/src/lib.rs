@@ -17,15 +17,15 @@ extern crate alloc;
 
 pub use application::{Application, ApplicationBuilder};
 pub use error::{Error, Result};
+pub use generators::VESTA_GENERATORS;
 pub use header::{Header, Suffix};
-pub use polynomial::{Commitment, Polynomial, poly_with_roots};
 pub use proof::{Pcd, Proof};
 pub use step::{Index, Step};
 
 pub mod application;
 pub mod error;
+pub mod generators;
 pub mod header;
-pub mod polynomial;
 pub mod proof;
 pub mod step;
 

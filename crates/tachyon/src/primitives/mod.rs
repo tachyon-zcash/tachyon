@@ -1,21 +1,20 @@
 mod action_digest;
 mod anchor;
-mod block_commit;
 mod block_height;
 mod chain_hash;
 pub mod effect;
 mod epoch;
 mod note_id;
-mod pool_commit;
+pub(crate) mod polynomial;
+mod set_commit;
 mod tachygram;
 
 pub use action_digest::{ActionDigest, ActionDigestError};
 pub use anchor::Anchor;
-pub use block_commit::BlockCommit;
 pub use block_height::BlockHeight;
 pub use chain_hash::{BlockChainHash, EpochChainHash};
 pub use effect::Effect;
 pub use epoch::Epoch;
 pub use note_id::NoteId;
-pub use pool_commit::PoolCommit;
+pub use set_commit::{BlockCommit, PoolCommit, SetCommit};
 pub use tachygram::Tachygram;

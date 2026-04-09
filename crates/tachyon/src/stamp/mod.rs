@@ -15,6 +15,7 @@
 extern crate alloc;
 
 pub mod delegation;
+pub mod exclusion;
 pub mod header;
 pub mod pool;
 pub mod proof;
@@ -267,7 +268,8 @@ impl Plan {
             return Err(ProveError::NoActions);
         }
 
-        // Merge pairwise.
+        // TODO: this builds a right-skewed linear chain (depth N-1).
+        // Use round-based pair drain for a balanced tree (depth log₂ N).
         while entries.len() > 1 {
             let (right, right_acc) = entries.pop().ok_or(ProveError::NoActions)?;
             let (left, left_acc) = entries.pop().ok_or(ProveError::NoActions)?;
