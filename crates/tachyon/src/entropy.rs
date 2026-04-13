@@ -4,17 +4,13 @@
 //! Combined with a note commitment it deterministically derives an
 //! [`ActionRandomizer`].
 
-use core::{any::TypeId, marker::PhantomData};
+use core::marker::PhantomData;
 
 use ff::{FromUniformBytes as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
 use rand_core::{CryptoRng, RngCore};
 
-use crate::{
-    constants::{OUTPUT_ALPHA_PERSONALIZATION, SPEND_ALPHA_PERSONALIZATION},
-    note,
-    primitives::{Effect, effect},
-};
+use crate::{note, primitives::Effect};
 
 /// Per-action entropy $\theta$ chosen by the signer (e.g. hardware wallet).
 ///
@@ -52,21 +48,8 @@ impl ActionEntropy {
     /// Uses distinct BLAKE2b personalizations for spend vs output to
     /// ensure the two randomizers are independent.
     #[must_use]
-    #[expect(clippy::unreachable, reason = "Effect is sealed to Spend and Output")]
     pub fn randomizer<E: Effect>(&self, cm: &note::Commitment) -> ActionRandomizer<E> {
-        if TypeId::of::<E>() == TypeId::of::<effect::Spend>() {
-            return ActionRandomizer(
-                derive_alpha(SPEND_ALPHA_PERSONALIZATION, self, cm),
-                PhantomData,
-            );
-        }
-        if TypeId::of::<E>() == TypeId::of::<effect::Output>() {
-            return ActionRandomizer(
-                derive_alpha(OUTPUT_ALPHA_PERSONALIZATION, self, cm),
-                PhantomData,
-            );
-        }
-        unreachable!("Effect is sealed to Spend and Output")
+        ActionRandomizer(E::derive_alpha(self, cm), PhantomData)
     }
 }
 
@@ -112,12 +95,11 @@ impl<E: Effect> From<ActionRandomizer<E>> for ActionRandomizer<Witness> {
 ///   \text{"Tachyon-Spend"},\; \theta \| \mathsf{cm}))$$
 /// $$\alpha_{\text{output}} = \text{ToScalar}(\text{BLAKE2b-512}(
 ///   \text{"Tachyon-Output"},\; \theta \| \mathsf{cm}))$$
-fn derive_alpha(personalization: &[u8], theta: &ActionEntropy, cm: &note::Commitment) -> Fq {
-    assert!(
-        personalization == SPEND_ALPHA_PERSONALIZATION
-            || personalization == OUTPUT_ALPHA_PERSONALIZATION,
-        "invalid personalization: {personalization:?}",
-    );
+pub(crate) fn derive_alpha(
+    personalization: &[u8],
+    theta: &ActionEntropy,
+    cm: &note::Commitment,
+) -> Fq {
     let hash = blake2b_simd::Params::new()
         .hash_length(64)
         .personal(personalization)
@@ -135,7 +117,7 @@ mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::note;
+    use crate::{note, primitives::effect};
 
     fn test_cm() -> note::Commitment {
         note::Commitment::from(Fp::ZERO)

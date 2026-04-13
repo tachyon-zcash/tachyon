@@ -1,6 +1,6 @@
 //! Tachyon Action descriptions.
 
-use core::{any::TypeId, marker::PhantomData};
+use core::marker::PhantomData;
 
 use crate::{
     entropy::ActionEntropy,
@@ -100,16 +100,8 @@ impl<E: Effect> Plan<E> {
     ///
     /// $$\mathsf{cv} = [\pm v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
     #[must_use]
-    #[expect(clippy::unreachable, reason = "Effect is sealed to Spend and Output")]
     pub fn cv(&self) -> value::Commitment {
-        let value: i64 = self.note.value.into();
-        if TypeId::of::<E>() == TypeId::of::<effect::Spend>() {
-            return self.rcv.commit(value);
-        }
-        if TypeId::of::<E>() == TypeId::of::<effect::Output>() {
-            return self.rcv.commit(-value);
-        }
-        unreachable!("Effect is sealed to Spend and Output")
+        E::commit_value(self.rcv, self.note.value)
     }
 }
 
