@@ -1,4 +1,4 @@
-use core::ops::Add;
+use core::ops::{Add, AddAssign};
 
 use ff::Field as _;
 use pasta_curves::{
@@ -54,6 +54,12 @@ impl Add for SetCommit {
 
     fn add(self, rhs: Self) -> Self {
         Self((Eq::from(self.0) + Eq::from(rhs.0)).to_affine())
+    }
+}
+
+impl AddAssign for SetCommit {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
     }
 }
 

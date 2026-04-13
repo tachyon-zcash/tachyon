@@ -16,10 +16,9 @@ use crate::{
     },
     stamp::{
         exclusion::{
-            ExclusionFuse, ExclusionHeader, ExclusionLeaf, ExclusionSetExtract,
-            ExclusionSetFuse, ExclusionSetHeader, ExclusionSetLeaf,
-            NullifierExclusionFuse, NullifierExclusionHeader, SpendableExclusionFuse,
-            SpendableExclusionHeader,
+            ExclusionFuse, ExclusionHeader, ExclusionLeaf, ExclusionSetExtract, ExclusionSetFuse,
+            ExclusionSetHeader, ExclusionSetLeaf, NullifierExclusionFuse, NullifierExclusionHeader,
+            SpendableExclusionFuse, SpendableExclusionHeader,
         },
         spend::SpendHeader,
         spendable::{
@@ -526,8 +525,7 @@ fn spendable_epoch_lift_across_boundary() {
     // scope == pool_commit. Pool resets at boundary, so pool_commit
     // is just this one block's polynomial commitment.
     let e1_tg = Tachygram::from(Fp::from(u64::from(epoch_size) * 1000 + 1));
-    let (excl_proof_1, excl_hdr_1) =
-        build_exclusion_proof(&mut rng, *app, nf_hdr_1.0, &[e1_tg]);
+    let (excl_proof_1, excl_hdr_1) = build_exclusion_proof(&mut rng, *app, nf_hdr_1.0, &[e1_tg]);
 
     // NullifierExclusionFuse: bind nullifier to exclusion.
     let nf_pcd_1 = nf_proof_1.carry::<delegation::NullifierHeader>(nf_hdr_1);
@@ -638,8 +636,7 @@ fn spendable_lift_within_epoch() {
         &[Tachygram::from(Fp::from(200u64))],
         &[Tachygram::from(Fp::from(300u64))],
     ];
-    let (excl_proof, excl_hdr) =
-        build_partitioned_exclusion(&mut rng, *app, nf_hdr.0, &delta_tgs);
+    let (excl_proof, excl_hdr) = build_partitioned_exclusion(&mut rng, *app, nf_hdr.0, &delta_tgs);
     let excl_pcd = excl_proof.carry::<ExclusionHeader>(excl_hdr);
 
     // SpendableExclusionFuse: bind spendable to exclusion.
@@ -1067,24 +1064,38 @@ fn exclusion_set_roundtrip() {
 
     // Leaf 1
     let (leaf1_proof, ()) = app
-        .seed(&mut rng, &ExclusionSetLeaf::<TEST_N, TEST_M>, (&tgs_1, &nullifiers))
+        .seed(
+            &mut rng,
+            &ExclusionSetLeaf::<TEST_N, TEST_M>,
+            (&tgs_1, &nullifiers),
+        )
         .expect("exclusion set leaf 1");
     let roots1: Vec<Fp> = tgs_1.iter().map(|tg| Fp::from(*tg)).collect();
     let coeffs1 = polynomial::poly_from_roots(&roots1);
     let scope1 = SetCommit::from(polynomial::pedersen_commit(&coeffs1));
-    let products1: Vec<Fp> = nullifiers.iter().map(|&nf| polynomial::poly_eval(&coeffs1, nf)).collect();
+    let products1: Vec<Fp> = nullifiers
+        .iter()
+        .map(|&nf| polynomial::poly_eval(&coeffs1, nf))
+        .collect();
     let nf_set = polynomial::pedersen_commit(nullifiers.as_slice());
     let prod_set1 = polynomial::pedersen_commit(&products1);
     let leaf1_pcd = leaf1_proof.carry::<ExclusionSetHeader<TEST_M>>((nf_set, prod_set1, scope1));
 
     // Leaf 2
     let (leaf2_proof, ()) = app
-        .seed(&mut rng, &ExclusionSetLeaf::<TEST_N, TEST_M>, (&tgs_2, &nullifiers))
+        .seed(
+            &mut rng,
+            &ExclusionSetLeaf::<TEST_N, TEST_M>,
+            (&tgs_2, &nullifiers),
+        )
         .expect("exclusion set leaf 2");
     let roots2: Vec<Fp> = tgs_2.iter().map(|tg| Fp::from(*tg)).collect();
     let coeffs2 = polynomial::poly_from_roots(&roots2);
     let scope2 = SetCommit::from(polynomial::pedersen_commit(&coeffs2));
-    let products2: Vec<Fp> = nullifiers.iter().map(|&nf| polynomial::poly_eval(&coeffs2, nf)).collect();
+    let products2: Vec<Fp> = nullifiers
+        .iter()
+        .map(|&nf| polynomial::poly_eval(&coeffs2, nf))
+        .collect();
     let prod_set2 = polynomial::pedersen_commit(&products2);
     let leaf2_pcd = leaf2_proof.carry::<ExclusionSetHeader<TEST_M>>((nf_set, prod_set2, scope2));
 
@@ -1142,11 +1153,7 @@ fn exclusion_set_extract_rejects_zero_product() {
     let scope = SetCommit::identity();
 
     let left = (nf_set, prod_set, scope);
-    let result = ExclusionSetExtract::<TEST_M>.witness(
-        (&nullifiers, &products, 0usize),
-        left,
-        (),
-    );
+    let result = ExclusionSetExtract::<TEST_M>.witness((&nullifiers, &products, 0usize), left, ());
     assert!(
         result.is_err(),
         "extract must reject when product at indexed slot is zero"
@@ -1168,4 +1175,3 @@ fn exclusion_leaf_rejects_member() {
         "exclusion leaf must reject when nf is a root"
     );
 }
-

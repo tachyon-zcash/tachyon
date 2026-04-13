@@ -15,15 +15,13 @@ use crate::{
     stamp::{
         delegation::{DelegationSeed, DelegationStep, NullifierStep},
         exclusion::{
-            ExclusionFuse, ExclusionLeaf, ExclusionSetExtract, ExclusionSetFuse,
-            ExclusionSetLeaf, NullifierExclusionFuse, SpendableExclusionFuse,
+            ExclusionFuse, ExclusionLeaf, ExclusionSetExtract, ExclusionSetFuse, ExclusionSetLeaf,
+            NullifierExclusionFuse, SpendableExclusionFuse,
         },
         header::{MergeStamp, OutputStamp, SpendStamp, StampLift},
         pool::{PoolSeed, PoolStep},
         spend::{SpendBind, SpendNullifier, SpendNullifierFuse},
-        spendable::{
-            SpendableEpochLift, SpendableInit, SpendableLift, SpendableRollover,
-        },
+        spendable::{SpendableEpochLift, SpendableInit, SpendableLift, SpendableRollover},
     },
 };
 

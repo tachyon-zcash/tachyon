@@ -2,8 +2,8 @@
 //!
 //! Two paths produce [`ExclusionHeader`]:
 //!
-//! - **Single-nullifier**: [`ExclusionLeaf`] + [`ExclusionFuse`]. One tree
-//!   per nullifier. Used by the user for local creation-hiding.
+//! - **Single-nullifier**: [`ExclusionLeaf`] + [`ExclusionFuse`]. One tree per
+//!   nullifier. Used by the user for local creation-hiding.
 //! - **Multi-nullifier**: [`ExclusionSetLeaf`] + [`ExclusionSetFuse`] +
 //!   [`ExclusionSetExtract`]. Amortizes the MSM across M nullifiers per
 //!   circuit. Used by the sync service.
@@ -149,8 +149,8 @@ impl Step for ExclusionFuse {
 /// - `nullifier_set`: `pedersen_commit` of the M-element nullifier vector.
 /// - `product_set`: `pedersen_commit` of the M-element product vector
 ///   (per-nullifier accumulated `∏(nf_i - tg_j)` across covered subsets).
-/// - `scope`: sum of subset polynomial commitments. Same generator basis
-///   as `pool_commit`.
+/// - `scope`: sum of subset polynomial commitments. Same generator basis as
+///   `pool_commit`.
 #[derive(Debug)]
 #[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct ExclusionSetHeader<const M: usize>;

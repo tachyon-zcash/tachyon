@@ -159,5 +159,4 @@ mod tests {
             "Pedersen commitment must be additively homomorphic"
         );
     }
-
 }

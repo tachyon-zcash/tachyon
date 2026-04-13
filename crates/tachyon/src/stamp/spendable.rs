@@ -137,9 +137,9 @@ impl<const N: usize> Step for SpendableInit<N> {
 /// Witness-free. Checks:
 /// - `right.block_height > left.anchor.block_height`
 /// - Same epoch, same `epoch_chain`
-/// - `left.anchor.pool_commit + left.scope == right.pool_commit`
-///   (subset/delta: exclusion proof covers exactly the tachygrams added
-///   since the previous anchor)
+/// - `left.anchor.pool_commit + left.scope == right.pool_commit` (subset/delta:
+///   exclusion proof covers exactly the tachygrams added since the previous
+///   anchor)
 #[derive(Debug)]
 #[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct SpendableLift;
