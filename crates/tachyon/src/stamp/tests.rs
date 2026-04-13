@@ -15,6 +15,10 @@ use crate::{
         SetCommit, Tachygram, polynomial,
     },
     stamp::{
+        block::{
+            BlockBindPool, BlockHeader, BlockSubsetEmpty, BlockSubsetFuse, BlockSubsetHeader,
+            BlockSubsetLeaf,
+        },
         exclusion::{
             ExclusionFuse, ExclusionHeader, ExclusionLeaf, ExclusionSetExtract, ExclusionSetFuse,
             ExclusionSetHeader, ExclusionSetLeaf, NullifierExclusionFuse, NullifierExclusionHeader,
@@ -116,9 +120,11 @@ fn pad_nullifiers<const M: usize>(nfs: &[Fp]) -> [Fp; M] {
 
 /// Build a SpendableHeader at block 0 for a newly-created note.
 ///
-/// The creation block is a synthetic block with the note's commitment as
-/// its sole tachygram (padded to `TEST_N`). SpendableInit binds the
-/// witness to the PoolHeader via the block polynomial commitment.
+/// Single-sub-block creation block: cm lives in its own sub-block (padded
+/// to `TEST_N`), with no sibling sub-blocks. The merge tree of "others" is
+/// seeded with `BlockSubsetEmpty` (identity commit). `BlockBindPool` passes
+/// `(identity, anchor)` into `SpendableInit`, which closes the loop by
+/// verifying `cm_sub_commit + identity == block_commit`.
 fn build_spendable(
     rng: &mut StdRng,
     app: mock_ragu::Application,
@@ -129,9 +135,9 @@ fn build_spendable(
 ) -> (mock_ragu::Proof, (NoteId, Nullifier, Anchor)) {
     let cm = note.commitment();
     let cm_tg = Tachygram::from(Fp::from(cm));
-    let block_tachygrams = pad_tachygrams::<TEST_N>(&[cm_tg]);
+    let cm_sub_block = pad_tachygrams::<TEST_N>(&[cm_tg]);
 
-    let roots: Vec<Fp> = block_tachygrams.iter().map(|tg| Fp::from(*tg)).collect();
+    let roots: Vec<Fp> = cm_sub_block.iter().map(|tg| Fp::from(*tg)).collect();
     let block_commit = BlockCommit(SetCommit::from(polynomial::pedersen_commit(
         &polynomial::poly_from_roots(&roots),
     )));
@@ -145,10 +151,23 @@ fn build_spendable(
         epoch_chain: EpochChainHash::genesis(BlockHeight(0)),
     };
 
+    // Pool chain at block 0
     let (pool_proof, ()) = app
         .seed(rng, &pool::PoolSeed, BlockHeight(0))
         .expect("pool seed");
     let pool_pcd = pool_proof.carry::<pool::PoolHeader>(anchor);
+
+    // Empty sibling merge tree (cm is the only sub-block in this block).
+    let (empty_proof, ()) = app
+        .seed(rng, &BlockSubsetEmpty, BlockHeight(0))
+        .expect("block subset empty");
+    let empty_pcd = empty_proof.carry::<BlockSubsetHeader>((SetCommit::identity(), BlockHeight(0)));
+
+    // Bind the empty siblings to the pool anchor.
+    let (block_proof, ()) = app
+        .fuse(rng, &BlockBindPool, (), empty_pcd, pool_pcd)
+        .expect("block bind pool");
+    let block_pcd = block_proof.carry::<BlockHeader>((SetCommit::identity(), anchor));
 
     let nf_pcd = nf_proof.carry::<delegation::NullifierHeader>(*nf_hdr);
 
@@ -156,9 +175,9 @@ fn build_spendable(
         .fuse(
             rng,
             &spendable::SpendableInit::<TEST_N>,
-            (note, nk, &block_tachygrams, 0usize),
+            (note, nk, &cm_sub_block, 0usize),
             nf_pcd,
-            pool_pcd,
+            block_pcd,
         )
         .expect("spendable init");
 
@@ -1173,5 +1192,200 @@ fn exclusion_leaf_rejects_member() {
     assert!(
         result.is_err(),
         "exclusion leaf must reject when nf is a root"
+    );
+}
+
+/// SpendableInit via a multi-sub-block block decomposition.
+///
+/// Builds a block from two `TEST_N`-sized sub-blocks. Sub-block A contains
+/// cm; sub-block B is attested via the merge tree through `BlockSubsetLeaf`
+/// and `BlockBindPool`. `SpendableInit` witnesses A, closes the
+/// decomposition sum, and produces the spendable header. Exercises the
+/// non-empty merge tree path.
+#[test]
+fn spendable_init_multi_subblock() {
+    let mut rng = StdRng::seed_from_u64(800);
+    let sk = private::SpendingKey::from([0x42u8; 32]);
+    let pak = sk.derive_proof_private();
+    let nk = *pak.nk();
+    let app = &*PROOF_SYSTEM;
+
+    let note = Note {
+        pk: sk.derive_payment_key(),
+        value: note::Value::from(500u64),
+        psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+        rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+    };
+    let note_id = note.id(&nk);
+    let epoch = Epoch(0);
+
+    // Two sub-blocks: A contains cm, B contains an unrelated tachygram.
+    let cm_tg = Tachygram::from(Fp::from(note.commitment()));
+    let other_tg = Tachygram::from(Fp::from(777u64));
+    let sub_a = pad_tachygrams::<TEST_N>(&[cm_tg]);
+    let sub_b = pad_tachygrams::<TEST_N>(&[other_tg]);
+
+    let coeffs_a =
+        polynomial::poly_from_roots(&sub_a.iter().map(|tg| Fp::from(*tg)).collect::<Vec<_>>());
+    let coeffs_b =
+        polynomial::poly_from_roots(&sub_b.iter().map(|tg| Fp::from(*tg)).collect::<Vec<_>>());
+    let commit_a = SetCommit::from(polynomial::pedersen_commit(&coeffs_a));
+    let commit_b = SetCommit::from(polynomial::pedersen_commit(&coeffs_b));
+    let block_commit = BlockCommit(commit_a + commit_b);
+    let pool_commit = PoolCommit(SetCommit::identity() + block_commit.0);
+
+    let anchor = Anchor {
+        block_height: BlockHeight(0),
+        block_commit,
+        pool_commit,
+        block_chain: BlockChainHash::genesis(BlockHeight(0)),
+        epoch_chain: EpochChainHash::genesis(BlockHeight(0)),
+    };
+
+    // Pool chain
+    let (pool_proof, ()) = app
+        .seed(&mut rng, &pool::PoolSeed, BlockHeight(0))
+        .expect("pool seed");
+    let pool_pcd = pool_proof.carry::<pool::PoolHeader>(anchor);
+
+    // Merge tree covers ONLY sub-block B (the non-cm sibling). Sub-block A
+    // is attested by SpendableInit itself.
+    let (leaf_b_proof, ()) = app
+        .seed(
+            &mut rng,
+            &BlockSubsetLeaf::<TEST_N>,
+            (BlockHeight(0), &sub_b),
+        )
+        .expect("subset leaf b");
+    let leaf_b_pcd = leaf_b_proof.carry::<BlockSubsetHeader>((commit_b, BlockHeight(0)));
+
+    // Bind siblings to pool (sum_others = commit_b).
+    let (block_proof, ()) = app
+        .fuse(&mut rng, &BlockBindPool, (), leaf_b_pcd, pool_pcd)
+        .expect("block bind pool");
+    let block_pcd = block_proof.carry::<BlockHeader>((commit_b, anchor));
+
+    // Delegation -> nullifier
+    let (nf_proof, nf_hdr, _) =
+        build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch);
+    let nf_pcd = nf_proof.carry::<delegation::NullifierHeader>(nf_hdr);
+
+    // SpendableInit: witness cm's sub-block A. Check closes: commit_a +
+    // commit_b == block_commit.
+    let (spendable_proof, ()) = app
+        .fuse(
+            &mut rng,
+            &spendable::SpendableInit::<TEST_N>,
+            (note, nk, &sub_a, 0usize),
+            nf_pcd,
+            block_pcd,
+        )
+        .expect("spendable init multi-subblock");
+
+    let spendable_hdr = (note_id, nf_hdr.0, anchor);
+    let spendable_pcd = spendable_proof.carry::<SpendableHeader>(spendable_hdr);
+    app.rerandomize(spendable_pcd, &mut rng)
+        .expect("rerandomize");
+}
+
+/// SpendableInit rejects when a fabricated cm sub-block is supplied.
+///
+/// The attacker has a real note but tries to claim cm is in a block where
+/// it isn't. With `sum_others` PCD-attested, the closing equation
+/// `fake_sub_commit + sum_others == block_commit` forces
+/// `fake_sub_commit == block_commit - sum_others`. Pedersen binding
+/// prevents finding a different sub-block with that exact commit.
+#[test]
+fn spendable_init_rejects_fabricated_sub_block() {
+    let mut rng = StdRng::seed_from_u64(801);
+    let sk = private::SpendingKey::from([0x42u8; 32]);
+    let pak = sk.derive_proof_private();
+    let nk = *pak.nk();
+    let app = &*PROOF_SYSTEM;
+
+    let note = Note {
+        pk: sk.derive_payment_key(),
+        value: note::Value::from(500u64),
+        psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+        rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+    };
+    let note_id = note.id(&nk);
+    let epoch = Epoch(0);
+
+    // Real block has two sub-blocks, neither containing cm.
+    let real_one = pad_tachygrams::<TEST_N>(&[Tachygram::from(Fp::from(111u64))]);
+    let real_two = pad_tachygrams::<TEST_N>(&[Tachygram::from(Fp::from(777u64))]);
+    let coeffs_one =
+        polynomial::poly_from_roots(&real_one.iter().map(|tg| Fp::from(*tg)).collect::<Vec<_>>());
+    let coeffs_two =
+        polynomial::poly_from_roots(&real_two.iter().map(|tg| Fp::from(*tg)).collect::<Vec<_>>());
+    let commit_one = SetCommit::from(polynomial::pedersen_commit(&coeffs_one));
+    let commit_two = SetCommit::from(polynomial::pedersen_commit(&coeffs_two));
+    let block_commit = BlockCommit(commit_one + commit_two);
+    let pool_commit = PoolCommit(SetCommit::identity() + block_commit.0);
+
+    let anchor = Anchor {
+        block_height: BlockHeight(0),
+        block_commit,
+        pool_commit,
+        block_chain: BlockChainHash::genesis(BlockHeight(0)),
+        epoch_chain: EpochChainHash::genesis(BlockHeight(0)),
+    };
+
+    let (pool_proof, ()) = app
+        .seed(&mut rng, &pool::PoolSeed, BlockHeight(0))
+        .expect("pool seed");
+    let pool_pcd = pool_proof.carry::<pool::PoolHeader>(anchor);
+
+    // Honest merge tree covers both real sub-blocks (sum_others =
+    // commit_one + commit_two = block_commit). Attacker's fake
+    // cm sub-block would need fake_sub_commit == identity, which
+    // Pedersen binding prevents.
+    let (leaf_one_proof, ()) = app
+        .seed(
+            &mut rng,
+            &BlockSubsetLeaf::<TEST_N>,
+            (BlockHeight(0), &real_one),
+        )
+        .expect("subset leaf one");
+    let leaf_one_pcd = leaf_one_proof.carry::<BlockSubsetHeader>((commit_one, BlockHeight(0)));
+    let (sibling_proof, ()) = app
+        .seed(
+            &mut rng,
+            &BlockSubsetLeaf::<TEST_N>,
+            (BlockHeight(0), &real_two),
+        )
+        .expect("subset leaf two");
+    let sibling_pcd = sibling_proof.carry::<BlockSubsetHeader>((commit_two, BlockHeight(0)));
+    let (fused_proof, ()) = app
+        .fuse(&mut rng, &BlockSubsetFuse, (), leaf_one_pcd, sibling_pcd)
+        .expect("fuse");
+    let fused_pcd =
+        fused_proof.carry::<BlockSubsetHeader>((commit_one + commit_two, BlockHeight(0)));
+    let (block_proof, ()) = app
+        .fuse(&mut rng, &BlockBindPool, (), fused_pcd, pool_pcd)
+        .expect("block bind pool");
+    let block_pcd = block_proof.carry::<BlockHeader>((commit_one + commit_two, anchor));
+
+    let (nf_proof, nf_hdr, _) =
+        build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch);
+    let nf_pcd = nf_proof.carry::<delegation::NullifierHeader>(nf_hdr);
+
+    // Attacker supplies a fabricated sub-block containing cm at index 0.
+    let cm_tg = Tachygram::from(Fp::from(note.commitment()));
+    let fake_cm_sub_block = pad_tachygrams::<TEST_N>(&[cm_tg]);
+
+    // SpendableInit must reject: fake_sub_commit + sum_others ≠ block_commit
+    // (would require fake_sub_commit == identity, which it isn't).
+    let result = app.fuse(
+        &mut rng,
+        &spendable::SpendableInit::<TEST_N>,
+        (note, nk, &fake_cm_sub_block, 0usize),
+        nf_pcd,
+        block_pcd,
+    );
+    assert!(
+        result.is_err(),
+        "fabricated cm sub-block must be rejected by the sum closure"
     );
 }

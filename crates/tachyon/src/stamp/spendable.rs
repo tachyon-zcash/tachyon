@@ -16,14 +16,16 @@ use alloc::vec::Vec;
 
 use ff::PrimeField as _;
 use mock_ragu::{Header, Index, Step, Suffix};
-use pasta_curves::{EqAffine, Fp};
+use pasta_curves::Fp;
 
 use super::{
+    block::BlockHeader,
     delegation::NullifierHeader,
     exclusion::{NullifierExclusionHeader, SpendableExclusionHeader},
     pool::PoolHeader,
 };
 use crate::{
+    SetCommit,
     keys::NullifierKey,
     note::{Note, Nullifier},
     primitives::{Anchor, NoteId, Tachygram, polynomial},
@@ -71,15 +73,24 @@ impl Header for SpendableRolloverHeader {
 
 /// Bootstraps spendable status from a creation block.
 ///
-/// Left: NullifierHeader (nf + note_id + epoch from delegation chain).
-/// Right: PoolHeader (creation block's anchor).
-/// Witness: note fields, nk, block tachygrams, index of cm in tachygrams.
+/// Left: `NullifierHeader` (nf + note_id + epoch from delegation chain).
+/// Right: `BlockHeader(sum_others, anchor)` from the sibling-sub-block merge
+/// tree bound via [`BlockBindPool`](super::block::BlockBindPool). `sum_others`
+/// is the Pedersen-committed sum of every sub-block *except* the cm's,
+/// PCD-attested by the merge tree. `anchor` comes from the pool chain (which
+/// consensus produces via [`PoolStep`](super::pool::PoolStep)).
+///
+/// Witness: note, nk, the cm sub-block, and cm_index within it.
 ///
 /// Verifies:
-/// - note_id == H(mk, cm)
-/// - epoch match
-/// - block tachygrams hash to right.block_commit (binds witness to pool chain)
-/// - cm is in the block tachygrams
+/// - `note_id == H(mk, cm)`
+/// - epoch matches `anchor.block_height.epoch()`
+/// - `pedersen(poly_from_roots(sub_block)) + sum_others == anchor.block_commit`
+///   — closes the decomposition loop. Because `sum_others` is PCD-attested (not
+///   a witness), the equation uniquely pins `sub_commit` to `block_commit −
+///   sum_others`, and Pedersen binding forces the witness sub-block to be the
+///   real cm sub-block.
+/// - `cm ∈ sub_block` at `cm_index`
 ///
 /// No exclusion check: consensus prevents simultaneous creation and spend,
 /// and downstream lifts verify non-membership at every advance.
@@ -91,41 +102,44 @@ impl<const N: usize> Step for SpendableInit<N> {
     type Aux<'source> = ();
     type Left = NullifierHeader;
     type Output = SpendableHeader;
-    type Right = PoolHeader;
+    type Right = BlockHeader;
     type Witness<'source> = (Note, NullifierKey, &'source [Tachygram; N], usize);
 
     const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,
-        (note, nk, block_tachygrams, cm_index): Self::Witness<'source>,
+        (note, nk, sub_block, cm_index): Self::Witness<'source>,
         (nf, left_epoch, left_note_id): <Self::Left as Header>::Data<'source>,
-        right: <Self::Right as Header>::Data<'source>,
+        (sum_others, anchor): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         let note_id = note.id(&nk);
         if note_id != left_note_id {
             return Err(mock_ragu::Error);
         }
-        if left_epoch != right.block_height.epoch() {
+        if left_epoch != anchor.block_height.epoch() {
             return Err(mock_ragu::Error);
         }
 
-        // Bind witness to PCD-attested block_commit
-        let roots: Vec<Fp> = block_tachygrams.iter().map(|tg| Fp::from(*tg)).collect();
+        // Close the block-commit decomposition: cm's sub-block commit plus
+        // the PCD-attested sum of all other sub-blocks must equal the
+        // pool-attested block_commit. Pedersen binding forces the witness
+        // sub-block to be the real cm sub-block.
+        let roots: Vec<Fp> = sub_block.iter().map(|tg| Fp::from(*tg)).collect();
         let coeffs = polynomial::poly_from_roots(&roots);
-        let computed = polynomial::pedersen_commit(&coeffs);
-        if computed != EqAffine::from(right.block_commit.0) {
+        let sub_commit = SetCommit::from(polynomial::pedersen_commit(&coeffs));
+        if sub_commit + sum_others != anchor.block_commit.0 {
             return Err(mock_ragu::Error);
         }
 
-        // cm inclusion at the specified index
+        // cm inclusion at the specified index within the sub-block
         let cm = note.commitment();
         let cm_tg = Tachygram::from(Fp::from(cm));
-        if block_tachygrams.get(cm_index).is_none_or(|tg| *tg != cm_tg) {
+        if sub_block.get(cm_index).is_none_or(|tg| *tg != cm_tg) {
             return Err(mock_ragu::Error);
         }
 
-        Ok(((left_note_id, nf, right), ()))
+        Ok(((left_note_id, nf, anchor), ()))
     }
 }
 

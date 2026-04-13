@@ -13,6 +13,7 @@ use crate::{
     action::Action,
     primitives::{ActionDigest, ActionDigestError, Tachygram},
     stamp::{
+        block::{BlockBindPool, BlockSubsetEmpty, BlockSubsetFuse, BlockSubsetLeaf},
         delegation::{DelegationSeed, DelegationStep, NullifierStep},
         exclusion::{
             ExclusionFuse, ExclusionLeaf, ExclusionSetExtract, ExclusionSetFuse, ExclusionSetLeaf,
@@ -25,8 +26,8 @@ use crate::{
     },
 };
 
-/// Fixed block-polynomial size for `SpendableInit` and exclusion leaves.
-pub(crate) const BLOCK_POLY_N: usize = 512;
+/// Per-step subset size for `SpendableInit` and exclusion leaves.
+pub(crate) const BLOCK_POLY_N: usize = 64;
 
 /// Fixed nullifier batch size for the sync-service exclusion set path.
 pub(crate) const BATCH_M: usize = 64;
@@ -98,6 +99,14 @@ lazy_static! {
             .expect("register NullifierExclusionFuse")
             .register(SpendableExclusionFuse)
             .expect("register SpendableExclusionFuse")
+            .register(BlockSubsetLeaf::<BLOCK_POLY_N>)
+            .expect("register BlockSubsetLeaf")
+            .register(BlockSubsetEmpty)
+            .expect("register BlockSubsetEmpty")
+            .register(BlockSubsetFuse)
+            .expect("register BlockSubsetFuse")
+            .register(BlockBindPool)
+            .expect("register BlockBindPool")
             .finalize()
             .expect("finalize")
     };

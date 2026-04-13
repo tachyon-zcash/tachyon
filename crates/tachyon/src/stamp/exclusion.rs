@@ -176,9 +176,6 @@ impl<const M: usize> Header for ExclusionSetHeader<M> {
 // ---------------------------------------------------------------------------
 
 /// Evaluates one subset's polynomial at M nullifiers. Pure seed.
-///
-/// One MSM (expensive, amortized M-fold), M Horner evaluations (cheap).
-/// Witness budget: N + M ≤ 512.
 #[derive(Debug)]
 #[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct ExclusionSetLeaf<const N: usize, const M: usize>;
@@ -222,7 +219,6 @@ impl<const N: usize, const M: usize> Step for ExclusionSetLeaf<N, M> {
 ///
 /// Witness: both product vectors. Verifies commitments, multiplies
 /// component-wise (Fp has no zero divisors), sums scope.
-/// Witness budget: 2M ≤ 512.
 #[derive(Debug)]
 #[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct ExclusionSetFuse<const M: usize>;
@@ -277,7 +273,8 @@ impl<const M: usize> Step for ExclusionSetFuse<M> {
 ///
 /// Witness: both vectors + index. Verifies vector commitments, picks the
 /// slot, checks product nonzero. Outputs `ExclusionHeader(nf, scope)`.
-/// Witness budget: 2M + 1 ≤ 512.
+/// Cost is dominated by two M-sized Pedersen commits — well under the
+/// 8192-constraint per-step budget.
 #[derive(Debug)]
 #[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct ExclusionSetExtract<const M: usize>;
