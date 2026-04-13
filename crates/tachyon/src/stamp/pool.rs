@@ -10,7 +10,6 @@ use crate::primitives::{Anchor, BlockCommit, BlockHeight, PoolCommit};
 
 /// Marker type for PCD headers carrying pool state.
 #[derive(Debug)]
-#[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct PoolHeader;
 
 impl Header for PoolHeader {
@@ -25,7 +24,6 @@ impl Header for PoolHeader {
 
 /// One-time pool chain genesis.
 #[derive(Debug)]
-#[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct PoolSeed;
 
 impl Step for PoolSeed {
@@ -49,7 +47,6 @@ impl Step for PoolSeed {
 
 /// Advances pool state by one block.
 #[derive(Debug)]
-#[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct PoolStep;
 
 impl Step for PoolStep {

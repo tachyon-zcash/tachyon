@@ -1,21 +1,21 @@
 //! Exclusion proof PCD steps.
 //!
-//! Two paths produce [`ExclusionHeader`]:
+//! [`ExclusionHeader`] is produced by two paths:
 //!
-//! - **Single-nullifier**: [`ExclusionLeaf`] + [`ExclusionFuse`]. One tree per
-//!   nullifier. Used by the user for local creation-hiding.
-//! - **Multi-nullifier**: [`ExclusionSetLeaf`] + [`ExclusionSetFuse`] +
-//!   [`ExclusionSetExtract`]. Amortizes the MSM across M nullifiers per
-//!   circuit. Used by the sync service.
+//! - **Per-block, prefix-partitioned**: one [`coverage`](super::coverage) tree
+//!   per block — bare [`CoverageLeaf`](super::coverage::CoverageLeaf)s plus a
+//!   single [`ExclusionLeaf`](super::coverage::ExclusionLeaf) at nf's prefix,
+//!   fused via [`CoverageFuse`](super::coverage::CoverageFuse), finalized by
+//!   [`ExclusionFinalize`](super::coverage::ExclusionFinalize).
+//! - **Batched**: [`ExclusionSetLeaf`] + [`ExclusionSetFuse`] +
+//!   [`ExclusionSetExtract`]. Amortizes M nullifiers per circuit, used by the
+//!   sync service.
 //!
-//! Both paths produce the same [`ExclusionHeader`], consumed by the
-//! binding fuse steps ([`NullifierExclusionFuse`], [`SpendableExclusionFuse`])
-//! which connect exclusion proofs to the spendable path.
+//! [`ExclusionFuse`] remains here for cross-block aggregation: summing
+//! per-block `ExclusionHeader`s into a pool-delta-level `ExclusionHeader`.
 //!
-//! The prover freely partitions tachygrams into subsets (≤ N per leaf
-//! circuit). No consensus-level discriminant — the only binding is that
-//! fused `scope` must equal the PCD-attested pool delta at the consuming
-//! spendable step.
+//! [`NullifierExclusionFuse`] and [`SpendableExclusionFuse`] bind the final
+//! `ExclusionHeader` to the delegation chain or spendable path.
 
 extern crate alloc;
 
@@ -39,7 +39,6 @@ use crate::{
 /// PCD header proving a nullifier is absent from tachygrams identified by
 /// their polynomial commitment `scope`.
 #[derive(Debug)]
-#[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct ExclusionHeader;
 
 impl Header for ExclusionHeader {
@@ -59,61 +58,16 @@ impl Header for ExclusionHeader {
 }
 
 // ---------------------------------------------------------------------------
-// ExclusionLeaf<N> — single-nullifier seed
+// ExclusionFuse — cross-block aggregation of per-block exclusion proofs
 // ---------------------------------------------------------------------------
 
-/// Proves nf ∉ a prover-chosen subset of tachygrams.
+/// Merges two `ExclusionHeader`s for the same nullifier by summing their
+/// scopes.
 ///
-/// Pure seed (no PCD inputs). Builds the polynomial from witness
-/// tachygrams, computes the Pedersen commitment, evaluates at nf via
-/// Horner. Checks evaluation ≠ 0.
-///
-/// The prover freely chooses which tachygrams to place in each leaf.
-/// Binding comes from the downstream sum check: fused `scope` must equal
-/// the PCD-attested pool delta.
+/// Used to aggregate per-block exclusion proofs (each produced by
+/// [`ExclusionFinalize`](super::coverage::ExclusionFinalize)) into a
+/// pool-delta-level exclusion proof. Witness-free.
 #[derive(Debug)]
-#[expect(clippy::module_name_repetitions, reason = "meaningful name")]
-pub struct ExclusionLeaf<const N: usize>;
-
-impl<const N: usize> Step for ExclusionLeaf<N> {
-    type Aux<'source> = ();
-    type Left = ();
-    type Output = ExclusionHeader;
-    type Right = ();
-    type Witness<'source> = (Nullifier, &'source [Tachygram; N]);
-
-    const INDEX: Index = Index::new(22);
-
-    fn witness<'source>(
-        &self,
-        (nf, tachygrams): Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        let nf_fp = Fp::from(nf);
-
-        let roots: Vec<Fp> = tachygrams.iter().map(|tg| Fp::from(*tg)).collect();
-        let coeffs = polynomial::poly_from_roots(&roots);
-
-        // Evaluate: must be nonzero for exclusion.
-        let eval = polynomial::poly_eval(&coeffs, nf_fp);
-        if eval.is_zero().into() {
-            return Err(mock_ragu::Error);
-        }
-
-        let scope = SetCommit::from(polynomial::pedersen_commit(&coeffs));
-        Ok(((nf, scope), ()))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ExclusionFuse — merge two single-nullifier exclusion proofs
-// ---------------------------------------------------------------------------
-
-/// Merges two exclusion proofs for the same nullifier across disjoint
-/// subsets. `scope_merged = left.scope + right.scope`. Witness-free.
-#[derive(Debug)]
-#[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct ExclusionFuse;
 
 impl Step for ExclusionFuse {
@@ -152,7 +106,6 @@ impl Step for ExclusionFuse {
 /// - `scope`: sum of subset polynomial commitments. Same generator basis as
 ///   `pool_commit`.
 #[derive(Debug)]
-#[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct ExclusionSetHeader<const M: usize>;
 
 impl<const M: usize> Header for ExclusionSetHeader<M> {
@@ -177,7 +130,6 @@ impl<const M: usize> Header for ExclusionSetHeader<M> {
 
 /// Evaluates one subset's polynomial at M nullifiers. Pure seed.
 #[derive(Debug)]
-#[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct ExclusionSetLeaf<const N: usize, const M: usize>;
 
 impl<const N: usize, const M: usize> Step for ExclusionSetLeaf<N, M> {
@@ -220,7 +172,6 @@ impl<const N: usize, const M: usize> Step for ExclusionSetLeaf<N, M> {
 /// Witness: both product vectors. Verifies commitments, multiplies
 /// component-wise (Fp has no zero divisors), sums scope.
 #[derive(Debug)]
-#[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct ExclusionSetFuse<const M: usize>;
 
 impl<const M: usize> Step for ExclusionSetFuse<M> {
@@ -276,7 +227,6 @@ impl<const M: usize> Step for ExclusionSetFuse<M> {
 /// Cost is dominated by two M-sized Pedersen commits — well under the
 /// 8192-constraint per-step budget.
 #[derive(Debug)]
-#[expect(clippy::module_name_repetitions, reason = "meaningful name")]
 pub struct ExclusionSetExtract<const M: usize>;
 
 impl<const M: usize> Step for ExclusionSetExtract<M> {

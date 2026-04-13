@@ -13,16 +13,19 @@ use crate::{
     action::Action,
     primitives::{ActionDigest, ActionDigestError, Tachygram},
     stamp::{
-        block::{BlockBindPool, BlockSubsetEmpty, BlockSubsetFuse, BlockSubsetLeaf},
+        coverage::{
+            CoverageFuse, CoverageLeaf, ExclusionFinalize, ExclusionLeaf, InclusionBindNullifier,
+            InclusionFinalize, InclusionLeaf,
+        },
         delegation::{DelegationSeed, DelegationStep, NullifierStep},
         exclusion::{
-            ExclusionFuse, ExclusionLeaf, ExclusionSetExtract, ExclusionSetFuse, ExclusionSetLeaf,
+            ExclusionFuse, ExclusionSetExtract, ExclusionSetFuse, ExclusionSetLeaf,
             NullifierExclusionFuse, SpendableExclusionFuse,
         },
         header::{MergeStamp, OutputStamp, SpendStamp, StampLift},
         pool::{PoolSeed, PoolStep},
         spend::{SpendBind, SpendNullifier, SpendNullifierFuse},
-        spendable::{SpendableEpochLift, SpendableInit, SpendableLift, SpendableRollover},
+        spendable::{SpendableEpochLift, SpendableLift, SpendableRollover},
     },
 };
 
@@ -69,8 +72,6 @@ lazy_static! {
             .expect("register PoolStep")
             .register(SpendBind)
             .expect("register SpendBind")
-            .register(SpendableInit::<BLOCK_POLY_N>)
-            .expect("register SpendableInit")
             .register(SpendableLift)
             .expect("register SpendableLift")
             .register(SpendableRollover)
@@ -85,8 +86,20 @@ lazy_static! {
             .expect("register MergeStamp")
             .register(StampLift)
             .expect("register StampLift")
+            .register(CoverageLeaf::<BLOCK_POLY_N>)
+            .expect("register CoverageLeaf")
+            .register(InclusionLeaf::<BLOCK_POLY_N>)
+            .expect("register InclusionLeaf")
             .register(ExclusionLeaf::<BLOCK_POLY_N>)
             .expect("register ExclusionLeaf")
+            .register(CoverageFuse)
+            .expect("register CoverageFuse")
+            .register(InclusionFinalize)
+            .expect("register InclusionFinalize")
+            .register(InclusionBindNullifier)
+            .expect("register InclusionBindNullifier")
+            .register(ExclusionFinalize)
+            .expect("register ExclusionFinalize")
             .register(ExclusionFuse)
             .expect("register ExclusionFuse")
             .register(ExclusionSetLeaf::<BLOCK_POLY_N, BATCH_M>)
@@ -99,14 +112,6 @@ lazy_static! {
             .expect("register NullifierExclusionFuse")
             .register(SpendableExclusionFuse)
             .expect("register SpendableExclusionFuse")
-            .register(BlockSubsetLeaf::<BLOCK_POLY_N>)
-            .expect("register BlockSubsetLeaf")
-            .register(BlockSubsetEmpty)
-            .expect("register BlockSubsetEmpty")
-            .register(BlockSubsetFuse)
-            .expect("register BlockSubsetFuse")
-            .register(BlockBindPool)
-            .expect("register BlockBindPool")
             .finalize()
             .expect("finalize")
     };

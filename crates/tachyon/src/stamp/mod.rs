@@ -11,10 +11,11 @@
 //! public data and passes them as the header to Ragu `verify()`.
 
 #![allow(clippy::type_complexity, reason = "todo")]
+#![allow(clippy::module_name_repetitions, reason = "many exceptions")]
 
 extern crate alloc;
 
-pub mod block;
+pub mod coverage;
 pub mod delegation;
 pub mod exclusion;
 pub mod header;
