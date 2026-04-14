@@ -14,8 +14,8 @@ use crate::{
     primitives::{ActionDigest, ActionDigestError, Tachygram},
     stamp::{
         coverage::{
-            CoverageFuse, CoverageLeaf, ExclusionFinalize, ExclusionLeaf, InclusionBindNullifier,
-            InclusionFinalize, InclusionLeaf,
+            CoverageEmpty, CoverageFuse, CoverageLeaf, ExclusionFinalize, ExclusionLeaf,
+            InclusionBindNullifier, InclusionFinalize, InclusionLeaf,
         },
         delegation::{DelegationSeed, DelegationStep, NullifierStep},
         exclusion::{
@@ -30,10 +30,10 @@ use crate::{
 };
 
 /// Per-step subset size for `SpendableInit` and exclusion leaves.
-pub(crate) const BLOCK_POLY_N: usize = 64;
+pub(crate) const BLOCK_POLY_SIZE: usize = 64;
 
 /// Fixed nullifier batch size for the sync-service exclusion set path.
-pub(crate) const BATCH_M: usize = 64;
+pub(crate) const BATCH_POLY_SIZE: usize = 64;
 
 /// Compute the raw Fp product accumulator over action digests.
 pub fn compute_action_acc(actions: &[Action]) -> Result<Fp, ActionDigestError> {
@@ -86,12 +86,14 @@ lazy_static! {
             .expect("register MergeStamp")
             .register(StampLift)
             .expect("register StampLift")
-            .register(CoverageLeaf::<BLOCK_POLY_N>)
+            .register(CoverageLeaf::<BLOCK_POLY_SIZE>)
             .expect("register CoverageLeaf")
-            .register(InclusionLeaf::<BLOCK_POLY_N>)
+            .register(InclusionLeaf::<BLOCK_POLY_SIZE>)
             .expect("register InclusionLeaf")
-            .register(ExclusionLeaf::<BLOCK_POLY_N>)
+            .register(ExclusionLeaf::<BLOCK_POLY_SIZE>)
             .expect("register ExclusionLeaf")
+            .register(CoverageEmpty)
+            .expect("register CoverageEmpty")
             .register(CoverageFuse)
             .expect("register CoverageFuse")
             .register(InclusionFinalize)
@@ -102,11 +104,11 @@ lazy_static! {
             .expect("register ExclusionFinalize")
             .register(ExclusionFuse)
             .expect("register ExclusionFuse")
-            .register(ExclusionSetLeaf::<BLOCK_POLY_N, BATCH_M>)
+            .register(ExclusionSetLeaf::<BLOCK_POLY_SIZE, BATCH_POLY_SIZE>)
             .expect("register ExclusionSetLeaf")
-            .register(ExclusionSetFuse::<BATCH_M>)
+            .register(ExclusionSetFuse::<BATCH_POLY_SIZE>)
             .expect("register ExclusionSetFuse")
-            .register(ExclusionSetExtract::<BATCH_M>)
+            .register(ExclusionSetExtract::<BATCH_POLY_SIZE>)
             .expect("register ExclusionSetExtract")
             .register(NullifierExclusionFuse)
             .expect("register NullifierExclusionFuse")

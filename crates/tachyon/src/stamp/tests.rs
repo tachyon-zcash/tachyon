@@ -16,8 +16,9 @@ use crate::{
     },
     stamp::{
         coverage::{
-            Claim, CoverageFuse, CoverageHeader, CoverageLeaf, ExclusionFinalize, ExclusionLeaf,
-            InclusionBindNullifier, InclusionBoundHeader, InclusionFinalize, InclusionLeaf, Prefix,
+            Claim, CoverageEmpty, CoverageFuse, CoverageHeader, CoverageLeaf, ExclusionFinalize,
+            ExclusionLeaf, InclusionBindNullifier, InclusionBoundHeader, InclusionFinalize,
+            InclusionLeaf, Prefix,
         },
         exclusion::{
             ExclusionFuse, ExclusionHeader, ExclusionSetExtract, ExclusionSetFuse,
@@ -1272,6 +1273,7 @@ fn coverage_fuse_rejects_double_inclusion() {
 /// matches; the sibling is attested as bare `CoverageLeaf`. `CoverageFuse`
 /// merges them; `InclusionFinalize` + `InclusionBindNullifier` close out.
 #[test]
+#[expect(clippy::too_many_lines, reason = "multi-sub-block integration test")]
 fn spendable_init_multi_subblock() {
     let mut rng = StdRng::seed_from_u64(800);
     let sk = private::SpendingKey::from([0x42u8; 32]);
@@ -1472,4 +1474,182 @@ fn inclusion_finalize_rejects_wrong_commit() {
         result.is_err(),
         "inclusion finalize must reject when coverage commit != block_commit"
     );
+}
+
+// ---- CoverageEmpty ----
+
+/// `CoverageEmpty` seeds identity at any prefix depth.
+#[test]
+fn coverage_empty_seeds_identity() {
+    use mock_ragu::Step as _;
+
+    for depth in [0u8, 1, 3, 8] {
+        let prefix = Prefix::new(0, depth).unwrap();
+        let ((commit, out_prefix, claim), ()) =
+            CoverageEmpty.witness(prefix, (), ()).expect("should succeed");
+        assert_eq!(commit, SetCommit::identity());
+        assert_eq!(out_prefix, prefix);
+        assert_eq!(claim, Claim::None);
+    }
+}
+
+/// Depth-1 inclusion proof where one side is a real `InclusionLeaf` and
+/// the sibling is a `CoverageEmpty` jump-start. The block only has
+/// tachygrams at cm's prefix; the sibling prefix is genuinely empty.
+#[test]
+fn inclusion_with_jump_started_sibling() {
+    let mut rng = StdRng::seed_from_u64(900);
+    let sk = private::SpendingKey::from([0x42u8; 32]);
+    let pak = sk.derive_proof_private();
+    let nk = *pak.nk();
+    let app = &*PROOF_SYSTEM;
+
+    let note = Note {
+        pk: sk.derive_payment_key(),
+        value: note::Value::from(500u64),
+        psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+        rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+    };
+    let note_id = note.id(&nk);
+    let epoch = Epoch(0);
+
+    let cm = note.commitment();
+    let cm_fp = Fp::from(cm);
+    let cm_low_bit = u64::from(cm_fp.to_repr()[0] & 1);
+    let cm_prefix = Prefix::new(cm_low_bit, 1).unwrap();
+    let sibling_prefix = Prefix::new(cm_low_bit ^ 1, 1).unwrap();
+
+    let cm_tg = Tachygram::from(cm_fp);
+    let cm_sub_block = pad_prefix_padded::<TEST_N>(&[cm_tg], cm_prefix);
+
+    // block_commit = cm_sub_commit + identity (empty sibling).
+    let cm_sub_commit = subset_commit_helper(&cm_sub_block);
+    let block_commit = BlockCommit(cm_sub_commit);
+    let pool_commit = PoolCommit(SetCommit::identity() + block_commit.0);
+
+    let anchor = Anchor {
+        block_height: BlockHeight(0),
+        block_commit,
+        pool_commit,
+        block_chain: BlockChainHash::genesis(BlockHeight(0)),
+        epoch_chain: EpochChainHash::genesis(BlockHeight(0)),
+    };
+
+    let (pool_proof, ()) = app
+        .seed(&mut rng, &pool::PoolSeed, BlockHeight(0))
+        .expect("pool seed");
+    let pool_pcd = pool_proof.carry::<pool::PoolHeader>(anchor);
+
+    // InclusionLeaf at cm's prefix.
+    let (incl_proof, ()) = app
+        .seed(
+            &mut rng,
+            &InclusionLeaf::<TEST_N>,
+            (cm_prefix, &cm_sub_block, 0usize, note, nk),
+        )
+        .expect("inclusion leaf");
+    let incl_pcd = incl_proof.carry::<CoverageHeader>((
+        cm_sub_commit,
+        cm_prefix,
+        Claim::Inclusion { cm: cm_fp, note_id },
+    ));
+
+    // CoverageEmpty jump-start at sibling prefix.
+    let (empty_proof, ()) = app
+        .seed(&mut rng, &CoverageEmpty, sibling_prefix)
+        .expect("coverage empty");
+    let empty_pcd = empty_proof.carry::<CoverageHeader>((
+        SetCommit::identity(),
+        sibling_prefix,
+        Claim::None,
+    ));
+
+    // CoverageFuse: left is prefix-0, right is prefix-1.
+    let (left_pcd, right_pcd) = if cm_low_bit == 0 {
+        (incl_pcd, empty_pcd)
+    } else {
+        (empty_pcd, incl_pcd)
+    };
+    let (fused_proof, ()) = app
+        .fuse(&mut rng, &CoverageFuse, (), left_pcd, right_pcd)
+        .expect("coverage fuse");
+    let fused_pcd = fused_proof.carry::<CoverageHeader>((
+        cm_sub_commit, // identity + cm_sub_commit
+        Prefix::EMPTY,
+        Claim::Inclusion { cm: cm_fp, note_id },
+    ));
+
+    // InclusionFinalize + InclusionBindNullifier.
+    let (bound_proof, ()) = app
+        .fuse(&mut rng, &InclusionFinalize, (), fused_pcd, pool_pcd)
+        .expect("inclusion finalize");
+    let bound_pcd = bound_proof.carry::<InclusionBoundHeader>((note_id, cm_fp, anchor));
+
+    let (nf_proof, nf_hdr, _) =
+        build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch);
+    let nf_pcd = nf_proof.carry::<delegation::NullifierHeader>(nf_hdr);
+    let (spendable_proof, ()) = app
+        .fuse(&mut rng, &InclusionBindNullifier, (), bound_pcd, nf_pcd)
+        .expect("inclusion bind nullifier");
+
+    let spendable_hdr = (note_id, nf_hdr.0, anchor);
+    let spendable_pcd = spendable_proof.carry::<SpendableHeader>(spendable_hdr);
+    app.rerandomize(spendable_pcd, &mut rng)
+        .expect("rerandomize");
+}
+
+/// `CoverageEmpty` at a populated prefix causes `InclusionFinalize` to
+/// reject because the root commit misses the tachygrams at that prefix.
+#[test]
+fn coverage_empty_misused_fails_at_terminal() {
+    use mock_ragu::Step as _;
+
+    // A block whose real block_commit includes tachygrams at both prefixes.
+    let tgs_0 = pad_prefix_padded::<TEST_N>(
+        &[Tachygram::from(Fp::from(2u64))], // low bit 0
+        Prefix::new(0, 1).unwrap(),
+    );
+    let tgs_1 = pad_prefix_padded::<TEST_N>(
+        &[Tachygram::from(Fp::from(3u64))], // low bit 1
+        Prefix::new(1, 1).unwrap(),
+    );
+    let commit_0 = subset_commit_helper(&tgs_0);
+    let commit_1 = subset_commit_helper(&tgs_1);
+    let real_block_commit = BlockCommit(commit_0 + commit_1);
+
+    let anchor = Anchor {
+        block_height: BlockHeight(0),
+        block_commit: real_block_commit,
+        pool_commit: PoolCommit(SetCommit::identity() + real_block_commit.0),
+        block_chain: BlockChainHash::genesis(BlockHeight(0)),
+        epoch_chain: EpochChainHash::genesis(BlockHeight(0)),
+    };
+
+    // Attacker builds a tree that jump-starts prefix-1 as empty instead of
+    // using the real tachygrams. The fused commit will be commit_0 + identity
+    // ≠ real_block_commit. InclusionFinalize rejects.
+    let fused_commit = commit_0; // commit_0 + identity
+    let cm_fp = Fp::from(2u64);
+    let note_id = NoteId::from(Fp::from(99u64)); // dummy
+
+    let result = InclusionFinalize.witness(
+        (),
+        (
+            fused_commit,
+            Prefix::EMPTY,
+            Claim::Inclusion { cm: cm_fp, note_id },
+        ),
+        anchor,
+    );
+    assert!(
+        result.is_err(),
+        "misused CoverageEmpty must cause terminal commit mismatch"
+    );
+}
+
+/// Helper: compute `SetCommit` from a tachygram array.
+fn subset_commit_helper<const N: usize>(tachygrams: &[Tachygram; N]) -> SetCommit {
+    let roots: Vec<Fp> = tachygrams.iter().map(|tg| Fp::from(*tg)).collect();
+    let coeffs = polynomial::poly_from_roots(&roots);
+    SetCommit::from(polynomial::pedersen_commit(&coeffs))
 }

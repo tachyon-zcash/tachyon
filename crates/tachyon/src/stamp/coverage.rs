@@ -402,6 +402,40 @@ impl Step for CoverageFuse {
 }
 
 // ---------------------------------------------------------------------------
+// CoverageEmpty — jump-start an empty subtree at any prefix depth
+// ---------------------------------------------------------------------------
+
+/// Seeds a `CoverageHeader` carrying the identity commit at any prefix.
+///
+/// Lets the prover assert "this subtree at prefix P is empty" in one step,
+/// avoiding the need to build real leaves for unpopulated partition elements.
+/// Soundness is preserved: the terminal commit-equality check
+/// (`InclusionFinalize` / pool-delta checks) still forces the tree's root
+/// to equal the consensus-attested total.
+#[derive(Debug)]
+pub struct CoverageEmpty;
+
+impl Step for CoverageEmpty {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = CoverageHeader;
+    type Right = ();
+    type Witness<'source> = Prefix;
+
+    const INDEX: Index = Index::new(32);
+
+    fn witness<'source>(
+        &self,
+        witness: Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        let prefix = witness;
+        Ok(((SetCommit::identity(), prefix, Claim::None), ()))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // InclusionFinalize — turn a fully-covered inclusion tree into SpendableHeader
 // ---------------------------------------------------------------------------
 
