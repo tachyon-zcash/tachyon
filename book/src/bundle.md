@@ -45,22 +45,25 @@ It contains:
 - `tachygrams` - nullifiers and commitments for each action
 
 [^protocol-spec]: The [Zcash Protocol Specification](https://zips.z.cash/protocol/protocol.pdf) lists the cryptographic properties a shielded pool must preserve.
-[^anchor]: Unlike Sapling/Orchard anchors which reference a single tree root, Tachyon anchors represent epoch *ranges* used for non-inclusion proofs. See [Tachyaction at a Distance §5](https://seanbowe.com/blog/tachyaction-at-a-distance/#5).
+[^anchor]: Unlike Sapling/Orchard anchors which reference a single tree root, Tachyon anchors represent epoch *ranges* used for non-inclusion proofs. See [Tachyaction at a Distance section 5](https://seanbowe.com/blog/tachyaction-at-a-distance/#5).
 
 The proof establishes:
 
-- tachygrams are not duplicated within the epoch range
+- each spend note was included in the pool (cm-inclusion) and unspent through the anchor (nf non-membership)
 - tachygrams are correctly bound to action keys
-- action balance effect matches pool balance effect
+- nullifiers are correctly derived from note keys
+
+Tachygram non-duplication is enforced by consensus, not by the proof.
+Value balance is enforced by the binding signature, not by the proof.
 
 The nullifier derivation uses a Poseidon-based GGM tree PRF (domain `Tachyon-NfDerive`):
 
-$$ \mathsf{nf} = F_{\mathsf{nk}}(\Psi \parallel \tau) $$
+$$ \mathsf{nf} = F_{\mathsf{nk}}(\Psi \parallel \text{flavor}) $$
 
 where
 
 - $\Psi$ is the nullifier trapdoor[^commitment]
-- $\tau$ is an epoch range
+- flavor is the epoch
 
 [^commitment]: User-controlled randomness [commitment trapdoor](https://zips.z.cash/protocol/protocol.pdf#commitment)
 
@@ -92,7 +95,7 @@ style anchor fill:#f0fff040
 
 style tachystamp fill:#7fff0040
 
-subgraph shielded_data["tachyon::ShieldedData"]
+subgraph shielded_data["tachyon::Bundle"]
 
     subgraph tachyaction_vec[" "]
 

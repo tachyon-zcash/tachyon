@@ -47,9 +47,11 @@ The PCD header carries two $\mathbb{F}_p$ accumulators and anchor data:
 | ----- | ---- | ----------- |
 | `action_acc` | $\mathbb{F}_p$ | Raw product of action digests |
 | `tachygram_acc` | $\mathbb{F}_p$ | Raw product of tachygrams |
-| `anchor_height` | `u32` | Block height of the anchor |
-| `anchor_commit` | $\mathbb{F}_p$ | Pool commitment at the anchor height |
-| `epoch_chain_hash` | $\mathbb{F}_p$ | Chain hash linking consecutive pool states |
+| `block_height` | `BlockHeight` | Block height in the pool chain |
+| `block_commit` | Vesta point | Per-block tachygram set commitment |
+| `pool_commit` | Vesta point | Cumulative epoch tachygram commitment |
+| `block_chain` | $\mathbb{F}_q$ | Running block chain hash `H(prev, block_commit)` |
+| `epoch_chain` | $\mathbb{F}_q$ | Running epoch chain hash `H(prev, pool_commit)` |
 
 Both accumulators are raw $\mathbb{F}_p$ products.
 Each action is digested (Poseidon, domain-separated) into a field element,
@@ -83,7 +85,7 @@ tachygrams $tg_i$, the anchor, and the proof bytes.
 2. **No duplicate tachygrams**: check the tachygram list for repeats
 3. **Action sigs**: verify each $sig_i$ against $rk_i$ (RedPallas)
 4. **Binding sig**: verify against $\sum cv_i$
-5. **Reconstruct**: build `(action_acc, tachygram_acc, anchor_height, anchor_commit, epoch_chain_hash)`
+5. **Reconstruct**: build `(action_acc, tachygram_acc, block_height, block_commit, pool_commit, block_chain, epoch_chain)`
    - **Recompute action_acc**: $\prod_i \text{Poseidon}(\mathsf{cv}_i \| \mathsf{rk}_i)$
    - **Recompute tachygram_acc**: $\prod_i \mathsf{tg}_i$
 6. **Verify proof**: call Ragu `verify(Pcd { proof, data: header })`
@@ -115,7 +117,7 @@ These are different products.
 
 An aggregator who merged overlapping stamps has exactly two options:
 
-**Option A** — list tachygrams without duplicates $\{a, b, c\}$:
+**Option A** -- list tachygrams without duplicates $\{a, b, c\}$:
 
 $$\text{reconstructed acc} = a \cdot b \cdot c$$
 $$\text{proof's actual acc} = a \cdot b^2 \cdot c$$
@@ -123,7 +125,7 @@ $$\text{proof's actual acc} = a \cdot b^2 \cdot c$$
 Proof doesn't verify against the reconstructed header.
 Rejected.
 
-**Option B** — list tachygrams with duplicates $\{a, b, b, c\}$:
+**Option B** -- list tachygrams with duplicates $\{a, b, b, c\}$:
 
 $$\text{reconstructed acc} = a \cdot b^2 \cdot c$$
 $$\text{proof's actual acc} = a \cdot b^2 \cdot c$$
@@ -162,7 +164,7 @@ An extraction circuit may be able to remove overlap before merging.
 ### Implications
 
 - **No in-circuit disjointness check needed.** The accumulator's binding property + data availability + duplicate detection is sufficient.
-- **Data availability is a hard requirement.** Tachygrams must be listed in the block — without the list, the verifier can't reconstruct the header.
+- **Data availability is a hard requirement.** Tachygrams must be listed in the block -- without the list, the verifier can't reconstruct the header.
 - **Mempool policy is not security.** Aggregators and miners may be adversarial.
 
   Only proof soundness + consensus rules (no duplicate tachygrams) provide guarantees.

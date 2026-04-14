@@ -74,10 +74,11 @@ Then during authorization, the custody device is able to confirm correctness of 
 The bundle commitment is a digest of the bundle's effect.
 
 $$ d_i = \text{Poseidon}_\text{Tachyon-ActnDgst}(\mathsf{cv}_i \| \mathsf{rk}_i) $$
-$$ \text{BLAKE2b-512}_\text{Tachyon-BndlHash}( d_1 \| d_2 \| \ldots \| d_n \| \mathsf{value\_balance}) $$
+$$ \mathsf{action\_acc} = \prod_i d_i $$
+$$ \text{BLAKE2b-512}_\text{Tachyon-BndlHash}(\mathsf{action\_acc} \| \mathsf{value\_balance}) $$
 
-The bundle commitment hashes the individual action digests in order.
-The same action digests are used as polynomial roots in the PCD stamp header's accumulator commitment, binding the stamp to the same set of actions as the signatures.
+The action accumulator is an $\mathbb{F}_p$ product of action digests -- order-independent by construction.
+The same accumulator appears in the PCD stamp header, binding the stamp to the same set of actions as the signatures.
 
 The stamp is excluded because it is stripped during [aggregation](./aggregation.md).
 
@@ -275,7 +276,8 @@ par Authorizing
             end
             note over Custody: action_digest_i = Poseidon(cv || rk)
         end
-        note over Custody: bundle_commitment = Blake2b(d_1 || ... || d_n || value_balance)
+        note over Custody: action_acc = product of action_digest_i
+        note over Custody: bundle_commitment = Blake2b(action_acc || value_balance)
         note over Custody: compute sighash
 
         break
@@ -345,7 +347,8 @@ destroy User
 User ->> Consensus: transaction
 break
     note over Consensus: action_digest_i = Poseidon(cv_i || rk_i)
-    note over Consensus: bundle_commitment = Blake2b(d_1 || ... || d_n || value_balance)
+    note over Consensus: action_acc = product of action_digest_i
+    note over Consensus: bundle_commitment = Blake2b(action_acc || value_balance)
     note over Consensus: compute sighash
     note over Consensus: check action sigs against sighash
     note over Consensus: check binding sig against sighash

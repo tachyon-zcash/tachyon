@@ -15,7 +15,8 @@
 //!   construction, so no evaluation is needed elsewhere in the tree.
 //!
 //! Terminal steps consume a root-prefix [`CoverageHeader`]:
-//! - [`InclusionFinalize`] + `PoolHeader` + `NullifierHeader` →
+//! - [`InclusionFinalize`] × `PoolHeader` → [`InclusionBoundHeader`], then
+//!   [`InclusionBindNullifier`] × `NullifierHeader` →
 //!   [`SpendableHeader`](super::spendable::SpendableHeader)
 //! - [`ExclusionFinalize`] →
 //!   [`ExclusionHeader`](super::exclusion::ExclusionHeader)
