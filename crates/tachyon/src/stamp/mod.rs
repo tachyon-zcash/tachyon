@@ -11,6 +11,8 @@
 //! commitments from public data and passes them as the header to Ragu
 //! `verify()`.
 
+#![allow(clippy::type_complexity, reason = "todo")]
+
 extern crate alloc;
 
 pub mod proof;
@@ -18,24 +20,70 @@ pub mod proof;
 use alloc::vec::Vec;
 use core::{error::Error, fmt};
 
+use core2::io::{self, Read, Write};
 use lazy_static::lazy_static;
-use mock_ragu::{Application, ApplicationBuilder};
+use mock_ragu::{Application, ApplicationBuilder, proof::PROOF_SIZE_COMPRESSED};
 pub use proof::Proof;
 use rand_core::CryptoRng;
 
-use self::proof::{ActionStep, ActionWitness, MergeStep, MergeWitness, StampHeader};
+use self::proof::{ActionStep, MergeStep, MergeWitness, StampHeader};
 use crate::{
     ActionDigest, Epoch,
-    action::Action,
-    keys::ProofAuthorizingKey,
+    entropy::{ActionRandomizer, Witness},
+    keys::{ProofAuthorizingKey, public},
+    note::Note,
     primitives::{ActionDigestError, Anchor, Tachygram, multiset::Multiset},
-    witness::ActionPrivate,
+    value,
 };
 
-/// Marker for the absence of a stamp.
+/// Marker for a bundle that has not yet been proven.
+///
+/// This is the initial state for a newly constructed bundle.
+/// Proving produces a [`Stamp`]; stripping produces an [`Adjunct`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Stampless;
+pub struct Unproven;
+
+/// Marker for a stripped bundle that depends on an aggregate stamp.
+///
+/// Carries an optional index referencing the stamped bundle on the surrounding
+/// block that covers this bundle's tachygrams.  Assigned by the miner during
+/// block assembly; defaults to `None`.
+///
+/// Serialization will fail if the index has not been assigned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Adjunct(Option<u8>);
+
+impl Adjunct {
+    /// Create a new `Adjunct` with the given `stamp_index`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is greater than 0xFC.
+    #[must_use]
+    pub fn new(stamp_index: u8) -> Self {
+        assert!(stamp_index <= 0xFC, "stamp index must be <= 0xFC");
+        Self(Some(stamp_index))
+    }
+
+    /// Set `stamp_index` to associate a stripped adjunct with an aggregate
+    /// stamp in the same block.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is greater than 0xFC.
+    pub fn set_index(&mut self, set_index: u8) {
+        assert!(set_index <= 0xFC, "stamp index must be <= 0xFC");
+        self.0 = Some(set_index);
+    }
+
+    /// Get the `stamp_index` associated with this stripped adjunct.
+    ///
+    /// Returns `None` if the `stamp_index` has not been assigned.
+    #[must_use]
+    pub const fn get_index(&self) -> Option<u8> {
+        self.0
+    }
+}
 
 /// Error during stamp verification.
 #[derive(Clone, Debug)]
@@ -60,6 +108,109 @@ impl fmt::Display for VerificationError {
 
 impl Error for VerificationError {}
 
+/// Everything needed to produce a [`Stamp`].
+///
+/// Each action is described by a public descriptor `(cv, rk)` and a
+/// private witness `(alpha, note, rcv)`. The `prove` method generates
+/// a leaf proof for each action, then merges pairwise into a single
+/// stamp.
+///
+/// Construct via [`Plan::new`] with pre-derived action witnesses, or
+/// via [`bundle::Plan::stamp_plan`](crate::bundle::Plan::stamp_plan)
+/// for the typed single-party path.
+#[derive(Clone, Debug)]
+pub struct Plan {
+    actions: Vec<(
+        (value::Commitment, public::ActionVerificationKey),
+        (ActionRandomizer<Witness>, Note, value::CommitmentTrapdoor),
+    )>,
+    anchor: Anchor,
+    epoch: Epoch,
+}
+
+impl Plan {
+    /// Create a stamp plan from paired action descriptors and witnesses.
+    ///
+    /// The caller is responsible for deriving alpha from theta (or
+    /// obtaining it through other means).
+    #[must_use]
+    pub const fn new(
+        actions: Vec<(
+            (value::Commitment, public::ActionVerificationKey),
+            (ActionRandomizer<Witness>, Note, value::CommitmentTrapdoor),
+        )>,
+        anchor: Anchor,
+        epoch: Epoch,
+    ) -> Self {
+        Self {
+            actions,
+            anchor,
+            epoch,
+        }
+    }
+
+    /// Execute the proof, producing a [`Stamp`].
+    ///
+    /// Proves each action as a leaf, then merges pairwise into a single
+    /// stamp covering all actions.
+    pub fn prove<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        pak: &ProofAuthorizingKey,
+    ) -> Result<Stamp, ProveError> {
+        let mut stamps_and_accs: Vec<(Stamp, Multiset<ActionDigest>)> = Vec::new();
+
+        for (descriptor, witness) in self.actions {
+            let (stamp, (action_acc, _tg_acc)) =
+                Stamp::prove_action(rng, descriptor, witness, self.anchor, self.epoch, pak)
+                    .map_err(|_err| ProveError::ProofFailed(stamps_and_accs.len()))?;
+
+            stamps_and_accs.push((stamp, action_acc));
+        }
+
+        // TODO: support zero actions
+        if stamps_and_accs.is_empty() {
+            return Err(ProveError::NoActions);
+        }
+
+        while stamps_and_accs.len() > 1 {
+            let (right_stamp, right_acc) = stamps_and_accs.pop().ok_or(ProveError::NoActions)?;
+            let (left_stamp, left_acc) = stamps_and_accs.pop().ok_or(ProveError::NoActions)?;
+            let (merged, (merged_acc, _tg_acc)) =
+                Stamp::prove_merge(rng, left_stamp, left_acc, right_stamp, right_acc)
+                    .map_err(|_err| ProveError::MergeFailed)?;
+            stamps_and_accs.push((merged, merged_acc));
+        }
+
+        let (stamp, _acc) = stamps_and_accs.pop().ok_or(ProveError::NoActions)?;
+        Ok(stamp)
+    }
+}
+
+/// Errors that can occur while proving a stamp.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ProveError {
+    /// The plan has no actions to prove.
+    NoActions,
+    /// Proof creation failed for the action at this index.
+    ProofFailed(usize),
+    /// Stamp merge failed.
+    MergeFailed,
+}
+
+impl fmt::Display for ProveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            | Self::NoActions => write!(f, "no actions to prove"),
+            | Self::ProofFailed(idx) => write!(f, "proof failed at action {idx}"),
+            | Self::MergeFailed => write!(f, "stamp merge failed"),
+        }
+    }
+}
+
+impl Error for ProveError {}
+
 /// A stamp carrying tachygrams, anchor, and proof.
 ///
 /// Present in [`Stamped`](crate::Stamped) bundles.
@@ -69,7 +220,6 @@ impl Error for VerificationError {}
 /// here — the verifier reconstructs it from public data and passes it as
 /// the header to Ragu `verify()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     ///
@@ -90,11 +240,11 @@ impl Stamp {
     /// The proof is rerandomized before returning.
     ///
     /// Leaf stamps are combined via [`prove_merge`](Self::prove_merge).
-    #[expect(clippy::type_complexity, reason = "deal with it")]
+    #[expect(clippy::type_complexity, reason = "PCD accumulators")]
     pub fn prove_action<RNG: CryptoRng>(
         rng: &mut RNG,
-        witness: &ActionPrivate,
-        action: &Action,
+        (cv, rk): (value::Commitment, public::ActionVerificationKey),
+        (alpha, note, rcv): (ActionRandomizer<Witness>, Note, value::CommitmentTrapdoor),
         anchor: Anchor,
         epoch: Epoch,
         pak: &ProofAuthorizingKey,
@@ -103,11 +253,9 @@ impl Stamp {
         let (proof, (tachygram, action_acc, tachygram_acc)) = app.seed(
             rng,
             &ActionStep,
-            ActionWitness {
-                action,
-                alpha: witness.alpha,
-                note: witness.note,
-                rcv: witness.rcv,
+            proof::ActionWitness {
+                descriptor: (cv, rk),
+                secrets: (alpha, note, rcv),
                 anchor,
                 epoch,
                 pak,
@@ -237,7 +385,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        action,
+        action, effect,
         entropy::ActionEntropy,
         keys::private,
         note::{self, Note},
@@ -248,7 +396,7 @@ mod tests {
         rng: &mut StdRng,
         sk: &private::SpendingKey,
         value_amount: u64,
-    ) -> (Action, ActionPrivate) {
+    ) -> action::Plan<effect::Spend> {
         let pak = sk.derive_proof_private();
         let note = Note {
             pk: sk.derive_payment_key(),
@@ -258,22 +406,15 @@ mod tests {
         };
         let rcv = value::CommitmentTrapdoor::random(rng);
         let theta = ActionEntropy::random(rng);
-        let plan = action::Plan::spend(note, theta, rcv, pak.ak());
-
-        let action = Action {
-            cv: plan.cv(),
-            rk: plan.rk,
-            sig: action::Signature::from([0u8; 64]),
-        };
-
-        (action, plan.witness())
+        let derive_rk = { move |alpha| pak.ak().derive_action_public(&alpha) };
+        action::Plan::spend(note, theta, rcv, derive_rk)
     }
 
     fn make_output(
         rng: &mut StdRng,
         sk: &private::SpendingKey,
         value_amount: u64,
-    ) -> (Action, ActionPrivate) {
+    ) -> action::Plan<effect::Output> {
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(value_amount),
@@ -282,15 +423,51 @@ mod tests {
         };
         let rcv = value::CommitmentTrapdoor::random(rng);
         let theta = ActionEntropy::random(rng);
-        let plan = action::Plan::output(note, theta, rcv);
+        action::Plan::output(note, theta, rcv)
+    }
 
-        let action = Action {
-            cv: plan.cv(),
-            rk: plan.rk,
-            sig: action::Signature::from([0u8; 64]),
-        };
+    fn prove_spend(
+        rng: &mut StdRng,
+        plan: &action::Plan<effect::Spend>,
+        anchor: Anchor,
+        epoch: Epoch,
+        pak: &ProofAuthorizingKey,
+    ) -> (Stamp, Multiset<ActionDigest>) {
+        let alpha = plan
+            .theta
+            .randomizer::<effect::Spend>(&plan.note.commitment());
+        let (stamp, (acc, _)) = Stamp::prove_action(
+            rng,
+            (plan.cv(), plan.rk),
+            (alpha.into(), plan.note, plan.rcv),
+            anchor,
+            epoch,
+            pak,
+        )
+        .expect("prove_action");
+        (stamp, acc)
+    }
 
-        (action, plan.witness())
+    fn prove_output(
+        rng: &mut StdRng,
+        plan: &action::Plan<effect::Output>,
+        anchor: Anchor,
+        epoch: Epoch,
+        pak: &ProofAuthorizingKey,
+    ) -> (Stamp, Multiset<ActionDigest>) {
+        let alpha = plan
+            .theta
+            .randomizer::<effect::Output>(&plan.note.commitment());
+        let (stamp, (acc, _)) = Stamp::prove_action(
+            rng,
+            (plan.cv(), plan.rk),
+            (alpha.into(), plan.note, plan.rcv),
+            anchor,
+            epoch,
+            pak,
+        )
+        .expect("prove_action");
+        (stamp, acc)
     }
 
     #[test]
@@ -301,13 +478,12 @@ mod tests {
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action, witness) = make_spend(&mut rng, &sk, 500);
-        let (stamp, _accs) = Stamp::prove_action(&mut rng, &witness, &action, anchor, epoch, &pak)
-            .expect("prove_action");
+        let plan = make_spend(&mut rng, &sk, 500);
+        let (stamp, _acc) = prove_spend(&mut rng, &plan, anchor, epoch, &pak);
 
         stamp
             .verify(
-                &Multiset::try_from([action].as_slice()).expect("valid"),
+                &Multiset::from(ActionDigest::new(plan.cv(), plan.rk).expect("valid")),
                 &mut rng,
             )
             .expect("verify should succeed");
@@ -321,18 +497,16 @@ mod tests {
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action_a, witness_a) = make_spend(&mut rng, &sk, 500);
-        let (stamp, _accs) =
-            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &pak)
-                .expect("prove_action");
+        let spend = make_spend(&mut rng, &sk, 500);
+        let (stamp, _acc) = prove_spend(&mut rng, &spend, anchor, epoch, &pak);
 
-        let (action_b, _witness_b) = make_output(&mut rng, &sk, 200);
+        let output = make_output(&mut rng, &sk, 200);
 
         assert!(
             stamp
                 .verify(
-                    &Multiset::try_from([action_b].as_slice()).expect("valid"),
-                    &mut rng
+                    &Multiset::from(ActionDigest::new(output.cv(), output.rk).expect("valid")),
+                    &mut rng,
                 )
                 .is_err(),
             "verify with wrong action must fail"
@@ -347,25 +521,17 @@ mod tests {
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action_a, witness_a) = make_spend(&mut rng, &sk, 500);
-        let (stamp_a, accs_a) =
-            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &pak)
-                .expect("prove_action a");
+        let spend = make_spend(&mut rng, &sk, 500);
+        let (stamp_a, acc_a) = prove_spend(&mut rng, &spend, anchor, epoch, &pak);
 
-        let (action_b, witness_b) = make_output(&mut rng, &sk, 200);
-        let (stamp_b, accs_b) =
-            Stamp::prove_action(&mut rng, &witness_b, &action_b, anchor, epoch, &pak)
-                .expect("prove_action b");
+        let output = make_output(&mut rng, &sk, 200);
+        let (stamp_b, acc_b) = prove_output(&mut rng, &output, anchor, epoch, &pak);
 
-        let (merged, _merged_accs) =
-            Stamp::prove_merge(&mut rng, stamp_a, accs_a.0, stamp_b, accs_b.0)
-                .expect("prove_merge");
+        let (merged, (merged_acc, _)) =
+            Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("prove_merge");
 
         merged
-            .verify(
-                &Multiset::try_from([action_a, action_b].as_slice()).expect("valid"),
-                &mut rng,
-            )
+            .verify(&merged_acc, &mut rng)
             .expect("merged stamp should verify");
     }
 
@@ -377,30 +543,57 @@ mod tests {
         let anchor = Anchor::from(Fp::ZERO);
         let epoch = Epoch::from(0u32);
 
-        let (action_a, witness_a) = make_spend(&mut rng, &sk, 500);
-        let (stamp_a, accs_a) =
-            Stamp::prove_action(&mut rng, &witness_a, &action_a, anchor, epoch, &pak)
-                .expect("prove_action a");
+        let spend = make_spend(&mut rng, &sk, 500);
+        let (stamp_a, acc_a) = prove_spend(&mut rng, &spend, anchor, epoch, &pak);
 
-        let (action_b, witness_b) = make_output(&mut rng, &sk, 200);
-        let (stamp_b, accs_b) =
-            Stamp::prove_action(&mut rng, &witness_b, &action_b, anchor, epoch, &pak)
-                .expect("prove_action b");
+        let output = make_output(&mut rng, &sk, 200);
+        let (stamp_b, acc_b) = prove_output(&mut rng, &output, anchor, epoch, &pak);
 
-        let (merged, _merged_accs) =
-            Stamp::prove_merge(&mut rng, stamp_a, accs_a.0, stamp_b, accs_b.0)
-                .expect("prove_merge");
+        let (merged, _) =
+            Stamp::prove_merge(&mut rng, stamp_a, acc_a, stamp_b, acc_b).expect("prove_merge");
 
         assert!(
             merged
                 .verify(
-                    &Multiset::try_from([action_a].as_slice()).expect("valid"),
-                    &mut rng
+                    &Multiset::from(ActionDigest::new(spend.cv(), spend.rk).expect("valid")),
+                    &mut rng,
                 )
                 .is_err(),
             "verify with partial actions must fail"
         );
     }
+}
+
+/// The serialized size of a proof, for the `stampTachyon` compactsize.
+pub(crate) const fn proof_serialized_size() -> usize {
+    PROOF_SIZE_COMPRESSED
+}
+
+/// Read a proof of the given byte length.
+pub(crate) fn read_proof_sized<R: Read>(mut reader: R, size: usize) -> io::Result<Proof> {
+    use alloc::boxed::Box;
+
+    if size != PROOF_SIZE_COMPRESSED {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unexpected proof size",
+        ));
+    }
+
+    let mut bytes = alloc::vec![0u8; size];
+    reader.read_exact(&mut bytes)?;
+    let arr: Box<[u8; PROOF_SIZE_COMPRESSED]> = bytes
+        .into_boxed_slice()
+        .try_into()
+        .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "proof buffer wrong size"))?;
+    Proof::try_from(arr.as_ref())
+        .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding"))
+}
+
+/// Write a proof's raw bytes (without length prefix).
+pub(crate) fn write_proof<W: Write>(mut writer: W, proof: &Proof) -> io::Result<()> {
+    let bytes = proof.serialize();
+    writer.write_all(bytes.as_ref())
 }
 
 lazy_static! {

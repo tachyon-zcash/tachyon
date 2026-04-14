@@ -19,8 +19,9 @@
 //!
 //! ## Proving
 //!
-//! The prover supplies an [`ActionPrivate`] per action, containing private
-//! inputs that the circuit checks against the public action and tachygram.
+//! The prover supplies a witness tuple `(alpha, note, rcv)` per action,
+//! containing private inputs that the circuit checks against the public
+//! action and tachygram.
 
 extern crate alloc;
 
@@ -33,9 +34,8 @@ use mock_ragu::{self, Header, Index, Step, Suffix};
 use pasta_curves::{EqAffine, Fp, group::GroupEncoding as _};
 
 use crate::{
-    action::Action,
     entropy::{ActionRandomizer, Witness},
-    keys::{ProofAuthorizingKey, private::ActionSigningKey},
+    keys::{ProofAuthorizingKey, private::ActionSigningKey, public},
     note::Note,
     primitives::{
         ActionDigest, Anchor, Epoch, Tachygram, effect,
@@ -76,14 +76,10 @@ impl Header for StampHeader {
 
 /// Witness data for a single action proof.
 pub(crate) struct ActionWitness<'action> {
-    /// The authorized action (cv, rk, sig).
-    pub(crate) action: &'action Action,
-    /// Action randomizer $\alpha$.
-    pub(crate) alpha: ActionRandomizer<Witness>,
-    /// The note being spent or created.
-    pub(crate) note: Note,
-    /// Value commitment trapdoor.
-    pub(crate) rcv: value::CommitmentTrapdoor,
+    /// Action descriptor (cv, rk).
+    pub(crate) descriptor: (value::Commitment, public::ActionVerificationKey),
+    /// Action secrets (alpha, note, rcv).
+    pub(crate) secrets: (ActionRandomizer<Witness>, Note, value::CommitmentTrapdoor),
     /// Accumulator state reference.
     pub(crate) anchor: Anchor,
     /// Epoch index for nullifier derivation.
@@ -110,59 +106,46 @@ impl Step for ActionStep {
         _left: <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        let note_value: i64 = witness.note.value.into();
+        let (cv, rk) = witness.descriptor;
+        let (alpha, note, rcv) = witness.secrets;
+        let (anchor, epoch, pak) = (witness.anchor, witness.epoch, witness.pak);
+
+        let note_value: i64 = note.value.into();
 
         // output: rk == [alpha]G
-        let is_output = witness.action.rk
-            == ActionSigningKey::new(&ActionRandomizer::<effect::Output>(
-                witness.alpha.0,
-                PhantomData,
-            ))
-            .derive_action_public();
+        let is_output = rk
+            == ActionSigningKey::new(&ActionRandomizer::<effect::Output>(alpha.0, PhantomData))
+                .derive_action_public();
 
         // spend: rk == ak + [alpha]G
-        let is_spend = witness.action.rk
-            == witness
-                .pak
+        let is_spend = rk
+            == pak
                 .ak()
-                .derive_action_public(&ActionRandomizer::<effect::Spend>(
-                    witness.alpha.0,
-                    PhantomData,
-                ));
+                .derive_action_public(&ActionRandomizer::<effect::Spend>(alpha.0, PhantomData));
 
         let (tachygram, check_cv): (Tachygram, value::Commitment) = match (is_spend, is_output) {
             | (true, false) => {
                 Ok((
-                    witness
-                        .note
-                        .nullifier(witness.pak.nk(), witness.epoch)
-                        .into(),
-                    witness.rcv.commit(note_value),
+                    note.nullifier(pak.nk(), epoch).into(),
+                    rcv.commit(note_value),
                 ))
             },
-            | (false, true) => {
-                // constrain cv: output commits negative value
-                Ok((
-                    witness.note.commitment().into(),
-                    witness.rcv.commit(note_value.neg()),
-                ))
-            },
+            | (false, true) => Ok((note.commitment().into(), rcv.commit(note_value.neg()))),
             | (true, true) | (false, false) => Err(mock_ragu::Error),
         }?;
 
-        // constrain cv
-        if witness.action.cv != check_cv {
+        if cv != check_cv {
             return Err(mock_ragu::Error);
         }
 
-        let action_acc = ActionDigest::try_from(witness.action)
+        let action_acc = ActionDigest::new(cv, rk)
             .map(Multiset::<ActionDigest>::from)
             .map_err(|_err| mock_ragu::Error)?;
 
         let tachygram_acc = Multiset::<Tachygram>::from(tachygram);
 
         Ok((
-            (action_acc.commit(), tachygram_acc.commit(), witness.anchor),
+            (action_acc.commit(), tachygram_acc.commit(), anchor),
             (tachygram, action_acc, tachygram_acc),
         ))
     }

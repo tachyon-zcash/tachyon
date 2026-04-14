@@ -85,54 +85,6 @@ impl From<NoteKey<Prefixed>> for [u8; 37] {
     }
 }
 
-#[cfg(feature = "serde")]
-impl serde::Serialize for NoteKey<Prefixed> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let bytes: [u8; 37] = (*self).into();
-        serializer.serialize_bytes(&bytes)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for NoteKey<Prefixed> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use core::fmt;
-
-        use serde::de;
-
-        struct NoteKeyVisitor;
-
-        impl de::Visitor<'_> for NoteKeyVisitor {
-            type Value = NoteKey<Prefixed>;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("37 bytes encoding a NoteKey<Prefixed>")
-            }
-
-            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if v.len() != 37 {
-                    return Err(E::invalid_length(v.len(), &self));
-                }
-                let mut bytes = [0u8; 37];
-                bytes.copy_from_slice(v);
-                NoteKey::<Prefixed>::try_from(bytes)
-                    .map_err(|_err| de::Error::custom("invalid NoteKey<Prefixed>"))
-            }
-        }
-
-        deserializer.deserialize_bytes(NoteKeyVisitor)
-    }
-}
-
 /// A Tachyon nullifier deriving key.
 ///
 /// Tachyon simplifies Orchard's nullifier construction
@@ -183,30 +135,6 @@ impl NullifierKey {
     }
 }
 
-#[cfg(feature = "serde")]
-impl serde::Serialize for NullifierKey {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use ff::PrimeField as _;
-
-        serializer.serialize_bytes(&self.0.to_repr())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for NullifierKey {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use crate::serde_helpers::FpVisitor;
-
-        deserializer.deserialize_bytes(FpVisitor).map(Self)
-    }
-}
-
 /// A Tachyon payment key — static per-spending-key recipient identifier.
 ///
 /// Replaces Orchard's diversified transmission key $\mathsf{pk_d}$ and
@@ -234,30 +162,6 @@ impl<'de> serde::Deserialize<'de> for NullifierKey {
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct PaymentKey(pub(crate) Fp);
-
-#[cfg(feature = "serde")]
-impl serde::Serialize for PaymentKey {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use ff::PrimeField as _;
-
-        serializer.serialize_bytes(&self.0.to_repr())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for PaymentKey {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use crate::serde_helpers::FpVisitor;
-
-        deserializer.deserialize_bytes(FpVisitor).map(Self)
-    }
-}
 
 /// Per-note master root key $\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk})$.
 ///

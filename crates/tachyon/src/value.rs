@@ -5,7 +5,7 @@
 
 use core::{iter, ops, ops::Neg as _};
 
-use ff::Field as _;
+use ff::{Field as _, PrimeField as _};
 use lazy_static::lazy_static;
 use pasta_curves::{
     Ep, EpAffine, Fq,
@@ -46,6 +46,12 @@ lazy_static! {
 pub struct CommitmentTrapdoor(Fq);
 
 impl CommitmentTrapdoor {
+    /// Attempt to parse a value commitment trapdoor from 32 bytes.
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
+        Fq::from_repr(bytes).into_option().map(Self)
+    }
+
     /// Generate a fresh random trapdoor.
     pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
         // TODO: the selection of `rcv` may be revised to incorporate a hash of
@@ -87,30 +93,6 @@ impl Default for CommitmentTrapdoor {
     }
 }
 
-#[cfg(feature = "serde")]
-impl serde::Serialize for CommitmentTrapdoor {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use ff::PrimeField as _;
-
-        serializer.serialize_bytes(&self.0.to_repr())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for CommitmentTrapdoor {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use crate::serde_helpers::FqVisitor;
-
-        deserializer.deserialize_bytes(FqVisitor).map(Self)
-    }
-}
-
 impl From<CommitmentTrapdoor> for Fq {
     fn from(trapdoor: CommitmentTrapdoor) -> Self {
         trapdoor.0
@@ -137,6 +119,12 @@ impl From<CommitmentTrapdoor> for Fq {
 pub struct Commitment(pub(super) EpAffine);
 
 impl Commitment {
+    /// Attempt to parse a value commitment from 32 compressed bytes.
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
+        EpAffine::from_bytes(&bytes).into_option().map(Self)
+    }
+
     /// Create the value balance commitment
     /// $\text{ValueCommit}_0(\mathsf{v\_{balance}})$.
     ///
@@ -193,30 +181,6 @@ impl iter::Sum for Commitment {
     /// commitments. Identity element is the point at infinity.
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self(EpAffine::identity()), |acc, cv| acc + cv)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl serde::Serialize for Commitment {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use group::GroupEncoding as _;
-
-        serializer.serialize_bytes(&self.0.to_bytes())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for Commitment {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use crate::serde_helpers::EpAffineVisitor;
-
-        deserializer.deserialize_bytes(EpAffineVisitor).map(Self)
     }
 }
 

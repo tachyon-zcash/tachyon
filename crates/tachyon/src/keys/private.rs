@@ -247,6 +247,14 @@ impl ActionSigningKey<effect::Output> {
 pub struct BindingSigningKey(reddsa::SigningKey<reddsa::BindingAuth>);
 
 impl BindingSigningKey {
+    /// Attempt to parse a binding signing key from 32 bytes.
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
+        reddsa::SigningKey::<reddsa::BindingAuth>::try_from(bytes)
+            .ok()
+            .map(Self)
+    }
+
     /// Sign a transaction sighash with this binding key.
     pub fn sign(
         &self,

@@ -1,4 +1,8 @@
+use core2::io::{self, Read, Write};
+use ff::PrimeField as _;
 use pasta_curves::Fp;
+
+use crate::serialization;
 
 /// A reference to a specific tachyon accumulator state.
 ///
@@ -29,25 +33,20 @@ impl From<Anchor> for Fp {
     }
 }
 
-#[cfg(feature = "serde")]
-impl serde::Serialize for Anchor {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use ff::PrimeField as _;
-        serializer.serialize_bytes(&self.0.to_repr())
+impl Anchor {
+    /// Attempt to parse an anchor from 32 bytes.
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
+        Fp::from_repr(bytes).into_option().map(Self)
     }
-}
 
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for Anchor {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use crate::serde_helpers::FpVisitor;
+    /// Read an anchor from 32 bytes.
+    pub fn read<R: Read>(reader: R) -> io::Result<Self> {
+        serialization::read_fp(reader).map(Self)
+    }
 
-        deserializer.deserialize_bytes(FpVisitor).map(Self)
+    /// Write an anchor as 32 bytes.
+    pub fn write<W: Write>(&self, writer: W) -> io::Result<()> {
+        serialization::write_fp(writer, &self.0)
     }
 }

@@ -27,11 +27,9 @@ std = [
     "blake2b_simd/std",
     "rand_core/std",
 ]
-serde = ["dep:serde"]
 
 [dependencies]
 blake2b_simd = { version = "1.0", default-features = false }
-serde = { version = "1.0", optional = true, default-features = false, features = ["derive"] }
 ff = "0.13"
 lazy_static = { version = "1", default-features = false, features = [
     "spin_no_std",
