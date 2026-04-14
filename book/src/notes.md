@@ -15,7 +15,7 @@ $$(\mathsf{pk}, v, \Psi, \mathsf{rcm})$$
 | $\Psi$ | $\mathbb{F}_p$ | Nullifier trapdoor (user-controlled) |
 | $\mathsf{rcm}$ | $\mathbb{F}_q$ | Commitment randomness |
 
-Both $\Psi$ and $\mathsf{rcm}$ can be derived from a shared key negotiated through the out-of-band payment protocol. This means the sender and recipient need only exchange $\mathsf{pk}$ and $v$ explicitly -- the note randomness can be deterministic from a shared secret.
+Both $\Psi$ and $\mathsf{rcm}$ can be derived from a shared key negotiated through the out-of-band payment protocol. This means the sender and recipient need only exchange $\mathsf{pk}$ and $v$ explicitly — the note randomness can be deterministic from a shared secret.
 
 ## Nullifier Derivation
 
@@ -29,38 +29,30 @@ where $F$ is a keyed PRF (Poseidon), $\Psi$ is the nullifier trapdoor, and flavo
 
 ### Epoch flavoring
 
-The same note spent in different epochs produces different nullifiers. This is essential for oblivious synchronization -- consensus validators only need to retain the last $k$ blocks worth of nullifiers, and users must prove their notes were spendable up to a recent point in history.
+The same note spent in different epochs produces different nullifiers. This is essential for oblivious synchronization — consensus validators only need to retain the last $k$ blocks worth of nullifiers, and users must prove their notes were spendable up to a recent point in history.
 
 ### Oblivious sync delegation
 
-The master root key $\mathsf{mk} = \text{Poseidon}_\text{Tachyon-MkDerive}(\Psi, \mathsf{nk})$ seeds a GGM (Goldreich-Goldwasser-Micali) tree PRF. Prefix keys $\Psi_t$ permit evaluating the PRF only for epochs $e \leq t$, enabling range-restricted delegation to an untrusted service (OSS) for non-inclusion proving without revealing spend capability.
+The master root key $\mathsf{mk} = \text{Poseidon}_\text{Tachyon-NfDerive}(\Psi, \mathsf{nk})$ seeds a GGM (Goldreich-Goldwasser-Micali) tree PRF. Prefix keys $\Psi_t$ permit evaluating the PRF only for epochs $e \leq t$, enabling range-restricted delegation to an untrusted service (OSS) for non-inclusion proving without revealing spend capability.
 
 ```mermaid
 flowchart TB
     nk["nk (NullifierKey)"]
-    psi["psi (NullifierTrapdoor)"]
+    psi["ψ (NullifierTrapdoor)"]
     mk["mk (NoteMasterKey)"]
     nf["nf (Nullifier)"]
-    psi_t["psi_t (NotePrefixedKey)"]
-    kdf(("Poseidon(psi, nk)"))
+    psi_t["ψ_t (NoteKey‹Prefixed›)"]
+    kdf(("Poseidon(ψ, nk)"))
 
     nk & psi ---  kdf --> mk
     mk -->|"F_mk(flavor)"| nf
     mk -->|"GGM(mk, t)"| psi_t
-    psi_t -->|"F_psi_t(flavor)"| nf
+    psi_t -->|"F_ψt(flavor)"| nf
 ```
 
 | Key | Rust type | Holder | Capability |
 | --- | --------- | ------ | ---------- |
 | $\mathsf{mk}$ | `NoteMasterKey` | User device | Derive nullifiers for any epoch; derive delegate keys |
-| $\Psi_t$ | `NotePrefixedKey` | OSS | Derive nullifiers for epochs $e \leq t$ only |
+| $\Psi_t$ | `NoteKey<Prefixed>` | OSS | Derive nullifiers for epochs $e \leq t$ only |
 
-$\mathsf{mk}$ is ephemeral -- the user device derives it from $(\mathsf{nk}, \Psi)$ when needed, never stores or transmits it. The OSS receives only delegate keys, which cannot recover $\mathsf{mk}$ or $\mathsf{nk}$.
-
-## Identity Binding
-
-The proof pipeline threads a single field element called `note_id` through all steps for a given note:
-
-$$\mathsf{note\_id} = \text{Poseidon}_\text{Tachyon-NoteMkCm}(\mathsf{mk}, \mathsf{cm})$$
-
-This binds the note's identity (via master key $\mathsf{mk}$) to its value commitment $\mathsf{cm}$. Every step in the spend pipeline -- delegation, nullifier derivation, inclusion, membership, and spend binding -- carries the same `note_id`, and fuse steps verify that left and right inputs agree on it. This prevents cross-note substitution attacks where an adversary splices proof fragments from different notes.
+$\mathsf{mk}$ is ephemeral — the user device derives it from $(\mathsf{nk}, \Psi)$ when needed, never stores or transmits it. The OSS receives only delegate keys, which cannot recover $\mathsf{mk}$ or $\mathsf{nk}$.

@@ -48,13 +48,13 @@ The key insight is that removing in-band secret distribution (on-chain ciphertex
 
 ### Spending key ($\mathsf{sk}$)
 
-Raw 32-byte entropy. The root of all authority -- must be kept secret. Matches Orchard's representation (raw bytes, not a field element), preserving the full 256-bit key space.
+Raw 32-byte entropy. The root of all authority — must be kept secret. Matches Orchard's representation (raw bytes, not a field element), preserving the full 256-bit key space.
 
 ### Spend authorizing key ($\mathsf{ask}$)
 
 $$\mathsf{ask} = \text{ToScalar}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\texttt{0x09}])\bigr)$$
 
-A long-lived $\mathbb{F}_q$ scalar derived from $\mathsf{sk}$. **Cannot sign directly** -- it must be randomized into a per-action $\mathsf{rsk}$ first. Per-action randomization ensures each $\mathsf{rk}$ is unlinkable to $\mathsf{ak}$, so observers cannot correlate actions to the same spending authority.
+A long-lived $\mathbb{F}_q$ scalar derived from $\mathsf{sk}$. **Cannot sign directly** — it must be randomized into a per-action $\mathsf{rsk}$ first. Per-action randomization ensures each $\mathsf{rk}$ is unlinkable to $\mathsf{ak}$, so observers cannot correlate actions to the same spending authority.
 
 #### Sign normalization
 
@@ -68,13 +68,13 @@ This flips the y-coordinate sign, producing a valid $\mathsf{ak}$ with $\tilde{y
 
 $$\mathsf{ak} = [\mathsf{ask}]\,\mathcal{G}$$
 
-The long-lived counterpart of $\mathsf{ask}$. Corresponds to the "spend validating key" in Orchard (section 4.2.3). Constrains per-action $\mathsf{rk}$ in the proof, tying accumulator activity to the holder of $\mathsf{ask}$.
+The long-lived counterpart of $\mathsf{ask}$. Corresponds to the "spend validating key" in Orchard (§4.2.3). Constrains per-action $\mathsf{rk}$ in the proof, tying accumulator activity to the holder of $\mathsf{ask}$.
 
-$\mathsf{ak}$ **cannot verify action signatures directly** -- it must be randomized into a per-action $\mathsf{rk}$ for verification. Component of the proof authorizing key $\mathsf{pak}$.
+$\mathsf{ak}$ **cannot verify action signatures directly** — it must be randomized into a per-action $\mathsf{rk}$ for verification. Component of the proof authorizing key $\mathsf{pak}$.
 
 #### Three-tier naming
 
-The spend authorization keys follow a three-tier scheme mapping to **private scalar -> circuit witness -> public on-chain**:
+The spend authorization keys follow a three-tier scheme mapping to **private scalar → circuit witness → public on-chain**:
 
 | Tier | Rust type | Protocol | Role |
 | ---- | --------- | -------- | ---- |
@@ -92,7 +92,7 @@ $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
 
 where $F$ is a keyed PRF (Poseidon with domain tag `Tachyon-NfDerive`), $\Psi$ is the note's nullifier trapdoor, and flavor is the epoch-id. See [Notes](./notes.md#nullifier-derivation).
 
-$\mathsf{nk}$ alone does NOT confer spend authority -- combined with $\mathsf{ak}$ it forms the proof authorizing key $\mathsf{pak}$, enabling proof construction and nullifier derivation without signing capability.
+$\mathsf{nk}$ alone does NOT confer spend authority — combined with $\mathsf{ak}$ it forms the proof authorizing key $\mathsf{pak}$, enabling proof construction and nullifier derivation without signing capability.
 
 [^faerie-gold]: Orchard's more complex nullifier construction defended against faerie gold attacks. These are moot under out-of-band payments because the recipient controls $\Psi$ (via payment requests or URI redemption). See footnote 1 in "Tachyaction at a Distance."
 
@@ -103,9 +103,9 @@ $$\mathsf{pk} = \text{ToBase}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\te
 Replaces Orchard's diversified transmission key $\mathsf{pk_d}$ and the entire diversified address system:
 
 > "Tachyon removes the diversifier $d$ because payment addresses are removed. The transmission key $\mathsf{pk_d}$ is substituted with a payment key $\mathsf{pk}$."
-> -- "Tachyaction at a Distance" (Bowe 2025)
+> — "Tachyaction at a Distance" (Bowe 2025)
 
-$\mathsf{pk}$ is **deterministic per spending key** -- every note from the same $\mathsf{sk}$ shares the same $\mathsf{pk}$. There is no per-note diversification. Unlinkability is the wallet layer's responsibility, handled via out-of-band payment protocols (ZIP 321 payment requests, ZIP 324 URI encapsulated payments).
+$\mathsf{pk}$ is **deterministic per spending key** — every note from the same $\mathsf{sk}$ shares the same $\mathsf{pk}$. There is no per-note diversification. Unlinkability is the wallet layer's responsibility, handled via out-of-band payment protocols (ZIP 321 payment requests, ZIP 324 URI encapsulated payments).
 
 ### Proof authorizing key ($\mathsf{pak}$)
 
@@ -121,4 +121,4 @@ $\mathsf{pak}$ covers **all notes** because $\mathsf{nk}$ is wallet-wide. For na
 | per-note | $(\mathsf{ak}, \mathsf{mk})$ | Per-note prover | One note, all epochs |
 | delegate | $(\mathsf{ak}, \Psi_t)$ | OSS | One note, epochs $e \leq t$ |
 
-The per-note master key $\mathsf{mk} = \text{Poseidon}_\text{Tachyon-MkDerive}(\Psi, \mathsf{nk})$ and delegate key $\Psi_t = \text{GGM}(\mathsf{mk}, t)$ (also Poseidon-based) are described in [Notes](./notes.md#oblivious-sync-delegation).
+The per-note master key $\mathsf{mk} = \text{Poseidon}_\text{Tachyon-NfDerive}(\Psi, \mathsf{nk})$ and delegate key $\Psi_t = \text{GGM}(\mathsf{mk}, t)$ (also Poseidon-based) are described in [Notes](./notes.md#oblivious-sync-delegation).

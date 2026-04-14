@@ -11,7 +11,7 @@ All BLAKE2b personalizations are exactly 16 bytes. Poseidon domain tags are 16-b
 
 | Constant | Value | Formula |
 | --- | --- | --- |
-| PRF expansion | `Zcash_ExpandSeed` | $\text{BLAKE2b-512}(\mathsf{sk} \| t)$ -- key derivation (shared with Sapling/Orchard) |
+| PRF expansion | `Zcash_ExpandSeed` | $\text{BLAKE2b-512}(\mathsf{sk} \| t)$ — key derivation (shared with Sapling/Orchard) |
 | Spend alpha | `Tachyon-Spend` | $\alpha_\text{spend} = \text{BLAKE2b-512}(\theta \| \mathsf{cm})$ |
 | Output alpha | `Tachyon-Output` | $\alpha_\text{output} = \text{BLAKE2b-512}(\theta \| \mathsf{cm})$ |
 | Bundle commitment | `Tachyon-BndlHash` | $\text{BLAKE2b-512}(\mathsf{action\_acc} \| \mathsf{value\_balance})$ |
@@ -20,13 +20,10 @@ All BLAKE2b personalizations are exactly 16 bytes. Poseidon domain tags are 16-b
 
 | Constant | Value | Formula |
 | --- | --- | --- |
-| Master key | `Tachyon-MkDerive` | $\mathsf{mk} = \text{Poseidon}(\mathsf{tag}, \Psi, \mathsf{nk})$ -- per-note master key KDF |
-| Nullifier | `Tachyon-NfDerive` | $\text{Poseidon}(\mathsf{tag}, \mathsf{node}, \mathsf{bit})$ -- GGM tree steps |
+| Master key | `Tachyon-MkDerive` | $\mathsf{mk} = \text{Poseidon}(\mathsf{tag}, \Psi, \mathsf{nk})$ — per-note master key KDF |
+| Nullifier | `Tachyon-NfDerive` | $\text{Poseidon}(\mathsf{tag}, \mathsf{node}, \mathsf{bit})$ — GGM tree steps |
 | Note commitment | `Tachyon-NoteCmmt` | $\mathsf{cm} = \text{Poseidon}(\mathsf{tag}, \mathsf{rcm}, \mathsf{pk}, v, \Psi)$ |
 | Action digest | `Tachyon-ActnDgst` | $\text{Poseidon}(\mathsf{tag}, \mathsf{cv}_x, \mathsf{cv}_y, \mathsf{rk}_x, \mathsf{rk}_y)$ |
-| Note identity | `Tachyon-NoteMkCm` | $\mathsf{note\_id} = \text{Poseidon}(\mathsf{tag}, \mathsf{mk}, \mathsf{cm})$ -- per-note identity binding |
-| Epoch chain hash | `Tachyon-EpchHash` | $\text{Poseidon}(\mathsf{tag}, \mathsf{prev}, \mathsf{pool\_commit})$ -- epoch-boundary chain hash |
-| Block chain hash | `Tachyon-BlkCHash` | $\text{Poseidon}(\mathsf{tag}, \mathsf{prev}, \mathsf{block\_commit})$ -- per-block chain hash |
 
 ## Other
 

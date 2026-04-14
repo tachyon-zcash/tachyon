@@ -31,7 +31,7 @@ This seems like a suitable candidate that satisfies the aforementioned requireme
 
 ## API Design
 
-Let $F_K$ be a GGM tree PRF instantiated from Poseidon (P128Pow5T3, domain tag `Tachyon-NfDerive`). Each tree step computes $\text{Poseidon}(\text{tag}, \text{node}, \text{bit})$. The wallet derives the master root key as $mk = \text{Poseidon}_\text{Tachyon-MkDerive}(\psi, nk)$.
+Let $F_K$ be a GGM tree PRF instantiated from Poseidon (P128Pow5T3, domain tag `Tachyon-NfDerive`). Each tree step computes $\text{Poseidon}(\text{tag}, \text{node}, \text{bit})$. The wallet derives the master root key as $mk = \text{Poseidon}_\text{Tachyon-NfDerive}(\psi, nk)$.
 
 1. **Compute the minimal prefix cover of [0..t].**
 
@@ -55,7 +55,7 @@ The oblivious syncing service learns which epochs the wallet requested, and we c
 
 ## Motivation
 
-The Oblivious Syncing Service (**OSS**) is granted key capability that allows it to derive nullifiers for a specified range of epochs, but never for any future epochs. When the wallet comes online, it will notify the service that the blockchain has advanced by a certain number of epochs. We then query the service to prove that our notes remain unspent. To do this, the service provides the new nullifiers for the relevant epochs, which can be used to construct the proof -- so we must grant the service the capability to derive them.
+The Oblivious Syncing Service (**OSS**) is granted key capability that allows it to derive nullifiers for a specified range of epochs, but never for any future epochs. When the wallet comes online, it will notify the service that the blockchain has advanced by a certain number of epochs. We then query the service to prove that our notes remain unspent. To do this, the service provides the new nullifiers for the relevant epochs, which can be used to construct the proof — so we must grant the service the capability to derive them.
 
 From a bandwidth narrative, the wallet-service handshakes incurs an *amortized* bandwidth complexity (logarithmic in the delegation material) which is favorable.
 
