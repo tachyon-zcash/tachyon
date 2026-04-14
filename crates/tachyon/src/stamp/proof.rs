@@ -29,11 +29,30 @@ use crate::{
     },
 };
 
-/// Per-step subset size for `SpendableInit` and exclusion leaves.
-pub(crate) const BLOCK_POLY_SIZE: usize = 64;
+/// Tachygrams per leaf of the membership proof trees.
+///
+/// Any membership test is ultimately over a tree of buckets this size,
+/// witnessed by `CoverageLeaf`, `InclusionLeaf`, or `ExclusionLeaf`.
+///
+/// The tradeoff is leaf cost vs more leaves.
+pub(crate) const COVERAGE_CHUNK: usize = 16;
 
-/// Fixed nullifier batch size for the sync-service exclusion set path.
-pub(crate) const BATCH_POLY_SIZE: usize = 64;
+/// Nullifiers per sync-service exclusion batch.
+///
+/// Controls the amortization width of `ExclusionSetLeaf`,
+/// `ExclusionSetFuse`, and `ExclusionSetExtract`. Within each batch the
+/// sync service evaluates one sub-block's polynomial at this many
+/// nullifiers, sharing the polynomial construction cost across all of
+/// them.
+///
+/// Biased conservatively: larger values improve amortization but produce
+/// heavier per-step witnesses (up to `2 × SYNC_CHUNK` field elements in
+/// the fuse and extract steps) and yield fewer, coarser work units for
+/// parallelism.
+///
+/// Must satisfy `COVERAGE_CHUNK * SYNC_CHUNK ≤ per-step constraint
+/// budget`.
+pub(crate) const SYNC_CHUNK: usize = 64;
 
 /// Compute the raw Fp product accumulator over action digests.
 pub fn compute_action_acc(actions: &[Action]) -> Result<Fp, ActionDigestError> {
@@ -86,11 +105,11 @@ lazy_static! {
             .expect("register MergeStamp")
             .register(StampLift)
             .expect("register StampLift")
-            .register(CoverageLeaf::<BLOCK_POLY_SIZE>)
+            .register(CoverageLeaf::<COVERAGE_CHUNK>)
             .expect("register CoverageLeaf")
-            .register(InclusionLeaf::<BLOCK_POLY_SIZE>)
+            .register(InclusionLeaf::<COVERAGE_CHUNK>)
             .expect("register InclusionLeaf")
-            .register(ExclusionLeaf::<BLOCK_POLY_SIZE>)
+            .register(ExclusionLeaf::<COVERAGE_CHUNK>)
             .expect("register ExclusionLeaf")
             .register(CoverageEmpty)
             .expect("register CoverageEmpty")
@@ -104,11 +123,11 @@ lazy_static! {
             .expect("register ExclusionFinalize")
             .register(ExclusionFuse)
             .expect("register ExclusionFuse")
-            .register(ExclusionSetLeaf::<BLOCK_POLY_SIZE, BATCH_POLY_SIZE>)
+            .register(ExclusionSetLeaf::<COVERAGE_CHUNK, SYNC_CHUNK>)
             .expect("register ExclusionSetLeaf")
-            .register(ExclusionSetFuse::<BATCH_POLY_SIZE>)
+            .register(ExclusionSetFuse::<SYNC_CHUNK>)
             .expect("register ExclusionSetFuse")
-            .register(ExclusionSetExtract::<BATCH_POLY_SIZE>)
+            .register(ExclusionSetExtract::<SYNC_CHUNK>)
             .expect("register ExclusionSetExtract")
             .register(NullifierExclusionFuse)
             .expect("register NullifierExclusionFuse")

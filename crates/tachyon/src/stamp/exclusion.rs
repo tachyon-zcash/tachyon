@@ -225,7 +225,7 @@ impl<const M: usize> Step for ExclusionSetFuse<M> {
 /// Witness: both vectors + index. Verifies vector commitments, picks the
 /// slot, checks product nonzero. Outputs `ExclusionHeader(nf, scope)`.
 /// Cost is dominated by two M-sized Pedersen commits — well under the
-/// 8192-constraint per-step budget.
+/// per-step constraint budget.
 #[derive(Debug)]
 pub struct ExclusionSetExtract<const M: usize>;
 
