@@ -75,7 +75,8 @@ mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use note::{NoteMasterKey, NullifierKey, PaymentKey};
+pub use ggm::{GGM_TREE_DEPTH, NoteMasterKey, NotePrefixedKey};
+pub use note::{NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]

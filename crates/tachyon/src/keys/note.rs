@@ -1,89 +1,12 @@
-//! Note-related keys: NullifierKey, NoteKey, PaymentKey.
-
-use core::num::NonZeroU8;
+//! Note-related keys: NullifierKey, PaymentKey.
 
 use ff::PrimeField as _;
 // TODO(#39): replace halo2_poseidon with Ragu Poseidon params
 use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::Fp;
 
-use super::ggm::{GGMTreeDepth as _, Master, Prefixed};
-use crate::{constants::NOTE_MASTER_DOMAIN, note::NullifierTrapdoor};
-
-/// A GGM tree node parameterized by its depth type.
-///
-/// - `NoteKey<Master>` is a root node (depth 0, ZST overhead).
-/// - `NoteKey<Prefixed>` is a delegate node covering a specific subtree.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NoteKey<D> {
-    pub inner: Fp,
-    pub prefix: D,
-}
-
-#[derive(Debug)]
-pub enum NoteKeyError {
-    InvalidRepr,
-    InvalidPrefix,
-}
-
-impl TryFrom<[u8; 32]> for NoteKey<Master> {
-    type Error = NoteKeyError;
-
-    fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
-        let inner = Fp::from_repr(bytes)
-            .into_option()
-            .ok_or(NoteKeyError::InvalidRepr)?;
-        Ok(Self {
-            inner,
-            prefix: Master,
-        })
-    }
-}
-
-impl From<NoteKey<Master>> for [u8; 32] {
-    fn from(key: NoteKey<Master>) -> [u8; 32] {
-        key.inner.to_repr()
-    }
-}
-
-impl TryFrom<[u8; 37]> for NoteKey<Prefixed> {
-    type Error = NoteKeyError;
-
-    fn try_from(bytes: [u8; 37]) -> Result<Self, Self::Error> {
-        // [repr(32) | depth(1) | index_le(4)]
-        let fp_bytes: &[u8; 32] = bytes.first_chunk().ok_or(NoteKeyError::InvalidRepr)?;
-        let inner = Fp::from_repr(*fp_bytes)
-            .into_option()
-            .ok_or(NoteKeyError::InvalidRepr)?;
-        let tail: &[u8; 5] = bytes.last_chunk().ok_or(NoteKeyError::InvalidPrefix)?;
-        let (&depth_byte, index_slice) = tail.split_first().ok_or(NoteKeyError::InvalidPrefix)?;
-        let depth = NonZeroU8::new(depth_byte).ok_or(NoteKeyError::InvalidPrefix)?;
-        let index_bytes: &[u8; 4] = index_slice
-            .first_chunk()
-            .ok_or(NoteKeyError::InvalidPrefix)?;
-        #[expect(clippy::little_endian_bytes, reason = "deserialization")]
-        let index = u32::from_le_bytes(*index_bytes);
-        let prefix =
-            Prefixed::new(depth, index).map_err(|_prefix_err| NoteKeyError::InvalidPrefix)?;
-        Ok(Self { inner, prefix })
-    }
-}
-
-impl From<NoteKey<Prefixed>> for [u8; 37] {
-    fn from(key: NoteKey<Prefixed>) -> [u8; 37] {
-        // [repr(32) | depth(1) | index_le(4)]
-        #[expect(clippy::expect_used, reason = "length is statically known")]
-        [
-            key.inner.to_repr().as_slice(),
-            &[key.prefix.depth()],
-            #[expect(clippy::little_endian_bytes, reason = "serialization")]
-            &key.prefix.index().to_le_bytes(),
-        ]
-        .concat()
-        .try_into()
-        .expect("32 + 1 + 4 = 37")
-    }
-}
+use super::ggm::NoteMasterKey;
+use crate::{constants::NOTE_MASTER_DOMAIN, note, primitives::NoteId};
 
 /// A Tachyon nullifier deriving key.
 ///
@@ -121,17 +44,27 @@ impl NullifierKey {
     ///   F_{\mathsf{mk}}(\text{flavor})$
     /// - Derive epoch-restricted prefix keys $\Psi_t$ for OSS delegation
     #[must_use]
-    pub fn derive_note_private(&self, psi: &NullifierTrapdoor) -> NoteMasterKey {
+    pub fn derive_note_private(&self, psi: &note::NullifierTrapdoor) -> NoteMasterKey {
         #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
         let personalization = Fp::from_u128(u128::from_le_bytes(*NOTE_MASTER_DOMAIN));
-        NoteKey {
-            inner: Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
+        NoteMasterKey(
+            Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
                 personalization,
                 psi.0,
                 self.0,
             ]),
-            prefix: Master,
-        }
+        )
+    }
+
+    /// Provides the note identity binding: `H(domain, mk, cm)`.
+    ///
+    /// Computes the master key and note commitment internally.
+    ///
+    /// This method is located here and not on `NoteMasterKey` to encourage the
+    /// correct relationship between master key and note commitment.
+    #[must_use]
+    pub fn note_id(&self, note: &note::Note) -> NoteId {
+        NoteId::derive(self, note)
     }
 }
 
@@ -163,34 +96,15 @@ impl NullifierKey {
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct PaymentKey(pub(crate) Fp);
 
-/// Per-note master root key $\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk})$.
-///
-/// Root of the GGM tree PRF for a single note. Derived by the user device
-/// from [`NullifierKey`] and the note's $\psi$ trapdoor.
-///
-/// ## Delegation chain
-///
-/// ```text
-/// nk + psi → mk (per-note root, user device)
-///              ├── nf = F_mk(flavor)     nullifier for a specific epoch
-///              └── psi_t = GGM(mk, t)    prefix key for epochs e ≤ t (OSS)
-/// ```
-///
-/// `mk` is not stored or transmitted — the user device derives it
-/// ephemerally when needed. The OSS receives only the prefix keys.
-pub type NoteMasterKey = NoteKey<Master>;
-
 #[cfg(test)]
 mod tests {
-    use core::num::NonZeroU8;
-
     use super::*;
-    use crate::{keys::ggm::Prefixed, primitives::Epoch};
+    use crate::primitives::Epoch;
 
     #[test]
     fn derive_note_private_deterministic() {
         let nk = NullifierKey(Fp::from(42u64));
-        let psi = NullifierTrapdoor::from(Fp::from(99u64));
+        let psi = note::NullifierTrapdoor::from(Fp::from(99u64));
         let mk1 = nk.derive_note_private(&psi);
         let mk2 = nk.derive_note_private(&psi);
         assert_eq!(mk1, mk2);
@@ -199,15 +113,15 @@ mod tests {
     #[test]
     fn different_psi_different_mk() {
         let nk = NullifierKey(Fp::from(42u64));
-        let mk1 = nk.derive_note_private(&NullifierTrapdoor::from(Fp::from(1u64)));
-        let mk2 = nk.derive_note_private(&NullifierTrapdoor::from(Fp::from(2u64)));
+        let mk1 = nk.derive_note_private(&note::NullifierTrapdoor::from(Fp::from(1u64)));
+        let mk2 = nk.derive_note_private(&note::NullifierTrapdoor::from(Fp::from(2u64)));
         assert_ne!(mk1, mk2);
     }
 
     #[test]
     fn different_epochs_different_nullifiers() {
         let nk = NullifierKey(Fp::from(42u64));
-        let psi = NullifierTrapdoor::from(Fp::from(99u64));
+        let psi = note::NullifierTrapdoor::from(Fp::from(99u64));
         let mk = nk.derive_note_private(&psi);
         assert_ne!(
             mk.derive_nullifier(Epoch::from(0u32)),
@@ -215,80 +129,35 @@ mod tests {
         );
     }
 
-    /// Prefix key (index 0) produces same nullifier as master key for
-    /// epochs within the authorized range.
+    /// Delegate key produces same nullifiers as master for epochs in range.
     #[test]
-    fn prefix_matches_master_at_index_zero() {
+    fn delegate_matches_master() {
         let nk = NullifierKey(Fp::from(42u64));
-        let psi = NullifierTrapdoor::from(Fp::from(99u64));
+        let psi = note::NullifierTrapdoor::from(Fp::from(99u64));
         let mk = nk.derive_note_private(&psi);
 
-        // depth=26 → window of 64 epochs at index 0 → epochs [0..=63]
-        let prefix = Prefixed::new(NonZeroU8::new(26u8).unwrap(), 0).unwrap();
-        let dk = &mk.derive_note_delegates([prefix])[0];
-
-        for epoch in 0..64u32 {
-            assert_eq!(
-                mk.derive_nullifier(Epoch::from(epoch)),
-                dk.derive_nullifier(Epoch::from(epoch)).unwrap(),
-                "mismatch at epoch {epoch}"
-            );
-        }
-    }
-
-    /// Prefix key at a non-zero index produces same nullifiers as
-    /// master key for epochs within its range.
-    #[test]
-    fn prefix_matches_master_at_nonzero_index() {
-        let nk = NullifierKey(Fp::from(42u64));
-        let psi = NullifierTrapdoor::from(Fp::from(99u64));
-        let mk = nk.derive_note_private(&psi);
-
-        // depth=26 → window of 64 epochs at index 1 → epochs [64..=127]
-        let prefix = Prefixed::new(NonZeroU8::new(26u8).unwrap(), 1).unwrap();
-        let dk = &mk.derive_note_delegates([prefix])[0];
-
-        for epoch in 64..128u32 {
-            assert_eq!(
-                mk.derive_nullifier(Epoch::from(epoch)),
-                dk.derive_nullifier(Epoch::from(epoch)).unwrap(),
-                "mismatch at epoch {epoch}"
-            );
-        }
-    }
-
-    /// Prefix cover produces same nullifiers as master for all
-    /// epochs in the covered range.
-    #[test]
-    fn cover_matches_master() {
-        let nk = NullifierKey(Fp::from(42u64));
-        let psi = NullifierTrapdoor::from(Fp::from(99u64));
-        let mk = nk.derive_note_private(&psi);
-
-        let prefixes = Prefixed::tight(0, 100);
-        for dk in &mk.derive_note_delegates(prefixes) {
-            for epoch in dk.prefix.first()..=dk.prefix.last() {
+        for dk in &mk.derive_note_delegates(0..=99) {
+            for epoch in dk.range() {
                 assert_eq!(
                     mk.derive_nullifier(Epoch::from(epoch)),
-                    dk.derive_nullifier(Epoch::from(epoch)).unwrap(),
+                    dk.derive_nullifier(Epoch::from(epoch)),
                     "mismatch at epoch {epoch} with delegate {dk:?}"
                 );
             }
         }
     }
 
-    /// A prefix key returns `None` for epochs outside its authorized range.
+    /// A delegate key panics for epochs outside its authorized range.
     #[test]
-    fn prefix_rejects_outside_range() {
+    #[should_panic(expected = "epoch out of range")]
+    fn delegate_rejects_outside_range() {
         let nk = NullifierKey(Fp::from(42u64));
-        let psi = NullifierTrapdoor::from(Fp::from(99u64));
+        let psi = note::NullifierTrapdoor::from(Fp::from(99u64));
         let mk = nk.derive_note_private(&psi);
 
-        // depth=26 index=0 → epochs [0..=63]
-        let prefix = Prefixed::new(NonZeroU8::new(26u8).unwrap(), 0).unwrap();
-        let dk = &mk.derive_note_delegates([prefix])[0];
-
+        // Delegate covering [0..=63]
+        let dk = &mk.derive_note_delegates(0..=63)[0];
         // epoch 64 is outside the authorized range
-        assert!(dk.derive_nullifier(Epoch::from(64u32)).is_none());
+        let _compute = dk.derive_nullifier(Epoch::from(64u32));
     }
 }
