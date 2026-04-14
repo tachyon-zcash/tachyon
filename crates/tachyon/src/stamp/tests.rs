@@ -1351,8 +1351,9 @@ fn coverage_empty_seeds_identity() {
 
     for depth in [0u8, 1, 3, 8] {
         let prefix = Prefix::new(0, depth).unwrap();
-        let ((commit, out_prefix, claim), ()) =
-            CoverageEmpty.witness(prefix, (), ()).expect("should succeed");
+        let ((commit, out_prefix, claim), ()) = CoverageEmpty
+            .witness(prefix, (), ())
+            .expect("should succeed");
         assert_eq!(commit, SetCommit::identity());
         assert_eq!(out_prefix, prefix);
         assert_eq!(claim, Claim::None);
@@ -1424,11 +1425,8 @@ fn inclusion_with_jump_started_sibling() {
     let (empty_proof, ()) = app
         .seed(&mut rng, &CoverageEmpty, sibling_prefix)
         .expect("coverage empty");
-    let empty_pcd = empty_proof.carry::<CoverageHeader>((
-        SetCommit::identity(),
-        sibling_prefix,
-        Claim::None,
-    ));
+    let empty_pcd =
+        empty_proof.carry::<CoverageHeader>((SetCommit::identity(), sibling_prefix, Claim::None));
 
     // CoverageFuse: left is prefix-0, right is prefix-1.
     let (left_pcd, right_pcd) = if cm_low_bit == 0 {
