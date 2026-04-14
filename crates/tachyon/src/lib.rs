@@ -54,6 +54,7 @@ pub mod constants;
 pub mod entropy;
 pub mod keys;
 pub mod note;
+pub mod reddsa;
 pub mod stamp;
 pub mod value;
 pub mod witness;
@@ -62,11 +63,11 @@ mod primitives;
 #[cfg(feature = "serde")]
 mod serde_helpers;
 
-pub use action::{Action, Plan as ActionPlan};
+pub use action::Action;
 pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped};
 pub use note::Note;
 pub use primitives::{
-    ActionDigest, ActionDigestError, Anchor, Epoch, Tachygram,
+    ActionDigest, ActionDigestError, Anchor, Effect, Epoch, Tachygram, effect,
     multiset::{self, Multiset},
 };
 pub use stamp::{Stamp, proof::Proof};
