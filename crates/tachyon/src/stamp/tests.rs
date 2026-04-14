@@ -21,8 +21,7 @@ use crate::{
             InclusionLeaf, Prefix,
         },
         exclusion::{
-            ExclusionFuse, ExclusionHeader, ExclusionSetExtract, ExclusionSetFuse,
-            ExclusionSetHeader, ExclusionSetLeaf, NullifierExclusionFuse, NullifierExclusionHeader,
+            ExclusionFuse, ExclusionHeader, NullifierExclusionFuse, NullifierExclusionHeader,
             SpendableExclusionFuse, SpendableExclusionHeader,
         },
         spend::SpendHeader,
@@ -107,17 +106,6 @@ fn build_delegation_to_nullifier(
 /// tachygrams.
 /// Small subset size for tests (real system uses up to 4095).
 const TEST_N: usize = 8;
-
-/// Batch size used by batch-path tests.
-const TEST_M: usize = 4;
-
-/// Pad an M-element nullifier vector from a list of real nullifiers.
-fn pad_nullifiers<const M: usize>(nfs: &[Fp]) -> [Fp; M] {
-    assert!(nfs.len() <= M, "nullifiers must fit within {M} size");
-    let mut arr = [Fp::ZERO; M];
-    arr[..nfs.len()].copy_from_slice(nfs);
-    arr
-}
 
 /// Build a SpendableHeader at block 0 for a newly-created note.
 ///
@@ -1071,128 +1059,6 @@ fn stamp_lift_rejects_cross_epoch() {
     assert!(
         result.is_err(),
         "stamp lift across epoch boundary must fail"
-    );
-}
-
-// ---- ExclusionSet (multi-nullifier batch) path ----
-
-/// ExclusionSetLeaf + ExclusionSetFuse + ExclusionSetExtract roundtrip.
-///
-/// Two subsets, two nullifiers. Leaf each subset, fuse, extract each
-/// nullifier into ExclusionHeader.
-#[test]
-fn exclusion_set_roundtrip() {
-    let mut rng = StdRng::seed_from_u64(700);
-    let app = &*PROOF_SYSTEM;
-    let nf_a = Fp::from(555u64);
-    let nf_b = Fp::from(777u64);
-    let nullifiers = pad_nullifiers::<TEST_M>(&[nf_a, nf_b]);
-
-    // Two distinct subsets of tachygrams.
-    let tgs_1 = pad_tachygrams::<TEST_N>(&[
-        Tachygram::from(Fp::from(10u64)),
-        Tachygram::from(Fp::from(20u64)),
-    ]);
-    let tgs_2 = pad_tachygrams::<TEST_N>(&[
-        Tachygram::from(Fp::from(30u64)),
-        Tachygram::from(Fp::from(40u64)),
-    ]);
-
-    // Leaf 1
-    let (leaf1_proof, ()) = app
-        .seed(
-            &mut rng,
-            &ExclusionSetLeaf::<TEST_N, TEST_M>,
-            (&tgs_1, &nullifiers),
-        )
-        .expect("exclusion set leaf 1");
-    let roots1: Vec<Fp> = tgs_1.iter().map(|tg| Fp::from(*tg)).collect();
-    let coeffs1 = polynomial::poly_from_roots(&roots1);
-    let scope1 = SetCommit::from(polynomial::pedersen_commit(&coeffs1));
-    let products1: Vec<Fp> = nullifiers
-        .iter()
-        .map(|&nf| polynomial::poly_eval(&coeffs1, nf))
-        .collect();
-    let nf_set = polynomial::pedersen_commit(nullifiers.as_slice());
-    let prod_set1 = polynomial::pedersen_commit(&products1);
-    let leaf1_pcd = leaf1_proof.carry::<ExclusionSetHeader<TEST_M>>((nf_set, prod_set1, scope1));
-
-    // Leaf 2
-    let (leaf2_proof, ()) = app
-        .seed(
-            &mut rng,
-            &ExclusionSetLeaf::<TEST_N, TEST_M>,
-            (&tgs_2, &nullifiers),
-        )
-        .expect("exclusion set leaf 2");
-    let roots2: Vec<Fp> = tgs_2.iter().map(|tg| Fp::from(*tg)).collect();
-    let coeffs2 = polynomial::poly_from_roots(&roots2);
-    let scope2 = SetCommit::from(polynomial::pedersen_commit(&coeffs2));
-    let products2: Vec<Fp> = nullifiers
-        .iter()
-        .map(|&nf| polynomial::poly_eval(&coeffs2, nf))
-        .collect();
-    let prod_set2 = polynomial::pedersen_commit(&products2);
-    let leaf2_pcd = leaf2_proof.carry::<ExclusionSetHeader<TEST_M>>((nf_set, prod_set2, scope2));
-
-    // Fuse
-    let prods1_arr: [Fp; TEST_M] = products1.try_into().unwrap();
-    let prods2_arr: [Fp; TEST_M] = products2.try_into().unwrap();
-    let (fused_proof, ()) = app
-        .fuse(
-            &mut rng,
-            &ExclusionSetFuse::<TEST_M>,
-            (&prods1_arr, &prods2_arr),
-            leaf1_pcd,
-            leaf2_pcd,
-        )
-        .expect("exclusion set fuse");
-    let merged_products: Vec<Fp> = prods1_arr
-        .iter()
-        .zip(prods2_arr.iter())
-        .map(|(&lp, &rp)| lp * rp)
-        .collect();
-    let merged_scope = scope1 + scope2;
-    let merged_prod_set = polynomial::pedersen_commit(&merged_products);
-
-    // Extract nullifier A (index 0)
-    let merged_products_arr: [Fp; TEST_M] = merged_products.try_into().unwrap();
-    let fused_hdr = (nf_set, merged_prod_set, merged_scope);
-    let fused_pcd_a = fused_proof.carry::<ExclusionSetHeader<TEST_M>>(fused_hdr);
-    let (extract_a_proof, ()) = app
-        .fuse(
-            &mut rng,
-            &ExclusionSetExtract::<TEST_M>,
-            (&nullifiers, &merged_products_arr, 0usize),
-            fused_pcd_a,
-            mock_ragu::Proof::trivial().carry::<()>(()),
-        )
-        .expect("extract nullifier A");
-    let excl_a_hdr = (Nullifier::from(nf_a), merged_scope);
-    let excl_a_pcd = extract_a_proof.carry::<ExclusionHeader>(excl_a_hdr);
-    app.rerandomize(excl_a_pcd, &mut rng)
-        .expect("rerandomize exclusion A");
-}
-
-/// ExclusionSetExtract rejects when the product at the indexed slot is zero.
-#[test]
-fn exclusion_set_extract_rejects_zero_product() {
-    use mock_ragu::Step as _;
-
-    let nf_fp = Fp::from(42u64);
-    let nullifiers = pad_nullifiers::<TEST_M>(&[nf_fp]);
-    let mut products = [Fp::ONE; TEST_M];
-    products[0] = Fp::ZERO; // nf is in the covered set
-
-    let nf_set = polynomial::pedersen_commit(nullifiers.as_slice());
-    let prod_set = polynomial::pedersen_commit(products.as_slice());
-    let scope = SetCommit::identity();
-
-    let left = (nf_set, prod_set, scope);
-    let result = ExclusionSetExtract::<TEST_M>.witness((&nullifiers, &products, 0usize), left, ());
-    assert!(
-        result.is_err(),
-        "extract must reject when product at indexed slot is zero"
     );
 }
 

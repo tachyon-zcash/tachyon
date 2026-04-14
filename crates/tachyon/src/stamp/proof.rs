@@ -18,10 +18,7 @@ use crate::{
             InclusionBindNullifier, InclusionFinalize, InclusionLeaf,
         },
         delegation::{DelegationSeed, DelegationStep, NullifierStep},
-        exclusion::{
-            ExclusionFuse, ExclusionSetExtract, ExclusionSetFuse, ExclusionSetLeaf,
-            NullifierExclusionFuse, SpendableExclusionFuse,
-        },
+        exclusion::{ExclusionFuse, NullifierExclusionFuse, SpendableExclusionFuse},
         header::{MergeStamp, OutputStamp, SpendStamp, StampLift},
         pool::{PoolSeed, PoolStep},
         spend::{SpendBind, SpendNullifier, SpendNullifierFuse},
@@ -36,23 +33,6 @@ use crate::{
 ///
 /// The tradeoff is leaf cost vs more leaves.
 pub(crate) const COVERAGE_CHUNK: usize = 16;
-
-/// Nullifiers per sync-service exclusion batch.
-///
-/// Controls the amortization width of `ExclusionSetLeaf`,
-/// `ExclusionSetFuse`, and `ExclusionSetExtract`. Within each batch the
-/// sync service evaluates one sub-block's polynomial at this many
-/// nullifiers, sharing the polynomial construction cost across all of
-/// them.
-///
-/// Biased conservatively: larger values improve amortization but produce
-/// heavier per-step witnesses (up to `2 × SYNC_CHUNK` field elements in
-/// the fuse and extract steps) and yield fewer, coarser work units for
-/// parallelism.
-///
-/// Must satisfy `COVERAGE_CHUNK * SYNC_CHUNK ≤ per-step constraint
-/// budget`.
-pub(crate) const SYNC_CHUNK: usize = 64;
 
 /// Compute the raw Fp product accumulator over action digests.
 pub fn compute_action_acc(actions: &[Action]) -> Result<Fp, ActionDigestError> {
@@ -123,12 +103,6 @@ lazy_static! {
             .expect("register ExclusionFinalize")
             .register(ExclusionFuse)
             .expect("register ExclusionFuse")
-            .register(ExclusionSetLeaf::<COVERAGE_CHUNK, SYNC_CHUNK>)
-            .expect("register ExclusionSetLeaf")
-            .register(ExclusionSetFuse::<SYNC_CHUNK>)
-            .expect("register ExclusionSetFuse")
-            .register(ExclusionSetExtract::<SYNC_CHUNK>)
-            .expect("register ExclusionSetExtract")
             .register(NullifierExclusionFuse)
             .expect("register NullifierExclusionFuse")
             .register(SpendableExclusionFuse)
