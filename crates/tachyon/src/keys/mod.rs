@@ -16,7 +16,7 @@
 //!     sig["sig (action::Signature)"]
 //!     pak[ProofAuthorizingKey]
 //!     sighash["sighash &amp;[u8; 32]"]
-//!     sk --> ask & nk & pk
+//!     sk --> ask & nk
 //!     ask --> ak
 //!     theta["ActionEntropy theta"] -- "randomizer::&lt;Spend&gt;" --> spend_alpha["ActionRandomizer&lt;Spend&gt;"]
 //!     theta -- "randomizer::&lt;Output&gt;" --> output_alpha["ActionRandomizer&lt;Output&gt;"]
@@ -28,6 +28,7 @@
 //!     spend_rsk -- "sign(sighash)" --> sig
 //!     output_rsk -- "sign(sighash)" --> sig
 //!     ak & nk --> pak
+//!     ak & nk -->|"Poseidon"| pk
 //! ```
 //!
 //! ### Private keys ([`private`])
@@ -45,7 +46,8 @@
 //! ### Note keys ([`note`])
 //!
 //! - `nk`: Observes when funds are spent (nullifier derivation)
-//! - `pk`: Used in note construction and out-of-band payment protocols
+//! - `pk = Poseidon(domain, ak_x, nk)`: Derived from `pak`, binds spending
+//!   authority and nullifier key to the note commitment
 //!
 //! ### Proof keys ([`proof`])
 //!
@@ -129,17 +131,21 @@ mod tests {
         assert_eq!(flipped, 16u32);
     }
 
-    /// ask, nk, pk derived from the same sk must all be different
-    /// (different domain separators produce independent keys).
+    /// ask, nk, pk derived from the same sk must all be different.
+    /// pk derives from (ak, nk) via Poseidon, not directly from sk.
     #[test]
     fn child_keys_independent() {
         let sk = private::SpendingKey::from([0x42u8; 32]);
-        let ask_bytes: [u8; 32] = sk.derive_auth_private().derive_auth_public().0.into();
-        let nk: Fp = sk.derive_nullifier_private().0;
-        let pk: Fp = sk.derive_payment_key().0;
+        let ak = sk.derive_auth_private().derive_auth_public();
+        let nk = sk.derive_nullifier_private();
+        let pk = sk.derive_payment_key();
 
-        assert_ne!(ask_bytes, nk.to_repr());
-        assert_ne!(nk.to_repr(), pk.to_repr());
+        let ak_bytes: [u8; 32] = ak.0.into();
+        assert_ne!(ak_bytes, nk.0.to_repr());
+        assert_ne!(nk.0.to_repr(), pk.0.to_repr());
+
+        let pak = sk.derive_proof_private();
+        assert_eq!(pak.derive_payment_key().0, pk.0);
     }
 
     /// rsk.derive_action_public() must equal ak.derive_action_public(alpha) for

@@ -107,19 +107,18 @@ impl SpendingKey {
 
     /// Derive the payment key $\mathsf{pk}$ from $\mathsf{sk}$.
     ///
-    /// $$\mathsf{pk} = \text{ToBase}\bigl(\text{PRF}^{\text{expand}}_
-    /// {\mathsf{sk}}([0\text{x}0b])\bigr)$$
+    /// $$\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
+    /// \mathsf{nk})$$
     ///
-    /// BLAKE2b-512 of $(\mathsf{sk} \| \texttt{0x0b})$, reduced to
-    /// $\mathbb{F}_p$ via `from_uniform_bytes`.
-    ///
-    /// This is deterministic: every note from the same `sk` shares the
-    /// same `pk`. Tachyon removes per-note diversification from the core
-    /// protocol; the wallet layer handles unlinkability via out-of-band
-    /// payment protocols ("Tachyaction at a Distance", Bowe 2025).
+    /// Derives `ak` and `nk` from `sk`, then computes `pk` via Poseidon.
+    /// This binds `pk` to both spending authority and nullifier derivation,
+    /// so `cm` (which contains `pk`) transitively pins the full proof
+    /// authorizing key to the accumulator.
     #[must_use]
     pub fn derive_payment_key(&self) -> PaymentKey {
-        PaymentKey(Fp::from_uniform_bytes(&PrfExpand::PK.with(&self.0)))
+        let ak = self.derive_auth_private().derive_auth_public();
+        let nk = self.derive_nullifier_private();
+        PaymentKey::derive(&ak, &nk)
     }
 
     /// Derive the proof authorizing key (`ak` + `nk`) for delegated proof

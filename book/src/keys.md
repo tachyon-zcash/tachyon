@@ -14,8 +14,8 @@ flowchart TB
 
     sk -->|"PRF 0x09"| ask
     sk -->|"PRF 0x0a"| nk
-    sk -->|"PRF 0x0b"| pk
     ask -->|"[ask]G"| ak
+    ak & nk -->|"Poseidon"| pk
 
     subgraph pak["pak (ProofAuthorizingKey)"]
         ak["ak (SpendValidatingKey)"]
@@ -23,21 +23,21 @@ flowchart TB
     end
 ```
 
-All child keys are derived from the spending key $\mathsf{sk}$ via domain-separated PRF expansion:
+The spending key $\mathsf{sk}$ derives $\mathsf{ask}$ and $\mathsf{nk}$ via domain-separated PRF expansion:
 
 $$ \text{PRF}^{\text{expand}}_{\mathsf{sk}}(t) = \text{BLAKE2b-512}(\text{"Zcash\_ExpandSeed"},\; \mathsf{sk} \| t) $$
 
-The domain bytes ($\texttt{0x09}$, $\texttt{0x0a}$, $\texttt{0x0b}$) are allocated to avoid collisions with Sapling and Orchard.
+The domain bytes ($\texttt{0x09}$, $\texttt{0x0a}$) are allocated to avoid collisions with Sapling and Orchard. The payment key $\mathsf{pk}$ is then derived from both $\mathsf{ak}$ and $\mathsf{nk}$ via Poseidon, binding it to the full proof authorizing key.
 
 ### Comparison with Orchard
 
 | Layer | Orchard | Tachyon | Rationale |
 | ----- | ------- | ------- | --------- |
 | Root | Spending key ($\mathsf{sk}$) | Spending key ($\mathsf{sk}$) | Identical |
-| Auth | $\mathsf{ask} \to \mathsf{ak}$ | $\mathsf{ask} \to \mathsf{ak}$ | Identical |
+| Auth | $\mathsf{ask} \to \mathsf{ak}$ | $\mathsf{ask} \to \mathsf{ak}$ | Identical (RedPallas) |
 | Viewing | Full viewing key ($\mathsf{ak}, \mathsf{nk}, \mathsf{rivk}$) | **Removed** | Out-of-band |
 | Incoming | $\mathsf{dk}, \mathsf{ivk}, \mathsf{ovk}$ | **Removed** | Out-of-band |
-| Address | Diversifier $d$, transmission key $\mathsf{pk_d}$ | Payment key $\mathsf{pk}$ | No diversification |
+| Address | Diversifier $d$, transmission key $\mathsf{pk_d}$ | $\mathsf{pk} = \text{Poseidon}(\mathsf{ak}_x, \mathsf{nk})$ | No diversification; binds to pak |
 | Proof authorization | Not separated | $\mathsf{pak} = (\mathsf{ak}, \mathsf{nk})$ | Authorize proofs for all notes |
 | Per-note delegation | Not separated | $(\mathsf{ak}, \mathsf{mk})$ | Delegate proofs for one note |
 | Epoch delegation | Not separated | $(\mathsf{ak}, \Psi_t)$ | Delegate non-inclusion proving for epochs $e \leq t$ |
@@ -98,12 +98,14 @@ $\mathsf{nk}$ alone does NOT confer spend authority — combined with $\mathsf{a
 
 ### Payment key ($\mathsf{pk}$)
 
-$$\mathsf{pk} = \text{ToBase}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\texttt{0x0b}])\bigr)$$
+$$\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x, \mathsf{nk})$$
 
-Replaces Orchard's diversified transmission key $\mathsf{pk_d}$ and the entire diversified address system:
+where $\mathsf{ak}_x$ is the x-coordinate of the spend validating key. Replaces Orchard's diversified transmission key $\mathsf{pk_d}$ and the entire diversified address system:
 
 > "Tachyon removes the diversifier $d$ because payment addresses are removed. The transmission key $\mathsf{pk_d}$ is substituted with a payment key $\mathsf{pk}$."
 > — "Tachyaction at a Distance" (Bowe 2025)
+
+Deriving $\mathsf{pk}$ from $(\mathsf{ak}, \mathsf{nk})$ binds the payment key to the full proof authorizing key. Since $\mathsf{pk}$ is committed in the note commitment $\mathsf{cm}$, the accumulator membership check transitively pins both $\mathsf{ak}$ and $\mathsf{nk}$. A wrong $\mathsf{nk}$ produces a wrong $\mathsf{pk}$, a wrong $\mathsf{cm}$, and accumulator inclusion fails.
 
 $\mathsf{pk}$ is **deterministic per spending key** — every note from the same $\mathsf{sk}$ shares the same $\mathsf{pk}$. There is no per-note diversification. Unlinkability is the wallet layer's responsibility, handled via out-of-band payment protocols (ZIP 321 payment requests, ZIP 324 URI encapsulated payments).
 
