@@ -13,7 +13,7 @@ use mock_ragu::{Header, Index, Step, Suffix};
 use pasta_curves::Fp;
 
 use crate::{
-    keys::{GGM_TREE_DEPTH, NotePrefixedKey, NullifierKey},
+    keys::{GGM_TREE_DEPTH, NotePrefixedKey, ProofAuthorizingKey},
     note::{Note, Nullifier},
     primitives::{Epoch, NoteId},
 };
@@ -68,18 +68,22 @@ impl Step for DelegationSeed {
     type Left = ();
     type Output = DelegationHeader;
     type Right = ();
-    type Witness<'source> = (Note, NullifierKey, bool);
+    type Witness<'source> = (Note, ProofAuthorizingKey, bool);
 
     const INDEX: Index = Index::new(2);
 
     fn witness<'source>(
         &self,
-        (note, nk, direction): Self::Witness<'source>,
+        (note, pak, direction): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        let mk = nk.derive_note_private(&note.psi);
-        Ok(((mk.step(direction), note.id(&nk)), ()))
+        if note.pk.0 != pak.derive_payment_key().0 {
+            return Err(mock_ragu::Error);
+        }
+
+        let mk = pak.nk().derive_note_private(&note.psi);
+        Ok(((mk.step(direction), note.id(pak.nk())), ()))
     }
 }
 

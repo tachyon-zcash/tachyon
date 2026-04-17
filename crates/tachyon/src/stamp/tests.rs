@@ -6,7 +6,7 @@ use super::*;
 use crate::{
     action,
     entropy::{ActionEntropy, ActionRandomizer},
-    keys::{GGM_TREE_DEPTH, NullifierKey, SpendValidatingKey, private, public},
+    keys::{GGM_TREE_DEPTH, ProofAuthorizingKey, private, public},
     note::{self, Note, Nullifier},
     primitives::{BlockCommit, BlockHeight, Epoch, NoteId, PoolCommit},
     stamp::{
@@ -45,16 +45,16 @@ fn build_delegation_to_nullifier(
     rng: &mut StdRng,
     app: mock_ragu::Application,
     note: Note,
-    nk: NullifierKey,
+    pak: ProofAuthorizingKey,
     note_id: NoteId,
     target_epoch: Epoch,
 ) -> (mock_ragu::Proof, (Nullifier, Epoch, NoteId), Fp) {
     let first_bit = (target_epoch.0 >> (GGM_TREE_DEPTH - 1)) & 1 != 0;
     let (mut proof, ()) = app
-        .seed(rng, &delegation::DelegationSeed, (note, nk, first_bit))
+        .seed(rng, &delegation::DelegationSeed, (note, pak, first_bit))
         .expect("delegation seed");
 
-    let mk = nk.derive_note_private(&note.psi);
+    let mk = pak.nk().derive_note_private(&note.psi);
     let mut nk_node = mk.step(first_bit);
     let mut hdr = (nk_node, note_id);
 
@@ -85,7 +85,7 @@ fn build_spendable(
     rng: &mut StdRng,
     app: mock_ragu::Application,
     note: Note,
-    nk: NullifierKey,
+    pak: ProofAuthorizingKey,
     nf_proof: mock_ragu::Proof,
     nf_hdr: &(Nullifier, Epoch, NoteId),
 ) -> (mock_ragu::Proof, (NoteId, Nullifier, Anchor)) {
@@ -99,7 +99,7 @@ fn build_spendable(
     let nf_pcd = nf_proof.carry::<delegation::NullifierHeader>(*nf_hdr);
 
     let (spendable_proof, ()) = app
-        .fuse(rng, &spendable::SpendableInit, (note, nk), nf_pcd, pool_pcd)
+        .fuse(rng, &spendable::SpendableInit, (note, pak), nf_pcd, pool_pcd)
         .expect("spendable init");
 
     let spendable_hdr = (nf_hdr.2, nf_hdr.0, anchor);
@@ -111,22 +111,21 @@ fn build_spend_pcd(
     rng: &mut StdRng,
     app: mock_ragu::Application,
     note: Note,
-    nk: NullifierKey,
-    ak: SpendValidatingKey,
+    pak: ProofAuthorizingKey,
     target_epoch: Epoch,
 ) -> (
     mock_ragu::Proof,
     (Fp, [Nullifier; 2], Epoch, NoteId),
     Action,
 ) {
-    let note_id = note.id(&nk);
-    let nf0 = note.nullifier(&nk, target_epoch);
-    let nf1 = note.nullifier(&nk, Epoch(target_epoch.0 + 1));
+    let note_id = note.id(pak.nk());
+    let nf0 = note.nullifier(pak.nk(), target_epoch);
+    let nf1 = note.nullifier(pak.nk(), Epoch(target_epoch.0 + 1));
     let rcv = value::CommitmentTrapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
     let spend_alpha = theta.randomizer::<effect::Spend>(&note.commitment());
     let (snf_proof, ()) = app
-        .seed(rng, &spend::SpendNullifier, (note, nk, target_epoch))
+        .seed(rng, &spend::SpendNullifier, (note, pak, target_epoch))
         .expect("spend nullifier");
     let snf_hdr = (nf0, nf1, target_epoch, note_id);
     let snf_pcd = snf_proof.carry::<SpendNullifierHeader>(snf_hdr);
@@ -134,12 +133,14 @@ fn build_spend_pcd(
         .fuse(
             rng,
             &SpendBind,
-            (rcv, spend_alpha, ak, note, nk),
+            (rcv, spend_alpha, pak, note),
             snf_pcd,
             mock_ragu::Proof::trivial().carry::<()>(()),
         )
         .expect("spend bind");
-    let plan = action::Plan::spend(note, theta, rcv, |alpha| ak.derive_action_public(&alpha));
+    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
+        pak.ak().derive_action_public(&alpha)
+    });
     let action = Action {
         cv: plan.cv(),
         rk: plan.rk,
@@ -255,8 +256,6 @@ fn full_spend_pipeline() {
     let mut rng = StdRng::seed_from_u64(100);
     let sk = private::SpendingKey::from([0x42u8; 32]);
     let pak = sk.derive_proof_private();
-    let nk = *pak.nk();
-    let ak = *pak.ak();
     let app = &*PROOF_SYSTEM;
 
     let note = Note {
@@ -266,23 +265,23 @@ fn full_spend_pipeline() {
         rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
     };
     let target_epoch = Epoch(0);
-    let nf0 = note.nullifier(&nk, target_epoch);
-    let nf1 = note.nullifier(&nk, Epoch(target_epoch.0 + 1));
-    let note_id = note.id(&nk);
+    let nf0 = note.nullifier(pak.nk(), target_epoch);
+    let nf1 = note.nullifier(pak.nk(), Epoch(target_epoch.0 + 1));
+    let note_id = note.id(pak.nk());
 
     // Delegation -> NullifierStep
     let (nf_proof, nf_hdr, nf) =
-        build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, target_epoch);
+        build_delegation_to_nullifier(&mut rng, *app, note, pak, note_id, target_epoch);
     assert_eq!(Fp::from(nf0), nf, "GGM tree leaf should equal nf0");
 
     // SpendableInit (NullifierHeader x PoolHeader -> SpendableHeader)
     let (spendable_proof, spendable_hdr) =
-        build_spendable(&mut rng, *app, note, nk, nf_proof, &nf_hdr);
+        build_spendable(&mut rng, *app, note, pak, nf_proof, &nf_hdr);
     let spendable_pcd = spendable_proof.carry::<SpendableHeader>(spendable_hdr);
 
     // SpendNullifier -> SpendBind
     let (sb_proof, sp_hdr, spend_action) =
-        build_spend_pcd(&mut rng, *app, note, nk, ak, target_epoch);
+        build_spend_pcd(&mut rng, *app, note, pak, target_epoch);
     let sp_pcd = sb_proof.carry::<SpendHeader>(sp_hdr);
 
     // SpendStamp -> verify
@@ -306,7 +305,6 @@ fn spend_nullifier_fuse_from_two_delegation_chains() {
     let mut rng = StdRng::seed_from_u64(200);
     let sk = private::SpendingKey::from([0x42u8; 32]);
     let pak = sk.derive_proof_private();
-    let nk = *pak.nk();
     let app = &*PROOF_SYSTEM;
 
     let note = Note {
@@ -315,14 +313,14 @@ fn spend_nullifier_fuse_from_two_delegation_chains() {
         psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
         rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
     };
-    let note_id = note.id(&nk);
+    let note_id = note.id(pak.nk());
     let epoch_e = Epoch(0);
     let epoch_e1 = Epoch(1);
 
     let (nf_proof_e, nf_hdr_e, nf_e) =
-        build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch_e);
+        build_delegation_to_nullifier(&mut rng, *app, note, pak, note_id, epoch_e);
     let (nf_proof_e1, nf_hdr_e1, nf_e1) =
-        build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch_e1);
+        build_delegation_to_nullifier(&mut rng, *app, note, pak, note_id, epoch_e1);
 
     let nf_pcd_e = nf_proof_e.carry::<delegation::NullifierHeader>(nf_hdr_e);
     let nf_pcd_e1 = nf_proof_e1.carry::<delegation::NullifierHeader>(nf_hdr_e1);
@@ -344,8 +342,8 @@ fn spend_nullifier_fuse_from_two_delegation_chains() {
         note_id,
     );
 
-    let expected_nf0 = note.nullifier(&nk, epoch_e);
-    let expected_nf1 = note.nullifier(&nk, epoch_e1);
+    let expected_nf0 = note.nullifier(pak.nk(), epoch_e);
+    let expected_nf1 = note.nullifier(pak.nk(), epoch_e1);
     assert_eq!(fused_hdr.0, expected_nf0);
     assert_eq!(fused_hdr.1, expected_nf1);
 
@@ -360,7 +358,6 @@ fn spendable_epoch_lift_across_boundary() {
     let mut rng = StdRng::seed_from_u64(300);
     let sk = private::SpendingKey::from([0x42u8; 32]);
     let pak = sk.derive_proof_private();
-    let nk = *pak.nk();
     let app = &*PROOF_SYSTEM;
 
     let note = Note {
@@ -369,7 +366,7 @@ fn spendable_epoch_lift_across_boundary() {
         psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
         rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
     };
-    let note_id = note.id(&nk);
+    let note_id = note.id(pak.nk());
     let epoch_size: u32 = 4096;
 
     // Build pool chain to epoch-final block (epoch_size - 1)
@@ -379,10 +376,10 @@ fn spendable_epoch_lift_across_boundary() {
     // Build nullifier for epoch 0
     let epoch_0 = Epoch(0);
     let (nf_proof_0, nf_hdr_0, _nf0) =
-        build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch_0);
+        build_delegation_to_nullifier(&mut rng, *app, note, pak, note_id, epoch_0);
 
     // SpendableInit at epoch 0 genesis
-    let (spendable_proof_0, _) = build_spendable(&mut rng, *app, note, nk, nf_proof_0, &nf_hdr_0);
+    let (spendable_proof_0, _) = build_spendable(&mut rng, *app, note, pak, nf_proof_0, &nf_hdr_0);
 
     // Construct spendable at epoch-final (SpendableLift has TODO stubs)
     let spendable_hdr_final = (note_id, nf_hdr_0.0, anchor_final);
@@ -394,7 +391,7 @@ fn spendable_epoch_lift_across_boundary() {
     // Build nullifier for epoch 1
     let epoch_1 = Epoch(1);
     let (nf_proof_1, nf_hdr_1, _) =
-        build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch_1);
+        build_delegation_to_nullifier(&mut rng, *app, note, pak, note_id, epoch_1);
     let nf_pcd_1 = nf_proof_1.carry::<delegation::NullifierHeader>(nf_hdr_1);
 
     // SpendableRollover at epoch 1
@@ -428,7 +425,6 @@ fn spendable_lift_within_epoch() {
     let mut rng = StdRng::seed_from_u64(350);
     let sk = private::SpendingKey::from([0x42u8; 32]);
     let pak = sk.derive_proof_private();
-    let nk = *pak.nk();
     let app = &*PROOF_SYSTEM;
 
     let note = Note {
@@ -437,16 +433,16 @@ fn spendable_lift_within_epoch() {
         psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
         rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
     };
-    let note_id = note.id(&nk);
+    let note_id = note.id(pak.nk());
     let epoch_0 = Epoch(0);
 
     // Build nullifier for epoch 0
     let (nf_proof, nf_hdr, _) =
-        build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch_0);
+        build_delegation_to_nullifier(&mut rng, *app, note, pak, note_id, epoch_0);
 
     // SpendableInit at genesis
     let (spendable_proof, spendable_hdr) =
-        build_spendable(&mut rng, *app, note, nk, nf_proof, &nf_hdr);
+        build_spendable(&mut rng, *app, note, pak, nf_proof, &nf_hdr);
 
     // Build pool to block 5 (same epoch)
     let (pool_proof_5, anchor_5) = build_pool_chain(&mut rng, *app, 5);
@@ -478,7 +474,6 @@ fn spendable_lift_rejects_cross_epoch() {
     let mut rng = StdRng::seed_from_u64(351);
     let sk = private::SpendingKey::from([0x42u8; 32]);
     let pak = sk.derive_proof_private();
-    let nk = *pak.nk();
     let app = &*PROOF_SYSTEM;
 
     let note = Note {
@@ -487,13 +482,13 @@ fn spendable_lift_rejects_cross_epoch() {
         psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
         rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
     };
-    let note_id = note.id(&nk);
+    let note_id = note.id(pak.nk());
     let epoch_0 = Epoch(0);
 
     let (nf_proof, nf_hdr, _) =
-        build_delegation_to_nullifier(&mut rng, *app, note, nk, note_id, epoch_0);
+        build_delegation_to_nullifier(&mut rng, *app, note, pak, note_id, epoch_0);
     let (spendable_proof, spendable_hdr) =
-        build_spendable(&mut rng, *app, note, nk, nf_proof, &nf_hdr);
+        build_spendable(&mut rng, *app, note, pak, nf_proof, &nf_hdr);
 
     // Build pool into epoch 1 (block 4096)
     let (pool_proof_e1, anchor_e1) = build_pool_chain(&mut rng, *app, 4096);
@@ -605,14 +600,14 @@ fn build_spend_nullifier_pcd(
     rng: &mut StdRng,
     app: mock_ragu::Application,
     note: Note,
-    nk: NullifierKey,
+    pak: ProofAuthorizingKey,
     target_epoch: Epoch,
 ) -> (mock_ragu::Proof, (Nullifier, Nullifier, Epoch, NoteId)) {
-    let note_id = note.id(&nk);
-    let nf0 = note.nullifier(&nk, target_epoch);
-    let nf1 = note.nullifier(&nk, Epoch(target_epoch.0 + 1));
+    let note_id = note.id(pak.nk());
+    let nf0 = note.nullifier(pak.nk(), target_epoch);
+    let nf1 = note.nullifier(pak.nk(), Epoch(target_epoch.0 + 1));
     let (snf_proof, ()) = app
-        .seed(rng, &spend::SpendNullifier, (note, nk, target_epoch))
+        .seed(rng, &spend::SpendNullifier, (note, pak, target_epoch))
         .expect("spend nullifier");
     let snf_hdr = (nf0, nf1, target_epoch, note_id);
     (snf_proof, snf_hdr)
@@ -684,8 +679,6 @@ fn plan_prove_spend_and_output() {
     let mut rng = StdRng::seed_from_u64(601);
     let sk = private::SpendingKey::from([0x42u8; 32]);
     let pak = sk.derive_proof_private();
-    let nk = *pak.nk();
-    let ak = *pak.ak();
     let app = &*PROOF_SYSTEM;
     let anchor = Anchor::genesis(BlockHeight(0));
     let target_epoch = Epoch(0);
@@ -701,7 +694,7 @@ fn plan_prove_spend_and_output() {
     let spend_theta = ActionEntropy::random(&mut rng);
     let spend_alpha = spend_theta.randomizer::<effect::Spend>(&spend_note.commitment());
     let spend_plan = action::Plan::spend(spend_note, spend_theta, spend_rcv, |alpha| {
-        ak.derive_action_public(&alpha)
+        pak.ak().derive_action_public(&alpha)
     });
     let spend_action = Action {
         cv: spend_plan.cv(),
@@ -713,15 +706,15 @@ fn plan_prove_spend_and_output() {
 
     // Build SpendNullifierHeader PCD (what sync service provides)
     let (snf_proof, snf_hdr) =
-        build_spend_nullifier_pcd(&mut rng, *app, spend_note, nk, target_epoch);
+        build_spend_nullifier_pcd(&mut rng, *app, spend_note, pak, target_epoch);
     let snf_pcd = snf_proof.carry::<SpendNullifierHeader>(snf_hdr);
 
     // Build SpendableHeader PCD (what sync service provides)
-    let note_id = spend_note.id(&nk);
+    let note_id = spend_note.id(pak.nk());
     let (nf_proof, nf_hdr, _) =
-        build_delegation_to_nullifier(&mut rng, *app, spend_note, nk, note_id, target_epoch);
+        build_delegation_to_nullifier(&mut rng, *app, spend_note, pak, note_id, target_epoch);
     let (spendable_proof, spendable_hdr) =
-        build_spendable(&mut rng, *app, spend_note, nk, nf_proof, &nf_hdr);
+        build_spendable(&mut rng, *app, spend_note, pak, nf_proof, &nf_hdr);
     let spendable_pcd = spendable_proof.carry::<SpendableHeader>(spendable_hdr);
 
     // -- Output side --
@@ -766,7 +759,6 @@ fn plan_prove_rejects_pcd_count_mismatch() {
     let mut rng = StdRng::seed_from_u64(603);
     let sk = private::SpendingKey::from([0x42u8; 32]);
     let pak = sk.derive_proof_private();
-    let ak = *pak.ak();
     let anchor = Anchor::genesis(BlockHeight(0));
 
     // Build a spend entry for the plan
@@ -780,7 +772,7 @@ fn plan_prove_rejects_pcd_count_mismatch() {
     let spend_theta = ActionEntropy::random(&mut rng);
     let spend_alpha = spend_theta.randomizer::<effect::Spend>(&spend_note.commitment());
     let spend_plan = action::Plan::spend(spend_note, spend_theta, spend_rcv, |alpha| {
-        ak.derive_action_public(&alpha)
+        pak.ak().derive_action_public(&alpha)
     });
     let spend_desc = (spend_plan.cv(), spend_plan.rk);
     let spend_wit = (spend_alpha, spend_note, spend_rcv);

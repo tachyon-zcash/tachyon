@@ -14,7 +14,7 @@ use pasta_curves::Fp;
 
 use super::{delegation::NullifierHeader, pool::PoolHeader};
 use crate::{
-    keys::NullifierKey,
+    keys::ProofAuthorizingKey,
     note::{Note, Nullifier},
     primitives::{Anchor, NoteId},
 };
@@ -77,17 +77,21 @@ impl Step for SpendableInit {
     type Left = NullifierHeader;
     type Output = SpendableHeader;
     type Right = PoolHeader;
-    type Witness<'source> = (Note, NullifierKey);
+    type Witness<'source> = (Note, ProofAuthorizingKey);
 
     const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,
-        (note, nk): Self::Witness<'source>,
+        (note, pak): Self::Witness<'source>,
         (nf, left_epoch, left_note_id): <Self::Left as Header>::Data<'source>,
         right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        let note_id = note.id(&nk);
+        if note.pk.0 != pak.derive_payment_key().0 {
+            return Err(mock_ragu::Error);
+        }
+
+        let note_id = note.id(pak.nk());
 
         if note_id != left_note_id {
             return Err(mock_ragu::Error);

@@ -226,7 +226,7 @@ impl Plan {
                 .fuse(
                     rng,
                     &SpendBind,
-                    (rcv, alpha, *pak.ak(), note, *pak.nk()),
+                    (rcv, alpha, *pak, note),
                     nf_pcd,
                     mock_ragu::Pcd {
                         proof: mock_ragu::Proof::trivial(),

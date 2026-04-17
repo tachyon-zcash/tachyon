@@ -15,7 +15,7 @@ use pasta_curves::Fp;
 use super::delegation::NullifierHeader;
 use crate::{
     entropy::ActionRandomizer,
-    keys::{NullifierKey, SpendValidatingKey},
+    keys::ProofAuthorizingKey,
     note::{Note, Nullifier},
     primitives::{ActionDigest, Epoch, NoteId, effect},
     value,
@@ -73,19 +73,23 @@ impl Step for SpendNullifier {
     type Left = ();
     type Output = SpendNullifierHeader;
     type Right = ();
-    type Witness<'source> = (Note, NullifierKey, Epoch);
+    type Witness<'source> = (Note, ProofAuthorizingKey, Epoch);
 
     const INDEX: Index = Index::new(3);
 
     fn witness<'source>(
         &self,
-        (note, nk, target_epoch): Self::Witness<'source>,
+        (note, pak, target_epoch): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        let note_id = note.id(&nk);
-        let nf0 = note.nullifier(&nk, target_epoch);
-        let nf1 = note.nullifier(&nk, Epoch(target_epoch.0 + 1));
+        if note.pk.0 != pak.derive_payment_key().0 {
+            return Err(mock_ragu::Error);
+        }
+
+        let note_id = note.id(pak.nk());
+        let nf0 = note.nullifier(pak.nk(), target_epoch);
+        let nf1 = note.nullifier(pak.nk(), Epoch(target_epoch.0 + 1));
 
         Ok(((nf0, nf1, target_epoch, note_id), ()))
     }
@@ -134,26 +138,29 @@ impl Step for SpendBind {
     type Witness<'source> = (
         value::CommitmentTrapdoor,
         ActionRandomizer<effect::Spend>,
-        SpendValidatingKey,
+        ProofAuthorizingKey,
         Note,
-        NullifierKey,
     );
 
     const INDEX: Index = Index::new(10);
 
     fn witness<'source>(
         &self,
-        (rcv, alpha, ak, note, nk): Self::Witness<'source>,
+        (rcv, alpha, pak, note): Self::Witness<'source>,
         (nf0, nf1, epoch, left_note_id): <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        let note_id = note.id(&nk);
+        if note.pk.0 != pak.derive_payment_key().0 {
+            return Err(mock_ragu::Error);
+        }
+
+        let note_id = note.id(pak.nk());
         if note_id != left_note_id {
             return Err(mock_ragu::Error);
         }
 
         let cv = rcv.commit(i64::from(note.value));
-        let rk = ak.derive_action_public(&alpha);
+        let rk = pak.ak().derive_action_public(&alpha);
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| mock_ragu::Error)?;
 
         Ok((
