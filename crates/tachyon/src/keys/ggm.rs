@@ -31,7 +31,7 @@ pub const GGM_TREE_DEPTH: u8 = 32;
 ///              └── psi_t = GGM(mk, t)    prefix key for epochs e ≤ t (OSS)
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NoteMasterKey(pub Fp);
+pub struct NoteMasterKey(pub(crate) Fp);
 
 impl NoteMasterKey {
     /// Descend one level from the root of the GGM tree.
@@ -105,11 +105,11 @@ impl From<NoteMasterKey> for [u8; 32] {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NotePrefixedKey {
     /// GGM tree node value.
-    pub inner: Fp,
+    pub(crate) inner: Fp,
     /// The number of levels already descended.
-    pub depth: NonZeroU8,
+    pub(crate) depth: NonZeroU8,
     /// Node index at this depth.
-    pub index: u32,
+    pub(crate) index: u32,
 }
 
 impl NotePrefixedKey {
