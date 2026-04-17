@@ -25,11 +25,15 @@ default = [
 ]
 std = [
     "blake2b_simd/std",
+    "core2/std",
     "rand_core/std",
 ]
 
 [dependencies]
 blake2b_simd = { version = "1.0", default-features = false }
+core2 = { version = "0.3", default-features = false, features = [
+    "alloc",
+] }
 ff = "0.13"
 lazy_static = { version = "1", default-features = false, features = [
     "spin_no_std",

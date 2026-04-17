@@ -17,13 +17,15 @@ extern crate alloc;
 
 pub use application::{Application, ApplicationBuilder};
 pub use error::{Error, Result};
+pub use gadgets::Multiset;
 pub use header::{Header, Suffix};
 pub use polynomial::{Commitment, Polynomial, poly_with_roots};
-pub use proof::{Pcd, Proof};
+pub use proof::{Pcd, Proof, Transcript};
 pub use step::{Index, Step};
 
 pub mod application;
 pub mod error;
+pub mod gadgets;
 pub mod header;
 pub mod polynomial;
 pub mod proof;

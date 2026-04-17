@@ -5,11 +5,12 @@
 use alloc::vec::Vec;
 use core::ops::Neg;
 
-use ff::Field;
+use core2::io::{self, Read, Write};
+use ff::{Field, PrimeField};
 use lazy_static::lazy_static;
 use pasta_curves::{Eq, EqAffine, Fp};
 
-const MAX_GENERATORS: usize = 256;
+const MAX_GENERATORS: usize = 8192;
 
 lazy_static! {
     /// Coefficient generators `g[0..n]`.
@@ -18,7 +19,6 @@ lazy_static! {
         let hasher = Eq::hash_to_curve("mock_ragu:generators");
         (0..MAX_GENERATORS)
             .map(|i| {
-                #[expect(clippy::little_endian_bytes, reason = "deterministic derivation")]
                 let point = hasher(&i.to_le_bytes());
                 point.to_affine()
             })
@@ -77,6 +77,43 @@ impl Polynomial {
     #[must_use]
     pub fn coefficients(&self) -> &[Fp] {
         &self.0
+    }
+
+    /// Evaluate via Horner's method: `p(x) = c₀ + x(c₁ + x(c₂ + …))`.
+    #[must_use]
+    pub fn eval(&self, x: Fp) -> Fp {
+        self.0.iter().rev().fold(Fp::ZERO, |acc, &c| acc * x + c)
+    }
+
+    /// Write length-prefixed polynomial: `u32 len || len·32 bytes
+    /// coefficients`.
+    ///
+    /// This is mock-specific — real ragu's PCS machinery transports opening
+    /// claims instead of coefficients.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        let len = u32::try_from(self.0.len())
+            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "polynomial too long"))?;
+        writer.write_all(&len.to_le_bytes())?;
+        for c in &self.0 {
+            writer.write_all(&c.to_repr())?;
+        }
+        Ok(())
+    }
+
+    /// Read a length-prefixed polynomial.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let mut len_bytes = [0u8; 4];
+        reader.read_exact(&mut len_bytes)?;
+        let len = u32::from_le_bytes(len_bytes) as usize;
+        let mut coeffs = Vec::with_capacity(len);
+        for _ in 0..len {
+            let mut repr = [0u8; 32];
+            reader.read_exact(&mut repr)?;
+            let coeff = Option::from(Fp::from_repr(repr))
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid coefficient"))?;
+            coeffs.push(coeff);
+        }
+        Ok(Self(coeffs))
     }
 
     /// `commit(blind) = ∑ coeffᵢ·gᵢ + blind·h`

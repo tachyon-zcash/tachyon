@@ -35,7 +35,7 @@ pub struct Pcd<'source, H: Header> {
 
 impl Proof {
     #[must_use]
-    pub(crate) fn trivial() -> Self {
+    pub fn trivial() -> Self {
         Self::new(&[], &[])
     }
 
@@ -161,4 +161,65 @@ pub(crate) fn compute_rerand_tag(proof_bytes: &[u8]) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(hash.as_bytes());
     out
+}
+
+/// Mock Fiat-Shamir transcript using Blake2b.
+///
+/// In real ragu this becomes an in-circuit Poseidon transcript with typed
+/// challenges (PR #569's `Challenge<F, T>` pattern). The mock uses Blake2b
+/// to match the existing mock binding infrastructure.
+pub struct Transcript {
+    state: blake2b_simd::State,
+}
+
+impl Transcript {
+    /// Create a new transcript with the given domain separator.
+    #[must_use]
+    pub fn new(domain: &[u8]) -> Self {
+        let state = blake2b_simd::Params::new()
+            .hash_length(64)
+            .personal(b"MkRagu_Txscript")
+            .to_state();
+        let mut t = Self { state };
+        t.state.update(domain);
+        t
+    }
+
+    /// Absorb a commitment into the transcript.
+    pub fn absorb_commitment(&mut self, c: &crate::polynomial::Commitment) {
+        let bytes: [u8; 32] = (*c).into();
+        self.state.update(&bytes);
+    }
+
+    /// Absorb a field element into the transcript.
+    pub fn absorb_field(&mut self, x: pasta_curves::Fp) {
+        use ff::PrimeField as _;
+        let bytes: [u8; 32] = x.to_repr();
+        self.state.update(&bytes);
+    }
+
+    /// Squeeze a challenge from the transcript (hash-to-field).
+    ///
+    /// Finalizes the current state into 64 bytes, interprets as a wide
+    /// integer, and reduces mod p. Then re-seeds the state with the hash
+    /// so subsequent challenges depend on all prior absorbs.
+    pub fn challenge(&mut self) -> pasta_curves::Fp {
+        use ff::FromUniformBytes as _;
+
+        let hash = self.state.finalize();
+        let bytes = hash.as_bytes();
+
+        // Re-seed: start fresh state absorbing the hash output,
+        // so future challenges chain properly.
+        self.state = blake2b_simd::Params::new()
+            .hash_length(64)
+            .personal(b"MkRagu_Txscript")
+            .to_state();
+        self.state.update(bytes);
+
+        // Wide reduction: interpret 64 bytes as little-endian integer mod p.
+        let mut wide = [0u8; 64];
+        wide.copy_from_slice(bytes);
+        pasta_curves::Fp::from_uniform_bytes(&wide)
+    }
 }
