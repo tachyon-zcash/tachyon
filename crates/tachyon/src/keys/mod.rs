@@ -90,7 +90,7 @@ mod tests {
     use crate::{
         constants::PrfExpand,
         entropy::ActionEntropy,
-        keys::private,
+        keys::{NullifierKey, PaymentKey, private},
         note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
         primitives::effect,
         reddsa,
@@ -146,6 +146,21 @@ mod tests {
 
         let pak = sk.derive_proof_private();
         assert_eq!(pak.derive_payment_key().0, pk.0);
+    }
+
+    /// pk must bind to nk: varying nk (with ak fixed) must produce a
+    /// different pk. This is what makes the note commitment transitively
+    /// pin the full proof authorizing key.
+    #[test]
+    fn payment_key_binds_nk() {
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ak = sk.derive_auth_private().derive_auth_public();
+        let nk = sk.derive_nullifier_private();
+        let pk = PaymentKey::derive(&ak, &nk);
+
+        let nk_other = NullifierKey(nk.0 + Fp::ONE);
+        let pk_other = PaymentKey::derive(&ak, &nk_other);
+        assert_ne!(pk.0, pk_other.0);
     }
 
     /// rsk.derive_action_public() must equal ak.derive_action_public(alpha) for

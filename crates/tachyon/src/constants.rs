@@ -57,7 +57,8 @@ pub const NOTE_ID_DOMAIN: &[u8; 16] = b"Tachyon-NoteMkCm";
 /// Poseidon domain tag for action digests.
 pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
 
-/// Poseidon domain tag for payment key derivation: $pk = \text{Poseidon}(\text{domain}, ak_x, nk)$.
+/// Poseidon domain tag for payment key derivation: $pk =
+/// \text{Poseidon}(\text{domain}, ak_x, nk)$.
 pub const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)

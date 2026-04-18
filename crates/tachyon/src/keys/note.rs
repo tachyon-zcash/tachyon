@@ -86,7 +86,8 @@ impl NullifierKey {
 ///
 /// Derived from the proof authorizing key components:
 ///
-/// $$\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x, \mathsf{nk})$$
+/// $$\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
+/// \mathsf{nk})$$
 ///
 /// where $\mathsf{ak}_x$ is the x-coordinate of the spend validating key.
 /// This binds `pk` to both `ak` and `nk`, so the note commitment `cm`
@@ -110,7 +111,8 @@ pub struct PaymentKey(pub(crate) Fp);
 
 impl PaymentKey {
     /// Derive the payment key from `ak` and `nk`:
-    /// $\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x, \mathsf{nk})$.
+    /// $\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
+    /// \mathsf{nk})$.
     #[must_use]
     #[expect(
         clippy::expect_used,
@@ -121,8 +123,8 @@ impl PaymentKey {
         let domain = Fp::from_u128(u128::from_le_bytes(*PAYMENT_KEY_DOMAIN));
 
         let ak_bytes: [u8; 32] = ak.0.into();
-        let ak_x = Option::from(Fp::from_repr(ak_bytes))
-            .expect("sign-normalized ak should be a valid Fp");
+        let ak_x =
+            Option::from(Fp::from_repr(ak_bytes)).expect("sign-normalized ak should be a valid Fp");
 
         Self(Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([domain, ak_x, nk.0]))
     }
