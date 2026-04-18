@@ -57,23 +57,17 @@ impl NoteMasterKey {
     /// only hashing children that overlap the range.
     #[must_use]
     pub fn derive_note_delegates(&self, range: RangeInclusive<u32>) -> Vec<NotePrefixedKey> {
-        let (low, high) = {
-            #[expect(clippy::expect_used, reason = "guaranteed valid shift")]
-            let root_split = u32::MAX
-                .checked_shr(1u32)
-                .expect("shifting u32::MAX by 1 will never overflow");
-            (
-                *range.start()..=root_split.min(*range.end()),
-                (*range.start()).max(root_split + 1)..=*range.end(),
-            )
-        };
+        // Children at depth 1 each own half of the u32 epoch space.
+        let split: u32 = u32::MAX >> 1;
 
         let mut result = Vec::new();
-        if !low.is_empty() {
-            result.extend(self.step(false).derive_note_delegates(low));
+        if *range.start() <= split {
+            let lo = *range.start()..=(*range.end()).min(split);
+            result.extend(self.step(false).derive_note_delegates(lo));
         }
-        if !high.is_empty() {
-            result.extend(self.step(true).derive_note_delegates(high));
+        if *range.end() > split {
+            let hi = (*range.start()).max(split + 1)..=*range.end();
+            result.extend(self.step(true).derive_note_delegates(hi));
         }
         result
     }
@@ -150,32 +144,36 @@ impl NotePrefixedKey {
     ///
     /// Recursively descends the tree, emitting fully-covered nodes and
     /// only hashing children that overlap the range.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `range` is not a subset of [`Self::range`].
     #[must_use]
     pub fn derive_note_delegates(&self, range: RangeInclusive<u32>) -> Vec<Self> {
+        assert!(
+            self.range().contains(range.start()) && self.range().contains(range.end()),
+            "prefix key for {:?} does not cover requested range {:?}",
+            self.range(),
+            range,
+        );
+
         if range == self.range() {
             // This node exactly covers the requested range.
             alloc::vec![*self]
         } else {
             // This node is larger than the requested range.
-            let (low, high) = {
-                let next_depth = u32::from(self.depth.get() + 1);
-                let next_dyad_size = u32::MAX.checked_shr(next_depth).unwrap_or(0);
-
-                // a key's range is dyadic-aligned. select next smallest dyad.
-                let next_split = *self.range().start() | next_dyad_size;
-
-                (
-                    *range.start()..=next_split.min(*range.end()),
-                    (*range.start()).max(next_split + 1)..=*range.end(),
-                )
-            };
+            let next_depth = u32::from(self.depth.get() + 1);
+            let next_dyad_size = u32::MAX.checked_shr(next_depth).unwrap_or(0);
+            let split = *self.range().start() | next_dyad_size;
 
             let mut result = Vec::new();
-            if !low.is_empty() {
-                result.extend(self.step(false).derive_note_delegates(low));
+            if *range.start() <= split {
+                let lo = *range.start()..=(*range.end()).min(split);
+                result.extend(self.step(false).derive_note_delegates(lo));
             }
-            if !high.is_empty() {
-                result.extend(self.step(true).derive_note_delegates(high));
+            if *range.end() > split {
+                let hi = (*range.start()).max(split + 1)..=*range.end();
+                result.extend(self.step(true).derive_note_delegates(hi));
             }
             result
         }
@@ -341,5 +339,41 @@ mod tests {
         }
         // Now at depth 32 (leaf) — one more step should panic.
         let _boom = key.step(false);
+    }
+
+    #[test]
+    fn full_range_from_master() {
+        let root = NoteMasterKey(Fp::from(1u64));
+        let delegates = root.derive_note_delegates(0..=u32::MAX);
+        assert_eq!(delegates.len(), 2);
+        assert_eq!(delegates[0].range(), 0..=(u32::MAX >> 1u32));
+        assert_eq!(delegates[1].range(), (u32::MAX >> 1u32) + 1..=u32::MAX);
+    }
+
+    #[test]
+    fn last_epoch_delegate() {
+        let root = NoteMasterKey(Fp::from(1u64));
+        let delegates = root.derive_note_delegates(u32::MAX..=u32::MAX);
+        assert_eq!(delegates.len(), 1);
+        assert_eq!(delegates[0].range(), u32::MAX..=u32::MAX);
+        assert_eq!(delegates[0].depth.get(), GGM_TREE_DEPTH);
+    }
+
+    #[test]
+    #[should_panic(expected = "does not cover requested range")]
+    fn disjoint_range_panics() {
+        let root = NoteMasterKey(Fp::from(1u64));
+        // depth-2 prefix covering [0..=0x3FFF_FFFF].
+        let prefix = root.step(false).step(false);
+        let _delegates = prefix.derive_note_delegates(0x8000_0000..=0x8000_0010);
+    }
+
+    #[test]
+    #[should_panic(expected = "does not cover requested range")]
+    fn partial_overlap_panics() {
+        let root = NoteMasterKey(Fp::from(1u64));
+        // depth-2 prefix covering [0..=0x3FFF_FFFF].
+        let prefix = root.step(false).step(false);
+        let _delegates = prefix.derive_note_delegates(0..=0x4000_0000);
     }
 }
