@@ -5,8 +5,12 @@ use ff::PrimeField as _;
 use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::Fp;
 
-use super::ggm::NoteMasterKey;
-use crate::{constants::NOTE_MASTER_DOMAIN, note, primitives::NoteId};
+use super::{ggm::NoteMasterKey, proof::SpendValidatingKey};
+use crate::{
+    constants::{NOTE_MASTER_DOMAIN, PAYMENT_KEY_DOMAIN},
+    note,
+    primitives::NoteId,
+};
 
 /// A Tachyon nullifier deriving key.
 ///
@@ -80,8 +84,17 @@ impl NullifierKey {
 ///
 /// ## Derivation
 ///
-/// Deterministic per-`sk`: $\mathsf{pk} =
-/// \text{ToBase}(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([0\text{x}0b]))$.
+/// Derived from the proof authorizing key components:
+///
+/// $$\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
+/// \mathsf{nk})$$
+///
+/// where $\mathsf{ak}_x$ is the x-coordinate of the spend validating key.
+/// This binds `pk` to both `ak` and `nk`, so the note commitment `cm`
+/// (which contains `pk`) transitively pins the full proof authorizing key.
+/// Wrong `nk` produces wrong `pk`, wrong `cm`, and accumulator inclusion
+/// fails.
+///
 /// Every note from the same spending key shares the same `pk`. There is
 /// no per-note diversification — unlinkability is the wallet layer's
 /// responsibility, not the core protocol's.
@@ -95,6 +108,27 @@ impl NullifierKey {
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct PaymentKey(pub(crate) Fp);
+
+impl PaymentKey {
+    /// Derive the payment key from `ak` and `nk`:
+    /// $\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
+    /// \mathsf{nk})$.
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "sign-normalized ak (tilde_y=0) is always a valid Fp repr"
+    )]
+    pub fn derive(ak: &SpendValidatingKey, nk: &NullifierKey) -> Self {
+        #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
+        let domain = Fp::from_u128(u128::from_le_bytes(*PAYMENT_KEY_DOMAIN));
+
+        let ak_bytes: [u8; 32] = ak.0.into();
+        let ak_x =
+            Option::from(Fp::from_repr(ak_bytes)).expect("sign-normalized ak should be a valid Fp");
+
+        Self(Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([domain, ak_x, nk.0]))
+    }
+}
 
 #[cfg(test)]
 mod tests {

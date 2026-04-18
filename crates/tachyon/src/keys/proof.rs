@@ -1,6 +1,9 @@
 //! Proof-related keys: ProofAuthorizingKey.
 
-use super::{note::NullifierKey, public};
+use super::{
+    note::{NullifierKey, PaymentKey},
+    public,
+};
 use crate::{entropy::ActionRandomizer, primitives::effect, reddsa};
 
 /// The proof authorizing key (`ak` + `nk`).
@@ -39,6 +42,14 @@ impl ProofAuthorizingKey {
     #[must_use]
     pub const fn nk(&self) -> &NullifierKey {
         &self.nk
+    }
+
+    /// Derive the payment key $\mathsf{pk}$ from `ak` and `nk`.
+    ///
+    /// Allows the pak holder to compute `pk` without access to `sk`.
+    #[must_use]
+    pub fn derive_payment_key(&self) -> PaymentKey {
+        PaymentKey::derive(&self.ak, &self.nk)
     }
 }
 

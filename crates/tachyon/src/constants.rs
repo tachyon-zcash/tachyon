@@ -5,7 +5,7 @@
 //! variable-length strings under the `z.cash:` namespace.
 
 /// BLAKE2b-512 personalization for `PRF^expand`: key expansion from
-/// a spending key to child keys (`ask`, `nk`, `pk`).
+/// a spending key to child keys (`ask`, `nk`).
 ///
 /// Matches Zcash's `PRF^expand` pattern (§5.4.2 of the protocol spec).
 pub const PRF_EXPAND_PERSONALIZATION: &[u8; 16] = b"Zcash_ExpandSeed";
@@ -57,6 +57,10 @@ pub const NOTE_ID_DOMAIN: &[u8; 16] = b"Tachyon-NoteMkCm";
 /// Poseidon domain tag for action digests.
 pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
 
+/// Poseidon domain tag for payment key derivation: $pk =
+/// \text{Poseidon}(\text{domain}, ak_x, nk)$.
+pub const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
+
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)
 pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
 
@@ -82,10 +86,6 @@ impl PrfExpand {
     /// `[0x0a]` -> `nk` (nullifier key, base field)
     pub(crate) const NK: Self = Self {
         domain_separator: 0x0a,
-    };
-    /// `[0x0b]` -> `pk` (payment key, base field)
-    pub(crate) const PK: Self = Self {
-        domain_separator: 0x0b,
     };
 
     /// Evaluate the PRF: `BLAKE2b-512("Zcash_ExpandSeed", sk || domain_sep)`.
@@ -115,9 +115,6 @@ mod tests {
         let sk = [0x42u8; 32];
         let ask = PrfExpand::ASK.with(&sk);
         let nk = PrfExpand::NK.with(&sk);
-        let pk = PrfExpand::PK.with(&sk);
         assert_ne!(ask, nk);
-        assert_ne!(ask, pk);
-        assert_ne!(nk, pk);
     }
 }
