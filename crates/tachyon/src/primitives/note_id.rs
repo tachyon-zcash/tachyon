@@ -13,6 +13,7 @@ use crate::{constants::NOTE_ID_DOMAIN, keys, note};
 pub struct NoteId(Fp);
 
 impl NoteId {
+    /// TODO: consider adding trapdoor so note_id may be opaque
     pub(crate) fn derive(nk: &keys::NullifierKey, note: &note::Note) -> Self {
         #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
         let domain = Fp::from_u128(u128::from_le_bytes(*NOTE_ID_DOMAIN));
