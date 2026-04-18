@@ -42,7 +42,7 @@ use rand_core::{CryptoRng, RngCore};
 use crate::{
     constants::{NOTE_COMMITMENT_DOMAIN, NOTE_VALUE_MAX},
     keys::{NullifierKey, PaymentKey},
-    primitives::{Epoch, Tachygram},
+    primitives::{Epoch, NoteId, Tachygram},
 };
 
 /// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
@@ -163,6 +163,12 @@ impl Note {
                 self.psi.0,
             ]),
         )
+    }
+
+    /// Derives the note identity binding: `H(domain, mk, cm)`.
+    #[must_use]
+    pub fn id(&self, nk: &NullifierKey) -> NoteId {
+        NoteId::derive(nk, self)
     }
 
     /// Derives a nullifier for this note at the given flavor (epoch).
@@ -291,7 +297,7 @@ mod tests {
             psi,
             rcm: CommitmentTrapdoor::from(Fp::ZERO),
         };
-        let flavor = Epoch::from(5u32);
+        let flavor = Epoch(5u32);
 
         let mk = nk.derive_note_private(&psi);
         assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));

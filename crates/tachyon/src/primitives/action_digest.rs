@@ -128,7 +128,7 @@ mod tests {
     use crate::{
         entropy::ActionEntropy,
         keys::private,
-        note::{self, CommitmentTrapdoor, Note, NullifierTrapdoor},
+        note::{self, Note},
         primitives::effect,
         value,
     };
@@ -144,8 +144,8 @@ mod tests {
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(val),
-            psi: NullifierTrapdoor::from(psi),
-            rcm: CommitmentTrapdoor::from(rcm),
+            psi: note::NullifierTrapdoor::from(psi),
+            rcm: note::CommitmentTrapdoor::from(rcm),
         };
         let rcv = value::CommitmentTrapdoor::random(rng);
         let cv = rcv.commit(i64::from(note.value));

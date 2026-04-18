@@ -1,14 +1,21 @@
 mod action_digest;
 mod anchor;
+mod block_commit;
+mod block_height;
+mod chain_hash;
 pub mod effect;
 mod epoch;
-pub mod multiset;
 mod note_id;
+mod pool_commit;
 mod tachygram;
 
 pub use action_digest::{ActionDigest, ActionDigestError};
 pub use anchor::Anchor;
+pub use block_commit::BlockCommit;
+pub use block_height::BlockHeight;
+pub use chain_hash::{BlockChainHash, EpochChainHash};
 pub use effect::Effect;
 pub use epoch::Epoch;
-pub(crate) use note_id::NoteId;
+pub use note_id::NoteId;
+pub use pool_commit::PoolCommit;
 pub use tachygram::Tachygram;

@@ -158,8 +158,8 @@ mod tests {
         let psi = note::NullifierTrapdoor::from(Fp::from(99u64));
         let mk = nk.derive_note_private(&psi);
         assert_ne!(
-            mk.derive_nullifier(Epoch::from(0u32)),
-            mk.derive_nullifier(Epoch::from(1u32)),
+            mk.derive_nullifier(Epoch(0u32)),
+            mk.derive_nullifier(Epoch(1u32)),
         );
     }
 
@@ -173,8 +173,8 @@ mod tests {
         for dk in &mk.derive_note_delegates(0..=99) {
             for epoch in dk.range() {
                 assert_eq!(
-                    mk.derive_nullifier(Epoch::from(epoch)),
-                    dk.derive_nullifier(Epoch::from(epoch)),
+                    mk.derive_nullifier(Epoch(epoch)),
+                    dk.derive_nullifier(Epoch(epoch)),
                     "mismatch at epoch {epoch} with delegate {dk:?}"
                 );
             }
@@ -192,6 +192,6 @@ mod tests {
         // Delegate covering [0..=63]
         let dk = &mk.derive_note_delegates(0..=63)[0];
         // epoch 64 is outside the authorized range
-        let _compute = dk.derive_nullifier(Epoch::from(64u32));
+        let _compute = dk.derive_nullifier(Epoch(64u32));
     }
 }
