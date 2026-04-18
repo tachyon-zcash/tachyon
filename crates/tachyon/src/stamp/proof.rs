@@ -1,194 +1,80 @@
 //! Tachyon proofs via Ragu PCD.
 //!
-//! Tachyon uses **Ragu PCD** (Proof-Carrying Data) for proof generation and
-//! aggregation. A single Ragu proof per aggregate covers all actions across
-//! multiple bundles.
-//!
-//! ## Verification
-//!
-//! The header is not transmitted on the wire. The verifier reconstructs the PCD
-//! header from public data according to consensus rules.
-//!
-//! 1. Recompute `action_acc` from the bundle's actions
-//! 2. Recompute `tachygram_acc` from the listed tachygrams
-//! 3. Construct the PCD header (`action_acc`, `tachygram_acc`, `anchor`)
-//! 4. Call Ragu `verify(Pcd { proof, data: header })`
-//!
-//! A successful verification with a reconstructed header demonstrates that
-//! consensus rules were followed.
-//!
-//! ## Proving
-//!
-//! The prover supplies a witness tuple `(alpha, note, rcv)` per action,
-//! containing private inputs that the circuit checks against the public
-//! action and tachygram.
+//! Registers all PCD step types and provides accumulator helpers for
+//! stamp construction and verification.
 
-extern crate alloc;
-
-use alloc::vec::Vec;
-use core::{marker::PhantomData, ops::Neg as _};
-
-use ff::PrimeField as _;
+use ff::Field as _;
+use lazy_static::lazy_static;
 pub use mock_ragu::Proof;
-use mock_ragu::{self, Header, Index, Step, Suffix};
-use pasta_curves::{EqAffine, Fp, group::GroupEncoding as _};
+use mock_ragu::{Application, ApplicationBuilder};
+use pasta_curves::Fp;
 
 use crate::{
-    entropy::{ActionRandomizer, Witness},
-    keys::{ProofAuthorizingKey, private::ActionSigningKey, public},
-    note::Note,
-    primitives::{
-        ActionDigest, Anchor, Epoch, Tachygram, effect,
-        multiset::{self, Multiset},
+    action::Action,
+    primitives::{ActionDigest, ActionDigestError, Tachygram},
+    stamp::{
+        delegation::{DelegationSeed, DelegationStep, NullifierStep},
+        header::{MergeStamp, OutputStamp, SpendStamp, StampLift},
+        pool::{PoolSeed, PoolStep},
+        spend::{SpendBind, SpendNullifier, SpendNullifierFuse},
+        spendable::{SpendableEpochLift, SpendableInit, SpendableLift, SpendableRollover},
     },
-    value,
 };
 
-/// PCD header type for Tachyon stamps.
-pub(crate) struct StampHeader;
-
-impl Header for StampHeader {
-    type Data<'source> = (
-        multiset::Commitment<ActionDigest>,
-        multiset::Commitment<Tachygram>,
-        Anchor,
-    );
-
-    const SUFFIX: Suffix = Suffix::new(1);
-
-    fn encode(
-        data: &(
-            multiset::Commitment<ActionDigest>,
-            multiset::Commitment<Tachygram>,
-            Anchor,
-        ),
-    ) -> Vec<u8> {
-        let mut out = Vec::with_capacity(96);
-        let action_bytes: [u8; 32] = EqAffine::from(data.0).to_bytes();
-        let tachygram_bytes: [u8; 32] = EqAffine::from(data.1).to_bytes();
-        out.extend_from_slice(&action_bytes);
-        out.extend_from_slice(&tachygram_bytes);
-        let anchor_bytes: [u8; 32] = Fp::from(data.2).to_repr();
-        out.extend_from_slice(&anchor_bytes);
-        out
+/// Compute the raw Fp product accumulator over action digests.
+pub fn compute_action_acc(actions: &[Action]) -> Result<Fp, ActionDigestError> {
+    let mut acc = Fp::ONE;
+    for action in actions {
+        let digest = ActionDigest::try_from(action)?;
+        acc *= Fp::from(digest);
     }
+    Ok(acc)
 }
 
-/// Witness data for a single action proof.
-pub(crate) struct ActionWitness<'action> {
-    /// Action descriptor (cv, rk).
-    pub(crate) descriptor: (value::Commitment, public::ActionVerificationKey),
-    /// Action secrets (alpha, note, rcv).
-    pub(crate) secrets: (ActionRandomizer<Witness>, Note, value::CommitmentTrapdoor),
-    /// Accumulator state reference.
-    pub(crate) anchor: Anchor,
-    /// Epoch index for nullifier derivation.
-    pub(crate) epoch: Epoch,
-    /// Wallet-wide proof authorizing key.
-    pub(crate) pak: &'action ProofAuthorizingKey,
+/// Compute the raw Fp product accumulator over tachygrams.
+pub(super) fn compute_tachygram_acc(tachygrams: &[Tachygram]) -> Fp {
+    tachygrams
+        .iter()
+        .fold(Fp::ONE, |acc, tg| acc * Fp::from(*tg))
 }
 
-/// Leaf step: produces a proof for a single action.
-pub(crate) struct ActionStep;
-
-impl Step for ActionStep {
-    type Aux<'source> = (Tachygram, Multiset<ActionDigest>, Multiset<Tachygram>);
-    type Left = ();
-    type Output = StampHeader;
-    type Right = ();
-    type Witness<'source> = ActionWitness<'source>;
-
-    const INDEX: Index = Index::new(0);
-
-    fn witness<'source>(
-        &self,
-        witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        let (cv, rk) = witness.descriptor;
-        let (alpha, note, rcv) = witness.secrets;
-        let (anchor, epoch, pak) = (witness.anchor, witness.epoch, witness.pak);
-
-        let note_value: i64 = note.value.into();
-
-        // output: rk == [alpha]G
-        let is_output = rk
-            == ActionSigningKey::new(&ActionRandomizer::<effect::Output>(alpha.0, PhantomData))
-                .derive_action_public();
-
-        // spend: rk == ak + [alpha]G
-        let is_spend = rk
-            == pak
-                .ak()
-                .derive_action_public(&ActionRandomizer::<effect::Spend>(alpha.0, PhantomData));
-
-        let (tachygram, check_cv): (Tachygram, value::Commitment) = match (is_spend, is_output) {
-            | (true, false) => {
-                Ok((
-                    note.nullifier(pak.nk(), epoch).into(),
-                    rcv.commit(note_value),
-                ))
-            },
-            | (false, true) => Ok((note.commitment().into(), rcv.commit(note_value.neg()))),
-            | (true, true) | (false, false) => Err(mock_ragu::Error),
-        }?;
-
-        if cv != check_cv {
-            return Err(mock_ragu::Error);
-        }
-
-        let action_acc = ActionDigest::new(cv, rk)
-            .map(Multiset::<ActionDigest>::from)
-            .map_err(|_err| mock_ragu::Error)?;
-
-        let tachygram_acc = Multiset::<Tachygram>::from(tachygram);
-
-        Ok((
-            (action_acc.commit(), tachygram_acc.commit(), anchor),
-            (tachygram, action_acc, tachygram_acc),
-        ))
-    }
-}
-
-/// Accumulators from both sides, needed for merge.
-#[expect(
-    clippy::struct_field_names,
-    reason = "left/right prefix is semantically necessary"
-)]
-pub(crate) struct MergeWitness {
-    pub(crate) left_action_acc: Multiset<ActionDigest>,
-    pub(crate) left_tachygram_acc: Multiset<Tachygram>,
-    pub(crate) right_action_acc: Multiset<ActionDigest>,
-    pub(crate) right_tachygram_acc: Multiset<Tachygram>,
-}
-
-/// Merge step: combines two stamp proofs.
-pub(crate) struct MergeStep;
-
-impl Step for MergeStep {
-    type Aux<'source> = (Multiset<ActionDigest>, Multiset<Tachygram>);
-    type Left = StampHeader;
-    type Output = StampHeader;
-    type Right = StampHeader;
-    type Witness<'source> = MergeWitness;
-
-    const INDEX: Index = Index::new(1);
-
-    fn witness<'source>(
-        &self,
-        witness: Self::Witness<'source>,
-        left: <Self::Left as Header>::Data<'source>,
-        right: <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        let action_acc = witness.left_action_acc * witness.right_action_acc;
-        let tachygram_acc = witness.left_tachygram_acc * witness.right_tachygram_acc;
-
-        let action_commitment = action_acc.commit();
-        let tachygram_commitment = tachygram_acc.commit();
-        let anchor = left.2.max(right.2);
-
-        let header = (action_commitment, tachygram_commitment, anchor);
-        Ok((header, (action_acc, tachygram_acc)))
-    }
+lazy_static! {
+    pub(super) static ref PROOF_SYSTEM: Application = {
+        #[expect(clippy::expect_used, reason = "mock registration is infallible")]
+        ApplicationBuilder::new()
+            .register(DelegationSeed)
+            .expect("register DelegationSeed")
+            .register(SpendNullifier)
+            .expect("register SpendNullifier")
+            .register(OutputStamp)
+            .expect("register OutputStamp")
+            .register(PoolSeed)
+            .expect("register PoolSeed")
+            .register(DelegationStep)
+            .expect("register DelegationStep")
+            .register(NullifierStep)
+            .expect("register NullifierStep")
+            .register(PoolStep)
+            .expect("register PoolStep")
+            .register(SpendBind)
+            .expect("register SpendBind")
+            .register(SpendableInit)
+            .expect("register SpendableInit")
+            .register(SpendableRollover)
+            .expect("register SpendableRollover")
+            .register(SpendableLift)
+            .expect("register SpendableLift")
+            .register(SpendableEpochLift)
+            .expect("register SpendableEpochLift")
+            .register(SpendNullifierFuse)
+            .expect("register SpendNullifierFuse")
+            .register(SpendStamp)
+            .expect("register SpendStamp")
+            .register(MergeStamp)
+            .expect("register MergeStamp")
+            .register(StampLift)
+            .expect("register StampLift")
+            .finalize()
+            .expect("finalize")
+    };
 }

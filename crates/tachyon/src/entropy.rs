@@ -57,19 +57,11 @@ impl ActionEntropy {
     }
 }
 
-/// Effect-erased marker for [`ActionRandomizer`].
-///
-/// Used in proof witness storage where the effect is inferred from
-/// the value commitment rather than carried in the type.
-#[derive(Clone, Copy, Debug)]
-pub struct Witness;
-
 mod sealed {
     use crate::primitives::Effect;
 
     pub trait RandomizerState: Copy {}
     impl<T: Effect> RandomizerState for T {}
-    impl RandomizerState for super::Witness {}
 }
 
 /// Per-action randomizer $\alpha$, parameterized by effect state.
@@ -77,19 +69,12 @@ mod sealed {
 /// - [`ActionRandomizer<Spend>`]: $\mathsf{rsk} = \mathsf{ask} + \alpha$,
 ///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
 /// - [`ActionRandomizer<Output>`]: $\mathsf{rsk} = \alpha$.
-/// - [`ActionRandomizer<Witness>`]: effect-erased, used in proof witnesses.
 #[derive(Clone, Copy, Debug)]
 pub struct ActionRandomizer<S: sealed::RandomizerState>(pub(crate) Fq, pub(crate) PhantomData<S>);
 
 impl<S: sealed::RandomizerState> From<ActionRandomizer<S>> for Fq {
     fn from(randomizer: ActionRandomizer<S>) -> Self {
         randomizer.0
-    }
-}
-
-impl<E: Effect> From<ActionRandomizer<E>> for ActionRandomizer<Witness> {
-    fn from(randomizer: ActionRandomizer<E>) -> Self {
-        Self(randomizer.0, PhantomData)
     }
 }
 

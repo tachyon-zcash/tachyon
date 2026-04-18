@@ -61,6 +61,12 @@ pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
 /// \text{Poseidon}(\text{domain}, ak_x, nk)$.
 pub const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
+/// Poseidon domain tag for epoch chain hashing.
+pub const EPOCH_CHAIN_HASH_DOMAIN: &[u8; 16] = b"Tachyon-EpchHash";
+
+/// Poseidon domain tag for block chain hashing.
+pub const BLOCK_CHAIN_HASH_DOMAIN: &[u8; 16] = b"Tachyon-BlkCHash";
+
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)
 pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
 

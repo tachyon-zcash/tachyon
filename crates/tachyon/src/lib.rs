@@ -66,7 +66,7 @@ pub use action::Action;
 pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped};
 pub use note::Note;
 pub use primitives::{
-    ActionDigest, ActionDigestError, Anchor, Effect, Epoch, Tachygram, effect,
-    multiset::{self, Multiset},
+    ActionDigest, ActionDigestError, Anchor, BlockChainHash, BlockCommit, BlockHeight, Effect,
+    Epoch, EpochChainHash, NoteId, PoolCommit, Tachygram, effect,
 };
-pub use stamp::{Stamp, proof::Proof};
+pub use stamp::Stamp;
