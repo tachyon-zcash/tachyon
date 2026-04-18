@@ -22,10 +22,12 @@ mod sealed {
 
 /// Sealed trait marking an action effect (spend or output).
 pub trait Effect: sealed::Sealed + 'static {
-    /// Derive this effect's $\alpha$ scalar from per-action entropy and a note commitment.
+    /// Derive this effect's $\alpha$ scalar from per-action entropy and a note
+    /// commitment.
     fn derive_alpha(theta: &ActionEntropy, cm: &note::Commitment) -> Fq;
 
-    /// Commit to this effect's signed value contribution using the given trapdoor.
+    /// Commit to this effect's signed value contribution using the given
+    /// trapdoor.
     fn commit_value(rcv: value::CommitmentTrapdoor, value: note::Value) -> value::Commitment;
 }
 

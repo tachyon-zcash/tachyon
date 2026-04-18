@@ -51,6 +51,9 @@ pub const NOTE_NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 /// Poseidon domain tag for note commitments.
 pub const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-NoteCmmt";
 
+/// Poseidon domain tag for note identity binding: `H(domain, mk, cm)`.
+pub const NOTE_ID_DOMAIN: &[u8; 16] = b"Tachyon-NoteMkCm";
+
 /// Poseidon domain tag for action digests.
 pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
 
