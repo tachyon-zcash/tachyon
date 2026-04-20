@@ -1,111 +1,13 @@
 use alloc::vec::Vec;
-use core::ops::Neg as _;
 
-use ff::Field as _;
-use pasta_curves::Fp;
 use rand::thread_rng;
 
-use super::{
+use crate::{
     application::*,
     error::Result,
     header::{Header, Suffix},
-    polynomial::*,
-    proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof},
     step::{Index, Step},
 };
-
-// ---- proof ----
-
-#[test]
-fn proof_round_trip() {
-    let proof = Proof::new(b"header", b"witness");
-    let bytes: [u8; PROOF_SIZE_COMPRESSED] = proof.clone().into();
-    let recovered = Proof::try_from(&bytes).expect("round trip should succeed");
-    assert_eq!(proof, recovered);
-}
-
-#[test]
-fn tampered_proof_fails() {
-    let proof = Proof::new(b"header", b"witness");
-    let mut bytes: [u8; PROOF_SIZE_COMPRESSED] = proof.into();
-    bytes[0] ^= 0xFFu8;
-    Proof::try_from(&bytes).expect_err("tampered proof should fail");
-}
-
-#[test]
-fn carry_creates_pcd() {
-    let proof = Proof::new(b"header", b"witness");
-    let expected = proof.clone();
-    let pcd: Pcd<'_, ()> = proof.carry(());
-    assert_eq!(pcd.proof, expected);
-}
-
-#[test]
-fn rerandomize() {
-    let proof = Proof::new(b"header", b"witness");
-    assert_eq!(proof.rerand_tag, [0u8; 32]);
-
-    let once = proof.rerandomize();
-
-    assert_eq!(proof.header_hash, once.header_hash);
-    assert_eq!(proof.witness_hash, once.witness_hash);
-    assert_eq!(proof.binding, once.binding);
-    assert_ne!(proof, once);
-
-    let twice = once.rerandomize();
-    assert_eq!(proof.header_hash, twice.header_hash);
-    assert_eq!(proof.witness_hash, twice.witness_hash);
-    assert_eq!(proof.binding, twice.binding);
-    assert_ne!(once, twice);
-
-    assert_ne!(proof.rerand_tag, once.rerand_tag);
-    assert_ne!(proof.rerand_tag, twice.rerand_tag);
-    assert_ne!(once.rerand_tag, twice.rerand_tag);
-}
-
-// ---- polynomial ----
-
-#[test]
-fn from_roots_and_multiply() {
-    let a = Fp::from(3u64);
-    let b = Fp::from(7u64);
-
-    let pa = Polynomial::from_roots(&[a]);
-    assert_eq!(pa.coefficients(), &[a.neg(), Fp::ONE]);
-
-    let pb = Polynomial::from_roots(&[b]);
-    assert_eq!(pa.multiply(&pb), Polynomial::from_roots(&[a, b]));
-
-    let identity = Polynomial::default();
-    assert_eq!(pa.multiply(&identity), pa);
-}
-
-#[test]
-fn commitment_deterministic_and_distinct() {
-    let c1 = Polynomial::from_roots(&[Fp::from(1u64)]).commit(Fp::ZERO);
-    let c2 = Polynomial::from_roots(&[Fp::from(2u64)]).commit(Fp::ZERO);
-    let c1_again = Polynomial::from_roots(&[Fp::from(1u64)]).commit(Fp::ZERO);
-    assert_eq!(c1, c1_again);
-    assert_ne!(c1, c2);
-}
-
-#[test]
-fn commitment_serialization_roundtrip() {
-    let commitment = Polynomial::from_roots(&[Fp::from(99u64)]).commit(Fp::ZERO);
-    let bytes: [u8; 32] = commitment.into();
-    let recovered = Commitment::try_from(&bytes).expect("valid point");
-    assert_eq!(commitment, recovered);
-}
-
-#[test]
-fn blinding_changes_commitment() {
-    let poly = Polynomial::from_roots(&[Fp::from(42u64)]);
-    let unblinded = poly.commit(Fp::ZERO);
-    let blinded = poly.commit(Fp::ONE);
-    assert_ne!(unblinded, blinded);
-}
-
-// ---- application ----
 
 struct TestHeader;
 
@@ -120,7 +22,6 @@ impl Header for TestHeader {
     const SUFFIX: Suffix = Suffix::new(0);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        #[expect(clippy::little_endian_bytes, reason = "test encoding")]
         let bytes = data.value.to_le_bytes();
         bytes.to_vec()
     }
@@ -381,9 +282,7 @@ fn different_merge_trees_same_header() {
     );
 }
 
-// -- Steps with aux --
-
-/// Header value is `witness²`, aux is `alloc::vec![witness²]`.
+/// Header value is `witness²`, aux is `vec![witness²]`.
 struct AuxSeedStep;
 
 impl Step for AuxSeedStep {

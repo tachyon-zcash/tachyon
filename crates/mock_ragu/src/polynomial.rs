@@ -9,7 +9,7 @@ use ff::Field;
 use lazy_static::lazy_static;
 use pasta_curves::{Eq, EqAffine, Fp};
 
-const MAX_GENERATORS: usize = 256;
+const MAX_GENERATORS: usize = 8192;
 
 lazy_static! {
     /// Coefficient generators `g[0..n]`.
@@ -18,7 +18,6 @@ lazy_static! {
         let hasher = Eq::hash_to_curve("mock_ragu:generators");
         (0..MAX_GENERATORS)
             .map(|i| {
-                #[expect(clippy::little_endian_bytes, reason = "deterministic derivation")]
                 let point = hasher(&i.to_le_bytes());
                 point.to_affine()
             })
@@ -77,6 +76,12 @@ impl Polynomial {
     #[must_use]
     pub fn coefficients(&self) -> &[Fp] {
         &self.0
+    }
+
+    /// Evaluate via Horner's method: `p(x) = c₀ + x(c₁ + x(c₂ + …))`.
+    #[must_use]
+    pub fn eval(&self, x: Fp) -> Fp {
+        self.0.iter().rev().fold(Fp::ZERO, |acc, &c| acc * x + c)
     }
 
     /// `commit(blind) = ∑ coeffᵢ·gᵢ + blind·h`

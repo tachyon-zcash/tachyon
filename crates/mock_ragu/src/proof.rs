@@ -35,7 +35,7 @@ pub struct Pcd<'source, H: Header> {
 
 impl Proof {
     #[must_use]
-    pub(crate) fn trivial() -> Self {
+    pub fn trivial() -> Self {
         Self::new(&[], &[])
     }
 
