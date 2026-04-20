@@ -61,6 +61,9 @@ pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
 /// \text{Poseidon}(\text{domain}, ak_x, nk)$.
 pub const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
+/// Poseidon domain tag for the Fq accumulator state transition.
+pub const ACCUMULATOR_DOMAIN: &[u8; 16] = b"Tachyon-AccState";
+
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)
 pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
 

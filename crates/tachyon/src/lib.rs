@@ -49,6 +49,7 @@ macro_rules! todo {
     };
 }
 
+pub mod accumulator;
 pub mod action;
 pub mod bundle;
 pub mod constants;
