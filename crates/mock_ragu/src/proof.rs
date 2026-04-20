@@ -162,4 +162,3 @@ pub(crate) fn compute_rerand_tag(proof_bytes: &[u8]) -> [u8; 32] {
     out.copy_from_slice(hash.as_bytes());
     out
 }
-
