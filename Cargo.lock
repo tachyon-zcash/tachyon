@@ -510,7 +510,6 @@ name = "mock_ragu"
 version = "0.0.0"
 dependencies = [
  "blake2b_simd",
- "core2",
  "ff",
  "lazy_static",
  "pasta_curves",
