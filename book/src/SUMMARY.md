@@ -23,6 +23,7 @@
 - [Extensions]()
   - [Oblivious Message Retrieval]()
 
-## Reference
+## Appendix
 
+- [Transaction Identifiers](transaction-identifiers.md)
 - [Domain Separators](domain-separators.md)

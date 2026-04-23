@@ -1,7 +1,4 @@
-use core2::io::{self, Read, Write};
 use pasta_curves::Fp;
-
-use crate::serialization;
 
 /// A tachygram is a field element ($\mathbb{F}_p$) representing either a
 /// note commitment or a nullifier in the Tachyon polynomial accumulator.
@@ -16,26 +13,14 @@ use crate::serialization;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Tachygram(Fp);
 
-impl From<Fp> for Tachygram {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
+impl From<&Fp> for Tachygram {
+    fn from(fp: &Fp) -> Self {
+        Self(*fp)
     }
 }
 
-impl From<Tachygram> for Fp {
-    fn from(tg: Tachygram) -> Self {
+impl From<&Tachygram> for Fp {
+    fn from(tg: &Tachygram) -> Self {
         tg.0
-    }
-}
-
-impl Tachygram {
-    /// Read a tachygram from 32 bytes.
-    pub fn read<R: Read>(reader: R) -> io::Result<Self> {
-        serialization::read_fp(reader).map(Self)
-    }
-
-    /// Write a tachygram as 32 bytes.
-    pub fn write<W: Write>(&self, writer: W) -> io::Result<()> {
-        serialization::write_fp(writer, &self.0)
     }
 }

@@ -6,9 +6,12 @@
 
 #![allow(dead_code, reason = "may not be used")]
 
+use alloc::vec::Vec;
+
 use core2::io::{self, Read, Write};
 use ff::PrimeField as _;
 use pasta_curves::{EpAffine, Fp, Fq, group::GroupEncoding as _};
+use zcash_encoding::CompactSize;
 
 use crate::reddsa;
 
@@ -18,6 +21,24 @@ pub(crate) fn read_fp<R: Read>(mut reader: R) -> io::Result<Fp> {
     reader.read_exact(&mut bytes)?;
     Option::from(Fp::from_repr(bytes))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid Fp encoding"))
+}
+
+pub(crate) fn read_fp_list<R: Read>(mut reader: R) -> io::Result<Vec<Fp>> {
+    let n = CompactSize::read_t::<_, usize>(&mut reader)?;
+    let mut fp_list = Vec::with_capacity(n);
+    for _ in 0..n {
+        let fp = read_fp(&mut reader)?;
+        fp_list.push(fp);
+    }
+    Ok(fp_list)
+}
+
+pub(crate) fn write_fp_list<W: Write>(mut writer: W, fp_list: &[Fp]) -> io::Result<()> {
+    CompactSize::write(&mut writer, fp_list.len())?;
+    for fp in fp_list {
+        write_fp(&mut writer, fp)?;
+    }
+    Ok(())
 }
 
 /// Write a Pallas base field element (`Fp`) as 32 bytes.
@@ -87,6 +108,22 @@ pub(crate) fn read_action_sig<R: Read>(
 pub(crate) fn write_action_sig<W: Write>(
     mut writer: W,
     sig: &reddsa::Signature<reddsa::ActionAuth>,
+) -> io::Result<()> {
+    let bytes: [u8; 64] = (*sig).into();
+    writer.write_all(&bytes)
+}
+
+pub(crate) fn read_binding_sig<R: Read>(
+    mut reader: R,
+) -> io::Result<reddsa::Signature<reddsa::BindingAuth>> {
+    let mut bytes = [0u8; 64];
+    reader.read_exact(&mut bytes)?;
+    Ok(reddsa::Signature::<reddsa::BindingAuth>::from(bytes))
+}
+
+pub(crate) fn write_binding_sig<W: Write>(
+    mut writer: W,
+    sig: &reddsa::Signature<reddsa::BindingAuth>,
 ) -> io::Result<()> {
     let bytes: [u8; 64] = (*sig).into();
     writer.write_all(&bytes)

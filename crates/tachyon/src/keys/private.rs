@@ -44,6 +44,13 @@ impl From<[u8; 32]> for SpendingKey {
 }
 
 impl SpendingKey {
+    /// Create a new spending key from 32 bytes of random data.
+    pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
+        let mut rand_bytes = [0u8; 32];
+        rng.fill_bytes(&mut rand_bytes);
+        Self(rand_bytes)
+    }
+
     /// Derive $\mathsf{ask}$ from $\mathsf{sk}$ with RedPallas sign
     /// normalization.
     ///

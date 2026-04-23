@@ -42,7 +42,7 @@ use rand_core::{CryptoRng, RngCore};
 use crate::{
     constants::{NOTE_COMMITMENT_DOMAIN, NOTE_VALUE_MAX},
     keys::{NullifierKey, PaymentKey},
-    primitives::{Epoch, Tachygram},
+    primitives::{EpochIndex, Tachygram},
 };
 
 /// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
@@ -118,13 +118,25 @@ pub struct Note {
     pub rcm: CommitmentTrapdoor,
 }
 
-/// A note value, less than 2.1e15 zatoshis.
+/// A note value in zatoshis. Non-zero and no greater than 2.1e15.
+///
+/// Zero-valued notes are forbidden by construction: a zero-value action
+/// carries no economic meaning. The newtype enforces the invariant at
+/// `Value::from` (panics on zero and on overflow). Each PCD step that
+/// witnesses a `Note` *independently* rechecks `value != 0` — the
+/// compiler cannot prove the invariant from inside the circuit, and a
+/// compiled proof system sees only raw field elements without the
+/// Rust-level newtype protection.
 #[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct Value(pub(super) u64);
+#[expect(
+    clippy::field_scoped_visibility_modifiers,
+    reason = "test helpers use crate-internal construction to bypass the API check"
+)]
+pub struct Value(pub(crate) u64);
 
 impl From<u64> for Value {
     fn from(value: u64) -> Self {
+        assert!(value > 0, "note value must be non-zero");
         assert!(
             value <= NOTE_VALUE_MAX,
             "note value must not exceed maximum"
@@ -152,10 +164,9 @@ impl Note {
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$
     #[must_use]
     pub fn commitment(&self) -> Commitment {
-        #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
         let domain = Fp::from_u128(u128::from_le_bytes(*NOTE_COMMITMENT_DOMAIN));
         Commitment::from(
-            Hash::<_, P128Pow5T3, ConstantLength<5>, 3, 2>::init().hash([
+            &Hash::<_, P128Pow5T3, ConstantLength<5>, 3, 2>::init().hash([
                 domain,
                 self.rcm.0,
                 self.pk.0,
@@ -173,7 +184,7 @@ impl Note {
     ///
     /// The same note at different flavors produces different nullifiers.
     #[must_use]
-    pub fn nullifier(&self, nk: &NullifierKey, flavor: Epoch) -> Nullifier {
+    pub fn nullifier(&self, nk: &NullifierKey, flavor: EpochIndex) -> Nullifier {
         let mk = nk.derive_note_private(&self.psi);
         mk.derive_nullifier(flavor)
     }
@@ -188,21 +199,21 @@ impl Note {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Commitment(Fp);
 
-impl From<Fp> for Commitment {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
+impl From<&Fp> for Commitment {
+    fn from(fp: &Fp) -> Self {
+        Self(*fp)
     }
 }
 
-impl From<Commitment> for Fp {
-    fn from(cm: Commitment) -> Self {
+impl From<&Commitment> for Fp {
+    fn from(cm: &Commitment) -> Self {
         cm.0
     }
 }
 
-impl From<Commitment> for Tachygram {
-    fn from(commitment: Commitment) -> Self {
-        Self::from(commitment.0)
+impl From<&Commitment> for Tachygram {
+    fn from(commitment: &Commitment) -> Self {
+        Self::from(&commitment.0)
     }
 }
 
@@ -219,21 +230,21 @@ impl From<Commitment> for Tachygram {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Nullifier(Fp);
 
-impl From<Fp> for Nullifier {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
+impl From<&Fp> for Nullifier {
+    fn from(fp: &Fp) -> Self {
+        Self(*fp)
     }
 }
 
-impl From<Nullifier> for Fp {
-    fn from(nf: Nullifier) -> Self {
+impl From<&Nullifier> for Fp {
+    fn from(nf: &Nullifier) -> Self {
         nf.0
     }
 }
 
-impl From<Nullifier> for Tachygram {
-    fn from(nullifier: Nullifier) -> Self {
-        Self::from(nullifier.0)
+impl From<&Nullifier> for Tachygram {
+    fn from(nullifier: &Nullifier) -> Self {
+        Self::from(&nullifier.0)
     }
 }
 
@@ -253,6 +264,13 @@ mod tests {
     #[should_panic(expected = "note value must not exceed maximum")]
     fn value_rejects_overflow() {
         let _val: Value = Value::from(NOTE_VALUE_MAX + 1);
+    }
+
+    /// Zero must be rejected — notes carry economic value.
+    #[test]
+    #[should_panic(expected = "note value must be non-zero")]
+    fn value_rejects_zero() {
+        let _val: Value = Value::from(0u64);
     }
 
     /// Different trapdoors produce different commitments.
@@ -280,7 +298,7 @@ mod tests {
     /// `Note::nullifier` delegates correctly to key derivation.
     #[test]
     fn note_nullifier_matches_key_derivation() {
-        use crate::{keys::private::SpendingKey, primitives::Epoch};
+        use crate::{keys::private::SpendingKey, primitives::EpochIndex};
 
         let sk = SpendingKey::from([0x42u8; 32]);
         let nk = sk.derive_nullifier_private();
@@ -291,7 +309,7 @@ mod tests {
             psi,
             rcm: CommitmentTrapdoor::from(Fp::ZERO),
         };
-        let flavor = Epoch::from(5u32);
+        let flavor = EpochIndex(5u32);
 
         let mk = nk.derive_note_private(&psi);
         assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));

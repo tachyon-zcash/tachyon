@@ -17,7 +17,7 @@
 //! - `Bundle<Unproven>` — actions signed but no proof yet
 //! - [`Stamped`] — `Bundle<Stamp>`, aggregate or self-contained with stamp
 //! - [`Stripped`] — `Bundle<Adjunct>`, stamp stripped, depends on aggregate
-//! - `Bundle<Option<Stamp>>` — erased stamp state for mixed contexts
+//! - [`TachyonBundle`] — enum of stamped-or-stripped for mixed contexts
 //!
 //! ## Block Structure
 //!
@@ -62,11 +62,11 @@ pub mod value;
 mod primitives;
 mod serialization;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 pub use action::Action;
-pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped};
+pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped, TachyonBundle};
 pub use note::Note;
-pub use primitives::{
-    ActionDigest, ActionDigestError, Anchor, Effect, Epoch, Tachygram, effect,
-    multiset::{self, Multiset},
-};
-pub use stamp::{Stamp, proof::Proof};
+pub use primitives::*;
+pub use stamp::Stamp;

@@ -122,5 +122,3 @@ $\mathsf{pak}$ covers **all notes** because $\mathsf{nk}$ is wallet-wide. For na
 | $\mathsf{pak}$ | $(\mathsf{ak}, \mathsf{nk})$ | Prover | All notes, all epochs |
 | per-note | $(\mathsf{ak}, \mathsf{mk})$ | Per-note prover | One note, all epochs |
 | delegate | $(\mathsf{ak}, \Psi_t)$ | OSS | One note, epochs $e \leq t$ |
-
-The per-note master key $\mathsf{mk} = \text{Poseidon}_\text{Tachyon-NfDerive}(\Psi, \mathsf{nk})$ and delegate key $\Psi_t = \text{GGM}(\mathsf{mk}, t)$ (also Poseidon-based) are described in [Notes](./notes.md#oblivious-sync-delegation).

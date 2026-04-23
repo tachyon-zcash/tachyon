@@ -36,20 +36,17 @@ Each **tachyaction** indistinguishably represents either the creation or destruc
 
 ### Tachystamp
 
-The **tachystamp** is a recursive zero-knowledge proof that all related tachyactions follow the correct rules.[^protocol-spec]
+The **tachystamp** is a recursive zero-knowledge proof that all related tachyactions follow the correct rules.
 
 It contains:
 
-- `anchor` - a recent epoch range[^anchor]
+- `anchor` - a recent pool state
 - `proof` - the recursive proof (which may be aggregated)
 - `tachygrams` - nullifiers and commitments for each action
 
-[^protocol-spec]: The [Zcash Protocol Specification](https://zips.z.cash/protocol/protocol.pdf) lists the cryptographic properties a shielded pool must preserve.
-[^anchor]: Unlike Sapling/Orchard anchors which reference a single tree root, Tachyon anchors represent epoch *ranges* used for non-inclusion proofs. See [Tachyaction at a Distance §5](https://seanbowe.com/blog/tachyaction-at-a-distance/#5).
-
 The proof establishes:
 
-- tachygrams are not duplicated within the epoch range
+- tachygrams either create a new note or destroy an existing note
 - tachygrams are correctly bound to action keys
 - action balance effect matches pool balance effect
 
@@ -60,7 +57,7 @@ $$ \mathsf{nf} = F_{\mathsf{nk}}(\Psi \parallel \tau) $$
 where
 
 - $\Psi$ is the nullifier trapdoor[^commitment]
-- $\tau$ is an epoch range
+- $\tau$ is an epoch index
 
 [^commitment]: User-controlled randomness [commitment trapdoor](https://zips.z.cash/protocol/protocol.pdf#commitment)
 

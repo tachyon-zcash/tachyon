@@ -74,12 +74,14 @@ Then during authorization, the custody device is able to confirm correctness of 
 The bundle commitment is a digest of the bundle's effect.
 
 $$ d_i = \text{Poseidon}_\text{Tachyon-ActnDgst}(\mathsf{cv}_i \| \mathsf{rk}_i) $$
-$$ \text{BLAKE2b-512}_\text{Tachyon-BndlHash}( d_1 \| d_2 \| \ldots \| d_n \| \mathsf{value\_balance}) $$
+$$ \mathsf{action\_acc} = \text{Commit}\Bigl(\prod_i \bigl(X - d_i\bigr)\Bigr) $$
+$$ \text{BLAKE2b-512}_\text{Tachyon-BndlHash}( \mathsf{action\_acc} \| \mathsf{value\_balance}) $$
 
-The bundle commitment hashes the individual action digests in order.
-The same action digests are used as polynomial roots in the PCD stamp header's accumulator commitment, binding the stamp to the same set of actions as the signatures.
+The bundle commitment hashes accumulated action digests with the value balance.
 
-The stamp is excluded because it is stripped during [aggregation](./aggregation.md).
+The same action digest accumulation is bound to the stamp proof.
+
+The stamp is excluded from the bundle commitment because it is stripped during [aggregation](./aggregation.md).
 
 ### Transaction sighash
 
@@ -89,6 +91,8 @@ The tachyon crate contributes its bundle commitment; a transaction-level crate c
 
 This binds every signature to the complete set of effecting data across all pools.
 Since `rk` is itself a commitment to `cm` (via `alpha`'s derivation from `theta` and `cm`), the signature transitively binds each action to its tachygram without the tachygram appearing in the action.
+
+Tachyon also contributes to the transaction-level `auth_digest` that backs `wtxid`. See [Transaction Identifiers](./transaction-identifiers.md) for the formula and how aggregation changes the authorization form.
 
 ## Value Balance
 
@@ -275,7 +279,7 @@ par Authorizing
             end
             note over Custody: action_digest_i = Poseidon(cv || rk)
         end
-        note over Custody: bundle_commitment = Blake2b(d_1 || ... || d_n || value_balance)
+        note over Custody: bundle_commitment = Blake2b(action_acc || value_balance)
         note over Custody: compute sighash
 
         break
@@ -321,9 +325,9 @@ and Proving
 
         loop while stamps > 1
             critical left(action_poly, tg_poly, anchor), right(action_poly, tg_poly, anchor)
+                note over Stamper: assert left.anchor == right.anchor
                 note over Stamper: merged_action = left.action_poly * right.action_poly
                 note over Stamper: merged_tg = left.tg_poly * right.tg_poly
-                note over Stamper: anchor = max(left.anchor, right.anchor)
                 note over Stamper: pcd: stamp(Commit(merged_action), Commit(merged_tg), anchor)
             end
         end
@@ -345,7 +349,7 @@ destroy User
 User ->> Consensus: transaction
 break
     note over Consensus: action_digest_i = Poseidon(cv_i || rk_i)
-    note over Consensus: bundle_commitment = Blake2b(d_1 || ... || d_n || value_balance)
+    note over Consensus: bundle_commitment = Blake2b(action_acc || value_balance)
     note over Consensus: compute sighash
     note over Consensus: check action sigs against sighash
     note over Consensus: check binding sig against sighash

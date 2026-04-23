@@ -31,7 +31,7 @@ This seems like a suitable candidate that satisfies the aforementioned requireme
 
 ## API Design
 
-Let $F_K$ be a GGM tree PRF instantiated from Poseidon (P128Pow5T3, domain tag `Tachyon-NfDerive`). Each tree step computes $\text{Poseidon}(\text{tag}, \text{node}, \text{bit})$. The wallet derives the master root key as $mk = \text{Poseidon}_\text{Tachyon-NfDerive}(\psi, nk)$.
+Let $F_K$ be a GGM tree PRF instantiated from Poseidon (P128Pow5T3, domain tag `Tachyon-NfDerive`). Each tree step computes $\text{Poseidon}(\text{tag}, \text{node}, \text{bit})$. The wallet derives the master root key as $mk = \text{Poseidon}_\text{Tachyon-MkDerive}(\psi, nk)$.
 
 1. **Compute the minimal prefix cover of [0..t].**
 
@@ -48,6 +48,8 @@ Let $F_K$ be a GGM tree PRF instantiated from Poseidon (P128Pow5T3, domain tag `
 4. **Chain state advances.**
 
    When the chain advances to $t' > t$, engage in the same protocol rounds and only send the delta for $(t..t']$.
+
+At each epoch boundary, consensus splices the previous epoch's final pool commitment into the next epoch's pool multiset as $\text{epoch\_seed\_hash}(\mathsf{pool\_commit})$. This lets `SpendableEpochLift` prove cross-epoch continuity by querying the seed.
 
 ## Privacy Considerations
 

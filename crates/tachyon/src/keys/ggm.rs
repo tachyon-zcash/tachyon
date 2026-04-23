@@ -13,7 +13,7 @@ use ff::PrimeField as _;
 use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::Fp;
 
-use crate::{constants::NOTE_NULLIFIER_DOMAIN, note::Nullifier, primitives::Epoch};
+use crate::{constants::NOTE_NULLIFIER_DOMAIN, note::Nullifier, primitives::EpochIndex};
 
 /// GGM tree depth — 32-bit epochs, leaves at depth 32.
 pub const GGM_TREE_DEPTH: u8 = 32;
@@ -47,8 +47,8 @@ impl NoteMasterKey {
 
     /// Derive a nullifier for the given epoch.
     #[must_use]
-    pub fn derive_nullifier(&self, flavor: Epoch) -> Nullifier {
-        Nullifier::from(ggm_walk(self.0, flavor.0, GGM_TREE_DEPTH))
+    pub fn derive_nullifier(&self, flavor: EpochIndex) -> Nullifier {
+        Nullifier::from(&ggm_walk(self.0, flavor.0, GGM_TREE_DEPTH))
     }
 
     /// Derive epoch-restricted prefix keys covering the specified range.
@@ -185,10 +185,10 @@ impl NotePrefixedKey {
     ///
     /// Panics if the epoch is outside this key's authorized range.
     #[must_use]
-    pub fn derive_nullifier(&self, flavor: Epoch) -> Nullifier {
+    pub fn derive_nullifier(&self, flavor: EpochIndex) -> Nullifier {
         assert!(self.range().contains(&flavor.0), "epoch out of range");
         let remaining = GGM_TREE_DEPTH - self.depth.get();
-        Nullifier::from(ggm_walk(self.inner, flavor.0, remaining))
+        Nullifier::from(&ggm_walk(self.inner, flavor.0, remaining))
     }
 }
 
@@ -210,7 +210,7 @@ impl TryFrom<[u8; 37]> for NotePrefixedKey {
         let index_bytes: &[u8; 4] = index_slice
             .first_chunk()
             .ok_or(NoteKeyError::InvalidPrefix)?;
-        #[expect(clippy::little_endian_bytes, reason = "deserialization")]
+
         let index = u32::from_le_bytes(*index_bytes);
         if index > u32::MAX >> (GGM_TREE_DEPTH - depth.get()) {
             return Err(NoteKeyError::InvalidPrefix);
@@ -230,7 +230,6 @@ impl From<NotePrefixedKey> for [u8; 37] {
         [
             key.inner.to_repr().as_slice(),
             &[key.depth.get()],
-            #[expect(clippy::little_endian_bytes, reason = "serialization")]
             &key.index.to_le_bytes(),
         ]
         .concat()
@@ -247,7 +246,6 @@ pub enum NoteKeyError {
 
 /// One GGM tree step: `Poseidon(tag, node, bit)`.
 fn ggm_step(node: Fp, bit: bool) -> Fp {
-    #[expect(clippy::little_endian_bytes, reason = "specified behavior")]
     let domain = Fp::from_u128(u128::from_le_bytes(*NOTE_NULLIFIER_DOMAIN));
     Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([domain, node, Fp::from(bit)])
 }
@@ -277,8 +275,8 @@ mod tests {
             NoteMasterKey::try_from(Fp::random(&mut StdRng::seed_from_u64(0)).to_repr()).unwrap();
 
         assert_ne!(
-            key.derive_nullifier(Epoch(0)),
-            key.derive_nullifier(Epoch(1)),
+            key.derive_nullifier(EpochIndex(0)),
+            key.derive_nullifier(EpochIndex(1)),
         );
     }
 
@@ -289,8 +287,8 @@ mod tests {
         let key2 = NoteMasterKey::try_from(Fp::random(&mut rng).to_repr()).unwrap();
 
         assert_ne!(
-            key1.derive_nullifier(Epoch(42)),
-            key2.derive_nullifier(Epoch(42)),
+            key1.derive_nullifier(EpochIndex(42)),
+            key2.derive_nullifier(EpochIndex(42)),
         );
     }
 
@@ -302,8 +300,8 @@ mod tests {
         // Single delegate covering [0..=63]
         for delegate in root.derive_note_delegates(0..=63) {
             assert_eq!(
-                delegate.derive_nullifier(Epoch(0)),
-                root.derive_nullifier(Epoch(0)),
+                delegate.derive_nullifier(EpochIndex(0)),
+                root.derive_nullifier(EpochIndex(0)),
                 "mismatch at depth {:?}",
                 delegate.depth.get()
             );

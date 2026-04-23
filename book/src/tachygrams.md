@@ -41,13 +41,13 @@ An observer sees a bag of actions and a bag of tachygrams with no individual cor
 
 ## Public Data
 
-The PCD header carries two polynomial commitments and one scalar:
+The PCD header carries two polynomial commitments and an anchor:
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| `action_acc` | EC point (Vesta) | Pedersen vector commitment to the action accumulator polynomial |
-| `tachygram_acc` | EC point (Vesta) | Pedersen vector commitment to the tachygram accumulator polynomial |
-| `anchor` | $\mathbb{F}_p$ scalar | Accumulator state reference |
+| `action_acc` | EC point (Pallas) | Pedersen vector commitment to the action accumulator polynomial |
+| `tachygram_acc` | EC point (Pallas) | Pedersen vector commitment to the tachygram accumulator polynomial |
+| `anchor` | `Anchor` | pool state commitment at a specific block |
 
 Both accumulators use polynomial commitments.
 Each element is hashed (Poseidon, domain-separated) into a root $r_i \in \mathbb{F}_p$.
@@ -72,23 +72,17 @@ The stamp carries only tachygrams, anchor, and proof bytes.
 The verifier reconstructs the full header following appropriate rules.
 This way, the verifier knows a consensus-valid set of tachygrams was used in proof generation.
 
-Each `ActionStep` seed builds a degree-1 polynomial from one root and commits it;
-`MergeStep` multiplies the polynomials together and recommits.
-PCD soundness means the only way to produce a valid
-proof is through `seed` + `fuse`, so an attacker cannot skip leaf circuits or
-strip duplicate contributions between steps.
-
-<!-- TODO
-The number of tachygrams in a stamp can be greater than the number of actions.
-This will require an additional leaf step that can accept the 'bonus' tachygram and provide it to the accumulator.
--->
+Each leaf step (`OutputStamp`, `SpendStamp`) creates a 1-member tachygram set;
+`MergeStamp` combines the sets. PCD soundness means the only way to produce a
+valid proof is through `seed` + `fuse`, so an attacker cannot skip leaf circuits
+or strip duplicate contributions between steps.
 
 ## Verification
 
 The verifier has: the public actions $(rk_i, cv_i, sig_i)$, the listed
 tachygrams $tg_i$, the anchor, and the proof bytes.
 
-1. **Anchor range**: check anchor is within valid epoch window
+1. **Anchor**: check the anchor matches a recent pool state
 2. **No duplicate tachygrams**: check the tachygram list for repeats
 3. **Action sigs**: verify each $sig_i$ against $rk_i$ (RedPallas)
 4. **Binding sig**: verify against $\sum cv_i$
@@ -97,82 +91,5 @@ tachygrams $tg_i$, the anchor, and the proof bytes.
    - **Recompute tachygram_acc**: build polynomial from roots $\text{Poseidon}(\mathsf{tg}_i)$, commit
 6. **Verify proof**: call Ragu `verify(Pcd { proof, data: header })`
 
-<!-- TODO
-Anchor range: Or check the block's epoch is within the anchor window?
--->
-
 The verifier constructs the header from scratch.
 If the proof was computed over different accumulators (e.g. from a double-spend), the reconstructed header won't match and verification fails.
-
-## Overlapping aggregation
-
-Can overlapping aggregates be merged? E.g., merge $\{a,b\}$ and $\{b,c\}$ to
-produce $\{a,b,c\}$?
-
-### 1. An overlapping merge is detectable
-
-The polynomial accumulator encodes multiplicity, committing to *how many times* each element appears.
-In the formulas below, $r(x) = \text{Poseidon}(x)$ denotes the root derived from element $x$.
-When `MergeStep` multiplies two intersecting polynomials, the intersection is evident:
-
-$$\text{merged} = (X - r(a))(X - r(b))(X - r(b))(X - r(c)) \quad (b \text{ counted twice})$$
-
-$$\text{clean} = (X - r(a))(X - r(b))(X - r(c)) \quad (b \text{ counted once})$$
-
-These are different polynomials with different commitments.
-
-### 2. Lying about an overlapping merge is not possible
-
-An aggregator who merged overlapping stamps has exactly two options:
-
-**Option A** — list tachygrams without duplicates $\{a, b, c\}$:
-
-$$\text{reconstructed commitment} = \text{Commit}((X - r(a))(X - r(b))(X - r(c)))$$
-$$\text{proof's actual commitment} = \text{Commit}((X - r(a))(X - r(b))^2(X - r(c)))$$
-
-Proof doesn't verify against the reconstructed header.
-Rejected.
-
-**Option B** — list tachygrams with duplicates $\{a, b, b, c\}$:
-
-$$\text{reconstructed commitment} = \text{Commit}((X - r(a))(X - r(b))^2(X - r(c)))$$
-$$\text{proof's actual commitment} = \text{Commit}((X - r(a))(X - r(b))^2(X - r(c)))$$
-
-Proof *would* verify, but consensus detects duplicate $b$, so the stamp was
-already rejected.
-
-### 3. There doesn't seem to be a path to support overlapping merges
-
-Could consensus allow duplicate tachygrams to enable overlap?
-No.
-Overlap merge and a double-spend are **indistinguishable** from the protocol's perspective.
-
-To achieve this, we'd have to relax the 'set' qualities of the tachygram vector on the stamp, to allow specifying and validating repeat accumulation.
-
-Now consider some tachygram $tg$ appearing in stamp A and stamp B:
-
-- **Scenario 1 (overlap):** Two aggregates independently included the same original stamp containing $tg$, and then merged again.
-  Now $tg$ is accumulated twice.
-
-- **Scenario 2 (double-spend):** A user creates two transactions spending the same note.
-  Both transactions are balanced.
-  Both produce nullifier $tg$ because tachygrams are deterministic.
-  Both are then are merged to an aggregate.
-  Now $tg$ is accumulated twice.
-  
-Observable data in both cases: you've got a stamps containing double-accumulation for tachygram $tg$, with some linked but unidentifiable actions in the adjuncts.
-The proofs may be 'valid' in both cases, if you repeat accumulation of $tg$ when recreating your proof input.
-
-The distinction is *intent*, but that intent isn't observable post-aggregation, because you can't correlate or identify the behavior of the actions.
-
-<!-- TODO
-An extraction circuit may be able to remove overlap before merging.
--->
-
-### Implications
-
-- **No in-circuit disjointness check needed.** The accumulator's binding property + data availability + duplicate detection is sufficient.
-- **Data availability is a hard requirement.** Tachygrams must be listed in the block — without the list, the verifier can't reconstruct the header.
-- **Mempool policy is not security.** Aggregators and miners may be adversarial.
-
-  Only proof soundness + consensus rules (no duplicate tachygrams) provide guarantees.
