@@ -24,18 +24,18 @@ Dan Boneh and Brent Waters introduced the "Constrained Pseudorandom Functions an
 
 The paper mentions a **GGM (Goldreich-Goldwasser-Micali) Tree PRF** construction whereby:
 
-- For a prefix $v \in \{0, 1\}^l$, the constrained key $k_v$ is the GGM node reached by following the bits of $v$ from the root,
-- This enables the evaluation of $F(k, v \| x)$ for any $x \in \{0, 1\}^{n-|v|}$
+- For a prefix $v \in \{0, 1, \dots, k-1\}^l$, the constrained key $k_v$ is the GGM node reached by following the chunks of $v$ from the root,
+- This enables the evaluation of $F(k, v \| x)$ for any $x \in \{0, 1, \dots, k-1\}^{n-|v|}$
 
 This seems like a suitable candidate that satisfies the aforementioned requirements.
 
 ## API Design
 
-Let $F_K$ be a GGM tree PRF instantiated from Poseidon (P128Pow5T3, domain tag `Tachyon-NfDerive`). Each tree step computes $\text{Poseidon}(\text{tag}, \text{node}, \text{bit})$. The wallet derives the master root key as $mk = \text{Poseidon}_\text{Tachyon-MkDerive}(\psi, nk)$.
+Let $F_K$ be a $k$-ary GGM tree PRF instantiated from Poseidon (P128Pow5T3, domain tag `Tachyon-NfDerive`). Each tree step computes $\text{Poseidon}(\text{tag}, \text{node}, \text{chunk})$, where *chunk* is a `LOG2_ARITY`-bit slice of the epoch index. Tachyon uses `LOG2_ARITY = 2` (so $k = 4$), and sizes the tree to tile exactly the epoch space: `GGM_TREE_DEPTH = EPOCH_BITS / LOG2_ARITY`, where `EPOCH_BITS = u32::BITS - EPOCH_SHIFT`. The wallet derives the master root key as $mk = \text{Poseidon}_\text{Tachyon-MkDerive}(\psi, nk)$.
 
 1. **Compute the minimal prefix cover of [0..t].**
 
-   Decompose the integer range into power-of-two aligned subranges (dyadic intervals), and each subrange corresponds to a binary prefix over epoch bits.
+   Decompose the integer range into $k$-ary aligned subranges (each subrange is $k^j$ consecutive epochs on a $k^j$-aligned boundary for some $j$). Each subrange corresponds to a base-$k$ prefix over epoch chunks.
 
 2. **Derive and send the prefix node seeds.**
 
@@ -61,6 +61,43 @@ The Oblivious Syncing Service (**OSS**) is granted key capability that allows it
 
 From a bandwidth narrative, the wallet-service handshakes incurs an *amortized* bandwidth complexity (logarithmic in the delegation material) which is favorable.
 
+## Delegation proof chain
+
+Delegation proofs separate GGM descent from per-delegation blinding so that
+wallets can cache note-bound spine proofs and reuse them across delegations
+(different trapdoors) without re-proving any in-circuit steps.
+
+1. **Pre-blind descent** — anchored to a note. Every header carries the
+   $(mk, cm)$ lineage; no delegation identifier is attached yet.
+
+   - `NoteSeedStep(note, pak)` — verifies ownership, derives
+     $mk = \text{Poseidon}_\text{Tachyon-MkDerive}(\psi, nk)$, emits
+     `NoteMasterHeader(mk, cm)`.
+   - `NoteMasterStep(chunk)` — one GGM step from $mk$; emits `NoteStepHeader`
+     at depth 1.
+   - `NoteStep(chunk)` — recursive pre-blind descent; preserves the
+     $(mk, cm)$ lineage through every step.
+
+2. **Blinding** — attaches a per-delegation trapdoor to the lineage.
+
+   - `DelegationBlindStep(trap)` — consumes `NoteStepHeader` at any depth,
+     emits `DelegationHeader(key, delegation_id)` where
+     $\text{delegation\_id} = \text{Poseidon}_\text{Tachyon-Delegate}(mk, cm, \text{trap})$.
+
+3. **Post-blind descent and leaf evaluation**.
+
+   - `DelegationStep(chunk)` — sync-side descent that carries
+     `delegation_id` unchanged through GGM steps.
+   - `NullifierStep` — at depth `GGM_TREE_DEPTH`, emits the
+     `NullifierHeader(nf, epoch, delegation_id)`.
+
+Because pre-blind steps are independent of the trapdoor, a wallet's cached
+left-spine proofs remain valid as a prefix to any fresh
+`DelegationBlindStep`, so the only fresh in-circuit work per delegation is
+the blind step plus any trailing non-cached peaks of the cover.
+
 ## Assumptions
 
-This currently assumes a fixed-depth tree.
+Current parameters: `EPOCH_SHIFT = 12` (production) / `4` (test), `LOG2_ARITY = 2`.
+`GGM_TREE_DEPTH` is derived, not configured independently, so the tree
+structure always matches the reachable epoch space.

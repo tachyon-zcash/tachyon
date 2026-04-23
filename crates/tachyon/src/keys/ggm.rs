@@ -1,9 +1,13 @@
 //! GGM tree PRF for nullifier derivation.
 //!
-//! A binary-tree pseudorandom function instantiated from Poseidon.
-//! Each step hashes the current node with a bit (0 = left, 1 = right).
-//! Traversal is MSB-first so that left subtrees cover lower-numbered
-//! leaves, enabling contiguous-range prefix delegation.
+//! A `k`-ary tree pseudorandom function instantiated from Poseidon, with
+//! `k = 1 << LOG2_ARITY`. Each step hashes the current node with a chunk
+//! of `LOG2_ARITY` bits drawn from the epoch index (MSB-first), so that
+//! left subtrees cover lower-numbered leaves and contiguous ranges map to
+//! sparse prefix covers.
+//!
+//! The tree is sized to tile the full epoch space:
+//! `GGM_TREE_DEPTH * LOG2_ARITY == EPOCH_BITS`.
 
 use alloc::vec::Vec;
 use core::{num::NonZeroU8, ops::RangeInclusive};
@@ -13,10 +17,17 @@ use ff::PrimeField as _;
 use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::Fp;
 
-use crate::{constants::NOTE_NULLIFIER_DOMAIN, note::Nullifier, primitives::EpochIndex};
+use crate::{
+    constants::{EPOCH_BITS, GGM_TREE_DEPTH, LOG2_ARITY, NOTE_NULLIFIER_DOMAIN},
+    note::Nullifier,
+    primitives::EpochIndex,
+};
 
-/// GGM tree depth — 32-bit epochs, leaves at depth 32.
-pub const GGM_TREE_DEPTH: u8 = 32;
+/// Tree arity — i.e. `1 << LOG2_ARITY`, the number of children per non-leaf.
+pub const ARITY: u8 = 1u8 << LOG2_ARITY;
+
+/// Mask covering exactly one chunk: low `LOG2_ARITY` bits set.
+const CHUNK_MASK: u32 = (1u32 << LOG2_ARITY) - 1u32;
 
 /// Per-note master root key.
 ///
@@ -36,12 +47,13 @@ pub struct NoteMasterKey(pub(crate) Fp);
 impl NoteMasterKey {
     /// Descend one level from the root of the GGM tree.
     #[must_use]
-    pub fn step(&self, direction: bool) -> NotePrefixedKey {
+    pub fn step(&self, chunk: u8) -> NotePrefixedKey {
+        debug_assert!(chunk < ARITY, "chunk must be less than arity");
         #[expect(clippy::expect_used, reason = "depth 1 is always valid")]
         NotePrefixedKey {
-            inner: ggm_step(self.0, direction),
+            inner: ggm_step(self.0, chunk),
             depth: NonZeroU8::new(1).expect("1 != 0"),
-            index: u32::from(direction),
+            index: u32::from(chunk),
         }
     }
 
@@ -57,17 +69,21 @@ impl NoteMasterKey {
     /// only hashing children that overlap the range.
     #[must_use]
     pub fn derive_note_delegates(&self, range: RangeInclusive<u32>) -> Vec<NotePrefixedKey> {
-        // Children at depth 1 each own half of the u32 epoch space.
-        let split: u32 = u32::MAX >> 1;
+        assert!(
+            *range.end() <= epoch_max(),
+            "range {range:?} exceeds epoch space {:?}",
+            0u32..=epoch_max(),
+        );
 
+        let child_size = 1u32 << (EPOCH_BITS - LOG2_ARITY);
         let mut result = Vec::new();
-        if *range.start() <= split {
-            let lo = *range.start()..=(*range.end()).min(split);
-            result.extend(self.step(false).derive_note_delegates(lo));
-        }
-        if *range.end() > split {
-            let hi = (*range.start()).max(split + 1)..=*range.end();
-            result.extend(self.step(true).derive_note_delegates(hi));
+        for chunk in 0u8..ARITY {
+            let child_lo = u32::from(chunk) * child_size;
+            let child_hi = child_lo + child_size - 1;
+            if *range.start() <= child_hi && *range.end() >= child_lo {
+                let clamped = (*range.start()).max(child_lo)..=(*range.end()).min(child_hi);
+                result.extend(self.step(chunk).derive_note_delegates(clamped));
+            }
         }
         result
     }
@@ -93,9 +109,9 @@ impl From<NoteMasterKey> for [u8; 32] {
 
 /// A Tachyon prefix key for range-restricted nullifier delegation.
 ///
-/// At depth `d` there are `2^d` nodes. Node `i` covers the contiguous epoch
-/// range `[i * 2^(32-d) ..= (i+1) * 2^(32-d) - 1]`. At depth 32, a key
-/// is a leaf whose `index` equals the epoch.
+/// At depth `d` there are `ARITY^d` nodes. Node `i` covers the contiguous
+/// epoch range of size `ARITY^(GGM_TREE_DEPTH - d)`. At depth
+/// `GGM_TREE_DEPTH`, a key is a leaf whose `index` equals its single epoch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NotePrefixedKey {
     /// GGM tree node value.
@@ -109,15 +125,15 @@ pub struct NotePrefixedKey {
 impl NotePrefixedKey {
     /// The epoch range covered by this key.
     #[must_use]
-    pub const fn range(self) -> RangeInclusive<u32> {
-        match self.depth.get() {
-            | GGM_TREE_DEPTH => self.index..=self.index,
-            | depth => {
-                let first = self.index << (GGM_TREE_DEPTH - depth);
-                let last = first | (u32::MAX >> depth);
-                first..=last
-            },
-        }
+    pub fn range(self) -> RangeInclusive<u32> {
+        let levels_remaining = GGM_TREE_DEPTH - self.depth.get();
+        let span_bits = u32::from(levels_remaining) * LOG2_ARITY;
+        let first = self.index << span_bits;
+        let mask = 1u32
+            .checked_shl(span_bits)
+            .map_or(u32::MAX, |size| size - 1u32);
+        let last = first | mask;
+        first..=last
     }
 
     /// Descend one level in the GGM tree.
@@ -126,16 +142,17 @@ impl NotePrefixedKey {
     ///
     /// Panics if already at a leaf (depth == `GGM_TREE_DEPTH`).
     #[must_use]
-    pub fn step(&self, direction: bool) -> Self {
+    pub fn step(&self, chunk: u8) -> Self {
         assert!(
             self.depth.get() < GGM_TREE_DEPTH,
             "must not step beyond leaf"
         );
+        debug_assert!(chunk < ARITY, "chunk must be less than arity");
         Self {
-            inner: ggm_step(self.inner, direction),
+            inner: ggm_step(self.inner, chunk),
             #[expect(clippy::expect_used, reason = "nonzero plus one is not zero")]
             depth: NonZeroU8::new(self.depth.get() + 1).expect("not zero"),
-            index: self.index * 2 + u32::from(direction),
+            index: self.index * u32::from(ARITY) + u32::from(chunk),
         }
     }
 
@@ -158,22 +175,21 @@ impl NotePrefixedKey {
         );
 
         if range == self.range() {
-            // This node exactly covers the requested range.
             alloc::vec![*self]
         } else {
-            // This node is larger than the requested range.
-            let next_depth = u32::from(self.depth.get() + 1);
-            let next_dyad_size = u32::MAX.checked_shr(next_depth).unwrap_or(0);
-            let split = *self.range().start() | next_dyad_size;
+            let next_depth = u32::from(self.depth.get()) + 1u32;
+            let child_span_bits = (u32::from(GGM_TREE_DEPTH) - next_depth) * LOG2_ARITY;
+            let child_size = 1u32 << child_span_bits;
+            let base = *self.range().start();
 
             let mut result = Vec::new();
-            if *range.start() <= split {
-                let lo = *range.start()..=(*range.end()).min(split);
-                result.extend(self.step(false).derive_note_delegates(lo));
-            }
-            if *range.end() > split {
-                let hi = (*range.start()).max(split + 1)..=*range.end();
-                result.extend(self.step(true).derive_note_delegates(hi));
+            for chunk in 0u8..ARITY {
+                let child_lo = base + u32::from(chunk) * child_size;
+                let child_hi = child_lo + child_size - 1;
+                if *range.start() <= child_hi && *range.end() >= child_lo {
+                    let clamped = (*range.start()).max(child_lo)..=(*range.end()).min(child_hi);
+                    result.extend(self.step(chunk).derive_note_delegates(clamped));
+                }
             }
             result
         }
@@ -212,7 +228,10 @@ impl TryFrom<[u8; 37]> for NotePrefixedKey {
             .ok_or(NoteKeyError::InvalidPrefix)?;
 
         let index = u32::from_le_bytes(*index_bytes);
-        if index > u32::MAX >> (GGM_TREE_DEPTH - depth.get()) {
+        let max_index = 1u32
+            .checked_shl(u32::from(depth.get()) * LOG2_ARITY)
+            .map_or(u32::MAX, |size| size - 1u32);
+        if index > max_index {
             return Err(NoteKeyError::InvalidPrefix);
         }
         Ok(Self {
@@ -244,20 +263,40 @@ pub enum NoteKeyError {
     InvalidPrefix,
 }
 
-/// One GGM tree step: `Poseidon(tag, node, bit)`.
-fn ggm_step(node: Fp, bit: bool) -> Fp {
-    let domain = Fp::from_u128(u128::from_le_bytes(*NOTE_NULLIFIER_DOMAIN));
-    Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([domain, node, Fp::from(bit)])
+/// Maximum valid [`EpochIndex`] covered by the tree.
+#[must_use]
+pub const fn epoch_max() -> u32 {
+    match 1u32.checked_shl(EPOCH_BITS) {
+        | Some(size) => size - 1u32,
+        | None => u32::MAX,
+    }
 }
 
-/// Recursive GGM walk: consume the top bit of `leaf` at each level,
-/// MSB-first, for `remaining` levels.
+/// One GGM tree step: `Poseidon(tag, node, chunk)`.
+fn ggm_step(node: Fp, chunk: u8) -> Fp {
+    debug_assert!(chunk < ARITY, "chunk must be less than arity");
+    let domain = Fp::from_u128(u128::from_le_bytes(*NOTE_NULLIFIER_DOMAIN));
+    Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
+        domain,
+        node,
+        Fp::from(u64::from(chunk)),
+    ])
+}
+
+/// Recursive GGM walk: consume the top `LOG2_ARITY` bits of `leaf` at each
+/// level, MSB-first, for `remaining` levels.
 fn ggm_walk(node: Fp, leaf: u32, remaining: u8) -> Fp {
     match remaining.checked_sub(1) {
         | None => node,
         | Some(next) => {
-            let bit = (leaf >> next) & 1 != 0;
-            ggm_walk(ggm_step(node, bit), leaf, next)
+            let shift = u32::from(next) * LOG2_ARITY;
+            let chunk_u32 = (leaf >> shift) & CHUNK_MASK;
+            #[expect(
+                clippy::expect_used,
+                reason = "chunk bits fit in u8 because LOG2_ARITY <= u8::BITS"
+            )]
+            let chunk = u8::try_from(chunk_u32).expect("chunk fits in u8");
+            ggm_walk(ggm_step(node, chunk), leaf, next)
         },
     }
 }
@@ -297,8 +336,8 @@ mod tests {
     fn delegate_matches_root() {
         let root =
             NoteMasterKey::try_from(Fp::random(&mut StdRng::seed_from_u64(0)).to_repr()).unwrap();
-        // Single delegate covering [0..=63]
-        for delegate in root.derive_note_delegates(0..=63) {
+        let cover_end = u32::from(ARITY) * u32::from(ARITY) - 1;
+        for delegate in root.derive_note_delegates(0..=cover_end) {
             assert_eq!(
                 delegate.derive_nullifier(EpochIndex(0)),
                 root.derive_nullifier(EpochIndex(0)),
@@ -312,10 +351,19 @@ mod tests {
     fn tight_cover() {
         let root = NoteMasterKey(Fp::from(1u64));
         let delegates = root.derive_note_delegates(0..=5);
-        // [0..=3] and [4..=5]
-        assert_eq!(delegates.len(), 2);
-        assert_eq!(delegates[0].range(), 0..=3);
-        assert_eq!(delegates[1].range(), 4..=5);
+        assert!(!delegates.is_empty());
+        let union_end = delegates
+            .iter()
+            .map(|dk| *dk.range().end())
+            .max()
+            .expect("non-empty delegates");
+        assert_eq!(union_end, 5);
+        let union_start = delegates
+            .iter()
+            .map(|dk| *dk.range().start())
+            .min()
+            .expect("non-empty delegates");
+        assert_eq!(union_start, 0);
     }
 
     #[test]
@@ -331,29 +379,36 @@ mod tests {
     #[should_panic(expected = "must not step beyond leaf")]
     fn step_beyond_leaf_panics() {
         let root = NoteMasterKey(Fp::from(1u64));
-        let mut key = root.step(false);
+        let mut key = root.step(0);
         for _ in 1..GGM_TREE_DEPTH {
-            key = key.step(false);
+            key = key.step(0);
         }
-        // Now at depth 32 (leaf) — one more step should panic.
-        let _boom = key.step(false);
+        let _boom = key.step(0);
     }
 
     #[test]
     fn full_range_from_master() {
         let root = NoteMasterKey(Fp::from(1u64));
-        let delegates = root.derive_note_delegates(0..=u32::MAX);
-        assert_eq!(delegates.len(), 2);
-        assert_eq!(delegates[0].range(), 0..=(u32::MAX >> 1u32));
-        assert_eq!(delegates[1].range(), (u32::MAX >> 1u32) + 1..=u32::MAX);
+        let delegates = root.derive_note_delegates(0..=epoch_max());
+        assert_eq!(delegates.len(), usize::from(ARITY));
+        for (idx, delegate) in delegates.iter().enumerate() {
+            assert_eq!(delegate.depth.get(), 1);
+            let idx_u32 = u32::try_from(idx).unwrap();
+            assert_eq!(delegate.index, idx_u32);
+        }
+        assert_eq!(*delegates[0].range().start(), 0);
+        assert_eq!(
+            *delegates[usize::from(ARITY) - 1].range().end(),
+            epoch_max()
+        );
     }
 
     #[test]
     fn last_epoch_delegate() {
         let root = NoteMasterKey(Fp::from(1u64));
-        let delegates = root.derive_note_delegates(u32::MAX..=u32::MAX);
+        let delegates = root.derive_note_delegates(epoch_max()..=epoch_max());
         assert_eq!(delegates.len(), 1);
-        assert_eq!(delegates[0].range(), u32::MAX..=u32::MAX);
+        assert_eq!(delegates[0].range(), epoch_max()..=epoch_max());
         assert_eq!(delegates[0].depth.get(), GGM_TREE_DEPTH);
     }
 
@@ -361,17 +416,19 @@ mod tests {
     #[should_panic(expected = "does not cover requested range")]
     fn disjoint_range_panics() {
         let root = NoteMasterKey(Fp::from(1u64));
-        // depth-2 prefix covering [0..=0x3FFF_FFFF].
-        let prefix = root.step(false).step(false);
-        let _delegates = prefix.derive_note_delegates(0x8000_0000..=0x8000_0010);
+        // Depth-2 prefix rooted at chunk (0, 0) covers epochs
+        // [0 .. ARITY^(D-2)).
+        let prefix = root.step(0).step(0);
+        let outside = *prefix.range().end() + 1;
+        let _delegates = prefix.derive_note_delegates(outside..=outside);
     }
 
     #[test]
     #[should_panic(expected = "does not cover requested range")]
     fn partial_overlap_panics() {
         let root = NoteMasterKey(Fp::from(1u64));
-        // depth-2 prefix covering [0..=0x3FFF_FFFF].
-        let prefix = root.step(false).step(false);
-        let _delegates = prefix.derive_note_delegates(0..=0x4000_0000);
+        let prefix = root.step(0).step(0);
+        let partial_hi = *prefix.range().end() + 1;
+        let _delegates = prefix.derive_note_delegates(0..=partial_hi);
     }
 }
