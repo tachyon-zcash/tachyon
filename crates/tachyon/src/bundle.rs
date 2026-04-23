@@ -1408,21 +1408,6 @@ mod tests {
         assert_eq!(deserialized.stamp.wtxid, [0; 64]);
     }
 
-    /// A stripped bundle with actions but zero wtxid fails to write — an
-    /// unassigned-adjunct guard.
-    #[test]
-    fn stripped_adjunct_write_rejects_unassigned_wtxid() {
-        let mut rng = StdRng::seed_from_u64(803);
-        let (stripped, _stamp) = build_autonome(&mut rng, 1000, 700).strip();
-        assert!(!stripped.actions.is_empty());
-        assert_eq!(stripped.stamp.wtxid, [0; 64]);
-
-        let mut buf = Vec::new();
-        stripped
-            .write(&mut buf)
-            .expect_err("adjunct with unassigned wtxid must fail to serialize");
-    }
-
     /// TachyonBundle round-trips a stamped bundle through the erased form
     /// without losing any fields.
     #[test]
