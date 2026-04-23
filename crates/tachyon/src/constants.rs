@@ -87,6 +87,39 @@ pub(crate) const EPOCH_SHIFT: u32 = if cfg!(test) { 4 } else { 12 };
 /// Number of blocks per epoch.
 pub const EPOCH_SIZE: u32 = 1 << EPOCH_SHIFT;
 
+/// Bits needed to index every epoch reachable from a `BlockHeight: u32`.
+pub const EPOCH_BITS: u32 = u32::BITS - EPOCH_SHIFT;
+
+/// Log2 of the GGM tree arity. Each step absorbs this many bits of the epoch
+/// index, so arity `k = 1 << LOG2_ARITY` and `GGM_TREE_DEPTH = EPOCH_BITS /
+/// LOG2_ARITY`.
+pub const LOG2_ARITY: u32 = 2;
+
+/// Depth of the GGM tree derived from [`EPOCH_BITS`] and [`LOG2_ARITY`].
+///
+/// Sized to tile the epoch space exactly: leaves index every possible
+/// [`EpochIndex`](crate::primitives::EpochIndex) value and nothing more.
+pub const GGM_TREE_DEPTH: u8 = {
+    #[expect(
+        clippy::integer_division_remainder_used,
+        reason = "compile-time check that the epoch space tiles cleanly"
+    )]
+    const _CLEAN: () = assert!(
+        EPOCH_BITS.checked_rem(LOG2_ARITY).is_some() && EPOCH_BITS % LOG2_ARITY == 0,
+        "EPOCH_BITS must divide evenly by LOG2_ARITY",
+    );
+    let Some(depth) = EPOCH_BITS.checked_div(LOG2_ARITY) else {
+        panic!("LOG2_ARITY must be non-zero")
+    };
+    // Pattern match is equivalent to a `depth <= u8::MAX` guard: if any of
+    // the upper three bytes is nonzero, the depth overflows a u8 and we
+    // panic below.
+    match depth.to_le_bytes() {
+        | [low, 0, 0, 0] => low,
+        | _ => panic!("GGM tree depth exceeds u8"),
+    }
+};
+
 /// Domain-separated key expansion from a spending key.
 ///
 /// `PRF^expand_sk(t) = BLAKE2b-512("Zcash_ExpandSeed", sk || t)`

@@ -77,9 +77,11 @@ mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use ggm::{GGM_TREE_DEPTH, NoteMasterKey, NotePrefixedKey};
+pub use ggm::{ARITY, NoteMasterKey, NotePrefixedKey, epoch_max};
 pub use note::{NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
+
+pub use crate::constants::GGM_TREE_DEPTH;
 
 #[cfg(test)]
 mod tests {
