@@ -7,6 +7,7 @@
 #![allow(dead_code, reason = "may not be used")]
 
 use alloc::vec::Vec;
+
 use core2::io::{self, Read, Write};
 use ff::PrimeField as _;
 use pasta_curves::{EpAffine, Fp, Fq, group::GroupEncoding as _};
