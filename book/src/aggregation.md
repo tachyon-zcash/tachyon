@@ -43,12 +43,11 @@ Aggregators must decompress proofs to a mutable format in order to merge proofs,
 Aggregators collect autonomes or existing aggregates and merge their stamps:
 
 1. Select transactions
-2. Deserialize and decompress stamps
-3. Align anchors with `StampLift` (both stamps must share the same `(block_height, pool_commit)` before merging)
+2. Deserialize and validate stamps
+3. Match/update anchors
 4. Merge stamps
-   - Merge tachygrams (set union)
-   - Combine action and tachygram accumulators (`MergeStamp` multiplies the underlying polynomials; see [Tachygrams](./tachygrams.md))
-   - Merge proofs (proof recursion)
+   - Merge tachygrams (exclusive sets)
+   - Merge proofs
 5. Serialize and compress the merged stamp
 6. Publish aggregate transaction
 
@@ -61,7 +60,7 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 
 Miners obtain the broadcast aggregates, or by vertically integrating as aggregators.
 
-When authoring a block, miners remove stamps from transactions covered by an aggregate, to produce appropriate adjuncts.
+When authoring a block, miners remove stamps from transactions covered by an aggregate, to produce appropriate adjuncts, and assign the adjunct a reference to the `wtxid` of the aggregate.
 
 ```mermaid
 ---
@@ -134,66 +133,8 @@ flowchart LR
     end
 ```
 
-## Transaction identifiers under aggregation
-
-A Tachyon bundle's authorization form changes across aggregation: stamping, merging into a covering aggregate, and stripping all produce bit-different authorizations of the same effecting data.
-[`wtxid`](https://zips.z.cash/zip-0239) — `txid || auth_digest` — is defined to uniquely fingerprint the physical on-wire transaction, so these forms must produce distinct `wtxid`s.
-
-Tachyon routes the mutable parts through `auth_digest`, leaving `txid` stable:
-
-- `txid` commits to [effecting data](./authorization.md#bundle-commitment) only: `action_acc || value_balance`. Stripping, merging, and re-stamping leave `txid` unchanged.
-- `auth_digest` commits to sigs plus the stamp trailer, per [Tachyon `auth_digest` contribution](./authorization.md#tachyon-auth_digest-contribution). Each physical auth form yields a distinct `auth_digest` and therefore a distinct `wtxid`.
-
-### Covering-aggregate references
-
-An adjunct's reference to the aggregate that covers it is a `wtxid`, not a `txid`.
-A `txid` alone cannot disambiguate: two bundles with the same effecting data but different stamps share a `txid`, so consensus would not know which physical aggregate to validate against.
-The 64-byte `wtxid` pins a specific physical aggregate.
-
-Miners assign the reference during block assembly. The covering aggregate must itself be top-level in the block — never stripped, never further aggregated — so the `wtxid` pointed to is stable.
-
-## Block Layout
-
-Adjuncts are bundles carrying actions but no stamp; each one carries an explicit `wtxid` naming the stamped bundle in the same block that covers it. The reference is 64 bytes (`txid || auth_digest`) and is assigned by the miner during block assembly. A stripped adjunct fails to serialize until its `wtxid` reference has been set.
-
-Non-tachyon transactions can appear anywhere in the block without affecting these references — the relationship is by `wtxid`, not position.
-
-| idx | tachyactions | stamp | description |
-| --- | ------------ | ----- | ----------- |
-| 0 | 1 | aggregate A | covers adjuncts pointing to `wtxid(A)` |
-| 1 | 2 | adjunct | stamp_wtxid = `wtxid(A)` |
-| 2 | - | - | no tachyon bundle |
-| 3 | 2 | adjunct | stamp_wtxid = `wtxid(A)` |
-| 4 | 2 | adjunct | stamp_wtxid = `wtxid(A)` |
-| 5 | - | aggregate B | covers adjuncts pointing to `wtxid(B)` |
-| 6 | 4 | adjunct | stamp_wtxid = `wtxid(B)` |
-| 7 | 4 | adjunct | stamp_wtxid = `wtxid(B)` |
-
-### Validation
-
-For each stamped bundle, consensus collects the covering actions — the bundle's own actions plus the actions of every stripped adjunct whose `stamp_wtxid` matches the stamped bundle's `wtxid` — reconstructs the `action_acc` and tachygram multiset, and verifies the stamp against that reconstructed header.
-
-```pseudocode
-let covered: Map<wtxid, Vec<Action>> = empty
-
-for tx in block {
-    if tx.tachyon is stripped {
-        covered[tx.tachyon.stamp_wtxid].append(tx.tachyon.actions)
-    }
-}
-
-for tx in block {
-    if tx.tachyon is stamped {
-        let actions = tx.tachyon.actions ++ covered[wtxid(tx)]
-        validate(tx.tachyon.stamp, actions)
-    }
-}
-```
-
-Because references are explicit, stamped and adjunct bundles may appear in any order; the miner is free to reorder for packing as long as each adjunct's `stamp_wtxid` keeps pointing at a stamped bundle in the block.
-
 <!-- TODO
-**p2p aggregation gossip is a secondary objective** and aggregation has some complex constraints.
+p2p aggregation gossip is a secondary objective and aggregation has some complex constraints.
 
 - aggregate size is limited by commitment size before block size (on the order of thousands of actions)
 - desirable to reduce the number of stamps in tx, for size, bandwidth, and validation cost

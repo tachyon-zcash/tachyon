@@ -94,8 +94,6 @@ where $F$ is a keyed PRF (Poseidon with domain tag `Tachyon-NfDerive`), $\Psi$ i
 
 $\mathsf{nk}$ alone does NOT confer spend authority — combined with $\mathsf{ak}$ it forms the proof authorizing key $\mathsf{pak}$, enabling proof construction and nullifier derivation without signing capability.
 
-Cross-epoch continuity of nullifier state is anchored by consensus: at every epoch boundary, the previous epoch's final pool commitment is hashed with `Tachyon-EpchSeed` and inserted as a root in the next epoch's pool multiset. See [Proof Pipeline → Epoch Seed](./proof-pipeline.md#epoch-seed).
-
 [^faerie-gold]: Orchard's more complex nullifier construction defended against faerie gold attacks. These are moot under out-of-band payments because the recipient controls $\Psi$ (via payment requests or URI redemption). See footnote 1 in "Tachyaction at a Distance."
 
 ### Payment key ($\mathsf{pk}$)
@@ -123,8 +121,4 @@ $\mathsf{pak}$ covers **all notes** because $\mathsf{nk}$ is wallet-wide. For na
 | ------ | ---- | ------ | ----- |
 | $\mathsf{pak}$ | $(\mathsf{ak}, \mathsf{nk})$ | Prover | All notes, all epochs |
 | per-note | $(\mathsf{ak}, \mathsf{mk})$ | Per-note prover | One note, all epochs |
-| delegate | $(\mathsf{ak}, \Psi_t)$, Rust `NotePrefixedKey` | OSS | One note, epochs $e \leq t$ |
-
-Each delegation hand-off is further blinded by a fresh `DelegationTrapdoor` — the prover publishes $\text{DelegationId} = \text{Poseidon}_\text{Tachyon-Delegate}(\mathsf{mk}, \mathsf{cm}, \mathsf{trapdoor})$ on every header in the resulting proof chain, so redelegating the same note produces an unrelated id. See [Notes → Delegation identity](./notes.md#delegation-identity).
-
-The per-note master key $\mathsf{mk} = \text{Poseidon}_\text{Tachyon-MkDerive}(\Psi, \mathsf{nk})$ and delegate key $\Psi_t = \text{GGM}(\mathsf{mk}, t)$ (also Poseidon-based) are described in [Notes](./notes.md#oblivious-sync-delegation).
+| delegate | $(\mathsf{ak}, \Psi_t)$ | OSS | One note, epochs $e \leq t$ |

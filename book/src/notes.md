@@ -56,18 +56,3 @@ flowchart TB
 | $\Psi_t$ | `NotePrefixedKey` | OSS | Derive nullifiers for epochs $e \leq t$ only |
 
 $\mathsf{mk}$ is ephemeral — the user device derives it from $(\mathsf{nk}, \Psi)$ when needed, never stores or transmits it. The OSS receives only delegate keys, which cannot recover $\mathsf{mk}$ or $\mathsf{nk}$.
-
-### Delegation identity
-
-A **`DelegationId`** ties together all PCD proofs that pertain to the same delegated note, without exposing the note itself. It is derived from the master key, the note commitment, and a fresh per-delegation trapdoor:
-
-$$\text{DelegationId} = \text{Poseidon}_\text{Tachyon-Delegate}(\mathsf{mk},\; \mathsf{cm},\; \mathsf{trapdoor})$$
-
-| Symbol | Rust type | Role |
-| ------ | --------- | ---- |
-| `DelegationId` | `DelegationId` | Public identifier appearing on every spend-side header (`DelegationHeader`, `NullifierHeader`, `SpendHeader`, `SpendableHeader`, `SpendableRolloverHeader`) |
-| `DelegationTrapdoor` | `DelegationTrapdoor` | Per-delegation randomness blinding the id; witness material only |
-
-Every delegation picks a fresh trapdoor. Two delegations of the same note produce unrelated `DelegationId`s, so nothing about the underlying note is visible to anyone who can't match a known trapdoor. Fuse steps in the [proof pipeline](./proof-pipeline.md#identity-binding) equality-check `DelegationId` across their inputs; `SpendBind` and `SpendableInit` additionally recompute the id from their note/trapdoor witness to pin the proof to the right note.
-
-See `NullifierKey::derive_delegation_id` in `crates/tachyon/src/keys/note.rs` for the implementation.

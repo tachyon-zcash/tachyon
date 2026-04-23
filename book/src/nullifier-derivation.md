@@ -49,7 +49,7 @@ Let $F_K$ be a GGM tree PRF instantiated from Poseidon (P128Pow5T3, domain tag `
 
    When the chain advances to $t' > t$, engage in the same protocol rounds and only send the delta for $(t..t']$.
 
-At each epoch boundary, consensus splices the previous epoch's final pool commitment into the next epoch's pool multiset as $\text{epoch\_seed\_hash}(\mathsf{pool\_commit})$. This lets `SpendableEpochLift` prove cross-epoch continuity by querying the seed — see [Proof Pipeline → Epoch Seed](./proof-pipeline.md#epoch-seed).
+At each epoch boundary, consensus splices the previous epoch's final pool commitment into the next epoch's pool multiset as $\text{epoch\_seed\_hash}(\mathsf{pool\_commit})$. This lets `SpendableEpochLift` prove cross-epoch continuity by querying the seed.
 
 ## Privacy Considerations
 
