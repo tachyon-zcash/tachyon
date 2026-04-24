@@ -33,9 +33,9 @@ This seems like a suitable candidate that satisfies the aforementioned requireme
 
 Let $F_K$ be a $k$-ary GGM tree PRF instantiated from Poseidon (P128Pow5T3, domain tag `Tachyon-NfDerive`). Each tree step computes $\text{Poseidon}(\text{tag}, \text{node}, \text{chunk})$, where *chunk* is a `LOG2_ARITY`-bit slice of the epoch index. Tachyon uses `LOG2_ARITY = 2` (so $k = 4$), and sizes the tree to tile exactly the epoch space: `GGM_TREE_DEPTH = EPOCH_BITS / LOG2_ARITY`, where `EPOCH_BITS = u32::BITS - EPOCH_SHIFT`. The wallet derives the master root key as $mk = \text{Poseidon}_\text{Tachyon-MkDerive}(\psi, nk)$.
 
-1. **Compute the minimal prefix cover of [0..t].**
+1. **Compute a prefix cover of [s..=t].**
 
-   Decompose the integer range into $k$-ary aligned subranges (each subrange is $k^j$ consecutive epochs on a $k^j$-aligned boundary for some $j$). Each subrange corresponds to a base-$k$ prefix over epoch chunks.
+   Start from the epoch $s$ of the spendable the wallet already holds (see "Delegation window" below); $s$ ranges from $0$ (first contact with sync) to the last-advanced spendable epoch. Decompose $[s..=t]$ into $k$-ary aligned subranges (each subrange is $k^j$ consecutive epochs on a $k^j$-aligned boundary for some $j$). Each subrange corresponds to a base-$k$ prefix over epoch chunks.
 
 2. **Derive and send the prefix node seeds.**
 
@@ -95,6 +95,42 @@ Because pre-blind steps are independent of the trapdoor, a wallet's cached
 left-spine proofs remain valid as a prefix to any fresh
 `DelegationBlindStep`, so the only fresh in-circuit work per delegation is
 the blind step plus any trailing non-cached peaks of the cover.
+
+## Delegation window
+
+On re-engagement, a wallet already holds a `SpendableHeader` at some epoch
+$s \geq 0$ (for first contact, $s = 0$). Sync only needs prefix keys for
+epochs $[s..=t]$, where $t$ is the current tip epoch.
+
+Optionally, the wallet may widen to $[s'..=t]$ with $s' \in [0, s]$, where
+$s'$ is $s$ rounded down to an $\mathrm{ARITY}^j$-boundary. The caller
+trades two quantities: **derivation effort** ($\sum_i \mathrm{depth}_i + 2N$
+fresh PCD steps per delegation, where $N$ is the cover's peak count and
+$\mathrm{depth}_i$ is each peak's depth — one chain per peak: seed → master →
+step × (depth − 1) → blind) against **cross-delegation linkability**,
+which a larger $s - s'$ increases.
+
+The linkability cost arises because nullifiers are $F_{mk}(e)$ —
+trap-independent — so any delegation covering epoch $e$ derives the same
+$nf_e$ value. An adversary with visibility into two delegations (e.g. the
+current sync service plus any party that observed a prior delegation)
+can match nullifiers at overlapping epochs to confirm that both
+delegations concern the same note. A tight $[s..=t]$ cover with $s$
+equal to the held spendable's epoch minimises this overlap, since prior
+delegations covered epochs $\leq s$ and the new one covers $\geq s$.
+Widening with $s' < s$ re-exposes epochs covered by earlier delegations.
+The degenerate widening $s' = 0$ reproduces the original $[0..=t]$
+behavior — maximum linkability risk — as the first list entry.
+
+Spine caching shaves the leftmost-peak chain, so covers that concentrate
+peaks on the spine benefit most in effort terms.
+
+[`keys::cover_candidates(start, end)`](../crates/tachyon/src/keys/ggm.rs)
+enumerates all $\mathrm{ARITY}^j$-aligned candidates for $[s..=t]$, sorted
+by overage descending (so $[0..=t]$ is first, $[s..=t]$ is last). The
+caller measures derivation effort on each candidate via
+`derive_note_delegates(range)` and picks by its own policy weighing
+effort against linkability exposure.
 
 ## Assumptions
 

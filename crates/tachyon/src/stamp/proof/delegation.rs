@@ -25,8 +25,8 @@ use mock_ragu::{Header, Index, Step, Suffix};
 use pasta_curves::Fp;
 
 use crate::{
-    constants::{DELEGATION_ID_DOMAIN, GGM_TREE_DEPTH},
-    keys::{ARITY, NoteMasterKey, NotePrefixedKey, ProofAuthorizingKey},
+    constants::DELEGATION_ID_DOMAIN,
+    keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey, NotePrefixedKey, ProofAuthorizingKey},
     note::{self, Note, Nullifier},
     primitives::{DelegationId, DelegationTrapdoor, EpochIndex},
 };
@@ -176,7 +176,7 @@ impl Step for NoteMasterStep {
         (mk, cm): <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if chunk >= ARITY {
+        if chunk >= GGM_TREE_ARITY {
             return Err(mock_ragu::Error);
         }
         Ok(((mk.step(chunk), mk, cm), ()))
@@ -205,7 +205,7 @@ impl Step for NoteStep {
         if key.depth.get() >= GGM_TREE_DEPTH {
             return Err(mock_ragu::Error);
         }
-        if chunk >= ARITY {
+        if chunk >= GGM_TREE_ARITY {
             return Err(mock_ragu::Error);
         }
         Ok(((key.step(chunk), mk, cm), ()))
@@ -274,7 +274,7 @@ impl Step for DelegationStep {
         if key.depth.get() >= GGM_TREE_DEPTH {
             return Err(mock_ragu::Error);
         }
-        if chunk >= ARITY {
+        if chunk >= GGM_TREE_ARITY {
             return Err(mock_ragu::Error);
         }
         Ok(((key.step(chunk), delegation_id), ()))

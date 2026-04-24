@@ -524,15 +524,16 @@ pub mod ggm_tools {
 
     use crate::{
         EpochIndex,
-        constants::{DELEGATION_ID_DOMAIN, EPOCH_BITS, LOG2_ARITY},
-        keys::{ARITY, GGM_TREE_DEPTH},
+        constants::DELEGATION_ID_DOMAIN,
+        keys::{GGM_TREE_ARITY, GGM_CHUNK_SIZE, GGM_TREE_DEPTH},
         primitives::{DelegationId, DelegationTrapdoor},
         stamp::proof::{PROOF_SYSTEM, delegation},
     };
 
     /// Walk a pre-blind master PCD down `target_depth` GGM levels, interpreting
-    /// `epoch_bits` as an epoch-space index (top `EPOCH_BITS` bits populated,
-    /// low bits zero for a prefix).
+    /// `epoch_bits` as an epoch-space index (top `(u32::from(GGM_DEPTH) *
+    /// GGM_CHUNK_SIZE)` bits populated, low bits zero for a
+    /// prefix).
     pub fn walk_master_to_depth<'source>(
         rng: &mut (impl RngCore + CryptoRng),
         master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
@@ -541,7 +542,7 @@ pub mod ggm_tools {
     ) -> Pcd<'source, delegation::NoteStepHeader> {
         assert!(
             (1..=GGM_TREE_DEPTH).contains(&target_depth),
-            "target_depth must be in 1..=GGM_TREE_DEPTH",
+            "target_depth must be in 1..=GGM_DEPTH",
         );
         let (mk, cm) = master_pcd.data;
 
@@ -594,7 +595,7 @@ pub mod ggm_tools {
             .into_iter()
             .map(|target_key| {
                 let target_depth = target_key.depth.get();
-                let span_bits = u32::from(GGM_TREE_DEPTH - target_depth) * LOG2_ARITY;
+                let span_bits = (GGM_TREE_DEPTH - target_depth) * GGM_CHUNK_SIZE;
                 let epoch_bits = target_key.index << span_bits;
                 let prefix_pcd =
                     walk_master_to_depth(rng, master_pcd.clone(), epoch_bits, target_depth);
@@ -722,33 +723,39 @@ pub mod ggm_tools {
         ))
     }
 
-    /// Extract the `LOG2_ARITY`-bit chunk absorbed at `level` (1-indexed) of a
-    /// walk indexing into an `EPOCH_BITS`-wide epoch space.
+    /// Extract the `GGM_CHUNK_SIZE`-bit chunk absorbed at `level`
+    /// (1-indexed) of a walk indexing into an `(u32::from(GGM_DEPTH) *
+    /// GGM_CHUNK_SIZE)`-wide epoch space.
     fn chunk_at(epoch_bits: u32, level: u8) -> u8 {
-        let shift = EPOCH_BITS - u32::from(level) * LOG2_ARITY;
-        let chunk_mask = (1u32 << LOG2_ARITY) - 1u32;
+        let shift = (GGM_TREE_DEPTH * GGM_CHUNK_SIZE) - level * GGM_CHUNK_SIZE;
+        let chunk_mask = (1u32 << GGM_CHUNK_SIZE) - 1u32;
         let chunk_u32 = (epoch_bits >> shift) & chunk_mask;
         u8::try_from(chunk_u32).expect("chunk fits in u8")
     }
 
-    /// Number of leading chunks (of `LOG2_ARITY` bits each) shared between
-    /// `lhs` and `rhs` when viewed as `EPOCH_BITS`-wide indices.
+    /// Number of leading chunks (of `GGM_CHUNK_SIZE` bits each)
+    /// shared between `lhs` and `rhs` when viewed as `(u32::from(GGM_DEPTH)
+    /// * GGM_CHUNK_SIZE)`-wide indices.
     fn shared_chunk_prefix_depth(lhs: u32, rhs: u32) -> u8 {
         let diff = lhs ^ rhs;
         if diff == 0 {
             return GGM_TREE_DEPTH;
         }
-        let msb_pos = u32::BITS - 1u32 - diff.leading_zeros();
-        assert!(msb_pos < EPOCH_BITS, "epoch index out of EPOCH_BITS range");
-        let shared_bits = EPOCH_BITS - 1u32 - msb_pos;
-        let shared_chunks = shared_bits
-            .checked_div(LOG2_ARITY)
-            .expect("LOG2_ARITY is non-zero");
-        u8::try_from(shared_chunks).expect("chunk count fits u8")
+        #[expect(clippy::as_conversions, reason = "safe")]
+        #[expect(clippy::cast_possible_truncation, reason = "safe")]
+        let msb_pos = (u32::BITS as u8) - 1 - (diff.leading_zeros() as u8);
+        assert!(
+            msb_pos < (GGM_TREE_DEPTH * GGM_CHUNK_SIZE),
+            "epoch index out of (u32::from(GGM_DEPTH) * GGM_CHUNK_SIZE) range"
+        );
+        let shared_bits = (GGM_TREE_DEPTH * GGM_CHUNK_SIZE) - 1 - msb_pos;
+        shared_bits
+            .checked_div(GGM_CHUNK_SIZE)
+            .expect("GGM_CHUNK_SIZE is non-zero")
     }
 
     #[expect(unused, reason = "exported for future benches")]
     pub const fn arity() -> u8 {
-        ARITY
+        GGM_TREE_ARITY
     }
 }
