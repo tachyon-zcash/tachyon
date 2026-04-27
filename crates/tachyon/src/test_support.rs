@@ -31,13 +31,12 @@ use crate::{
     BlockSet,
     action::{self, Action, Signature},
     bundle::{self, Stamped},
-    constants::EPOCH_SIZE,
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     primitives::{
-        ActionDigest, Anchor, BlockAcc, BlockHeight, DelegationId, DelegationTrapdoor, EpochIndex,
-        PoolAcc, PoolCommit, PoolDelta, PoolSet, effect, epoch_seed_hash,
+        ActionDigest, Anchor, BlockAcc, BlockCommit, BlockHeight, DelegationId, DelegationTrapdoor,
+        EpochIndex, PoolChain, effect,
     },
     stamp::proof::{PROOF_SYSTEM, delegation, spendable},
     value,
@@ -64,6 +63,8 @@ pub fn action_digests(actions: &[Action]) -> Vec<ActionDigest> {
         .collect()
 }
 
+/// Build a block with `size` random tachygrams. The canonical height
+/// tachygram is added by [`PoolSim::mine`] — callers don't include it.
 pub fn random_block(rng: &mut (impl RngCore + CryptoRng), size: usize) -> BlockAcc {
     let roots: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
         .take(size)
@@ -93,76 +94,76 @@ pub fn build_output_action(
     (rcv, alpha, action)
 }
 
+/// Build a block containing every commitment in `cms` plus enough random
+/// tachygrams to reach `size` total roots.
 pub fn random_block_with(
     rng: &mut (impl RngCore + CryptoRng),
-    cm: note::Commitment,
+    cms: &[note::Commitment],
     size: usize,
 ) -> BlockAcc {
-    assert!(size >= 1, "size must include at least the commitment");
-    let mut roots: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-        .take(size - 1)
-        .collect();
-    roots.push(Fp::from(&cm));
+    assert!(
+        size >= cms.len(),
+        "size must accommodate every commitment in cms"
+    );
+    let mut roots: Vec<Fp> = cms.iter().map(Fp::from).collect();
+    roots.extend(iter::repeat_with(|| Fp::random(&mut *rng)).take(size - cms.len()));
     BlockSet(Polynomial::from_roots(&roots))
 }
 
+#[derive(Clone, Debug)]
+struct HistoryEntry {
+    block: BlockAcc,
+    prev_chain: PoolChain,
+    height: BlockHeight,
+}
+
 pub struct PoolSim {
-    pub history: Vec<(BlockAcc, PoolAcc)>,
+    history: Vec<HistoryEntry>,
 }
 
 impl PoolSim {
     pub fn new() -> Self {
+        // Genesis: a single block at height 0 carrying only the canonical
+        // height tachygram, prev_chain = PoolChain::genesis().
+        let height = BlockHeight(0);
+        let prev_chain = PoolChain::genesis();
+        let height_root = Fp::from(&height.tachygram(prev_chain));
+        let block = BlockSet(Polynomial::from_roots(&[height_root]));
         Self {
-            history: alloc::vec![(
-                BlockSet(Polynomial::default()),
-                PoolSet(Polynomial::default()),
-            )],
+            history: alloc::vec![HistoryEntry {
+                block,
+                prev_chain,
+                height,
+            }],
         }
     }
 
-    pub fn state(&self) -> &PoolAcc {
-        &self
-            .history
+    pub fn tip(&self) -> BlockHeight {
+        self.history
             .last()
             .expect("history always has genesis entry")
-            .1
+            .height
     }
 
     pub fn anchor(&self) -> Anchor {
-        let height =
-            BlockHeight(u32::try_from(self.history.len() - 1).expect("block height fits u32"));
-        self.anchor_at(height)
+        self.anchor_at(self.tip())
     }
 
-    pub fn state_at(&self, height: BlockHeight) -> PoolAcc {
-        self.history[usize::try_from(height.0).expect("block height fits usize")]
-            .1
+    pub fn block_at(&self, height: BlockHeight) -> BlockAcc {
+        self.history[usize::try_from(height.0).expect("fits usize")]
+            .block
             .clone()
+    }
+
+    pub fn prev_chain_at(&self, height: BlockHeight) -> PoolChain {
+        self.history[usize::try_from(height.0).expect("fits usize")].prev_chain
     }
 
     pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
-        let state = &self.history[usize::try_from(height.0).expect("block height fits usize")].1;
-        Anchor(height, PoolCommit(state.0.commit(Fp::ZERO)))
-    }
-
-    #[expect(unused, reason = "test support")]
-    pub fn block_at(&self, height: BlockHeight) -> BlockAcc {
-        self.history[usize::try_from(height.0).expect("block height fits usize")]
-            .0
-            .clone()
-    }
-
-    pub fn delta(&self, from: BlockHeight, to: BlockHeight) -> PoolDelta<Polynomial> {
-        assert!(from <= to, "delta: from > to");
-        assert_eq!(from.epoch(), to.epoch(), "delta spans an epoch boundary");
-        let from_idx = usize::try_from(from.0).expect("block height fits usize") + 1;
-        let to_idx_exclusive = usize::try_from(to.0).expect("block height fits usize") + 1;
-        let product = self.history[from_idx..to_idx_exclusive]
-            .iter()
-            .map(|entry| entry.0.0.clone())
-            .reduce(|acc, next| acc.multiply(&next))
-            .unwrap_or_default();
-        PoolDelta(product)
+        let entry = &self.history[usize::try_from(height.0).expect("fits usize")];
+        let block_commit = BlockCommit(entry.block.0.commit(Fp::ZERO));
+        let chain = entry.prev_chain.advance(&block_commit);
+        Anchor(block_commit, chain)
     }
 
     pub fn advance(
@@ -172,34 +173,42 @@ impl PoolSim {
     ) -> Vec<BlockAcc> {
         let start_idx = self.history.len();
         for _ in 0..count {
-            self.mine(block_factory(self));
+            self.mine(&block_factory(self));
         }
         self.history[start_idx..]
             .iter()
-            .map(|entry| entry.0.clone())
+            .map(|entry| entry.block.clone())
             .collect()
     }
 
-    pub fn mine(&mut self, block: BlockAcc) {
-        let current_anchor = self.anchor();
-        let current_state = &self
+    /// Append a block. `PoolSim` automatically embeds the canonical height
+    /// tachygram and advances the chain.
+    pub fn mine(&mut self, block: &BlockAcc) {
+        let prev_entry = self
             .history
             .last()
-            .expect("history always has genesis entry")
-            .1;
-        let prior_pool: Polynomial = if current_anchor.0.is_epoch_final() {
-            Polynomial::from_roots(&[epoch_seed_hash(&current_anchor.1)])
-        } else {
-            current_state.0.clone()
-        };
-        let new_state = PoolSet(prior_pool.multiply(&block.0));
-        self.history.push((block, new_state));
+            .expect("history always has genesis entry");
+        let prev_block_commit = BlockCommit(prev_entry.block.0.commit(Fp::ZERO));
+        let prev_chain_after_prev = prev_entry.prev_chain.advance(&prev_block_commit);
+
+        let height = BlockHeight(prev_entry.height.0 + 1);
+        let height_root = Fp::from(&height.tachygram(prev_chain_after_prev));
+        let block_with_height = BlockSet(block.0.multiply(&Polynomial::from_roots(&[height_root])));
+
+        self.history.push(HistoryEntry {
+            block: block_with_height,
+            prev_chain: prev_chain_after_prev,
+            height,
+        });
     }
 }
 
 pub struct SyncSim<'source> {
     delegates: Vec<Pcd<'source, delegation::DelegationHeader>>,
-    spendables: Vec<Pcd<'source, spendable::SpendableHeader>>,
+    /// `(spendable PCD, height that the spendable currently anchors at)`.
+    /// Height isn't carried on `SpendableHeader`; the sync service tracks it
+    /// alongside.
+    spendables: Vec<(Pcd<'source, spendable::SpendableHeader>, BlockHeight)>,
 }
 
 impl<'source> SyncSim<'source> {
@@ -210,8 +219,12 @@ impl<'source> SyncSim<'source> {
         }
     }
 
-    pub fn accept_spendable(&mut self, spendable: Pcd<'source, spendable::SpendableHeader>) {
-        self.spendables.push(spendable);
+    pub fn accept_spendable(
+        &mut self,
+        spendable: Pcd<'source, spendable::SpendableHeader>,
+        height: BlockHeight,
+    ) {
+        self.spendables.push((spendable, height));
     }
 
     pub fn spendable(
@@ -220,15 +233,20 @@ impl<'source> SyncSim<'source> {
     ) -> Pcd<'source, spendable::SpendableHeader> {
         self.spendables
             .iter()
-            .find(|pcd| pcd.data.0 == delegation_id)
+            .find(|entry| entry.0.data.0 == delegation_id)
             .expect("no maintained spendable for delegation_id")
+            .0
             .clone()
     }
 
-    /// Advance every maintained spendable to `pool.anchor()`, chaining
-    /// same-epoch and cross-epoch lifts as needed.
+    /// Advance every maintained spendable to `pool.tip()`, chaining
+    /// same-epoch and cross-epoch lifts one block at a time.
     pub fn lift(&mut self, rng: &mut (impl RngCore + CryptoRng), pool: &PoolSim) {
-        let ids: Vec<DelegationId> = self.spendables.iter().map(|pcd| pcd.data.0).collect();
+        let ids: Vec<DelegationId> = self
+            .spendables
+            .iter()
+            .map(|entry| entry.0.data.0)
+            .collect();
         for id in ids {
             self.lift_one(rng, id, pool);
         }
@@ -240,98 +258,108 @@ impl<'source> SyncSim<'source> {
         delegation_id: DelegationId,
         pool: &PoolSim,
     ) {
-        let target_anchor = pool.anchor();
+        let target_height = pool.tip();
         loop {
             let idx = self
                 .spendables
                 .iter()
-                .position(|pcd| pcd.data.0 == delegation_id)
+                .position(|entry| entry.0.data.0 == delegation_id)
                 .expect("no maintained spendable for delegation_id");
-            let stored_anchor = self.spendables[idx].data.2;
-            if stored_anchor.1 == target_anchor.1 {
+            let stored_height = self.spendables[idx].1;
+            if stored_height == target_height {
                 return;
             }
             assert!(
-                stored_anchor.0 <= target_anchor.0,
-                "target_anchor is behind stored anchor"
+                stored_height <= target_height,
+                "target_height is behind stored height"
             );
 
-            let spendable_pcd = self.spendables.swap_remove(idx);
-            let stored_epoch = stored_anchor.0.epoch();
-            let lifted = if stored_epoch == target_anchor.0.epoch() {
-                let left_pool = pool.state_at(stored_anchor.0);
-                let delta = pool.delta(stored_anchor.0, target_anchor.0);
-                Self::same_epoch_lift(rng, spendable_pcd, left_pool, delta, target_anchor)
+            let (spendable_pcd, _) = self.spendables.swap_remove(idx);
+            let stored_epoch = stored_height.epoch();
+            let new_height = BlockHeight(stored_height.0 + 1);
+            let new_epoch = new_height.epoch();
+
+            let lifted = if new_epoch == stored_epoch {
+                Self::same_epoch_lift(rng, spendable_pcd, pool, stored_height, new_height)
             } else {
-                let epoch_final_h = BlockHeight(stored_epoch.0.saturating_add(1) * EPOCH_SIZE - 1);
-                let at_final = if stored_anchor.0 < epoch_final_h {
-                    let intermediate = pool.anchor_at(epoch_final_h);
-                    let left_pool = pool.state_at(stored_anchor.0);
-                    let delta = pool.delta(stored_anchor.0, epoch_final_h);
-                    Self::same_epoch_lift(rng, spendable_pcd, left_pool, delta, intermediate)
-                } else {
-                    spendable_pcd
-                };
-                let new_epoch = EpochIndex(stored_epoch.0 + 1);
-                let new_epoch_first_h = BlockHeight(new_epoch.0 * EPOCH_SIZE);
-                let new_epoch_first_anchor = pool.anchor_at(new_epoch_first_h);
-                let new_pool = pool.state_at(new_epoch_first_h);
                 let old_nf_pcd = self.nullifier(rng, delegation_id, stored_epoch);
                 let new_nf_pcd = self.nullifier(rng, delegation_id, new_epoch);
-                Self::next_epoch_lift(
+                Self::epoch_lift(
                     rng,
-                    at_final,
+                    spendable_pcd,
                     old_nf_pcd,
                     new_nf_pcd,
-                    new_pool,
-                    new_epoch_first_anchor,
+                    pool,
+                    stored_height,
+                    new_height,
                 )
             };
-            self.spendables.push(lifted);
+            self.spendables.push((lifted, new_height));
         }
     }
 
     fn same_epoch_lift(
         rng: &mut (impl RngCore + CryptoRng),
         spendable_pcd: Pcd<'source, spendable::SpendableHeader>,
-        left_pool: PoolAcc,
-        delta: PoolDelta<Polynomial>,
-        target_anchor: Anchor,
+        pool: &PoolSim,
+        old_height: BlockHeight,
+        new_height: BlockHeight,
     ) -> Pcd<'source, spendable::SpendableHeader> {
         let (delegation_id, nf, _) = spendable_pcd.data;
+        let new_anchor = pool.anchor_at(new_height);
+        let old_prev_chain = pool.prev_chain_at(old_height);
+        let old_block = pool.block_at(old_height);
+        let new_block = pool.block_at(new_height);
         let (proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 &spendable::SpendableLift,
-                (left_pool.into(), delta.into(), target_anchor),
+                (
+                    old_prev_chain,
+                    old_block.into(),
+                    old_height,
+                    new_block.into(),
+                    new_height,
+                    new_anchor,
+                ),
                 spendable_pcd,
                 Proof::trivial().carry::<()>(()),
             )
             .expect("spendable lift");
-        proof.carry::<spendable::SpendableHeader>((delegation_id, nf, target_anchor))
+        proof.carry::<spendable::SpendableHeader>((delegation_id, nf, new_anchor))
     }
 
-    fn next_epoch_lift(
+    fn epoch_lift(
         rng: &mut (impl RngCore + CryptoRng),
         spendable_pcd: Pcd<'source, spendable::SpendableHeader>,
         old_nf_pcd: Pcd<'source, delegation::NullifierHeader>,
         new_nf_pcd: Pcd<'source, delegation::NullifierHeader>,
-        new_pool: PoolAcc,
-        new_anchor: Anchor,
+        pool: &PoolSim,
+        old_height: BlockHeight,
+        new_height: BlockHeight,
     ) -> Pcd<'source, spendable::SpendableHeader> {
-        let (delegation_id, _, stored_anchor) = spendable_pcd.data;
+        let (delegation_id, ..) = spendable_pcd.data;
         assert!(
-            stored_anchor.0.is_epoch_final(),
-            "rollover requires spendable at epoch-final"
+            old_height.is_epoch_final(),
+            "epoch lift requires spendable at epoch-final"
         );
         let old_nf = old_nf_pcd.data.0;
         let new_nf = new_nf_pcd.data.0;
+        let new_anchor = pool.anchor_at(new_height);
 
+        // Build a SpendableRollover PCD against the new block.
+        let new_block = pool.block_at(new_height);
+        let new_prev_chain = pool.prev_chain_at(new_height);
         let (rollover_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 &spendable::SpendableRollover,
-                (new_pool.clone().into(), new_anchor),
+                (
+                    new_prev_chain,
+                    new_block.clone().into(),
+                    new_height,
+                    new_anchor,
+                ),
                 old_nf_pcd,
                 new_nf_pcd,
             )
@@ -343,11 +371,21 @@ impl<'source> SyncSim<'source> {
             new_anchor,
         ));
 
+        // Apply the cross-epoch lift.
+        let old_prev_chain = pool.prev_chain_at(old_height);
+        let old_block = pool.block_at(old_height);
         let (epoch_lift_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 &spendable::SpendableEpochLift,
-                (new_pool.into(),),
+                (
+                    old_prev_chain,
+                    old_block.into(),
+                    old_height,
+                    new_block.into(),
+                    new_height,
+                    new_anchor,
+                ),
                 spendable_pcd,
                 rollover_pcd,
             )
@@ -397,10 +435,6 @@ impl WalletSim {
         }
     }
 
-    /// Produce a pre-blind master header PCD via [`NoteSeedStep`] — the GGM
-    /// tree root at depth 0 with `(mk, cm)` lineage. The trapdoor is NOT
-    /// witnessed here; blinding happens at a terminal
-    /// [`DelegationBlindStep`](delegation::DelegationBlindStep).
     pub fn note_master<'source>(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
@@ -414,11 +448,12 @@ impl WalletSim {
         proof.carry::<delegation::NoteMasterHeader>((mk, cm))
     }
 
+    #[expect(clippy::type_complexity, reason = "test-support tuple")]
     pub fn fresh_spend<'source>(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
-        anchor: Anchor,
-        pool_state: PoolAcc,
+        pool: &PoolSim,
+        height: BlockHeight,
         spend_note: Note,
     ) -> (
         Note,
@@ -426,14 +461,27 @@ impl WalletSim {
         Pcd<'source, delegation::NullifierHeader>,
         Pcd<'source, delegation::NullifierHeader>,
         Pcd<'source, spendable::SpendableHeader>,
+        PoolChain,
+        BlockAcc,
+        BlockHeight,
     ) {
         let trap = DelegationTrapdoor::random(rng);
         let master = self.note_master(rng, spend_note);
         let (nf_e, nf_e1) =
-            ggm_tools::nullifier_pair_from_master(rng, master, trap, anchor.0.epoch());
-        let spendable_pcd =
-            self.spendable_init(rng, spend_note, trap, anchor, pool_state, nf_e.clone());
-        (spend_note, trap, nf_e, nf_e1, spendable_pcd)
+            ggm_tools::nullifier_pair_from_master(rng, master, trap, height.epoch());
+        let spendable_pcd = self.spendable_init(rng, spend_note, trap, pool, height, nf_e.clone());
+        let prev_chain = pool.prev_chain_at(height);
+        let block = pool.block_at(height);
+        (
+            spend_note,
+            trap,
+            nf_e,
+            nf_e1,
+            spendable_pcd,
+            prev_chain,
+            block,
+            height,
+        )
     }
 
     pub fn spendable_init<'source>(
@@ -441,16 +489,27 @@ impl WalletSim {
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
         trap: DelegationTrapdoor,
-        anchor: Anchor,
-        pool_state: PoolAcc,
+        pool: &PoolSim,
+        height: BlockHeight,
         nf_pcd: Pcd<'source, delegation::NullifierHeader>,
     ) -> Pcd<'source, spendable::SpendableHeader> {
         let (nf, _epoch, delegation_id) = nf_pcd.data;
+        let prev_chain = pool.prev_chain_at(height);
+        let block = pool.block_at(height);
+        let anchor = pool.anchor_at(height);
         let (spendable_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 &spendable::SpendableInit,
-                (note, self.pak, trap, pool_state.into(), anchor),
+                (
+                    note,
+                    self.pak,
+                    trap,
+                    prev_chain,
+                    block.into(),
+                    height,
+                    anchor,
+                ),
                 nf_pcd,
                 Proof::trivial().carry::<()>(()),
             )
@@ -469,6 +528,9 @@ impl WalletSim {
             Pcd<'source, delegation::NullifierHeader>,
             Pcd<'source, delegation::NullifierHeader>,
             Pcd<'source, spendable::SpendableHeader>,
+            PoolChain,
+            BlockAcc,
+            BlockHeight,
         )>,
         output_notes: Vec<Note>,
     ) -> Stamped {
@@ -477,7 +539,9 @@ impl WalletSim {
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut traps = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
-        for (note, trap, nf_now_pcd, nf_next_pcd, spendable_pcd) in spends {
+        for (note, trap, nf_now_pcd, nf_next_pcd, spendable_pcd, prev_chain, block, height) in
+            spends
+        {
             let rcv = value::CommitmentTrapdoor::random(&mut *rng);
             let theta = ActionEntropy::random(&mut *rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
@@ -485,7 +549,14 @@ impl WalletSim {
             });
             spend_plans.push(plan);
             traps.push(trap);
-            spend_pcds.push((nf_now_pcd, nf_next_pcd, spendable_pcd));
+            spend_pcds.push((
+                nf_now_pcd,
+                nf_next_pcd,
+                spendable_pcd,
+                prev_chain,
+                block,
+                height,
+            ));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
@@ -525,7 +596,7 @@ pub mod ggm_tools {
     use crate::{
         EpochIndex,
         constants::DELEGATION_ID_DOMAIN,
-        keys::{GGM_TREE_ARITY, GGM_CHUNK_SIZE, GGM_TREE_DEPTH},
+        keys::{GGM_CHUNK_SIZE, GGM_TREE_ARITY, GGM_TREE_DEPTH},
         primitives::{DelegationId, DelegationTrapdoor},
         stamp::proof::{PROOF_SYSTEM, delegation},
     };

@@ -37,8 +37,8 @@ use crate::{
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, public},
     primitives::{
-        ActionCommit, ActionDigest, ActionDigestError, ActionSet, Anchor, DelegationTrapdoor,
-        Tachygram, TachygramAcc, TachygramCommit,
+        ActionCommit, ActionDigest, ActionDigestError, ActionSet, Anchor, BlockAcc, BlockHeight,
+        DelegationTrapdoor, PoolChain, Tachygram, TachygramAcc, TachygramCommit,
     },
     stamp::proof::{compute_action_acc, delegation, spend, spendable},
     value,
@@ -180,6 +180,9 @@ impl Plan {
             mock_ragu::Pcd<'source, delegation::NullifierHeader>,
             mock_ragu::Pcd<'source, delegation::NullifierHeader>,
             mock_ragu::Pcd<'source, spendable::SpendableHeader>,
+            PoolChain,
+            BlockAcc,
+            BlockHeight,
         )>,
     ) -> Result<Stamp, ProveError> {
         // Each entry is (stamp, action_digests). The digest list is ephemeral —
@@ -193,7 +196,7 @@ impl Plan {
 
         for (
             ((cv, rk), (alpha, note, rcv, delegation_trap)),
-            (nf_now_pcd, nf_next_pcd, spendable_pcd),
+            (nf_now_pcd, nf_next_pcd, spendable_pcd, prev_chain, block, height),
         ) in self.spends.into_iter().zip(spend_pcds.into_iter())
         {
             let action_digest =
@@ -225,8 +228,16 @@ impl Plan {
 
             // SpendStamp: fuse spend with spendable chain
             let tachygrams = alloc::vec![Tachygram::from(&nf0), Tachygram::from(&nf1),];
-            let stamp = Stamp::prove_spend(rng, bind_pcd, spendable_pcd, tachygrams)
-                .map_err(|_err| ProveError::ProofFailed)?;
+            let stamp = Stamp::prove_spend(
+                rng,
+                bind_pcd,
+                spendable_pcd,
+                tachygrams,
+                prev_chain,
+                block,
+                height,
+            )
+            .map_err(|_err| ProveError::ProofFailed)?;
 
             entries.push((stamp, alloc::vec![action_digest]));
         }
@@ -353,13 +364,21 @@ impl Stamp {
         spend_pcd: mock_ragu::Pcd<'source, spend::SpendHeader>,
         spendable_pcd: mock_ragu::Pcd<'source, spendable::SpendableHeader>,
         tachygrams: Vec<Tachygram>,
+        prev_chain: PoolChain,
+        block: BlockAcc,
+        height: BlockHeight,
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
         let anchor = spendable_pcd.data.2;
 
-        let (proof, (action_acc, tachygram_acc)) =
-            app.fuse(rng, &SpendStamp, (), spend_pcd, spendable_pcd)?;
+        let (proof, (action_acc, tachygram_acc)) = app.fuse(
+            rng,
+            &SpendStamp,
+            (prev_chain, block.into(), height),
+            spend_pcd,
+            spendable_pcd,
+        )?;
 
         let header = (
             ActionCommit(action_acc.0.commit(Fp::ZERO)),

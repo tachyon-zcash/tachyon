@@ -69,13 +69,26 @@ pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
 /// \text{Poseidon}(\text{domain}, ak_x, nk)$.
 pub const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
-/// Poseidon domain tag for the epoch-boundary seed root.
+/// Poseidon domain tag for the per-block pool hash chain.
 ///
-/// At each epoch boundary, consensus inserts
-/// `epoch_seed_hash(prev_pool_commit)` as a root of E+1's pool multiset.
-/// `SpendableEpochLift` queries the seed to prove E+1 is derived from E's final
-/// state.
-pub const EPOCH_SEED_DOMAIN: &[u8; 16] = b"Tachyon-EpchSeed";
+/// $$\mathsf{chain}_n =
+/// \text{Poseidon}_\text{Tachyon-PoolChn}(\mathsf{chain}_{n-1} \|
+/// x(\mathsf{block\_commit}_n) \| y(\mathsf{block\_commit}_n))$$
+///
+/// The chain binds every prior block into a single field element; an anchor
+/// exposes the chain plus the latest block commitment so verifiers can prove
+/// per-block history without iterating it.
+pub const POOL_CHAIN_DOMAIN: &[u8; 16] = b"Tachyon-PoolChan";
+
+/// Poseidon domain tag for the canonical block-height tachygram.
+///
+/// Each block's `BlockSet` carries `Poseidon(BLOCK_HEIGHT_DOMAIN, prev_chain,
+/// height)` as a root. Circuits witness `height: u32`, recompute the
+/// tachygram, prove membership, then use `height` for epoch arithmetic —
+/// height is no longer a free public input on `Anchor`. Since height
+/// uniquely determines its epoch, no separate epoch-boundary sentinel is
+/// needed.
+pub const BLOCK_HEIGHT_DOMAIN: &[u8; 16] = b"Tachyon-BlkHight";
 
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)
 pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
