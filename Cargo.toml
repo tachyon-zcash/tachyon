@@ -38,6 +38,9 @@ perf = { level = "deny", priority = -1 }
 style = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 
+cast_possible_truncation = "deny"
+as_conversions = "deny"
+
 multiple_crate_versions = "allow"   # todo
 doc_markdown = "allow"              # https://github.com/rust-lang/rust-clippy/issues/7273
 missing_errors_doc = "allow"
@@ -67,7 +70,6 @@ return_and_then = "forbid"
 
 # -- forbid: type coercion ---------------------------------------------------
 # use From/TryFrom.
-as_conversions = "forbid"
 as_underscore = "forbid"
 as_pointer_underscore = "forbid"
 fn_to_numeric_cast_any = "forbid" # casting function pointers to integers is never appropriate.

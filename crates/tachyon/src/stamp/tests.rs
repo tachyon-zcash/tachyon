@@ -54,6 +54,7 @@ fn merge_stamp_rejects_mismatched_anchors() {
 /// whose pairing is wrong (a swap is caught at `SpendBind` via the
 /// `delegation_id` equality check).
 #[test]
+#[expect(clippy::too_many_lines, reason = "bundled invalid-input cases")]
 fn plan_prove_rejects_invalid_inputs() {
     let mut rng = StdRng::seed_from_u64(602);
     let user = WalletSim::random(&mut rng);
@@ -71,10 +72,12 @@ fn plan_prove_rejects_invalid_inputs() {
     let anchor = pool.anchor();
     let pool_state = pool.state().clone();
 
-    let master_a = user.delegate_master(&mut rng, note_a, trap_a);
-    let master_b = user.delegate_master(&mut rng, note_b, trap_b);
-    let (nf_now_a, nf_next_a) = nullifier_pair_from_master(&mut rng, master_a, target_epoch);
-    let (nf_now_b, nf_next_b) = nullifier_pair_from_master(&mut rng, master_b, target_epoch);
+    let master_a = user.note_master(&mut rng, note_a);
+    let master_b = user.note_master(&mut rng, note_b);
+    let (nf_now_a, nf_next_a) =
+        nullifier_pair_from_master(&mut rng, master_a, trap_a, target_epoch);
+    let (nf_now_b, nf_next_b) =
+        nullifier_pair_from_master(&mut rng, master_b, trap_b, target_epoch);
     let spendable_a = user.spendable_init(
         &mut rng,
         note_a,
