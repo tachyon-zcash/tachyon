@@ -29,8 +29,6 @@ std = [
     "mock_ragu/std",
     "rand_core/std",
     "reddsa/std",
-    "zcash_primitives/std",
-    "zcash_encoding/std",
     "core2/std",
 ]
 
@@ -52,8 +50,6 @@ mock_ragu = { path = "../mock_ragu", default-features = false }
 pasta_curves = "0.5.1"
 rand_core = { version = "0.6", default-features = false }
 reddsa = { version = "0.5.1", default-features = false }
-zcash_encoding = { version = "0.3", default-features = false }
-zcash_primitives = { version = "0.26.4", default-features = false }
 
 [dev-dependencies]
 rand = "0.8"
