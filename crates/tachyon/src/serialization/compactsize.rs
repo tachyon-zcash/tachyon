@@ -10,6 +10,7 @@ use core::{num::TryFromIntError, ops::RangeInclusive};
 
 use core2::io::{self, Read, Write};
 
+#[derive(Debug)]
 pub(crate) enum CompactSizeError {
     /// The value should be in a different encoding form.
     NonCanonical(CompactSize),
@@ -248,6 +249,149 @@ impl TryFrom<CompactSize> for usize {
             | CompactSize::TwoBytes(inner_u16) => Ok(Self::from(inner_u16)),
             | CompactSize::FourBytes(inner_u32) => Self::try_from(inner_u32),
             | CompactSize::EightBytes(inner_u64) => Self::try_from(inner_u64),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use super::*;
+
+    fn sized_value(value: &[u8]) -> Vec<u8> {
+        let flag = match value.len() {
+            | 2 => [FLAG_TWO_BYTES].as_slice(),
+            | 4 => [FLAG_FOUR_BYTES].as_slice(),
+            | 8 => [FLAG_EIGHT_BYTES].as_slice(),
+            | _ => [].as_slice(),
+        };
+        [flag, value].concat()
+    }
+
+    /// Each form boundary: confirm `From<u64>` picks the right variant, the
+    /// encoding matches the spec, and `read` round-trips back to the same variant.
+    #[test]
+    fn form_boundary_round_trips() {
+        let cases = alloc::vec![
+            (0, CompactSize::OneByte(0), [0x00].to_vec()),
+            (
+                u64::from(MAX_ONE_BYTE),
+                CompactSize::OneByte(MAX_ONE_BYTE),
+                [MAX_ONE_BYTE].to_vec()
+            ),
+            // 253 is both `FLAG_TWO_BYTES` and the smallest value that requires the TwoBytes form.
+            (
+                u64::from(FLAG_TWO_BYTES),
+                CompactSize::TwoBytes(u16::from(FLAG_TWO_BYTES)),
+                sized_value(&u16::from(FLAG_TWO_BYTES).to_le_bytes()),
+            ),
+            (
+                u64::from(u16::MAX),
+                CompactSize::TwoBytes(u16::MAX),
+                sized_value(&u16::MAX.to_le_bytes()),
+            ),
+            (
+                u64::from(u16::MAX) + 1,
+                CompactSize::FourBytes(u32::from(u16::MAX) + 1),
+                sized_value(&(u32::from(u16::MAX) + 1).to_le_bytes()),
+            ),
+            (
+                u64::from(MAX_COMPACT_SIZE),
+                CompactSize::FourBytes(MAX_COMPACT_SIZE),
+                sized_value(&MAX_COMPACT_SIZE.to_le_bytes()),
+            ),
+            (
+                u64::from(u32::MAX) + 1,
+                CompactSize::EightBytes(u64::from(u32::MAX) + 1),
+                sized_value(&(u64::from(u32::MAX) + 1).to_le_bytes()),
+            ),
+            (
+                u64::MAX,
+                CompactSize::EightBytes(u64::MAX),
+                sized_value(&u64::MAX.to_le_bytes()),
+            ),
+        ];
+
+        let mut buf = Vec::new();
+        for (value, expected_variant, expected_bytes) in cases {
+            let cs = CompactSize::from(value);
+            assert_eq!(cs, expected_variant);
+            cs.write(&mut buf).unwrap();
+            assert_eq!(buf, expected_bytes);
+            assert_eq!(CompactSize::read(buf.as_slice()).unwrap(), expected_variant);
+            buf.clear();
+        }
+    }
+
+    /// Form-checked constructors reject one-past the canonical edge in either direction.
+    #[test]
+    fn constructors_enforce_canonical_form() {
+        CompactSize::one_byte(0).unwrap();
+        CompactSize::one_byte(MAX_ONE_BYTE).unwrap();
+        CompactSize::one_byte(FLAG_TWO_BYTES).unwrap_err();
+
+        CompactSize::two_bytes(u16::from(MAX_ONE_BYTE)).unwrap_err();
+        CompactSize::two_bytes(u16::from(FLAG_TWO_BYTES)).unwrap();
+        CompactSize::two_bytes(u16::MAX).unwrap();
+
+        CompactSize::four_bytes(u32::from(u16::MAX)).unwrap_err();
+        CompactSize::four_bytes(u32::from(u16::MAX) + 1).unwrap();
+        CompactSize::four_bytes(u32::MAX).unwrap();
+
+        CompactSize::eight_bytes(u64::from(u32::MAX)).unwrap_err();
+        CompactSize::eight_bytes(u64::from(u32::MAX) + 1).unwrap();
+    }
+
+    /// `read` rejects over-long (non-canonical) encodings per Zcash spec §7.1 p.132.
+    #[test]
+    fn read_rejects_non_canonical_encodings() {
+        CompactSize::read(sized_value(&u16::from(MAX_ONE_BYTE).to_le_bytes()).as_slice())
+            .unwrap_err();
+        CompactSize::read(sized_value(&u32::from(u16::MAX).to_le_bytes()).as_slice()).unwrap_err();
+        CompactSize::read(sized_value(&u64::from(u32::MAX).to_le_bytes()).as_slice()).unwrap_err();
+    }
+
+    /// Truncated inputs: flag byte present but payload missing or short.
+    #[test]
+    fn read_rejects_truncated_input() {
+        CompactSize::read([].as_slice()).unwrap_err();
+        CompactSize::read([FLAG_TWO_BYTES].as_slice()).unwrap_err();
+        CompactSize::read([FLAG_TWO_BYTES, 0x00].as_slice()).unwrap_err();
+        CompactSize::read([FLAG_FOUR_BYTES, 0x00, 0x00, 0x00].as_slice()).unwrap_err();
+        CompactSize::read([FLAG_EIGHT_BYTES, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00].as_slice())
+            .unwrap_err();
+    }
+
+    /// Trailing bytes after a complete encoding are not consumed and not an error.
+    #[test]
+    fn read_ignores_trailing_bytes() {
+        let one_byte_with_trailing = [0x00, 0xDE, 0xAD, 0xBE, 0xEF];
+        assert_eq!(
+            CompactSize::read(one_byte_with_trailing.as_slice()).unwrap(),
+            CompactSize::OneByte(0),
+        );
+        let two_byte_with_trailing = [
+            sized_value(&u16::from(FLAG_TWO_BYTES).to_le_bytes()).as_slice(),
+            [0xDE, 0xAD].as_slice(),
+        ]
+        .concat();
+        assert_eq!(
+            CompactSize::read(two_byte_with_trailing.as_slice()).unwrap(),
+            CompactSize::TwoBytes(u16::from(FLAG_TWO_BYTES)),
+        );
+    }
+
+    #[test]
+    fn try_from_usize_round_trip() {
+        for n in [
+            0usize,
+            usize::from(MAX_ONE_BYTE),
+            usize::from(FLAG_TWO_BYTES),
+            usize::from(u16::MAX) + 1,
+        ] {
+            let cs = CompactSize::try_from(n).unwrap();
+            assert_eq!(usize::try_from(cs).unwrap(), n);
         }
     }
 }
