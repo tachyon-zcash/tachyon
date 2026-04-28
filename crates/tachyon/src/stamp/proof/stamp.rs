@@ -14,11 +14,26 @@ use crate::{
     keys::private,
     note::Note,
     primitives::{
-        ActionAcc, ActionCommit, ActionDigest, ActionSet, Anchor, PoolDelta, PoolSet, Tachygram,
-        TachygramAcc, TachygramCommit, TachygramSet, effect,
+        ActionAcc, ActionCommit, ActionDigest, ActionSet, Anchor, BlockCommit, BlockHeight,
+        BlockSet, PoolChain, Tachygram, TachygramAcc, TachygramCommit, TachygramSet, effect,
     },
     value,
 };
+
+/// Verify the witnessed `(prev_chain, height, block)` advances to `anchor`.
+/// Height is the Pedersen blinding trapdoor of `block_commit`, so this single
+/// equality binds `(prev_chain, height, block)` — the commitment scheme is
+/// binding in both the polynomial and the blinding factor.
+fn check_anchor(
+    prev_chain: PoolChain,
+    height: BlockHeight,
+    block: &BlockSet<Multiset>,
+    anchor: &Anchor,
+) -> bool {
+    let height_fp = Fp::from(u64::from(height.0));
+    let block_commit = BlockCommit(block.0.commit_with(height_fp));
+    anchor.0 == prev_chain.advance(height, &block_commit)
+}
 
 /// Header for a stamp, representing either a single action or many
 /// transactions.
@@ -31,21 +46,20 @@ pub struct StampHeader;
 impl Header for StampHeader {
     /// `(action_commit, tachygram_commit, anchor)` — all 32-byte commitment
     /// handles. Polynomials travel prover-side via `Witness`/`Aux` as
-    /// `ActionAcc` / `TachygramAcc` / `PoolAcc`.
+    /// `ActionAcc` / `TachygramAcc`. Per-block pool state travels through
+    /// the spendable chain (it isn't on the stamp header).
     type Data<'source> = (ActionCommit, TachygramCommit, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(6);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 4 + 32);
+        let mut out = Vec::with_capacity(32 + 32 + 32);
         let action_bytes: [u8; 32] = data.0.0.into();
         let tachygram_bytes: [u8; 32] = data.1.0.into();
         out.extend_from_slice(&action_bytes);
         out.extend_from_slice(&tachygram_bytes);
-
-        out.extend_from_slice(&u32::from(data.2.0).to_le_bytes());
-        let pool_bytes: [u8; 32] = data.2.1.0.into();
-        out.extend_from_slice(&pool_bytes);
+        let chain_bytes: [u8; 32] = data.2.0.into();
+        out.extend_from_slice(&chain_bytes);
         out
     }
 }
@@ -103,13 +117,16 @@ impl Step for SpendStamp {
     type Left = SpendHeader;
     type Output = StampHeader;
     type Right = SpendableHeader;
-    type Witness<'source> = ();
+    /// Witness the right anchor's `prev_chain` + block set + height, so the
+    /// SpendStamp can prove that `epoch == height.epoch()` for a height bound
+    /// by membership in the block.
+    type Witness<'source> = (PoolChain, BlockSet<Multiset>, BlockHeight);
 
     const INDEX: Index = Index::new(10);
 
     fn witness<'source>(
         &self,
-        _witness: Self::Witness<'source>,
+        (prev_chain, block, height): Self::Witness<'source>,
         (action_digest, nullifiers, epoch, delegation_id): <Self::Left as Header>::Data<'source>,
         (right_delegation_id, right_nf, right_anchor): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
@@ -121,7 +138,12 @@ impl Step for SpendStamp {
         if nullifiers[0] != right_nf {
             return Err(mock_ragu::Error);
         }
-        if epoch != right_anchor.0.epoch() {
+
+        // Bind the witnessed prev_chain + block + height to the right anchor.
+        if !check_anchor(prev_chain, height, &block, &right_anchor) {
+            return Err(mock_ragu::Error);
+        }
+        if epoch != height.epoch() {
             return Err(mock_ragu::Error);
         }
 
@@ -168,6 +190,7 @@ impl Step for MergeStamp {
             'source,
         >,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        // Same-anchor constraint: both block_commit and chain hash must match.
         if left_anchor != right_anchor {
             return Err(mock_ragu::Error);
         }
@@ -193,7 +216,8 @@ impl Step for MergeStamp {
     }
 }
 
-/// Advances a stamp's anchor to a later block within the same epoch.
+/// Advances a stamp's anchor to the next block within the same epoch via a
+/// single hash-chain step. Multi-block lifts chain through PCD recursion.
 #[derive(Debug)]
 pub struct StampLift;
 
@@ -205,8 +229,11 @@ impl Step for StampLift {
     type Witness<'source> = (
         ActionSet<Multiset>,
         TachygramSet<Multiset>,
-        PoolSet<Multiset>,
-        PoolDelta<Multiset>,
+        PoolChain,
+        BlockSet<Multiset>,
+        BlockHeight,
+        BlockSet<Multiset>,
+        BlockHeight,
         Anchor,
     );
 
@@ -214,32 +241,49 @@ impl Step for StampLift {
 
     fn witness<'source>(
         &self,
-        (left_action, left_tachygram, left_pool, delta, right_anchor): Self::Witness<'source>,
-        (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data<
+        (
+            left_action,
+            left_tachygram,
+            prev_chain,
+            old_block,
+            old_height,
+            new_block,
+            new_height,
+            new_anchor,
+        ): Self::Witness<'source>,
+        (left_action_commit, left_tachygram_commit, old_anchor): <Self::Left as Header>::Data<
             'source,
         >,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if left_anchor.0.epoch() != right_anchor.0.epoch() {
-            return Err(mock_ragu::Error);
-        }
-        if right_anchor.0 <= left_anchor.0 {
-            return Err(mock_ragu::Error);
-        }
-
+        // Bind action/tachygram witnesses to the left header's commitments.
         if left_action.0.commit() != left_action_commit.0
             || left_tachygram.0.commit() != left_tachygram_commit.0
-            || left_pool.0.commit() != left_anchor.1.0
         {
             return Err(mock_ragu::Error);
         }
 
-        let right_pool = left_pool.0.merge(&delta.0);
-        if right_pool.commit() != right_anchor.1.0 {
+        // Bind prev_chain + old_block to old_anchor.
+        if !check_anchor(prev_chain, old_height, &old_block, &old_anchor) {
             return Err(mock_ragu::Error);
         }
 
-        let data = (left_action_commit, left_tachygram_commit, right_anchor);
+        // Single chain step from old anchor to new anchor.
+        if !check_anchor(old_anchor.0, new_height, &new_block, &new_anchor) {
+            return Err(mock_ragu::Error);
+        }
+
+        // Same epoch, step-by-one. Cross-epoch StampLift is rejected; the
+        // stamp must be re-lifted via the spendable epoch path before
+        // re-stamping in the new epoch.
+        if new_height.0 != old_height.0 + 1 {
+            return Err(mock_ragu::Error);
+        }
+        if new_height.epoch() != old_height.epoch() {
+            return Err(mock_ragu::Error);
+        }
+
+        let data = (left_action_commit, left_tachygram_commit, new_anchor);
         Ok((data, ()))
     }
 }

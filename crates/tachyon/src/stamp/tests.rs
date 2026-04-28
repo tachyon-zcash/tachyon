@@ -54,6 +54,7 @@ fn merge_stamp_rejects_mismatched_anchors() {
 /// whose pairing is wrong (a swap is caught at `SpendBind` via the
 /// `delegation_id` equality check).
 #[test]
+#[expect(clippy::too_many_lines, reason = "bundled invalid-input cases")]
 fn plan_prove_rejects_invalid_inputs() {
     let mut rng = StdRng::seed_from_u64(602);
     let user = WalletSim::random(&mut rng);
@@ -61,36 +62,32 @@ fn plan_prove_rejects_invalid_inputs() {
     let target_epoch = EpochIndex(0);
 
     // Two notes with distinct trapdoors → distinct delegation_ids. Both cms
-    // mined into the same pool so each `spendable_init` sees its cm.
+    // mined into the same block so each `spendable_init` sees its cm and
+    // produces a spendable at the same anchor.
     let note_a = user.random_note(&mut rng, 500);
     let note_b = user.random_note(&mut rng, 700);
     let trap_a = DelegationTrapdoor::random(&mut rng);
     let trap_b = DelegationTrapdoor::random(&mut rng);
-    pool.mine(random_block_with(&mut rng, note_a.commitment(), 50));
-    pool.mine(random_block_with(&mut rng, note_b.commitment(), 50));
-    let anchor = pool.anchor();
-    let pool_state = pool.state().clone();
+    pool.mine(&random_block_with(
+        &mut rng,
+        &[note_a.commitment(), note_b.commitment()],
+        50,
+    ));
+    let height = pool.tip();
+    let anchor = pool.anchor_at(height);
+    let prev_chain = pool.prev_chain_at(height);
+    let block = pool.block_at(height);
 
-    let master_a = user.delegate_master(&mut rng, note_a, trap_a);
-    let master_b = user.delegate_master(&mut rng, note_b, trap_b);
-    let (nf_now_a, nf_next_a) = nullifier_pair_from_master(&mut rng, master_a, target_epoch);
-    let (nf_now_b, nf_next_b) = nullifier_pair_from_master(&mut rng, master_b, target_epoch);
-    let spendable_a = user.spendable_init(
-        &mut rng,
-        note_a,
-        trap_a,
-        anchor,
-        pool_state.clone(),
-        nf_now_a.clone(),
-    );
-    let spendable_b = user.spendable_init(
-        &mut rng,
-        note_b,
-        trap_b,
-        anchor,
-        pool_state,
-        nf_now_b.clone(),
-    );
+    let master_a = user.note_master(&mut rng, note_a);
+    let master_b = user.note_master(&mut rng, note_b);
+    let (nf_now_a, nf_next_a) =
+        nullifier_pair_from_master(&mut rng, master_a, trap_a, target_epoch);
+    let (nf_now_b, nf_next_b) =
+        nullifier_pair_from_master(&mut rng, master_b, trap_b, target_epoch);
+    let spendable_a =
+        user.spendable_init(&mut rng, note_a, trap_a, &pool, height, nf_now_a.clone());
+    let spendable_b =
+        user.spendable_init(&mut rng, note_b, trap_b, &pool, height, nf_now_b.clone());
 
     let rcv_a = value::CommitmentTrapdoor::random(&mut rng);
     let theta_a = ActionEntropy::random(&mut rng);
@@ -128,7 +125,14 @@ fn plan_prove_rejects_invalid_inputs() {
     // Too few PCDs: 2 spends, 1 PCD.
     {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
-        let pcds = alloc::vec![(nf_now_a.clone(), nf_next_a.clone(), spendable_a.clone(),)];
+        let pcds = alloc::vec![(
+            nf_now_a.clone(),
+            nf_next_a.clone(),
+            spendable_a.clone(),
+            prev_chain,
+            block.clone(),
+            height,
+        )];
         assert!(
             matches!(
                 plan.prove(&mut rng, &user.pak, pcds),
@@ -142,9 +146,30 @@ fn plan_prove_rejects_invalid_inputs() {
     {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![
-            (nf_now_a.clone(), nf_next_a.clone(), spendable_a.clone()),
-            (nf_now_b.clone(), nf_next_b.clone(), spendable_b.clone()),
-            (nf_now_a.clone(), nf_next_a.clone(), spendable_a.clone()),
+            (
+                nf_now_a.clone(),
+                nf_next_a.clone(),
+                spendable_a.clone(),
+                prev_chain,
+                block.clone(),
+                height,
+            ),
+            (
+                nf_now_b.clone(),
+                nf_next_b.clone(),
+                spendable_b.clone(),
+                prev_chain,
+                block.clone(),
+                height,
+            ),
+            (
+                nf_now_a.clone(),
+                nf_next_a.clone(),
+                spendable_a.clone(),
+                prev_chain,
+                block.clone(),
+                height,
+            ),
         ];
         assert!(
             matches!(
@@ -159,8 +184,15 @@ fn plan_prove_rejects_invalid_inputs() {
     {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![
-            (nf_now_b, nf_next_b, spendable_b),
-            (nf_now_a, nf_next_a, spendable_a),
+            (
+                nf_now_b,
+                nf_next_b,
+                spendable_b,
+                prev_chain,
+                block.clone(),
+                height,
+            ),
+            (nf_now_a, nf_next_a, spendable_a, prev_chain, block, height),
         ];
         assert!(
             matches!(

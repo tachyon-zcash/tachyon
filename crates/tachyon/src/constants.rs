@@ -69,23 +69,27 @@ pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
 /// \text{Poseidon}(\text{domain}, ak_x, nk)$.
 pub const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
-/// Poseidon domain tag for the epoch-boundary seed root.
+/// Poseidon domain tag for the per-block pool hash chain.
 ///
-/// At each epoch boundary, consensus inserts
-/// `epoch_seed_hash(prev_pool_commit)` as a root of E+1's pool multiset.
-/// `SpendableEpochLift` queries the seed to prove E+1 is derived from E's final
-/// state.
-pub const EPOCH_SEED_DOMAIN: &[u8; 16] = b"Tachyon-EpchSeed";
+/// $$\mathsf{chain}_n =
+/// \text{Poseidon}_\text{Tachyon-PoolChn}(\mathsf{chain}_{n-1} \|
+/// x(\mathsf{block\_commit}_n) \| y(\mathsf{block\_commit}_n))$$
+///
+/// The chain binds every prior block into a single field element; an anchor
+/// exposes the chain plus the latest block commitment so verifiers can prove
+/// per-block history without iterating it.
+pub const POOL_CHAIN_DOMAIN: &[u8; 16] = b"Tachyon-PoolChan";
 
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)
 pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
 
-/// Log2 of the epoch size in blocks. Compile-time constant so the whole crate
-/// sees the same epoch boundaries; tests override it to a small value.
-pub(crate) const EPOCH_SHIFT: u32 = if cfg!(test) { 4 } else { 12 };
+const EPOCH_SHIFT: u32 = if cfg!(test) { 4 } else { 12 };
 
 /// Number of blocks per epoch.
 pub const EPOCH_SIZE: u32 = 1 << EPOCH_SHIFT;
+
+/// Maximum epoch index.
+pub const EPOCH_MAX: u32 = u32::MAX >> EPOCH_SHIFT;
 
 /// Domain-separated key expansion from a spending key.
 ///

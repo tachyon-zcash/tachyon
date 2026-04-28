@@ -21,7 +21,7 @@ All BLAKE2b personalizations are exactly 16 bytes. Poseidon domain tags are 16-b
 | Constant | Value | Formula |
 | --- | --- | --- |
 | Master key | `Tachyon-MkDerive` | $\mathsf{mk} = \text{Poseidon}(\mathsf{tag}, \Psi, \mathsf{nk})$ — per-note master key KDF |
-| Nullifier | `Tachyon-NfDerive` | $\text{Poseidon}(\mathsf{tag}, \mathsf{node}, \mathsf{bit})$ — GGM tree steps |
+| Nullifier | `Tachyon-NfDerive` | $\text{Poseidon}(\mathsf{tag}, \mathsf{node}, \mathsf{chunk})$ — $k$-ary GGM tree steps |
 | Note commitment | `Tachyon-NoteCmmt` | $\mathsf{cm} = \text{Poseidon}(\mathsf{tag}, \mathsf{rcm}, \mathsf{pk}, v, \Psi)$ |
 | Action digest | `Tachyon-ActnDgst` | $\text{Poseidon}(\mathsf{tag}, \mathsf{cv}_x, \mathsf{cv}_y, \mathsf{rk}_x, \mathsf{rk}_y)$ |
 | Payment key | `Tachyon-PkDerive` | $\mathsf{pk} = \text{Poseidon}(\mathsf{tag}, \mathsf{ak}_x, \mathsf{nk})$ |

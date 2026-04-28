@@ -31,13 +31,12 @@ use crate::{
     BlockSet,
     action::{self, Action, Signature},
     bundle::{self, Stamped},
-    constants::EPOCH_SIZE,
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     primitives::{
-        ActionDigest, Anchor, BlockAcc, BlockHeight, DelegationId, DelegationTrapdoor, EpochIndex,
-        PoolAcc, PoolCommit, PoolDelta, PoolSet, effect, epoch_seed_hash,
+        ActionDigest, Anchor, BlockAcc, BlockCommit, BlockHeight, DelegationId, DelegationTrapdoor,
+        EpochIndex, PoolChain, effect,
     },
     stamp::proof::{PROOF_SYSTEM, delegation, spendable},
     value,
@@ -64,6 +63,7 @@ pub fn action_digests(actions: &[Action]) -> Vec<ActionDigest> {
         .collect()
 }
 
+/// Build a block with `size` random elements.
 pub fn random_block(rng: &mut (impl RngCore + CryptoRng), size: usize) -> BlockAcc {
     let roots: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
         .take(size)
@@ -93,76 +93,66 @@ pub fn build_output_action(
     (rcv, alpha, action)
 }
 
+/// Build a block containing every commitment in `cms` plus enough random
+/// tachygrams to reach `size` total roots.
 pub fn random_block_with(
     rng: &mut (impl RngCore + CryptoRng),
-    cm: note::Commitment,
+    cms: &[note::Commitment],
     size: usize,
 ) -> BlockAcc {
-    assert!(size >= 1, "size must include at least the commitment");
-    let mut roots: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-        .take(size - 1)
-        .collect();
-    roots.push(Fp::from(&cm));
+    assert!(
+        size >= cms.len(),
+        "size must accommodate every commitment in cms"
+    );
+    let mut roots: Vec<Fp> = cms.iter().map(Fp::from).collect();
+    roots.extend(iter::repeat_with(|| Fp::random(&mut *rng)).take(size - cms.len()));
     BlockSet(Polynomial::from_roots(&roots))
 }
 
 pub struct PoolSim {
-    pub history: Vec<(BlockAcc, PoolAcc)>,
+    history: Vec<(BlockAcc, PoolChain, BlockHeight)>,
 }
 
 impl PoolSim {
     pub fn new() -> Self {
+        // Genesis: block 0, empty block set, prev_chain = PoolChain::genesis().
+        let genesis = (
+            BlockSet(Polynomial::from_roots(&[])),
+            PoolChain::genesis(),
+            BlockHeight(0),
+        );
         Self {
-            history: alloc::vec![(
-                BlockSet(Polynomial::default()),
-                PoolSet(Polynomial::default()),
-            )],
+            history: alloc::vec![genesis],
         }
     }
 
-    pub fn state(&self) -> &PoolAcc {
-        &self
-            .history
+    pub fn tip(&self) -> BlockHeight {
+        self.history
             .last()
             .expect("history always has genesis entry")
-            .1
+            .2
     }
 
     pub fn anchor(&self) -> Anchor {
-        let height =
-            BlockHeight(u32::try_from(self.history.len() - 1).expect("block height fits u32"));
-        self.anchor_at(height)
+        self.anchor_at(self.tip())
     }
 
-    pub fn state_at(&self, height: BlockHeight) -> PoolAcc {
-        self.history[usize::try_from(height.0).expect("block height fits usize")]
-            .1
-            .clone()
-    }
-
-    pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
-        let state = &self.history[usize::try_from(height.0).expect("block height fits usize")].1;
-        Anchor(height, PoolCommit(state.0.commit(Fp::ZERO)))
-    }
-
-    #[expect(unused, reason = "test support")]
     pub fn block_at(&self, height: BlockHeight) -> BlockAcc {
-        self.history[usize::try_from(height.0).expect("block height fits usize")]
+        self.history[usize::try_from(height.0).expect("fits usize")]
             .0
             .clone()
     }
 
-    pub fn delta(&self, from: BlockHeight, to: BlockHeight) -> PoolDelta<Polynomial> {
-        assert!(from <= to, "delta: from > to");
-        assert_eq!(from.epoch(), to.epoch(), "delta spans an epoch boundary");
-        let from_idx = usize::try_from(from.0).expect("block height fits usize") + 1;
-        let to_idx_exclusive = usize::try_from(to.0).expect("block height fits usize") + 1;
-        let product = self.history[from_idx..to_idx_exclusive]
-            .iter()
-            .map(|entry| entry.0.0.clone())
-            .reduce(|acc, next| acc.multiply(&next))
-            .unwrap_or_default();
-        PoolDelta(product)
+    pub fn prev_chain_at(&self, height: BlockHeight) -> PoolChain {
+        self.history[usize::try_from(height.0).expect("fits usize")].1
+    }
+
+    pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
+        let entry = &self.history[usize::try_from(height.0).expect("fits usize")];
+        let entry_height = entry.2;
+        let height_fp = Fp::from(u64::from(entry_height.0));
+        let block_commit = BlockCommit(entry.0.0.commit(height_fp));
+        Anchor(entry.1.advance(entry_height, &block_commit))
     }
 
     pub fn advance(
@@ -172,7 +162,7 @@ impl PoolSim {
     ) -> Vec<BlockAcc> {
         let start_idx = self.history.len();
         for _ in 0..count {
-            self.mine(block_factory(self));
+            self.mine(&block_factory(self));
         }
         self.history[start_idx..]
             .iter()
@@ -180,26 +170,29 @@ impl PoolSim {
             .collect()
     }
 
-    pub fn mine(&mut self, block: BlockAcc) {
-        let current_anchor = self.anchor();
-        let current_state = &self
+    /// Append a block and advance the chain.
+    pub fn mine(&mut self, block: &BlockAcc) {
+        let prev = self
             .history
             .last()
-            .expect("history always has genesis entry")
-            .1;
-        let prior_pool: Polynomial = if current_anchor.0.is_epoch_final() {
-            Polynomial::from_roots(&[epoch_seed_hash(&current_anchor.1)])
-        } else {
-            current_state.0.clone()
-        };
-        let new_state = PoolSet(prior_pool.multiply(&block.0));
-        self.history.push((block, new_state));
+            .expect("history always has genesis entry");
+        let prev_height = prev.2;
+        let prev_height_fp = Fp::from(u64::from(prev_height.0));
+        let prev_block_commit = BlockCommit(prev.0.0.commit(prev_height_fp));
+        let new_chain = prev.1.advance(prev_height, &prev_block_commit);
+
+        let height = BlockHeight(prev_height.0 + 1);
+
+        self.history.push((block.clone(), new_chain, height));
     }
 }
 
 pub struct SyncSim<'source> {
     delegates: Vec<Pcd<'source, delegation::DelegationHeader>>,
-    spendables: Vec<Pcd<'source, spendable::SpendableHeader>>,
+    /// `(spendable PCD, height that the spendable currently anchors at)`.
+    /// Height isn't carried on `SpendableHeader`; the sync service tracks it
+    /// alongside.
+    spendables: Vec<(Pcd<'source, spendable::SpendableHeader>, BlockHeight)>,
 }
 
 impl<'source> SyncSim<'source> {
@@ -210,8 +203,12 @@ impl<'source> SyncSim<'source> {
         }
     }
 
-    pub fn accept_spendable(&mut self, spendable: Pcd<'source, spendable::SpendableHeader>) {
-        self.spendables.push(spendable);
+    pub fn accept_spendable(
+        &mut self,
+        spendable: Pcd<'source, spendable::SpendableHeader>,
+        height: BlockHeight,
+    ) {
+        self.spendables.push((spendable, height));
     }
 
     pub fn spendable(
@@ -220,15 +217,16 @@ impl<'source> SyncSim<'source> {
     ) -> Pcd<'source, spendable::SpendableHeader> {
         self.spendables
             .iter()
-            .find(|pcd| pcd.data.0 == delegation_id)
+            .find(|entry| entry.0.data.0 == delegation_id)
             .expect("no maintained spendable for delegation_id")
+            .0
             .clone()
     }
 
-    /// Advance every maintained spendable to `pool.anchor()`, chaining
-    /// same-epoch and cross-epoch lifts as needed.
+    /// Advance every maintained spendable to `pool.tip()`, chaining
+    /// same-epoch and cross-epoch lifts one block at a time.
     pub fn lift(&mut self, rng: &mut (impl RngCore + CryptoRng), pool: &PoolSim) {
-        let ids: Vec<DelegationId> = self.spendables.iter().map(|pcd| pcd.data.0).collect();
+        let ids: Vec<DelegationId> = self.spendables.iter().map(|entry| entry.0.data.0).collect();
         for id in ids {
             self.lift_one(rng, id, pool);
         }
@@ -240,98 +238,108 @@ impl<'source> SyncSim<'source> {
         delegation_id: DelegationId,
         pool: &PoolSim,
     ) {
-        let target_anchor = pool.anchor();
+        let target_height = pool.tip();
         loop {
             let idx = self
                 .spendables
                 .iter()
-                .position(|pcd| pcd.data.0 == delegation_id)
+                .position(|entry| entry.0.data.0 == delegation_id)
                 .expect("no maintained spendable for delegation_id");
-            let stored_anchor = self.spendables[idx].data.2;
-            if stored_anchor.1 == target_anchor.1 {
+            let stored_height = self.spendables[idx].1;
+            if stored_height == target_height {
                 return;
             }
             assert!(
-                stored_anchor.0 <= target_anchor.0,
-                "target_anchor is behind stored anchor"
+                stored_height <= target_height,
+                "target_height is behind stored height"
             );
 
-            let spendable_pcd = self.spendables.swap_remove(idx);
-            let stored_epoch = stored_anchor.0.epoch();
-            let lifted = if stored_epoch == target_anchor.0.epoch() {
-                let left_pool = pool.state_at(stored_anchor.0);
-                let delta = pool.delta(stored_anchor.0, target_anchor.0);
-                Self::same_epoch_lift(rng, spendable_pcd, left_pool, delta, target_anchor)
+            let (spendable_pcd, _) = self.spendables.swap_remove(idx);
+            let stored_epoch = stored_height.epoch();
+            let new_height = BlockHeight(stored_height.0 + 1);
+            let new_epoch = new_height.epoch();
+
+            let lifted = if new_epoch == stored_epoch {
+                Self::same_epoch_lift(rng, spendable_pcd, pool, stored_height, new_height)
             } else {
-                let epoch_final_h = BlockHeight(stored_epoch.0.saturating_add(1) * EPOCH_SIZE - 1);
-                let at_final = if stored_anchor.0 < epoch_final_h {
-                    let intermediate = pool.anchor_at(epoch_final_h);
-                    let left_pool = pool.state_at(stored_anchor.0);
-                    let delta = pool.delta(stored_anchor.0, epoch_final_h);
-                    Self::same_epoch_lift(rng, spendable_pcd, left_pool, delta, intermediate)
-                } else {
-                    spendable_pcd
-                };
-                let new_epoch = EpochIndex(stored_epoch.0 + 1);
-                let new_epoch_first_h = BlockHeight(new_epoch.0 * EPOCH_SIZE);
-                let new_epoch_first_anchor = pool.anchor_at(new_epoch_first_h);
-                let new_pool = pool.state_at(new_epoch_first_h);
                 let old_nf_pcd = self.nullifier(rng, delegation_id, stored_epoch);
                 let new_nf_pcd = self.nullifier(rng, delegation_id, new_epoch);
-                Self::next_epoch_lift(
+                Self::epoch_lift(
                     rng,
-                    at_final,
+                    spendable_pcd,
                     old_nf_pcd,
                     new_nf_pcd,
-                    new_pool,
-                    new_epoch_first_anchor,
+                    pool,
+                    stored_height,
+                    new_height,
                 )
             };
-            self.spendables.push(lifted);
+            self.spendables.push((lifted, new_height));
         }
     }
 
     fn same_epoch_lift(
         rng: &mut (impl RngCore + CryptoRng),
         spendable_pcd: Pcd<'source, spendable::SpendableHeader>,
-        left_pool: PoolAcc,
-        delta: PoolDelta<Polynomial>,
-        target_anchor: Anchor,
+        pool: &PoolSim,
+        old_height: BlockHeight,
+        new_height: BlockHeight,
     ) -> Pcd<'source, spendable::SpendableHeader> {
         let (delegation_id, nf, _) = spendable_pcd.data;
+        let new_anchor = pool.anchor_at(new_height);
+        let old_prev_chain = pool.prev_chain_at(old_height);
+        let old_block = pool.block_at(old_height);
+        let new_block = pool.block_at(new_height);
         let (proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 &spendable::SpendableLift,
-                (left_pool.into(), delta.into(), target_anchor),
+                (
+                    old_prev_chain,
+                    old_block.into(),
+                    old_height,
+                    new_block.into(),
+                    new_height,
+                    new_anchor,
+                ),
                 spendable_pcd,
                 Proof::trivial().carry::<()>(()),
             )
             .expect("spendable lift");
-        proof.carry::<spendable::SpendableHeader>((delegation_id, nf, target_anchor))
+        proof.carry::<spendable::SpendableHeader>((delegation_id, nf, new_anchor))
     }
 
-    fn next_epoch_lift(
+    fn epoch_lift(
         rng: &mut (impl RngCore + CryptoRng),
         spendable_pcd: Pcd<'source, spendable::SpendableHeader>,
         old_nf_pcd: Pcd<'source, delegation::NullifierHeader>,
         new_nf_pcd: Pcd<'source, delegation::NullifierHeader>,
-        new_pool: PoolAcc,
-        new_anchor: Anchor,
+        pool: &PoolSim,
+        old_height: BlockHeight,
+        new_height: BlockHeight,
     ) -> Pcd<'source, spendable::SpendableHeader> {
-        let (delegation_id, _, stored_anchor) = spendable_pcd.data;
+        let (delegation_id, ..) = spendable_pcd.data;
         assert!(
-            stored_anchor.0.is_epoch_final(),
-            "rollover requires spendable at epoch-final"
+            old_height.is_epoch_final(),
+            "epoch lift requires spendable at epoch-final"
         );
         let old_nf = old_nf_pcd.data.0;
         let new_nf = new_nf_pcd.data.0;
+        let new_anchor = pool.anchor_at(new_height);
 
+        // Build a SpendableRollover PCD against the new block.
+        let new_block = pool.block_at(new_height);
+        let new_prev_chain = pool.prev_chain_at(new_height);
         let (rollover_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 &spendable::SpendableRollover,
-                (new_pool.clone().into(), new_anchor),
+                (
+                    new_prev_chain,
+                    new_block.clone().into(),
+                    new_height,
+                    new_anchor,
+                ),
                 old_nf_pcd,
                 new_nf_pcd,
             )
@@ -343,11 +351,21 @@ impl<'source> SyncSim<'source> {
             new_anchor,
         ));
 
+        // Apply the cross-epoch lift.
+        let old_prev_chain = pool.prev_chain_at(old_height);
+        let old_block = pool.block_at(old_height);
         let (epoch_lift_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 &spendable::SpendableEpochLift,
-                (new_pool.into(),),
+                (
+                    old_prev_chain,
+                    old_block.into(),
+                    old_height,
+                    new_block.into(),
+                    new_height,
+                    new_anchor,
+                ),
                 spendable_pcd,
                 rollover_pcd,
             )
@@ -397,27 +415,25 @@ impl WalletSim {
         }
     }
 
-    /// Produce a master header PCD via `DelegationSeed` — the GGM tree root
-    /// at depth 0.
-    pub fn delegate_master<'source>(
+    pub fn note_master<'source>(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
-        trap: DelegationTrapdoor,
-    ) -> Pcd<'source, delegation::DelegationMasterHeader> {
+    ) -> Pcd<'source, delegation::NoteMasterHeader> {
         let mk = self.pak.nk.derive_note_private(&note.psi);
-        let delegation_id = self.pak.nk.derive_delegation_id(&note, trap);
+        let cm = note.commitment();
         let (proof, ()) = PROOF_SYSTEM
-            .seed(rng, &delegation::DelegationSeed, (note, self.pak, trap))
-            .expect("delegation seed");
-        proof.carry::<delegation::DelegationMasterHeader>((mk, delegation_id))
+            .seed(rng, &delegation::NoteSeedStep, (note, self.pak))
+            .expect("note seed");
+        proof.carry::<delegation::NoteMasterHeader>((mk, cm))
     }
 
+    #[expect(clippy::type_complexity, reason = "test-support tuple")]
     pub fn fresh_spend<'source>(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
-        anchor: Anchor,
-        pool_state: PoolAcc,
+        pool: &PoolSim,
+        height: BlockHeight,
         spend_note: Note,
     ) -> (
         Note,
@@ -425,13 +441,27 @@ impl WalletSim {
         Pcd<'source, delegation::NullifierHeader>,
         Pcd<'source, delegation::NullifierHeader>,
         Pcd<'source, spendable::SpendableHeader>,
+        PoolChain,
+        BlockAcc,
+        BlockHeight,
     ) {
         let trap = DelegationTrapdoor::random(rng);
-        let master = self.delegate_master(rng, spend_note, trap);
-        let (nf_e, nf_e1) = ggm_tools::nullifier_pair_from_master(rng, master, anchor.0.epoch());
-        let spendable_pcd =
-            self.spendable_init(rng, spend_note, trap, anchor, pool_state, nf_e.clone());
-        (spend_note, trap, nf_e, nf_e1, spendable_pcd)
+        let master = self.note_master(rng, spend_note);
+        let (nf_e, nf_e1) =
+            ggm_tools::nullifier_pair_from_master(rng, master, trap, height.epoch());
+        let spendable_pcd = self.spendable_init(rng, spend_note, trap, pool, height, nf_e.clone());
+        let prev_chain = pool.prev_chain_at(height);
+        let block = pool.block_at(height);
+        (
+            spend_note,
+            trap,
+            nf_e,
+            nf_e1,
+            spendable_pcd,
+            prev_chain,
+            block,
+            height,
+        )
     }
 
     pub fn spendable_init<'source>(
@@ -439,16 +469,27 @@ impl WalletSim {
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
         trap: DelegationTrapdoor,
-        anchor: Anchor,
-        pool_state: PoolAcc,
+        pool: &PoolSim,
+        height: BlockHeight,
         nf_pcd: Pcd<'source, delegation::NullifierHeader>,
     ) -> Pcd<'source, spendable::SpendableHeader> {
         let (nf, _epoch, delegation_id) = nf_pcd.data;
+        let prev_chain = pool.prev_chain_at(height);
+        let block = pool.block_at(height);
+        let anchor = pool.anchor_at(height);
         let (spendable_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 &spendable::SpendableInit,
-                (note, self.pak, trap, pool_state.into(), anchor),
+                (
+                    note,
+                    self.pak,
+                    trap,
+                    prev_chain,
+                    block.into(),
+                    height,
+                    anchor,
+                ),
                 nf_pcd,
                 Proof::trivial().carry::<()>(()),
             )
@@ -467,6 +508,9 @@ impl WalletSim {
             Pcd<'source, delegation::NullifierHeader>,
             Pcd<'source, delegation::NullifierHeader>,
             Pcd<'source, spendable::SpendableHeader>,
+            PoolChain,
+            BlockAcc,
+            BlockHeight,
         )>,
         output_notes: Vec<Note>,
     ) -> Stamped {
@@ -475,7 +519,9 @@ impl WalletSim {
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut traps = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
-        for (note, trap, nf_now_pcd, nf_next_pcd, spendable_pcd) in spends {
+        for (note, trap, nf_now_pcd, nf_next_pcd, spendable_pcd, prev_chain, block, height) in
+            spends
+        {
             let rcv = value::CommitmentTrapdoor::random(&mut *rng);
             let theta = ActionEntropy::random(&mut *rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
@@ -483,7 +529,14 @@ impl WalletSim {
             });
             spend_plans.push(plan);
             traps.push(trap);
-            spend_pcds.push((nf_now_pcd, nf_next_pcd, spendable_pcd));
+            spend_pcds.push((
+                nf_now_pcd,
+                nf_next_pcd,
+                spendable_pcd,
+                prev_chain,
+                block,
+                height,
+            ));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
@@ -514,65 +567,78 @@ pub mod ggm_tools {
     use alloc::vec::Vec;
     use core::ops::RangeInclusive;
 
+    use ff::PrimeField as _;
+    use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
     use mock_ragu::{Pcd, Proof};
+    use pasta_curves::Fp;
     use rand_core::{CryptoRng, RngCore};
 
     use crate::{
         EpochIndex,
-        keys::GGM_TREE_DEPTH,
+        constants::DELEGATION_ID_DOMAIN,
+        keys::{GGM_CHUNK_SIZE, GGM_TREE_ARITY, GGM_TREE_DEPTH},
+        primitives::{DelegationId, DelegationTrapdoor},
         stamp::proof::{PROOF_SYSTEM, delegation},
     };
 
+    /// Walk a pre-blind master PCD down `target_depth` GGM levels, interpreting
+    /// `epoch_bits` as an epoch-space index (top `(u32::from(GGM_DEPTH) *
+    /// GGM_CHUNK_SIZE)` bits populated, low bits zero for a
+    /// prefix).
     pub fn walk_master_to_depth<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<'source, delegation::DelegationMasterHeader>,
+        master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
         epoch_bits: u32,
         target_depth: u8,
-    ) -> Pcd<'source, delegation::DelegationHeader> {
+    ) -> Pcd<'source, delegation::NoteStepHeader> {
         assert!(
             (1..=GGM_TREE_DEPTH).contains(&target_depth),
-            "target_depth must be in 1..=GGM_TREE_DEPTH",
+            "target_depth must be in 1..=GGM_DEPTH",
         );
-        let (mk, delegation_id) = master_pcd.data;
+        let (mk, cm) = master_pcd.data;
 
-        let first_bit = (epoch_bits >> (GGM_TREE_DEPTH - 1)) & 1 != 0;
+        let first_chunk = chunk_at(epoch_bits, 1);
         let (mut proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::DelegationMasterStep,
-                (first_bit,),
+                &delegation::NoteMasterStep,
+                (first_chunk,),
                 master_pcd,
                 Proof::trivial().carry::<()>(()),
             )
-            .expect("delegation master step");
-        let mut key = mk.step(first_bit);
+            .expect("note master step");
+        let mut key = mk.step(first_chunk);
 
         while key.depth.get() < target_depth {
             let next_step = key.depth.get() + 1;
-            let direction = (epoch_bits >> (GGM_TREE_DEPTH - next_step)) & 1 != 0;
-            let pcd = proof.carry::<delegation::DelegationHeader>((key, delegation_id));
+            let chunk = chunk_at(epoch_bits, next_step);
+            let pcd = proof.carry::<delegation::NoteStepHeader>((key, mk, cm));
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    &delegation::DelegationStep,
-                    (direction,),
+                    &delegation::NoteStep,
+                    (chunk,),
                     pcd,
                     Proof::trivial().carry::<()>(()),
                 )
-                .expect("delegation step");
-            key = key.step(direction);
+                .expect("note step");
+            key = key.step(chunk);
             proof = next_proof;
         }
 
-        proof.carry::<delegation::DelegationHeader>((key, delegation_id))
+        proof.carry::<delegation::NoteStepHeader>((key, mk, cm))
     }
 
-    /// Fan the master header into the prefix delegates that tightly cover
-    /// `epoch_range`. Clones `master_pcd` once per prefix and descends to the
-    /// prefix's depth.
+    /// Fan the pre-blind master into the post-blind prefix delegates that
+    /// tightly cover `epoch_range`. Each prefix is pre-blind walked to its
+    /// depth, then a fresh
+    /// [`DelegationBlindStep`](delegation::DelegationBlindStep)
+    /// attaches `trap` to produce a
+    /// [`DelegationHeader`](delegation::DelegationHeader).
     pub fn delegate_range<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: &Pcd<'source, delegation::DelegationMasterHeader>,
+        master_pcd: &Pcd<'source, delegation::NoteMasterHeader>,
+        trap: DelegationTrapdoor,
         epoch_range: RangeInclusive<u32>,
     ) -> Vec<Pcd<'source, delegation::DelegationHeader>> {
         let mk = master_pcd.data.0;
@@ -580,29 +646,37 @@ pub mod ggm_tools {
             .into_iter()
             .map(|target_key| {
                 let target_depth = target_key.depth.get();
-                let epoch_bits = target_key.index << (GGM_TREE_DEPTH - target_depth);
-                walk_master_to_depth(rng, master_pcd.clone(), epoch_bits, target_depth)
+                let span_bits = (GGM_TREE_DEPTH - target_depth) * GGM_CHUNK_SIZE;
+                let epoch_bits = target_key.index << span_bits;
+                let prefix_pcd =
+                    walk_master_to_depth(rng, master_pcd.clone(), epoch_bits, target_depth);
+                blind_prefix(rng, prefix_pcd, trap)
             })
             .collect()
     }
 
-    /// Walk from a master header to the leaf for `target_epoch` and apply
-    /// `NullifierStep`. The wallet-side counterpart to [`SyncSim::nullifier`],
-    /// which walks from a delegated prefix instead.
+    /// Walk from a pre-blind master header to the nullifier leaf for
+    /// `target_epoch`, applying
+    /// [`DelegationBlindStep`](delegation::DelegationBlindStep)
+    /// and [`NullifierStep`](delegation::NullifierStep) at the end.
     pub fn nullifier_from_master<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<'source, delegation::DelegationMasterHeader>,
+        master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
+        trap: DelegationTrapdoor,
         target_epoch: EpochIndex,
     ) -> Pcd<'source, delegation::NullifierHeader> {
         let depth_one = walk_master_to_depth(rng, master_pcd, target_epoch.0, 1);
-        walk_delegate_to_nullifier(rng, depth_one, target_epoch)
+        let blinded = blind_prefix(rng, depth_one, trap);
+        walk_delegate_to_nullifier(rng, blinded, target_epoch)
     }
 
-    /// Produce the `(nf_E, nf_{E+1})` pair from one master header, sharing the
-    /// GGM walk prefix up to the first bit where E and E+1 diverge.
+    /// Produce the `(nf_E, nf_{E+1})` pair from one pre-blind master header,
+    /// sharing the GGM walk prefix up to the first chunk where `E` and `E+1`
+    /// diverge.
     pub fn nullifier_pair_from_master<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<'source, delegation::DelegationMasterHeader>,
+        master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
+        trap: DelegationTrapdoor,
         target_epoch: EpochIndex,
     ) -> (
         Pcd<'source, delegation::NullifierHeader>,
@@ -610,24 +684,51 @@ pub mod ggm_tools {
     ) {
         let e0 = target_epoch;
         let e1 = EpochIndex(e0.0 + 1);
-        let shared_depth =
-            u8::try_from((e0.0 ^ e1.0).leading_zeros()).expect("u32 leading_zeros fits u8");
+        let shared_depth = shared_chunk_prefix_depth(e0.0, e1.0);
 
         if shared_depth == 0 {
-            // Bits diverge at the MSB — no shared walk; two independent walks
-            // from cloned masters.
             let clone = master_pcd.clone();
             (
-                nullifier_from_master(rng, master_pcd, e0),
-                nullifier_from_master(rng, clone, e1),
+                nullifier_from_master(rng, master_pcd, trap, e0),
+                nullifier_from_master(rng, clone, trap, e1),
             )
         } else {
-            let shared = walk_master_to_depth(rng, master_pcd, e0.0, shared_depth);
+            let shared_prefix = walk_master_to_depth(rng, master_pcd, e0.0, shared_depth);
+            let blinded = blind_prefix(rng, shared_prefix, trap);
             (
-                walk_delegate_to_nullifier(rng, shared.clone(), e0),
-                walk_delegate_to_nullifier(rng, shared, e1),
+                walk_delegate_to_nullifier(rng, blinded.clone(), e0),
+                walk_delegate_to_nullifier(rng, blinded, e1),
             )
         }
+    }
+
+    /// Apply [`DelegationBlindStep`](delegation::DelegationBlindStep) to a
+    /// pre-blind prefix PCD, returning a post-blind delegate PCD.
+    pub fn blind_prefix<'source>(
+        rng: &mut (impl RngCore + CryptoRng),
+        prefix_pcd: Pcd<'source, delegation::NoteStepHeader>,
+        trap: DelegationTrapdoor,
+    ) -> Pcd<'source, delegation::DelegationHeader> {
+        let (key, mk, cm) = prefix_pcd.data;
+        let (proof, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                &delegation::DelegationBlindStep,
+                (trap,),
+                prefix_pcd,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("delegation blind step");
+        let domain = Fp::from_u128(u128::from_le_bytes(*DELEGATION_ID_DOMAIN));
+        let delegation_id = DelegationId::from(
+            &Hash::<_, P128Pow5T3, ConstantLength<4>, 3, 2>::init().hash([
+                domain,
+                mk.0,
+                Fp::from(&cm),
+                Fp::from(&trap),
+            ]),
+        );
+        proof.carry::<delegation::DelegationHeader>((key, delegation_id))
     }
 
     pub fn walk_delegate_to_nullifier<'source>(
@@ -640,18 +741,18 @@ pub mod ggm_tools {
 
         while key.depth.get() < GGM_TREE_DEPTH {
             let next_step = key.depth.get() + 1;
-            let direction = (target_epoch.0 >> (GGM_TREE_DEPTH - next_step)) & 1 != 0;
+            let chunk = chunk_at(target_epoch.0, next_step);
             let pcd = proof.carry::<delegation::DelegationHeader>((key, delegation_id));
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
                     &delegation::DelegationStep,
-                    (direction,),
+                    (chunk,),
                     pcd,
                     Proof::trivial().carry::<()>(()),
                 )
                 .expect("delegation step");
-            key = key.step(direction);
+            key = key.step(chunk);
             proof = next_proof;
         }
 
@@ -671,5 +772,41 @@ pub mod ggm_tools {
             target_epoch,
             delegation_id,
         ))
+    }
+
+    /// Extract the `GGM_CHUNK_SIZE`-bit chunk absorbed at `level`
+    /// (1-indexed) of a walk indexing into an `(u32::from(GGM_DEPTH) *
+    /// GGM_CHUNK_SIZE)`-wide epoch space.
+    fn chunk_at(epoch_bits: u32, level: u8) -> u8 {
+        let shift = (GGM_TREE_DEPTH * GGM_CHUNK_SIZE) - level * GGM_CHUNK_SIZE;
+        let chunk_mask = (1u32 << GGM_CHUNK_SIZE) - 1u32;
+        let chunk_u32 = (epoch_bits >> shift) & chunk_mask;
+        u8::try_from(chunk_u32).expect("chunk fits in u8")
+    }
+
+    /// Number of leading chunks (of `GGM_CHUNK_SIZE` bits each)
+    /// shared between `lhs` and `rhs` when viewed as `(u32::from(GGM_DEPTH)
+    /// * GGM_CHUNK_SIZE)`-wide indices.
+    fn shared_chunk_prefix_depth(lhs: u32, rhs: u32) -> u8 {
+        let diff = lhs ^ rhs;
+        if diff == 0 {
+            return GGM_TREE_DEPTH;
+        }
+        #[expect(clippy::as_conversions, reason = "safe")]
+        #[expect(clippy::cast_possible_truncation, reason = "safe")]
+        let msb_pos = (u32::BITS as u8) - 1 - (diff.leading_zeros() as u8);
+        assert!(
+            msb_pos < (GGM_TREE_DEPTH * GGM_CHUNK_SIZE),
+            "epoch index out of (u32::from(GGM_DEPTH) * GGM_CHUNK_SIZE) range"
+        );
+        let shared_bits = (GGM_TREE_DEPTH * GGM_CHUNK_SIZE) - 1 - msb_pos;
+        shared_bits
+            .checked_div(GGM_CHUNK_SIZE)
+            .expect("GGM_CHUNK_SIZE is non-zero")
+    }
+
+    #[expect(unused, reason = "exported for future benches")]
+    pub const fn arity() -> u8 {
+        GGM_TREE_ARITY
     }
 }
