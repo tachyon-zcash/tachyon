@@ -15,7 +15,21 @@ use pasta_curves::{EpAffine, Fp, Fq, group::GroupEncoding as _};
 use crate::reddsa;
 
 /// The maximum allowed value representable as a [`CompactSize`].
-pub(crate) const MAX_COMPACT_SIZE: u32 = 0x02000000;
+pub(crate) const MAX_COMPACT_SIZE: u32 = 0x0200_0000;
+
+/// Flag byte preceding a 2-byte little-endian `u16` payload.
+const FLAG_U16: u8 = 253;
+/// Flag byte preceding a 4-byte little-endian `u32` payload.
+const FLAG_U32: u8 = 254;
+/// Flag byte preceding an 8-byte little-endian `u64` payload.
+const FLAG_U64: u8 = 255;
+
+/// Largest value encodable in the single-byte form (no flag prefix); `FLAG_U16 - 1`.
+const MAX_SINGLE_BYTE: u64 = 0xFC;
+/// Largest value encodable in the 2-byte `u16` form; `u16::MAX`.
+const MAX_U16_PAYLOAD: u64 = 0xFFFF;
+/// Largest value encodable in the 4-byte `u32` form; `u32::MAX`.
+const MAX_U32_PAYLOAD: u64 = 0xFFFF_FFFF;
 
 /// Namespace for functions for compact encoding of integers (Bitcoin-style
 /// varint), with the Zcash consensus restriction `0..=0x02000000`.
@@ -32,46 +46,46 @@ impl CompactSize {
         reader.read_exact(&mut flag_bytes)?;
         let flag = flag_bytes[0];
 
-        let result = if flag < 253 {
+        let result = if flag < FLAG_U16 {
             Ok(u64::from(flag))
-        } else if flag == 253 {
+        } else if flag == FLAG_U16 {
             let mut bytes = [0; 2];
             reader.read_exact(&mut bytes)?;
-            match u16::from_le_bytes(bytes) {
-                n if n < 253 => Err(io::Error::new(
+            match u64::from(u16::from_le_bytes(bytes)) {
+                | n if n <= MAX_SINGLE_BYTE => Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "non-canonical CompactSize",
                 )),
-                n => Ok(u64::from(n)),
+                | n => Ok(n),
             }
-        } else if flag == 254 {
+        } else if flag == FLAG_U32 {
             let mut bytes = [0; 4];
             reader.read_exact(&mut bytes)?;
-            match u32::from_le_bytes(bytes) {
-                n if n < 0x10000 => Err(io::Error::new(
+            match u64::from(u32::from_le_bytes(bytes)) {
+                | n if n <= MAX_U16_PAYLOAD => Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "non-canonical CompactSize",
                 )),
-                n => Ok(u64::from(n)),
+                | n => Ok(n),
             }
         } else {
             let mut bytes = [0; 8];
             reader.read_exact(&mut bytes)?;
             match u64::from_le_bytes(bytes) {
-                n if n < 0x100000000 => Err(io::Error::new(
+                | n if n <= MAX_U32_PAYLOAD => Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "non-canonical CompactSize",
                 )),
-                n => Ok(n),
+                | n => Ok(n),
             }
         }?;
 
         match result {
-            s if s > u64::from(MAX_COMPACT_SIZE) => Err(io::Error::new(
+            | value if value > u64::from(MAX_COMPACT_SIZE) => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "CompactSize too large",
             )),
-            s => Ok(s),
+            | value => Ok(value),
         }
     }
 
@@ -89,21 +103,24 @@ impl CompactSize {
 
     /// Writes the provided `usize` value to the provided writer in compact form.
     pub(crate) fn write<W: Write>(mut writer: W, size: usize) -> io::Result<()> {
-        match size {
-            s if s < 253 => writer.write_all(&[s as u8]),
-            s if s <= 0xFFFF => {
-                writer.write_all(&[253])?;
-                writer.write_all(&(s as u16).to_le_bytes())
-            }
-            s if s <= 0xFFFF_FFFF => {
-                writer.write_all(&[254])?;
-                writer.write_all(&(s as u32).to_le_bytes())
-            }
-            s => {
-                writer.write_all(&[255])?;
-                writer.write_all(&(s as u64).to_le_bytes())
-            }
-        }
+        u64::try_from(size)
+            .and_then(|wide| match wide {
+                | small if small <= MAX_SINGLE_BYTE => {
+                    u8::try_from(small).map(|byte| writer.write_all(&[byte]))
+                }
+                | short if short <= MAX_U16_PAYLOAD => u16::try_from(short).map(|value| {
+                    writer.write_all(&[FLAG_U16])?;
+                    writer.write_all(&value.to_le_bytes())
+                }),
+                | word if word <= MAX_U32_PAYLOAD => u32::try_from(word).map(|value| {
+                    writer.write_all(&[FLAG_U32])?;
+                    writer.write_all(&value.to_le_bytes())
+                }),
+                | long => Ok(writer
+                    .write_all(&[FLAG_U64])
+                    .and_then(|()| writer.write_all(&long.to_le_bytes()))),
+            })
+            .map_err(|_err| io::Error::other("CompactSize encoding overflow"))?
     }
 }
 
