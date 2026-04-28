@@ -71,7 +71,7 @@ use lazy_static::lazy_static;
 use mock_ragu::Polynomial;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
-use zcash_encoding::CompactSize;
+use crate::serialization::CompactSize;
 
 use crate::{
     action::{self, Action},

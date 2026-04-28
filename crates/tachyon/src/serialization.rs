@@ -11,9 +11,101 @@ use alloc::vec::Vec;
 use core2::io::{self, Read, Write};
 use ff::PrimeField as _;
 use pasta_curves::{EpAffine, Fp, Fq, group::GroupEncoding as _};
-use zcash_encoding::CompactSize;
 
 use crate::reddsa;
+
+/// The maximum allowed value representable as a [`CompactSize`].
+pub(crate) const MAX_COMPACT_SIZE: u32 = 0x02000000;
+
+/// Namespace for functions for compact encoding of integers (Bitcoin-style
+/// varint), with the Zcash consensus restriction `0..=0x02000000`.
+///
+/// Vendored locally from `zcash_encoding::CompactSize` to keep tachyon free
+/// of any librustzcash dependency. The encoding is spec-defined and won't
+/// drift; if `zcash_encoding` ever lands in this workspace we can switch back.
+pub(crate) struct CompactSize;
+
+impl CompactSize {
+    /// Reads an integer encoded in compact form.
+    pub(crate) fn read<R: Read>(mut reader: R) -> io::Result<u64> {
+        let mut flag_bytes = [0; 1];
+        reader.read_exact(&mut flag_bytes)?;
+        let flag = flag_bytes[0];
+
+        let result = if flag < 253 {
+            Ok(u64::from(flag))
+        } else if flag == 253 {
+            let mut bytes = [0; 2];
+            reader.read_exact(&mut bytes)?;
+            match u16::from_le_bytes(bytes) {
+                n if n < 253 => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "non-canonical CompactSize",
+                )),
+                n => Ok(u64::from(n)),
+            }
+        } else if flag == 254 {
+            let mut bytes = [0; 4];
+            reader.read_exact(&mut bytes)?;
+            match u32::from_le_bytes(bytes) {
+                n if n < 0x10000 => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "non-canonical CompactSize",
+                )),
+                n => Ok(u64::from(n)),
+            }
+        } else {
+            let mut bytes = [0; 8];
+            reader.read_exact(&mut bytes)?;
+            match u64::from_le_bytes(bytes) {
+                n if n < 0x100000000 => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "non-canonical CompactSize",
+                )),
+                n => Ok(n),
+            }
+        }?;
+
+        match result {
+            s if s > u64::from(MAX_COMPACT_SIZE) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CompactSize too large",
+            )),
+            s => Ok(s),
+        }
+    }
+
+    /// Reads an integer encoded in compact form and performs checked
+    /// conversion to the target type.
+    pub(crate) fn read_t<R: Read, T: TryFrom<u64>>(mut reader: R) -> io::Result<T> {
+        let n = Self::read(&mut reader)?;
+        T::try_from(n).map_err(|_err| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CompactSize value exceeds range of target type.",
+            )
+        })
+    }
+
+    /// Writes the provided `usize` value to the provided writer in compact form.
+    pub(crate) fn write<W: Write>(mut writer: W, size: usize) -> io::Result<()> {
+        match size {
+            s if s < 253 => writer.write_all(&[s as u8]),
+            s if s <= 0xFFFF => {
+                writer.write_all(&[253])?;
+                writer.write_all(&(s as u16).to_le_bytes())
+            }
+            s if s <= 0xFFFF_FFFF => {
+                writer.write_all(&[254])?;
+                writer.write_all(&(s as u32).to_le_bytes())
+            }
+            s => {
+                writer.write_all(&[255])?;
+                writer.write_all(&(s as u64).to_le_bytes())
+            }
+        }
+    }
+}
 
 /// Read a Pallas base field element (`Fp`) from 32 bytes.
 pub(crate) fn read_fp<R: Read>(mut reader: R) -> io::Result<Fp> {
