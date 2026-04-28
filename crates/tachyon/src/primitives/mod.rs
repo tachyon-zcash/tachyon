@@ -12,9 +12,9 @@ pub use anchor::Anchor;
 pub use block_height::BlockHeight;
 pub use delegation_id::{DelegationId, DelegationTrapdoor};
 pub use effect::Effect;
-pub use epoch::{EpochIndex, epoch_seed_hash};
+pub use epoch::EpochIndex;
 pub use sets::{
-    ActionAcc, ActionCommit, ActionSet, BlockAcc, BlockCommit, BlockSet, PoolAcc, PoolCommit,
-    PoolDelta, PoolSet, TachygramAcc, TachygramCommit, TachygramSet,
+    ActionAcc, ActionCommit, ActionSet, BlockAcc, BlockCommit, BlockSet, TachygramAcc,
+    TachygramCommit, TachygramSet,
 };
 pub use tachygram::Tachygram;

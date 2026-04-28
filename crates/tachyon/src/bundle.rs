@@ -66,7 +66,6 @@ use core::{error::Error, fmt};
 
 use core2::io::{self, Read, Write};
 use ff::{Field as _, PrimeField as _};
-use group::GroupEncoding as _;
 use lazy_static::lazy_static;
 use mock_ragu::Polynomial;
 use pasta_curves::Fp;
@@ -622,8 +621,8 @@ impl Stamped {
         let binding_sig_bytes: [u8; 64] = self.binding_sig.into();
         state.update(&binding_sig_bytes);
 
-        state.update(&self.stamp.anchor.0.0.to_le_bytes());
-        state.update(&self.stamp.anchor.1.0.inner().to_bytes());
+        let chain_bytes: [u8; 32] = self.stamp.anchor.0.into();
+        state.update(&chain_bytes);
 
         for tg in &self.stamp.tachygrams {
             state.update(&Fp::from(tg).to_repr());
@@ -927,9 +926,6 @@ fn write_bundle_trailer_stripped<W: Write>(mut writer: W, adjunct: &Adjunct) -> 
 
 #[cfg(test)]
 mod tests {
-    use ff::Field as _;
-    use mock_ragu::Polynomial;
-    use pasta_curves::Fp;
     use rand::{CryptoRng, RngCore, SeedableRng as _, rngs::StdRng};
 
     use super::*;
@@ -937,7 +933,6 @@ mod tests {
         action,
         entropy::ActionEntropy,
         keys::private,
-        primitives::{BlockHeight, PoolCommit},
         stamp::Stamp,
         test_support::{
             PoolSim, WalletSim, action_digests, build_output_action, mock_sighash,
@@ -957,17 +952,8 @@ mod tests {
         let plan = action::Plan::output(note, theta, rcv);
         let alpha = theta.randomizer::<effect::Output>(&note.commitment());
 
-        let stamp = Stamp::prove_output(
-            &mut *rng,
-            rcv,
-            alpha,
-            note,
-            Anchor(
-                BlockHeight(0),
-                PoolCommit(Polynomial::default().commit(Fp::ZERO)),
-            ),
-        )
-        .expect("prove_output");
+        let stamp = Stamp::prove_output(&mut *rng, rcv, alpha, note, PoolSim::new().anchor())
+            .expect("prove_output");
         let action = Action {
             cv: plan.cv(),
             rk: plan.rk,
@@ -988,9 +974,10 @@ mod tests {
         let spend_note = wallet.random_note(rng, spend_value);
         let output_note = wallet.random_note(rng, output_value);
         let mut pool = PoolSim::new();
-        pool.mine(random_block_with(rng, spend_note.commitment(), 50));
-        let anchor = pool.anchor();
-        let spend = wallet.fresh_spend(rng, anchor, pool.state().clone(), spend_note);
+        pool.mine(&random_block_with(rng, &[spend_note.commitment()], 50));
+        let height = pool.tip();
+        let anchor = pool.anchor_at(height);
+        let spend = wallet.fresh_spend(rng, &pool, height, spend_note);
         wallet.autonome(rng, anchor, alloc::vec![spend], alloc::vec![output_note])
     }
 
@@ -1085,9 +1072,10 @@ mod tests {
         let change_note = sender.random_note(&mut rng, 300);
 
         let mut pool = PoolSim::new();
-        pool.mine(random_block_with(&mut rng, input_note.commitment(), 50));
-        let anchor = pool.anchor();
-        let spend = sender.fresh_spend(&mut rng, anchor, pool.state().clone(), input_note);
+        pool.mine(&random_block_with(&mut rng, &[input_note.commitment()], 50));
+        let height = pool.tip();
+        let anchor = pool.anchor_at(height);
+        let spend = sender.fresh_spend(&mut rng, &pool, height, input_note);
         let stamped = sender.autonome(
             &mut rng,
             anchor,
@@ -1179,15 +1167,18 @@ mod tests {
         let spend_b = wallet.random_note(&mut rng, 500);
         let output_b = wallet.random_note(&mut rng, 200);
 
-        // Mine both spend cms into the same pool so both autonomes share anchor.
+        // Mine both spend cms into the same block so both autonomes share anchor.
         let mut pool = PoolSim::new();
-        pool.mine(random_block_with(&mut rng, spend_a.commitment(), 50));
-        pool.mine(random_block_with(&mut rng, spend_b.commitment(), 50));
-        let anchor = pool.anchor();
-        let pool_state = pool.state().clone();
+        pool.mine(&random_block_with(
+            &mut rng,
+            &[spend_a.commitment(), spend_b.commitment()],
+            50,
+        ));
+        let height = pool.tip();
+        let anchor = pool.anchor_at(height);
 
-        let tuple_a = wallet.fresh_spend(&mut rng, anchor, pool_state.clone(), spend_a);
-        let tuple_b = wallet.fresh_spend(&mut rng, anchor, pool_state, spend_b);
+        let tuple_a = wallet.fresh_spend(&mut rng, &pool, height, spend_a);
+        let tuple_b = wallet.fresh_spend(&mut rng, &pool, height, spend_b);
         let autonome_a = wallet.autonome(
             &mut rng,
             anchor,
@@ -1247,15 +1238,21 @@ mod tests {
         let b_output = wallet.random_note(&mut rng, 200);
 
         let mut pool = PoolSim::new();
-        pool.mine(random_block_with(&mut rng, based_spend.commitment(), 50));
-        pool.mine(random_block_with(&mut rng, a_spend.commitment(), 50));
-        pool.mine(random_block_with(&mut rng, b_spend.commitment(), 50));
-        let anchor = pool.anchor();
-        let pool_state = pool.state().clone();
+        pool.mine(&random_block_with(
+            &mut rng,
+            &[
+                based_spend.commitment(),
+                a_spend.commitment(),
+                b_spend.commitment(),
+            ],
+            50,
+        ));
+        let height = pool.tip();
+        let anchor = pool.anchor_at(height);
 
-        let based_tuple = wallet.fresh_spend(&mut rng, anchor, pool_state.clone(), based_spend);
-        let a_tuple = wallet.fresh_spend(&mut rng, anchor, pool_state.clone(), a_spend);
-        let b_tuple = wallet.fresh_spend(&mut rng, anchor, pool_state, b_spend);
+        let based_tuple = wallet.fresh_spend(&mut rng, &pool, height, based_spend);
+        let a_tuple = wallet.fresh_spend(&mut rng, &pool, height, a_spend);
+        let b_tuple = wallet.fresh_spend(&mut rng, &pool, height, b_spend);
         let mut becomes_based = wallet.autonome(
             &mut rng,
             anchor,
