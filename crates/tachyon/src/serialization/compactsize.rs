@@ -14,6 +14,8 @@ use core2::io::{self, Read, Write};
 pub(crate) enum CompactSizeError {
     /// The value should be in a different encoding form.
     NonCanonical(CompactSize),
+    /// The value exceeds the zcash consensus bound.
+    ExceedsMaximum(CompactSize),
 }
 
 /// The maximum allowed value representable as a [`CompactSize`].
@@ -100,7 +102,7 @@ impl CompactSize {
         Ok(Self::from(value))
     }
 
-    pub(crate) fn enforce_valid(self) -> Result<Self, CompactSizeError> {
+    pub(crate) fn enforce_canon(self) -> Result<Self, CompactSizeError> {
         match self {
             | Self::OneByte(inner_u8) => {
                 if VALID_ONE_BYTE.contains(&inner_u8.into()) {
@@ -133,16 +135,28 @@ impl CompactSize {
         }
     }
 
-    /// Read a [`CompactSize`] from `reader`, validating canonical form and
-    /// enforcing the consensus bound [`MAX_COMPACT_SIZE`].
-    ///
-    /// Non-canonical encodings (over-long forms) are rejected per Zcash
-    /// protocol spec §7.1 (page 132).
+    /// Reject values above the consensus bound [`MAX_COMPACT_SIZE`].
+    pub(crate) fn enforce_max(self) -> Result<Self, CompactSizeError> {
+        if u64::from(self) > u64::from(MAX_COMPACT_SIZE) {
+            Err(CompactSizeError::ExceedsMaximum(self))
+        } else {
+            Ok(self)
+        }
+    }
+
+    pub(crate) fn enforce_valid(self) -> Result<Self, CompactSizeError> {
+        self.enforce_canon()?.enforce_max()
+    }
+
+    /// Parse a [`CompactSize`] from `reader`. Performs no canonical-form or
+    /// consensus-bound checks — callers are responsible for invoking
+    /// [`Self::enforce_canon`], [`Self::enforce_max`], or [`Self::enforce_valid`]
+    /// as appropriate.
     pub(crate) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut flag = [0u8; 1];
         reader.read_exact(&mut flag)?;
 
-        let csize = match flag[0] {
+        Ok(match flag[0] {
             | 0..=MAX_ONE_BYTE => Self::OneByte(flag[0]),
             | FLAG_TWO_BYTES => {
                 let mut bytes = [0u8; 2];
@@ -159,10 +173,7 @@ impl CompactSize {
                 reader.read_exact(&mut bytes)?;
                 Self::EightBytes(u64::from_le_bytes(bytes))
             },
-        }
-        .enforce_valid();
-
-        csize.map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "invalid compact size"))
+        })
     }
 
     /// Write this [`CompactSize`] to `writer`.
@@ -301,16 +312,6 @@ mod tests {
                 CompactSize::FourBytes(MAX_COMPACT_SIZE),
                 sized_value(&MAX_COMPACT_SIZE.to_le_bytes()),
             ),
-            (
-                u64::from(u32::MAX) + 1,
-                CompactSize::EightBytes(u64::from(u32::MAX) + 1),
-                sized_value(&(u64::from(u32::MAX) + 1).to_le_bytes()),
-            ),
-            (
-                u64::MAX,
-                CompactSize::EightBytes(u64::MAX),
-                sized_value(&u64::MAX.to_le_bytes()),
-            ),
         ];
 
         let mut buf = Vec::new();
@@ -343,13 +344,21 @@ mod tests {
         CompactSize::eight_bytes(u64::from(u32::MAX) + 1).unwrap();
     }
 
-    /// `read` rejects over-long (non-canonical) encodings per Zcash spec §7.1 p.132.
+    /// `enforce_max` rejects values above the consensus bound `MAX_COMPACT_SIZE`.
     #[test]
-    fn read_rejects_non_canonical_encodings() {
-        CompactSize::read(sized_value(&u16::from(MAX_ONE_BYTE).to_le_bytes()).as_slice())
-            .unwrap_err();
-        CompactSize::read(sized_value(&u32::from(u16::MAX).to_le_bytes()).as_slice()).unwrap_err();
-        CompactSize::read(sized_value(&u64::from(u32::MAX).to_le_bytes()).as_slice()).unwrap_err();
+    fn enforce_max_rejects_above_consensus() {
+        CompactSize::FourBytes(MAX_COMPACT_SIZE + 1).enforce_max().unwrap_err();
+        CompactSize::FourBytes(u32::MAX).enforce_max().unwrap_err();
+        CompactSize::EightBytes(u64::from(u32::MAX) + 1).enforce_max().unwrap_err();
+        CompactSize::FourBytes(MAX_COMPACT_SIZE).enforce_max().unwrap();
+    }
+
+    /// `enforce_canon` rejects values stored in an over-long form per Zcash spec §7.1 p.132.
+    #[test]
+    fn enforce_canon_rejects_non_canonical() {
+        CompactSize::TwoBytes(u16::from(MAX_ONE_BYTE)).enforce_canon().unwrap_err();
+        CompactSize::FourBytes(u32::from(u16::MAX)).enforce_canon().unwrap_err();
+        CompactSize::EightBytes(u64::from(u32::MAX)).enforce_canon().unwrap_err();
     }
 
     /// Truncated inputs: flag byte present but payload missing or short.

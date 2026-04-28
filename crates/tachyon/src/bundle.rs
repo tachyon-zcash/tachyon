@@ -81,7 +81,7 @@ use crate::{
         effect,
     },
     reddsa,
-    serialization::{self, compactsize::CompactSize},
+    serialization,
     stamp::{self, Adjunct, Stamp, Unproven, proof::compute_action_acc},
     value,
 };
@@ -833,7 +833,8 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Sig
     reader.read_exact(&mut vb_bytes)?;
     let value_balance = i64::from_le_bytes(vb_bytes);
 
-    let n_actions = usize::try_from(CompactSize::read(&mut reader)?).map_err(io::Error::other)?;
+    let n_actions =
+        usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(io::Error::other)?;
 
     let mut descriptors = Vec::with_capacity(n_actions);
     for _ in 0..n_actions {
@@ -896,9 +897,10 @@ fn write_bundle_body<W: Write>(
 ) -> io::Result<()> {
     writer.write_all(&value_balance.to_le_bytes())?;
 
-    CompactSize::try_from(actions.len())
-        .map_err(io::Error::other)?
-        .write(&mut writer)?;
+    serialization::write_compactsize(
+        &mut writer,
+        u64::try_from(actions.len()).map_err(io::Error::other)?,
+    )?;
     for action in actions {
         serialization::write_ep_affine(&mut writer, &action.cv.0)?;
         serialization::write_action_vk(&mut writer, &action.rk.0)?;

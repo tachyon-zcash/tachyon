@@ -17,7 +17,17 @@ pub(crate) mod compactsize;
 use crate::{reddsa, serialization::compactsize::CompactSize};
 
 pub(crate) fn read_compactsize<R: Read>(mut reader: R) -> io::Result<u64> {
-    let compact_size = CompactSize::read(&mut reader)?;
+    let compact_size = CompactSize::read(&mut reader)?
+        .enforce_valid()
+        .map_err(|err| match err {
+            | compactsize::CompactSizeError::NonCanonical(_) => {
+                io::Error::new(io::ErrorKind::InvalidData, "non-canonical compact size")
+            },
+            | compactsize::CompactSizeError::ExceedsMaximum(_) => io::Error::new(
+                io::ErrorKind::InvalidData,
+                "compact size exceeds consensus maximum",
+            ),
+        })?;
     Ok(compact_size.into())
 }
 
@@ -36,7 +46,7 @@ pub(crate) fn read_fp<R: Read>(mut reader: R) -> io::Result<Fp> {
 }
 
 pub(crate) fn read_fp_list<R: Read>(mut reader: R) -> io::Result<Vec<Fp>> {
-    let n = usize::try_from(CompactSize::read(&mut reader)?).map_err(io::Error::other)?;
+    let n = usize::try_from(read_compactsize(&mut reader)?).map_err(io::Error::other)?;
     let mut fp_list = Vec::with_capacity(n);
     for _ in 0..n {
         let fp = read_fp(&mut reader)?;
@@ -46,9 +56,10 @@ pub(crate) fn read_fp_list<R: Read>(mut reader: R) -> io::Result<Vec<Fp>> {
 }
 
 pub(crate) fn write_fp_list<W: Write>(mut writer: W, fp_list: &[Fp]) -> io::Result<()> {
-    CompactSize::try_from(fp_list.len())
-        .map_err(io::Error::other)?
-        .write(&mut writer)?;
+    write_compactsize(
+        &mut writer,
+        u64::try_from(fp_list.len()).map_err(io::Error::other)?,
+    )?;
     for fp in fp_list {
         write_fp(&mut writer, fp)?;
     }
