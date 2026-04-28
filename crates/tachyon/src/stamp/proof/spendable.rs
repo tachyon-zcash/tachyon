@@ -5,7 +5,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::{Field as _, PrimeField as _};
-use mock_ragu::{Header, Index, Multiset, Polynomial, Step, Suffix};
+use mock_ragu::{Header, Index, Multiset, Step, Suffix};
 use pasta_curves::Fp;
 
 use super::delegation::NullifierHeader;
@@ -14,36 +14,6 @@ use crate::{
     note::{Note, Nullifier},
     primitives::{Anchor, BlockHeight, BlockSet, DelegationId, DelegationTrapdoor},
 };
-
-fn encode_anchor(anchor: &Anchor) -> [u8; 32] {
-    anchor.0.into()
-}
-
-fn encode_spendable(delegation_id: DelegationId, nf: Nullifier, anchor: &Anchor) -> Vec<u8> {
-    let mut out = Vec::with_capacity(32 + 32 + 32);
-    out.extend_from_slice(&Fp::from(&delegation_id).to_repr());
-    out.extend_from_slice(&Fp::from(&nf).to_repr());
-    out.extend_from_slice(&encode_anchor(anchor));
-    out
-}
-
-/// Verify that `anchor` is the Pedersen commitment of `(X - prev_anchor_fp) *
-/// block_polynomial` blinded by `height`. The commitment scheme is binding in
-/// both the polynomial (block contents + prior anchor as a root) and the
-/// blinding factor (height), so this single equality binds all three.
-fn check_anchor(
-    prev_anchor: Anchor,
-    height: BlockHeight,
-    block: &BlockSet<Multiset>,
-    anchor: &Anchor,
-) -> bool {
-    let height_fp = Fp::from(u64::from(height.0));
-    let prev_fp = Fp::from(&prev_anchor);
-    let extended = block
-        .0
-        .merge(&Multiset::new(Polynomial::from_roots(&[prev_fp])));
-    *anchor == Anchor(extended.commit_with(height_fp))
-}
 
 /// Header attesting a note is spendable at a specific anchor.
 #[derive(Clone, Debug)]
@@ -55,7 +25,12 @@ impl Header for SpendableHeader {
     const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        encode_spendable(data.0, data.1, &data.2)
+        let mut out = Vec::with_capacity(32 + 32 + 32);
+        out.extend_from_slice(&Fp::from(&data.0).to_repr());
+        out.extend_from_slice(&Fp::from(&data.1).to_repr());
+        let anchor_bytes: [u8; 32] = data.2.0.into();
+        out.extend_from_slice(&anchor_bytes);
+        out
     }
 }
 
@@ -74,7 +49,8 @@ impl Header for SpendableRolloverHeader {
         out.extend_from_slice(&Fp::from(&data.0).to_repr());
         out.extend_from_slice(&Fp::from(&data.1).to_repr());
         out.extend_from_slice(&Fp::from(&data.2).to_repr());
-        out.extend_from_slice(&encode_anchor(&data.3));
+        let anchor_bytes: [u8; 32] = data.3.0.into();
+        out.extend_from_slice(&anchor_bytes);
         out
     }
 }
@@ -116,7 +92,7 @@ impl Step for SpendableInit {
             return Err(mock_ragu::Error);
         }
 
-        if !check_anchor(prev_anchor, height, &block, &anchor) {
+        if anchor != prev_anchor.next_set(&block, &height) {
             return Err(mock_ragu::Error);
         }
         if epoch != height.epoch() {
@@ -161,7 +137,7 @@ impl Step for SpendableRollover {
             return Err(mock_ragu::Error);
         }
 
-        if !check_anchor(prev_anchor, height, &block, &anchor) {
+        if anchor != prev_anchor.next_set(&block, &height) {
             return Err(mock_ragu::Error);
         }
         if new_epoch != height.epoch() {
@@ -206,12 +182,12 @@ impl Step for SpendableLift {
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         // Bind prev_anchor + old_block to old_anchor.
-        if !check_anchor(prev_anchor, old_height, &old_block, &old_anchor) {
+        if old_anchor != prev_anchor.next_set(&old_block, &old_height) {
             return Err(mock_ragu::Error);
         }
 
         // Single chain step from the old anchor to the new anchor.
-        if !check_anchor(old_anchor, new_height, &new_block, &new_anchor) {
+        if new_anchor != old_anchor.next_set(&new_block, &new_height) {
             return Err(mock_ragu::Error);
         }
 
@@ -271,12 +247,12 @@ impl Step for SpendableEpochLift {
         }
 
         // Bind prev_anchor + old_block to old_anchor.
-        if !check_anchor(prev_anchor, old_height, &old_block, &old_anchor) {
+        if old_anchor != prev_anchor.next_set(&old_block, &old_height) {
             return Err(mock_ragu::Error);
         }
 
         // Single chain step from old anchor to new anchor.
-        if !check_anchor(old_anchor, new_height, &new_block, &new_anchor) {
+        if new_anchor != old_anchor.next_set(&new_block, &new_height) {
             return Err(mock_ragu::Error);
         }
 

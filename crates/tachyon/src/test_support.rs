@@ -114,13 +114,6 @@ pub struct PoolSim {
     history: Vec<(BlockAcc, Anchor, BlockHeight)>,
 }
 
-fn compute_anchor(prev: Anchor, block: &BlockAcc, height: BlockHeight) -> Anchor {
-    let prev_fp = Fp::from(&prev);
-    let height_fp = Fp::from(u64::from(height.0));
-    let extended = block.0.multiply(&Polynomial::from_roots(&[prev_fp]));
-    Anchor(extended.commit(height_fp))
-}
-
 impl PoolSim {
     pub fn new() -> Self {
         Self {
@@ -152,7 +145,7 @@ impl PoolSim {
     /// Anchor of the block at `height` (post-block).
     pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
         let entry = &self.history[usize::try_from(height.0).expect("fits usize")];
-        compute_anchor(entry.1, &entry.0, entry.2)
+        entry.1.next_poly(&entry.0, &entry.2)
     }
 
     /// Chain anchor immediately before the block at `height`.

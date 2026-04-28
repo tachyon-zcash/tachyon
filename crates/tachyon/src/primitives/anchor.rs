@@ -1,7 +1,9 @@
 use core2::io::{self, Read, Write};
 use ff::{Field as _, PrimeField as _};
-use mock_ragu::{Commitment, Polynomial};
+use mock_ragu::{Commitment, Multiset, Polynomial};
 use pasta_curves::{Fp, arithmetic::CurveAffine as _};
+
+use super::{BlockHeight, BlockSet};
 
 /// Pool state at a specific block. Wire format is 32 bytes (compressed
 /// Pasta curve point).
@@ -26,6 +28,30 @@ impl Anchor {
     #[must_use]
     pub fn pregenesis() -> Self {
         Self(Polynomial::from_roots(&[]).commit(-Fp::ONE))
+    }
+
+    /// Compute the anchor produced by extending `prev` with `block` at
+    /// `height`: the Pedersen commitment of `(X - prev_fp) · block_polynomial`
+    /// blinded by `height`.
+    #[must_use]
+    pub fn next_poly(&self, block: &BlockSet<Polynomial>, height: &BlockHeight) -> Self {
+        let block_poly = block.0.clone();
+        let prev_poly = Polynomial::from_roots(&[self.into()]);
+        let extended = block_poly.multiply(&prev_poly);
+        let height_fp = Fp::from(u64::from(height.0));
+        Self(extended.commit(height_fp))
+    }
+
+    #[must_use]
+    /// Compute the anchor produced by extending `prev` with `block` at
+    /// `height`: the Pedersen commitment of `(X - prev_fp) · block_polynomial`
+    /// blinded by `height`.
+    pub fn next_set(&self, block: &BlockSet<Multiset>, height: &BlockHeight) -> Self {
+        let block_set = block.clone();
+        let prev = Multiset::new(Polynomial::from_roots(&[self.into()]));
+        let extended = block_set.0.merge(&prev);
+        let height_fp = Fp::from(u64::from(height.0));
+        Self(extended.commit_with(height_fp))
     }
 
     /// Read a 32-byte anchor.

@@ -20,22 +20,6 @@ use crate::{
     value,
 };
 
-/// Verify that `anchor` is the Pedersen commitment of `(X - prev_anchor_fp) *
-/// block_polynomial` blinded by `height`.
-fn check_anchor(
-    prev_anchor: Anchor,
-    height: BlockHeight,
-    block: &BlockSet<Multiset>,
-    anchor: &Anchor,
-) -> bool {
-    let height_fp = Fp::from(u64::from(height.0));
-    let prev_fp = Fp::from(&prev_anchor);
-    let extended = block
-        .0
-        .merge(&Multiset::new(Polynomial::from_roots(&[prev_fp])));
-    *anchor == Anchor(extended.commit_with(height_fp))
-}
-
 /// Header for a stamp, representing either a single action or many
 /// transactions.
 ///
@@ -140,7 +124,7 @@ impl Step for SpendStamp {
         }
 
         // Bind the witnessed prev_anchor + block + height to the right anchor.
-        if !check_anchor(prev_anchor, height, &block, &right_anchor) {
+        if right_anchor != prev_anchor.next_set(&block, &height) {
             return Err(mock_ragu::Error);
         }
         if epoch != height.epoch() {
@@ -264,12 +248,12 @@ impl Step for StampLift {
         }
 
         // Bind prev_anchor + old_block to old_anchor.
-        if !check_anchor(prev_anchor, old_height, &old_block, &old_anchor) {
+        if old_anchor != prev_anchor.next_set(&old_block, &old_height) {
             return Err(mock_ragu::Error);
         }
 
         // Single chain step from old anchor to new anchor.
-        if !check_anchor(old_anchor, new_height, &new_block, &new_anchor) {
+        if new_anchor != old_anchor.next_set(&new_block, &new_height) {
             return Err(mock_ragu::Error);
         }
 
