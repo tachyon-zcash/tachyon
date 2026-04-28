@@ -17,8 +17,8 @@ use crate::{
     keys::private,
     note,
     primitives::{
-        ActionCommit, Anchor, BlockAcc, BlockHeight, DelegationTrapdoor, EpochIndex, PoolChain,
-        Tachygram, TachygramAcc, TachygramCommit, effect,
+        ActionCommit, Anchor, BlockAcc, BlockHeight, DelegationTrapdoor, EpochIndex, Tachygram,
+        TachygramAcc, TachygramCommit, effect,
     },
     stamp::Stamp,
     test_support::{
@@ -43,7 +43,7 @@ fn stamp_lift_within_epoch() {
     let old_height = pool.tip();
     let old_anchor = pool.anchor_at(old_height);
     let old_block = pool.block_at(old_height);
-    let old_prev_chain = pool.prev_chain_at(old_height);
+    let old_prev_anchor = pool.prev_anchor_at(old_height);
 
     let note = user.random_note(&mut rng, 200);
     let (rcv, alpha, action) = build_output_action(&mut rng, note);
@@ -69,7 +69,7 @@ fn stamp_lift_within_epoch() {
             (
                 action_acc.into(),
                 tachygram_acc.into(),
-                old_prev_chain,
+                old_prev_anchor,
                 old_block.into(),
                 old_height,
                 new_block.into(),
@@ -103,7 +103,7 @@ fn stamp_lift_rejects_cross_epoch() {
     assert!(old_height.is_epoch_final());
     let old_anchor = pool.anchor_at(old_height);
     let old_block = pool.block_at(old_height);
-    let old_prev_chain = pool.prev_chain_at(old_height);
+    let old_prev_anchor = pool.prev_anchor_at(old_height);
 
     let note = user.random_note(&mut rng, 200);
     let (rcv, alpha, action) = build_output_action(&mut rng, note);
@@ -130,7 +130,7 @@ fn stamp_lift_rejects_cross_epoch() {
         (
             action_acc.into(),
             tachygram_acc.into(),
-            old_prev_chain,
+            old_prev_anchor,
             old_block.into(),
             old_height,
             new_block.into(),
@@ -257,7 +257,7 @@ fn step_rejects_zero_value_note() {
     pool.mine(&random_block_with(&mut rng, &[zero_note.commitment()], 50));
     let init_height = pool.tip();
     let init_anchor = pool.anchor_at(init_height);
-    let init_prev_chain = pool.prev_chain_at(init_height);
+    let init_prev_anchor = pool.prev_anchor_at(init_height);
     let init_block = pool.block_at(init_height);
     let delegation_id = user.pak.nk.derive_delegation_id(&zero_note, trap);
     let nf = zero_note.nullifier(&user.pak.nk, target_epoch);
@@ -272,7 +272,7 @@ fn step_rejects_zero_value_note() {
                     zero_note,
                     user.pak,
                     trap,
-                    init_prev_chain,
+                    init_prev_anchor,
                     init_block.into(),
                     init_height,
                     init_anchor,
@@ -413,7 +413,7 @@ fn spendable_lift_rejects_cross_epoch() {
 
     let old_height = pool.tip();
     let old_block = pool.block_at(old_height);
-    let old_prev_chain = pool.prev_chain_at(old_height);
+    let old_prev_anchor = pool.prev_anchor_at(old_height);
     let master_pcd = user.note_master(&mut rng, note);
     let nf_pcd = nullifier_from_master(&mut rng, master_pcd, trap, old_height.epoch());
     let spendable_pcd = user.spendable_init(&mut rng, note, trap, &pool, old_height, nf_pcd);
@@ -429,7 +429,7 @@ fn spendable_lift_rejects_cross_epoch() {
         &mut rng,
         &spendable::SpendableLift,
         (
-            old_prev_chain,
+            old_prev_anchor,
             old_block.into(),
             old_height,
             new_block.into(),
@@ -460,7 +460,7 @@ fn spendable_init_rejects_cm_absent() {
     pool.mine(&BlockAcc::from(&[Tachygram::from(&unrelated)][..]));
     let height = pool.tip();
     let anchor = pool.anchor_at(height);
-    let prev_chain = pool.prev_chain_at(height);
+    let prev_anchor = pool.prev_anchor_at(height);
     let block = pool.block_at(height);
 
     let master_pcd = user.note_master(&mut rng, note);
@@ -472,7 +472,7 @@ fn spendable_init_rejects_cm_absent() {
             note,
             user.pak,
             trap,
-            prev_chain,
+            prev_anchor,
             block.into(),
             height,
             anchor,
@@ -505,7 +505,7 @@ fn spendable_init_rejects_nf_present() {
     ));
     let height = pool.tip();
     let anchor = pool.anchor_at(height);
-    let prev_chain = pool.prev_chain_at(height);
+    let prev_anchor = pool.prev_anchor_at(height);
     let block = pool.block_at(height);
 
     let master_pcd = user.note_master(&mut rng, note);
@@ -517,7 +517,7 @@ fn spendable_init_rejects_nf_present() {
             note,
             user.pak,
             trap,
-            prev_chain,
+            prev_anchor,
             block.into(),
             height,
             anchor,
@@ -544,7 +544,7 @@ fn spendable_lift_rejects_chain_mismatch() {
     pool.mine(&random_block_with(&mut rng, &[note.commitment()], 50));
     let old_height = pool.tip();
     let old_block = pool.block_at(old_height);
-    let old_prev_chain = pool.prev_chain_at(old_height);
+    let old_prev_anchor = pool.prev_anchor_at(old_height);
     let master_pcd = user.note_master(&mut rng, note);
     let nf_pcd = nullifier_from_master(&mut rng, master_pcd, trap, old_height.epoch());
     let spendable_pcd = user.spendable_init(&mut rng, note, trap, &pool, old_height, nf_pcd);
@@ -555,13 +555,13 @@ fn spendable_lift_rejects_chain_mismatch() {
 
     // Forge a new_anchor whose chain hash doesn't actually advance from the
     // input PCD's chain via new_block's commitment.
-    let bogus_anchor = Anchor(PoolChain::genesis());
+    let bogus_anchor = Anchor::pregenesis();
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
         &spendable::SpendableLift,
         (
-            old_prev_chain,
+            old_prev_anchor,
             old_block.into(),
             old_height,
             new_block.into(),
@@ -617,7 +617,7 @@ fn spendable_rollover_rejects_new_nf_in_block() {
         &mut rng,
         &spendable::SpendableRollover,
         (
-            pool.prev_chain_at(new_height),
+            pool.prev_anchor_at(new_height),
             pool.block_at(new_height).into(),
             new_height,
             pool.anchor_at(new_height),
@@ -676,7 +676,7 @@ fn spendable_rollover_rejects_delegation_id_mismatch() {
         &mut rng,
         &spendable::SpendableRollover,
         (
-            pool.prev_chain_at(new_height),
+            pool.prev_anchor_at(new_height),
             pool.block_at(new_height).into(),
             new_height,
             pool.anchor_at(new_height),
@@ -722,7 +722,7 @@ fn spendable_rollover_rejects_non_adjacent_epochs() {
         &mut rng,
         &spendable::SpendableRollover,
         (
-            pool.prev_chain_at(new_height),
+            pool.prev_anchor_at(new_height),
             pool.block_at(new_height).into(),
             new_height,
             pool.anchor_at(new_height),

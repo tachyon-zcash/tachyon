@@ -14,25 +14,26 @@ use crate::{
     keys::private,
     note::Note,
     primitives::{
-        ActionAcc, ActionCommit, ActionDigest, ActionSet, Anchor, BlockCommit, BlockHeight,
-        BlockSet, PoolChain, Tachygram, TachygramAcc, TachygramCommit, TachygramSet, effect,
+        ActionAcc, ActionCommit, ActionDigest, ActionSet, Anchor, BlockHeight, BlockSet, Tachygram,
+        TachygramAcc, TachygramCommit, TachygramSet, effect,
     },
     value,
 };
 
-/// Verify the witnessed `(prev_chain, height, block)` advances to `anchor`.
-/// Height is the Pedersen blinding trapdoor of `block_commit`, so this single
-/// equality binds `(prev_chain, height, block)` — the commitment scheme is
-/// binding in both the polynomial and the blinding factor.
+/// Verify that `anchor` is the Pedersen commitment of `(X - prev_anchor_fp) *
+/// block_polynomial` blinded by `height`.
 fn check_anchor(
-    prev_chain: PoolChain,
+    prev_anchor: Anchor,
     height: BlockHeight,
     block: &BlockSet<Multiset>,
     anchor: &Anchor,
 ) -> bool {
     let height_fp = Fp::from(u64::from(height.0));
-    let block_commit = BlockCommit(block.0.commit_with(height_fp));
-    anchor.0 == prev_chain.advance(height, &block_commit)
+    let prev_fp = Fp::from(&prev_anchor);
+    let extended = block
+        .0
+        .merge(&Multiset::new(Polynomial::from_roots(&[prev_fp])));
+    *anchor == Anchor(extended.commit_with(height_fp))
 }
 
 /// Header for a stamp, representing either a single action or many
@@ -117,16 +118,15 @@ impl Step for SpendStamp {
     type Left = SpendHeader;
     type Output = StampHeader;
     type Right = SpendableHeader;
-    /// Witness the right anchor's `prev_chain` + block set + height, so the
-    /// SpendStamp can prove that `epoch == height.epoch()` for a height bound
-    /// by membership in the block.
-    type Witness<'source> = (PoolChain, BlockSet<Multiset>, BlockHeight);
+    /// Witness the right anchor's `prev_anchor` + block set + height, so the
+    /// SpendStamp can prove that `epoch == height.epoch()`.
+    type Witness<'source> = (Anchor, BlockSet<Multiset>, BlockHeight);
 
     const INDEX: Index = Index::new(10);
 
     fn witness<'source>(
         &self,
-        (prev_chain, block, height): Self::Witness<'source>,
+        (prev_anchor, block, height): Self::Witness<'source>,
         (action_digest, nullifiers, epoch, delegation_id): <Self::Left as Header>::Data<'source>,
         (right_delegation_id, right_nf, right_anchor): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
@@ -139,8 +139,8 @@ impl Step for SpendStamp {
             return Err(mock_ragu::Error);
         }
 
-        // Bind the witnessed prev_chain + block + height to the right anchor.
-        if !check_anchor(prev_chain, height, &block, &right_anchor) {
+        // Bind the witnessed prev_anchor + block + height to the right anchor.
+        if !check_anchor(prev_anchor, height, &block, &right_anchor) {
             return Err(mock_ragu::Error);
         }
         if epoch != height.epoch() {
@@ -229,7 +229,7 @@ impl Step for StampLift {
     type Witness<'source> = (
         ActionSet<Multiset>,
         TachygramSet<Multiset>,
-        PoolChain,
+        Anchor,
         BlockSet<Multiset>,
         BlockHeight,
         BlockSet<Multiset>,
@@ -244,7 +244,7 @@ impl Step for StampLift {
         (
             left_action,
             left_tachygram,
-            prev_chain,
+            prev_anchor,
             old_block,
             old_height,
             new_block,
@@ -263,13 +263,13 @@ impl Step for StampLift {
             return Err(mock_ragu::Error);
         }
 
-        // Bind prev_chain + old_block to old_anchor.
-        if !check_anchor(prev_chain, old_height, &old_block, &old_anchor) {
+        // Bind prev_anchor + old_block to old_anchor.
+        if !check_anchor(prev_anchor, old_height, &old_block, &old_anchor) {
             return Err(mock_ragu::Error);
         }
 
         // Single chain step from old anchor to new anchor.
-        if !check_anchor(old_anchor.0, new_height, &new_block, &new_anchor) {
+        if !check_anchor(old_anchor, new_height, &new_block, &new_anchor) {
             return Err(mock_ragu::Error);
         }
 

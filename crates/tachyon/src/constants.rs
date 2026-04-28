@@ -69,17 +69,6 @@ pub const ACTION_DIGEST_PERSONALIZATION: &[u8; 16] = b"Tachyon-ActnDgst";
 /// \text{Poseidon}(\text{domain}, ak_x, nk)$.
 pub const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
-/// Poseidon domain tag for the per-block pool hash chain.
-///
-/// $$\mathsf{chain}_n =
-/// \text{Poseidon}_\text{Tachyon-PoolChn}(\mathsf{chain}_{n-1} \|
-/// x(\mathsf{block\_commit}_n) \| y(\mathsf{block\_commit}_n))$$
-///
-/// The chain binds every prior block into a single field element; an anchor
-/// exposes the chain plus the latest block commitment so verifiers can prove
-/// per-block history without iterating it.
-pub const POOL_CHAIN_DOMAIN: &[u8; 16] = b"Tachyon-PoolChan";
-
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)
 pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
 

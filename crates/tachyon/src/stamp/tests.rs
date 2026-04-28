@@ -75,7 +75,7 @@ fn plan_prove_rejects_invalid_inputs() {
     ));
     let height = pool.tip();
     let anchor = pool.anchor_at(height);
-    let prev_chain = pool.prev_chain_at(height);
+    let prev_anchor = pool.prev_anchor_at(height);
     let block = pool.block_at(height);
 
     let master_a = user.note_master(&mut rng, note_a);
@@ -129,7 +129,7 @@ fn plan_prove_rejects_invalid_inputs() {
             nf_now_a.clone(),
             nf_next_a.clone(),
             spendable_a.clone(),
-            prev_chain,
+            prev_anchor,
             block.clone(),
             height,
         )];
@@ -150,7 +150,7 @@ fn plan_prove_rejects_invalid_inputs() {
                 nf_now_a.clone(),
                 nf_next_a.clone(),
                 spendable_a.clone(),
-                prev_chain,
+                prev_anchor,
                 block.clone(),
                 height,
             ),
@@ -158,7 +158,7 @@ fn plan_prove_rejects_invalid_inputs() {
                 nf_now_b.clone(),
                 nf_next_b.clone(),
                 spendable_b.clone(),
-                prev_chain,
+                prev_anchor,
                 block.clone(),
                 height,
             ),
@@ -166,7 +166,7 @@ fn plan_prove_rejects_invalid_inputs() {
                 nf_now_a.clone(),
                 nf_next_a.clone(),
                 spendable_a.clone(),
-                prev_chain,
+                prev_anchor,
                 block.clone(),
                 height,
             ),
@@ -188,11 +188,11 @@ fn plan_prove_rejects_invalid_inputs() {
                 nf_now_b,
                 nf_next_b,
                 spendable_b,
-                prev_chain,
+                prev_anchor,
                 block.clone(),
                 height,
             ),
-            (nf_now_a, nf_next_a, spendable_a, prev_chain, block, height),
+            (nf_now_a, nf_next_a, spendable_a, prev_anchor, block, height),
         ];
         assert!(
             matches!(

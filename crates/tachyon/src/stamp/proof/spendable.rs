@@ -5,16 +5,14 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::{Field as _, PrimeField as _};
-use mock_ragu::{Header, Index, Multiset, Step, Suffix};
+use mock_ragu::{Header, Index, Multiset, Polynomial, Step, Suffix};
 use pasta_curves::Fp;
 
 use super::delegation::NullifierHeader;
 use crate::{
     keys::ProofAuthorizingKey,
     note::{Note, Nullifier},
-    primitives::{
-        Anchor, BlockCommit, BlockHeight, BlockSet, DelegationId, DelegationTrapdoor, PoolChain,
-    },
+    primitives::{Anchor, BlockHeight, BlockSet, DelegationId, DelegationTrapdoor},
 };
 
 fn encode_anchor(anchor: &Anchor) -> [u8; 32] {
@@ -29,19 +27,22 @@ fn encode_spendable(delegation_id: DelegationId, nf: Nullifier, anchor: &Anchor)
     out
 }
 
-/// Verify the witnessed `(prev_chain, height, block)` advances to `anchor`.
-/// Height is the Pedersen blinding trapdoor of `block_commit`, so this single
-/// equality binds `(prev_chain, height, block)` — the commitment scheme is
-/// binding in both the polynomial and the blinding factor.
+/// Verify that `anchor` is the Pedersen commitment of `(X - prev_anchor_fp) *
+/// block_polynomial` blinded by `height`. The commitment scheme is binding in
+/// both the polynomial (block contents + prior anchor as a root) and the
+/// blinding factor (height), so this single equality binds all three.
 fn check_anchor(
-    prev_chain: PoolChain,
+    prev_anchor: Anchor,
     height: BlockHeight,
     block: &BlockSet<Multiset>,
     anchor: &Anchor,
 ) -> bool {
     let height_fp = Fp::from(u64::from(height.0));
-    let block_commit = BlockCommit(block.0.commit_with(height_fp));
-    anchor.0 == prev_chain.advance(height, &block_commit)
+    let prev_fp = Fp::from(&prev_anchor);
+    let extended = block
+        .0
+        .merge(&Multiset::new(Polynomial::from_roots(&[prev_fp])));
+    *anchor == Anchor(extended.commit_with(height_fp))
 }
 
 /// Header attesting a note is spendable at a specific anchor.
@@ -91,7 +92,7 @@ impl Step for SpendableInit {
         Note,
         ProofAuthorizingKey,
         DelegationTrapdoor,
-        PoolChain,
+        Anchor,
         BlockSet<Multiset>,
         BlockHeight,
         Anchor,
@@ -101,7 +102,7 @@ impl Step for SpendableInit {
 
     fn witness<'source>(
         &self,
-        (note, pak, trap, prev_chain, block, height, anchor): Self::Witness<'source>,
+        (note, pak, trap, prev_anchor, block, height, anchor): Self::Witness<'source>,
         (nf, epoch, delegation_id): <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
@@ -115,7 +116,7 @@ impl Step for SpendableInit {
             return Err(mock_ragu::Error);
         }
 
-        if !check_anchor(prev_chain, height, &block, &anchor) {
+        if !check_anchor(prev_anchor, height, &block, &anchor) {
             return Err(mock_ragu::Error);
         }
         if epoch != height.epoch() {
@@ -143,13 +144,13 @@ impl Step for SpendableRollover {
     type Left = NullifierHeader;
     type Output = SpendableRolloverHeader;
     type Right = NullifierHeader;
-    type Witness<'source> = (PoolChain, BlockSet<Multiset>, BlockHeight, Anchor);
+    type Witness<'source> = (Anchor, BlockSet<Multiset>, BlockHeight, Anchor);
 
     const INDEX: Index = Index::new(7);
 
     fn witness<'source>(
         &self,
-        (prev_chain, block, height, anchor): Self::Witness<'source>,
+        (prev_anchor, block, height, anchor): Self::Witness<'source>,
         (old_nf, old_epoch, old_delegation_id): <Self::Left as Header>::Data<'source>,
         (new_nf, new_epoch, new_delegation_id): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
@@ -160,7 +161,7 @@ impl Step for SpendableRollover {
             return Err(mock_ragu::Error);
         }
 
-        if !check_anchor(prev_chain, height, &block, &anchor) {
+        if !check_anchor(prev_anchor, height, &block, &anchor) {
             return Err(mock_ragu::Error);
         }
         if new_epoch != height.epoch() {
@@ -176,7 +177,7 @@ impl Step for SpendableRollover {
 }
 
 /// Advances spendable status to the next block within the same epoch via a
-/// single hash-chain step. Multi-block lifts chain through PCD recursion.
+/// single chain step. Multi-block lifts chain through PCD recursion.
 #[derive(Debug)]
 pub struct SpendableLift;
 
@@ -186,7 +187,7 @@ impl Step for SpendableLift {
     type Output = SpendableHeader;
     type Right = ();
     type Witness<'source> = (
-        PoolChain,
+        Anchor,
         BlockSet<Multiset>,
         BlockHeight,
         BlockSet<Multiset>,
@@ -198,19 +199,19 @@ impl Step for SpendableLift {
 
     fn witness<'source>(
         &self,
-        (prev_chain, old_block, old_height, new_block, new_height, new_anchor): Self::Witness<
+        (prev_anchor, old_block, old_height, new_block, new_height, new_anchor): Self::Witness<
             'source,
         >,
         (delegation_id, nf, old_anchor): <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        // Bind prev_chain + old_block to old_anchor.
-        if !check_anchor(prev_chain, old_height, &old_block, &old_anchor) {
+        // Bind prev_anchor + old_block to old_anchor.
+        if !check_anchor(prev_anchor, old_height, &old_block, &old_anchor) {
             return Err(mock_ragu::Error);
         }
 
         // Single chain step from the old anchor to the new anchor.
-        if !check_anchor(old_anchor.0, new_height, &new_block, &new_anchor) {
+        if !check_anchor(old_anchor, new_height, &new_block, &new_anchor) {
             return Err(mock_ragu::Error);
         }
 
@@ -231,11 +232,7 @@ impl Step for SpendableLift {
     }
 }
 
-/// Single-block hash-chain step across an epoch boundary.
-///
-/// The hash chain itself binds the prior epoch's final state; the new
-/// block's height tachygram (which uniquely determines the epoch) is
-/// verified the same way as in `SpendableLift`.
+/// Single-block chain step across an epoch boundary.
 #[derive(Debug)]
 pub struct SpendableEpochLift;
 
@@ -245,7 +242,7 @@ impl Step for SpendableEpochLift {
     type Output = SpendableHeader;
     type Right = SpendableRolloverHeader;
     type Witness<'source> = (
-        PoolChain,
+        Anchor,
         BlockSet<Multiset>,
         BlockHeight,
         BlockSet<Multiset>,
@@ -257,7 +254,7 @@ impl Step for SpendableEpochLift {
 
     fn witness<'source>(
         &self,
-        (prev_chain, old_block, old_height, new_block, new_height, new_anchor): Self::Witness<
+        (prev_anchor, old_block, old_height, new_block, new_height, new_anchor): Self::Witness<
             'source,
         >,
         (old_delegation_id, old_nf, old_anchor): <Self::Left as Header>::Data<'source>,
@@ -273,13 +270,13 @@ impl Step for SpendableEpochLift {
             return Err(mock_ragu::Error);
         }
 
-        // Bind prev_chain + old_block to old_anchor.
-        if !check_anchor(prev_chain, old_height, &old_block, &old_anchor) {
+        // Bind prev_anchor + old_block to old_anchor.
+        if !check_anchor(prev_anchor, old_height, &old_block, &old_anchor) {
             return Err(mock_ragu::Error);
         }
 
         // Single chain step from old anchor to new anchor.
-        if !check_anchor(old_anchor.0, new_height, &new_block, &new_anchor) {
+        if !check_anchor(old_anchor, new_height, &new_block, &new_anchor) {
             return Err(mock_ragu::Error);
         }
 

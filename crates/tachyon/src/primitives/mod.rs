@@ -4,7 +4,6 @@ mod block_height;
 mod delegation_id;
 pub mod effect;
 mod epoch;
-mod pool_chain;
 mod sets;
 mod tachygram;
 
@@ -14,9 +13,8 @@ pub use block_height::BlockHeight;
 pub use delegation_id::{DelegationId, DelegationTrapdoor};
 pub use effect::Effect;
 pub use epoch::EpochIndex;
-pub use pool_chain::PoolChain;
 pub use sets::{
-    ActionAcc, ActionCommit, ActionSet, BlockAcc, BlockCommit, BlockSet, PoolAcc, PoolCommit,
-    PoolSet, TachygramAcc, TachygramCommit, TachygramSet,
+    ActionAcc, ActionCommit, ActionSet, BlockAcc, BlockCommit, BlockSet, TachygramAcc,
+    TachygramCommit, TachygramSet,
 };
 pub use tachygram::Tachygram;

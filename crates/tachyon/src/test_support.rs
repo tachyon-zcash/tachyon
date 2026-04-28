@@ -35,8 +35,8 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     primitives::{
-        ActionDigest, Anchor, BlockAcc, BlockCommit, BlockHeight, DelegationId, DelegationTrapdoor,
-        EpochIndex, PoolChain, effect,
+        ActionDigest, Anchor, BlockAcc, BlockHeight, DelegationId, DelegationTrapdoor, EpochIndex,
+        effect,
     },
     stamp::proof::{PROOF_SYSTEM, delegation, spendable},
     value,
@@ -110,26 +110,32 @@ pub fn random_block_with(
 }
 
 pub struct PoolSim {
-    history: Vec<(BlockAcc, PoolChain, BlockHeight)>,
+    /// `(block, prev_anchor, height)`
+    history: Vec<(BlockAcc, Anchor, BlockHeight)>,
+}
+
+fn compute_anchor(prev: Anchor, block: &BlockAcc, height: BlockHeight) -> Anchor {
+    let prev_fp = Fp::from(&prev);
+    let height_fp = Fp::from(u64::from(height.0));
+    let extended = block.0.multiply(&Polynomial::from_roots(&[prev_fp]));
+    Anchor(extended.commit(height_fp))
 }
 
 impl PoolSim {
     pub fn new() -> Self {
-        // Genesis: block 0, empty block set, prev_chain = PoolChain::genesis().
-        let genesis = (
-            BlockSet(Polynomial::from_roots(&[])),
-            PoolChain::genesis(),
-            BlockHeight(0),
-        );
         Self {
-            history: alloc::vec![genesis],
+            history: alloc::vec![(
+                BlockSet(Polynomial::from_roots(&[])),
+                Anchor::pregenesis(),
+                BlockHeight(0),
+            )],
         }
     }
 
     pub fn tip(&self) -> BlockHeight {
         self.history
             .last()
-            .expect("history always has genesis entry")
+            .expect("history always has the height-0 entry")
             .2
     }
 
@@ -143,16 +149,15 @@ impl PoolSim {
             .clone()
     }
 
-    pub fn prev_chain_at(&self, height: BlockHeight) -> PoolChain {
-        self.history[usize::try_from(height.0).expect("fits usize")].1
-    }
-
+    /// Anchor of the block at `height` (post-block).
     pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
         let entry = &self.history[usize::try_from(height.0).expect("fits usize")];
-        let entry_height = entry.2;
-        let height_fp = Fp::from(u64::from(entry_height.0));
-        let block_commit = BlockCommit(entry.0.0.commit(height_fp));
-        Anchor(entry.1.advance(entry_height, &block_commit))
+        compute_anchor(entry.1, &entry.0, entry.2)
+    }
+
+    /// Chain anchor immediately before the block at `height`.
+    pub fn prev_anchor_at(&self, height: BlockHeight) -> Anchor {
+        self.history[usize::try_from(height.0).expect("fits usize")].1
     }
 
     pub fn advance(
@@ -170,20 +175,12 @@ impl PoolSim {
             .collect()
     }
 
-    /// Append a block and advance the chain.
+    /// Append a block at `tip + 1` with prev = the current tip's post-block
+    /// anchor.
     pub fn mine(&mut self, block: &BlockAcc) {
-        let prev = self
-            .history
-            .last()
-            .expect("history always has genesis entry");
-        let prev_height = prev.2;
-        let prev_height_fp = Fp::from(u64::from(prev_height.0));
-        let prev_block_commit = BlockCommit(prev.0.0.commit(prev_height_fp));
-        let new_chain = prev.1.advance(prev_height, &prev_block_commit);
-
-        let height = BlockHeight(prev_height.0 + 1);
-
-        self.history.push((block.clone(), new_chain, height));
+        let prev_anchor = self.anchor();
+        let height = BlockHeight(self.tip().0 + 1);
+        self.history.push((block.clone(), prev_anchor, height));
     }
 }
 
@@ -287,7 +284,7 @@ impl<'source> SyncSim<'source> {
     ) -> Pcd<'source, spendable::SpendableHeader> {
         let (delegation_id, nf, _) = spendable_pcd.data;
         let new_anchor = pool.anchor_at(new_height);
-        let old_prev_chain = pool.prev_chain_at(old_height);
+        let old_prev_anchor = pool.prev_anchor_at(old_height);
         let old_block = pool.block_at(old_height);
         let new_block = pool.block_at(new_height);
         let (proof, ()) = PROOF_SYSTEM
@@ -295,7 +292,7 @@ impl<'source> SyncSim<'source> {
                 rng,
                 &spendable::SpendableLift,
                 (
-                    old_prev_chain,
+                    old_prev_anchor,
                     old_block.into(),
                     old_height,
                     new_block.into(),
@@ -329,13 +326,13 @@ impl<'source> SyncSim<'source> {
 
         // Build a SpendableRollover PCD against the new block.
         let new_block = pool.block_at(new_height);
-        let new_prev_chain = pool.prev_chain_at(new_height);
+        let new_prev_anchor = pool.prev_anchor_at(new_height);
         let (rollover_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 &spendable::SpendableRollover,
                 (
-                    new_prev_chain,
+                    new_prev_anchor,
                     new_block.clone().into(),
                     new_height,
                     new_anchor,
@@ -352,14 +349,14 @@ impl<'source> SyncSim<'source> {
         ));
 
         // Apply the cross-epoch lift.
-        let old_prev_chain = pool.prev_chain_at(old_height);
+        let old_prev_anchor = pool.prev_anchor_at(old_height);
         let old_block = pool.block_at(old_height);
         let (epoch_lift_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 &spendable::SpendableEpochLift,
                 (
-                    old_prev_chain,
+                    old_prev_anchor,
                     old_block.into(),
                     old_height,
                     new_block.into(),
@@ -441,7 +438,7 @@ impl WalletSim {
         Pcd<'source, delegation::NullifierHeader>,
         Pcd<'source, delegation::NullifierHeader>,
         Pcd<'source, spendable::SpendableHeader>,
-        PoolChain,
+        Anchor,
         BlockAcc,
         BlockHeight,
     ) {
@@ -450,7 +447,7 @@ impl WalletSim {
         let (nf_e, nf_e1) =
             ggm_tools::nullifier_pair_from_master(rng, master, trap, height.epoch());
         let spendable_pcd = self.spendable_init(rng, spend_note, trap, pool, height, nf_e.clone());
-        let prev_chain = pool.prev_chain_at(height);
+        let prev_anchor = pool.prev_anchor_at(height);
         let block = pool.block_at(height);
         (
             spend_note,
@@ -458,7 +455,7 @@ impl WalletSim {
             nf_e,
             nf_e1,
             spendable_pcd,
-            prev_chain,
+            prev_anchor,
             block,
             height,
         )
@@ -474,7 +471,7 @@ impl WalletSim {
         nf_pcd: Pcd<'source, delegation::NullifierHeader>,
     ) -> Pcd<'source, spendable::SpendableHeader> {
         let (nf, _epoch, delegation_id) = nf_pcd.data;
-        let prev_chain = pool.prev_chain_at(height);
+        let prev_anchor = pool.prev_anchor_at(height);
         let block = pool.block_at(height);
         let anchor = pool.anchor_at(height);
         let (spendable_proof, ()) = PROOF_SYSTEM
@@ -485,7 +482,7 @@ impl WalletSim {
                     note,
                     self.pak,
                     trap,
-                    prev_chain,
+                    prev_anchor,
                     block.into(),
                     height,
                     anchor,
@@ -508,7 +505,7 @@ impl WalletSim {
             Pcd<'source, delegation::NullifierHeader>,
             Pcd<'source, delegation::NullifierHeader>,
             Pcd<'source, spendable::SpendableHeader>,
-            PoolChain,
+            Anchor,
             BlockAcc,
             BlockHeight,
         )>,
@@ -519,7 +516,7 @@ impl WalletSim {
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut traps = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
-        for (note, trap, nf_now_pcd, nf_next_pcd, spendable_pcd, prev_chain, block, height) in
+        for (note, trap, nf_now_pcd, nf_next_pcd, spendable_pcd, prev_anchor, block, height) in
             spends
         {
             let rcv = value::CommitmentTrapdoor::random(&mut *rng);
@@ -533,7 +530,7 @@ impl WalletSim {
                 nf_now_pcd,
                 nf_next_pcd,
                 spendable_pcd,
-                prev_chain,
+                prev_anchor,
                 block,
                 height,
             ));
