@@ -80,8 +80,7 @@ use crate::{
         ActionCommit, ActionDigest, ActionDigestError, Anchor, DelegationTrapdoor, Tachygram,
         effect,
     },
-    reddsa,
-    serialization,
+    reddsa, serialization,
     stamp::{self, Adjunct, Stamp, Unproven, proof::compute_action_acc},
     value,
 };

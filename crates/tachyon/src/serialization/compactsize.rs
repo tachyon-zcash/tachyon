@@ -150,8 +150,8 @@ impl CompactSize {
 
     /// Parse a [`CompactSize`] from `reader`. Performs no canonical-form or
     /// consensus-bound checks — callers are responsible for invoking
-    /// [`Self::enforce_canon`], [`Self::enforce_max`], or [`Self::enforce_valid`]
-    /// as appropriate.
+    /// [`Self::enforce_canon`], [`Self::enforce_max`], or
+    /// [`Self::enforce_valid`] as appropriate.
     pub(crate) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut flag = [0u8; 1];
         reader.read_exact(&mut flag)?;
@@ -281,7 +281,8 @@ mod tests {
     }
 
     /// Each form boundary: confirm `From<u64>` picks the right variant, the
-    /// encoding matches the spec, and `read` round-trips back to the same variant.
+    /// encoding matches the spec, and `read` round-trips back to the same
+    /// variant.
     #[test]
     fn form_boundary_round_trips() {
         let cases = alloc::vec![
@@ -325,7 +326,8 @@ mod tests {
         }
     }
 
-    /// Form-checked constructors reject one-past the canonical edge in either direction.
+    /// Form-checked constructors reject one-past the canonical edge in either
+    /// direction.
     #[test]
     fn constructors_enforce_canonical_form() {
         CompactSize::one_byte(0).unwrap();
@@ -344,21 +346,35 @@ mod tests {
         CompactSize::eight_bytes(u64::from(u32::MAX) + 1).unwrap();
     }
 
-    /// `enforce_max` rejects values above the consensus bound `MAX_COMPACT_SIZE`.
+    /// `enforce_max` rejects values above the consensus bound
+    /// `MAX_COMPACT_SIZE`.
     #[test]
     fn enforce_max_rejects_above_consensus() {
-        CompactSize::FourBytes(MAX_COMPACT_SIZE + 1).enforce_max().unwrap_err();
+        CompactSize::FourBytes(MAX_COMPACT_SIZE + 1)
+            .enforce_max()
+            .unwrap_err();
         CompactSize::FourBytes(u32::MAX).enforce_max().unwrap_err();
-        CompactSize::EightBytes(u64::from(u32::MAX) + 1).enforce_max().unwrap_err();
-        CompactSize::FourBytes(MAX_COMPACT_SIZE).enforce_max().unwrap();
+        CompactSize::EightBytes(u64::from(u32::MAX) + 1)
+            .enforce_max()
+            .unwrap_err();
+        CompactSize::FourBytes(MAX_COMPACT_SIZE)
+            .enforce_max()
+            .unwrap();
     }
 
-    /// `enforce_canon` rejects values stored in an over-long form per Zcash spec §7.1 p.132.
+    /// `enforce_canon` rejects values stored in an over-long form per Zcash
+    /// spec §7.1 p.132.
     #[test]
     fn enforce_canon_rejects_non_canonical() {
-        CompactSize::TwoBytes(u16::from(MAX_ONE_BYTE)).enforce_canon().unwrap_err();
-        CompactSize::FourBytes(u32::from(u16::MAX)).enforce_canon().unwrap_err();
-        CompactSize::EightBytes(u64::from(u32::MAX)).enforce_canon().unwrap_err();
+        CompactSize::TwoBytes(u16::from(MAX_ONE_BYTE))
+            .enforce_canon()
+            .unwrap_err();
+        CompactSize::FourBytes(u32::from(u16::MAX))
+            .enforce_canon()
+            .unwrap_err();
+        CompactSize::EightBytes(u64::from(u32::MAX))
+            .enforce_canon()
+            .unwrap_err();
     }
 
     /// Truncated inputs: flag byte present but payload missing or short.
@@ -372,7 +388,8 @@ mod tests {
             .unwrap_err();
     }
 
-    /// Trailing bytes after a complete encoding are not consumed and not an error.
+    /// Trailing bytes after a complete encoding are not consumed and not an
+    /// error.
     #[test]
     fn read_ignores_trailing_bytes() {
         let one_byte_with_trailing = [0x00, 0xDE, 0xAD, 0xBE, 0xEF];
