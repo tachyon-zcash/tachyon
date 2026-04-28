@@ -20,17 +20,17 @@ use crate::{
     value,
 };
 
-/// Verify `block` opens `anchor.0` and `prev_chain.advance(...)` matches
-/// `anchor.1`.
-fn check_anchor(prev_chain: PoolChain, block: &BlockSet<Multiset>, anchor: &Anchor) -> bool {
+/// Verify the witnessed `(prev_chain, height, block)` advances to `anchor`.
+/// The chain step is collision-resistant in `(prev_chain, height,
+/// block_commit)`, so this single equality binds all three.
+fn check_anchor(
+    prev_chain: PoolChain,
+    height: BlockHeight,
+    block: &BlockSet<Multiset>,
+    anchor: &Anchor,
+) -> bool {
     let block_commit = BlockCommit(block.0.commit());
-    if anchor.0 != block_commit {
-        return false;
-    }
-    if anchor.1 != prev_chain.advance(&block_commit) {
-        return false;
-    }
-    true
+    anchor.0 == prev_chain.advance(height, &block_commit)
 }
 
 /// Verify `block` has `height.tachygram(prev_chain)` as a root.
@@ -56,14 +56,12 @@ impl Header for StampHeader {
     const SUFFIX: Suffix = Suffix::new(6);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 64);
+        let mut out = Vec::with_capacity(32 + 32 + 32);
         let action_bytes: [u8; 32] = data.0.0.into();
         let tachygram_bytes: [u8; 32] = data.1.0.into();
         out.extend_from_slice(&action_bytes);
         out.extend_from_slice(&tachygram_bytes);
-        let commit_bytes: [u8; 32] = data.2.0.0.into();
-        out.extend_from_slice(&commit_bytes);
-        let chain_bytes: [u8; 32] = data.2.1.into();
+        let chain_bytes: [u8; 32] = data.2.0.into();
         out.extend_from_slice(&chain_bytes);
         out
     }
@@ -145,7 +143,7 @@ impl Step for SpendStamp {
         }
 
         // Bind the witnessed prev_chain + block + height to the right anchor.
-        if !check_anchor(prev_chain, &block, &right_anchor) {
+        if !check_anchor(prev_chain, height, &block, &right_anchor) {
             return Err(mock_ragu::Error);
         }
         if !check_height(&block, prev_chain, height) {
@@ -273,7 +271,7 @@ impl Step for StampLift {
 
         // Bind prev_chain + old_block to old_anchor; prove old_height is in
         // old_block.
-        if !check_anchor(prev_chain, &old_block, &old_anchor) {
+        if !check_anchor(prev_chain, old_height, &old_block, &old_anchor) {
             return Err(mock_ragu::Error);
         }
         if !check_height(&old_block, prev_chain, old_height) {
@@ -282,10 +280,10 @@ impl Step for StampLift {
 
         // Single chain step from old anchor to new anchor; prove new_height
         // is in new_block.
-        if !check_anchor(old_anchor.1, &new_block, &new_anchor) {
+        if !check_anchor(old_anchor.0, new_height, &new_block, &new_anchor) {
             return Err(mock_ragu::Error);
         }
-        if !check_height(&new_block, old_anchor.1, new_height) {
+        if !check_height(&new_block, old_anchor.0, new_height) {
             return Err(mock_ragu::Error);
         }
 

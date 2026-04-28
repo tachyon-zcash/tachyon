@@ -621,9 +621,7 @@ impl Stamped {
         let binding_sig_bytes: [u8; 64] = self.binding_sig.into();
         state.update(&binding_sig_bytes);
 
-        let block_commit_bytes: [u8; 32] = self.stamp.anchor.0.0.into();
-        state.update(&block_commit_bytes);
-        let chain_bytes: [u8; 32] = self.stamp.anchor.1.into();
+        let chain_bytes: [u8; 32] = self.stamp.anchor.0.into();
         state.update(&chain_bytes);
 
         for tg in &self.stamp.tachygrams {

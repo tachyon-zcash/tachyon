@@ -17,7 +17,7 @@ use crate::{
     keys::private,
     note,
     primitives::{
-        ActionCommit, Anchor, BlockAcc, BlockCommit, BlockHeight, DelegationTrapdoor, EpochIndex,
+        ActionCommit, Anchor, BlockAcc, BlockHeight, DelegationTrapdoor, EpochIndex,
         PoolChain, Tachygram, TachygramAcc, TachygramCommit, effect,
     },
     stamp::Stamp,
@@ -532,7 +532,7 @@ fn spendable_init_rejects_nf_present() {
 }
 
 /// SpendableLift rejects when the witnessed `new_anchor` chain doesn't
-/// actually advance from `old_anchor.1` via `new_block`'s commitment.
+/// actually advance from `old_anchor` via `new_block`'s commitment.
 #[test]
 fn spendable_lift_rejects_chain_mismatch() {
     let mut rng = StdRng::seed_from_u64(703);
@@ -552,11 +552,10 @@ fn spendable_lift_rejects_chain_mismatch() {
     pool.advance(1, |_| random_block(&mut rng, 50));
     let new_height = pool.tip();
     let new_block = pool.block_at(new_height);
-    let real_new_anchor = pool.anchor_at(new_height);
 
-    // Forge a new_anchor with the right block_commit but a bogus chain
-    // hash — `check_anchor` must reject because `old_anchor.1.advance` ≠ chain.
-    let bogus_anchor = Anchor(real_new_anchor.0, PoolChain::genesis());
+    // Forge a new_anchor whose chain hash doesn't actually advance from the
+    // input PCD's chain via new_block's commitment.
+    let bogus_anchor = Anchor(PoolChain::genesis());
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
@@ -575,37 +574,6 @@ fn spendable_lift_rejects_chain_mismatch() {
     assert!(
         result.is_err(),
         "SpendableLift must reject a forged new_anchor chain"
-    );
-
-    // Also reject a forged new_anchor with the wrong block_commit.
-    let other_block_commit =
-        BlockCommit(Polynomial::from_roots(&[Fp::from(0x00C0_FFEEu64)]).commit(Fp::ZERO));
-    let bogus_block_commit_anchor = Anchor(other_block_commit, real_new_anchor.1);
-
-    // Re-init the spendable so we have a fresh PCD to feed the second
-    // attempt — the prior `fuse` consumed `spendable_pcd`.
-    let master_pcd_two = user.note_master(&mut rng, note);
-    let nf_pcd_two = nullifier_from_master(&mut rng, master_pcd_two, trap, old_height.epoch());
-    let spendable_pcd_two =
-        user.spendable_init(&mut rng, note, trap, &pool, old_height, nf_pcd_two);
-
-    let result_two = PROOF_SYSTEM.fuse(
-        &mut rng,
-        &spendable::SpendableLift,
-        (
-            old_prev_chain,
-            pool.block_at(old_height).into(),
-            old_height,
-            pool.block_at(new_height).into(),
-            new_height,
-            bogus_block_commit_anchor,
-        ),
-        spendable_pcd_two,
-        Proof::trivial().carry::<()>(()),
-    );
-    assert!(
-        result_two.is_err(),
-        "SpendableLift must reject a forged new_anchor block_commit"
     );
 }
 
@@ -635,21 +603,25 @@ fn spendable_rollover_rejects_new_nf_in_block() {
     let new_nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_1);
     let new_nf = new_nf_pcd.data.0;
 
-    // Construct a block at first-of-epoch-1 height containing the new_nf as
-    // a root — the rollover step queries new_nf in the block and must fail.
-    let new_height = BlockHeight(EPOCH_SIZE);
-    let prev_chain = PoolChain::genesis();
-    let new_block = BlockSet(Polynomial::from_roots(&[
-        Fp::from(&new_nf),
-        Fp::from(&new_height.tachygram(prev_chain)),
-    ]));
-    let block_commit = BlockCommit(new_block.0.commit(Fp::ZERO));
-    let new_anchor = Anchor(block_commit, prev_chain.advance(&block_commit));
+    // Advance through epoch 0, then mine first block of epoch 1 containing
+    // new_nf as a root — rollover queries new_nf in that block and rejects.
+    let mut pool = PoolSim::new();
+    let to_epoch_final = usize::try_from(EPOCH_SIZE - 1 - pool.tip().0).expect("fits");
+    pool.advance(to_epoch_final, |_| random_block(&mut rng, 10));
+    assert!(pool.tip().is_epoch_final());
+    pool.mine(&BlockSet(Polynomial::from_roots(&[Fp::from(&new_nf)])));
+    let new_height = pool.tip();
+    assert_eq!(new_height.epoch().0, 1);
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
         &spendable::SpendableRollover,
-        (prev_chain, new_block.into(), new_height, new_anchor),
+        (
+            pool.prev_chain_at(new_height),
+            pool.block_at(new_height).into(),
+            new_height,
+            pool.anchor_at(new_height),
+        ),
         old_nf_pcd,
         new_nf_pcd,
     );
@@ -691,21 +663,24 @@ fn spendable_rollover_rejects_delegation_id_mismatch() {
     let old_nf_pcd = sync_a.nullifier(&mut rng, id_a, epoch_0);
     let new_nf_pcd = sync_b.nullifier(&mut rng, id_b, epoch_1);
 
-    // Unrelated root + canonical height tachygram so non-membership and
-    // height checks pass; delegation_id check should fire first.
-    let new_height = BlockHeight(EPOCH_SIZE);
-    let prev_chain = PoolChain::genesis();
-    let new_block = BlockSet(Polynomial::from_roots(&[
-        Fp::random(&mut rng),
-        Fp::from(&new_height.tachygram(prev_chain)),
-    ]));
-    let block_commit = BlockCommit(new_block.0.commit(Fp::ZERO));
-    let new_anchor = Anchor(block_commit, prev_chain.advance(&block_commit));
+    // Advance through epoch 0 and into epoch 1; the new block carries an
+    // unrelated root so non-membership and height checks pass and the
+    // delegation_id check fires first.
+    let mut pool = PoolSim::new();
+    let to_first_of_epoch_1 = usize::try_from(EPOCH_SIZE - pool.tip().0).expect("fits");
+    pool.advance(to_first_of_epoch_1, |_| random_block(&mut rng, 10));
+    let new_height = pool.tip();
+    assert_eq!(new_height.epoch().0, 1);
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
         &spendable::SpendableRollover,
-        (prev_chain, new_block.into(), new_height, new_anchor),
+        (
+            pool.prev_chain_at(new_height),
+            pool.block_at(new_height).into(),
+            new_height,
+            pool.anchor_at(new_height),
+        ),
         old_nf_pcd,
         new_nf_pcd,
     );
@@ -736,19 +711,22 @@ fn spendable_rollover_rejects_non_adjacent_epochs() {
     let old_nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_0);
     let new_nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_2);
 
-    let new_height = BlockHeight(2 * EPOCH_SIZE);
-    let prev_chain = PoolChain::genesis();
-    let new_block = BlockSet(Polynomial::from_roots(&[
-        Fp::random(&mut rng),
-        Fp::from(&new_height.tachygram(prev_chain)),
-    ]));
-    let block_commit = BlockCommit(new_block.0.commit(Fp::ZERO));
-    let new_anchor = Anchor(block_commit, prev_chain.advance(&block_commit));
+    // Advance through epochs 0 and 1 into the first block of epoch 2.
+    let mut pool = PoolSim::new();
+    let to_first_of_epoch_2 = usize::try_from(2 * EPOCH_SIZE - pool.tip().0).expect("fits");
+    pool.advance(to_first_of_epoch_2, |_| random_block(&mut rng, 10));
+    let new_height = pool.tip();
+    assert_eq!(new_height.epoch().0, 2);
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
         &spendable::SpendableRollover,
-        (prev_chain, new_block.into(), new_height, new_anchor),
+        (
+            pool.prev_chain_at(new_height),
+            pool.block_at(new_height).into(),
+            new_height,
+            pool.anchor_at(new_height),
+        ),
         old_nf_pcd,
         new_nf_pcd,
     );

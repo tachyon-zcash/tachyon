@@ -17,34 +17,29 @@ use crate::{
     },
 };
 
-fn encode_anchor(anchor: &Anchor) -> [u8; 64] {
-    let mut out = [0u8; 64];
-    let commit_bytes: [u8; 32] = anchor.0.0.into();
-    out[..32].copy_from_slice(&commit_bytes);
-    let chain_bytes: [u8; 32] = anchor.1.into();
-    out[32..].copy_from_slice(&chain_bytes);
-    out
+fn encode_anchor(anchor: &Anchor) -> [u8; 32] {
+    anchor.0.into()
 }
 
 fn encode_spendable(delegation_id: DelegationId, nf: Nullifier, anchor: &Anchor) -> Vec<u8> {
-    let mut out = Vec::with_capacity(32 + 32 + 64);
+    let mut out = Vec::with_capacity(32 + 32 + 32);
     out.extend_from_slice(&Fp::from(&delegation_id).to_repr());
     out.extend_from_slice(&Fp::from(&nf).to_repr());
     out.extend_from_slice(&encode_anchor(anchor));
     out
 }
 
-/// Verify that `block` opens `anchor.0` and `prev_chain.advance(...)` matches
-/// `anchor.1`.
-fn check_anchor(prev_chain: PoolChain, block: &BlockSet<Multiset>, anchor: &Anchor) -> bool {
+/// Verify the witnessed `(prev_chain, height, block)` advances to `anchor`.
+/// The chain step is collision-resistant in `(prev_chain, height,
+/// block_commit)`, so this single equality binds all three.
+fn check_anchor(
+    prev_chain: PoolChain,
+    height: BlockHeight,
+    block: &BlockSet<Multiset>,
+    anchor: &Anchor,
+) -> bool {
     let block_commit = BlockCommit(block.0.commit());
-    if anchor.0 != block_commit {
-        return false;
-    }
-    if anchor.1 != prev_chain.advance(&block_commit) {
-        return false;
-    }
-    true
+    anchor.0 == prev_chain.advance(height, &block_commit)
 }
 
 /// Verify `block` has `height.tachygram(prev_chain)` as a root.
@@ -125,7 +120,7 @@ impl Step for SpendableInit {
             return Err(mock_ragu::Error);
         }
 
-        if !check_anchor(prev_chain, &block, &anchor) {
+        if !check_anchor(prev_chain, height, &block, &anchor) {
             return Err(mock_ragu::Error);
         }
         if !check_height(&block, prev_chain, height) {
@@ -173,7 +168,7 @@ impl Step for SpendableRollover {
             return Err(mock_ragu::Error);
         }
 
-        if !check_anchor(prev_chain, &block, &anchor) {
+        if !check_anchor(prev_chain, height, &block, &anchor) {
             return Err(mock_ragu::Error);
         }
         if !check_height(&block, prev_chain, height) {
@@ -221,7 +216,7 @@ impl Step for SpendableLift {
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         // Bind prev_chain + old_block to old_anchor.
-        if !check_anchor(prev_chain, &old_block, &old_anchor) {
+        if !check_anchor(prev_chain, old_height, &old_block, &old_anchor) {
             return Err(mock_ragu::Error);
         }
         if !check_height(&old_block, prev_chain, old_height) {
@@ -229,10 +224,10 @@ impl Step for SpendableLift {
         }
 
         // Single chain step from the old anchor to the new anchor.
-        if !check_anchor(old_anchor.1, &new_block, &new_anchor) {
+        if !check_anchor(old_anchor.0, new_height, &new_block, &new_anchor) {
             return Err(mock_ragu::Error);
         }
-        if !check_height(&new_block, old_anchor.1, new_height) {
+        if !check_height(&new_block, old_anchor.0, new_height) {
             return Err(mock_ragu::Error);
         }
 
@@ -296,7 +291,7 @@ impl Step for SpendableEpochLift {
         }
 
         // Bind prev_chain + old_block to old_anchor.
-        if !check_anchor(prev_chain, &old_block, &old_anchor) {
+        if !check_anchor(prev_chain, old_height, &old_block, &old_anchor) {
             return Err(mock_ragu::Error);
         }
         if !check_height(&old_block, prev_chain, old_height) {
@@ -304,10 +299,10 @@ impl Step for SpendableEpochLift {
         }
 
         // Single chain step from old anchor to new anchor.
-        if !check_anchor(old_anchor.1, &new_block, &new_anchor) {
+        if !check_anchor(old_anchor.0, new_height, &new_block, &new_anchor) {
             return Err(mock_ragu::Error);
         }
-        if !check_height(&new_block, old_anchor.1, new_height) {
+        if !check_height(&new_block, old_anchor.0, new_height) {
             return Err(mock_ragu::Error);
         }
 

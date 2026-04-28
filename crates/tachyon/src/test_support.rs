@@ -162,8 +162,7 @@ impl PoolSim {
     pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
         let entry = &self.history[usize::try_from(height.0).expect("fits usize")];
         let block_commit = BlockCommit(entry.block.0.commit(Fp::ZERO));
-        let chain = entry.prev_chain.advance(&block_commit);
-        Anchor(block_commit, chain)
+        Anchor(entry.prev_chain.advance(entry.height, &block_commit))
     }
 
     pub fn advance(
@@ -189,7 +188,9 @@ impl PoolSim {
             .last()
             .expect("history always has genesis entry");
         let prev_block_commit = BlockCommit(prev_entry.block.0.commit(Fp::ZERO));
-        let prev_chain_after_prev = prev_entry.prev_chain.advance(&prev_block_commit);
+        let prev_chain_after_prev = prev_entry
+            .prev_chain
+            .advance(prev_entry.height, &prev_block_commit);
 
         let height = BlockHeight(prev_entry.height.0 + 1);
         let height_root = Fp::from(&height.tachygram(prev_chain_after_prev));
