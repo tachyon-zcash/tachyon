@@ -17,8 +17,8 @@ use crate::{
     keys::private,
     note,
     primitives::{
-        ActionCommit, Anchor, BlockAcc, BlockHeight, DelegationTrapdoor, EpochIndex,
-        PoolChain, Tachygram, TachygramAcc, TachygramCommit, effect,
+        ActionCommit, Anchor, BlockAcc, BlockHeight, DelegationTrapdoor, EpochIndex, PoolChain,
+        Tachygram, TachygramAcc, TachygramCommit, effect,
     },
     stamp::Stamp,
     test_support::{

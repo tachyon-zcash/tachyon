@@ -30,23 +30,18 @@ fn encode_spendable(delegation_id: DelegationId, nf: Nullifier, anchor: &Anchor)
 }
 
 /// Verify the witnessed `(prev_chain, height, block)` advances to `anchor`.
-/// The chain step is collision-resistant in `(prev_chain, height,
-/// block_commit)`, so this single equality binds all three.
+/// Height is the Pedersen blinding trapdoor of `block_commit`, so this single
+/// equality binds `(prev_chain, height, block)` — the commitment scheme is
+/// binding in both the polynomial and the blinding factor.
 fn check_anchor(
     prev_chain: PoolChain,
     height: BlockHeight,
     block: &BlockSet<Multiset>,
     anchor: &Anchor,
 ) -> bool {
-    let block_commit = BlockCommit(block.0.commit());
+    let height_fp = Fp::from(u64::from(height.0));
+    let block_commit = BlockCommit(block.0.commit_with(height_fp));
     anchor.0 == prev_chain.advance(height, &block_commit)
-}
-
-/// Verify `block` has `height.tachygram(prev_chain)` as a root.
-/// Together with `check_anchor`, this binds the witnessed `(prev_chain,
-/// height)` pair to the anchor's block.
-fn check_height(block: &BlockSet<Multiset>, prev_chain: PoolChain, height: BlockHeight) -> bool {
-    block.0.query(Fp::from(&height.tachygram(prev_chain))) == Fp::ZERO
 }
 
 /// Header attesting a note is spendable at a specific anchor.
@@ -123,9 +118,6 @@ impl Step for SpendableInit {
         if !check_anchor(prev_chain, height, &block, &anchor) {
             return Err(mock_ragu::Error);
         }
-        if !check_height(&block, prev_chain, height) {
-            return Err(mock_ragu::Error);
-        }
         if epoch != height.epoch() {
             return Err(mock_ragu::Error);
         }
@@ -169,9 +161,6 @@ impl Step for SpendableRollover {
         }
 
         if !check_anchor(prev_chain, height, &block, &anchor) {
-            return Err(mock_ragu::Error);
-        }
-        if !check_height(&block, prev_chain, height) {
             return Err(mock_ragu::Error);
         }
         if new_epoch != height.epoch() {
@@ -219,15 +208,9 @@ impl Step for SpendableLift {
         if !check_anchor(prev_chain, old_height, &old_block, &old_anchor) {
             return Err(mock_ragu::Error);
         }
-        if !check_height(&old_block, prev_chain, old_height) {
-            return Err(mock_ragu::Error);
-        }
 
         // Single chain step from the old anchor to the new anchor.
         if !check_anchor(old_anchor.0, new_height, &new_block, &new_anchor) {
-            return Err(mock_ragu::Error);
-        }
-        if !check_height(&new_block, old_anchor.0, new_height) {
             return Err(mock_ragu::Error);
         }
 
@@ -294,15 +277,9 @@ impl Step for SpendableEpochLift {
         if !check_anchor(prev_chain, old_height, &old_block, &old_anchor) {
             return Err(mock_ragu::Error);
         }
-        if !check_height(&old_block, prev_chain, old_height) {
-            return Err(mock_ragu::Error);
-        }
 
         // Single chain step from old anchor to new anchor.
         if !check_anchor(old_anchor.0, new_height, &new_block, &new_anchor) {
-            return Err(mock_ragu::Error);
-        }
-        if !check_height(&new_block, old_anchor.0, new_height) {
             return Err(mock_ragu::Error);
         }
 

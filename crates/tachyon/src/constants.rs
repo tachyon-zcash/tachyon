@@ -80,16 +80,6 @@ pub const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 /// per-block history without iterating it.
 pub const POOL_CHAIN_DOMAIN: &[u8; 16] = b"Tachyon-PoolChan";
 
-/// Poseidon domain tag for the canonical block-height tachygram.
-///
-/// Each block's `BlockSet` carries `Poseidon(BLOCK_HEIGHT_DOMAIN, prev_chain,
-/// height)` as a root. Circuits witness `height: u32`, recompute the
-/// tachygram, prove membership, then use `height` for epoch arithmetic —
-/// height is no longer a free public input on `Anchor`. Since height
-/// uniquely determines its epoch, no separate epoch-boundary sentinel is
-/// needed.
-pub const BLOCK_HEIGHT_DOMAIN: &[u8; 16] = b"Tachyon-BlkHight";
-
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)
 pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
 

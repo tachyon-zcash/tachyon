@@ -63,8 +63,7 @@ pub fn action_digests(actions: &[Action]) -> Vec<ActionDigest> {
         .collect()
 }
 
-/// Build a block with `size` random tachygrams. The canonical height
-/// tachygram is added by [`PoolSim::mine`] — callers don't include it.
+/// Build a block with `size` random elements.
 pub fn random_block(rng: &mut (impl RngCore + CryptoRng), size: usize) -> BlockAcc {
     let roots: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
         .take(size)
@@ -110,31 +109,20 @@ pub fn random_block_with(
     BlockSet(Polynomial::from_roots(&roots))
 }
 
-#[derive(Clone, Debug)]
-struct HistoryEntry {
-    block: BlockAcc,
-    prev_chain: PoolChain,
-    height: BlockHeight,
-}
-
 pub struct PoolSim {
-    history: Vec<HistoryEntry>,
+    history: Vec<(BlockAcc, PoolChain, BlockHeight)>,
 }
 
 impl PoolSim {
     pub fn new() -> Self {
-        // Genesis: a single block at height 0 carrying only the canonical
-        // height tachygram, prev_chain = PoolChain::genesis().
-        let height = BlockHeight(0);
-        let prev_chain = PoolChain::genesis();
-        let height_root = Fp::from(&height.tachygram(prev_chain));
-        let block = BlockSet(Polynomial::from_roots(&[height_root]));
+        // Genesis: block 0, empty block set, prev_chain = PoolChain::genesis().
+        let genesis = (
+            BlockSet(Polynomial::from_roots(&[])),
+            PoolChain::genesis(),
+            BlockHeight(0),
+        );
         Self {
-            history: alloc::vec![HistoryEntry {
-                block,
-                prev_chain,
-                height,
-            }],
+            history: alloc::vec![genesis],
         }
     }
 
@@ -142,7 +130,7 @@ impl PoolSim {
         self.history
             .last()
             .expect("history always has genesis entry")
-            .height
+            .2
     }
 
     pub fn anchor(&self) -> Anchor {
@@ -151,18 +139,20 @@ impl PoolSim {
 
     pub fn block_at(&self, height: BlockHeight) -> BlockAcc {
         self.history[usize::try_from(height.0).expect("fits usize")]
-            .block
+            .0
             .clone()
     }
 
     pub fn prev_chain_at(&self, height: BlockHeight) -> PoolChain {
-        self.history[usize::try_from(height.0).expect("fits usize")].prev_chain
+        self.history[usize::try_from(height.0).expect("fits usize")].1
     }
 
     pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
         let entry = &self.history[usize::try_from(height.0).expect("fits usize")];
-        let block_commit = BlockCommit(entry.block.0.commit(Fp::ZERO));
-        Anchor(entry.prev_chain.advance(entry.height, &block_commit))
+        let entry_height = entry.2;
+        let height_fp = Fp::from(u64::from(entry_height.0));
+        let block_commit = BlockCommit(entry.0.0.commit(height_fp));
+        Anchor(entry.1.advance(entry_height, &block_commit))
     }
 
     pub fn advance(
@@ -176,31 +166,24 @@ impl PoolSim {
         }
         self.history[start_idx..]
             .iter()
-            .map(|entry| entry.block.clone())
+            .map(|entry| entry.0.clone())
             .collect()
     }
 
-    /// Append a block. `PoolSim` automatically embeds the canonical height
-    /// tachygram and advances the chain.
+    /// Append a block and advance the chain.
     pub fn mine(&mut self, block: &BlockAcc) {
-        let prev_entry = self
+        let prev = self
             .history
             .last()
             .expect("history always has genesis entry");
-        let prev_block_commit = BlockCommit(prev_entry.block.0.commit(Fp::ZERO));
-        let prev_chain_after_prev = prev_entry
-            .prev_chain
-            .advance(prev_entry.height, &prev_block_commit);
+        let prev_height = prev.2;
+        let prev_height_fp = Fp::from(u64::from(prev_height.0));
+        let prev_block_commit = BlockCommit(prev.0.0.commit(prev_height_fp));
+        let new_chain = prev.1.advance(prev_height, &prev_block_commit);
 
-        let height = BlockHeight(prev_entry.height.0 + 1);
-        let height_root = Fp::from(&height.tachygram(prev_chain_after_prev));
-        let block_with_height = BlockSet(block.0.multiply(&Polynomial::from_roots(&[height_root])));
+        let height = BlockHeight(prev_height.0 + 1);
 
-        self.history.push(HistoryEntry {
-            block: block_with_height,
-            prev_chain: prev_chain_after_prev,
-            height,
-        });
+        self.history.push((block.clone(), new_chain, height));
     }
 }
 
@@ -243,11 +226,7 @@ impl<'source> SyncSim<'source> {
     /// Advance every maintained spendable to `pool.tip()`, chaining
     /// same-epoch and cross-epoch lifts one block at a time.
     pub fn lift(&mut self, rng: &mut (impl RngCore + CryptoRng), pool: &PoolSim) {
-        let ids: Vec<DelegationId> = self
-            .spendables
-            .iter()
-            .map(|entry| entry.0.data.0)
-            .collect();
+        let ids: Vec<DelegationId> = self.spendables.iter().map(|entry| entry.0.data.0).collect();
         for id in ids {
             self.lift_one(rng, id, pool);
         }

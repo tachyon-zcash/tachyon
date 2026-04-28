@@ -21,21 +21,18 @@ use crate::{
 };
 
 /// Verify the witnessed `(prev_chain, height, block)` advances to `anchor`.
-/// The chain step is collision-resistant in `(prev_chain, height,
-/// block_commit)`, so this single equality binds all three.
+/// Height is the Pedersen blinding trapdoor of `block_commit`, so this single
+/// equality binds `(prev_chain, height, block)` — the commitment scheme is
+/// binding in both the polynomial and the blinding factor.
 fn check_anchor(
     prev_chain: PoolChain,
     height: BlockHeight,
     block: &BlockSet<Multiset>,
     anchor: &Anchor,
 ) -> bool {
-    let block_commit = BlockCommit(block.0.commit());
+    let height_fp = Fp::from(u64::from(height.0));
+    let block_commit = BlockCommit(block.0.commit_with(height_fp));
     anchor.0 == prev_chain.advance(height, &block_commit)
-}
-
-/// Verify `block` has `height.tachygram(prev_chain)` as a root.
-fn check_height(block: &BlockSet<Multiset>, prev_chain: PoolChain, height: BlockHeight) -> bool {
-    block.0.query(Fp::from(&height.tachygram(prev_chain))) == Fp::ZERO
 }
 
 /// Header for a stamp, representing either a single action or many
@@ -144,9 +141,6 @@ impl Step for SpendStamp {
 
         // Bind the witnessed prev_chain + block + height to the right anchor.
         if !check_anchor(prev_chain, height, &block, &right_anchor) {
-            return Err(mock_ragu::Error);
-        }
-        if !check_height(&block, prev_chain, height) {
             return Err(mock_ragu::Error);
         }
         if epoch != height.epoch() {
@@ -269,21 +263,13 @@ impl Step for StampLift {
             return Err(mock_ragu::Error);
         }
 
-        // Bind prev_chain + old_block to old_anchor; prove old_height is in
-        // old_block.
+        // Bind prev_chain + old_block to old_anchor.
         if !check_anchor(prev_chain, old_height, &old_block, &old_anchor) {
             return Err(mock_ragu::Error);
         }
-        if !check_height(&old_block, prev_chain, old_height) {
-            return Err(mock_ragu::Error);
-        }
 
-        // Single chain step from old anchor to new anchor; prove new_height
-        // is in new_block.
+        // Single chain step from old anchor to new anchor.
         if !check_anchor(old_anchor.0, new_height, &new_block, &new_anchor) {
-            return Err(mock_ragu::Error);
-        }
-        if !check_height(&new_block, old_anchor.0, new_height) {
             return Err(mock_ragu::Error);
         }
 
