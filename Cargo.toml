@@ -67,7 +67,6 @@ return_and_then = "forbid"
 
 # -- forbid: type coercion ---------------------------------------------------
 # use From/TryFrom.
-as_conversions = "forbid"
 as_underscore = "forbid"
 as_pointer_underscore = "forbid"
 fn_to_numeric_cast_any = "forbid" # casting function pointers to integers is never appropriate.
@@ -135,6 +134,7 @@ rc_mutex = "forbid"
 
 # -- deny: restrictions (may need localized #[expect]) -----------------------
 absolute_paths = "deny"
+as_conversions = "deny"
 assertions_on_result_states = "deny"
 big_endian_bytes = "deny"
 cfg_not_test = "deny"
