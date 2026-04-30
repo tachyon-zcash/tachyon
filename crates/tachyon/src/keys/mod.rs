@@ -187,4 +187,22 @@ mod tests {
 
         assert_eq!(rk_from_signer, rk_from_prover);
     }
+
+    #[test]
+    fn debug_spending_key_redacts_bytes() {
+        let sk = private::SpendingKey::from([0xAB; 32]);
+        let dbg = alloc::format!("{sk:?}");
+        assert!(dbg.contains("SpendingKey"), "must name the type");
+        assert!(!dbg.contains("AB"), "must not leak key bytes");
+        assert!(!dbg.contains("171"), "must not leak decimal bytes");
+    }
+
+    #[test]
+    fn debug_nullifier_key_redacts_value() {
+        let nk = NullifierKey(Fp::from(0xDEADu64));
+        let dbg = alloc::format!("{nk:?}");
+        assert!(dbg.contains("NullifierKey"), "must name the type");
+        assert!(!dbg.contains("DEAD"), "must not leak field element");
+        assert!(!dbg.contains("57005"), "must not leak decimal value");
+    }
 }

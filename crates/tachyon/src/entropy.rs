@@ -4,7 +4,7 @@
 //! Combined with a note commitment it deterministically derives an
 //! [`ActionRandomizer`].
 
-use core::marker::PhantomData;
+use core::{any::type_name, fmt, marker::PhantomData};
 
 use ff::{FromUniformBytes as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
@@ -26,9 +26,15 @@ use crate::{note, primitives::Effect};
 /// (possibly untrusted) device constructs the proof later using $\theta$
 /// and $\mathsf{cm}$ to recover $\alpha$
 /// ("Tachyaction at a Distance", Bowe 2025).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
 pub struct ActionEntropy([u8; 32]);
+
+impl fmt::Debug for ActionEntropy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ActionEntropy").finish_non_exhaustive()
+    }
+}
 
 impl ActionEntropy {
     /// Parse action entropy from 32 bytes.
@@ -66,8 +72,16 @@ mod sealed {
 /// - [`ActionRandomizer<Spend>`]: $\mathsf{rsk} = \mathsf{ask} + \alpha$,
 ///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
 /// - [`ActionRandomizer<Output>`]: $\mathsf{rsk} = \alpha$.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct ActionRandomizer<S: sealed::RandomizerState>(pub(crate) Fq, pub(crate) PhantomData<S>);
+
+impl<S: sealed::RandomizerState> fmt::Debug for ActionRandomizer<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ActionRandomizer")
+            .field("state", &type_name::<S>())
+            .finish_non_exhaustive()
+    }
+}
 
 impl<S: sealed::RandomizerState> From<ActionRandomizer<S>> for Fq {
     fn from(randomizer: ActionRandomizer<S>) -> Self {
@@ -134,5 +148,26 @@ mod tests {
         // Sensitive: different theta
         let other: Fq = theta_b.randomizer::<effect::Spend>(&cm).into();
         assert_ne!(first, other);
+    }
+
+    #[test]
+    fn debug_entropy_redacts_bytes() {
+        let theta = ActionEntropy::from_bytes([0xAB; 32]);
+        let dbg = alloc::format!("{theta:?}");
+        assert!(dbg.contains("ActionEntropy"), "must name the type");
+        assert!(!dbg.contains("AB"), "must not leak entropy bytes");
+        assert!(!dbg.contains("171"), "must not leak entropy bytes");
+    }
+
+    #[test]
+    fn debug_randomizer_redacts_scalar() {
+        let mut rng = StdRng::seed_from_u64(200);
+        let theta = ActionEntropy::random(&mut rng);
+        let cm = note::Commitment::from(&Fp::random(&mut rng));
+        let alpha = theta.randomizer::<effect::Spend>(&cm);
+        let dbg = alloc::format!("{alpha:?}");
+        assert!(dbg.contains("ActionRandomizer"), "must name the type");
+        // The scalar value must not appear; the state type name should.
+        assert!(dbg.contains("Spend"), "must show type parameter");
     }
 }

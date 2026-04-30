@@ -3,7 +3,7 @@
 //! A value commitment hides the value transferred in an action:
 //! `cv = [v]V + [rcv]R` where `rcv` is the [`CommitmentTrapdoor`].
 
-use core::{iter, ops, ops::Neg as _};
+use core::{fmt, iter, ops, ops::Neg as _};
 
 use ff::{Field as _, PrimeField as _};
 use lazy_static::lazy_static;
@@ -42,8 +42,14 @@ lazy_static! {
 /// An $\mathbb{F}_q$ element (Pallas scalar field, 32 bytes). Lives
 /// in the scalar field because $\mathsf{rcv}$ is used as a scalar in
 /// point multiplication $[\mathsf{rcv}]\,\mathcal{R}$.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct CommitmentTrapdoor(Fq);
+
+impl fmt::Debug for CommitmentTrapdoor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
+    }
+}
 
 impl CommitmentTrapdoor {
     /// Attempt to parse a value commitment trapdoor from 32 bytes.
@@ -115,8 +121,14 @@ impl From<CommitmentTrapdoor> for Fq {
 /// ## Type representation
 ///
 /// An EpAffine (Pallas affine curve point, 32 compressed bytes).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Commitment(pub(super) EpAffine);
+
+impl fmt::Debug for Commitment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Commitment").finish_non_exhaustive()
+    }
+}
 
 impl Commitment {
     /// Attempt to parse a value commitment from 32 compressed bytes.
@@ -216,5 +228,21 @@ mod tests {
         let expected: EpAffine = (*VALUE_COMMIT_R * rcv_sum).into();
 
         assert_eq!(remainder, Commitment(expected));
+    }
+
+    #[test]
+    fn debug_value_trapdoor_redacts_scalar() {
+        let rcv = CommitmentTrapdoor(Fq::from(0xFACEu64));
+        let dbg = alloc::format!("{rcv:?}");
+        assert!(dbg.contains("CommitmentTrapdoor"), "must name the type");
+        assert!(!dbg.contains("FACE"), "must not leak scalar");
+        assert!(!dbg.contains("64206"), "must not leak decimal value");
+    }
+
+    #[test]
+    fn debug_value_commitment_redacts_point() {
+        let cv = Commitment::balance(100);
+        let dbg = alloc::format!("{cv:?}");
+        assert!(dbg.contains("Commitment"), "must name the type");
     }
 }
