@@ -106,16 +106,16 @@ impl Step for SpendableInit {
         }
 
         if pool.0.commit() != anchor.1.0 {
-            return Err(mock_ragu::Error("SpendableInit: pool must commit to anchor"));
+            return Err(mock_ragu::Error(
+                "SpendableInit: pool must commit to anchor",
+            ));
         }
 
         if pool.0.query(Fp::from(cm_tg)) != Fp::ZERO {
             return Err(mock_ragu::Error("SpendableInit: cm not in pool"));
         }
         if pool.0.query(Fp::from(nf)) == Fp::ZERO {
-            return Err(mock_ragu::Error(
-                "SpendableInit: nullifier already in pool",
-            ));
+            return Err(mock_ragu::Error("SpendableInit: nullifier already in pool"));
         }
 
         Ok(((nf, anchor), ()))

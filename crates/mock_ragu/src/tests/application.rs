@@ -235,15 +235,9 @@ fn different_merge_trees_same_header() {
         .finalize()
         .expect("finalize");
 
-    let (pa, ()) = app
-        .seed(&mut thread_rng(), SeedStep, 1u64)
-        .expect("seed a");
-    let (pb, ()) = app
-        .seed(&mut thread_rng(), SeedStep, 2u64)
-        .expect("seed b");
-    let (pc, ()) = app
-        .seed(&mut thread_rng(), SeedStep, 3u64)
-        .expect("seed c");
+    let (pa, ()) = app.seed(&mut thread_rng(), SeedStep, 1u64).expect("seed a");
+    let (pb, ()) = app.seed(&mut thread_rng(), SeedStep, 2u64).expect("seed b");
+    let (pc, ()) = app.seed(&mut thread_rng(), SeedStep, 3u64).expect("seed c");
 
     // Tree shape 1: fuse(fuse(a, b), c)
     let pcd_a1 = pa.clone().carry::<TestHeader>(TestHeaderData { value: 1 });

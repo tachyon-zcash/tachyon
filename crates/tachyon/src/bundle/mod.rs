@@ -91,19 +91,6 @@ enum BundleState {
     Stripped = 0b0000_0010,
 }
 
-impl TryFrom<u8> for BundleState {
-    type Error = ();
-
-    fn try_from(byte: u8) -> Result<Self, Self::Error> {
-        match byte {
-            | 0b0000_0000 => Ok(Self::NoBundle),
-            | 0b0000_0001 => Ok(Self::Stamped),
-            | 0b0000_0010 => Ok(Self::Stripped),
-            | _other => Err(()),
-        }
-    }
-}
-
 impl From<BundleState> for u8 {
     fn from(state: BundleState) -> Self {
         match state {
@@ -731,8 +718,17 @@ impl From<Signature> for [u8; 64] {
 fn read_bundle_head<R: Read>(mut reader: R) -> io::Result<BundleState> {
     let mut byte = [0u8; 1];
     reader.read_exact(&mut byte)?;
-    BundleState::try_from(byte[0])
-        .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "invalid bundle state"))
+    match byte[0] {
+        | 0b0000_0000 => Ok(BundleState::NoBundle),
+        | 0b0000_0001 => Ok(BundleState::Stamped),
+        | 0b0000_0010 => Ok(BundleState::Stripped),
+        | _other => {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid bundle state",
+            ))
+        },
+    }
 }
 
 /// Read bundle fields: value balance, action descriptors, action sigs,
@@ -743,7 +739,12 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Sig
     let value_balance = i64::from_le_bytes(vb_bytes);
 
     let n_actions =
-        usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(io::Error::other)?;
+        usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "actions vector length exceeds usize",
+            )
+        })?;
 
     let mut descriptors = Vec::with_capacity(n_actions);
     for _ in 0..n_actions {
@@ -808,7 +809,12 @@ fn write_bundle_body<W: Write>(
 
     serialization::write_compactsize(
         &mut writer,
-        u64::try_from(actions.len()).map_err(io::Error::other)?,
+        u64::try_from(actions.len()).map_err(|_err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "actions vector length exceeds u64",
+            )
+        })?,
     )?;
     for action in actions {
         serialization::write_ep_affine(&mut writer, &action.cv.0)?;
