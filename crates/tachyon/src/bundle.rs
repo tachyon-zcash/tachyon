@@ -832,8 +832,8 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Sig
     reader.read_exact(&mut vb_bytes)?;
     let value_balance = i64::from_le_bytes(vb_bytes);
 
-    let n_actions =
-        usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(io::Error::other)?;
+    let n_actions = usize::try_from(serialization::read_compactsize(&mut reader)?)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "n_actions exceeds usize"))?;
 
     let mut descriptors = Vec::with_capacity(n_actions);
     for _ in 0..n_actions {
@@ -898,7 +898,8 @@ fn write_bundle_body<W: Write>(
 
     serialization::write_compactsize(
         &mut writer,
-        u64::try_from(actions.len()).map_err(io::Error::other)?,
+        u64::try_from(actions.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "actions.len() exceeds u64"))?,
     )?;
     for action in actions {
         serialization::write_ep_affine(&mut writer, &action.cv.0)?;
