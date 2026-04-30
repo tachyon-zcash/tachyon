@@ -10,7 +10,7 @@
 //! `GGM_ARITY^GGM_DEPTH == GGM_MAX_INDEX + 1`.
 
 use alloc::vec::Vec;
-use core::{num::NonZeroU8, ops::RangeInclusive};
+use core::{fmt, num::NonZeroU8, ops::RangeInclusive};
 
 use ff::PrimeField as _;
 use pasta_curves::Fp;
@@ -57,8 +57,14 @@ pub const GGM_TREE_DEPTH: u8 = GGM_MAX_INDEX.trailing_ones() as u8 / GGM_CHUNK_S
 ///              ├── nf = F_mk(flavor)     nullifier for a specific epoch
 ///              └── psi_t = GGM(mk, t)    prefix key for epochs e ≤ t (OSS)
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct NoteMasterKey(pub(crate) Fp);
+
+impl fmt::Debug for NoteMasterKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NoteMasterKey").finish_non_exhaustive()
+    }
+}
 
 impl NoteMasterKey {
     /// Descend one level from the root of the GGM tree.
@@ -128,7 +134,7 @@ impl From<NoteMasterKey> for [u8; 32] {
 /// At depth `d` there are `GGM_ARITY^d` nodes. Node `i` covers the contiguous
 /// epoch range of size `GGM_ARITY^(GGM_DEPTH - d)`. At depth
 /// `GGM_DEPTH`, a key is a leaf whose `index` equals its single epoch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct NotePrefixedKey {
     /// GGM tree node value.
     pub(crate) inner: Fp,
@@ -136,6 +142,15 @@ pub struct NotePrefixedKey {
     pub(crate) depth: NonZeroU8,
     /// Node index at this depth.
     pub(crate) index: u32,
+}
+
+impl fmt::Debug for NotePrefixedKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NotePrefixedKey")
+            .field("depth", &self.depth)
+            .field("index", &self.index)
+            .finish_non_exhaustive()
+    }
 }
 
 impl NotePrefixedKey {
@@ -512,5 +527,24 @@ mod tests {
         assert!(!cover_candidates(0..=max).is_empty());
         assert!(!cover_candidates(max..=max).is_empty());
         assert!(!cover_candidates(42u32..=max).is_empty());
+    }
+
+    #[test]
+    fn debug_master_key_redacts_value() {
+        let key = NoteMasterKey(Fp::from(0xDEAD_BEEFu64));
+        let dbg = alloc::format!("{key:?}");
+        assert!(dbg.contains("NoteMasterKey"), "must name the type");
+        assert!(!dbg.contains("DEAD"), "must not leak field element");
+        assert!(!dbg.contains("dead"), "must not leak field element");
+    }
+
+    #[test]
+    fn debug_prefixed_key_shows_coordinates_hides_inner() {
+        let root = NoteMasterKey(Fp::from(1u64));
+        let prefix = root.step(0);
+        let dbg = alloc::format!("{prefix:?}");
+        assert!(dbg.contains("NotePrefixedKey"), "must name the type");
+        assert!(dbg.contains("depth"), "must show depth");
+        assert!(dbg.contains("index"), "must show index");
     }
 }
