@@ -8,7 +8,7 @@
 
 use alloc::vec::Vec;
 
-use core2::io::{self, Read, Write};
+use corez::io::{self, Read, Write};
 use ff::PrimeField as _;
 use pasta_curves::{EpAffine, Fp, Fq, group::GroupEncoding as _};
 
@@ -50,7 +50,8 @@ pub(crate) fn read_fp<R: Read>(mut reader: R) -> io::Result<Fp> {
 }
 
 pub(crate) fn read_fp_list<R: Read>(mut reader: R) -> io::Result<Vec<Fp>> {
-    let n = usize::try_from(read_compactsize(&mut reader)?).map_err(io::Error::other)?;
+    let n = usize::try_from(read_compactsize(&mut reader)?)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     let mut fp_list = Vec::with_capacity(n);
     for _ in 0..n {
         let fp = read_fp(&mut reader)?;
@@ -62,7 +63,7 @@ pub(crate) fn read_fp_list<R: Read>(mut reader: R) -> io::Result<Vec<Fp>> {
 pub(crate) fn write_fp_list<W: Write>(mut writer: W, fp_list: &[Fp]) -> io::Result<()> {
     write_compactsize(
         &mut writer,
-        u64::try_from(fp_list.len()).map_err(io::Error::other)?,
+        u64::try_from(fp_list.len()).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?,
     )?;
     for fp in fp_list {
         write_fp(&mut writer, fp)?;
