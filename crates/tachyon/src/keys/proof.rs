@@ -80,3 +80,52 @@ impl SpendValidatingKey {
         public::ActionVerificationKey(self.0.randomize(&alpha.0))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ff::Field as _;
+    use pasta_curves::Fp;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use crate::{
+        entropy::ActionEntropy,
+        keys::private,
+        note::{self, Note},
+        primitives::effect,
+    };
+
+    /// pak.derive_payment_key() must equal sk.derive_payment_key().
+    #[test]
+    fn pak_payment_key_matches_sk() {
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let pak = sk.derive_proof_private();
+        assert_eq!(pak.derive_payment_key().0, sk.derive_payment_key().0);
+    }
+
+    /// SpendValidatingKey.derive_action_public(alpha) must agree with
+    /// ActionSigningKey<Spend>.derive_action_public() for the same alpha.
+    #[test]
+    fn svk_rk_matches_signer_rk() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let pak = sk.derive_proof_private();
+
+        let note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(1000u64),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+        };
+        let theta = ActionEntropy::random(&mut rng);
+        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+
+        let rk_prover: [u8; 32] = pak.ak.derive_action_public(&alpha).0.into();
+        let rk_signer: [u8; 32] = ask
+            .derive_action_private(&alpha)
+            .derive_action_public()
+            .0
+            .into();
+        assert_eq!(rk_prover, rk_signer);
+    }
+}

@@ -156,3 +156,76 @@ impl PartialEq for BindingVerificationKey {
     reason = "default assert_receiver_is_total_eq is correct"
 )]
 impl Eq for BindingVerificationKey {}
+
+#[cfg(test)]
+mod tests {
+    use ff::Field as _;
+    use pasta_curves::Fp;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use crate::{
+        entropy::ActionEntropy,
+        keys::private,
+        note::{self, Note},
+        primitives::effect,
+        value,
+    };
+
+    use super::*;
+
+    /// ActionVerificationKey serialization round-trip: key → bytes → key.
+    #[test]
+    fn action_verification_key_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(1000u64),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+        };
+        let theta = ActionEntropy::random(&mut rng);
+        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let rsk = ask.derive_action_private(&alpha);
+        let rk = rsk.derive_action_public();
+
+        let bytes: [u8; 32] = rk.into();
+        let recovered = ActionVerificationKey::try_from(bytes).unwrap();
+        assert_eq!(rk, recovered);
+    }
+
+    /// Invalid bytes must be rejected by ActionVerificationKey::try_from.
+    #[test]
+    fn action_verification_key_rejects_invalid_bytes() {
+        ActionVerificationKey::try_from([0xFFu8; 32]).unwrap_err();
+    }
+
+    /// derive_bvk from public data must match signer's bvk.
+    #[test]
+    fn derive_bvk_matches_signer() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let rcv_a = value::CommitmentTrapdoor::random(&mut rng);
+        let rcv_b = value::CommitmentTrapdoor::random(&mut rng);
+        let cv_a = rcv_a.commit(100);
+        let cv_b = rcv_b.commit(-100);
+
+        let bsk = private::BindingSigningKey::from([rcv_a, rcv_b].as_slice());
+        let bvk_signer = bsk.derive_binding_public();
+        let bvk_verifier = BindingVerificationKey::from(derive_bvk([cv_a, cv_b].into_iter(), 0));
+
+        assert_eq!(bvk_signer, bvk_verifier);
+    }
+
+    /// Binding signature verification must fail with wrong sighash.
+    #[test]
+    fn binding_signature_rejects_wrong_sighash() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let rcv = value::CommitmentTrapdoor::random(&mut rng);
+        let bsk = private::BindingSigningKey::from([rcv].as_slice());
+        let bvk = bsk.derive_binding_public();
+
+        let sig = bsk.sign(&mut rng, &[0xAAu8; 32]);
+        bvk.verify(&[0xBBu8; 32], &sig).unwrap_err();
+    }
+}

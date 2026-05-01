@@ -112,3 +112,126 @@ impl From<Signature> for [u8; 64] {
         <[u8; 64]>::from(sig.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ff::Field as _;
+    use pasta_curves::Fp;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use crate::{
+        entropy::ActionEntropy,
+        keys::{private, public},
+        note::{self, Note},
+        primitives::effect,
+        value,
+    };
+
+    use super::*;
+
+    fn test_note(rng: &mut impl rand::RngCore) -> Note {
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(1000u64),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut *rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut *rng)),
+        }
+    }
+
+    /// Spend plan rk must equal ask.derive_action_private(alpha).derive_action_public().
+    #[test]
+    fn spend_plan_rk_matches_derivation() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let note = test_note(&mut rng);
+        let theta = ActionEntropy::random(&mut rng);
+        let rcv = value::CommitmentTrapdoor::random(&mut rng);
+
+        let plan = Plan::spend(note, theta, rcv, |alpha| {
+            ask.derive_action_private(&alpha).derive_action_public()
+        });
+
+        // Independently derive the expected rk.
+        let cm = note.commitment();
+        let alpha = theta.randomizer::<effect::Spend>(&cm);
+        let expected_rk = ask.derive_action_private(&alpha).derive_action_public();
+
+        assert_eq!(plan.rk, expected_rk);
+    }
+
+    /// Output plan rk must equal [alpha]G (no ask involved).
+    #[test]
+    fn output_plan_rk_is_alpha_g() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let note = test_note(&mut rng);
+        let theta = ActionEntropy::random(&mut rng);
+        let rcv = value::CommitmentTrapdoor::random(&mut rng);
+
+        let plan = Plan::output(note, theta, rcv);
+
+        // Independently derive the expected rk.
+        let cm = note.commitment();
+        let alpha = theta.randomizer::<effect::Output>(&cm);
+        let expected_rk =
+            private::ActionSigningKey::<effect::Output>::new(&alpha).derive_action_public();
+
+        assert_eq!(plan.rk, expected_rk);
+    }
+
+    /// Spend cv must be positive; output cv must be negative. Their sum
+    /// with matching values and value_balance=0 should equal [rcv_a + rcv_b]R.
+    #[test]
+    fn spend_output_cv_binding() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let rcv_spend = value::CommitmentTrapdoor::random(&mut rng);
+        let rcv_output = value::CommitmentTrapdoor::random(&mut rng);
+
+        let spend_note = test_note(&mut rng);
+        let output_note = Note {
+            value: spend_note.value,
+            ..test_note(&mut rng)
+        };
+
+        let spend_plan = Plan::spend(
+            spend_note,
+            ActionEntropy::random(&mut rng),
+            rcv_spend,
+            |alpha| ask.derive_action_private(&alpha).derive_action_public(),
+        );
+        let output_plan = Plan::output(output_note, ActionEntropy::random(&mut rng), rcv_output);
+
+        // Verify via binding key agreement.
+        let bsk = private::BindingSigningKey::from([rcv_spend, rcv_output].as_slice());
+        let bvk_signer = bsk.derive_binding_public();
+        let bvk_verifier = public::BindingVerificationKey::from(public::derive_bvk(
+            [spend_plan.cv(), output_plan.cv()].into_iter(),
+            0,
+        ));
+        assert_eq!(bvk_signer, bvk_verifier);
+    }
+
+    /// Signature serialization round-trip: sig → bytes → sig.
+    #[test]
+    fn signature_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let note = test_note(&mut rng);
+        let theta = ActionEntropy::random(&mut rng);
+        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let rsk = ask.derive_action_private(&alpha);
+        let rk = rsk.derive_action_public();
+
+        let sighash = [0xABu8; 32];
+        let sig = rsk.sign(&mut rng, &sighash);
+        let bytes: [u8; 64] = sig.into();
+        let recovered = Signature::from(bytes);
+
+        // Recovered signature must still verify.
+        rk.verify(&sighash, &recovered).unwrap();
+    }
+}

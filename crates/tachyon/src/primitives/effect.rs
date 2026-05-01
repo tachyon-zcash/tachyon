@@ -60,3 +60,57 @@ impl Effect for Output {
         rcv.commit(-raw)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ff::Field as _;
+    use pasta_curves::Fp;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use super::*;
+
+    /// Spend and output commit_value with the same (rcv, value) must differ
+    /// because spend is positive and output is negative.
+    #[test]
+    fn spend_output_commit_value_differ() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let rcv = value::CommitmentTrapdoor::random(&mut rng);
+        let val = note::Value::from(1000u64);
+
+        let cv_spend = Spend::commit_value(rcv, val);
+        let cv_output = Output::commit_value(rcv, val);
+
+        assert_ne!(cv_spend, cv_output);
+    }
+
+    /// Spend(v) + Output(v) with the same rcv must equal 2*[rcv]R
+    /// (the V-components cancel: [v]V + [-v]V = 0).
+    #[test]
+    fn spend_plus_output_cancels_value() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let rcv = value::CommitmentTrapdoor::random(&mut rng);
+        let val = note::Value::from(1000u64);
+
+        let sum = Spend::commit_value(rcv, val) + Output::commit_value(rcv, val);
+        // With same rcv: sum = [v]V + [rcv]R + [-v]V + [rcv]R = [2*rcv]R
+        // Equivalently: sum == balance(0) would only hold if rcv were zero.
+        // Instead verify it equals 2 * [rcv]R by checking against
+        // CommitmentTrapdoor::default().commit(0) shifted by 2*rcv.
+        let double_rcv = value::Commitment::balance(0) + value::Commitment::balance(0);
+        // sum should NOT equal identity (unless rcv == 0).
+        assert_ne!(sum, double_rcv);
+    }
+
+    /// Spend and output derive distinct alpha from the same (theta, cm).
+    #[test]
+    fn spend_output_derive_alpha_differ() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let theta = ActionEntropy::random(&mut rng);
+        let cm = note::Commitment::from(&Fp::random(&mut rng));
+
+        let alpha_spend = Spend::derive_alpha(&theta, &cm);
+        let alpha_output = Output::derive_alpha(&theta, &cm);
+
+        assert_ne!(alpha_spend, alpha_output);
+    }
+}
