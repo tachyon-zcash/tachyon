@@ -1,4 +1,4 @@
-use core2::io::{self, Read, Write};
+use corez::io::{self, Read, Write};
 use mock_ragu::Commitment;
 
 use super::{BlockHeight, PoolCommit};

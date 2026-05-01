@@ -20,7 +20,7 @@ pub mod proof;
 use alloc::vec::Vec;
 use core::{error::Error, fmt};
 
-use core2::io::{self, Read, Write};
+use corez::io::{self, Read, Write};
 use ff::Field as _;
 use mock_ragu::{self, proof::PROOF_SIZE_COMPRESSED};
 use pasta_curves::Fp;

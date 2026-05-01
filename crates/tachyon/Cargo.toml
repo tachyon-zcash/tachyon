@@ -29,7 +29,7 @@ std = [
     "mock_ragu/std",
     "rand_core/std",
     "reddsa/std",
-    "core2/std",
+    "corez/std",
 ]
 
 [lints]
@@ -37,7 +37,7 @@ workspace = true
 
 [dependencies]
 blake2b_simd = { version = "1.0", default-features = false }
-core2 = { version = "0.3", default-features = false, features = [
+corez = { version = "0.1.1", default-features = false, features = [
     "alloc",
 ] }
 ff = "0.13"

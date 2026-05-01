@@ -64,7 +64,7 @@
 use alloc::vec::Vec;
 use core::{error::Error, fmt};
 
-use core2::io::{self, Read, Write};
+use corez::io::{self, Read, Write};
 use ff::{Field as _, PrimeField as _};
 use group::GroupEncoding as _;
 use lazy_static::lazy_static;
@@ -833,7 +833,8 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Sig
     let value_balance = i64::from_le_bytes(vb_bytes);
 
     let n_actions =
-        usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(io::Error::other)?;
+        usize::try_from(serialization::read_compactsize(&mut reader)?)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
     let mut descriptors = Vec::with_capacity(n_actions);
     for _ in 0..n_actions {
@@ -898,7 +899,7 @@ fn write_bundle_body<W: Write>(
 
     serialization::write_compactsize(
         &mut writer,
-        u64::try_from(actions.len()).map_err(io::Error::other)?,
+        u64::try_from(actions.len()).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?,
     )?;
     for action in actions {
         serialization::write_ep_affine(&mut writer, &action.cv.0)?;
