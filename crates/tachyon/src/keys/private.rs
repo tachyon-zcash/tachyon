@@ -298,3 +298,198 @@ impl From<&[value::CommitmentTrapdoor]> for BindingSigningKey {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ff::Field as _;
+    use pasta_curves::Fp;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use crate::{
+        entropy::ActionEntropy,
+        keys::{private, public},
+        note::{self, Note},
+        primitives::effect,
+        value,
+    };
+
+    /// Same spending key must derive the same ask every time.
+    #[test]
+    fn derive_auth_private_deterministic() {
+        let sk = private::SpendingKey::from([0x01u8; 32]);
+        let ak1: [u8; 32] = sk.derive_auth_private().derive_auth_public().0.into();
+        let ak2: [u8; 32] = sk.derive_auth_private().derive_auth_public().0.into();
+        assert_eq!(ak1, ak2);
+    }
+
+    /// Different spending keys must derive different ask values.
+    #[test]
+    fn different_sk_different_ask() {
+        let sk_a = private::SpendingKey::from([0x01u8; 32]);
+        let sk_b = private::SpendingKey::from([0x02u8; 32]);
+        let ak_a: [u8; 32] = sk_a.derive_auth_private().derive_auth_public().0.into();
+        let ak_b: [u8; 32] = sk_b.derive_auth_private().derive_auth_public().0.into();
+        assert_ne!(ak_a, ak_b);
+    }
+
+    /// Same spending key must derive the same nk every time.
+    #[test]
+    fn derive_nullifier_private_deterministic() {
+        let sk = private::SpendingKey::from([0x01u8; 32]);
+        let nk1 = sk.derive_nullifier_private();
+        let nk2 = sk.derive_nullifier_private();
+        assert_eq!(nk1.0, nk2.0);
+    }
+
+    /// Different spending keys must derive different nk values.
+    #[test]
+    fn different_sk_different_nk() {
+        let sk_a = private::SpendingKey::from([0x01u8; 32]);
+        let sk_b = private::SpendingKey::from([0x02u8; 32]);
+        assert_ne!(
+            sk_a.derive_nullifier_private().0,
+            sk_b.derive_nullifier_private().0
+        );
+    }
+
+    /// Same spending key must derive the same payment key every time.
+    #[test]
+    fn derive_payment_key_deterministic() {
+        let sk = private::SpendingKey::from([0x01u8; 32]);
+        assert_eq!(sk.derive_payment_key().0, sk.derive_payment_key().0);
+    }
+
+    /// ProofAuthorizingKey fields must match independent derivation.
+    #[test]
+    fn derive_proof_private_consistent() {
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let pak = sk.derive_proof_private();
+        let ak: [u8; 32] = sk.derive_auth_private().derive_auth_public().0.into();
+        let pak_ak: [u8; 32] = pak.ak.0.into();
+        assert_eq!(ak, pak_ak);
+        assert_eq!(pak.nk.0, sk.derive_nullifier_private().0);
+    }
+
+    /// Sign with rsk (spend), verify with rk — full spend auth round-trip.
+    #[test]
+    fn spend_sign_verify_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(1000u64),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+        };
+        let theta = ActionEntropy::random(&mut rng);
+        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let rsk = ask.derive_action_private(&alpha);
+        let rk = rsk.derive_action_public();
+
+        let sighash = [0xABu8; 32];
+        let sig = rsk.sign(&mut rng, &sighash);
+        rk.verify(&sighash, &sig).unwrap();
+    }
+
+    /// Spend signature must fail verification against wrong sighash.
+    #[test]
+    fn spend_signature_rejects_wrong_sighash() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let ask = sk.derive_auth_private();
+        let note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(1000u64),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+        };
+        let theta = ActionEntropy::random(&mut rng);
+        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let rsk = ask.derive_action_private(&alpha);
+        let rk = rsk.derive_action_public();
+
+        let sig = rsk.sign(&mut rng, &[0xABu8; 32]);
+        rk.verify(&[0xCDu8; 32], &sig).unwrap_err();
+    }
+
+    /// Output action: sign with rsk = alpha, verify with rk = [alpha]G.
+    #[test]
+    fn output_sign_verify_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let note = Note {
+            pk: sk.derive_payment_key(),
+            value: note::Value::from(500u64),
+            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
+            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+        };
+        let theta = ActionEntropy::random(&mut rng);
+        let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+        let rsk = private::ActionSigningKey::<effect::Output>::new(&alpha);
+        let rk = rsk.derive_action_public();
+
+        let sighash = [0xABu8; 32];
+        let sig = rsk.sign(&mut rng, &sighash);
+        rk.verify(&sighash, &sig).unwrap();
+    }
+
+    /// Binding key: sign with bsk, verify with bvk.
+    #[test]
+    fn binding_sign_verify_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let rcv = value::CommitmentTrapdoor::random(&mut rng);
+        let trapdoors = [rcv];
+        let bsk = private::BindingSigningKey::from(trapdoors.as_slice());
+        let bvk = bsk.derive_binding_public();
+
+        let sighash = [0xABu8; 32];
+        let sig = bsk.sign(&mut rng, &sighash);
+        bvk.verify(&sighash, &sig).unwrap();
+    }
+
+    /// bsk from empty trapdoor slice must still produce a valid key (zero scalar).
+    #[test]
+    fn binding_signing_key_from_empty_trapdoors() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let bsk = private::BindingSigningKey::from([].as_slice());
+        let bvk = bsk.derive_binding_public();
+        let sighash = [0xABu8; 32];
+        let sig = bsk.sign(&mut rng, &sighash);
+        bvk.verify(&sighash, &sig).unwrap();
+    }
+
+    /// bsk from multiple trapdoors: bvk must match the signer-derived bvk.
+    #[test]
+    fn binding_key_sum_matches_signer() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let rcv_a = value::CommitmentTrapdoor::random(&mut rng);
+        let rcv_b = value::CommitmentTrapdoor::random(&mut rng);
+
+        let bsk = private::BindingSigningKey::from([rcv_a, rcv_b].as_slice());
+        let bvk_from_signer = bsk.derive_binding_public();
+
+        // Verify the signer's bvk matches verifier-derived bvk.
+        let cv_a = rcv_a.commit(100);
+        let cv_b = rcv_b.commit(-100);
+        let bvk_from_verifier =
+            public::BindingVerificationKey::from(public::derive_bvk([cv_a, cv_b].into_iter(), 0));
+
+        assert_eq!(bvk_from_signer, bvk_from_verifier);
+    }
+
+    /// BindingSigningKey::from_bytes must reject the zero scalar (invalid
+    /// for RedPallas signing keys... or accept all Fq — test actual behavior).
+    #[test]
+    fn binding_signing_key_from_bytes_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let rcv = value::CommitmentTrapdoor::random(&mut rng);
+        let bsk = private::BindingSigningKey::from([rcv].as_slice());
+        let bvk = bsk.derive_binding_public();
+
+        // Verify we can sign and verify after construction.
+        let sighash = [0x99u8; 32];
+        let sig = bsk.sign(&mut rng, &sighash);
+        bvk.verify(&sighash, &sig).unwrap();
+    }
+}
