@@ -65,6 +65,10 @@ mod serialization;
 #[cfg(test)]
 pub(crate) mod test_support;
 
+/// Proptest generators for Tachyon types.
+#[cfg(test)]
+pub(crate) mod testing;
+
 pub use action::Action;
 pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped, TachyonBundle};
 pub use note::Note;

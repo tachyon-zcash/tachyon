@@ -186,9 +186,11 @@ impl iter::Sum for Commitment {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
+    use crate::testing::HALF_MAX;
 
     /// balance(0) must be the identity point — the V-component cancels
     /// and the R-component has zero scalar.
@@ -216,5 +218,51 @@ mod tests {
         let expected: EpAffine = (*VALUE_COMMIT_R * rcv_sum).into();
 
         assert_eq!(remainder, Commitment(expected));
+    }
+
+    proptest! {
+        /// Different trapdoors with the same value produce different commitments.
+        #[test]
+        fn different_trapdoor_different_cv(
+            seed_a in any::<u64>(),
+            seed_b in any::<u64>(),
+            val in 1u64..=HALF_MAX,
+        ) {
+            let mut rng_a = StdRng::seed_from_u64(seed_a);
+            let mut rng_b = StdRng::seed_from_u64(seed_b);
+            let rcv_a = CommitmentTrapdoor::random(&mut rng_a);
+            let rcv_b = CommitmentTrapdoor::random(&mut rng_b);
+            prop_assume!(Into::<Fq>::into(rcv_a) != Into::<Fq>::into(rcv_b));
+            let signed = i64::try_from(val).unwrap();
+            prop_assert_ne!(rcv_a.commit(signed), rcv_b.commit(signed));
+        }
+
+        /// V-components cancel over random inputs:
+        /// cv(v1, r1) + cv(v2, r2) - balance(v1+v2) is non-identity
+        /// when rcv_a + rcv_b != 0.
+        #[test]
+        fn homomorphic_binding_random(
+            seed_a in any::<u64>(),
+            seed_b in any::<u64>(),
+            v1 in 1u64..=HALF_MAX,
+            v2 in 1u64..=HALF_MAX,
+        ) {
+            let mut rng_a = StdRng::seed_from_u64(seed_a);
+            let mut rng_b = StdRng::seed_from_u64(seed_b);
+            let rcv_a = CommitmentTrapdoor::random(&mut rng_a);
+            let rcv_b = CommitmentTrapdoor::random(&mut rng_b);
+
+            let cv_a = rcv_a.commit(i64::try_from(v1).unwrap());
+            let cv_b = rcv_b.commit(i64::try_from(v2).unwrap());
+            let remainder = cv_a + cv_b - Commitment::balance(i64::try_from(v1 + v2).unwrap());
+
+            let rcv_sum: Fq = Into::<Fq>::into(rcv_a) + Into::<Fq>::into(rcv_b);
+            let identity = Commitment::balance(0i64);
+            if rcv_sum == Fq::ZERO {
+                prop_assert_eq!(remainder, identity);
+            } else {
+                prop_assert_ne!(remainder, identity);
+            }
+        }
     }
 }
