@@ -85,6 +85,7 @@ pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 mod tests {
     use ff::{Field as _, PrimeField as _};
     use pasta_curves::{Fp, Fq};
+    use proptest::prelude::*;
     use rand::{RngCore as _, SeedableRng as _, rngs::StdRng};
 
     use crate::{
@@ -94,6 +95,7 @@ mod tests {
         note::{self, Note},
         primitives::effect,
         reddsa,
+        testing::arb_note,
     };
 
     /// RedPallas requires ak to have tilde_y = 0 (sign bit cleared).
@@ -186,5 +188,53 @@ mod tests {
         let rk_from_prover: [u8; 32] = ak.derive_action_public(&alpha).0.into();
 
         assert_eq!(rk_from_signer, rk_from_prover);
+    }
+
+    proptest! {
+        /// Different spending keys derive different authorization keys.
+        #[test]
+        fn different_sk_different_ak(
+            sk_a in any::<[u8; 32]>(),
+            sk_b in any::<[u8; 32]>(),
+        ) {
+            prop_assume!(sk_a != sk_b);
+            let ak_a: [u8; 32] = private::SpendingKey::from(sk_a)
+                .derive_auth_private().derive_auth_public().0.into();
+            let ak_b: [u8; 32] = private::SpendingKey::from(sk_b)
+                .derive_auth_private().derive_auth_public().0.into();
+            // PRF collision would be a security finding.
+            prop_assert_ne!(ak_a, ak_b);
+        }
+
+        /// rk derived by signer (ask + alpha) equals rk derived by prover (ak + [alpha]G).
+        #[test]
+        fn rk_signer_equals_prover(
+            sk_bytes in any::<[u8; 32]>(),
+            theta_bytes in any::<[u8; 32]>(),
+            note in arb_note(),
+        ) {
+            let sk = private::SpendingKey::from(sk_bytes);
+            let ask = sk.derive_auth_private();
+            let pak = sk.derive_proof_private();
+            let theta = ActionEntropy::from_bytes(theta_bytes);
+            let cm = note.commitment();
+            let alpha = theta.randomizer::<effect::Spend>(&cm);
+
+            let rk_signer: [u8; 32] = ask
+                .derive_action_private(&alpha)
+                .derive_action_public()
+                .0
+                .into();
+            let rk_prover: [u8; 32] = pak.ak.derive_action_public(&alpha).0.into();
+            prop_assert_eq!(rk_signer, rk_prover);
+        }
+
+        /// pak.derive_payment_key() matches sk.derive_payment_key().
+        #[test]
+        fn pak_payment_key_consistent(sk_bytes in any::<[u8; 32]>()) {
+            let sk = private::SpendingKey::from(sk_bytes);
+            let pak = sk.derive_proof_private();
+            prop_assert_eq!(pak.derive_payment_key().0, sk.derive_payment_key().0);
+        }
     }
 }
