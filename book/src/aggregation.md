@@ -3,7 +3,7 @@
 Instead of verifying each transaction individually, transaction proofs may be recursively merged into a single proof that covers many transactions.
 This is how Tachyon seeks to reduce chain costs.
 
-The act of merging proofs is **aggregation**, and **aggregators** are nodes enganged in this activity creating **aggregate** transactions.
+The act of merging proofs is **aggregation**, and **aggregators** are nodes engaged in this activity creating **aggregate** transactions.
 
 Miners are likely to vertically integrate aggregation.
 
@@ -11,7 +11,7 @@ Miners are likely to vertically integrate aggregation.
 
 Transactions with no Tachyon bundle[^bundle-format] are not covered here.
 
-Aggregation creation of a new transaction with a proof that can replace the proof in a selection of other transactions.
+Aggregation creates a new transaction with a proof that can replace the proof in a selection of other transactions.
 To create a valid block with a given aggregate, a miner must include all of those other transactions, sans their now-redundant proofs.
 
 So Tachyon bundles have two main states: **stamped** or **stripped**.

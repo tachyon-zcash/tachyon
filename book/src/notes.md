@@ -11,9 +11,9 @@ $$(\mathsf{pk}, v, \Psi, \mathsf{rcm})$$
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | $\mathsf{pk}$ | $\mathbb{F}_p$ | Recipient's payment key |
-| $v$ | integer | Note value ($< 2.1 \times 10^{15}$ zatoshis) |
+| $v$ | integer | Note value (non-zero, $\leq 2.1 \times 10^{15}$ zatoshis) |
 | $\Psi$ | $\mathbb{F}_p$ | Nullifier trapdoor (user-controlled) |
-| $\mathsf{rcm}$ | $\mathbb{F}_q$ | Commitment randomness |
+| $\mathsf{rcm}$ | $\mathbb{F}_p$ | Commitment randomness |
 
 Both $\Psi$ and $\mathsf{rcm}$ can be derived from a shared key negotiated through the out-of-band payment protocol. This means the sender and recipient need only exchange $\mathsf{pk}$ and $v$ explicitly — the note randomness can be deterministic from a shared secret.
 
@@ -21,9 +21,10 @@ Both $\Psi$ and $\mathsf{rcm}$ can be derived from a shared key negotiated throu
 
 Tachyon's nullifier construction is significantly simpler than Orchard's:[^orchard-nf]
 
-$$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
+$$\mathsf{mk} = \text{Poseidon}_\text{Tachyon-MkDerive}(\Psi, \mathsf{nk})$$
+$$\mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$$
 
-where $F$ is a keyed PRF (Poseidon), $\Psi$ is the nullifier trapdoor, and flavor is the epoch.
+where $\mathsf{mk}$ is a per-note master root key derived from the nullifier trapdoor $\Psi$ and the nullifier key $\mathsf{nk}$, and flavor is the epoch. The GGM tree PRF $F_{\mathsf{mk}}$ is instantiated from Poseidon (domain `Tachyon-NfDerive`).
 
 [^orchard-nf]: Orchard uses $\mathsf{nf} = \text{Extract}((F_{\mathsf{nk}}(\rho) + \psi \bmod p) \cdot \mathcal{G} + \mathsf{cm})$. The complexity defended against faerie gold attacks and made weak assumptions about circuit-efficient PRFs. See the [Orchard book](https://zcash.github.io/orchard/design/nullifiers.html) for the full explanation.
 

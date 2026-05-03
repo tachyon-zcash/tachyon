@@ -1,8 +1,10 @@
 //! Protocol-wide domain separators and personalizations.
 //!
-//! All BLAKE2b personalizations are exactly 16 bytes (the BLAKE2b
-//! personal field width). Hash-to-curve and Poseidon domains use
-//! variable-length strings under the `z.cash:` namespace.
+//! BLAKE2b personalizations are at most 16 bytes (the BLAKE2b
+//! personal field width). Most are exactly 16 bytes; the spend and
+//! output alpha personalizations are 13 and 14 bytes respectively.
+//! Hash-to-curve and Poseidon domains use variable-length strings
+//! under the `z.cash:` namespace.
 
 /// BLAKE2b-512 personalization for `PRF^expand`: key expansion from
 /// a spending key to child keys (`ask`, `nk`).

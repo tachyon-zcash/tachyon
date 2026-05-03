@@ -4,7 +4,7 @@
 
 A tachygram is a deterministic field element ($\mathbb{F}_p$) derived from a note:
 
-- **Spend**: nullifier $\mathsf{tg} = \mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$ (Poseidon GGM tree PRF, domain `Tachyon-NfDerive`)
+- **Spend**: nullifier $\mathsf{tg} = \mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$ where $\mathsf{mk} = \text{Poseidon}_\text{Tachyon-MkDerive}(\Psi, \mathsf{nk})$ (GGM tree PRF, domain `Tachyon-NfDerive`)
 - **Output**: commitment $\mathsf{tg} = \mathsf{cm} = \text{Poseidon}_\text{Tachyon-NoteCmmt}(\mathsf{rcm}, \mathsf{pk}, v, \Psi)$
 
 The circuit computes both values with the constraint that a witness tachygram
@@ -50,12 +50,13 @@ The PCD header carries two polynomial commitments and an anchor:
 | `anchor` | `Anchor` | pool state commitment at a specific block |
 
 Both accumulators use polynomial commitments.
-Each element is hashed (Poseidon, domain-separated) into a root $r_i \in \mathbb{F}_p$.
-The accumulator polynomial is the product of linear factors:
+For actions, each element is hashed (Poseidon, domain `Tachyon-ActnDgst`) into a root $r_i \in \mathbb{F}_p$.
+For tachygrams, the tachygram field element is used directly as the root.
+Each accumulator polynomial is the product of linear factors:
 
 $$\mathsf{action\_poly}(X) = \prod_i \bigl(X - \text{Poseidon}_\text{Tachyon-ActnDgst}(\mathsf{cv}_i \| \mathsf{rk}_i)\bigr)$$
 
-$$\mathsf{tachygram\_poly}(X) = \prod_i \bigl(X - \text{Poseidon}_\text{Tachyon-TgrmDgst}(\mathsf{tg}_i)\bigr)$$
+$$\mathsf{tachygram\_poly}(X) = \prod_i \bigl(X - \mathsf{tg}_i\bigr)$$
 
 The header values are Pedersen vector commitments to the coefficients:
 $\mathsf{action\_acc} = \text{Commit}(\mathsf{action\_poly})$,
@@ -88,7 +89,7 @@ tachygrams $tg_i$, the anchor, and the proof bytes.
 4. **Binding sig**: verify against $\sum cv_i$
 5. **Reconstruct**: build `(action_acc, tachygram_acc, anchor)`
    - **Recompute action_acc**: build polynomial from roots $\text{Poseidon}(\mathsf{cv}_i \| \mathsf{rk}_i)$, commit
-   - **Recompute tachygram_acc**: build polynomial from roots $\text{Poseidon}(\mathsf{tg}_i)$, commit
+   - **Recompute tachygram_acc**: build polynomial from roots $\mathsf{tg}_i$, commit
 6. **Verify proof**: call Ragu `verify(Pcd { proof, data: header })`
 
 The verifier constructs the header from scratch.

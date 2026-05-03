@@ -88,9 +88,9 @@ $$\mathsf{nk} = \text{ToBase}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\te
 
 An $\mathbb{F}_p$ element used in nullifier derivation. Tachyon simplifies Orchard's nullifier construction:[^faerie-gold]
 
-$$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
+$$\mathsf{mk} = \text{Poseidon}_\text{Tachyon-MkDerive}(\Psi, \mathsf{nk}), \quad \mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$$
 
-where $F$ is a keyed PRF (Poseidon with domain tag `Tachyon-NfDerive`), $\Psi$ is the note's nullifier trapdoor, and flavor is the epoch-id. See [Notes](./notes.md#nullifier-derivation).
+where $\mathsf{mk}$ is a per-note master root key, and $F_{\mathsf{mk}}$ is a GGM tree PRF (Poseidon with domain tag `Tachyon-NfDerive`). See [Notes](./notes.md#nullifier-derivation).
 
 $\mathsf{nk}$ alone does NOT confer spend authority — combined with $\mathsf{ak}$ it forms the proof authorizing key $\mathsf{pak}$, enabling proof construction and nullifier derivation without signing capability.
 
