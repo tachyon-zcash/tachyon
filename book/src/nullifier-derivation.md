@@ -6,11 +6,12 @@ In **Orchard**, the nullifiers are used to prevent double-spends, resist faerie 
 
 $$\text{nf} = \text{Extract}_P((F_{nk}(\rho) + \psi \mod p) \cdot G + cm)$$
 
-**Tachyon** drops much of this machinery, specifically the notion of a global uniqueness requirement inside the formula, and settles for a simpler nullifier design:
+**Tachyon** drops much of this machinery, specifically the notion of a global uniqueness requirement inside the formula, and settles for a simpler two-step nullifier design:
 
-$$\text{nf} = F_{nk}(\Psi \parallel \text{flavor})$$
+$$\mathsf{mk} = \text{Poseidon}_\text{Tachyon-MkDerive}(\Psi, \mathsf{nk})$$
+$$\text{nf} = F_{\mathsf{mk}}(\text{flavor})$$
 
-where $F$ is a keyed PRF (Poseidon with domain tag `Tachyon-NfDerive`), $\Psi$ is the nullifier trapdoor (user-controlled randomness), and *flavor* is simply interpreted as an epoch-id. The observation here is that unlike the existing nullifier derivation in Orchard which requires a globally unique $\rho$ to the output note being spent, this simpler derivation doesn't require that and $\Psi$ is also not required to be unique.
+where $\mathsf{mk}$ is a per-note master root key derived from the nullifier trapdoor $\Psi$ and the nullifier key $\mathsf{nk}$, and $F_{\mathsf{mk}}$ is a GGM tree PRF (Poseidon with domain tag `Tachyon-NfDerive`). The *flavor* is simply interpreted as an epoch-id. The observation here is that unlike the existing nullifier derivation in Orchard which requires a globally unique $\rho$ to the output note being spent, this simpler derivation doesn't require that and $\Psi$ is also not required to be unique.
 
 ## Proposed: Nullifier Derivation Scheme
 

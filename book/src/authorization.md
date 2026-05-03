@@ -239,7 +239,7 @@ rect rgb(100, 149, 237, 0.1)
 
         note over User: random theta
         note over User: random rcv
-        note over User: cm = Poseidon(pk, psi, rcm, v)
+        note over User: cm = Poseidon(domain, rcm, pk, v, psi)
         alt spend
             note over User: alpha = Blake2b(theta || cm)
             note over User: rk = ak + [alpha]G
@@ -306,12 +306,13 @@ and Proving
                 alt effect == spend
                     User --> User: rk == ak + [alpha]G
                     note over User: flavor = epoch(anchor)
-                    note over User: nf = Poseidon(nk, psi, flavor)
-                    note over User: tg_root = Poseidon(nf)
+                    note over User: mk = Poseidon(domain, psi, nk)
+                    note over User: nf = F_mk(flavor)
+                    note over User: tg_root = nf
                 else effect == output
                     User --> User: rk == [alpha]G
-                    note over User: cm = Poseidon(pk, psi, rcm, v)
-                    note over User: tg_root = Poseidon(cm)
+                    note over User: cm = Poseidon(domain, rcm, pk, v, psi)
+                    note over User: tg_root = cm
                 end
                 note over User: action_root = Poseidon(cv || rk)
                 note over User: action_poly = (X - action_root), tg_poly = (X - tg_root)

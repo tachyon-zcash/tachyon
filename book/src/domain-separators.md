@@ -5,7 +5,7 @@ Tachyon uses two hash families, chosen by context:
 - **BLAKE2b-512** for byte-oriented operations outside circuits: key derivation, alpha randomizers, and the bundle commitment that feeds the transaction sighash.
 - **Poseidon** (P128Pow5T3, constant-length) for field-arithmetic operations that must be efficient inside Ragu circuits: nullifier derivation, note commitments, and action digests.
 
-All BLAKE2b personalizations are exactly 16 bytes. Poseidon domain tags are 16-byte strings interpreted as little-endian $\mathbb{F}_p$ elements via `Fp::from_u128`.
+BLAKE2b personalizations are at most 16 bytes (the BLAKE2b personal field width). Most are exactly 16 bytes; the spend and output alpha personalizations are 13 and 14 bytes respectively. Poseidon domain tags are 16-byte strings interpreted as little-endian $\mathbb{F}_p$ elements via `Fp::from_u128`.
 
 ## BLAKE2b-512
 

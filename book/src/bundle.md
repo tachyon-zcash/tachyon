@@ -50,14 +50,17 @@ The proof establishes:
 - tachygrams are correctly bound to action keys
 - action balance effect matches pool balance effect
 
-The nullifier derivation uses a Poseidon-based GGM tree PRF (domain `Tachyon-NfDerive`):
+The nullifier derivation uses a two-step Poseidon-based GGM tree PRF:
 
-$$ \mathsf{nf} = F_{\mathsf{nk}}(\Psi \parallel \tau) $$
+$$ \mathsf{mk} = \text{Poseidon}_\text{Tachyon-MkDerive}(\Psi, \mathsf{nk}), \quad \mathsf{nf} = F_{\mathsf{mk}}(\tau) $$
 
 where
 
 - $\Psi$ is the nullifier trapdoor[^commitment]
+- $\mathsf{nk}$ is the nullifier key
+- $\mathsf{mk}$ is the per-note master root key
 - $\tau$ is an epoch index
+- $F_{\mathsf{mk}}$ is a GGM tree PRF (domain `Tachyon-NfDerive`)
 
 [^commitment]: User-controlled randomness [commitment trapdoor](https://zips.z.cash/protocol/protocol.pdf#commitment)
 
