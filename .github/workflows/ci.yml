@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-nostd:
+    name: Build target ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - thumbv7em-none-eabihf
+        include:
+          - target: thumbv7em-none-eabihf
+            build_deps: gcc-arm-none-eabi
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        if: matrix.build_deps != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.build_deps }}
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build zcash_tachyon (--no-default-features) for ${{ matrix.target }}
+        run: >
+          cargo build
+          --manifest-path crates/tachyon/Cargo.toml
+          --no-default-features
+          --target ${{ matrix.target }}
+          --verbose
+
+  check-nostd:
+    name: Check --no-default-features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cargo check --no-default-features
+        run: cargo check --manifest-path crates/tachyon/Cargo.toml --no-default-features --verbose
