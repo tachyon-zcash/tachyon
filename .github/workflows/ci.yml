@@ -1,0 +1,55 @@
+name: CI
+
+permissions: {}
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-nostd:
+    name: Build target ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - thumbv7em-none-eabihf
+        include:
+          - target: thumbv7em-none-eabihf
+            build_deps: >
+              gcc-arm-none-eabi
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          path: crates
+      - name: Install linux build dependencies
+        run: sudo apt update && sudo apt install ${{ matrix.build_deps }}
+        if: matrix.build_deps != ''
+      - name: Copy Rust toolchain into the root for use in synthetic crate setup
+        run: cp crates/rust-toolchain.toml .
+      - name: Create synthetic crate for testing
+        run: cargo init --lib ci-build
+      - name: Move Rust toolchain file into synthetic crate
+        run: mv rust-toolchain.toml ci-build/
+      - name: Add no_std pragma to lib.rs
+        run: |
+          echo "#![no_std]" > ./ci-build/src/lib.rs
+      - name: Copy pinned dependencies into synthetic crate
+        run: cp crates/Cargo.lock ci-build/
+      - name: Add mock_ragu as a dependency of the synthetic crate
+        working-directory: ./ci-build
+        run: cargo add --no-default-features --path ../crates/crates/mock_ragu
+      - name: Add zcash_tachyon as a dependency of the synthetic crate
+        working-directory: ./ci-build
+        run: cargo add --no-default-features --path ../crates/crates/tachyon
+      - name: Add lazy_static with the spin_no_std feature
+        working-directory: ./ci-build
+        run: cargo add lazy_static --features "spin_no_std"
+      - name: Add target
+        working-directory: ./ci-build
+        run: rustup target add ${{ matrix.target }}
+      - name: Build for target
+        working-directory: ./ci-build
+        run: cargo build --verbose --target ${{ matrix.target }}
