@@ -397,20 +397,21 @@ impl WalletSim {
         }
     }
 
-    /// Produce a master header PCD via `DelegationSeed` — the GGM tree root
-    /// at depth 0.
-    pub fn delegate_master<'source>(
+    /// Produce a pre-blind master header PCD via [`NoteSeedStep`] — the GGM
+    /// tree root at depth 0 with `(mk, cm)` lineage. The trapdoor is NOT
+    /// witnessed here; blinding happens at a terminal
+    /// [`DelegationBlindStep`](delegation::DelegationBlindStep).
+    pub fn note_master<'source>(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
-        trap: DelegationTrapdoor,
-    ) -> Pcd<'source, delegation::DelegationMasterHeader> {
+    ) -> Pcd<'source, delegation::NoteMasterHeader> {
         let mk = self.pak.nk.derive_note_private(&note.psi);
-        let delegation_id = self.pak.nk.derive_delegation_id(&note, trap);
+        let cm = note.commitment();
         let (proof, ()) = PROOF_SYSTEM
-            .seed(rng, &delegation::DelegationSeed, (note, self.pak, trap))
-            .expect("delegation seed");
-        proof.carry::<delegation::DelegationMasterHeader>((mk, delegation_id))
+            .seed(rng, &delegation::NoteSeedStep, (note, self.pak))
+            .expect("note seed");
+        proof.carry::<delegation::NoteMasterHeader>((mk, cm))
     }
 
     pub fn fresh_spend<'source>(
@@ -427,8 +428,9 @@ impl WalletSim {
         Pcd<'source, spendable::SpendableHeader>,
     ) {
         let trap = DelegationTrapdoor::random(rng);
-        let master = self.delegate_master(rng, spend_note, trap);
-        let (nf_e, nf_e1) = ggm_tools::nullifier_pair_from_master(rng, master, anchor.0.epoch());
+        let master = self.note_master(rng, spend_note);
+        let (nf_e, nf_e1) =
+            ggm_tools::nullifier_pair_from_master(rng, master, trap, anchor.0.epoch());
         let spendable_pcd =
             self.spendable_init(rng, spend_note, trap, anchor, pool_state, nf_e.clone());
         (spend_note, trap, nf_e, nf_e1, spendable_pcd)
@@ -514,65 +516,78 @@ pub mod ggm_tools {
     use alloc::vec::Vec;
     use core::ops::RangeInclusive;
 
+    use ff::PrimeField as _;
+    use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
     use mock_ragu::{Pcd, Proof};
+    use pasta_curves::Fp;
     use rand_core::{CryptoRng, RngCore};
 
     use crate::{
         EpochIndex,
-        keys::GGM_TREE_DEPTH,
+        constants::DELEGATION_ID_DOMAIN,
+        keys::{GGM_TREE_ARITY, GGM_CHUNK_SIZE, GGM_TREE_DEPTH},
+        primitives::{DelegationId, DelegationTrapdoor},
         stamp::proof::{PROOF_SYSTEM, delegation},
     };
 
+    /// Walk a pre-blind master PCD down `target_depth` GGM levels, interpreting
+    /// `epoch_bits` as an epoch-space index (top `(u32::from(GGM_DEPTH) *
+    /// GGM_CHUNK_SIZE)` bits populated, low bits zero for a
+    /// prefix).
     pub fn walk_master_to_depth<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<'source, delegation::DelegationMasterHeader>,
+        master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
         epoch_bits: u32,
         target_depth: u8,
-    ) -> Pcd<'source, delegation::DelegationHeader> {
+    ) -> Pcd<'source, delegation::NoteStepHeader> {
         assert!(
             (1..=GGM_TREE_DEPTH).contains(&target_depth),
-            "target_depth must be in 1..=GGM_TREE_DEPTH",
+            "target_depth must be in 1..=GGM_DEPTH",
         );
-        let (mk, delegation_id) = master_pcd.data;
+        let (mk, cm) = master_pcd.data;
 
-        let first_bit = (epoch_bits >> (GGM_TREE_DEPTH - 1)) & 1 != 0;
+        let first_chunk = chunk_at(epoch_bits, 1);
         let (mut proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::DelegationMasterStep,
-                (first_bit,),
+                &delegation::NoteMasterStep,
+                (first_chunk,),
                 master_pcd,
                 Proof::trivial().carry::<()>(()),
             )
-            .expect("delegation master step");
-        let mut key = mk.step(first_bit);
+            .expect("note master step");
+        let mut key = mk.step(first_chunk);
 
         while key.depth.get() < target_depth {
             let next_step = key.depth.get() + 1;
-            let direction = (epoch_bits >> (GGM_TREE_DEPTH - next_step)) & 1 != 0;
-            let pcd = proof.carry::<delegation::DelegationHeader>((key, delegation_id));
+            let chunk = chunk_at(epoch_bits, next_step);
+            let pcd = proof.carry::<delegation::NoteStepHeader>((key, mk, cm));
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    &delegation::DelegationStep,
-                    (direction,),
+                    &delegation::NoteStep,
+                    (chunk,),
                     pcd,
                     Proof::trivial().carry::<()>(()),
                 )
-                .expect("delegation step");
-            key = key.step(direction);
+                .expect("note step");
+            key = key.step(chunk);
             proof = next_proof;
         }
 
-        proof.carry::<delegation::DelegationHeader>((key, delegation_id))
+        proof.carry::<delegation::NoteStepHeader>((key, mk, cm))
     }
 
-    /// Fan the master header into the prefix delegates that tightly cover
-    /// `epoch_range`. Clones `master_pcd` once per prefix and descends to the
-    /// prefix's depth.
+    /// Fan the pre-blind master into the post-blind prefix delegates that
+    /// tightly cover `epoch_range`. Each prefix is pre-blind walked to its
+    /// depth, then a fresh
+    /// [`DelegationBlindStep`](delegation::DelegationBlindStep)
+    /// attaches `trap` to produce a
+    /// [`DelegationHeader`](delegation::DelegationHeader).
     pub fn delegate_range<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: &Pcd<'source, delegation::DelegationMasterHeader>,
+        master_pcd: &Pcd<'source, delegation::NoteMasterHeader>,
+        trap: DelegationTrapdoor,
         epoch_range: RangeInclusive<u32>,
     ) -> Vec<Pcd<'source, delegation::DelegationHeader>> {
         let mk = master_pcd.data.0;
@@ -580,29 +595,37 @@ pub mod ggm_tools {
             .into_iter()
             .map(|target_key| {
                 let target_depth = target_key.depth.get();
-                let epoch_bits = target_key.index << (GGM_TREE_DEPTH - target_depth);
-                walk_master_to_depth(rng, master_pcd.clone(), epoch_bits, target_depth)
+                let span_bits = (GGM_TREE_DEPTH - target_depth) * GGM_CHUNK_SIZE;
+                let epoch_bits = target_key.index << span_bits;
+                let prefix_pcd =
+                    walk_master_to_depth(rng, master_pcd.clone(), epoch_bits, target_depth);
+                blind_prefix(rng, prefix_pcd, trap)
             })
             .collect()
     }
 
-    /// Walk from a master header to the leaf for `target_epoch` and apply
-    /// `NullifierStep`. The wallet-side counterpart to [`SyncSim::nullifier`],
-    /// which walks from a delegated prefix instead.
+    /// Walk from a pre-blind master header to the nullifier leaf for
+    /// `target_epoch`, applying
+    /// [`DelegationBlindStep`](delegation::DelegationBlindStep)
+    /// and [`NullifierStep`](delegation::NullifierStep) at the end.
     pub fn nullifier_from_master<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<'source, delegation::DelegationMasterHeader>,
+        master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
+        trap: DelegationTrapdoor,
         target_epoch: EpochIndex,
     ) -> Pcd<'source, delegation::NullifierHeader> {
         let depth_one = walk_master_to_depth(rng, master_pcd, target_epoch.0, 1);
-        walk_delegate_to_nullifier(rng, depth_one, target_epoch)
+        let blinded = blind_prefix(rng, depth_one, trap);
+        walk_delegate_to_nullifier(rng, blinded, target_epoch)
     }
 
-    /// Produce the `(nf_E, nf_{E+1})` pair from one master header, sharing the
-    /// GGM walk prefix up to the first bit where E and E+1 diverge.
+    /// Produce the `(nf_E, nf_{E+1})` pair from one pre-blind master header,
+    /// sharing the GGM walk prefix up to the first chunk where `E` and `E+1`
+    /// diverge.
     pub fn nullifier_pair_from_master<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<'source, delegation::DelegationMasterHeader>,
+        master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
+        trap: DelegationTrapdoor,
         target_epoch: EpochIndex,
     ) -> (
         Pcd<'source, delegation::NullifierHeader>,
@@ -610,24 +633,51 @@ pub mod ggm_tools {
     ) {
         let e0 = target_epoch;
         let e1 = EpochIndex(e0.0 + 1);
-        let shared_depth =
-            u8::try_from((e0.0 ^ e1.0).leading_zeros()).expect("u32 leading_zeros fits u8");
+        let shared_depth = shared_chunk_prefix_depth(e0.0, e1.0);
 
         if shared_depth == 0 {
-            // Bits diverge at the MSB — no shared walk; two independent walks
-            // from cloned masters.
             let clone = master_pcd.clone();
             (
-                nullifier_from_master(rng, master_pcd, e0),
-                nullifier_from_master(rng, clone, e1),
+                nullifier_from_master(rng, master_pcd, trap, e0),
+                nullifier_from_master(rng, clone, trap, e1),
             )
         } else {
-            let shared = walk_master_to_depth(rng, master_pcd, e0.0, shared_depth);
+            let shared_prefix = walk_master_to_depth(rng, master_pcd, e0.0, shared_depth);
+            let blinded = blind_prefix(rng, shared_prefix, trap);
             (
-                walk_delegate_to_nullifier(rng, shared.clone(), e0),
-                walk_delegate_to_nullifier(rng, shared, e1),
+                walk_delegate_to_nullifier(rng, blinded.clone(), e0),
+                walk_delegate_to_nullifier(rng, blinded, e1),
             )
         }
+    }
+
+    /// Apply [`DelegationBlindStep`](delegation::DelegationBlindStep) to a
+    /// pre-blind prefix PCD, returning a post-blind delegate PCD.
+    pub fn blind_prefix<'source>(
+        rng: &mut (impl RngCore + CryptoRng),
+        prefix_pcd: Pcd<'source, delegation::NoteStepHeader>,
+        trap: DelegationTrapdoor,
+    ) -> Pcd<'source, delegation::DelegationHeader> {
+        let (key, mk, cm) = prefix_pcd.data;
+        let (proof, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                &delegation::DelegationBlindStep,
+                (trap,),
+                prefix_pcd,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("delegation blind step");
+        let domain = Fp::from_u128(u128::from_le_bytes(*DELEGATION_ID_DOMAIN));
+        let delegation_id = DelegationId::from(
+            &Hash::<_, P128Pow5T3, ConstantLength<4>, 3, 2>::init().hash([
+                domain,
+                mk.0,
+                Fp::from(&cm),
+                Fp::from(&trap),
+            ]),
+        );
+        proof.carry::<delegation::DelegationHeader>((key, delegation_id))
     }
 
     pub fn walk_delegate_to_nullifier<'source>(
@@ -640,18 +690,18 @@ pub mod ggm_tools {
 
         while key.depth.get() < GGM_TREE_DEPTH {
             let next_step = key.depth.get() + 1;
-            let direction = (target_epoch.0 >> (GGM_TREE_DEPTH - next_step)) & 1 != 0;
+            let chunk = chunk_at(target_epoch.0, next_step);
             let pcd = proof.carry::<delegation::DelegationHeader>((key, delegation_id));
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
                     &delegation::DelegationStep,
-                    (direction,),
+                    (chunk,),
                     pcd,
                     Proof::trivial().carry::<()>(()),
                 )
                 .expect("delegation step");
-            key = key.step(direction);
+            key = key.step(chunk);
             proof = next_proof;
         }
 
@@ -671,5 +721,41 @@ pub mod ggm_tools {
             target_epoch,
             delegation_id,
         ))
+    }
+
+    /// Extract the `GGM_CHUNK_SIZE`-bit chunk absorbed at `level`
+    /// (1-indexed) of a walk indexing into an `(u32::from(GGM_DEPTH) *
+    /// GGM_CHUNK_SIZE)`-wide epoch space.
+    fn chunk_at(epoch_bits: u32, level: u8) -> u8 {
+        let shift = (GGM_TREE_DEPTH * GGM_CHUNK_SIZE) - level * GGM_CHUNK_SIZE;
+        let chunk_mask = (1u32 << GGM_CHUNK_SIZE) - 1u32;
+        let chunk_u32 = (epoch_bits >> shift) & chunk_mask;
+        u8::try_from(chunk_u32).expect("chunk fits in u8")
+    }
+
+    /// Number of leading chunks (of `GGM_CHUNK_SIZE` bits each)
+    /// shared between `lhs` and `rhs` when viewed as `(u32::from(GGM_DEPTH)
+    /// * GGM_CHUNK_SIZE)`-wide indices.
+    fn shared_chunk_prefix_depth(lhs: u32, rhs: u32) -> u8 {
+        let diff = lhs ^ rhs;
+        if diff == 0 {
+            return GGM_TREE_DEPTH;
+        }
+        #[expect(clippy::as_conversions, reason = "safe")]
+        #[expect(clippy::cast_possible_truncation, reason = "safe")]
+        let msb_pos = (u32::BITS as u8) - 1 - (diff.leading_zeros() as u8);
+        assert!(
+            msb_pos < (GGM_TREE_DEPTH * GGM_CHUNK_SIZE),
+            "epoch index out of (u32::from(GGM_DEPTH) * GGM_CHUNK_SIZE) range"
+        );
+        let shared_bits = (GGM_TREE_DEPTH * GGM_CHUNK_SIZE) - 1 - msb_pos;
+        shared_bits
+            .checked_div(GGM_CHUNK_SIZE)
+            .expect("GGM_CHUNK_SIZE is non-zero")
+    }
+
+    #[expect(unused, reason = "exported for future benches")]
+    pub const fn arity() -> u8 {
+        GGM_TREE_ARITY
     }
 }
