@@ -511,15 +511,13 @@ pub mod ggm_tools {
     use alloc::vec::Vec;
     use core::ops::RangeInclusive;
 
-    use ff::PrimeField as _;
-    use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
     use mock_ragu::{Pcd, Proof};
     use pasta_curves::Fp;
     use rand_core::{CryptoRng, RngCore};
 
     use crate::{
         EpochIndex,
-        constants::DELEGATION_ID_DOMAIN,
+        digest::poseidon,
         keys::{GGM_CHUNK_SIZE, GGM_TREE_ARITY, GGM_TREE_DEPTH},
         primitives::{DelegationId, DelegationTrapdoor, Tachygram},
         stamp::proof::{PROOF_SYSTEM, delegation},
@@ -718,15 +716,11 @@ pub mod ggm_tools {
                 Proof::trivial().carry::<()>(()),
             )
             .expect("delegation blind step");
-        let domain = Fp::from_u128(u128::from_le_bytes(*DELEGATION_ID_DOMAIN));
-        let delegation_id = DelegationId::from(
-            &Hash::<_, P128Pow5T3, ConstantLength<4>, 3, 2>::init().hash([
-                domain,
-                mk.0,
-                Fp::from(&cm),
-                Fp::from(&trap),
-            ]),
-        );
+        let delegation_id = DelegationId::from(&poseidon::delegation_id(
+            mk.0,
+            Fp::from(&cm),
+            Fp::from(&trap),
+        ));
         proof.carry::<delegation::DelegateNfPrefixHeader>((key, delegation_id))
     }
 

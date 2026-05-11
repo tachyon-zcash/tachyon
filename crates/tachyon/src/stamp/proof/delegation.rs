@@ -26,13 +26,12 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::PrimeField as _;
-// TODO(#39): replace halo2_poseidon with Ragu Poseidon params
-use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use mock_ragu::{Header, Index, Step, Suffix};
 use pasta_curves::Fp;
 
 use crate::{
-    constants::{DELEGATION_ID_DOMAIN, NOTE_VALUE_MAX},
+    constants::NOTE_VALUE_MAX,
+    digest::poseidon,
     keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey, NotePrefixedKey, ProofAuthorizingKey},
     note::{self, Note, Nullifier},
     primitives::{DelegationId, DelegationTrapdoor, EpochIndex, Tachygram},
@@ -297,15 +296,11 @@ impl Step for DelegationStep {
         (key, mk, cm): <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        let domain = Fp::from_u128(u128::from_le_bytes(*DELEGATION_ID_DOMAIN));
-        let delegation_id = DelegationId::from(
-            &Hash::<_, P128Pow5T3, ConstantLength<4>, 3, 2>::init().hash([
-                domain,
-                mk.0,
-                Fp::from(&cm),
-                Fp::from(&trap),
-            ]),
-        );
+        let delegation_id = DelegationId::from(&poseidon::delegation_id(
+            mk.0,
+            Fp::from(&cm),
+            Fp::from(&trap),
+        ));
         Ok(((key, delegation_id), ()))
     }
 }

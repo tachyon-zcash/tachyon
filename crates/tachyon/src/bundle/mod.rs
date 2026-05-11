@@ -74,7 +74,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::{
     action::{self, Action},
-    constants::{AUTH_DIGEST_PERSONALIZATION, BUNDLE_COMMITMENT_PERSONALIZATION},
+    digest::blake2b::{AUTH_DIGEST_PERSONALIZATION, BUNDLE_COMMITMENT_PERSONALIZATION},
     keys::{private, public},
     primitives::{ActionCommit, ActionDigest, ActionDigestError, Anchor, Tachygram, effect},
     reddsa, serialization,

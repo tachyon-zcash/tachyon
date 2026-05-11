@@ -91,7 +91,7 @@ mod tests {
     use rand::{RngCore as _, SeedableRng as _, rngs::StdRng};
 
     use crate::{
-        constants::PrfExpand,
+        digest::blake2b,
         entropy::ActionEntropy,
         keys::{NullifierKey, PaymentKey, private},
         note::{self, Note},
@@ -114,7 +114,7 @@ mod tests {
             rng.fill_bytes(&mut sk_bytes);
 
             // Check the raw (pre-normalization) sign bit.
-            let ask_scalar = Fq::from_uniform_bytes(&PrfExpand::ASK.with(&sk_bytes));
+            let ask_scalar = Fq::from_uniform_bytes(&blake2b::prf_expand_ask(&sk_bytes));
             let unnormalized_ak: [u8; 32] = reddsa::VerificationKey::from(
                 &reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask_scalar.to_repr()).unwrap(),
             )

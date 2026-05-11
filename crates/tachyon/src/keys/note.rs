@@ -1,13 +1,11 @@
 //! Note-related keys: NullifierKey, PaymentKey.
 
 use ff::PrimeField as _;
-// TODO(#39): replace halo2_poseidon with Ragu Poseidon params
-use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::Fp;
 
 use super::{ggm::NoteMasterKey, proof::SpendValidatingKey};
 use crate::{
-    constants::{DELEGATION_ID_DOMAIN, NOTE_MASTER_DOMAIN, PAYMENT_KEY_DOMAIN},
+    digest::poseidon,
     note,
     primitives::{DelegationId, DelegationTrapdoor},
 };
@@ -49,14 +47,7 @@ impl NullifierKey {
     /// - Derive epoch-restricted prefix keys $\Psi_t$ for OSS delegation
     #[must_use]
     pub fn derive_note_private(&self, psi: &note::NullifierTrapdoor) -> NoteMasterKey {
-        let personalization = Fp::from_u128(u128::from_le_bytes(*NOTE_MASTER_DOMAIN));
-        NoteMasterKey(
-            Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
-                personalization,
-                psi.0,
-                self.0,
-            ]),
-        )
+        NoteMasterKey(poseidon::note_master(psi.0, self.0))
     }
 
     /// Derives a per-delegation identifier: `H(domain, mk, cm, trap)`.
@@ -69,18 +60,14 @@ impl NullifierKey {
         note: &note::Note,
         trap: DelegationTrapdoor,
     ) -> DelegationId {
-        let domain = Fp::from_u128(u128::from_le_bytes(*DELEGATION_ID_DOMAIN));
         let mk = self.derive_note_private(&note.psi);
         let cm = note.commitment();
 
-        DelegationId::from(
-            &Hash::<_, P128Pow5T3, ConstantLength<4>, 3, 2>::init().hash([
-                domain,
-                mk.0,
-                Fp::from(&cm),
-                Fp::from(&trap),
-            ]),
-        )
+        DelegationId::from(&poseidon::delegation_id(
+            mk.0,
+            Fp::from(&cm),
+            Fp::from(&trap),
+        ))
     }
 }
 
@@ -131,13 +118,11 @@ impl PaymentKey {
         reason = "sign-normalized ak (tilde_y=0) is always a valid Fp repr"
     )]
     pub fn derive(ak: &SpendValidatingKey, nk: &NullifierKey) -> Self {
-        let domain = Fp::from_u128(u128::from_le_bytes(*PAYMENT_KEY_DOMAIN));
-
         let ak_bytes: [u8; 32] = ak.0.into();
         let ak_x =
             Option::from(Fp::from_repr(ak_bytes)).expect("sign-normalized ak should be a valid Fp");
 
-        Self(Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([domain, ak_x, nk.0]))
+        Self(poseidon::payment_key(ak_x, nk.0))
     }
 }
 

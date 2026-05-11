@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     action, bundle,
-    constants::PrfExpand,
+    digest::blake2b,
     entropy::ActionRandomizer,
     primitives::{Effect, effect},
     reddsa, value,
@@ -83,7 +83,7 @@ impl SpendingKey {
     )]
     pub fn derive_auth_private(&self) -> SpendAuthorizingKey {
         // Derive ask scalar from sk via PRF (Orchard §4.2.3).
-        let mut ask = Fq::from_uniform_bytes(&PrfExpand::ASK.with(&self.0));
+        let mut ask = Fq::from_uniform_bytes(&blake2b::prf_expand_ask(&self.0));
 
         // Sign normalization (§5.4.7.1): ak must have tilde_y = 0.
         // Compute ak = [ask]G via reddsa (basepoint is sealed) and check
@@ -109,7 +109,7 @@ impl SpendingKey {
     /// `nk = ToBase(PRF^expand_sk([0x0a]))` — BLAKE2b-512 reduced to Fp.
     #[must_use]
     pub fn derive_nullifier_private(&self) -> NullifierKey {
-        NullifierKey(Fp::from_uniform_bytes(&PrfExpand::NK.with(&self.0)))
+        NullifierKey(Fp::from_uniform_bytes(&blake2b::prf_expand_nk(&self.0)))
     }
 
     /// Derive the payment key $\mathsf{pk}$ from $\mathsf{sk}$.
