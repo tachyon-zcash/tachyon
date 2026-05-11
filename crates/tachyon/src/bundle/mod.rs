@@ -66,19 +66,17 @@ use core::{error::Error, fmt};
 
 use corez::io::{self, Read, Write};
 use ff::{Field as _, PrimeField as _};
-use group::GroupEncoding as _;
-use lazy_static::lazy_static;
 use mock_ragu::Polynomial;
-use pasta_curves::Fp;
+use pasta_curves::{Fp, arithmetic::CurveAffine as _};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
     action::{self, Action},
-    digest::blake2b::{AUTH_DIGEST_PERSONALIZATION, BUNDLE_COMMITMENT_PERSONALIZATION},
+    digest::blake2b,
     keys::{private, public},
-    primitives::{ActionCommit, ActionDigest, ActionDigestError, Anchor, Tachygram, effect},
+    primitives::{ActionDigest, ActionDigestError, ActionSetCommit, Anchor, Tachygram, effect},
     reddsa, serialization,
-    stamp::{self, Adjunct, Stamp, Unproven, proof::compute_action_acc},
+    stamp::{self, Adjunct, Stamp, Unproven},
     value,
 };
 
@@ -230,79 +228,20 @@ impl fmt::Display for SignError {
 
 impl Error for SignError {}
 
-/// Compute a digest of all the bundle's effecting data.
-///
-/// This contributes to the transaction sighash.
-///
-/// $$ \mathsf{bundle\_commitment} = \text{BLAKE2b-512}(
-/// \text{"Tachyon-BndlHash"},\; \mathsf{action\_acc} \|
-/// \mathsf{value\_balance}) $$
-///
-/// where $\mathsf{action\_acc}$ is the 32-byte commitment to the action
-/// digest multiset `∏(X - action_digest_i)` — order-independent by
-/// construction since the polynomial is invariant under root permutation.
-///
-/// The stamp is excluded because it is stripped during aggregation.
-#[expect(clippy::module_name_repetitions, reason = "intentional name")]
-#[must_use]
-pub fn digest_bundle(action_acc: &ActionCommit, value_balance: i64) -> [u8; 64] {
-    let mut state = blake2b_simd::Params::new()
-        .hash_length(64)
-        .personal(BUNDLE_COMMITMENT_PERSONALIZATION)
-        .to_state();
-
-    let action_bytes: [u8; 32] = action_acc.0.into();
-    state.update(&action_bytes);
-
-    state.update(&value_balance.to_le_bytes());
-
-    *state.finalize().as_array()
-}
-
-lazy_static! {
-    /// Commitment for the absence of a Tachyon bundle in a transaction.
-    ///
-    /// Personalized BLAKE2b-512 finalized with no data, distinct from the
-    /// commitment of an empty bundle (which hashes the identity accumulator
-    /// commitment and a zero value balance).
-    ///
-    /// Follows ZIP-244's pattern for absent pool commitments.
-    static ref COMMIT_NO_BUNDLE: [u8; 64] = *blake2b_simd::Params::new()
-        .hash_length(64)
-        .personal(BUNDLE_COMMITMENT_PERSONALIZATION)
-        .to_state()
-        .finalize()
-        .as_array();
-}
-
 /// Canonical sighash contribution when a transaction has no Tachyon bundle.
 ///
 /// Returns the personalized BLAKE2b-512 finalized with no data, distinct from
 /// any real bundle commitment. Mirrors orchard's `hash_bundle_txid_empty`.
 #[must_use]
 pub fn empty_commitment() -> [u8; 64] {
-    *COMMIT_NO_BUNDLE
-}
-
-lazy_static! {
-    /// Auth-digest contribution for the absence of a Tachyon bundle.
-    ///
-    /// Personalized BLAKE2b-256 finalized with no data, distinct from any
-    /// real bundle's contribution. Follows ZIP-244's pattern for absent pool
-    /// auth digests.
-    static ref AUTH_DIGEST_NO_BUNDLE: [u8; 64] = *blake2b_simd::Params::new()
-        .hash_length(64)
-        .personal(AUTH_DIGEST_PERSONALIZATION)
-        .to_state()
-        .finalize()
-        .as_array();
+    blake2b::no_bundle_commitment()
 }
 
 /// Canonical `auth_digest` contribution when a transaction has no Tachyon
 /// bundle. Distinct from any real bundle's contribution.
 #[must_use]
 pub fn empty_auth_digest() -> [u8; 64] {
-    *AUTH_DIGEST_NO_BUNDLE
+    blake2b::no_bundle_auth_digest()
 }
 
 /// A complete bundle plan, awaiting authorization.
@@ -357,20 +296,37 @@ impl Plan {
         spend_sum - output_sum
     }
 
-    /// Compute the bundle commitment.
-    /// See [`digest_bundle`].
+    /// Compute a digest of all the bundle's effecting data.
+    ///
+    /// This contributes to the transaction sighash.
+    ///
+    /// $$ \mathsf{bundle\_commitment} = \text{BLAKE2b-512}(
+    /// \text{"Tachyon-BndlHash"},\; \mathsf{action\_acc}_x \|
+    /// \mathsf{action\_acc}_y \| \mathsf{value\_balance}) $$
+    ///
+    /// where $\mathsf{action\_acc}$ is the polynomial commitment to the
+    /// action digest multiset `∏(X - action_digest_i)` — order-independent
+    /// by construction since the polynomial is invariant under root
+    /// permutation.
+    ///
+    /// The stamp is excluded because it is stripped during aggregation.
     #[must_use]
     pub fn commitment(&self) -> [u8; 64] {
         #[expect(clippy::expect_used, reason = "todo")]
         let roots: Vec<Fp> = self
             .iter_actions(
-                |plan| Fp::from(ActionDigest::try_from(plan).expect("don't plan invalid spends")),
-                |plan| Fp::from(ActionDigest::try_from(plan).expect("don't plan invalid outputs")),
+                |plan| Fp::from(plan.digest().expect("don't plan invalid spends")),
+                |plan| Fp::from(plan.digest().expect("don't plan invalid outputs")),
             )
             .collect();
-        let action_acc = ActionCommit(Polynomial::from_roots(&roots).commit(Fp::ZERO));
+        let action_acc = ActionSetCommit(Polynomial::from_roots(&roots).commit(Fp::ZERO));
+        let action_coords = action_acc
+            .0
+            .inner()
+            .coordinates()
+            .expect("non-identity action accumulator");
 
-        digest_bundle(&action_acc, self.value_balance())
+        blake2b::bundle_commitment(action_coords, self.value_balance())
     }
 
     /// Build a [`stamp::Plan`] from this bundle plan.
@@ -589,28 +545,23 @@ impl Stamped {
     /// stamp trailer (anchor + tachygrams + proof).
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 64] {
-        let mut state = blake2b_simd::Params::new()
-            .hash_length(64)
-            .personal(AUTH_DIGEST_PERSONALIZATION)
-            .to_state();
-
-        for action in &self.actions {
-            let sig_bytes: [u8; 64] = action.sig.into();
-            state.update(&sig_bytes);
-        }
-        let binding_sig_bytes: [u8; 64] = self.binding_sig.into();
-        state.update(&binding_sig_bytes);
-
-        state.update(&self.stamp.anchor.0.0.to_le_bytes());
-        state.update(&self.stamp.anchor.1.0.inner().to_bytes());
-
-        for tg in &self.stamp.tachygrams {
-            state.update(&Fp::from(*tg).to_repr());
-        }
-
-        state.update(self.stamp.proof.serialize().as_ref());
-
-        *state.finalize().as_array()
+        let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
+        let binding_sig: [u8; 64] = self.binding_sig.into();
+        let anchor: [u8; 32] = self.stamp.anchor.0.into();
+        let tachygrams: Vec<[u8; 32]> = self
+            .stamp
+            .tachygrams
+            .iter()
+            .map(|&tg| Fp::from(tg).to_repr())
+            .collect();
+        let proof = self.stamp.proof.serialize();
+        blake2b::stamped_auth_digest(
+            &action_sigs,
+            &binding_sig,
+            &anchor,
+            &tachygrams,
+            proof.as_ref(),
+        )
     }
 }
 
@@ -672,21 +623,9 @@ impl Stripped {
     /// `wtxid` of the covering aggregate.
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 64] {
-        let mut state = blake2b_simd::Params::new()
-            .hash_length(64)
-            .personal(AUTH_DIGEST_PERSONALIZATION)
-            .to_state();
-
-        for action in &self.actions {
-            let sig_bytes: [u8; 64] = action.sig.into();
-            state.update(&sig_bytes);
-        }
-        let binding_sig_bytes: [u8; 64] = self.binding_sig.into();
-        state.update(&binding_sig_bytes);
-
-        state.update(&self.stamp.wtxid);
-
-        *state.finalize().as_array()
+        let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
+        let binding_sig: [u8; 64] = self.binding_sig.into();
+        blake2b::stripped_auth_digest(&action_sigs, &binding_sig, &self.stamp.wtxid)
     }
 }
 
@@ -747,10 +686,23 @@ impl TachyonBundle {
 }
 
 impl<S: StampState> Bundle<S> {
-    /// See [`digest_bundle`].
+    /// See [`Plan::commitment`].
     pub fn commitment(&self) -> Result<[u8; 64], ActionDigestError> {
-        let action_acc = ActionCommit(compute_action_acc(&self.actions)?.0.commit(Fp::ZERO));
-        Ok(digest_bundle(&action_acc, self.value_balance))
+        let action_digests = self
+            .actions
+            .iter()
+            .map(Action::digest)
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
+        let action_acc = ActionSetCommit::from(action_digests.as_slice());
+        let action_coords = action_acc
+            .0
+            .inner()
+            .coordinates()
+            .expect("non-identity action accumulator");
+        Ok(blake2b::bundle_commitment(
+            action_coords,
+            self.value_balance,
+        ))
     }
 
     /// Verify the bundle's binding signature and all action signatures.
@@ -900,8 +852,7 @@ fn write_bundle_trailer_stamped<W: Write>(mut writer: W, stamp: &Stamp) -> io::R
         &stamp
             .tachygrams
             .iter()
-            .copied()
-            .map(Fp::from)
+            .map(|&tg| Fp::from(tg))
             .collect::<Vec<Fp>>(),
     )?;
     stamp::write_proof(&mut writer, &stamp.proof)?;

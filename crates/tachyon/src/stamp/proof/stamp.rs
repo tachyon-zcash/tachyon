@@ -4,20 +4,16 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ff::Field as _;
-use mock_ragu::{Header, Index, Multiset, Polynomial, Step, Suffix};
-use pasta_curves::Fp;
+use mock_ragu::{Header, Index, Step, Suffix};
 
-use super::{spend::SpendHeader, spendable::SpendableHeader};
+use super::{pool::AnchorSpan, spend::SpendHeader, spendable::SpendableHeader};
 use crate::{
+    ActionSetGadget, TachygramSetGadget,
     constants::NOTE_VALUE_MAX,
     entropy::ActionRandomizer,
     keys::private,
     note::Note,
-    primitives::{
-        ActionAcc, ActionCommit, ActionDigest, ActionSet, Anchor, PoolDelta, PoolSet, Tachygram,
-        TachygramAcc, TachygramCommit, TachygramSet, effect,
-    },
+    primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit, effect},
     value,
 };
 
@@ -30,23 +26,23 @@ use crate::{
 pub struct StampHeader;
 
 impl Header for StampHeader {
-    /// `(action_commit, tachygram_commit, anchor)` — all 32-byte commitment
+    /// `(action_commit, stamp_tg_commit, anchor)` — all 32-byte commitment
     /// handles. Polynomials travel prover-side via `Witness`/`Aux` as
-    /// `ActionAcc` / `TachygramAcc` / `PoolAcc`.
-    type Data<'source> = (ActionCommit, TachygramCommit, Anchor);
+    /// `ActionAcc` / `StampTgAcc`. Per-block pool state travels through
+    /// the spendable / stamp-lift chain (it isn't on the stamp header).
+    type Data<'source> = (ActionSetCommit, TachygramSetCommit, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(6);
+    const SUFFIX: Suffix = Suffix::new(14);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 4 + 32);
+        todo!("commitment encoding seems incorrect");
+        let mut out = Vec::with_capacity(32 + 32 + 32);
         let action_bytes: [u8; 32] = data.0.0.into();
         let tachygram_bytes: [u8; 32] = data.1.0.into();
+        let anchor_bytes: [u8; 32] = data.2.0.into();
         out.extend_from_slice(&action_bytes);
         out.extend_from_slice(&tachygram_bytes);
-
-        out.extend_from_slice(&u32::from(data.2.0).to_le_bytes());
-        let pool_bytes: [u8; 32] = data.2.1.0.into();
-        out.extend_from_slice(&pool_bytes);
+        out.extend_from_slice(&anchor_bytes);
         out
     }
 }
@@ -56,7 +52,7 @@ impl Header for StampHeader {
 pub struct OutputStamp;
 
 impl Step for OutputStamp {
-    type Aux<'source> = (ActionAcc, TachygramAcc, Tachygram);
+    type Aux<'source> = ();
     type Left = ();
     type Output = StampHeader;
     type Right = ();
@@ -67,7 +63,7 @@ impl Step for OutputStamp {
         Anchor,
     );
 
-    const INDEX: Index = Index::new(2);
+    const INDEX: Index = Index::new(24);
 
     fn witness<'source>(
         &self,
@@ -85,68 +81,54 @@ impl Step for OutputStamp {
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         let action_digest = ActionDigest::new(cv, rk)
             .map_err(|_err| mock_ragu::Error("OutputStamp: action digest construction failed"))?;
-
         let tachygram = Tachygram::from(note.commitment());
-        let action_acc = ActionAcc::from(&[action_digest][..]);
-        let tachygram_acc = TachygramAcc::from(&[tachygram][..]);
 
         let data = (
-            ActionCommit(action_acc.0.commit(Fp::ZERO)),
-            TachygramCommit(tachygram_acc.0.commit(Fp::ZERO)),
+            ActionSetCommit::from([action_digest].as_slice()),
+            TachygramSetCommit::from([tachygram].as_slice()),
             anchor,
         );
-        Ok((data, (action_acc, tachygram_acc, tachygram)))
+        Ok((data, ()))
     }
 }
 
-/// Fuses spend with spendable chain into a stamp.
+/// Fuses a [`SpendHeader`] with a [`SpendableHeader`] into a stamp.
+///
+/// The spend's first nullifier must equal the spendable's `nf`;
+/// chain-binding is implicit via `spendable.anchor` (already validated by
+/// the spendable lineage). Epoch alignment is consumer-side.
 #[derive(Debug)]
 pub struct SpendStamp;
 
 impl Step for SpendStamp {
-    type Aux<'source> = (ActionAcc, TachygramAcc);
+    type Aux<'source> = ();
     type Left = SpendHeader;
     type Output = StampHeader;
     type Right = SpendableHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(10);
+    const INDEX: Index = Index::new(26);
 
     fn witness<'source>(
         &self,
         _witness: Self::Witness<'source>,
-        (action_digest, nullifiers, epoch): <Self::Left as Header>::Data<'source>,
-        (right_nf, right_anchor): <Self::Right as Header>::Data<'source>,
+        (action_digest, (now_nf, next_nf)): <Self::Left as Header>::Data<'source>,
+        (anchored_nf, anchor): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        // Spendable must have been lifted to the present epoch E and tracks
-        // nf_E; the stamp reveals nf_E (and pre-commits nf_{E+1}). nf-equality
-        // is sufficient: by PCD soundness, the spendable's `nf` carries the
-        // wallet's `cm`-binding established at `SpendableInit`, and
-        // `nullifiers[0]` carries the same wallet's `cm`-binding established
-        // at `SpendBind`. Same `nf` ⇒ same GGM leaf ⇒ same wallet.
-        if nullifiers[0] != right_nf {
+        if now_nf != anchored_nf {
             return Err(mock_ragu::Error(
                 "SpendStamp: spend's now_nf must equal spendable's nf",
             ));
         }
-        if epoch != right_anchor.0.epoch() {
-            return Err(mock_ragu::Error(
-                "SpendStamp: spend epoch must match spendable's anchor epoch",
-            ));
-        }
-
-        let action_acc = ActionAcc::from(&[action_digest][..]);
-        let tachygram_acc = TachygramSet(Polynomial::from_roots(&[
-            Fp::from(nullifiers[0]),
-            Fp::from(nullifiers[1]),
-        ]));
 
         let data = (
-            ActionCommit(action_acc.0.commit(Fp::ZERO)),
-            TachygramCommit(tachygram_acc.0.commit(Fp::ZERO)),
-            right_anchor,
+            ActionSetCommit::from([action_digest].as_slice()),
+            TachygramSetCommit::from(
+                [Tachygram::from(now_nf), Tachygram::from(next_nf)].as_slice(),
+            ),
+            anchor,
         );
-        Ok((data, (action_acc, tachygram_acc)))
+        Ok((data, ()))
     }
 }
 
@@ -160,13 +142,13 @@ impl Step for MergeStamp {
     type Output = StampHeader;
     type Right = StampHeader;
     type Witness<'source> = (
-        ActionSet<Multiset>,
-        ActionSet<Multiset>,
-        TachygramSet<Multiset>,
-        TachygramSet<Multiset>,
+        ActionSetGadget,
+        ActionSetGadget,
+        TachygramSetGadget,
+        TachygramSetGadget,
     );
 
-    const INDEX: Index = Index::new(11);
+    const INDEX: Index = Index::new(27);
 
     fn witness<'source>(
         &self,
@@ -178,6 +160,7 @@ impl Step for MergeStamp {
             'source,
         >,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        // Same-anchor constraint.
         if left_anchor != right_anchor {
             return Err(mock_ragu::Error("MergeStamp: anchors must match"));
         }
@@ -193,19 +176,21 @@ impl Step for MergeStamp {
             ));
         }
 
-        let merged_action = left_action.0.merge(&right_action.0);
-        let merged_tachygram = left_tachygram.0.merge(&right_tachygram.0);
+        let merged_action = ActionSetGadget(left_action.0.merge(&right_action.0));
+        let merged_tachygram = TachygramSetGadget(left_tachygram.0.merge(&right_tachygram.0));
 
         let data = (
-            ActionCommit(merged_action.commit()),
-            TachygramCommit(merged_tachygram.commit()),
+            ActionSetCommit::from(merged_action),
+            TachygramSetCommit::from(merged_tachygram),
             left_anchor,
         );
         Ok((data, ()))
     }
 }
 
-/// Advances a stamp's anchor to a later block within the same epoch.
+/// Advance a stamp's anchor by absorbing an [`AnchorSpan`]: the span's
+/// `prev_anchor` must equal the stamp's `old_anchor`, and the new anchor
+/// is the span's `end_anchor`.
 #[derive(Debug)]
 pub struct StampLift;
 
@@ -213,51 +198,35 @@ impl Step for StampLift {
     type Aux<'source> = ();
     type Left = StampHeader;
     type Output = StampHeader;
-    type Right = ();
-    type Witness<'source> = (
-        ActionSet<Multiset>,
-        TachygramSet<Multiset>,
-        PoolSet<Multiset>,
-        PoolDelta<Multiset>,
-        Anchor,
-    );
+    type Right = AnchorSpan;
+    type Witness<'source> = (ActionSetCommit, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(12);
+    const INDEX: Index = Index::new(28);
 
     fn witness<'source>(
         &self,
-        (left_action, left_tachygram, left_pool, delta, right_anchor): Self::Witness<'source>,
-        (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data<
+        (left_action, left_tachygram): Self::Witness<'source>,
+        (left_action_commit, left_tachygram_commit, old_anchor): <Self::Left as Header>::Data<
             'source,
         >,
-        _right: <Self::Right as Header>::Data<'source>,
+        (span_prev_anchor, span_end_anchor): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if left_anchor.0.epoch() != right_anchor.0.epoch() {
-            return Err(mock_ragu::Error("StampLift: anchors must share an epoch"));
-        }
-        if right_anchor.0 <= left_anchor.0 {
-            return Err(mock_ragu::Error(
-                "StampLift: right anchor must be later than left",
-            ));
-        }
-
-        if left_action.0.commit() != left_action_commit.0
-            || left_tachygram.0.commit() != left_tachygram_commit.0
-            || left_pool.0.commit() != left_anchor.1.0
-        {
+        // Bind witness commits to the left header's commitments.
+        if left_action.0 != left_action_commit.0 || left_tachygram.0 != left_tachygram_commit.0 {
             return Err(mock_ragu::Error(
                 "StampLift: witness commits must match left header commits",
             ));
         }
 
-        let right_pool = left_pool.0.merge(&delta.0);
-        if right_pool.commit() != right_anchor.1.0 {
+        // The anchor span's chain segment must root at the stamp's old
+        // anchor — boundary match instead of a multiset query.
+        if span_prev_anchor != old_anchor {
             return Err(mock_ragu::Error(
-                "StampLift: pool plus delta must match right anchor",
+                "StampLift: span prev_anchor must equal stamp old_anchor",
             ));
         }
 
-        let data = (left_action_commit, left_tachygram_commit, right_anchor);
+        let data = (left_action_commit, left_tachygram_commit, span_end_anchor);
         Ok((data, ()))
     }
 }

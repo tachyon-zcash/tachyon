@@ -52,14 +52,13 @@ macro_rules! todo {
 pub mod action;
 pub mod bundle;
 pub mod constants;
+pub mod digest;
 pub mod entropy;
 pub mod keys;
 pub mod note;
 pub mod reddsa;
 pub mod stamp;
 pub mod value;
-
-mod digest;
 
 mod primitives;
 mod serialization;

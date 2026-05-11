@@ -27,6 +27,8 @@ All BLAKE2b personalizations are exactly 16 bytes. Poseidon domain tags are 16-b
 | Payment key | `Tachyon-PkDerive` | $\mathsf{pk} = \text{Poseidon}(\mathsf{tag}, \mathsf{ak}_x, \mathsf{nk})$ |
 | Delegation id | `Tachyon-Delegate` | $\text{DelegationId} = \text{Poseidon}(\mathsf{tag}, \mathsf{mk}, \mathsf{cm}, \mathsf{trapdoor})$ — per-delegation note binding |
 | Epoch seed | `Tachyon-EpchSeed` | $\text{epoch\_seed} = \text{Poseidon}(\mathsf{tag}, \mathsf{pool\_commit}_x, \mathsf{pool\_commit}_y)$ — seed inserted at epoch boundary |
+| Chain anchor | `Tachyon-AnchrFld` | $\mathsf{anchor} = \text{Poseidon}(\mathsf{tag}, \mathsf{prev\_anchor}, \mathsf{height}, \mathsf{block\_state})$ — per-block anchor step |
+| Block state | `Tachyon-PoolFold` | $\mathsf{block\_state} = \text{Poseidon}(\mathsf{tag}, \mathsf{prev\_state}, \mathsf{stamp\_commit}_x, \mathsf{stamp\_commit}_y)$ — fold over stamp set commits |
 
 ## Other
 

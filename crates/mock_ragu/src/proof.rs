@@ -27,10 +27,22 @@ pub struct Proof {
 }
 
 /// Mocks `ragu_pcd::Pcd`.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Pcd<'source, H: Header> {
     pub proof: Proof,
     pub data: H::Data<'source>,
+}
+
+impl<'source, H: Header> Clone for Pcd<'source, H>
+where
+    H::Data<'source>: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            proof: self.proof.clone(),
+            data: self.data.clone(),
+        }
+    }
 }
 
 impl Proof {

@@ -5,6 +5,7 @@ mod delegation_id;
 pub mod effect;
 mod epoch;
 mod sets;
+mod subblock;
 mod tachygram;
 
 pub use action_digest::{ActionDigest, ActionDigestError};
@@ -12,9 +13,7 @@ pub use anchor::Anchor;
 pub use block_height::BlockHeight;
 pub use delegation_id::{DelegationId, DelegationTrapdoor};
 pub use effect::Effect;
-pub use epoch::{EpochIndex, epoch_seed_hash};
-pub use sets::{
-    ActionAcc, ActionCommit, ActionSet, BlockAcc, BlockCommit, BlockSet, PoolAcc, PoolCommit,
-    PoolDelta, PoolSet, TachygramAcc, TachygramCommit, TachygramSet,
-};
+pub use epoch::EpochIndex;
+pub use sets::{ActionSetCommit, ActionSetGadget, TachygramSetCommit, TachygramSetGadget};
+pub use subblock::SubBlock;
 pub use tachygram::Tachygram;

@@ -107,7 +107,7 @@ mod tests {
     fn ask_sign_normalization() {
         use ff::FromUniformBytes as _;
 
-        let mut rng = StdRng::seed_from_u64(0);
+        let rng = &mut StdRng::seed_from_u64(0);
         let mut flipped = 0u32;
         for _ in 0u8..20 {
             let mut sk_bytes = [0u8; 32];
@@ -156,7 +156,8 @@ mod tests {
     /// pin the full proof authorizing key.
     #[test]
     fn payment_key_binds_nk() {
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let rng = &mut StdRng::seed_from_u64(0);
+        let sk = private::SpendingKey::random(rng);
         let ak = sk.derive_auth_private().derive_auth_public();
         let nk = sk.derive_nullifier_private();
         let pk = PaymentKey::derive(&ak, &nk);
@@ -171,17 +172,17 @@ mod tests {
     /// and prover sides of the randomized key derivation.
     #[test]
     fn rsk_public_equals_ak_derive_action_public() {
-        let mut rng = StdRng::seed_from_u64(0);
+        let rng = &mut StdRng::seed_from_u64(0);
         let sk = private::SpendingKey::from([0x42u8; 32]);
         let ask = sk.derive_auth_private();
         let ak = ask.derive_auth_public();
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
-            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
-            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+            psi: note::NullifierTrapdoor::random(rng),
+            rcm: note::CommitmentTrapdoor::random(rng),
         };
-        let theta = ActionEntropy::random(&mut rng);
+        let theta = ActionEntropy::random(rng);
         let alpha = theta.randomizer::<effect::Spend>(note.commitment());
         let rsk = ask.derive_action_private(&alpha);
 

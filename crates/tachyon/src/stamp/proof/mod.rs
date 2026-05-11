@@ -6,77 +6,56 @@
 extern crate alloc;
 
 pub mod delegation;
+pub mod pool;
 pub mod spend;
 pub mod spendable;
 pub mod stamp;
+pub mod unspent;
 
 #[cfg(test)]
 mod tests;
 
-use alloc::vec::Vec;
-
-use delegation::{
-    DelegateNfPrefixStep, DelegateNullifierStep, DelegationStep, NfMasterSeed, NfMasterStep,
-    NfPrefixStep, NullifierStep,
-};
 use lazy_static::lazy_static;
 pub use mock_ragu::Proof;
 use mock_ragu::{Application, ApplicationBuilder};
-use spend::SpendBind;
-use spendable::{SpendableEpochLift, SpendableInit, SpendableLift, SpendableRollover};
-use stamp::{MergeStamp, OutputStamp, SpendStamp, StampLift};
 
-use crate::{
-    action::Action,
-    primitives::{ActionAcc, ActionDigest, ActionDigestError},
-};
-
-/// Build the action accumulator polynomial from the public actions list.
-pub fn compute_action_acc(actions: &[Action]) -> Result<ActionAcc, ActionDigestError> {
-    let digests: Vec<ActionDigest> = actions
-        .iter()
-        .map(ActionDigest::try_from)
-        .collect::<Result<_, ActionDigestError>>()?;
-    Ok(ActionAcc::from(&*digests))
+fn make_app() -> Result<Application, mock_ragu::Error> {
+    ApplicationBuilder::new()
+        .register(delegation::NfMasterSeed)?
+        .register(delegation::NfMasterStep)?
+        .register(delegation::NfPrefixStep)?
+        .register(delegation::NullifierStep)?
+        .register(delegation::DelegationStep)?
+        .register(delegation::DelegateNfPrefixStep)?
+        .register(delegation::DelegateNullifierStep)?
+        .register(pool::InclusionShardFuse)?
+        .register(pool::InclusionComplementSeed)?
+        .register(pool::InclusionComplementStep)?
+        .register(pool::ExclusionShardSeed)?
+        .register(pool::ExclusionShardFuse)?
+        .register(pool::AnchorSpanSeed)?
+        .register(pool::AnchorSpanStep)?
+        .register(pool::AnchorSpanFuse)?
+        .register(unspent::EmptyBlockUnspentSeed)?
+        .register(unspent::UnspentInit)?
+        .register(unspent::UnspentFuse)?
+        .register(spendable::SpendableInit)?
+        .register(spendable::SpendableLift)?
+        .register(spendable::RolloverFuse)?
+        .register(spendable::DelegateRolloverFuse)?
+        .register(spendable::SpendableRollover)?
+        .register(spendable::SpendableEpochLift)?
+        .register(stamp::OutputStamp)?
+        .register(spend::SpendBind)?
+        .register(stamp::SpendStamp)?
+        .register(stamp::MergeStamp)?
+        .register(stamp::StampLift)?
+        .finalize()
 }
 
 lazy_static! {
     pub(crate) static ref PROOF_SYSTEM: Application = {
         #[expect(clippy::expect_used, reason = "mock registration is infallible")]
-        ApplicationBuilder::new()
-            .register(NfMasterSeed)
-            .expect("register NfMasterSeed")
-            .register(NfMasterStep)
-            .expect("register NfMasterStep")
-            .register(OutputStamp)
-            .expect("register OutputStamp")
-            .register(NfPrefixStep)
-            .expect("register NfPrefixStep")
-            .register(NullifierStep)
-            .expect("register NullifierStep")
-            .register(DelegateNullifierStep)
-            .expect("register DelegateNullifierStep")
-            .register(SpendBind)
-            .expect("register SpendBind")
-            .register(SpendableInit)
-            .expect("register SpendableInit")
-            .register(SpendableRollover)
-            .expect("register SpendableRollover")
-            .register(SpendableLift)
-            .expect("register SpendableLift")
-            .register(SpendableEpochLift)
-            .expect("register SpendableEpochLift")
-            .register(SpendStamp)
-            .expect("register SpendStamp")
-            .register(MergeStamp)
-            .expect("register MergeStamp")
-            .register(StampLift)
-            .expect("register StampLift")
-            .register(DelegationStep)
-            .expect("register DelegationStep")
-            .register(DelegateNfPrefixStep)
-            .expect("register DelegateNfPrefixStep")
-            .finalize()
-            .expect("finalize")
+        make_app().expect("should work")
     };
 }

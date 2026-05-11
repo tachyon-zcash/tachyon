@@ -55,7 +55,7 @@ pub struct NullifierTrapdoor(pub(super) Fp);
 
 impl NullifierTrapdoor {
     /// Generate a fresh random trapdoor.
-    pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
+    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fp::random(rng))
     }
 }
@@ -81,7 +81,7 @@ pub struct CommitmentTrapdoor(Fp);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
-    pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
+    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fp::random(rng))
     }
 }
@@ -161,8 +161,18 @@ impl Note {
     /// Computes the note commitment `cm`.
     ///
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$
+    ///
+    /// # Panics
+    ///
+    /// Panics if the note commitment trapdoor is zero.
     #[must_use]
     pub fn commitment(&self) -> Commitment {
+        assert_ne!(
+            self.rcm.0,
+            Fp::ZERO,
+            "note commitment trapdoor should not be zero"
+        );
+
         Commitment::from(poseidon::note_commitment(
             self.rcm.0,
             self.pk.0,
@@ -245,8 +255,10 @@ impl From<Nullifier> for Tachygram {
 
 #[cfg(test)]
 mod tests {
+    use rand::{SeedableRng as _, rngs::StdRng};
+
     use super::*;
-    use crate::constants::NOTE_VALUE_MAX;
+    use crate::{constants::NOTE_VALUE_MAX, keys::private::SpendingKey, primitives::EpochIndex};
 
     /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
     #[test]
@@ -271,20 +283,21 @@ mod tests {
     /// Different trapdoors produce different commitments.
     #[test]
     fn distinct_rcm_distinct_commitments() {
-        let pk = PaymentKey(Fp::from(1u64));
-        let psi = NullifierTrapdoor::from(Fp::from(2u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let pk = PaymentKey(Fp::random(&mut *rng));
+        let psi = NullifierTrapdoor::random(rng);
 
         let note1 = Note {
             pk,
             value: Value::from(100u64),
             psi,
-            rcm: CommitmentTrapdoor::from(Fp::from(3u64)),
+            rcm: CommitmentTrapdoor::random(rng),
         };
         let note2 = Note {
             pk,
             value: Value::from(100u64),
             psi,
-            rcm: CommitmentTrapdoor::from(Fp::from(4u64)),
+            rcm: CommitmentTrapdoor::random(rng),
         };
 
         assert_ne!(note1.commitment(), note2.commitment());
@@ -293,20 +306,19 @@ mod tests {
     /// `Note::nullifier` delegates correctly to key derivation.
     #[test]
     fn note_nullifier_matches_key_derivation() {
-        use crate::{keys::private::SpendingKey, primitives::EpochIndex};
+        let rng = &mut StdRng::seed_from_u64(0);
 
-        let sk = SpendingKey::from([0x42u8; 32]);
+        let sk = SpendingKey::random(rng);
         let nk = sk.derive_nullifier_private();
-        let psi = NullifierTrapdoor::from(Fp::from(99u64));
         let note = Note {
             pk: sk.derive_payment_key(),
             value: Value::from(100u64),
-            psi,
-            rcm: CommitmentTrapdoor::from(Fp::ZERO),
+            psi: NullifierTrapdoor::random(rng),
+            rcm: CommitmentTrapdoor::random(rng),
         };
         let flavor = EpochIndex(5u32);
 
-        let mk = nk.derive_note_private(&psi);
+        let mk = nk.derive_note_private(&note.psi);
         assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));
     }
 }

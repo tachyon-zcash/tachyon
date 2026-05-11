@@ -5,10 +5,12 @@
 //! `blake2b_simd::Params::personal` accepts any length ≤ 16.
 
 use blake2b_simd::Params;
+use ff::PrimeField as _;
+use pasta_curves::{EqAffine, arithmetic::Coordinates};
 
 const PRF_EXPAND_PERSONALIZATION: &[u8; 16] = b"Zcash_ExpandSeed";
-pub(crate) const BUNDLE_COMMITMENT_PERSONALIZATION: &[u8; 16] = b"Tachyon-BndlHash";
-pub(crate) const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
+const BUNDLE_COMMITMENT_PERSONALIZATION: &[u8; 16] = b"Tachyon-BndlHash";
+const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 const SPEND_ALPHA_PERSONALIZATION: &[u8; 13] = b"Tachyon-Spend";
 const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
 
@@ -70,6 +72,84 @@ pub(crate) fn alpha_output(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
         .to_state()
         .update(theta)
         .update(cm)
+        .finalize()
+        .as_array()
+}
+
+/// Bundle commitment over $\mathsf{action\_acc}_x \|
+/// \mathsf{action\_acc}_y \| \mathsf{value\_balance}_{LE}$.
+pub(crate) fn bundle_commitment(action_acc: Coordinates<EqAffine>, value_balance: i64) -> [u8; 64] {
+    *Params::new()
+        .hash_length(64)
+        .personal(BUNDLE_COMMITMENT_PERSONALIZATION)
+        .to_state()
+        .update(&action_acc.x().to_repr())
+        .update(&action_acc.y().to_repr())
+        .update(&value_balance.to_le_bytes())
+        .finalize()
+        .as_array()
+}
+
+/// Bundle commitment for absent Tachyon bundle (empty hash, ZIP-244 pattern).
+pub(crate) fn no_bundle_commitment() -> [u8; 64] {
+    *Params::new()
+        .hash_length(64)
+        .personal(BUNDLE_COMMITMENT_PERSONALIZATION)
+        .to_state()
+        .finalize()
+        .as_array()
+}
+
+/// `auth_digest` for stamped bundles: action sigs ‖ binding sig ‖ anchor ‖
+/// tachygrams ‖ proof bytes.
+pub(crate) fn stamped_auth_digest(
+    action_sigs: &[[u8; 64]],
+    binding_sig: &[u8; 64],
+    anchor: &[u8; 32],
+    tachygrams: &[[u8; 32]],
+    proof: &[u8],
+) -> [u8; 64] {
+    let mut state = Params::new()
+        .hash_length(64)
+        .personal(AUTH_DIGEST_PERSONALIZATION)
+        .to_state();
+    for sig in action_sigs {
+        state.update(sig);
+    }
+    state.update(binding_sig);
+    state.update(anchor);
+    for tg in tachygrams {
+        state.update(tg);
+    }
+    state.update(proof);
+    *state.finalize().as_array()
+}
+
+/// `auth_digest` for stripped bundles: action sigs ‖ binding sig ‖ aggregate
+/// wtxid.
+pub(crate) fn stripped_auth_digest(
+    action_sigs: &[[u8; 64]],
+    binding_sig: &[u8; 64],
+    aggregate_wtxid: &[u8; 64],
+) -> [u8; 64] {
+    let mut state = Params::new()
+        .hash_length(64)
+        .personal(AUTH_DIGEST_PERSONALIZATION)
+        .to_state();
+    for sig in action_sigs {
+        state.update(sig);
+    }
+    state.update(binding_sig);
+    state.update(aggregate_wtxid);
+    *state.finalize().as_array()
+}
+
+/// `auth_digest` for absent Tachyon bundle (empty hash, ZIP-244 pattern).
+pub(crate) fn no_bundle_auth_digest() -> [u8; 64] {
+    *Params::new()
+        .hash_length(64)
+        .personal(AUTH_DIGEST_PERSONALIZATION)
+        .to_state()
         .finalize()
         .as_array()
 }

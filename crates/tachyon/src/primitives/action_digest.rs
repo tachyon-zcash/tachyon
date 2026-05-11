@@ -3,9 +3,7 @@ use core::{error::Error, fmt};
 use ff::PrimeField as _;
 use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
 
-use crate::{
-    Action, action::Plan as ActionPlan, digest::poseidon, keys::public, primitives::Effect, value,
-};
+use crate::{digest::poseidon, keys::public, value};
 
 /// Poseidon digest of a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
 ///
@@ -49,7 +47,6 @@ impl ActionDigest {
             .coordinates()
             .into_option()
             .ok_or(ActionDigestError::IdentityRk)?;
-
         Ok(Self(poseidon::action_digest(cv_coords, rk_coords)))
     }
 }
@@ -64,22 +61,6 @@ impl From<ActionDigest> for Fp {
 impl From<Fp> for ActionDigest {
     fn from(fp: Fp) -> Self {
         Self(fp)
-    }
-}
-
-impl<E: Effect> TryFrom<&ActionPlan<E>> for ActionDigest {
-    type Error = ActionDigestError;
-
-    fn try_from(plan: &ActionPlan<E>) -> Result<Self, Self::Error> {
-        Self::new(plan.cv(), plan.rk)
-    }
-}
-
-impl TryFrom<&Action> for ActionDigest {
-    type Error = ActionDigestError;
-
-    fn try_from(action: &Action) -> Result<Self, Self::Error> {
-        Self::new(action.cv, action.rk)
     }
 }
 
@@ -100,9 +81,7 @@ impl TryFrom<&[u8; 32]> for ActionDigest {
 
 #[cfg(test)]
 mod tests {
-    use ff::Field as _;
-    use pasta_curves::Fp;
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::{CryptoRng, RngCore, SeedableRng as _, rngs::StdRng};
 
     use super::*;
     use crate::{
@@ -113,19 +92,16 @@ mod tests {
         value,
     };
 
-    /// Build a (cv, rk) pair from a note, random rcv, and random theta.
-    fn make_action_parts(
-        rng: &mut StdRng,
-        sk: &private::SpendingKey,
+    fn make_action_parts<RNG: RngCore + CryptoRng>(
+        rng: &mut RNG,
         val: u64,
-        psi: Fp,
-        rcm: Fp,
     ) -> (value::Commitment, public::ActionVerificationKey) {
+        let sk = private::SpendingKey::random(rng);
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(val),
-            psi: note::NullifierTrapdoor::from(psi),
-            rcm: note::CommitmentTrapdoor::from(rcm),
+            psi: note::NullifierTrapdoor::random(rng),
+            rcm: note::CommitmentTrapdoor::random(rng),
         };
         let rcv = value::CommitmentTrapdoor::random(rng);
         let cv = rcv.commit(i64::from(note.value));
@@ -138,11 +114,9 @@ mod tests {
     /// Different (cv, rk) pairs produce different digests.
     #[test]
     fn distinct_actions_distinct_digests() {
-        let mut rng = StdRng::seed_from_u64(201);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
-
-        let (cv_a, rk_a) = make_action_parts(&mut rng, &sk, 1000, Fp::ZERO, Fp::ZERO);
-        let (cv_b, rk_b) = make_action_parts(&mut rng, &sk, 700, Fp::ONE, Fp::ONE);
+        let rng = &mut StdRng::seed_from_u64(0);
+        let (cv_a, rk_a) = make_action_parts(rng, 1000);
+        let (cv_b, rk_b) = make_action_parts(rng, 700);
 
         assert_ne!(
             ActionDigest::new(cv_a, rk_a).unwrap(),
@@ -155,9 +129,8 @@ mod tests {
     fn digest_rejects_identity_cv() {
         use pasta_curves::group::prime::PrimeCurveAffine as _;
 
-        let mut rng = StdRng::seed_from_u64(203);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
-        let (_, rk) = make_action_parts(&mut rng, &sk, 500, Fp::ZERO, Fp::ZERO);
+        let rng = &mut StdRng::seed_from_u64(0);
+        let (_, rk) = make_action_parts(rng, 500);
         let cv = value::Commitment::from(EpAffine::identity());
         assert!(matches!(
             ActionDigest::new(cv, rk),
@@ -168,9 +141,8 @@ mod tests {
     /// Identity rk is rejected.
     #[test]
     fn digest_rejects_identity_rk() {
-        let mut rng = StdRng::seed_from_u64(204);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
-        let (cv, _) = make_action_parts(&mut rng, &sk, 500, Fp::ZERO, Fp::ZERO);
+        let rng = &mut StdRng::seed_from_u64(0);
+        let (cv, _) = make_action_parts(rng, 500);
         let rk =
             public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());
         assert!(matches!(

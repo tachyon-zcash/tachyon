@@ -40,7 +40,7 @@ The **tachystamp** is a recursive zero-knowledge proof that all related tachyact
 
 It contains:
 
-- `anchor` - a recent pool state
+- `anchor` - a chain [anchor](./anchor.md)
 - `proof` - the recursive proof (which may be aggregated)
 - `tachygrams` - nullifiers and commitments for each action
 
