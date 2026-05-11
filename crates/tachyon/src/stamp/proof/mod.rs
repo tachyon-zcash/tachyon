@@ -16,7 +16,8 @@ mod tests;
 use alloc::vec::Vec;
 
 use delegation::{
-    DelegationBlindStep, DelegationStep, NoteMasterStep, NoteSeedStep, NoteStep, NullifierStep,
+    DelegateNullifierStep, DelegationBlindStep, DelegationStep, NoteMasterStep, NoteSeedStep,
+    NoteStep, NullifierStep,
 };
 use lazy_static::lazy_static;
 pub use mock_ragu::Proof;
@@ -53,6 +54,8 @@ lazy_static! {
             .expect("register NoteStep")
             .register(NullifierStep)
             .expect("register NullifierStep")
+            .register(DelegateNullifierStep)
+            .expect("register DelegateNullifierStep")
             .register(SpendBind)
             .expect("register SpendBind")
             .register(SpendableInit)

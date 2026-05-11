@@ -1,4 +1,10 @@
 //! Spendable status headers and steps.
+//!
+//! Spendable state carries no `delegation_id`. `nf` uniquely encodes
+//! `(key, epoch)` via GGM determinism and is bound to the wallet's `cm` by
+//! the pre-blind chain rooted at `NoteSeedStep`; downstream nf-equality
+//! (e.g. at `SpendStamp`) recovers any further binding required, by
+//! composition of upstream PCDs.
 
 extern crate alloc;
 
@@ -8,16 +14,14 @@ use ff::{Field as _, PrimeField as _};
 use mock_ragu::{Header, Index, Multiset, Step, Suffix};
 use pasta_curves::Fp;
 
-use super::delegation::NullifierHeader;
+use super::delegation::{DelegateNullifierHeader, NullifierHeader};
 use crate::{
-    keys::ProofAuthorizingKey,
-    note::{Note, Nullifier},
-    primitives::{Anchor, DelegationId, DelegationTrapdoor, PoolDelta, PoolSet, epoch_seed_hash},
+    note::Nullifier,
+    primitives::{Anchor, PoolDelta, PoolSet, epoch_seed_hash},
 };
 
-fn encode_spendable(delegation_id: DelegationId, nf: Nullifier, anchor: &Anchor) -> Vec<u8> {
-    let mut out = Vec::with_capacity(32 + 32 + 4 + 32);
-    out.extend_from_slice(&Fp::from(&delegation_id).to_repr());
+fn encode_spendable(nf: Nullifier, anchor: &Anchor) -> Vec<u8> {
+    let mut out = Vec::with_capacity(32 + 4 + 32);
     out.extend_from_slice(&Fp::from(&nf).to_repr());
     out.extend_from_slice(&u32::from(anchor.0).to_le_bytes());
     let pool_bytes: [u8; 32] = anchor.1.0.into();
@@ -26,42 +30,55 @@ fn encode_spendable(delegation_id: DelegationId, nf: Nullifier, anchor: &Anchor)
 }
 
 /// Header attesting a note is spendable at a specific anchor.
+///
+/// Identified by `nf` alone — `nf` uniquely encodes `(key, epoch)` via
+/// GGM determinism, so sync services can update a spendable by `nf`
+/// without any `delegation_id`.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
 impl Header for SpendableHeader {
-    type Data<'source> = (DelegationId, Nullifier, Anchor);
+    /// `(nf, anchor)`.
+    type Data<'source> = (Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        encode_spendable(data.0, data.1, &data.2)
+        encode_spendable(data.0, &data.1)
     }
 }
 
-/// Header collecting information necessary for epoch transition.
+/// Header collecting information necessary for epoch transition. Carries
+/// `(old_nf, new_nf, anchor)` — `delegation_id` is fused internally at
+/// [`SpendableRollover`] and not propagated.
 #[derive(Debug)]
 pub struct SpendableRolloverHeader;
 
 impl Header for SpendableRolloverHeader {
-    // (delegation_id, old_nf, new_nf, new_anchor)
-    type Data<'source> = (DelegationId, Nullifier, Nullifier, Anchor);
+    /// `(old_nf, new_nf, new_anchor)`.
+    type Data<'source> = (Nullifier, Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(4);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 32 + 4 + 32);
+        let mut out = Vec::with_capacity(32 + 32 + 4 + 32);
         out.extend_from_slice(&Fp::from(&data.0).to_repr());
         out.extend_from_slice(&Fp::from(&data.1).to_repr());
-        out.extend_from_slice(&Fp::from(&data.2).to_repr());
-        out.extend_from_slice(&u32::from(data.3.0).to_le_bytes());
-        let pool_bytes: [u8; 32] = data.3.1.0.into();
+        out.extend_from_slice(&u32::from(data.2.0).to_le_bytes());
+        let pool_bytes: [u8; 32] = data.2.1.0.into();
         out.extend_from_slice(&pool_bytes);
         out
     }
 }
 
-/// Proves cm inclusion to bootstrap spendable status.
+/// Seeds spendable status from a pre-blind GGM-leaf header.
+///
+/// Note-ownership and well-formedness are structurally enforced upstream by
+/// `NoteSeedStep`; `cm` arrives on the leaf so this step only needs to
+/// verify pool membership and epoch alignment. By PCD soundness, the
+/// emitted `(nf, anchor)` carries forward the upstream `cm ↔ nf` binding —
+/// any downstream nf-equality (e.g. at `SpendStamp`) reconnects to a
+/// witnessed wallet without a `delegation_id` flowing through.
 ///
 /// TODO: this should probably check a single block, instead of pool state.
 #[derive(Debug)]
@@ -72,32 +89,16 @@ impl Step for SpendableInit {
     type Left = NullifierHeader;
     type Output = SpendableHeader;
     type Right = ();
-    type Witness<'source> = (
-        Note,
-        ProofAuthorizingKey,
-        DelegationTrapdoor,
-        PoolSet<Multiset>,
-        Anchor,
-    );
+    type Witness<'source> = (PoolSet<Multiset>, Anchor);
 
     const INDEX: Index = Index::new(6);
 
     fn witness<'source>(
         &self,
-        (note, pak, trap, pool, anchor): Self::Witness<'source>,
-        (nf, epoch, delegation_id): <Self::Left as Header>::Data<'source>,
+        (pool, anchor): Self::Witness<'source>,
+        (cm_tg, nf, epoch): <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if u64::from(note.value) == 0 {
-            return Err(mock_ragu::Error);
-        }
-        if note.pk.0 != pak.derive_payment_key().0 {
-            return Err(mock_ragu::Error);
-        }
-
-        if delegation_id != pak.nk.derive_delegation_id(&note, trap) {
-            return Err(mock_ragu::Error);
-        }
         if epoch != anchor.0.epoch() {
             return Err(mock_ragu::Error);
         }
@@ -106,27 +107,30 @@ impl Step for SpendableInit {
             return Err(mock_ragu::Error);
         }
 
-        let cm: Fp = Fp::from(&note.commitment());
-        if pool.0.query(cm) != Fp::ZERO {
+        if pool.0.query(Fp::from(&cm_tg)) != Fp::ZERO {
             return Err(mock_ragu::Error);
         }
         if pool.0.query(Fp::from(&nf)) == Fp::ZERO {
             return Err(mock_ragu::Error);
         }
 
-        Ok(((delegation_id, nf, anchor), ()))
+        Ok(((nf, anchor), ()))
     }
 }
 
-/// Collects some prerequisites for epoch transition.
+/// Collects prerequisites for epoch transition.
+///
+/// Consumes two post-blind `DelegateNullifierHeader`s and binds them as
+/// same-wallet via `delegation_id`-equality; `delegation_id` is not
+/// propagated to the output.
 #[derive(Debug)]
 pub struct SpendableRollover;
 
 impl Step for SpendableRollover {
     type Aux<'source> = ();
-    type Left = NullifierHeader;
+    type Left = DelegateNullifierHeader;
     type Output = SpendableRolloverHeader;
-    type Right = NullifierHeader;
+    type Right = DelegateNullifierHeader;
     type Witness<'source> = (PoolSet<Multiset>, Anchor);
 
     const INDEX: Index = Index::new(7);
@@ -154,7 +158,7 @@ impl Step for SpendableRollover {
             return Err(mock_ragu::Error);
         }
 
-        Ok(((new_delegation_id, old_nf, new_nf, anchor), ()))
+        Ok(((old_nf, new_nf, anchor), ()))
     }
 }
 
@@ -174,7 +178,7 @@ impl Step for SpendableLift {
     fn witness<'source>(
         &self,
         (old_pool, delta, to_anchor): Self::Witness<'source>,
-        (delegation_id, nf, old_anchor): <Self::Left as Header>::Data<'source>,
+        (nf, old_anchor): <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         if old_pool.0.commit() != old_anchor.1.0 {
@@ -194,7 +198,7 @@ impl Step for SpendableLift {
             return Err(mock_ragu::Error);
         }
 
-        Ok(((delegation_id, nf, to_anchor), ()))
+        Ok(((nf, to_anchor), ()))
     }
 }
 
@@ -214,12 +218,9 @@ impl Step for SpendableEpochLift {
     fn witness<'source>(
         &self,
         (pool,): Self::Witness<'source>,
-        (old_delegation_id, old_nf, old_anchor): <Self::Left as Header>::Data<'source>,
-        (rollover_delegation_id, rollover_old_nf, new_nf, new_anchor): <Self::Right as Header>::Data<'source>,
+        (old_nf, old_anchor): <Self::Left as Header>::Data<'source>,
+        (rollover_old_nf, new_nf, new_anchor): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if old_delegation_id != rollover_delegation_id {
-            return Err(mock_ragu::Error);
-        }
         if old_nf != rollover_old_nf {
             return Err(mock_ragu::Error);
         }
@@ -239,6 +240,6 @@ impl Step for SpendableEpochLift {
             return Err(mock_ragu::Error);
         }
 
-        Ok(((old_delegation_id, new_nf, new_anchor), ()))
+        Ok(((new_nf, new_anchor), ()))
     }
 }

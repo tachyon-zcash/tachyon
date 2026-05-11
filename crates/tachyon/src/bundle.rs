@@ -76,10 +76,7 @@ use crate::{
     action::{self, Action},
     constants::{AUTH_DIGEST_PERSONALIZATION, BUNDLE_COMMITMENT_PERSONALIZATION},
     keys::{private, public},
-    primitives::{
-        ActionCommit, ActionDigest, ActionDigestError, Anchor, DelegationTrapdoor, Tachygram,
-        effect,
-    },
+    primitives::{ActionCommit, ActionDigest, ActionDigestError, Anchor, Tachygram, effect},
     reddsa, serialization,
     stamp::{self, Adjunct, Stamp, Unproven, proof::compute_action_acc},
     value,
@@ -381,31 +378,14 @@ impl Plan {
     /// Derives alpha from theta for each action and collects the proof
     /// witnesses. The returned plan is ready to prove with
     /// [`stamp::Plan::prove`].
-    ///
-    /// `spend_traps` must be in the same order as `self.spends` and
-    /// carry the `DelegationTrapdoor` that was used to construct each
-    /// spend's delegation / nullifier PCDs.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `spend_traps.len() != self.spends.len()`.
     #[must_use]
-    pub fn stamp_plan(&self, anchor: Anchor, spend_traps: &[DelegationTrapdoor]) -> stamp::Plan {
-        assert_eq!(
-            spend_traps.len(),
-            self.spends.len(),
-            "one DelegationTrapdoor per spend"
-        );
+    pub fn stamp_plan(&self, anchor: Anchor) -> stamp::Plan {
         let spends = self
             .spends
             .iter()
-            .zip(spend_traps.iter().copied())
-            .map(|(plan, delegation_trap)| {
+            .map(|plan| {
                 let alpha = plan.theta.randomizer(&plan.note.commitment());
-                (
-                    (plan.cv(), plan.rk),
-                    (alpha, plan.note, plan.rcv, delegation_trap),
-                )
+                ((plan.cv(), plan.rk), (alpha, plan.note, plan.rcv))
             })
             .collect();
 

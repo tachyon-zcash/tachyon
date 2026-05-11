@@ -4,15 +4,22 @@
 //!
 //! 1. **Pre-blind** descent from the note master key down to some prefix key.
 //!    Headers carry `(mk, cm)` lineage (no delegation identifier). Steps:
-//!    [`NoteSeedStep`] → [`NoteMasterStep`] → [`NoteStep`] (recursive).
+//!    [`NoteSeedStep`] → [`NoteMasterStep`] → [`NoteStep`] (recursive). The
+//!    leaf is reached via [`NullifierStep`] which propagates `cm` onto a
+//!    pre-blind [`NullifierHeader`].
 //! 2. **Post-blind** phase after [`DelegationBlindStep`] attaches a fresh
 //!    `DelegationTrapdoor` to the `(mk, cm)` lineage, producing a
 //!    [`DelegationHeader`]. Further descent uses [`DelegationStep`];
-//!    [`NullifierStep`] emits a [`NullifierHeader`] at the leaf.
+//!    [`DelegateNullifierStep`] emits a [`DelegateNullifierHeader`] at the
+//!    leaf.
 //!
 //! Splitting the chain lets wallets cache pre-blind spine proofs (note-bound,
 //! trap-independent) and reuse them across delegations by swapping in a fresh
-//! `DelegationBlindStep` per delegation event.
+//! `DelegationBlindStep` per delegation event. The pre-blind leaf is the
+//! user-device path that retains `cm` for stamp-binding via cm-equality at
+//! `SpendBind` and pool-membership at `SpendableInit`; the post-blind leaf is
+//! the sync-service path that carries `delegation_id` for the cross-epoch
+//! `SpendableRollover`.
 
 extern crate alloc;
 
@@ -28,10 +35,8 @@ use crate::{
     constants::DELEGATION_ID_DOMAIN,
     keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey, NotePrefixedKey, ProofAuthorizingKey},
     note::{self, Note, Nullifier},
-    primitives::{DelegationId, DelegationTrapdoor, EpochIndex},
+    primitives::{DelegationId, DelegationTrapdoor, EpochIndex, Tachygram},
 };
-
-// ── Pre-blind headers ──────────────────────────────────────────────────────
 
 /// Pre-blind header for the note master key.
 ///
@@ -77,7 +82,29 @@ impl Header for NoteStepHeader {
     }
 }
 
-// ── Post-blind headers ─────────────────────────────────────────────────────
+/// Pre-blind GGM-leaf header.
+///
+/// Carries `(cm, nf, epoch)` — the wallet's private GGM-leaf state. `cm` is
+/// available to downstream steps (`SpendBind`, `SpendableInit`) to bind
+/// witnessed `Note` / pool-membership checks without a separate witness
+/// re-derivation. User device only — `cm` is private.
+#[derive(Clone, Debug)]
+pub struct NullifierHeader;
+
+impl Header for NullifierHeader {
+    /// `(cm, nf, epoch)`.
+    type Data<'source> = (Tachygram, Nullifier, EpochIndex);
+
+    const SUFFIX: Suffix = Suffix::new(9);
+
+    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+        let mut out = Vec::with_capacity(32 + 32 + 4);
+        out.extend_from_slice(&Fp::from(&data.0).to_repr());
+        out.extend_from_slice(&Fp::from(&data.1).to_repr());
+        out.extend_from_slice(&data.2.0.to_le_bytes());
+        out
+    }
+}
 
 /// Post-blind header for a delegated prefix key at depth ≥ 1.
 ///
@@ -101,12 +128,14 @@ impl Header for DelegationHeader {
     }
 }
 
-/// Header for a proven nullifier derivation at a specific epoch.
+/// Post-blind GGM-leaf header. Carries `(nf, epoch, delegation_id)` so the
+/// sync-service-driven `SpendableRollover` can match same-wallet pairs by
+/// `delegation_id`.
 #[derive(Clone, Debug)]
-pub struct NullifierHeader;
+pub struct DelegateNullifierHeader;
 
-impl Header for NullifierHeader {
-    // (nf, epoch, delegation_id)
+impl Header for DelegateNullifierHeader {
+    /// `(nf, epoch, delegation_id)`.
     type Data<'source> = (Nullifier, EpochIndex, DelegationId);
 
     const SUFFIX: Suffix = Suffix::new(2);
@@ -119,8 +148,6 @@ impl Header for NullifierHeader {
         out
     }
 }
-
-// ── Pre-blind steps ────────────────────────────────────────────────────────
 
 /// Seeds the GGM tree root from `(note, pak)`.
 ///
@@ -212,7 +239,40 @@ impl Step for NoteStep {
     }
 }
 
-// ── Blinding ────────────────────────────────────────────────────────────────
+/// Pre-blind GGM-leaf step.
+///
+/// Verifies leaf depth, derives `nf` from `key` (matching what
+/// [`DelegateNullifierStep`] would derive for the same key), and propagates
+/// `cm` from the lineage onto the output header. `mk` is dropped — no
+/// consumer of `NullifierHeader` needs it.
+#[derive(Debug)]
+pub struct NullifierStep;
+
+impl Step for NullifierStep {
+    type Aux<'source> = ();
+    type Left = NoteStepHeader;
+    type Output = NullifierHeader;
+    type Right = ();
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(19);
+
+    fn witness<'source>(
+        &self,
+        _witness: Self::Witness<'source>,
+        (key, _mk, cm): <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        if key.depth.get() != GGM_TREE_DEPTH {
+            return Err(mock_ragu::Error);
+        }
+
+        let epoch = EpochIndex(key.index);
+        let nf = key.derive_nullifier(epoch);
+        let cm_tg = Tachygram::from(&Fp::from(&cm));
+        Ok(((cm_tg, nf, epoch), ()))
+    }
+}
 
 /// Attach a delegation identifier to a pre-blind prefix.
 ///
@@ -250,8 +310,6 @@ impl Step for DelegationBlindStep {
     }
 }
 
-// ── Post-blind steps ───────────────────────────────────────────────────────
-
 /// Recursive post-blind GGM step.
 #[derive(Debug)]
 pub struct DelegationStep;
@@ -281,14 +339,15 @@ impl Step for DelegationStep {
     }
 }
 
-/// Final GGM step: post-blind leaf key becomes nullifier.
+/// Post-blind GGM-leaf step. Derives `nf` from `key` and forwards
+/// `delegation_id` for the sync-service-driven `SpendableRollover`.
 #[derive(Debug)]
-pub struct NullifierStep;
+pub struct DelegateNullifierStep;
 
-impl Step for NullifierStep {
+impl Step for DelegateNullifierStep {
     type Aux<'source> = ();
     type Left = DelegationHeader;
-    type Output = NullifierHeader;
+    type Output = DelegateNullifierHeader;
     type Right = ();
     type Witness<'source> = ();
 

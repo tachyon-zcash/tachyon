@@ -110,14 +110,15 @@ impl Step for SpendStamp {
     fn witness<'source>(
         &self,
         _witness: Self::Witness<'source>,
-        (action_digest, nullifiers, epoch, delegation_id): <Self::Left as Header>::Data<'source>,
-        (right_delegation_id, right_nf, right_anchor): <Self::Right as Header>::Data<'source>,
+        (action_digest, nullifiers, epoch): <Self::Left as Header>::Data<'source>,
+        (right_nf, right_anchor): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if delegation_id != right_delegation_id {
-            return Err(mock_ragu::Error);
-        }
         // Spendable must have been lifted to the present epoch E and tracks
-        // nf_E; the stamp reveals nf_E (and pre-commits nf_{E+1}).
+        // nf_E; the stamp reveals nf_E (and pre-commits nf_{E+1}). nf-equality
+        // is sufficient: by PCD soundness, the spendable's `nf` carries the
+        // wallet's `cm`-binding established at `SpendableInit`, and
+        // `nullifiers[0]` carries the same wallet's `cm`-binding established
+        // at `SpendBind`. Same `nf` ⇒ same GGM leaf ⇒ same wallet.
         if nullifiers[0] != right_nf {
             return Err(mock_ragu::Error);
         }

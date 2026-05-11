@@ -36,8 +36,8 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     primitives::{
-        ActionDigest, Anchor, BlockAcc, BlockHeight, DelegationId, DelegationTrapdoor, EpochIndex,
-        PoolAcc, PoolCommit, PoolDelta, PoolSet, effect, epoch_seed_hash,
+        ActionDigest, Anchor, BlockAcc, BlockHeight, DelegationId, EpochIndex, PoolAcc, PoolCommit,
+        PoolDelta, PoolSet, effect, epoch_seed_hash,
     },
     stamp::proof::{PROOF_SYSTEM, delegation, spendable},
     value,
@@ -199,7 +199,11 @@ impl PoolSim {
 
 pub struct SyncSim<'source> {
     delegates: Vec<Pcd<'source, delegation::DelegationHeader>>,
-    spendables: Vec<Pcd<'source, spendable::SpendableHeader>>,
+    /// Stored as `(delegation_id, pcd)` — `SpendableHeader` itself no
+    /// longer carries `delegation_id`, so the sync service tracks it
+    /// externally (it already learned `delegation_id` from the wallet
+    /// when the delegate was handed over).
+    spendables: Vec<(DelegationId, Pcd<'source, spendable::SpendableHeader>)>,
 }
 
 impl<'source> SyncSim<'source> {
@@ -210,8 +214,12 @@ impl<'source> SyncSim<'source> {
         }
     }
 
-    pub fn accept_spendable(&mut self, spendable: Pcd<'source, spendable::SpendableHeader>) {
-        self.spendables.push(spendable);
+    pub fn accept_spendable(
+        &mut self,
+        delegation_id: DelegationId,
+        spendable: Pcd<'source, spendable::SpendableHeader>,
+    ) {
+        self.spendables.push((delegation_id, spendable));
     }
 
     pub fn spendable(
@@ -220,15 +228,15 @@ impl<'source> SyncSim<'source> {
     ) -> Pcd<'source, spendable::SpendableHeader> {
         self.spendables
             .iter()
-            .find(|pcd| pcd.data.0 == delegation_id)
+            .find(|entry| entry.0 == delegation_id)
+            .map(|entry| entry.1.clone())
             .expect("no maintained spendable for delegation_id")
-            .clone()
     }
 
     /// Advance every maintained spendable to `pool.anchor()`, chaining
     /// same-epoch and cross-epoch lifts as needed.
     pub fn lift(&mut self, rng: &mut (impl RngCore + CryptoRng), pool: &PoolSim) {
-        let ids: Vec<DelegationId> = self.spendables.iter().map(|pcd| pcd.data.0).collect();
+        let ids: Vec<DelegationId> = self.spendables.iter().map(|entry| entry.0).collect();
         for id in ids {
             self.lift_one(rng, id, pool);
         }
@@ -245,9 +253,9 @@ impl<'source> SyncSim<'source> {
             let idx = self
                 .spendables
                 .iter()
-                .position(|pcd| pcd.data.0 == delegation_id)
+                .position(|entry| entry.0 == delegation_id)
                 .expect("no maintained spendable for delegation_id");
-            let stored_anchor = self.spendables[idx].data.2;
+            let stored_anchor = self.spendables[idx].1.data.1;
             if stored_anchor.1 == target_anchor.1 {
                 return;
             }
@@ -256,7 +264,7 @@ impl<'source> SyncSim<'source> {
                 "target_anchor is behind stored anchor"
             );
 
-            let spendable_pcd = self.spendables.swap_remove(idx);
+            let (id, spendable_pcd) = self.spendables.swap_remove(idx);
             let stored_epoch = stored_anchor.0.epoch();
             let lifted = if stored_epoch == target_anchor.0.epoch() {
                 let left_pool = pool.state_at(stored_anchor.0);
@@ -287,7 +295,7 @@ impl<'source> SyncSim<'source> {
                     new_epoch_first_anchor,
                 )
             };
-            self.spendables.push(lifted);
+            self.spendables.push((id, lifted));
         }
     }
 
@@ -298,7 +306,7 @@ impl<'source> SyncSim<'source> {
         delta: PoolDelta<Polynomial>,
         target_anchor: Anchor,
     ) -> Pcd<'source, spendable::SpendableHeader> {
-        let (delegation_id, nf, _) = spendable_pcd.data;
+        let (nf, _) = spendable_pcd.data;
         let (proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
@@ -308,18 +316,18 @@ impl<'source> SyncSim<'source> {
                 Proof::trivial().carry::<()>(()),
             )
             .expect("spendable lift");
-        proof.carry::<spendable::SpendableHeader>((delegation_id, nf, target_anchor))
+        proof.carry::<spendable::SpendableHeader>((nf, target_anchor))
     }
 
     fn next_epoch_lift(
         rng: &mut (impl RngCore + CryptoRng),
         spendable_pcd: Pcd<'source, spendable::SpendableHeader>,
-        old_nf_pcd: Pcd<'source, delegation::NullifierHeader>,
-        new_nf_pcd: Pcd<'source, delegation::NullifierHeader>,
+        old_nf_pcd: Pcd<'source, delegation::DelegateNullifierHeader>,
+        new_nf_pcd: Pcd<'source, delegation::DelegateNullifierHeader>,
         new_pool: PoolAcc,
         new_anchor: Anchor,
     ) -> Pcd<'source, spendable::SpendableHeader> {
-        let (delegation_id, _, stored_anchor) = spendable_pcd.data;
+        let (_, stored_anchor) = spendable_pcd.data;
         assert!(
             stored_anchor.0.is_epoch_final(),
             "rollover requires spendable at epoch-final"
@@ -336,12 +344,8 @@ impl<'source> SyncSim<'source> {
                 new_nf_pcd,
             )
             .expect("spendable rollover");
-        let rollover_pcd = rollover_proof.carry::<spendable::SpendableRolloverHeader>((
-            delegation_id,
-            old_nf,
-            new_nf,
-            new_anchor,
-        ));
+        let rollover_pcd = rollover_proof
+            .carry::<spendable::SpendableRolloverHeader>((old_nf, new_nf, new_anchor));
 
         let (epoch_lift_proof, ()) = PROOF_SYSTEM
             .fuse(
@@ -352,7 +356,7 @@ impl<'source> SyncSim<'source> {
                 rollover_pcd,
             )
             .expect("spendable epoch lift");
-        epoch_lift_proof.carry::<spendable::SpendableHeader>((delegation_id, new_nf, new_anchor))
+        epoch_lift_proof.carry::<spendable::SpendableHeader>((new_nf, new_anchor))
     }
 
     pub fn nullifier(
@@ -360,7 +364,7 @@ impl<'source> SyncSim<'source> {
         rng: &mut (impl RngCore + CryptoRng),
         delegation_id: DelegationId,
         target_epoch: EpochIndex,
-    ) -> Pcd<'source, delegation::NullifierHeader> {
+    ) -> Pcd<'source, delegation::DelegateNullifierHeader> {
         let delegate = self
             .delegates
             .iter()
@@ -422,40 +426,36 @@ impl WalletSim {
         spend_note: Note,
     ) -> (
         Note,
-        DelegationTrapdoor,
         Pcd<'source, delegation::NullifierHeader>,
         Pcd<'source, delegation::NullifierHeader>,
         Pcd<'source, spendable::SpendableHeader>,
     ) {
-        let trap = DelegationTrapdoor::random(rng);
         let master = self.note_master(rng, spend_note);
         let (nf_e, nf_e1) =
-            ggm_tools::nullifier_pair_from_master(rng, master, trap, anchor.0.epoch());
-        let spendable_pcd =
-            self.spendable_init(rng, spend_note, trap, anchor, pool_state, nf_e.clone());
-        (spend_note, trap, nf_e, nf_e1, spendable_pcd)
+            ggm_tools::preblind_nullifier_pair_from_master(rng, master, anchor.0.epoch());
+        let spendable_pcd = self.spendable_init(rng, anchor, pool_state, nf_e.clone());
+        (spend_note, nf_e, nf_e1, spendable_pcd)
     }
 
+    #[expect(clippy::unused_self, reason = "method form for call-site readability")]
     pub fn spendable_init<'source>(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
-        note: Note,
-        trap: DelegationTrapdoor,
         anchor: Anchor,
         pool_state: PoolAcc,
-        nf_pcd: Pcd<'source, delegation::NullifierHeader>,
+        preblind_nf_pcd: Pcd<'source, delegation::NullifierHeader>,
     ) -> Pcd<'source, spendable::SpendableHeader> {
-        let (nf, _epoch, delegation_id) = nf_pcd.data;
+        let (_cm_tg, nf, _epoch) = preblind_nf_pcd.data;
         let (spendable_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 &spendable::SpendableInit,
-                (note, self.pak, trap, pool_state.into(), anchor),
-                nf_pcd,
+                (pool_state.into(), anchor),
+                preblind_nf_pcd,
                 Proof::trivial().carry::<()>(()),
             )
             .expect("spendable init");
-        spendable_proof.carry::<spendable::SpendableHeader>((delegation_id, nf, anchor))
+        spendable_proof.carry::<spendable::SpendableHeader>((nf, anchor))
     }
 
     #[expect(clippy::type_complexity, reason = "test-support tuple")]
@@ -465,7 +465,6 @@ impl WalletSim {
         anchor: Anchor,
         spends: Vec<(
             Note,
-            DelegationTrapdoor,
             Pcd<'source, delegation::NullifierHeader>,
             Pcd<'source, delegation::NullifierHeader>,
             Pcd<'source, spendable::SpendableHeader>,
@@ -475,16 +474,14 @@ impl WalletSim {
         let ask = self.sk.derive_auth_private();
 
         let mut spend_plans = Vec::with_capacity(spends.len());
-        let mut traps = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
-        for (note, trap, nf_now_pcd, nf_next_pcd, spendable_pcd) in spends {
+        for (note, nf_now_pcd, nf_next_pcd, spendable_pcd) in spends {
             let rcv = value::CommitmentTrapdoor::random(&mut *rng);
             let theta = ActionEntropy::random(&mut *rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            traps.push(trap);
             spend_pcds.push((nf_now_pcd, nf_next_pcd, spendable_pcd));
         }
 
@@ -503,7 +500,7 @@ impl WalletSim {
             .sign(&sighash, &ask, &mut *rng)
             .expect("sign autonome");
 
-        let stamp_plan = bundle_plan.stamp_plan(anchor, &traps);
+        let stamp_plan = bundle_plan.stamp_plan(anchor);
         let stamp = stamp_plan
             .prove(&mut *rng, &self.pak, spend_pcds)
             .expect("prove autonome stamp");
@@ -525,8 +522,8 @@ pub mod ggm_tools {
     use crate::{
         EpochIndex,
         constants::DELEGATION_ID_DOMAIN,
-        keys::{GGM_TREE_ARITY, GGM_CHUNK_SIZE, GGM_TREE_DEPTH},
-        primitives::{DelegationId, DelegationTrapdoor},
+        keys::{GGM_CHUNK_SIZE, GGM_TREE_ARITY, GGM_TREE_DEPTH},
+        primitives::{DelegationId, DelegationTrapdoor, Tachygram},
         stamp::proof::{PROOF_SYSTEM, delegation},
     };
 
@@ -604,28 +601,25 @@ pub mod ggm_tools {
             .collect()
     }
 
-    /// Walk from a pre-blind master header to the nullifier leaf for
-    /// `target_epoch`, applying
-    /// [`DelegationBlindStep`](delegation::DelegationBlindStep)
-    /// and [`NullifierStep`](delegation::NullifierStep) at the end.
-    pub fn nullifier_from_master<'source>(
+    /// Walk from a pre-blind master header to the pre-blind nullifier leaf
+    /// (`NullifierHeader = (cm, nf, epoch)`) for `target_epoch`. No
+    /// blinding step is applied — the entire walk stays trapdoor-free.
+    pub fn preblind_nullifier_from_master<'source>(
         rng: &mut (impl RngCore + CryptoRng),
         master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
-        trap: DelegationTrapdoor,
         target_epoch: EpochIndex,
     ) -> Pcd<'source, delegation::NullifierHeader> {
-        let depth_one = walk_master_to_depth(rng, master_pcd, target_epoch.0, 1);
-        let blinded = blind_prefix(rng, depth_one, trap);
-        walk_delegate_to_nullifier(rng, blinded, target_epoch)
+        let prefix_pcd = walk_master_to_depth(rng, master_pcd, target_epoch.0, GGM_TREE_DEPTH);
+        walk_preblind_leaf(rng, prefix_pcd)
     }
 
-    /// Produce the `(nf_E, nf_{E+1})` pair from one pre-blind master header,
-    /// sharing the GGM walk prefix up to the first chunk where `E` and `E+1`
-    /// diverge.
-    pub fn nullifier_pair_from_master<'source>(
+    /// Produce the pre-blind `(nf_E, nf_{E+1})` pair from one pre-blind
+    /// master header. Shares the GGM walk prefix up to the first chunk
+    /// where `E` and `E+1` diverge, then descends each branch to a
+    /// pre-blind leaf via [`NullifierStep`](delegation::NullifierStep).
+    pub fn preblind_nullifier_pair_from_master<'source>(
         rng: &mut (impl RngCore + CryptoRng),
         master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
-        trap: DelegationTrapdoor,
         target_epoch: EpochIndex,
     ) -> (
         Pcd<'source, delegation::NullifierHeader>,
@@ -638,17 +632,75 @@ pub mod ggm_tools {
         if shared_depth == 0 {
             let clone = master_pcd.clone();
             (
-                nullifier_from_master(rng, master_pcd, trap, e0),
-                nullifier_from_master(rng, clone, trap, e1),
+                preblind_nullifier_from_master(rng, master_pcd, e0),
+                preblind_nullifier_from_master(rng, clone, e1),
+            )
+        } else if shared_depth == GGM_TREE_DEPTH {
+            // Both epochs land in the same leaf — caller error, but we can
+            // still emit two leaves from independent walks.
+            let clone = master_pcd.clone();
+            (
+                preblind_nullifier_from_master(rng, master_pcd, e0),
+                preblind_nullifier_from_master(rng, clone, e1),
             )
         } else {
             let shared_prefix = walk_master_to_depth(rng, master_pcd, e0.0, shared_depth);
-            let blinded = blind_prefix(rng, shared_prefix, trap);
+            let left_prefix = walk_step_to_depth(rng, shared_prefix.clone(), e0.0, GGM_TREE_DEPTH);
+            let right_prefix = walk_step_to_depth(rng, shared_prefix, e1.0, GGM_TREE_DEPTH);
             (
-                walk_delegate_to_nullifier(rng, blinded.clone(), e0),
-                walk_delegate_to_nullifier(rng, blinded, e1),
+                walk_preblind_leaf(rng, left_prefix),
+                walk_preblind_leaf(rng, right_prefix),
             )
         }
+    }
+
+    /// Apply [`NullifierStep`](delegation::NullifierStep) to a depth-final
+    /// pre-blind prefix PCD, returning a pre-blind leaf PCD.
+    pub fn walk_preblind_leaf<'source>(
+        rng: &mut (impl RngCore + CryptoRng),
+        prefix_pcd: Pcd<'source, delegation::NoteStepHeader>,
+    ) -> Pcd<'source, delegation::NullifierHeader> {
+        let (key, _mk, cm) = prefix_pcd.data;
+        let (nf_proof, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                &delegation::NullifierStep,
+                (),
+                prefix_pcd,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("preblind nullifier step");
+        let epoch = EpochIndex(key.index);
+        let nf = key.derive_nullifier(epoch);
+        let cm_tg = Tachygram::from(&Fp::from(&cm));
+        nf_proof.carry::<delegation::NullifierHeader>((cm_tg, nf, epoch))
+    }
+
+    /// Walk a pre-blind `NoteStepHeader` from its current depth down to
+    /// `target_depth`, decoding chunks from `epoch_bits`.
+    pub fn walk_step_to_depth<'source>(
+        rng: &mut (impl RngCore + CryptoRng),
+        mut prefix_pcd: Pcd<'source, delegation::NoteStepHeader>,
+        epoch_bits: u32,
+        target_depth: u8,
+    ) -> Pcd<'source, delegation::NoteStepHeader> {
+        while prefix_pcd.data.0.depth.get() < target_depth {
+            let next_step = prefix_pcd.data.0.depth.get() + 1;
+            let chunk = chunk_at(epoch_bits, next_step);
+            let (mut key, mk, cm) = prefix_pcd.data;
+            let (next_proof, ()) = PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    &delegation::NoteStep,
+                    (chunk,),
+                    prefix_pcd,
+                    Proof::trivial().carry::<()>(()),
+                )
+                .expect("note step");
+            key = key.step(chunk);
+            prefix_pcd = next_proof.carry::<delegation::NoteStepHeader>((key, mk, cm));
+        }
+        prefix_pcd
     }
 
     /// Apply [`DelegationBlindStep`](delegation::DelegationBlindStep) to a
@@ -684,7 +736,7 @@ pub mod ggm_tools {
         rng: &mut (impl RngCore + CryptoRng),
         delegate_pcd: Pcd<'source, delegation::DelegationHeader>,
         target_epoch: EpochIndex,
-    ) -> Pcd<'source, delegation::NullifierHeader> {
+    ) -> Pcd<'source, delegation::DelegateNullifierHeader> {
         let (mut key, delegation_id) = delegate_pcd.data;
         let mut proof = delegate_pcd.proof;
 
@@ -709,14 +761,14 @@ pub mod ggm_tools {
         let (nf_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::NullifierStep,
+                &delegation::DelegateNullifierStep,
                 (),
                 pcd,
                 Proof::trivial().carry::<()>(()),
             )
-            .expect("nullifier step");
+            .expect("delegate nullifier step");
 
-        nf_proof.carry::<delegation::NullifierHeader>((
+        nf_proof.carry::<delegation::DelegateNullifierHeader>((
             key.derive_nullifier(target_epoch),
             target_epoch,
             delegation_id,

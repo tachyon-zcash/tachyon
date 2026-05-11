@@ -4,9 +4,9 @@ use super::*;
 use crate::{
     action,
     entropy::ActionEntropy,
-    primitives::{DelegationTrapdoor, EpochIndex, effect},
+    primitives::{EpochIndex, effect},
     test_support::{
-        PoolSim, WalletSim, build_output_action, ggm_tools::nullifier_pair_from_master,
+        PoolSim, WalletSim, build_output_action, ggm_tools::preblind_nullifier_pair_from_master,
         random_block, random_block_with,
     },
     value,
@@ -52,21 +52,18 @@ fn merge_stamp_rejects_mismatched_anchors() {
 /// `Plan::prove` rejects every malformed input: empty plans, PCD counts that
 /// don't match the spend count (fewer or more), and equal-length PCD sets
 /// whose pairing is wrong (a swap is caught at `SpendBind` via the
-/// `delegation_id` equality check).
+/// `cm`-equality check between the witnessed note and the leaves).
 #[test]
-#[expect(clippy::too_many_lines, reason = "bundled invalid-input cases")]
 fn plan_prove_rejects_invalid_inputs() {
     let mut rng = StdRng::seed_from_u64(602);
     let user = WalletSim::random(&mut rng);
     let mut pool = PoolSim::new();
     let target_epoch = EpochIndex(0);
 
-    // Two notes with distinct trapdoors → distinct delegation_ids. Both cms
-    // mined into the same pool so each `spendable_init` sees its cm.
+    // Two distinct notes; both cms mined into the same pool so each
+    // `spendable_init` sees its cm.
     let note_a = user.random_note(&mut rng, 500);
     let note_b = user.random_note(&mut rng, 700);
-    let trap_a = DelegationTrapdoor::random(&mut rng);
-    let trap_b = DelegationTrapdoor::random(&mut rng);
     pool.mine(random_block_with(&mut rng, note_a.commitment(), 50));
     pool.mine(random_block_with(&mut rng, note_b.commitment(), 50));
     let anchor = pool.anchor();
@@ -75,25 +72,11 @@ fn plan_prove_rejects_invalid_inputs() {
     let master_a = user.note_master(&mut rng, note_a);
     let master_b = user.note_master(&mut rng, note_b);
     let (nf_now_a, nf_next_a) =
-        nullifier_pair_from_master(&mut rng, master_a, trap_a, target_epoch);
+        preblind_nullifier_pair_from_master(&mut rng, master_a, target_epoch);
     let (nf_now_b, nf_next_b) =
-        nullifier_pair_from_master(&mut rng, master_b, trap_b, target_epoch);
-    let spendable_a = user.spendable_init(
-        &mut rng,
-        note_a,
-        trap_a,
-        anchor,
-        pool_state.clone(),
-        nf_now_a.clone(),
-    );
-    let spendable_b = user.spendable_init(
-        &mut rng,
-        note_b,
-        trap_b,
-        anchor,
-        pool_state,
-        nf_now_b.clone(),
-    );
+        preblind_nullifier_pair_from_master(&mut rng, master_b, target_epoch);
+    let spendable_a = user.spendable_init(&mut rng, anchor, pool_state.clone(), nf_now_a.clone());
+    let spendable_b = user.spendable_init(&mut rng, anchor, pool_state, nf_now_b.clone());
 
     let rcv_a = value::CommitmentTrapdoor::random(&mut rng);
     let theta_a = ActionEntropy::random(&mut rng);
@@ -111,8 +94,8 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let two_spends = || {
         alloc::vec![
-            ((plan_a.cv(), plan_a.rk), (alpha_a, note_a, rcv_a, trap_a)),
-            ((plan_b.cv(), plan_b.rk), (alpha_b, note_b, rcv_b, trap_b)),
+            ((plan_a.cv(), plan_a.rk), (alpha_a, note_a, rcv_a)),
+            ((plan_b.cv(), plan_b.rk), (alpha_b, note_b, rcv_b)),
         ]
     };
 

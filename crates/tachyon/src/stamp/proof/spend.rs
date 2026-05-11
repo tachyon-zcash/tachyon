@@ -13,7 +13,7 @@ use crate::{
     entropy::ActionRandomizer,
     keys::ProofAuthorizingKey,
     note::{Note, Nullifier},
-    primitives::{ActionDigest, DelegationId, DelegationTrapdoor, EpochIndex, effect},
+    primitives::{ActionDigest, EpochIndex, Tachygram, effect},
     value,
 };
 
@@ -22,24 +22,28 @@ use crate::{
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    // (action_digest, nullifiers, epoch, delegation_id)
-    type Data<'source> = (ActionDigest, [Nullifier; 2], EpochIndex, DelegationId);
+    // (action_digest, nullifiers, epoch)
+    type Data<'source> = (ActionDigest, [Nullifier; 2], EpochIndex);
 
     const SUFFIX: Suffix = Suffix::new(5);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 * 2 + 4 + 32);
+        let mut out = Vec::with_capacity(32 + 32 * 2 + 4);
         out.extend_from_slice(&Fp::from(&data.0).to_repr());
         out.extend_from_slice(&Fp::from(&data.1[0]).to_repr());
         out.extend_from_slice(&Fp::from(&data.1[1]).to_repr());
-
         out.extend_from_slice(&data.2.0.to_le_bytes());
-        out.extend_from_slice(&Fp::from(&data.3).to_repr());
         out
     }
 }
 
-/// Fuses two epoch-adjacent nullifiers and binds them to an action.
+/// Fuses two epoch-adjacent pre-blind nullifier leaves and binds them to an
+/// action.
+///
+/// Same-wallet binding between the two leaves is established by
+/// `cm`-equality; the witnessed `(note, pak)` is bound to the leaves via
+/// `note.commitment() == leaf.cm`. The `DelegationTrapdoor` is not needed
+/// here — `delegation_id` is only consumed by `SpendableRollover`.
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -53,21 +57,27 @@ impl Step for SpendBind {
         ActionRandomizer<effect::Spend>,
         ProofAuthorizingKey,
         Note,
-        DelegationTrapdoor,
     );
 
     const INDEX: Index = Index::new(5);
 
     fn witness<'source>(
         &self,
-        (rcv, alpha, pak, note, trap): Self::Witness<'source>,
-        (nf0, left_epoch, left_delegation_id): <Self::Left as Header>::Data<'source>,
-        (nf1, right_epoch, right_delegation_id): <Self::Right as Header>::Data<'source>,
+        (rcv, alpha, pak, note): Self::Witness<'source>,
+        (left_cm_tg, nf0, left_epoch): <Self::Left as Header>::Data<'source>,
+        (right_cm_tg, nf1, right_epoch): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if left_delegation_id != right_delegation_id {
+        // Same wallet: both leaves share the cm propagated from the
+        // pre-blind NoteSeedStep root.
+        if left_cm_tg != right_cm_tg {
             return Err(mock_ragu::Error);
         }
         if right_epoch.0 != left_epoch.0 + 1 {
+            return Err(mock_ragu::Error);
+        }
+        // Bind the witnessed note to the leaves' cm.
+        let note_cm_tg = Tachygram::from(&Fp::from(&note.commitment()));
+        if note_cm_tg != left_cm_tg {
             return Err(mock_ragu::Error);
         }
         if u64::from(note.value) == 0 {
@@ -77,18 +87,10 @@ impl Step for SpendBind {
             return Err(mock_ragu::Error);
         }
 
-        let delegation_id = pak.nk.derive_delegation_id(&note, trap);
-        if delegation_id != left_delegation_id {
-            return Err(mock_ragu::Error);
-        }
-
         let cv = rcv.commit(i64::from(note.value));
         let rk = pak.ak.derive_action_public(&alpha);
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| mock_ragu::Error)?;
 
-        Ok((
-            (action_digest, [nf0, nf1], left_epoch, left_delegation_id),
-            (),
-        ))
+        Ok(((action_digest, [nf0, nf1], left_epoch), ()))
     }
 }
