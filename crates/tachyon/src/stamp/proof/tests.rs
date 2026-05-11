@@ -13,14 +13,7 @@ use super::{PROOF_SYSTEM, compute_action_acc, delegation, spend, spendable, stam
 use crate::{
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
-    keys::private,
-    note,
-    primitives::{
-        ActionCommit, Anchor, BlockAcc, BlockHeight, DelegationTrapdoor, EpochIndex, PoolCommit,
-        PoolDelta, PoolSet, Tachygram, TachygramAcc, TachygramCommit, effect,
-    },
-    stamp::Stamp,
-    test_support::{
+    fixtures::{
         PoolSim, SyncSim, WalletSim, build_output_action,
         ggm_tools::{
             delegate_range, preblind_nullifier_from_master, preblind_nullifier_pair_from_master,
@@ -28,6 +21,13 @@ use crate::{
         },
         random_block, random_block_with,
     },
+    keys::private,
+    note,
+    primitives::{
+        ActionCommit, Anchor, BlockAcc, BlockHeight, DelegationTrapdoor, EpochIndex, PoolCommit,
+        PoolDelta, PoolSet, Tachygram, TachygramAcc, TachygramCommit, effect,
+    },
+    stamp::Stamp,
     value,
 };
 

@@ -63,7 +63,7 @@ mod primitives;
 mod serialization;
 
 #[cfg(test)]
-pub(crate) mod test_support;
+pub(crate) mod fixtures;
 
 pub use action::Action;
 pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped, TachyonBundle};

@@ -4,11 +4,11 @@ use super::*;
 use crate::{
     action,
     entropy::ActionEntropy,
-    primitives::{EpochIndex, effect},
-    test_support::{
+    fixtures::{
         PoolSim, WalletSim, build_output_action, ggm_tools::preblind_nullifier_pair_from_master,
         random_block, random_block_with,
     },
+    primitives::{EpochIndex, effect},
     value,
 };
 

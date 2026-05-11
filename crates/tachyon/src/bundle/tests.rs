@@ -7,12 +7,12 @@ use super::*;
 use crate::{
     action,
     entropy::ActionEntropy,
+    fixtures::{
+        PoolSim, WalletSim, action_digests, build_output_action, mock_sighash, random_block_with,
+    },
     keys::private,
     primitives::{BlockHeight, PoolCommit},
     stamp::Stamp,
-    test_support::{
-        PoolSim, WalletSim, action_digests, build_output_action, mock_sighash, random_block_with,
-    },
     value,
 };
 
