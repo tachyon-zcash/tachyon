@@ -13,8 +13,6 @@ pub mod stamp;
 #[cfg(test)]
 mod tests;
 
-use alloc::vec::Vec;
-
 use delegation::{
     DelegateNfPrefixStep, DelegateNullifierStep, DelegationStep, NfMasterSeed, NfMasterStep,
     NfPrefixStep, NullifierStep,
@@ -25,20 +23,6 @@ use mock_ragu::{Application, ApplicationBuilder};
 use spend::SpendBind;
 use spendable::{SpendableEpochLift, SpendableInit, SpendableLift, SpendableRollover};
 use stamp::{MergeStamp, OutputStamp, SpendStamp, StampLift};
-
-use crate::{
-    action::Action,
-    primitives::{ActionAcc, ActionDigest, ActionDigestError},
-};
-
-/// Build the action accumulator polynomial from the public actions list.
-pub fn compute_action_acc(actions: &[Action]) -> Result<ActionAcc, ActionDigestError> {
-    let digests: Vec<ActionDigest> = actions
-        .iter()
-        .map(ActionDigest::try_from)
-        .collect::<Result<_, ActionDigestError>>()?;
-    Ok(ActionAcc::from(&*digests))
-}
 
 lazy_static! {
     pub(crate) static ref PROOF_SYSTEM: Application = {

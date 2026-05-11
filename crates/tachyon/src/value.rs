@@ -15,7 +15,8 @@ use pasta_curves::{
 };
 use rand_core::{CryptoRng, RngCore};
 
-use crate::constants::VALUE_COMMITMENT_DOMAIN;
+/// Orchard-shared personalization for the value-commitment generators.
+const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
 
 lazy_static! {
     /// Generator $\mathcal{V}$ for value commitments.

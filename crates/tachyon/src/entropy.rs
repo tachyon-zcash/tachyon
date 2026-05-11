@@ -6,8 +6,7 @@
 
 use core::marker::PhantomData;
 
-use ff::{FromUniformBytes as _, PrimeField as _};
-use pasta_curves::{Fp, Fq};
+use pasta_curves::Fq;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{note, primitives::Effect};
@@ -28,7 +27,7 @@ use crate::{note, primitives::Effect};
 /// ("Tachyaction at a Distance", Bowe 2025).
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
-pub struct ActionEntropy([u8; 32]);
+pub struct ActionEntropy(pub(crate) [u8; 32]);
 
 impl ActionEntropy {
     /// Parse action entropy from 32 bytes.
@@ -73,27 +72,6 @@ impl<S: sealed::RandomizerState> From<ActionRandomizer<S>> for Fq {
     fn from(randomizer: ActionRandomizer<S>) -> Self {
         randomizer.0
     }
-}
-
-/// Derive the raw $\alpha$ scalar from $\theta$ and $\mathsf{cm}$.
-///
-/// $$\alpha_{\text{spend}} = \text{ToScalar}(\text{BLAKE2b-512}(
-///   \text{"Tachyon-Spend"},\; \theta \| \mathsf{cm}))$$
-/// $$\alpha_{\text{output}} = \text{ToScalar}(\text{BLAKE2b-512}(
-///   \text{"Tachyon-Output"},\; \theta \| \mathsf{cm}))$$
-pub(crate) fn derive_alpha(
-    personalization: &[u8],
-    theta: &ActionEntropy,
-    cm: &note::Commitment,
-) -> Fq {
-    let hash = blake2b_simd::Params::new()
-        .hash_length(64)
-        .personal(personalization)
-        .to_state()
-        .update(&theta.0)
-        .update(&Fp::from(cm).to_repr())
-        .finalize();
-    Fq::from_uniform_bytes(hash.as_array())
 }
 
 #[cfg(test)]

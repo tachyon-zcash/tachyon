@@ -13,15 +13,9 @@ use alloc::vec::Vec;
 use core::{num::NonZeroU8, ops::RangeInclusive};
 
 use ff::PrimeField as _;
-// TODO(#39): replace halo2_poseidon with Ragu Poseidon params
-use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::Fp;
 
-use crate::{
-    constants::{EPOCH_MAX, NOTE_NULLIFIER_DOMAIN},
-    note::Nullifier,
-    primitives::EpochIndex,
-};
+use crate::{constants::EPOCH_MAX, digest::poseidon, note::Nullifier, primitives::EpochIndex};
 
 /// Maximum leaf index. Equal to [`EPOCH_MAX`] so every epoch maps to a
 /// distinct leaf.
@@ -319,12 +313,7 @@ pub fn cover_candidates(range: RangeInclusive<u32>) -> Vec<RangeInclusive<u32>> 
 /// One GGM tree step: `Poseidon(tag, node, chunk)`.
 fn ggm_step(node: Fp, chunk: u8) -> Fp {
     assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
-    let domain = Fp::from_u128(u128::from_le_bytes(*NOTE_NULLIFIER_DOMAIN));
-    Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
-        domain,
-        node,
-        Fp::from(u64::from(chunk)),
-    ])
+    poseidon::ggm_step(node, chunk)
 }
 
 /// Recursive GGM walk: consume the top `GGM_CHUNK_SIZE` bits of `leaf` at each

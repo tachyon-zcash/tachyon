@@ -31,7 +31,7 @@ use proof::{
 use rand_core::CryptoRng;
 
 use crate::{
-    Note,
+    ActionAcc, Note,
     action::Action,
     effect,
     entropy::ActionRandomizer,
@@ -40,7 +40,7 @@ use crate::{
         ActionCommit, ActionDigest, ActionDigestError, ActionSet, Anchor, Tachygram, TachygramAcc,
         TachygramCommit,
     },
-    stamp::proof::{compute_action_acc, delegation, spend, spendable},
+    stamp::proof::{delegation, spend, spendable},
     value,
 };
 
@@ -455,7 +455,15 @@ impl Stamp {
     ) -> Result<(), VerificationError> {
         let app = &*PROOF_SYSTEM;
 
-        let action_acc = compute_action_acc(actions).map_err(VerificationError::ActionDigest)?;
+        let action_acc = ActionAcc::from(
+            actions
+                .iter()
+                .map(ActionDigest::try_from)
+                .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
+                .map_err(VerificationError::ActionDigest)?
+                .as_slice(),
+        );
+
         let tachygram_acc = TachygramAcc::from(&*self.tachygrams);
 
         let header = (

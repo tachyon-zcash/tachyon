@@ -534,18 +534,6 @@ fn wire_rejects_invalid_state_byte() {
     TachyonBundle::read(buf).expect_err("invalid state byte must be rejected");
 }
 
-/// empty_commitment() matches the canonical COMMIT_NO_BUNDLE static.
-#[test]
-fn empty_commitment_matches_static() {
-    assert_eq!(empty_commitment(), *COMMIT_NO_BUNDLE);
-}
-
-/// empty_auth_digest() matches the canonical AUTH_DIGEST_NO_BUNDLE static.
-#[test]
-fn empty_auth_digest_matches_static() {
-    assert_eq!(empty_auth_digest(), *AUTH_DIGEST_NO_BUNDLE);
-}
-
 /// A stamped bundle and its stripped sibling produce distinct
 /// auth_digests — the defining property that makes wtxid discriminate
 /// across aggregation forms.

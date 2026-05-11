@@ -9,8 +9,9 @@ use mock_ragu::{Polynomial, Proof};
 use pasta_curves::Fp;
 use rand::{SeedableRng as _, rngs::StdRng};
 
-use super::{PROOF_SYSTEM, compute_action_acc, delegation, spend, spendable, stamp as stamp_proof};
+use super::{PROOF_SYSTEM, delegation, spend, spendable, stamp as stamp_proof};
 use crate::{
+    ActionAcc, ActionDigest,
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
     fixtures::{
@@ -49,7 +50,7 @@ fn stamp_lift_within_epoch() {
     let (rcv, alpha, action) = build_output_action(&mut rng, note);
     let stamp = Stamp::prove_output(&mut rng, rcv, alpha, note, anchor_5).expect("prove_output");
 
-    let action_acc = compute_action_acc(&[action]).unwrap();
+    let action_acc = ActionAcc::from([ActionDigest::try_from(&action).unwrap()].as_slice());
     let tachygram_acc = TachygramAcc::from(&*stamp.tachygrams);
     let action_commit = ActionCommit(action_acc.0.commit(Fp::ZERO));
     let tachygram_commit = TachygramCommit(tachygram_acc.0.commit(Fp::ZERO));
@@ -98,7 +99,7 @@ fn stamp_lift_rejects_cross_epoch() {
     let (rcv, alpha, action) = build_output_action(&mut rng, note);
     let stamp = Stamp::prove_output(&mut rng, rcv, alpha, note, anchor_5).expect("prove_output");
 
-    let action_acc = compute_action_acc(&[action]).unwrap();
+    let action_acc = ActionAcc::from([ActionDigest::try_from(&action).unwrap()].as_slice());
     let tachygram_acc = TachygramAcc::from(&*stamp.tachygrams);
 
     let remaining = usize::try_from(EPOCH_SIZE - u32::from(pool.anchor().0)).expect("fits usize");
