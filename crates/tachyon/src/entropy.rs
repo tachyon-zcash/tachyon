@@ -37,7 +37,7 @@ impl ActionEntropy {
     }
 
     /// Sample fresh per-action entropy.
-    pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
+    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         let mut bytes = [0u8; 32];
         rng.fill_bytes(&mut bytes);
         Self(bytes)

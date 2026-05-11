@@ -1,39 +1,49 @@
-//! Spendable status headers and steps.
+//! Spendable bootstrap, lift, and cross-epoch rollover.
 //!
-//! Spendable state carries no `delegation_id`. `nf` uniquely encodes
-//! `(key, epoch)` via GGM determinism and is bound to the wallet's `cm` by
-//! the pre-blind chain rooted at `NfMasterSeed`; downstream nf-equality
-//! (e.g. at `SpendStamp`) recovers any further binding required, by
-//! composition of upstream PCDs.
+//! Bootstrap runs entirely on the user device. The wallet's
+//! [`NullifierHeader`] carries `(cm, nf, epoch)`; [`SpendableInit`]
+//! fuses it with a freely-witnessed `(pre_cm_anchor, stamp_tg_set)`,
+//! verifying `cm ∈ stamp_tg_set`, and emits a [`SpendableHeader`]
+//! carrying `(nf, post_cm_anchor)` — the running anchor immediately
+//! after the cm-stamp's absorption. The cm↔nf binding is structurally
+//! inherited through the [`NullifierHeader`] (GGM-bound). The wallet's
+//! epoch claim flows through `nf` itself, so no epoch alignment check
+//! is needed here.
+//!
+//! `pre_cm_anchor` is freely witnessed at this step; the spendable
+//! reaches a real published anchor only by extending through
+//! [`SpendableLift`] over [`Unspent`] segments, which by construction
+//! prove nf-exclusion at every covered stamp. There is no path that
+//! advances a spendable's anchor without a per-stamp nf-check.
+//!
+//! Sync services update spendables via lifts ([`SpendableLift`]) and
+//! cross-epoch rollovers ([`SpendableRollover`] →
+//! [`SpendableEpochLift`]). [`SpendableRollover`] is the only step that
+//! emits the [`Anchor::next_epoch`] boundary domain — it lifts the old
+//! epoch's terminal anchor into the new epoch's initial anchor, which
+//! the new-epoch [`Unspent`] then extends with ordinary per-stamp
+//! advances.
 
 extern crate alloc;
 
 use alloc::vec::Vec;
 
 use ff::{Field as _, PrimeField as _};
-use mock_ragu::{Header, Index, Multiset, Step, Suffix};
+use mock_ragu::{Header, Index, Step, Suffix};
 use pasta_curves::Fp;
 
-use super::delegation::{DelegateNullifierHeader, NullifierHeader};
+use super::{
+    delegation::{DelegateNullifierHeader, NullifierHeader},
+    pool::Unspent,
+};
 use crate::{
     note::Nullifier,
-    primitives::{Anchor, PoolDelta, PoolSet, epoch_seed_hash},
+    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetGadget},
 };
 
-fn encode_spendable(nf: Nullifier, anchor: &Anchor) -> Vec<u8> {
-    let mut out = Vec::with_capacity(32 + 4 + 32);
-    out.extend_from_slice(&Fp::from(nf).to_repr());
-    out.extend_from_slice(&u32::from(anchor.0).to_le_bytes());
-    let pool_bytes: [u8; 32] = anchor.1.0.into();
-    out.extend_from_slice(&pool_bytes);
-    out
-}
-
-/// Header attesting a note is spendable at a specific anchor.
-///
-/// Identified by `nf` alone — `nf` uniquely encodes `(key, epoch)` via
-/// GGM determinism, so sync services can update a spendable by `nf`
-/// without any `delegation_id`.
+/// Wallet's spendable position. Identified by `nf` alone — `nf` uniquely
+/// encodes `(key, epoch)` via GGM determinism, so sync services can update
+/// a spendable by `nf` without knowing `delegation_id`.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
@@ -41,46 +51,79 @@ impl Header for SpendableHeader {
     /// `(nf, anchor)`.
     type Data<'source> = (Nullifier, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(3);
+    const SUFFIX: Suffix = Suffix::new(7);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        encode_spendable(data.0, &data.1)
-    }
-}
-
-/// Header collecting information necessary for epoch transition. Carries
-/// `(old_nf, new_nf, anchor)` — `delegation_id` is fused internally at
-/// [`SpendableRollover`] and not propagated.
-#[derive(Debug)]
-pub struct SpendableRolloverHeader;
-
-impl Header for SpendableRolloverHeader {
-    /// `(old_nf, new_nf, new_anchor)`.
-    type Data<'source> = (Nullifier, Nullifier, Anchor);
-
-    const SUFFIX: Suffix = Suffix::new(4);
-
-    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 4 + 32);
+        let mut out = Vec::with_capacity(32 + 32);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1).to_repr());
-        out.extend_from_slice(&u32::from(data.2.0).to_le_bytes());
-        let pool_bytes: [u8; 32] = data.2.1.0.into();
-        out.extend_from_slice(&pool_bytes);
         out
     }
 }
 
-/// Seeds spendable status from a pre-blind GGM-leaf header.
+/// Cross-epoch nf rotation pair.
 ///
-/// Note-ownership and well-formedness are structurally enforced upstream by
-/// `NfMasterSeed`; `cm` arrives on the leaf so this step only needs to
-/// verify pool membership and epoch alignment. By PCD soundness, the
-/// emitted `(nf, anchor)` carries forward the upstream `cm ↔ nf` binding —
-/// any downstream nf-equality (e.g. at `SpendStamp`) reconnects to a
-/// witnessed wallet without a `delegation_id` flowing through.
+/// `nfs[0]` is the old-epoch `nf`, `nfs[1]` the new-epoch `nf`; the new
+/// epoch index is exposed for downstream consumers (specifically
+/// [`SpendableRollover`]'s boundary hash). Consecutive epochs are
+/// verified at construction.
+#[derive(Clone, Debug)]
+pub struct NullifierRolloverHeader;
+
+impl Header for NullifierRolloverHeader {
+    /// `(old_nf, new_nf, new_epoch)`.
+    type Data<'source> = (Nullifier, Nullifier, EpochIndex);
+
+    const SUFFIX: Suffix = Suffix::new(8);
+
+    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+        let mut out = Vec::with_capacity(32 + 32 + 4);
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        out.extend_from_slice(&Fp::from(data.1).to_repr());
+        out.extend_from_slice(&data.2.0.to_le_bytes());
+        out
+    }
+}
+
+/// A spendable rolled forward through an nf rotation, awaiting a
+/// new-epoch anchor from [`SpendableEpochLift`].
 ///
-/// TODO: this should probably check a single block, instead of pool state.
+/// Carries `new_nf` (which the new-epoch [`Unspent`] must cover) and
+/// `boundary_anchor` (output of [`Anchor::next_epoch`] applied to the
+/// old epoch's terminal anchor — i.e., the new epoch's initial
+/// anchor). The new-epoch `Unspent`'s `prev_anchor` must equal this
+/// boundary anchor. The old-epoch nullifier is dropped: [`SpendableRollover`]
+/// has already discharged it against the input spendable's `nf`.
+#[derive(Clone, Debug)]
+pub struct SpendableRolloverHeader;
+
+impl Header for SpendableRolloverHeader {
+    /// `(new_nf, boundary_anchor)`.
+    type Data<'source> = (Nullifier, Anchor);
+
+    const SUFFIX: Suffix = Suffix::new(9);
+
+    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+        let mut out = Vec::with_capacity(32 + 32);
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        out.extend_from_slice(&Fp::from(data.1).to_repr());
+        out
+    }
+}
+
+/// Bootstrap a [`SpendableHeader`] from the wallet's [`NullifierHeader`].
+///
+/// Witness `(pre_cm_anchor, stamp_tg_set)`: verifies `cm ∈ stamp_tg_set`
+/// (cm comes from the left header) and emits a [`SpendableHeader`]
+/// carrying `(nf, pre_cm_anchor.next_stamp(commit))` — the running
+/// anchor immediately after the cm-stamp's absorption.
+///
+/// `pre_cm_anchor` is freely witnessed; the spendable reaches a real
+/// published anchor only by extending through [`SpendableLift`] over
+/// [`Unspent`] segments built from real stamps. The cm-block itself
+/// cannot contain the wallet's `nf` (`nf` is GGM-bound to `cm`), so no
+/// nf-exclusion check is needed at the cm-stamp; the wallet's epoch
+/// claim flows through `nf` (GGM-bound at the [`NullifierHeader`]).
 #[derive(Debug)]
 pub struct SpendableInit;
 
@@ -89,94 +132,29 @@ impl Step for SpendableInit {
     type Left = NullifierHeader;
     type Output = SpendableHeader;
     type Right = ();
-    type Witness<'source> = (PoolSet<Multiset>, Anchor);
+    /// `(pre_cm_anchor, stamp_tg_set)`.
+    type Witness<'source> = (Anchor, TachygramSetGadget);
 
-    const INDEX: Index = Index::new(6);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
-        (pool, anchor): Self::Witness<'source>,
-        (cm_tg, nf, epoch): <Self::Left as Header>::Data<'source>,
+        (pre_cm_anchor, stamp_tg_set): Self::Witness<'source>,
+        (cm, nf, _epoch): <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if epoch != anchor.0.epoch() {
-            return Err(mock_ragu::Error(
-                "SpendableInit: nullifier epoch must match anchor epoch",
-            ));
+        // Inclusion: cm ∈ set ⇔ query(cm) == 0.
+        if stamp_tg_set.0.query(Fp::from(cm)) != Fp::ZERO {
+            return Err(mock_ragu::Error("SpendableInit: commitment not in set"));
         }
-
-        if pool.0.commit() != anchor.1.0 {
-            return Err(mock_ragu::Error(
-                "SpendableInit: pool must commit to anchor",
-            ));
-        }
-
-        if pool.0.query(Fp::from(cm_tg)) != Fp::ZERO {
-            return Err(mock_ragu::Error("SpendableInit: cm not in pool"));
-        }
-        if pool.0.query(Fp::from(nf)) == Fp::ZERO {
-            return Err(mock_ragu::Error("SpendableInit: nullifier already in pool"));
-        }
-
-        Ok(((nf, anchor), ()))
+        let stamp_commit = TachygramSetCommit::from(stamp_tg_set);
+        let post_cm_anchor = pre_cm_anchor.next_stamp(&stamp_commit);
+        Ok(((nf, post_cm_anchor), ()))
     }
 }
 
-/// Collects prerequisites for epoch transition.
-///
-/// Consumes two post-blind `DelegateNullifierHeader`s and binds them as
-/// same-wallet via `delegation_id`-equality; `delegation_id` is not
-/// propagated to the output.
-#[derive(Debug)]
-pub struct SpendableRollover;
-
-impl Step for SpendableRollover {
-    type Aux<'source> = ();
-    type Left = DelegateNullifierHeader;
-    type Output = SpendableRolloverHeader;
-    type Right = DelegateNullifierHeader;
-    type Witness<'source> = (PoolSet<Multiset>, Anchor);
-
-    const INDEX: Index = Index::new(7);
-
-    fn witness<'source>(
-        &self,
-        (pool, anchor): Self::Witness<'source>,
-        (old_nf, old_epoch, old_delegation_id): <Self::Left as Header>::Data<'source>,
-        (new_nf, new_epoch, new_delegation_id): <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if old_delegation_id != new_delegation_id {
-            return Err(mock_ragu::Error(
-                "SpendableRollover: delegations not related",
-            ));
-        }
-        if new_epoch.0 != old_epoch.0 + 1 {
-            return Err(mock_ragu::Error(
-                "SpendableRollover: nullifiers not adjacent",
-            ));
-        }
-        if new_epoch != anchor.0.epoch() {
-            return Err(mock_ragu::Error(
-                "SpendableRollover: new epoch must match anchor epoch",
-            ));
-        }
-
-        if pool.0.commit() != anchor.1.0 {
-            return Err(mock_ragu::Error(
-                "SpendableRollover: pool must commit to anchor",
-            ));
-        }
-        if pool.0.query(Fp::from(new_nf)) == Fp::ZERO {
-            return Err(mock_ragu::Error(
-                "SpendableRollover: new nullifier already in pool",
-            ));
-        }
-
-        Ok(((old_nf, new_nf, anchor), ()))
-    }
-}
-
-/// Advances spendable status to a later block within the same epoch.
+/// Advance a [`SpendableHeader`]'s `anchor` along an [`Unspent`]
+/// segment whose `prev_anchor` equals the spendable's current anchor.
 #[derive(Debug)]
 pub struct SpendableLift;
 
@@ -184,94 +162,177 @@ impl Step for SpendableLift {
     type Aux<'source> = ();
     type Left = SpendableHeader;
     type Output = SpendableHeader;
-    type Right = ();
-    type Witness<'source> = (PoolSet<Multiset>, PoolDelta<Multiset>, Anchor);
+    type Right = Unspent;
+    type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(8);
+    const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,
-        (old_pool, delta, to_anchor): Self::Witness<'source>,
-        (nf, old_anchor): <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
+        _witness: Self::Witness<'source>,
+        (spendable_nf, spendable_anchor): <Self::Left as Header>::Data<'source>,
+        (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data<
+            'source,
+        >,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if old_pool.0.commit() != old_anchor.1.0 {
+        if unspent_nf != spendable_nf {
             return Err(mock_ragu::Error(
-                "SpendableLift: pool must commit to old anchor",
+                "SpendableLift: unspent does not relate to spendable",
             ));
         }
-
-        if to_anchor.0 <= old_anchor.0 || to_anchor.0.epoch() != old_anchor.0.epoch() {
+        if unspent_prev_anchor != spendable_anchor {
             return Err(mock_ragu::Error(
-                "SpendableLift: target anchor must be later within the same epoch",
+                "SpendableLift: unspent not adjacent to spendable",
             ));
         }
-
-        let to_pool = old_pool.0.merge(&delta.0);
-        if to_pool.commit() != to_anchor.1.0 {
-            return Err(mock_ragu::Error(
-                "SpendableLift: pool plus delta must commit to target anchor",
-            ));
-        }
-
-        if delta.0.query(Fp::from(nf)) == Fp::ZERO {
-            return Err(mock_ragu::Error(
-                "SpendableLift: nullifier was spent in delta",
-            ));
-        }
-
-        Ok(((nf, to_anchor), ()))
+        Ok(((spendable_nf, unspent_end_anchor), ()))
     }
 }
 
-/// Transitions an epoch-final spendable into the next epoch.
+/// Combine two [`NullifierHeader`]s into a [`NullifierRolloverHeader`] via
+/// lineage-bound `cm` equality. **User device.**
+#[derive(Debug)]
+pub struct RolloverFuse;
+
+impl Step for RolloverFuse {
+    type Aux<'source> = ();
+    type Left = NullifierHeader;
+    type Output = NullifierRolloverHeader;
+    type Right = NullifierHeader;
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(15);
+
+    fn witness<'source>(
+        &self,
+        _witness: Self::Witness<'source>,
+        (left_cm, left_nf, left_epoch): <Self::Left as Header>::Data<'source>,
+        (right_cm, right_nf, right_epoch): <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        if left_cm != right_cm {
+            return Err(mock_ragu::Error("RolloverFuse: nullifiers not related"));
+        }
+        if right_epoch.0 != left_epoch.0 + 1 {
+            return Err(mock_ragu::Error("RolloverFuse: nullifiers not adjacent"));
+        }
+        Ok(((left_nf, right_nf, right_epoch), ()))
+    }
+}
+
+/// Combine two [`DelegateNullifierHeader`]s into a
+/// [`NullifierRolloverHeader`] via `delegation_id` equality. **Sync service
+/// or user.**
+#[derive(Debug)]
+pub struct DelegateRolloverFuse;
+
+impl Step for DelegateRolloverFuse {
+    type Aux<'source> = ();
+    type Left = DelegateNullifierHeader;
+    type Output = NullifierRolloverHeader;
+    type Right = DelegateNullifierHeader;
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(16);
+
+    fn witness<'source>(
+        &self,
+        _witness: Self::Witness<'source>,
+        (left_nf, left_epoch, left_delegation_id): <Self::Left as Header>::Data<'source>,
+        (right_nf, right_epoch, right_delegation_id): <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        if left_delegation_id != right_delegation_id {
+            return Err(mock_ragu::Error(
+                "DelegateRolloverFuse: nullifiers not related",
+            ));
+        }
+        if right_epoch.0 != left_epoch.0 + 1 {
+            return Err(mock_ragu::Error(
+                "DelegateRolloverFuse: nullifiers not adjacent",
+            ));
+        }
+        Ok(((left_nf, right_nf, right_epoch), ()))
+    }
+}
+
+/// Lift a [`SpendableHeader`] across an epoch boundary.
+///
+/// Checks `spendable.nf == old_nf` from the [`NullifierRolloverHeader`],
+/// then applies [`Anchor::next_epoch`] to the spendable's current anchor
+/// to produce the new epoch's `boundary_anchor`. Emits `(new_nf,
+/// boundary_anchor)` for [`SpendableEpochLift`] to consume against a
+/// new-epoch [`Unspent`] whose `prev_anchor` equals this boundary.
+///
+/// This is the only step in the proof tree that invokes the
+/// [`Anchor::next_epoch`] domain. `new_epoch` enters the boundary hash
+/// directly, so any tampered value diverges from the published anchor.
+#[derive(Debug)]
+pub struct SpendableRollover;
+
+impl Step for SpendableRollover {
+    type Aux<'source> = ();
+    type Left = SpendableHeader;
+    type Output = SpendableRolloverHeader;
+    type Right = NullifierRolloverHeader;
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(17);
+
+    fn witness<'source>(
+        &self,
+        _witness: Self::Witness<'source>,
+        (spendable_nf, spendable_anchor): <Self::Left as Header>::Data<'source>,
+        (rollover_old_nf, rollover_new_nf, rollover_new_epoch): <Self::Right as Header>::Data<
+            'source,
+        >,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        if spendable_nf != rollover_old_nf {
+            return Err(mock_ragu::Error(
+                "SpendableRollover: nullifiers don't match",
+            ));
+        }
+        let boundary_anchor = spendable_anchor.next_epoch(rollover_new_epoch);
+        Ok(((rollover_new_nf, boundary_anchor), ()))
+    }
+}
+
+/// Land a rolled-over spendable on a new-epoch anchor.
+///
+/// Merges with a new-epoch [`Unspent`] whose `prev_anchor` equals the
+/// rollover's `boundary_anchor`. The boundary anchor cryptographically
+/// binds `new_epoch` via [`Anchor::next_epoch`], and the new-epoch
+/// [`Unspent`] is bound to the wallet's new-epoch identity via
+/// `unspent.nf == new_nf` (GGM-bound upstream in the NullifierHeader).
+/// Together these pin the wallet to the real E→E+1 epoch transition.
 #[derive(Debug)]
 pub struct SpendableEpochLift;
 
 impl Step for SpendableEpochLift {
     type Aux<'source> = ();
-    type Left = SpendableHeader;
+    type Left = SpendableRolloverHeader;
     type Output = SpendableHeader;
-    type Right = SpendableRolloverHeader;
-    type Witness<'source> = (PoolSet<Multiset>,);
+    type Right = Unspent;
+    type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(9);
+    const INDEX: Index = Index::new(18);
 
     fn witness<'source>(
         &self,
-        (pool,): Self::Witness<'source>,
-        (old_nf, old_anchor): <Self::Left as Header>::Data<'source>,
-        (rollover_old_nf, new_nf, new_anchor): <Self::Right as Header>::Data<'source>,
+        _witness: Self::Witness<'source>,
+        (rollover_new_nf, rollover_boundary_anchor): <Self::Left as Header>::Data<'source>,
+        (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data<
+            'source,
+        >,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if old_nf != rollover_old_nf {
+        if unspent_nf != rollover_new_nf {
             return Err(mock_ragu::Error(
-                "SpendableEpochLift: rollover not related to spendable",
+                "SpendableEpochLift: nullifiers not related",
             ));
         }
-        if !old_anchor.0.is_epoch_final() {
+        if unspent_prev_anchor != rollover_boundary_anchor {
             return Err(mock_ragu::Error(
-                "SpendableEpochLift: old anchor must be epoch-final",
+                "SpendableEpochLift: unspent prev_anchor must equal rollover boundary_anchor",
             ));
         }
-        if new_anchor.0.epoch().0 != old_anchor.0.epoch().0 + 1 {
-            return Err(mock_ragu::Error(
-                "SpendableEpochLift: anchors not in adjacent epochs",
-            ));
-        }
-
-        if pool.0.commit() != new_anchor.1.0 {
-            return Err(mock_ragu::Error(
-                "SpendableEpochLift: pool must commit to new anchor",
-            ));
-        }
-
-        let seed = epoch_seed_hash(&old_anchor.1);
-        if pool.0.query(seed) != Fp::ZERO {
-            return Err(mock_ragu::Error(
-                "SpendableEpochLift: epoch seed not in new pool",
-            ));
-        }
-
-        Ok(((new_nf, new_anchor), ()))
+        Ok(((rollover_new_nf, unspent_end_anchor), ()))
     }
 }

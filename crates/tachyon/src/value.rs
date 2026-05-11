@@ -5,7 +5,7 @@
 
 use core::{fmt, iter, ops, ops::Neg as _};
 
-use ff::{Field as _, PrimeField as _};
+use ff::Field as _;
 use lazy_static::lazy_static;
 use pasta_curves::{
     Ep, EpAffine, Fq,
@@ -15,7 +15,9 @@ use pasta_curves::{
 };
 use rand_core::{CryptoRng, RngCore};
 
-/// Orchard-shared personalization for the value-commitment generators.
+/// Hash-to-curve domain for value commitment generators $\mathcal{V}$ and
+/// $\mathcal{R}$. Shared with Orchard to reuse `reddsa::orchard::Binding` —
+/// same generators, same basepoint, same binding signature verification.
 const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
 
 lazy_static! {
@@ -47,18 +49,8 @@ lazy_static! {
 pub struct CommitmentTrapdoor(Fq);
 
 impl CommitmentTrapdoor {
-    /// Attempt to parse a value commitment trapdoor from 32 bytes.
-    #[must_use]
-    pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
-        Fq::from_repr(bytes).into_option().map(Self)
-    }
-
     /// Generate a fresh random trapdoor.
-    pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
-        // TODO: the selection of `rcv` may be revised to incorporate a hash of
-        // the note commitment or other action-specific data, possibly
-        // tied to alpha/theta derivation.
-        todo!("random commitment trapdoor");
+    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fq::random(rng))
     }
 
@@ -70,6 +62,8 @@ impl CommitmentTrapdoor {
     /// outputs (balance exhausted).
     #[must_use]
     pub fn commit(self, raw_value: i64) -> Commitment {
+        assert_ne!(self.0, Fq::ZERO, "commitment trapdoor should not be zero");
+
         let value_abs: Fq = Fq::from(raw_value.unsigned_abs());
         let value_fq = if raw_value >= 0 {
             value_abs
@@ -84,13 +78,6 @@ impl CommitmentTrapdoor {
         };
 
         Commitment(committed)
-    }
-}
-
-impl Default for CommitmentTrapdoor {
-    /// Generate an identity trapdoor.
-    fn default() -> Self {
-        Self(Fq::ZERO)
     }
 }
 
@@ -110,7 +97,7 @@ impl From<CommitmentTrapdoor> for Fq {
 ///
 /// where $v$ is the value, $\mathsf{rcv}$ is the randomness
 /// ([`CommitmentTrapdoor`]), and $\mathcal{V}$, $\mathcal{R}$ are
-/// generator points derived from [`VALUE_COMMITMENT_DOMAIN`]
+/// generator points hashed-to-curve under the Orchard `cv` domain
 /// (§5.4.8.3).
 ///
 /// ## Type representation
@@ -120,12 +107,6 @@ impl From<CommitmentTrapdoor> for Fq {
 pub struct Commitment(pub(super) EpAffine);
 
 impl Commitment {
-    /// Attempt to parse a value commitment from 32 compressed bytes.
-    #[must_use]
-    pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
-        EpAffine::from_bytes(&bytes).into_option().map(Self)
-    }
-
     /// Create the value balance commitment
     /// $\text{ValueCommit}_0(\mathsf{v\_{balance}})$.
     ///
@@ -139,7 +120,13 @@ impl Commitment {
     ///   \ominus \text{ValueCommit}_0(\mathsf{v\_{balance}})$$
     #[must_use]
     pub fn balance(value: i64) -> Self {
-        CommitmentTrapdoor::default().commit(value)
+        let value_abs: Fq = Fq::from(value.unsigned_abs());
+        let value_fq = if value >= 0 {
+            value_abs
+        } else {
+            value_abs.neg()
+        };
+        Self((*VALUE_COMMIT_V * value_fq).into())
     }
 }
 
@@ -207,20 +194,17 @@ mod tests {
     /// and the R-component has zero scalar.
     #[test]
     fn balance_zero_is_identity() {
-        assert_eq!(
-            CommitmentTrapdoor::default().commit(0),
-            Commitment(EpAffine::identity())
-        );
+        assert_eq!(Commitment::balance(0), Commitment(EpAffine::identity()));
     }
 
     /// The binding property: `cv_a + cv_b - balance(a+b) = [rcv_a + rcv_b]R`.
     /// The V-components cancel, leaving only the R-component.
     #[test]
     fn commit_homomorphic_binding_property() {
-        let mut rng = StdRng::seed_from_u64(0);
-        let rcv_a = CommitmentTrapdoor::random(&mut rng);
+        let rng = &mut StdRng::seed_from_u64(0);
+        let rcv_a = CommitmentTrapdoor::random(rng);
         let cv_a = rcv_a.commit(100);
-        let rcv_b = CommitmentTrapdoor::random(&mut rng);
+        let rcv_b = CommitmentTrapdoor::random(rng);
         let cv_b = rcv_b.commit(200);
 
         let remainder = cv_a + cv_b - Commitment::balance(300);

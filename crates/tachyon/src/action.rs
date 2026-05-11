@@ -6,7 +6,7 @@ use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{private, public},
     note::Note,
-    primitives::{Effect, effect},
+    primitives::{ActionDigest, ActionDigestError, Effect, effect},
     reddsa, value,
 };
 
@@ -77,6 +77,11 @@ impl<E: Effect> Plan<E> {
     pub fn cv(&self) -> value::Commitment {
         E::commit_value(self.rcv, self.note.value)
     }
+
+    /// Derive the action digest.
+    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
+        ActionDigest::new(self.cv(), self.rk)
+    }
 }
 
 /// An authorized Tachyon action.
@@ -95,6 +100,13 @@ pub struct Action {
 
     /// RedPallas spend auth signature over the transaction sighash.
     pub sig: Signature,
+}
+
+impl Action {
+    /// Derive the action digest.
+    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
+        ActionDigest::new(self.cv, self.rk)
+    }
 }
 
 /// A spend authorization signature (RedPallas over reddsa::ActionAuth).

@@ -65,18 +65,15 @@ use alloc::vec::Vec;
 use core::{error::Error, fmt};
 
 use corez::io::{self, Read, Write};
-use ff::Field as _;
-use group::GroupEncoding as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
 pub use crate::digest::blake2b::{AUTH_DIGEST_NO_BUNDLE, COMMIT_NO_BUNDLE};
 use crate::{
-    ActionAcc,
     action::{self, Action},
-    digest::blake2b::{auth_digest_stamped, auth_digest_stripped, commit_bundle},
+    digest::blake2b,
     keys::{private, public},
-    primitives::{ActionCommit, ActionDigest, ActionDigestError, Anchor, Tachygram, effect},
+    primitives::{ActionDigest, ActionDigestError, ActionSetCommit, Anchor, Tachygram, effect},
     reddsa, serialization,
     stamp::{self, Adjunct, Stamp, Unproven},
     value,
@@ -269,22 +266,31 @@ impl Plan {
         spend_sum - output_sum
     }
 
-    /// Compute the bundle commitment.
-    /// See [`digest_bundle`].
+    /// Compute a digest of all the bundle's effecting data.
+    ///
+    /// This contributes to the transaction sighash.
+    ///
+    /// $$ \mathsf{bundle\_commitment} = \text{BLAKE2b-512}(
+    /// \text{"Tachyon-BndlHash"},\; \mathsf{action\_acc}_x \|
+    /// \mathsf{action\_acc}_y \| \mathsf{value\_balance}) $$
+    ///
+    /// where $\mathsf{action\_acc}$ is the polynomial commitment to the
+    /// action digest multiset `∏(X - action_digest_i)` — order-independent
+    /// by construction since the polynomial is invariant under root
+    /// permutation.
+    ///
+    /// The stamp is excluded because it is stripped during aggregation.
     #[must_use]
     pub fn commitment(&self) -> [u8; 64] {
         #[expect(clippy::expect_used, reason = "todo")]
         let digests: Vec<ActionDigest> = self
-            .iter_actions(
-                |plan| ActionDigest::try_from(plan),
-                |plan| ActionDigest::try_from(plan),
-            )
+            .iter_actions(action::Plan::digest, action::Plan::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
             .expect("don't plan invalid actions");
 
-        let action_commit = ActionCommit(ActionAcc::from(digests.as_slice()).0.commit(Fp::ZERO));
+        let action_commit = ActionSetCommit::from(digests.as_slice());
 
-        commit_bundle(action_commit.0.inner(), self.value_balance())
+        blake2b::bundle_commitment(action_commit.0.inner(), self.value_balance())
     }
 
     /// Build a [`stamp::Plan`] from this bundle plan.
@@ -503,25 +509,22 @@ impl Stamped {
     /// stamp trailer (anchor + tachygrams + proof).
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 64] {
-        let action_sigs: Vec<[u8; 64]> = self
-            .actions
-            .iter()
-            .map(|action| <[u8; 64]>::from(action.sig))
-            .collect();
-
+        let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
+        let binding_sig: [u8; 64] = self.binding_sig.into();
+        let anchor: [u8; 32] = self.stamp.anchor.0.into();
         let tachygrams: Vec<Fp> = self
             .stamp
             .tachygrams
             .iter()
             .map(|&tg| Fp::from(tg))
             .collect();
-
-        auth_digest_stamped(
-            action_sigs.iter().collect::<Vec<&[u8; 64]>>().as_slice(),
-            &self.binding_sig.into(),
-            &self.stamp.anchor.1.0.inner().to_bytes(),
-            tachygrams.as_slice(),
-            self.stamp.proof.serialize().as_ref(),
+        let proof = self.stamp.proof.serialize();
+        blake2b::stamped_auth_digest(
+            &action_sigs,
+            &binding_sig,
+            &anchor,
+            &tachygrams,
+            proof.as_ref(),
         )
     }
 }
@@ -584,17 +587,9 @@ impl Stripped {
     /// `wtxid` of the covering aggregate.
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 64] {
-        let action_sigs: Vec<[u8; 64]> = self
-            .actions
-            .iter()
-            .map(|action| <[u8; 64]>::from(action.sig))
-            .collect();
-
-        auth_digest_stripped(
-            action_sigs.iter().collect::<Vec<&[u8; 64]>>().as_slice(),
-            &self.binding_sig.into(),
-            &self.stamp.wtxid,
-        )
+        let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
+        let binding_sig: [u8; 64] = self.binding_sig.into();
+        blake2b::stripped_auth_digest(&action_sigs, &binding_sig, &self.stamp.wtxid)
     }
 }
 
@@ -655,19 +650,18 @@ impl TachyonBundle {
 }
 
 impl<S: StampState> Bundle<S> {
-    /// See [`digest_bundle`].
+    /// See [`Plan::commitment`].
     pub fn commitment(&self) -> Result<[u8; 64], ActionDigestError> {
-        let digests: Vec<ActionDigest> = self
+        let action_digests = self
             .actions
             .iter()
-            .map(ActionDigest::try_from)
-            .collect::<Result<_, ActionDigestError>>()?;
-
-        let set = ActionAcc::from(digests.as_slice());
-
-        let commit = ActionCommit(set.0.commit(Fp::ZERO));
-
-        Ok(commit_bundle(commit.0.inner(), self.value_balance))
+            .map(Action::digest)
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
+        let action_acc = ActionSetCommit::from(action_digests.as_slice());
+        Ok(blake2b::bundle_commitment(
+            action_acc.0.inner(),
+            self.value_balance,
+        ))
     }
 
     /// Verify the bundle's binding signature and all action signatures.
@@ -836,8 +830,7 @@ fn write_bundle_trailer_stamped<W: Write>(mut writer: W, stamp: &Stamp) -> io::R
         &stamp
             .tachygrams
             .iter()
-            .copied()
-            .map(Fp::from)
+            .map(|&tg| Fp::from(tg))
             .collect::<Vec<Fp>>(),
     )?;
     stamp::write_proof(&mut writer, &stamp.proof)?;

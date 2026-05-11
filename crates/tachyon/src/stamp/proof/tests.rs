@@ -1,682 +1,767 @@
-//! Proof-step tests: `StampLift`, `SpendBind`, and the Spendable*
-//! steps. Grouped in one module so all step-level behavior lives together
-//! next to the step definitions.
+//! Proof-step tests: `StampLift`, `SpendBind`, the `Spendable*` lineage,
+//! and the per-tachygram exclusion / inclusion seeds.
 
 extern crate alloc;
 
+use alloc::vec;
+
 use ff::Field as _;
-use mock_ragu::{Polynomial, Proof};
+use mock_ragu::Proof;
 use pasta_curves::Fp;
 use rand::{SeedableRng as _, rngs::StdRng};
+use rand_core::{CryptoRng, RngCore};
 
-use super::{PROOF_SYSTEM, delegation, spend, spendable, stamp as stamp_proof};
+use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
-    ActionAcc, ActionDigest,
+    ActionSetCommit, TachygramSetCommit, TachygramSetGadget,
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
     fixtures::{
-        PoolSim, SyncSim, WalletSim, build_output_action,
-        ggm_tools::{
-            delegate_range, preblind_nullifier_from_master, preblind_nullifier_pair_from_master,
-            walk_delegate_to_nullifier,
-        },
-        random_block, random_block_with,
+        PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_nullifier_rollover_pcd,
+        build_output_stamp, build_unspent_pcd, build_unspent_seed_pcd,
+        ggm_tools::{delegate_nullifier_from_master, delegate_range},
+        random_block, random_block_with, spend_witness,
     },
-    keys::private,
-    note,
-    primitives::{
-        ActionCommit, Anchor, BlockAcc, BlockHeight, DelegationTrapdoor, EpochIndex, PoolCommit,
-        PoolDelta, PoolSet, Tachygram, TachygramAcc, TachygramCommit, effect,
-    },
-    stamp::Stamp,
+    note::{self, Nullifier},
+    primitives::{Anchor, BlockHeight, DelegationTrapdoor, EpochIndex, Tachygram, effect},
     value,
 };
 
-// ── StampLift ──────────────────────────────────────────────────────────────
+const NON_ADJACENT_EPOCH_PAIRS: &[(EpochIndex, EpochIndex)] = &[
+    (EpochIndex(3), EpochIndex(3)),
+    (EpochIndex(1), EpochIndex(4)),
+    (EpochIndex(3), EpochIndex(0)),
+];
 
-/// StampLift: advances stamp anchor across same-epoch blocks that carry
-/// tachygrams. The delta is the real product of those intervening blocks.
+fn tg<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Tachygram {
+    Tachygram::from(Fp::random(rng))
+}
+
 #[test]
 fn stamp_lift_within_epoch() {
-    let mut rng = StdRng::seed_from_u64(400);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let mut pool = PoolSim::new();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
 
-    pool.advance(1, |_| random_block(&mut rng, 50));
-    let anchor_5 = pool.anchor();
-    let left_pool_acc = pool.state_at(anchor_5.0);
+    pool.advance(1, |_| random_block(rng, 1, 4));
+    let stamp_anchor = pool.anchor_at(BlockHeight(1));
 
-    let note = user.random_note(&mut rng, 200);
-    let (rcv, alpha, action) = build_output_action(&mut rng, note);
-    let stamp = Stamp::prove_output(&mut rng, rcv, alpha, note, anchor_5).expect("prove_output");
+    let note = user.random_note(rng, 200);
+    let (stamp, plan) = build_output_stamp(rng, stamp_anchor, note);
 
-    let action_acc = ActionAcc::from([ActionDigest::try_from(&action).unwrap()].as_slice());
-    let tachygram_acc = TachygramAcc::from(&*stamp.tachygrams);
-    let action_commit = ActionCommit(action_acc.0.commit(Fp::ZERO));
-    let tachygram_commit = TachygramCommit(tachygram_acc.0.commit(Fp::ZERO));
+    let action_commit: ActionSetCommit =
+        ActionSetCommit::from([plan.digest().expect("valid plan")].as_slice());
+    let tachygram_commit: TachygramSetCommit =
+        TachygramSetCommit::from(stamp.tachygrams.as_slice());
 
-    pool.advance(2, |_| random_block(&mut rng, 50));
-    let anchor_10 = pool.anchor();
-    let delta = pool.delta(anchor_5.0, anchor_10.0);
+    pool.advance(usize::try_from(EPOCH_SIZE - 2).expect("fits"), |_| {
+        random_block(rng, 1, 4)
+    });
+    let new_height = pool.height();
 
-    let stamp_hdr = (action_commit, tachygram_commit, anchor_5);
-    let stamp_pcd = stamp.proof.carry(stamp_hdr);
+    let stamp_pcd = stamp
+        .proof
+        .carry((action_commit, tachygram_commit, stamp_anchor));
+    let anchor_chain = build_anchor_chain_pcd(rng, &pool, BlockHeight(2)..=new_height);
 
-    let (lifted_proof, ()) = PROOF_SYSTEM
+    let (lifted_pcd, ()) = PROOF_SYSTEM
         .fuse(
-            &mut rng,
-            stamp_proof::StampLift,
-            (
-                action_acc.into(),
-                tachygram_acc.into(),
-                left_pool_acc.into(),
-                delta.into(),
-                anchor_10,
-            ),
+            rng,
+            stamp::StampLift,
+            (action_commit, tachygram_commit),
             stamp_pcd,
-            Proof::trivial().carry::<()>(()),
+            anchor_chain,
         )
         .expect("stamp lift");
-
-    let lifted_hdr = (action_commit, tachygram_commit, anchor_10);
-    let lifted_pcd = lifted_proof.carry::<stamp_proof::StampHeader>(lifted_hdr);
     PROOF_SYSTEM
-        .rerandomize(lifted_pcd, &mut rng)
+        .rerandomize(lifted_pcd, rng)
         .expect("rerandomize lifted stamp");
 }
 
-/// StampLift rejects target in a different epoch.
 #[test]
-fn stamp_lift_rejects_cross_epoch() {
-    let mut rng = StdRng::seed_from_u64(604);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let mut pool = PoolSim::new();
+fn spend_bind_rejects_invalid_inputs() {
+    // Non-adjacent epoch pairs.
+    for &(epoch_l, epoch_r) in NON_ADJACENT_EPOCH_PAIRS {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user = WalletSim::random(rng);
+        let note = user.random_note(rng, 500);
 
-    pool.advance(1, |_| random_block(&mut rng, 50));
-    let anchor_5 = pool.anchor();
+        let nf_pcd_l = user.nullifier_pcd(rng, note, epoch_l);
+        let nf_pcd_r = user.nullifier_pcd(rng, note, epoch_r);
+        let (rcv, _theta, alpha) = spend_witness(rng, &note);
 
-    let note = user.random_note(&mut rng, 200);
-    let (rcv, alpha, action) = build_output_action(&mut rng, note);
-    let stamp = Stamp::prove_output(&mut rng, rcv, alpha, note, anchor_5).expect("prove_output");
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spend::SpendBind,
+                (rcv, alpha, user.pak, note),
+                nf_pcd_l,
+                nf_pcd_r,
+            )
+            .unwrap_err();
+        assert_eq!(
+            err.0, "SpendBind: nullifiers not adjacent",
+            "epochs {epoch_l:?} {epoch_r:?}"
+        );
+    }
 
-    let action_acc = ActionAcc::from([ActionDigest::try_from(&action).unwrap()].as_slice());
-    let tachygram_acc = TachygramAcc::from(&*stamp.tachygrams);
+    // cm mismatch: leaves derived from two distinct notes (different cm)
+    // are rejected by the `left_cm_tg == right_cm_tg` check.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user = WalletSim::random(rng);
+        let note_a = user.random_note(rng, 500);
+        let note_b = user.random_note(rng, 500);
+        assert_ne!(note_a.commitment(), note_b.commitment());
 
-    let remaining = usize::try_from(EPOCH_SIZE - u32::from(pool.anchor().0)).expect("fits usize");
-    pool.advance(remaining, |_| random_block(&mut rng, 10));
-    assert_eq!(pool.anchor().0.epoch().0, 1);
+        let nf_now = user.nullifier_pcd(rng, note_a, EpochIndex(0));
+        let nf_next = user.nullifier_pcd(rng, note_b, EpochIndex(1));
+        let (rcv, _theta, alpha) = spend_witness(rng, &note_a);
 
-    let delta = PoolDelta(Polynomial::from_roots(&[]));
-    let action_commit = ActionCommit(action_acc.0.commit(Fp::ZERO));
-    let tachygram_commit = TachygramCommit(tachygram_acc.0.commit(Fp::ZERO));
-    let stamp_hdr = (action_commit, tachygram_commit, anchor_5);
-    let stamp_pcd = stamp.proof.carry(stamp_hdr);
-    let to_anchor = pool.anchor();
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spend::SpendBind,
+                (rcv, alpha, user.pak, note_a),
+                nf_now,
+                nf_next,
+            )
+            .unwrap_err();
+        assert_eq!(err.0, "SpendBind: nullifiers not related");
+    }
 
-    let result = PROOF_SYSTEM.fuse(
-        &mut rng,
-        stamp_proof::StampLift,
-        (
-            action_acc.into(),
-            tachygram_acc.into(),
-            PoolSet::<Polynomial>(Polynomial::default()).into(),
-            delta.into(),
-            to_anchor,
-        ),
-        stamp_pcd,
-        Proof::trivial().carry::<()>(()),
-    );
-    assert!(
-        result.is_err(),
-        "stamp lift across epoch boundary must fail"
-    );
+    // note↔leaf mismatch: leaves built from `note_a` but witness carries
+    // `note_b` — the `Tachygram::from(note.commitment()) == left_cm_tg`
+    // check rejects.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user = WalletSim::random(rng);
+        let note_a = user.random_note(rng, 500);
+        let note_b = user.random_note(rng, 500);
+        assert_ne!(note_a.commitment(), note_b.commitment());
+
+        let (nf_now, nf_next) = user.nullifier_pair_pcd(rng, note_a, EpochIndex(0));
+        let (rcv, _theta, alpha) = spend_witness(rng, &note_b);
+
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spend::SpendBind,
+                (rcv, alpha, user.pak, note_b),
+                nf_now,
+                nf_next,
+            )
+            .unwrap_err();
+        assert_eq!(err.0, "SpendBind: nullifiers not related to note");
+    }
+
+    // pk substitution: witness `pak_b` against `note_a` whose pk was derived
+    // from `pak_a`.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user_a = WalletSim::random(rng);
+        let user_b = WalletSim::random(rng);
+        assert_ne!(
+            user_a.pak.derive_payment_key().0,
+            user_b.pak.derive_payment_key().0,
+        );
+        let note_a = user_a.random_note(rng, 500);
+
+        let (nf_now, nf_next) = user_a.nullifier_pair_pcd(rng, note_a, EpochIndex(0));
+        let (rcv, _theta, alpha) = spend_witness(rng, &note_a);
+
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spend::SpendBind,
+                (rcv, alpha, user_b.pak, note_a),
+                nf_now,
+                nf_next,
+            )
+            .unwrap_err();
+        assert_eq!(err.0, "SpendBind: pak not related to note");
+    }
 }
 
-// ── SpendBind non-adjacent epochs ─────────────────────────────────────────
-
-/// `SpendBind` must reject two pre-blind nullifier PCDs whose epochs are
-/// not adjacent (`right_epoch != left_epoch + 1`).
-#[test]
-fn spend_bind_rejects_non_adjacent_epochs() {
-    let mut rng = StdRng::seed_from_u64(200);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let note = user.random_note(&mut rng, 500);
-
-    let epoch_e = EpochIndex(0);
-    let epoch_far = EpochIndex(5);
-
-    let master = user.note_master(&mut rng, note);
-    let nf_pcd_e = preblind_nullifier_from_master(&mut rng, master.clone(), epoch_e);
-    let nf_pcd_far = preblind_nullifier_from_master(&mut rng, master, epoch_far);
-
-    let rcv = value::CommitmentTrapdoor::random(&mut rng);
-    let theta = ActionEntropy::random(&mut rng);
-    let alpha = theta.randomizer::<effect::Spend>(note.commitment());
-
-    let result = PROOF_SYSTEM.fuse(
-        &mut rng,
-        spend::SpendBind,
-        (rcv, alpha, user.pak, note),
-        nf_pcd_e,
-        nf_pcd_far,
-    );
-    assert!(result.is_err(), "SpendBind must reject non-adjacent epochs");
-}
-
-// ── Zero-value witness rejection ──────────────────────────────────────────
-
-/// Every step that witnesses a `Note` must independently constrain `value ==
-/// 0`. The `Value` newtype's `From<u64>` panics on zero, but the tuple field is
-/// `pub(crate)` so a test can bypass the API check; the circuit check is the
-/// actual soundness guarantee and must fire on the zero witness.
 #[test]
 fn step_rejects_zero_value_note() {
-    let mut rng = StdRng::seed_from_u64(800);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
     let target_epoch = EpochIndex(0);
 
     let zero_note = note::Note {
         pk: user.pak.derive_payment_key(),
         value: note::Value(0),
-        psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
-        rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+        psi: note::NullifierTrapdoor::random(rng),
+        rcm: note::CommitmentTrapdoor::random(rng),
     };
 
-    // NfMasterSeed: no PCD inputs needed. This is the root constraint —
-    // SpendableInit no longer takes a Note witness, so zero-value rejection
-    // for the spendable path is enforced structurally here.
-    assert!(
-        PROOF_SYSTEM
-            .seed(&mut rng, delegation::NfMasterSeed, (zero_note, user.pak),)
-            .is_err(),
-        "NfMasterSeed must reject zero-value note"
-    );
+    {
+        let err = PROOF_SYSTEM
+            .seed(rng, delegation::NfMasterSeed, (zero_note, user.pak))
+            .unwrap_err();
+        assert_eq!(err.0, "NfMasterSeed: zero-value note");
+    }
 
-    // OutputStamp: no PCD inputs needed.
-    let out_rcv = value::CommitmentTrapdoor::random(&mut rng);
-    let out_theta = ActionEntropy::random(&mut rng);
-    let out_alpha = out_theta.randomizer::<effect::Output>(zero_note.commitment());
-    let out_anchor = PoolSim::new().anchor();
-    assert!(
-        PROOF_SYSTEM
+    {
+        let out_rcv = value::CommitmentTrapdoor::random(rng);
+        let out_theta = ActionEntropy::random(rng);
+        let out_alpha = out_theta.randomizer::<effect::Output>(zero_note.commitment());
+        let out_anchor = PoolSim::genesis(rng).anchor();
+        let err = PROOF_SYSTEM
             .seed(
-                &mut rng,
-                stamp_proof::OutputStamp,
+                rng,
+                stamp::OutputStamp,
                 (out_rcv, out_alpha, zero_note, out_anchor),
             )
-            .is_err(),
-        "OutputStamp must reject zero-value note"
-    );
+            .unwrap_err();
+        assert_eq!(err.0, "OutputStamp: zero-value note");
+    }
 
-    // SpendBind: left/right pre-blind nf PCDs built from a *valid* note;
-    // witness uses zero note. The witness-cm-binding check rejects first
-    // (zero_note.commitment() != valid leaf cm), but the explicit
-    // `note.value != 0` check would also fire.
-    let valid_note = user.random_note(&mut rng, 500);
-    let valid_master = user.note_master(&mut rng, valid_note);
-    let (nf_now_pcd, nf_next_pcd) =
-        preblind_nullifier_pair_from_master(&mut rng, valid_master, target_epoch);
-    let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
-    let spend_theta = ActionEntropy::random(&mut rng);
-    let spend_alpha = spend_theta.randomizer::<effect::Spend>(zero_note.commitment());
-    assert!(
-        PROOF_SYSTEM
+    {
+        let valid_note = note::Note {
+            value: note::Value(500),
+            ..zero_note
+        };
+        let (nf_now_pcd, nf_next_pcd) = user.nullifier_pair_pcd(rng, valid_note, target_epoch);
+        let spend_rcv = value::CommitmentTrapdoor::random(rng);
+        let spend_theta = ActionEntropy::random(rng);
+        let spend_alpha = spend_theta.randomizer::<effect::Spend>(valid_note.commitment());
+
+        let err = PROOF_SYSTEM
             .fuse(
-                &mut rng,
+                rng,
                 spend::SpendBind,
                 (spend_rcv, spend_alpha, user.pak, zero_note),
                 nf_now_pcd,
                 nf_next_pcd,
             )
-            .is_err(),
-        "SpendBind must reject zero-value note"
-    );
+            .unwrap_err();
+        assert_eq!(err.0, "SpendBind: zero-value note");
+
+        // this should also fail the commitment test
+        assert_ne!(valid_note.commitment(), zero_note.commitment());
+    }
 }
 
-// ── SpendBind ─────────────────────────────────────────────────────────────
-
-/// `SpendBind` must reject when the witnessed `note` doesn't match the
-/// leaves' `cm`. Two notes from the same wallet produce different leaves
-/// (different `cm`); witnessing one note with another's leaves must fail
-/// the cm-equality check.
-#[test]
-fn spend_bind_rejects_note_cm_mismatch() {
-    let mut rng = StdRng::seed_from_u64(705);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let leaf_note = user.random_note(&mut rng, 500);
-    let other_note = user.random_note(&mut rng, 500);
-    let target_epoch = EpochIndex(0);
-
-    let leaf_master = user.note_master(&mut rng, leaf_note);
-    let (nf_now_pcd, nf_next_pcd) =
-        preblind_nullifier_pair_from_master(&mut rng, leaf_master, target_epoch);
-    let rcv = value::CommitmentTrapdoor::random(&mut rng);
-    let theta = ActionEntropy::random(&mut rng);
-    let alpha = theta.randomizer::<effect::Spend>(other_note.commitment());
-
-    let result = PROOF_SYSTEM.fuse(
-        &mut rng,
-        spend::SpendBind,
-        (rcv, alpha, user.pak, other_note),
-        nf_now_pcd,
-        nf_next_pcd,
-    );
-    assert!(
-        result.is_err(),
-        "SpendBind must reject when witnessed note's cm doesn't match the leaf"
-    );
-}
-
-// ── Spendable{Init, Lift, Rollover, EpochLift} ────────────────────────────
-
-/// SpendableEpochLift: sync's cross-epoch `lift_spendable` internally chains
-/// `SpendableLift` → `SpendableRollover` → `SpendableEpochLift`, so a
-/// successful cross-epoch lift binds all three steps.
 #[test]
 fn spendable_epoch_lift_across_boundary() {
-    let mut rng = StdRng::seed_from_u64(300);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let mut pool = PoolSim::new();
-    let note = user.random_note(&mut rng, 500);
-    let trap = DelegationTrapdoor::random(&mut rng);
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+    let note = user.random_note(rng, 500);
+    let trap = DelegationTrapdoor::random(rng);
     let delegation_id = user.pak.nk.derive_delegation_id(&note, trap);
 
     let epoch_0 = EpochIndex(0);
-    let master = user.note_master(&mut rng, note);
+    let master = user.note_master(rng, note);
+    let delegates = delegate_range(rng, &master, trap, epoch_0.0..=epoch_0.0 + 1);
     let mut sync = SyncSim::new();
 
-    pool.mine(random_block_with(&mut rng, note.commitment(), 50));
-    let preblind_nf_pcd = preblind_nullifier_from_master(&mut rng, master.clone(), epoch_0);
-    let spendable_pcd = user.spendable_init(
-        &mut rng,
-        pool.anchor(),
-        pool.state().clone(),
-        preblind_nf_pcd,
-    );
-    sync.accept_spendable(
-        delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_0.0 + 1),
-        spendable_pcd,
-    );
+    pool.mine(random_block_with(rng, &[alloc::vec![note.commitment()]], 4));
+    let init_height = pool.height();
+    let nf_pcd = user.nullifier_pcd(rng, note, epoch_0);
+    let spendable_pcd = user.spendable_init(rng, note, &pool, init_height, nf_pcd);
+    sync.accept_spendable(delegates, spendable_pcd);
 
-    // Advance into epoch 1, then lift; sync chooses the cross-epoch path.
-    let remaining = usize::try_from(EPOCH_SIZE + 1 - u32::from(pool.anchor().0)).expect("fits");
-    pool.advance(remaining, |_| random_block(&mut rng, 10));
-    assert_eq!(pool.anchor().0.epoch().0, 1);
-    sync.lift(&mut rng, &pool);
+    let remaining = usize::try_from(EPOCH_SIZE + 1 - pool.height().0).expect("fits");
+    pool.advance(remaining, |_| random_block(rng, 1, 4));
+    assert_eq!(pool.height().epoch().0, 1);
+    sync.lift(rng, &pool);
 
     PROOF_SYSTEM
-        .rerandomize(sync.spendable(delegation_id), &mut rng)
+        .rerandomize(sync.spendable(delegation_id), rng)
         .expect("rerandomize lifted spendable");
 }
 
-/// SpendableLift: advances spendable anchor within the same epoch across
-/// blocks that carry tachygrams unrelated to this note's `nf`. The delta is
-/// the real product of those intervening block polynomials.
 #[test]
-fn spendable_lift_within_epoch() {
-    let mut rng = StdRng::seed_from_u64(350);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let mut pool = PoolSim::new();
-    let note = user.random_note(&mut rng, 500);
-    let trap = DelegationTrapdoor::random(&mut rng);
-    let delegation_id = user.pak.nk.derive_delegation_id(&note, trap);
-    let epoch_0 = EpochIndex(0);
+fn spendable_lift_rejects_invalid_inputs() {
+    // prev_anchor mismatch: forge a SpendableHeader carrying a bogus anchor
+    // that doesn't match the Unspent's prev_anchor.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user = WalletSim::random(rng);
+        let mut pool = PoolSim::genesis(rng);
+        let note = user.random_note(rng, 500);
 
-    let master = user.note_master(&mut rng, note);
-    let mut sync = SyncSim::new();
+        pool.mine(random_block_with(rng, &[alloc::vec![note.commitment()]], 4));
+        let init_height = pool.height();
+        let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
+        let real_spendable = user.spendable_init(rng, note, &pool, init_height, nf_pcd);
 
-    pool.mine(random_block_with(&mut rng, note.commitment(), 50));
-    let preblind_nf_pcd = preblind_nullifier_from_master(&mut rng, master.clone(), epoch_0);
-    let spendable_pcd = user.spendable_init(
-        &mut rng,
-        pool.anchor(),
-        pool.state().clone(),
-        preblind_nf_pcd,
-    );
-    sync.accept_spendable(
-        delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_0.0),
-        spendable_pcd,
-    );
+        pool.advance(2, |_| random_block(rng, 1, 4));
+        let target_height = pool.height();
+        let unspent = build_unspent_pcd(
+            rng,
+            &pool,
+            real_spendable.data.0,
+            BlockHeight(init_height.0 + 1)..=target_height,
+        );
 
-    pool.advance(2, |_| random_block(&mut rng, 50));
+        let forged_anchor = Anchor(Fp::random(&mut *rng));
+        let forged_spendable = real_spendable
+            .proof
+            .clone()
+            .carry::<spendable::SpendableHeader>((real_spendable.data.0, forged_anchor));
 
-    sync.lift(&mut rng, &pool);
-    let lifted_pcd = sync.spendable(delegation_id);
+        let err = PROOF_SYSTEM
+            .fuse(rng, spendable::SpendableLift, (), forged_spendable, unspent)
+            .unwrap_err();
+        assert_eq!(err.0, "SpendableLift: unspent not adjacent to spendable");
+    }
 
-    PROOF_SYSTEM
-        .rerandomize(lifted_pcd, &mut rng)
-        .expect("rerandomize lifted spendable");
+    // nf mismatch: spendable for note_a, unspent for note_b's nf.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user = WalletSim::random(rng);
+        let mut pool = PoolSim::genesis(rng);
+        let note_a = user.random_note(rng, 100);
+        let note_b = user.random_note(rng, 200);
+
+        pool.mine(random_block_with(
+            rng,
+            &[alloc::vec![note_a.commitment()]],
+            4,
+        ));
+        let init_height = pool.height();
+        let nf_pcd_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
+        let spendable_a = user.spendable_init(rng, note_a, &pool, init_height, nf_pcd_a);
+
+        pool.advance(2, |_| random_block(rng, 1, 4));
+        let target_height = pool.height();
+        let nf_b = note_b.nullifier(&user.pak.nk, EpochIndex(0));
+        let unspent_b = build_unspent_pcd(
+            rng,
+            &pool,
+            nf_b,
+            BlockHeight(init_height.0 + 1)..=target_height,
+        );
+
+        let err = PROOF_SYSTEM
+            .fuse(rng, spendable::SpendableLift, (), spendable_a, unspent_b)
+            .unwrap_err();
+        assert_eq!(err.0, "SpendableLift: unspent does not relate to spendable");
+    }
 }
 
-/// SpendableLift rejects target in a different epoch.
 #[test]
-fn spendable_lift_rejects_cross_epoch() {
-    let mut rng = StdRng::seed_from_u64(351);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let mut pool = PoolSim::new();
-    let note = user.random_note(&mut rng, 500);
-    pool.mine(random_block_with(&mut rng, note.commitment(), 50));
-    let init_anchor = pool.anchor();
-    let left_pool_acc = pool.state().clone();
-    let master_pcd = user.note_master(&mut rng, note);
-    let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, init_anchor.0.epoch());
-    let spendable_pcd = user.spendable_init(&mut rng, init_anchor, left_pool_acc.clone(), nf_pcd);
+fn spendable_init_rejects_tg_absent() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let note = user.random_note(rng, 500);
 
-    // Advance to epoch-final of epoch 0, then across the boundary.
-    let epoch_final = BlockHeight(EPOCH_SIZE - 1);
-    let to_epoch_final = usize::try_from(epoch_final.0 - init_anchor.0.0).expect("fits usize");
-    pool.advance(to_epoch_final, |_| random_block(&mut rng, 10));
-    // Accurate delta for the same-epoch span; the lift should still reject
-    // because `to_anchor` below crosses the boundary.
-    let delta = pool.delta(init_anchor.0, epoch_final);
-    pool.advance(1, |_| random_block(&mut rng, 10));
-    assert_eq!(pool.anchor().0.epoch().0, 1);
-
-    let result = PROOF_SYSTEM.fuse(
-        &mut rng,
-        spendable::SpendableLift,
-        (left_pool_acc.into(), delta.into(), pool.anchor()),
-        spendable_pcd,
-        Proof::trivial().carry::<()>(()),
-    );
-    assert!(
-        result.is_err(),
-        "spendable lift across epoch boundary must fail"
-    );
+    let absent_set = TachygramSetGadget::from([tg(rng)].as_slice());
+    let pre_cm_anchor = Anchor::default();
+    let nf_pcd_absent = user.nullifier_pcd(rng, note, EpochIndex(0));
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableInit,
+            (pre_cm_anchor, absent_set),
+            nf_pcd_absent,
+            Proof::trivial().carry::<()>(()),
+        )
+        .unwrap_err();
+    assert_eq!(err.0, "SpendableInit: commitment not in set");
 }
 
-/// SpendableInit rejects when the note's cm is not in the pool.
 #[test]
-fn spendable_init_rejects_cm_absent() {
-    let mut rng = StdRng::seed_from_u64(700);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let mut pool = PoolSim::new();
-    let note = user.random_note(&mut rng, 500);
-    let epoch_0 = EpochIndex(0);
+fn unspent_seed_rejects_tg_present() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let note = user.random_note(rng, 500);
+    let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
 
-    // Advance with an UNRELATED tachygram — cm is NOT in the pool.
-    let unrelated = Fp::from(0xDEAD_BEEFu64);
-    pool.mine(BlockAcc::from(&[Tachygram::from(unrelated)][..]));
-    let anchor = pool.anchor();
+    let containing_set = TachygramSetGadget::from([nf.into()].as_slice());
+    let start = Anchor::default();
 
-    let master_pcd = user.note_master(&mut rng, note);
-    let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, epoch_0);
-    let result = PROOF_SYSTEM.fuse(
-        &mut rng,
-        spendable::SpendableInit,
-        (pool.state().clone().into(), anchor),
-        nf_pcd,
-        Proof::trivial().carry::<()>(()),
-    );
-    assert!(
-        result.is_err(),
-        "SpendableInit must reject when cm is absent from pool"
-    );
+    let err = PROOF_SYSTEM
+        .seed(rng, pool::UnspentSeed, (start, containing_set, nf))
+        .unwrap_err();
+    assert_eq!(err.0, "UnspentSeed: found nullifier in set");
 }
 
-/// SpendableInit rejects when the note's `nf` for this epoch is already
-/// present in the pool (i.e., the note has been spent).
-///
-/// TODO: is this a valid thing to test? presently, SpendableInit just checks
-/// the total pool state, so it can do this. But, it should probably just check
-/// a single block state.
 #[test]
-fn spendable_init_rejects_nf_present() {
-    let mut rng = StdRng::seed_from_u64(701);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let mut pool = PoolSim::new();
-    let note = user.random_note(&mut rng, 500);
-    let epoch_0 = EpochIndex(0);
+fn delegate_rollover_fuse_rejects_invalid_inputs() {
+    // delegation_id mismatch (different traps yield different ids).
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user = WalletSim::random(rng);
+        let note = user.random_note(rng, 500);
+        let trap_a = DelegationTrapdoor::random(rng);
+        let trap_b = DelegationTrapdoor::random(rng);
+        assert_ne!(
+            user.pak.nk.derive_delegation_id(&note, trap_a),
+            user.pak.nk.derive_delegation_id(&note, trap_b),
+        );
 
-    let nf = note.nullifier(&user.pak.nk, epoch_0);
-    // Mine a block containing BOTH cm and nf — cm-in-pool passes, nf-in-pool
-    // is the intended failure.
-    pool.mine(BlockAcc::from(
-        &[Tachygram::from(note.commitment()), Tachygram::from(nf)][..],
+        let master_a = user.note_master(rng, note);
+        let master_b = user.note_master(rng, note);
+        let nf_a = delegate_nullifier_from_master(rng, master_a, trap_a, EpochIndex(0));
+        let nf_b = delegate_nullifier_from_master(rng, master_b, trap_b, EpochIndex(1));
+
+        let err = PROOF_SYSTEM
+            .fuse(rng, spendable::DelegateRolloverFuse, (), nf_a, nf_b)
+            .unwrap_err();
+        assert_eq!(err.0, "DelegateRolloverFuse: nullifiers not related");
+    }
+
+    // Non-adjacent epoch pairs.
+    for &(epoch_l, epoch_r) in NON_ADJACENT_EPOCH_PAIRS {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user = WalletSim::random(rng);
+        let note = user.random_note(rng, 500);
+        let trap = DelegationTrapdoor::random(rng);
+
+        let master_a = user.note_master(rng, note);
+        let master_b = user.note_master(rng, note);
+        let nf_l = delegate_nullifier_from_master(rng, master_a, trap, epoch_l);
+        let nf_r = delegate_nullifier_from_master(rng, master_b, trap, epoch_r);
+
+        let err = PROOF_SYSTEM
+            .fuse(rng, spendable::DelegateRolloverFuse, (), nf_l, nf_r)
+            .unwrap_err();
+        assert_eq!(
+            err.0, "DelegateRolloverFuse: nullifiers not adjacent",
+            "epochs {epoch_l:?} {epoch_r:?}"
+        );
+    }
+}
+
+#[test]
+fn spendable_rollover_rejects_nf_mismatch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+    let note_a = user.random_note(rng, 100);
+    let note_b = user.random_note(rng, 200);
+
+    pool.mine(random_block_with(
+        rng,
+        &[alloc::vec![note_a.commitment()]],
+        4,
     ));
-    let anchor = pool.anchor();
+    let init_height = pool.height();
+    let nf_pcd_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
+    let spendable_a = user.spendable_init(rng, note_a, &pool, init_height, nf_pcd_a);
 
-    let master_pcd = user.note_master(&mut rng, note);
-    let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, epoch_0);
-    let result = PROOF_SYSTEM.fuse(
-        &mut rng,
-        spendable::SpendableInit,
-        (pool.state().clone().into(), anchor),
-        nf_pcd,
-        Proof::trivial().carry::<()>(()),
-    );
-    assert!(
-        result.is_err(),
-        "SpendableInit must reject when nf is present in the pool"
-    );
+    let rollover_b = build_nullifier_rollover_pcd(rng, &user, note_b, EpochIndex(0));
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableRollover,
+            (),
+            spendable_a,
+            rollover_b,
+        )
+        .unwrap_err();
+    assert_eq!(err.0, "SpendableRollover: nullifiers don't match");
 }
 
-/// SpendableEpochLift rejects when the E+1 pool lacks the epoch-boundary
-/// seed. This state isn't reachable via `PoolSim`, so the inputs are
-/// fabricated — the test is exclusively about the proof step's constraint.
 #[test]
-fn spendable_epoch_lift_rejects_missing_seed() {
-    let mut rng = StdRng::seed_from_u64(702);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let note = user.random_note(&mut rng, 500);
+fn spendable_epoch_lift_rejects_invalid_inputs() {
+    // nf mismatch: rolled spendable for note_a, unspent for note_b's nf.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user = WalletSim::random(rng);
+        let mut pool = PoolSim::genesis(rng);
+        let note_a = user.random_note(rng, 100);
+        let note_b = user.random_note(rng, 200);
 
-    // Left: SpendableHeader at epoch-final with a fabricated pool (cm only).
-    let cm_fp = Fp::from(note.commitment());
-    let epoch_final_height = BlockHeight(EPOCH_SIZE - 1);
-    let left_pool = PoolSet(Polynomial::from_roots(&[cm_fp]));
-    let left_anchor = Anchor(epoch_final_height, PoolCommit(left_pool.0.commit(Fp::ZERO)));
-    let nf_e0 = note.nullifier(&user.pak.nk, EpochIndex(0));
+        pool.mine(random_block_with(
+            rng,
+            &[alloc::vec![note_a.commitment()]],
+            4,
+        ));
+        let init_height = pool.height();
+        let nf_pcd_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
+        let spendable_a = user.spendable_init(rng, note_a, &pool, init_height, nf_pcd_a);
 
-    // Right: SpendableRolloverHeader at first block of epoch 1 with a pool
-    // whose single root is unrelated to both the epoch seed and this note.
-    let right_pool = PoolSet(Polynomial::from_roots(&[Fp::ONE]));
-    let right_anchor = Anchor(
-        BlockHeight(EPOCH_SIZE),
-        PoolCommit(right_pool.0.commit(Fp::ZERO)),
-    );
-    let nf_e1 = note.nullifier(&user.pak.nk, EpochIndex(1));
+        let rollover_a = build_nullifier_rollover_pcd(rng, &user, note_a, EpochIndex(0));
+        let (rolled_a, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spendable::SpendableRollover,
+                (),
+                spendable_a,
+                rollover_a,
+            )
+            .expect("SpendableRollover");
 
-    let left_pcd = Proof::trivial().carry::<spendable::SpendableHeader>((nf_e0, left_anchor));
-    let right_pcd =
-        Proof::trivial().carry::<spendable::SpendableRolloverHeader>((nf_e0, nf_e1, right_anchor));
+        let nf_b = note_b.nullifier(&user.pak.nk, EpochIndex(0));
+        let unspent_b = build_unspent_pcd(rng, &pool, nf_b, BlockHeight(0)..=init_height);
 
-    let result = PROOF_SYSTEM.fuse(
-        &mut rng,
-        spendable::SpendableEpochLift,
-        (right_pool.into(),),
-        left_pcd,
-        right_pcd,
-    );
-    assert!(
-        result.is_err(),
-        "SpendableEpochLift must reject when E+1 pool lacks the seed root"
-    );
+        let err = PROOF_SYSTEM
+            .fuse(rng, spendable::SpendableEpochLift, (), rolled_a, unspent_b)
+            .unwrap_err();
+        assert_eq!(err.0, "SpendableEpochLift: nullifiers not related");
+    }
+
+    // prev_anchor mismatch: last_old_anchor flows from the spendable at
+    // init_height, but the unspent is rooted at epoch_0_final's anchor.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user = WalletSim::random(rng);
+        let mut pool = PoolSim::genesis(rng);
+        let note_a = user.random_note(rng, 500);
+
+        pool.mine(random_block_with(
+            rng,
+            &[alloc::vec![note_a.commitment()]],
+            4,
+        ));
+        let init_height = pool.height();
+        pool.advance(usize::try_from(EPOCH_SIZE).expect("fits"), |_| {
+            random_block(rng, 1, 4)
+        });
+        let epoch_1_first = BlockHeight(EPOCH_SIZE);
+
+        let nf_pcd_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
+        let spendable_a = user.spendable_init(rng, note_a, &pool, init_height, nf_pcd_a);
+        let rollover_a = build_nullifier_rollover_pcd(rng, &user, note_a, EpochIndex(0));
+        let nf_a_e1 = note_a.nullifier(&user.pak.nk, EpochIndex(1));
+        let (rolled_a, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spendable::SpendableRollover,
+                (),
+                spendable_a,
+                rollover_a,
+            )
+            .expect("SpendableRollover");
+
+        let unspent = build_unspent_pcd(rng, &pool, nf_a_e1, epoch_1_first..=epoch_1_first);
+
+        let err = PROOF_SYSTEM
+            .fuse(rng, spendable::SpendableEpochLift, (), rolled_a, unspent)
+            .unwrap_err();
+        assert_eq!(
+            err.0,
+            "SpendableEpochLift: unspent prev_anchor must equal rollover boundary_anchor"
+        );
+    }
 }
 
-/// SpendableLift rejects when the delta does not actually connect the two
-/// pool states.
 #[test]
-fn spendable_lift_rejects_non_superset_delta() {
-    let mut rng = StdRng::seed_from_u64(703);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let mut pool = PoolSim::new();
-    let note = user.random_note(&mut rng, 500);
-    pool.mine(random_block_with(&mut rng, note.commitment(), 50));
-    let left_pool_acc = pool.state().clone();
-    let anchor = pool.anchor();
-    let master_pcd = user.note_master(&mut rng, note);
-    let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, anchor.0.epoch());
-    let spendable_pcd = user.spendable_init(&mut rng, anchor, left_pool_acc.clone(), nf_pcd);
+fn rollover_fuse_rejects_invalid_inputs() {
+    // cm mismatch: nullifiers from two different notes.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user = WalletSim::random(rng);
+        let note_a = user.random_note(rng, 100);
+        let note_b = user.random_note(rng, 200);
 
-    pool.advance(2, |_| random_block(&mut rng, 50));
-    let bogus_delta = PoolDelta(Polynomial::from_roots(&[Fp::from(0x1234u64)]));
+        let nf_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
+        let nf_b = user.nullifier_pcd(rng, note_b, EpochIndex(1));
 
-    let result = PROOF_SYSTEM.fuse(
-        &mut rng,
-        spendable::SpendableLift,
-        (left_pool_acc.into(), bogus_delta.into(), pool.anchor()),
-        spendable_pcd,
-        Proof::trivial().carry::<()>(()),
-    );
-    assert!(
-        result.is_err(),
-        "SpendableLift must reject a non-superset delta"
-    );
+        let err = PROOF_SYSTEM
+            .fuse(rng, spendable::RolloverFuse, (), nf_a, nf_b)
+            .unwrap_err();
+        assert_eq!(err.0, "RolloverFuse: nullifiers not related");
+    }
+
+    // Non-adjacent epoch pairs.
+    for &(epoch_l, epoch_r) in NON_ADJACENT_EPOCH_PAIRS {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user = WalletSim::random(rng);
+        let note = user.random_note(rng, 500);
+
+        let nf_l = user.nullifier_pcd(rng, note, epoch_l);
+        let nf_r = user.nullifier_pcd(rng, note, epoch_r);
+
+        let err = PROOF_SYSTEM
+            .fuse(rng, spendable::RolloverFuse, (), nf_l, nf_r)
+            .unwrap_err();
+        assert_eq!(
+            err.0, "RolloverFuse: nullifiers not adjacent",
+            "epochs {epoch_l:?} {epoch_r:?}"
+        );
+    }
 }
 
-// ── SpendableRollover ─────────────────────────────────────────────────────
-
-/// `SpendableRollover` must reject when `new_nf` is already present as a
-/// root of the E+1 pool — the nullifier has been mined, so a spendable-
-/// status attestation for E+1 is meaningless.
 #[test]
-fn spendable_rollover_rejects_new_nf_in_pool() {
-    let mut rng = StdRng::seed_from_u64(735);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let note = user.random_note(&mut rng, 500);
-    let trap = DelegationTrapdoor::random(&mut rng);
+fn unspent_fuse_rejects_invalid_compositions() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let stamps_left = vec![tg(rng)];
+    let stamps_right = vec![tg(rng)];
+    let start = Anchor::default();
+    let mid = start.next_stamp(&TachygramSetCommit::from(stamps_left.as_slice()));
 
-    let epoch_0 = EpochIndex(0);
-    let epoch_1 = EpochIndex(1);
-    let master = user.note_master(&mut rng, note);
-    let delegates = delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_1.0);
-    let old_nf_pcd = walk_delegate_to_nullifier(
-        &mut rng,
-        delegates
-            .iter()
-            .find(|del| del.data.0.range().contains(&epoch_0.0))
-            .expect("covers")
-            .clone(),
-        epoch_0,
-    );
-    let new_nf_pcd = walk_delegate_to_nullifier(
-        &mut rng,
-        delegates
-            .iter()
-            .find(|del| del.data.0.range().contains(&epoch_1.0))
-            .expect("covers")
-            .clone(),
-        epoch_1,
-    );
-    let new_nf = new_nf_pcd.data.0;
+    // nf mismatch: contiguous states but different nfs.
+    {
+        let nf_a = Nullifier::from(Fp::random(&mut *rng));
+        let nf_b = Nullifier::from(Fp::random(&mut *rng));
+        let shard_a = build_unspent_seed_pcd(rng, start, &stamps_left, nf_a);
+        let shard_b = build_unspent_seed_pcd(rng, mid, &stamps_right, nf_b);
+        let err = PROOF_SYSTEM
+            .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
+            .unwrap_err();
+        assert_eq!(err.0, "UnspentFuse: left and right must share the same nf");
+    }
 
-    // Pool rooted at new_nf → query(new_nf) == 0 → step rejects.
-    let new_pool = PoolSet(Polynomial::from_roots(&[Fp::from(new_nf)]));
-    let new_anchor = Anchor(
-        BlockHeight(EPOCH_SIZE),
-        PoolCommit(new_pool.0.commit(Fp::ZERO)),
-    );
-
-    let result = PROOF_SYSTEM.fuse(
-        &mut rng,
-        spendable::SpendableRollover,
-        (new_pool.into(), new_anchor),
-        old_nf_pcd,
-        new_nf_pcd,
-    );
-    assert!(
-        result.is_err(),
-        "SpendableRollover must reject when new_nf is already in the E+1 pool"
-    );
+    // state discontinuity: same nf, but right's start matches `start`
+    // instead of `left.end`.
+    {
+        let nf = Nullifier::from(Fp::random(&mut *rng));
+        let shard_a = build_unspent_seed_pcd(rng, start, &stamps_left, nf);
+        let shard_b = build_unspent_seed_pcd(rng, start, &stamps_right, nf);
+        let err = PROOF_SYSTEM
+            .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
+            .unwrap_err();
+        assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
+    }
 }
 
-/// `SpendableRollover` must reject when the two `NullifierHeader` PCDs carry
-/// different `delegation_id`s.
 #[test]
-fn spendable_rollover_rejects_delegation_id_mismatch() {
-    let mut rng = StdRng::seed_from_u64(736);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let note = user.random_note(&mut rng, 500);
-    let trap_a = DelegationTrapdoor::random(&mut rng);
-    let trap_b = DelegationTrapdoor::random(&mut rng);
-    let id_a = user.pak.nk.derive_delegation_id(&note, trap_a);
-    let id_b = user.pak.nk.derive_delegation_id(&note, trap_b);
-    assert_ne!(id_a, id_b);
+fn anchor_chain_fuse_rejects_invalid_compositions() {
+    // anchor break: synthetic right-segment seeded from a bogus start anchor.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let mut pool = PoolSim::genesis(rng);
+        pool.advance(2, |_| random_block(rng, 1, 2));
 
-    let epoch_0 = EpochIndex(0);
-    let epoch_1 = EpochIndex(1);
-    let master_a = user.note_master(&mut rng, note);
-    let master_b = user.note_master(&mut rng, note);
-    let delegates_a = delegate_range(&mut rng, &master_a, trap_a, epoch_0.0..=epoch_0.0);
-    let delegates_b = delegate_range(&mut rng, &master_b, trap_b, epoch_1.0..=epoch_1.0);
-    let old_nf_pcd = walk_delegate_to_nullifier(
-        &mut rng,
-        delegates_a.into_iter().next().expect("covers"),
-        epoch_0,
-    );
-    let new_nf_pcd = walk_delegate_to_nullifier(
-        &mut rng,
-        delegates_b.into_iter().next().expect("covers"),
-        epoch_1,
-    );
+        let left = build_anchor_chain_pcd(rng, &pool, BlockHeight(0)..=BlockHeight(0));
 
-    // Unrelated root so the non-membership check would pass; delegation_id
-    // check should fire first.
-    let new_pool = PoolSet(Polynomial::from_roots(&[Fp::random(&mut rng)]));
-    let new_anchor = Anchor(
-        BlockHeight(EPOCH_SIZE),
-        PoolCommit(new_pool.0.commit(Fp::ZERO)),
-    );
+        let bogus_start = Anchor(Fp::random(&mut *rng));
+        let commit = pool.stamp_commits_at(BlockHeight(1))[0];
+        let (right, ()) = PROOF_SYSTEM
+            .seed(rng, pool::AnchorSeed, (bogus_start, commit))
+            .expect("AnchorSeed");
 
-    let result = PROOF_SYSTEM.fuse(
-        &mut rng,
-        spendable::SpendableRollover,
-        (new_pool.into(), new_anchor),
-        old_nf_pcd,
-        new_nf_pcd,
-    );
-    assert!(
-        result.is_err(),
-        "SpendableRollover must reject delegation_id mismatch"
-    );
+        let err = PROOF_SYSTEM
+            .fuse(rng, pool::AnchorFuse, (), left, right)
+            .unwrap_err();
+        assert_eq!(err.0, "AnchorFuse: segments not adjacent");
+    }
+
+    // cross-epoch: left segment ends at epoch_0_final's anchor, right segment
+    // over the first block of epoch_1 starts at the boundary anchor.
+    // Adjacency fails because the boundary anchor (via Anchor::next_epoch)
+    // sits between them, and no AnchorChain step ever emits it.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let mut pool = PoolSim::genesis(rng);
+        pool.advance(usize::try_from(EPOCH_SIZE + 1).expect("fits"), |_| {
+            random_block(rng, 1, 2)
+        });
+
+        let left = build_anchor_chain_pcd(rng, &pool, BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1));
+        let right = build_anchor_chain_pcd(
+            rng,
+            &pool,
+            BlockHeight(EPOCH_SIZE)..=BlockHeight(EPOCH_SIZE),
+        );
+
+        let err = PROOF_SYSTEM
+            .fuse(rng, pool::AnchorFuse, (), left, right)
+            .unwrap_err();
+        assert_eq!(err.0, "AnchorFuse: segments not adjacent");
+    }
 }
 
-/// `SpendableRollover` must reject when `new_epoch != old_epoch + 1`.
 #[test]
-fn spendable_rollover_rejects_non_adjacent_epochs() {
-    let mut rng = StdRng::seed_from_u64(737);
-    let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let note = user.random_note(&mut rng, 500);
-    let trap = DelegationTrapdoor::random(&mut rng);
+fn unspent_fuse_rejects_cross_pool_or_cross_epoch() {
+    // anchor break: two pools share the first and last block but diverge at
+    // the middle, so `left` from pool_a ends at a height-2 anchor that
+    // differs from `right`'s start in pool_b at the same height.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let mut pool_a = PoolSim::genesis(rng);
+        let mut pool_b = PoolSim::genesis(rng);
 
-    let epoch_0 = EpochIndex(0);
-    let epoch_2 = EpochIndex(2);
-    let master = user.note_master(&mut rng, note);
-    let delegates = delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_2.0);
-    let old_nf_pcd = walk_delegate_to_nullifier(
-        &mut rng,
-        delegates
-            .iter()
-            .find(|del| del.data.0.range().contains(&epoch_0.0))
-            .expect("covers")
-            .clone(),
-        epoch_0,
-    );
-    let new_nf_pcd = walk_delegate_to_nullifier(
-        &mut rng,
-        delegates
-            .iter()
-            .find(|del| del.data.0.range().contains(&epoch_2.0))
-            .expect("covers")
-            .clone(),
-        epoch_2,
-    );
+        let shared_first = random_block(rng, 1, 2);
+        pool_a.mine(shared_first.clone());
+        pool_b.mine(shared_first);
+        pool_a.mine(random_block(rng, 1, 2));
+        pool_b.mine(random_block(rng, 1, 2));
+        let shared_last = random_block(rng, 1, 2);
+        pool_a.mine(shared_last.clone());
+        pool_b.mine(shared_last);
 
-    let new_pool = PoolSet(Polynomial::from_roots(&[Fp::random(&mut rng)]));
-    let new_anchor = Anchor(
-        BlockHeight(2 * EPOCH_SIZE),
-        PoolCommit(new_pool.0.commit(Fp::ZERO)),
-    );
+        let nf = Nullifier::from(Fp::random(&mut *rng));
+        let left = build_unspent_pcd(rng, &pool_a, nf, BlockHeight(1)..=BlockHeight(2));
+        let right = build_unspent_pcd(rng, &pool_b, nf, BlockHeight(3)..=BlockHeight(3));
 
-    let result = PROOF_SYSTEM.fuse(
-        &mut rng,
-        spendable::SpendableRollover,
-        (new_pool.into(), new_anchor),
-        old_nf_pcd,
-        new_nf_pcd,
-    );
-    assert!(
-        result.is_err(),
-        "SpendableRollover must reject non-adjacent epochs"
-    );
+        let err = PROOF_SYSTEM
+            .fuse(rng, pool::UnspentFuse, (), left, right)
+            .unwrap_err();
+        assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
+    }
+
+    // cross-epoch: ranges straddling the epoch boundary cannot fuse because
+    // the boundary anchor (output of `Anchor::next_epoch`) sits in the sequence
+    // between `left.end` and `right.start` — adjacency fails.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let mut pool = PoolSim::genesis(rng);
+        pool.advance(usize::try_from(EPOCH_SIZE + 1).expect("fits"), |_| {
+            random_block(rng, 1, 2)
+        });
+
+        let nf = Nullifier::from(Fp::random(&mut *rng));
+        let left = build_unspent_pcd(rng, &pool, nf, BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1));
+        let right = build_unspent_pcd(
+            rng,
+            &pool,
+            nf,
+            BlockHeight(EPOCH_SIZE)..=BlockHeight(EPOCH_SIZE),
+        );
+
+        let err = PROOF_SYSTEM
+            .fuse(rng, pool::UnspentFuse, (), left, right)
+            .unwrap_err();
+        assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
+    }
+}
+
+#[test]
+fn empty_block_anchor_unique_per_height() {
+    // Two consecutive empty blocks publish distinct anchors.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis(rng);
+    pool.mine(vec![]);
+    pool.mine(vec![]);
+
+    let h1 = BlockHeight(1);
+    let h2 = BlockHeight(2);
+    assert_ne!(pool.anchor_at(h1), pool.anchor_at(h2));
+    // h2's anchor is h1's anchor advanced via next_empty.
+    assert_eq!(pool.anchor_at(h2), pool.anchor_at(h1).next_empty());
+}
+
+#[test]
+fn empty_block_unspent_lifts_spendable() {
+    // Build a spendable, then lift it across an empty block via an
+    // Unspent built solely from EmptyBlockUnspentSeed.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let note = user.random_note(rng, 100);
+    let cm = note.commitment();
+
+    let mut pool = PoolSim::genesis(rng);
+    let mut stamps = random_block(rng, 1, 4);
+    stamps[1] = vec![cm.into()];
+    pool.mine(stamps);
+    let cm_height = pool.height();
+
+    // Bootstrap spendable at the cm-block's published anchor.
+    let nf_pcd = user.nullifier_pcd(rng, note, cm_height.epoch());
+    let spendable = user.spendable_init(rng, note, &pool, cm_height, nf_pcd);
+    let spendable_anchor_before = spendable.data.1;
+
+    // Mine one empty block.
+    pool.mine(vec![]);
+    let empty_height = pool.height();
+
+    // Build an Unspent over the empty block via EmptyBlockUnspentSeed,
+    // then lift the spendable.
+    let nf = spendable.data.0;
+    let unspent = build_unspent_pcd(rng, &pool, nf, empty_height..=empty_height);
+    let (lifted, ()) = PROOF_SYSTEM
+        .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
+        .expect("SpendableLift across empty block");
+
+    assert_eq!(lifted.data.1, spendable_anchor_before.next_empty());
+    assert_eq!(lifted.data.1, pool.anchor_at(empty_height));
 }

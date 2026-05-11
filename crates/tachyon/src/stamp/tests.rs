@@ -1,93 +1,92 @@
+use alloc::vec;
+
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
 use crate::{
     action,
-    entropy::ActionEntropy,
+    constants::EPOCH_SIZE,
     fixtures::{
-        PoolSim, WalletSim, build_output_action, ggm_tools::preblind_nullifier_pair_from_master,
-        random_block, random_block_with,
+        PoolSim, WalletSim, build_output_stamp, random_block, random_block_with, spend_witness,
     },
-    primitives::{EpochIndex, effect},
-    value,
+    primitives::{BlockHeight, EpochIndex},
 };
 
-fn digest(action: &Action) -> ActionDigest {
-    ActionDigest::try_from(action).expect("valid action")
-}
+const WITHIN_EPOCH_ANCHOR_PAIRS: &[(BlockHeight, BlockHeight)] = &[
+    (BlockHeight(8), BlockHeight(8)),
+    (BlockHeight(0), BlockHeight(1)),
+    (BlockHeight(2), BlockHeight(5)),
+    (BlockHeight(0), BlockHeight(EPOCH_SIZE - 1)),
+];
 
-/// MergeStamp rejects mismatched anchors.
 #[test]
-fn merge_stamp_rejects_mismatched_anchors() {
-    let mut rng = StdRng::seed_from_u64(500);
-    let user_a = WalletSim::random(&mut rng);
-    let user_b = WalletSim::random(&mut rng);
-    let mut pool = PoolSim::new();
+fn merge_stamp_iff_matching_anchors() {
+    for &(anchor_height_a, anchor_height_b) in WITHIN_EPOCH_ANCHOR_PAIRS {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let user_a = WalletSim::random(rng);
+        let user_b = WalletSim::random(rng);
+        let mut pool = PoolSim::genesis(rng);
 
-    pool.advance(3, |_| random_block(&mut rng, 50));
-    let anchor_early = pool.anchor();
-    let note_a = user_a.random_note(&mut rng, 200);
-    let (rcv_a, alpha_a, action_a) = build_output_action(&mut rng, note_a);
-    let stamp_a = Stamp::prove_output(&mut rng, rcv_a, alpha_a, note_a, anchor_early)
-        .expect("prove_output a");
+        pool.advance(
+            usize::try_from(anchor_height_a.0 + 1).expect("fits"),
+            |_| random_block(rng, 1, 50),
+        );
+        let anchor_a = pool.anchor();
+        let note_a = user_a.random_note(rng, 200);
+        let (stamp_a, plan_a) = build_output_stamp(rng, anchor_a, note_a);
 
-    pool.advance(3, |_| random_block(&mut rng, 50));
-    let anchor_late = pool.anchor();
-    let note_b = user_b.random_note(&mut rng, 300);
-    let (rcv_b, alpha_b, action_b) = build_output_action(&mut rng, note_b);
-    let stamp_b =
-        Stamp::prove_output(&mut rng, rcv_b, alpha_b, note_b, anchor_late).expect("prove_output b");
+        let n_between = anchor_height_b.0 - anchor_height_a.0;
+        pool.advance(usize::try_from(n_between).expect("fits"), |_| {
+            random_block(rng, 1, 50)
+        });
+        let anchor_b = pool.anchor();
+        let note_b = user_b.random_note(rng, 300);
+        let (stamp_b, plan_b) = build_output_stamp(rng, anchor_b, note_b);
 
-    assert!(
-        Stamp::prove_merge(
-            &mut rng,
-            (stamp_a, &[digest(&action_a)]),
-            (stamp_b, &[digest(&action_b)]),
-        )
-        .is_err(),
-        "merge with mismatched anchors must fail"
-    );
+        let result = Stamp::prove_merge(
+            rng,
+            (stamp_a, &[plan_a.digest().expect("valid plan")]),
+            (stamp_b, &[plan_b.digest().expect("valid plan")]),
+        );
+        assert_eq!(
+            result.is_ok(),
+            anchor_height_a == anchor_height_b,
+            "merge with anchors {anchor_height_a:?} {anchor_height_b:?}"
+        );
+    }
 }
 
-/// `Plan::prove` rejects every malformed input: empty plans, PCD counts that
-/// don't match the spend count (fewer or more), and equal-length PCD sets
-/// whose pairing is wrong (a swap is caught at `SpendBind` via the
-/// `cm`-equality check between the witnessed note and the leaves).
 #[test]
 fn plan_prove_rejects_invalid_inputs() {
-    let mut rng = StdRng::seed_from_u64(602);
-    let user = WalletSim::random(&mut rng);
-    let mut pool = PoolSim::new();
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
     let target_epoch = EpochIndex(0);
 
-    // Two distinct notes; both cms mined into the same pool so each
-    // `spendable_init` sees its cm.
-    let note_a = user.random_note(&mut rng, 500);
-    let note_b = user.random_note(&mut rng, 700);
-    pool.mine(random_block_with(&mut rng, note_a.commitment(), 50));
-    pool.mine(random_block_with(&mut rng, note_b.commitment(), 50));
-    let anchor = pool.anchor();
-    let pool_state = pool.state().clone();
+    let note_a = user.random_note(rng, 500);
+    let note_b = user.random_note(rng, 700);
+    pool.mine(random_block_with(
+        rng,
+        &[vec![note_a.commitment()], vec![note_b.commitment()]],
+        50,
+    ));
+    let height = pool.height();
+    let anchor = pool.anchor_at(height);
 
-    let master_a = user.note_master(&mut rng, note_a);
-    let master_b = user.note_master(&mut rng, note_b);
-    let (nf_now_a, nf_next_a) =
-        preblind_nullifier_pair_from_master(&mut rng, master_a, target_epoch);
-    let (nf_now_b, nf_next_b) =
-        preblind_nullifier_pair_from_master(&mut rng, master_b, target_epoch);
-    let spendable_a = user.spendable_init(&mut rng, anchor, pool_state.clone(), nf_now_a.clone());
-    let spendable_b = user.spendable_init(&mut rng, anchor, pool_state, nf_now_b.clone());
+    let init_nf_a = user.nullifier_pcd(rng, note_a, target_epoch);
+    let spendable_a = user.spendable_init(rng, note_a, &pool, height, init_nf_a);
+    let init_nf_b = user.nullifier_pcd(rng, note_b, target_epoch);
+    let spendable_b = user.spendable_init(rng, note_b, &pool, height, init_nf_b);
 
-    let rcv_a = value::CommitmentTrapdoor::random(&mut rng);
-    let theta_a = ActionEntropy::random(&mut rng);
-    let alpha_a = theta_a.randomizer::<effect::Spend>(note_a.commitment());
+    let (nf_now_a, nf_next_a) = user.nullifier_pair_pcd(rng, note_a, target_epoch);
+    let (nf_now_b, nf_next_b) = user.nullifier_pair_pcd(rng, note_b, target_epoch);
+
+    let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
-    let rcv_b = value::CommitmentTrapdoor::random(&mut rng);
-    let theta_b = ActionEntropy::random(&mut rng);
-    let alpha_b = theta_b.randomizer::<effect::Spend>(note_b.commitment());
+    let (rcv_b, theta_b, alpha_b) = spend_witness(rng, &note_b);
     let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
@@ -102,26 +101,16 @@ fn plan_prove_rejects_invalid_inputs() {
     // Empty plan: no actions at all.
     {
         let plan = Plan::new(alloc::vec![], alloc::vec![], anchor);
-        assert!(
-            matches!(
-                plan.prove(&mut rng, &user.pak, alloc::vec![]),
-                Err(ProveError::NoActions),
-            ),
-            "empty plan must return NoActions",
-        );
+        let err = plan.prove(rng, &user.pak, alloc::vec![]).unwrap_err();
+        assert_eq!(alloc::format!("{err}"), "no actions to prove");
     }
 
     // Too few PCDs: 2 spends, 1 PCD.
     {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![(nf_now_a.clone(), nf_next_a.clone(), spendable_a.clone(),)];
-        assert!(
-            matches!(
-                plan.prove(&mut rng, &user.pak, pcds),
-                Err(ProveError::SpendableMismatch),
-            ),
-            "fewer PCDs than spends must return SpendableMismatch",
-        );
+        let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
+        assert_eq!(alloc::format!("{err}"), "spendable PCD count mismatch");
     }
 
     // Too many PCDs: 2 spends, 3 PCDs.
@@ -132,13 +121,8 @@ fn plan_prove_rejects_invalid_inputs() {
             (nf_now_b.clone(), nf_next_b.clone(), spendable_b.clone()),
             (nf_now_a.clone(), nf_next_a.clone(), spendable_a.clone()),
         ];
-        assert!(
-            matches!(
-                plan.prove(&mut rng, &user.pak, pcds),
-                Err(ProveError::SpendableMismatch),
-            ),
-            "more PCDs than spends must return SpendableMismatch",
-        );
+        let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
+        assert_eq!(alloc::format!("{err}"), "spendable PCD count mismatch");
     }
 
     // Correspondence swap: lengths match, pairing is wrong.
@@ -148,12 +132,10 @@ fn plan_prove_rejects_invalid_inputs() {
             (nf_now_b, nf_next_b, spendable_b),
             (nf_now_a, nf_next_a, spendable_a),
         ];
-        assert!(
-            matches!(
-                plan.prove(&mut rng, &user.pak, pcds),
-                Err(ProveError::ProofFailed),
-            ),
-            "swapped PCD correspondence must return ProofFailed",
+        let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
+        assert_eq!(
+            alloc::format!("{err}"),
+            "action proof failed: Error(\"SpendBind: nullifiers not related to note\")",
         );
     }
 }

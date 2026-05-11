@@ -45,7 +45,7 @@ impl From<[u8; 32]> for SpendingKey {
 
 impl SpendingKey {
     /// Create a new spending key from 32 bytes of random data.
-    pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
+    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         let mut rand_bytes = [0u8; 32];
         rng.fill_bytes(&mut rand_bytes);
         Self(rand_bytes)
@@ -198,9 +198,9 @@ pub struct ActionSigningKey<E: Effect>(reddsa::SigningKey<reddsa::ActionAuth>, P
 
 impl<E: Effect> ActionSigningKey<E> {
     /// Sign a transaction sighash with this action key.
-    pub fn sign(
+    pub fn sign<RNG: RngCore + CryptoRng>(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut RNG,
         sighash: &[u8; 32],
     ) -> action::Signature {
         action::Signature(self.0.sign(rng, sighash))
@@ -262,9 +262,9 @@ impl BindingSigningKey {
     }
 
     /// Sign a transaction sighash with this binding key.
-    pub fn sign(
+    pub fn sign<RNG: RngCore + CryptoRng>(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut RNG,
         sighash: &[u8; 32],
     ) -> bundle::Signature {
         bundle::Signature(self.0.sign(rng, sighash))

@@ -12,7 +12,6 @@
 use alloc::vec::Vec;
 use core::{fmt, num::NonZeroU8, ops::RangeInclusive};
 
-use ff::PrimeField as _;
 use pasta_curves::Fp;
 
 use crate::{constants::EPOCH_MAX, digest::poseidon, note::Nullifier, primitives::EpochIndex};
@@ -64,7 +63,7 @@ impl NoteMasterKey {
     /// Descend one level from the root of the GGM tree.
     #[must_use]
     pub fn step(&self, chunk: u8) -> NotePrefixedKey {
-        assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
+        debug_assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
         #[expect(clippy::expect_used, reason = "depth 1 is always valid")]
         NotePrefixedKey {
             inner: ggm_step(self.0, chunk),
@@ -102,24 +101,6 @@ impl NoteMasterKey {
             }
         }
         result
-    }
-}
-
-impl TryFrom<[u8; 32]> for NoteMasterKey {
-    type Error = NoteKeyError;
-
-    fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
-        Ok(Self(
-            Fp::from_repr(bytes)
-                .into_option()
-                .ok_or(NoteKeyError::InvalidRepr)?,
-        ))
-    }
-}
-
-impl From<NoteMasterKey> for [u8; 32] {
-    fn from(key: NoteMasterKey) -> [u8; 32] {
-        key.0.to_repr()
     }
 }
 
@@ -163,7 +144,7 @@ impl NotePrefixedKey {
             self.depth.get() < GGM_TREE_DEPTH,
             "must not step beyond leaf"
         );
-        assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
+        debug_assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
         Self {
             inner: ggm_step(self.inner, chunk),
             #[expect(clippy::expect_used, reason = "nonzero plus one is not zero")]
@@ -224,61 +205,6 @@ impl NotePrefixedKey {
     }
 }
 
-impl TryFrom<[u8; 37]> for NotePrefixedKey {
-    type Error = NoteKeyError;
-
-    fn try_from(bytes: [u8; 37]) -> Result<Self, Self::Error> {
-        // [repr(32) | depth(1) | index_le(4)]
-        let fp_bytes: &[u8; 32] = bytes.first_chunk().ok_or(NoteKeyError::InvalidRepr)?;
-        let inner = Fp::from_repr(*fp_bytes)
-            .into_option()
-            .ok_or(NoteKeyError::InvalidRepr)?;
-        let tail: &[u8; 5] = bytes.last_chunk().ok_or(NoteKeyError::InvalidPrefix)?;
-        let (&depth_byte, index_slice) = tail.split_first().ok_or(NoteKeyError::InvalidPrefix)?;
-        let depth = NonZeroU8::new(depth_byte).ok_or(NoteKeyError::InvalidPrefix)?;
-        if depth.get() > GGM_TREE_DEPTH {
-            return Err(NoteKeyError::InvalidPrefix);
-        }
-        let index_bytes: &[u8; 4] = index_slice
-            .first_chunk()
-            .ok_or(NoteKeyError::InvalidPrefix)?;
-
-        let index = u32::from_le_bytes(*index_bytes);
-        let max_index = 1u32
-            .checked_shl(u32::from(depth.get() * GGM_CHUNK_SIZE))
-            .map_or(u32::MAX, |size| size - 1u32);
-        if index > max_index {
-            return Err(NoteKeyError::InvalidPrefix);
-        }
-        Ok(Self {
-            inner,
-            depth,
-            index,
-        })
-    }
-}
-
-impl From<NotePrefixedKey> for [u8; 37] {
-    fn from(key: NotePrefixedKey) -> [u8; 37] {
-        // [repr(32) | depth(1) | index_le(4)]
-        #[expect(clippy::expect_used, reason = "length is statically known")]
-        [
-            key.inner.to_repr().as_slice(),
-            &[key.depth.get()],
-            &key.index.to_le_bytes(),
-        ]
-        .concat()
-        .try_into()
-        .expect("32 + 1 + 4 = 37")
-    }
-}
-
-#[derive(Debug)]
-pub enum NoteKeyError {
-    InvalidRepr,
-    InvalidPrefix,
-}
-
 /// Candidate starts for a cover of `[start..=end]`, rounded down to
 /// `GGM_ARITY^j`-boundaries. Sorted by overage descending (`[0..=end]` first,
 /// `[start..=end]` last), duplicates collapsed.
@@ -312,7 +238,7 @@ pub fn cover_candidates(range: RangeInclusive<u32>) -> Vec<RangeInclusive<u32>> 
 
 /// One GGM tree step: `Poseidon(tag, node, chunk)`.
 fn ggm_step(node: Fp, chunk: u8) -> Fp {
-    assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
+    debug_assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
     poseidon::ggm_step(node, chunk)
 }
 
@@ -358,8 +284,8 @@ mod tests {
 
     #[test]
     fn distinct_leaves() {
-        let key =
-            NoteMasterKey::try_from(Fp::random(&mut StdRng::seed_from_u64(0)).to_repr()).unwrap();
+        let rng = &mut StdRng::seed_from_u64(0);
+        let key = NoteMasterKey(Fp::random(rng));
 
         assert_ne!(
             key.derive_nullifier(EpochIndex(0)),
@@ -367,23 +293,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn distinct_keys() {
-        let mut rng = StdRng::seed_from_u64(0);
-        let key1 = NoteMasterKey::try_from(Fp::random(&mut rng).to_repr()).unwrap();
-        let key2 = NoteMasterKey::try_from(Fp::random(&mut rng).to_repr()).unwrap();
-
-        assert_ne!(
-            key1.derive_nullifier(EpochIndex(42)),
-            key2.derive_nullifier(EpochIndex(42)),
-        );
-    }
-
     /// Delegate covering epoch 0 produces the same nullifier as the root.
     #[test]
     fn delegate_matches_root() {
-        let root =
-            NoteMasterKey::try_from(Fp::random(&mut StdRng::seed_from_u64(0)).to_repr()).unwrap();
+        let rng = &mut StdRng::seed_from_u64(0);
+        let root = NoteMasterKey(Fp::random(rng));
         let cover_end = u32::from(GGM_TREE_ARITY) * u32::from(GGM_TREE_ARITY) - 1;
         for delegate in root.derive_note_delegates(0..=cover_end) {
             assert_eq!(
@@ -397,7 +311,8 @@ mod tests {
 
     #[test]
     fn tight_cover() {
-        let root = NoteMasterKey(Fp::from(1u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let root = NoteMasterKey(Fp::random(rng));
         let delegates = root.derive_note_delegates(0..=5);
         assert!(!delegates.is_empty());
         let union_end = delegates
@@ -416,7 +331,8 @@ mod tests {
 
     #[test]
     fn single_epoch_delegate() {
-        let root = NoteMasterKey(Fp::from(1u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let root = NoteMasterKey(Fp::random(rng));
         let delegates = root.derive_note_delegates(42..=42);
         assert_eq!(delegates.len(), 1);
         assert_eq!(delegates[0].range(), 42..=42);
@@ -426,7 +342,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "must not step beyond leaf")]
     fn step_beyond_leaf_panics() {
-        let root = NoteMasterKey(Fp::from(1u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let root = NoteMasterKey(Fp::random(rng));
         let mut key = root.step(0);
         for _ in 1..GGM_TREE_DEPTH {
             key = key.step(0);
@@ -436,7 +353,8 @@ mod tests {
 
     #[test]
     fn full_range_from_master() {
-        let root = NoteMasterKey(Fp::from(1u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let root = NoteMasterKey(Fp::random(rng));
         let delegates = root.derive_note_delegates(0..=GGM_MAX_INDEX);
         assert_eq!(delegates.len(), usize::from(GGM_TREE_ARITY));
         for (idx, delegate) in delegates.iter().enumerate() {
@@ -453,7 +371,8 @@ mod tests {
 
     #[test]
     fn last_epoch_delegate() {
-        let root = NoteMasterKey(Fp::from(1u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let root = NoteMasterKey(Fp::random(rng));
         let delegates = root.derive_note_delegates(GGM_MAX_INDEX..=GGM_MAX_INDEX);
         assert_eq!(delegates.len(), 1);
         assert_eq!(delegates[0].range(), GGM_MAX_INDEX..=GGM_MAX_INDEX);
@@ -463,7 +382,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "does not cover requested range")]
     fn disjoint_range_panics() {
-        let root = NoteMasterKey(Fp::from(1u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let root = NoteMasterKey(Fp::random(rng));
         // Depth-2 prefix rooted at chunk (0, 0) covers epochs
         // [0 .. GGM_ARITY^(D-2)).
         let prefix = root.step(0).step(0);
@@ -474,7 +394,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "does not cover requested range")]
     fn partial_overlap_panics() {
-        let root = NoteMasterKey(Fp::from(1u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let root = NoteMasterKey(Fp::random(rng));
         let prefix = root.step(0).step(0);
         let partial_hi = *prefix.range().end() + 1;
         let _delegates = prefix.derive_note_delegates(0..=partial_hi);

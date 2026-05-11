@@ -87,7 +87,7 @@ pub(crate) fn alpha_output(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
 /// Hashes the bundle's effecting data. The stamp is excluded because it is
 /// stripped during aggregation.
 #[must_use]
-pub(crate) fn commit_bundle(action_commit: &EqAffine, value_balance: i64) -> [u8; 64] {
+pub(crate) fn bundle_commitment(action_commit: &EqAffine, value_balance: i64) -> [u8; 64] {
     let coords = action_commit
         .coordinates()
         .expect("commitment should not be the identity point");
@@ -106,8 +106,8 @@ pub(crate) fn commit_bundle(action_commit: &EqAffine, value_balance: i64) -> [u8
 /// A stamped bundle's contribution to the transaction auth_digest.
 ///
 /// Hashes action signatures, the binding signature, and the stamp.
-pub(crate) fn auth_digest_stamped(
-    action_sigs: &[&[u8; 64]],
+pub(crate) fn stamped_auth_digest(
+    action_sigs: &[[u8; 64]],
     binding_sig: &[u8; 64],
     anchor: &[u8; 32],
     tachygrams: &[Fp],
@@ -118,7 +118,7 @@ pub(crate) fn auth_digest_stamped(
         .personal(AUTH_DIGEST_PERSONALIZATION)
         .to_state();
 
-    for &action_sig in action_sigs {
+    for action_sig in action_sigs {
         state.update(action_sig);
     }
 
@@ -138,8 +138,8 @@ pub(crate) fn auth_digest_stamped(
 /// A stripped bundle's contribution to the transaction auth_digest.
 ///
 /// Hashes action signatures, the binding signature, and aggregate wtxid.
-pub(crate) fn auth_digest_stripped(
-    action_sigs: &[&[u8; 64]],
+pub(crate) fn stripped_auth_digest(
+    action_sigs: &[[u8; 64]],
     binding_sig: &[u8; 64],
     wtxid: &[u8; 64],
 ) -> [u8; 64] {
@@ -148,7 +148,7 @@ pub(crate) fn auth_digest_stripped(
         .personal(AUTH_DIGEST_PERSONALIZATION)
         .to_state();
 
-    for &action_sig in action_sigs {
+    for action_sig in action_sigs {
         state.update(action_sig);
     }
 
