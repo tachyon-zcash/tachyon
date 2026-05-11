@@ -62,7 +62,7 @@ impl NoteMasterKey {
     /// Descend one level from the root of the GGM tree.
     #[must_use]
     pub fn step(&self, chunk: u8) -> NotePrefixedKey {
-        debug_assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
+        assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
         #[expect(clippy::expect_used, reason = "depth 1 is always valid")]
         NotePrefixedKey {
             inner: ggm_step(self.0, chunk),
@@ -161,7 +161,7 @@ impl NotePrefixedKey {
             self.depth.get() < GGM_TREE_DEPTH,
             "must not step beyond leaf"
         );
-        debug_assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
+        assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
         Self {
             inner: ggm_step(self.inner, chunk),
             #[expect(clippy::expect_used, reason = "nonzero plus one is not zero")]
@@ -310,7 +310,7 @@ pub fn cover_candidates(range: RangeInclusive<u32>) -> Vec<RangeInclusive<u32>> 
 
 /// One GGM tree step: `Poseidon(tag, node, chunk)`.
 fn ggm_step(node: Fp, chunk: u8) -> Fp {
-    debug_assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
+    assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
     let domain = Fp::from_u128(u128::from_le_bytes(*NOTE_NULLIFIER_DOMAIN));
     Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
         domain,

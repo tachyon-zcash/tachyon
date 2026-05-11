@@ -1,19 +1,3 @@
-//! Shared test-support: simulators for the three real roles.
-//!
-//! - [`PoolSim`] — consensus's evolving pool state, the public chain that
-//!   everyone observes.
-//! - [`WalletSim`] — the wallet. Holds `sk`/`pak`. Constructs notes and
-//!   actions, derives delegate keys for sync, bootstraps delegation seeds and
-//!   spendable PCDs (these steps take `pak` in their witness), authorizes
-//!   spends.
-//! - [`SyncSim`] — the sync-service observer. Constructed from a `Vec` of
-//!   [`NotePrefixedKey`] delegates handed over by the wallet; holds no other
-//!   key material. Walks delegation PCDs down to nullifier leaves but cannot
-//!   derive nullifiers outside a delegated prefix.
-//!
-//! Tests construct `pool`, `user`, and `sync` individually — `sync` needs
-//! the delegate keys at construction, which the wallet must produce first.
-
 #![allow(unreachable_pub, reason = "test support")]
 #![allow(clippy::partial_pub_fields, reason = "test support")]
 
@@ -198,45 +182,54 @@ impl PoolSim {
 }
 
 pub struct SyncSim<'source> {
-    delegates: Vec<Pcd<'source, delegation::DelegationHeader>>,
-    /// Stored as `(delegation_id, pcd)` — `SpendableHeader` itself no
-    /// longer carries `delegation_id`, so the sync service tracks it
-    /// externally (it already learned `delegation_id` from the wallet
-    /// when the delegate was handed over).
-    spendables: Vec<(DelegationId, Pcd<'source, spendable::SpendableHeader>)>,
+    entries: Vec<(
+        DelegationId,
+        Vec<Pcd<'source, delegation::DelegationHeader>>,
+        Pcd<'source, spendable::SpendableHeader>,
+    )>,
 }
 
 impl<'source> SyncSim<'source> {
-    pub fn new(delegates: Vec<Pcd<'source, delegation::DelegationHeader>>) -> Self {
+    pub fn new() -> Self {
         Self {
-            delegates,
-            spendables: Vec::new(),
+            entries: Vec::new(),
         }
     }
 
     pub fn accept_spendable(
         &mut self,
-        delegation_id: DelegationId,
+        delegates: Vec<Pcd<'source, delegation::DelegationHeader>>,
         spendable: Pcd<'source, spendable::SpendableHeader>,
     ) {
-        self.spendables.push((delegation_id, spendable));
+        let delegation_id = delegates.first().expect("at least one delegate").data.1;
+        assert!(delegates.iter().all(|del| del.data.1 == delegation_id));
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.0 == delegation_id)
+        {
+            entry.1 = delegates;
+            entry.2 = spendable;
+        } else {
+            self.entries.push((delegation_id, delegates, spendable));
+        }
     }
 
     pub fn spendable(
         &self,
         delegation_id: DelegationId,
     ) -> Pcd<'source, spendable::SpendableHeader> {
-        self.spendables
+        self.entries
             .iter()
             .find(|entry| entry.0 == delegation_id)
-            .map(|entry| entry.1.clone())
+            .map(|entry| entry.2.clone())
             .expect("no maintained spendable for delegation_id")
     }
 
     /// Advance every maintained spendable to `pool.anchor()`, chaining
     /// same-epoch and cross-epoch lifts as needed.
     pub fn lift(&mut self, rng: &mut (impl RngCore + CryptoRng), pool: &PoolSim) {
-        let ids: Vec<DelegationId> = self.spendables.iter().map(|entry| entry.0).collect();
+        let ids: Vec<DelegationId> = self.entries.iter().map(|entry| entry.0).collect();
         for id in ids {
             self.lift_one(rng, id, pool);
         }
@@ -250,12 +243,14 @@ impl<'source> SyncSim<'source> {
     ) {
         let target_anchor = pool.anchor();
         loop {
-            let idx = self
-                .spendables
+            let stored_anchor = self
+                .entries
                 .iter()
-                .position(|entry| entry.0 == delegation_id)
-                .expect("no maintained spendable for delegation_id");
-            let stored_anchor = self.spendables[idx].1.data.1;
+                .find(|entry| entry.0 == delegation_id)
+                .expect("no maintained spendable for delegation_id")
+                .2
+                .data
+                .1;
             if stored_anchor.1 == target_anchor.1 {
                 return;
             }
@@ -264,7 +259,12 @@ impl<'source> SyncSim<'source> {
                 "target_anchor is behind stored anchor"
             );
 
-            let (id, spendable_pcd) = self.spendables.swap_remove(idx);
+            let idx = self
+                .entries
+                .iter()
+                .position(|entry| entry.0 == delegation_id)
+                .expect("present");
+            let (_, delegates, spendable_pcd) = self.entries.swap_remove(idx);
             let stored_epoch = stored_anchor.0.epoch();
             let lifted = if stored_epoch == target_anchor.0.epoch() {
                 let left_pool = pool.state_at(stored_anchor.0);
@@ -284,8 +284,8 @@ impl<'source> SyncSim<'source> {
                 let new_epoch_first_h = BlockHeight(new_epoch.0 * EPOCH_SIZE);
                 let new_epoch_first_anchor = pool.anchor_at(new_epoch_first_h);
                 let new_pool = pool.state_at(new_epoch_first_h);
-                let old_nf_pcd = self.nullifier(rng, delegation_id, stored_epoch);
-                let new_nf_pcd = self.nullifier(rng, delegation_id, new_epoch);
+                let old_nf_pcd = Self::nullifier(&delegates, rng, stored_epoch);
+                let new_nf_pcd = Self::nullifier(&delegates, rng, new_epoch);
                 Self::next_epoch_lift(
                     rng,
                     at_final,
@@ -295,7 +295,7 @@ impl<'source> SyncSim<'source> {
                     new_epoch_first_anchor,
                 )
             };
-            self.spendables.push((id, lifted));
+            self.entries.push((delegation_id, delegates, lifted));
         }
     }
 
@@ -359,17 +359,15 @@ impl<'source> SyncSim<'source> {
         epoch_lift_proof.carry::<spendable::SpendableHeader>((new_nf, new_anchor))
     }
 
-    pub fn nullifier(
-        &self,
+    fn nullifier(
+        delegates: &[Pcd<'source, delegation::DelegationHeader>],
         rng: &mut (impl RngCore + CryptoRng),
-        delegation_id: DelegationId,
         target_epoch: EpochIndex,
     ) -> Pcd<'source, delegation::DelegateNullifierHeader> {
-        let delegate = self
-            .delegates
+        let delegate = delegates
             .iter()
-            .find(|pcd| pcd.data.1 == delegation_id && pcd.data.0.range().contains(&target_epoch.0))
-            .expect("no delegate covers (delegation_id, target_epoch)")
+            .find(|pcd| pcd.data.0.range().contains(&target_epoch.0))
+            .expect("no delegate covers target_epoch")
             .clone();
         ggm_tools::walk_delegate_to_nullifier(rng, delegate, target_epoch)
     }

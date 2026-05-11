@@ -24,6 +24,7 @@ use crate::{
         PoolSim, SyncSim, WalletSim, build_output_action,
         ggm_tools::{
             delegate_range, preblind_nullifier_from_master, preblind_nullifier_pair_from_master,
+            walk_delegate_to_nullifier,
         },
         random_block, random_block_with,
     },
@@ -281,12 +282,7 @@ fn spendable_epoch_lift_across_boundary() {
 
     let epoch_0 = EpochIndex(0);
     let master = user.note_master(&mut rng, note);
-    let mut sync = SyncSim::new(delegate_range(
-        &mut rng,
-        &master,
-        trap,
-        epoch_0.0..=epoch_0.0 + 1,
-    ));
+    let mut sync = SyncSim::new();
 
     pool.mine(random_block_with(&mut rng, note.commitment(), 50));
     let preblind_nf_pcd = preblind_nullifier_from_master(&mut rng, master.clone(), epoch_0);
@@ -296,7 +292,10 @@ fn spendable_epoch_lift_across_boundary() {
         pool.state().clone(),
         preblind_nf_pcd,
     );
-    sync.accept_spendable(delegation_id, spendable_pcd);
+    sync.accept_spendable(
+        delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_0.0 + 1),
+        spendable_pcd,
+    );
 
     // Advance into epoch 1, then lift; sync chooses the cross-epoch path.
     let remaining = usize::try_from(EPOCH_SIZE + 1 - u32::from(pool.anchor().0)).expect("fits");
@@ -323,12 +322,7 @@ fn spendable_lift_within_epoch() {
     let epoch_0 = EpochIndex(0);
 
     let master = user.note_master(&mut rng, note);
-    let mut sync = SyncSim::new(delegate_range(
-        &mut rng,
-        &master,
-        trap,
-        epoch_0.0..=epoch_0.0,
-    ));
+    let mut sync = SyncSim::new();
 
     pool.mine(random_block_with(&mut rng, note.commitment(), 50));
     let preblind_nf_pcd = preblind_nullifier_from_master(&mut rng, master.clone(), epoch_0);
@@ -338,7 +332,10 @@ fn spendable_lift_within_epoch() {
         pool.state().clone(),
         preblind_nf_pcd,
     );
-    sync.accept_spendable(delegation_id, spendable_pcd);
+    sync.accept_spendable(
+        delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_0.0),
+        spendable_pcd,
+    );
 
     pool.advance(2, |_| random_block(&mut rng, 50));
 
@@ -537,19 +534,29 @@ fn spendable_rollover_rejects_new_nf_in_pool() {
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
     let note = user.random_note(&mut rng, 500);
     let trap = DelegationTrapdoor::random(&mut rng);
-    let delegation_id = user.pak.nk.derive_delegation_id(&note, trap);
 
     let epoch_0 = EpochIndex(0);
     let epoch_1 = EpochIndex(1);
     let master = user.note_master(&mut rng, note);
-    let sync = SyncSim::new(delegate_range(
+    let delegates = delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_1.0);
+    let old_nf_pcd = walk_delegate_to_nullifier(
         &mut rng,
-        &master,
-        trap,
-        epoch_0.0..=epoch_1.0,
-    ));
-    let old_nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_0);
-    let new_nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_1);
+        delegates
+            .iter()
+            .find(|del| del.data.0.range().contains(&epoch_0.0))
+            .expect("covers")
+            .clone(),
+        epoch_0,
+    );
+    let new_nf_pcd = walk_delegate_to_nullifier(
+        &mut rng,
+        delegates
+            .iter()
+            .find(|del| del.data.0.range().contains(&epoch_1.0))
+            .expect("covers")
+            .clone(),
+        epoch_1,
+    );
     let new_nf = new_nf_pcd.data.0;
 
     // Pool rooted at new_nf → query(new_nf) == 0 → step rejects.
@@ -589,20 +596,18 @@ fn spendable_rollover_rejects_delegation_id_mismatch() {
     let epoch_1 = EpochIndex(1);
     let master_a = user.note_master(&mut rng, note);
     let master_b = user.note_master(&mut rng, note);
-    let sync_a = SyncSim::new(delegate_range(
+    let delegates_a = delegate_range(&mut rng, &master_a, trap_a, epoch_0.0..=epoch_0.0);
+    let delegates_b = delegate_range(&mut rng, &master_b, trap_b, epoch_1.0..=epoch_1.0);
+    let old_nf_pcd = walk_delegate_to_nullifier(
         &mut rng,
-        &master_a,
-        trap_a,
-        epoch_0.0..=epoch_1.0,
-    ));
-    let sync_b = SyncSim::new(delegate_range(
+        delegates_a.into_iter().next().expect("covers"),
+        epoch_0,
+    );
+    let new_nf_pcd = walk_delegate_to_nullifier(
         &mut rng,
-        &master_b,
-        trap_b,
-        epoch_0.0..=epoch_1.0,
-    ));
-    let old_nf_pcd = sync_a.nullifier(&mut rng, id_a, epoch_0);
-    let new_nf_pcd = sync_b.nullifier(&mut rng, id_b, epoch_1);
+        delegates_b.into_iter().next().expect("covers"),
+        epoch_1,
+    );
 
     // Unrelated root so the non-membership check would pass; delegation_id
     // check should fire first.
@@ -632,19 +637,29 @@ fn spendable_rollover_rejects_non_adjacent_epochs() {
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
     let note = user.random_note(&mut rng, 500);
     let trap = DelegationTrapdoor::random(&mut rng);
-    let delegation_id = user.pak.nk.derive_delegation_id(&note, trap);
 
     let epoch_0 = EpochIndex(0);
     let epoch_2 = EpochIndex(2);
     let master = user.note_master(&mut rng, note);
-    let sync = SyncSim::new(delegate_range(
+    let delegates = delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_2.0);
+    let old_nf_pcd = walk_delegate_to_nullifier(
         &mut rng,
-        &master,
-        trap,
-        epoch_0.0..=epoch_2.0,
-    ));
-    let old_nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_0);
-    let new_nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_2);
+        delegates
+            .iter()
+            .find(|del| del.data.0.range().contains(&epoch_0.0))
+            .expect("covers")
+            .clone(),
+        epoch_0,
+    );
+    let new_nf_pcd = walk_delegate_to_nullifier(
+        &mut rng,
+        delegates
+            .iter()
+            .find(|del| del.data.0.range().contains(&epoch_2.0))
+            .expect("covers")
+            .clone(),
+        epoch_2,
+    );
 
     let new_pool = PoolSet(Polynomial::from_roots(&[Fp::random(&mut rng)]));
     let new_anchor = Anchor(
