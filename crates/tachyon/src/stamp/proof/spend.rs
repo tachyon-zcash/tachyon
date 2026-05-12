@@ -68,7 +68,7 @@ impl Step for SpendBind {
         (right_cm_tg, nf1, right_epoch): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         // Same wallet: both leaves share the cm propagated from the
-        // pre-blind NoteSeedStep root.
+        // pre-blind NfMasterSeed root.
         if left_cm_tg != right_cm_tg {
             return Err(mock_ragu::Error);
         }

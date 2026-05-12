@@ -4,18 +4,18 @@
 //!
 //! 1. **Pre-blind** descent from the note master key down to some prefix key.
 //!    Headers carry `(mk, cm)` lineage (no delegation identifier). Steps:
-//!    [`NoteSeedStep`] → [`NoteMasterStep`] → [`NoteStep`] (recursive). The
+//!    [`NfMasterSeed`] → [`NfMasterStep`] → [`NfPrefixStep`] (recursive). The
 //!    leaf is reached via [`NullifierStep`] which propagates `cm` onto a
 //!    pre-blind [`NullifierHeader`].
-//! 2. **Post-blind** phase after [`DelegationBlindStep`] attaches a fresh
+//! 2. **Post-blind** phase after [`DelegationStep`] attaches a fresh
 //!    `DelegationTrapdoor` to the `(mk, cm)` lineage, producing a
-//!    [`DelegationHeader`]. Further descent uses [`DelegationStep`];
-//!    [`DelegateNullifierStep`] emits a [`DelegateNullifierHeader`] at the
-//!    leaf.
+//!    [`DelegateNfPrefixHeader`]. Further descent uses
+//!    [`DelegateNfPrefixStep`]; [`DelegateNullifierStep`] emits a
+//!    [`DelegateNullifierHeader`] at the leaf.
 //!
 //! Splitting the chain lets wallets cache pre-blind spine proofs (note-bound,
 //! trap-independent) and reuse them across delegations by swapping in a fresh
-//! `DelegationBlindStep` per delegation event. The pre-blind leaf is the
+//! `DelegationStep` per delegation event. The pre-blind leaf is the
 //! user-device path that retains `cm` for stamp-binding via cm-equality at
 //! `SpendBind` and pool-membership at `SpendableInit`; the post-blind leaf is
 //! the sync-service path that carries `delegation_id` for the cross-epoch
@@ -40,12 +40,12 @@ use crate::{
 
 /// Pre-blind header for the note master key.
 ///
-/// Carries the `(mk, cm)` lineage established at [`NoteSeedStep`]. No
+/// Carries the `(mk, cm)` lineage established at [`NfMasterSeed`]. No
 /// delegation identifier — blinding happens later.
 #[derive(Clone, Debug)]
-pub struct NoteMasterHeader;
+pub struct NfMasterHeader;
 
-impl Header for NoteMasterHeader {
+impl Header for NfMasterHeader {
     type Data<'source> = (NoteMasterKey, note::Commitment);
 
     const SUFFIX: Suffix = Suffix::new(0);
@@ -60,13 +60,13 @@ impl Header for NoteMasterHeader {
 
 /// Pre-blind header for a GGM descendant at depth ≥ 1.
 ///
-/// Lineage `(mk, cm)` is threaded unchanged through [`NoteMasterStep`] and
-/// [`NoteStep`] so that [`DelegationBlindStep`] can derive the delegation
+/// Lineage `(mk, cm)` is threaded unchanged through [`NfMasterStep`] and
+/// [`NfPrefixStep`] so that [`DelegationStep`] can derive the delegation
 /// identifier from any depth.
 #[derive(Clone, Debug)]
-pub struct NoteStepHeader;
+pub struct NfPrefixHeader;
 
-impl Header for NoteStepHeader {
+impl Header for NfPrefixHeader {
     type Data<'source> = (NotePrefixedKey, NoteMasterKey, note::Commitment);
 
     const SUFFIX: Suffix = Suffix::new(10);
@@ -108,12 +108,12 @@ impl Header for NullifierHeader {
 
 /// Post-blind header for a delegated prefix key at depth ≥ 1.
 ///
-/// Emitted by [`DelegationBlindStep`] and threaded through [`DelegationStep`]
-/// for post-blind descent toward a nullifier leaf.
+/// Emitted by [`DelegationStep`] and threaded through
+/// [`DelegateNfPrefixStep`] for post-blind descent toward a nullifier leaf.
 #[derive(Clone, Debug)]
-pub struct DelegationHeader;
+pub struct DelegateNfPrefixHeader;
 
-impl Header for DelegationHeader {
+impl Header for DelegateNfPrefixHeader {
     type Data<'source> = (NotePrefixedKey, DelegationId);
 
     const SUFFIX: Suffix = Suffix::new(1);
@@ -154,12 +154,12 @@ impl Header for DelegateNullifierHeader {
 /// Verifies note ownership (`pak.derive_payment_key() == note.pk`), that the
 /// note is well-formed (non-zero value), and emits the `(mk, cm)` lineage.
 #[derive(Debug)]
-pub struct NoteSeedStep;
+pub struct NfMasterSeed;
 
-impl Step for NoteSeedStep {
+impl Step for NfMasterSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = NoteMasterHeader;
+    type Output = NfMasterHeader;
     type Right = ();
     type Witness<'source> = (Note, ProofAuthorizingKey);
 
@@ -186,12 +186,12 @@ impl Step for NoteSeedStep {
 
 /// First GGM step: master → depth-1 prefix.
 #[derive(Debug)]
-pub struct NoteMasterStep;
+pub struct NfMasterStep;
 
-impl Step for NoteMasterStep {
+impl Step for NfMasterStep {
     type Aux<'source> = ();
-    type Left = NoteMasterHeader;
-    type Output = NoteStepHeader;
+    type Left = NfMasterHeader;
+    type Output = NfPrefixHeader;
     type Right = ();
     type Witness<'source> = (u8,);
 
@@ -212,12 +212,12 @@ impl Step for NoteMasterStep {
 
 /// Recursive pre-blind GGM step.
 #[derive(Debug)]
-pub struct NoteStep;
+pub struct NfPrefixStep;
 
-impl Step for NoteStep {
+impl Step for NfPrefixStep {
     type Aux<'source> = ();
-    type Left = NoteStepHeader;
-    type Output = NoteStepHeader;
+    type Left = NfPrefixHeader;
+    type Output = NfPrefixHeader;
     type Right = ();
     type Witness<'source> = (u8,);
 
@@ -250,7 +250,7 @@ pub struct NullifierStep;
 
 impl Step for NullifierStep {
     type Aux<'source> = ();
-    type Left = NoteStepHeader;
+    type Left = NfPrefixHeader;
     type Output = NullifierHeader;
     type Right = ();
     type Witness<'source> = ();
@@ -276,16 +276,16 @@ impl Step for NullifierStep {
 
 /// Attach a delegation identifier to a pre-blind prefix.
 ///
-/// Consumes a [`NoteStepHeader`] carrying `(mk, cm)` lineage and a witnessed
-/// [`DelegationTrapdoor`]; emits a [`DelegationHeader`] with
+/// Consumes a [`NfPrefixHeader`] carrying `(mk, cm)` lineage and a witnessed
+/// [`DelegationTrapdoor`]; emits a [`DelegateNfPrefixHeader`] with
 /// `delegation_id = Poseidon(domain, mk, cm, trap)`.
 #[derive(Debug)]
-pub struct DelegationBlindStep;
+pub struct DelegationStep;
 
-impl Step for DelegationBlindStep {
+impl Step for DelegationStep {
     type Aux<'source> = ();
-    type Left = NoteStepHeader;
-    type Output = DelegationHeader;
+    type Left = NfPrefixHeader;
+    type Output = DelegateNfPrefixHeader;
     type Right = ();
     type Witness<'source> = (DelegationTrapdoor,);
 
@@ -312,12 +312,12 @@ impl Step for DelegationBlindStep {
 
 /// Recursive post-blind GGM step.
 #[derive(Debug)]
-pub struct DelegationStep;
+pub struct DelegateNfPrefixStep;
 
-impl Step for DelegationStep {
+impl Step for DelegateNfPrefixStep {
     type Aux<'source> = ();
-    type Left = DelegationHeader;
-    type Output = DelegationHeader;
+    type Left = DelegateNfPrefixHeader;
+    type Output = DelegateNfPrefixHeader;
     type Right = ();
     type Witness<'source> = (u8,);
 
@@ -346,7 +346,7 @@ pub struct DelegateNullifierStep;
 
 impl Step for DelegateNullifierStep {
     type Aux<'source> = ();
-    type Left = DelegationHeader;
+    type Left = DelegateNfPrefixHeader;
     type Output = DelegateNullifierHeader;
     type Right = ();
     type Witness<'source> = ();

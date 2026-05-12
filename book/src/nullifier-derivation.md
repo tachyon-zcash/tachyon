@@ -63,38 +63,63 @@ From a bandwidth narrative, the wallet-service handshakes incurs an *amortized* 
 
 ## Delegation proof chain
 
-Delegation proofs separate GGM descent from per-delegation blinding so that
-wallets can cache note-bound spine proofs and reuse them across delegations
-(different trapdoors) without re-proving any in-circuit steps.
+Delegation proofs separate GGM descent from per-delegation blinding so the
+wallet can cache trapdoor-independent pre-blind PCDs (descent down to a
+prefix, and the prefix's nullifier leaf) and reuse them across delegations.
+A delegation event is then a single in-circuit step that attaches a fresh
+trapdoor to a cached `NfPrefixHeader`.
 
-1. **Pre-blind descent** — anchored to a note. Every header carries the
-   $(mk, cm)$ lineage; no delegation identifier is attached yet.
+The chain has two leaves: a **pre-blind** `NullifierHeader` produced on the
+user device, carrying $(cm, nf, epoch)$ for `SpendBind` cm-equality and
+`SpendableInit` pool-membership; and a **post-blind**
+`DelegateNullifierHeader` produced by the sync service, carrying
+$(nf, epoch, \text{delegation\_id})$ for `SpendableRollover` cross-epoch
+matching.
 
-   - `NoteSeedStep(note, pak)` — verifies ownership, derives
+1. **Pre-blind descent** — wallet-side, trapdoor-independent. Intermediate
+   headers thread the $(mk, cm)$ lineage so any prefix can be later blinded
+   without re-deriving from the root.
+
+   - `NfMasterSeedStep` — root step. Witnesses $(\text{note}, \mathsf{pak})$,
+     checks $\mathsf{pak}.\text{derive\_payment\_key}() = \text{note}.\mathsf{pk}$
+     and $\text{note}.\text{value} \neq 0$, derives
      $mk = \text{Poseidon}_\text{Tachyon-MkDerive}(\psi, nk)$, emits
-     `NoteMasterHeader(mk, cm)`.
-   - `NoteMasterStep(chunk)` — one GGM step from $mk$; emits `NoteStepHeader`
-     at depth 1.
-   - `NoteStep(chunk)` — recursive pre-blind descent; preserves the
-     $(mk, cm)$ lineage through every step.
+     `NfMasterHeader(mk, cm)`.
+   - `NfMasterStep(chunk)` — consumes `NfMasterHeader`, advances one
+     GGM step from $mk$, emits `NfPrefixHeader(key, mk, cm)` at depth 1.
+   - `NfPrefixStep(chunk)` — consumes `NfPrefixHeader`, emits
+     `NfPrefixHeader(key.step(chunk), mk, cm)`. Threads the lineage and
+     advances depth by 1; constrained to $\text{depth} < \texttt{GGM\_TREE\_DEPTH}$.
+   - `NullifierStep` — pre-blind leaf. Consumes an `NfPrefixHeader` at
+     depth $= \texttt{GGM\_TREE\_DEPTH}$, derives $nf$ from $key$, drops
+     $mk$, propagates $cm$, and emits `NullifierHeader(cm, nf, epoch)`.
+     Cacheable because nothing in the chain depends on a delegation
+     trapdoor.
 
-2. **Blinding** — attaches a per-delegation trapdoor to the lineage.
+2. **Blinding** — the delegation event itself, one in-circuit step.
 
-   - `DelegationBlindStep(trap)` — consumes `NoteStepHeader` at any depth,
-     emits `DelegationHeader(key, delegation_id)` where
-     $\text{delegation\_id} = \text{Poseidon}_\text{Tachyon-Delegate}(mk, cm, \text{trap})$.
+   - `DelegationStep` — consumes a cached `NfPrefixHeader(key, mk, cm)` at
+     any depth, witnesses a `DelegationTrapdoor`, computes
+     $\text{delegation\_id} = \text{Poseidon}_\text{Tachyon-Delegate}(mk, cm, \text{trap})$,
+     emits `DelegateNfPrefixHeader(key, delegation_id)`.
 
-3. **Post-blind descent and leaf evaluation**.
+3. **Post-blind descent** — sync-service-side. The lineage has collapsed
+   to $\text{delegation\_id}$; $(mk, cm)$ are no longer in scope.
 
-   - `DelegationStep(chunk)` — sync-side descent that carries
-     `delegation_id` unchanged through GGM steps.
-   - `NullifierStep` — at depth `GGM_TREE_DEPTH`, emits the
-     `NullifierHeader(nf, epoch, delegation_id)`.
+   - `DelegateNfPrefixStep(chunk)` — consumes `DelegateNfPrefixHeader`,
+     emits `DelegateNfPrefixHeader(key.step(chunk), delegation_id)`.
+     Threads $\text{delegation\_id}$ unchanged and advances depth by 1.
+   - `DelegateNullifierStep` — post-blind leaf. Consumes a
+     `DelegateNfPrefixHeader` at depth $= \texttt{GGM\_TREE\_DEPTH}$,
+     derives $nf$ from $key$, and emits
+     `DelegateNullifierHeader(nf, epoch, delegation_id)`.
 
-Because pre-blind steps are independent of the trapdoor, a wallet's cached
-left-spine proofs remain valid as a prefix to any fresh
-`DelegationBlindStep`, so the only fresh in-circuit work per delegation is
-the blind step plus any trailing non-cached peaks of the cover.
+The cover for $[s..=t]$ decomposes into peaks; each peak has its own
+pre-blind chain (root → $\texttt{depth}_i$). The fresh in-circuit work per
+delegation event is one `DelegationStep` for every prefix the wallet hands
+to the sync service, plus pre-blind chain segments for any peaks whose
+spine has not been cached. The post-blind chain is produced by the sync
+service and is paid per epoch served.
 
 ## Delegation window
 

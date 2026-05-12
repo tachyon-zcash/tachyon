@@ -184,7 +184,7 @@ impl PoolSim {
 pub struct SyncSim<'source> {
     entries: Vec<(
         DelegationId,
-        Vec<Pcd<'source, delegation::DelegationHeader>>,
+        Vec<Pcd<'source, delegation::DelegateNfPrefixHeader>>,
         Pcd<'source, spendable::SpendableHeader>,
     )>,
 }
@@ -198,7 +198,7 @@ impl<'source> SyncSim<'source> {
 
     pub fn accept_spendable(
         &mut self,
-        delegates: Vec<Pcd<'source, delegation::DelegationHeader>>,
+        delegates: Vec<Pcd<'source, delegation::DelegateNfPrefixHeader>>,
         spendable: Pcd<'source, spendable::SpendableHeader>,
     ) {
         let delegation_id = delegates.first().expect("at least one delegate").data.1;
@@ -360,7 +360,7 @@ impl<'source> SyncSim<'source> {
     }
 
     fn nullifier(
-        delegates: &[Pcd<'source, delegation::DelegationHeader>],
+        delegates: &[Pcd<'source, delegation::DelegateNfPrefixHeader>],
         rng: &mut (impl RngCore + CryptoRng),
         target_epoch: EpochIndex,
     ) -> Pcd<'source, delegation::DelegateNullifierHeader> {
@@ -399,21 +399,21 @@ impl WalletSim {
         }
     }
 
-    /// Produce a pre-blind master header PCD via [`NoteSeedStep`] — the GGM
+    /// Produce a pre-blind master header PCD via [`NfMasterSeed`] — the GGM
     /// tree root at depth 0 with `(mk, cm)` lineage. The trapdoor is NOT
     /// witnessed here; blinding happens at a terminal
-    /// [`DelegationBlindStep`](delegation::DelegationBlindStep).
+    /// [`DelegationStep`](delegation::DelegationStep).
     pub fn note_master<'source>(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
-    ) -> Pcd<'source, delegation::NoteMasterHeader> {
+    ) -> Pcd<'source, delegation::NfMasterHeader> {
         let mk = self.pak.nk.derive_note_private(&note.psi);
         let cm = note.commitment();
         let (proof, ()) = PROOF_SYSTEM
-            .seed(rng, &delegation::NoteSeedStep, (note, self.pak))
+            .seed(rng, &delegation::NfMasterSeed, (note, self.pak))
             .expect("note seed");
-        proof.carry::<delegation::NoteMasterHeader>((mk, cm))
+        proof.carry::<delegation::NfMasterHeader>((mk, cm))
     }
 
     pub fn fresh_spend<'source>(
@@ -531,10 +531,10 @@ pub mod ggm_tools {
     /// prefix).
     pub fn walk_master_to_depth<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
+        master_pcd: Pcd<'source, delegation::NfMasterHeader>,
         epoch_bits: u32,
         target_depth: u8,
-    ) -> Pcd<'source, delegation::NoteStepHeader> {
+    ) -> Pcd<'source, delegation::NfPrefixHeader> {
         assert!(
             (1..=GGM_TREE_DEPTH).contains(&target_depth),
             "target_depth must be in 1..=GGM_DEPTH",
@@ -545,7 +545,7 @@ pub mod ggm_tools {
         let (mut proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::NoteMasterStep,
+                &delegation::NfMasterStep,
                 (first_chunk,),
                 master_pcd,
                 Proof::trivial().carry::<()>(()),
@@ -556,11 +556,11 @@ pub mod ggm_tools {
         while key.depth.get() < target_depth {
             let next_step = key.depth.get() + 1;
             let chunk = chunk_at(epoch_bits, next_step);
-            let pcd = proof.carry::<delegation::NoteStepHeader>((key, mk, cm));
+            let pcd = proof.carry::<delegation::NfPrefixHeader>((key, mk, cm));
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    &delegation::NoteStep,
+                    &delegation::NfPrefixStep,
                     (chunk,),
                     pcd,
                     Proof::trivial().carry::<()>(()),
@@ -570,21 +570,21 @@ pub mod ggm_tools {
             proof = next_proof;
         }
 
-        proof.carry::<delegation::NoteStepHeader>((key, mk, cm))
+        proof.carry::<delegation::NfPrefixHeader>((key, mk, cm))
     }
 
     /// Fan the pre-blind master into the post-blind prefix delegates that
     /// tightly cover `epoch_range`. Each prefix is pre-blind walked to its
     /// depth, then a fresh
-    /// [`DelegationBlindStep`](delegation::DelegationBlindStep)
+    /// [`DelegationStep`](delegation::DelegationStep)
     /// attaches `trap` to produce a
-    /// [`DelegationHeader`](delegation::DelegationHeader).
+    /// [`DelegateNfPrefixHeader`](delegation::DelegateNfPrefixHeader).
     pub fn delegate_range<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: &Pcd<'source, delegation::NoteMasterHeader>,
+        master_pcd: &Pcd<'source, delegation::NfMasterHeader>,
         trap: DelegationTrapdoor,
         epoch_range: RangeInclusive<u32>,
-    ) -> Vec<Pcd<'source, delegation::DelegationHeader>> {
+    ) -> Vec<Pcd<'source, delegation::DelegateNfPrefixHeader>> {
         let mk = master_pcd.data.0;
         mk.derive_note_delegates(epoch_range)
             .into_iter()
@@ -604,7 +604,7 @@ pub mod ggm_tools {
     /// blinding step is applied — the entire walk stays trapdoor-free.
     pub fn preblind_nullifier_from_master<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
+        master_pcd: Pcd<'source, delegation::NfMasterHeader>,
         target_epoch: EpochIndex,
     ) -> Pcd<'source, delegation::NullifierHeader> {
         let prefix_pcd = walk_master_to_depth(rng, master_pcd, target_epoch.0, GGM_TREE_DEPTH);
@@ -617,7 +617,7 @@ pub mod ggm_tools {
     /// pre-blind leaf via [`NullifierStep`](delegation::NullifierStep).
     pub fn preblind_nullifier_pair_from_master<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<'source, delegation::NoteMasterHeader>,
+        master_pcd: Pcd<'source, delegation::NfMasterHeader>,
         target_epoch: EpochIndex,
     ) -> (
         Pcd<'source, delegation::NullifierHeader>,
@@ -656,7 +656,7 @@ pub mod ggm_tools {
     /// pre-blind prefix PCD, returning a pre-blind leaf PCD.
     pub fn walk_preblind_leaf<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        prefix_pcd: Pcd<'source, delegation::NoteStepHeader>,
+        prefix_pcd: Pcd<'source, delegation::NfPrefixHeader>,
     ) -> Pcd<'source, delegation::NullifierHeader> {
         let (key, _mk, cm) = prefix_pcd.data;
         let (nf_proof, ()) = PROOF_SYSTEM
@@ -674,14 +674,14 @@ pub mod ggm_tools {
         nf_proof.carry::<delegation::NullifierHeader>((cm_tg, nf, epoch))
     }
 
-    /// Walk a pre-blind `NoteStepHeader` from its current depth down to
+    /// Walk a pre-blind `NfPrefixHeader` from its current depth down to
     /// `target_depth`, decoding chunks from `epoch_bits`.
     pub fn walk_step_to_depth<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        mut prefix_pcd: Pcd<'source, delegation::NoteStepHeader>,
+        mut prefix_pcd: Pcd<'source, delegation::NfPrefixHeader>,
         epoch_bits: u32,
         target_depth: u8,
-    ) -> Pcd<'source, delegation::NoteStepHeader> {
+    ) -> Pcd<'source, delegation::NfPrefixHeader> {
         while prefix_pcd.data.0.depth.get() < target_depth {
             let next_step = prefix_pcd.data.0.depth.get() + 1;
             let chunk = chunk_at(epoch_bits, next_step);
@@ -689,30 +689,30 @@ pub mod ggm_tools {
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    &delegation::NoteStep,
+                    &delegation::NfPrefixStep,
                     (chunk,),
                     prefix_pcd,
                     Proof::trivial().carry::<()>(()),
                 )
                 .expect("note step");
             key = key.step(chunk);
-            prefix_pcd = next_proof.carry::<delegation::NoteStepHeader>((key, mk, cm));
+            prefix_pcd = next_proof.carry::<delegation::NfPrefixHeader>((key, mk, cm));
         }
         prefix_pcd
     }
 
-    /// Apply [`DelegationBlindStep`](delegation::DelegationBlindStep) to a
+    /// Apply [`DelegationStep`](delegation::DelegationStep) to a
     /// pre-blind prefix PCD, returning a post-blind delegate PCD.
     pub fn blind_prefix<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        prefix_pcd: Pcd<'source, delegation::NoteStepHeader>,
+        prefix_pcd: Pcd<'source, delegation::NfPrefixHeader>,
         trap: DelegationTrapdoor,
-    ) -> Pcd<'source, delegation::DelegationHeader> {
+    ) -> Pcd<'source, delegation::DelegateNfPrefixHeader> {
         let (key, mk, cm) = prefix_pcd.data;
         let (proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::DelegationBlindStep,
+                &delegation::DelegationStep,
                 (trap,),
                 prefix_pcd,
                 Proof::trivial().carry::<()>(()),
@@ -727,12 +727,12 @@ pub mod ggm_tools {
                 Fp::from(&trap),
             ]),
         );
-        proof.carry::<delegation::DelegationHeader>((key, delegation_id))
+        proof.carry::<delegation::DelegateNfPrefixHeader>((key, delegation_id))
     }
 
     pub fn walk_delegate_to_nullifier<'source>(
         rng: &mut (impl RngCore + CryptoRng),
-        delegate_pcd: Pcd<'source, delegation::DelegationHeader>,
+        delegate_pcd: Pcd<'source, delegation::DelegateNfPrefixHeader>,
         target_epoch: EpochIndex,
     ) -> Pcd<'source, delegation::DelegateNullifierHeader> {
         let (mut key, delegation_id) = delegate_pcd.data;
@@ -741,11 +741,11 @@ pub mod ggm_tools {
         while key.depth.get() < GGM_TREE_DEPTH {
             let next_step = key.depth.get() + 1;
             let chunk = chunk_at(target_epoch.0, next_step);
-            let pcd = proof.carry::<delegation::DelegationHeader>((key, delegation_id));
+            let pcd = proof.carry::<delegation::DelegateNfPrefixHeader>((key, delegation_id));
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    &delegation::DelegationStep,
+                    &delegation::DelegateNfPrefixStep,
                     (chunk,),
                     pcd,
                     Proof::trivial().carry::<()>(()),
@@ -755,7 +755,7 @@ pub mod ggm_tools {
             proof = next_proof;
         }
 
-        let pcd = proof.carry::<delegation::DelegationHeader>((key, delegation_id));
+        let pcd = proof.carry::<delegation::DelegateNfPrefixHeader>((key, delegation_id));
         let (nf_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,

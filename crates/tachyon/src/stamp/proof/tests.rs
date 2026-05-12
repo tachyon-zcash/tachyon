@@ -181,14 +181,14 @@ fn step_rejects_zero_value_note() {
         rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
     };
 
-    // NoteSeedStep: no PCD inputs needed. This is the root constraint —
+    // NfMasterSeed: no PCD inputs needed. This is the root constraint —
     // SpendableInit no longer takes a Note witness, so zero-value rejection
     // for the spendable path is enforced structurally here.
     assert!(
         PROOF_SYSTEM
-            .seed(&mut rng, &delegation::NoteSeedStep, (zero_note, user.pak),)
+            .seed(&mut rng, &delegation::NfMasterSeed, (zero_note, user.pak),)
             .is_err(),
-        "NoteSeedStep must reject zero-value note"
+        "NfMasterSeed must reject zero-value note"
     );
 
     // OutputStamp: no PCD inputs needed.

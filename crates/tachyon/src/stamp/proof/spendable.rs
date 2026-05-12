@@ -2,7 +2,7 @@
 //!
 //! Spendable state carries no `delegation_id`. `nf` uniquely encodes
 //! `(key, epoch)` via GGM determinism and is bound to the wallet's `cm` by
-//! the pre-blind chain rooted at `NoteSeedStep`; downstream nf-equality
+//! the pre-blind chain rooted at `NfMasterSeed`; downstream nf-equality
 //! (e.g. at `SpendStamp`) recovers any further binding required, by
 //! composition of upstream PCDs.
 
@@ -74,7 +74,7 @@ impl Header for SpendableRolloverHeader {
 /// Seeds spendable status from a pre-blind GGM-leaf header.
 ///
 /// Note-ownership and well-formedness are structurally enforced upstream by
-/// `NoteSeedStep`; `cm` arrives on the leaf so this step only needs to
+/// `NfMasterSeed`; `cm` arrives on the leaf so this step only needs to
 /// verify pool membership and epoch alignment. By PCD soundness, the
 /// emitted `(nf, anchor)` carries forward the upstream `cm ↔ nf` binding —
 /// any downstream nf-equality (e.g. at `SpendStamp`) reconnects to a

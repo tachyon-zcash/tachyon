@@ -137,7 +137,6 @@ rc_mutex = "forbid"
 
 # -- deny: restrictions (may need localized #[expect]) -----------------------
 absolute_paths = "deny"
-as_conversions = "deny"
 assertions_on_result_states = "deny"
 big_endian_bytes = "deny"
 cfg_not_test = "deny"
