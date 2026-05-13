@@ -71,26 +71,32 @@ impl Step for SpendBind {
         // Same wallet: both leaves share the cm propagated from the
         // pre-blind NfMasterSeed root.
         if left_cm_tg != right_cm_tg {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error("SpendBind: nullifiers not related"));
         }
         if right_epoch.0 != left_epoch.0 + 1 {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error("SpendBind: nullifiers not adjacent"));
         }
         // Bind the witnessed note to the leaves' cm.
         let note_cm_tg = Tachygram::from(note.commitment());
         if note_cm_tg != left_cm_tg {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendBind: note not related to nullifiers",
+            ));
         }
-        if u64::from(note.value) == 0 || u64::from(note.value) > NOTE_VALUE_MAX {
-            return Err(mock_ragu::Error);
+        if u64::from(note.value) == 0 {
+            return Err(mock_ragu::Error("SpendBind: zero-value note"));
+        }
+        if u64::from(note.value) > NOTE_VALUE_MAX {
+            return Err(mock_ragu::Error("SpendBind: note value exceeds maximum"));
         }
         if note.pk.0 != pak.derive_payment_key().0 {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error("SpendBind: pak not related to note"));
         }
 
         let cv = rcv.commit(i64::from(note.value));
         let rk = pak.ak.derive_action_public(&alpha);
-        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| mock_ragu::Error)?;
+        let action_digest = ActionDigest::new(cv, rk)
+            .map_err(|_err| mock_ragu::Error("SpendBind: action digest failed"))?;
 
         Ok(((action_digest, [nf0, nf1], left_epoch), ()))
     }

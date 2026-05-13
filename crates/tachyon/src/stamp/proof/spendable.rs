@@ -100,18 +100,22 @@ impl Step for SpendableInit {
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         if epoch != anchor.0.epoch() {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableInit: nullifier epoch must match anchor epoch",
+            ));
         }
 
         if pool.0.commit() != anchor.1.0 {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error("SpendableInit: pool must commit to anchor"));
         }
 
         if pool.0.query(Fp::from(cm_tg)) != Fp::ZERO {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error("SpendableInit: cm not in pool"));
         }
         if pool.0.query(Fp::from(nf)) == Fp::ZERO {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableInit: nullifier already in pool",
+            ));
         }
 
         Ok(((nf, anchor), ()))
@@ -142,20 +146,30 @@ impl Step for SpendableRollover {
         (new_nf, new_epoch, new_delegation_id): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         if old_delegation_id != new_delegation_id {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableRollover: delegations not related",
+            ));
         }
         if new_epoch.0 != old_epoch.0 + 1 {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableRollover: nullifiers not adjacent",
+            ));
         }
         if new_epoch != anchor.0.epoch() {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableRollover: new epoch must match anchor epoch",
+            ));
         }
 
         if pool.0.commit() != anchor.1.0 {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableRollover: pool must commit to anchor",
+            ));
         }
         if pool.0.query(Fp::from(new_nf)) == Fp::ZERO {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableRollover: new nullifier already in pool",
+            ));
         }
 
         Ok(((old_nf, new_nf, anchor), ()))
@@ -182,20 +196,28 @@ impl Step for SpendableLift {
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         if old_pool.0.commit() != old_anchor.1.0 {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableLift: pool must commit to old anchor",
+            ));
         }
 
         if to_anchor.0 <= old_anchor.0 || to_anchor.0.epoch() != old_anchor.0.epoch() {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableLift: target anchor must be later within the same epoch",
+            ));
         }
 
         let to_pool = old_pool.0.merge(&delta.0);
         if to_pool.commit() != to_anchor.1.0 {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableLift: pool plus delta must commit to target anchor",
+            ));
         }
 
         if delta.0.query(Fp::from(nf)) == Fp::ZERO {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableLift: nullifier was spent in delta",
+            ));
         }
 
         Ok(((nf, to_anchor), ()))
@@ -222,22 +244,32 @@ impl Step for SpendableEpochLift {
         (rollover_old_nf, new_nf, new_anchor): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         if old_nf != rollover_old_nf {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableEpochLift: rollover not related to spendable",
+            ));
         }
         if !old_anchor.0.is_epoch_final() {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableEpochLift: old anchor must be epoch-final",
+            ));
         }
         if new_anchor.0.epoch().0 != old_anchor.0.epoch().0 + 1 {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableEpochLift: anchors not in adjacent epochs",
+            ));
         }
 
         if pool.0.commit() != new_anchor.1.0 {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableEpochLift: pool must commit to new anchor",
+            ));
         }
 
         let seed = epoch_seed_hash(&old_anchor.1);
         if pool.0.query(seed) != Fp::ZERO {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendableEpochLift: epoch seed not in new pool",
+            ));
         }
 
         Ok(((new_nf, new_anchor), ()))

@@ -75,12 +75,16 @@ impl Step for OutputStamp {
         _left: <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if u64::from(note.value) == 0 || u64::from(note.value) > NOTE_VALUE_MAX {
-            return Err(mock_ragu::Error);
+        if u64::from(note.value) == 0 {
+            return Err(mock_ragu::Error("OutputStamp: zero-value note"));
+        }
+        if u64::from(note.value) > NOTE_VALUE_MAX {
+            return Err(mock_ragu::Error("OutputStamp: note value exceeds maximum"));
         }
         let cv = rcv.commit(-i64::from(note.value));
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
-        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| mock_ragu::Error)?;
+        let action_digest = ActionDigest::new(cv, rk)
+            .map_err(|_err| mock_ragu::Error("OutputStamp: action digest construction failed"))?;
 
         let tachygram = Tachygram::from(note.commitment());
         let action_acc = ActionAcc::from(&[action_digest][..]);
@@ -121,10 +125,14 @@ impl Step for SpendStamp {
         // `nullifiers[0]` carries the same wallet's `cm`-binding established
         // at `SpendBind`. Same `nf` ⇒ same GGM leaf ⇒ same wallet.
         if nullifiers[0] != right_nf {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendStamp: spend's now_nf must equal spendable's nf",
+            ));
         }
         if epoch != right_anchor.0.epoch() {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "SpendStamp: spend epoch must match spendable's anchor epoch",
+            ));
         }
 
         let action_acc = ActionAcc::from(&[action_digest][..]);
@@ -171,7 +179,7 @@ impl Step for MergeStamp {
         >,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         if left_anchor != right_anchor {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error("MergeStamp: anchors must match"));
         }
 
         // Bind witness accumulators to the public commitments on Data.
@@ -180,7 +188,9 @@ impl Step for MergeStamp {
             || left_tachygram.0.commit() != left_tachygram_commit.0
             || right_tachygram.0.commit() != right_tachygram_commit.0
         {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "MergeStamp: witness accumulators must commit to header commits",
+            ));
         }
 
         let merged_action = left_action.0.merge(&right_action.0);
@@ -223,22 +233,28 @@ impl Step for StampLift {
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         if left_anchor.0.epoch() != right_anchor.0.epoch() {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error("StampLift: anchors must share an epoch"));
         }
         if right_anchor.0 <= left_anchor.0 {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "StampLift: right anchor must be later than left",
+            ));
         }
 
         if left_action.0.commit() != left_action_commit.0
             || left_tachygram.0.commit() != left_tachygram_commit.0
             || left_pool.0.commit() != left_anchor.1.0
         {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "StampLift: witness commits must match left header commits",
+            ));
         }
 
         let right_pool = left_pool.0.merge(&delta.0);
         if right_pool.commit() != right_anchor.1.0 {
-            return Err(mock_ragu::Error);
+            return Err(mock_ragu::Error(
+                "StampLift: pool plus delta must match right anchor",
+            ));
         }
 
         let data = (left_action_commit, left_tachygram_commit, right_anchor);
