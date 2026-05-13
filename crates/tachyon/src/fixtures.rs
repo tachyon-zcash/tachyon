@@ -310,7 +310,7 @@ impl<'source> SyncSim<'source> {
         let (proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &spendable::SpendableLift,
+                spendable::SpendableLift,
                 (left_pool.into(), delta.into(), target_anchor),
                 spendable_pcd,
                 Proof::trivial().carry::<()>(()),
@@ -338,7 +338,7 @@ impl<'source> SyncSim<'source> {
         let (rollover_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &spendable::SpendableRollover,
+                spendable::SpendableRollover,
                 (new_pool.clone().into(), new_anchor),
                 old_nf_pcd,
                 new_nf_pcd,
@@ -350,7 +350,7 @@ impl<'source> SyncSim<'source> {
         let (epoch_lift_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &spendable::SpendableEpochLift,
+                spendable::SpendableEpochLift,
                 (new_pool.into(),),
                 spendable_pcd,
                 rollover_pcd,
@@ -411,7 +411,7 @@ impl WalletSim {
         let mk = self.pak.nk.derive_note_private(&note.psi);
         let cm = note.commitment();
         let (proof, ()) = PROOF_SYSTEM
-            .seed(rng, &delegation::NfMasterSeed, (note, self.pak))
+            .seed(rng, delegation::NfMasterSeed, (note, self.pak))
             .expect("note seed");
         proof.carry::<delegation::NfMasterHeader>((mk, cm))
     }
@@ -447,7 +447,7 @@ impl WalletSim {
         let (spendable_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &spendable::SpendableInit,
+                spendable::SpendableInit,
                 (pool_state.into(), anchor),
                 preblind_nf_pcd,
                 Proof::trivial().carry::<()>(()),
@@ -543,7 +543,7 @@ pub mod ggm_tools {
         let (mut proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::NfMasterStep,
+                delegation::NfMasterStep,
                 (first_chunk,),
                 master_pcd,
                 Proof::trivial().carry::<()>(()),
@@ -558,7 +558,7 @@ pub mod ggm_tools {
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    &delegation::NfPrefixStep,
+                    delegation::NfPrefixStep,
                     (chunk,),
                     pcd,
                     Proof::trivial().carry::<()>(()),
@@ -660,7 +660,7 @@ pub mod ggm_tools {
         let (nf_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::NullifierStep,
+                delegation::NullifierStep,
                 (),
                 prefix_pcd,
                 Proof::trivial().carry::<()>(()),
@@ -687,7 +687,7 @@ pub mod ggm_tools {
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    &delegation::NfPrefixStep,
+                    delegation::NfPrefixStep,
                     (chunk,),
                     prefix_pcd,
                     Proof::trivial().carry::<()>(()),
@@ -710,7 +710,7 @@ pub mod ggm_tools {
         let (proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::DelegationStep,
+                delegation::DelegationStep,
                 (trap,),
                 prefix_pcd,
                 Proof::trivial().carry::<()>(()),
@@ -736,7 +736,7 @@ pub mod ggm_tools {
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    &delegation::DelegateNfPrefixStep,
+                    delegation::DelegateNfPrefixStep,
                     (chunk,),
                     pcd,
                     Proof::trivial().carry::<()>(()),
@@ -750,7 +750,7 @@ pub mod ggm_tools {
         let (nf_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::DelegateNullifierStep,
+                delegation::DelegateNullifierStep,
                 (),
                 pcd,
                 Proof::trivial().carry::<()>(()),

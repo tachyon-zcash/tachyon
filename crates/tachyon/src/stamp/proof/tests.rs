@@ -65,7 +65,7 @@ fn stamp_lift_within_epoch() {
     let (lifted_proof, ()) = PROOF_SYSTEM
         .fuse(
             &mut rng,
-            &stamp_proof::StampLift,
+            stamp_proof::StampLift,
             (
                 action_acc.into(),
                 tachygram_acc.into(),
@@ -115,7 +115,7 @@ fn stamp_lift_rejects_cross_epoch() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &stamp_proof::StampLift,
+        stamp_proof::StampLift,
         (
             action_acc.into(),
             tachygram_acc.into(),
@@ -155,7 +155,7 @@ fn spend_bind_rejects_non_adjacent_epochs() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spend::SpendBind,
+        spend::SpendBind,
         (rcv, alpha, user.pak, note),
         nf_pcd_e,
         nf_pcd_far,
@@ -187,7 +187,7 @@ fn step_rejects_zero_value_note() {
     // for the spendable path is enforced structurally here.
     assert!(
         PROOF_SYSTEM
-            .seed(&mut rng, &delegation::NfMasterSeed, (zero_note, user.pak),)
+            .seed(&mut rng, delegation::NfMasterSeed, (zero_note, user.pak),)
             .is_err(),
         "NfMasterSeed must reject zero-value note"
     );
@@ -201,7 +201,7 @@ fn step_rejects_zero_value_note() {
         PROOF_SYSTEM
             .seed(
                 &mut rng,
-                &stamp_proof::OutputStamp,
+                stamp_proof::OutputStamp,
                 (out_rcv, out_alpha, zero_note, out_anchor),
             )
             .is_err(),
@@ -223,7 +223,7 @@ fn step_rejects_zero_value_note() {
         PROOF_SYSTEM
             .fuse(
                 &mut rng,
-                &spend::SpendBind,
+                spend::SpendBind,
                 (spend_rcv, spend_alpha, user.pak, zero_note),
                 nf_now_pcd,
                 nf_next_pcd,
@@ -256,7 +256,7 @@ fn spend_bind_rejects_note_cm_mismatch() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spend::SpendBind,
+        spend::SpendBind,
         (rcv, alpha, user.pak, other_note),
         nf_now_pcd,
         nf_next_pcd,
@@ -374,7 +374,7 @@ fn spendable_lift_rejects_cross_epoch() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableLift,
+        spendable::SpendableLift,
         (left_pool_acc.into(), delta.into(), pool.anchor()),
         spendable_pcd,
         Proof::trivial().carry::<()>(()),
@@ -403,7 +403,7 @@ fn spendable_init_rejects_cm_absent() {
     let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, epoch_0);
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableInit,
+        spendable::SpendableInit,
         (pool.state().clone().into(), anchor),
         nf_pcd,
         Proof::trivial().carry::<()>(()),
@@ -440,7 +440,7 @@ fn spendable_init_rejects_nf_present() {
     let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, epoch_0);
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableInit,
+        spendable::SpendableInit,
         (pool.state().clone().into(), anchor),
         nf_pcd,
         Proof::trivial().carry::<()>(()),
@@ -482,7 +482,7 @@ fn spendable_epoch_lift_rejects_missing_seed() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableEpochLift,
+        spendable::SpendableEpochLift,
         (right_pool.into(),),
         left_pcd,
         right_pcd,
@@ -513,7 +513,7 @@ fn spendable_lift_rejects_non_superset_delta() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableLift,
+        spendable::SpendableLift,
         (left_pool_acc.into(), bogus_delta.into(), pool.anchor()),
         spendable_pcd,
         Proof::trivial().carry::<()>(()),
@@ -569,7 +569,7 @@ fn spendable_rollover_rejects_new_nf_in_pool() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableRollover,
+        spendable::SpendableRollover,
         (new_pool.into(), new_anchor),
         old_nf_pcd,
         new_nf_pcd,
@@ -620,7 +620,7 @@ fn spendable_rollover_rejects_delegation_id_mismatch() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableRollover,
+        spendable::SpendableRollover,
         (new_pool.into(), new_anchor),
         old_nf_pcd,
         new_nf_pcd,
@@ -670,7 +670,7 @@ fn spendable_rollover_rejects_non_adjacent_epochs() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableRollover,
+        spendable::SpendableRollover,
         (new_pool.into(), new_anchor),
         old_nf_pcd,
         new_nf_pcd,
