@@ -45,7 +45,7 @@ impl Application {
     pub fn seed<'source, RNG: CryptoRng, S: Step<Left = (), Right = ()>>(
         &self,
         rng: &mut RNG,
-        step: &S,
+        step: S,
         witness: S::Witness<'source>,
     ) -> Result<(Proof, S::Aux<'source>)> {
         let left = Proof::trivial().carry::<()>(());
@@ -56,7 +56,7 @@ impl Application {
     pub fn fuse<'source, RNG: CryptoRng, S: Step>(
         &self,
         _rng: &mut RNG,
-        step: &S,
+        step: S,
         witness: S::Witness<'source>,
         left: Pcd<'source, S::Left>,
         right: Pcd<'source, S::Right>,

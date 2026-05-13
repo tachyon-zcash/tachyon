@@ -208,7 +208,7 @@ impl Plan {
             let (bind_proof, ()) = app
                 .fuse(
                     rng,
-                    &spend::SpendBind,
+                    spend::SpendBind,
                     (rcv, alpha, *pak, note),
                     nf_now_pcd,
                     nf_next_pcd,
@@ -320,7 +320,7 @@ impl Stamp {
         let app = &*PROOF_SYSTEM;
 
         let (proof, (action_acc, tachygram_acc, tachygram)) =
-            app.seed(rng, &OutputStamp, (rcv, alpha, note, anchor))?;
+            app.seed(rng, OutputStamp, (rcv, alpha, note, anchor))?;
 
         let header = (
             ActionCommit(action_acc.0.commit(Fp::ZERO)),
@@ -354,7 +354,7 @@ impl Stamp {
         let anchor = spendable_pcd.data.1;
 
         let (proof, (action_acc, tachygram_acc)) =
-            app.fuse(rng, &SpendStamp, (), spend_pcd, spendable_pcd)?;
+            app.fuse(rng, SpendStamp, (), spend_pcd, spendable_pcd)?;
 
         let header = (
             ActionCommit(action_acc.0.commit(Fp::ZERO)),
@@ -417,7 +417,7 @@ impl Stamp {
 
         let (proof, ()) = app.fuse(
             rng,
-            &MergeStamp,
+            MergeStamp,
             (
                 left_action.into(),
                 right_action.into(),
