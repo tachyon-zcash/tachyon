@@ -14,9 +14,9 @@ const NOTE_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-MkDerive";
 const NOTE_NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
 const DELEGATION_DOMAIN: &[u8; 16] = b"Tachyon-Delegate";
-const SUB_BLOCK_DOMAIN: &[u8; 16] = b"Tachyon-StampFld";
-const ANCHOR_BLOCK_DOMAIN: &[u8; 16] = b"Tachyon-BlockFld";
-const EPOCH_INCREMENT_DOMAIN: &[u8; 16] = b"Tachyon-EpochInc";
+const STAMP_FOLD_DOMAIN: &[u8; 16] = b"Tachyon-StampFld";
+const EMPTY_BLOCK_DOMAIN: &[u8; 16] = b"Tachyon-EmptyBlk";
+const EPOCH_STEP_DOMAIN: &[u8; 16] = b"Tachyon-EpochStp";
 const ACTION_DOMAIN: &[u8; 16] = b"Tachyon-ActnDgst";
 const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
@@ -88,10 +88,11 @@ pub(crate) fn action_digest(cv: Coordinates<EpAffine>, rk: Coordinates<EpAffine>
     ])
 }
 
-/// Sub-block fold step $H(\text{dom}, \mathit{state}, x_{lo}, x_{hi}, y_{lo},
-/// y_{hi})$.
+/// Per-stamp anchor advance $H(\text{dom}, \mathit{prev}, x_{lo}, x_{hi},
+/// y_{lo}, y_{hi})$. Absorbs the curve coordinates of a stamp's tachygram-set
+/// commitment into the running anchor.
 #[must_use]
-pub fn subblock_step(prev: Fp, update: Coordinates<EqAffine>) -> Fp {
+pub fn anchor_stamp_step(prev: Fp, update: Coordinates<EqAffine>) -> Fp {
     let (x, y) = (update.x().to_repr(), update.y().to_repr());
 
     #[expect(clippy::expect_used, reason = "constant size decomposition")]
@@ -103,7 +104,7 @@ pub fn subblock_step(prev: Fp, update: Coordinates<EqAffine>) -> Fp {
     ];
 
     hash::<6>([
-        Fp::from_u128(u128::from_le_bytes(*SUB_BLOCK_DOMAIN)),
+        Fp::from_u128(u128::from_le_bytes(*STAMP_FOLD_DOMAIN)),
         prev,
         x_lo,
         x_hi,
@@ -112,13 +113,14 @@ pub fn subblock_step(prev: Fp, update: Coordinates<EqAffine>) -> Fp {
     ])
 }
 
-/// Intra-epoch anchor advance $H(\text{dom}, \mathit{prev}, \mathit{state})$.
+/// Empty-block anchor tick $H(\text{dom}, \mathit{prev})$. Advances
+/// the anchor through one block that contains zero stamps, preserving
+/// per-height anchor uniqueness.
 #[must_use]
-pub fn anchor_block_step(prev: Fp, state: Fp) -> Fp {
-    hash::<3>([
-        Fp::from_u128(u128::from_le_bytes(*ANCHOR_BLOCK_DOMAIN)),
+pub fn anchor_empty_step(prev: Fp) -> Fp {
+    hash::<2>([
+        Fp::from_u128(u128::from_le_bytes(*EMPTY_BLOCK_DOMAIN)),
         prev,
-        state,
     ])
 }
 
@@ -128,7 +130,7 @@ pub fn anchor_block_step(prev: Fp, state: Fp) -> Fp {
 #[must_use]
 pub fn anchor_epoch_step(prev: Fp, new_epoch: u32) -> Fp {
     hash::<3>([
-        Fp::from_u128(u128::from_le_bytes(*EPOCH_INCREMENT_DOMAIN)),
+        Fp::from_u128(u128::from_le_bytes(*EPOCH_STEP_DOMAIN)),
         prev,
         Fp::from(u64::from(new_epoch)),
     ])

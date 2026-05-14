@@ -25,7 +25,7 @@ pub struct SpendHeader;
 impl Header for SpendHeader {
     type Data<'source> = (ActionDigest, (Nullifier, Nullifier));
 
-    const SUFFIX: Suffix = Suffix::new(13);
+    const SUFFIX: Suffix = Suffix::new(10);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32 + 32 * 2);
@@ -38,7 +38,7 @@ impl Header for SpendHeader {
 
 /// Fuses two epoch-adjacent nullifier leaves and binds them to an action.
 ///
-/// One `cm`-equality chain folds together same-wallet binding between the
+/// One `cm`-equality fold ties together same-wallet binding between the
 /// two leaves and note-binding for the witnessed `(note, pak)`:
 /// `note.commitment() == left_cm == right_cm`. The `DelegationTrapdoor` is
 /// not needed — `delegation_id` is consumed only by the sync-service-side
@@ -58,7 +58,7 @@ impl Step for SpendBind {
         Note,
     );
 
-    const INDEX: Index = Index::new(25);
+    const INDEX: Index = Index::new(20);
 
     fn witness<'source>(
         &self,

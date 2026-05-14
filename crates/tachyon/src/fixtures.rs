@@ -15,7 +15,6 @@ use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    SubBlock,
     action::{self, Action},
     bundle::{self, Stamped},
     constants::EPOCH_SIZE,
@@ -28,7 +27,7 @@ use crate::{
     },
     stamp::{
         Stamp,
-        proof::{PROOF_SYSTEM, delegation, pool, spendable, unspent},
+        proof::{PROOF_SYSTEM, delegation, pool, spendable},
     },
     value,
 };
@@ -188,9 +187,7 @@ impl PoolSim {
 
     #[must_use]
     pub fn anchor(&self) -> Anchor {
-        let block = self.history.last().expect("pool has blocks");
-        let state = SubBlock::from(&block.stamps);
-        block.prev.next_block(state)
+        self.anchor_at(self.height())
     }
 
     #[must_use]
@@ -220,18 +217,18 @@ impl PoolSim {
 
     #[must_use]
     pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
-        let block = self
-            .history
-            .get(usize::try_from(height).expect("fits usize"))
-            .expect("query height should exist");
-
-        let block_state = self.block_state_at(height);
-        block.prev.next_block(block_state)
+        let prev = self.prev_anchor_at(height);
+        let commits = self.stamp_commits_at(height);
+        if commits.is_empty() {
+            prev.next_empty()
+        } else {
+            commits.iter().fold(prev, Anchor::next_stamp)
+        }
     }
 
     /// Resolve the height at which `anchor` was produced. `block.prev` already
     /// holds the anchor of the preceding block, so a single scan over the
-    /// `prev` chain suffices; only the tip anchor needs recomputing.
+    /// `prev` linkage suffices; only the tip anchor needs recomputing.
     #[must_use]
     pub fn height_at(&self, anchor: Anchor) -> BlockHeight {
         self.history
@@ -242,11 +239,6 @@ impl PoolSim {
             .map(|(idx, _)| BlockHeight::from(idx - 1))
             .or_else(|| (self.anchor() == anchor).then(|| self.height()))
             .expect("anchor not in pool history")
-    }
-
-    #[must_use]
-    pub fn block_state_at(&self, height: BlockHeight) -> SubBlock {
-        SubBlock::from(self.stamp_commits_at(height).as_slice())
     }
 
     pub fn advance(
@@ -263,8 +255,8 @@ impl PoolSim {
     pub fn mine(&mut self, stamps: Vec<Vec<Tachygram>>) {
         let new_height = BlockHeight::from(self.history.len());
         let old_tip = self.anchor();
-        // Epoch-first blocks are preceded by a boundary lift in the chain;
-        // intra-epoch blocks chain directly from the previous tip.
+        // Epoch-first blocks are preceded by a boundary anchor lift;
+        // intra-epoch blocks advance directly from the previous tip.
         let prev = if new_height.is_epoch_first() {
             old_tip.next_epoch(new_height.epoch())
         } else {
@@ -274,187 +266,141 @@ impl PoolSim {
     }
 }
 
-pub(crate) fn build_anchor_span_pcd<'source>(
+/// Build an [`AnchorChain`] covering blocks `range`, rooted at the
+/// block-start anchor of `*range.start()`.
+///
+/// Per non-empty block: one [`AnchorSeed`] per stamp, fused via
+/// [`AnchorFuse`]. Per empty block: one [`EmptyBlockSeed`].
+/// All segments fused linearly.
+pub(crate) fn build_anchor_chain_pcd<'source>(
     rng: &mut (impl RngCore + CryptoRng),
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
-) -> Pcd<'source, pool::AnchorSpan> {
+) -> Pcd<'source, pool::AnchorChain> {
     let start = *range.start();
     let end = *range.end();
-    assert_eq!(start.epoch(), end.epoch(), "AnchorSpan single-epoch range");
+    assert_eq!(start.epoch(), end.epoch(), "AnchorChain single-epoch range");
     assert!(start <= end);
 
-    let prev_anchor = pool.prev_anchor_at(start);
-    let first_state = pool.block_state_at(start);
-    let (mut pcd, ()) = PROOF_SYSTEM
-        .seed(rng, pool::AnchorSpanSeed, (prev_anchor, first_state))
-        .expect("AnchorSpanSeed");
-
-    let mut height = BlockHeight(start.0 + 1);
-    while height.0 <= end.0 {
-        let next_state = pool.block_state_at(height);
-        let (next_pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                pool::AnchorSpanStep,
-                (next_state,),
-                pcd,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("AnchorSpanStep");
-        pcd = next_pcd;
-        height = BlockHeight(height.0 + 1);
+    let mut state = pool.prev_anchor_at(start);
+    let mut chain: Option<Pcd<'source, pool::AnchorChain>> = None;
+    let mut height = start;
+    loop {
+        let commits = pool.stamp_commits_at(height);
+        if commits.is_empty() {
+            let next_state = state.next_empty();
+            let (seed, ()) = PROOF_SYSTEM
+                .seed(rng, pool::EmptyBlockSeed, (state,))
+                .expect("EmptyBlockSeed");
+            chain = Some(match chain.take() {
+                | None => seed,
+                | Some(left) => {
+                    let (fused, ()) = PROOF_SYSTEM
+                        .fuse(rng, pool::AnchorFuse, (), left, seed)
+                        .expect("AnchorFuse");
+                    fused
+                },
+            });
+            state = next_state;
+        } else {
+            for commit in commits {
+                let next_state = state.next_stamp(&commit);
+                let (seed, ()) = PROOF_SYSTEM
+                    .seed(rng, pool::AnchorSeed, (state, commit))
+                    .expect("AnchorSeed");
+                chain = Some(match chain.take() {
+                    | None => seed,
+                    | Some(left) => {
+                        let (fused, ()) = PROOF_SYSTEM
+                            .fuse(rng, pool::AnchorFuse, (), left, seed)
+                            .expect("AnchorFuse");
+                        fused
+                    },
+                });
+                state = next_state;
+            }
+        }
+        if height >= end {
+            break;
+        }
+        height = height.next().expect("height < max");
     }
 
-    pcd
+    chain.expect("AnchorChain range must cover at least one block")
 }
 
-pub(crate) fn build_inclusion_complement_pcd<'source>(
+pub(crate) fn build_unspent_seed_pcd<'source>(
     rng: &mut (impl RngCore + CryptoRng),
-    pool: &PoolSim,
-    height: BlockHeight,
-    cm_idx: usize,
-) -> Pcd<'source, pool::InclusionComplement> {
-    let stamp_commits = pool.stamp_commits_at(height);
-    let stamps_len = stamp_commits.len();
-    assert!(cm_idx < stamps_len, "cm_idx out of range");
-
-    let prev_anchor = pool.prev_anchor_at(height);
-    let closing_block_state = pool.block_state_at(height);
-
-    // Seed at closing_block_state (zero rollback).
-    let (mut pcd, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::InclusionComplementSeed,
-            (prev_anchor, closing_block_state),
-        )
-        .expect("InclusionComplementSeed");
-
-    for stamp_idx in ((cm_idx + 1)..stamps_len).rev() {
-        let prev_state = SubBlock::from(&stamp_commits[..stamp_idx]);
-        let prev_stamp_commit = stamp_commits[stamp_idx];
-
-        let (next_pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                pool::InclusionComplementStep,
-                (prev_state, prev_stamp_commit),
-                pcd,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("InclusionComplementStep");
-        pcd = next_pcd;
-    }
-
-    pcd
-}
-
-pub(crate) fn build_inclusion_shard_pcd<'source>(
-    rng: &mut (impl RngCore + CryptoRng),
-    pre_cm_state: SubBlock,
-    stamp_tgs: &[Tachygram],
-    nf_pcd: Pcd<'source, delegation::NullifierHeader>,
-) -> Pcd<'source, pool::InclusionShard> {
-    let stamp_gadget = TachygramSetGadget::from(stamp_tgs);
-    let (pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::InclusionShardFuse,
-            (pre_cm_state, stamp_gadget),
-            nf_pcd,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("InclusionShardFuse");
-    pcd
-}
-
-pub(crate) fn build_exclusion_shard_pcd<'source>(
-    rng: &mut (impl RngCore + CryptoRng),
-    start_state: SubBlock,
+    start: Anchor,
     stamp_tgs: &[Tachygram],
     nf: Nullifier,
-) -> Pcd<'source, pool::ExclusionShard> {
+) -> Pcd<'source, pool::Unspent> {
     let stamp_gadget = TachygramSetGadget::from(stamp_tgs);
     let (pcd, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::ExclusionShardSeed,
-            (start_state, stamp_gadget, nf),
-        )
-        .expect("ExclusionShardSeed");
+        .seed(rng, pool::UnspentSeed, (start, stamp_gadget, nf))
+        .expect("UnspentSeed");
     pcd
 }
 
-pub(crate) fn build_unspent_at_block_pcd<'source>(
-    rng: &mut (impl RngCore + CryptoRng),
-    pool: &PoolSim,
-    nf: Nullifier,
-    height: BlockHeight,
-) -> Pcd<'source, unspent::Unspent> {
-    let stamps = pool.tachygrams_at(height);
-    let prev_anchor = pool.prev_anchor_at(height);
-
-    if stamps.is_empty() {
-        let (pcd, ()) = PROOF_SYSTEM
-            .seed(rng, unspent::EmptyBlockUnspentSeed, (nf, prev_anchor))
-            .expect("EmptyBlockUnspentSeed");
-        return pcd;
-    }
-
-    let stamp_commits = pool.stamp_commits_at(height);
-
-    // Build per-stamp shards in landing order, accumulating end_state
-    // forward from sentinel. The fused shard always starts at sentinel.
-    let shard_start = SubBlock::default();
-    let mut shard = build_exclusion_shard_pcd(rng, shard_start, &stamps[0], nf);
-    let mut shard_end = shard_start.next(&stamp_commits[0]);
-
-    for idx in 1..stamps.len() {
-        let next_shard = build_exclusion_shard_pcd(rng, shard_end, &stamps[idx], nf);
-        let (fused_pcd, ()) = PROOF_SYSTEM
-            .fuse(rng, pool::ExclusionShardFuse, (), shard, next_shard)
-            .expect("ExclusionShardFuse");
-        shard_end = shard_end.next(&stamp_commits[idx]);
-        shard = fused_pcd;
-    }
-
-    let (pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            unspent::UnspentInit,
-            (prev_anchor,),
-            shard,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("UnspentInit");
-    pcd
-}
-
+/// Build an [`Unspent`] for `nf` covering blocks `range`. Per non-empty
+/// block: one [`UnspentSeed`] per stamp. Per empty block: one
+/// [`EmptyBlockUnspentSeed`]. All segments fused linearly via
+/// [`UnspentFuse`].
 pub(crate) fn build_unspent_pcd<'source>(
     rng: &mut (impl RngCore + CryptoRng),
     pool: &PoolSim,
     nf: Nullifier,
     range: RangeInclusive<BlockHeight>,
-) -> Pcd<'source, unspent::Unspent> {
+) -> Pcd<'source, pool::Unspent> {
     let start = *range.start();
     let end = *range.end();
     assert_eq!(start.epoch(), end.epoch(), "Unspent single-epoch range");
     assert!(start <= end);
 
-    let mut left = build_unspent_at_block_pcd(rng, pool, nf, start);
-    let mut height = start.next().expect("start < max");
-    while height <= end {
-        let right = build_unspent_at_block_pcd(rng, pool, nf, height);
-        let (next_pcd, ()) = PROOF_SYSTEM
-            .fuse(rng, unspent::UnspentFuse, (), left, right)
-            .expect("UnspentFuse");
-        left = next_pcd;
-        let Some(succ) = height.next() else { break };
-        height = succ;
+    let mut state = pool.prev_anchor_at(start);
+    let mut chain: Option<Pcd<'source, pool::Unspent>> = None;
+    let mut height = start;
+    loop {
+        let stamps = pool.tachygrams_at(height);
+        let stamp_commits = pool.stamp_commits_at(height);
+        if stamps.is_empty() {
+            let next_state = state.next_empty();
+            let (seed, ()) = PROOF_SYSTEM
+                .seed(rng, pool::EmptyBlockUnspentSeed, (state, nf))
+                .expect("EmptyBlockUnspentSeed");
+            chain = Some(match chain.take() {
+                | None => seed,
+                | Some(left) => {
+                    let (fused, ()) = PROOF_SYSTEM
+                        .fuse(rng, pool::UnspentFuse, (), left, seed)
+                        .expect("UnspentFuse");
+                    fused
+                },
+            });
+            state = next_state;
+        } else {
+            for (tgs, commit) in stamps.iter().zip(stamp_commits.iter()) {
+                let next_state = state.next_stamp(commit);
+                let seed = build_unspent_seed_pcd(rng, state, tgs, nf);
+                chain = Some(match chain.take() {
+                    | None => seed,
+                    | Some(left) => {
+                        let (fused, ()) = PROOF_SYSTEM
+                            .fuse(rng, pool::UnspentFuse, (), left, seed)
+                            .expect("UnspentFuse");
+                        fused
+                    },
+                });
+                state = next_state;
+            }
+        }
+        if height >= end {
+            break;
+        }
+        height = height.next().expect("height < max");
     }
 
-    left
+    chain.expect("Unspent range must cover at least one block")
 }
 
 pub(crate) fn build_nullifier_rollover_pcd<'source>(
@@ -572,20 +518,61 @@ impl WalletSim {
         let cm = note.commitment();
 
         let stamps = pool.tachygrams_at(height);
+        let stamp_commits = pool.stamp_commits_at(height);
         let cm_idx = stamps
             .iter()
             .position(|tgs| tgs.contains(&cm.into()))
             .expect("cm not found in any stamp at the cm-block");
-        let stamp_commits = pool.stamp_commits_at(height);
-        let pre_cm_state = SubBlock::from(&stamp_commits[..cm_idx]);
 
-        let shard = build_inclusion_shard_pcd(rng, pre_cm_state, &stamps[cm_idx], nf_pcd);
-        let complement = build_inclusion_complement_pcd(rng, pool, height, cm_idx);
+        let pre_cm_anchor = stamp_commits[..cm_idx]
+            .iter()
+            .fold(pool.prev_anchor_at(height), Anchor::next_stamp);
 
-        let (pcd, ()) = PROOF_SYSTEM
-            .fuse(rng, spendable::SpendableInit, (), shard, complement)
+        let stamp_gadget = TachygramSetGadget::from(stamps[cm_idx].as_slice());
+        let (spendable, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spendable::SpendableInit,
+                (pre_cm_anchor, stamp_gadget),
+                nf_pcd,
+                Proof::trivial().carry::<()>(()),
+            )
             .expect("SpendableInit");
-        pcd
+
+        // If cm is the last stamp, post_cm_anchor is already the
+        // block-final anchor — no rest-of-block lift needed.
+        if cm_idx + 1 == stamps.len() {
+            return spendable;
+        }
+
+        // Build an Unspent over stamps cm_idx+1..end of the cm-block,
+        // chained from post_cm_anchor, then SpendableLift.
+        let nf = spendable.data.0;
+        let mut state = spendable.data.1;
+        let mut acc: Option<Pcd<'source, pool::Unspent>> = None;
+        for (tgs, commit) in stamps[cm_idx + 1..]
+            .iter()
+            .zip(stamp_commits[cm_idx + 1..].iter())
+        {
+            let next_state = state.next_stamp(commit);
+            let seed = build_unspent_seed_pcd(rng, state, tgs, nf);
+            acc = Some(match acc.take() {
+                | None => seed,
+                | Some(left) => {
+                    let (fused, ()) = PROOF_SYSTEM
+                        .fuse(rng, pool::UnspentFuse, (), left, seed)
+                        .expect("UnspentFuse");
+                    fused
+                },
+            });
+            state = next_state;
+        }
+        let rest = acc.expect("rest-of-block has at least one stamp");
+
+        let (lifted, ()) = PROOF_SYSTEM
+            .fuse(rng, spendable::SpendableLift, (), spendable, rest)
+            .expect("SpendableLift");
+        lifted
     }
 
     pub fn autonome<'source>(
@@ -692,7 +679,7 @@ impl<'source> SyncSim<'source> {
     }
 
     /// Advance every maintained spendable up to `pool`'s current anchor,
-    /// chaining same-epoch and cross-epoch lifts as needed. Stored
+    /// composing same-epoch and cross-epoch lifts as needed. Stored
     /// spendables locate their current height by asking `pool` to resolve
     /// the spendable's anchor.
     pub fn lift(&mut self, rng: &mut (impl RngCore + CryptoRng), pool: &PoolSim) {

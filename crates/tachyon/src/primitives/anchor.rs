@@ -1,30 +1,51 @@
 use corez::io::{self, Read, Write};
 use ff::{Field as _, PrimeField as _};
-use pasta_curves::Fp;
+use pasta_curves::{
+    Fp,
+    arithmetic::{Coordinates, CurveAffine as _},
+};
 
-use super::EpochIndex;
-use crate::{SubBlock, digest::poseidon};
+use super::{EpochIndex, TachygramSetCommit};
+use crate::digest::poseidon;
 
-/// Chain anchor.
+/// Running anchor over the consensus state.
 ///
-/// A running Poseidon hash chain. Intra-epoch links absorb only the
-/// `(prev_anchor, block_state)` pair via [`Anchor::next_block`];
-/// epoch transitions are domain-separated boundary links of the form
-/// `(prev_anchor, new_epoch)` via [`Anchor::next_epoch`] (performed by
-/// `SpendableRollover`). Opening a chain reveals which links cross epoch
-/// boundaries by their domain.
+/// A Poseidon hash sequence with three domain-separated link types:
+///
+/// - [`Anchor::next_stamp`] (`Tachyon-StampFld`) absorbs one stamp's
+///   tachygram-set commitment.
+/// - [`Anchor::next_empty`] (`Tachyon-EmptyBlk`) advances through one block
+///   that contains zero stamps, preserving per-height anchor uniqueness.
+/// - [`Anchor::next_epoch`] (`Tachyon-EpochStp`) lifts across an epoch
+///   boundary; performed by `SpendableRollover`.
+///
+/// Opening reveals each link's role by its domain.
 #[derive(Clone, Copy, Debug, Eq)]
 pub struct Anchor(pub Fp);
 
 impl Anchor {
-    /// Advance the anchor by one intra-epoch block.
+    /// Advance the anchor by absorbing one stamp's commit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `stamp_commit` is the identity point.
     #[must_use]
-    pub fn next_block(self, block_state: SubBlock) -> Self {
-        Self(poseidon::anchor_block_step(self.0, block_state.0))
+    pub fn next_stamp(self, stamp_commit: &TachygramSetCommit) -> Self {
+        let point = stamp_commit.0.inner();
+        let coords = point
+            .coordinates()
+            .expect("must not be identity commitment"); // TODO: error?
+        Self(poseidon::anchor_stamp_step(self.0, coords))
+    }
+
+    /// Advance the anchor through one empty block (zero stamps).
+    #[must_use]
+    pub fn next_empty(self) -> Self {
+        Self(poseidon::anchor_empty_step(self.0))
     }
 
     /// Lift the anchor across an epoch boundary into the new epoch's
-    /// initial chain state.
+    /// initial state.
     #[must_use]
     pub fn next_epoch(self, new_epoch: EpochIndex) -> Self {
         Self(poseidon::anchor_epoch_step(self.0, new_epoch.0))
@@ -69,5 +90,75 @@ impl From<Anchor> for Fp {
 impl PartialEq<Self> for Anchor {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use super::*;
+    use crate::Tachygram;
+
+    /// Folding the same stamps in the same order yields the same anchor.
+    #[test]
+    fn next_stamp_is_deterministic() {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let first = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
+        let second = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
+
+        let run_one = Anchor::default().next_stamp(&first).next_stamp(&second);
+        let run_two = Anchor::default().next_stamp(&first).next_stamp(&second);
+        assert_eq!(run_one, run_two);
+    }
+
+    /// Two distinct stamp commits absorb to distinct anchors.
+    #[test]
+    fn distinct_stamps_distinct_anchors() {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let first = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
+        let second = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
+
+        assert_ne!(
+            Anchor::default().next_stamp(&first),
+            Anchor::default().next_stamp(&second),
+        );
+    }
+
+    /// Order matters: absorbing the same stamps in different orders diverges.
+    #[test]
+    fn order_matters() {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let first = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
+        let second = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
+
+        let forward = Anchor::default().next_stamp(&first).next_stamp(&second);
+        let reverse = Anchor::default().next_stamp(&second).next_stamp(&first);
+        assert_ne!(forward, reverse);
+    }
+
+    /// An empty-block tick changes the anchor.
+    #[test]
+    fn next_empty_advances_anchor() {
+        let start = Anchor::default();
+        assert_ne!(start, start.next_empty());
+    }
+
+    /// Consecutive empty-block ticks produce distinct anchors.
+    #[test]
+    fn consecutive_empty_distinct() {
+        let first = Anchor::default().next_empty();
+        let second = first.next_empty();
+        assert_ne!(first, second);
+    }
+
+    /// Empty-block tick is domain-separated from stamp absorption.
+    #[test]
+    fn next_empty_distinct_from_next_stamp() {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let stamp = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
+        let via_empty = Anchor::default().next_empty();
+        let via_stamp = Anchor::default().next_stamp(&stamp);
+        assert_ne!(via_empty, via_stamp);
     }
 }

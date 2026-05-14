@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use mock_ragu::{Header, Index, Step, Suffix};
 
-use super::{pool::AnchorSpan, spend::SpendHeader, spendable::SpendableHeader};
+use super::{pool::AnchorChain, spend::SpendHeader, spendable::SpendableHeader};
 use crate::{
     ActionSetGadget, TachygramSetGadget,
     constants::NOTE_VALUE_MAX,
@@ -29,10 +29,10 @@ impl Header for StampHeader {
     /// `(action_commit, stamp_tg_commit, anchor)` — all 32-byte commitment
     /// handles. Polynomials travel prover-side via `Witness`/`Aux` as
     /// `ActionAcc` / `StampTgAcc`. Per-block pool state travels through
-    /// the spendable / stamp-lift chain (it isn't on the stamp header).
+    /// the spendable / stamp-lift lineage (it isn't on the stamp header).
     type Data<'source> = (ActionSetCommit, TachygramSetCommit, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(14);
+    const SUFFIX: Suffix = Suffix::new(11);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
         todo!("commitment encoding seems incorrect");
@@ -63,7 +63,7 @@ impl Step for OutputStamp {
         Anchor,
     );
 
-    const INDEX: Index = Index::new(24);
+    const INDEX: Index = Index::new(19);
 
     fn witness<'source>(
         &self,
@@ -95,7 +95,7 @@ impl Step for OutputStamp {
 /// Fuses a [`SpendHeader`] with a [`SpendableHeader`] into a stamp.
 ///
 /// The spend's first nullifier must equal the spendable's `nf`;
-/// chain-binding is implicit via `spendable.anchor` (already validated by
+/// anchor-binding is implicit via `spendable.anchor` (already validated by
 /// the spendable lineage). Epoch alignment is consumer-side.
 #[derive(Debug)]
 pub struct SpendStamp;
@@ -107,7 +107,7 @@ impl Step for SpendStamp {
     type Right = SpendableHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(26);
+    const INDEX: Index = Index::new(21);
 
     fn witness<'source>(
         &self,
@@ -148,7 +148,7 @@ impl Step for MergeStamp {
         TachygramSetGadget,
     );
 
-    const INDEX: Index = Index::new(27);
+    const INDEX: Index = Index::new(22);
 
     fn witness<'source>(
         &self,
@@ -188,9 +188,9 @@ impl Step for MergeStamp {
     }
 }
 
-/// Advance a stamp's anchor by absorbing an [`AnchorSpan`]: the span's
-/// `prev_anchor` must equal the stamp's `old_anchor`, and the new anchor
-/// is the span's `end_anchor`.
+/// Advance a stamp's anchor by absorbing an [`AnchorChain`]: the
+/// segment's `start` must equal the stamp's `old_anchor`, and the new
+/// anchor is the segment's `end`.
 #[derive(Debug)]
 pub struct StampLift;
 
@@ -198,10 +198,10 @@ impl Step for StampLift {
     type Aux<'source> = ();
     type Left = StampHeader;
     type Output = StampHeader;
-    type Right = AnchorSpan;
+    type Right = AnchorChain;
     type Witness<'source> = (ActionSetCommit, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(28);
+    const INDEX: Index = Index::new(23);
 
     fn witness<'source>(
         &self,
@@ -209,7 +209,7 @@ impl Step for StampLift {
         (left_action_commit, left_tachygram_commit, old_anchor): <Self::Left as Header>::Data<
             'source,
         >,
-        (span_prev_anchor, span_end_anchor): <Self::Right as Header>::Data<'source>,
+        (segment_start, segment_end): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         // Bind witness commits to the left header's commitments.
         if left_action.0 != left_action_commit.0 || left_tachygram.0 != left_tachygram_commit.0 {
@@ -218,15 +218,14 @@ impl Step for StampLift {
             ));
         }
 
-        // The anchor span's chain segment must root at the stamp's old
-        // anchor — boundary match instead of a multiset query.
-        if span_prev_anchor != old_anchor {
+        // The anchor segment must root at the stamp's old anchor.
+        if segment_start != old_anchor {
             return Err(mock_ragu::Error(
-                "StampLift: span prev_anchor must equal stamp old_anchor",
+                "StampLift: segment start must equal stamp old_anchor",
             ));
         }
 
-        let data = (left_action_commit, left_tachygram_commit, span_end_anchor);
+        let data = (left_action_commit, left_tachygram_commit, segment_end);
         Ok((data, ()))
     }
 }

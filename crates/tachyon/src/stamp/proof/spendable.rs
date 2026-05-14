@@ -1,48 +1,44 @@
 //! Spendable bootstrap, lift, and cross-epoch rollover.
 //!
 //! Bootstrap runs entirely on the user device. The wallet's
-//! [`NullifierHeader`] carries `(cm, nf, epoch)`; fusing it with a
-//! freely-witnessed `(pre_cm_state, stamp_tg_set)` via
-//! [`pool::InclusionShardFuse`] produces a wallet-bound
-//! [`pool::InclusionShard`] carrying `(cm, nf, block_state)`.
-//! [`SpendableInit`] then fuses that shard with a sync-service-supplied
-//! [`pool::InclusionComplement`] (rolled back to the cm-stamp position),
-//! verifying chain integrity, to produce a [`SpendableHeader`] carrying
-//! only `(nf, anchor)`. The cm↔nf binding is structurally inherited
-//! through the shard — no separate cm-equality check is needed at
-//! `SpendableInit`. The wallet's epoch claim flows through `nf` itself
-//! (GGM-bound at the NullifierHeader), so no epoch alignment check is
-//! needed here either.
+//! [`NullifierHeader`] carries `(cm, nf, epoch)`; [`SpendableInit`]
+//! fuses it with a freely-witnessed `(pre_cm_anchor, stamp_tg_set)`,
+//! verifying `cm ∈ stamp_tg_set`, and emits a [`SpendableHeader`]
+//! carrying `(nf, post_cm_anchor)` — the running anchor immediately
+//! after the cm-stamp's absorption. The cm↔nf binding is structurally
+//! inherited through the [`NullifierHeader`] (GGM-bound). The wallet's
+//! epoch claim flows through `nf` itself, so no epoch alignment check
+//! is needed here.
 //!
-//! Position-independence is intrinsic — the wallet seeds its
-//! `InclusionShard` at whatever cm-pre-state its cm-stamp actually sits
-//! at, and the sync service's per-block rollback lineage exposes a valid
-//! `InclusionComplement` at every depth.
+//! `pre_cm_anchor` is freely witnessed at this step; the spendable
+//! reaches a real published anchor only by extending through
+//! [`SpendableLift`] over [`Unspent`] segments, which by construction
+//! prove nf-exclusion at every covered stamp. There is no path that
+//! advances a spendable's anchor without a per-stamp nf-check.
 //!
 //! Sync services update spendables via lifts ([`SpendableLift`]) and
 //! cross-epoch rollovers ([`SpendableRollover`] →
 //! [`SpendableEpochLift`]). [`SpendableRollover`] is the only step that
 //! emits the [`Anchor::next_epoch`] boundary domain — it lifts the old
 //! epoch's terminal anchor into the new epoch's initial anchor, which
-//! the new-epoch [`Unspent`] chain then extends with ordinary block
-//! steps.
+//! the new-epoch [`Unspent`] then extends with ordinary per-stamp
+//! advances.
 
 extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ff::PrimeField as _;
+use ff::{Field as _, PrimeField as _};
 use mock_ragu::{Header, Index, Step, Suffix};
 use pasta_curves::Fp;
 
 use super::{
     delegation::{DelegateNullifierHeader, NullifierHeader},
-    pool::{InclusionComplement, InclusionShard},
-    unspent::Unspent,
+    pool::Unspent,
 };
 use crate::{
     note::Nullifier,
-    primitives::{Anchor, EpochIndex},
+    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetGadget},
 };
 
 /// Wallet's spendable position. Identified by `nf` alone — `nf` uniquely
@@ -55,7 +51,7 @@ impl Header for SpendableHeader {
     /// `(nf, anchor)`.
     type Data<'source> = (Nullifier, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(10);
+    const SUFFIX: Suffix = Suffix::new(7);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32);
@@ -78,7 +74,7 @@ impl Header for NullifierRolloverHeader {
     /// `(old_nf, new_nf, new_epoch)`.
     type Data<'source> = (Nullifier, Nullifier, EpochIndex);
 
-    const SUFFIX: Suffix = Suffix::new(11);
+    const SUFFIX: Suffix = Suffix::new(8);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32 + 4);
@@ -90,11 +86,11 @@ impl Header for NullifierRolloverHeader {
 }
 
 /// A spendable rolled forward through an nf rotation, awaiting a
-/// new-epoch chain anchor from [`SpendableEpochLift`].
+/// new-epoch anchor from [`SpendableEpochLift`].
 ///
 /// Carries `new_nf` (which the new-epoch [`Unspent`] must cover) and
 /// `boundary_anchor` (output of [`Anchor::next_epoch`] applied to the
-/// old epoch's terminal anchor — i.e., the new epoch's initial chain
+/// old epoch's terminal anchor — i.e., the new epoch's initial
 /// anchor). The new-epoch `Unspent`'s `prev_anchor` must equal this
 /// boundary anchor. The old-epoch nullifier is dropped: [`SpendableRollover`]
 /// has already discharged it against the input spendable's `nf`.
@@ -105,7 +101,7 @@ impl Header for SpendableRolloverHeader {
     /// `(new_nf, boundary_anchor)`.
     type Data<'source> = (Nullifier, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(12);
+    const SUFFIX: Suffix = Suffix::new(9);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32);
@@ -115,45 +111,49 @@ impl Header for SpendableRolloverHeader {
     }
 }
 
-/// Fuse a wallet's [`InclusionShard`] with a sync-service-supplied
-/// [`InclusionComplement`] rolled back to the cm-stamp position, producing
-/// a [`SpendableHeader`] anchored at the cm-block.
+/// Bootstrap a [`SpendableHeader`] from the wallet's [`NullifierHeader`].
 ///
-/// Verifies chain integrity (`shard.block_state == complement.start_state`).
-/// The cm↔nf binding is structurally inherited through the shard, so no
-/// cm-equality check is needed here. The cm-block structurally cannot
-/// contain the wallet's nullifier (`nf` is Poseidon-bound to `cm`), so
-/// `SpendableInit` does not carry an nf-exclusion check on the cm-block.
-/// The wallet's epoch claim flows through `nf` (GGM-bound at the
-/// NullifierHeader); no epoch alignment check is needed.
+/// Witness `(pre_cm_anchor, stamp_tg_set)`: verifies `cm ∈ stamp_tg_set`
+/// (cm comes from the left header) and emits a [`SpendableHeader`]
+/// carrying `(nf, pre_cm_anchor.next_stamp(commit))` — the running
+/// anchor immediately after the cm-stamp's absorption.
+///
+/// `pre_cm_anchor` is freely witnessed; the spendable reaches a real
+/// published anchor only by extending through [`SpendableLift`] over
+/// [`Unspent`] segments built from real stamps. The cm-block itself
+/// cannot contain the wallet's `nf` (`nf` is GGM-bound to `cm`), so no
+/// nf-exclusion check is needed at the cm-stamp; the wallet's epoch
+/// claim flows through `nf` (GGM-bound at the [`NullifierHeader`]).
 #[derive(Debug)]
 pub struct SpendableInit;
 
 impl Step for SpendableInit {
     type Aux<'source> = ();
-    type Left = InclusionShard;
+    type Left = NullifierHeader;
     type Output = SpendableHeader;
-    type Right = InclusionComplement;
-    type Witness<'source> = ();
+    type Right = ();
+    /// `(pre_cm_anchor, stamp_tg_set)`.
+    type Witness<'source> = (Anchor, TachygramSetGadget);
 
-    const INDEX: Index = Index::new(18);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
-        _witness: Self::Witness<'source>,
-        (_shard_cm, shard_nf, shard_block_state): <Self::Left as Header>::Data<'source>,
-        (complement_start_state, complement_anchor): <Self::Right as Header>::Data<'source>,
+        (pre_cm_anchor, stamp_tg_set): Self::Witness<'source>,
+        (cm, nf, _epoch): <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if shard_block_state != complement_start_state {
-            return Err(mock_ragu::Error(
-                "SpendableInit: wrong complement for shard state",
-            ));
+        // Inclusion: cm ∈ set ⇔ query(cm) == 0.
+        if stamp_tg_set.0.query(Fp::from(cm)) != Fp::ZERO {
+            return Err(mock_ragu::Error("SpendableInit: commitment not in set"));
         }
-        Ok(((shard_nf, complement_anchor), ()))
+        let stamp_commit = TachygramSetCommit::from(stamp_tg_set);
+        let post_cm_anchor = pre_cm_anchor.next_stamp(&stamp_commit);
+        Ok(((nf, post_cm_anchor), ()))
     }
 }
 
-/// Advance a [`SpendableHeader`]'s `anchor` along an [`Unspent`] chain
+/// Advance a [`SpendableHeader`]'s `anchor` along an [`Unspent`]
 /// segment whose `prev_anchor` equals the spendable's current anchor.
 #[derive(Debug)]
 pub struct SpendableLift;
@@ -165,7 +165,7 @@ impl Step for SpendableLift {
     type Right = Unspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(19);
+    const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,
@@ -201,7 +201,7 @@ impl Step for RolloverFuse {
     type Right = NullifierHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(20);
+    const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,
@@ -232,7 +232,7 @@ impl Step for DelegateRolloverFuse {
     type Right = DelegateNullifierHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(21);
+    const INDEX: Index = Index::new(16);
 
     fn witness<'source>(
         &self,
@@ -264,7 +264,7 @@ impl Step for DelegateRolloverFuse {
 ///
 /// This is the only step in the proof tree that invokes the
 /// [`Anchor::next_epoch`] domain. `new_epoch` enters the boundary hash
-/// directly, so any tampered value diverges from the published chain.
+/// directly, so any tampered value diverges from the published anchor.
 #[derive(Debug)]
 pub struct SpendableRollover;
 
@@ -275,7 +275,7 @@ impl Step for SpendableRollover {
     type Right = NullifierRolloverHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(22);
+    const INDEX: Index = Index::new(17);
 
     fn witness<'source>(
         &self,
@@ -295,14 +295,14 @@ impl Step for SpendableRollover {
     }
 }
 
-/// Land a rolled-over spendable on a new-epoch chain anchor.
+/// Land a rolled-over spendable on a new-epoch anchor.
 ///
 /// Merges with a new-epoch [`Unspent`] whose `prev_anchor` equals the
 /// rollover's `boundary_anchor`. The boundary anchor cryptographically
 /// binds `new_epoch` via [`Anchor::next_epoch`], and the new-epoch
 /// [`Unspent`] is bound to the wallet's new-epoch identity via
 /// `unspent.nf == new_nf` (GGM-bound upstream in the NullifierHeader).
-/// Together these pin the wallet to the real chain's E→E+1 transition.
+/// Together these pin the wallet to the real E→E+1 epoch transition.
 #[derive(Debug)]
 pub struct SpendableEpochLift;
 
@@ -313,7 +313,7 @@ impl Step for SpendableEpochLift {
     type Right = Unspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(23);
+    const INDEX: Index = Index::new(18);
 
     fn witness<'source>(
         &self,

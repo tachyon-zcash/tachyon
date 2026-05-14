@@ -10,7 +10,6 @@ pub mod pool;
 pub mod spend;
 pub mod spendable;
 pub mod stamp;
-pub mod unspent;
 
 #[cfg(test)]
 mod tests;
@@ -28,17 +27,12 @@ fn make_app() -> Result<Application, mock_ragu::Error> {
         .register(delegation::DelegationStep)?
         .register(delegation::DelegateNfPrefixStep)?
         .register(delegation::DelegateNullifierStep)?
-        .register(pool::InclusionShardFuse)?
-        .register(pool::InclusionComplementSeed)?
-        .register(pool::InclusionComplementStep)?
-        .register(pool::ExclusionShardSeed)?
-        .register(pool::ExclusionShardFuse)?
-        .register(pool::AnchorSpanSeed)?
-        .register(pool::AnchorSpanStep)?
-        .register(pool::AnchorSpanFuse)?
-        .register(unspent::EmptyBlockUnspentSeed)?
-        .register(unspent::UnspentInit)?
-        .register(unspent::UnspentFuse)?
+        .register(pool::AnchorSeed)?
+        .register(pool::EmptyBlockSeed)?
+        .register(pool::AnchorFuse)?
+        .register(pool::UnspentSeed)?
+        .register(pool::EmptyBlockUnspentSeed)?
+        .register(pool::UnspentFuse)?
         .register(spendable::SpendableInit)?
         .register(spendable::SpendableLift)?
         .register(spendable::RolloverFuse)?

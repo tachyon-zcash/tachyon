@@ -64,8 +64,8 @@ impl Header for NfPrefixHeader {
 /// Private header after nullifier derivation.
 ///
 /// Carries `(cm, nf, epoch)` — the wallet's private GGM-leaf state. `cm` is
-/// required at [`InclusionShardFuse`](super::pool::InclusionShardFuse) to
-/// bind the inclusion shard, and at
+/// required at [`SpendableInit`](super::spendable::SpendableInit) to bind
+/// the spendable to the cm-stamp's anchor advance, and at
 /// [`SpendBind`](super::spend::SpendBind) to bind the action to the note
 /// via `note.commitment() == cm_tg`. User device only — `cm` is private.
 #[derive(Clone, Debug)]
