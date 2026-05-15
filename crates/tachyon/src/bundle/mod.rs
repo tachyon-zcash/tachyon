@@ -311,7 +311,7 @@ impl Plan {
             .spends
             .iter()
             .map(|plan| {
-                let alpha = plan.theta.randomizer(&plan.note.commitment());
+                let alpha = plan.theta.randomizer(plan.note.commitment());
                 ((plan.cv(), plan.rk), (alpha, plan.note, plan.rcv))
             })
             .collect();
@@ -320,7 +320,7 @@ impl Plan {
             .outputs
             .iter()
             .map(|plan| {
-                let alpha = plan.theta.randomizer(&plan.note.commitment());
+                let alpha = plan.theta.randomizer(plan.note.commitment());
                 ((plan.cv(), plan.rk), (alpha, plan.note, plan.rcv))
             })
             .collect();
@@ -360,7 +360,7 @@ impl Plan {
 
         for (idx, plan) in self.spends.iter().enumerate() {
             let cm = plan.note.commitment();
-            let alpha = plan.theta.randomizer::<effect::Spend>(&cm);
+            let alpha = plan.theta.randomizer::<effect::Spend>(cm);
             let rsk = ask.derive_action_private(&alpha);
             if rsk.derive_action_public() != plan.rk {
                 return Err(SignError::RkMismatch(idx));
@@ -374,7 +374,7 @@ impl Plan {
 
         for (idx, plan) in self.outputs.iter().enumerate() {
             let cm = plan.note.commitment();
-            let alpha = plan.theta.randomizer::<effect::Output>(&cm);
+            let alpha = plan.theta.randomizer::<effect::Output>(cm);
             let rsk = private::ActionSigningKey::new(&alpha);
             if rsk.derive_action_public() != plan.rk {
                 return Err(SignError::RkMismatch(self.spends.len() + idx));
@@ -522,7 +522,12 @@ impl Stamped {
             .map(|action| <[u8; 64]>::from(action.sig))
             .collect();
 
-        let tachygrams: Vec<Fp> = self.stamp.tachygrams.iter().map(Fp::from).collect();
+        let tachygrams: Vec<Fp> = self
+            .stamp
+            .tachygrams
+            .iter()
+            .map(|&tg| Fp::from(tg))
+            .collect();
 
         auth_digest_stamped(
             action_sigs.iter().collect::<Vec<&[u8; 64]>>().as_slice(),
@@ -768,7 +773,7 @@ fn read_bundle_trailer_stamped<R: Read>(mut reader: R) -> io::Result<Stamp> {
     let anchor = Anchor::read(&mut reader)?;
 
     let tachygrams = serialization::read_fp_list(&mut reader)?
-        .iter()
+        .into_iter()
         .map(Tachygram::from)
         .collect();
 
@@ -822,7 +827,12 @@ fn write_bundle_trailer_stamped<W: Write>(mut writer: W, stamp: &Stamp) -> io::R
     stamp.anchor.write(&mut writer)?;
     serialization::write_fp_list(
         &mut writer,
-        &stamp.tachygrams.iter().map(Fp::from).collect::<Vec<Fp>>(),
+        &stamp
+            .tachygrams
+            .iter()
+            .copied()
+            .map(Fp::from)
+            .collect::<Vec<Fp>>(),
     )?;
     stamp::write_proof(&mut writer, &stamp.proof)?;
     Ok(())

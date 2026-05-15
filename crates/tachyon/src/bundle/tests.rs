@@ -25,7 +25,7 @@ fn make_output_stamp(
     let rcv = value::CommitmentTrapdoor::random(&mut *rng);
     let theta = ActionEntropy::random(&mut *rng);
     let plan = action::Plan::output(note, theta, rcv);
-    let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+    let alpha = theta.randomizer::<effect::Output>(note.commitment());
 
     let stamp = Stamp::prove_output(
         &mut *rng,

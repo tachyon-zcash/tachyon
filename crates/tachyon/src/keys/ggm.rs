@@ -76,7 +76,7 @@ impl NoteMasterKey {
     /// Derive a nullifier for the given epoch.
     #[must_use]
     pub fn derive_nullifier(&self, flavor: EpochIndex) -> Nullifier {
-        Nullifier::from(&ggm_walk(self.0, flavor.0, GGM_TREE_DEPTH))
+        Nullifier::from(ggm_walk(self.0, flavor.0, GGM_TREE_DEPTH))
     }
 
     /// Derive epoch-restricted prefix keys covering the specified range.
@@ -220,7 +220,7 @@ impl NotePrefixedKey {
     pub fn derive_nullifier(&self, flavor: EpochIndex) -> Nullifier {
         assert!(self.range().contains(&flavor.0), "epoch out of range");
         let remaining = GGM_TREE_DEPTH - self.depth.get();
-        Nullifier::from(&ggm_walk(self.inner, flavor.0, remaining))
+        Nullifier::from(ggm_walk(self.inner, flavor.0, remaining))
     }
 }
 

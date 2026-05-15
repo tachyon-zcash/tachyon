@@ -52,7 +52,7 @@ impl Header for NfMasterHeader {
     fn encode(&(mk, cm): &Self::Data<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32);
         out.extend_from_slice(&mk.0.to_repr());
-        out.extend_from_slice(&Fp::from(&cm).to_repr());
+        out.extend_from_slice(&Fp::from(cm).to_repr());
         out
     }
 }
@@ -76,7 +76,7 @@ impl Header for NfPrefixHeader {
         out.extend_from_slice(&key.depth.get().to_le_bytes());
         out.extend_from_slice(&key.index.to_le_bytes());
         out.extend_from_slice(&mk.0.to_repr());
-        out.extend_from_slice(&Fp::from(&cm).to_repr());
+        out.extend_from_slice(&Fp::from(cm).to_repr());
         out
     }
 }
@@ -98,8 +98,8 @@ impl Header for NullifierHeader {
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32 + 4);
-        out.extend_from_slice(&Fp::from(&data.0).to_repr());
-        out.extend_from_slice(&Fp::from(&data.1).to_repr());
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        out.extend_from_slice(&Fp::from(data.1).to_repr());
         out.extend_from_slice(&data.2.0.to_le_bytes());
         out
     }
@@ -122,7 +122,7 @@ impl Header for DelegateNfPrefixHeader {
         out.extend_from_slice(&key.inner.to_repr());
         out.extend_from_slice(&key.depth.get().to_le_bytes());
         out.extend_from_slice(&key.index.to_le_bytes());
-        out.extend_from_slice(&Fp::from(&id).to_repr());
+        out.extend_from_slice(&id.0.to_repr());
         out
     }
 }
@@ -141,9 +141,9 @@ impl Header for DelegateNullifierHeader {
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 4 + 32);
-        out.extend_from_slice(&Fp::from(&data.0).to_repr());
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&data.1.0.to_le_bytes());
-        out.extend_from_slice(&Fp::from(&data.2).to_repr());
+        out.extend_from_slice(&Fp::from(data.2).to_repr());
         out
     }
 }
@@ -268,7 +268,7 @@ impl Step for NullifierStep {
 
         let epoch = EpochIndex(key.index);
         let nf = key.derive_nullifier(epoch);
-        let cm_tg = Tachygram::from(&Fp::from(&cm));
+        let cm_tg = Tachygram::from(cm);
         Ok(((cm_tg, nf, epoch), ()))
     }
 }
@@ -296,11 +296,8 @@ impl Step for DelegationStep {
         (key, mk, cm): <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        let delegation_id = DelegationId::from(&poseidon::delegation_id(
-            mk.0,
-            Fp::from(&cm),
-            Fp::from(&trap),
-        ));
+        let delegation_id =
+            DelegationId::from(poseidon::delegation_id(mk.0, Fp::from(cm), Fp::from(trap)));
         Ok(((key, delegation_id), ()))
     }
 }

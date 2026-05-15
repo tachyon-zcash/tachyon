@@ -22,7 +22,7 @@ use crate::{
 
 fn encode_spendable(nf: Nullifier, anchor: &Anchor) -> Vec<u8> {
     let mut out = Vec::with_capacity(32 + 4 + 32);
-    out.extend_from_slice(&Fp::from(&nf).to_repr());
+    out.extend_from_slice(&Fp::from(nf).to_repr());
     out.extend_from_slice(&u32::from(anchor.0).to_le_bytes());
     let pool_bytes: [u8; 32] = anchor.1.0.into();
     out.extend_from_slice(&pool_bytes);
@@ -62,8 +62,8 @@ impl Header for SpendableRolloverHeader {
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32 + 4 + 32);
-        out.extend_from_slice(&Fp::from(&data.0).to_repr());
-        out.extend_from_slice(&Fp::from(&data.1).to_repr());
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        out.extend_from_slice(&Fp::from(data.1).to_repr());
         out.extend_from_slice(&u32::from(data.2.0).to_le_bytes());
         let pool_bytes: [u8; 32] = data.2.1.0.into();
         out.extend_from_slice(&pool_bytes);
@@ -107,10 +107,10 @@ impl Step for SpendableInit {
             return Err(mock_ragu::Error);
         }
 
-        if pool.0.query(Fp::from(&cm_tg)) != Fp::ZERO {
+        if pool.0.query(Fp::from(cm_tg)) != Fp::ZERO {
             return Err(mock_ragu::Error);
         }
-        if pool.0.query(Fp::from(&nf)) == Fp::ZERO {
+        if pool.0.query(Fp::from(nf)) == Fp::ZERO {
             return Err(mock_ragu::Error);
         }
 
@@ -154,7 +154,7 @@ impl Step for SpendableRollover {
         if pool.0.commit() != anchor.1.0 {
             return Err(mock_ragu::Error);
         }
-        if pool.0.query(Fp::from(&new_nf)) == Fp::ZERO {
+        if pool.0.query(Fp::from(new_nf)) == Fp::ZERO {
             return Err(mock_ragu::Error);
         }
 
@@ -194,7 +194,7 @@ impl Step for SpendableLift {
             return Err(mock_ragu::Error);
         }
 
-        if delta.0.query(Fp::from(&nf)) == Fp::ZERO {
+        if delta.0.query(Fp::from(nf)) == Fp::ZERO {
             return Err(mock_ragu::Error);
         }
 

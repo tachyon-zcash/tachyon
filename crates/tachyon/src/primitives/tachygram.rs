@@ -13,14 +13,14 @@ use pasta_curves::Fp;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Tachygram(Fp);
 
-impl From<&Fp> for Tachygram {
-    fn from(fp: &Fp) -> Self {
-        Self(*fp)
+impl From<Fp> for Tachygram {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
-impl From<&Tachygram> for Fp {
-    fn from(tg: &Tachygram) -> Self {
+impl From<Tachygram> for Fp {
+    fn from(tg: Tachygram) -> Self {
         tg.0
     }
 }

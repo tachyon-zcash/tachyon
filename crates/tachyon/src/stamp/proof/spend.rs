@@ -30,9 +30,9 @@ impl Header for SpendHeader {
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32 * 2 + 4);
-        out.extend_from_slice(&Fp::from(&data.0).to_repr());
-        out.extend_from_slice(&Fp::from(&data.1[0]).to_repr());
-        out.extend_from_slice(&Fp::from(&data.1[1]).to_repr());
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        out.extend_from_slice(&Fp::from(data.1[0]).to_repr());
+        out.extend_from_slice(&Fp::from(data.1[1]).to_repr());
         out.extend_from_slice(&data.2.0.to_le_bytes());
         out
     }
@@ -77,7 +77,7 @@ impl Step for SpendBind {
             return Err(mock_ragu::Error);
         }
         // Bind the witnessed note to the leaves' cm.
-        let note_cm_tg = Tachygram::from(&Fp::from(&note.commitment()));
+        let note_cm_tg = Tachygram::from(note.commitment());
         if note_cm_tg != left_cm_tg {
             return Err(mock_ragu::Error);
         }

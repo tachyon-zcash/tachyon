@@ -48,8 +48,8 @@ impl ActionEntropy {
     /// Uses distinct BLAKE2b personalizations for spend vs output to
     /// ensure the two randomizers are independent.
     #[must_use]
-    pub fn randomizer<E: Effect>(&self, cm: &note::Commitment) -> ActionRandomizer<E> {
-        ActionRandomizer(E::derive_alpha(self, cm), PhantomData)
+    pub fn randomizer<E: Effect>(&self, cm: note::Commitment) -> ActionRandomizer<E> {
+        ActionRandomizer(E::derive_alpha(*self, cm), PhantomData)
     }
 }
 
@@ -89,10 +89,10 @@ mod tests {
     fn spend_and_output_randomizers_differ() {
         let mut rng = StdRng::seed_from_u64(100);
         let theta = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::from(&Fp::random(&mut rng));
+        let cm = note::Commitment::from(Fp::random(&mut rng));
 
-        let spend_alpha: Fq = theta.randomizer::<effect::Spend>(&cm).into();
-        let output_alpha: Fq = theta.randomizer::<effect::Output>(&cm).into();
+        let spend_alpha: Fq = theta.randomizer::<effect::Spend>(cm).into();
+        let output_alpha: Fq = theta.randomizer::<effect::Output>(cm).into();
 
         assert_ne!(spend_alpha, output_alpha);
     }
@@ -102,15 +102,15 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(101);
         let theta_a = ActionEntropy::random(&mut rng);
         let theta_b = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::from(&Fp::random(&mut rng));
+        let cm = note::Commitment::from(Fp::random(&mut rng));
 
         // Deterministic: same theta twice
-        let first: Fq = theta_a.randomizer::<effect::Spend>(&cm).into();
-        let second: Fq = theta_a.randomizer::<effect::Spend>(&cm).into();
+        let first: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
+        let second: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
         assert_eq!(first, second);
 
         // Sensitive: different theta
-        let other: Fq = theta_b.randomizer::<effect::Spend>(&cm).into();
+        let other: Fq = theta_b.randomizer::<effect::Spend>(cm).into();
         assert_ne!(first, other);
     }
 }

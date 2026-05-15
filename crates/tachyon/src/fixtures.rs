@@ -66,7 +66,7 @@ pub fn build_output_action(
     let rcv = value::CommitmentTrapdoor::random(&mut *rng);
     let theta = ActionEntropy::random(&mut *rng);
     let plan = action::Plan::output(note, theta, rcv);
-    let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+    let alpha = theta.randomizer::<effect::Output>(note.commitment());
 
     let action = Action {
         cv: plan.cv(),
@@ -86,7 +86,7 @@ pub fn random_block_with(
     let mut roots: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
         .take(size - 1)
         .collect();
-    roots.push(Fp::from(&cm));
+    roots.push(Fp::from(cm));
     BlockSet(Polynomial::from_roots(&roots))
 }
 
@@ -668,7 +668,7 @@ pub mod ggm_tools {
             .expect("preblind nullifier step");
         let epoch = EpochIndex(key.index);
         let nf = key.derive_nullifier(epoch);
-        let cm_tg = Tachygram::from(&Fp::from(&cm));
+        let cm_tg = Tachygram::from(cm);
         nf_proof.carry::<delegation::NullifierHeader>((cm_tg, nf, epoch))
     }
 
@@ -716,11 +716,8 @@ pub mod ggm_tools {
                 Proof::trivial().carry::<()>(()),
             )
             .expect("delegation blind step");
-        let delegation_id = DelegationId::from(&poseidon::delegation_id(
-            mk.0,
-            Fp::from(&cm),
-            Fp::from(&trap),
-        ));
+        let delegation_id =
+            DelegationId::from(poseidon::delegation_id(mk.0, Fp::from(cm), Fp::from(trap)));
         proof.carry::<delegation::DelegateNfPrefixHeader>((key, delegation_id))
     }
 

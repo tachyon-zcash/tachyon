@@ -18,14 +18,14 @@ use rand_core::{CryptoRng, RngCore};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DelegationId(pub(crate) Fp);
 
-impl From<&Fp> for DelegationId {
-    fn from(fp: &Fp) -> Self {
-        Self(*fp)
+impl From<Fp> for DelegationId {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
-impl From<&DelegationId> for Fp {
-    fn from(id: &DelegationId) -> Self {
+impl From<DelegationId> for Fp {
+    fn from(id: DelegationId) -> Self {
         id.0
     }
 }
@@ -40,19 +40,19 @@ pub struct DelegationTrapdoor(Fp);
 
 impl DelegationTrapdoor {
     /// Generate a fresh random trapdoor.
-    pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
+    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fp::random(rng))
     }
 }
 
-impl From<&Fp> for DelegationTrapdoor {
-    fn from(fp: &Fp) -> Self {
-        Self(*fp)
+impl From<Fp> for DelegationTrapdoor {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
-impl From<&DelegationTrapdoor> for Fp {
-    fn from(trap: &DelegationTrapdoor) -> Self {
+impl From<DelegationTrapdoor> for Fp {
+    fn from(trap: DelegationTrapdoor) -> Self {
         trap.0
     }
 }

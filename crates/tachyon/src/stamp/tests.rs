@@ -80,14 +80,14 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let rcv_a = value::CommitmentTrapdoor::random(&mut rng);
     let theta_a = ActionEntropy::random(&mut rng);
-    let alpha_a = theta_a.randomizer::<effect::Spend>(&note_a.commitment());
+    let alpha_a = theta_a.randomizer::<effect::Spend>(note_a.commitment());
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
     let rcv_b = value::CommitmentTrapdoor::random(&mut rng);
     let theta_b = ActionEntropy::random(&mut rng);
-    let alpha_b = theta_b.randomizer::<effect::Spend>(&note_b.commitment());
+    let alpha_b = theta_b.randomizer::<effect::Spend>(note_b.commitment());
     let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });

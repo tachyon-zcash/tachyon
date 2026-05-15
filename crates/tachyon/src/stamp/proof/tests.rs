@@ -151,7 +151,7 @@ fn spend_bind_rejects_non_adjacent_epochs() {
 
     let rcv = value::CommitmentTrapdoor::random(&mut rng);
     let theta = ActionEntropy::random(&mut rng);
-    let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+    let alpha = theta.randomizer::<effect::Spend>(note.commitment());
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
@@ -195,7 +195,7 @@ fn step_rejects_zero_value_note() {
     // OutputStamp: no PCD inputs needed.
     let out_rcv = value::CommitmentTrapdoor::random(&mut rng);
     let out_theta = ActionEntropy::random(&mut rng);
-    let out_alpha = out_theta.randomizer::<effect::Output>(&zero_note.commitment());
+    let out_alpha = out_theta.randomizer::<effect::Output>(zero_note.commitment());
     let out_anchor = PoolSim::new().anchor();
     assert!(
         PROOF_SYSTEM
@@ -218,7 +218,7 @@ fn step_rejects_zero_value_note() {
         preblind_nullifier_pair_from_master(&mut rng, valid_master, target_epoch);
     let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
     let spend_theta = ActionEntropy::random(&mut rng);
-    let spend_alpha = spend_theta.randomizer::<effect::Spend>(&zero_note.commitment());
+    let spend_alpha = spend_theta.randomizer::<effect::Spend>(zero_note.commitment());
     assert!(
         PROOF_SYSTEM
             .fuse(
@@ -252,7 +252,7 @@ fn spend_bind_rejects_note_cm_mismatch() {
         preblind_nullifier_pair_from_master(&mut rng, leaf_master, target_epoch);
     let rcv = value::CommitmentTrapdoor::random(&mut rng);
     let theta = ActionEntropy::random(&mut rng);
-    let alpha = theta.randomizer::<effect::Spend>(&other_note.commitment());
+    let alpha = theta.randomizer::<effect::Spend>(other_note.commitment());
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
@@ -396,7 +396,7 @@ fn spendable_init_rejects_cm_absent() {
 
     // Advance with an UNRELATED tachygram — cm is NOT in the pool.
     let unrelated = Fp::from(0xDEAD_BEEFu64);
-    pool.mine(BlockAcc::from(&[Tachygram::from(&unrelated)][..]));
+    pool.mine(BlockAcc::from(&[Tachygram::from(unrelated)][..]));
     let anchor = pool.anchor();
 
     let master_pcd = user.note_master(&mut rng, note);
@@ -432,7 +432,7 @@ fn spendable_init_rejects_nf_present() {
     // Mine a block containing BOTH cm and nf — cm-in-pool passes, nf-in-pool
     // is the intended failure.
     pool.mine(BlockAcc::from(
-        &[Tachygram::from(&note.commitment()), Tachygram::from(&nf)][..],
+        &[Tachygram::from(note.commitment()), Tachygram::from(nf)][..],
     ));
     let anchor = pool.anchor();
 
@@ -461,7 +461,7 @@ fn spendable_epoch_lift_rejects_missing_seed() {
     let note = user.random_note(&mut rng, 500);
 
     // Left: SpendableHeader at epoch-final with a fabricated pool (cm only).
-    let cm_fp = Fp::from(&note.commitment());
+    let cm_fp = Fp::from(note.commitment());
     let epoch_final_height = BlockHeight(EPOCH_SIZE - 1);
     let left_pool = PoolSet(Polynomial::from_roots(&[cm_fp]));
     let left_anchor = Anchor(epoch_final_height, PoolCommit(left_pool.0.commit(Fp::ZERO)));
@@ -561,7 +561,7 @@ fn spendable_rollover_rejects_new_nf_in_pool() {
     let new_nf = new_nf_pcd.data.0;
 
     // Pool rooted at new_nf → query(new_nf) == 0 → step rejects.
-    let new_pool = PoolSet(Polynomial::from_roots(&[Fp::from(&new_nf)]));
+    let new_pool = PoolSet(Polynomial::from_roots(&[Fp::from(new_nf)]));
     let new_anchor = Anchor(
         BlockHeight(EPOCH_SIZE),
         PoolCommit(new_pool.0.commit(Fp::ZERO)),

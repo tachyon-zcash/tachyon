@@ -55,15 +55,15 @@ impl ActionDigest {
 }
 
 /// Extract the inner field element (polynomial root).
-impl From<&ActionDigest> for Fp {
-    fn from(digest: &ActionDigest) -> Self {
+impl From<ActionDigest> for Fp {
+    fn from(digest: ActionDigest) -> Self {
         digest.0
     }
 }
 
-impl From<&Fp> for ActionDigest {
-    fn from(fp: &Fp) -> Self {
-        Self(*fp)
+impl From<Fp> for ActionDigest {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
@@ -130,7 +130,7 @@ mod tests {
         let rcv = value::CommitmentTrapdoor::random(rng);
         let cv = rcv.commit(i64::from(note.value));
         let theta = ActionEntropy::random(rng);
-        let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+        let alpha = theta.randomizer::<effect::Output>(note.commitment());
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         (cv, rk)
     }
