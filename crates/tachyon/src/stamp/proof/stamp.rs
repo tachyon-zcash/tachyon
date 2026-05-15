@@ -82,7 +82,7 @@ impl Step for OutputStamp {
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| mock_ragu::Error)?;
 
-        let tachygram = Tachygram::from(&note.commitment());
+        let tachygram = Tachygram::from(note.commitment());
         let action_acc = ActionAcc::from(&[action_digest][..]);
         let tachygram_acc = TachygramAcc::from(&[tachygram][..]);
 
@@ -129,8 +129,8 @@ impl Step for SpendStamp {
 
         let action_acc = ActionAcc::from(&[action_digest][..]);
         let tachygram_acc = TachygramSet(Polynomial::from_roots(&[
-            Fp::from(&nullifiers[0]),
-            Fp::from(&nullifiers[1]),
+            Fp::from(nullifiers[0]),
+            Fp::from(nullifiers[1]),
         ]));
 
         let data = (

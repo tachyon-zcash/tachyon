@@ -182,7 +182,7 @@ mod tests {
             rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let alpha = theta.randomizer::<effect::Spend>(note.commitment());
         let rsk = ask.derive_action_private(&alpha);
 
         let rk_from_signer: [u8; 32] = rsk.derive_action_public().0.into();

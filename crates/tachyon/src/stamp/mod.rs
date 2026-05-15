@@ -219,7 +219,7 @@ impl Plan {
                 bind_proof.carry::<spend::SpendHeader>((action_digest, [nf0, nf1], epoch));
 
             // SpendStamp: fuse spend with spendable chain
-            let tachygrams = alloc::vec![Tachygram::from(&nf0), Tachygram::from(&nf1),];
+            let tachygrams = alloc::vec![Tachygram::from(nf0), Tachygram::from(nf1)];
             let stamp = Stamp::prove_spend(rng, bind_pcd, spendable_pcd, tachygrams)
                 .map_err(|_err| ProveError::ProofFailed)?;
 
@@ -387,8 +387,8 @@ impl Stamp {
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let left_fps: Vec<Fp> = left_digests.iter().map(Fp::from).collect();
-        let right_fps: Vec<Fp> = right_digests.iter().map(Fp::from).collect();
+        let left_fps: Vec<Fp> = left_digests.iter().copied().map(Fp::from).collect();
+        let right_fps: Vec<Fp> = right_digests.iter().copied().map(Fp::from).collect();
         let left_action = ActionSet(mock_ragu::Polynomial::from_roots(&left_fps));
         let right_action = ActionSet(mock_ragu::Polynomial::from_roots(&right_fps));
         let left_tachygram = TachygramAcc::from(&*left.tachygrams);

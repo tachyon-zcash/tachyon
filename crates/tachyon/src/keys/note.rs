@@ -63,11 +63,7 @@ impl NullifierKey {
         let mk = self.derive_note_private(&note.psi);
         let cm = note.commitment();
 
-        DelegationId::from(&poseidon::delegation_id(
-            mk.0,
-            Fp::from(&cm),
-            Fp::from(&trap),
-        ))
+        DelegationId::from(poseidon::delegation_id(mk.0, Fp::from(cm), Fp::from(trap)))
     }
 }
 

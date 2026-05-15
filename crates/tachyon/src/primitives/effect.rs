@@ -23,7 +23,7 @@ pub trait Effect: sealed::Sealed + 'static {
     /// commitment.
     ///
     /// TODO: finalize alpha derivation spec. poseidon, or other native Fq?
-    fn derive_alpha(theta: &ActionEntropy, cm: &note::Commitment) -> Fq;
+    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq;
 
     /// Commit to this effect's signed value contribution using the given
     /// trapdoor.
@@ -39,7 +39,7 @@ pub struct Spend;
 pub struct Output;
 
 impl Effect for Spend {
-    fn derive_alpha(theta: &ActionEntropy, cm: &note::Commitment) -> Fq {
+    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
         Fq::from_uniform_bytes(&blake2b::alpha_spend(&theta.0, &Fp::from(cm).to_repr()))
     }
 
@@ -50,7 +50,7 @@ impl Effect for Spend {
 }
 
 impl Effect for Output {
-    fn derive_alpha(theta: &ActionEntropy, cm: &note::Commitment) -> Fq {
+    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
         Fq::from_uniform_bytes(&blake2b::alpha_output(&theta.0, &Fp::from(cm).to_repr()))
     }
 

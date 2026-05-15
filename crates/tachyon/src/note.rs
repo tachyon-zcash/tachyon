@@ -163,7 +163,7 @@ impl Note {
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$
     #[must_use]
     pub fn commitment(&self) -> Commitment {
-        Commitment::from(&poseidon::note_commitment(
+        Commitment::from(poseidon::note_commitment(
             self.rcm.0,
             self.pk.0,
             self.value.0,
@@ -194,21 +194,21 @@ impl Note {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Commitment(Fp);
 
-impl From<&Fp> for Commitment {
-    fn from(fp: &Fp) -> Self {
-        Self(*fp)
+impl From<Fp> for Commitment {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
-impl From<&Commitment> for Fp {
-    fn from(cm: &Commitment) -> Self {
+impl From<Commitment> for Fp {
+    fn from(cm: Commitment) -> Self {
         cm.0
     }
 }
 
-impl From<&Commitment> for Tachygram {
-    fn from(commitment: &Commitment) -> Self {
-        Self::from(&commitment.0)
+impl From<Commitment> for Tachygram {
+    fn from(commitment: Commitment) -> Self {
+        Self::from(commitment.0)
     }
 }
 
@@ -225,21 +225,21 @@ impl From<&Commitment> for Tachygram {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Nullifier(Fp);
 
-impl From<&Fp> for Nullifier {
-    fn from(fp: &Fp) -> Self {
-        Self(*fp)
+impl From<Fp> for Nullifier {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
-impl From<&Nullifier> for Fp {
-    fn from(nf: &Nullifier) -> Self {
+impl From<Nullifier> for Fp {
+    fn from(nf: Nullifier) -> Self {
         nf.0
     }
 }
 
-impl From<&Nullifier> for Tachygram {
-    fn from(nullifier: &Nullifier) -> Self {
-        Self::from(&nullifier.0)
+impl From<Nullifier> for Tachygram {
+    fn from(nullifier: Nullifier) -> Self {
+        Self::from(nullifier.0)
     }
 }
 
