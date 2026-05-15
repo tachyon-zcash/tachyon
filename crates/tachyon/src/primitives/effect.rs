@@ -21,6 +21,8 @@ mod sealed {
 pub trait Effect: sealed::Sealed + 'static {
     /// Derive this effect's $\alpha$ scalar from per-action entropy and a note
     /// commitment.
+    ///
+    /// TODO: finalize alpha derivation spec. poseidon, or other native Fq?
     fn derive_alpha(theta: &ActionEntropy, cm: &note::Commitment) -> Fq;
 
     /// Commit to this effect's signed value contribution using the given
