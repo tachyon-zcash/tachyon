@@ -27,21 +27,29 @@ use crate::{
 /// distinct leaf.
 pub const GGM_MAX_INDEX: u32 = EPOCH_MAX;
 
-/// Children per non-leaf node. Must be a power of two ≥ 2.
+/// Children per non-leaf node. Must be a power of two >= 2.
 pub const GGM_TREE_ARITY: u8 = 4;
 
 /// Bits of the leaf index absorbed per GGM step.
-#[expect(clippy::as_conversions, reason = "safe")]
-#[expect(clippy::cast_possible_truncation, reason = "safe")]
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "const arithmetic"
+)]
 pub const GGM_CHUNK_SIZE: u8 = GGM_TREE_ARITY.trailing_zeros() as u8;
 
 /// Mask covering exactly one chunk: low `GGM_CHUNK_SIZE` bits set.
 pub const GGM_CHUNK_MASK: u8 = GGM_TREE_ARITY - 1;
 
-/// Tree depth such that `GGM_ARITY^GGM_DEPTH == GGM_MAX_INDEX + 1`.
-#[expect(clippy::as_conversions, reason = "safe")]
-#[expect(clippy::cast_possible_truncation, reason = "safe")]
-pub const GGM_TREE_DEPTH: u8 = (GGM_MAX_INDEX.trailing_ones() as u8).wrapping_div(GGM_CHUNK_SIZE);
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
+    reason = "const arithmetic"
+)]
+/// Tree depth such that `ARITY ** DEPTH == MAX_INDEX + 1`.
+pub const GGM_TREE_DEPTH: u8 = GGM_MAX_INDEX.trailing_ones() as u8 / GGM_CHUNK_SIZE;
 
 /// Per-note master root key.
 ///
