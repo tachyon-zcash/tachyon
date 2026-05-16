@@ -1,36 +1,11 @@
 use core::{error::Error, fmt};
 
 use ff::PrimeField as _;
-// TODO(#39): replace halo2_poseidon with Ragu Poseidon params
-use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
-use pasta_curves::{
-    EpAffine, Fp,
-    arithmetic::{Coordinates, CurveAffine as _},
-};
+use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
 
 use crate::{
-    Action, action::Plan as ActionPlan, constants::ACTION_DIGEST_PERSONALIZATION, keys::public,
-    primitives::Effect, value,
+    Action, action::Plan as ActionPlan, digest::poseidon, keys::public, primitives::Effect, value,
 };
-
-/// Digest a single action into the accumulation domain.
-///
-/// $$ \mathsf{action\_acc} = \prod_i
-/// \bigl(\text{Poseidon}_\text{Tachyon-ActnDgst}(\mathsf{cv}_i \|
-/// \mathsf{rk}_i) + 1\bigr) $$
-fn digest_action(cv: Coordinates<EpAffine>, rk: Coordinates<EpAffine>) -> ActionDigest {
-    let personalization = Fp::from_u128(u128::from_le_bytes(*ACTION_DIGEST_PERSONALIZATION));
-
-    let hash = Hash::<_, P128Pow5T3, ConstantLength<5>, 3, 2>::init().hash([
-        personalization,
-        *cv.x(),
-        *cv.y(),
-        *rk.x(),
-        *rk.y(),
-    ]);
-
-    ActionDigest(hash)
-}
 
 /// Poseidon digest of a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
 ///
@@ -75,20 +50,20 @@ impl ActionDigest {
             .into_option()
             .ok_or(ActionDigestError::IdentityRk)?;
 
-        Ok(digest_action(cv_coords, rk_coords))
+        Ok(Self(poseidon::action_digest(cv_coords, rk_coords)))
     }
 }
 
 /// Extract the inner field element (polynomial root).
-impl From<&ActionDigest> for Fp {
-    fn from(digest: &ActionDigest) -> Self {
+impl From<ActionDigest> for Fp {
+    fn from(digest: ActionDigest) -> Self {
         digest.0
     }
 }
 
-impl From<&Fp> for ActionDigest {
-    fn from(fp: &Fp) -> Self {
-        Self(*fp)
+impl From<Fp> for ActionDigest {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
@@ -155,7 +130,7 @@ mod tests {
         let rcv = value::CommitmentTrapdoor::random(rng);
         let cv = rcv.commit(i64::from(note.value));
         let theta = ActionEntropy::random(rng);
-        let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+        let alpha = theta.randomizer::<effect::Output>(note.commitment());
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         (cv, rk)
     }

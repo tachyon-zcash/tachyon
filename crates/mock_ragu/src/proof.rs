@@ -108,7 +108,7 @@ impl TryFrom<&[u8; PROOF_SIZE_COMPRESSED]> for Proof {
 
         let expected_binding = compute_binding(&header_hash, &witness_hash);
         if expected_binding != binding {
-            return Err(crate::error::Error);
+            return Err(crate::error::Error("mock_ragu internal binding mismatch"));
         }
 
         Ok(Self {

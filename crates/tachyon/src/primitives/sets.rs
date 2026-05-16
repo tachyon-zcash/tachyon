@@ -60,21 +60,21 @@ pub type TachygramAcc = TachygramSet<Polynomial>;
 
 impl From<&[ActionDigest]> for ActionAcc {
     fn from(ads: &[ActionDigest]) -> Self {
-        let roots: Vec<Fp> = ads.iter().map(Fp::from).collect();
+        let roots: Vec<Fp> = ads.iter().copied().map(Fp::from).collect();
         Self(Polynomial::from_roots(&roots))
     }
 }
 
 impl From<&[Tachygram]> for TachygramAcc {
     fn from(tgs: &[Tachygram]) -> Self {
-        let roots: Vec<Fp> = tgs.iter().map(Fp::from).collect();
+        let roots: Vec<Fp> = tgs.iter().copied().map(Fp::from).collect();
         Self(Polynomial::from_roots(&roots))
     }
 }
 
 impl From<&[Tachygram]> for BlockAcc {
     fn from(tgs: &[Tachygram]) -> Self {
-        let roots: Vec<Fp> = tgs.iter().map(Fp::from).collect();
+        let roots: Vec<Fp> = tgs.iter().copied().map(Fp::from).collect();
         Self(Polynomial::from_roots(&roots))
     }
 }

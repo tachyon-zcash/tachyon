@@ -33,14 +33,13 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
-use ff::{Field as _, PrimeField as _};
-// TODO(#39): replace halo2_poseidon with Ragu Poseidon params
-use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
+use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    constants::{NOTE_COMMITMENT_DOMAIN, NOTE_VALUE_MAX},
+    constants::NOTE_VALUE_MAX,
+    digest::poseidon,
     keys::{NullifierKey, PaymentKey},
     primitives::{EpochIndex, Tachygram},
 };
@@ -164,16 +163,12 @@ impl Note {
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$
     #[must_use]
     pub fn commitment(&self) -> Commitment {
-        let domain = Fp::from_u128(u128::from_le_bytes(*NOTE_COMMITMENT_DOMAIN));
-        Commitment::from(
-            &Hash::<_, P128Pow5T3, ConstantLength<5>, 3, 2>::init().hash([
-                domain,
-                self.rcm.0,
-                self.pk.0,
-                Fp::from(self.value.0),
-                self.psi.0,
-            ]),
-        )
+        Commitment::from(poseidon::note_commitment(
+            self.rcm.0,
+            self.pk.0,
+            self.value.0,
+            self.psi.0,
+        ))
     }
 
     /// Derives a nullifier for this note at the given flavor (epoch).
@@ -199,21 +194,21 @@ impl Note {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Commitment(Fp);
 
-impl From<&Fp> for Commitment {
-    fn from(fp: &Fp) -> Self {
-        Self(*fp)
+impl From<Fp> for Commitment {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
-impl From<&Commitment> for Fp {
-    fn from(cm: &Commitment) -> Self {
+impl From<Commitment> for Fp {
+    fn from(cm: Commitment) -> Self {
         cm.0
     }
 }
 
-impl From<&Commitment> for Tachygram {
-    fn from(commitment: &Commitment) -> Self {
-        Self::from(&commitment.0)
+impl From<Commitment> for Tachygram {
+    fn from(commitment: Commitment) -> Self {
+        Self::from(commitment.0)
     }
 }
 
@@ -230,21 +225,21 @@ impl From<&Commitment> for Tachygram {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Nullifier(Fp);
 
-impl From<&Fp> for Nullifier {
-    fn from(fp: &Fp) -> Self {
-        Self(*fp)
+impl From<Fp> for Nullifier {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
-impl From<&Nullifier> for Fp {
-    fn from(nf: &Nullifier) -> Self {
+impl From<Nullifier> for Fp {
+    fn from(nf: Nullifier) -> Self {
         nf.0
     }
 }
 
-impl From<&Nullifier> for Tachygram {
-    fn from(nullifier: &Nullifier) -> Self {
-        Self::from(&nullifier.0)
+impl From<Nullifier> for Tachygram {
+    fn from(nullifier: Nullifier) -> Self {
+        Self::from(nullifier.0)
     }
 }
 

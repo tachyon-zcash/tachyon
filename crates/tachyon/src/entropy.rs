@@ -6,8 +6,7 @@
 
 use core::marker::PhantomData;
 
-use ff::{FromUniformBytes as _, PrimeField as _};
-use pasta_curves::{Fp, Fq};
+use pasta_curves::Fq;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{note, primitives::Effect};
@@ -28,7 +27,7 @@ use crate::{note, primitives::Effect};
 /// ("Tachyaction at a Distance", Bowe 2025).
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
-pub struct ActionEntropy([u8; 32]);
+pub struct ActionEntropy(pub(crate) [u8; 32]);
 
 impl ActionEntropy {
     /// Parse action entropy from 32 bytes.
@@ -49,8 +48,8 @@ impl ActionEntropy {
     /// Uses distinct BLAKE2b personalizations for spend vs output to
     /// ensure the two randomizers are independent.
     #[must_use]
-    pub fn randomizer<E: Effect>(&self, cm: &note::Commitment) -> ActionRandomizer<E> {
-        ActionRandomizer(E::derive_alpha(self, cm), PhantomData)
+    pub fn randomizer<E: Effect>(&self, cm: note::Commitment) -> ActionRandomizer<E> {
+        ActionRandomizer(E::derive_alpha(*self, cm), PhantomData)
     }
 }
 
@@ -75,27 +74,6 @@ impl<S: sealed::RandomizerState> From<ActionRandomizer<S>> for Fq {
     }
 }
 
-/// Derive the raw $\alpha$ scalar from $\theta$ and $\mathsf{cm}$.
-///
-/// $$\alpha_{\text{spend}} = \text{ToScalar}(\text{BLAKE2b-512}(
-///   \text{"Tachyon-Spend"},\; \theta \| \mathsf{cm}))$$
-/// $$\alpha_{\text{output}} = \text{ToScalar}(\text{BLAKE2b-512}(
-///   \text{"Tachyon-Output"},\; \theta \| \mathsf{cm}))$$
-pub(crate) fn derive_alpha(
-    personalization: &[u8],
-    theta: &ActionEntropy,
-    cm: &note::Commitment,
-) -> Fq {
-    let hash = blake2b_simd::Params::new()
-        .hash_length(64)
-        .personal(personalization)
-        .to_state()
-        .update(&theta.0)
-        .update(&Fp::from(cm).to_repr())
-        .finalize();
-    Fq::from_uniform_bytes(hash.as_array())
-}
-
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
@@ -111,10 +89,10 @@ mod tests {
     fn spend_and_output_randomizers_differ() {
         let mut rng = StdRng::seed_from_u64(100);
         let theta = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::from(&Fp::random(&mut rng));
+        let cm = note::Commitment::from(Fp::random(&mut rng));
 
-        let spend_alpha: Fq = theta.randomizer::<effect::Spend>(&cm).into();
-        let output_alpha: Fq = theta.randomizer::<effect::Output>(&cm).into();
+        let spend_alpha: Fq = theta.randomizer::<effect::Spend>(cm).into();
+        let output_alpha: Fq = theta.randomizer::<effect::Output>(cm).into();
 
         assert_ne!(spend_alpha, output_alpha);
     }
@@ -124,15 +102,15 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(101);
         let theta_a = ActionEntropy::random(&mut rng);
         let theta_b = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::from(&Fp::random(&mut rng));
+        let cm = note::Commitment::from(Fp::random(&mut rng));
 
         // Deterministic: same theta twice
-        let first: Fq = theta_a.randomizer::<effect::Spend>(&cm).into();
-        let second: Fq = theta_a.randomizer::<effect::Spend>(&cm).into();
+        let first: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
+        let second: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
         assert_eq!(first, second);
 
         // Sensitive: different theta
-        let other: Fq = theta_b.randomizer::<effect::Spend>(&cm).into();
+        let other: Fq = theta_b.randomizer::<effect::Spend>(cm).into();
         assert_ne!(first, other);
     }
 }

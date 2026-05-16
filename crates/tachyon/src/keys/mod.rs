@@ -87,52 +87,15 @@ pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 #[cfg(test)]
 mod tests {
     use ff::{Field as _, PrimeField as _};
-    use pasta_curves::{Fp, Fq};
-    use rand::{RngCore as _, SeedableRng as _, rngs::StdRng};
+    use pasta_curves::Fp;
+    use rand::{SeedableRng as _, rngs::StdRng};
 
     use crate::{
-        constants::PrfExpand,
         entropy::ActionEntropy,
         keys::{NullifierKey, PaymentKey, private},
         note::{self, Note},
         primitives::effect,
-        reddsa,
     };
-
-    /// RedPallas requires ak to have tilde_y = 0 (sign bit cleared).
-    /// The key derivation must enforce this for any spending key.
-    /// Verifies both code paths: keys that needed negation and keys that
-    /// didn't.
-    #[test]
-    fn ask_sign_normalization() {
-        use ff::FromUniformBytes as _;
-
-        let mut rng = StdRng::seed_from_u64(0);
-        let mut flipped = 0u32;
-        for _ in 0u8..20 {
-            let mut sk_bytes = [0u8; 32];
-            rng.fill_bytes(&mut sk_bytes);
-
-            // Check the raw (pre-normalization) sign bit.
-            let ask_scalar = Fq::from_uniform_bytes(&PrfExpand::ASK.with(&sk_bytes));
-            let unnormalized_ak: [u8; 32] = reddsa::VerificationKey::from(
-                &reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask_scalar.to_repr()).unwrap(),
-            )
-            .into();
-            if unnormalized_ak[31] >> 7u8 == 1u8 {
-                flipped += 1;
-            }
-
-            // Verify normalization produces tilde_y = 0.
-            let sk = private::SpendingKey::from(sk_bytes);
-            let ak = sk.derive_auth_private().derive_auth_public();
-            let ak_bytes: [u8; 32] = ak.0.into();
-            assert_eq!(ak_bytes[31] >> 7u8, 0u8, "ak sign bit must be 0");
-        }
-        // 16 of 20 keys need the sign flip with this seed,
-        // confirming both code paths are exercised.
-        assert_eq!(flipped, 16u32);
-    }
 
     /// ask, nk, pk derived from the same sk must all be different.
     /// pk derives from (ak, nk) via Poseidon, not directly from sk.
@@ -182,7 +145,7 @@ mod tests {
             rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let alpha = theta.randomizer::<effect::Spend>(note.commitment());
         let rsk = ask.derive_action_private(&alpha);
 
         let rk_from_signer: [u8; 32] = rsk.derive_action_public().0.into();

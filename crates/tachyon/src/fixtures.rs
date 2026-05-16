@@ -66,7 +66,7 @@ pub fn build_output_action(
     let rcv = value::CommitmentTrapdoor::random(&mut *rng);
     let theta = ActionEntropy::random(&mut *rng);
     let plan = action::Plan::output(note, theta, rcv);
-    let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+    let alpha = theta.randomizer::<effect::Output>(note.commitment());
 
     let action = Action {
         cv: plan.cv(),
@@ -86,7 +86,7 @@ pub fn random_block_with(
     let mut roots: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
         .take(size - 1)
         .collect();
-    roots.push(Fp::from(&cm));
+    roots.push(Fp::from(cm));
     BlockSet(Polynomial::from_roots(&roots))
 }
 
@@ -310,7 +310,7 @@ impl<'source> SyncSim<'source> {
         let (proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &spendable::SpendableLift,
+                spendable::SpendableLift,
                 (left_pool.into(), delta.into(), target_anchor),
                 spendable_pcd,
                 Proof::trivial().carry::<()>(()),
@@ -338,7 +338,7 @@ impl<'source> SyncSim<'source> {
         let (rollover_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &spendable::SpendableRollover,
+                spendable::SpendableRollover,
                 (new_pool.clone().into(), new_anchor),
                 old_nf_pcd,
                 new_nf_pcd,
@@ -350,7 +350,7 @@ impl<'source> SyncSim<'source> {
         let (epoch_lift_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &spendable::SpendableEpochLift,
+                spendable::SpendableEpochLift,
                 (new_pool.into(),),
                 spendable_pcd,
                 rollover_pcd,
@@ -411,7 +411,7 @@ impl WalletSim {
         let mk = self.pak.nk.derive_note_private(&note.psi);
         let cm = note.commitment();
         let (proof, ()) = PROOF_SYSTEM
-            .seed(rng, &delegation::NfMasterSeed, (note, self.pak))
+            .seed(rng, delegation::NfMasterSeed, (note, self.pak))
             .expect("note seed");
         proof.carry::<delegation::NfMasterHeader>((mk, cm))
     }
@@ -447,7 +447,7 @@ impl WalletSim {
         let (spendable_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &spendable::SpendableInit,
+                spendable::SpendableInit,
                 (pool_state.into(), anchor),
                 preblind_nf_pcd,
                 Proof::trivial().carry::<()>(()),
@@ -511,15 +511,13 @@ pub mod ggm_tools {
     use alloc::vec::Vec;
     use core::ops::RangeInclusive;
 
-    use ff::PrimeField as _;
-    use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
     use mock_ragu::{Pcd, Proof};
     use pasta_curves::Fp;
     use rand_core::{CryptoRng, RngCore};
 
     use crate::{
         EpochIndex,
-        constants::DELEGATION_ID_DOMAIN,
+        digest::poseidon,
         keys::{GGM_CHUNK_SIZE, GGM_TREE_ARITY, GGM_TREE_DEPTH},
         primitives::{DelegationId, DelegationTrapdoor, Tachygram},
         stamp::proof::{PROOF_SYSTEM, delegation},
@@ -545,7 +543,7 @@ pub mod ggm_tools {
         let (mut proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::NfMasterStep,
+                delegation::NfMasterStep,
                 (first_chunk,),
                 master_pcd,
                 Proof::trivial().carry::<()>(()),
@@ -560,7 +558,7 @@ pub mod ggm_tools {
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    &delegation::NfPrefixStep,
+                    delegation::NfPrefixStep,
                     (chunk,),
                     pcd,
                     Proof::trivial().carry::<()>(()),
@@ -662,7 +660,7 @@ pub mod ggm_tools {
         let (nf_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::NullifierStep,
+                delegation::NullifierStep,
                 (),
                 prefix_pcd,
                 Proof::trivial().carry::<()>(()),
@@ -670,7 +668,7 @@ pub mod ggm_tools {
             .expect("preblind nullifier step");
         let epoch = EpochIndex(key.index);
         let nf = key.derive_nullifier(epoch);
-        let cm_tg = Tachygram::from(&Fp::from(&cm));
+        let cm_tg = Tachygram::from(cm);
         nf_proof.carry::<delegation::NullifierHeader>((cm_tg, nf, epoch))
     }
 
@@ -689,7 +687,7 @@ pub mod ggm_tools {
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    &delegation::NfPrefixStep,
+                    delegation::NfPrefixStep,
                     (chunk,),
                     prefix_pcd,
                     Proof::trivial().carry::<()>(()),
@@ -712,21 +710,14 @@ pub mod ggm_tools {
         let (proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::DelegationStep,
+                delegation::DelegationStep,
                 (trap,),
                 prefix_pcd,
                 Proof::trivial().carry::<()>(()),
             )
             .expect("delegation blind step");
-        let domain = Fp::from_u128(u128::from_le_bytes(*DELEGATION_ID_DOMAIN));
-        let delegation_id = DelegationId::from(
-            &Hash::<_, P128Pow5T3, ConstantLength<4>, 3, 2>::init().hash([
-                domain,
-                mk.0,
-                Fp::from(&cm),
-                Fp::from(&trap),
-            ]),
-        );
+        let delegation_id =
+            DelegationId::from(poseidon::delegation_id(mk.0, Fp::from(cm), Fp::from(trap)));
         proof.carry::<delegation::DelegateNfPrefixHeader>((key, delegation_id))
     }
 
@@ -745,7 +736,7 @@ pub mod ggm_tools {
             let (next_proof, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    &delegation::DelegateNfPrefixStep,
+                    delegation::DelegateNfPrefixStep,
                     (chunk,),
                     pcd,
                     Proof::trivial().carry::<()>(()),
@@ -759,7 +750,7 @@ pub mod ggm_tools {
         let (nf_proof, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                &delegation::DelegateNullifierStep,
+                delegation::DelegateNullifierStep,
                 (),
                 pcd,
                 Proof::trivial().carry::<()>(()),

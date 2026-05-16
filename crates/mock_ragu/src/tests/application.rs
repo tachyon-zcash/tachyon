@@ -83,7 +83,7 @@ fn seed_then_verify() {
         .expect("finalize should succeed");
 
     let (proof, ()) = app
-        .seed(&mut thread_rng(), &SeedStep, 42u64)
+        .seed(&mut thread_rng(), SeedStep, 42u64)
         .expect("seed should succeed");
     let pcd = proof.carry::<TestHeader>(TestHeaderData { value: 42 });
 
@@ -102,7 +102,7 @@ fn verify_rejects_wrong_data() {
         .expect("finalize should succeed");
 
     let (proof, ()) = app
-        .seed(&mut thread_rng(), &SeedStep, 42u64)
+        .seed(&mut thread_rng(), SeedStep, 42u64)
         .expect("seed should succeed");
     let pcd = proof.carry::<TestHeader>(TestHeaderData { value: 999 });
 
@@ -123,17 +123,17 @@ fn fuse_then_verify() {
         .expect("finalize should succeed");
 
     let (proof_a, ()) = app
-        .seed(&mut thread_rng(), &SeedStep, 10u64)
+        .seed(&mut thread_rng(), SeedStep, 10u64)
         .expect("seed a");
     let pcd_a = proof_a.carry::<TestHeader>(TestHeaderData { value: 10 });
 
     let (proof_b, ()) = app
-        .seed(&mut thread_rng(), &SeedStep, 20u64)
+        .seed(&mut thread_rng(), SeedStep, 20u64)
         .expect("seed b");
     let pcd_b = proof_b.carry::<TestHeader>(TestHeaderData { value: 20 });
 
     let (merged_proof, ()) = app
-        .fuse(&mut thread_rng(), &MergeStep, (), pcd_a, pcd_b)
+        .fuse(&mut thread_rng(), MergeStep, (), pcd_a, pcd_b)
         .expect("fuse should succeed");
     let merged_pcd = merged_proof.carry::<TestHeader>(TestHeaderData { value: 30 });
 
@@ -154,17 +154,17 @@ fn fuse_rejects_wrong_sum() {
         .expect("finalize");
 
     let (proof_a, ()) = app
-        .seed(&mut thread_rng(), &SeedStep, 10u64)
+        .seed(&mut thread_rng(), SeedStep, 10u64)
         .expect("seed a");
     let pcd_a = proof_a.carry::<TestHeader>(TestHeaderData { value: 10 });
 
     let (proof_b, ()) = app
-        .seed(&mut thread_rng(), &SeedStep, 20u64)
+        .seed(&mut thread_rng(), SeedStep, 20u64)
         .expect("seed b");
     let pcd_b = proof_b.carry::<TestHeader>(TestHeaderData { value: 20 });
 
     let (merged_proof, ()) = app
-        .fuse(&mut thread_rng(), &MergeStep, (), pcd_a, pcd_b)
+        .fuse(&mut thread_rng(), MergeStep, (), pcd_a, pcd_b)
         .expect("fuse");
     let bad_pcd = merged_proof.carry::<TestHeader>(TestHeaderData { value: 31 });
 
@@ -184,7 +184,7 @@ fn deep_fuse_chain() {
 
     let mut proofs = Vec::new();
     for val in 1u64..=4 {
-        let (proof, ()) = app.seed(&mut thread_rng(), &SeedStep, val).expect("seed");
+        let (proof, ()) = app.seed(&mut thread_rng(), SeedStep, val).expect("seed");
         proofs.push((proof, val));
     }
 
@@ -193,7 +193,7 @@ fn deep_fuse_chain() {
     let pcd1 = p1.carry::<TestHeader>(TestHeaderData { value: v1 });
     let pcd2 = p2.carry::<TestHeader>(TestHeaderData { value: v2 });
     let (merged_left, ()) = app
-        .fuse(&mut thread_rng(), &MergeStep, (), pcd1, pcd2)
+        .fuse(&mut thread_rng(), MergeStep, (), pcd1, pcd2)
         .expect("fuse left");
 
     let (p3, v3) = proofs.remove(0);
@@ -201,13 +201,13 @@ fn deep_fuse_chain() {
     let pcd3 = p3.carry::<TestHeader>(TestHeaderData { value: v3 });
     let pcd4 = p4.carry::<TestHeader>(TestHeaderData { value: v4 });
     let (merged_right, ()) = app
-        .fuse(&mut thread_rng(), &MergeStep, (), pcd3, pcd4)
+        .fuse(&mut thread_rng(), MergeStep, (), pcd3, pcd4)
         .expect("fuse right");
 
     let pcd_left = merged_left.carry::<TestHeader>(TestHeaderData { value: v1 + v2 });
     let pcd_right = merged_right.carry::<TestHeader>(TestHeaderData { value: v3 + v4 });
     let (final_proof, ()) = app
-        .fuse(&mut thread_rng(), &MergeStep, (), pcd_left, pcd_right)
+        .fuse(&mut thread_rng(), MergeStep, (), pcd_left, pcd_right)
         .expect("fuse final");
 
     let final_pcd = final_proof.carry::<TestHeader>(TestHeaderData { value: 10 });
@@ -236,37 +236,37 @@ fn different_merge_trees_same_header() {
         .expect("finalize");
 
     let (pa, ()) = app
-        .seed(&mut thread_rng(), &SeedStep, 1u64)
+        .seed(&mut thread_rng(), SeedStep, 1u64)
         .expect("seed a");
     let (pb, ()) = app
-        .seed(&mut thread_rng(), &SeedStep, 2u64)
+        .seed(&mut thread_rng(), SeedStep, 2u64)
         .expect("seed b");
     let (pc, ()) = app
-        .seed(&mut thread_rng(), &SeedStep, 3u64)
+        .seed(&mut thread_rng(), SeedStep, 3u64)
         .expect("seed c");
 
     // Tree shape 1: fuse(fuse(a, b), c)
     let pcd_a1 = pa.clone().carry::<TestHeader>(TestHeaderData { value: 1 });
     let pcd_b1 = pb.clone().carry::<TestHeader>(TestHeaderData { value: 2 });
     let (ab, ()) = app
-        .fuse(&mut thread_rng(), &MergeStep, (), pcd_a1, pcd_b1)
+        .fuse(&mut thread_rng(), MergeStep, (), pcd_a1, pcd_b1)
         .expect("fuse ab");
     let pcd_ab = ab.carry::<TestHeader>(TestHeaderData { value: 3 });
     let pcd_c1 = pc.clone().carry::<TestHeader>(TestHeaderData { value: 3 });
     let (left_leaning, ()) = app
-        .fuse(&mut thread_rng(), &MergeStep, (), pcd_ab, pcd_c1)
+        .fuse(&mut thread_rng(), MergeStep, (), pcd_ab, pcd_c1)
         .expect("fuse (ab)c");
 
     // Tree shape 2: fuse(a, fuse(b, c))
     let pcd_b2 = pb.carry::<TestHeader>(TestHeaderData { value: 2 });
     let pcd_c2 = pc.carry::<TestHeader>(TestHeaderData { value: 3 });
     let (bc, ()) = app
-        .fuse(&mut thread_rng(), &MergeStep, (), pcd_b2, pcd_c2)
+        .fuse(&mut thread_rng(), MergeStep, (), pcd_b2, pcd_c2)
         .expect("fuse bc");
     let pcd_a2 = pa.carry::<TestHeader>(TestHeaderData { value: 1 });
     let pcd_bc = bc.carry::<TestHeader>(TestHeaderData { value: 5 });
     let (right_leaning, ()) = app
-        .fuse(&mut thread_rng(), &MergeStep, (), pcd_a2, pcd_bc)
+        .fuse(&mut thread_rng(), MergeStep, (), pcd_a2, pcd_bc)
         .expect("fuse a(bc)");
 
     let final_header = TestHeaderData { value: 6 };
@@ -345,12 +345,12 @@ fn aux_data_flows_through_seed_and_fuse() {
         .expect("finalize");
 
     let (proof_a, aux_a) = app
-        .seed(&mut thread_rng(), &AuxSeedStep, 3u64)
+        .seed(&mut thread_rng(), AuxSeedStep, 3u64)
         .expect("seed a");
     assert_eq!(aux_a, alloc::vec![9]);
 
     let (proof_b, aux_b) = app
-        .seed(&mut thread_rng(), &AuxSeedStep, 4u64)
+        .seed(&mut thread_rng(), AuxSeedStep, 4u64)
         .expect("seed b");
     assert_eq!(aux_b, alloc::vec![16]);
 
@@ -359,7 +359,7 @@ fn aux_data_flows_through_seed_and_fuse() {
     let (merged_proof, merged_aux) = app
         .fuse(
             &mut thread_rng(),
-            &AuxMergeStep,
+            AuxMergeStep,
             (aux_a, aux_b),
             pcd_a,
             pcd_b,
@@ -389,7 +389,7 @@ fn rerandomize_preserves_validity() {
         .expect("finalize should succeed");
 
     let (proof, ()) = app
-        .seed(&mut thread_rng(), &SeedStep, 42u64)
+        .seed(&mut thread_rng(), SeedStep, 42u64)
         .expect("seed should succeed");
     let original_proof = proof.clone();
     let pcd = proof.carry::<TestHeader>(TestHeaderData { value: 42 });

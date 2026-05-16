@@ -3,7 +3,8 @@ use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::{Fp, arithmetic::CurveAffine as _};
 
 use super::PoolCommit;
-use crate::constants::EPOCH_SEED_DOMAIN;
+
+const EPOCH_SEED_DOMAIN: &[u8; 16] = b"Tachyon-EpchSeed";
 
 /// A tachyon epoch — a point in the accumulator's history.
 ///

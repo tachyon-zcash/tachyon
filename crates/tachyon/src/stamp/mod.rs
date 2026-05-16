@@ -31,7 +31,7 @@ use proof::{
 use rand_core::CryptoRng;
 
 use crate::{
-    Note,
+    ActionAcc, Note,
     action::Action,
     effect,
     entropy::ActionRandomizer,
@@ -40,7 +40,7 @@ use crate::{
         ActionCommit, ActionDigest, ActionDigestError, ActionSet, Anchor, Tachygram, TachygramAcc,
         TachygramCommit,
     },
-    stamp::proof::{compute_action_acc, delegation, spend, spendable},
+    stamp::proof::{delegation, spend, spendable},
     value,
 };
 
@@ -208,7 +208,7 @@ impl Plan {
             let (bind_proof, ()) = app
                 .fuse(
                     rng,
-                    &spend::SpendBind,
+                    spend::SpendBind,
                     (rcv, alpha, *pak, note),
                     nf_now_pcd,
                     nf_next_pcd,
@@ -219,7 +219,7 @@ impl Plan {
                 bind_proof.carry::<spend::SpendHeader>((action_digest, [nf0, nf1], epoch));
 
             // SpendStamp: fuse spend with spendable chain
-            let tachygrams = alloc::vec![Tachygram::from(&nf0), Tachygram::from(&nf1),];
+            let tachygrams = alloc::vec![Tachygram::from(nf0), Tachygram::from(nf1)];
             let stamp = Stamp::prove_spend(rng, bind_pcd, spendable_pcd, tachygrams)
                 .map_err(|_err| ProveError::ProofFailed)?;
 
@@ -320,7 +320,7 @@ impl Stamp {
         let app = &*PROOF_SYSTEM;
 
         let (proof, (action_acc, tachygram_acc, tachygram)) =
-            app.seed(rng, &OutputStamp, (rcv, alpha, note, anchor))?;
+            app.seed(rng, OutputStamp, (rcv, alpha, note, anchor))?;
 
         let header = (
             ActionCommit(action_acc.0.commit(Fp::ZERO)),
@@ -354,7 +354,7 @@ impl Stamp {
         let anchor = spendable_pcd.data.1;
 
         let (proof, (action_acc, tachygram_acc)) =
-            app.fuse(rng, &SpendStamp, (), spend_pcd, spendable_pcd)?;
+            app.fuse(rng, SpendStamp, (), spend_pcd, spendable_pcd)?;
 
         let header = (
             ActionCommit(action_acc.0.commit(Fp::ZERO)),
@@ -387,8 +387,8 @@ impl Stamp {
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let left_fps: Vec<Fp> = left_digests.iter().map(Fp::from).collect();
-        let right_fps: Vec<Fp> = right_digests.iter().map(Fp::from).collect();
+        let left_fps: Vec<Fp> = left_digests.iter().copied().map(Fp::from).collect();
+        let right_fps: Vec<Fp> = right_digests.iter().copied().map(Fp::from).collect();
         let left_action = ActionSet(mock_ragu::Polynomial::from_roots(&left_fps));
         let right_action = ActionSet(mock_ragu::Polynomial::from_roots(&right_fps));
         let left_tachygram = TachygramAcc::from(&*left.tachygrams);
@@ -417,7 +417,7 @@ impl Stamp {
 
         let (proof, ()) = app.fuse(
             rng,
-            &MergeStamp,
+            MergeStamp,
             (
                 left_action.into(),
                 right_action.into(),
@@ -455,7 +455,15 @@ impl Stamp {
     ) -> Result<(), VerificationError> {
         let app = &*PROOF_SYSTEM;
 
-        let action_acc = compute_action_acc(actions).map_err(VerificationError::ActionDigest)?;
+        let action_acc = ActionAcc::from(
+            actions
+                .iter()
+                .map(ActionDigest::try_from)
+                .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
+                .map_err(VerificationError::ActionDigest)?
+                .as_slice(),
+        );
+
         let tachygram_acc = TachygramAcc::from(&*self.tachygrams);
 
         let header = (

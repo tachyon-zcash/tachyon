@@ -9,18 +9,12 @@ use mock_ragu::{Polynomial, Proof};
 use pasta_curves::Fp;
 use rand::{SeedableRng as _, rngs::StdRng};
 
-use super::{PROOF_SYSTEM, compute_action_acc, delegation, spend, spendable, stamp as stamp_proof};
+use super::{PROOF_SYSTEM, delegation, spend, spendable, stamp as stamp_proof};
 use crate::{
+    ActionAcc, ActionDigest,
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
-    keys::private,
-    note,
-    primitives::{
-        ActionCommit, Anchor, BlockAcc, BlockHeight, DelegationTrapdoor, EpochIndex, PoolCommit,
-        PoolDelta, PoolSet, Tachygram, TachygramAcc, TachygramCommit, effect,
-    },
-    stamp::Stamp,
-    test_support::{
+    fixtures::{
         PoolSim, SyncSim, WalletSim, build_output_action,
         ggm_tools::{
             delegate_range, preblind_nullifier_from_master, preblind_nullifier_pair_from_master,
@@ -28,6 +22,13 @@ use crate::{
         },
         random_block, random_block_with,
     },
+    keys::private,
+    note,
+    primitives::{
+        ActionCommit, Anchor, BlockAcc, BlockHeight, DelegationTrapdoor, EpochIndex, PoolCommit,
+        PoolDelta, PoolSet, Tachygram, TachygramAcc, TachygramCommit, effect,
+    },
+    stamp::Stamp,
     value,
 };
 
@@ -49,7 +50,7 @@ fn stamp_lift_within_epoch() {
     let (rcv, alpha, action) = build_output_action(&mut rng, note);
     let stamp = Stamp::prove_output(&mut rng, rcv, alpha, note, anchor_5).expect("prove_output");
 
-    let action_acc = compute_action_acc(&[action]).unwrap();
+    let action_acc = ActionAcc::from([ActionDigest::try_from(&action).unwrap()].as_slice());
     let tachygram_acc = TachygramAcc::from(&*stamp.tachygrams);
     let action_commit = ActionCommit(action_acc.0.commit(Fp::ZERO));
     let tachygram_commit = TachygramCommit(tachygram_acc.0.commit(Fp::ZERO));
@@ -64,7 +65,7 @@ fn stamp_lift_within_epoch() {
     let (lifted_proof, ()) = PROOF_SYSTEM
         .fuse(
             &mut rng,
-            &stamp_proof::StampLift,
+            stamp_proof::StampLift,
             (
                 action_acc.into(),
                 tachygram_acc.into(),
@@ -98,7 +99,7 @@ fn stamp_lift_rejects_cross_epoch() {
     let (rcv, alpha, action) = build_output_action(&mut rng, note);
     let stamp = Stamp::prove_output(&mut rng, rcv, alpha, note, anchor_5).expect("prove_output");
 
-    let action_acc = compute_action_acc(&[action]).unwrap();
+    let action_acc = ActionAcc::from([ActionDigest::try_from(&action).unwrap()].as_slice());
     let tachygram_acc = TachygramAcc::from(&*stamp.tachygrams);
 
     let remaining = usize::try_from(EPOCH_SIZE - u32::from(pool.anchor().0)).expect("fits usize");
@@ -114,7 +115,7 @@ fn stamp_lift_rejects_cross_epoch() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &stamp_proof::StampLift,
+        stamp_proof::StampLift,
         (
             action_acc.into(),
             tachygram_acc.into(),
@@ -150,11 +151,11 @@ fn spend_bind_rejects_non_adjacent_epochs() {
 
     let rcv = value::CommitmentTrapdoor::random(&mut rng);
     let theta = ActionEntropy::random(&mut rng);
-    let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+    let alpha = theta.randomizer::<effect::Spend>(note.commitment());
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spend::SpendBind,
+        spend::SpendBind,
         (rcv, alpha, user.pak, note),
         nf_pcd_e,
         nf_pcd_far,
@@ -186,7 +187,7 @@ fn step_rejects_zero_value_note() {
     // for the spendable path is enforced structurally here.
     assert!(
         PROOF_SYSTEM
-            .seed(&mut rng, &delegation::NfMasterSeed, (zero_note, user.pak),)
+            .seed(&mut rng, delegation::NfMasterSeed, (zero_note, user.pak),)
             .is_err(),
         "NfMasterSeed must reject zero-value note"
     );
@@ -194,13 +195,13 @@ fn step_rejects_zero_value_note() {
     // OutputStamp: no PCD inputs needed.
     let out_rcv = value::CommitmentTrapdoor::random(&mut rng);
     let out_theta = ActionEntropy::random(&mut rng);
-    let out_alpha = out_theta.randomizer::<effect::Output>(&zero_note.commitment());
+    let out_alpha = out_theta.randomizer::<effect::Output>(zero_note.commitment());
     let out_anchor = PoolSim::new().anchor();
     assert!(
         PROOF_SYSTEM
             .seed(
                 &mut rng,
-                &stamp_proof::OutputStamp,
+                stamp_proof::OutputStamp,
                 (out_rcv, out_alpha, zero_note, out_anchor),
             )
             .is_err(),
@@ -217,12 +218,12 @@ fn step_rejects_zero_value_note() {
         preblind_nullifier_pair_from_master(&mut rng, valid_master, target_epoch);
     let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
     let spend_theta = ActionEntropy::random(&mut rng);
-    let spend_alpha = spend_theta.randomizer::<effect::Spend>(&zero_note.commitment());
+    let spend_alpha = spend_theta.randomizer::<effect::Spend>(zero_note.commitment());
     assert!(
         PROOF_SYSTEM
             .fuse(
                 &mut rng,
-                &spend::SpendBind,
+                spend::SpendBind,
                 (spend_rcv, spend_alpha, user.pak, zero_note),
                 nf_now_pcd,
                 nf_next_pcd,
@@ -251,11 +252,11 @@ fn spend_bind_rejects_note_cm_mismatch() {
         preblind_nullifier_pair_from_master(&mut rng, leaf_master, target_epoch);
     let rcv = value::CommitmentTrapdoor::random(&mut rng);
     let theta = ActionEntropy::random(&mut rng);
-    let alpha = theta.randomizer::<effect::Spend>(&other_note.commitment());
+    let alpha = theta.randomizer::<effect::Spend>(other_note.commitment());
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spend::SpendBind,
+        spend::SpendBind,
         (rcv, alpha, user.pak, other_note),
         nf_now_pcd,
         nf_next_pcd,
@@ -373,7 +374,7 @@ fn spendable_lift_rejects_cross_epoch() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableLift,
+        spendable::SpendableLift,
         (left_pool_acc.into(), delta.into(), pool.anchor()),
         spendable_pcd,
         Proof::trivial().carry::<()>(()),
@@ -395,14 +396,14 @@ fn spendable_init_rejects_cm_absent() {
 
     // Advance with an UNRELATED tachygram — cm is NOT in the pool.
     let unrelated = Fp::from(0xDEAD_BEEFu64);
-    pool.mine(BlockAcc::from(&[Tachygram::from(&unrelated)][..]));
+    pool.mine(BlockAcc::from(&[Tachygram::from(unrelated)][..]));
     let anchor = pool.anchor();
 
     let master_pcd = user.note_master(&mut rng, note);
     let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, epoch_0);
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableInit,
+        spendable::SpendableInit,
         (pool.state().clone().into(), anchor),
         nf_pcd,
         Proof::trivial().carry::<()>(()),
@@ -431,7 +432,7 @@ fn spendable_init_rejects_nf_present() {
     // Mine a block containing BOTH cm and nf — cm-in-pool passes, nf-in-pool
     // is the intended failure.
     pool.mine(BlockAcc::from(
-        &[Tachygram::from(&note.commitment()), Tachygram::from(&nf)][..],
+        &[Tachygram::from(note.commitment()), Tachygram::from(nf)][..],
     ));
     let anchor = pool.anchor();
 
@@ -439,7 +440,7 @@ fn spendable_init_rejects_nf_present() {
     let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, epoch_0);
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableInit,
+        spendable::SpendableInit,
         (pool.state().clone().into(), anchor),
         nf_pcd,
         Proof::trivial().carry::<()>(()),
@@ -460,7 +461,7 @@ fn spendable_epoch_lift_rejects_missing_seed() {
     let note = user.random_note(&mut rng, 500);
 
     // Left: SpendableHeader at epoch-final with a fabricated pool (cm only).
-    let cm_fp = Fp::from(&note.commitment());
+    let cm_fp = Fp::from(note.commitment());
     let epoch_final_height = BlockHeight(EPOCH_SIZE - 1);
     let left_pool = PoolSet(Polynomial::from_roots(&[cm_fp]));
     let left_anchor = Anchor(epoch_final_height, PoolCommit(left_pool.0.commit(Fp::ZERO)));
@@ -481,7 +482,7 @@ fn spendable_epoch_lift_rejects_missing_seed() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableEpochLift,
+        spendable::SpendableEpochLift,
         (right_pool.into(),),
         left_pcd,
         right_pcd,
@@ -512,7 +513,7 @@ fn spendable_lift_rejects_non_superset_delta() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableLift,
+        spendable::SpendableLift,
         (left_pool_acc.into(), bogus_delta.into(), pool.anchor()),
         spendable_pcd,
         Proof::trivial().carry::<()>(()),
@@ -560,7 +561,7 @@ fn spendable_rollover_rejects_new_nf_in_pool() {
     let new_nf = new_nf_pcd.data.0;
 
     // Pool rooted at new_nf → query(new_nf) == 0 → step rejects.
-    let new_pool = PoolSet(Polynomial::from_roots(&[Fp::from(&new_nf)]));
+    let new_pool = PoolSet(Polynomial::from_roots(&[Fp::from(new_nf)]));
     let new_anchor = Anchor(
         BlockHeight(EPOCH_SIZE),
         PoolCommit(new_pool.0.commit(Fp::ZERO)),
@@ -568,7 +569,7 @@ fn spendable_rollover_rejects_new_nf_in_pool() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableRollover,
+        spendable::SpendableRollover,
         (new_pool.into(), new_anchor),
         old_nf_pcd,
         new_nf_pcd,
@@ -619,7 +620,7 @@ fn spendable_rollover_rejects_delegation_id_mismatch() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableRollover,
+        spendable::SpendableRollover,
         (new_pool.into(), new_anchor),
         old_nf_pcd,
         new_nf_pcd,
@@ -669,7 +670,7 @@ fn spendable_rollover_rejects_non_adjacent_epochs() {
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
-        &spendable::SpendableRollover,
+        spendable::SpendableRollover,
         (new_pool.into(), new_anchor),
         old_nf_pcd,
         new_nf_pcd,
