@@ -10,6 +10,7 @@ use pasta_curves::Fp;
 
 use super::delegation::NullifierHeader;
 use crate::{
+    constants::NOTE_VALUE_MAX,
     entropy::ActionRandomizer,
     keys::ProofAuthorizingKey,
     note::{Note, Nullifier},
@@ -80,7 +81,7 @@ impl Step for SpendBind {
         if note_cm_tg != left_cm_tg {
             return Err(mock_ragu::Error);
         }
-        if u64::from(note.value) == 0 {
+        if u64::from(note.value) == 0 || u64::from(note.value) > NOTE_VALUE_MAX {
             return Err(mock_ragu::Error);
         }
         if note.pk.0 != pak.derive_payment_key().0 {

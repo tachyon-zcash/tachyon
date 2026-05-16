@@ -10,6 +10,7 @@ use pasta_curves::Fp;
 
 use super::{spend::SpendHeader, spendable::SpendableHeader};
 use crate::{
+    constants::NOTE_VALUE_MAX,
     entropy::ActionRandomizer,
     keys::private,
     note::Note,
@@ -74,7 +75,7 @@ impl Step for OutputStamp {
         _left: <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if u64::from(note.value) == 0 {
+        if u64::from(note.value) == 0 || u64::from(note.value) > NOTE_VALUE_MAX {
             return Err(mock_ragu::Error);
         }
         let cv = rcv.commit(-i64::from(note.value));

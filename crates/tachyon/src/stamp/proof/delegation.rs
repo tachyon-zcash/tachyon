@@ -32,7 +32,7 @@ use mock_ragu::{Header, Index, Step, Suffix};
 use pasta_curves::Fp;
 
 use crate::{
-    constants::DELEGATION_ID_DOMAIN,
+    constants::{DELEGATION_ID_DOMAIN, NOTE_VALUE_MAX},
     keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey, NotePrefixedKey, ProofAuthorizingKey},
     note::{self, Note, Nullifier},
     primitives::{DelegationId, DelegationTrapdoor, EpochIndex, Tachygram},
@@ -171,7 +171,7 @@ impl Step for NfMasterSeed {
         _left: <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if u64::from(note.value) == 0 {
+        if u64::from(note.value) == 0 || u64::from(note.value) > NOTE_VALUE_MAX {
             return Err(mock_ragu::Error);
         }
         if note.pk.0 != pak.derive_payment_key().0 {
