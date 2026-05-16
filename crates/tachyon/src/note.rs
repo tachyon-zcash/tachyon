@@ -250,8 +250,15 @@ impl From<&Nullifier> for Tachygram {
 
 #[cfg(test)]
 mod tests {
+    use pasta_curves::Fp;
+    use proptest::prelude::*;
+
     use super::*;
-    use crate::constants::NOTE_VALUE_MAX;
+    use crate::{
+        constants::NOTE_VALUE_MAX,
+        keys::private,
+        testing::{arb_note, arb_nullifier_trapdoor, arb_spending_key, arb_value},
+    };
 
     /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
     #[test]
@@ -313,5 +320,79 @@ mod tests {
 
         let mk = nk.derive_note_private(&psi);
         assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));
+    }
+
+    proptest! {
+        /// Mutating pk produces a different commitment.
+        #[test]
+        fn mutated_pk_changes_commitment(
+            note in arb_note(),
+            other_sk in arb_spending_key(),
+        ) {
+            let other_pk = other_sk.derive_payment_key();
+            prop_assume!(note.pk.0 != other_pk.0);
+            let mutated = Note { pk: other_pk, ..note };
+            prop_assert_ne!(note.commitment(), mutated.commitment());
+        }
+
+        /// Mutating value produces a different commitment.
+        #[test]
+        fn mutated_value_changes_commitment(
+            note in arb_note(),
+            other_val in arb_value(),
+        ) {
+            prop_assume!(note.value.0 != other_val.0);
+            let mutated = Note { value: other_val, ..note };
+            prop_assert_ne!(note.commitment(), mutated.commitment());
+        }
+
+        /// Mutating psi produces a different commitment.
+        #[test]
+        fn mutated_psi_changes_commitment(
+            note in arb_note(),
+            other_psi in arb_nullifier_trapdoor(),
+        ) {
+            prop_assume!(Fp::from(note.psi) != Fp::from(other_psi));
+            let mutated = Note { psi: other_psi, ..note };
+            prop_assert_ne!(note.commitment(), mutated.commitment());
+        }
+
+        /// Different nullifier key produces a different nullifier.
+        #[test]
+        fn different_nk_different_nullifier(
+            note in arb_note(),
+            sk_a_bytes in any::<[u8; 32]>(),
+            sk_b_bytes in any::<[u8; 32]>(),
+            epoch in 0u32..1000,
+        ) {
+            // Different sk -> different nk via PRF. Collision would be a security finding.
+            prop_assume!(sk_a_bytes != sk_b_bytes);
+            let nk_a = private::SpendingKey::from(sk_a_bytes).derive_nullifier_private();
+            let nk_b = private::SpendingKey::from(sk_b_bytes).derive_nullifier_private();
+            let flavor = EpochIndex(epoch);
+            prop_assert_ne!(
+                note.nullifier(&nk_a, flavor),
+                note.nullifier(&nk_b, flavor)
+            );
+        }
+
+        /// Nullifier is deterministic and epoch-sensitive.
+        #[test]
+        fn nullifier_deterministic_and_epoch_sensitive(
+            note in arb_note(),
+            sk in arb_spending_key(),
+            epoch_a in 0u32..1000,
+            epoch_b in 0u32..1000,
+        ) {
+            let nk = sk.derive_nullifier_private();
+            let nf1 = note.nullifier(&nk, EpochIndex(epoch_a));
+            let nf2 = note.nullifier(&nk, EpochIndex(epoch_a));
+            prop_assert_eq!(nf1, nf2);
+
+            if epoch_a != epoch_b {
+                let nf_other = note.nullifier(&nk, EpochIndex(epoch_b));
+                prop_assert_ne!(nf1, nf_other);
+            }
+        }
     }
 }

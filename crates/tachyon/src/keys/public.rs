@@ -156,3 +156,119 @@ impl PartialEq for BindingVerificationKey {
     reason = "default assert_receiver_is_total_eq is correct"
 )]
 impl Eq for BindingVerificationKey {}
+
+#[cfg(test)]
+mod tests {
+    use pasta_curves::Fq;
+    use proptest::prelude::*;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use super::*;
+    use crate::{
+        action,
+        entropy::ActionEntropy,
+        keys::private,
+        note::Note,
+        primitives::effect,
+        testing::{arb_note, arb_value},
+        value,
+    };
+
+    proptest! {
+        /// ActionVerificationKey byte round-trip: rk -> bytes -> rk.
+        #[test]
+        fn avk_byte_roundtrip(
+            sk_bytes in any::<[u8; 32]>(),
+            theta_bytes in any::<[u8; 32]>(),
+            note in arb_note(),
+        ) {
+            let sk = private::SpendingKey::from(sk_bytes);
+            let ask = sk.derive_auth_private();
+            let theta = ActionEntropy::from_bytes(theta_bytes);
+            let cm = note.commitment();
+            let alpha = theta.randomizer::<effect::Spend>(&cm);
+            let rsk = ask.derive_action_private(&alpha);
+            let rk = rsk.derive_action_public();
+
+            let bytes: [u8; 32] = rk.into();
+            let recovered = ActionVerificationKey::try_from(bytes).unwrap();
+            prop_assert_eq!(rk, recovered);
+        }
+
+        /// Binding sign-then-verify succeeds for any valid trapdoor.
+        #[test]
+        fn binding_sign_verify_roundtrip(
+            seed in any::<u64>(),
+            sighash in any::<[u8; 32]>(),
+        ) {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let rcv = value::CommitmentTrapdoor::random(&mut rng);
+            let bsk = private::BindingSigningKey::from([rcv].as_slice());
+            let bvk = bsk.derive_binding_public();
+
+            let sig = bsk.sign(&mut rng, &sighash);
+            prop_assert!(bvk.verify(&sighash, &sig).is_ok());
+        }
+
+        /// Wrong binding key fails verification.
+        #[test]
+        fn wrong_binding_key_rejects(
+            seed_a in any::<u64>(),
+            seed_b in any::<u64>(),
+            sighash in any::<[u8; 32]>(),
+        ) {
+            let mut rng_a = StdRng::seed_from_u64(seed_a);
+            let mut rng_b = StdRng::seed_from_u64(seed_b);
+            let rcv_a = value::CommitmentTrapdoor::random(&mut rng_a);
+            let rcv_b = value::CommitmentTrapdoor::random(&mut rng_b);
+            prop_assume!(Into::<Fq>::into(rcv_a) != Into::<Fq>::into(rcv_b));
+
+            let bsk_a = private::BindingSigningKey::from([rcv_a].as_slice());
+            let bvk_b = private::BindingSigningKey::from([rcv_b].as_slice())
+                .derive_binding_public();
+
+            let sig = bsk_a.sign(&mut rng_a, &sighash);
+            prop_assert!(bvk_b.verify(&sighash, &sig).is_err());
+        }
+
+        /// Balanced bundle: signer bvk (from bsk) equals verifier bvk (from cv sum).
+        #[test]
+        fn balanced_bundle_bvk_agreement(
+            sk_bytes in any::<[u8; 32]>(),
+            seed_spend in any::<u64>(),
+            seed_output in any::<u64>(),
+            theta_s_bytes in any::<[u8; 32]>(),
+            theta_o_bytes in any::<[u8; 32]>(),
+            val in arb_value(),
+            note_spend in arb_note(),
+            note_output in arb_note(),
+        ) {
+            let sk = private::SpendingKey::from(sk_bytes);
+            let ask = sk.derive_auth_private();
+            let mut rng_s = StdRng::seed_from_u64(seed_spend);
+            let mut rng_o = StdRng::seed_from_u64(seed_output);
+            let rcv_spend = value::CommitmentTrapdoor::random(&mut rng_s);
+            let rcv_output = value::CommitmentTrapdoor::random(&mut rng_o);
+
+            let spend_note = Note { value: val, ..note_spend };
+            let output_note = Note { value: val, ..note_output };
+
+            let theta_s = ActionEntropy::from_bytes(theta_s_bytes);
+            let theta_o = ActionEntropy::from_bytes(theta_o_bytes);
+
+            let spend_plan = action::Plan::spend(
+                spend_note, theta_s, rcv_spend,
+                |alpha| ask.derive_action_private(&alpha).derive_action_public(),
+            );
+            let output_plan = action::Plan::output(output_note, theta_o, rcv_output);
+
+            let bsk = private::BindingSigningKey::from([rcv_spend, rcv_output].as_slice());
+            let bvk_signer = bsk.derive_binding_public();
+            let bvk_verifier = BindingVerificationKey::from(derive_bvk(
+                [spend_plan.cv(), output_plan.cv()].into_iter(),
+                0i64,
+            ));
+            prop_assert_eq!(bvk_signer, bvk_verifier);
+        }
+    }
+}

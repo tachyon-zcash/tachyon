@@ -112,3 +112,119 @@ impl From<Signature> for [u8; 64] {
         <[u8; 64]>::from(sig.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use crate::{
+        entropy::ActionEntropy,
+        keys::private,
+        primitives::{Effect as _, effect},
+        testing::{arb_note, arb_value},
+        value,
+    };
+
+    proptest! {
+        /// Spend sign-then-verify succeeds for any valid key/note/sighash.
+        #[test]
+        fn spend_sign_verify(
+            sk_bytes in any::<[u8; 32]>(),
+            theta_bytes in any::<[u8; 32]>(),
+            sighash in any::<[u8; 32]>(),
+            note in arb_note(),
+        ) {
+            let sk = private::SpendingKey::from(sk_bytes);
+            let ask = sk.derive_auth_private();
+            let theta = ActionEntropy::from_bytes(theta_bytes);
+            let cm = note.commitment();
+            let alpha = theta.randomizer::<effect::Spend>(&cm);
+            let rsk = ask.derive_action_private(&alpha);
+            let rk = rsk.derive_action_public();
+
+            let mut rng = StdRng::seed_from_u64(0);
+            let sig = rsk.sign(&mut rng, &sighash);
+            prop_assert!(rk.verify(&sighash, &sig).is_ok());
+        }
+
+        /// Output sign-then-verify succeeds.
+        #[test]
+        fn output_sign_verify(
+            theta_bytes in any::<[u8; 32]>(),
+            sighash in any::<[u8; 32]>(),
+            note in arb_note(),
+        ) {
+            let theta = ActionEntropy::from_bytes(theta_bytes);
+            let cm = note.commitment();
+            let alpha = theta.randomizer::<effect::Output>(&cm);
+            let rsk = private::ActionSigningKey::new(&alpha);
+            let rk = rsk.derive_action_public();
+
+            let mut rng = StdRng::seed_from_u64(0);
+            let sig = rsk.sign(&mut rng, &sighash);
+            prop_assert!(rk.verify(&sighash, &sig).is_ok());
+        }
+
+        /// Signature rejects wrong sighash.
+        #[test]
+        fn wrong_sighash_rejects(
+            sk_bytes in any::<[u8; 32]>(),
+            theta_bytes in any::<[u8; 32]>(),
+            sighash_a in any::<[u8; 32]>(),
+            sighash_b in any::<[u8; 32]>(),
+            note in arb_note(),
+        ) {
+            prop_assume!(sighash_a != sighash_b);
+            let sk = private::SpendingKey::from(sk_bytes);
+            let ask = sk.derive_auth_private();
+            let theta = ActionEntropy::from_bytes(theta_bytes);
+            let cm = note.commitment();
+            let alpha = theta.randomizer::<effect::Spend>(&cm);
+            let rsk = ask.derive_action_private(&alpha);
+            let rk = rsk.derive_action_public();
+
+            let mut rng = StdRng::seed_from_u64(0);
+            let sig = rsk.sign(&mut rng, &sighash_a);
+            prop_assert!(rk.verify(&sighash_b, &sig).is_err());
+        }
+
+        /// Wrong key rejects: sign with one rsk, verify with a different rk.
+        #[test]
+        fn wrong_key_rejects(
+            sk_a_bytes in any::<[u8; 32]>(),
+            sk_b_bytes in any::<[u8; 32]>(),
+            theta_bytes in any::<[u8; 32]>(),
+            sighash in any::<[u8; 32]>(),
+            note in arb_note(),
+        ) {
+            prop_assume!(sk_a_bytes != sk_b_bytes);
+            let theta = ActionEntropy::from_bytes(theta_bytes);
+            let cm = note.commitment();
+            let alpha = theta.randomizer::<effect::Spend>(&cm);
+
+            let ask_a = private::SpendingKey::from(sk_a_bytes).derive_auth_private();
+            let rsk_a = ask_a.derive_action_private(&alpha);
+
+            let ask_b = private::SpendingKey::from(sk_b_bytes).derive_auth_private();
+            let rk_b = ask_b.derive_action_private(&alpha).derive_action_public();
+
+            let mut rng = StdRng::seed_from_u64(0);
+            let sig = rsk_a.sign(&mut rng, &sighash);
+            prop_assert!(rk_b.verify(&sighash, &sig).is_err());
+        }
+
+        /// Spend and output commit_value with the same (rcv, value) differ.
+        #[test]
+        fn spend_output_cv_differ(
+            seed in any::<u64>(),
+            val in arb_value(),
+        ) {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let rcv = value::CommitmentTrapdoor::random(&mut rng);
+            let cv_spend = effect::Spend::commit_value(rcv, val);
+            let cv_output = effect::Output::commit_value(rcv, val);
+            prop_assert_ne!(cv_spend, cv_output);
+        }
+    }
+}

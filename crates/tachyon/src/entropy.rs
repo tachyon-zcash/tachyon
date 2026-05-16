@@ -100,10 +100,11 @@ pub(crate) fn derive_alpha(
 mod tests {
     use ff::Field as _;
     use pasta_curves::{Fp, Fq};
+    use proptest::prelude::*;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::{note, primitives::effect};
+    use crate::{note, primitives::effect, testing::arb_note};
 
     /// Distinct BLAKE2b personalizations must yield distinct alpha scalars
     /// for the same (theta, cm).
@@ -134,5 +135,20 @@ mod tests {
         // Sensitive: different theta
         let other: Fq = theta_b.randomizer::<effect::Spend>(&cm).into();
         assert_ne!(first, other);
+    }
+
+    proptest! {
+        /// Spend and output randomizers are independent for all (theta, cm).
+        #[test]
+        fn spend_output_alpha_independent(
+            theta_bytes in any::<[u8; 32]>(),
+            note in arb_note(),
+        ) {
+            let theta = ActionEntropy::from_bytes(theta_bytes);
+            let cm = note.commitment();
+            let spend_alpha: Fq = theta.randomizer::<effect::Spend>(&cm).into();
+            let output_alpha: Fq = theta.randomizer::<effect::Output>(&cm).into();
+            prop_assert_ne!(spend_alpha, output_alpha);
+        }
     }
 }
