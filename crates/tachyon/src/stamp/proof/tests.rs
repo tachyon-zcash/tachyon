@@ -22,7 +22,10 @@ use crate::{
     stamp::Stamp,
     test_support::{
         PoolSim, SyncSim, WalletSim, build_output_action,
-        ggm_tools::{delegate_range, nullifier_from_master, nullifier_pair_from_master},
+        ggm_tools::{
+            delegate_range, preblind_nullifier_from_master, preblind_nullifier_pair_from_master,
+            walk_delegate_to_nullifier,
+        },
         random_block, random_block_with,
     },
     value,
@@ -130,24 +133,20 @@ fn stamp_lift_rejects_cross_epoch() {
 
 // ── SpendBind non-adjacent epochs ─────────────────────────────────────────
 
-/// `SpendBind` must reject two delegation-derived nullifier PCDs whose epochs
-/// are not adjacent (`right_epoch != left_epoch + 1`).
+/// `SpendBind` must reject two pre-blind nullifier PCDs whose epochs are
+/// not adjacent (`right_epoch != left_epoch + 1`).
 #[test]
 fn spend_bind_rejects_non_adjacent_epochs() {
     let mut rng = StdRng::seed_from_u64(200);
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
     let note = user.random_note(&mut rng, 500);
-    let trap = DelegationTrapdoor::random(&mut rng);
 
     let epoch_e = EpochIndex(0);
     let epoch_far = EpochIndex(5);
-    let delegation_id = user.pak.nk.derive_delegation_id(&note, trap);
-    // Wallet delegates range covering both epochs.
-    let master = user.delegate_master(&mut rng, note, trap);
-    let sync = SyncSim::new(delegate_range(&mut rng, &master, epoch_e.0..=epoch_far.0));
 
-    let nf_pcd_e = sync.nullifier(&mut rng, delegation_id, epoch_e);
-    let nf_pcd_far = sync.nullifier(&mut rng, delegation_id, epoch_far);
+    let master = user.note_master(&mut rng, note);
+    let nf_pcd_e = preblind_nullifier_from_master(&mut rng, master.clone(), epoch_e);
+    let nf_pcd_far = preblind_nullifier_from_master(&mut rng, master, epoch_far);
 
     let rcv = value::CommitmentTrapdoor::random(&mut rng);
     let theta = ActionEntropy::random(&mut rng);
@@ -156,7 +155,7 @@ fn spend_bind_rejects_non_adjacent_epochs() {
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
         &spend::SpendBind,
-        (rcv, alpha, user.pak, note, trap),
+        (rcv, alpha, user.pak, note),
         nf_pcd_e,
         nf_pcd_far,
     );
@@ -173,7 +172,6 @@ fn spend_bind_rejects_non_adjacent_epochs() {
 fn step_rejects_zero_value_note() {
     let mut rng = StdRng::seed_from_u64(800);
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let trap = DelegationTrapdoor::random(&mut rng);
     let target_epoch = EpochIndex(0);
 
     let zero_note = note::Note {
@@ -183,16 +181,14 @@ fn step_rejects_zero_value_note() {
         rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
     };
 
-    // DelegationSeed: no PCD inputs needed.
+    // NfMasterSeed: no PCD inputs needed. This is the root constraint —
+    // SpendableInit no longer takes a Note witness, so zero-value rejection
+    // for the spendable path is enforced structurally here.
     assert!(
         PROOF_SYSTEM
-            .seed(
-                &mut rng,
-                &delegation::DelegationSeed,
-                (zero_note, user.pak, trap),
-            )
+            .seed(&mut rng, &delegation::NfMasterSeed, (zero_note, user.pak),)
             .is_err(),
-        "DelegationSeed must reject zero-value note"
+        "NfMasterSeed must reject zero-value note"
     );
 
     // OutputStamp: no PCD inputs needed.
@@ -211,12 +207,14 @@ fn step_rejects_zero_value_note() {
         "OutputStamp must reject zero-value note"
     );
 
-    // SpendBind: left/right nf PCDs built from a *valid* note; witness uses zero
-    // note.
+    // SpendBind: left/right pre-blind nf PCDs built from a *valid* note;
+    // witness uses zero note. The witness-cm-binding check rejects first
+    // (zero_note.commitment() != valid leaf cm), but the explicit
+    // `note.value != 0` check would also fire.
     let valid_note = user.random_note(&mut rng, 500);
-    let valid_master = user.delegate_master(&mut rng, valid_note, trap);
+    let valid_master = user.note_master(&mut rng, valid_note);
     let (nf_now_pcd, nf_next_pcd) =
-        nullifier_pair_from_master(&mut rng, valid_master, target_epoch);
+        preblind_nullifier_pair_from_master(&mut rng, valid_master, target_epoch);
     let spend_rcv = value::CommitmentTrapdoor::random(&mut rng);
     let spend_theta = ActionEntropy::random(&mut rng);
     let spend_alpha = spend_theta.randomizer::<effect::Spend>(&zero_note.commitment());
@@ -225,73 +223,46 @@ fn step_rejects_zero_value_note() {
             .fuse(
                 &mut rng,
                 &spend::SpendBind,
-                (spend_rcv, spend_alpha, user.pak, zero_note, trap),
+                (spend_rcv, spend_alpha, user.pak, zero_note),
                 nf_now_pcd,
                 nf_next_pcd,
             )
             .is_err(),
         "SpendBind must reject zero-value note"
     );
-
-    // SpendableInit: pool must contain cm; witness uses zero-value note.
-    let mut pool = PoolSim::new();
-    pool.mine(random_block_with(&mut rng, zero_note.commitment(), 50));
-    let init_anchor = pool.anchor();
-    let delegation_id = user.pak.nk.derive_delegation_id(&zero_note, trap);
-    let nf = zero_note.nullifier(&user.pak.nk, target_epoch);
-    let nf_pcd =
-        Proof::trivial().carry::<delegation::NullifierHeader>((nf, target_epoch, delegation_id));
-    assert!(
-        PROOF_SYSTEM
-            .fuse(
-                &mut rng,
-                &spendable::SpendableInit,
-                (
-                    zero_note,
-                    user.pak,
-                    trap,
-                    pool.state().clone().into(),
-                    init_anchor,
-                ),
-                nf_pcd,
-                Proof::trivial().carry::<()>(()),
-            )
-            .is_err(),
-        "SpendableInit must reject zero-value note"
-    );
 }
 
 // ── SpendBind ─────────────────────────────────────────────────────────────
 
-/// `SpendBind` must reject when the witness's `(note, trap)` recomputes a
-/// `delegation_id` that differs from the one carried on the nullifier PCDs.
-/// Same note, different trapdoor — isolates the delegation_id equality check
-/// from the note/pak binding.
+/// `SpendBind` must reject when the witnessed `note` doesn't match the
+/// leaves' `cm`. Two notes from the same wallet produce different leaves
+/// (different `cm`); witnessing one note with another's leaves must fail
+/// the cm-equality check.
 #[test]
-fn spend_bind_rejects_delegation_id_mismatch() {
+fn spend_bind_rejects_note_cm_mismatch() {
     let mut rng = StdRng::seed_from_u64(705);
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
-    let note = user.random_note(&mut rng, 500);
-    let trap_nf = DelegationTrapdoor::random(&mut rng);
-    let trap_bind = DelegationTrapdoor::random(&mut rng);
+    let leaf_note = user.random_note(&mut rng, 500);
+    let other_note = user.random_note(&mut rng, 500);
     let target_epoch = EpochIndex(0);
 
-    let nf_master = user.delegate_master(&mut rng, note, trap_nf);
-    let (nf_now_pcd, nf_next_pcd) = nullifier_pair_from_master(&mut rng, nf_master, target_epoch);
+    let leaf_master = user.note_master(&mut rng, leaf_note);
+    let (nf_now_pcd, nf_next_pcd) =
+        preblind_nullifier_pair_from_master(&mut rng, leaf_master, target_epoch);
     let rcv = value::CommitmentTrapdoor::random(&mut rng);
     let theta = ActionEntropy::random(&mut rng);
-    let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+    let alpha = theta.randomizer::<effect::Spend>(&other_note.commitment());
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
         &spend::SpendBind,
-        (rcv, alpha, user.pak, note, trap_bind),
+        (rcv, alpha, user.pak, other_note),
         nf_now_pcd,
         nf_next_pcd,
     );
     assert!(
         result.is_err(),
-        "SpendBind must reject when recomputed delegation_id doesn't match nf header"
+        "SpendBind must reject when witnessed note's cm doesn't match the leaf"
     );
 }
 
@@ -310,20 +281,21 @@ fn spendable_epoch_lift_across_boundary() {
     let delegation_id = user.pak.nk.derive_delegation_id(&note, trap);
 
     let epoch_0 = EpochIndex(0);
-    let master = user.delegate_master(&mut rng, note, trap);
-    let mut sync = SyncSim::new(delegate_range(&mut rng, &master, epoch_0.0..=epoch_0.0 + 1));
+    let master = user.note_master(&mut rng, note);
+    let mut sync = SyncSim::new();
 
     pool.mine(random_block_with(&mut rng, note.commitment(), 50));
-    let nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_0);
+    let preblind_nf_pcd = preblind_nullifier_from_master(&mut rng, master.clone(), epoch_0);
     let spendable_pcd = user.spendable_init(
         &mut rng,
-        note,
-        trap,
         pool.anchor(),
         pool.state().clone(),
-        nf_pcd,
+        preblind_nf_pcd,
     );
-    sync.accept_spendable(spendable_pcd);
+    sync.accept_spendable(
+        delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_0.0 + 1),
+        spendable_pcd,
+    );
 
     // Advance into epoch 1, then lift; sync chooses the cross-epoch path.
     let remaining = usize::try_from(EPOCH_SIZE + 1 - u32::from(pool.anchor().0)).expect("fits");
@@ -349,20 +321,21 @@ fn spendable_lift_within_epoch() {
     let delegation_id = user.pak.nk.derive_delegation_id(&note, trap);
     let epoch_0 = EpochIndex(0);
 
-    let master = user.delegate_master(&mut rng, note, trap);
-    let mut sync = SyncSim::new(delegate_range(&mut rng, &master, epoch_0.0..=epoch_0.0));
+    let master = user.note_master(&mut rng, note);
+    let mut sync = SyncSim::new();
 
     pool.mine(random_block_with(&mut rng, note.commitment(), 50));
-    let nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_0);
+    let preblind_nf_pcd = preblind_nullifier_from_master(&mut rng, master.clone(), epoch_0);
     let spendable_pcd = user.spendable_init(
         &mut rng,
-        note,
-        trap,
         pool.anchor(),
         pool.state().clone(),
-        nf_pcd,
+        preblind_nf_pcd,
     );
-    sync.accept_spendable(spendable_pcd);
+    sync.accept_spendable(
+        delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_0.0),
+        spendable_pcd,
+    );
 
     pool.advance(2, |_| random_block(&mut rng, 50));
 
@@ -381,20 +354,12 @@ fn spendable_lift_rejects_cross_epoch() {
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
     let mut pool = PoolSim::new();
     let note = user.random_note(&mut rng, 500);
-    let trap = DelegationTrapdoor::random(&mut rng);
     pool.mine(random_block_with(&mut rng, note.commitment(), 50));
     let init_anchor = pool.anchor();
     let left_pool_acc = pool.state().clone();
-    let master_pcd = user.delegate_master(&mut rng, note, trap);
-    let nf_pcd = nullifier_from_master(&mut rng, master_pcd, init_anchor.0.epoch());
-    let spendable_pcd = user.spendable_init(
-        &mut rng,
-        note,
-        trap,
-        init_anchor,
-        left_pool_acc.clone(),
-        nf_pcd,
-    );
+    let master_pcd = user.note_master(&mut rng, note);
+    let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, init_anchor.0.epoch());
+    let spendable_pcd = user.spendable_init(&mut rng, init_anchor, left_pool_acc.clone(), nf_pcd);
 
     // Advance to epoch-final of epoch 0, then across the boundary.
     let epoch_final = BlockHeight(EPOCH_SIZE - 1);
@@ -426,7 +391,6 @@ fn spendable_init_rejects_cm_absent() {
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
     let mut pool = PoolSim::new();
     let note = user.random_note(&mut rng, 500);
-    let trap = DelegationTrapdoor::random(&mut rng);
     let epoch_0 = EpochIndex(0);
 
     // Advance with an UNRELATED tachygram — cm is NOT in the pool.
@@ -434,12 +398,12 @@ fn spendable_init_rejects_cm_absent() {
     pool.mine(BlockAcc::from(&[Tachygram::from(&unrelated)][..]));
     let anchor = pool.anchor();
 
-    let master_pcd = user.delegate_master(&mut rng, note, trap);
-    let nf_pcd = nullifier_from_master(&mut rng, master_pcd, epoch_0);
+    let master_pcd = user.note_master(&mut rng, note);
+    let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, epoch_0);
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
         &spendable::SpendableInit,
-        (note, user.pak, trap, pool.state().clone().into(), anchor),
+        (pool.state().clone().into(), anchor),
         nf_pcd,
         Proof::trivial().carry::<()>(()),
     );
@@ -461,7 +425,6 @@ fn spendable_init_rejects_nf_present() {
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
     let mut pool = PoolSim::new();
     let note = user.random_note(&mut rng, 500);
-    let trap = DelegationTrapdoor::random(&mut rng);
     let epoch_0 = EpochIndex(0);
 
     let nf = note.nullifier(&user.pak.nk, epoch_0);
@@ -472,12 +435,12 @@ fn spendable_init_rejects_nf_present() {
     ));
     let anchor = pool.anchor();
 
-    let master_pcd = user.delegate_master(&mut rng, note, trap);
-    let nf_pcd = nullifier_from_master(&mut rng, master_pcd, epoch_0);
+    let master_pcd = user.note_master(&mut rng, note);
+    let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, epoch_0);
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
         &spendable::SpendableInit,
-        (note, user.pak, trap, pool.state().clone().into(), anchor),
+        (pool.state().clone().into(), anchor),
         nf_pcd,
         Proof::trivial().carry::<()>(()),
     );
@@ -495,8 +458,6 @@ fn spendable_epoch_lift_rejects_missing_seed() {
     let mut rng = StdRng::seed_from_u64(702);
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
     let note = user.random_note(&mut rng, 500);
-    let trap = DelegationTrapdoor::random(&mut rng);
-    let delegation_id = user.pak.nk.derive_delegation_id(&note, trap);
 
     // Left: SpendableHeader at epoch-final with a fabricated pool (cm only).
     let cm_fp = Fp::from(&note.commitment());
@@ -514,14 +475,9 @@ fn spendable_epoch_lift_rejects_missing_seed() {
     );
     let nf_e1 = note.nullifier(&user.pak.nk, EpochIndex(1));
 
-    let left_pcd =
-        Proof::trivial().carry::<spendable::SpendableHeader>((delegation_id, nf_e0, left_anchor));
-    let right_pcd = Proof::trivial().carry::<spendable::SpendableRolloverHeader>((
-        delegation_id,
-        nf_e0,
-        nf_e1,
-        right_anchor,
-    ));
+    let left_pcd = Proof::trivial().carry::<spendable::SpendableHeader>((nf_e0, left_anchor));
+    let right_pcd =
+        Proof::trivial().carry::<spendable::SpendableRolloverHeader>((nf_e0, nf_e1, right_anchor));
 
     let result = PROOF_SYSTEM.fuse(
         &mut rng,
@@ -544,14 +500,12 @@ fn spendable_lift_rejects_non_superset_delta() {
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
     let mut pool = PoolSim::new();
     let note = user.random_note(&mut rng, 500);
-    let trap = DelegationTrapdoor::random(&mut rng);
     pool.mine(random_block_with(&mut rng, note.commitment(), 50));
     let left_pool_acc = pool.state().clone();
     let anchor = pool.anchor();
-    let master_pcd = user.delegate_master(&mut rng, note, trap);
-    let nf_pcd = nullifier_from_master(&mut rng, master_pcd, anchor.0.epoch());
-    let spendable_pcd =
-        user.spendable_init(&mut rng, note, trap, anchor, left_pool_acc.clone(), nf_pcd);
+    let master_pcd = user.note_master(&mut rng, note);
+    let nf_pcd = preblind_nullifier_from_master(&mut rng, master_pcd, anchor.0.epoch());
+    let spendable_pcd = user.spendable_init(&mut rng, anchor, left_pool_acc.clone(), nf_pcd);
 
     pool.advance(2, |_| random_block(&mut rng, 50));
     let bogus_delta = PoolDelta(Polynomial::from_roots(&[Fp::from(0x1234u64)]));
@@ -580,14 +534,29 @@ fn spendable_rollover_rejects_new_nf_in_pool() {
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
     let note = user.random_note(&mut rng, 500);
     let trap = DelegationTrapdoor::random(&mut rng);
-    let delegation_id = user.pak.nk.derive_delegation_id(&note, trap);
 
     let epoch_0 = EpochIndex(0);
     let epoch_1 = EpochIndex(1);
-    let master = user.delegate_master(&mut rng, note, trap);
-    let sync = SyncSim::new(delegate_range(&mut rng, &master, epoch_0.0..=epoch_1.0));
-    let old_nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_0);
-    let new_nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_1);
+    let master = user.note_master(&mut rng, note);
+    let delegates = delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_1.0);
+    let old_nf_pcd = walk_delegate_to_nullifier(
+        &mut rng,
+        delegates
+            .iter()
+            .find(|del| del.data.0.range().contains(&epoch_0.0))
+            .expect("covers")
+            .clone(),
+        epoch_0,
+    );
+    let new_nf_pcd = walk_delegate_to_nullifier(
+        &mut rng,
+        delegates
+            .iter()
+            .find(|del| del.data.0.range().contains(&epoch_1.0))
+            .expect("covers")
+            .clone(),
+        epoch_1,
+    );
     let new_nf = new_nf_pcd.data.0;
 
     // Pool rooted at new_nf → query(new_nf) == 0 → step rejects.
@@ -625,12 +594,20 @@ fn spendable_rollover_rejects_delegation_id_mismatch() {
 
     let epoch_0 = EpochIndex(0);
     let epoch_1 = EpochIndex(1);
-    let master_a = user.delegate_master(&mut rng, note, trap_a);
-    let master_b = user.delegate_master(&mut rng, note, trap_b);
-    let sync_a = SyncSim::new(delegate_range(&mut rng, &master_a, epoch_0.0..=epoch_1.0));
-    let sync_b = SyncSim::new(delegate_range(&mut rng, &master_b, epoch_0.0..=epoch_1.0));
-    let old_nf_pcd = sync_a.nullifier(&mut rng, id_a, epoch_0);
-    let new_nf_pcd = sync_b.nullifier(&mut rng, id_b, epoch_1);
+    let master_a = user.note_master(&mut rng, note);
+    let master_b = user.note_master(&mut rng, note);
+    let delegates_a = delegate_range(&mut rng, &master_a, trap_a, epoch_0.0..=epoch_0.0);
+    let delegates_b = delegate_range(&mut rng, &master_b, trap_b, epoch_1.0..=epoch_1.0);
+    let old_nf_pcd = walk_delegate_to_nullifier(
+        &mut rng,
+        delegates_a.into_iter().next().expect("covers"),
+        epoch_0,
+    );
+    let new_nf_pcd = walk_delegate_to_nullifier(
+        &mut rng,
+        delegates_b.into_iter().next().expect("covers"),
+        epoch_1,
+    );
 
     // Unrelated root so the non-membership check would pass; delegation_id
     // check should fire first.
@@ -660,14 +637,29 @@ fn spendable_rollover_rejects_non_adjacent_epochs() {
     let user = WalletSim::new(private::SpendingKey::random(&mut rng));
     let note = user.random_note(&mut rng, 500);
     let trap = DelegationTrapdoor::random(&mut rng);
-    let delegation_id = user.pak.nk.derive_delegation_id(&note, trap);
 
     let epoch_0 = EpochIndex(0);
     let epoch_2 = EpochIndex(2);
-    let master = user.delegate_master(&mut rng, note, trap);
-    let sync = SyncSim::new(delegate_range(&mut rng, &master, epoch_0.0..=epoch_2.0));
-    let old_nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_0);
-    let new_nf_pcd = sync.nullifier(&mut rng, delegation_id, epoch_2);
+    let master = user.note_master(&mut rng, note);
+    let delegates = delegate_range(&mut rng, &master, trap, epoch_0.0..=epoch_2.0);
+    let old_nf_pcd = walk_delegate_to_nullifier(
+        &mut rng,
+        delegates
+            .iter()
+            .find(|del| del.data.0.range().contains(&epoch_0.0))
+            .expect("covers")
+            .clone(),
+        epoch_0,
+    );
+    let new_nf_pcd = walk_delegate_to_nullifier(
+        &mut rng,
+        delegates
+            .iter()
+            .find(|del| del.data.0.range().contains(&epoch_2.0))
+            .expect("covers")
+            .clone(),
+        epoch_2,
+    );
 
     let new_pool = PoolSet(Polynomial::from_roots(&[Fp::random(&mut rng)]));
     let new_anchor = Anchor(

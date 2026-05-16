@@ -77,7 +77,10 @@ mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use ggm::{GGM_TREE_DEPTH, NoteMasterKey, NotePrefixedKey};
+pub use ggm::{
+    GGM_CHUNK_MASK, GGM_CHUNK_SIZE, GGM_MAX_INDEX, GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey,
+    NotePrefixedKey, cover_candidates,
+};
 pub use note::{NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 

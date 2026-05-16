@@ -37,8 +37,8 @@ use crate::{
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, public},
     primitives::{
-        ActionCommit, ActionDigest, ActionDigestError, ActionSet, Anchor, DelegationTrapdoor,
-        Tachygram, TachygramAcc, TachygramCommit,
+        ActionCommit, ActionDigest, ActionDigestError, ActionSet, Anchor, Tachygram, TachygramAcc,
+        TachygramCommit,
     },
     stamp::proof::{compute_action_acc, delegation, spend, spendable},
     value,
@@ -112,7 +112,6 @@ pub struct Plan {
             ActionRandomizer<effect::Spend>,
             Note,
             value::CommitmentTrapdoor,
-            DelegationTrapdoor,
         ),
     )>,
     outputs: Vec<(
@@ -130,10 +129,9 @@ impl Plan {
     /// Create a stamp plan from paired action descriptors and witnesses.
     ///
     /// The caller is responsible for deriving alpha from theta (or
-    /// obtaining it through other means). Each spend witness carries the
-    /// `DelegationTrapdoor` that was used to construct the corresponding
-    /// nullifier-header PCDs, so `SpendBind` can recompute and equality-check
-    /// the `DelegationId`.
+    /// obtaining it through other means). `SpendBind` binds the witnessed
+    /// `note` to the pre-blind nullifier leaves via `cm`-equality, so no
+    /// `DelegationTrapdoor` is needed at spend time.
     #[must_use]
     pub const fn new(
         spends: Vec<(
@@ -142,7 +140,6 @@ impl Plan {
                 ActionRandomizer<effect::Spend>,
                 Note,
                 value::CommitmentTrapdoor,
-                DelegationTrapdoor,
             ),
         )>,
         outputs: Vec<(
@@ -191,37 +188,35 @@ impl Plan {
             return Err(ProveError::SpendableMismatch);
         }
 
-        for (
-            ((cv, rk), (alpha, note, rcv, delegation_trap)),
-            (nf_now_pcd, nf_next_pcd, spendable_pcd),
-        ) in self.spends.into_iter().zip(spend_pcds.into_iter())
+        for (((cv, rk), (alpha, note, rcv)), (nf_now_pcd, nf_next_pcd, spendable_pcd)) in
+            self.spends.into_iter().zip(spend_pcds.into_iter())
         {
             let action_digest =
                 ActionDigest::new(cv, rk).map_err(|_err| ProveError::ProofFailed)?;
 
-            // Extract nullifier data before fuse consumes the PCDs.
-            let (nf0, epoch, delegation_id) = nf_now_pcd.data;
-            let nf1 = nf_next_pcd.data.0;
+            // Extract nullifier data before fuse consumes the PCDs. The
+            // pre-blind leaf carries `(cm, nf, epoch)`.
+            let (_cm_tg, nf0, epoch) = nf_now_pcd.data;
+            let nf1 = nf_next_pcd.data.1;
 
             let app = &*PROOF_SYSTEM;
 
-            // SpendBind: fuse two epoch-adjacent nullifier headers with action data
+            // SpendBind: fuse two epoch-adjacent pre-blind nullifier headers
+            // with action data. Same-wallet binding is via `cm`-equality
+            // between the leaves; the witnessed `note` is bound to the
+            // leaves' `cm`.
             let (bind_proof, ()) = app
                 .fuse(
                     rng,
                     &spend::SpendBind,
-                    (rcv, alpha, *pak, note, delegation_trap),
+                    (rcv, alpha, *pak, note),
                     nf_now_pcd,
                     nf_next_pcd,
                 )
                 .map_err(|_err| ProveError::ProofFailed)?;
 
-            let bind_pcd = bind_proof.carry::<spend::SpendHeader>((
-                action_digest,
-                [nf0, nf1],
-                epoch,
-                delegation_id,
-            ));
+            let bind_pcd =
+                bind_proof.carry::<spend::SpendHeader>((action_digest, [nf0, nf1], epoch));
 
             // SpendStamp: fuse spend with spendable chain
             let tachygrams = alloc::vec![Tachygram::from(&nf0), Tachygram::from(&nf1),];
@@ -356,7 +351,7 @@ impl Stamp {
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let anchor = spendable_pcd.data.2;
+        let anchor = spendable_pcd.data.1;
 
         let (proof, (action_acc, tachygram_acc)) =
             app.fuse(rng, &SpendStamp, (), spend_pcd, spendable_pcd)?;

@@ -80,12 +80,13 @@ pub const EPOCH_SEED_DOMAIN: &[u8; 16] = b"Tachyon-EpchSeed";
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)
 pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
 
-/// Log2 of the epoch size in blocks. Compile-time constant so the whole crate
-/// sees the same epoch boundaries; tests override it to a small value.
-pub(crate) const EPOCH_SHIFT: u32 = if cfg!(test) { 4 } else { 12 };
+const EPOCH_SHIFT: u32 = if cfg!(test) { 4 } else { 12 };
 
 /// Number of blocks per epoch.
 pub const EPOCH_SIZE: u32 = 1 << EPOCH_SHIFT;
+
+/// Maximum epoch index.
+pub const EPOCH_MAX: u32 = u32::MAX >> EPOCH_SHIFT;
 
 /// Domain-separated key expansion from a spending key.
 ///

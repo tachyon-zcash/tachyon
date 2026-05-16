@@ -15,7 +15,10 @@ mod tests;
 
 use alloc::vec::Vec;
 
-use delegation::{DelegationMasterStep, DelegationSeed, DelegationStep, NullifierStep};
+use delegation::{
+    DelegateNfPrefixStep, DelegateNullifierStep, DelegationStep, NfMasterSeed, NfMasterStep,
+    NfPrefixStep, NullifierStep,
+};
 use lazy_static::lazy_static;
 pub use mock_ragu::Proof;
 use mock_ragu::{Application, ApplicationBuilder};
@@ -41,16 +44,18 @@ lazy_static! {
     pub(crate) static ref PROOF_SYSTEM: Application = {
         #[expect(clippy::expect_used, reason = "mock registration is infallible")]
         ApplicationBuilder::new()
-            .register(DelegationSeed)
-            .expect("register DelegationSeed")
-            .register(DelegationMasterStep)
-            .expect("register DelegationMasterStep")
+            .register(NfMasterSeed)
+            .expect("register NfMasterSeed")
+            .register(NfMasterStep)
+            .expect("register NfMasterStep")
             .register(OutputStamp)
             .expect("register OutputStamp")
-            .register(DelegationStep)
-            .expect("register DelegationStep")
+            .register(NfPrefixStep)
+            .expect("register NfPrefixStep")
             .register(NullifierStep)
             .expect("register NullifierStep")
+            .register(DelegateNullifierStep)
+            .expect("register DelegateNullifierStep")
             .register(SpendBind)
             .expect("register SpendBind")
             .register(SpendableInit)
@@ -67,6 +72,10 @@ lazy_static! {
             .expect("register MergeStamp")
             .register(StampLift)
             .expect("register StampLift")
+            .register(DelegationStep)
+            .expect("register DelegationStep")
+            .register(DelegateNfPrefixStep)
+            .expect("register DelegateNfPrefixStep")
             .finalize()
             .expect("finalize")
     };

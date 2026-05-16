@@ -76,10 +76,7 @@ use crate::{
     action::{self, Action},
     constants::{AUTH_DIGEST_PERSONALIZATION, BUNDLE_COMMITMENT_PERSONALIZATION},
     keys::{private, public},
-    primitives::{
-        ActionCommit, ActionDigest, ActionDigestError, Anchor, DelegationTrapdoor, Tachygram,
-        effect,
-    },
+    primitives::{ActionCommit, ActionDigest, ActionDigestError, Anchor, Tachygram, effect},
     reddsa, serialization,
     stamp::{self, Adjunct, Stamp, Unproven, proof::compute_action_acc},
     value,
@@ -381,31 +378,14 @@ impl Plan {
     /// Derives alpha from theta for each action and collects the proof
     /// witnesses. The returned plan is ready to prove with
     /// [`stamp::Plan::prove`].
-    ///
-    /// `spend_traps` must be in the same order as `self.spends` and
-    /// carry the `DelegationTrapdoor` that was used to construct each
-    /// spend's delegation / nullifier PCDs.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `spend_traps.len() != self.spends.len()`.
     #[must_use]
-    pub fn stamp_plan(&self, anchor: Anchor, spend_traps: &[DelegationTrapdoor]) -> stamp::Plan {
-        assert_eq!(
-            spend_traps.len(),
-            self.spends.len(),
-            "one DelegationTrapdoor per spend"
-        );
+    pub fn stamp_plan(&self, anchor: Anchor) -> stamp::Plan {
         let spends = self
             .spends
             .iter()
-            .zip(spend_traps.iter().copied())
-            .map(|(plan, delegation_trap)| {
+            .map(|plan| {
                 let alpha = plan.theta.randomizer(&plan.note.commitment());
-                (
-                    (plan.cv(), plan.rk),
-                    (alpha, plan.note, plan.rcv, delegation_trap),
-                )
+                ((plan.cv(), plan.rk), (alpha, plan.note, plan.rcv))
             })
             .collect();
 
@@ -833,8 +813,7 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Sig
     let value_balance = i64::from_le_bytes(vb_bytes);
 
     let n_actions =
-        usize::try_from(serialization::read_compactsize(&mut reader)?)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(io::Error::other)?;
 
     let mut descriptors = Vec::with_capacity(n_actions);
     for _ in 0..n_actions {
@@ -899,7 +878,7 @@ fn write_bundle_body<W: Write>(
 
     serialization::write_compactsize(
         &mut writer,
-        u64::try_from(actions.len()).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?,
+        u64::try_from(actions.len()).map_err(io::Error::other)?,
     )?;
     for action in actions {
         serialization::write_ep_affine(&mut writer, &action.cv.0)?;
