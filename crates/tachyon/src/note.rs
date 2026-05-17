@@ -33,6 +33,8 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
+use core::fmt;
+
 use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
@@ -49,7 +51,7 @@ use crate::{
 /// Used to derive the master root key: $mk = \text{KDF}(\psi, nk)$.
 /// The GGM tree PRF then evaluates $nf = F_{mk}(\text{flavor})$.
 /// Prefix keys derived from $mk$ enable range-restricted delegation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct NullifierTrapdoor(pub(super) Fp);
 
@@ -76,7 +78,7 @@ impl From<NullifierTrapdoor> for Fp {
 /// commitment.
 ///
 /// Can be derived from a shared secret negotiated out-of-band.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct CommitmentTrapdoor(Fp);
 
 impl CommitmentTrapdoor {
@@ -191,7 +193,7 @@ impl Note {
 /// the value that becomes a tachygram:
 /// - For **output** operations, `cm` IS the tachygram directly.
 /// - For **spend** operations, `cm` is a private witness.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Commitment(Fp);
 
 impl From<Fp> for Commitment {
@@ -222,7 +224,7 @@ impl From<Commitment> for Tachygram {
 /// - Don't need collision resistance (no faerie gold defense)
 /// - Have an epoch "flavor" component for sync delegation
 /// - Are prunable by validators after a window of blocks
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Nullifier(Fp);
 
 impl From<Fp> for Nullifier {
@@ -240,6 +242,30 @@ impl From<Nullifier> for Fp {
 impl From<Nullifier> for Tachygram {
     fn from(nullifier: Nullifier) -> Self {
         Self::from(nullifier.0)
+    }
+}
+
+impl fmt::Debug for NullifierTrapdoor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NullifierTrapdoor").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for CommitmentTrapdoor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Commitment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Commitment").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Nullifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Nullifier").finish_non_exhaustive()
     }
 }
 
@@ -308,5 +334,31 @@ mod tests {
 
         let mk = nk.derive_note_private(&psi);
         assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));
+    }
+
+    #[test]
+    fn debug_nullifier_trapdoor_redacts_value() {
+        let psi = NullifierTrapdoor::from(Fp::from(0xCAFEu64));
+        let dbg = alloc::format!("{psi:?}");
+        assert!(dbg.contains("NullifierTrapdoor"), "must name the type");
+        assert!(!dbg.contains("CAFE"), "must not leak field element");
+        assert!(!dbg.contains("51966"), "must not leak decimal value");
+    }
+
+    #[test]
+    fn debug_note_commitment_redacts_value() {
+        let cm = Commitment::from(Fp::from(42u64));
+        let dbg = alloc::format!("{cm:?}");
+        assert!(dbg.contains("Commitment"), "must name the type");
+        assert!(!dbg.contains("42"), "must not leak field element");
+    }
+
+    #[test]
+    fn debug_nullifier_redacts_value() {
+        let nf = Nullifier::from(Fp::from(0xBEEFu64));
+        let dbg = alloc::format!("{nf:?}");
+        assert!(dbg.contains("Nullifier"), "must name the type");
+        assert!(!dbg.contains("BEEF"), "must not leak field element");
+        assert!(!dbg.contains("48879"), "must not leak decimal value");
     }
 }

@@ -1,6 +1,6 @@
 //! Private (signing) keys.
 
-use core::marker::PhantomData;
+use core::{any::type_name, fmt, marker::PhantomData};
 
 use ff::{Field as _, FromUniformBytes as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
@@ -34,7 +34,7 @@ use crate::{
 /// - [`derive_payment_key`](Self::derive_payment_key) → [`PaymentKey`] (`pk`)
 /// - [`derive_proof_private`](Self::derive_proof_private) →
 ///   [`ProofAuthorizingKey`] (`ak` + `nk`)
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct SpendingKey([u8; 32]);
 
 impl From<[u8; 32]> for SpendingKey {
@@ -158,7 +158,7 @@ impl SpendingKey {
 /// `ask` derives [`SpendValidatingKey`](super::proof::SpendValidatingKey)
 /// (`ak`) via [`derive_auth_public`](Self::derive_auth_public) — the
 /// circuit witness that validates spend authorization.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct SpendAuthorizingKey(reddsa::SigningKey<reddsa::ActionAuth>);
 
 impl SpendAuthorizingKey {
@@ -193,7 +193,7 @@ impl SpendAuthorizingKey {
 ///
 /// Both variants sign via [`sign`](Self::sign) and derive `rk` via
 /// [`derive_action_public`](Self::derive_action_public).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct ActionSigningKey<E: Effect>(reddsa::SigningKey<reddsa::ActionAuth>, PhantomData<E>);
 
 impl<E: Effect> ActionSigningKey<E> {
@@ -249,7 +249,7 @@ impl ActionSigningKey<effect::Output> {
 /// commitment (and commitments from other pools). The stamp is
 /// excluded from the bundle commitment because it is stripped during
 /// aggregation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct BindingSigningKey(reddsa::SigningKey<reddsa::BindingAuth>);
 
 impl BindingSigningKey {
@@ -296,5 +296,32 @@ impl From<&[value::CommitmentTrapdoor]> for BindingSigningKey {
             reddsa::SigningKey::<reddsa::BindingAuth>::try_from(sum.to_repr())
                 .expect("all Fq are valid RedPallas signing keys"),
         )
+    }
+}
+
+impl fmt::Debug for SpendingKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SpendingKey").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for SpendAuthorizingKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SpendAuthorizingKey")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<E: Effect> fmt::Debug for ActionSigningKey<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ActionSigningKey")
+            .field("effect", &type_name::<E>())
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for BindingSigningKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingSigningKey").finish_non_exhaustive()
     }
 }

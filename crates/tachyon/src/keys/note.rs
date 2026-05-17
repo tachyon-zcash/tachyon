@@ -1,5 +1,7 @@
 //! Note-related keys: NullifierKey, PaymentKey.
 
+use core::fmt;
+
 use ff::PrimeField as _;
 use pasta_curves::Fp;
 
@@ -34,7 +36,7 @@ use crate::{
 /// `nk` alone does NOT confer spend authority — combined with `ak` it
 /// forms the proof authorizing key `pak`, enabling proof construction
 /// and nullifier derivation without signing capability.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct NullifierKey(pub(super) Fp);
 
 impl NullifierKey {
@@ -100,7 +102,7 @@ impl NullifierKey {
 /// note commitment. It is NOT an on-chain address; payment coordination
 /// happens out-of-band via higher-level protocols (ZIP 321 payment
 /// requests, ZIP 324 URI encapsulated payments).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct PaymentKey(pub(crate) Fp);
 
@@ -119,6 +121,18 @@ impl PaymentKey {
             Option::from(Fp::from_repr(ak_bytes)).expect("sign-normalized ak should be a valid Fp");
 
         Self(poseidon::payment_key(ak_x, nk.0))
+    }
+}
+
+impl fmt::Debug for NullifierKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NullifierKey").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for PaymentKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PaymentKey").finish_non_exhaustive()
     }
 }
 
