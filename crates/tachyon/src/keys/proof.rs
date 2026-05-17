@@ -33,13 +33,6 @@ pub struct ProofAuthorizingKey {
     pub nk: NullifierKey,
 }
 
-impl fmt::Debug for ProofAuthorizingKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProofAuthorizingKey")
-            .finish_non_exhaustive()
-    }
-}
-
 impl ProofAuthorizingKey {
     /// Derive the payment key $\mathsf{pk}$ from `ak` and `nk`.
     ///
@@ -66,12 +59,6 @@ impl ProofAuthorizingKey {
 #[derive(Clone, Copy)]
 pub struct SpendValidatingKey(pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>);
 
-impl fmt::Debug for SpendValidatingKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SpendValidatingKey").finish_non_exhaustive()
-    }
-}
-
 impl SpendValidatingKey {
     /// Derive the per-action public (verification) key: $\mathsf{rk} =
     /// \mathsf{ak} + [\alpha]\,\mathcal{G}$.
@@ -93,5 +80,18 @@ impl SpendValidatingKey {
         alpha: &ActionRandomizer<effect::Spend>,
     ) -> public::ActionVerificationKey {
         public::ActionVerificationKey(self.0.randomize(&alpha.0))
+    }
+}
+
+impl fmt::Debug for ProofAuthorizingKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProofAuthorizingKey")
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for SpendValidatingKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SpendValidatingKey").finish_non_exhaustive()
     }
 }

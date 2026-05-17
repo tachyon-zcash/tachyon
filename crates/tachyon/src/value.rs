@@ -46,12 +46,6 @@ lazy_static! {
 #[derive(Clone, Copy)]
 pub struct CommitmentTrapdoor(Fq);
 
-impl fmt::Debug for CommitmentTrapdoor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
-    }
-}
-
 impl CommitmentTrapdoor {
     /// Attempt to parse a value commitment trapdoor from 32 bytes.
     #[must_use]
@@ -125,12 +119,6 @@ impl From<CommitmentTrapdoor> for Fq {
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Commitment(pub(super) EpAffine);
 
-impl fmt::Debug for Commitment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Commitment").finish_non_exhaustive()
-    }
-}
-
 impl Commitment {
     /// Attempt to parse a value commitment from 32 compressed bytes.
     #[must_use]
@@ -194,6 +182,18 @@ impl iter::Sum for Commitment {
     /// commitments. Identity element is the point at infinity.
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self(EpAffine::identity()), |acc, cv| acc + cv)
+    }
+}
+
+impl fmt::Debug for CommitmentTrapdoor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Commitment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Commitment").finish_non_exhaustive()
     }
 }
 

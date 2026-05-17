@@ -39,12 +39,6 @@ use crate::{
 #[derive(Clone, Copy)]
 pub struct NullifierKey(pub(super) Fp);
 
-impl fmt::Debug for NullifierKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NullifierKey").finish_non_exhaustive()
-    }
-}
-
 impl NullifierKey {
     /// Derive the per-note master root key: $\mathsf{mk} = \text{KDF}(\psi,
     /// \mathsf{nk})$.
@@ -112,12 +106,6 @@ impl NullifierKey {
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct PaymentKey(pub(crate) Fp);
 
-impl fmt::Debug for PaymentKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PaymentKey").finish_non_exhaustive()
-    }
-}
-
 impl PaymentKey {
     /// Derive the payment key from `ak` and `nk`:
     /// $\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
@@ -133,6 +121,18 @@ impl PaymentKey {
             Option::from(Fp::from_repr(ak_bytes)).expect("sign-normalized ak should be a valid Fp");
 
         Self(poseidon::payment_key(ak_x, nk.0))
+    }
+}
+
+impl fmt::Debug for NullifierKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NullifierKey").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for PaymentKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PaymentKey").finish_non_exhaustive()
     }
 }
 

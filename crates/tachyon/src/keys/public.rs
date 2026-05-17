@@ -25,13 +25,6 @@ use crate::{action, action::Action, bundle, reddsa, value};
 #[derive(Clone, Copy, PartialEq)]
 pub struct ActionVerificationKey(pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>);
 
-impl fmt::Debug for ActionVerificationKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ActionVerificationKey")
-            .finish_non_exhaustive()
-    }
-}
-
 impl ActionVerificationKey {
     /// Verify an action signature against a transaction sighash.
     pub fn verify(&self, sighash: &[u8; 32], sig: &action::Signature) -> Result<(), reddsa::Error> {
@@ -117,13 +110,6 @@ pub fn derive_bvk(
 #[derive(Clone, Copy)]
 pub struct BindingVerificationKey(pub(super) reddsa::VerificationKey<reddsa::BindingAuth>);
 
-impl fmt::Debug for BindingVerificationKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BindingVerificationKey")
-            .finish_non_exhaustive()
-    }
-}
-
 impl BindingVerificationKey {
     /// Derive the binding verification key from public action data.
     ///
@@ -172,3 +158,17 @@ impl PartialEq for BindingVerificationKey {
     reason = "default assert_receiver_is_total_eq is correct"
 )]
 impl Eq for BindingVerificationKey {}
+
+impl fmt::Debug for ActionVerificationKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ActionVerificationKey")
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for BindingVerificationKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingVerificationKey")
+            .finish_non_exhaustive()
+    }
+}

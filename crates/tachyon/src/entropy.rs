@@ -29,12 +29,6 @@ use crate::{note, primitives::Effect};
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
 pub struct ActionEntropy(pub(crate) [u8; 32]);
 
-impl fmt::Debug for ActionEntropy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ActionEntropy").finish_non_exhaustive()
-    }
-}
-
 impl ActionEntropy {
     /// Parse action entropy from 32 bytes.
     #[must_use]
@@ -74,17 +68,23 @@ mod sealed {
 #[derive(Clone, Copy)]
 pub struct ActionRandomizer<S: sealed::RandomizerState>(pub(crate) Fq, pub(crate) PhantomData<S>);
 
+impl<S: sealed::RandomizerState> From<ActionRandomizer<S>> for Fq {
+    fn from(randomizer: ActionRandomizer<S>) -> Self {
+        randomizer.0
+    }
+}
+
+impl fmt::Debug for ActionEntropy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ActionEntropy").finish_non_exhaustive()
+    }
+}
+
 impl<S: sealed::RandomizerState> fmt::Debug for ActionRandomizer<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ActionRandomizer")
             .field("state", &type_name::<S>())
             .finish_non_exhaustive()
-    }
-}
-
-impl<S: sealed::RandomizerState> From<ActionRandomizer<S>> for Fq {
-    fn from(randomizer: ActionRandomizer<S>) -> Self {
-        randomizer.0
     }
 }
 

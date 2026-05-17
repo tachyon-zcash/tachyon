@@ -55,12 +55,6 @@ use crate::{
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct NullifierTrapdoor(pub(super) Fp);
 
-impl fmt::Debug for NullifierTrapdoor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NullifierTrapdoor").finish_non_exhaustive()
-    }
-}
-
 impl NullifierTrapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
@@ -86,12 +80,6 @@ impl From<NullifierTrapdoor> for Fp {
 /// Can be derived from a shared secret negotiated out-of-band.
 #[derive(Clone, Copy)]
 pub struct CommitmentTrapdoor(Fp);
-
-impl fmt::Debug for CommitmentTrapdoor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
-    }
-}
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
@@ -208,12 +196,6 @@ impl Note {
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Commitment(Fp);
 
-impl fmt::Debug for Commitment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Commitment").finish_non_exhaustive()
-    }
-}
-
 impl From<Fp> for Commitment {
     fn from(fp: Fp) -> Self {
         Self(fp)
@@ -245,12 +227,6 @@ impl From<Commitment> for Tachygram {
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Nullifier(Fp);
 
-impl fmt::Debug for Nullifier {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Nullifier").finish_non_exhaustive()
-    }
-}
-
 impl From<Fp> for Nullifier {
     fn from(fp: Fp) -> Self {
         Self(fp)
@@ -266,6 +242,30 @@ impl From<Nullifier> for Fp {
 impl From<Nullifier> for Tachygram {
     fn from(nullifier: Nullifier) -> Self {
         Self::from(nullifier.0)
+    }
+}
+
+impl fmt::Debug for NullifierTrapdoor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NullifierTrapdoor").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for CommitmentTrapdoor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Commitment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Commitment").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Nullifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Nullifier").finish_non_exhaustive()
     }
 }
 

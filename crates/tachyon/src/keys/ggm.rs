@@ -60,12 +60,6 @@ pub const GGM_TREE_DEPTH: u8 = GGM_MAX_INDEX.trailing_ones() as u8 / GGM_CHUNK_S
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct NoteMasterKey(pub(crate) Fp);
 
-impl fmt::Debug for NoteMasterKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NoteMasterKey").finish_non_exhaustive()
-    }
-}
-
 impl NoteMasterKey {
     /// Descend one level from the root of the GGM tree.
     #[must_use]
@@ -142,15 +136,6 @@ pub struct NotePrefixedKey {
     pub(crate) depth: NonZeroU8,
     /// Node index at this depth.
     pub(crate) index: u32,
-}
-
-impl fmt::Debug for NotePrefixedKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NotePrefixedKey")
-            .field("depth", &self.depth)
-            .field("index", &self.index)
-            .finish_non_exhaustive()
-    }
 }
 
 impl NotePrefixedKey {
@@ -346,6 +331,21 @@ fn ggm_walk(node: Fp, leaf: u32, remaining: u8) -> Fp {
             let chunk = u8::try_from(chunk_u32).expect("chunk fits in u8");
             ggm_walk(ggm_step(node, chunk), leaf, next)
         },
+    }
+}
+
+impl fmt::Debug for NoteMasterKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NoteMasterKey").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for NotePrefixedKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NotePrefixedKey")
+            .field("depth", &self.depth)
+            .field("index", &self.index)
+            .finish_non_exhaustive()
     }
 }
 
