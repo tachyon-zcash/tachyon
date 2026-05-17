@@ -12,8 +12,8 @@ flowchart TB
     ask["ask (SpendAuthorizingKey)"]
     pk["pk (PaymentKey)"]
 
-    sk -->|"PRF 0x09"| ask
-    sk -->|"PRF 0x0a"| nk
+    sk -->|"PRF 0x21"| ask
+    sk -->|"PRF 0x22"| nk
     ask -->|"[ask]G"| ak
     ak & nk -->|"Poseidon"| pk
 
@@ -27,7 +27,7 @@ The spending key $\mathsf{sk}$ derives $\mathsf{ask}$ and $\mathsf{nk}$ via doma
 
 $$ \text{PRF}^{\text{expand}}_{\mathsf{sk}}(t) = \text{BLAKE2b-512}(\text{"Zcash\_ExpandSeed"},\; \mathsf{sk} \| t) $$
 
-The domain bytes ($\texttt{0x09}$, $\texttt{0x0a}$) are allocated to avoid collisions with Sapling and Orchard. The payment key $\mathsf{pk}$ is then derived from both $\mathsf{ak}$ and $\mathsf{nk}$ via Poseidon, binding it to the full proof authorizing key.
+The payment key $\mathsf{pk}$ is then derived from both $\mathsf{ak}$ and $\mathsf{nk}$ via Poseidon, binding it to the full proof authorizing key.
 
 ### Comparison with Orchard
 
@@ -52,7 +52,7 @@ Raw 32-byte entropy. The root of all authority — must be kept secret. Matches 
 
 ### Spend authorizing key ($\mathsf{ask}$)
 
-$$\mathsf{ask} = \text{ToScalar}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\texttt{0x09}])\bigr)$$
+$$\mathsf{ask} = \text{ToScalar}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\texttt{0x21}])\bigr)$$
 
 A long-lived $\mathbb{F}_q$ scalar derived from $\mathsf{sk}$. **Cannot sign directly** — it must be randomized into a per-action $\mathsf{rsk}$ first. Per-action randomization ensures each $\mathsf{rk}$ is unlinkable to $\mathsf{ak}$, so observers cannot correlate actions to the same spending authority.
 
@@ -84,7 +84,7 @@ The spend authorization keys follow a three-tier scheme mapping to **private sca
 
 ### Nullifier key ($\mathsf{nk}$)
 
-$$\mathsf{nk} = \text{ToBase}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\texttt{0x0a}])\bigr)$$
+$$\mathsf{nk} = \text{ToBase}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\texttt{0x22}])\bigr)$$
 
 An $\mathbb{F}_p$ element used in nullifier derivation. Tachyon simplifies Orchard's nullifier construction:[^faerie-gold]
 

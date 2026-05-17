@@ -75,7 +75,11 @@ impl NoteMasterKey {
     /// Derive a nullifier for the given epoch.
     #[must_use]
     pub fn derive_nullifier(&self, flavor: EpochIndex) -> Nullifier {
-        Nullifier::from(ggm_walk(self.0, flavor.0, GGM_TREE_DEPTH))
+        Nullifier::from(poseidon::nullifier(ggm_walk(
+            self.0,
+            flavor.0,
+            GGM_TREE_DEPTH,
+        )))
     }
 
     /// Derive epoch-restricted prefix keys covering the specified range.
@@ -201,7 +205,9 @@ impl NotePrefixedKey {
     pub fn derive_nullifier(&self, flavor: EpochIndex) -> Nullifier {
         assert!(self.range().contains(&flavor.0), "epoch out of range");
         let remaining = GGM_TREE_DEPTH - self.depth.get();
-        Nullifier::from(ggm_walk(self.inner, flavor.0, remaining))
+        Nullifier::from(poseidon::nullifier(ggm_walk(
+            self.inner, flavor.0, remaining,
+        )))
     }
 }
 
@@ -239,7 +245,7 @@ pub fn cover_candidates(range: RangeInclusive<u32>) -> Vec<RangeInclusive<u32>> 
 /// One GGM tree step: `Poseidon(tag, node, chunk)`.
 fn ggm_step(node: Fp, chunk: u8) -> Fp {
     debug_assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
-    poseidon::ggm_step(node, chunk)
+    poseidon::nf_prefix(node, chunk)
 }
 
 /// Recursive GGM walk: consume the top `GGM_CHUNK_SIZE` bits of `leaf` at each

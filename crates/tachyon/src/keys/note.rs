@@ -49,7 +49,7 @@ impl NullifierKey {
     /// - Derive epoch-restricted prefix keys $\Psi_t$ for OSS delegation
     #[must_use]
     pub fn derive_note_private(&self, psi: &note::NullifierTrapdoor) -> NoteMasterKey {
-        NoteMasterKey(poseidon::note_master(psi.0, self.0))
+        NoteMasterKey(poseidon::nf_master(psi.0, self.0))
     }
 
     /// Derives a per-delegation identifier: `H(domain, mk, cm, trap)`.

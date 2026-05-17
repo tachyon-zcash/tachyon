@@ -33,7 +33,7 @@ The same note spent in different epochs produces different nullifiers. This is e
 
 ### Oblivious sync delegation
 
-The master root key $\mathsf{mk} = \text{Poseidon}_\text{Tachyon-MkDerive}(\Psi, \mathsf{nk})$ seeds a GGM (Goldreich-Goldwasser-Micali) tree PRF. Prefix keys $\Psi_t$ permit evaluating the PRF only for epochs $e \leq t$, enabling range-restricted delegation to an untrusted service (OSS) for non-inclusion proving without revealing spend capability.
+The master root key $\mathsf{mk} = \text{Poseidon}_\text{Tachyon-NfPrefix}(\Psi, \mathsf{nk})$ seeds a GGM (Goldreich-Goldwasser-Micali) tree PRF. Prefix keys $\Psi_t$ permit evaluating the PRF only for epochs $e \leq t$, enabling range-restricted delegation to an untrusted service (OSS) for non-inclusion proving without revealing spend capability.
 
 ```mermaid
 flowchart TB

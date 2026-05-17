@@ -9,16 +9,42 @@ use ff::PrimeField as _;
 use lazy_static::lazy_static;
 use pasta_curves::{EqAffine, Fp, arithmetic::CurveAffine as _};
 
-const PRF_EXPAND_PERSONALIZATION: &[u8; 16] = b"Zcash_ExpandSeed";
-const BUNDLE_COMMITMENT_PERSONALIZATION: &[u8; 16] = b"Tachyon-BndlHash";
-const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
+fn hasher(personalization: &[u8]) -> blake2b_simd::State {
+    Params::new()
+        .hash_length(64)
+        .personal(personalization)
+        .to_state()
+}
+
 const SPEND_ALPHA_PERSONALIZATION: &[u8; 13] = b"Tachyon-Spend";
 const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
 
-// Domain bytes for Tachyon's PRF-expand.
+/// Spend-side $\alpha$ pre-image: $\text{BLAKE2b-512}(\text{"Tachyon-Spend"},
+/// \theta \| cm)$.
+///
+/// Caller reduces to scalar via `Fq::from_uniform_bytes`.
+pub(crate) fn alpha_spend(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
+    *hasher(SPEND_ALPHA_PERSONALIZATION)
+        .update(theta)
+        .update(cm)
+        .finalize()
+        .as_array()
+}
+
+/// Output-side $\alpha$ pre-image: $\text{BLAKE2b-512}(\text{"Tachyon-Output"},
+/// \theta \| cm)$.
+pub(crate) fn alpha_output(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
+    *hasher(OUTPUT_ALPHA_PERSONALIZATION)
+        .update(theta)
+        .update(cm)
+        .finalize()
+        .as_array()
+}
+
 // See https://github.com/zcash/zcash_spec/blob/main/src/prf_expand.rs
-const ASK_DOMAIN_BYTE: u8 = 0x21;
-const NK_DOMAIN_BYTE: u8 = 0x22;
+const PRF_EXPAND_PERSONALIZATION: &[u8; 16] = b"Zcash_ExpandSeed";
+const PRF_EXPAND_DOMAIN_ASK: u8 = 0x21;
+const PRF_EXPAND_DOMAIN_NK: u8 = 0x22;
 
 /// PRF-expand to derive `ask` from a spending key. Performs no normalization.
 ///
@@ -27,12 +53,9 @@ const NK_DOMAIN_BYTE: u8 = 0x22;
 ///
 /// TODO: return normalized Fq?
 pub(crate) fn prf_expand_ask(sk: &[u8; 32]) -> [u8; 64] {
-    *Params::new()
-        .hash_length(64)
-        .personal(PRF_EXPAND_PERSONALIZATION)
-        .to_state()
+    *hasher(PRF_EXPAND_PERSONALIZATION)
         .update(sk)
-        .update(&[ASK_DOMAIN_BYTE])
+        .update(&[PRF_EXPAND_DOMAIN_ASK])
         .finalize()
         .as_array()
 }
@@ -44,43 +67,16 @@ pub(crate) fn prf_expand_ask(sk: &[u8; 32]) -> [u8; 64] {
 ///
 /// TODO: return normalized Fq?
 pub(crate) fn prf_expand_nk(sk: &[u8; 32]) -> [u8; 64] {
-    *Params::new()
-        .hash_length(64)
-        .personal(PRF_EXPAND_PERSONALIZATION)
-        .to_state()
+    *hasher(PRF_EXPAND_PERSONALIZATION)
         .update(sk)
-        .update(&[NK_DOMAIN_BYTE])
+        .update(&[PRF_EXPAND_DOMAIN_NK])
         .finalize()
         .as_array()
 }
 
-/// Spend-side $\alpha$ pre-image: $\text{BLAKE2b-512}(\text{"Tachyon-Spend"},
-/// \theta \| cm)$.
-///
-/// Caller reduces to scalar via `Fq::from_uniform_bytes`.
-pub(crate) fn alpha_spend(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
-    *Params::new()
-        .hash_length(64)
-        .personal(SPEND_ALPHA_PERSONALIZATION)
-        .to_state()
-        .update(theta)
-        .update(cm)
-        .finalize()
-        .as_array()
-}
-
-/// Output-side $\alpha$ pre-image: $\text{BLAKE2b-512}(\text{"Tachyon-Output"},
-/// \theta \| cm)$.
-pub(crate) fn alpha_output(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
-    *Params::new()
-        .hash_length(64)
-        .personal(OUTPUT_ALPHA_PERSONALIZATION)
-        .to_state()
-        .update(theta)
-        .update(cm)
-        .finalize()
-        .as_array()
-}
+// See https://github.com/zcash/orchard/blob/main/src/bundle/commitments.rs
+const BUNDLE_COMMITMENT_PERSONALIZATION: &[u8; 16] = b"ZTxIdTachyonHash";
+const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 
 /// A bundle's contribution to the transaction sighash.
 ///
@@ -92,10 +88,7 @@ pub(crate) fn bundle_commitment(action_commit: &EqAffine, value_balance: i64) ->
         .coordinates()
         .expect("commitment should not be the identity point");
 
-    *Params::new()
-        .hash_length(64)
-        .personal(BUNDLE_COMMITMENT_PERSONALIZATION)
-        .to_state()
+    *hasher(BUNDLE_COMMITMENT_PERSONALIZATION)
         .update(&coords.x().to_repr())
         .update(&coords.y().to_repr())
         .update(&value_balance.to_le_bytes())
@@ -113,10 +106,7 @@ pub(crate) fn stamped_auth_digest(
     tachygrams: &[Fp],
     proof: &[u8],
 ) -> [u8; 64] {
-    let mut state = Params::new()
-        .hash_length(64)
-        .personal(AUTH_DIGEST_PERSONALIZATION)
-        .to_state();
+    let mut state = hasher(AUTH_DIGEST_PERSONALIZATION);
 
     for action_sig in action_sigs {
         state.update(action_sig);
@@ -143,10 +133,7 @@ pub(crate) fn stripped_auth_digest(
     binding_sig: &[u8; 64],
     wtxid: &[u8; 64],
 ) -> [u8; 64] {
-    let mut state = Params::new()
-        .hash_length(64)
-        .personal(AUTH_DIGEST_PERSONALIZATION)
-        .to_state();
+    let mut state = hasher(AUTH_DIGEST_PERSONALIZATION);
 
     for action_sig in action_sigs {
         state.update(action_sig);
@@ -166,12 +153,7 @@ lazy_static! {
     ///
     /// **This is NOT the same as a bundle with no actions and zero balance.**
     pub static ref COMMIT_NO_BUNDLE: [u8; 64] = {
-        *Params::new()
-            .hash_length(64)
-            .personal(BUNDLE_COMMITMENT_PERSONALIZATION)
-            .to_state()
-            .finalize()
-            .as_array()
+        *hasher(BUNDLE_COMMITMENT_PERSONALIZATION).finalize().as_array()
     };
 
     /// A non-Tachyon transaction's contribution to the transaction auth_digest.
@@ -180,11 +162,6 @@ lazy_static! {
     ///
     /// **This is NOT the same as a bundle with no actions and zero balance.**
     pub static ref AUTH_DIGEST_NO_BUNDLE: [u8; 64] = {
-        *Params::new()
-            .hash_length(64)
-            .personal(AUTH_DIGEST_PERSONALIZATION)
-            .to_state()
-            .finalize()
-            .as_array()
+        *hasher(AUTH_DIGEST_PERSONALIZATION).finalize().as_array()
     };
 }

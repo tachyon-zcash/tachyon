@@ -271,7 +271,7 @@ impl Plan {
     /// This contributes to the transaction sighash.
     ///
     /// $$ \mathsf{bundle\_commitment} = \text{BLAKE2b-512}(
-    /// \text{"Tachyon-BndlHash"},\; \mathsf{action\_acc}_x \|
+    /// \text{"ZTxIdTachyonHash"},\; \mathsf{action\_acc}_x \|
     /// \mathsf{action\_acc}_y \| \mathsf{value\_balance}) $$
     ///
     /// where $\mathsf{action\_acc}$ is the polynomial commitment to the
