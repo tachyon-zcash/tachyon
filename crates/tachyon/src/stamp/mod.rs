@@ -17,11 +17,12 @@ extern crate alloc;
 
 pub mod proof;
 
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use core::{error::Error, fmt};
 
 use corez::io::{self, Read, Write};
 use mock_ragu::{self, proof::PROOF_SIZE_COMPRESSED};
+use pasta_curves::Fp;
 use proof::{
     PROOF_SYSTEM,
     stamp::{MergeStamp, OutputStamp, SpendStamp, StampHeader},
@@ -35,6 +36,7 @@ use crate::{
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, public},
     primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram},
+    serialization,
     stamp::proof::{delegation, spend, spendable},
     value,
 };
@@ -58,6 +60,18 @@ pub struct Adjunct {
     /// same effecting data produce different wtxids, so this ref remains
     /// unambiguous even across aggregation forms.
     pub wtxid: [u8; 64],
+}
+
+impl Adjunct {
+    pub(super) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let mut wtxid = [0u8; 64];
+        reader.read_exact(&mut wtxid)?;
+        Ok(Self { wtxid })
+    }
+
+    pub(super) fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_all(&self.wtxid)
+    }
 }
 
 impl Default for Adjunct {
@@ -427,28 +441,43 @@ impl Stamp {
             Err(VerificationError::Disproved)
         }
     }
-}
 
-/// The serialized size of a proof, written raw without a length prefix.
-pub(crate) const fn proof_serialized_size() -> usize {
-    PROOF_SIZE_COMPRESSED
-}
+    /// Read a stamp from the consensus wire format.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let anchor = Anchor::read(&mut reader)?;
 
-/// Read a proof of the given byte length.
-pub(crate) fn read_proof_sized<R: Read>(
-    mut reader: R,
-    size: usize,
-) -> io::Result<mock_ragu::Proof> {
-    use alloc::boxed::Box;
+        let tachygrams = serialization::read_fp_list(&mut reader)?
+            .into_iter()
+            .map(Tachygram::from)
+            .collect();
 
-    if size != PROOF_SIZE_COMPRESSED {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "unexpected proof size",
-        ));
+        let proof = read_proof(&mut reader)?;
+
+        Ok(Self {
+            tachygrams,
+            anchor,
+            proof,
+        })
     }
 
-    let mut bytes = alloc::vec![0u8; size];
+    /// Write a stamp to the consensus wire format.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        self.anchor.write(&mut writer)?;
+        serialization::write_fp_list(
+            &mut writer,
+            &self
+                .tachygrams
+                .iter()
+                .map(|&tg| Fp::from(tg))
+                .collect::<Vec<Fp>>(),
+        )?;
+        write_proof(&mut writer, &self.proof)
+    }
+}
+
+/// Read a proof of known constant size.
+pub(crate) fn read_proof<R: Read>(mut reader: R) -> io::Result<mock_ragu::Proof> {
+    let mut bytes = alloc::vec![0u8; PROOF_SIZE_COMPRESSED];
     reader.read_exact(&mut bytes)?;
     let arr: Box<[u8; PROOF_SIZE_COMPRESSED]> = bytes
         .into_boxed_slice()
@@ -458,7 +487,7 @@ pub(crate) fn read_proof_sized<R: Read>(
         .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding"))
 }
 
-/// Write a proof's raw bytes (without length prefix).
+/// Write a proof of known constant size.
 pub(crate) fn write_proof<W: Write>(mut writer: W, proof: &mock_ragu::Proof) -> io::Result<()> {
     let bytes = proof.serialize();
     writer.write_all(bytes.as_ref())

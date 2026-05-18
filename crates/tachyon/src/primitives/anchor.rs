@@ -1,9 +1,9 @@
 use corez::io::{self, Read, Write};
-use ff::{Field as _, PrimeField as _};
+use ff::Field as _;
 use pasta_curves::{Fp, arithmetic::CurveAffine as _};
 
 use super::{EpochIndex, TachygramSetCommit};
-use crate::digest::poseidon;
+use crate::{digest::poseidon, serialization};
 
 /// Running anchor over the consensus state.
 ///
@@ -50,16 +50,12 @@ impl Anchor {
 
     /// Read a 32-byte anchor.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let mut bytes = [0u8; 32];
-        reader.read_exact(&mut bytes)?;
-        Option::from(Fp::from_repr(bytes))
-            .map(Self)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "anchor not in Fp"))
+        serialization::read_fp(&mut reader).map(Self)
     }
 
     /// Write a 32-byte anchor.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        writer.write_all(&self.0.to_repr())
+        serialization::write_fp(&mut writer, &self.0)
     }
 }
 
