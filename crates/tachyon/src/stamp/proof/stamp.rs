@@ -20,16 +20,25 @@ use crate::{
 /// Header for a stamp, representing either a single action or many
 /// transactions.
 ///
-/// Commitments to the action and tachygram sets should not be published, so
-/// they must be reconstructed by validators.
+/// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
+/// the action-digest and tachygram sets. Each producing step computes
+/// them from the actions and tachygrams the step witnesses.
+///
+/// `anchor` is freely witnessed at [`OutputStamp`]; at [`SpendStamp`]
+/// it threads from the right [`SpendableHeader`]; at [`MergeStamp`]
+/// the step constrains `left.anchor == right.anchor`; at
+/// [`StampLift`] it advances to the right [`AnchorChain`] segment's
+/// `end` after constraining `segment.start == old_anchor`.
 #[derive(Debug)]
 pub struct StampHeader;
 
 impl Header for StampHeader {
-    /// `(action_commit, stamp_tg_commit, anchor)` — all 32-byte commitment
-    /// handles. Polynomials travel prover-side via `Witness`/`Aux` as
-    /// `ActionAcc` / `StampTgAcc`. Per-block pool state travels through
-    /// the spendable / stamp-lift lineage (it isn't on the stamp header).
+    /// `(action_commit, stamp_tg_commit, anchor)`. The two commitments
+    /// are computed at each producing step from the actions and
+    /// tachygrams that step witnesses. `anchor` is freely witnessed at
+    /// [`OutputStamp`], threaded from the right [`SpendableHeader`] at
+    /// [`SpendStamp`], equality-constrained at [`MergeStamp`], or
+    /// advanced over an [`AnchorChain`] at [`StampLift`].
     type Data<'source> = (ActionSetCommit, TachygramSetCommit, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(11);

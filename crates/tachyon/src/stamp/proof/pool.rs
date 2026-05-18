@@ -36,11 +36,20 @@ use crate::{
 /// is invoked anywhere in the [`AnchorChain`] builders — crossing an
 /// epoch boundary requires the [`Anchor::next_epoch`] domain only
 /// emitted by `SpendableRollover`.
+///
+/// `start` at the seed steps ([`AnchorSeed`] / [`EmptyBlockSeed`]) has
+/// PCD lineage rooted in an unbound `start: Anchor` witness, so a
+/// standalone segment proves nothing about real coverage. Final binding
+/// closes when [`super::stamp::StampLift`] consumes the segment and the
+/// resulting stamp is accepted by consensus (anchor membership).
 #[derive(Clone, Debug)]
 pub struct AnchorChain;
 
 impl Header for AnchorChain {
-    /// `(start, end)`.
+    /// `(start, end)`. `start` roots in an unbound witness at [`AnchorSeed`] or
+    /// [`EmptyBlockSeed`] and flows to [`super::stamp::StampLift`] which must
+    /// ultimately be checked by consensus. `end` is always computed in-circuit
+    /// as `start.next_stamp(...)` or `start.next_empty()`.
     type Data<'source> = (Anchor, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(5);
@@ -64,11 +73,24 @@ impl Header for AnchorChain {
 /// epoch and by the intra-epoch-only `Anchor::next_stamp` advances —
 /// crossing an epoch boundary requires matching a boundary anchor that
 /// no `Unspent` builder ever emits.
+///
+/// At the seed steps the PCD lineage of `nf` and `start` roots in
+/// freely-chosen witnesses. `nf`'s binding closes at the consumer
+/// ([`super::spendable::SpendableLift`] checks `unspent.nf ==
+/// spendable.nf`; the spendable's `nf` is itself bound upstream at
+/// [`super::delegation::NullifierHeader`]); `start`'s binding closes
+/// through the spendable lineage plus consensus anchor membership.
 #[derive(Clone, Debug)]
 pub struct Unspent;
 
 impl Header for Unspent {
-    /// `(nf, start, end)`.
+    /// `(nf, start, end)`. `nf` roots in a seed witness, bound by the
+    /// consumer ([`super::spendable::SpendableLift`] checks
+    /// `unspent.nf == spendable.nf`, and the spendable's `nf` is
+    /// GGM-bound upstream). `start` roots in a seed witness, bound
+    /// through the spendable lineage plus consensus anchor membership.
+    /// `end` is always computed in-circuit as `start.next_stamp(...)`
+    /// or `start.next_empty()`.
     type Data<'source> = (Nullifier, Anchor, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(6);

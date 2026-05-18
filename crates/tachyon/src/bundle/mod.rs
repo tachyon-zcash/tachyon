@@ -36,11 +36,11 @@
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
 //! | `tachyonBundleState`  | u8                   | `0x01` or `0x02`                         |
-//! | `valueBalanceTachyon` | int64 LE             | net value of tachyon actions             |
+//! | `valueBalanceTachyon` | i64                  | net value of tachyon actions             |
 //! | `nActionsTachyon`     | compactsize          | number of tachyon actions                |
 //! | `vActionsTachyon`     | 64 * nActionsTachyon | (cv: 32 bytes, rk: 32 bytes)             |
 //! | `vActionSigsTachyon`  | 64 * nActionsTachyon | authorization per action over tx sighash |
-//! | `bindingSigTachyon`   | 64                   | binding over tx sighash                  |
+//! | `bindingSigTachyon`   | 64 bytes             | binding over tx sighash                  |
 //!
 //! ### Stamp trailer
 //!
@@ -48,9 +48,9 @@
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `anchorTachyon`       | Fp                   | pool state                               |
+//! | `anchorTachyon`       | 32 bytes             | pool state reference                     |
 //! | `nTachygrams`         | compactsize          | number of tachygrams                     |
-//! | `vTachygrams`         | Fp * nTachygrams     | tachygrams for this proof                |
+//! | `vTachygrams`         | 32 * nTachygrams     | tachygrams for this proof                |
 //! | `proofTachyon`        | PROOF_SIZE blob      | serialized proof of fixed size           |
 //!
 //! ## Stripped trailer
@@ -59,7 +59,7 @@
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `tachyonAggregateId`  | 64                   | wtxid of the relevant aggregate          |
+//! | `tachyonAggregateId`  | 64 bytes             | wtxid of the relevant aggregate          |
 
 use alloc::vec::Vec;
 use core::{error::Error, fmt};
@@ -93,7 +93,7 @@ impl BundleState {
     pub(super) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut byte = [0u8; 1];
         reader.read_exact(&mut byte)?;
-        match byte[0] {
+        match u8::from_le_bytes(byte) {
             | 0b0000_0000u8 => Ok(Self::NoBundle),
             | 0b0000_0001u8 => Ok(Self::Stamped),
             | 0b0000_0010u8 => Ok(Self::Stripped),
@@ -105,11 +105,11 @@ impl BundleState {
     }
 
     pub(super) fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
-        let byte = [match self {
+        let byte = u8::to_le_bytes(match self {
             | Self::NoBundle => 0b0000_0000u8,
             | Self::Stamped => 0b0000_0001u8,
             | Self::Stripped => 0b0000_0010u8,
-        }];
+        });
         writer.write_all(&byte)
     }
 }

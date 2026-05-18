@@ -44,11 +44,25 @@ use crate::{
 /// Wallet's spendable position. Identified by `nf` alone — `nf` uniquely
 /// encodes `(key, epoch)` via GGM determinism, so sync services can update
 /// a spendable by `nf` without knowing `delegation_id`.
+///
+/// `anchor` at [`SpendableInit`] is computed in-circuit as
+/// `pre_cm_anchor.next_stamp(stamp_commit)`, but its PCD lineage roots
+/// in `SpendableInit`'s unbound `pre_cm_anchor: Anchor` witness.
+/// Binding on that witness closes only through subsequent
+/// [`SpendableLift`] steps over [`Unspent`] segments (each `Unspent`
+/// proves nf-exclusion at a real stamp), plus consensus anchor
+/// membership. There is no path that advances a spendable's anchor
+/// without a per-stamp nf-check.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
 impl Header for SpendableHeader {
-    /// `(nf, anchor)`.
+    /// `(nf, anchor)`. `nf` is GGM-bound to `(note, epoch)` upstream
+    /// in [`super::delegation::NullifierHeader`]. `anchor` is computed
+    /// at [`SpendableInit`] as `pre_cm_anchor.next_stamp(stamp_commit)`
+    /// over a freely-witnessed `pre_cm_anchor`, then advanced over
+    /// [`Unspent`] segments at [`SpendableLift`] /
+    /// [`SpendableEpochLift`].
     type Data<'source> = (Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(7);
@@ -67,11 +81,19 @@ impl Header for SpendableHeader {
 /// epoch index is exposed for downstream consumers (specifically
 /// [`SpendableRollover`]'s boundary hash). Consecutive epochs are
 /// verified at construction.
+///
+/// Produced by either [`RolloverFuse`] (user device, lineage = `cm`
+/// equality) or [`DelegateRolloverFuse`] (sync service, lineage =
+/// `delegation_id` equality); the resulting header is identical either
+/// way.
 #[derive(Clone, Debug)]
 pub struct NullifierRolloverHeader;
 
 impl Header for NullifierRolloverHeader {
-    /// `(old_nf, new_nf, new_epoch)`.
+    /// `(old_nf, new_nf, new_epoch)`. Produced by [`RolloverFuse`]
+    /// (user device, lineage by `cm` equality) or
+    /// [`DelegateRolloverFuse`] (sync service, lineage by
+    /// `delegation_id` equality); both verify consecutive epochs.
     type Data<'source> = (Nullifier, Nullifier, EpochIndex);
 
     const SUFFIX: Suffix = Suffix::new(8);
@@ -98,7 +120,11 @@ impl Header for NullifierRolloverHeader {
 pub struct SpendableRolloverHeader;
 
 impl Header for SpendableRolloverHeader {
-    /// `(new_nf, boundary_anchor)`.
+    /// `(new_nf, boundary_anchor)`. `boundary_anchor` is computed at
+    /// [`SpendableRollover`] via `Anchor::next_epoch` on the
+    /// spendable's prior anchor, the only place the `Tachyon-EpochStp`
+    /// domain is invoked. The new-epoch [`Unspent`]'s `prev_anchor` is
+    /// the only way to discharge it.
     type Data<'source> = (Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(9);

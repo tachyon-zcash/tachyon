@@ -23,12 +23,19 @@ use crate::{
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
+    /// `(action_digest, (now_nf, next_nf))`. `action_digest` is
+    /// computed at [`SpendBind`] as the Poseidon digest of the
+    /// witnessed `(cv, rk)`. `now_nf` and `next_nf` are computed
+    /// upstream by [`NullifierStep`](super::delegation::NullifierStep)
+    /// on two [`NullifierHeader`](super::delegation::NullifierHeader)s
+    /// that [`SpendBind`] constrains to share a `cm` lineage and to
+    /// live on consecutive epochs.
     type Data<'source> = (ActionDigest, (Nullifier, Nullifier));
 
     const SUFFIX: Suffix = Suffix::new(10);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 32 * 2);
+        let mut out = Vec::with_capacity(32 + 32 + 32);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1.1).to_repr());

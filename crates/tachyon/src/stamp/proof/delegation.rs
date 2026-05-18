@@ -24,6 +24,9 @@ use crate::{
 pub struct NfMasterHeader;
 
 impl Header for NfMasterHeader {
+    /// `(mk, cm)`. Both computed at [`NfMasterSeed`] from the
+    /// `(note, pak)` witness, which the step constrains via
+    /// `note.pk == pak.derive_payment_key()`.
     type Data<'source> = (NoteMasterKey, note::Commitment);
 
     const SUFFIX: Suffix = Suffix::new(0);
@@ -46,12 +49,15 @@ impl Header for NfMasterHeader {
 pub struct NfPrefixHeader;
 
 impl Header for NfPrefixHeader {
+    /// `(key, mk, cm)`. `key` advances via [`NfPrefixStep`] from a
+    /// parent prefix or [`NfMasterStep`] from `mk`; `mk` and `cm`
+    /// thread through unchanged.
     type Data<'source> = (NotePrefixedKey, NoteMasterKey, note::Commitment);
 
     const SUFFIX: Suffix = Suffix::new(1);
 
     fn encode(&(key, mk, cm): &Self::Data<'_>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 4 + 4 + 32 + 32);
+        let mut out = Vec::with_capacity(32 + 1 + 4 + 32 + 32);
         out.extend_from_slice(&key.inner.to_repr());
         out.extend_from_slice(&key.depth.get().to_le_bytes());
         out.extend_from_slice(&key.index.to_le_bytes());
@@ -72,7 +78,9 @@ impl Header for NfPrefixHeader {
 pub struct NullifierHeader;
 
 impl Header for NullifierHeader {
-    /// `(cm, nf, epoch)`.
+    /// `(cm, nf, epoch)`. `nf` and `epoch` are computed at
+    /// [`NullifierStep`] from the input [`NfPrefixHeader`]; `cm`
+    /// threads through unchanged.
     type Data<'source> = (note::Commitment, Nullifier, EpochIndex);
 
     const SUFFIX: Suffix = Suffix::new(2);
@@ -87,16 +95,24 @@ impl Header for NullifierHeader {
 }
 
 /// Blinded header for a prefix key at depth ≥ 1.
+///
+/// Replaces the `(mk, cm)` lineage carried by [`NfPrefixHeader`] with a
+/// `delegation_id` opaque to the holder. After [`DelegationStep`] there
+/// is no way to recover `cm` or `mk` from this header.
 #[derive(Clone, Debug)]
 pub struct DelegateNfPrefixHeader;
 
 impl Header for DelegateNfPrefixHeader {
+    /// `(key, delegation_id)`. Both computed at [`DelegationStep`]
+    /// from the left [`NfPrefixHeader`] plus a trapdoor witness;
+    /// `delegation_id` is the Poseidon binding of `(mk, cm, trapdoor)`
+    /// and supplants the `(mk, cm)` lineage from then on.
     type Data<'source> = (NotePrefixedKey, DelegationId);
 
     const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(&(key, id): &Self::Data<'_>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 4 + 4 + 32);
+        let mut out = Vec::with_capacity(32 + 1 + 4 + 32);
         out.extend_from_slice(&key.inner.to_repr());
         out.extend_from_slice(&key.depth.get().to_le_bytes());
         out.extend_from_slice(&key.index.to_le_bytes());
@@ -106,11 +122,17 @@ impl Header for DelegateNfPrefixHeader {
 }
 
 /// Blinded header after nullifier derivation.
+///
+/// Sync-service-visible leaf state. Consumed only by
+/// [`DelegateRolloverFuse`](super::spendable::DelegateRolloverFuse),
+/// which checks lineage equality on `delegation_id`.
 #[derive(Clone, Debug)]
 pub struct DelegateNullifierHeader;
 
 impl Header for DelegateNullifierHeader {
-    /// `(nf, epoch, delegation_id)`.
+    /// `(nf, epoch, delegation_id)`. `nf` and `epoch` are computed at
+    /// [`DelegateNullifierStep`] from the GGM leaf; `delegation_id`
+    /// threads unchanged from [`DelegateNfPrefixHeader`].
     type Data<'source> = (Nullifier, EpochIndex, DelegationId);
 
     const SUFFIX: Suffix = Suffix::new(4);
