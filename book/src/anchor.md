@@ -6,27 +6,17 @@ Each stamp, empty block, and epoch transition produces a new pool state, but con
 
 These end-of-block states are anchors.
 
-## Three domains
+## Stamp absorption
 
-The chain advances under three domain tags, each used in exactly one situation:
-
-| Domain | When |
-| ------ | ---- |
-| `Tachyon-StampFld` | Advance one stamp within a block |
-| `Tachyon-EmptyBlk` | Advance one block with zero stamps |
-| `Tachyon-EpochStp` | Advance over an epoch boundary (never an anchor) |
-
-### Stamp absorption
-
-Each stamp lands at a definite position in a definite block. Its contribution to the pool state is its tachygram-set commitment, a point whose coordinates feed the chain directly:
+Each stamp lands at a definite position in a definite block, when the block is accepted by consensus. A stamp's contribution to the pool state is
 
 $$
 \mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}StampFld}(\mathsf{anchor},\ x,\ y)
 $$
 
-where $(x, y)$ are the affine coordinates of the stamp's tachygram-set commitment. Absorbing the coordinates directly (rather than the compressed encoding) makes the binding independent of sign-bit recovery, so two parties cannot disagree on which of $\pm y$ produced the chain.
+where $(x, y)$ are coordinates of the stamp's tachygram-set commitment. Absorbing the complete coordinates (rather than a compressed encoding) ensures the binding is unambiguous.
 
-### Empty block
+## Empty block
 
 A block with zero stamps still advances the anchor:
 
@@ -34,9 +24,7 @@ $$
 \mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}EmptyBlk}(\mathsf{anchor})
 $$
 
-The dedicated domain ensures an empty block at height $h$ produces an anchor distinct from any non-empty configuration. Per-height uniqueness matters because validators acknowledge anchors at heights, not by content.
-
-### Epoch boundary
+## Epoch boundary
 
 When the chain crosses from epoch $e$ into epoch $e+1$:
 
@@ -44,7 +32,7 @@ $$
 \mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}EpochStp}(\mathsf{anchor},\ e+1)
 $$
 
-This is the only domain that absorbs the new epoch index. Nothing else in the chain references the epoch number, so cross-epoch identity flows through exactly this step.
+This is the only domain that absorbs the new epoch index. Nothing else in the chain references the epoch number, so cross-epoch binding relies on this step.
 
 ## Intra-block state vs end-of-block anchor
 
