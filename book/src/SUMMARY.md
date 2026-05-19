@@ -6,11 +6,10 @@
 
 - [Data Model]()
   - [Bundles](bundle.md)
-  - [Tachygrams](tachygrams.md)
 - [Cryptographic Primitives]()
   - [Key Hierarchy](keys.md)
   - [Notes](notes.md)
-  - [Nullifier Derivation](nullifier-derivation.md)
+  - [Nullifiers](nullifiers.md)
 - [Protocol]()
   - [Authorization](authorization.md)
   - [Anchor](anchor.md)
