@@ -14,6 +14,7 @@
   - [Tachygrams](tachygrams.md)
 - [Protocol]()
   - [Authorization](authorization.md)
+  - [Proof Tree](proof-tree.md)
   - [Aggregation](aggregation.md)
 - [Network Roles]()
   - [Overview](network_roles/overview.md)
