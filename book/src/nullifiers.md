@@ -1,10 +1,16 @@
 # Nullifiers
 
-A nullifier is a Poseidon $\mathbb{F}_p$ commitment to two private values (the note's trapdoor $\psi$[^notes] and the wallet's nullifier key $\mathsf{nk}$[^keys]) and a relevant epoch $e$ according to consensus. So, the nullifier for a given note is different every epoch.
+A nullifier is a Poseidon $\mathbb{F}_p$ digest of two private values (the note's trapdoor $\psi$[^notes] and the wallet's nullifier key $\mathsf{nk}$[^keys]) and a relevant epoch $e$ according to consensus. So, the nullifier for a given note is different every epoch.
 
-In order to spend a note, the transaction author must publish an anchored[^anchor] proof that no nullifier for the note has ever been published, and publish two nullifiers (for the anchor epoch and the next future epoch).
+In order to spend a note, the transaction author must publish an anchored[^anchor] proof that no nullifier for the note has ever been published <!-- todo: since the note was created? -->, and publish two nullifiers (for the anchor epoch and the next future epoch).
 
 Pool state immediately advances beyond the proof's anchor, so consensus must confirm these nullifiers did not enter the pool in the intervening time. The second published nullifier allows consensus to handle an epoch transition if necessary.
+
+<!-- todo:
+- check nullifier ordering requirements on headers?
+- must check the entire anchor epoch for nullifier, since stamps may be lifted arbitrarily within an epoch.
+- consensus rule: for all tachygrams in a stamp, none should have appeared in any block for the current epoch and the last epoch.
+-->
 
 [^notes]: [Notes](./notes.md) describes other note fields
 [^keys]: [Keys](./keys.md) describes $\mathsf{nk}$ and other key derivation
@@ -62,3 +68,5 @@ $$
         \mathsf{KDF}^{\mathsf{climb}}_\psi(e, D)
     \right)
 $$
+
+<!-- todo: add reasoning/rationale? -->
