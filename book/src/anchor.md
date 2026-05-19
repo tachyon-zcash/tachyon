@@ -14,7 +14,10 @@ $$
 \mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}StampFld}(\mathsf{anchor},\ x,\ y)
 $$
 
-where $(x, y)$ are coordinates of the stamp's tachygram-set commitment. Absorbing the complete coordinates (rather than a compressed encoding) ensures the binding is unambiguous.
+where $(x, y)$ are coordinates of the stamp's tachygram-set commitment[^tachygrams].
+Absorbing the complete coordinates (rather than a compressed encoding) ensures the binding is unambiguous.
+
+[^tachygrams]: [Tachygrams](./tachygrams.md) describes the tachygram commitment are absorbed here
 
 ## Empty block
 

@@ -6,9 +6,9 @@ In order to spend a note, the transaction author must publish an anchored[^ancho
 
 Pool state immediately advances beyond the proof's anchor, so consensus must confirm these nullifiers did not enter the pool in the intervening time. The second published nullifier allows consensus to handle an epoch transition if necessary.
 
-[^notes]: See [Notes](./notes.md).
-[^keys]: See [Keys](./keys.md).
-[^anchor]: See [Anchor](./anchor.md).
+[^notes]: [Notes](./notes.md) describes other note fields
+[^keys]: [Keys](./keys.md) describes $\mathsf{nk}$ and other key derivation
+[^anchor]: [Anchor](./anchor.md) describes the pool state commitment
 
 ## Derivation
 

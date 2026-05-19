@@ -30,7 +30,7 @@ $$
     )
 $$
 
-For an output operation, $\mathsf{cm}$ is the published tachygram[^bundle].
+For an output operation, $\mathsf{cm}$ is the published [tachygram](./tachygrams.md).
 
 ## Nullifier
 
@@ -45,8 +45,7 @@ $$
     \right)
 $$
 
-For a spend operation, two nullifiers at present epoch $e$ and next epoch $e+1$ are published as tachygrams.
+For a spend operation, two nullifiers at present epoch $e$ and next epoch $e+1$ are published as [tachygrams](./tachygrams.md).
 
 [^keys]: See [Keys](./keys.md) for $\mathsf{pk}$ derivation from $(\mathsf{ak}, \mathsf{nk})$.
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for how $\psi$ enters nullifier derivation.
-[^bundle]: See [Bundle](./bundle.md) for tachygrams.
