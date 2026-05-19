@@ -291,6 +291,14 @@ impl Step for DelegationStep {
 }
 
 /// Recursive blinded GGM step.
+///
+/// Each directional chunk in the climb is freely witnessed, rather than bound
+/// to some specific target epoch.
+///
+/// A delegate holding a depth-`d` prefix key holds the cryptographic material
+/// to walk to any leaf in the covered subtree, regardless of the proof
+/// constraints. Free-chunk descent lets them prove which leaf they walked to;
+/// it does not extend the set of leaves they can reach.
 #[derive(Debug)]
 pub struct DelegateNfPrefixStep;
 
