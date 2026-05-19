@@ -208,25 +208,18 @@ impl Step for StampLift {
     type Left = StampHeader;
     type Output = StampHeader;
     type Right = AnchorChain;
-    type Witness<'source> = (ActionSetCommit, TachygramSetCommit);
+    type Witness<'source> = ();
 
     const INDEX: Index = Index::new(23);
 
     fn witness<'source>(
         &self,
-        (left_action, left_tachygram): Self::Witness<'source>,
+        (): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, old_anchor): <Self::Left as Header>::Data<
             'source,
         >,
         (segment_start, segment_end): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        // Bind witness commits to the left header's commitments.
-        if left_action.0 != left_action_commit.0 || left_tachygram.0 != left_tachygram_commit.0 {
-            return Err(mock_ragu::Error(
-                "StampLift: witness commits must match left header commits",
-            ));
-        }
-
         // The anchor segment must root at the stamp's old anchor.
         if segment_start != old_anchor {
             return Err(mock_ragu::Error(

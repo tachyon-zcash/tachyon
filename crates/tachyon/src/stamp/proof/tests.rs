@@ -65,13 +65,7 @@ fn stamp_lift_within_epoch() {
     let anchor_chain = build_anchor_chain_pcd(rng, &pool, BlockHeight(2)..=new_height);
 
     let (lifted_pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            stamp::StampLift,
-            (action_commit, tachygram_commit),
-            stamp_pcd,
-            anchor_chain,
-        )
+        .fuse(rng, stamp::StampLift, (), stamp_pcd, anchor_chain)
         .expect("stamp lift");
     PROOF_SYSTEM
         .rerandomize(lifted_pcd, rng)
