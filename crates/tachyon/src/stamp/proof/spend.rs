@@ -1,4 +1,8 @@
 //! Spend action-binding header and step.
+//!
+//! TODO: eliminate SpendBind and SpendStep? possibly NullifierRolloverHeader
+//! would replace SpendHeader as input to SpendStamp, and SpendStamp would be
+//! responsible for witnessing the action fields presently handled by SpendBind.
 
 extern crate alloc;
 
