@@ -23,7 +23,12 @@ Zero-value notes are forbidden.
 
 The note commitment binds all four fields:
 
-$$\mathsf{cm} = \mathsf{Poseidon}_\texttt{Tachyon-CmDerive}(\mathsf{rcm}, \mathsf{pk}, v, \psi)$$
+$$
+\mathsf{cm} =
+    \mathsf{Poseidon}_\texttt{Tachyon-CmDerive}(
+        \mathsf{rcm}, \mathsf{pk}, v, \psi
+    )
+$$
 
 For an output operation, $\mathsf{cm}$ is the published tachygram[^bundle].
 
