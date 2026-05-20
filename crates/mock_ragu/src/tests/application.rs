@@ -6,6 +6,7 @@ use crate::{
     application::*,
     error::Result,
     header::{Header, Suffix},
+    proof::{PROOF_SIZE_COMPRESSED, Proof},
     step::{Index, Step},
 };
 
@@ -337,6 +338,56 @@ fn aux_data_flows_through_seed_and_fuse() {
     assert_eq!(reconstructed_value, 25);
     let valid = app.verify(&merged_pcd, thread_rng()).expect("verify");
     assert!(valid, "fused proof must verify");
+}
+
+#[test]
+fn serialized_proof_still_verifies() {
+    let app = ApplicationBuilder::new()
+        .register(SeedStep)
+        .expect("register should succeed")
+        .finalize()
+        .expect("finalize should succeed");
+
+    let (pcd, ()) = app
+        .seed(&mut thread_rng(), SeedStep, 42u64)
+        .expect("seed should succeed");
+    let saved_data = pcd.data.clone();
+
+    let bytes: [u8; PROOF_SIZE_COMPRESSED] = pcd.proof.into();
+    let recovered_proof =
+        Proof::try_from(&bytes).expect("recovered proof should deserialize");
+
+    let recovered_pcd = recovered_proof.carry::<TestHeader>(saved_data);
+    let valid = app
+        .verify(&recovered_pcd, thread_rng())
+        .expect("verify should succeed");
+    assert!(valid, "round-tripped proof should still verify");
+}
+
+#[test]
+fn serialized_proof_rejects_mismatched_header_data() {
+    let app = ApplicationBuilder::new()
+        .register(SeedStep)
+        .expect("register should succeed")
+        .finalize()
+        .expect("finalize should succeed");
+
+    let (pcd, ()) = app
+        .seed(&mut thread_rng(), SeedStep, 42u64)
+        .expect("seed should succeed");
+
+    let bytes: [u8; PROOF_SIZE_COMPRESSED] = pcd.proof.into();
+    let recovered_proof =
+        Proof::try_from(&bytes).expect("recovered proof should deserialize");
+
+    let bad_pcd = recovered_proof.carry::<TestHeader>(TestHeaderData { value: 999 });
+    let valid = app
+        .verify(&bad_pcd, thread_rng())
+        .expect("verify should succeed");
+    assert!(
+        !valid,
+        "round-tripped proof must still reject mismatched header data"
+    );
 }
 
 #[test]
