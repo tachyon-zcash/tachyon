@@ -1,36 +1,66 @@
-# Hash Functions and Domain Separators
-
-Tachyon uses two hash families, chosen by context:
-
-- **BLAKE2b-512** for byte-oriented operations outside circuits: key derivation, alpha randomizers, and the bundle commitment that feeds the transaction sighash.
-- **Poseidon** (P128Pow5T3, constant-length) for field-arithmetic operations that must be efficient inside Ragu circuits: nullifier derivation, note commitments, and action digests.
-
-All BLAKE2b personalizations are exactly 16 bytes. Poseidon domain tags are 16-byte strings interpreted as little-endian $\mathbb{F}_p$ elements via `Fp::from_u128`.
+# Domain Separators
 
 ## BLAKE2b-512
 
-| Constant | Value | Formula |
-| --- | --- | --- |
-| PRF expansion | `Zcash_ExpandSeed` | $\text{BLAKE2b-512}(\mathsf{sk} \| t)$ — key derivation (shared with Sapling/Orchard) |
-| Spend alpha | `Tachyon-Spend` | $\alpha_\text{spend} = \text{BLAKE2b-512}(\theta \| \mathsf{cm})$ |
-| Output alpha | `Tachyon-Output` | $\alpha_\text{output} = \text{BLAKE2b-512}(\theta \| \mathsf{cm})$ |
-| Bundle commitment | `Tachyon-BndlHash` | $\text{BLAKE2b-512}(\mathsf{action\_acc} \| \mathsf{value\_balance})$ |
+### Action alpha
+
+Deterministic action randomizer for Tachyon, privately handled by transaction author and custody device.
+
+<!-- todo: consider poseidon or other curve-native derivation? -->
+
+| Purpose | Value |
+| ------- | ----- |
+| Spend alpha | `Tachyon-Spend` |
+| Output alpha | `Tachyon-Output` |
+
+### Transaction identifiers
+
+Digests used to commit to Tachyon bundle contents for sighash and and auth digest.
+
+<!-- see 
+    https://github.com/zcash/orchard/blob/main/src/bundle/commitments.rs 
+    https://zips.z.cash/zip-0244
+-->
+
+| Purpose | Value |
+| ------- | ----- |
+| Bundle commitment | `ZTxIdTachyonHash` |
+| Bundle auth digest | `ZTxAuthTachyHash` |
+
+### PRF expansion
+
+Domain string and personalization bytes for `sk` expansion.
+
+<!-- see
+    https://github.com/zcash/zcash_spec/blob/main/src/prf_expand.rs
+-->
+
+| Purpose | Value |
+| ------- | ----- |
+| PRF expand | `Zcash_ExpandSeed` |
+| `ask` derivation | `0x21` byte |
+| `nk` derivation | `0x22` byte |
 
 ## Poseidon
 
-| Constant | Value | Formula |
-| --- | --- | --- |
-| Master key | `Tachyon-MkDerive` | $\mathsf{mk} = \text{Poseidon}(\mathsf{tag}, \Psi, \mathsf{nk})$ — per-note master key KDF |
-| Nullifier | `Tachyon-NfDerive` | $\text{Poseidon}(\mathsf{tag}, \mathsf{node}, \mathsf{chunk})$ — $k$-ary GGM tree steps |
-| Note commitment | `Tachyon-NoteCmmt` | $\mathsf{cm} = \text{Poseidon}(\mathsf{tag}, \mathsf{rcm}, \mathsf{pk}, v, \Psi)$ |
-| Action digest | `Tachyon-ActnDgst` | $\text{Poseidon}(\mathsf{tag}, \mathsf{cv}_x, \mathsf{cv}_y, \mathsf{rk}_x, \mathsf{rk}_y)$ |
-| Payment key | `Tachyon-PkDerive` | $\mathsf{pk} = \text{Poseidon}(\mathsf{tag}, \mathsf{ak}_x, \mathsf{nk})$ |
-| Delegation id | `Tachyon-Delegate` | $\text{DelegationId} = \text{Poseidon}(\mathsf{tag}, \mathsf{mk}, \mathsf{cm}, \mathsf{trapdoor})$ — per-delegation note binding |
-| Epoch seed | `Tachyon-EpchSeed` | $\text{epoch\_seed} = \text{Poseidon}(\mathsf{tag}, \mathsf{pool\_commit}_x, \mathsf{pool\_commit}_y)$ — seed inserted at epoch boundary |
+These are all Tachyon-specific digests, performed in-circuit.
 
-## Other
+| Purpose | Value |
+| ------- | ----- |
+| Nullifier prefix key | `Tachyon-NfPrefix` |
+| Nullifier derivation | `Tachyon-NfDerive` |
+| Note commitment | `Tachyon-CmDerive` |
+| Action digest | `Tachyon-ActionDg` |
+| Payment key derivation | `Tachyon-PkDerive` |
+| Delegation ID | `Tachyon-Delegate` |
+| Anchor stamp step | `Tachyon-StampFld` |
+| Anchor empty step | `Tachyon-EmptyBlk` |
+| Anchor epoch step | `Tachyon-EpochStp` |
 
-| Constant | Value | Purpose |
-| --- | --- | --- |
-| Value commitment | `z.cash:Orchard-cv` | Hash-to-curve generators $\mathcal{V}$, $\mathcal{R}$ (shared with Orchard) |
-| Accumulator generators | `mock_ragu:generators` | Hash-to-curve for Pedersen commitment generators (mock; replaced by Ragu generators) |
+## Hash-to-curve
+
+Value commitments presently use the same generator as Orchard.
+
+| Purpose | Value |
+| ------- | ----- |
+| Value commitment | `z.cash:Orchard-cv` |

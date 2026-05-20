@@ -23,24 +23,24 @@
 //!
 //! ## No Bundle
 //!
-//! When `tachyonBundleState == 0`, there is no bundle.
+//! When `tachyonBundleState` is 0x00, there is no bundle.
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `tachyonBundleState`  | 1                    | 0                                        |
+//! | `tachyonBundleState`  | u8                   | `0x00`                                   |
 //!
 //! ## Tachyon Bundle
 //!
-//! When `tachyonBundleState != 0`, there is a tachyon bundle.
+//! When `tachyonBundleState` is not 0x00, there is a tachyon bundle.
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `tachyonBundleState`  | 1                    | `0x01` or `0x02`                         |
-//! | `valueBalanceTachyon` | int64 LE             | net value of tachyon actions             |
+//! | `tachyonBundleState`  | u8                   | `0x01` or `0x02`                         |
+//! | `valueBalanceTachyon` | i64                  | net value of tachyon actions             |
 //! | `nActionsTachyon`     | compactsize          | number of tachyon actions                |
 //! | `vActionsTachyon`     | 64 * nActionsTachyon | (cv: 32 bytes, rk: 32 bytes)             |
 //! | `vActionSigsTachyon`  | 64 * nActionsTachyon | authorization per action over tx sighash |
-//! | `bindingSigTachyon`   | 64                   | binding over tx sighash                  |
+//! | `bindingSigTachyon`   | 64 bytes             | binding over tx sighash                  |
 //!
 //! ### Stamp trailer
 //!
@@ -48,7 +48,7 @@
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `anchorTachyon`       | 64                   | pool state                               |
+//! | `anchorTachyon`       | 32 bytes             | pool state reference                     |
 //! | `nTachygrams`         | compactsize          | number of tachygrams                     |
 //! | `vTachygrams`         | 32 * nTachygrams     | tachygrams for this proof                |
 //! | `proofTachyon`        | PROOF_SIZE blob      | serialized proof of fixed size           |
@@ -59,24 +59,21 @@
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `tachyonAggregateId`  | 64                   | wtxid of the relevant aggregate          |
+//! | `tachyonAggregateId`  | 64 bytes             | wtxid of the relevant aggregate          |
 
 use alloc::vec::Vec;
 use core::{error::Error, fmt};
 
 use corez::io::{self, Read, Write};
-use ff::Field as _;
-use group::GroupEncoding as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
 pub use crate::digest::blake2b::{AUTH_DIGEST_NO_BUNDLE, COMMIT_NO_BUNDLE};
 use crate::{
-    ActionAcc,
     action::{self, Action},
-    digest::blake2b::{auth_digest_stamped, auth_digest_stripped, commit_bundle},
+    digest::blake2b,
     keys::{private, public},
-    primitives::{ActionCommit, ActionDigest, ActionDigestError, Anchor, Tachygram, effect},
+    primitives::{ActionDigest, ActionDigestError, ActionSetCommit, Anchor, effect},
     reddsa, serialization,
     stamp::{self, Adjunct, Stamp, Unproven},
     value,
@@ -85,19 +82,37 @@ use crate::{
 /// The `tachyonBundleState` wire byte. See the module-level wire format
 /// documentation for its role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 enum BundleState {
-    NoBundle = 0b0000_0000,
-    Stamped = 0b0000_0001,
-    Stripped = 0b0000_0010,
+    NoBundle = 0b0000_0000u8,
+    Stamped = 0b0000_0001u8,
+    Stripped = 0b0000_0010u8,
 }
 
-impl From<BundleState> for u8 {
-    fn from(state: BundleState) -> Self {
-        match state {
-            | BundleState::NoBundle => 0b0000_0000,
-            | BundleState::Stamped => 0b0000_0001,
-            | BundleState::Stripped => 0b0000_0010,
+impl BundleState {
+    pub(super) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let mut byte = [0u8; 1];
+        reader.read_exact(&mut byte)?;
+        match u8::from_le_bytes(byte) {
+            | 0b0000_0000u8 => Ok(Self::NoBundle),
+            | 0b0000_0001u8 => Ok(Self::Stamped),
+            | 0b0000_0010u8 => Ok(Self::Stripped),
+            | _other => {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid bundle state",
+                ))
+            },
         }
+    }
+
+    pub(super) fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
+        let byte = u8::to_le_bytes(match self {
+            | Self::NoBundle => 0b0000_0000u8,
+            | Self::Stamped => 0b0000_0001u8,
+            | Self::Stripped => 0b0000_0010u8,
+        });
+        writer.write_all(&byte)
     }
 }
 
@@ -269,22 +284,31 @@ impl Plan {
         spend_sum - output_sum
     }
 
-    /// Compute the bundle commitment.
-    /// See [`digest_bundle`].
+    /// Compute a digest of all the bundle's effecting data.
+    ///
+    /// This contributes to the transaction sighash.
+    ///
+    /// $$ \mathsf{bundle\_commitment} = \text{BLAKE2b-512}(
+    /// \text{"ZTxIdTachyonHash"},\; \mathsf{action\_acc}_x \|
+    /// \mathsf{action\_acc}_y \| \mathsf{value\_balance}) $$
+    ///
+    /// where $\mathsf{action\_acc}$ is the polynomial commitment to the
+    /// action digest multiset `∏(X - action_digest_i)` — order-independent
+    /// by construction since the polynomial is invariant under root
+    /// permutation.
+    ///
+    /// The stamp is excluded because it is stripped during aggregation.
     #[must_use]
     pub fn commitment(&self) -> [u8; 64] {
         #[expect(clippy::expect_used, reason = "todo")]
         let digests: Vec<ActionDigest> = self
-            .iter_actions(
-                |plan| ActionDigest::try_from(plan),
-                |plan| ActionDigest::try_from(plan),
-            )
+            .iter_actions(action::Plan::digest, action::Plan::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
             .expect("don't plan invalid actions");
 
-        let action_commit = ActionCommit(ActionAcc::from(digests.as_slice()).0.commit(Fp::ZERO));
+        let action_commit = ActionSetCommit::from(digests.as_slice());
 
-        commit_bundle(action_commit.0.inner(), self.value_balance())
+        blake2b::bundle_commitment(action_commit.0.inner(), self.value_balance())
     }
 
     /// Build a [`stamp::Plan`] from this bundle plan.
@@ -459,19 +483,19 @@ impl Stamped {
     /// Expects `tachyonBundleState == 0x01`. See the module-level wire format
     /// documentation.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let head = read_bundle_head(&mut reader)?;
+        let head = BundleState::read(&mut reader)?;
 
         if head != BundleState::Stamped {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "stamped bundle requires tachyonBundleState == 0x01",
+                "stamped bundle requires tachyonBundleState 0x01",
             ));
         }
 
         let (actions, value_balance, binding_sig): (Vec<Action>, i64, Signature) =
             read_bundle_body(&mut reader)?;
 
-        let stamp = read_bundle_trailer_stamped(&mut reader)?;
+        let stamp = Stamp::read(&mut reader)?;
 
         Ok(Self {
             actions,
@@ -483,7 +507,7 @@ impl Stamped {
 
     /// Write a stamped bundle in the consensus wire format.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        write_bundle_head(&mut writer, BundleState::Stamped)?;
+        BundleState::Stamped.write(&mut writer)?;
 
         write_bundle_body(
             &mut writer,
@@ -492,7 +516,7 @@ impl Stamped {
             &self.binding_sig,
         )?;
 
-        write_bundle_trailer_stamped(&mut writer, &self.stamp)?;
+        self.stamp.write(&mut writer)?;
 
         Ok(())
     }
@@ -503,25 +527,22 @@ impl Stamped {
     /// stamp trailer (anchor + tachygrams + proof).
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 64] {
-        let action_sigs: Vec<[u8; 64]> = self
-            .actions
-            .iter()
-            .map(|action| <[u8; 64]>::from(action.sig))
-            .collect();
-
+        let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
+        let binding_sig: [u8; 64] = self.binding_sig.into();
+        let anchor: [u8; 32] = self.stamp.anchor.0.into();
         let tachygrams: Vec<Fp> = self
             .stamp
             .tachygrams
             .iter()
             .map(|&tg| Fp::from(tg))
             .collect();
-
-        auth_digest_stamped(
-            action_sigs.iter().collect::<Vec<&[u8; 64]>>().as_slice(),
-            &self.binding_sig.into(),
-            &self.stamp.anchor.1.0.inner().to_bytes(),
-            tachygrams.as_slice(),
-            self.stamp.proof.serialize().as_ref(),
+        let proof = self.stamp.proof.serialize();
+        blake2b::stamped_auth_digest(
+            &action_sigs,
+            &binding_sig,
+            &anchor,
+            &tachygrams,
+            proof.as_ref(),
         )
     }
 }
@@ -529,21 +550,21 @@ impl Stamped {
 impl Stripped {
     /// Read a stripped bundle from the consensus wire format.
     ///
-    /// Expects `tachyonBundleState == 0x02`. Always reads a 64-byte
+    /// Expects `tachyonBundleState` 0x02. Always reads a 64-byte
     /// `stampWtxid` trailer. See the module-level wire format documentation.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let head = read_bundle_head(&mut reader)?;
+        let head = BundleState::read(&mut reader)?;
 
         if head != BundleState::Stripped {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "stripped bundle requires tachyonBundleState == 0x02",
+                "stripped bundle requires tachyonBundleState 0x02",
             ));
         }
 
         let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
 
-        let stamp = read_bundle_trailer_stripped(&mut reader)?;
+        let stamp = Adjunct::read(&mut reader)?;
 
         Ok(Self {
             actions,
@@ -564,7 +585,7 @@ impl Stripped {
     /// broadcast. Stripped innocents (empty actions) may serialize with a
     /// zero wtxid if no absorbing aggregate was recorded.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        write_bundle_head(&mut writer, BundleState::Stripped)?;
+        BundleState::Stripped.write(&mut writer)?;
 
         write_bundle_body(
             &mut writer,
@@ -573,9 +594,7 @@ impl Stripped {
             &self.binding_sig,
         )?;
 
-        write_bundle_trailer_stripped(&mut writer, &self.stamp)?;
-
-        Ok(())
+        self.stamp.write(&mut writer)
     }
 
     /// Tachyon's contribution to the transaction `auth_digest`.
@@ -584,17 +603,9 @@ impl Stripped {
     /// `wtxid` of the covering aggregate.
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 64] {
-        let action_sigs: Vec<[u8; 64]> = self
-            .actions
-            .iter()
-            .map(|action| <[u8; 64]>::from(action.sig))
-            .collect();
-
-        auth_digest_stripped(
-            action_sigs.iter().collect::<Vec<&[u8; 64]>>().as_slice(),
-            &self.binding_sig.into(),
-            &self.stamp.wtxid,
-        )
+        let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
+        let binding_sig: [u8; 64] = self.binding_sig.into();
+        blake2b::stripped_auth_digest(&action_sigs, &binding_sig, &self.stamp.wtxid)
     }
 }
 
@@ -606,7 +617,7 @@ impl TachyonBundle {
     /// `0x00` (non-tachyon — the caller should decide absence at its own
     /// layer) and any other byte.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Option<Self>> {
-        let state = read_bundle_head(&mut reader)?;
+        let state = BundleState::read(&mut reader)?;
 
         Ok(match state {
             | BundleState::NoBundle => None,
@@ -616,7 +627,7 @@ impl TachyonBundle {
                     actions,
                     value_balance,
                     binding_sig,
-                    stamp: read_bundle_trailer_stamped(&mut reader)?,
+                    stamp: Stamp::read(&mut reader)?,
                 }))
             },
             | BundleState::Stripped => {
@@ -625,7 +636,7 @@ impl TachyonBundle {
                     actions,
                     value_balance,
                     binding_sig,
-                    stamp: read_bundle_trailer_stripped(&mut reader)?,
+                    stamp: Adjunct::read(&mut reader)?,
                 }))
             },
         })
@@ -655,19 +666,18 @@ impl TachyonBundle {
 }
 
 impl<S: StampState> Bundle<S> {
-    /// See [`digest_bundle`].
+    /// See [`Plan::commitment`].
     pub fn commitment(&self) -> Result<[u8; 64], ActionDigestError> {
-        let digests: Vec<ActionDigest> = self
+        let action_digests = self
             .actions
             .iter()
-            .map(ActionDigest::try_from)
-            .collect::<Result<_, ActionDigestError>>()?;
-
-        let set = ActionAcc::from(digests.as_slice());
-
-        let commit = ActionCommit(set.0.commit(Fp::ZERO));
-
-        Ok(commit_bundle(commit.0.inner(), self.value_balance))
+            .map(Action::digest)
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
+        let action_acc = ActionSetCommit::from(action_digests.as_slice());
+        Ok(blake2b::bundle_commitment(
+            action_acc.0.inner(),
+            self.value_balance,
+        ))
     }
 
     /// Verify the bundle's binding signature and all action signatures.
@@ -715,22 +725,6 @@ impl From<Signature> for [u8; 64] {
     }
 }
 
-fn read_bundle_head<R: Read>(mut reader: R) -> io::Result<BundleState> {
-    let mut byte = [0u8; 1];
-    reader.read_exact(&mut byte)?;
-    match byte[0] {
-        | 0b0000_0000 => Ok(BundleState::NoBundle),
-        | 0b0000_0001 => Ok(BundleState::Stamped),
-        | 0b0000_0010 => Ok(BundleState::Stripped),
-        | _other => {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid bundle state",
-            ))
-        },
-    }
-}
-
 /// Read bundle fields: value balance, action descriptors, action sigs,
 /// and binding sig.
 fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Signature)> {
@@ -770,33 +764,6 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Sig
     Ok((actions, value_balance, binding_sig))
 }
 
-fn read_bundle_trailer_stamped<R: Read>(mut reader: R) -> io::Result<Stamp> {
-    let anchor = Anchor::read(&mut reader)?;
-
-    let tachygrams = serialization::read_fp_list(&mut reader)?
-        .into_iter()
-        .map(Tachygram::from)
-        .collect();
-
-    let proof = stamp::read_proof_sized(&mut reader, stamp::proof_serialized_size())?;
-    Ok(Stamp {
-        tachygrams,
-        anchor,
-        proof,
-    })
-}
-
-fn read_bundle_trailer_stripped<R: Read>(mut reader: R) -> io::Result<Adjunct> {
-    let mut wtxid = [0u8; 64];
-    reader.read_exact(&mut wtxid)?;
-    Ok(Adjunct { wtxid })
-}
-
-fn write_bundle_head<W: Write>(mut writer: W, state: BundleState) -> io::Result<()> {
-    writer.write_all(&[u8::from(state)])?;
-    Ok(())
-}
-
 /// Write bundle fields: value balance, action descriptors, action sigs,
 /// and binding sig.
 fn write_bundle_body<W: Write>(
@@ -826,26 +793,6 @@ fn write_bundle_body<W: Write>(
 
     serialization::write_binding_sig(&mut writer, &binding_sig.0)?;
 
-    Ok(())
-}
-
-fn write_bundle_trailer_stamped<W: Write>(mut writer: W, stamp: &Stamp) -> io::Result<()> {
-    stamp.anchor.write(&mut writer)?;
-    serialization::write_fp_list(
-        &mut writer,
-        &stamp
-            .tachygrams
-            .iter()
-            .copied()
-            .map(Fp::from)
-            .collect::<Vec<Fp>>(),
-    )?;
-    stamp::write_proof(&mut writer, &stamp.proof)?;
-    Ok(())
-}
-
-fn write_bundle_trailer_stripped<W: Write>(mut writer: W, adjunct: &Adjunct) -> io::Result<()> {
-    writer.write_all(&adjunct.wtxid)?;
     Ok(())
 }
 

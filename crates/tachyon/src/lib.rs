@@ -60,7 +60,6 @@ pub mod stamp;
 pub mod value;
 
 mod digest;
-
 mod primitives;
 mod serialization;
 
