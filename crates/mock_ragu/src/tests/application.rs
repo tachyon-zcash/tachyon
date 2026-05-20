@@ -354,8 +354,7 @@ fn serialized_proof_still_verifies() {
     let saved_data = pcd.data.clone();
 
     let bytes: [u8; PROOF_SIZE_COMPRESSED] = pcd.proof.into();
-    let recovered_proof =
-        Proof::try_from(&bytes).expect("recovered proof should deserialize");
+    let recovered_proof = Proof::try_from(&bytes).expect("recovered proof should deserialize");
 
     let recovered_pcd = recovered_proof.carry::<TestHeader>(saved_data);
     let valid = app
@@ -377,8 +376,7 @@ fn serialized_proof_rejects_mismatched_header_data() {
         .expect("seed should succeed");
 
     let bytes: [u8; PROOF_SIZE_COMPRESSED] = pcd.proof.into();
-    let recovered_proof =
-        Proof::try_from(&bytes).expect("recovered proof should deserialize");
+    let recovered_proof = Proof::try_from(&bytes).expect("recovered proof should deserialize");
 
     let bad_pcd = recovered_proof.carry::<TestHeader>(TestHeaderData { value: 999 });
     let valid = app
