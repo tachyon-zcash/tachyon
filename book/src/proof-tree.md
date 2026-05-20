@@ -9,52 +9,6 @@ Multiple parties execute the proof tree.
 - A **sync service** holds delegate key material and pool state proofs
 - A **aggregator** merges stamps for pool efficiency
 
-## Headers
-
-| Header | Fields |
-| ------ | ------ |
-| AnchorChain | (prev_anchor, end_anchor) |
-| Unspent | (nf, prev_anchor, end_anchor) |
-| NfMasterHeader | (mk, cm) |
-| NfPrefixHeader | (prefix{key, depth, index}, mk, cm) |
-| NullifierHeader | (cm, nf, epoch) |
-| DelegateNfPrefixHeader | (prefix{key, depth, index}, delegation_id) |
-| DelegateNullifierHeader | (nf, epoch, delegation_id) |
-| NullifierRolloverHeader | (old_nf, new_nf, new_epoch) |
-| SpendableHeader | (nf, anchor) |
-| SpendableRolloverHeader | (new_nf, epoch_anchor) |
-| SpendHeader | (action_digest, present_nf, future_nf) |
-| StampHeader | (action_acc, tachygram_acc, anchor) |
-
-## Steps
-
-| Step | Left | Right | Witness | Output |
-| ---- | ---- | ----- | ------- | ------ |
-| AnchorSeed | — | — | start, stamp_commit | AnchorChain |
-| EmptyBlockSeed | — | — | start | AnchorChain |
-| AnchorFuse | AnchorChain | AnchorChain | — | AnchorChain |
-| UnspentSeed | — | — | start, stamp_tg_set, nf | Unspent |
-| EmptyBlockUnspentSeed | — | — | start, nf | Unspent |
-| UnspentFuse | Unspent | Unspent | — | Unspent |
-| NfMasterSeed | — | — | note, pak | NfMasterHeader |
-| NfMasterStep | NfMasterHeader | — | chunk | NfPrefixHeader |
-| NfPrefixStep | NfPrefixHeader | — | chunk | NfPrefixHeader |
-| NullifierStep | NfPrefixHeader | — | — | NullifierHeader |
-| DelegationStep | NfPrefixHeader | — | trapdoor | DelegateNfPrefixHeader |
-| DelegateNfPrefixStep | DelegateNfPrefixHeader | — | chunk | DelegateNfPrefixHeader |
-| DelegateNullifierStep | DelegateNfPrefixHeader | — | — | DelegateNullifierHeader |
-| RolloverFuse | NullifierHeader | NullifierHeader | — | NullifierRolloverHeader |
-| DelegateRolloverFuse | DelegateNullifierHeader | DelegateNullifierHeader | — | NullifierRolloverHeader |
-| SpendableInit | NullifierHeader | — | anchor, stamp_tg_set | SpendableHeader |
-| SpendableLift | SpendableHeader | Unspent | — | SpendableHeader |
-| SpendableRollover | SpendableHeader | NullifierRolloverHeader | — | SpendableRolloverHeader |
-| SpendableEpochLift | SpendableRolloverHeader | Unspent | — | SpendableHeader |
-| SpendBind | NullifierHeader | NullifierHeader | rcv, alpha, pak, note | SpendHeader |
-| OutputStamp | — | — | rcv, alpha, note, anchor | StampHeader |
-| SpendStamp | SpendHeader | SpendableHeader | — | StampHeader |
-| MergeStamp | StampHeader | StampHeader | action gadgets, tachygram gadgets | StampHeader |
-| StampLift | StampHeader | AnchorChain | — | StampHeader |
-
 ## Lifecycle
 
 A note is essentially created when the wallet runs `SpendableInit`.
@@ -297,27 +251,7 @@ flowchart LR
 
 `NfPrefixStep` repeats once per remaining GGM depth.
 
-### Delegated GGM derivation
-
-```mermaid
-flowchart LR
-  np((NfPrefixHeader))
-  w_trap[/trapdoor/]
-  s_delegation[DelegationStep]
-  w_chunk[/chunk/]
-  s_walk[DelegateNfPrefixStep]
-  s_dleaf[DelegateNullifierStep]
-  dnh((DelegateNullifierHeader))
-
-  np --> s_delegation
-  w_trap --> s_delegation
-  s_delegation -->|DelegateNfPrefixHeader| s_walk
-  w_chunk --> s_walk
-  s_walk -->|DelegateNfPrefixHeader| s_dleaf
-  s_dleaf --> dnh
-```
-
-`DelegateNfPrefixStep` repeats once per remaining depth in the prefix key's covered range.
+A sync-service variant inserts `DelegationStep` at the handoff depth (consuming an `NfPrefixHeader` and witnessing a per-delegation trapdoor), producing a `DelegateNfPrefixHeader` that the sync service climbs with `DelegateNfPrefixStep` and terminates with `DelegateNullifierStep`; the resulting `DelegateNullifierHeader` carries an opaque `delegation_id` in place of the private master-key and commitment lineage.
 
 ### Stamp anchor advance
 
@@ -386,6 +320,52 @@ flowchart LR
 ```
 
 A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `DelegateNullifierHeader`s) for `RolloverFuse`; the resulting `NullifierRolloverHeader` is identical, so the downstream rollover and lift are unchanged.
+
+## Headers
+
+| Header | Fields |
+| ------ | ------ |
+| AnchorChain | (prev_anchor, end_anchor) |
+| Unspent | (nf, prev_anchor, end_anchor) |
+| NfMasterHeader | (mk, cm) |
+| NfPrefixHeader | (prefix{key, depth, index}, mk, cm) |
+| NullifierHeader | (cm, nf, epoch) |
+| DelegateNfPrefixHeader | (prefix{key, depth, index}, delegation_id) |
+| DelegateNullifierHeader | (nf, epoch, delegation_id) |
+| NullifierRolloverHeader | (old_nf, new_nf, new_epoch) |
+| SpendableHeader | (nf, anchor) |
+| SpendableRolloverHeader | (new_nf, epoch_anchor) |
+| SpendHeader | (action_digest, present_nf, future_nf) |
+| StampHeader | (action_acc, tachygram_acc, anchor) |
+
+## Steps
+
+| Step | Left | Right | Witness | Output |
+| ---- | ---- | ----- | ------- | ------ |
+| AnchorSeed | — | — | start, stamp_commit | AnchorChain |
+| EmptyBlockSeed | — | — | start | AnchorChain |
+| AnchorFuse | AnchorChain | AnchorChain | — | AnchorChain |
+| UnspentSeed | — | — | start, stamp_tg_set, nf | Unspent |
+| EmptyBlockUnspentSeed | — | — | start, nf | Unspent |
+| UnspentFuse | Unspent | Unspent | — | Unspent |
+| NfMasterSeed | — | — | note, pak | NfMasterHeader |
+| NfMasterStep | NfMasterHeader | — | chunk | NfPrefixHeader |
+| NfPrefixStep | NfPrefixHeader | — | chunk | NfPrefixHeader |
+| NullifierStep | NfPrefixHeader | — | — | NullifierHeader |
+| DelegationStep | NfPrefixHeader | — | trapdoor | DelegateNfPrefixHeader |
+| DelegateNfPrefixStep | DelegateNfPrefixHeader | — | chunk | DelegateNfPrefixHeader |
+| DelegateNullifierStep | DelegateNfPrefixHeader | — | — | DelegateNullifierHeader |
+| RolloverFuse | NullifierHeader | NullifierHeader | — | NullifierRolloverHeader |
+| DelegateRolloverFuse | DelegateNullifierHeader | DelegateNullifierHeader | — | NullifierRolloverHeader |
+| SpendableInit | NullifierHeader | — | anchor, stamp_tg_set | SpendableHeader |
+| SpendableLift | SpendableHeader | Unspent | — | SpendableHeader |
+| SpendableRollover | SpendableHeader | NullifierRolloverHeader | — | SpendableRolloverHeader |
+| SpendableEpochLift | SpendableRolloverHeader | Unspent | — | SpendableHeader |
+| SpendBind | NullifierHeader | NullifierHeader | rcv, alpha, pak, note | SpendHeader |
+| OutputStamp | — | — | rcv, alpha, note, anchor | StampHeader |
+| SpendStamp | SpendHeader | SpendableHeader | — | StampHeader |
+| MergeStamp | StampHeader | StampHeader | action gadgets, tachygram gadgets | StampHeader |
+| StampLift | StampHeader | AnchorChain | — | StampHeader |
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the GGM tree, the prefix walk, and the leaf wrap that produces a published nullifier.
 [^tachygrams]: See [Tachygrams](./tachygrams.md) for the per-stamp multiset polynomial and its Pedersen commitment.
