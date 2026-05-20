@@ -391,6 +391,24 @@ fn serialized_proof_rejects_mismatched_header_data() {
 }
 
 #[test]
+fn tampered_serialized_proof_fails_to_deserialize() {
+    let app = ApplicationBuilder::new()
+        .register(SeedStep)
+        .expect("register should succeed")
+        .finalize()
+        .expect("finalize should succeed");
+
+    let (pcd, ()) = app
+        .seed(&mut thread_rng(), SeedStep, 42u64)
+        .expect("seed should succeed");
+
+    let mut bytes: [u8; PROOF_SIZE_COMPRESSED] = pcd.proof.into();
+    bytes[0] ^= 0xFFu8;
+    Proof::try_from(&bytes)
+        .expect_err("tampered proof bytes must be rejected before reaching verify");
+}
+
+#[test]
 fn rerandomize_preserves_validity() {
     let app = ApplicationBuilder::new()
         .register(SeedStep)
