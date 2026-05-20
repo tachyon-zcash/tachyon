@@ -410,7 +410,7 @@ mod tests {
             rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let alpha = theta.randomizer::<effect::Spend>(note.commitment());
         let rsk = ask.derive_action_private(&alpha);
         let rk = rsk.derive_action_public();
 
@@ -432,7 +432,7 @@ mod tests {
             rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let alpha = theta.randomizer::<effect::Spend>(note.commitment());
         let rsk = ask.derive_action_private(&alpha);
         let rk = rsk.derive_action_public();
 
@@ -452,7 +452,7 @@ mod tests {
             rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let alpha = theta.randomizer::<effect::Output>(&note.commitment());
+        let alpha = theta.randomizer::<effect::Output>(note.commitment());
         let rsk = private::ActionSigningKey::<effect::Output>::new(&alpha);
         let rk = rsk.derive_action_public();
 
@@ -475,7 +475,8 @@ mod tests {
         bvk.verify(&sighash, &sig).unwrap();
     }
 
-    /// bsk from empty trapdoor slice must still produce a valid key (zero scalar).
+    /// bsk from empty trapdoor slice must still produce a valid key (zero
+    /// scalar).
     #[test]
     fn binding_signing_key_from_empty_trapdoors() {
         let mut rng = StdRng::seed_from_u64(42);

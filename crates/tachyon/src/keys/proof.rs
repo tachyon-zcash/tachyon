@@ -133,7 +133,7 @@ mod tests {
             rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let alpha = theta.randomizer::<effect::Spend>(note.commitment());
 
         let rk_prover: [u8; 32] = pak.ak.derive_action_public(&alpha).0.into();
         let rk_signer: [u8; 32] = ask

@@ -131,6 +131,7 @@ mod tests {
     use pasta_curves::Fp;
     use rand::{SeedableRng as _, rngs::StdRng};
 
+    use super::*;
     use crate::{
         entropy::ActionEntropy,
         keys::{private, public},
@@ -138,8 +139,6 @@ mod tests {
         primitives::effect,
         value,
     };
-
-    use super::*;
 
     fn test_note(rng: &mut impl rand::RngCore) -> Note {
         let sk = private::SpendingKey::from([0x42u8; 32]);
@@ -151,7 +150,8 @@ mod tests {
         }
     }
 
-    /// Spend plan rk must equal ask.derive_action_private(alpha).derive_action_public().
+    /// Spend plan rk must equal
+    /// ask.derive_action_private(alpha).derive_action_public().
     #[test]
     fn spend_plan_rk_matches_derivation() {
         let mut rng = StdRng::seed_from_u64(42);
@@ -167,7 +167,7 @@ mod tests {
 
         // Independently derive the expected rk.
         let cm = note.commitment();
-        let alpha = theta.randomizer::<effect::Spend>(&cm);
+        let alpha = theta.randomizer::<effect::Spend>(cm);
         let expected_rk = ask.derive_action_private(&alpha).derive_action_public();
 
         assert_eq!(plan.rk, expected_rk);
@@ -185,7 +185,7 @@ mod tests {
 
         // Independently derive the expected rk.
         let cm = note.commitment();
-        let alpha = theta.randomizer::<effect::Output>(&cm);
+        let alpha = theta.randomizer::<effect::Output>(cm);
         let expected_rk =
             private::ActionSigningKey::<effect::Output>::new(&alpha).derive_action_public();
 
@@ -234,7 +234,7 @@ mod tests {
         let ask = sk.derive_auth_private();
         let note = test_note(&mut rng);
         let theta = ActionEntropy::random(&mut rng);
-        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let alpha = theta.randomizer::<effect::Spend>(note.commitment());
         let rsk = ask.derive_action_private(&alpha);
         let rk = rsk.derive_action_public();
 

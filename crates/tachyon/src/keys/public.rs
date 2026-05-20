@@ -176,6 +176,7 @@ mod tests {
     use pasta_curves::Fp;
     use rand::{SeedableRng as _, rngs::StdRng};
 
+    use super::*;
     use crate::{
         entropy::ActionEntropy,
         keys::private,
@@ -183,8 +184,6 @@ mod tests {
         primitives::effect,
         value,
     };
-
-    use super::*;
 
     /// ActionVerificationKey serialization round-trip: key → bytes → key.
     #[test]
@@ -199,7 +198,7 @@ mod tests {
             rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
         };
         let theta = ActionEntropy::random(&mut rng);
-        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let alpha = theta.randomizer::<effect::Spend>(note.commitment());
         let rsk = ask.derive_action_private(&alpha);
         let rk = rsk.derive_action_public();
 

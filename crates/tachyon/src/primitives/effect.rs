@@ -105,10 +105,10 @@ mod tests {
     fn spend_output_derive_alpha_differ() {
         let mut rng = StdRng::seed_from_u64(42);
         let theta = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::from(&Fp::random(&mut rng));
+        let cm = note::Commitment::from(Fp::random(&mut rng));
 
-        let alpha_spend = Spend::derive_alpha(&theta, &cm);
-        let alpha_output = Output::derive_alpha(&theta, &cm);
+        let alpha_spend = Spend::derive_alpha(theta, cm);
+        let alpha_output = Output::derive_alpha(theta, cm);
 
         assert_ne!(alpha_spend, alpha_output);
     }
