@@ -8,7 +8,7 @@
 
 use core::{num::TryFromIntError, ops::RangeInclusive};
 
-use core2::io::{self, Read, Write};
+use corez::io::{self, Read, Write};
 
 #[derive(Debug)]
 pub(crate) enum CompactSizeError {

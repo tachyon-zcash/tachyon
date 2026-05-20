@@ -77,59 +77,25 @@ mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use ggm::{GGM_TREE_DEPTH, NoteMasterKey, NotePrefixedKey};
+pub use ggm::{
+    GGM_CHUNK_MASK, GGM_CHUNK_SIZE, GGM_MAX_INDEX, GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey,
+    NotePrefixedKey, cover_candidates,
+};
 pub use note::{NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]
 mod tests {
     use ff::{Field as _, PrimeField as _};
-    use pasta_curves::{Fp, Fq};
-    use rand::{RngCore as _, SeedableRng as _, rngs::StdRng};
+    use pasta_curves::Fp;
+    use rand::{SeedableRng as _, rngs::StdRng};
 
     use crate::{
-        constants::PrfExpand,
         entropy::ActionEntropy,
         keys::{NullifierKey, PaymentKey, private},
         note::{self, Note},
         primitives::effect,
-        reddsa,
     };
-
-    /// RedPallas requires ak to have tilde_y = 0 (sign bit cleared).
-    /// The key derivation must enforce this for any spending key.
-    /// Verifies both code paths: keys that needed negation and keys that
-    /// didn't.
-    #[test]
-    fn ask_sign_normalization() {
-        use ff::FromUniformBytes as _;
-
-        let mut rng = StdRng::seed_from_u64(0);
-        let mut flipped = 0u32;
-        for _ in 0u8..20 {
-            let mut sk_bytes = [0u8; 32];
-            rng.fill_bytes(&mut sk_bytes);
-
-            // Check the raw (pre-normalization) sign bit.
-            let ask_scalar = Fq::from_uniform_bytes(&PrfExpand::ASK.with(&sk_bytes));
-            let unnormalized_ak: [u8; 32] = reddsa::VerificationKey::from(
-                &reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask_scalar.to_repr()).unwrap(),
-            )
-            .into();
-            if unnormalized_ak[31] >> 7u8 == 1u8 {
-                flipped += 1;
-            }
-
-            // Verify normalization produces tilde_y = 0.
-            let sk = private::SpendingKey::from(sk_bytes);
-            let ak = sk.derive_auth_private().derive_auth_public();
-            let ak_bytes: [u8; 32] = ak.0.into();
-            assert_eq!(ak_bytes[31] >> 7u8, 0u8, "ak sign bit must be 0");
-        }
-        // 16 of 20 keys need the sign flip with this seed,
-        // confirming both code paths are exercised.
-        assert_eq!(flipped, 16u32);
-    }
 
     /// ask, nk, pk derived from the same sk must all be different.
     /// pk derives from (ak, nk) via Poseidon, not directly from sk.
@@ -153,7 +119,8 @@ mod tests {
     /// pin the full proof authorizing key.
     #[test]
     fn payment_key_binds_nk() {
-        let sk = private::SpendingKey::from([0x42u8; 32]);
+        let rng = &mut StdRng::seed_from_u64(0);
+        let sk = private::SpendingKey::random(rng);
         let ak = sk.derive_auth_private().derive_auth_public();
         let nk = sk.derive_nullifier_private();
         let pk = PaymentKey::derive(&ak, &nk);
@@ -168,23 +135,41 @@ mod tests {
     /// and prover sides of the randomized key derivation.
     #[test]
     fn rsk_public_equals_ak_derive_action_public() {
-        let mut rng = StdRng::seed_from_u64(0);
+        let rng = &mut StdRng::seed_from_u64(0);
         let sk = private::SpendingKey::from([0x42u8; 32]);
         let ask = sk.derive_auth_private();
         let ak = ask.derive_auth_public();
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
-            psi: note::NullifierTrapdoor::from(Fp::random(&mut rng)),
-            rcm: note::CommitmentTrapdoor::from(Fp::random(&mut rng)),
+            psi: note::NullifierTrapdoor::random(rng),
+            rcm: note::CommitmentTrapdoor::random(rng),
         };
-        let theta = ActionEntropy::random(&mut rng);
-        let alpha = theta.randomizer::<effect::Spend>(&note.commitment());
+        let theta = ActionEntropy::random(rng);
+        let alpha = theta.randomizer::<effect::Spend>(note.commitment());
         let rsk = ask.derive_action_private(&alpha);
 
         let rk_from_signer: [u8; 32] = rsk.derive_action_public().0.into();
         let rk_from_prover: [u8; 32] = ak.derive_action_public(&alpha).0.into();
 
         assert_eq!(rk_from_signer, rk_from_prover);
+    }
+
+    #[test]
+    fn debug_spending_key_redacts_bytes() {
+        let sk = private::SpendingKey::from([0xAB; 32]);
+        let dbg = alloc::format!("{sk:?}");
+        assert!(dbg.contains("SpendingKey"), "must name the type");
+        assert!(!dbg.contains("AB"), "must not leak key bytes");
+        assert!(!dbg.contains("171"), "must not leak decimal bytes");
+    }
+
+    #[test]
+    fn debug_nullifier_key_redacts_value() {
+        let nk = NullifierKey(Fp::from(0xDEADu64));
+        let dbg = alloc::format!("{nk:?}");
+        assert!(dbg.contains("NullifierKey"), "must name the type");
+        assert!(!dbg.contains("DEAD"), "must not leak field element");
+        assert!(!dbg.contains("57005"), "must not leak decimal value");
     }
 }

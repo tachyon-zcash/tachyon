@@ -1,5 +1,7 @@
 //! Public (verification) keys.
 
+use core::fmt;
+
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 
 use crate::{action, action::Action, bundle, reddsa, value};
@@ -20,7 +22,7 @@ use crate::{action, action::Action, bundle, reddsa, value};
 ///
 /// This unification lets consensus treat all actions identically while
 /// the type system enforces the authority boundary at construction time.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct ActionVerificationKey(pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>);
 
 impl ActionVerificationKey {
@@ -51,13 +53,10 @@ impl TryFrom<[u8; 32]> for ActionVerificationKey {
 }
 
 /// Decompress the verification key to an affine curve point.
-#[expect(clippy::expect_used, reason = "specified behavior")]
 impl From<ActionVerificationKey> for EpAffine {
     fn from(key: ActionVerificationKey) -> Self {
         let bytes: [u8; 32] = key.0.into();
-        Self::from_bytes(&bytes)
-            .into_option()
-            .expect("verification key is a valid curve point")
+        Self::from_bytes(&bytes).expect("verification key is a valid curve point")
     }
 }
 
@@ -105,7 +104,7 @@ pub fn derive_bvk(
 ///
 /// Wraps `reddsa::VerificationKey<reddsa::BindingAuth>`, which internally
 /// stores a Pallas curve point (EpAffine, encoded as 32 compressed bytes).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct BindingVerificationKey(pub(super) reddsa::VerificationKey<reddsa::BindingAuth>);
 
 impl BindingVerificationKey {
@@ -156,6 +155,20 @@ impl PartialEq for BindingVerificationKey {
     reason = "default assert_receiver_is_total_eq is correct"
 )]
 impl Eq for BindingVerificationKey {}
+
+impl fmt::Debug for ActionVerificationKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ActionVerificationKey")
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for BindingVerificationKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingVerificationKey")
+            .finish_non_exhaustive()
+    }
+}
 
 #[cfg(test)]
 mod tests {

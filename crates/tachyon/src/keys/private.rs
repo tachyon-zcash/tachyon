@@ -1,6 +1,6 @@
 //! Private (signing) keys.
 
-use core::marker::PhantomData;
+use core::{any::type_name, fmt, marker::PhantomData};
 
 use ff::{Field as _, FromUniformBytes as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     action, bundle,
-    constants::PrfExpand,
+    digest::blake2b,
     entropy::ActionRandomizer,
     primitives::{Effect, effect},
     reddsa, value,
@@ -34,7 +34,7 @@ use crate::{
 /// - [`derive_payment_key`](Self::derive_payment_key) → [`PaymentKey`] (`pk`)
 /// - [`derive_proof_private`](Self::derive_proof_private) →
 ///   [`ProofAuthorizingKey`] (`ak` + `nk`)
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct SpendingKey([u8; 32]);
 
 impl From<[u8; 32]> for SpendingKey {
@@ -45,7 +45,7 @@ impl From<[u8; 32]> for SpendingKey {
 
 impl SpendingKey {
     /// Create a new spending key from 32 bytes of random data.
-    pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
+    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         let mut rand_bytes = [0u8; 32];
         rng.fill_bytes(&mut rand_bytes);
         Self(rand_bytes)
@@ -83,7 +83,7 @@ impl SpendingKey {
     )]
     pub fn derive_auth_private(&self) -> SpendAuthorizingKey {
         // Derive ask scalar from sk via PRF (Orchard §4.2.3).
-        let mut ask = Fq::from_uniform_bytes(&PrfExpand::ASK.with(&self.0));
+        let mut ask = Fq::from_uniform_bytes(&blake2b::prf_expand_ask(&self.0));
 
         // Sign normalization (§5.4.7.1): ak must have tilde_y = 0.
         // Compute ak = [ask]G via reddsa (basepoint is sealed) and check
@@ -109,7 +109,7 @@ impl SpendingKey {
     /// `nk = ToBase(PRF^expand_sk([0x0a]))` — BLAKE2b-512 reduced to Fp.
     #[must_use]
     pub fn derive_nullifier_private(&self) -> NullifierKey {
-        NullifierKey(Fp::from_uniform_bytes(&PrfExpand::NK.with(&self.0)))
+        NullifierKey(Fp::from_uniform_bytes(&blake2b::prf_expand_nk(&self.0)))
     }
 
     /// Derive the payment key $\mathsf{pk}$ from $\mathsf{sk}$.
@@ -158,7 +158,7 @@ impl SpendingKey {
 /// `ask` derives [`SpendValidatingKey`](super::proof::SpendValidatingKey)
 /// (`ak`) via [`derive_auth_public`](Self::derive_auth_public) — the
 /// circuit witness that validates spend authorization.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct SpendAuthorizingKey(reddsa::SigningKey<reddsa::ActionAuth>);
 
 impl SpendAuthorizingKey {
@@ -193,14 +193,14 @@ impl SpendAuthorizingKey {
 ///
 /// Both variants sign via [`sign`](Self::sign) and derive `rk` via
 /// [`derive_action_public`](Self::derive_action_public).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct ActionSigningKey<E: Effect>(reddsa::SigningKey<reddsa::ActionAuth>, PhantomData<E>);
 
 impl<E: Effect> ActionSigningKey<E> {
     /// Sign a transaction sighash with this action key.
-    pub fn sign(
+    pub fn sign<RNG: RngCore + CryptoRng>(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut RNG,
         sighash: &[u8; 32],
     ) -> action::Signature {
         action::Signature(self.0.sign(rng, sighash))
@@ -249,7 +249,7 @@ impl ActionSigningKey<effect::Output> {
 /// commitment (and commitments from other pools). The stamp is
 /// excluded from the bundle commitment because it is stripped during
 /// aggregation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct BindingSigningKey(reddsa::SigningKey<reddsa::BindingAuth>);
 
 impl BindingSigningKey {
@@ -262,9 +262,9 @@ impl BindingSigningKey {
     }
 
     /// Sign a transaction sighash with this binding key.
-    pub fn sign(
+    pub fn sign<RNG: RngCore + CryptoRng>(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut RNG,
         sighash: &[u8; 32],
     ) -> bundle::Signature {
         bundle::Signature(self.0.sign(rng, sighash))
@@ -296,6 +296,33 @@ impl From<&[value::CommitmentTrapdoor]> for BindingSigningKey {
             reddsa::SigningKey::<reddsa::BindingAuth>::try_from(sum.to_repr())
                 .expect("all Fq are valid RedPallas signing keys"),
         )
+    }
+}
+
+impl fmt::Debug for SpendingKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SpendingKey").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for SpendAuthorizingKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SpendAuthorizingKey")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<E: Effect> fmt::Debug for ActionSigningKey<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ActionSigningKey")
+            .field("effect", &type_name::<E>())
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for BindingSigningKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingSigningKey").finish_non_exhaustive()
     }
 }
 

@@ -6,13 +6,10 @@
 //! [`ActionSigningKey`](crate::keys::private::ActionSigningKey), and key types
 //! to enforce the spend/output distinction at compile time.
 
-use pasta_curves::Fq;
+use ff::{FromUniformBytes as _, PrimeField as _};
+use pasta_curves::{Fp, Fq};
 
-use crate::{
-    constants::{OUTPUT_ALPHA_PERSONALIZATION, SPEND_ALPHA_PERSONALIZATION},
-    entropy::{self, ActionEntropy},
-    note, value,
-};
+use crate::{digest::blake2b, entropy::ActionEntropy, note, value};
 
 mod sealed {
     pub trait Sealed: Copy {}
@@ -24,7 +21,9 @@ mod sealed {
 pub trait Effect: sealed::Sealed + 'static {
     /// Derive this effect's $\alpha$ scalar from per-action entropy and a note
     /// commitment.
-    fn derive_alpha(theta: &ActionEntropy, cm: &note::Commitment) -> Fq;
+    ///
+    /// TODO: finalize alpha derivation spec. poseidon, or other native Fq?
+    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq;
 
     /// Commit to this effect's signed value contribution using the given
     /// trapdoor.
@@ -40,8 +39,8 @@ pub struct Spend;
 pub struct Output;
 
 impl Effect for Spend {
-    fn derive_alpha(theta: &ActionEntropy, cm: &note::Commitment) -> Fq {
-        entropy::derive_alpha(SPEND_ALPHA_PERSONALIZATION, theta, cm)
+    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
+        Fq::from_uniform_bytes(&blake2b::alpha_spend(&theta.0, &Fp::from(cm).to_repr()))
     }
 
     fn commit_value(rcv: value::CommitmentTrapdoor, value: note::Value) -> value::Commitment {
@@ -51,8 +50,8 @@ impl Effect for Spend {
 }
 
 impl Effect for Output {
-    fn derive_alpha(theta: &ActionEntropy, cm: &note::Commitment) -> Fq {
-        entropy::derive_alpha(OUTPUT_ALPHA_PERSONALIZATION, theta, cm)
+    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
+        Fq::from_uniform_bytes(&blake2b::alpha_output(&theta.0, &Fp::from(cm).to_repr()))
     }
 
     fn commit_value(rcv: value::CommitmentTrapdoor, value: note::Value) -> value::Commitment {

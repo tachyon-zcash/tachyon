@@ -33,14 +33,15 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
-use ff::{Field as _, PrimeField as _};
-// TODO(#39): replace halo2_poseidon with Ragu Poseidon params
-use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
+use core::fmt;
+
+use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    constants::{NOTE_COMMITMENT_DOMAIN, NOTE_VALUE_MAX},
+    constants::NOTE_VALUE_MAX,
+    digest::poseidon,
     keys::{NullifierKey, PaymentKey},
     primitives::{EpochIndex, Tachygram},
 };
@@ -50,13 +51,13 @@ use crate::{
 /// Used to derive the master root key: $mk = \text{KDF}(\psi, nk)$.
 /// The GGM tree PRF then evaluates $nf = F_{mk}(\text{flavor})$.
 /// Prefix keys derived from $mk$ enable range-restricted delegation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct NullifierTrapdoor(pub(super) Fp);
 
 impl NullifierTrapdoor {
     /// Generate a fresh random trapdoor.
-    pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
+    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fp::random(rng))
     }
 }
@@ -77,12 +78,12 @@ impl From<NullifierTrapdoor> for Fp {
 /// commitment.
 ///
 /// Can be derived from a shared secret negotiated out-of-band.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct CommitmentTrapdoor(Fp);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
-    pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
+    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fp::random(rng))
     }
 }
@@ -162,18 +163,24 @@ impl Note {
     /// Computes the note commitment `cm`.
     ///
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$
+    ///
+    /// # Panics
+    ///
+    /// Panics if the note commitment trapdoor is zero.
     #[must_use]
     pub fn commitment(&self) -> Commitment {
-        let domain = Fp::from_u128(u128::from_le_bytes(*NOTE_COMMITMENT_DOMAIN));
-        Commitment::from(
-            &Hash::<_, P128Pow5T3, ConstantLength<5>, 3, 2>::init().hash([
-                domain,
-                self.rcm.0,
-                self.pk.0,
-                Fp::from(self.value.0),
-                self.psi.0,
-            ]),
-        )
+        assert_ne!(
+            self.rcm.0,
+            Fp::ZERO,
+            "note commitment trapdoor should not be zero"
+        );
+
+        Commitment::from(poseidon::note_commitment(
+            self.rcm.0,
+            self.pk.0,
+            self.value.0,
+            self.psi.0,
+        ))
     }
 
     /// Derives a nullifier for this note at the given flavor (epoch).
@@ -196,24 +203,24 @@ impl Note {
 /// the value that becomes a tachygram:
 /// - For **output** operations, `cm` IS the tachygram directly.
 /// - For **spend** operations, `cm` is a private witness.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Commitment(Fp);
 
-impl From<&Fp> for Commitment {
-    fn from(fp: &Fp) -> Self {
-        Self(*fp)
+impl From<Fp> for Commitment {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
-impl From<&Commitment> for Fp {
-    fn from(cm: &Commitment) -> Self {
+impl From<Commitment> for Fp {
+    fn from(cm: Commitment) -> Self {
         cm.0
     }
 }
 
-impl From<&Commitment> for Tachygram {
-    fn from(commitment: &Commitment) -> Self {
-        Self::from(&commitment.0)
+impl From<Commitment> for Tachygram {
+    fn from(commitment: Commitment) -> Self {
+        Self::from(commitment.0)
     }
 }
 
@@ -227,31 +234,57 @@ impl From<&Commitment> for Tachygram {
 /// - Don't need collision resistance (no faerie gold defense)
 /// - Have an epoch "flavor" component for sync delegation
 /// - Are prunable by validators after a window of blocks
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Nullifier(Fp);
 
-impl From<&Fp> for Nullifier {
-    fn from(fp: &Fp) -> Self {
-        Self(*fp)
+impl From<Fp> for Nullifier {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
     }
 }
 
-impl From<&Nullifier> for Fp {
-    fn from(nf: &Nullifier) -> Self {
+impl From<Nullifier> for Fp {
+    fn from(nf: Nullifier) -> Self {
         nf.0
     }
 }
 
-impl From<&Nullifier> for Tachygram {
-    fn from(nullifier: &Nullifier) -> Self {
-        Self::from(&nullifier.0)
+impl From<Nullifier> for Tachygram {
+    fn from(nullifier: Nullifier) -> Self {
+        Self::from(nullifier.0)
+    }
+}
+
+impl fmt::Debug for NullifierTrapdoor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NullifierTrapdoor").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for CommitmentTrapdoor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Commitment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Commitment").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Nullifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Nullifier").finish_non_exhaustive()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use rand::{SeedableRng as _, rngs::StdRng};
+
     use super::*;
-    use crate::constants::NOTE_VALUE_MAX;
+    use crate::{constants::NOTE_VALUE_MAX, keys::private::SpendingKey, primitives::EpochIndex};
 
     /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
     #[test]
@@ -276,20 +309,21 @@ mod tests {
     /// Different trapdoors produce different commitments.
     #[test]
     fn distinct_rcm_distinct_commitments() {
-        let pk = PaymentKey(Fp::from(1u64));
-        let psi = NullifierTrapdoor::from(Fp::from(2u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let pk = PaymentKey(Fp::random(&mut *rng));
+        let psi = NullifierTrapdoor::random(rng);
 
         let note1 = Note {
             pk,
             value: Value::from(100u64),
             psi,
-            rcm: CommitmentTrapdoor::from(Fp::from(3u64)),
+            rcm: CommitmentTrapdoor::random(rng),
         };
         let note2 = Note {
             pk,
             value: Value::from(100u64),
             psi,
-            rcm: CommitmentTrapdoor::from(Fp::from(4u64)),
+            rcm: CommitmentTrapdoor::random(rng),
         };
 
         assert_ne!(note1.commitment(), note2.commitment());
@@ -298,20 +332,45 @@ mod tests {
     /// `Note::nullifier` delegates correctly to key derivation.
     #[test]
     fn note_nullifier_matches_key_derivation() {
-        use crate::{keys::private::SpendingKey, primitives::EpochIndex};
+        let rng = &mut StdRng::seed_from_u64(0);
 
-        let sk = SpendingKey::from([0x42u8; 32]);
+        let sk = SpendingKey::random(rng);
         let nk = sk.derive_nullifier_private();
-        let psi = NullifierTrapdoor::from(Fp::from(99u64));
         let note = Note {
             pk: sk.derive_payment_key(),
             value: Value::from(100u64),
-            psi,
-            rcm: CommitmentTrapdoor::from(Fp::ZERO),
+            psi: NullifierTrapdoor::random(rng),
+            rcm: CommitmentTrapdoor::random(rng),
         };
         let flavor = EpochIndex(5u32);
 
-        let mk = nk.derive_note_private(&psi);
+        let mk = nk.derive_note_private(&note.psi);
         assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));
+    }
+
+    #[test]
+    fn debug_nullifier_trapdoor_redacts_value() {
+        let psi = NullifierTrapdoor::from(Fp::from(0xCAFEu64));
+        let dbg = alloc::format!("{psi:?}");
+        assert!(dbg.contains("NullifierTrapdoor"), "must name the type");
+        assert!(!dbg.contains("CAFE"), "must not leak field element");
+        assert!(!dbg.contains("51966"), "must not leak decimal value");
+    }
+
+    #[test]
+    fn debug_note_commitment_redacts_value() {
+        let cm = Commitment::from(Fp::from(42u64));
+        let dbg = alloc::format!("{cm:?}");
+        assert!(dbg.contains("Commitment"), "must name the type");
+        assert!(!dbg.contains("42"), "must not leak field element");
+    }
+
+    #[test]
+    fn debug_nullifier_redacts_value() {
+        let nf = Nullifier::from(Fp::from(0xBEEFu64));
+        let dbg = alloc::format!("{nf:?}");
+        assert!(dbg.contains("Nullifier"), "must name the type");
+        assert!(!dbg.contains("BEEF"), "must not leak field element");
+        assert!(!dbg.contains("48879"), "must not leak decimal value");
     }
 }

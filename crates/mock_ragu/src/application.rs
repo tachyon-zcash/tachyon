@@ -45,9 +45,9 @@ impl Application {
     pub fn seed<'source, RNG: CryptoRng, S: Step<Left = (), Right = ()>>(
         &self,
         rng: &mut RNG,
-        step: &S,
+        step: S,
         witness: S::Witness<'source>,
-    ) -> Result<(Proof, S::Aux<'source>)> {
+    ) -> Result<(Pcd<'source, S::Output>, S::Aux<'source>)> {
         let left = Proof::trivial().carry::<()>(());
         let right = Proof::trivial().carry::<()>(());
         self.fuse(rng, step, witness, left, right)
@@ -56,11 +56,11 @@ impl Application {
     pub fn fuse<'source, RNG: CryptoRng, S: Step>(
         &self,
         _rng: &mut RNG,
-        step: &S,
+        step: S,
         witness: S::Witness<'source>,
         left: Pcd<'source, S::Left>,
         right: Pcd<'source, S::Right>,
-    ) -> Result<(Proof, S::Aux<'source>)> {
+    ) -> Result<(Pcd<'source, S::Output>, S::Aux<'source>)> {
         let left_proof = left.proof;
         let right_proof = right.proof;
         let (output_data, aux) = step.witness(witness, left.data, right.data)?;
@@ -75,7 +75,7 @@ impl Application {
         witness_data.extend_from_slice(right_bytes.as_ref());
 
         let proof_value = Proof::new(&encoded, &witness_data);
-        Ok((proof_value, aux))
+        Ok((proof_value.carry::<S::Output>(output_data), aux))
     }
 
     pub fn verify<RNG: CryptoRng, H: Header>(&self, pcd: &Pcd<'_, H>, _rng: RNG) -> Result<bool> {

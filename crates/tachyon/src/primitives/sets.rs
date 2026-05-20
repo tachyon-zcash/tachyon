@@ -6,105 +6,78 @@ use mock_ragu::{Commitment, Multiset, Polynomial};
 use pasta_curves::Fp;
 
 use super::{ActionDigest, Tachygram};
+use crate::{Action, ActionDigestError};
 
-/// 32-byte Pedersen commitment for the pool state.
+/// Pedersen commitment to a stamp's tachygram set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PoolCommit(pub Commitment);
+pub struct TachygramSetCommit(pub Commitment);
 
-/// 32-byte Pedersen commitment for a block's tachygram set.
+/// Pedersen commitment to a stamp's action-digest set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BlockCommit(pub Commitment);
+pub struct ActionSetCommit(pub Commitment);
 
-/// 32-byte Pedersen commitment for a stamp's action-digest set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ActionCommit(pub Commitment);
+/// Ragu gadget representation of a stamp's tachygram set.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TachygramSetGadget(pub Multiset);
 
-/// 32-byte Pedersen commitment for a stamp's tachygram set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TachygramCommit(pub Commitment);
+/// Ragu gadget representation of a stamp's action-digest set.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActionSetGadget(pub Multiset);
 
-/// Pool-state set. `T = Polynomial` for external state (see [`PoolAcc`]);
-/// `T = Multiset` for the gadget form handed to a step as witness.
-#[derive(Clone, Debug)]
-pub struct PoolSet<T>(pub T);
-
-/// Block set. `T = Polynomial` for external state (see [`BlockAcc`]);
-/// `T = Multiset` for the gadget form handed to a step as witness.
-#[derive(Clone, Debug)]
-pub struct BlockSet<T>(pub T);
-
-/// Action-digest set. See [`ActionAcc`].
-#[derive(Clone, Debug)]
-pub struct ActionSet<T>(pub T);
-
-/// Tachygram set carried by a stamp. See [`TachygramAcc`].
-#[derive(Clone, Debug)]
-pub struct TachygramSet<T>(pub T);
-
-/// Pool-state delta between two anchors. `T = Polynomial` externally;
-/// `T = Multiset` when supplied to a step.
-#[derive(Clone, Debug)]
-pub struct PoolDelta<T>(pub T);
-
-/// Polynomial-form pool set — external prover state between steps.
-pub type PoolAcc = PoolSet<Polynomial>;
-
-/// Polynomial-form block set — external prover state between steps.
-pub type BlockAcc = BlockSet<Polynomial>;
-
-/// Polynomial-form action set — external prover state between steps.
-pub type ActionAcc = ActionSet<Polynomial>;
-
-/// Polynomial-form tachygram set — external prover state between steps.
-pub type TachygramAcc = TachygramSet<Polynomial>;
-
-impl From<&[ActionDigest]> for ActionAcc {
+impl From<&[ActionDigest]> for ActionSetGadget {
     fn from(ads: &[ActionDigest]) -> Self {
-        let roots: Vec<Fp> = ads.iter().map(Fp::from).collect();
-        Self(Polynomial::from_roots(&roots))
+        let roots: Vec<Fp> = ads.iter().map(|&ad| Fp::from(ad)).collect();
+        let poly = Polynomial::from_roots(&roots);
+        Self(Multiset::new(poly))
     }
 }
 
-impl From<&[Tachygram]> for TachygramAcc {
+impl From<&[Tachygram]> for TachygramSetGadget {
     fn from(tgs: &[Tachygram]) -> Self {
-        let roots: Vec<Fp> = tgs.iter().map(Fp::from).collect();
-        Self(Polynomial::from_roots(&roots))
+        let roots: Vec<Fp> = tgs.iter().map(|&tg| Fp::from(tg)).collect();
+        let poly = Polynomial::from_roots(&roots);
+        Self(Multiset::new(poly))
     }
 }
 
-impl From<&[Tachygram]> for BlockAcc {
+impl From<&[ActionDigest]> for ActionSetCommit {
+    fn from(ads: &[ActionDigest]) -> Self {
+        let roots: Vec<Fp> = ads.iter().map(|&ad| Fp::from(ad)).collect();
+        let poly = Polynomial::from_roots(&roots);
+        Self(Multiset::new(poly).commit())
+    }
+}
+
+impl TryFrom<&[Action]> for ActionSetCommit {
+    type Error = ActionDigestError;
+
+    fn try_from(actions: &[Action]) -> Result<Self, Self::Error> {
+        let ads: Vec<ActionDigest> = actions
+            .iter()
+            .map(Action::digest)
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
+        let roots: Vec<Fp> = ads.into_iter().map(Fp::from).collect();
+        let poly = Polynomial::from_roots(&roots);
+        Ok(Self(Multiset::new(poly).commit()))
+    }
+}
+
+impl From<&[Tachygram]> for TachygramSetCommit {
     fn from(tgs: &[Tachygram]) -> Self {
-        let roots: Vec<Fp> = tgs.iter().map(Fp::from).collect();
-        Self(Polynomial::from_roots(&roots))
+        let roots: Vec<Fp> = tgs.iter().map(|&tg| Fp::from(tg)).collect();
+        let poly = Polynomial::from_roots(&roots);
+        Self(Multiset::new(poly).commit())
     }
 }
 
-impl From<PoolSet<Polynomial>> for PoolSet<Multiset> {
-    fn from(poly: PoolSet<Polynomial>) -> Self {
-        Self(Multiset::new(poly.0))
+impl From<ActionSetGadget> for ActionSetCommit {
+    fn from(gadget: ActionSetGadget) -> Self {
+        Self(gadget.0.commit())
     }
 }
 
-impl From<BlockSet<Polynomial>> for BlockSet<Multiset> {
-    fn from(poly: BlockSet<Polynomial>) -> Self {
-        Self(Multiset::new(poly.0))
-    }
-}
-
-impl From<ActionSet<Polynomial>> for ActionSet<Multiset> {
-    fn from(poly: ActionSet<Polynomial>) -> Self {
-        Self(Multiset::new(poly.0))
-    }
-}
-
-impl From<TachygramSet<Polynomial>> for TachygramSet<Multiset> {
-    fn from(poly: TachygramSet<Polynomial>) -> Self {
-        Self(Multiset::new(poly.0))
-    }
-}
-
-impl From<PoolDelta<Polynomial>> for PoolDelta<Multiset> {
-    fn from(poly: PoolDelta<Polynomial>) -> Self {
-        Self(Multiset::new(poly.0))
+impl From<TachygramSetGadget> for TachygramSetCommit {
+    fn from(gadget: TachygramSetGadget) -> Self {
+        Self(gadget.0.commit())
     }
 }

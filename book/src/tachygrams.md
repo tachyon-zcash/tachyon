@@ -1,95 +1,66 @@
 # Tachygrams
 
-## What is a tachygram?
+A tachygram is an opaque Poseidon $\mathbb{F}_p$ commitment to the creation or destruction of a note[^notes].
 
-A tachygram is a deterministic field element ($\mathbb{F}_p$) derived from a note:
+A tachyon transaction is published with a stamp containing tachygrams for the notes involved in its proven actions.
 
-- **Spend**: nullifier $\mathsf{tg} = \mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$ (Poseidon GGM tree PRF, domain `Tachyon-NfDerive`)
-- **Output**: commitment $\mathsf{tg} = \mathsf{cm} = \text{Poseidon}_\text{Tachyon-NoteCmmt}(\mathsf{rcm}, \mathsf{pk}, v, \Psi)$
+An output action involves a note commitment.
 
-The circuit computes both values with the constraint that a witness tachygram
-matches one of them: $(\mathsf{tg} - \mathsf{nf})(\mathsf{tg} - \mathsf{cm}) = 0$.
+$$
+\mathsf{tg} = \mathsf{cm} =
+    \mathsf{Poseidon}_\texttt{Tachyon-CmDerive}(
+        \mathsf{rcm}, \mathsf{pk}, v, \psi
+    )
+$$
 
-Tachygrams are opaque to observers: you can't tell if any given tachygram is a
-nullifier or a commitment.
+A spend action involves a nullifier[^nullifiers].
 
-## What is deterministic and what isn't
+$$
+\mathsf{tg} = \mathsf{nf} =
+    \mathsf{Poseidon}_\texttt{Tachyon-NfDerive}\!\left(
+        \mathsf{KDF}^{\mathsf{climb}}_\psi(e, D)
+    \right)
+$$
 
-The key hierarchy splits into two independent branches from the spending key.
-These branches share key material but no randomness.
+## Tachygram sets
 
-- $sk \to nk$ (nullifier deriving key) - contributes to nullifiers
-- $sk \to ask \to ak = [ask]G$ (spend auth key) - contributes to actions
+A stamp contains the tachygrams of every action it covers.
 
-Actions produce unpredictable $rk$ and $cv$ values:
+A stamp's covered actions may be small (a single action with one or two
+tachygrams) or large (many aggregated actions). Ideally, the consensus chain
+will contain aggregated[^aggregation] bundles[^bundle].
 
-- $rk = ak + [\alpha]G$ with fresh $\alpha$ randomizer per action
-- $cv = [v]V + [rcv]R$ with fresh $rcv$ trapdoor per action
+The covering proof in a stamp has witnessed a commitment to an unordered set of those tachygrams.
 
-But nullifier inputs are fixed per note per epoch:
+$$
+\mathsf{tachygram\_acc}(X) =
+   \prod_i \left(
+      X - \mathsf{tg}_i
+   \right)
+$$
 
-- $nk$ is constant
-- $\psi$ is bound to the note
-- $\text{flavor}$ is the epoch
+This set is the atomic unit which folds into pool state to contribute to the anchor[^anchor].
 
-A spend attempt in a given epoch produces one nullifier, reliably.
+## Consensus validation
 
-**So actions use fresh per-action randomness, but tachygrams are deterministic.**
+When a stamp is published, consensus checks that every tachygram in the stamp is absent from every block of the current epoch and the immediately preceding epoch. A duplicate within that two-epoch window is rejected.
 
-**The proof is the link.** At proof creation time, each action is bound to its tachygram, but the PCD only exposes accumulated values.
-An observer sees a bag of actions and a bag of tachygrams with no individual correspondences visible.
+The window spans two epochs because a stamp can republish a tachygram in two distinct ways.
 
-## Public Data
+A stamp's anchor may have been advanced within its epoch via `StampLift`[^proof-tree], so the stamp could have been built at any earlier height in the same epoch. Consensus therefore scans every block in the anchor's epoch, not just blocks after the anchor.
 
-The PCD header carries two polynomial commitments and an anchor:
+A spend publishes a nullifier for the current epoch and one for the next epoch[^nullifiers-pair]. The next-epoch nullifier published in epoch $e$ is the present-epoch nullifier that any later spend of the same note would have to publish in epoch $e+1$. Including the previous epoch in the check catches that collision.
 
-| Field | Type | Description |
-| ----- | ---- | ----------- |
-| `action_acc` | EC point (Pallas) | Pedersen vector commitment to the action accumulator polynomial |
-| `tachygram_acc` | EC point (Pallas) | Pedersen vector commitment to the tachygram accumulator polynomial |
-| `anchor` | `Anchor` | pool state commitment at a specific block |
+[^notes]: See [Notes](./notes.md) for the note's field structure: $\mathsf{pk}$, $v$, $\psi$, $\mathsf{rcm}$.
 
-Both accumulators use polynomial commitments.
-Each element is hashed (Poseidon, domain-separated) into a root $r_i \in \mathbb{F}_p$.
-The accumulator polynomial is the product of linear factors:
+[^nullifiers]: See [Nullifiers](./nullifiers.md) for the GGM derivation that yields $\mathsf{KDF}^\mathsf{climb}_\psi(e, D)$.
 
-$$\mathsf{action\_poly}(X) = \prod_i \bigl(X - \text{Poseidon}_\text{Tachyon-ActnDgst}(\mathsf{cv}_i \| \mathsf{rk}_i)\bigr)$$
+[^aggregation]: See [Aggregation](./aggregation.md) for how stamps merge their tachygram sets.
 
-$$\mathsf{tachygram\_poly}(X) = \prod_i \bigl(X - \text{Poseidon}_\text{Tachyon-TgrmDgst}(\mathsf{tg}_i)\bigr)$$
+[^bundle]: See [Bundle](./bundle.md) for the on-wire encoding of bundles and the layout of a stamp trailer.
 
-The header values are Pedersen vector commitments to the coefficients:
-$\mathsf{action\_acc} = \text{Commit}(\mathsf{action\_poly})$,
-$\mathsf{tachygram\_acc} = \text{Commit}(\mathsf{tachygram\_poly})$.
+[^anchor]: See [Anchor](./anchor.md) for the Poseidon chain that absorbs each stamp's tachygram-set commitment.
 
-Polynomial coefficients are canonical (independent of root ordering), so PCD tree shape doesn't matter.
+[^proof-tree]: See [Proof Tree](./proof-tree.md) for how `StampLift` advances a stamp's anchor within an epoch.
 
-Polynomial commitment prevents the post-proof substitution attack: finding a substitute set of roots whose committed polynomial matches the proven commitment reduces to the discrete logarithm problem on the elliptic curve, maintaining 128-bit security regardless of the number of elements.
-
-**This header is 'public' but not published.**
-The stamp carries only tachygrams, anchor, and proof bytes.
-**The header is recoverable if you have the correct set of tachygrams and the correct set of actions.**
-
-The verifier reconstructs the full header following appropriate rules.
-This way, the verifier knows a consensus-valid set of tachygrams was used in proof generation.
-
-Each leaf step (`OutputStamp`, `SpendStamp`) creates a 1-member tachygram set;
-`MergeStamp` combines the sets. PCD soundness means the only way to produce a
-valid proof is through `seed` + `fuse`, so an attacker cannot skip leaf circuits
-or strip duplicate contributions between steps.
-
-## Verification
-
-The verifier has: the public actions $(rk_i, cv_i, sig_i)$, the listed
-tachygrams $tg_i$, the anchor, and the proof bytes.
-
-1. **Anchor**: check the anchor matches a recent pool state
-2. **No duplicate tachygrams**: check the tachygram list for repeats
-3. **Action sigs**: verify each $sig_i$ against $rk_i$ (RedPallas)
-4. **Binding sig**: verify against $\sum cv_i$
-5. **Reconstruct**: build `(action_acc, tachygram_acc, anchor)`
-   - **Recompute action_acc**: build polynomial from roots $\text{Poseidon}(\mathsf{cv}_i \| \mathsf{rk}_i)$, commit
-   - **Recompute tachygram_acc**: build polynomial from roots $\text{Poseidon}(\mathsf{tg}_i)$, commit
-6. **Verify proof**: call Ragu `verify(Pcd { proof, data: header })`
-
-The verifier constructs the header from scratch.
-If the proof was computed over different accumulators (e.g. from a double-spend), the reconstructed header won't match and verification fails.
+[^nullifiers-pair]: See [Nullifiers](./nullifiers.md) for the present/future nullifier pair published with each spend.

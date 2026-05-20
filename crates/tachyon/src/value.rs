@@ -3,9 +3,9 @@
 //! A value commitment hides the value transferred in an action:
 //! `cv = [v]V + [rcv]R` where `rcv` is the [`CommitmentTrapdoor`].
 
-use core::{iter, ops, ops::Neg as _};
+use core::{fmt, iter, ops, ops::Neg as _};
 
-use ff::{Field as _, PrimeField as _};
+use ff::Field as _;
 use lazy_static::lazy_static;
 use pasta_curves::{
     Ep, EpAffine, Fq,
@@ -15,7 +15,10 @@ use pasta_curves::{
 };
 use rand_core::{CryptoRng, RngCore};
 
-use crate::constants::VALUE_COMMITMENT_DOMAIN;
+/// Hash-to-curve domain for value commitment generators $\mathcal{V}$ and
+/// $\mathcal{R}$. Shared with Orchard to reuse `reddsa::orchard::Binding` —
+/// same generators, same basepoint, same binding signature verification.
+const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
 
 lazy_static! {
     /// Generator $\mathcal{V}$ for value commitments.
@@ -42,22 +45,12 @@ lazy_static! {
 /// An $\mathbb{F}_q$ element (Pallas scalar field, 32 bytes). Lives
 /// in the scalar field because $\mathsf{rcv}$ is used as a scalar in
 /// point multiplication $[\mathsf{rcv}]\,\mathcal{R}$.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct CommitmentTrapdoor(Fq);
 
 impl CommitmentTrapdoor {
-    /// Attempt to parse a value commitment trapdoor from 32 bytes.
-    #[must_use]
-    pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
-        Fq::from_repr(bytes).into_option().map(Self)
-    }
-
     /// Generate a fresh random trapdoor.
-    pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
-        // TODO: the selection of `rcv` may be revised to incorporate a hash of
-        // the note commitment or other action-specific data, possibly
-        // tied to alpha/theta derivation.
-        todo!("random commitment trapdoor");
+    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fq::random(rng))
     }
 
@@ -69,6 +62,8 @@ impl CommitmentTrapdoor {
     /// outputs (balance exhausted).
     #[must_use]
     pub fn commit(self, raw_value: i64) -> Commitment {
+        assert_ne!(self.0, Fq::ZERO, "commitment trapdoor should not be zero");
+
         let value_abs: Fq = Fq::from(raw_value.unsigned_abs());
         let value_fq = if raw_value >= 0 {
             value_abs
@@ -83,13 +78,6 @@ impl CommitmentTrapdoor {
         };
 
         Commitment(committed)
-    }
-}
-
-impl Default for CommitmentTrapdoor {
-    /// Generate an identity trapdoor.
-    fn default() -> Self {
-        Self(Fq::ZERO)
     }
 }
 
@@ -109,22 +97,16 @@ impl From<CommitmentTrapdoor> for Fq {
 ///
 /// where $v$ is the value, $\mathsf{rcv}$ is the randomness
 /// ([`CommitmentTrapdoor`]), and $\mathcal{V}$, $\mathcal{R}$ are
-/// generator points derived from [`VALUE_COMMITMENT_DOMAIN`]
+/// generator points hashed-to-curve under the Orchard `cv` domain
 /// (§5.4.8.3).
 ///
 /// ## Type representation
 ///
 /// An EpAffine (Pallas affine curve point, 32 compressed bytes).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Commitment(pub(super) EpAffine);
 
 impl Commitment {
-    /// Attempt to parse a value commitment from 32 compressed bytes.
-    #[must_use]
-    pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
-        EpAffine::from_bytes(&bytes).into_option().map(Self)
-    }
-
     /// Create the value balance commitment
     /// $\text{ValueCommit}_0(\mathsf{v\_{balance}})$.
     ///
@@ -138,7 +120,13 @@ impl Commitment {
     ///   \ominus \text{ValueCommit}_0(\mathsf{v\_{balance}})$$
     #[must_use]
     pub fn balance(value: i64) -> Self {
-        CommitmentTrapdoor::default().commit(value)
+        let value_abs: Fq = Fq::from(value.unsigned_abs());
+        let value_fq = if value >= 0 {
+            value_abs
+        } else {
+            value_abs.neg()
+        };
+        Self((*VALUE_COMMIT_V * value_fq).into())
     }
 }
 
@@ -184,6 +172,18 @@ impl iter::Sum for Commitment {
     }
 }
 
+impl fmt::Debug for CommitmentTrapdoor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Commitment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Commitment").finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
@@ -194,20 +194,17 @@ mod tests {
     /// and the R-component has zero scalar.
     #[test]
     fn balance_zero_is_identity() {
-        assert_eq!(
-            CommitmentTrapdoor::default().commit(0),
-            Commitment(EpAffine::identity())
-        );
+        assert_eq!(Commitment::balance(0), Commitment(EpAffine::identity()));
     }
 
     /// The binding property: `cv_a + cv_b - balance(a+b) = [rcv_a + rcv_b]R`.
     /// The V-components cancel, leaving only the R-component.
     #[test]
     fn commit_homomorphic_binding_property() {
-        let mut rng = StdRng::seed_from_u64(0);
-        let rcv_a = CommitmentTrapdoor::random(&mut rng);
+        let rng = &mut StdRng::seed_from_u64(0);
+        let rcv_a = CommitmentTrapdoor::random(rng);
         let cv_a = rcv_a.commit(100);
-        let rcv_b = CommitmentTrapdoor::random(&mut rng);
+        let rcv_b = CommitmentTrapdoor::random(rng);
         let cv_b = rcv_b.commit(200);
 
         let remainder = cv_a + cv_b - Commitment::balance(300);
@@ -216,5 +213,21 @@ mod tests {
         let expected: EpAffine = (*VALUE_COMMIT_R * rcv_sum).into();
 
         assert_eq!(remainder, Commitment(expected));
+    }
+
+    #[test]
+    fn debug_value_trapdoor_redacts_scalar() {
+        let rcv = CommitmentTrapdoor(Fq::from(0xFACEu64));
+        let dbg = alloc::format!("{rcv:?}");
+        assert!(dbg.contains("CommitmentTrapdoor"), "must name the type");
+        assert!(!dbg.contains("FACE"), "must not leak scalar");
+        assert!(!dbg.contains("64206"), "must not leak decimal value");
+    }
+
+    #[test]
+    fn debug_value_commitment_redacts_point() {
+        let cv = Commitment::balance(100);
+        let dbg = alloc::format!("{cv:?}");
+        assert!(dbg.contains("Commitment"), "must name the type");
     }
 }

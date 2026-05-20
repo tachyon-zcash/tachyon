@@ -1,13 +1,13 @@
 //! Note-related keys: NullifierKey, PaymentKey.
 
+use core::fmt;
+
 use ff::PrimeField as _;
-// TODO(#39): replace halo2_poseidon with Ragu Poseidon params
-use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::Fp;
 
 use super::{ggm::NoteMasterKey, proof::SpendValidatingKey};
 use crate::{
-    constants::{DELEGATION_ID_DOMAIN, NOTE_MASTER_DOMAIN, PAYMENT_KEY_DOMAIN},
+    digest::poseidon,
     note,
     primitives::{DelegationId, DelegationTrapdoor},
 };
@@ -36,7 +36,7 @@ use crate::{
 /// `nk` alone does NOT confer spend authority — combined with `ak` it
 /// forms the proof authorizing key `pak`, enabling proof construction
 /// and nullifier derivation without signing capability.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct NullifierKey(pub(super) Fp);
 
 impl NullifierKey {
@@ -49,14 +49,7 @@ impl NullifierKey {
     /// - Derive epoch-restricted prefix keys $\Psi_t$ for OSS delegation
     #[must_use]
     pub fn derive_note_private(&self, psi: &note::NullifierTrapdoor) -> NoteMasterKey {
-        let personalization = Fp::from_u128(u128::from_le_bytes(*NOTE_MASTER_DOMAIN));
-        NoteMasterKey(
-            Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
-                personalization,
-                psi.0,
-                self.0,
-            ]),
-        )
+        NoteMasterKey(poseidon::nf_master(psi.0, self.0))
     }
 
     /// Derives a per-delegation identifier: `H(domain, mk, cm, trap)`.
@@ -69,18 +62,9 @@ impl NullifierKey {
         note: &note::Note,
         trap: DelegationTrapdoor,
     ) -> DelegationId {
-        let domain = Fp::from_u128(u128::from_le_bytes(*DELEGATION_ID_DOMAIN));
         let mk = self.derive_note_private(&note.psi);
         let cm = note.commitment();
-
-        DelegationId::from(
-            &Hash::<_, P128Pow5T3, ConstantLength<4>, 3, 2>::init().hash([
-                domain,
-                mk.0,
-                Fp::from(&cm),
-                Fp::from(&trap),
-            ]),
-        )
+        DelegationId::from(poseidon::delegation_id(mk.0, Fp::from(cm), Fp::from(trap)))
     }
 }
 
@@ -117,7 +101,7 @@ impl NullifierKey {
 /// note commitment. It is NOT an on-chain address; payment coordination
 /// happens out-of-band via higher-level protocols (ZIP 321 payment
 /// requests, ZIP 324 URI encapsulated payments).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct PaymentKey(pub(crate) Fp);
 
@@ -126,30 +110,38 @@ impl PaymentKey {
     /// $\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
     /// \mathsf{nk})$.
     #[must_use]
-    #[expect(
-        clippy::expect_used,
-        reason = "sign-normalized ak (tilde_y=0) is always a valid Fp repr"
-    )]
     pub fn derive(ak: &SpendValidatingKey, nk: &NullifierKey) -> Self {
-        let domain = Fp::from_u128(u128::from_le_bytes(*PAYMENT_KEY_DOMAIN));
-
         let ak_bytes: [u8; 32] = ak.0.into();
-        let ak_x =
-            Option::from(Fp::from_repr(ak_bytes)).expect("sign-normalized ak should be a valid Fp");
+        let ak_fp = Fp::from_repr(ak_bytes).expect("ak bytes should be a valid Fp");
+        Self(poseidon::payment_key(ak_fp, nk.0))
+    }
+}
 
-        Self(Hash::<_, P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([domain, ak_x, nk.0]))
+impl fmt::Debug for NullifierKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NullifierKey").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for PaymentKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PaymentKey").finish_non_exhaustive()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use ff::Field as _;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
     use super::*;
     use crate::primitives::EpochIndex;
 
     #[test]
     fn derive_note_private_deterministic() {
-        let nk = NullifierKey(Fp::from(42u64));
-        let psi = note::NullifierTrapdoor::from(Fp::from(99u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let nk = NullifierKey(Fp::random(&mut *rng));
+        let psi = note::NullifierTrapdoor::random(rng);
         let mk1 = nk.derive_note_private(&psi);
         let mk2 = nk.derive_note_private(&psi);
         assert_eq!(mk1, mk2);
@@ -157,16 +149,20 @@ mod tests {
 
     #[test]
     fn different_psi_different_mk() {
-        let nk = NullifierKey(Fp::from(42u64));
-        let mk1 = nk.derive_note_private(&note::NullifierTrapdoor::from(Fp::from(1u64)));
-        let mk2 = nk.derive_note_private(&note::NullifierTrapdoor::from(Fp::from(2u64)));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let nk = NullifierKey(Fp::random(&mut *rng));
+        let psi1 = note::NullifierTrapdoor::random(rng);
+        let psi2 = note::NullifierTrapdoor::random(rng);
+        let mk1 = nk.derive_note_private(&psi1);
+        let mk2 = nk.derive_note_private(&psi2);
         assert_ne!(mk1, mk2);
     }
 
     #[test]
     fn different_epochs_different_nullifiers() {
-        let nk = NullifierKey(Fp::from(42u64));
-        let psi = note::NullifierTrapdoor::from(Fp::from(99u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let nk = NullifierKey(Fp::random(&mut *rng));
+        let psi = note::NullifierTrapdoor::random(rng);
         let mk = nk.derive_note_private(&psi);
         assert_ne!(
             mk.derive_nullifier(EpochIndex(0u32)),
@@ -177,8 +173,9 @@ mod tests {
     /// Delegate key produces same nullifiers as master for epochs in range.
     #[test]
     fn delegate_matches_master() {
-        let nk = NullifierKey(Fp::from(42u64));
-        let psi = note::NullifierTrapdoor::from(Fp::from(99u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let nk = NullifierKey(Fp::random(&mut *rng));
+        let psi = note::NullifierTrapdoor::random(rng);
         let mk = nk.derive_note_private(&psi);
 
         for dk in &mk.derive_note_delegates(0..=99) {
@@ -196,8 +193,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "epoch out of range")]
     fn delegate_rejects_outside_range() {
-        let nk = NullifierKey(Fp::from(42u64));
-        let psi = note::NullifierTrapdoor::from(Fp::from(99u64));
+        let rng = &mut StdRng::seed_from_u64(0);
+        let nk = NullifierKey(Fp::random(&mut *rng));
+        let psi = note::NullifierTrapdoor::random(rng);
         let mk = nk.derive_note_private(&psi);
 
         // Delegate covering [0..=63]

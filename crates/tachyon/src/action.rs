@@ -6,7 +6,7 @@ use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{private, public},
     note::Note,
-    primitives::{Effect, effect},
+    primitives::{ActionDigest, ActionDigestError, Effect, effect},
     reddsa, value,
 };
 
@@ -37,7 +37,7 @@ impl Plan<effect::Spend> {
         derive_rk: impl FnOnce(ActionRandomizer<effect::Spend>) -> public::ActionVerificationKey,
     ) -> Self {
         let cm = note.commitment();
-        let alpha = theta.randomizer::<effect::Spend>(&cm);
+        let alpha = theta.randomizer::<effect::Spend>(cm);
 
         Self {
             rk: derive_rk(alpha),
@@ -56,7 +56,7 @@ impl Plan<effect::Output> {
     #[must_use]
     pub fn output(note: Note, theta: ActionEntropy, rcv: value::CommitmentTrapdoor) -> Self {
         let cm = note.commitment();
-        let alpha = theta.randomizer::<effect::Output>(&cm);
+        let alpha = theta.randomizer::<effect::Output>(cm);
         let rsk = private::ActionSigningKey::new(&alpha);
 
         Self {
@@ -77,6 +77,11 @@ impl<E: Effect> Plan<E> {
     pub fn cv(&self) -> value::Commitment {
         E::commit_value(self.rcv, self.note.value)
     }
+
+    /// Derive the action digest.
+    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
+        ActionDigest::new(self.cv(), self.rk)
+    }
 }
 
 /// An authorized Tachyon action.
@@ -95,6 +100,13 @@ pub struct Action {
 
     /// RedPallas spend auth signature over the transaction sighash.
     pub sig: Signature,
+}
+
+impl Action {
+    /// Derive the action digest.
+    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
+        ActionDigest::new(self.cv, self.rk)
+    }
 }
 
 /// A spend authorization signature (RedPallas over reddsa::ActionAuth).
