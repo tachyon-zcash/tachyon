@@ -97,10 +97,12 @@ impl BundleState {
             | 0b0000_0000u8 => Ok(Self::NoBundle),
             | 0b0000_0001u8 => Ok(Self::Stamped),
             | 0b0000_0010u8 => Ok(Self::Stripped),
-            | _other => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid bundle state",
-            )),
+            | _other => {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid bundle state",
+                ))
+            },
         }
     }
 
