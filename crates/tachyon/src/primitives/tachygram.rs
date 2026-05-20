@@ -10,6 +10,10 @@ use pasta_curves::Fp;
 /// The number of tachygrams in a stamp need not equal the number of
 /// actions. The invariant is consistency between the listed tachygrams
 /// and the proof's `tachygram_acc`, not a fixed ratio to actions.
+///
+/// Consensus rejects a published tachygram that has already appeared in
+/// any block of the current or immediately preceding epoch. See the
+/// Tachygrams book chapter for why the window spans two epochs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Tachygram(Fp);
 

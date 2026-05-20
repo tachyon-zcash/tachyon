@@ -4,17 +4,14 @@ A nullifier is a Poseidon $\mathbb{F}_p$ digest of two private values (the note'
 
 In order to spend a note, the transaction author must publish an anchored[^anchor] proof that no nullifier for the note has ever been published <!-- todo: since the note was created? -->, and publish two nullifiers (for the anchor epoch and the next future epoch).
 
-Pool state immediately advances beyond the proof's anchor, so consensus must confirm these nullifiers did not enter the pool in the intervening time. The second published nullifier allows consensus to handle an epoch transition if necessary.
+Pool state immediately advances beyond the proof's anchor, so consensus must confirm these nullifiers did not enter the pool in the intervening time. The second published nullifier allows consensus to handle an epoch transition if necessary[^tachygrams].
 
-<!-- todo:
-- check nullifier ordering requirements on headers?
-- must check the entire anchor epoch for nullifier, since stamps may be lifted arbitrarily within an epoch.
-- consensus rule: for all tachygrams in a stamp, none should have appeared in any block for the current epoch and the last epoch.
--->
+<!-- todo: check nullifier ordering requirements on headers? -->
 
 [^notes]: [Notes](./notes.md) describes other note fields
 [^keys]: [Keys](./keys.md) describes $\mathsf{nk}$ and other key derivation
 [^anchor]: [Anchor](./anchor.md) describes the pool state commitment
+[^tachygrams]: See [Tachygrams](./tachygrams.md) for the unified consensus rule covering all published tachygrams.
 
 ## Derivation
 

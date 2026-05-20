@@ -37,6 +37,10 @@ use crate::{
 /// epoch boundary requires the [`Anchor::next_epoch`] domain only
 /// emitted by `SpendableRollover`.
 ///
+/// The within-epoch property pairs with a consensus-side two-epoch
+/// tachygram scan that catches any tachygram already published earlier
+/// in the epoch a stamp is lifted across. See the Tachygrams book chapter.
+///
 /// `start` at the seed steps ([`AnchorSeed`] / [`EmptyBlockSeed`]) has
 /// PCD lineage rooted in an unbound `start: Anchor` witness, so a
 /// standalone segment proves nothing about real coverage. Final binding

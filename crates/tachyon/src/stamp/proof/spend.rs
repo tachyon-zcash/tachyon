@@ -23,6 +23,11 @@ use crate::{
 };
 
 /// Header binding an action to a nullifier pair.
+///
+/// Publishing `next_nf` one epoch early lets consensus catch a same-note
+/// spend made in epoch `e+1`: that spend's present-epoch nullifier would
+/// collide with this `next_nf`, which the two-epoch tachygram scan
+/// rejects. See the Tachygrams book chapter.
 #[derive(Debug)]
 pub struct SpendHeader;
 
