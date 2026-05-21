@@ -1,8 +1,4 @@
 //! Spend action-binding header and step.
-//!
-//! TODO: eliminate SpendBind and SpendStep? possibly NullifierRolloverHeader
-//! would replace SpendHeader as input to SpendStamp, and SpendStamp would be
-//! responsible for witnessing the action fields presently handled by SpendBind.
 
 extern crate alloc;
 
@@ -16,9 +12,9 @@ use super::delegation::NullifierHeader;
 use crate::{
     constants::NOTE_VALUE_MAX,
     entropy::ActionRandomizer,
-    keys::ProofAuthorizingKey,
+    keys::{ProofAuthorizingKey, public},
     note::{Note, Nullifier},
-    primitives::{ActionDigest, effect},
+    primitives::effect,
     value,
 };
 
@@ -32,33 +28,60 @@ use crate::{
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(action_digest, (now_nf, next_nf))`. `action_digest` is
-    /// computed at [`SpendBind`] as the Poseidon digest of the
-    /// witnessed `(cv, rk)`. `now_nf` and `next_nf` are computed
-    /// upstream by [`NullifierStep`](super::delegation::NullifierStep)
-    /// on two [`NullifierHeader`](super::delegation::NullifierHeader)s
-    /// that [`SpendBind`] constrains to share a `cm` lineage and to
-    /// live on consecutive epochs.
-    type Data<'source> = (ActionDigest, (Nullifier, Nullifier));
+    /// `(cv, rk, (now_nf, next_nf))`. `cv` and `rk` are derived at
+    /// [`SpendBind`] from the witnessed `(rcv, alpha, pak, note)`.
+    /// [`SpendStamp`](super::stamp::SpendStamp) hashes `(cv, rk)`
+    /// into the per-action `ActionDigest` when committing the
+    /// action set. `now_nf` and `next_nf` are computed upstream by
+    /// [`NullifierStep`](super::delegation::NullifierStep) on two
+    /// [`NullifierHeader`](super::delegation::NullifierHeader)s
+    /// that [`SpendBind`] constrains to share a `cm` lineage and
+    /// to live on consecutive epochs.
+    type Data<'source> = (
+        value::Commitment,
+        public::ActionVerificationKey,
+        (Nullifier, Nullifier),
+    );
 
     const SUFFIX: Suffix = Suffix::new(10);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 32);
-        out.extend_from_slice(&Fp::from(data.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.1.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.1.1).to_repr());
+        let mut out = Vec::with_capacity(32 + 32 + 32 + 32);
+        let cv_bytes: [u8; 32] = data.0.into();
+        let rk_bytes: [u8; 32] = data.1.into();
+        out.extend_from_slice(&cv_bytes);
+        out.extend_from_slice(&rk_bytes);
+        out.extend_from_slice(&Fp::from(data.2.0).to_repr());
+        out.extend_from_slice(&Fp::from(data.2.1).to_repr());
         out
     }
 }
 
 /// Fuses two epoch-adjacent nullifier leaves and binds them to an action.
 ///
-/// One `cm`-equality fold ties together same-wallet binding between the
-/// two leaves and note-binding for the witnessed `(note, pak)`:
-/// `note.commitment() == left_cm == right_cm`. The `DelegationTrapdoor` is
-/// not needed — `delegation_id` is consumed only by the sync-service-side
-/// rollover steps on `DelegateNullifierHeader`.
+/// The `note.commitment() == left_cm == right_cm` fold is the cv-to-value
+/// seam: the witnessed note's value flows into `cv = rcv.commit(note.value)`,
+/// which becomes the on-chain action's value commitment. Without binding
+/// the witnessed note to the upstream nullifier's `cm`, a prover could
+/// publish a nullifier for a high-value note while committing `cv` to a
+/// low-value note.
+///
+/// [`NullifierRolloverHeader`](super::spendable::NullifierRolloverHeader)
+/// drops `cm` and cannot expose it without leaking note material via
+/// [`DelegateRolloverFuse`](super::spendable::DelegateRolloverFuse), so
+/// this step is the only place where `cm` is in scope alongside the
+/// action witness.
+///
+/// Outputs `SpendHeader::Data = (cv, rk, (now_nf, next_nf))`. The
+/// `ActionDigest = Poseidon(cv, rk)` derivation lives downstream in
+/// [`SpendStamp`](super::stamp::SpendStamp) to keep this step's gate
+/// budget under the per-step bound. `SpendBind` and `SpendStamp` are both
+/// wallet-private; the `SpendHeader` boundary between them is not exposed
+/// to consensus or the sync service.
+///
+/// The `DelegationTrapdoor` is not needed because `delegation_id` is
+/// consumed only by the sync-service rollover steps on
+/// `DelegateNullifierHeader`.
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -106,9 +129,7 @@ impl Step for SpendBind {
 
         let cv = rcv.commit(i64::from(note.value));
         let rk = pak.ak.derive_action_public(&alpha);
-        let action_digest = ActionDigest::new(cv, rk)
-            .map_err(|_err| mock_ragu::Error("SpendBind: action digest failed"))?;
 
-        Ok(((action_digest, (nf0, nf1)), ()))
+        Ok(((cv, rk, (nf0, nf1)), ()))
     }
 }

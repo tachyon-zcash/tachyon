@@ -106,6 +106,11 @@ impl Step for OutputStamp {
 /// The spend's first nullifier must equal the spendable's `nf`;
 /// anchor-binding is implicit via `spendable.anchor` (already validated by
 /// the spendable lineage). Epoch alignment is consumer-side.
+///
+/// `SpendStamp` derives `action_digest = Poseidon(cv, rk)` from the
+/// `(cv, rk)` carried in `SpendHeader` before constructing the
+/// `ActionSetCommit`. The derivation lives here, not in `SpendBind`, so
+/// that `SpendBind` stays under its per-step gate budget.
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -121,7 +126,7 @@ impl Step for SpendStamp {
     fn witness<'source>(
         &self,
         _witness: Self::Witness<'source>,
-        (action_digest, (now_nf, next_nf)): <Self::Left as Header>::Data<'source>,
+        (cv, rk, (now_nf, next_nf)): <Self::Left as Header>::Data<'source>,
         (anchored_nf, anchor): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         if now_nf != anchored_nf {
@@ -129,6 +134,10 @@ impl Step for SpendStamp {
                 "SpendStamp: spend's now_nf must equal spendable's nf",
             ));
         }
+
+        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
+            mock_ragu::Error("SpendStamp: action digest construction failed")
+        })?;
 
         let data = (
             ActionSetCommit::from([action_digest].as_slice()),

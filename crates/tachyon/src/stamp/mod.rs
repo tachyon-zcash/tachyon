@@ -193,7 +193,7 @@ impl Plan {
         }
 
         for (((cv, rk), (alpha, note, rcv)), (nf_now_pcd, nf_next_pcd, spendable_pcd)) in
-            self.spends.into_iter().zip(spend_pcds.into_iter())
+            self.spends.into_iter().zip(spend_pcds)
         {
             let action_digest = ActionDigest::new(cv, rk).map_err(ProveError::ActionDigest)?;
 
