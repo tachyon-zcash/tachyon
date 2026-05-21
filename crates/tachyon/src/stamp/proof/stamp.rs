@@ -109,8 +109,7 @@ impl Step for OutputStamp {
 ///
 /// `SpendStamp` derives `action_digest = Poseidon(cv, rk)` from the
 /// `(cv, rk)` carried in `SpendHeader` before constructing the
-/// `ActionSetCommit`. The derivation lives here, not in `SpendBind`, so
-/// that `SpendBind` stays under its per-step gate budget.
+/// `ActionSetCommit`.
 #[derive(Debug)]
 pub struct SpendStamp;
 
