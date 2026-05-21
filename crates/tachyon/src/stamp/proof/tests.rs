@@ -245,11 +245,7 @@ fn spend_stamp_rejects_identity_cv() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
 
-    pool.mine(random_block_with(
-        rng,
-        &[alloc::vec![note.commitment()]],
-        4,
-    ));
+    pool.mine(random_block_with(rng, &[alloc::vec![note.commitment()]], 4));
     let init_height = pool.height();
     let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
     let spendable = user.spendable_init(rng, note, &pool, init_height, nf_pcd);
@@ -268,9 +264,10 @@ fn spend_stamp_rejects_identity_cv() {
 
     let (_real_cv, real_rk, real_nfs) = real_spend.data;
     let identity_cv = value::Commitment::balance(0);
-    let forged_spend = real_spend
-        .proof
-        .carry::<spend::SpendHeader>((identity_cv, real_rk, real_nfs));
+    let forged_spend =
+        real_spend
+            .proof
+            .carry::<spend::SpendHeader>((identity_cv, real_rk, real_nfs));
 
     let err = PROOF_SYSTEM
         .fuse(rng, stamp::SpendStamp, (), forged_spend, spendable)

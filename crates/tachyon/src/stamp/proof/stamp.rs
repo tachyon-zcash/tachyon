@@ -135,9 +135,8 @@ impl Step for SpendStamp {
             ));
         }
 
-        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
-            mock_ragu::Error("SpendStamp: action digest construction failed")
-        })?;
+        let action_digest = ActionDigest::new(cv, rk)
+            .map_err(|_err| mock_ragu::Error("SpendStamp: action digest construction failed"))?;
 
         let data = (
             ActionSetCommit::from([action_digest].as_slice()),
