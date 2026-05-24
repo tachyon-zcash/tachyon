@@ -27,3 +27,5 @@ Importantly, an 'Update' ZIP doesn't amend the 'Final' ZIP that originally intro
 This attempts to enumerate the landscape, at a high-level lacking a lot of detail, for the different kinds of ZIPs that Tachyon will need to propose: 5 'Additive' ZIPs, 4 'Update' ZIPs, 0 'Successor' ZIP, and 1 'Deployment' ZIP = 10 ZIPs.
 
 There are probably other ZIPs that need updating, but haven't examined the entire search space here yet (there are a lot of ZIPs)!
+
+![Tachyon & Ragu — ZIP dependency graph](zip-dependency-graph.png)
