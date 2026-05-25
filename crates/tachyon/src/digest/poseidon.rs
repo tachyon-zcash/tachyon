@@ -119,14 +119,18 @@ pub(crate) fn anchor_stamp_step(anchor_prev: Fp, tgs: Coordinates<EqAffine>) -> 
     ])
 }
 
-const ANCHOR_EMPTY_DOMAIN: &[u8; 16] = b"Tachyon-EmptyBlk";
+const ANCHOR_CLOSE_DOMAIN: &[u8; 16] = b"Tachyon-BlockEnd";
 
-/// Advances the anchor through one block that contains zero stamps.
+/// Closes a block: absorbs the block's epoch index into the running anchor.
+///
+/// Runs exactly once per block at end-of-block, after any stamp absorbs.
+/// A block with zero stamps still runs this step on its starting anchor.
 #[must_use]
-pub(crate) fn anchor_empty_step(anchor_prev: Fp) -> Fp {
-    hash::<2>([
-        Fp::from_u128(u128::from_le_bytes(*ANCHOR_EMPTY_DOMAIN)),
+pub(crate) fn anchor_close_step(anchor_prev: Fp, epoch_index: u32) -> Fp {
+    hash::<3>([
+        Fp::from_u128(u128::from_le_bytes(*ANCHOR_CLOSE_DOMAIN)),
         anchor_prev,
+        Fp::from(u64::from(epoch_index)),
     ])
 }
 

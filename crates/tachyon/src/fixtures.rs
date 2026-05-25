@@ -218,12 +218,11 @@ impl PoolSim {
     #[must_use]
     pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
         let prev = self.prev_anchor_at(height);
-        let commits = self.stamp_commits_at(height);
-        if commits.is_empty() {
-            prev.next_empty()
-        } else {
-            commits.iter().fold(prev, Anchor::next_stamp)
-        }
+        let intra = self
+            .stamp_commits_at(height)
+            .iter()
+            .fold(prev, Anchor::next_stamp);
+        intra.close_block(height.epoch())
     }
 
     /// Resolve the height at which `anchor` was produced. `block.prev` already
@@ -269,9 +268,9 @@ impl PoolSim {
 /// Build an [`AnchorChain`] covering blocks `range`, rooted at the
 /// block-start anchor of `*range.start()`.
 ///
-/// Per non-empty block: one [`AnchorSeed`] per stamp, fused via
-/// [`AnchorFuse`]. Per empty block: one [`EmptyBlockSeed`].
-/// All segments fused linearly.
+/// Per block: zero or more [`AnchorSeed`]s (one per stamp) followed by
+/// one [`CloseBlockSeed`] absorbing the block's epoch. All segments fused
+/// linearly via [`AnchorFuse`].
 pub(crate) fn build_anchor_chain_pcd<'source>(
     rng: &mut (impl RngCore + CryptoRng),
     pool: &PoolSim,
@@ -287,11 +286,12 @@ pub(crate) fn build_anchor_chain_pcd<'source>(
     let mut height = start;
     loop {
         let commits = pool.stamp_commits_at(height);
-        if commits.is_empty() {
-            let next_state = state.next_empty();
+        let epoch = height.epoch();
+        for commit in commits {
+            let next_state = state.next_stamp(&commit);
             let (seed, ()) = PROOF_SYSTEM
-                .seed(rng, pool::EmptyBlockSeed, (state,))
-                .expect("EmptyBlockSeed");
+                .seed(rng, pool::AnchorSeed, (state, commit))
+                .expect("AnchorSeed");
             chain = Some(match chain.take() {
                 | None => seed,
                 | Some(left) => {
@@ -302,24 +302,21 @@ pub(crate) fn build_anchor_chain_pcd<'source>(
                 },
             });
             state = next_state;
-        } else {
-            for commit in commits {
-                let next_state = state.next_stamp(&commit);
-                let (seed, ()) = PROOF_SYSTEM
-                    .seed(rng, pool::AnchorSeed, (state, commit))
-                    .expect("AnchorSeed");
-                chain = Some(match chain.take() {
-                    | None => seed,
-                    | Some(left) => {
-                        let (fused, ()) = PROOF_SYSTEM
-                            .fuse(rng, pool::AnchorFuse, (), left, seed)
-                            .expect("AnchorFuse");
-                        fused
-                    },
-                });
-                state = next_state;
-            }
         }
+        let next_state = state.close_block(epoch);
+        let (close_seed, ()) = PROOF_SYSTEM
+            .seed(rng, pool::CloseBlockSeed, (state, epoch))
+            .expect("CloseBlockSeed");
+        chain = Some(match chain.take() {
+            | None => close_seed,
+            | Some(left) => {
+                let (fused, ()) = PROOF_SYSTEM
+                    .fuse(rng, pool::AnchorFuse, (), left, close_seed)
+                    .expect("AnchorFuse");
+                fused
+            },
+        });
+        state = next_state;
         if height >= end {
             break;
         }
@@ -342,10 +339,10 @@ pub(crate) fn build_unspent_seed_pcd<'source>(
     pcd
 }
 
-/// Build an [`Unspent`] for `nf` covering blocks `range`. Per non-empty
-/// block: one [`UnspentSeed`] per stamp. Per empty block: one
-/// [`EmptyBlockUnspentSeed`]. All segments fused linearly via
-/// [`UnspentFuse`].
+/// Build an [`Unspent`] for `nf` covering blocks `range`. Per block:
+/// zero or more [`UnspentSeed`]s (one per stamp, each proving
+/// `nf ∉ stamp`) followed by one [`CloseBlockUnspentSeed`] absorbing
+/// the block's epoch. All segments fused linearly via [`UnspentFuse`].
 pub(crate) fn build_unspent_pcd<'source>(
     rng: &mut (impl RngCore + CryptoRng),
     pool: &PoolSim,
@@ -363,11 +360,10 @@ pub(crate) fn build_unspent_pcd<'source>(
     loop {
         let stamps = pool.tachygrams_at(height);
         let stamp_commits = pool.stamp_commits_at(height);
-        if stamps.is_empty() {
-            let next_state = state.next_empty();
-            let (seed, ()) = PROOF_SYSTEM
-                .seed(rng, pool::EmptyBlockUnspentSeed, (state, nf))
-                .expect("EmptyBlockUnspentSeed");
+        let epoch = height.epoch();
+        for (tgs, commit) in stamps.iter().zip(stamp_commits.iter()) {
+            let next_state = state.next_stamp(commit);
+            let seed = build_unspent_seed_pcd(rng, state, tgs, nf);
             chain = Some(match chain.take() {
                 | None => seed,
                 | Some(left) => {
@@ -378,22 +374,21 @@ pub(crate) fn build_unspent_pcd<'source>(
                 },
             });
             state = next_state;
-        } else {
-            for (tgs, commit) in stamps.iter().zip(stamp_commits.iter()) {
-                let next_state = state.next_stamp(commit);
-                let seed = build_unspent_seed_pcd(rng, state, tgs, nf);
-                chain = Some(match chain.take() {
-                    | None => seed,
-                    | Some(left) => {
-                        let (fused, ()) = PROOF_SYSTEM
-                            .fuse(rng, pool::UnspentFuse, (), left, seed)
-                            .expect("UnspentFuse");
-                        fused
-                    },
-                });
-                state = next_state;
-            }
         }
+        let next_state = state.close_block(epoch);
+        let (close_seed, ()) = PROOF_SYSTEM
+            .seed(rng, pool::CloseBlockUnspentSeed, (state, epoch, nf))
+            .expect("CloseBlockUnspentSeed");
+        chain = Some(match chain.take() {
+            | None => close_seed,
+            | Some(left) => {
+                let (fused, ()) = PROOF_SYSTEM
+                    .fuse(rng, pool::UnspentFuse, (), left, close_seed)
+                    .expect("UnspentFuse");
+                fused
+            },
+        });
+        state = next_state;
         if height >= end {
             break;
         }
@@ -539,15 +534,11 @@ impl WalletSim {
             )
             .expect("SpendableInit");
 
-        // If cm is the last stamp, post_cm_anchor is already the
-        // block-final anchor — no rest-of-block lift needed.
-        if cm_idx + 1 == stamps.len() {
-            return spendable;
-        }
-
-        // Build an Unspent over stamps cm_idx+1..end of the cm-block,
-        // chained from post_cm_anchor, then SpendableLift.
+        // Build an Unspent over stamps cm_idx+1..end of the cm-block
+        // followed by the block's close step, chained from post_cm_anchor.
+        // Every block closes, so this is always non-empty.
         let nf = spendable.data.0;
+        let epoch = height.epoch();
         let mut state = spendable.data.1;
         let mut acc: Option<Pcd<'source, pool::Unspent>> = None;
         for (tgs, commit) in stamps[cm_idx + 1..]
@@ -567,7 +558,18 @@ impl WalletSim {
             });
             state = next_state;
         }
-        let rest = acc.expect("rest-of-block has at least one stamp");
+        let (close_seed, ()) = PROOF_SYSTEM
+            .seed(rng, pool::CloseBlockUnspentSeed, (state, epoch, nf))
+            .expect("CloseBlockUnspentSeed");
+        let rest = match acc {
+            | None => close_seed,
+            | Some(left) => {
+                let (fused, ()) = PROOF_SYSTEM
+                    .fuse(rng, pool::UnspentFuse, (), left, close_seed)
+                    .expect("UnspentFuse");
+                fused
+            },
+        };
 
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable, rest)

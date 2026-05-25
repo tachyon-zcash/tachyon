@@ -10,9 +10,9 @@ use crate::{digest::poseidon, serialization};
 /// A Poseidon hash sequence with three domain-separated link types:
 ///
 /// - [`Anchor::next_stamp`] (`Tachyon-StampFld`) absorbs one stamp's
-///   tachygram-set commitment.
-/// - [`Anchor::next_empty`] (`Tachyon-EmptyBlk`) advances through one block
-///   that contains zero stamps, preserving per-height anchor uniqueness.
+///   tachygram-set commitment. Runs zero or more times per block.
+/// - [`Anchor::close_block`] (`Tachyon-BlockEnd`) closes a block, absorbing the
+///   block's epoch index. Runs exactly once per block, after any stamp absorbs.
 /// - [`Anchor::next_epoch`] (`Tachyon-EpochStp`) lifts across an epoch
 ///   boundary; performed by `SpendableRollover`.
 ///
@@ -35,10 +35,15 @@ impl Anchor {
         Self(poseidon::anchor_stamp_step(self.0, coords))
     }
 
-    /// Advance the anchor through one empty block (zero stamps).
+    /// Close a block by absorbing its epoch index into the running anchor.
+    ///
+    /// Runs exactly once per block, at end of block, after any stamp absorbs.
+    /// An empty block (zero stamps) runs this step directly on the block's
+    /// starting anchor; per-height uniqueness comes from chain continuity,
+    /// per-epoch domain separation from `epoch`.
     #[must_use]
-    pub fn next_empty(self) -> Self {
-        Self(poseidon::anchor_empty_step(self.0))
+    pub fn close_block(self, epoch: EpochIndex) -> Self {
+        Self(poseidon::anchor_close_step(self.0, epoch.0))
     }
 
     /// Lift the anchor across an epoch boundary into the new epoch's
@@ -130,28 +135,49 @@ mod tests {
         assert_ne!(forward, reverse);
     }
 
-    /// An empty-block tick changes the anchor.
+    /// A close-block step changes the anchor.
     #[test]
-    fn next_empty_advances_anchor() {
+    fn close_block_advances_anchor() {
         let start = Anchor::default();
-        assert_ne!(start, start.next_empty());
+        assert_ne!(start, start.close_block(EpochIndex(0)));
     }
 
-    /// Consecutive empty-block ticks produce distinct anchors.
+    /// Closing with distinct epoch indices produces distinct anchors.
     #[test]
-    fn consecutive_empty_distinct() {
-        let first = Anchor::default().next_empty();
-        let second = first.next_empty();
-        assert_ne!(first, second);
+    fn close_block_distinct_epochs() {
+        let start = Anchor::default();
+        let e0 = start.close_block(EpochIndex(0));
+        let e1 = start.close_block(EpochIndex(1));
+        assert_ne!(e0, e1);
     }
 
-    /// Empty-block tick is domain-separated from stamp absorption.
+    /// Closing twice on the same start with the same epoch yields the same
+    /// anchor.
     #[test]
-    fn next_empty_distinct_from_next_stamp() {
+    fn close_block_is_deterministic() {
+        let start = Anchor::default();
+        assert_eq!(
+            start.close_block(EpochIndex(7)),
+            start.close_block(EpochIndex(7)),
+        );
+    }
+
+    /// Close-block step is domain-separated from stamp absorption.
+    #[test]
+    fn close_block_distinct_from_next_stamp() {
         let rng = &mut StdRng::seed_from_u64(0);
         let stamp = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
-        let via_empty = Anchor::default().next_empty();
+        let via_close = Anchor::default().close_block(EpochIndex(0));
         let via_stamp = Anchor::default().next_stamp(&stamp);
-        assert_ne!(via_empty, via_stamp);
+        assert_ne!(via_close, via_stamp);
+    }
+
+    /// Close-block step is domain-separated from the epoch boundary step.
+    #[test]
+    fn close_block_distinct_from_next_epoch() {
+        let start = Anchor::default();
+        let via_close = start.close_block(EpochIndex(1));
+        let via_epoch = start.next_epoch(EpochIndex(1));
+        assert_ne!(via_close, via_epoch);
     }
 }

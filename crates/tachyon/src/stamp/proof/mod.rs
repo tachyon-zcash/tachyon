@@ -28,10 +28,10 @@ fn make_app() -> Result<Application, mock_ragu::Error> {
         .register(delegation::DelegateNfPrefixStep)?
         .register(delegation::DelegateNullifierStep)?
         .register(pool::AnchorSeed)?
-        .register(pool::EmptyBlockSeed)?
+        .register(pool::CloseBlockSeed)?
         .register(pool::AnchorFuse)?
         .register(pool::UnspentSeed)?
-        .register(pool::EmptyBlockUnspentSeed)?
+        .register(pool::CloseBlockUnspentSeed)?
         .register(pool::UnspentFuse)?
         .register(spendable::SpendableInit)?
         .register(spendable::SpendableLift)?

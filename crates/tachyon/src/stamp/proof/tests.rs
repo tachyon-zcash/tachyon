@@ -757,14 +757,17 @@ fn empty_block_anchor_unique_per_height() {
     let h1 = BlockHeight(1);
     let h2 = BlockHeight(2);
     assert_ne!(pool.anchor_at(h1), pool.anchor_at(h2));
-    // h2's anchor is h1's anchor advanced via next_empty.
-    assert_eq!(pool.anchor_at(h2), pool.anchor_at(h1).next_empty());
+    // h2's anchor is h1's anchor advanced via close_block.
+    assert_eq!(
+        pool.anchor_at(h2),
+        pool.anchor_at(h1).close_block(h2.epoch())
+    );
 }
 
 #[test]
 fn empty_block_unspent_lifts_spendable() {
     // Build a spendable, then lift it across an empty block via an
-    // Unspent built solely from EmptyBlockUnspentSeed.
+    // Unspent built solely from CloseBlockUnspentSeed.
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
     let note = user.random_note(rng, 100);
@@ -785,7 +788,7 @@ fn empty_block_unspent_lifts_spendable() {
     pool.mine(vec![]);
     let empty_height = pool.height();
 
-    // Build an Unspent over the empty block via EmptyBlockUnspentSeed,
+    // Build an Unspent over the empty block via CloseBlockUnspentSeed,
     // then lift the spendable.
     let nf = spendable.data.0;
     let unspent = build_unspent_pcd(rng, &pool, nf, empty_height..=empty_height);
@@ -793,6 +796,9 @@ fn empty_block_unspent_lifts_spendable() {
         .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
         .expect("SpendableLift across empty block");
 
-    assert_eq!(lifted.data.1, spendable_anchor_before.next_empty());
+    assert_eq!(
+        lifted.data.1,
+        spendable_anchor_before.close_block(empty_height.epoch())
+    );
     assert_eq!(lifted.data.1, pool.anchor_at(empty_height));
 }

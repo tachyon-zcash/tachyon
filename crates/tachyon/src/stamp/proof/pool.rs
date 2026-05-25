@@ -5,11 +5,13 @@
 //! multi-stamp exclusion proof ([`Unspent`]) used by
 //! [`super::spendable::SpendableLift`] to advance a spendable.
 //!
-//! Anchor advances are single-level: every link absorbs one stamp's
-//! tachygram-set commitment into the running [`Anchor`] via
-//! [`Anchor::next_stamp`]. There is no per-block hash domain — block
-//! alignment is a consensus convention (validators check that anchor
-//! endpoints belong to the published per-block anchor sequence).
+//! Anchor advances are two-kind: zero or more per-stamp absorbs
+//! ([`Anchor::next_stamp`]) followed by exactly one block-closing step
+//! ([`Anchor::close_block`]) that absorbs the block's epoch index into
+//! the running [`Anchor`]. Block alignment is therefore both a
+//! hash-domain fact (close step has its own domain) and a consensus
+//! convention (validators still check that anchor endpoints belong to the
+//! published per-block anchor sequence).
 
 #![allow(clippy::module_name_repetitions, reason = "intentional names")]
 
@@ -23,7 +25,7 @@ use pasta_curves::Fp;
 
 use crate::{
     note::Nullifier,
-    primitives::{Anchor, TachygramSetCommit, TachygramSetGadget},
+    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetGadget},
 };
 
 /// Anchor segment between two endpoints. Composable via [`AnchorFuse`].
@@ -41,7 +43,7 @@ use crate::{
 /// tachygram scan that catches any tachygram already published earlier
 /// in the epoch a stamp is lifted across. See the Tachygrams book chapter.
 ///
-/// `start` at the seed steps ([`AnchorSeed`] / [`EmptyBlockSeed`]) has
+/// `start` at the seed steps ([`AnchorSeed`] / [`CloseBlockSeed`]) has
 /// PCD lineage rooted in an unbound `start: Anchor` witness, so a
 /// standalone segment proves nothing about real coverage. Final binding
 /// closes when [`super::stamp::StampLift`] consumes the segment and the
@@ -51,9 +53,9 @@ pub struct AnchorChain;
 
 impl Header for AnchorChain {
     /// `(start, end)`. `start` roots in an unbound witness at [`AnchorSeed`] or
-    /// [`EmptyBlockSeed`] and flows to [`super::stamp::StampLift`] which must
+    /// [`CloseBlockSeed`] and flows to [`super::stamp::StampLift`] which must
     /// ultimately be checked by consensus. `end` is always computed in-circuit
-    /// as `start.next_stamp(...)` or `start.next_empty()`.
+    /// as `start.next_stamp(...)` or `start.close_block(...)`.
     type Data<'source> = (Anchor, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(5);
@@ -74,9 +76,10 @@ impl Header for AnchorChain {
 /// advances are continuous.
 ///
 /// Same-epoch is structurally guaranteed by GGM-binding of `nf` to one
-/// epoch and by the intra-epoch-only `Anchor::next_stamp` advances —
-/// crossing an epoch boundary requires matching a boundary anchor that
-/// no `Unspent` builder ever emits.
+/// epoch and by the intra-epoch-only `Anchor::next_stamp` /
+/// `Anchor::close_block` advances — crossing an epoch boundary requires
+/// matching a boundary anchor (via [`Anchor::next_epoch`]) that no
+/// `Unspent` builder ever emits.
 ///
 /// At the seed steps the PCD lineage of `nf` and `start` roots in
 /// freely-chosen witnesses. `nf`'s binding closes at the consumer
@@ -94,7 +97,7 @@ impl Header for Unspent {
     /// GGM-bound upstream). `start` roots in a seed witness, bound
     /// through the spendable lineage plus consensus anchor membership.
     /// `end` is always computed in-circuit as `start.next_stamp(...)`
-    /// or `start.next_empty()`.
+    /// or `start.close_block(...)`.
     type Data<'source> = (Nullifier, Anchor, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(6);
@@ -136,32 +139,32 @@ impl Step for AnchorSeed {
     }
 }
 
-/// One-empty-block [`AnchorChain`] seed. Witness `(start,)`; emit
-/// `(start, start.next_empty())`.
+/// Block-closing [`AnchorChain`] seed. Witness `(start, epoch)`; emit
+/// `(start, start.close_block(epoch))`.
 ///
-/// Advances the anchor through one block that contains zero stamps.
-/// Used alongside [`AnchorSeed`] when an anchor segment must traverse
-/// a mix of empty and non-empty blocks.
+/// Runs exactly once per block, after the block's [`AnchorSeed`]
+/// segments (zero for an empty block). Absorbs the block's epoch index
+/// into the anchor.
 #[derive(Debug)]
-pub struct EmptyBlockSeed;
+pub struct CloseBlockSeed;
 
-impl Step for EmptyBlockSeed {
+impl Step for CloseBlockSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = AnchorChain;
     type Right = ();
-    /// `(start,)`.
-    type Witness<'source> = (Anchor,);
+    /// `(start, epoch)`.
+    type Witness<'source> = (Anchor, EpochIndex);
 
     const INDEX: Index = Index::new(8);
 
     fn witness<'source>(
         &self,
-        (start,): Self::Witness<'source>,
+        (start, epoch): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        Ok(((start, start.next_empty()), ()))
+        Ok(((start, start.close_block(epoch)), ()))
     }
 }
 
@@ -227,35 +230,40 @@ impl Step for UnspentSeed {
     }
 }
 
-/// One-empty-block [`Unspent`] seed for any `nf`. No exclusion check is
-/// needed — an empty block contains no stamps, so any nf is trivially
-/// absent.
+/// Block-closing [`Unspent`] seed for any `nf`.
 ///
-/// Witness `(start, nf)`; emit `(nf, start, start.next_empty())`. An
-/// attacker can claim any nf at an empty-block segment, but the consumer
+/// No exclusion check is performed here: the close step absorbs only
+/// the block's epoch index, not any stamp tachygram set, so any nf is
+/// trivially absent at this link.
+///
+/// Witness `(start, epoch, nf)`; emit `(nf, start,
+/// start.close_block(epoch))`. Runs exactly once per block after any
+/// per-stamp [`UnspentSeed`] segments.
+///
+/// An attacker can claim any nf at a close segment, but the consumer
 /// (`SpendableLift`) checks `unspent.nf == spendable.nf` and the
-/// spendable's nf is GGM-bound upstream — so a fake-nf empty segment can
+/// spendable's nf is GGM-bound upstream, so a fake-nf close segment can
 /// only "advance" a non-existent fake spendable.
 #[derive(Debug)]
-pub struct EmptyBlockUnspentSeed;
+pub struct CloseBlockUnspentSeed;
 
-impl Step for EmptyBlockUnspentSeed {
+impl Step for CloseBlockUnspentSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = Unspent;
     type Right = ();
-    /// `(start, nf)`.
-    type Witness<'source> = (Anchor, Nullifier);
+    /// `(start, epoch, nf)`.
+    type Witness<'source> = (Anchor, EpochIndex, Nullifier);
 
     const INDEX: Index = Index::new(11);
 
     fn witness<'source>(
         &self,
-        (start, nf): Self::Witness<'source>,
+        (start, epoch, nf): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        Ok(((nf, start, start.next_empty()), ()))
+        Ok(((nf, start, start.close_block(epoch)), ()))
     }
 }
 
