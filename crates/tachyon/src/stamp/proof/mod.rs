@@ -49,7 +49,10 @@ fn make_app() -> Result<Application, mock_ragu::Error> {
 
 lazy_static! {
     pub(crate) static ref PROOF_SYSTEM: Application = {
-        #[expect(clippy::expect_used, reason = "mock registration is infallible")]
-        make_app().expect("should work")
+        #[expect(
+            clippy::expect_used,
+            reason = "hardcoded step ordering must register cleanly"
+        )]
+        make_app().expect("registration of fixed step list must succeed")
     };
 }

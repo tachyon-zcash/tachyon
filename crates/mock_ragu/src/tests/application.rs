@@ -6,7 +6,7 @@ use crate::{
     application::*,
     error::Result,
     header::{Header, Suffix},
-    proof::{PROOF_SIZE_COMPRESSED, Proof},
+    proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof},
     step::{Index, Step},
 };
 
@@ -261,7 +261,7 @@ impl Step for AuxSeedStep {
     type Right = ();
     type Witness<'source> = u64;
 
-    const INDEX: Index = Index::new(2);
+    const INDEX: Index = Index::new(0);
 
     fn witness<'source>(
         &self,
@@ -283,7 +283,7 @@ impl Step for AuxMergeStep {
     type Right = TestHeader;
     type Witness<'source> = (Vec<u64>, Vec<u64>);
 
-    const INDEX: Index = Index::new(3);
+    const INDEX: Index = Index::new(1);
 
     fn witness<'source>(
         &self,
@@ -429,5 +429,197 @@ fn rerandomize_preserves_validity() {
     assert_ne!(
         rerand_pcd.proof, original_proof,
         "rerandomization must change the proof"
+    );
+}
+
+/// Distinct Header type that declares the same `SUFFIX` value as `TestHeader`.
+struct ConflictingHeader;
+
+impl Header for ConflictingHeader {
+    type Data<'source> = TestHeaderData;
+
+    const SUFFIX: Suffix = Suffix::new(0);
+
+    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+        data.value.to_le_bytes().to_vec()
+    }
+}
+
+/// Second seed step claiming `Index::new(0)` for the duplicate-index test.
+struct DuplicateIndexStep;
+
+impl Step for DuplicateIndexStep {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = TestHeader;
+    type Right = ();
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(0);
+
+    fn witness<'source>(
+        &self,
+        _witness: Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
+    ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        Ok((TestHeaderData { value: 0 }, ()))
+    }
+}
+
+/// Seed step whose output is `ConflictingHeader` (which collides with
+/// `TestHeader::SUFFIX`).
+struct SuffixCollisionStep;
+
+impl Step for SuffixCollisionStep {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = ConflictingHeader;
+    type Right = ();
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(1);
+
+    fn witness<'source>(
+        &self,
+        _witness: Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
+    ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        Ok((TestHeaderData { value: 0 }, ()))
+    }
+}
+
+#[test]
+fn duplicate_index_rejects_registration() {
+    let result = ApplicationBuilder::new()
+        .register(SeedStep)
+        .expect("register first step should succeed")
+        .register(DuplicateIndexStep);
+    assert!(result.is_err(), "duplicate INDEX must be rejected");
+}
+
+#[test]
+fn non_sequential_index_rejects_registration() {
+    let result = ApplicationBuilder::new().register(MergeStep);
+    assert!(
+        result.is_err(),
+        "non-sequential INDEX (1 before 0) must be rejected"
+    );
+}
+
+#[test]
+fn duplicate_suffix_distinct_types_rejects_registration() {
+    let result = ApplicationBuilder::new()
+        .register(SeedStep)
+        .expect("register first step should succeed")
+        .register(SuffixCollisionStep);
+    assert!(
+        result.is_err(),
+        "distinct Header types sharing a SUFFIX must be rejected"
+    );
+}
+
+#[test]
+fn same_suffix_same_type_succeeds_registration() {
+    let result = ApplicationBuilder::new()
+        .register(SeedStep)
+        .expect("register SeedStep should succeed")
+        .register(MergeStep);
+    assert!(
+        result.is_ok(),
+        "reusing the same Header type across steps is allowed"
+    );
+}
+
+#[test]
+fn internal_step_index_rejects_registration() {
+    struct InternalIndexStep;
+    impl Step for InternalIndexStep {
+        type Aux<'source> = ();
+        type Left = ();
+        type Output = TestHeader;
+        type Right = ();
+        type Witness<'source> = ();
+
+        const INDEX: Index = Index::internal(0);
+
+        fn witness<'source>(
+            &self,
+            _witness: Self::Witness<'source>,
+            _left: <Self::Left as Header>::Data<'source>,
+            _right: <Self::Right as Header>::Data<'source>,
+        ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+            Ok((TestHeaderData { value: 0 }, ()))
+        }
+    }
+
+    let result = ApplicationBuilder::new().register(InternalIndexStep);
+    assert!(
+        result.is_err(),
+        "application-defined steps must not use Index::Internal"
+    );
+}
+
+#[test]
+fn verify_rejects_unregistered_step_index() {
+    let app = ApplicationBuilder::new()
+        .register(SeedStep)
+        .expect("register should succeed")
+        .finalize()
+        .expect("finalize should succeed");
+
+    let encoded = TestHeader::encode(&TestHeaderData { value: 42 });
+    let forged_proof = Proof::new(
+        TestHeader::SUFFIX,
+        Index::new(999),
+        &encoded,
+        b"unused-witness",
+    );
+    let forged_pcd: Pcd<'_, TestHeader> =
+        forged_proof.carry::<TestHeader>(TestHeaderData { value: 42 });
+
+    let valid = app
+        .verify(&forged_pcd, thread_rng())
+        .expect("verify should succeed");
+    assert!(
+        !valid,
+        "proof whose step_index is outside the registered range must fail verify"
+    );
+}
+
+#[test]
+fn verify_rejects_swapped_header_type() {
+    struct SwappedHeader;
+    impl Header for SwappedHeader {
+        type Data<'source> = TestHeaderData;
+
+        const SUFFIX: Suffix = Suffix::new(99);
+
+        fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+            data.value.to_le_bytes().to_vec()
+        }
+    }
+
+    let app = ApplicationBuilder::new()
+        .register(SeedStep)
+        .expect("register should succeed")
+        .finalize()
+        .expect("finalize should succeed");
+
+    let (pcd, ()) = app
+        .seed(&mut thread_rng(), SeedStep, 42u64)
+        .expect("seed should succeed");
+
+    let swapped_pcd: Pcd<'_, SwappedHeader> = pcd
+        .proof
+        .carry::<SwappedHeader>(TestHeaderData { value: 42 });
+
+    let valid = app
+        .verify(&swapped_pcd, thread_rng())
+        .expect("verify should succeed");
+    assert!(
+        !valid,
+        "proof bound to a different Header SUFFIX must fail verify"
     );
 }
