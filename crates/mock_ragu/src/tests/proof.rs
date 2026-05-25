@@ -1,8 +1,15 @@
-use crate::proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof};
+use crate::{
+    header::Suffix,
+    proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof},
+    step::Index,
+};
+
+const TEST_SUFFIX: Suffix = Suffix::new(0);
+const TEST_INDEX: Index = Index::new(0);
 
 #[test]
 fn round_trip() {
-    let proof = Proof::new(b"header", b"witness");
+    let proof = Proof::new(TEST_SUFFIX, TEST_INDEX, b"header", b"witness");
     let bytes: [u8; PROOF_SIZE_COMPRESSED] = proof.clone().into();
     let recovered = Proof::try_from(&bytes).expect("round trip should succeed");
     assert_eq!(proof, recovered);
@@ -10,7 +17,7 @@ fn round_trip() {
 
 #[test]
 fn tampered_fails() {
-    let proof = Proof::new(b"header", b"witness");
+    let proof = Proof::new(TEST_SUFFIX, TEST_INDEX, b"header", b"witness");
     let mut bytes: [u8; PROOF_SIZE_COMPRESSED] = proof.into();
     bytes[0] ^= 0xFFu8;
     Proof::try_from(&bytes).expect_err("tampered proof should fail");
@@ -18,7 +25,7 @@ fn tampered_fails() {
 
 #[test]
 fn carry_creates_pcd() {
-    let proof = Proof::new(b"header", b"witness");
+    let proof = Proof::new(TEST_SUFFIX, TEST_INDEX, b"header", b"witness");
     let expected = proof.clone();
     let pcd: Pcd<'_, ()> = proof.carry(());
     assert_eq!(pcd.proof, expected);
@@ -26,7 +33,7 @@ fn carry_creates_pcd() {
 
 #[test]
 fn rerandomize() {
-    let proof = Proof::new(b"header", b"witness");
+    let proof = Proof::new(TEST_SUFFIX, TEST_INDEX, b"header", b"witness");
     assert_eq!(proof.rerand_tag, [0u8; 32]);
 
     let once = proof.rerandomize();

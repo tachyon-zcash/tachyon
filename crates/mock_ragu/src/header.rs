@@ -2,14 +2,59 @@
 
 use alloc::vec::Vec;
 
-/// Mirrors `ragu_pcd::header::Suffix`.
+/// Number of internal header suffixes reserved by mock_ragu.
+///
+/// Only the trivial header [`()`] uses an internal suffix; reserving a small
+/// range mirrors real ragu's value-space partition between internal and
+/// application suffixes.
+pub(crate) const NUM_INTERNAL_SUFFIXES: usize = 1;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub struct Suffix(usize);
+enum HeaderSuffix {
+    Internal(usize),
+    Application(usize),
+}
+
+/// Mirrors `ragu_pcd::header::Suffix`.
+///
+/// Variants are crate-private. Construct via [`Suffix::new`] for application
+/// headers; only mock_ragu itself constructs internal-header suffixes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Suffix {
+    suffix: HeaderSuffix,
+}
 
 impl Suffix {
     #[must_use]
     pub const fn new(value: usize) -> Self {
-        Self(value)
+        Self {
+            suffix: HeaderSuffix::Application(value),
+        }
+    }
+
+    pub(crate) const fn internal(value: usize) -> Self {
+        assert!(
+            value < NUM_INTERNAL_SUFFIXES,
+            "invalid internal header suffix index"
+        );
+        Self {
+            suffix: HeaderSuffix::Internal(value),
+        }
+    }
+
+    /// Returns the encoded value mapping internal vs application into a
+    /// single `u64` namespace. Internal values occupy
+    /// `0..NUM_INTERNAL_SUFFIXES` and application values follow.
+    #[expect(
+        clippy::expect_used,
+        reason = "usize fits in u64 on all supported targets"
+    )]
+    pub(crate) fn get(self) -> u64 {
+        let value_usize = match self.suffix {
+            | HeaderSuffix::Internal(value) => value,
+            | HeaderSuffix::Application(value) => value + NUM_INTERNAL_SUFFIXES,
+        };
+        u64::try_from(value_usize).expect("suffix value fits in u64")
     }
 }
 
@@ -24,7 +69,7 @@ pub trait Header: Send + Sync + 'static {
 impl Header for () {
     type Data<'source> = ();
 
-    const SUFFIX: Suffix = Suffix(0);
+    const SUFFIX: Suffix = Suffix::internal(0);
 
     fn encode(_data: &()) -> Vec<u8> {
         Vec::new()
