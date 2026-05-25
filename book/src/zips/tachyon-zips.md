@@ -32,4 +32,4 @@ There are probably other ZIPs that need updating, but haven't examined the entir
 
 ![Tachyon & Ragu — ZIP dependency graph](zip-dependency-graph.png)
 
-Each ZIP entry below contains two subsections: **Design Notes** (exploratory context, open questions, and dependencies) and a **ZIP Draft** (the formal specification intended to be upstreamed to [zcash/zips](https://github.com/zcash/zips)). For each ZIP entry, see the corresponding issue in the tracking issue [#111](https://github.com/tachyon-zcash/tachyon/issues/111) for more context.
+Each ZIP entry below contains three subsections: **Dependencies**, **Design Notes** (exploratory context and open questions), and a **ZIP Draft** (the formal specification intended to be upstreamed to [zcash/zips](https://github.com/zcash/zips)). For each ZIP entry, see the corresponding issue in the tracking issue [#111](https://github.com/tachyon-zcash/tachyon/issues/111) for more context.
