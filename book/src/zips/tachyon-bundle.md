@@ -4,8 +4,8 @@
 
 **('Additive / Update' ZIP, Category 'Consensus')**
 
-## Dependencies
+## I. Dependencies
 
-## Design Considerations
+## II. Design Considerations
 
-## ZIP Draft
+## III. ZIP Draft

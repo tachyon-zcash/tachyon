@@ -4,8 +4,8 @@
 
 **('Additive' ZIP, Category 'Network')**
 
-## Dependencies
+## I. Dependencies
 
-## Design Considerations
+## II. Design Considerations
 
-## ZIP Draft
+## III. ZIP Draft

@@ -4,8 +4,8 @@
 
 **('Additive' ZIP, Category 'Wallet / Ecosystem')**
 
-## Dependencies
+## I. Dependencies
 
-## Design Considerations
+## II. Design Considerations
 
-## ZIP Draft
+## III. ZIP Draft
