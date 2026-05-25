@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 /// Number of internal header suffixes reserved by mock_ragu.
 ///
 /// Mirrors real ragu's `InternalStepIndex` layout:
-/// - Slot 0: `Rerandomize` (reserved; mock rerandomize is a transformation,
-///   not a Step, but the slot stays reserved for migration parity).
+/// - Slot 0: `Rerandomize` (reserved; mock rerandomize is a transformation, not
+///   a Step, but the slot stays reserved for migration parity).
 /// - Slot 1: trivial header [`()`].
 pub(crate) const NUM_INTERNAL_SUFFIXES: usize = 2;
 
