@@ -4,4 +4,6 @@
 
 **('Additive' ZIP, Category 'Wallet / Ecosystem')**
 
-OSS providers (untrusted third parties light clients delegate) that wallets query to spend their funds.
+## Design Notes
+
+## ZIP Draft

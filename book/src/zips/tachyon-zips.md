@@ -31,3 +31,5 @@ This attempts to enumerate the landscape, at a high-level lacking a lot of detai
 There are probably other ZIPs that need updating, but haven't examined the entire search space here yet (there are a lot of ZIPs)!
 
 ![Tachyon & Ragu — ZIP dependency graph](zip-dependency-graph.png)
+
+Each ZIP entry below contains two subsections: **Design Notes** (exploratory context, open questions, and dependencies) and a **ZIP Draft** (the formal specification intended to be upstreamed to [zcash/zips](https://github.com/zcash/zips)). For each ZIP entry, see the corresponding issue in the tracking issue [#111](https://github.com/tachyon-zcash/tachyon/issues/111) for more context.

@@ -4,4 +4,6 @@
 
 **('Deployment' ZIP, Category 'Consensus')**
 
-These will be packaged into a network upgrade.
+## Design Notes
+
+## ZIP Draft
