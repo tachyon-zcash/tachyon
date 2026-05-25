@@ -42,5 +42,3 @@ This is the only domain that absorbs the new epoch index. Nothing else in the ch
 Within a block, each stamp's absorption produces an intermediate hash value.
 
 Consensus actors should know about intermediate states, but may only acknowledge the anchor state at the end of a block.
-
-A proof such as `SpendableInit` will produce a header that is likely at an intra-block state, and should be lifted to the end of a block by proving state continuity.

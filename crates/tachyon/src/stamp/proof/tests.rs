@@ -6,7 +6,7 @@ extern crate alloc;
 use alloc::vec;
 
 use ff::Field as _;
-use mock_ragu::Proof;
+use mock_ragu::{Pcd, Proof};
 use pasta_curves::Fp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
@@ -18,7 +18,7 @@ use crate::{
     entropy::ActionEntropy,
     fixtures::{
         PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_nullifier_rollover_pcd,
-        build_output_stamp, build_unspent_pcd, build_unspent_seed_pcd,
+        build_output_stamp, build_unspent_pcd,
         ggm_tools::{delegate_nullifier_from_master, delegate_range},
         random_block, random_block_with, spend_witness,
     },
@@ -384,32 +384,253 @@ fn spendable_init_rejects_tg_absent() {
     let absent_set = TachygramSetGadget::from([tg(rng)].as_slice());
     let pre_cm_anchor = Anchor::default();
     let nf_pcd_absent = user.nullifier_pcd(rng, note, EpochIndex(0));
+    let (summary, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::RangeSummaryStampSeed,
+            (pre_cm_anchor, absent_set.clone()),
+        )
+        .expect("RangeSummaryStampSeed");
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             spendable::SpendableInit,
-            (pre_cm_anchor, absent_set),
+            (absent_set,),
             nf_pcd_absent,
-            Proof::trivial().carry::<()>(()),
+            summary,
         )
         .unwrap_err();
     assert_eq!(err.0, "SpendableInit: commitment not in set");
 }
 
 #[test]
-fn unspent_seed_rejects_tg_present() {
+fn spendable_init_rejects_nf_present() {
+    // A range that contains both cm (note minted) and nf (note already
+    // spent within the range) must not bootstrap a spendable.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let note = user.random_note(rng, 500);
+    let cm = note.commitment();
+    let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
+
+    let set = TachygramSetGadget::from([cm.into(), nf.into()].as_slice());
+    let pre_cm_anchor = Anchor::default();
+    let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
+    let (summary, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::RangeSummaryStampSeed,
+            (pre_cm_anchor, set.clone()),
+        )
+        .expect("RangeSummaryStampSeed");
+    let err = PROOF_SYSTEM
+        .fuse(rng, spendable::SpendableInit, (set,), nf_pcd, summary)
+        .unwrap_err();
+    assert_eq!(err.0, "SpendableInit: nullifier found in set");
+}
+
+#[test]
+fn unspent_from_range_rejects_tg_present() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
     let note = user.random_note(rng, 500);
     let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
 
     let containing_set = TachygramSetGadget::from([nf.into()].as_slice());
-    let start = Anchor::default();
+    let (summary, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::RangeSummaryStampSeed,
+            (Anchor::default(), containing_set.clone()),
+        )
+        .expect("RangeSummaryStampSeed");
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::UnspentFromRange,
+            (nf, containing_set),
+            summary,
+            Proof::trivial().carry::<()>(()),
+        )
+        .unwrap_err();
+    assert_eq!(err.0, "UnspentFromRange: found nullifier in set");
+}
+
+#[test]
+fn unspent_from_range_rejects_unbound_gadget() {
+    // A witness gadget that doesn't commit to the range's tg_set must
+    // be rejected before the nf-exclusion query runs.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let range_set = TachygramSetGadget::from([tg(rng)].as_slice());
+    let unrelated = TachygramSetGadget::from([tg(rng)].as_slice());
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+
+    let (summary, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::RangeSummaryStampSeed,
+            (Anchor::default(), range_set),
+        )
+        .expect("RangeSummaryStampSeed");
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::UnspentFromRange,
+            (nf, unrelated),
+            summary,
+            Proof::trivial().carry::<()>(()),
+        )
+        .unwrap_err();
+    assert_eq!(
+        err.0,
+        "UnspentFromRange: witness gadget must commit to range tg_set"
+    );
+}
+
+#[test]
+fn range_summary_fuse_rejects_unbound_gadget() {
+    // Both halves of the witness must commit to their respective header
+    // tg_set. Exercise each `||` arm via a left-unrelated and a
+    // right-unrelated sub-case.
+    fn build_pair<'source>(
+        rng: &mut (impl RngCore + CryptoRng),
+        tg_a: TachygramSetGadget,
+        tg_b: TachygramSetGadget,
+    ) -> (
+        Pcd<'source, pool::RangeSummary>,
+        Pcd<'source, pool::RangeSummary>,
+    ) {
+        let (left, ()) = PROOF_SYSTEM
+            .seed(rng, pool::RangeSummaryStampSeed, (Anchor::default(), tg_a))
+            .expect("RangeSummaryStampSeed left");
+        let left_end = left.data.1;
+        let (right, ()) = PROOF_SYSTEM
+            .seed(rng, pool::RangeSummaryStampSeed, (left_end, tg_b))
+            .expect("RangeSummaryStampSeed right");
+        (left, right)
+    }
+
+    // Left witness unrelated to left.tg_set.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let tg_a = TachygramSetGadget::from([tg(rng)].as_slice());
+        let tg_b = TachygramSetGadget::from([tg(rng)].as_slice());
+        let unrelated = TachygramSetGadget::from([tg(rng)].as_slice());
+        let (left, right) = build_pair(rng, tg_a, tg_b.clone());
+        let err = PROOF_SYSTEM
+            .fuse(rng, pool::RangeSummaryFuse, (unrelated, tg_b), left, right)
+            .unwrap_err();
+        assert_eq!(
+            err.0,
+            "RangeSummaryFuse: witness gadgets must commit to header tg_set"
+        );
+    }
+
+    // Right witness unrelated to right.tg_set.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let tg_a = TachygramSetGadget::from([tg(rng)].as_slice());
+        let tg_b = TachygramSetGadget::from([tg(rng)].as_slice());
+        let unrelated = TachygramSetGadget::from([tg(rng)].as_slice());
+        let (left, right) = build_pair(rng, tg_a.clone(), tg_b);
+        let err = PROOF_SYSTEM
+            .fuse(rng, pool::RangeSummaryFuse, (tg_a, unrelated), left, right)
+            .unwrap_err();
+        assert_eq!(
+            err.0,
+            "RangeSummaryFuse: witness gadgets must commit to header tg_set"
+        );
+    }
+}
+
+#[test]
+fn range_summary_fuse_rejects_non_adjacent() {
+    // TODO: add cross-epoch nonadjacency to demonstrate
+    let rng = &mut StdRng::seed_from_u64(0);
+    let tg_a = TachygramSetGadget::from([tg(rng)].as_slice());
+    let tg_b = TachygramSetGadget::from([tg(rng)].as_slice());
+
+    let (left, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::RangeSummaryStampSeed,
+            (Anchor::default(), tg_a.clone()),
+        )
+        .expect("RangeSummaryStampSeed left");
+    let unrelated_start = Anchor(Fp::random(&mut *rng));
+    let (right, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::RangeSummaryStampSeed,
+            (unrelated_start, tg_b.clone()),
+        )
+        .expect("RangeSummaryStampSeed right");
 
     let err = PROOF_SYSTEM
-        .seed(rng, pool::UnspentSeed, (start, containing_set, nf))
+        .fuse(rng, pool::RangeSummaryFuse, (tg_a, tg_b), left, right)
         .unwrap_err();
-    assert_eq!(err.0, "UnspentSeed: found nullifier in set");
+    assert_eq!(err.0, "RangeSummaryFuse: segments not adjacent");
+}
+
+#[test]
+fn range_summary_fuse_merges_tachygrams() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let tg_a = tg(rng);
+    let tg_b = tg(rng);
+    let gadget_a = TachygramSetGadget::from([tg_a].as_slice());
+    let gadget_b = TachygramSetGadget::from([tg_b].as_slice());
+
+    let (left, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::RangeSummaryStampSeed,
+            (Anchor::default(), gadget_a.clone()),
+        )
+        .expect("RangeSummaryStampSeed left");
+    let left_end = left.data.1;
+    let (right, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::RangeSummaryStampSeed,
+            (left_end, gadget_b.clone()),
+        )
+        .expect("RangeSummaryStampSeed right");
+
+    let (fused, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::RangeSummaryFuse,
+            (gadget_a, gadget_b),
+            left,
+            right,
+        )
+        .expect("RangeSummaryFuse");
+
+    let expected = TachygramSetCommit::from([tg_a, tg_b].as_slice());
+    assert_eq!(fused.data.2, expected);
+}
+
+#[test]
+fn unspent_from_range_handles_empty() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let empty_gadget = TachygramSetGadget::from([].as_slice());
+    let (summary, ()) = PROOF_SYSTEM
+        .seed(rng, pool::RangeSummaryEmptySeed, (Anchor::default(),))
+        .expect("RangeSummaryEmptySeed");
+    let summary_end = summary.data.1;
+    let (unspent, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::UnspentFromRange,
+            (nf, empty_gadget),
+            summary,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("UnspentFromRange over empty block");
+    assert_eq!(unspent.data.0, nf);
+    assert_eq!(unspent.data.1, Anchor::default());
+    assert_eq!(unspent.data.2, summary_end);
 }
 
 #[test]
@@ -611,6 +832,28 @@ fn rollover_fuse_rejects_invalid_inputs() {
     }
 }
 
+fn build_single_stamp_unspent<'source>(
+    rng: &mut (impl RngCore + CryptoRng),
+    start: Anchor,
+    stamp_tgs: &[Tachygram],
+    nf: Nullifier,
+) -> Pcd<'source, spendable::Unspent> {
+    let tg_gadget = TachygramSetGadget::from(stamp_tgs);
+    let (summary, ()) = PROOF_SYSTEM
+        .seed(rng, pool::RangeSummaryStampSeed, (start, tg_gadget.clone()))
+        .expect("RangeSummaryStampSeed");
+    let (unspent, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::UnspentFromRange,
+            (nf, tg_gadget),
+            summary,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("UnspentFromRange");
+    unspent
+}
+
 #[test]
 fn unspent_fuse_rejects_invalid_compositions() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -623,10 +866,10 @@ fn unspent_fuse_rejects_invalid_compositions() {
     {
         let nf_a = Nullifier::from(Fp::random(&mut *rng));
         let nf_b = Nullifier::from(Fp::random(&mut *rng));
-        let shard_a = build_unspent_seed_pcd(rng, start, &stamps_left, nf_a);
-        let shard_b = build_unspent_seed_pcd(rng, mid, &stamps_right, nf_b);
+        let shard_a = build_single_stamp_unspent(rng, start, &stamps_left, nf_a);
+        let shard_b = build_single_stamp_unspent(rng, mid, &stamps_right, nf_b);
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
+            .fuse(rng, spendable::UnspentFuse, (), shard_a, shard_b)
             .unwrap_err();
         assert_eq!(err.0, "UnspentFuse: left and right must share the same nf");
     }
@@ -635,10 +878,10 @@ fn unspent_fuse_rejects_invalid_compositions() {
     // instead of `left.end`.
     {
         let nf = Nullifier::from(Fp::random(&mut *rng));
-        let shard_a = build_unspent_seed_pcd(rng, start, &stamps_left, nf);
-        let shard_b = build_unspent_seed_pcd(rng, start, &stamps_right, nf);
+        let shard_a = build_single_stamp_unspent(rng, start, &stamps_left, nf);
+        let shard_b = build_single_stamp_unspent(rng, start, &stamps_right, nf);
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
+            .fuse(rng, spendable::UnspentFuse, (), shard_a, shard_b)
             .unwrap_err();
         assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
     }
@@ -715,7 +958,7 @@ fn unspent_fuse_rejects_cross_pool_or_cross_epoch() {
         let right = build_unspent_pcd(rng, &pool_b, nf, BlockHeight(3)..=BlockHeight(3));
 
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, (), left, right)
+            .fuse(rng, spendable::UnspentFuse, (), left, right)
             .unwrap_err();
         assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
     }
@@ -740,7 +983,7 @@ fn unspent_fuse_rejects_cross_pool_or_cross_epoch() {
         );
 
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, (), left, right)
+            .fuse(rng, spendable::UnspentFuse, (), left, right)
             .unwrap_err();
         assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
     }
@@ -764,7 +1007,7 @@ fn empty_block_anchor_unique_per_height() {
 #[test]
 fn empty_block_unspent_lifts_spendable() {
     // Build a spendable, then lift it across an empty block via an
-    // Unspent built solely from EmptyBlockUnspentSeed.
+    // Unspent built from an empty-block RangeSummary + UnspentFromRange.
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
     let note = user.random_note(rng, 100);
@@ -785,8 +1028,8 @@ fn empty_block_unspent_lifts_spendable() {
     pool.mine(vec![]);
     let empty_height = pool.height();
 
-    // Build an Unspent over the empty block via EmptyBlockUnspentSeed,
-    // then lift the spendable.
+    // Build an Unspent over the empty block via RangeSummaryEmptySeed +
+    // UnspentFromRange, then lift the spendable.
     let nf = spendable.data.0;
     let unspent = build_unspent_pcd(rng, &pool, nf, empty_height..=empty_height);
     let (lifted, ()) = PROOF_SYSTEM
