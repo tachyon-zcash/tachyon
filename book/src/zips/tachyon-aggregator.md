@@ -6,6 +6,6 @@
 
 ## Dependencies
 
-## Design Notes
+## Design Considerations
 
 ## ZIP Draft
