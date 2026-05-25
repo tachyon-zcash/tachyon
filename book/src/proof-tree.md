@@ -27,8 +27,8 @@ Crossing an epoch boundary requires a new-epoch nullifier and the cross-epoch an
 `SpendableEpochLift` consumes that header and a new-epoch `Unspent` whose start equals the boundary anchor, producing a fresh spendable in the new epoch.
 
 To spend, the wallet derives two `NullifierHeader`s (for the present epoch and the next) by running the GGM walk[^nullifiers] twice on the same note.
-`SpendBind` fuses these two leaves, checks that the witnessed note's commitment[^notes] matches the commitment carried on each, and emits a `SpendHeader` containing the action digest and both nullifiers.
-`SpendStamp` then fuses that `SpendHeader` with a current-epoch `SpendableHeader`, checks that the present-epoch nullifier matches the spendable's, and emits a `StampHeader` whose tachygram set contains both nullifiers and whose anchor is the spendable's.
+`SpendBind` fuses these two leaves, checks that the witnessed note's commitment[^notes] matches the commitment carried on each, and emits a `SpendHeader` containing the value commitment, action verification key, and both nullifiers.
+`SpendStamp` then fuses that `SpendHeader` with a current-epoch `SpendableHeader`, checks that the present-epoch nullifier matches the spendable's, derives the action digest from the SpendHeader's value commitment and verification key, and emits a `StampHeader` whose tachygram set contains both nullifiers and whose anchor is the spendable's.
 
 An output operation runs `OutputStamp` directly.
 The step witnesses the new note, value-randomness, action-randomness, and an anchor; the wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
@@ -128,14 +128,14 @@ The cross-epoch anchor advance is the only such transition in the proof tree; sa
 
 Spending a note publishes two nullifiers, one for the current epoch and one for the next.
 Both leaves come from the same note's GGM tree[^nullifiers], and `SpendBind` ties them together by checking that the witnessed note's commitment[^notes] equals the commitment carried on each input.
-The action digest is computed from the value commitment and the action verification key derived from the same witnessed note and key material[^keys].
+The value commitment and action verification key are derived at `SpendBind` from the witnessed note and key material[^keys]; the action digest is derived downstream at `SpendStamp` from those two values, so that `SpendBind` stays within its per-step gate budget.
 Publishing both nullifiers lets consensus apply the spend across an epoch transition that may occur between proof construction and inclusion.
 
 ### Stamp construction
 
 A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
 `OutputStamp` derives a value commitment, action verification key, and action digest from a witnessed note, value-randomness, and action-randomness; constraints reject zero or over-range note values and require the note's payment key to match the witnessed key material[^keys].
-`SpendStamp` consumes a `SpendHeader` (already action-bound) and a `SpendableHeader` (already anchor-bound), checks the spend's present-epoch nullifier equals the spendable's, and emits a stamp whose action digest, two-nullifier tachygram set, and threaded anchor follow from that constraint.
+`SpendStamp` consumes a `SpendHeader` (carrying value commitment, action verification key, and two nullifiers) and a `SpendableHeader` (already anchor-bound), checks the spend's present-epoch nullifier equals the spendable's, derives the action digest from the SpendHeader's value commitment and verification key, and emits a stamp whose action digest, two-nullifier tachygram set, and threaded anchor follow from that constraint.
 `MergeStamp` fuses two stamps by checking anchor equality and unioning their commitments through witnessed multiset gadgets.
 
 ### Stamp anchor
@@ -335,7 +335,7 @@ A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `Delega
 | NullifierRolloverHeader | (old_nf, new_nf, new_epoch) |
 | SpendableHeader | (nf, anchor) |
 | SpendableRolloverHeader | (new_nf, epoch_anchor) |
-| SpendHeader | (action_digest, present_nf, future_nf) |
+| SpendHeader | (cv, rk, present_nf, future_nf) |
 | StampHeader | (action_acc, tachygram_acc, anchor) |
 
 ## Steps
