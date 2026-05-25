@@ -53,7 +53,7 @@ impl<'source, H: Header> Clone for Pcd<'source, H> {
 impl Proof {
     #[must_use]
     pub fn trivial() -> Self {
-        Self::new(<() as Header>::SUFFIX, Index::internal(0), &[], &[])
+        Self::new(<() as Header>::SUFFIX, Index::internal(1), &[], &[])
     }
 
     #[must_use]

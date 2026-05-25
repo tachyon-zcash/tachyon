@@ -4,10 +4,11 @@ use alloc::vec::Vec;
 
 /// Number of internal header suffixes reserved by mock_ragu.
 ///
-/// Only the trivial header [`()`] uses an internal suffix; reserving a small
-/// range mirrors real ragu's value-space partition between internal and
-/// application suffixes.
-pub(crate) const NUM_INTERNAL_SUFFIXES: usize = 1;
+/// Mirrors real ragu's `InternalStepIndex` layout:
+/// - Slot 0: `Rerandomize` (reserved; mock rerandomize is a transformation,
+///   not a Step, but the slot stays reserved for migration parity).
+/// - Slot 1: trivial header [`()`].
+pub(crate) const NUM_INTERNAL_SUFFIXES: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum HeaderSuffix {
@@ -69,7 +70,7 @@ pub trait Header: Send + Sync + 'static {
 impl Header for () {
     type Data<'source> = ();
 
-    const SUFFIX: Suffix = Suffix::internal(0);
+    const SUFFIX: Suffix = Suffix::internal(1);
 
     fn encode(_data: &()) -> Vec<u8> {
         Vec::new()

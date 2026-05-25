@@ -7,10 +7,11 @@ use crate::{
 
 /// Number of internal step indexes reserved by mock_ragu.
 ///
-/// Only the trivial step (used to seed [`crate::proof::Proof::trivial`]) is
-/// allocated; reserving a small range mirrors real ragu's value-space
-/// partition between internal and application steps.
-pub(crate) const NUM_INTERNAL_STEPS: usize = 1;
+/// Mirrors real ragu's `InternalStepIndex` layout:
+/// - Slot 0: `Rerandomize` (reserved; mock rerandomize is a transformation,
+///   not a Step, but the slot stays reserved for migration parity).
+/// - Slot 1: trivial step (used to seed [`crate::proof::Proof::trivial`]).
+pub(crate) const NUM_INTERNAL_STEPS: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum StepIndex {
