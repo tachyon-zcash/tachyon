@@ -1,8 +1,10 @@
 # Tachyon ZIPs
 
-The [ZIP process](https://zips.z.cash/zip-0000) seems highly formalized, with codified standards and ceremony around each proposal. Tachyon will need to determine the domain of different ZIPs we intend to propose, the ordering of those proposals, and what existing ZIPs need modification and how version control works in that context. This document is intended to compile research and seed discussion on the ZIP writing process.
+The [ZIP process](https://zips.z.cash/zip-0000) seems highly formalized, with codified standards and ceremony around each proposal. Tachyon will need to determine the domain of different ZIPs we intend to propose, the ordering of those proposals, and what existing ZIPs need modification and how version control works in that context. This is intended to compile research and seed discussion on the ZIP writing process.
 
 ## ZIP Versioning
+
+For more details on the ZIP process, reference [ZIP 0](https://zips.z.cash/zip-0000).
 
 ZIPs are associated with a triple: **status, category, and (informally, my own classification) a role**.
 
@@ -10,7 +12,7 @@ ZIPs are associated with a triple: **status, category, and (informally, my own c
 - **Category:** 'consensus, standards, process, consensus process, informational, network, rpc, wallet, ecosystem' – different categories that define the ZIP kind,
 - **Role:** 'update, successor, additive, deployment' – this is more of an informal metric for ZIP versioning, defining how the proposed ZIP interplays with existing ZIPs.
 
-The versioning process seems to follow *informal* patterns that aren't standardized / named in the ZIP process, so I'm distilling those patterns here. Here are the informal ZIP amendment patterns (ie. the **roles**):
+For more specifics on ZIP versioning conventions, reference [ZIP 0](https://zips.z.cash/zip-0000), but here's my distillation of those patterns: 
 
 **1. Update ZIPs (2xxx):** These are smaller scoped, surgical edits to the existing [Zcash Protocol Specification](https://zips.z.cash/protocol/protocol.pdf). Reference [zip-2003](https://zips.z.cash/zip-2003) and [zip-2004](https://zips.z.cash/zip-2004) (and their accompany PRs [#825](https://github.com/zcash/zips/pull/825) and [#917](https://github.com/zcash/zips/pull/917)) for reference on process.
 
