@@ -30,6 +30,126 @@ This attempts to enumerate the landscape, at a high-level lacking a lot of detai
 
 There are probably other ZIPs that need updating, but haven't examined the entire search space here yet (there are a lot of ZIPs)!
 
-![Tachyon & Ragu — ZIP dependency graph](zip-dependency-graph.png)
+```mermaid
+---
+title: Tachyon and Ragu - ZIP dependency graph
+---
+flowchart TB
+classDef additive fill:#fff1c740,stroke:black
+classDef update fill:#d5ebd140,stroke:black
+classDef successor fill:#fccaca40,stroke:black
+classDef deployment fill:#dcd2eb40,stroke:black
+
+accumulator["`
+**3. Tachyon Accumulator / Hash Chain**
+
+*(additive, consensus)*
+
+- per-stamp Pedersen commit (tachygram vector commit over multiset polynomial)
+- per-block Poseidon hash-chain (over commit coordinates)
+- epoch / k-block window
+`"]:::additive
+
+shielded["`
+**1. Tachyon Shielded Protocol**
+
+*(additive, consensus)*
+
+- Notes, keys, delegation
+- Nullifiers, commitments
+- Actions, signatures
+- Consensus rules
+- Cross-references Ragu
+`"]:::additive
+
+bundle["`
+**2. Bundle / Aggregate Tx Format**
+
+*(additive, consensus + conditional)*
+
+- Bundle wire format
+- Stamped / Stripped variants
+- Registers in ZIP-248 (or Update G if 248 fails)
+`"]:::additive
+
+aggregator["`
+**4. Tachyon Aggregator Protocol**
+
+*(additive, network)*
+
+- Aggregator role
+- Automation / Aggs / Adjs
+- Miners' role
+- Block construction protocol
+- Self-contains relay rules
+`"]:::additive
+
+oss["`
+**5. OSS**
+
+*(additive, wallet / ecosystem)*
+
+- Delegated sync via (ak, Psi_t)
+- Note metadata delivery
+- Privacy model
+- Service interface
+`"]:::additive
+
+zip221["`
+**6. Update: ZIP 221**
+
+*(update, consensus)*
+
+Extends ZIP-221's MMR leaf schema to include per-block Tachyon accumulator commitment
+`"]:::update
+
+zip209["`
+**7. Update: ZIP 209**
+
+*(update, consensus)*
+
+- valueBalanceTachyon
+- non-negative pool rule
+`"]:::update
+
+zip244["`
+**8. Update: ZIP 244**
+
+*(update, consensus + conditional)*
+
+tachyon_digest branch in txid / auth digest tree (only if ZIP 248 fails)
+`"]:::update
+
+zip317["`
+**9. Update: ZIP 317**
+
+*(update, consensus)*
+
+Fee logic extension to enumerate Tachyon actions in the logical-action count
+`"]:::update
+
+nu_deployment["`
+**10. NU Deployment ZIP**
+
+*(deployment, consensus)*
+
+- CONSENSUS_BRANCH_ID
+- Activation heights
+- MIN_NETWORK_PROTOCOL_VERSION
+`"]:::deployment
+
+accumulator --> zip221 & aggregator & shielded & oss
+shielded --> bundle & aggregator & zip209 & zip317 & oss
+
+bundle --> aggregator & nu_deployment
+bundle -- "if 244 fails" --> zip244
+
+aggregator --> nu_deployment
+oss --> nu_deployment
+
+zip221 --> nu_deployment
+zip209 --> nu_deployment
+zip317 --> nu_deployment
+```
 
 Each ZIP entry below contains three subsections: **Dependencies**, **Design Considerations** (exploratory context and open questions), and a **ZIP Draft** (the formal specification intended to be upstreamed to [zcash/zips](https://github.com/zcash/zips)). For each ZIP entry, see the corresponding issue in the tracking issue [#111](https://github.com/tachyon-zcash/tachyon/issues/111) for more context.
