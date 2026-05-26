@@ -38,6 +38,6 @@
   - [Oblivious Syncing Service, OSS](zips/oss.md)
   - [ZIP-221](zips/zip-221.md)
   - [ZIP-209](zips/zip-209.md)
-  - [ZIP-244](zips/zip-244.md)
+  - [ZIP-248](zips/zip-248.md)
   - [ZIP-317](zips/zip-317.md)
   - [Network Upgrade Deployment](zips/network-upgrade-deployment.md)
