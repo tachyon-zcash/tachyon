@@ -81,14 +81,19 @@ impl TryFrom<&[u8; 32]> for ActionDigest {
 
 #[cfg(test)]
 mod tests {
+    extern crate alloc;
+
+    use alloc::vec::Vec;
+    use core::iter;
+
     use rand::{CryptoRng, RngCore, SeedableRng as _, rngs::StdRng};
 
     use super::*;
     use crate::{
         entropy::ActionEntropy,
         keys::private,
-        note::{self, Note},
-        primitives::effect,
+        note::{self, Note, ProNf},
+        primitives::{ProNfSeqPoly, effect},
         value,
     };
 
@@ -97,10 +102,11 @@ mod tests {
         val: u64,
     ) -> (value::Commitment, public::ActionVerificationKey) {
         let sk = private::SpendingKey::random(rng);
+        let pronfs: Vec<ProNf> = iter::repeat_with(|| ProNf::random(rng)).take(8).collect();
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(val),
-            psi: note::NullifierTrapdoor::random(rng),
+            psi: ProNfSeqPoly::from(pronfs.as_slice()).commit(),
             rcm: note::CommitmentTrapdoor::random(rng),
         };
         let rcv = value::CommitmentTrapdoor::random(rng);

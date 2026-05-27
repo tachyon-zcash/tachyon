@@ -35,7 +35,7 @@
 //!
 //! - `sk`: Root spending key (full authority)
 //! - `ask`: Authorizes spends (long-lived, cannot sign directly)
-//! - `bsk = Σrcvᵢ`: Binding signing key (per-bundle)
+//! - `bsk`: Binding signing key $\sum_i \mathsf{rcv}_i$ (per-bundle)
 //!
 //! ### Public keys ([`public`])
 //!
@@ -56,36 +56,32 @@
 //!
 //! ## Nullifier Derivation
 //!
-//! Nullifiers are derived via a GGM tree PRF instantiated from Poseidon:
-//!
-//! $$\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk})$$
-//! $$\mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$$
-//!
-//! where $\psi$ is the note's nullifier trapdoor, $\mathsf{nk}$ is the
-//! nullifier key, and flavor is the epoch-id.
-//!
-//! The master root key $\mathsf{mk}$ supports oblivious sync delegation:
-//! prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
-//! $e \leq t$, enabling range-restricted delegation without revealing
-//! spend capability.
+//! Each note's per-epoch nullifiers are coefficients of a recipient's
+//! pronullifier polynomial $M$ shifted by the note commitment, with $M$
+//! committed into the note as $\psi = \sum_i M_i G_i$. Wallets read
+//! pronullifiers from $M$
+//! natively; the proof tree binds the published sequence to $\psi$ through the
+//! lift relation. `nk` no longer
+//! seeds a per-note PRF; it binds the note only through the payment key
+//! $\mathsf{pk}$.
 
 pub mod private;
 pub mod public;
 
-mod ggm;
 mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use ggm::{
-    GGM_CHUNK_MASK, GGM_CHUNK_SIZE, GGM_MAX_INDEX, GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey,
-    NotePrefixedKey, cover_candidates,
-};
 pub use note::{NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]
 mod tests {
+    extern crate alloc;
+
+    use alloc::vec::Vec;
+    use core::iter;
+
     use ff::{Field as _, PrimeField as _};
     use pasta_curves::Fp;
     use rand::{SeedableRng as _, rngs::StdRng};
@@ -93,9 +89,16 @@ mod tests {
     use crate::{
         entropy::ActionEntropy,
         keys::{NullifierKey, PaymentKey, private},
-        note::{self, Note},
-        primitives::effect,
+        note::{self, Note, ProNf},
+        primitives::{ProNfSeqCommit, ProNfSeqPoly, effect},
     };
+
+    /// A random pronullifier-polynomial commitment, standing in for $\psi =
+    /// \sum_i M_i G_i$.
+    fn random_psi(rng: &mut StdRng) -> ProNfSeqCommit {
+        let pronfs: Vec<ProNf> = iter::repeat_with(|| ProNf::random(rng)).take(8).collect();
+        ProNfSeqPoly::from(pronfs.as_slice()).commit()
+    }
 
     /// ask, nk, pk derived from the same sk must all be different.
     /// pk derives from (ak, nk) via Poseidon, not directly from sk.
@@ -142,7 +145,7 @@ mod tests {
         let note = Note {
             pk: sk.derive_payment_key(),
             value: note::Value::from(1000u64),
-            psi: note::NullifierTrapdoor::random(rng),
+            psi: random_psi(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };
         let theta = ActionEntropy::random(rng);

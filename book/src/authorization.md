@@ -225,6 +225,8 @@ A modified action breaks both checks.
 
 ## Detailed Sequence
 
+<!-- todo: this is significantly outdated -->
+
 ```mermaid
 sequenceDiagram
 
@@ -305,8 +307,8 @@ and Proving
         critical anchor, action plan { rk, note, theta, rcv, effect }, pak { ak, nk }
                 alt effect == spend
                     User --> User: rk == ak + [alpha]G
-                    note over User: flavor = epoch(anchor)
-                    note over User: nf = Poseidon(nk, psi, flavor)
+                    note over User: e = epoch(anchor)
+                    note over User: nf = M[e] + cm
                     note over User: tg_root = Poseidon(nf)
                 else effect == output
                     User --> User: rk == [alpha]G

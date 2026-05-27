@@ -4,11 +4,11 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use group::GroupEncoding as _;
-use pasta_curves::EqAffine;
-use ragu::{Header, Index, Polynomial, Step, Suffix, enforce_poly_product};
+use ff::PrimeField as _;
+use pasta_curves::Fp;
+use ragu::{Commitment, Header, Index, Polynomial, Step, StepCtx, Suffix, enforce_poly_product};
 
-use super::{pool::AnchorChain, spend::SpendHeader, spendable::SpendableHeader};
+use super::{pool::AnchorChain, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
     constants::NOTE_VALUE_MAX,
@@ -27,7 +27,7 @@ use crate::{
 /// them from the actions and tachygrams the step witnesses.
 ///
 /// `anchor` is freely witnessed at [`OutputStamp`]; at [`SpendStamp`]
-/// it threads from the right [`SpendableHeader`]; at [`MergeStamp`]
+/// it threads from the left [`SpendHeader`]; at [`MergeStamp`]
 /// the step constrains `left.anchor == right.anchor`; at
 /// [`StampLift`] it advances to the right [`AnchorChain`] segment's
 /// `end` after constraining `segment.start == old_anchor`.
@@ -38,7 +38,7 @@ impl Header for StampHeader {
     /// `(action_commit, stamp_tg_commit, anchor)`. The two commitments
     /// are computed at each producing step from the actions and
     /// tachygrams that step witnesses. `anchor` is freely witnessed at
-    /// [`OutputStamp`], threaded from the right [`SpendableHeader`] at
+    /// [`OutputStamp`], threaded from the left [`SpendHeader`] at
     /// [`SpendStamp`], equality-constrained at [`MergeStamp`], or
     /// advanced over an [`AnchorChain`] at [`StampLift`].
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
@@ -46,14 +46,12 @@ impl Header for StampHeader {
     const SUFFIX: Suffix = Suffix::new(11);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        // TODO: should commitment encoding be 32 bytes?
-        let mut out = Vec::with_capacity(32 + 32 + 32);
-        let action_bytes: [u8; 32] = EqAffine::from(&data.0).to_bytes();
-        let tachygram_bytes: [u8; 32] = EqAffine::from(&data.1).to_bytes();
-        let anchor_bytes: [u8; 32] = data.2.0.into();
+        let mut out = Vec::with_capacity(32 * 3);
+        let action_bytes: [u8; 32] = Commitment::from(data.0).into();
+        let tachygram_bytes: [u8; 32] = Commitment::from(data.1).into();
         out.extend_from_slice(&action_bytes);
         out.extend_from_slice(&tachygram_bytes);
-        out.extend_from_slice(&anchor_bytes);
+        out.extend_from_slice(&Fp::from(data.2).to_repr());
         out
     }
 }
@@ -74,11 +72,11 @@ impl Step for OutputStamp {
         Anchor,
     );
 
-    const INDEX: Index = Index::new(19);
+    const INDEX: Index = Index::new(9);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
+        _ctx: &mut StepCtx<'_>,
         (rcv, alpha, note, anchor): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
@@ -104,11 +102,14 @@ impl Step for OutputStamp {
     }
 }
 
-/// Fuses a [`SpendHeader`] with a [`SpendableHeader`] into a stamp.
+/// Turns a [`SpendHeader`] into a stamp.
 ///
-/// The spend's first nullifier must equal the spendable's `nf`;
-/// anchor-binding is implicit via `spendable.anchor` (already validated by
-/// the spendable lineage). Epoch alignment is consumer-side.
+/// The spend's nullifier pair and pool anchor arrive together on the
+/// [`SpendHeader`]. [`SpendBind`](super::spend::SpendBind) already joined the
+/// spendable into the spend lineage (its `Left` is the `SpendableHeader`), so
+/// there is no separate spendable input here. Anchor-binding is implicit via
+/// the threaded `anchor` (validated by the spendable lineage that fed the
+/// spend).
 ///
 /// `SpendStamp` derives `action_digest = Poseidon(cv, rk)` from the
 /// `(cv, rk)` carried in `SpendHeader` before constructing the
@@ -120,24 +121,18 @@ impl Step for SpendStamp {
     type Aux<'source> = ();
     type Left = SpendHeader;
     type Output = StampHeader;
-    type Right = SpendableHeader;
+    type Right = ();
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(21);
+    const INDEX: Index = Index::new(11);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
+        _ctx: &mut StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (cv, rk, (now_nf, next_nf)): <Self::Left as Header>::Data,
-        (anchored_nf, anchor): <Self::Right as Header>::Data,
+        (cv, rk, (now_nf, next_nf), anchor): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if now_nf != anchored_nf {
-            return Err(ragu::Error(
-                "SpendStamp: spend's now_nf must equal spendable's nf",
-            ));
-        }
-
         let action_digest = ActionDigest::new(cv, rk)
             .map_err(|_err| ragu::Error("SpendStamp: action digest construction failed"))?;
 
@@ -161,10 +156,6 @@ impl Step for MergeStamp {
     type Left = StampHeader;
     type Output = StampHeader;
     type Right = StampHeader;
-    /// `(left_action, right_action, left_tachygram, right_tachygram)`. The
-    /// merged sets are the polynomial products of the witnessed pairs;
-    /// [`enforce_poly_product`] pins each union to its
-    /// `multiplicand · multiplier`.
     type Witness<'source> = (
         ActionSetPoly,
         ActionSetPoly,
@@ -172,11 +163,11 @@ impl Step for MergeStamp {
         TachygramSetPoly,
     );
 
-    const INDEX: Index = Index::new(22);
+    const INDEX: Index = Index::new(12);
 
     fn witness<'source>(
         &self,
-        ctx: &mut ragu::StepCtx<'_>,
+        ctx: &mut StepCtx<'_>,
         (left_action, right_action, left_tachygram, right_tachygram): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
         (right_action_commit, right_tachygram_commit, right_anchor): <Self::Right as Header>::Data,
@@ -186,7 +177,7 @@ impl Step for MergeStamp {
             return Err(ragu::Error("MergeStamp: anchors must match"));
         }
 
-        // Bind the witnessed input sets to the public commitments on Data.
+        // Bind witness accumulators to the public commitments on Data.
         if left_action.commit() != left_action_commit
             || right_action.commit() != right_action_commit
             || left_tachygram.commit() != left_tachygram_commit
@@ -197,6 +188,10 @@ impl Step for MergeStamp {
             ));
         }
 
+        // Merge each set via the product relation: the union is the product of
+        // the two root polynomials. The prover constructs the union
+        // out-of-circuit; `enforce_poly_product` confirms it against the
+        // committed inputs.
         let merged_action_poly = {
             let left_poly = Polynomial::from(left_action);
             let right_poly = Polynomial::from(right_action);
@@ -235,11 +230,11 @@ impl Step for StampLift {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(23);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
+        _ctx: &mut StepCtx<'_>,
         (): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, old_anchor): <Self::Left as Header>::Data,
         (segment_start, segment_end): <Self::Right as Header>::Data,

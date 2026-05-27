@@ -86,13 +86,15 @@ The spend authorization keys follow a three-tier scheme mapping to **private sca
 
 $$\mathsf{nk} = \text{ToBase}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\texttt{0x22}])\bigr)$$
 
-An $\mathbb{F}_p$ element used in nullifier derivation. Tachyon simplifies Orchard's nullifier construction:[^faerie-gold]
+An $\mathbb{F}_p$ element that binds the note to this key tree. It is digested into the payment key
 
-$$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
+$$\mathsf{pk} = \mathsf{Poseidon}_\texttt{Tachyon-PkDerive}(\mathsf{ak}_x, \mathsf{nk}),$$
 
-where $F$ is a keyed PRF (Poseidon with domain tag `Tachyon-NfDerive`), $\Psi$ is the note's nullifier trapdoor, and flavor is the epoch-id. See [Notes](./notes.md#nullifier-derivation).
+which the note commitment $\mathsf{cm}$ in turn binds, so a note's nullifiers are tied to $\mathsf{nk}$ through $\mathsf{cm}$.
 
-$\mathsf{nk}$ alone does NOT confer spend authority — combined with $\mathsf{ak}$ it forms the proof authorizing key $\mathsf{pak}$, enabling proof construction and nullifier derivation without signing capability.
+Tachyon does not derive nullifiers from $\mathsf{nk}$ directly. The epoch-$e$ nullifier is the pronullifier coefficient shifted by the commitment, $\mathsf{nf}_e = M_e + \mathsf{cm}$; see [Nullifiers](./nullifiers.md). No collision-resistant construction is needed.[^faerie-gold]
+
+$\mathsf{nk}$ alone does NOT confer spend authority; combined with $\mathsf{ak}$ it forms the proof authorizing key $\mathsf{pak}$, enabling proof construction without signing capability.
 
 [^faerie-gold]: Orchard's more complex nullifier construction defended against faerie gold attacks. These are moot under out-of-band payments because the recipient controls $\Psi$ (via payment requests or URI redemption). See footnote 1 in "Tachyaction at a Distance."
 

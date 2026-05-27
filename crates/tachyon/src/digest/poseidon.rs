@@ -40,57 +40,34 @@ pub(crate) fn payment_key(ak: Fp, nk: Fp) -> Fp {
 const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
 
 /// Derives a note commitment from note fields.
+///
+/// $\psi = \sum_i M_i G_i$ is a Vesta point: its coordinates live in `Fq`, so
+/// it cannot enter the `Fp` Poseidon whole. Its `(x, y)` are bit-decomposed
+/// into 128-bit limbs and hashed alongside the scalar fields, exactly as
+/// [`anchor_stamp_step`] digests a stamp commitment. This binds the whole
+/// commitment point losslessly into `cm`, with no lossy `Commitment -> Fp`
+/// reduction.
 #[must_use]
-pub(crate) fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
-    hash::<5>([
+pub(crate) fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Coordinates<EqAffine>) -> Fp {
+    let (x, y) = (psi.x().to_repr(), psi.y().to_repr());
+
+    #[expect(clippy::expect_used, reason = "constant size decomposition")]
+    let (x_lo, x_hi, y_lo, y_hi) = (
+        Fp::from_u128(u128::from_le_bytes(x[..16].try_into().expect("16 bytes"))),
+        Fp::from_u128(u128::from_le_bytes(x[16..].try_into().expect("16 bytes"))),
+        Fp::from_u128(u128::from_le_bytes(y[..16].try_into().expect("16 bytes"))),
+        Fp::from_u128(u128::from_le_bytes(y[16..].try_into().expect("16 bytes"))),
+    );
+
+    hash::<8>([
         Fp::from_u128(u128::from_le_bytes(*NOTE_COMMITMENT_DOMAIN)),
         rcm,
         pk,
         Fp::from(value),
-        psi,
-    ])
-}
-
-const NULLIFIER_PREFIX_DOMAIN: &[u8; 16] = b"Tachyon-NfPrefix";
-
-/// Derives a GGM root (master key) from note trapdoor and wallet nullifier key.
-#[must_use]
-pub(crate) fn nf_master(psi: Fp, nk: Fp) -> Fp {
-    hash::<3>([
-        Fp::from_u128(u128::from_le_bytes(*NULLIFIER_PREFIX_DOMAIN)),
-        psi,
-        nk,
-    ])
-}
-
-/// Derives a nullifier prefix from a previous prefix and a walk direction.
-#[must_use]
-pub(crate) fn nf_prefix(prefix_prev: Fp, step: u8) -> Fp {
-    hash::<3>([
-        Fp::from_u128(u128::from_le_bytes(*NULLIFIER_PREFIX_DOMAIN)),
-        prefix_prev,
-        Fp::from(u64::from(step)), // TODO: chunk some booleans by arity?
-    ])
-}
-
-const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
-
-/// Derives a nullifier from a leaf of the prefix tree.
-#[must_use]
-pub(crate) fn nullifier(leaf: Fp) -> Fp {
-    hash::<2>([Fp::from_u128(u128::from_le_bytes(*NULLIFIER_DOMAIN)), leaf])
-}
-
-const DELEGATION_DOMAIN: &[u8; 16] = b"Tachyon-Delegate";
-
-/// Derives a delegation identifier from a note commitment and trapdoor.
-#[must_use]
-pub(crate) fn delegation_id(mk: Fp, cm: Fp, trap: Fp) -> Fp {
-    hash::<4>([
-        Fp::from_u128(u128::from_le_bytes(*DELEGATION_DOMAIN)),
-        mk,
-        cm,
-        trap,
+        x_lo,
+        x_hi,
+        y_lo,
+        y_hi,
     ])
 }
 

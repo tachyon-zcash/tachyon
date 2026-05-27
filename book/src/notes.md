@@ -8,13 +8,13 @@ A spend operation consumes a note by publishing a nullifier.
 
 ## Fields
 
-Tachyon notes are simple: a note carries only its recipient, value, and two trapdoors.
+Tachyon notes are simple: a note carries only its recipient, value, a pronullifier commitment, and a commitment trapdoor.
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | $\mathsf{pk}$ | $\mathbb{F}_p$ | recipient's payment key[^keys] |
 | $v$ | u64 | value in zatoshi, $1 \leq v \leq 2.1 \times 10^{15}$ |
-| $\psi$ | $\mathbb{F}_p$ | nullifier trapdoor[^nullifiers] |
+| $\psi$ | $\mathbb{G}$ | pronullifier polynomial commitment[^nullifiers] |
 | $\mathsf{rcm}$ | $\mathbb{F}_p$ | note commitment trapdoor |
 
 Zero-value notes are forbidden.
@@ -36,13 +36,10 @@ For an output operation, $\mathsf{cm}$ is the published [tachygram](./tachygrams
 
 Complete derivation is covered in [Nullifiers](./nullifiers.md).
 
-The note nullifier changes per epoch. Briefly, a nullifier for epoch $e$ is derived:
+The note nullifier changes per epoch. Briefly, the nullifier for epoch $e$ is the note's pronullifier coefficient $M_e$ (a coefficient of the polynomial committed to $\psi$) shifted by the note commitment:
 
 $$
-\mathsf{nf} =
-    \mathsf{Poseidon}_\texttt{Tachyon-NfDerive}\!\left(
-        \mathsf{KDF}^{\mathsf{climb}}_\psi(e, D)
-    \right)
+\mathsf{nf}_e = M_e + \mathsf{cm}
 $$
 
 For a spend operation, two nullifiers at present epoch $e$ and next epoch $e+1$ are published as [tachygrams](./tachygrams.md).

@@ -35,9 +35,10 @@ use crate::{
     effect,
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, public},
-    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram},
+    note::{Nullifier, ProNf},
+    primitives::{ActionDigest, ActionDigestError, Anchor, NfSeqPoly, ProNfSeqPoly, Tachygram},
     serialization,
-    stamp::proof::{delegation, spend, spendable},
+    stamp::proof::{spend, spendable},
     value,
 };
 
@@ -200,22 +201,32 @@ impl Plan {
 
     /// Prove a single [`Stamp`] for this plan.
     ///
-    /// For each **spend**, uses [`SpendBind`] to prepare PCD inputs, then runs
-    /// [`SpendStamp`] to attach the spendable chain.
+    /// For each **spend**, uses [`SpendBind`] to bind the action to its
+    /// [`SpendableHeader`](spendable::SpendableHeader) (validating the spend
+    /// pair against the spendable's `future`), then runs [`SpendStamp`] to
+    /// produce the stamp.
     ///
     /// For each **output**, runs [`OutputStamp`] with no PCD inputs.
     ///
     /// Stamps are recursively merged via [`MergeStamp`] into a single stamp.
     ///
-    /// `spend_pcds` items must correspond to each planned spend, in order.
+    /// `spend_pcds` items must correspond to each planned spend, in order: the
+    /// spendable proof and the note's pronullifier polynomial `M`, split into
+    /// `consumed_head` and `remaining_tail` (the part from the current epoch
+    /// on). `prove` reassembles `M` for the `psi`/`cm` preimage and shifts the
+    /// live tail into nullifier values prover-side (`nf_pair`, `rest`,
+    /// `nf_tail`). `SpendBind` then derives `psi` and `cm` from the preimage
+    /// (`cm` is not supplied), matches the re-based nullifier tail against
+    /// `future` via `future.unblind(cm)`, and republishes the nullifier pair on
+    /// its output header (read into the stamp's tachygrams).
     pub fn prove<RNG: RngCore + CryptoRng>(
         self,
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<delegation::NullifierHeader>,
-            ragu::Pcd<delegation::NullifierHeader>,
             ragu::Pcd<spendable::SpendableHeader>,
+            ProNfSeqPoly,
+            ProNfSeqPoly,
         )>,
     ) -> Result<Stamp, ProveError> {
         // Each entry is (stamp, action_digests). The digest list is ephemeral —
@@ -227,34 +238,74 @@ impl Plan {
             return Err(ProveError::SpendableMismatch);
         }
 
-        for (((cv, rk), (alpha, note, rcv)), (nf_now_pcd, nf_next_pcd, spendable_pcd)) in
+        for (((cv, rk), (alpha, note, rcv)), (spendable_pcd, consumed_head, remaining_tail)) in
             self.spends.into_iter().zip(spend_pcds)
         {
             let action_digest = ActionDigest::new(cv, rk).map_err(ProveError::ActionDigest)?;
 
-            // Extract nullifier values for the downstream tachygram list; the
-            // step itself consumes the input PCDs.
-            let nf0 = nf_now_pcd.data().1;
-            let nf1 = nf_next_pcd.data().1;
-
             let app = &*PROOF_SYSTEM;
 
-            // SpendBind: fuse two epoch-adjacent nullifier headers with
-            // action data.
+            // SpendBind: bind the action to the spendable. The honest prover
+            // supplies the note preimage (`pk`, `value`, `rcm`, and the full `M`
+            // reassembled from `consumed_head ++ remaining_tail` for `psi`/`cm`),
+            // peels the two live pronullifier scalars off the tail, and builds the
+            // re-based live tail `nf_tail = nf_pair || rest`. SpendBind matches
+            // `nf_tail` against the lineage's `future` and republishes the pair.
+            let cm = note.commitment();
+            let pronf = consumed_head.concat(&remaining_tail);
+
+            let nullify_seq = |coeffs: &[Fp]| -> NfSeqPoly {
+                NfSeqPoly::from(
+                    coeffs
+                        .iter()
+                        .map(|&coeff| cm.nullify(ProNf::from(coeff)))
+                        .collect::<Vec<Nullifier>>()
+                        .as_slice(),
+                )
+            };
+
+            let tail_poly = ragu::Polynomial::from(remaining_tail);
+            let tail_coeffs = tail_poly.coefficients();
+            let Some((&m_now, after_now)) = tail_coeffs.split_first() else {
+                return Err(ProveError::SpendTailTooShort);
+            };
+            let Some((&m_next, after_next)) = after_now.split_first() else {
+                return Err(ProveError::SpendTailTooShort);
+            };
+            let live_now = ProNf::from(m_now);
+            let live_next = ProNf::from(m_next);
+            let nf_pair = NfSeqPoly::from([cm.nullify(live_now), cm.nullify(live_next)].as_slice());
+            let rest = nullify_seq(after_next);
+            // The live tail `nf_tail = nf_pair || rest` (all of `remaining_tail`,
+            // shifted) is the concat SpendBind confirms against `future`.
+            let nf_tail = nullify_seq(tail_coeffs);
+
             let (bind_pcd, ()) = app
                 .fuse(
                     rng,
                     spend::SpendBind,
-                    (rcv, alpha, *pak, note),
-                    nf_now_pcd,
-                    nf_next_pcd,
+                    (
+                        (note.pk, note.value, note.rcm, pronf),
+                        nf_pair,
+                        rest,
+                        nf_tail,
+                        (live_now, live_next),
+                        rcv,
+                        alpha,
+                        *pak,
+                    ),
+                    spendable_pcd,
+                    ragu::Proof::trivial().carry::<()>(()),
                 )
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: fuse spend with spendable.
-            let tachygrams = alloc::vec![Tachygram::from(nf0), Tachygram::from(nf1)];
-            let stamp = Stamp::prove_spend(rng, bind_pcd, spendable_pcd, tachygrams)
-                .map_err(ProveError::ProofFailed)?;
+            // SpendStamp: produce the stamp from the bound spend. The published
+            // nullifier pair is read off SpendBind's output header.
+            let nf_now = bind_pcd.data().2.0;
+            let nf_next = bind_pcd.data().2.1;
+            let tachygrams = alloc::vec![Tachygram::from(nf_now), Tachygram::from(nf_next)];
+            let stamp =
+                Stamp::prove_spend(rng, bind_pcd, tachygrams).map_err(ProveError::ProofFailed)?;
 
             entries.push((stamp, alloc::vec![action_digest]));
         }
@@ -301,6 +352,9 @@ pub enum ProveError {
     MergeFailed(ragu::Error),
     /// Number of spendable PCDs doesn't match number of spends.
     SpendableMismatch,
+    /// A spend's remaining pronullifier tail has fewer than the two live epochs
+    /// (present and next) the published nullifier pair requires.
+    SpendTailTooShort,
 }
 
 impl fmt::Display for ProveError {
@@ -311,6 +365,7 @@ impl fmt::Display for ProveError {
             | Self::ProofFailed(inner) => write!(f, "action proof failed: {inner}"),
             | Self::MergeFailed(inner) => write!(f, "stamp merge failed: {inner}"),
             | Self::SpendableMismatch => write!(f, "spendable PCD count mismatch"),
+            | Self::SpendTailTooShort => write!(f, "spend tail shorter than two epochs"),
         }
     }
 }
@@ -372,22 +427,28 @@ impl Stamp {
         })
     }
 
-    /// Creates a stamp for a spend action from pre-built spend and spendable
-    /// PCDs.
+    /// Creates a stamp for a spend action from a pre-built [`SpendHeader`] PCD.
     ///
-    /// The spendable's `anchor` is taken as the stamp's anchor — chain
-    /// validation lives inside the spendable lineage, not here.
+    /// The spend's `anchor` (threaded from the
+    /// [`SpendableHeader`](spendable::SpendableHeader) that `SpendBind`
+    /// consumed) is taken as the stamp's anchor; chain validation lives
+    /// inside the spendable lineage that fed the bind.
     pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         spend_pcd: ragu::Pcd<spend::SpendHeader>,
-        spendable_pcd: ragu::Pcd<spendable::SpendableHeader>,
         tachygrams: Vec<Tachygram>,
     ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let anchor = spendable_pcd.data().1;
+        let anchor = spend_pcd.data().3;
 
-        let (pcd, ()) = app.fuse(rng, SpendStamp, (), spend_pcd, spendable_pcd)?;
+        let (pcd, ()) = app.fuse(
+            rng,
+            SpendStamp,
+            (),
+            spend_pcd,
+            ragu::Proof::trivial().carry::<()>(()),
+        )?;
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok(Self {

@@ -1,28 +1,28 @@
-//! Spendable bootstrap, lift, and cross-epoch rollover.
+//! Spendable bootstrap and lift.
 //!
-//! Bootstrap runs entirely on the user device. The wallet's
-//! [`NullifierHeader`] carries `(cm, nf, epoch)`; [`SpendableInit`]
-//! fuses it with a freely-witnessed `(pre_cm_anchor, stamp_tg_set)`,
-//! verifying `cm ∈ stamp_tg_set`, and emits a [`SpendableHeader`]
-//! carrying `(nf, post_cm_anchor)` — the running anchor immediately
-//! after the cm-stamp's absorption. The cm↔nf binding is structurally
-//! inherited through the [`NullifierHeader`] (GGM-bound). The wallet's
-//! epoch claim flows through `nf` itself, so no epoch alignment check
-//! is needed here.
+//! The spendable carries a commitment `future` to the unconsumed coefficients
+//! of the nullifier polynomial $N = M + \mathsf{cm}\cdot\mathbb{1}$,
+//! Pedersen-trapdoored with `cm`. Pedersen-independence of the coefficient
+//! generators from the blinding generator pins both $N$ *and* the `cm` value:
+//! any other note would need a different polynomial *and* a different `cm` to
+//! satisfy the same point.
 //!
-//! `pre_cm_anchor` is freely witnessed at this step; the spendable
-//! reaches a real published anchor only by extending through
-//! [`SpendableLift`] over [`Unspent`] segments, which by construction
-//! prove nf-exclusion at every covered stamp. There is no path that
-//! advances a spendable's anchor without a per-stamp nf-check.
+//! [`SpendableInit`] witnesses the note and unshifted $M$, derives $\psi =
+//! \sum_i M_i G_i$, derives `cm` from `(rcm, pk, value, derived psi)`, checks
+//! `cm` is in `creation_set`, anchors the spendable immediately after the
+//! creation stamp, and emits the homomorphically shifted-and-trapdoored initial
+//! `future` (the cm-shift $M \mapsto N$ then the `cm` trapdoor, two distinct
+//! commit-level operations). Each [`SpendableLift`] consumes one composed
+//! [`Unspent`] segment, derives `cm` from the witnessed note fields and $M$
+//! (never witnessed naked) to verify the trapped commit, validates the
+//! segment's polynomial as a prefix of the spendable's current future by
+//! commit-binding, shrinks `future` to the trapdoored complement, and advances
+//! the anchor.
 //!
-//! Sync services update spendables via lifts ([`SpendableLift`]) and
-//! cross-epoch rollovers ([`SpendableRollover`] →
-//! [`SpendableEpochLift`]). [`SpendableRollover`] is the only step that
-//! emits the [`Anchor::next_epoch`] boundary domain — it lifts the old
-//! epoch's terminal anchor into the new epoch's initial anchor, which
-//! the new-epoch [`Unspent`] then extends with ordinary per-stamp
-//! advances.
+//! The trapdoor makes the whole spendable lineage wallet-only (the prover must
+//! know the note and $M$ to derive `cm` and verify the trapped commit), so
+//! [`SpendableLift`] is no longer delegate-safe. Sync-side work moves up to
+//! [`Unspent`] composition, which never touches `cm`, $\psi$, or $M$.
 
 extern crate alloc;
 
@@ -30,161 +30,179 @@ use alloc::vec::Vec;
 
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
-use ragu::{Header, Index, Step, Suffix};
+use ragu::{Commitment, Header, Index, Polynomial, Step, StepCtx, Suffix, enforce_poly_concat};
 
-use super::{
-    delegation::{DelegateNullifierHeader, NullifierHeader},
-    pool::Unspent,
-};
+use super::pool::Unspent;
 use crate::{
-    note::Nullifier,
-    primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    Note,
+    constants::{NOTE_LIFETIME_MAX, NOTE_VALUE_MAX},
+    keys::PaymentKey,
+    note::{CommitmentTrapdoor, Value},
+    primitives::{Anchor, BlindNfSeqCommit, NfSeqPoly, ProNfSeqPoly, TachygramSetPoly},
 };
 
-/// Wallet's spendable position. Identified by `nf` alone — `nf` uniquely
-/// encodes `(key, epoch)` via GGM determinism, so sync services can update
-/// a spendable by `nf` without knowing `delegation_id`.
+/// Spendable position.
 ///
-/// `anchor` at [`SpendableInit`] is computed in-circuit as
-/// `pre_cm_anchor.next_stamp(stamp_commit)`, but its PCD lineage roots
-/// in `SpendableInit`'s unbound `pre_cm_anchor: Anchor` witness.
-/// Binding on that witness closes only through subsequent
-/// [`SpendableLift`] steps over [`Unspent`] segments (each `Unspent`
-/// proves nf-exclusion at a real stamp), plus consensus anchor
-/// membership. There is no path that advances a spendable's anchor
-/// without a per-stamp nf-check.
+/// `(future, anchor)`.
+///
+/// `future` commits to the unconsumed tail of the nullifier polynomial $N = M +
+/// \mathsf{cm}\cdot\mathbb{1}$ re-based to degree 0, Pedersen-trapdoored with
+/// the note's `cm`. Pinned through every [`SpendableLift`] by the trapdoor
+/// identity.
+///
+/// `anchor` is the spendable's current pool position. [`SpendableInit`] sets
+/// it to `pre_cm_anchor.next_stamp(creation_commit)`, the anchor immediately
+/// after the creation (cm) stamp, so the first [`SpendableLift`] can only
+/// consume an [`Unspent`] adjacent to the creation context; each later lift
+/// advances it to the consumed segment's end.
+///
+/// Carries no `cm`, $\psi$, `nk`, or $M$ directly — `cm` is hidden inside
+/// the trapdoored commit. The spendable is wallet-only: every step that
+/// verifies `future` against witnessed coefficients needs `cm` as
+/// a witness.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
 impl Header for SpendableHeader {
-    /// `(nf, anchor)`. `nf` is GGM-bound to `(note, epoch)` upstream
-    /// in [`super::delegation::NullifierHeader`]. `anchor` is computed
-    /// at [`SpendableInit`] as `pre_cm_anchor.next_stamp(stamp_commit)`
-    /// over a freely-witnessed `pre_cm_anchor`, then advanced over
-    /// [`Unspent`] segments at [`SpendableLift`] /
-    /// [`SpendableEpochLift`].
-    type Data = (Nullifier, Anchor);
+    /// `(future, anchor)`. `future` shrinks per lift, the trapdoor inside it
+    /// stays constant; `anchor` advances per lift.
+    type Data = (BlindNfSeqCommit, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(7);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32);
-        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        let mut out = Vec::with_capacity(32 * 2);
+        let future_bytes: [u8; 32] = Commitment::from(data.0).into();
+        out.extend_from_slice(&future_bytes);
         out.extend_from_slice(&Fp::from(data.1).to_repr());
         out
     }
 }
 
-/// Cross-epoch nf rotation pair.
+/// Bootstrap a spendable from a note's fields and its pronullifier polynomial.
 ///
-/// `nfs[0]` is the old-epoch `nf`, `nfs[1]` the new-epoch `nf`; the new
-/// epoch index is exposed for downstream consumers (specifically
-/// [`SpendableRollover`]'s boundary hash). Consecutive epochs are
-/// verified at construction.
+/// Wallet-only seed. Witnesses the note's non-psi fields (`pk`, `value`,
+/// `rcm`) and the unshifted pronullifier polynomial $M$ — never a `Note` and
+/// never a stored `psi`. It derives $\psi = \sum_i M_i G_i$ from the gadget,
+/// then `cm = Poseidon(rcm, pk, value, psi)`, so the spendable's identity is
+/// bound to the polynomial the prover actually knows. Verifies `cm` is in
+/// `creation_set` against the witnessed creation stamp's tachygrams (a
+/// divergent $M$ yields a divergent `cm` that misses the set), anchors the
+/// spendable at `pre_cm_anchor.next_stamp(&creation_commit)` (the position
+/// immediately after the creation stamp), and emits the cm-shifted,
+/// cm-trapdoored initial `future` (all of $N$, blinded with `cm`). All
+/// witnesses are dropped from the output.
 ///
-/// Produced by either [`RolloverFuse`] (user device, lineage = `cm`
-/// equality) or [`DelegateRolloverFuse`] (sync service, lineage =
-/// `delegation_id` equality); the resulting header is identical either
-/// way.
-#[derive(Clone, Debug)]
-pub struct NullifierRolloverHeader;
-
-impl Header for NullifierRolloverHeader {
-    /// `(old_nf, new_nf, new_epoch)`. Produced by [`RolloverFuse`]
-    /// (user device, lineage by `cm` equality) or
-    /// [`DelegateRolloverFuse`] (sync service, lineage by
-    /// `delegation_id` equality); both verify consecutive epochs.
-    type Data = (Nullifier, Nullifier, EpochIndex);
-
-    const SUFFIX: Suffix = Suffix::new(8);
-
-    fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 4);
-        out.extend_from_slice(&Fp::from(data.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.1).to_repr());
-        out.extend_from_slice(&data.2.0.to_le_bytes());
-        out
-    }
-}
-
-/// A spendable rolled forward through an nf rotation, awaiting a
-/// new-epoch anchor from [`SpendableEpochLift`].
+/// Claim: *the spendable's initial state is bound to a real note included in
+/// a real pool stamp; the trapdoor pins the note's `cm` into every
+/// downstream `future`.*
 ///
-/// Carries `new_nf` (which the new-epoch [`Unspent`] must cover) and
-/// `boundary_anchor` (output of [`Anchor::next_epoch`] applied to the
-/// old epoch's terminal anchor — i.e., the new epoch's initial
-/// anchor). The new-epoch `Unspent`'s `prev_anchor` must equal this
-/// boundary anchor. The old-epoch nullifier is dropped: [`SpendableRollover`]
-/// has already discharged it against the input spendable's `nf`.
-#[derive(Clone, Debug)]
-pub struct SpendableRolloverHeader;
-
-impl Header for SpendableRolloverHeader {
-    /// `(new_nf, boundary_anchor)`. `boundary_anchor` is computed at
-    /// [`SpendableRollover`] via `Anchor::next_epoch` on the
-    /// spendable's prior anchor, the only place the `Tachyon-EpochStp`
-    /// domain is invoked. The new-epoch [`Unspent`]'s `prev_anchor` is
-    /// the only way to discharge it.
-    type Data = (Nullifier, Anchor);
-
-    const SUFFIX: Suffix = Suffix::new(9);
-
-    fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32);
-        out.extend_from_slice(&Fp::from(data.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.1).to_repr());
-        out
-    }
-}
-
-/// Bootstrap a [`SpendableHeader`] from the wallet's [`NullifierHeader`].
-///
-/// Witness `(pre_cm_anchor, stamp_tg_set)`: verifies `cm ∈ stamp_tg_set`
-/// (cm comes from the left header) and emits a [`SpendableHeader`]
-/// carrying `(nf, pre_cm_anchor.next_stamp(commit))` — the running
-/// anchor immediately after the cm-stamp's absorption.
-///
-/// `pre_cm_anchor` is freely witnessed; the spendable reaches a real
-/// published anchor only by extending through [`SpendableLift`] over
-/// [`Unspent`] segments built from real stamps. The cm-block itself
-/// cannot contain the wallet's `nf` (`nf` is GGM-bound to `cm`), so no
-/// nf-exclusion check is needed at the cm-stamp; the wallet's epoch
-/// claim flows through `nf` (GGM-bound at the [`NullifierHeader`]).
+/// TODO:
+///  - instead of using index 0 for the first nullifier, should we simply modulo
+///    the epoch?
+///  - what if two identical notes sharing $M$ appear two epochs apart?
+///  - what if $M$ contains repeated values?
 #[derive(Debug)]
 pub struct SpendableInit;
 
 impl Step for SpendableInit {
     type Aux<'source> = ();
-    type Left = NullifierHeader;
+    type Left = ();
     type Output = SpendableHeader;
     type Right = ();
-    /// `(pre_cm_anchor, stamp_tg_set)`.
-    type Witness<'source> = (Anchor, TachygramSetPoly);
+    /// `(note, creation_set, pre_cm_anchor)` with `note = (pk, value, rcm, M)`.
+    type Witness<'source> = (
+        (PaymentKey, Value, CommitmentTrapdoor, ProNfSeqPoly),
+        TachygramSetPoly,
+        Anchor,
+    );
 
-    const INDEX: Index = Index::new(13);
+    const INDEX: Index = Index::new(7);
 
     fn witness<'source>(
         &self,
-        ctx: &mut ragu::StepCtx<'_>,
-        (pre_cm_anchor, stamp_tg_set): Self::Witness<'source>,
-        (cm, nf, _epoch): <Self::Left as Header>::Data,
+        _ctx: &mut StepCtx<'_>,
+        ((pk, value, rcm, pronf), creation_set, pre_cm_anchor): Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
-        let cm_point = Fp::from(cm);
-        let eval = stamp_tg_set.eval(cm_point);
-        ctx.enforce_poly_query(stamp_tg_set.commit().into(), cm_point, eval)?;
-        if eval != Fp::ZERO {
-            return Err(ragu::Error("SpendableInit: commitment not in set"));
+        if u64::from(value) == 0 {
+            return Err(ragu::Error("SpendableInit: zero-value note"));
         }
-        let stamp_commit = stamp_tg_set.commit();
-        let post_cm_anchor = pre_cm_anchor.next_stamp(&stamp_commit);
-        Ok(((nf, post_cm_anchor), ()))
+        if u64::from(value) > NOTE_VALUE_MAX {
+            return Err(ragu::Error("SpendableInit: note value exceeds maximum"));
+        }
+
+        // psi := commit(M), derived from the gadget. cm derives from psi; the
+        // cm-in-set check then binds M to a real note (a divergent M yields a
+        // divergent cm that misses the real creation stamp).
+        let psi = pronf.commit();
+        let cm = Note {
+            pk,
+            value,
+            psi,
+            rcm,
+        }
+        .commitment();
+        if creation_set.eval(Fp::from(cm)) != Fp::ZERO {
+            return Err(ragu::Error("SpendableInit: cm not in creation stamp"));
+        }
+        let creation_commit = creation_set.commit();
+        let anchor = pre_cm_anchor.next_stamp(&creation_commit);
+        // Build the initial `future` from psi as two distinct homomorphic
+        // commit-level operations: the cm-shift M -> N (every coefficient + cm,
+        // via ProNfSeqCommit::shift) then the cm-trapdoor (blind with cm*H, via
+        // NfSeqCommit::blind). The shift basis is the constant full width L
+        // (NOTE_LIFETIME_MAX), never a read length: M is full-rank L by type, so
+        // every coefficient (including any trailing zero) shifts by cm. cm is a
+        // private witnessed scalar, so neither op makes it public.
+        let future = psi.shift(cm, NOTE_LIFETIME_MAX).blind(cm);
+        Ok(((future, anchor), ()))
     }
 }
 
-/// Advance a [`SpendableHeader`]'s `anchor` along an [`Unspent`]
-/// segment whose `prev_anchor` equals the spendable's current anchor.
+/// Shrink the spendable's `future` by the [`Unspent`]'s polynomial and
+/// advance the anchor to the [`Unspent`]'s end.
+///
+/// Witnesses `spendable_future` (the lineage's future nullifiers $N_i = M_i +
+/// \mathsf{cm}$), the [`Unspent`]'s `unspent_elapsed` nullifiers (also shifted,
+/// since the wallet shares shifted nf values with the delegate), the complement
+/// `new_future`, and the note's non-psi fields plus $M$, from which it derives
+/// `cm` (the trapdoor established at [`SpendableInit`]) — `cm` is never
+/// witnessed naked. Trapdooring `spendable_future` with `cm`
+/// (`spendable_future.commit().blind(cm) == future`) forces both the nullifier
+/// coefficients *and* the `cm` to match the spendable's lineage. The Unspent's
+/// commit is zero-blind (it doesn't know `cm`). The new `future` is the
+/// trapdoored commit of `new_future`; a commit-binding check confirms
+/// `spendable_future = unspent_elapsed || new_future`, so we never strip.
+///
+/// Soundness: the spendable's `future` is Pedersen-bound through every
+/// successive lift, with the trapdoor riding along. The chain traces back to
+/// the initial `future` (all of $N = M + \mathsf{cm}\cdot\mathbb{1}$,
+/// trapdoored with `cm`) at [`SpendableInit`], so by induction the current
+/// `future` pins the same `cm` and is $N$ minus the lineage's consumed prefix.
+/// Each consumed coefficient is one of $N$'s, in order, matching the nullifiers
+/// the [`Unspent`] threaded through real per-stamp non-membership checks.
+///
+/// Because deriving and verifying the trapped commit requires the note and
+/// $M$, this step is wallet-only.
+///
+/// # The shift offset comes from the consumed segment's crossing count
+///
+/// The split `spendable_future = unspent_elapsed || new_future` shifts by the
+/// number of epoch-boundary crossings the consumed [`Unspent`] spanned. That
+/// count is threaded in the [`Unspent`] header (`elapsed_size`) and passed as
+/// the concat offset, so the step never reads a polynomial length, and the
+/// faithful opening relation pins the offset to it (a wrong offset cannot
+/// pass). The count is delegate-side data and does not propagate onto the
+/// spendable header, so the wallet's cumulative position stays private. The
+/// tip-tie `present_nf == new_future.eval(0)` then attributes the Unspent's
+/// in-progress tip to the spendable's carried-forward present epoch, closing
+/// the partial-tip-epoch gap. $M$ stays full length $L$ = `NOTE_LIFETIME_MAX`
+/// by its structural rank ([`SpendableInit`]'s shift basis is the const-size
+/// $\sum_{i<L} G_i$).
+///
+/// [`SpendableInit`]: super::spendable::SpendableInit
 #[derive(Debug)]
 pub struct SpendableLift;
 
@@ -193,167 +211,99 @@ impl Step for SpendableLift {
     type Left = SpendableHeader;
     type Output = SpendableHeader;
     type Right = Unspent;
-    type Witness<'source> = ();
+    /// `(note, spendable_future, unspent_elapsed, new_future)` with `note =
+    /// (pk, value, rcm, M)`. `spendable_future` is the lineage's future
+    /// nullifiers ($N[\text{consumed}..]$); `unspent_elapsed` the consumed
+    /// segment's elapsed nullifiers; `new_future` the witnessed complement
+    /// left after the split.
+    type Witness<'source> = (
+        (PaymentKey, Value, CommitmentTrapdoor, ProNfSeqPoly),
+        NfSeqPoly,
+        NfSeqPoly,
+        NfSeqPoly,
+    );
 
-    const INDEX: Index = Index::new(14);
+    const INDEX: Index = Index::new(8);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (spendable_nf, spendable_anchor): <Self::Left as Header>::Data,
-        (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data,
+        ctx: &mut StepCtx<'_>,
+        ((pk, value, rcm, pronf), spendable_future, unspent_elapsed, new_future): Self::Witness<
+            'source,
+        >,
+        (future, spendable_anchor): <Self::Left as Header>::Data,
+        ((right_elapsed, right_size), unspent_prev, unspent_end, present_nf): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if unspent_nf != spendable_nf {
+        if u64::from(value) == 0 {
+            return Err(ragu::Error("SpendableLift: zero-value note"));
+        }
+        if u64::from(value) > NOTE_VALUE_MAX {
+            return Err(ragu::Error("SpendableLift: note value exceeds maximum"));
+        }
+        // cm is never witnessed naked: derive it from the witnessed note fields
+        // and M so this step is bound to a note the prover actually knows.
+        let psi = pronf.commit();
+        let cm = Note {
+            pk,
+            value,
+            psi,
+            rcm,
+        }
+        .commitment();
+        // Trapdoor the witnessed `spendable_future` with cm (blind with cm*H) and
+        // match the spendable's `future`; by Pedersen independence this pins both
+        // the nullifier coefficients and cm to the spendable's lineage. The
+        // Unspent's commit is zero-blind (it doesn't know cm).
+        if future != spendable_future.commit().blind(cm) {
             return Err(ragu::Error(
-                "SpendableLift: unspent does not relate to spendable",
+                "SpendableLift: spendable_future does not match future",
             ));
         }
-        if unspent_prev_anchor != spendable_anchor {
+        if unspent_elapsed.commit() != right_elapsed {
+            return Err(ragu::Error(
+                "SpendableLift: unspent_elapsed does not match header",
+            ));
+        }
+        if spendable_anchor != unspent_prev {
             return Err(ragu::Error(
                 "SpendableLift: unspent not adjacent to spendable",
             ));
         }
-        Ok(((spendable_nf, unspent_end_anchor), ()))
-    }
-}
-
-/// Combine two [`NullifierHeader`]s into a [`NullifierRolloverHeader`] via
-/// lineage-bound `cm` equality. **User device.**
-#[derive(Debug)]
-pub struct RolloverFuse;
-
-impl Step for RolloverFuse {
-    type Aux<'source> = ();
-    type Left = NullifierHeader;
-    type Output = NullifierRolloverHeader;
-    type Right = NullifierHeader;
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(15);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (left_cm, left_nf, left_epoch): <Self::Left as Header>::Data,
-        (right_cm, right_nf, right_epoch): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if left_cm != right_cm {
-            return Err(ragu::Error("RolloverFuse: nullifiers not related"));
-        }
-        if right_epoch.0 != left_epoch.0 + 1 {
-            return Err(ragu::Error("RolloverFuse: nullifiers not adjacent"));
-        }
-        Ok(((left_nf, right_nf, right_epoch), ()))
-    }
-}
-
-/// Combine two [`DelegateNullifierHeader`]s into a
-/// [`NullifierRolloverHeader`] via `delegation_id` equality. **Sync service
-/// or user.**
-#[derive(Debug)]
-pub struct DelegateRolloverFuse;
-
-impl Step for DelegateRolloverFuse {
-    type Aux<'source> = ();
-    type Left = DelegateNullifierHeader;
-    type Output = NullifierRolloverHeader;
-    type Right = DelegateNullifierHeader;
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(16);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (left_nf, left_epoch, left_delegation_id): <Self::Left as Header>::Data,
-        (right_nf, right_epoch, right_delegation_id): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if left_delegation_id != right_delegation_id {
-            return Err(ragu::Error("DelegateRolloverFuse: nullifiers not related"));
-        }
-        if right_epoch.0 != left_epoch.0 + 1 {
-            return Err(ragu::Error("DelegateRolloverFuse: nullifiers not adjacent"));
-        }
-        Ok(((left_nf, right_nf, right_epoch), ()))
-    }
-}
-
-/// Lift a [`SpendableHeader`] across an epoch boundary.
-///
-/// Checks `spendable.nf == old_nf` from the [`NullifierRolloverHeader`],
-/// then applies [`Anchor::next_epoch`] to the spendable's current anchor
-/// to produce the new epoch's `boundary_anchor`. Emits `(new_nf,
-/// boundary_anchor)` for [`SpendableEpochLift`] to consume against a
-/// new-epoch [`Unspent`] whose `prev_anchor` equals this boundary.
-///
-/// This is the only step in the proof tree that invokes the
-/// [`Anchor::next_epoch`] domain. `new_epoch` enters the boundary hash
-/// directly, so any tampered value diverges from the published anchor.
-#[derive(Debug)]
-pub struct SpendableRollover;
-
-impl Step for SpendableRollover {
-    type Aux<'source> = ();
-    type Left = SpendableHeader;
-    type Output = SpendableRolloverHeader;
-    type Right = NullifierRolloverHeader;
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(17);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (spendable_nf, spendable_anchor): <Self::Left as Header>::Data,
-        (rollover_old_nf, rollover_new_nf, rollover_new_epoch): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if spendable_nf != rollover_old_nf {
-            return Err(ragu::Error("SpendableRollover: nullifiers don't match"));
-        }
-        let boundary_anchor = spendable_anchor.next_epoch(rollover_new_epoch);
-        Ok(((rollover_new_nf, boundary_anchor), ()))
-    }
-}
-
-/// Land a rolled-over spendable on a new-epoch anchor.
-///
-/// Merges with a new-epoch [`Unspent`] whose `prev_anchor` equals the
-/// rollover's `boundary_anchor`. The boundary anchor cryptographically
-/// binds `new_epoch` via [`Anchor::next_epoch`], and the new-epoch
-/// [`Unspent`] is bound to the wallet's new-epoch identity via
-/// `unspent.nf == new_nf` (GGM-bound upstream in the NullifierHeader).
-/// Together these pin the wallet to the real E→E+1 epoch transition.
-#[derive(Debug)]
-pub struct SpendableEpochLift;
-
-impl Step for SpendableEpochLift {
-    type Aux<'source> = ();
-    type Left = SpendableRolloverHeader;
-    type Output = SpendableHeader;
-    type Right = Unspent;
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(18);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (rollover_new_nf, rollover_boundary_anchor): <Self::Left as Header>::Data,
-        (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if unspent_nf != rollover_new_nf {
-            return Err(ragu::Error("SpendableEpochLift: nullifiers not related"));
-        }
-        if unspent_prev_anchor != rollover_boundary_anchor {
+        // Shrink `future` by the consumed segment: prove `spendable_future =
+        // unspent_elapsed || new_future` at `offset = right.elapsed_size` (the
+        // threaded crossing count, never a read length) via the faithful opening
+        // relation. `spendable_future` is pinned to the lineage above and
+        // `unspent_elapsed` to the absence proof, so the count-pinned offset
+        // forces `new_future` to be the genuine complement after exactly the
+        // elapsed crossings -- a wrong offset cannot pass.
+        let offset = usize::try_from(right_size).map_err(|_too_many_crossings| {
+            ragu::Error("SpendableLift: crossing count exceeds usize")
+        })?;
+        // `spendable_future` is already pinned to the lineage by the future-match
+        // above and `unspent_elapsed` to the absence proof, so confirming the
+        // concat at the count-pinned offset forces `new_future` to be the genuine
+        // complement after exactly the elapsed crossings.
+        enforce_poly_concat(
+            ctx,
+            &Polynomial::from(unspent_elapsed),
+            &Polynomial::from(new_future.clone()),
+            offset,
+            &Polynomial::from(spendable_future),
+        )
+        .map_err(|_relation_err| {
+            ragu::Error("SpendableLift: unspent_elapsed is not a prefix of future")
+        })?;
+        // Tie the consumed Unspent's in-progress tip to the spendable's
+        // carried-forward present epoch: new_future's degree-0 coefficient (the
+        // new present nf) must equal the threaded present_nf. Closes the
+        // partial-tip-epoch absence gap.
+        if Fp::from(present_nf) != new_future.eval(Fp::ZERO) {
             return Err(ragu::Error(
-                "SpendableEpochLift: unspent prev_anchor must equal rollover boundary_anchor",
+                "SpendableLift: present_nf does not match new future tip",
             ));
         }
-        Ok(((rollover_new_nf, unspent_end_anchor), ()))
+        // The new `future` is the complement, re-trapdoored with the same cm.
+        let new_future_commit = new_future.commit().blind(cm);
+        Ok(((new_future_commit, unspent_end), ()))
     }
 }

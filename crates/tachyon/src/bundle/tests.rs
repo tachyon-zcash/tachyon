@@ -4,11 +4,13 @@ use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
 use crate::{
+    constants::EPOCH_SIZE,
     digest::blake2b::COMMIT_NO_BUNDLE,
     fixtures::{
         PoolSim, WalletSim, action_digests, build_autonome, build_output_stamp, mock_sighash,
-        random_action, random_block_with,
+        random_action, random_block, random_block_with,
     },
+    primitives::BlockHeight,
 };
 
 #[test]
@@ -91,12 +93,14 @@ fn payment_bundle_verifies() {
     let mut pool = PoolSim::genesis(rng);
     pool.mine(random_block_with(rng, &[vec![input_note.commitment()]], 50));
     let height = pool.height();
-    let anchor = pool.anchor_at(height);
-    let spend = sender.fresh_spend(rng, &pool, height, input_note);
+    let spendable_pcd = sender.fresh_spend(rng, &pool, height, &input_note);
+    let consumed_head = sender.consumed_head(&input_note, 0);
+    let remaining_tail = sender.remaining_tail(&input_note, 0);
+    let anchor = spendable_pcd.data().1;
     let stamped = sender.autonome(
         rng,
         anchor,
-        alloc::vec![spend],
+        alloc::vec![(input_note, spendable_pcd, consumed_head, remaining_tail)],
         alloc::vec![output_note, change_note],
     );
     let sighash = mock_sighash(stamped.commitment().unwrap());
@@ -150,6 +154,9 @@ fn stamp_verify_action_multiset_invariants() {
     }
 }
 
+// Two autonomes from independently-created notes are each lifted over their
+// creation epoch to a common epoch-final anchor, so their stamps satisfy
+// MergeStamp's anchor-equality and aggregate into one innocent stamp.
 #[test]
 fn innocent_aggregate_from_two_autonomes() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -160,20 +167,50 @@ fn innocent_aggregate_from_two_autonomes() {
     let spend_b = wallet.random_note(rng, 500);
     let output_b = wallet.random_note(rng, 200);
 
-    // Mine both spend cms into the same block so both autonomes share anchor.
+    // Each spend cm is its own stamp, so the two spendables start at distinct
+    // anchors; lifting each over its creation epoch brings them together.
     let mut pool = PoolSim::genesis(rng);
     pool.mine(random_block_with(
         rng,
         &[vec![spend_a.commitment()], vec![spend_b.commitment()]],
         50,
     ));
-    let height = pool.height();
-    let anchor = pool.anchor_at(height);
+    let cm_height = pool.height();
+    while pool.height() < BlockHeight(EPOCH_SIZE) {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
 
-    let tuple_a = wallet.fresh_spend(rng, &pool, height, spend_a);
-    let tuple_b = wallet.fresh_spend(rng, &pool, height, spend_b);
-    let autonome_a = wallet.autonome(rng, anchor, alloc::vec![tuple_a], alloc::vec![output_a]);
-    let autonome_b = wallet.autonome(rng, anchor, alloc::vec![tuple_b], alloc::vec![output_b]);
+    let init_a = wallet.spendable_init(rng, &spend_a, &pool, cm_height);
+    let sp_a = wallet.lift_over_creation_epoch(rng, &pool, &spend_a, cm_height, init_a);
+    let init_b = wallet.spendable_init(rng, &spend_b, &pool, cm_height);
+    let sp_b = wallet.lift_over_creation_epoch(rng, &pool, &spend_b, cm_height, init_b);
+    let anchor_a = sp_a.data().1;
+    let anchor_b = sp_b.data().1;
+    assert_eq!(anchor_a, anchor_b, "lifts land on a common anchor");
+
+    // Each spendable was lifted over its creation epoch, so one epoch is consumed.
+    let autonome_a = wallet.autonome(
+        rng,
+        anchor_a,
+        alloc::vec![(
+            spend_a,
+            sp_a,
+            wallet.consumed_head(&spend_a, 1),
+            wallet.remaining_tail(&spend_a, 1)
+        )],
+        alloc::vec![output_a],
+    );
+    let autonome_b = wallet.autonome(
+        rng,
+        anchor_b,
+        alloc::vec![(
+            spend_b,
+            sp_b,
+            wallet.consumed_head(&spend_b, 1),
+            wallet.remaining_tail(&spend_b, 1)
+        )],
+        alloc::vec![output_b],
+    );
 
     let digests_a = action_digests(&autonome_a.actions);
     let digests_b = action_digests(&autonome_b.actions);
@@ -230,20 +267,56 @@ fn based_aggregate_with_two_adjuncts() {
         ],
         50,
     ));
-    let height = pool.height();
-    let anchor = pool.anchor_at(height);
+    let cm_height = pool.height();
+    while pool.height() < BlockHeight(EPOCH_SIZE) {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
 
-    let based_tuple = wallet.fresh_spend(rng, &pool, height, based_spend);
-    let a_tuple = wallet.fresh_spend(rng, &pool, height, a_spend);
-    let b_tuple = wallet.fresh_spend(rng, &pool, height, b_spend);
+    // Lift each spendable over its creation epoch to the shared epoch-final anchor.
+    let based_init = wallet.spendable_init(rng, &based_spend, &pool, cm_height);
+    let based_sp = wallet.lift_over_creation_epoch(rng, &pool, &based_spend, cm_height, based_init);
+    let a_init = wallet.spendable_init(rng, &a_spend, &pool, cm_height);
+    let a_sp = wallet.lift_over_creation_epoch(rng, &pool, &a_spend, cm_height, a_init);
+    let b_init = wallet.spendable_init(rng, &b_spend, &pool, cm_height);
+    let b_sp = wallet.lift_over_creation_epoch(rng, &pool, &b_spend, cm_height, b_init);
+    let anchor = based_sp.data().1;
+    assert_eq!(anchor, a_sp.data().1, "lifts land on a common anchor");
+    assert_eq!(anchor, b_sp.data().1, "lifts land on a common anchor");
+
+    // Each spendable was lifted over its creation epoch, so one epoch is consumed.
     let mut becomes_based = wallet.autonome(
         rng,
         anchor,
-        alloc::vec![based_tuple],
+        alloc::vec![(
+            based_spend,
+            based_sp,
+            wallet.consumed_head(&based_spend, 1),
+            wallet.remaining_tail(&based_spend, 1)
+        )],
         alloc::vec![based_output],
     );
-    let autonome_a = wallet.autonome(rng, anchor, alloc::vec![a_tuple], alloc::vec![a_output]);
-    let autonome_b = wallet.autonome(rng, anchor, alloc::vec![b_tuple], alloc::vec![b_output]);
+    let autonome_a = wallet.autonome(
+        rng,
+        anchor,
+        alloc::vec![(
+            a_spend,
+            a_sp,
+            wallet.consumed_head(&a_spend, 1),
+            wallet.remaining_tail(&a_spend, 1)
+        )],
+        alloc::vec![a_output],
+    );
+    let autonome_b = wallet.autonome(
+        rng,
+        anchor,
+        alloc::vec![(
+            b_spend,
+            b_sp,
+            wallet.consumed_head(&b_spend, 1),
+            wallet.remaining_tail(&b_spend, 1)
+        )],
+        alloc::vec![b_output],
+    );
 
     let sighash = mock_sighash(becomes_based.commitment().unwrap());
 

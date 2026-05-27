@@ -11,21 +11,21 @@
 //! | ----- | ---- | ----------- |
 //! | `pk`  | [`PaymentKey`] | Recipient's payment key |
 //! | `value`   | [`Value`] | Note value |
-//! | `psi` | [`NullifierTrapdoor`] | Nullifier trapdoor ($\psi$) |
+//! | `psi` | [`ProNfSeqCommit`] | Commitment to the pronullifier sequence ($\psi = \sum_i M_i G_i$) |
 //! | `rcm` | [`CommitmentTrapdoor`] | Note commitment randomness |
 //!
-//! Both $\psi$ and $rcm$ can be derived from a shared key negotiated
-//! through the out-of-band payment protocol.
+//! $rcm$ can be derived from a shared key negotiated through the out-of-band
+//! payment protocol; $\psi$ is the recipient's commitment to its pronullifier
+//! polynomial $M$, supplied in the payment request.
 //!
 //! ## Nullifier Derivation
 //!
-//! $mk = \text{KDF}(\psi, nk)$, then $nf = F_{mk}(\text{flavor})$ via a GGM
-//! tree PRF instantiated from Poseidon. The "flavor" is the epoch at which the
-//! nullifier is revealed, enabling range-restricted delegation.
-//!
-//! Evaluated natively by wallets and the Oblivious Syncing Service (via
-//! delegated GGM prefix keys). The Ragu circuit constrains that the
-//! externally-provided nullifier matches the note's private fields.
+//! Each epoch's nullifier is a coefficient of the recipient's pronullifier
+//! polynomial $M$ shifted by the note commitment, $\mathsf{nf}_e = M_e +
+//! \mathsf{cm}$, with $M$ committed as $\psi = \sum_i M_i G_i$ and frozen
+//! into `cm`. Wallets read pronullifiers from $M$ natively; the Ragu proof
+//! tree binds the published nullifier sequence to $\psi$ through the lift
+//! relation rather than re-deriving it.
 //!
 //! ## Note Commitment
 //!
@@ -36,43 +36,15 @@
 use core::fmt;
 
 use ff::Field as _;
-use pasta_curves::Fp;
+use pasta_curves::{EqAffine, Fp, arithmetic::CurveAffine as _};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
     constants::NOTE_VALUE_MAX,
     digest::poseidon,
-    keys::{NullifierKey, PaymentKey},
-    primitives::{EpochIndex, Tachygram},
+    keys::PaymentKey,
+    primitives::{ProNfSeqCommit, Tachygram},
 };
-
-/// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
-///
-/// Used to derive the master root key: $mk = \text{KDF}(\psi, nk)$.
-/// The GGM tree PRF then evaluates $nf = F_{mk}(\text{flavor})$.
-/// Prefix keys derived from $mk$ enable range-restricted delegation.
-#[derive(Clone, Copy)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct NullifierTrapdoor(pub(super) Fp);
-
-impl NullifierTrapdoor {
-    /// Generate a fresh random trapdoor.
-    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Fp::random(rng))
-    }
-}
-
-impl From<Fp> for NullifierTrapdoor {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-impl From<NullifierTrapdoor> for Fp {
-    fn from(trapdoor: NullifierTrapdoor) -> Self {
-        trapdoor.0
-    }
-}
 
 /// Note commitment trapdoor ($rcm$) — randomness that blinds the note
 /// commitment.
@@ -112,8 +84,9 @@ pub struct Note {
     /// The note value in zatoshis, less than 2.1e15
     pub value: Value,
 
-    /// The nullifier trapdoor ($\psi$).
-    pub psi: NullifierTrapdoor,
+    /// Commitment to the note's pronullifier polynomial ($\psi =
+    /// \sum_i M_i G_i$).
+    pub psi: ProNfSeqCommit,
 
     /// Note commitment trapdoor ($rcm$).
     pub rcm: CommitmentTrapdoor,
@@ -124,7 +97,7 @@ pub struct Note {
 /// Zero-valued notes are forbidden by construction: a zero-value action
 /// carries no economic meaning. The newtype enforces the invariant at
 /// `Value::from` (panics on zero and on overflow). Each PCD step that
-/// witnesses a `Note` *independently* rechecks `value != 0` — the
+/// witnesses a `value` *independently* rechecks `value != 0` — the
 /// compiler cannot prove the invariant from inside the circuit, and a
 /// compiled proof system sees only raw field elements without the
 /// Rust-level newtype protection.
@@ -160,40 +133,30 @@ impl From<Value> for u64 {
 }
 
 impl Note {
-    /// Computes the note commitment `cm`.
+    /// Computes the note commitment `cm` using the stored `note.psi`.
     ///
-    /// Commits to $(pk, v, \psi)$ with randomness $rcm$
+    /// Commits to $(pk, v, \psi)$ with randomness $rcm$, where $\psi =
+    /// \sum_i M_i G_i$ is digested by bit-decomposing its Vesta
+    /// coordinates (see [`poseidon::note_commitment`]).
     ///
     /// # Panics
     ///
-    /// Panics if the note commitment trapdoor is zero.
+    /// Panics if the note commitment trapdoor is zero, or if $\psi$ is the
+    /// identity point.
     #[must_use]
     pub fn commitment(&self) -> Commitment {
         assert_ne!(
             self.rcm.0,
             Fp::ZERO,
-            "note commitment trapdoor should not be zero"
+            "note commitment trapdoor must be nonzero (rcm = 0 collapses hiding)"
         );
-
-        Commitment::from(poseidon::note_commitment(
+        let psi_eq: EqAffine = self.psi.into();
+        Commitment(poseidon::note_commitment(
             self.rcm.0,
             self.pk.0,
             self.value.0,
-            self.psi.0,
+            psi_eq.coordinates().expect("valid psi"),
         ))
-    }
-
-    /// Derives a nullifier for this note at the given flavor (epoch).
-    ///
-    /// GGM tree PRF:
-    /// 1. $mk = \text{Poseidon}(\psi, nk)$ — master root key (per-note)
-    /// 2. $nf = F_{mk}(\text{flavor})$ — tree walk with bits of flavor
-    ///
-    /// The same note at different flavors produces different nullifiers.
-    #[must_use]
-    pub fn nullifier(&self, nk: &NullifierKey, flavor: EpochIndex) -> Nullifier {
-        let mk = nk.derive_note_private(&self.psi);
-        mk.derive_nullifier(flavor)
     }
 }
 
@@ -224,15 +187,26 @@ impl From<Commitment> for Tachygram {
     }
 }
 
+impl Commitment {
+    /// Shift a pronullifier by this note commitment to obtain the published
+    /// nullifier: $\mathsf{nf}_e = M_e + \mathsf{cm}$.
+    #[must_use]
+    pub fn nullify(self, pronf: ProNf) -> Nullifier {
+        Nullifier::from(Fp::from(pronf) + self.0)
+    }
+}
+
 /// A Tachyon nullifier.
 ///
-/// Derived via GGM tree PRF: $mk = \text{KDF}(\psi, nk)$, then
-/// $nf = F_{mk}(\text{flavor})$. Published when a note is spent;
-/// becomes a tachygram in the polynomial accumulator.
+/// A [`ProNf`] (one coefficient of the note's pronullifier polynomial $M$, one
+/// per epoch) shifted by the note commitment: $\mathsf{nf}_e = M_e +
+/// \mathsf{cm}$. The shift makes each note's nullifier sequence distinct even
+/// when two notes share the same $M$. Published when a note is spent; becomes a
+/// tachygram in the polynomial accumulator.
 ///
 /// Unlike Orchard, Tachyon nullifiers:
 /// - Don't need collision resistance (no faerie gold defense)
-/// - Have an epoch "flavor" component for sync delegation
+/// - Are indexed per-epoch for sync delegation
 /// - Are prunable by validators after a window of blocks
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct Nullifier(Fp);
@@ -255,9 +229,33 @@ impl From<Nullifier> for Tachygram {
     }
 }
 
-impl fmt::Debug for NullifierTrapdoor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NullifierTrapdoor").finish_non_exhaustive()
+/// The raw pronullifier coefficient $M_e$ that becomes a [`Nullifier`] once
+/// shifted by the note commitment: $\mathsf{nf}_e = M_e + \mathsf{cm}$.
+///
+/// Same-$M$ notes get distinct nullifier sequences because each shifts by its
+/// own `cm`. Unlike a [`Nullifier`], a `ProNf` is never published (no
+/// [`Tachygram`] conversion): it stays private while its shifted form, the
+/// nullifier, is published.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct ProNf(Fp);
+
+impl ProNf {
+    /// Generate a random pronullifier.
+    #[must_use]
+    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
+        Self::from(Fp::random(rng))
+    }
+}
+
+impl From<Fp> for ProNf {
+    fn from(fp: Fp) -> Self {
+        Self(fp)
+    }
+}
+
+impl From<ProNf> for Fp {
+    fn from(pre_nf: ProNf) -> Self {
+        pre_nf.0
     }
 }
 
@@ -279,12 +277,45 @@ impl fmt::Debug for Nullifier {
     }
 }
 
+impl fmt::Debug for ProNf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProNf").finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    extern crate alloc;
+
+    use alloc::vec::Vec;
+    use core::iter;
+
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::{constants::NOTE_VALUE_MAX, keys::private::SpendingKey, primitives::EpochIndex};
+    use crate::{constants::NOTE_VALUE_MAX, primitives::ProNfSeqPoly};
+
+    /// A random pronullifier-polynomial commitment, standing in for
+    /// `commit(M)`.
+    fn random_psi(rng: &mut StdRng) -> ProNfSeqCommit {
+        let pronfs: Vec<ProNf> = iter::repeat_with(|| ProNf::random(rng)).take(8).collect();
+        ProNfSeqPoly::from(pronfs.as_slice()).commit()
+    }
+
+    /// `Commitment::nullify` is exactly the `+ cm` shift, and `ProNf`
+    /// round-trips through `Fp`.
+    #[test]
+    fn nullify_shifts_by_cm() {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let coefficient = Fp::random(&mut *rng);
+        let cm = Commitment::from(Fp::random(&mut *rng));
+
+        assert_eq!(Fp::from(ProNf::from(coefficient)), coefficient);
+        assert_eq!(
+            Fp::from(cm.nullify(ProNf::from(coefficient))),
+            coefficient + Fp::from(cm)
+        );
+    }
 
     /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
     #[test]
@@ -311,7 +342,7 @@ mod tests {
     fn distinct_rcm_distinct_commitments() {
         let rng = &mut StdRng::seed_from_u64(0);
         let pk = PaymentKey(Fp::random(&mut *rng));
-        let psi = NullifierTrapdoor::random(rng);
+        let psi = random_psi(rng);
 
         let note1 = Note {
             pk,
@@ -329,32 +360,28 @@ mod tests {
         assert_ne!(note1.commitment(), note2.commitment());
     }
 
-    /// `Note::nullifier` delegates correctly to key derivation.
+    /// Distinct pronullifier-sequence commitments produce distinct note
+    /// commitments — `psi = commit(M)` is bound into `cm`.
     #[test]
-    fn note_nullifier_matches_key_derivation() {
+    fn distinct_psi_distinct_commitments() {
         let rng = &mut StdRng::seed_from_u64(0);
+        let pk = PaymentKey(Fp::random(&mut *rng));
+        let rcm = CommitmentTrapdoor::random(rng);
 
-        let sk = SpendingKey::random(rng);
-        let nk = sk.derive_nullifier_private();
-        let note = Note {
-            pk: sk.derive_payment_key(),
+        let note1 = Note {
+            pk,
             value: Value::from(100u64),
-            psi: NullifierTrapdoor::random(rng),
-            rcm: CommitmentTrapdoor::random(rng),
+            psi: random_psi(rng),
+            rcm,
         };
-        let flavor = EpochIndex(5u32);
+        let note2 = Note {
+            pk,
+            value: Value::from(100u64),
+            psi: random_psi(rng),
+            rcm,
+        };
 
-        let mk = nk.derive_note_private(&note.psi);
-        assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));
-    }
-
-    #[test]
-    fn debug_nullifier_trapdoor_redacts_value() {
-        let psi = NullifierTrapdoor::from(Fp::from(0xCAFEu64));
-        let dbg = alloc::format!("{psi:?}");
-        assert!(dbg.contains("NullifierTrapdoor"), "must name the type");
-        assert!(!dbg.contains("CAFE"), "must not leak field element");
-        assert!(!dbg.contains("51966"), "must not leak decimal value");
+        assert_ne!(note1.commitment(), note2.commitment());
     }
 
     #[test]
@@ -370,6 +397,16 @@ mod tests {
         let nf = Nullifier::from(Fp::from(0xBEEFu64));
         let dbg = alloc::format!("{nf:?}");
         assert!(dbg.contains("Nullifier"), "must name the type");
+        assert!(!dbg.contains("BEEF"), "must not leak field element");
+        assert!(!dbg.contains("48879"), "must not leak decimal value");
+    }
+
+    #[test]
+    fn debug_pronf_redacts_value() {
+        // ProNf carries the secret pre-nullifier; its Debug must not leak it.
+        let pronf = ProNf::from(Fp::from(0xBEEFu64));
+        let dbg = alloc::format!("{pronf:?}");
+        assert!(dbg.contains("ProNf"), "must name the type");
         assert!(!dbg.contains("BEEF"), "must not leak field element");
         assert!(!dbg.contains("48879"), "must not leak decimal value");
     }

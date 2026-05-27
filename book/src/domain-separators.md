@@ -47,12 +47,9 @@ These are all Tachyon-specific digests, performed in-circuit.
 
 | Purpose | Value |
 | ------- | ----- |
-| Nullifier prefix key | `Tachyon-NfPrefix` |
-| Nullifier derivation | `Tachyon-NfDerive` |
 | Note commitment | `Tachyon-CmDerive` |
 | Action digest | `Tachyon-ActionDg` |
 | Payment key derivation | `Tachyon-PkDerive` |
-| Delegation ID | `Tachyon-Delegate` |
 | Anchor stamp step | `Tachyon-StampFld` |
 | Anchor empty step | `Tachyon-EmptyBlk` |
 | Anchor epoch step | `Tachyon-EpochStp` |

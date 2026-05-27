@@ -3,10 +3,10 @@
 /// The tachyon accumulator evolves as tachygrams are included. Each
 /// epoch identifies a specific pool accumulator state.
 ///
-/// Used as **flavor** in nullifier derivation:
-/// $mk = \text{KDF}(\psi, nk)$, then $nf = F_{mk}(\text{flavor})$.
-/// Different epochs produce different nullifiers for the same note,
-/// enabling range-restricted delegation via the GGM tree PRF.
+/// Used as the per-epoch **index** into a note's pronullifier polynomial
+/// $M$: the epoch-$e$ nullifier is $nf_e = M_e + cm$. Different epochs
+/// select different coefficients, so the same note has a distinct nullifier
+/// each epoch.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct EpochIndex(pub u32);
 

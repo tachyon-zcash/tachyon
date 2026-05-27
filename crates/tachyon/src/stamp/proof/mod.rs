@@ -5,7 +5,6 @@
 
 extern crate alloc;
 
-pub mod delegation;
 pub mod pool;
 pub mod spend;
 pub mod spendable;
@@ -20,25 +19,15 @@ use ragu::{Application, ApplicationBuilder};
 
 fn make_app() -> Result<Application, ragu::Error> {
     ApplicationBuilder::new()
-        .register(delegation::NfMasterSeed)?
-        .register(delegation::NfMasterStep)?
-        .register(delegation::NfPrefixStep)?
-        .register(delegation::NullifierStep)?
-        .register(delegation::DelegationStep)?
-        .register(delegation::DelegateNfPrefixStep)?
-        .register(delegation::DelegateNullifierStep)?
         .register(pool::AnchorSeed)?
         .register(pool::EmptyBlockSeed)?
         .register(pool::AnchorFuse)?
         .register(pool::UnspentSeed)?
         .register(pool::EmptyBlockUnspentSeed)?
         .register(pool::UnspentFuse)?
+        .register(pool::UnspentEpochFuse)?
         .register(spendable::SpendableInit)?
         .register(spendable::SpendableLift)?
-        .register(spendable::RolloverFuse)?
-        .register(spendable::DelegateRolloverFuse)?
-        .register(spendable::SpendableRollover)?
-        .register(spendable::SpendableEpochLift)?
         .register(stamp::OutputStamp)?
         .register(spend::SpendBind)?
         .register(stamp::SpendStamp)?

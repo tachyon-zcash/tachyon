@@ -49,7 +49,7 @@ Core cryptographic plumbing is implemented and tested:
 Stubbed (pending Ragu PCD and Poseidon integration):
 
 - Note commitments
-- Nullifier derivation (GGM tree PRF)
+- Nullifier derivation (pronullifier polynomial shifted by the note commitment)
 - Proof creation, merge, and verification
 - Stamp compression/decompression
 
