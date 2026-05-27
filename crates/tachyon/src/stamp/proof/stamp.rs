@@ -4,17 +4,18 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+use ff::Field as _;
 use group::GroupEncoding as _;
-use pasta_curves::EqAffine;
-use ragu::{Header, Index, Polynomial, Step, Suffix, enforce_poly_product};
+use pasta_curves::{EqAffine, Fp};
+use ragu::{Header, Index, Polynomial, Step, Suffix, enforce_poly_product, generators};
 
-use super::{pool::AnchorChain, spend::SpendHeader, spendable::SpendableHeader};
+use super::{delegation::NullifierHeader, pool::AnchorChain, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
     constants::NOTE_VALUE_MAX,
     entropy::ActionRandomizer,
     keys::private,
-    note::Note,
+    note::{Note, Nullifier},
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit, effect},
     value,
 };
@@ -27,7 +28,7 @@ use crate::{
 /// them from the actions and tachygrams the step witnesses.
 ///
 /// `anchor` is freely witnessed at [`OutputStamp`]; at [`SpendStamp`]
-/// it threads from the right [`SpendableHeader`]; at [`MergeStamp`]
+/// it threads from the left [`SpendHeader`]; at [`MergeStamp`]
 /// the step constrains `left.anchor == right.anchor`; at
 /// [`StampLift`] it advances to the right [`AnchorChain`] segment's
 /// `end` after constraining `segment.start == old_anchor`.
@@ -38,7 +39,7 @@ impl Header for StampHeader {
     /// `(action_commit, stamp_tg_commit, anchor)`. The two commitments
     /// are computed at each producing step from the actions and
     /// tachygrams that step witnesses. `anchor` is freely witnessed at
-    /// [`OutputStamp`], threaded from the right [`SpendableHeader`] at
+    /// [`OutputStamp`], threaded from the left [`SpendHeader`] at
     /// [`SpendStamp`], equality-constrained at [`MergeStamp`], or
     /// advanced over an [`AnchorChain`] at [`StampLift`].
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
@@ -46,7 +47,6 @@ impl Header for StampHeader {
     const SUFFIX: Suffix = Suffix::new(11);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        // TODO: should commitment encoding be 32 bytes?
         let mut out = Vec::with_capacity(32 + 32 + 32);
         let action_bytes: [u8; 32] = EqAffine::from(&data.0).to_bytes();
         let tachygram_bytes: [u8; 32] = EqAffine::from(&data.1).to_bytes();
@@ -74,7 +74,7 @@ impl Step for OutputStamp {
         Anchor,
     );
 
-    const INDEX: Index = Index::new(19);
+    const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,
@@ -104,15 +104,13 @@ impl Step for OutputStamp {
     }
 }
 
-/// Fuses a [`SpendHeader`] with a [`SpendableHeader`] into a stamp.
+/// Composes a [`SpendHeader`] with the live rank-2 [`NullifierHeader`] range
+/// and stamps the spend.
 ///
-/// The spend's first nullifier must equal the spendable's `nf`;
-/// anchor-binding is implicit via `spendable.anchor` (already validated by
-/// the spendable lineage). Epoch alignment is consumer-side.
-///
-/// `SpendStamp` derives `action_digest = Poseidon(cv, rk)` from the
-/// `(cv, rk)` carried in `SpendHeader` before constructing the
-/// `ActionSetCommit`.
+/// Witnesses `nf_next` and binds the published pair to the note's genuine
+/// `GGM(mk, ·)` leaves: consumes the rank-2 range (`range.end == range.start +
+/// 2`, `range.cm == cm`) and checks `[present_nf]G_0 + [nf_next]G_1 ==
+/// range_commit`.
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -120,22 +118,42 @@ impl Step for SpendStamp {
     type Aux<'source> = ();
     type Left = SpendHeader;
     type Output = StampHeader;
-    type Right = SpendableHeader;
-    type Witness<'source> = ();
+    type Right = NullifierHeader;
+    /// `(nf_next,)`.
+    type Witness<'source> = (Nullifier,);
 
-    const INDEX: Index = Index::new(21);
+    const INDEX: Index = Index::new(16);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (cv, rk, (now_nf, next_nf)): <Self::Left as Header>::Data,
-        (anchored_nf, anchor): <Self::Right as Header>::Data,
+        (nf_next,): Self::Witness<'source>,
+        (cv, rk, present_nf, anchor, cm): <Self::Left as Header>::Data,
+        (range_commit, range_start, range_end, range_cm): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if now_nf != anchored_nf {
+        if range_end.0 != range_start.0 + 2 {
+            return Err(ragu::Error("SpendStamp: live range must span two epochs"));
+        }
+        if range_cm != cm {
+            return Err(ragu::Error("SpendStamp: derived range does not match note"));
+        }
+
+        // Bind the published pair to the genuine rank-2 GGM leaves.
+        let nf_pair_ref: EqAffine = *((generators::g(0) * Fp::from(present_nf)
+            + generators::g(1) * Fp::from(nf_next))
+        .inner());
+        if EqAffine::from(range_commit) != nf_pair_ref {
             return Err(ragu::Error(
-                "SpendStamp: spend's now_nf must equal spendable's nf",
+                "SpendStamp: published scalars are not the rank-2 derived pair",
             ));
+        }
+
+        // A zero nullifier would collide with the note's own cm tachygram.
+        if Fp::from(present_nf) == Fp::ZERO {
+            return Err(ragu::Error("SpendStamp: present-epoch nullifier is zero"));
+        }
+        if Fp::from(nf_next) == Fp::ZERO {
+            return Err(ragu::Error("SpendStamp: next-epoch nullifier is zero"));
         }
 
         let action_digest = ActionDigest::new(cv, rk)
@@ -144,7 +162,7 @@ impl Step for SpendStamp {
         let data = (
             ActionSetCommit::from([action_digest].as_slice()),
             TachygramSetCommit::from(
-                [Tachygram::from(now_nf), Tachygram::from(next_nf)].as_slice(),
+                [Tachygram::from(present_nf), Tachygram::from(nf_next)].as_slice(),
             ),
             anchor,
         );
@@ -172,7 +190,7 @@ impl Step for MergeStamp {
         TachygramSetPoly,
     );
 
-    const INDEX: Index = Index::new(22);
+    const INDEX: Index = Index::new(17);
 
     fn witness<'source>(
         &self,
@@ -235,7 +253,7 @@ impl Step for StampLift {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(23);
+    const INDEX: Index = Index::new(18);
 
     fn witness<'source>(
         &self,

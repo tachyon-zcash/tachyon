@@ -225,6 +225,8 @@ A modified action breaks both checks.
 
 ## Detailed Sequence
 
+<!-- todo: this is significantly outdated -->
+
 ```mermaid
 sequenceDiagram
 

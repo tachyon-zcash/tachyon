@@ -6,11 +6,7 @@ use ff::PrimeField as _;
 use pasta_curves::Fp;
 
 use super::{ggm::NoteMasterKey, proof::SpendValidatingKey};
-use crate::{
-    digest::poseidon,
-    note,
-    primitives::{DelegationId, DelegationTrapdoor},
-};
+use crate::{digest::poseidon, note};
 
 /// A Tachyon nullifier deriving key.
 ///
@@ -40,31 +36,10 @@ use crate::{
 pub struct NullifierKey(pub(super) Fp);
 
 impl NullifierKey {
-    /// Derive the per-note master root key: $\mathsf{mk} = \text{KDF}(\psi,
-    /// \mathsf{nk})$.
-    ///
-    /// `mk` is the root of the GGM tree for one note. It is used to:
-    /// - Derive nullifiers directly: $\mathsf{nf} =
-    ///   F_{\mathsf{mk}}(\text{flavor})$
-    /// - Derive epoch-restricted prefix keys $\Psi_t$ for OSS delegation
+    /// Derive a note's GGM master root from its nullifier trapdoor `psi`.
     #[must_use]
     pub fn derive_note_private(&self, psi: &note::NullifierTrapdoor) -> NoteMasterKey {
         NoteMasterKey(poseidon::nf_master(psi.0, self.0))
-    }
-
-    /// Derives a per-delegation identifier: `H(domain, mk, cm, trap)`.
-    ///
-    /// Two proofs that assert the same `DelegationId` must have been
-    /// constructed with the same `(note, trap)` pair.
-    #[must_use]
-    pub fn derive_delegation_id(
-        &self,
-        note: &note::Note,
-        trap: DelegationTrapdoor,
-    ) -> DelegationId {
-        let mk = self.derive_note_private(&note.psi);
-        let cm = note.commitment();
-        DelegationId::from(poseidon::delegation_id(mk.0, Fp::from(cm), Fp::from(trap)))
     }
 }
 

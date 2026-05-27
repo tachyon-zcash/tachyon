@@ -35,6 +35,7 @@ use crate::{
     effect,
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, public},
+    note::Nullifier,
     primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram},
     serialization,
     stamp::proof::{delegation, spend, spendable},
@@ -201,7 +202,7 @@ impl Plan {
     /// Prove a single [`Stamp`] for this plan.
     ///
     /// For each **spend**, uses [`SpendBind`] to prepare PCD inputs, then runs
-    /// [`SpendStamp`] to attach the spendable chain.
+    /// [`SpendStamp`] to attach the live nullifier pair.
     ///
     /// For each **output**, runs [`OutputStamp`] with no PCD inputs.
     ///
@@ -214,7 +215,7 @@ impl Plan {
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
             ragu::Pcd<delegation::NullifierHeader>,
-            ragu::Pcd<delegation::NullifierHeader>,
+            [Nullifier; 2],
             ragu::Pcd<spendable::SpendableHeader>,
         )>,
     ) -> Result<Stamp, ProveError> {
@@ -227,33 +228,26 @@ impl Plan {
             return Err(ProveError::SpendableMismatch);
         }
 
-        for (((cv, rk), (alpha, note, rcv)), (nf_now_pcd, nf_next_pcd, spendable_pcd)) in
+        for (((cv, rk), (alpha, note, rcv)), (range_pcd, [nf_now, nf_next], spendable_pcd)) in
             self.spends.into_iter().zip(spend_pcds)
         {
             let action_digest = ActionDigest::new(cv, rk).map_err(ProveError::ActionDigest)?;
 
-            // Extract nullifier values for the downstream tachygram list; the
-            // step itself consumes the input PCDs.
-            let nf0 = nf_now_pcd.data().1;
-            let nf1 = nf_next_pcd.data().1;
-
             let app = &*PROOF_SYSTEM;
 
-            // SpendBind: fuse two epoch-adjacent nullifier headers with
-            // action data.
             let (bind_pcd, ()) = app
                 .fuse(
                     rng,
                     spend::SpendBind,
-                    (rcv, alpha, *pak, note),
-                    nf_now_pcd,
-                    nf_next_pcd,
+                    ((note.pk, note.value, note.rcm, note.psi), rcv, alpha, *pak),
+                    spendable_pcd,
+                    ragu::Proof::trivial().carry::<()>(()),
                 )
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: fuse spend with spendable.
-            let tachygrams = alloc::vec![Tachygram::from(nf0), Tachygram::from(nf1)];
-            let stamp = Stamp::prove_spend(rng, bind_pcd, spendable_pcd, tachygrams)
+            // SpendStamp: bind the live pair to the derived range and publish.
+            let tachygrams = alloc::vec![Tachygram::from(nf_now), Tachygram::from(nf_next)];
+            let stamp = Stamp::prove_spend(rng, bind_pcd, range_pcd, nf_next, tachygrams)
                 .map_err(ProveError::ProofFailed)?;
 
             entries.push((stamp, alloc::vec![action_digest]));
@@ -372,22 +366,23 @@ impl Stamp {
         })
     }
 
-    /// Creates a stamp for a spend action from pre-built spend and spendable
-    /// PCDs.
+    /// Creates a stamp for a spend action from pre-built spend and
+    /// nullifier-range PCDs.
     ///
-    /// The spendable's `anchor` is taken as the stamp's anchor — chain
+    /// The spend's `anchor` is taken as the stamp's anchor — chain
     /// validation lives inside the spendable lineage, not here.
     pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         spend_pcd: ragu::Pcd<spend::SpendHeader>,
-        spendable_pcd: ragu::Pcd<spendable::SpendableHeader>,
+        range_pcd: ragu::Pcd<delegation::NullifierHeader>,
+        nf_next: Nullifier,
         tachygrams: Vec<Tachygram>,
     ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let anchor = spendable_pcd.data().1;
+        let anchor = spend_pcd.data().3;
 
-        let (pcd, ()) = app.fuse(rng, SpendStamp, (), spend_pcd, spendable_pcd)?;
+        let (pcd, ()) = app.fuse(rng, SpendStamp, (nf_next,), spend_pcd, range_pcd)?;
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok(Self {
