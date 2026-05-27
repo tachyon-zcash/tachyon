@@ -136,7 +136,7 @@ Publishing both nullifiers lets consensus apply the spend across an epoch transi
 A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
 `OutputStamp` derives a value commitment, action verification key, and action digest from a witnessed note, value-randomness, and action-randomness; constraints reject zero or over-range note values and require the note's payment key to match the witnessed key material[^keys].
 `SpendStamp` consumes a `SpendHeader` (carrying value commitment, action verification key, and two nullifiers) and a `SpendableHeader` (already anchor-bound), checks the spend's present-epoch nullifier equals the spendable's, derives the action digest from the SpendHeader's value commitment and verification key, and emits a stamp whose action digest, two-nullifier tachygram set, and threaded anchor follow from that constraint.
-`MergeStamp` fuses two stamps by checking anchor equality and unioning their commitments through witnessed multiset gadgets.
+`MergeStamp` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged action-digest and tachygram sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 
 ### Stamp anchor
 
@@ -364,7 +364,7 @@ A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `Delega
 | SpendBind | NullifierHeader | NullifierHeader | rcv, alpha, pak, note | SpendHeader |
 | OutputStamp | — | — | rcv, alpha, note, anchor | StampHeader |
 | SpendStamp | SpendHeader | SpendableHeader | — | StampHeader |
-| MergeStamp | StampHeader | StampHeader | action gadgets, tachygram gadgets | StampHeader |
+| MergeStamp | StampHeader | StampHeader | action polys, tachygram polys | StampHeader |
 | StampLift | StampHeader | AnchorChain | — | StampHeader |
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the GGM tree, the prefix walk, and the leaf wrap that produces a published nullifier.

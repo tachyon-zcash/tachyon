@@ -3,7 +3,7 @@
 //! Real Pedersen crypto on Vesta. Only the proof system is mocked.
 
 use alloc::vec::Vec;
-use core::ops::Neg;
+use core::ops::{Add, Mul, Neg};
 
 use ff::Field;
 use lazy_static::lazy_static;
@@ -47,13 +47,19 @@ pub fn poly_with_roots(roots: &[Fp]) -> Vec<Fp> {
 }
 
 /// Mirrors `ragu_circuits::polynomials::unstructured::Polynomial`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq)]
 pub struct Polynomial(Vec<Fp>);
+
+impl PartialEq for Polynomial {
+    fn eq(&self, other: &Self) -> bool {
+        self.commit() == other.commit()
+    }
+}
 
 impl Polynomial {
     #[must_use]
-    pub fn from_coeffs(coeffs: Vec<Fp>) -> Self {
-        Self(coeffs)
+    pub fn from_coeffs(coeffs: &[Fp]) -> Self {
+        Self(coeffs.to_vec())
     }
 
     #[must_use]
@@ -84,9 +90,9 @@ impl Polynomial {
         self.0.iter().rev().fold(Fp::ZERO, |acc, &c| acc * x + c)
     }
 
-    /// `commit(blind) = ∑ coeffᵢ·gᵢ + blind·h`
+    /// `commit() = ∑ coeffᵢ·gᵢ` -- the unblinded coefficient commitment.
     #[must_use]
-    pub fn commit(&self, blind: Fp) -> Commitment {
+    pub fn commit(&self) -> Commitment {
         use pasta_curves::group::{Curve as _, Group as _};
 
         let generators = &*GENERATORS;
@@ -101,7 +107,6 @@ impl Polynomial {
         for (&coeff, &point) in self.0.iter().zip(generators.iter()) {
             acc += Eq::from(point) * coeff;
         }
-        acc += Eq::from(*BLINDING_GENERATOR) * blind;
 
         Commitment(acc.to_affine())
     }
@@ -114,13 +119,44 @@ impl Default for Polynomial {
 }
 
 /// A Pedersen vector commitment (EC point on Vesta).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq)]
 pub struct Commitment(EqAffine);
 
+impl PartialEq for Commitment {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
 impl Commitment {
+    /// The identity (zero) point — the commitment of the empty polynomial.
+    #[must_use]
+    pub fn identity() -> Self {
+        use pasta_curves::group::{Curve as _, Group as _};
+        Self(Eq::identity().to_affine())
+    }
+
     #[must_use]
     pub fn inner(&self) -> &EqAffine {
         &self.0
+    }
+}
+
+impl Add for Commitment {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self {
+        use pasta_curves::group::Curve as _;
+        Self((Eq::from(self.0) + Eq::from(rhs.0)).to_affine())
+    }
+}
+
+impl Mul<Fp> for Commitment {
+    type Output = Self;
+
+    fn mul(self, rhs: Fp) -> Self {
+        use pasta_curves::group::Curve as _;
+        Self((Eq::from(self.0) * rhs).to_affine())
     }
 }
 
@@ -139,5 +175,66 @@ impl TryFrom<&[u8; 32]> for Commitment {
         Option::from(EqAffine::from_bytes(bytes))
             .map(Self)
             .ok_or("invalid curve point")
+    }
+}
+
+/// Fixed commitment-scheme generators — the mock's stand-in for ragu's
+/// `FixedGenerators`. The coefficient generators `gᵢ` (the basis
+/// [`Polynomial::commit`](super::Polynomial::commit) commits against) and the
+/// blinding generator `h` have unknown discrete-logarithm relationships with
+/// one another. Each returns a [`Commitment`] -- the mock's wrapper around a
+/// Vesta point -- so callers can combine them with the homomorphic `+` and `*`
+/// operators (e.g. blind a commitment as `c + h() * blind`).
+pub mod generators {
+    use pasta_curves::{Eq, Fp};
+
+    use super::{BLINDING_GENERATOR, Commitment, GENERATORS};
+
+    /// The `i`-th coefficient generator `gᵢ`. A public constant.
+    #[must_use]
+    pub fn g(i: usize) -> Commitment {
+        let generators = &*GENERATORS;
+        assert!(
+            i < generators.len(),
+            "generator index {i} exceeds max generators {}",
+            generators.len(),
+        );
+        Commitment(generators[i])
+    }
+
+    /// The blinding generator `h`, with unknown discrete log relative to the
+    /// coefficient generators `gᵢ`. Blind a commitment as `c + h() * blind`, or
+    /// use [`short_commit`] to commit a single value with blinding.
+    #[must_use]
+    pub fn h() -> Commitment {
+        Commitment(*BLINDING_GENERATOR)
+    }
+
+    /// `Σ_{i<len} gᵢ` — the sum of the first `len` coefficient generators.
+    ///
+    /// A public constant for a fixed `len` (no secret input); the
+    /// coefficient-side basis of the homomorphic shift `+ s·Σ gᵢ`, where the
+    /// witnessed scalar `s` stays private.
+    #[must_use]
+    pub fn g_sum(len: usize) -> Commitment {
+        use pasta_curves::group::{Curve as _, Group as _};
+        let generators = &*GENERATORS;
+        assert!(
+            len <= generators.len(),
+            "length {len} exceeds max generators {}",
+            generators.len(),
+        );
+        let mut acc = Eq::identity();
+        for &point in generators.iter().take(len) {
+            acc += Eq::from(point);
+        }
+        Commitment(acc.to_affine())
+    }
+
+    /// Commit to a single value with blinding: `g(0)·value + h·blind`. Mirrors
+    /// ragu's `FixedGenerators::short_commit`.
+    #[must_use]
+    pub fn short_commit(value: Fp, blind: Fp) -> Commitment {
+        g(0) * value + h() * blind
     }
 }

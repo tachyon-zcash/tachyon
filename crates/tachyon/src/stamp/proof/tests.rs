@@ -13,7 +13,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
-    ActionSetCommit, TachygramSetCommit, TachygramSetGadget,
+    ActionSetCommit, TachygramSetCommit, TachygramSetPoly,
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
     fixtures::{
@@ -262,11 +262,12 @@ fn spend_stamp_rejects_identity_cv() {
         )
         .expect("SpendBind");
 
-    let (_real_cv, real_rk, real_nfs) = real_spend.data;
+    let (_real_cv, real_rk, real_nfs) = *real_spend.data();
     let identity_cv = value::Commitment::balance(0);
     let forged_spend =
         real_spend
-            .proof
+            .proof()
+            .clone()
             .carry::<spend::SpendHeader>((identity_cv, real_rk, real_nfs));
 
     let err = PROOF_SYSTEM
@@ -325,15 +326,15 @@ fn spendable_lift_rejects_invalid_inputs() {
         let unspent = build_unspent_pcd(
             rng,
             &pool,
-            real_spendable.data.0,
+            real_spendable.data().0,
             BlockHeight(init_height.0 + 1)..=target_height,
         );
 
         let forged_anchor = Anchor(Fp::random(&mut *rng));
         let forged_spendable = real_spendable
-            .proof
+            .proof()
             .clone()
-            .carry::<spendable::SpendableHeader>((real_spendable.data.0, forged_anchor));
+            .carry::<spendable::SpendableHeader>((real_spendable.data().0, forged_anchor));
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), forged_spendable, unspent)
@@ -381,7 +382,7 @@ fn spendable_init_rejects_tg_absent() {
     let user = WalletSim::random(rng);
     let note = user.random_note(rng, 500);
 
-    let absent_set = TachygramSetGadget::from([tg(rng)].as_slice());
+    let absent_set = TachygramSetPoly::from([tg(rng)].as_slice());
     let pre_cm_anchor = Anchor::default();
     let nf_pcd_absent = user.nullifier_pcd(rng, note, EpochIndex(0));
     let err = PROOF_SYSTEM
@@ -403,7 +404,7 @@ fn unspent_seed_rejects_tg_present() {
     let note = user.random_note(rng, 500);
     let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
 
-    let containing_set = TachygramSetGadget::from([nf.into()].as_slice());
+    let containing_set = TachygramSetPoly::from([nf.into()].as_slice());
     let start = Anchor::default();
 
     let err = PROOF_SYSTEM
@@ -779,7 +780,7 @@ fn empty_block_unspent_lifts_spendable() {
     // Bootstrap spendable at the cm-block's published anchor.
     let nf_pcd = user.nullifier_pcd(rng, note, cm_height.epoch());
     let spendable = user.spendable_init(rng, note, &pool, cm_height, nf_pcd);
-    let spendable_anchor_before = spendable.data.1;
+    let spendable_anchor_before = spendable.data().1;
 
     // Mine one empty block.
     pool.mine(vec![]);
@@ -787,12 +788,12 @@ fn empty_block_unspent_lifts_spendable() {
 
     // Build an Unspent over the empty block via EmptyBlockUnspentSeed,
     // then lift the spendable.
-    let nf = spendable.data.0;
+    let nf = spendable.data().0;
     let unspent = build_unspent_pcd(rng, &pool, nf, empty_height..=empty_height);
     let (lifted, ()) = PROOF_SYSTEM
         .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
         .expect("SpendableLift across empty block");
 
-    assert_eq!(lifted.data.1, spendable_anchor_before.next_empty());
-    assert_eq!(lifted.data.1, pool.anchor_at(empty_height));
+    assert_eq!(lifted.data().1, spendable_anchor_before.next_empty());
+    assert_eq!(lifted.data().1, pool.anchor_at(empty_height));
 }

@@ -4,6 +4,7 @@ mod block_height;
 mod delegation_id;
 pub mod effect;
 mod epoch;
+mod seq;
 mod sets;
 mod tachygram;
 
@@ -13,5 +14,6 @@ pub use block_height::BlockHeight;
 pub use delegation_id::{DelegationId, DelegationTrapdoor};
 pub use effect::Effect;
 pub use epoch::EpochIndex;
-pub use sets::{ActionSetCommit, ActionSetGadget, TachygramSetCommit, TachygramSetGadget};
+pub use seq::{NullifierSeqCommit, NullifierSeqPoly, PronullifierSeqCommit, PronullifierSeqPoly};
+pub use sets::{ActionSetCommit, ActionSetPoly, TachygramSetCommit, TachygramSetPoly};
 pub use tachygram::Tachygram;

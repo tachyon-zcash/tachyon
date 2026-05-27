@@ -1,6 +1,6 @@
 use corez::io::{self, Read, Write};
 use ff::Field as _;
-use pasta_curves::{Fp, arithmetic::CurveAffine as _};
+use pasta_curves::{EqAffine, Fp, arithmetic::CurveAffine as _};
 
 use super::{EpochIndex, TachygramSetCommit};
 use crate::{digest::poseidon, serialization};
@@ -28,7 +28,7 @@ impl Anchor {
     /// Panics if `stamp_commit` is the identity point.
     #[must_use]
     pub fn next_stamp(self, stamp_commit: &TachygramSetCommit) -> Self {
-        let point = stamp_commit.0.inner();
+        let point = EqAffine::from(stamp_commit);
         let coords = point
             .coordinates()
             .expect("must not be identity commitment"); // TODO: error?

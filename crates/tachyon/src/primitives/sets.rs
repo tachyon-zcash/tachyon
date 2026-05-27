@@ -2,49 +2,86 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use mock_ragu::{Commitment, Multiset, Polynomial};
-use pasta_curves::Fp;
+use mock_ragu::{Commitment, Polynomial};
+use pasta_curves::{EqAffine, Fp};
 
 use super::{ActionDigest, Tachygram};
 use crate::{Action, ActionDigestError};
 
 /// Pedersen commitment to a stamp's tachygram set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TachygramSetCommit(pub Commitment);
+pub struct TachygramSetCommit(Commitment);
 
 /// Pedersen commitment to a stamp's action-digest set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ActionSetCommit(pub Commitment);
+pub struct ActionSetCommit(Commitment);
 
-/// Ragu gadget representation of a stamp's tachygram set.
+/// Witness polynomial for a stamp's tachygram set (members encoded as roots).
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TachygramSetGadget(pub Multiset);
+pub struct TachygramSetPoly(Polynomial);
 
-/// Ragu gadget representation of a stamp's action-digest set.
+/// Witness polynomial for a stamp's action-digest set (members encoded as
+/// roots).
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ActionSetGadget(pub Multiset);
+pub struct ActionSetPoly(Polynomial);
 
-impl From<&[ActionDigest]> for ActionSetGadget {
-    fn from(ads: &[ActionDigest]) -> Self {
-        let roots: Vec<Fp> = ads.iter().map(|&ad| Fp::from(ad)).collect();
-        let poly = Polynomial::from_roots(&roots);
-        Self(Multiset::new(poly))
+impl TachygramSetPoly {
+    /// Deterministic (untrapdoored) commitment to the set polynomial.
+    #[must_use]
+    pub fn commit(&self) -> TachygramSetCommit {
+        TachygramSetCommit(self.0.commit())
+    }
+
+    /// Evaluate the set polynomial at a given point.
+    #[must_use]
+    pub fn eval(&self, x: Fp) -> Fp {
+        self.0.eval(x)
     }
 }
 
-impl From<&[Tachygram]> for TachygramSetGadget {
+impl From<TachygramSetPoly> for Polynomial {
+    fn from(poly: TachygramSetPoly) -> Self {
+        poly.0
+    }
+}
+
+impl ActionSetPoly {
+    /// Deterministic (untrapdoored) commitment to the set polynomial.
+    #[must_use]
+    pub fn commit(&self) -> ActionSetCommit {
+        ActionSetCommit(self.0.commit())
+    }
+
+    /// Evaluate the set polynomial at a given point.
+    #[must_use]
+    pub fn eval(&self, x: Fp) -> Fp {
+        self.0.eval(x)
+    }
+}
+
+impl From<ActionSetPoly> for Polynomial {
+    fn from(poly: ActionSetPoly) -> Self {
+        poly.0
+    }
+}
+
+impl From<&[ActionDigest]> for ActionSetPoly {
+    fn from(ads: &[ActionDigest]) -> Self {
+        let roots: Vec<Fp> = ads.iter().map(|&ad| Fp::from(ad)).collect();
+        Self(Polynomial::from_roots(&roots))
+    }
+}
+
+impl From<&[Tachygram]> for TachygramSetPoly {
     fn from(tgs: &[Tachygram]) -> Self {
         let roots: Vec<Fp> = tgs.iter().map(|&tg| Fp::from(tg)).collect();
-        let poly = Polynomial::from_roots(&roots);
-        Self(Multiset::new(poly))
+        Self(Polynomial::from_roots(&roots))
     }
 }
 
 impl From<&[ActionDigest]> for ActionSetCommit {
     fn from(ads: &[ActionDigest]) -> Self {
-        let roots: Vec<Fp> = ads.iter().map(|&ad| Fp::from(ad)).collect();
-        let poly = Polynomial::from_roots(&roots);
-        Self(Multiset::new(poly).commit())
+        ActionSetPoly::from(ads).commit()
     }
 }
 
@@ -56,28 +93,60 @@ impl TryFrom<&[Action]> for ActionSetCommit {
             .iter()
             .map(Action::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
-        let roots: Vec<Fp> = ads.into_iter().map(Fp::from).collect();
-        let poly = Polynomial::from_roots(&roots);
-        Ok(Self(Multiset::new(poly).commit()))
+        Ok(ActionSetPoly::from(ads.as_slice()).commit())
     }
 }
 
 impl From<&[Tachygram]> for TachygramSetCommit {
     fn from(tgs: &[Tachygram]) -> Self {
-        let roots: Vec<Fp> = tgs.iter().map(|&tg| Fp::from(tg)).collect();
-        let poly = Polynomial::from_roots(&roots);
-        Self(Multiset::new(poly).commit())
+        TachygramSetPoly::from(tgs).commit()
     }
 }
 
-impl From<ActionSetGadget> for ActionSetCommit {
-    fn from(gadget: ActionSetGadget) -> Self {
-        Self(gadget.0.commit())
+impl From<ActionSetCommit> for Commitment {
+    fn from(commit: ActionSetCommit) -> Self {
+        commit.0
     }
 }
 
-impl From<TachygramSetGadget> for TachygramSetCommit {
-    fn from(gadget: TachygramSetGadget) -> Self {
-        Self(gadget.0.commit())
+impl From<Commitment> for ActionSetCommit {
+    fn from(commit: Commitment) -> Self {
+        Self(commit)
+    }
+}
+
+impl From<TachygramSetCommit> for Commitment {
+    fn from(commit: TachygramSetCommit) -> Self {
+        commit.0
+    }
+}
+
+impl From<Commitment> for TachygramSetCommit {
+    fn from(commit: Commitment) -> Self {
+        Self(commit)
+    }
+}
+
+impl From<&ActionSetCommit> for EqAffine {
+    fn from(commit: &ActionSetCommit) -> Self {
+        *commit.0.inner()
+    }
+}
+
+impl From<ActionSetCommit> for EqAffine {
+    fn from(commit: ActionSetCommit) -> Self {
+        *commit.0.inner()
+    }
+}
+
+impl From<TachygramSetCommit> for EqAffine {
+    fn from(commit: TachygramSetCommit) -> Self {
+        *commit.0.inner()
+    }
+}
+
+impl From<&TachygramSetCommit> for EqAffine {
+    fn from(commit: &TachygramSetCommit) -> Self {
+        *commit.0.inner()
     }
 }

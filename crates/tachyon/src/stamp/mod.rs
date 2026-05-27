@@ -30,7 +30,7 @@ use proof::{
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    ActionSetCommit, ActionSetGadget, Note, TachygramSetCommit, TachygramSetGadget,
+    ActionSetCommit, ActionSetPoly, Note, TachygramSetCommit, TachygramSetPoly,
     action::Action,
     effect,
     entropy::ActionRandomizer,
@@ -173,14 +173,14 @@ impl Plan {
     /// Stamps are recursively merged via [`MergeStamp`] into a single stamp.
     ///
     /// `spend_pcds` items must correspond to each planned spend, in order.
-    pub fn prove<'source, RNG: RngCore + CryptoRng>(
+    pub fn prove<RNG: RngCore + CryptoRng>(
         self,
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            mock_ragu::Pcd<'source, delegation::NullifierHeader>,
-            mock_ragu::Pcd<'source, delegation::NullifierHeader>,
-            mock_ragu::Pcd<'source, spendable::SpendableHeader>,
+            mock_ragu::Pcd<delegation::NullifierHeader>,
+            mock_ragu::Pcd<delegation::NullifierHeader>,
+            mock_ragu::Pcd<spendable::SpendableHeader>,
         )>,
     ) -> Result<Stamp, ProveError> {
         // Each entry is (stamp, action_digests). The digest list is ephemeral —
@@ -199,8 +199,8 @@ impl Plan {
 
             // Extract nullifier values for the downstream tachygram list; the
             // step itself consumes the input PCDs.
-            let nf0 = nf_now_pcd.data.1;
-            let nf1 = nf_next_pcd.data.1;
+            let nf0 = nf_now_pcd.data().1;
+            let nf1 = nf_next_pcd.data().1;
 
             let app = &*PROOF_SYSTEM;
 
@@ -323,7 +323,7 @@ impl Stamp {
         Ok(Self {
             tachygrams: alloc::vec![tachygram],
             anchor,
-            proof: rerand.proof,
+            proof: rerand.proof().clone(),
         })
     }
 
@@ -332,15 +332,15 @@ impl Stamp {
     ///
     /// The spendable's `anchor` is taken as the stamp's anchor — chain
     /// validation lives inside the spendable lineage, not here.
-    pub fn prove_spend<'source, RNG: RngCore + CryptoRng>(
+    pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
-        spend_pcd: mock_ragu::Pcd<'source, spend::SpendHeader>,
-        spendable_pcd: mock_ragu::Pcd<'source, spendable::SpendableHeader>,
+        spend_pcd: mock_ragu::Pcd<spend::SpendHeader>,
+        spendable_pcd: mock_ragu::Pcd<spendable::SpendableHeader>,
         tachygrams: Vec<Tachygram>,
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let anchor = spendable_pcd.data.1;
+        let anchor = spendable_pcd.data().1;
 
         let (pcd, ()) = app.fuse(rng, SpendStamp, (), spend_pcd, spendable_pcd)?;
         let rerand = app.rerandomize(pcd, rng)?;
@@ -348,7 +348,7 @@ impl Stamp {
         Ok(Self {
             tachygrams,
             anchor,
-            proof: rerand.proof,
+            proof: rerand.proof().clone(),
         })
     }
 
@@ -367,24 +367,26 @@ impl Stamp {
     ) -> Result<Self, mock_ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let left_action_gadget = ActionSetGadget::from(left_digests);
-        let right_action_gadget = ActionSetGadget::from(right_digests);
-        let left_tg_gadget = TachygramSetGadget::from(&*left.tachygrams);
-        let right_tg_gadget = TachygramSetGadget::from(&*right.tachygrams);
+        let (left_acts_poly, left_tg_poly) = (
+            ActionSetPoly::from(left_digests),
+            TachygramSetPoly::from(&*left.tachygrams),
+        );
 
-        let left_header = (
-            ActionSetCommit::from(left_digests),
-            TachygramSetCommit::from(&*left.tachygrams),
+        let (right_acts_poly, right_tg_poly) = (
+            ActionSetPoly::from(right_digests),
+            TachygramSetPoly::from(&*right.tachygrams),
+        );
+
+        let left_pcd = left.proof.carry::<StampHeader>((
+            left_acts_poly.commit(),
+            left_tg_poly.commit(),
             left.anchor,
-        );
-        let right_header = (
-            ActionSetCommit::from(right_digests),
-            TachygramSetCommit::from(&*right.tachygrams),
+        ));
+        let right_pcd = right.proof.carry::<StampHeader>((
+            right_acts_poly.commit(),
+            right_tg_poly.commit(),
             right.anchor,
-        );
-
-        let left_pcd = left.proof.carry::<StampHeader>(left_header);
-        let right_pcd = right.proof.carry::<StampHeader>(right_header);
+        ));
 
         let anchor = left.anchor;
         let mut tachygrams = left.tachygrams;
@@ -393,12 +395,7 @@ impl Stamp {
         let (pcd, ()) = app.fuse(
             rng,
             MergeStamp,
-            (
-                left_action_gadget,
-                right_action_gadget,
-                left_tg_gadget,
-                right_tg_gadget,
-            ),
+            (left_acts_poly, right_acts_poly, left_tg_poly, right_tg_poly),
             left_pcd,
             right_pcd,
         )?;
@@ -407,7 +404,7 @@ impl Stamp {
         Ok(Self {
             tachygrams,
             anchor,
-            proof: rerand.proof,
+            proof: rerand.proof().clone(),
         })
     }
 

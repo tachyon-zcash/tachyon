@@ -1,6 +1,7 @@
 //! Mock PCD step — mirrors `ragu_pcd::Step`.
 
 use crate::{
+    ctx::StepCtx,
     error::{Error, Result},
     header::Header,
 };
@@ -108,8 +109,9 @@ pub trait Step: Sized + Send + Sync {
 
     fn witness<'source>(
         &self,
+        ctx: &mut StepCtx,
         witness: Self::Witness<'source>,
-        left: <Self::Left as Header>::Data<'source>,
-        right: <Self::Right as Header>::Data<'source>,
-    ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)>;
+        left: <Self::Left as Header>::Data,
+        right: <Self::Right as Header>::Data,
+    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)>;
 }

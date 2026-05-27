@@ -38,7 +38,7 @@ use super::{
 };
 use crate::{
     note::Nullifier,
-    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetGadget},
+    primitives::{Anchor, EpochIndex, TachygramSetPoly},
 };
 
 /// Wallet's spendable position. Identified by `nf` alone — `nf` uniquely
@@ -63,11 +63,11 @@ impl Header for SpendableHeader {
     /// over a freely-witnessed `pre_cm_anchor`, then advanced over
     /// [`Unspent`] segments at [`SpendableLift`] /
     /// [`SpendableEpochLift`].
-    type Data<'source> = (Nullifier, Anchor);
+    type Data = (Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(7);
 
-    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+    fn encode(data: &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1).to_repr());
@@ -94,11 +94,11 @@ impl Header for NullifierRolloverHeader {
     /// (user device, lineage by `cm` equality) or
     /// [`DelegateRolloverFuse`] (sync service, lineage by
     /// `delegation_id` equality); both verify consecutive epochs.
-    type Data<'source> = (Nullifier, Nullifier, EpochIndex);
+    type Data = (Nullifier, Nullifier, EpochIndex);
 
     const SUFFIX: Suffix = Suffix::new(8);
 
-    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+    fn encode(data: &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32 + 4);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1).to_repr());
@@ -125,11 +125,11 @@ impl Header for SpendableRolloverHeader {
     /// spendable's prior anchor, the only place the `Tachyon-EpochStp`
     /// domain is invoked. The new-epoch [`Unspent`]'s `prev_anchor` is
     /// the only way to discharge it.
-    type Data<'source> = (Nullifier, Anchor);
+    type Data = (Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(9);
 
-    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+    fn encode(data: &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1).to_repr());
@@ -159,21 +159,25 @@ impl Step for SpendableInit {
     type Output = SpendableHeader;
     type Right = ();
     /// `(pre_cm_anchor, stamp_tg_set)`.
-    type Witness<'source> = (Anchor, TachygramSetGadget);
+    type Witness<'source> = (Anchor, TachygramSetPoly);
 
     const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
+        ctx: &mut mock_ragu::StepCtx<'_>,
         (pre_cm_anchor, stamp_tg_set): Self::Witness<'source>,
-        (cm, nf, _epoch): <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        // Inclusion: cm ∈ set ⇔ query(cm) == 0.
-        if stamp_tg_set.0.query(Fp::from(cm)) != Fp::ZERO {
+        (cm, nf, _epoch): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
+        let cm_point = Fp::from(cm);
+        let eval = stamp_tg_set.eval(cm_point);
+        ctx.enforce_poly_query(stamp_tg_set.commit().into(), cm_point, eval)?;
+        if eval != Fp::ZERO {
             return Err(mock_ragu::Error("SpendableInit: commitment not in set"));
         }
-        let stamp_commit = TachygramSetCommit::from(stamp_tg_set);
+        let stamp_commit = stamp_tg_set.commit();
         let post_cm_anchor = pre_cm_anchor.next_stamp(&stamp_commit);
         Ok(((nf, post_cm_anchor), ()))
     }
@@ -195,12 +199,11 @@ impl Step for SpendableLift {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut mock_ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (spendable_nf, spendable_anchor): <Self::Left as Header>::Data<'source>,
-        (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data<
-            'source,
-        >,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (spendable_nf, spendable_anchor): <Self::Left as Header>::Data,
+        (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if unspent_nf != spendable_nf {
             return Err(mock_ragu::Error(
                 "SpendableLift: unspent does not relate to spendable",
@@ -231,10 +234,11 @@ impl Step for RolloverFuse {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut mock_ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (left_cm, left_nf, left_epoch): <Self::Left as Header>::Data<'source>,
-        (right_cm, right_nf, right_epoch): <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (left_cm, left_nf, left_epoch): <Self::Left as Header>::Data,
+        (right_cm, right_nf, right_epoch): <Self::Right as Header>::Data,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if left_cm != right_cm {
             return Err(mock_ragu::Error("RolloverFuse: nullifiers not related"));
         }
@@ -262,10 +266,11 @@ impl Step for DelegateRolloverFuse {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut mock_ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (left_nf, left_epoch, left_delegation_id): <Self::Left as Header>::Data<'source>,
-        (right_nf, right_epoch, right_delegation_id): <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (left_nf, left_epoch, left_delegation_id): <Self::Left as Header>::Data,
+        (right_nf, right_epoch, right_delegation_id): <Self::Right as Header>::Data,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if left_delegation_id != right_delegation_id {
             return Err(mock_ragu::Error(
                 "DelegateRolloverFuse: nullifiers not related",
@@ -305,12 +310,11 @@ impl Step for SpendableRollover {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut mock_ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (spendable_nf, spendable_anchor): <Self::Left as Header>::Data<'source>,
-        (rollover_old_nf, rollover_new_nf, rollover_new_epoch): <Self::Right as Header>::Data<
-            'source,
-        >,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (spendable_nf, spendable_anchor): <Self::Left as Header>::Data,
+        (rollover_old_nf, rollover_new_nf, rollover_new_epoch): <Self::Right as Header>::Data,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if spendable_nf != rollover_old_nf {
             return Err(mock_ragu::Error(
                 "SpendableRollover: nullifiers don't match",
@@ -343,12 +347,11 @@ impl Step for SpendableEpochLift {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut mock_ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (rollover_new_nf, rollover_boundary_anchor): <Self::Left as Header>::Data<'source>,
-        (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data<
-            'source,
-        >,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (rollover_new_nf, rollover_boundary_anchor): <Self::Left as Header>::Data,
+        (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if unspent_nf != rollover_new_nf {
             return Err(mock_ragu::Error(
                 "SpendableEpochLift: nullifiers not related",

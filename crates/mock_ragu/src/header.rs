@@ -62,13 +62,13 @@ impl Suffix {
 /// Mirrors `ragu_pcd::Header`.
 pub trait Header: Send + Sync + 'static {
     const SUFFIX: Suffix;
-    type Data<'source>: Send + Clone;
-    fn encode(data: &Self::Data<'_>) -> Vec<u8>;
+    type Data: Send + Clone;
+    fn encode(data: &Self::Data) -> Vec<u8>;
 }
 
 /// Trivial header for seed steps.
 impl Header for () {
-    type Data<'source> = ();
+    type Data = ();
 
     const SUFFIX: Suffix = Suffix::internal(1);
 

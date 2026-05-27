@@ -4,6 +4,7 @@ use rand::thread_rng;
 
 use crate::{
     application::*,
+    ctx::StepCtx,
     error::Result,
     header::{Header, Suffix},
     proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof},
@@ -18,11 +19,11 @@ struct TestHeaderData {
 }
 
 impl Header for TestHeader {
-    type Data<'source> = TestHeaderData;
+    type Data = TestHeaderData;
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+    fn encode(data: &Self::Data) -> Vec<u8> {
         let bytes = data.value.to_le_bytes();
         bytes.to_vec()
     }
@@ -41,10 +42,11 @@ impl Step for SeedStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut StepCtx<'_>,
         witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        _left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         Ok((TestHeaderData { value: witness }, ()))
     }
 }
@@ -62,10 +64,11 @@ impl Step for MergeStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        left: <Self::Left as Header>::Data<'source>,
-        right: <Self::Right as Header>::Data<'source>,
-    ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        left: <Self::Left as Header>::Data,
+        right: <Self::Right as Header>::Data,
+    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         Ok((
             TestHeaderData {
                 value: left.value + right.value,
@@ -246,7 +249,8 @@ fn different_merge_trees_same_header() {
     assert!(app.verify(&left_leaning, thread_rng()).expect("verify"));
     assert!(app.verify(&right_leaning, thread_rng()).expect("verify"));
     assert_ne!(
-        left_leaning.proof, right_leaning.proof,
+        left_leaning.proof.serialize(),
+        right_leaning.proof.serialize(),
         "different tree shapes must produce different proofs"
     );
 }
@@ -265,10 +269,11 @@ impl Step for AuxSeedStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut StepCtx<'_>,
         witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        _left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let squared = witness * witness;
         Ok((TestHeaderData { value: squared }, alloc::vec![squared]))
     }
@@ -287,10 +292,11 @@ impl Step for AuxMergeStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut StepCtx<'_>,
         witness: Self::Witness<'source>,
-        left: <Self::Left as Header>::Data<'source>,
-        right: <Self::Right as Header>::Data<'source>,
-    ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        left: <Self::Left as Header>::Data,
+        right: <Self::Right as Header>::Data,
+    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let (left_aux, right_aux) = witness;
         let mut combined = left_aux;
         combined.extend(right_aux);
@@ -402,8 +408,10 @@ fn tampered_serialized_proof_fails_to_deserialize() {
 
     let mut bytes: [u8; PROOF_SIZE_COMPRESSED] = pcd.proof.into();
     bytes[0] ^= 0xFFu8;
-    Proof::try_from(&bytes)
-        .expect_err("tampered proof bytes must be rejected before reaching verify");
+    assert!(
+        Proof::try_from(&bytes).is_err(),
+        "tampered proof bytes must be rejected before reaching verify"
+    );
 }
 
 #[test]
@@ -427,7 +435,8 @@ fn rerandomize_preserves_validity() {
         .expect("verify should succeed");
     assert!(valid, "rerandomized proof should still verify");
     assert_ne!(
-        rerand_pcd.proof, original_proof,
+        rerand_pcd.proof.serialize(),
+        original_proof.serialize(),
         "rerandomization must change the proof"
     );
 }
@@ -436,11 +445,11 @@ fn rerandomize_preserves_validity() {
 struct ConflictingHeader;
 
 impl Header for ConflictingHeader {
-    type Data<'source> = TestHeaderData;
+    type Data = TestHeaderData;
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+    fn encode(data: &Self::Data) -> Vec<u8> {
         data.value.to_le_bytes().to_vec()
     }
 }
@@ -459,10 +468,11 @@ impl Step for DuplicateIndexStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        _left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         Ok((TestHeaderData { value: 0 }, ()))
     }
 }
@@ -482,10 +492,11 @@ impl Step for SuffixCollisionStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        _left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         Ok((TestHeaderData { value: 0 }, ()))
     }
 }
@@ -546,10 +557,11 @@ fn internal_step_index_rejects_registration() {
 
         fn witness<'source>(
             &self,
+            _ctx: &mut StepCtx<'_>,
             _witness: Self::Witness<'source>,
-            _left: <Self::Left as Header>::Data<'source>,
-            _right: <Self::Right as Header>::Data<'source>,
-        ) -> Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+            _left: <Self::Left as Header>::Data,
+            _right: <Self::Right as Header>::Data,
+        ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
             Ok((TestHeaderData { value: 0 }, ()))
         }
     }
@@ -576,7 +588,7 @@ fn verify_rejects_unregistered_step_index() {
         &encoded,
         b"unused-witness",
     );
-    let forged_pcd: Pcd<'_, TestHeader> =
+    let forged_pcd: Pcd<TestHeader> =
         forged_proof.carry::<TestHeader>(TestHeaderData { value: 42 });
 
     let valid = app
@@ -592,11 +604,11 @@ fn verify_rejects_unregistered_step_index() {
 fn verify_rejects_swapped_header_type() {
     struct SwappedHeader;
     impl Header for SwappedHeader {
-        type Data<'source> = TestHeaderData;
+        type Data = TestHeaderData;
 
         const SUFFIX: Suffix = Suffix::new(99);
 
-        fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+        fn encode(data: &Self::Data) -> Vec<u8> {
             data.value.to_le_bytes().to_vec()
         }
     }
@@ -611,7 +623,7 @@ fn verify_rejects_swapped_header_type() {
         .seed(&mut thread_rng(), SeedStep, 42u64)
         .expect("seed should succeed");
 
-    let swapped_pcd: Pcd<'_, SwappedHeader> = pcd
+    let swapped_pcd: Pcd<SwappedHeader> = pcd
         .proof
         .carry::<SwappedHeader>(TestHeaderData { value: 42 });
 

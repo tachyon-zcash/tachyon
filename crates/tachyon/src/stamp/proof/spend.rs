@@ -37,7 +37,7 @@ impl Header for SpendHeader {
     /// [`NullifierHeader`](super::delegation::NullifierHeader)s
     /// that [`SpendBind`] constrains to share a `cm` lineage and
     /// to live on consecutive epochs.
-    type Data<'source> = (
+    type Data = (
         value::Commitment,
         public::ActionVerificationKey,
         (Nullifier, Nullifier),
@@ -45,7 +45,7 @@ impl Header for SpendHeader {
 
     const SUFFIX: Suffix = Suffix::new(10);
 
-    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+    fn encode(data: &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32 + 32 + 32);
         let cv_bytes: [u8; 32] = data.0.into();
         let rk_bytes: [u8; 32] = data.1.into();
@@ -101,10 +101,11 @@ impl Step for SpendBind {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut mock_ragu::StepCtx<'_>,
         (rcv, alpha, pak, note): Self::Witness<'source>,
-        (left_cm, nf0, left_epoch): <Self::Left as Header>::Data<'source>,
-        (right_cm, nf1, right_epoch): <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (left_cm, nf0, left_epoch): <Self::Left as Header>::Data,
+        (right_cm, nf1, right_epoch): <Self::Right as Header>::Data,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if u64::from(note.value) == 0 {
             return Err(mock_ragu::Error("SpendBind: zero-value note"));
         }

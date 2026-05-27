@@ -25,7 +25,7 @@ const STEP_INDEX_SIZE: usize = 8;
 const HASH_SIZE: usize = 32;
 
 /// Mocks `ragu_pcd::Proof`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Proof {
     pub(crate) step_index: Index,
     pub(crate) header_hash: [u8; HASH_SIZE],
@@ -36,12 +36,30 @@ pub struct Proof {
 
 /// Mocks `ragu_pcd::Pcd`.
 #[derive(Debug)]
-pub struct Pcd<'source, H: Header> {
-    pub proof: Proof,
-    pub data: H::Data<'source>,
+pub struct Pcd<H: Header> {
+    pub(crate) proof: Proof,
+    pub(crate) data: H::Data,
 }
 
-impl<'source, H: Header> Clone for Pcd<'source, H> {
+impl<H: Header> Pcd<H> {
+    /// Returns a reference to the data that the proof accompanies.
+    ///
+    /// Mirrors `ragu_pcd::Pcd::data`.
+    #[must_use]
+    pub fn data(&self) -> &H::Data {
+        &self.data
+    }
+
+    /// Returns a reference to the proof that accompanies the data.
+    ///
+    /// Mirrors `ragu_pcd::Pcd::proof`.
+    #[must_use]
+    pub fn proof(&self) -> &Proof {
+        &self.proof
+    }
+}
+
+impl<H: Header> Clone for Pcd<H> {
     fn clone(&self) -> Self {
         Self {
             proof: self.proof.clone(),
@@ -77,7 +95,7 @@ impl Proof {
 
     /// Mirrors `ragu_pcd::Proof::carry`.
     #[must_use]
-    pub fn carry<H: Header>(self, data: H::Data<'_>) -> Pcd<'_, H> {
+    pub fn carry<H: Header>(self, data: H::Data) -> Pcd<H> {
         Pcd { proof: self, data }
     }
 
