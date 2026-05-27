@@ -1,34 +1,10 @@
-//! Spendable bootstrap, lift, and cross-epoch rollover.
+//! Spendable bootstrap and lift.
 //!
-//! Bootstrap runs entirely on the user device. The wallet's
-//! [`NullifierHeader`] carries `(cm, nf, epoch)`; [`SpendableInit`] fuses it
-//! with a boundary-rooted [`AnchorChain`] (the segment from the epoch boundary
-//! through the cm-stamp) plus a `(pre_epoch_anchor, pre_cm_anchor,
-//! stamp_tg_set)` witness. It verifies `cm ∈ stamp_tg_set`, requires the chain
-//! to root at `pre_epoch_anchor.next_epoch(epoch)`, requires the cm-stamp to be
-//! the chain's final link, and emits a [`SpendableHeader`] carrying
-//! `(nf, post_cm_anchor)`.
-//!
-//! Rooting the lineage at `next_epoch(epoch)` pins the GGM leaf index to the
-//! consensus epoch. The chain's `start` is
-//! `pre_epoch_anchor.next_epoch(epoch)`, which consensus anchor membership of
-//! the eventual spend anchor requires to be the real epoch boundary `B_E =
-//! (terminal of E-1).next_epoch(E)`. [`Anchor::next_epoch`] is the sole
-//! epoch-folding domain and an [`AnchorChain`] advances only within an epoch,
-//! so matching those two epoch-folded anchors forces `epoch == E`.
-//! [`SpendableRollover`] applies the same pin at a crossing.
-//!
-//! `pre_epoch_anchor` and `pre_cm_anchor` are witnessed but pinned downstream:
-//! `pre_epoch_anchor` yields a consensus-published anchor only when it is the
-//! real prior-epoch terminal, and the spendable reaches a real published anchor
-//! only by extending through [`SpendableLift`] over [`Unspent`] segments, which
-//! by construction prove nf-exclusion at every covered stamp.
-//!
-//! Sync services update spendables via lifts ([`SpendableLift`]) and
-//! cross-epoch rollovers ([`SpendableRollover`] then [`SpendableEpochLift`]).
-//! [`SpendableRollover`] lifts the old epoch's terminal anchor into the new
-//! epoch's initial anchor via the [`Anchor::next_epoch`] boundary domain, which
-//! the new-epoch [`Unspent`] then extends with ordinary per-stamp advances.
+//! The spendable carries `(present_nf, anchor, cm)`: the note's current
+//! nullifier `GGM(mk, e)`, its pool position, and the minted-note commitment
+//! binding the lineage (and its value) across lifts. [`SpendableInit`]
+//! bootstraps it from a minted note; [`SpendableLift`] advances it over
+//! [`VerifiedUnspent`](super::pool::VerifiedUnspent) segments.
 
 extern crate alloc;
 
@@ -36,127 +12,46 @@ use alloc::vec::Vec;
 
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
-use ragu::{Header, Index, Step, Suffix};
+use ragu::{Header, Index, Step, Suffix, generators};
 
 use super::{
-    delegation::{DelegateNullifierHeader, NullifierHeader},
-    pool::{AnchorChain, Unspent},
+    delegation::NullifierHeader,
+    pool::{AnchorChain, VerifiedUnspent},
 };
 use crate::{
-    note::Nullifier,
-    primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    note::{self, Nullifier},
+    primitives::{Anchor, NfSeqCommit, TachygramSetPoly},
 };
 
-/// Wallet's spendable position. Identified by `nf` alone — `nf` uniquely
-/// encodes `(key, epoch)` via GGM determinism, so sync services can update
-/// a spendable by `nf` without knowing `delegation_id`.
-///
-/// `anchor` at [`SpendableInit`] is the cm-stamp's `post_cm_anchor`, threaded
-/// from a boundary-rooted [`AnchorChain`] whose `start` is checked to equal
-/// `pre_epoch_anchor.next_epoch(epoch)`. Its PCD lineage therefore folds the
-/// GGM `epoch` at the boundary; binding closes through consensus anchor
-/// membership of the eventual spend anchor, plus the per-stamp nf-checks of any
-/// subsequent [`SpendableLift`] over [`Unspent`] segments.
+/// Wallet's spendable position `(present_nf, anchor, cm)`: the note's
+/// current-epoch nullifier and pool position (advanced per lift) plus the
+/// minted-note commitment, threaded unchanged so the spent value cannot drift
+/// to a different same-`mk` note.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
 impl Header for SpendableHeader {
-    /// `(nf, anchor)`. `nf` is GGM-bound to `(note, epoch)` upstream in
-    /// [`super::delegation::NullifierHeader`]. `anchor` is the cm-stamp's
-    /// `post_cm_anchor`, computed at [`SpendableInit`] from a boundary-rooted
-    /// [`AnchorChain`], then advanced over [`Unspent`] segments at
-    /// [`SpendableLift`] / [`SpendableEpochLift`].
-    type Data = (Nullifier, Anchor);
+    /// `(present_nf, anchor, cm)`. `present_nf` and `anchor` advance per lift;
+    /// `cm` threads unchanged.
+    type Data = (Nullifier, Anchor, note::Commitment);
 
     const SUFFIX: Suffix = Suffix::new(7);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32);
+        let mut out = Vec::with_capacity(32 + 32 + 32);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1).to_repr());
+        out.extend_from_slice(&Fp::from(data.2).to_repr());
         out
     }
 }
 
-/// Cross-epoch nf rotation pair.
+/// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
-/// `nfs[0]` is the old-epoch `nf`, `nfs[1]` the new-epoch `nf`; the new
-/// epoch index is exposed for downstream consumers (specifically
-/// [`SpendableRollover`]'s boundary hash). Consecutive epochs are
-/// verified at construction.
-///
-/// Produced by either [`RolloverFuse`] (user device, lineage = `cm`
-/// equality) or [`DelegateRolloverFuse`] (sync service, lineage =
-/// `delegation_id` equality); the resulting header is identical either
-/// way.
-#[derive(Clone, Debug)]
-pub struct NullifierRolloverHeader;
-
-impl Header for NullifierRolloverHeader {
-    /// `(old_nf, new_nf, new_epoch)`. Produced by [`RolloverFuse`]
-    /// (user device, lineage by `cm` equality) or
-    /// [`DelegateRolloverFuse`] (sync service, lineage by
-    /// `delegation_id` equality); both verify consecutive epochs.
-    type Data = (Nullifier, Nullifier, EpochIndex);
-
-    const SUFFIX: Suffix = Suffix::new(8);
-
-    fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 4);
-        out.extend_from_slice(&Fp::from(data.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.1).to_repr());
-        out.extend_from_slice(&data.2.0.to_le_bytes());
-        out
-    }
-}
-
-/// A spendable rolled forward through an nf rotation, awaiting a
-/// new-epoch anchor from [`SpendableEpochLift`].
-///
-/// Carries `new_nf` (which the new-epoch [`Unspent`] must cover) and
-/// `boundary_anchor` (output of [`Anchor::next_epoch`] applied to the
-/// old epoch's terminal anchor — i.e., the new epoch's initial
-/// anchor). The new-epoch `Unspent`'s `prev_anchor` must equal this
-/// boundary anchor. The old-epoch nullifier is dropped: [`SpendableRollover`]
-/// has already discharged it against the input spendable's `nf`.
-#[derive(Clone, Debug)]
-pub struct SpendableRolloverHeader;
-
-impl Header for SpendableRolloverHeader {
-    /// `(new_nf, boundary_anchor)`. `boundary_anchor` is computed at
-    /// [`SpendableRollover`] via `Anchor::next_epoch` on the spendable's prior
-    /// anchor. [`SpendableInit`] is the only other in-circuit caller of the
-    /// `Tachyon-EpochStp` domain (it checks a boundary chain's root rather than
-    /// advancing one). The new-epoch [`Unspent`]'s `prev_anchor` is the only
-    /// way to discharge it.
-    type Data = (Nullifier, Anchor);
-
-    const SUFFIX: Suffix = Suffix::new(9);
-
-    fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32);
-        out.extend_from_slice(&Fp::from(data.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.1).to_repr());
-        out
-    }
-}
-
-/// Bootstrap a [`SpendableHeader`] from the wallet's [`NullifierHeader`] and a
-/// boundary-rooted [`AnchorChain`].
-///
-/// Verifies `cm ∈ stamp_tg_set` (cm from the [`NullifierHeader`]), requires the
-/// chain to root at `pre_epoch_anchor.next_epoch(epoch)`, and requires the
-/// cm-stamp to be the chain's final link
-/// (`chain.end == pre_cm_anchor.next_stamp(commit)`). Emits a
-/// [`SpendableHeader`] carrying `(nf, post_cm_anchor)`.
-///
-/// The boundary check pins the GGM leaf index to the consensus epoch: consensus
-/// anchor membership of the spend anchor requires `chain.start` to be the real
-/// epoch boundary `B_E`, and since `next_epoch` is the sole epoch-folding
-/// domain and the chain is intra-epoch, matching
-/// `pre_epoch_anchor.next_epoch(epoch)` against `B_E` forces `epoch == E`. The
-/// cm-block carries `cm`, not the wallet's `nf` (`nf` is GGM-bound to `cm`), so
-/// the cm-stamp needs no nf-exclusion check.
+/// Wallet-only. Fuses a boundary-rooted [`AnchorChain`] with the wallet's
+/// single-leaf [`NullifierHeader`](super::delegation::NullifierHeader): binds
+/// `present_nf` to the proven leaf, checks `cm in creation_set`, roots the
+/// chain at the epoch boundary, and requires the cm-stamp to be its final link.
 #[derive(Debug)]
 pub struct SpendableInit;
 
@@ -165,36 +60,49 @@ impl Step for SpendableInit {
     type Left = AnchorChain;
     type Output = SpendableHeader;
     type Right = NullifierHeader;
-    /// `(pre_epoch_anchor, pre_cm_anchor, stamp_tg_set)`. `pre_epoch_anchor` is
-    /// the prior epoch's terminal anchor (folded into the boundary);
-    /// `pre_cm_anchor` is the anchor immediately before the cm-stamp (the
-    /// chain's penultimate state).
-    type Witness<'source> = (Anchor, Anchor, TachygramSetPoly);
+    /// `(pre_epoch_anchor, pre_cm_anchor, creation_set, present_nf)`.
+    /// `pre_epoch_anchor` is the prior epoch's terminal anchor (folded into the
+    /// boundary); `pre_cm_anchor` the anchor immediately before the cm-stamp.
+    type Witness<'source> = (Anchor, Anchor, TachygramSetPoly, Nullifier);
 
-    const INDEX: Index = Index::new(13);
+    const INDEX: Index = Index::new(12);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (pre_epoch_anchor, pre_cm_anchor, stamp_tg_set): Self::Witness<'source>,
+        (pre_epoch_anchor, pre_cm_anchor, creation_set, present_nf): Self::Witness<'source>,
         (chain_start, chain_end): <Self::Left as Header>::Data,
-        (cm, nf, epoch): <Self::Right as Header>::Data,
+        (range_commit, range_start, range_end, cm): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        // Bind `present_nf` to the single derived starting leaf `GGM(mk, epoch)`.
+        if range_end.0 != range_start.0 + 1 {
+            return Err(ragu::Error(
+                "SpendableInit: starting range must span one epoch",
+            ));
+        }
+        let present_commit = NfSeqCommit::from(generators::g(0) * Fp::from(present_nf));
+        if range_commit != present_commit {
+            return Err(ragu::Error(
+                "SpendableInit: present nullifier does not match the derived leaf",
+            ));
+        }
+        let epoch = range_start;
+
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_point = Fp::from(cm);
-        let eval = stamp_tg_set.eval(cm_point);
-        ctx.enforce_poly_query(stamp_tg_set.commit().into(), cm_point, eval)?;
+        let eval = creation_set.eval(cm_point);
+        ctx.enforce_poly_query(creation_set.commit().into(), cm_point, eval)?;
         if eval != Fp::ZERO {
             return Err(ragu::Error("SpendableInit: commitment not in set"));
         }
-        let stamp_commit = stamp_tg_set.commit();
+        let creation_commit = creation_set.commit();
 
         // Pin the lineage's starting epoch to consensus. Consensus anchor
         // membership of the eventual spend anchor requires `chain_start` to be
         // the real epoch boundary. `next_epoch` (`Tachyon-EpochStp`) is the sole
         // epoch-folding domain and the chain is intra-epoch, so matching
         // `pre_epoch_anchor.next_epoch(epoch)` against that boundary forces
-        // `epoch == E` (the same pin `SpendableRollover` applies at a crossing).
+        // `epoch == E`, tying the GGM leaf index to the creation epoch.
         if chain_start != pre_epoch_anchor.next_epoch(epoch) {
             return Err(ragu::Error(
                 "SpendableInit: chain not rooted at epoch boundary",
@@ -204,21 +112,22 @@ impl Step for SpendableInit {
         // The cm-stamp is the chain's final link: `chain_end ==
         // pre_cm_anchor.next_stamp(cm_commit)`. This ties the cm-inclusion to a
         // real, consensus-pinned stamp and yields `post_cm_anchor` as the chain
-        // end; a note created first-in-epoch produces a single-link chain
-        // (`B_E.next_stamp(cm)`).
-        let post_cm_anchor = pre_cm_anchor.next_stamp(&stamp_commit);
+        // end; a note created first-in-epoch produces a single-link chain.
+        let post_cm_anchor = pre_cm_anchor.next_stamp(&creation_commit);
         if chain_end != post_cm_anchor {
             return Err(ragu::Error(
                 "SpendableInit: cm-stamp is not the chain's final link",
             ));
         }
 
-        Ok(((nf, post_cm_anchor), ()))
+        Ok(((present_nf, post_cm_anchor, cm), ()))
     }
 }
 
-/// Advance a [`SpendableHeader`]'s `anchor` along an [`Unspent`]
-/// segment whose `prev_anchor` equals the spendable's current anchor.
+/// Advance the spendable over one [`VerifiedUnspent`] segment.
+///
+/// Wallet-only, witness-free. Checks `cm`, `start_nf == present_nf`, and anchor
+/// adjacency, then advances to the tip `(end_nf, end_anchor)`.
 #[derive(Debug)]
 pub struct SpendableLift;
 
@@ -226,170 +135,33 @@ impl Step for SpendableLift {
     type Aux<'source> = ();
     type Left = SpendableHeader;
     type Output = SpendableHeader;
-    type Right = Unspent;
+    type Right = VerifiedUnspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(14);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (spendable_nf, spendable_anchor): <Self::Left as Header>::Data,
-        (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data,
+        (present_nf, spendable_anchor, cm): <Self::Left as Header>::Data,
+        (start_anchor, start_nf, end_anchor, end_nf, verified_cm, _epoch): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if unspent_nf != spendable_nf {
+        if verified_cm != cm {
             return Err(ragu::Error(
-                "SpendableLift: unspent does not relate to spendable",
+                "SpendableLift: verified unspent cm does not match spendable",
             ));
         }
-        if unspent_prev_anchor != spendable_anchor {
+        if start_nf != present_nf {
+            return Err(ragu::Error(
+                "SpendableLift: segment does not start at the lineage nullifier",
+            ));
+        }
+        if start_anchor != spendable_anchor {
             return Err(ragu::Error(
                 "SpendableLift: unspent not adjacent to spendable",
             ));
         }
-        Ok(((spendable_nf, unspent_end_anchor), ()))
-    }
-}
-
-/// Combine two [`NullifierHeader`]s into a [`NullifierRolloverHeader`] via
-/// lineage-bound `cm` equality. **User device.**
-#[derive(Debug)]
-pub struct RolloverFuse;
-
-impl Step for RolloverFuse {
-    type Aux<'source> = ();
-    type Left = NullifierHeader;
-    type Output = NullifierRolloverHeader;
-    type Right = NullifierHeader;
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(15);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (left_cm, left_nf, left_epoch): <Self::Left as Header>::Data,
-        (right_cm, right_nf, right_epoch): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if left_cm != right_cm {
-            return Err(ragu::Error("RolloverFuse: nullifiers not related"));
-        }
-        if right_epoch.0 != left_epoch.0 + 1 {
-            return Err(ragu::Error("RolloverFuse: nullifiers not adjacent"));
-        }
-        Ok(((left_nf, right_nf, right_epoch), ()))
-    }
-}
-
-/// Combine two [`DelegateNullifierHeader`]s into a
-/// [`NullifierRolloverHeader`] via `delegation_id` equality. **Sync service
-/// or user.**
-#[derive(Debug)]
-pub struct DelegateRolloverFuse;
-
-impl Step for DelegateRolloverFuse {
-    type Aux<'source> = ();
-    type Left = DelegateNullifierHeader;
-    type Output = NullifierRolloverHeader;
-    type Right = DelegateNullifierHeader;
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(16);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (left_nf, left_epoch, left_delegation_id): <Self::Left as Header>::Data,
-        (right_nf, right_epoch, right_delegation_id): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if left_delegation_id != right_delegation_id {
-            return Err(ragu::Error("DelegateRolloverFuse: nullifiers not related"));
-        }
-        if right_epoch.0 != left_epoch.0 + 1 {
-            return Err(ragu::Error("DelegateRolloverFuse: nullifiers not adjacent"));
-        }
-        Ok(((left_nf, right_nf, right_epoch), ()))
-    }
-}
-
-/// Lift a [`SpendableHeader`] across an epoch boundary.
-///
-/// Checks `spendable.nf == old_nf` from the [`NullifierRolloverHeader`],
-/// then applies [`Anchor::next_epoch`] to the spendable's current anchor
-/// to produce the new epoch's `boundary_anchor`. Emits `(new_nf,
-/// boundary_anchor)` for [`SpendableEpochLift`] to consume against a
-/// new-epoch [`Unspent`] whose `prev_anchor` equals this boundary.
-///
-/// This is the only step that *advances* a live spendable across a boundary
-/// via [`Anchor::next_epoch`]; [`SpendableInit`] also invokes that domain
-/// in-circuit, but to *check* a boundary chain's root rather than advance one.
-/// `new_epoch` enters the boundary hash directly, so any tampered value
-/// diverges from the published anchor.
-#[derive(Debug)]
-pub struct SpendableRollover;
-
-impl Step for SpendableRollover {
-    type Aux<'source> = ();
-    type Left = SpendableHeader;
-    type Output = SpendableRolloverHeader;
-    type Right = NullifierRolloverHeader;
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(17);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (spendable_nf, spendable_anchor): <Self::Left as Header>::Data,
-        (rollover_old_nf, rollover_new_nf, rollover_new_epoch): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if spendable_nf != rollover_old_nf {
-            return Err(ragu::Error("SpendableRollover: nullifiers don't match"));
-        }
-        let boundary_anchor = spendable_anchor.next_epoch(rollover_new_epoch);
-        Ok(((rollover_new_nf, boundary_anchor), ()))
-    }
-}
-
-/// Land a rolled-over spendable on a new-epoch anchor.
-///
-/// Merges with a new-epoch [`Unspent`] whose `prev_anchor` equals the
-/// rollover's `boundary_anchor`. The boundary anchor cryptographically
-/// binds `new_epoch` via [`Anchor::next_epoch`], and the new-epoch
-/// [`Unspent`] is bound to the wallet's new-epoch identity via
-/// `unspent.nf == new_nf` (GGM-bound upstream in the NullifierHeader).
-/// Together these pin the wallet to the real E→E+1 epoch transition.
-#[derive(Debug)]
-pub struct SpendableEpochLift;
-
-impl Step for SpendableEpochLift {
-    type Aux<'source> = ();
-    type Left = SpendableRolloverHeader;
-    type Output = SpendableHeader;
-    type Right = Unspent;
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(18);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (rollover_new_nf, rollover_boundary_anchor): <Self::Left as Header>::Data,
-        (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if unspent_nf != rollover_new_nf {
-            return Err(ragu::Error("SpendableEpochLift: nullifiers not related"));
-        }
-        if unspent_prev_anchor != rollover_boundary_anchor {
-            return Err(ragu::Error(
-                "SpendableEpochLift: unspent prev_anchor must equal rollover boundary_anchor",
-            ));
-        }
-        Ok(((rollover_new_nf, unspent_end_anchor), ()))
+        Ok(((end_nf, end_anchor, cm), ()))
     }
 }

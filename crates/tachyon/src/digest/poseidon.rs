@@ -81,19 +81,6 @@ pub(crate) fn nullifier(leaf: Fp) -> Fp {
     hash::<2>([Fp::from_u128(u128::from_le_bytes(*NULLIFIER_DOMAIN)), leaf])
 }
 
-const DELEGATION_DOMAIN: &[u8; 16] = b"Tachyon-Delegate";
-
-/// Derives a delegation identifier from a note commitment and trapdoor.
-#[must_use]
-pub(crate) fn delegation_id(mk: Fp, cm: Fp, trap: Fp) -> Fp {
-    hash::<4>([
-        Fp::from_u128(u128::from_le_bytes(*DELEGATION_DOMAIN)),
-        mk,
-        cm,
-        trap,
-    ])
-}
-
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-StampFld";
 
 /// Advances the anchor by absorbing one stamp's tachygram-set commitment.
