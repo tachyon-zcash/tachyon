@@ -16,15 +16,15 @@ The step takes the wallet's `NullifierHeader` for the creation epoch, a pre-stam
 The output is a `SpendableHeader` carrying the nullifier and the post-stamp anchor.
 
 Maintaining the spendable means advancing its anchor forward over `Unspent` segments.
-`SpendableLift` consumes one `Unspent` whose nullifier matches the spendable's and whose start matches the spendable's current anchor, producing a fresh `SpendableHeader` at the segment's end.
+`SpendableLift` consumes one `Unspent` whose start nullifier matches the spendable's and whose start anchor matches the spendable's current anchor, producing a fresh `SpendableHeader` at the segment's end and adopting the segment's end nullifier (which differs from the start only when the segment crossed an epoch boundary).
 Each `UnspentSeed` link absorbs one stamp and proves the spendable's nullifier was absent from that stamp's tachygram set[^tachygrams]; `EmptyBlockUnspentSeed` covers empty blocks; `UnspentFuse` composes adjacent segments.
 The sync service produces the `Unspent` segments and may perform lifts on the wallet's behalf.
 
-Crossing an epoch boundary requires a new-epoch nullifier and the cross-epoch anchor advance.
+Crossing an epoch boundary happens inside the `Unspent` lineage, so a single segment can span the boundary.
 `RolloverFuse` consumes two consecutive-epoch `NullifierHeader`s that share a note commitment and emits a `NullifierRolloverHeader`.
 `DelegateRolloverFuse` is the sync-service analog, fusing two `DelegateNullifierHeader`s by `delegation_id` equality; the resulting `NullifierRolloverHeader` is the same shape either way.
-`SpendableRollover` then fuses the spendable with the rollover header and advances the anchor across the boundary, emitting a `SpendableRolloverHeader`.
-`SpendableEpochLift` consumes that header and a new-epoch `Unspent` whose start equals the boundary anchor, producing a fresh spendable in the new epoch.
+`UnspentRollover` consumes that rollover header and emits a zero-stamp `Unspent` segment that applies the cross-epoch anchor advance and rotates the exclusion nullifier from the old epoch's to the new epoch's.
+Fusing the prior-epoch and new-epoch segments onto it with `UnspentFuse` yields one `Unspent` spanning the boundary, which `SpendableLift` then consumes exactly as it consumes an intra-epoch one.
 
 To spend, the wallet derives two `NullifierHeader`s (for the present epoch and the next) by running the GGM walk[^nullifiers] twice on the same note.
 `SpendBind` fuses these two leaves, checks that the witnessed note's commitment[^notes] matches the commitment carried on each, and emits a `SpendHeader` containing the value commitment, action verification key, and both nullifiers.
@@ -55,7 +55,7 @@ It seeds and walks the private GGM tree (`NfMasterSeed`, `NfMasterStep`, `NfPref
 
 The sync service holds a `DelegateNfPrefixHeader` produced by the wallet at delegation time.
 From there it climbs the blinded subtree (`DelegateNfPrefixStep`) to whichever leaf an epoch requires and emits a `DelegateNullifierHeader` (`DelegateNullifierStep`); it fuses two consecutive-epoch leaves with `DelegateRolloverFuse` when an epoch boundary is approached.
-It produces the `Unspent` segments that carry the spendable forward (`UnspentSeed`, `EmptyBlockUnspentSeed`, `UnspentFuse`), and runs the lifts that consume them (`SpendableLift`, `SpendableRollover`, `SpendableEpochLift`).
+It produces the `Unspent` segments that carry the spendable forward (`UnspentSeed`, `EmptyBlockUnspentSeed`, `UnspentFuse`, and `UnspentRollover` to cross a boundary), and runs the lifts that consume them (`SpendableLift`).
 
 The aggregator works only with published `StampHeader`s.
 It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `EmptyBlockSeed`, `AnchorFuse`) and fuses with `MergeStamp`.
@@ -68,6 +68,7 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `E
 | UnspentSeed | possible | yes | no |
 | EmptyBlockUnspentSeed | possible | yes | no |
 | UnspentFuse | possible | yes | no |
+| UnspentRollover | possible | yes | no |
 | NfMasterSeed | yes | no | no |
 | NfMasterStep | yes | no | no |
 | NfPrefixStep | yes | no | no |
@@ -79,8 +80,6 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `E
 | DelegateRolloverFuse | no | yes | no |
 | SpendableInit | yes | no | no |
 | SpendableLift | yes | possible | no |
-| SpendableRollover | yes | possible | no |
-| SpendableEpochLift | yes | possible | no |
 | SpendBind | yes | no | no |
 | OutputStamp | yes | no | no |
 | SpendStamp | yes | no | no |
@@ -113,16 +112,18 @@ A segment ties to real chain history only when a stamp-emitting step consumes it
 ### Spendable lifecycle
 
 A spendable bootstraps at `SpendableInit`, which fuses the wallet's `NullifierHeader` with a pre-stamp anchor and the tachygram set of the stamp that produced the note, verifies the note's commitment[^notes] is among those tachygrams, and advances the anchor through that stamp.
-`SpendableLift` advances the spendable's anchor further by consuming an `Unspent` segment whose nullifier equals the spendable's and whose start matches the spendable's current anchor.
-Each `UnspentSeed` link absorbs one stamp into the anchor and proves the spendable's nullifier is absent from that stamp's tachygram set[^tachygrams]; `EmptyBlockUnspentSeed` skips the absence check (no tachygrams to scan); `UnspentFuse` requires both halves to share a nullifier and to meet at a common anchor.
+`SpendableLift` advances the spendable's anchor further by consuming an `Unspent` segment whose start nullifier equals the spendable's and whose start anchor matches the spendable's current anchor; the spendable adopts the segment's end nullifier and end anchor.
+An `Unspent` carries the nullifier excluded at its start and the one at its end; the two are equal within an epoch and differ only when the segment crosses a boundary.
+Each `UnspentSeed` link absorbs one stamp into the anchor and proves the spendable's nullifier is absent from that stamp's tachygram set[^tachygrams]; `EmptyBlockUnspentSeed` skips the absence check (no tachygrams to scan); `UnspentFuse` requires the left segment's end nullifier to equal the right's start nullifier and the two to meet at a common anchor.
 
 ### Epoch rollover
 
+Crossing a boundary is handled within the `Unspent` lineage, so one segment can span it.
 `RolloverFuse` consumes two consecutive-epoch `NullifierHeader`s, checks they share a note commitment, and emits a `NullifierRolloverHeader`.
 `DelegateRolloverFuse` is the sync-service analog, fusing two `DelegateNullifierHeader`s by `delegation_id` equality; the resulting `NullifierRolloverHeader` is the same shape either way.
-`SpendableRollover` then fuses the spendable with the rollover header and applies the cross-epoch anchor advance, emitting a `SpendableRolloverHeader`.
-`SpendableEpochLift` consumes that header plus a new-epoch `Unspent` whose start equals the boundary anchor, producing a fresh spendable in the new epoch.
-The cross-epoch anchor advance is the only such transition in the proof tree; same-epoch advances always run through `AnchorChain` or `Unspent` segments.
+`UnspentRollover` consumes that rollover header, witnesses the pre-boundary anchor, and emits a zero-stamp `Unspent` segment that applies the cross-epoch anchor advance and rotates the exclusion nullifier from old to new.
+`UnspentFuse` then composes the prior-epoch and new-epoch segments around it into one boundary-spanning `Unspent`, which an ordinary `SpendableLift` consumes.
+The cross-epoch anchor advance is the only such transition in the proof tree; same-epoch advances always run through `AnchorChain` or `Unspent` segments, and only `UnspentRollover` emits the boundary step.
 
 ### Spend binding
 
@@ -168,8 +169,10 @@ flowchart TB
     w_init[/anchor, stamp_tg_set/]
     s_init[SpendableInit]
     s_rfuse[RolloverFuse]
-    s_rollover[SpendableRollover]
-    s_epochlift[SpendableEpochLift]
+    w_roll[/anchor/]
+    s_unspentroll[UnspentRollover]
+    u_fuse[UnspentFuse]
+    s_lift[SpendableLift]
     unspent_new((Unspent))
   end
 
@@ -202,14 +205,16 @@ flowchart TB
 
   s_leaf_old -->|NullifierHeader e-1| s_init
   w_init --> s_init
-  s_init -->|SpendableHeader| s_rollover
+  s_init -->|SpendableHeader| s_lift
 
   s_leaf_old -->|NullifierHeader e-1| s_rfuse
   s_leaf_now -->|NullifierHeader e| s_rfuse
-  s_rfuse -->|NullifierRolloverHeader| s_rollover
-  s_rollover -->|SpendableRolloverHeader| s_epochlift
-  unspent_new --> s_epochlift
-  s_epochlift -->|SpendableHeader| s_spendstamp
+  s_rfuse -->|NullifierRolloverHeader| s_unspentroll
+  w_roll --> s_unspentroll
+  s_unspentroll -->|Unspent| u_fuse
+  unspent_new -->|Unspent| u_fuse
+  u_fuse -->|Unspent| s_lift
+  s_lift -->|SpendableHeader| s_spendstamp
 
   s_leaf_now -->|NullifierHeader e| s_spendbind
   s_leaf_next -->|NullifierHeader e+1| s_spendbind
@@ -304,29 +309,33 @@ flowchart LR
   nh_old((NullifierHeader))
   nh_new((NullifierHeader))
   s_rfuse[RolloverFuse]
-  sp_in((SpendableHeader))
-  s_rollover[SpendableRollover]
-  s_epochlift[SpendableEpochLift]
+  w_roll[/anchor/]
+  s_unspentroll[UnspentRollover]
   unspent_new((Unspent))
+  s_ufuse[UnspentFuse]
+  sp_in((SpendableHeader))
+  s_lift[SpendableLift]
   sp_out((SpendableHeader))
 
   nh_old --> s_rfuse
   nh_new --> s_rfuse
-  sp_in --> s_rollover
-  s_rfuse -->|NullifierRolloverHeader| s_rollover
-  s_rollover -->|SpendableRolloverHeader| s_epochlift
-  unspent_new --> s_epochlift
-  s_epochlift --> sp_out
+  s_rfuse -->|NullifierRolloverHeader| s_unspentroll
+  w_roll --> s_unspentroll
+  s_unspentroll -->|Unspent| s_ufuse
+  unspent_new -->|Unspent| s_ufuse
+  sp_in --> s_lift
+  s_ufuse -->|Unspent| s_lift
+  s_lift --> sp_out
 ```
 
-A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `DelegateNullifierHeader`s) for `RolloverFuse`; the resulting `NullifierRolloverHeader` is identical, so the downstream rollover and lift are unchanged.
+A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `DelegateNullifierHeader`s) for `RolloverFuse`; the resulting `NullifierRolloverHeader` is identical, so the downstream `UnspentRollover`, fuse, and lift are unchanged.
 
 ## Headers
 
 | Header | Fields |
 | ------ | ------ |
 | AnchorChain | (prev_anchor, end_anchor) |
-| Unspent | (nf, prev_anchor, end_anchor) |
+| Unspent | (start_nf, end_nf, start_anchor, end_anchor) |
 | NfMasterHeader | (mk, cm) |
 | NfPrefixHeader | (prefix{key, depth, index}, mk, cm) |
 | NullifierHeader | (cm, nf, epoch) |
@@ -334,7 +343,6 @@ A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `Delega
 | DelegateNullifierHeader | (nf, epoch, delegation_id) |
 | NullifierRolloverHeader | (old_nf, new_nf, new_epoch) |
 | SpendableHeader | (nf, anchor) |
-| SpendableRolloverHeader | (new_nf, epoch_anchor) |
 | SpendHeader | (cv, rk, present_nf, future_nf) |
 | StampHeader | (action_acc, tachygram_acc, anchor) |
 
@@ -348,6 +356,7 @@ A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `Delega
 | UnspentSeed | — | — | start, stamp_tg_set, nf | Unspent |
 | EmptyBlockUnspentSeed | — | — | start, nf | Unspent |
 | UnspentFuse | Unspent | Unspent | — | Unspent |
+| UnspentRollover | NullifierRolloverHeader | — | start | Unspent |
 | NfMasterSeed | — | — | note, pak | NfMasterHeader |
 | NfMasterStep | NfMasterHeader | — | chunk | NfPrefixHeader |
 | NfPrefixStep | NfPrefixHeader | — | chunk | NfPrefixHeader |
@@ -359,8 +368,6 @@ A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `Delega
 | DelegateRolloverFuse | DelegateNullifierHeader | DelegateNullifierHeader | — | NullifierRolloverHeader |
 | SpendableInit | NullifierHeader | — | anchor, stamp_tg_set | SpendableHeader |
 | SpendableLift | SpendableHeader | Unspent | — | SpendableHeader |
-| SpendableRollover | SpendableHeader | NullifierRolloverHeader | — | SpendableRolloverHeader |
-| SpendableEpochLift | SpendableRolloverHeader | Unspent | — | SpendableHeader |
 | SpendBind | NullifierHeader | NullifierHeader | rcv, alpha, pak, note | SpendHeader |
 | OutputStamp | — | — | rcv, alpha, note, anchor | StampHeader |
 | SpendStamp | SpendHeader | SpendableHeader | — | StampHeader |

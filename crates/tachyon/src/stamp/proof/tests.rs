@@ -460,39 +460,71 @@ fn delegate_rollover_fuse_rejects_invalid_inputs() {
 }
 
 #[test]
-fn spendable_rollover_rejects_nf_mismatch() {
+fn unspent_rollover_crosses_boundary() {
+    // A spendable advances across an epoch boundary by consuming a single
+    // cross-epoch Unspent: an UnspentRollover seed rotates the nf at the
+    // boundary, a new-epoch segment is fused on, and one SpendableLift
+    // consumes the whole span.
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
     let mut pool = PoolSim::genesis(rng);
-    let note_a = user.random_note(rng, 100);
-    let note_b = user.random_note(rng, 200);
+    let note = user.random_note(rng, 500);
 
-    pool.mine(random_block_with(
-        rng,
-        &[alloc::vec![note_a.commitment()]],
-        4,
-    ));
+    pool.mine(random_block_with(rng, &[alloc::vec![note.commitment()]], 4));
     let init_height = pool.height();
-    let nf_pcd_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
-    let spendable_a = user.spendable_init(rng, note_a, &pool, init_height, nf_pcd_a);
+    let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
+    let spendable = user.spendable_init(rng, note, &pool, init_height, nf_pcd);
 
-    let rollover_b = build_nullifier_rollover_pcd(rng, &user, note_b, EpochIndex(0));
+    pool.advance(
+        usize::try_from(EPOCH_SIZE + 1 - pool.height().0).expect("fits"),
+        |_| random_block(rng, 1, 4),
+    );
+    let epoch_0_final = BlockHeight(EPOCH_SIZE - 1);
+    let epoch_1_first = BlockHeight(EPOCH_SIZE);
 
-    let err = PROOF_SYSTEM
+    // Lift within epoch 0 up to its final block.
+    let nf_0 = note.nullifier(&user.pak.nk, EpochIndex(0));
+    let within = build_unspent_pcd(
+        rng,
+        &pool,
+        nf_0,
+        BlockHeight(init_height.0 + 1)..=epoch_0_final,
+    );
+    let (spendable_at_final, ()) = PROOF_SYSTEM
+        .fuse(rng, spendable::SpendableLift, (), spendable, within)
+        .expect("SpendableLift within epoch 0");
+
+    // UnspentRollover seed at the epoch-0 final anchor + epoch-1 segment.
+    let rollover = build_nullifier_rollover_pcd(rng, &user, note, EpochIndex(0));
+    let boundary_start = spendable_at_final.data.1;
+    let (rollover_seg, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            spendable::SpendableRollover,
-            (),
-            spendable_a,
-            rollover_b,
+            pool::UnspentRollover,
+            (boundary_start,),
+            rollover,
+            Proof::trivial().carry::<()>(()),
         )
-        .unwrap_err();
-    assert_eq!(err.0, "SpendableRollover: nullifiers don't match");
+        .expect("UnspentRollover");
+    let nf_1 = note.nullifier(&user.pak.nk, EpochIndex(1));
+    let e1_seg = build_unspent_pcd(rng, &pool, nf_1, epoch_1_first..=epoch_1_first);
+    let (cross, ()) = PROOF_SYSTEM
+        .fuse(rng, pool::UnspentFuse, (), rollover_seg, e1_seg)
+        .expect("UnspentFuse across boundary");
+
+    let (landed, ()) = PROOF_SYSTEM
+        .fuse(rng, spendable::SpendableLift, (), spendable_at_final, cross)
+        .expect("SpendableLift across boundary");
+
+    // The spendable now carries the epoch-1 nf at the epoch-1 anchor.
+    assert_eq!(landed.data.0, nf_1);
+    assert_eq!(landed.data.1, pool.anchor_at(epoch_1_first));
 }
 
 #[test]
-fn spendable_epoch_lift_rejects_invalid_inputs() {
-    // nf mismatch: rolled spendable for note_a, unspent for note_b's nf.
+fn cross_epoch_unspent_fuse_rejects_invalid_boundary() {
+    // nf discontinuity: the rollover seg rotates to note_a's epoch-1 nf, but
+    // the new-epoch segment covers a different note's nf.
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let user = WalletSim::random(rng);
@@ -500,77 +532,65 @@ fn spendable_epoch_lift_rejects_invalid_inputs() {
         let note_a = user.random_note(rng, 100);
         let note_b = user.random_note(rng, 200);
 
-        pool.mine(random_block_with(
-            rng,
-            &[alloc::vec![note_a.commitment()]],
-            4,
-        ));
-        let init_height = pool.height();
-        let nf_pcd_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
-        let spendable_a = user.spendable_init(rng, note_a, &pool, init_height, nf_pcd_a);
+        pool.advance(usize::try_from(EPOCH_SIZE + 1).expect("fits"), |_| {
+            random_block(rng, 1, 4)
+        });
+        let epoch_0_final = BlockHeight(EPOCH_SIZE - 1);
+        let epoch_1_first = BlockHeight(EPOCH_SIZE);
 
         let rollover_a = build_nullifier_rollover_pcd(rng, &user, note_a, EpochIndex(0));
-        let (rolled_a, ()) = PROOF_SYSTEM
+        let boundary_start = pool.anchor_at(epoch_0_final);
+        let (rollover_seg, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                spendable::SpendableRollover,
-                (),
-                spendable_a,
+                pool::UnspentRollover,
+                (boundary_start,),
                 rollover_a,
+                Proof::trivial().carry::<()>(()),
             )
-            .expect("SpendableRollover");
+            .expect("UnspentRollover");
 
-        let nf_b = note_b.nullifier(&user.pak.nk, EpochIndex(0));
-        let unspent_b = build_unspent_pcd(rng, &pool, nf_b, BlockHeight(0)..=init_height);
+        let nf_b_1 = note_b.nullifier(&user.pak.nk, EpochIndex(1));
+        let e1_seg = build_unspent_pcd(rng, &pool, nf_b_1, epoch_1_first..=epoch_1_first);
 
         let err = PROOF_SYSTEM
-            .fuse(rng, spendable::SpendableEpochLift, (), rolled_a, unspent_b)
+            .fuse(rng, pool::UnspentFuse, (), rollover_seg, e1_seg)
             .unwrap_err();
-        assert_eq!(err.0, "SpendableEpochLift: nullifiers not related");
+        assert_eq!(err.0, "UnspentFuse: left.end_nf must equal right.start_nf");
     }
 
-    // prev_anchor mismatch: last_old_anchor flows from the spendable at
-    // init_height, but the unspent is rooted at epoch_0_final's anchor.
+    // anchor discontinuity: seed the rollover at a bogus pre-boundary anchor,
+    // so its boundary does not meet the real epoch-1 segment's start.
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let user = WalletSim::random(rng);
         let mut pool = PoolSim::genesis(rng);
-        let note_a = user.random_note(rng, 500);
+        let note = user.random_note(rng, 500);
 
-        pool.mine(random_block_with(
-            rng,
-            &[alloc::vec![note_a.commitment()]],
-            4,
-        ));
-        let init_height = pool.height();
-        pool.advance(usize::try_from(EPOCH_SIZE).expect("fits"), |_| {
+        pool.advance(usize::try_from(EPOCH_SIZE + 1).expect("fits"), |_| {
             random_block(rng, 1, 4)
         });
         let epoch_1_first = BlockHeight(EPOCH_SIZE);
 
-        let nf_pcd_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
-        let spendable_a = user.spendable_init(rng, note_a, &pool, init_height, nf_pcd_a);
-        let rollover_a = build_nullifier_rollover_pcd(rng, &user, note_a, EpochIndex(0));
-        let nf_a_e1 = note_a.nullifier(&user.pak.nk, EpochIndex(1));
-        let (rolled_a, ()) = PROOF_SYSTEM
+        let rollover = build_nullifier_rollover_pcd(rng, &user, note, EpochIndex(0));
+        let bogus_start = Anchor(Fp::random(&mut *rng));
+        let (rollover_seg, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                spendable::SpendableRollover,
-                (),
-                spendable_a,
-                rollover_a,
+                pool::UnspentRollover,
+                (bogus_start,),
+                rollover,
+                Proof::trivial().carry::<()>(()),
             )
-            .expect("SpendableRollover");
+            .expect("UnspentRollover");
 
-        let unspent = build_unspent_pcd(rng, &pool, nf_a_e1, epoch_1_first..=epoch_1_first);
+        let nf_1 = note.nullifier(&user.pak.nk, EpochIndex(1));
+        let e1_seg = build_unspent_pcd(rng, &pool, nf_1, epoch_1_first..=epoch_1_first);
 
         let err = PROOF_SYSTEM
-            .fuse(rng, spendable::SpendableEpochLift, (), rolled_a, unspent)
+            .fuse(rng, pool::UnspentFuse, (), rollover_seg, e1_seg)
             .unwrap_err();
-        assert_eq!(
-            err.0,
-            "SpendableEpochLift: unspent prev_anchor must equal rollover boundary_anchor"
-        );
+        assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
     }
 }
 
@@ -628,7 +648,7 @@ fn unspent_fuse_rejects_invalid_compositions() {
         let err = PROOF_SYSTEM
             .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
             .unwrap_err();
-        assert_eq!(err.0, "UnspentFuse: left and right must share the same nf");
+        assert_eq!(err.0, "UnspentFuse: left.end_nf must equal right.start_nf");
     }
 
     // state discontinuity: same nf, but right's start matches `start`

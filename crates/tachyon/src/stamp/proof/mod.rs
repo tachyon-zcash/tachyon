@@ -33,12 +33,11 @@ fn make_app() -> Result<Application, mock_ragu::Error> {
         .register(pool::UnspentSeed)?
         .register(pool::EmptyBlockUnspentSeed)?
         .register(pool::UnspentFuse)?
+        .register(pool::UnspentRollover)?
         .register(spendable::SpendableInit)?
         .register(spendable::SpendableLift)?
         .register(spendable::RolloverFuse)?
         .register(spendable::DelegateRolloverFuse)?
-        .register(spendable::SpendableRollover)?
-        .register(spendable::SpendableEpochLift)?
         .register(stamp::OutputStamp)?
         .register(spend::SpendBind)?
         .register(stamp::SpendStamp)?

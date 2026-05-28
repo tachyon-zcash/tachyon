@@ -739,8 +739,11 @@ impl<'source> SyncSim<'source> {
                 continue;
             }
 
-            // Cross the epoch boundary. Walk the local delegates cover
-            // directly so we don't have to re-insert the popped entry.
+            // Cross the epoch boundary with a single cross-epoch Unspent:
+            // an UnspentRollover seed rotates the nf at the boundary, then a
+            // new-epoch segment is fused on, and one SpendableLift consumes
+            // the whole span. Walk the local delegates cover directly so we
+            // don't have to re-insert the popped entry.
             let new_epoch = EpochIndex(stored_epoch.0 + 1);
             let old_nf_pcd = walk_delegate_for_epoch(rng, &delegates, stored_epoch);
             let new_nf_pcd = walk_delegate_for_epoch(rng, &delegates, new_epoch);
@@ -756,28 +759,37 @@ impl<'source> SyncSim<'source> {
                 )
                 .expect("DelegateRolloverFuse");
 
-            let (rollover_header_pcd, ()) = PROOF_SYSTEM
+            // Seed the boundary-crossing segment at the spendable's
+            // epoch-final anchor.
+            let boundary_start = after_same_epoch_pcd.data.1;
+            let (rollover_seg, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    spendable::SpendableRollover,
-                    (),
-                    after_same_epoch_pcd,
+                    pool::UnspentRollover,
+                    (boundary_start,),
                     rollover_pcd,
+                    Proof::trivial().carry::<()>(()),
                 )
-                .expect("SpendableRollover");
+                .expect("UnspentRollover");
 
+            // Cover the new epoch and fuse onto the rollover segment.
             let next_target = cmp::min(target_height, epoch_final_of(new_epoch));
             let new_epoch_first = BlockHeight(stored_epoch_final.0 + 1);
-            let unspent = build_unspent_pcd(rng, pool, new_nf, new_epoch_first..=next_target);
+            let new_epoch_unspent =
+                build_unspent_pcd(rng, pool, new_nf, new_epoch_first..=next_target);
+            let (cross_unspent, ()) = PROOF_SYSTEM
+                .fuse(rng, pool::UnspentFuse, (), rollover_seg, new_epoch_unspent)
+                .expect("UnspentFuse");
+
             let (landed, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    spendable::SpendableEpochLift,
+                    spendable::SpendableLift,
                     (),
-                    rollover_header_pcd,
-                    unspent,
+                    after_same_epoch_pcd,
+                    cross_unspent,
                 )
-                .expect("SpendableEpochLift");
+                .expect("SpendableLift");
             self.entries.push((delegation_id, delegates, landed));
         }
     }

@@ -21,6 +21,7 @@ use ff::{Field as _, PrimeField as _};
 use mock_ragu::{Header, Index, Step, Suffix};
 use pasta_curves::Fp;
 
+use super::spendable::NullifierRolloverHeader;
 use crate::{
     note::Nullifier,
     primitives::{Anchor, TachygramSetCommit, TachygramSetGadget},
@@ -35,7 +36,7 @@ use crate::{
 /// Structurally intra-epoch because only intra-epoch [`Anchor::next_stamp`]
 /// is invoked anywhere in the [`AnchorChain`] builders — crossing an
 /// epoch boundary requires the [`Anchor::next_epoch`] domain only
-/// emitted by `SpendableRollover`.
+/// emitted by [`UnspentRollover`] in the [`Unspent`] lineage.
 ///
 /// The within-epoch property pairs with a consensus-side two-epoch
 /// tachygram scan that catches any tachygram already published earlier
@@ -66,21 +67,25 @@ impl Header for AnchorChain {
     }
 }
 
-/// Per-nf range exclusion proof.
+/// Per-nf range exclusion proof, possibly spanning an epoch boundary.
 ///
-/// `nf` is absent from every stamp covered by the anchor segment from
-/// `start` to `end`. Built per-stamp at seed and fused with adjacent
-/// fragments — fusion now spans block boundaries because anchor
-/// advances are continuous.
+/// The covered note's nullifier is absent from every stamp on the anchor
+/// segment from `start` to `end`. `start_nf` is the nullifier excluded at
+/// `start`'s epoch and `end_nf` at `end`'s epoch; for an intra-epoch
+/// segment they are equal, and a segment that crosses one boundary rotates
+/// `start_nf = nf_E` to `end_nf = nf_{E+1}` at [`UnspentRollover`]. Built
+/// per-stamp at seed and fused with adjacent fragments; fusion spans both
+/// block and (via [`UnspentRollover`]) epoch boundaries.
 ///
-/// Same-epoch is structurally guaranteed by GGM-binding of `nf` to one
-/// epoch and by the intra-epoch-only `Anchor::next_stamp` advances —
-/// crossing an epoch boundary requires matching a boundary anchor that
-/// no `Unspent` builder ever emits.
+/// Within each single-epoch run the nf is GGM-bound to that one epoch and
+/// advances run through the intra-epoch-only `Anchor::next_stamp` /
+/// `Anchor::next_empty`; the sole cross-epoch transition is
+/// [`UnspentRollover`]'s `Anchor::next_epoch`, which rotates the nf using a
+/// lineage-bound [`NullifierRolloverHeader`].
 ///
-/// At the seed steps the PCD lineage of `nf` and `start` roots in
-/// freely-chosen witnesses. `nf`'s binding closes at the consumer
-/// ([`super::spendable::SpendableLift`] checks `unspent.nf ==
+/// At the seed steps the PCD lineage of `start_nf` and `start` roots in
+/// freely-chosen witnesses. `start_nf`'s binding closes at the consumer
+/// ([`super::spendable::SpendableLift`] checks `unspent.start_nf ==
 /// spendable.nf`; the spendable's `nf` is itself bound upstream at
 /// [`super::delegation::NullifierHeader`]); `start`'s binding closes
 /// through the spendable lineage plus consensus anchor membership.
@@ -88,22 +93,25 @@ impl Header for AnchorChain {
 pub struct Unspent;
 
 impl Header for Unspent {
-    /// `(nf, start, end)`. `nf` roots in a seed witness, bound by the
-    /// consumer ([`super::spendable::SpendableLift`] checks
-    /// `unspent.nf == spendable.nf`, and the spendable's `nf` is
-    /// GGM-bound upstream). `start` roots in a seed witness, bound
-    /// through the spendable lineage plus consensus anchor membership.
-    /// `end` is always computed in-circuit as `start.next_stamp(...)`
-    /// or `start.next_empty()`.
-    type Data<'source> = (Nullifier, Anchor, Anchor);
+    /// `(start_nf, end_nf, start, end)`. `start_nf` is the nf excluded at
+    /// `start`'s epoch (roots in a seed witness, bound by the consumer
+    /// [`super::spendable::SpendableLift`]); `end_nf` is the nf at
+    /// `end`'s epoch (equal to `start_nf` within an epoch, rotated at
+    /// [`UnspentRollover`] across a boundary). `start` roots in a seed
+    /// witness, bound through the spendable lineage plus consensus anchor
+    /// membership. `end` is always computed in-circuit as
+    /// `start.next_stamp(...)`, `start.next_empty()`, or
+    /// `prev.next_epoch(...)`.
+    type Data<'source> = (Nullifier, Nullifier, Anchor, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(6);
 
     fn encode(data: &Self::Data<'_>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 32);
+        let mut out = Vec::with_capacity(32 + 32 + 32 + 32);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1).to_repr());
         out.extend_from_slice(&Fp::from(data.2).to_repr());
+        out.extend_from_slice(&Fp::from(data.3).to_repr());
         out
     }
 }
@@ -223,7 +231,8 @@ impl Step for UnspentSeed {
         }
         let stamp_commit = TachygramSetCommit::from(stamp_tg_set);
         let end = start.next_stamp(&stamp_commit);
-        Ok(((nf, start, end), ()))
+        // A single stamp is within one epoch, so start_nf == end_nf.
+        Ok(((nf, nf, start, end), ()))
     }
 }
 
@@ -255,12 +264,16 @@ impl Step for EmptyBlockUnspentSeed {
         _left: <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        Ok(((nf, start, start.next_empty()), ()))
+        // An empty block is within one epoch, so start_nf == end_nf.
+        Ok(((nf, nf, start, start.next_empty()), ()))
     }
 }
 
-/// Compose two adjacent [`Unspent`] segments for the same `nf`.
-/// Verify same `nf` and `left.end == right.start`.
+/// Compose two adjacent [`Unspent`] segments.
+///
+/// Verify nf continuity at the join (`left.end_nf == right.start_nf`,
+/// which equates the shared nf within an epoch and chains a rotation
+/// across a boundary) and anchor continuity (`left.end == right.start`).
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -276,12 +289,14 @@ impl Step for UnspentFuse {
     fn witness<'source>(
         &self,
         _witness: Self::Witness<'source>,
-        (left_nf, left_start, left_end): <Self::Left as Header>::Data<'source>,
-        (right_nf, right_start, right_end): <Self::Right as Header>::Data<'source>,
+        (left_start_nf, left_end_nf, left_start, left_end): <Self::Left as Header>::Data<'source>,
+        (right_start_nf, right_end_nf, right_start, right_end): <Self::Right as Header>::Data<
+            'source,
+        >,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
-        if left_nf != right_nf {
+        if left_end_nf != right_start_nf {
             return Err(mock_ragu::Error(
-                "UnspentFuse: left and right must share the same nf",
+                "UnspentFuse: left.end_nf must equal right.start_nf",
             ));
         }
         if left_end != right_start {
@@ -289,6 +304,51 @@ impl Step for UnspentFuse {
                 "UnspentFuse: left.end must equal right.start",
             ));
         }
-        Ok(((left_nf, left_start, right_end), ()))
+        Ok(((left_start_nf, right_end_nf, left_start, right_end), ()))
+    }
+}
+
+/// Cross-epoch [`Unspent`] rollover seed: a zero-stamp segment that crosses
+/// one epoch boundary, rotating the exclusion nullifier.
+///
+/// Witnesses the pre-boundary `start` anchor (freely chosen, bound at the
+/// consumer like other seeds) and consumes a lineage-bound
+/// [`super::spendable::NullifierRolloverHeader`] `(old_nf, new_nf,
+/// new_epoch)`. Emits `Unspent(old_nf, new_nf, start,
+/// start.next_epoch(new_epoch))`. The segment excludes nothing itself (the
+/// boundary link absorbs no stamps); it carries the nf rotation and the
+/// sole [`Anchor::next_epoch`] advance in the proof tree. Fuse a
+/// prior-epoch segment (ending at `start`, nf `old_nf`) and a new-epoch
+/// segment (starting at the boundary, nf `new_nf`) onto it with
+/// [`UnspentFuse`]; when the spendable already sits at the epoch-final
+/// anchor, the prior-epoch segment is empty and this seed's `start` binds
+/// directly to the spendable's anchor at [`super::spendable::SpendableLift`].
+///
+/// `new_epoch` enters the boundary hash directly; its binding to a real
+/// published anchor closes at consensus when the consuming spend's stamp is
+/// accepted (anchor membership), exactly as the spendable lineage's anchors
+/// do. The rotation's lineage (same note, consecutive epochs) is carried by
+/// the [`super::spendable::NullifierRolloverHeader`].
+#[derive(Debug)]
+pub struct UnspentRollover;
+
+impl Step for UnspentRollover {
+    type Aux<'source> = ();
+    type Left = NullifierRolloverHeader;
+    type Output = Unspent;
+    type Right = ();
+    /// `(start,)` — the pre-boundary anchor.
+    type Witness<'source> = (Anchor,);
+
+    const INDEX: Index = Index::new(13);
+
+    fn witness<'source>(
+        &self,
+        (start,): Self::Witness<'source>,
+        (old_nf, new_nf, new_epoch): <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        let boundary = start.next_epoch(new_epoch);
+        Ok(((old_nf, new_nf, start, boundary), ()))
     }
 }
