@@ -21,6 +21,9 @@ pub enum ActionDigestError {
     /// The rk is the identity point, so the digest cannot be computed.
     #[display("rk is the identity point")]
     IdentityRk,
+    /// Bytes do not represent a valid field element.
+    #[display("invalid field element encoding")]
+    InvalidEncoding,
 }
 
 impl ActionDigest {
@@ -48,10 +51,11 @@ impl From<ActionDigest> for [u8; 32] {
 }
 
 impl TryFrom<&[u8; 32]> for ActionDigest {
-    type Error = &'static str;
+    type Error = ActionDigestError;
 
     fn try_from(bytes: &[u8; 32]) -> Result<Self, Self::Error> {
-        let fp: Fp = Option::from(Fp::from_repr(*bytes)).ok_or("invalid field element")?;
+        let fp: Fp =
+            Option::from(Fp::from_repr(*bytes)).ok_or(ActionDigestError::InvalidEncoding)?;
         Ok(Self(fp))
     }
 }
@@ -125,6 +129,16 @@ mod tests {
         assert!(matches!(
             ActionDigest::new(cv, rk),
             Err(ActionDigestError::IdentityRk)
+        ));
+    }
+
+    /// Invalid field element bytes are rejected.
+    #[test]
+    fn try_from_rejects_invalid_encoding() {
+        let bytes = [0xFF; 32];
+        assert!(matches!(
+            ActionDigest::try_from(&bytes),
+            Err(ActionDigestError::InvalidEncoding)
         ));
     }
 }

@@ -182,13 +182,27 @@ impl TryFrom<TachyonBundle> for Bundle<AggregateId> {
 }
 
 /// Errors during bundle construction.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Display, Error)]
 pub enum BuildError {
-    /// Ragu proof verification failed
+    /// Ragu proof verification failed.
+    #[display("proof verification failed")]
     ProofInvalid,
 
-    /// BSK/BVK mismatch (see Protocol §4.14)
+    /// BSK/BVK mismatch (see Protocol §4.14).
+    #[display("binding signing key does not match verification key")]
     BalanceKeyMismatch,
+}
+
+/// Errors from bundle signature verification.
+#[derive(Debug, Display, Error)]
+#[non_exhaustive]
+pub enum SignatureError {
+    /// The binding signature is invalid.
+    #[display("invalid binding signature")]
+    Binding,
+    /// An action signature is invalid.
+    #[display("invalid action signature for {_0:?}")]
+    Action(#[error(not(source))] reddsa::VerificationKeyBytes<reddsa::ActionAuth>),
 }
 
 /// Errors that can occur while signing a bundle plan.
@@ -704,16 +718,20 @@ impl<S: StampState> Bundle<S> {
     }
 
     /// Verify the bundle's binding signature and all action signatures.
-    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), reddsa::Error> {
+    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
         // 1. Derive bvk from public data (validator-side, §4.14)
         let bvk = public::BindingVerificationKey::derive(&self.actions, self.value_balance);
 
         // 2. Verify binding signature
-        bvk.verify(sighash, &self.binding_sig)?;
+        bvk.verify(sighash, &self.binding_sig)
+            .map_err(|_err| SignatureError::Binding)?;
 
         // 3. Verify each action signature against the SAME sighash
         for action in &self.actions {
-            action.rk.verify(sighash, &action.sig)?;
+            action
+                .rk
+                .verify(sighash, &action.sig)
+                .map_err(|_err| SignatureError::Action(action.rk.0.into()))?;
         }
 
         Ok(())

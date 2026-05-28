@@ -11,6 +11,7 @@ use crate::{
         random_action, random_block, random_block_with,
     },
     primitives::BlockHeight,
+    reddsa,
 };
 
 #[test]
@@ -21,7 +22,10 @@ fn wrong_value_balance_fails_verification() {
     let sighash = mock_sighash(bundle.commitment().unwrap());
 
     bundle.value_balance = 999;
-    assert!(bundle.verify_signatures(&sighash).is_err());
+    assert!(matches!(
+        bundle.verify_signatures(&sighash),
+        Err(SignatureError::Binding)
+    ));
 }
 
 #[test]
@@ -337,7 +341,11 @@ fn invalid_action_sig_fails_verification() {
     sig_bytes[0] ^= 0xFF;
     bundle.actions[0].sig = action::Signature::from(sig_bytes);
 
-    assert!(bundle.verify_signatures(&sighash).is_err());
+    let expected_rk = reddsa::VerificationKeyBytes::from(bundle.actions[0].rk.0);
+    assert!(matches!(
+        bundle.verify_signatures(&sighash),
+        Err(SignatureError::Action(rk)) if rk == expected_rk
+    ));
 }
 
 #[test]
