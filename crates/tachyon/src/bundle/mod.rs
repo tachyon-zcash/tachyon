@@ -75,7 +75,7 @@ use crate::{
     keys::{private, public},
     primitives::{ActionDigest, ActionDigestError, ActionSetCommit, Anchor, effect},
     reddsa, serialization,
-    stamp::{self, Adjunct, Stamp, Unproven},
+    stamp::{self, Adjunct, Stamp, Unassigned, Unproven},
     value,
 };
 
@@ -121,6 +121,7 @@ mod sealed {
     impl Sealed for super::Stamp {}
     impl Sealed for super::Adjunct {}
     impl Sealed for super::Unproven {}
+    impl Sealed for super::Unassigned {}
 }
 
 /// Sealed trait constraining stamp state types.
@@ -139,7 +140,7 @@ pub struct Bundle<S: StampState> {
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
 
-    /// Stamp state: `Stamp` when present, `Adjunct` when stripped.
+    /// Stamp state: `Stamp`, `Unassigned`, or `Adjunct`.
     pub stamp: S,
 }
 
@@ -152,8 +153,8 @@ pub type Stripped = Bundle<Adjunct>;
 /// A Tachyon bundle in one of its two on-wire states: stamped or stripped.
 ///
 /// Used where code accepts either form — reading from the wire, dispatching
-/// `auth_digest`, etc. The `Unproven` intermediate state is outside this
-/// enum because it has no wire representation.
+/// `auth_digest`, etc. The `Unproven` and `Unassigned` intermediate states are
+/// outside this enum because they have no wire representation.
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
 #[derive(Clone, Debug)]
 pub enum TachyonBundle {
@@ -207,6 +208,25 @@ pub enum BuildError {
     /// BSK/BVK mismatch (see Protocol §4.14)
     BalanceKeyMismatch,
 }
+
+/// Errors that can occur when assigning a covering aggregate wtxid.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AssignWtxidError {
+    /// A non-empty stripped bundle cannot be assigned the zero wtxid.
+    UnassignedNonEmpty,
+}
+
+impl fmt::Display for AssignWtxidError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            | Self::UnassignedNonEmpty => {
+                write!(f, "non-empty stripped bundle has unassigned wtxid")
+            },
+        }
+    }
+}
+
+impl Error for AssignWtxidError {}
 
 /// Errors that can occur while signing a bundle plan.
 #[derive(Debug)]
@@ -461,18 +481,43 @@ impl Bundle<Unproven> {
     }
 }
 
-impl Stamped {
-    /// Strips the stamp, producing a stripped bundle and the extracted stamp.
+impl Bundle<Unassigned> {
+    /// Assign the covering aggregate's `wtxid`, producing a serializable
+    /// [`Stripped`] bundle.
     ///
-    /// The stamp should be merged into an aggregate's stamped bundle.
+    /// This is the only path from [`strip()`](Stamped::strip) to a wire-ready
+    /// stripped bundle — `Bundle<Unassigned>` has no `write()` method. The
+    /// zero wtxid is allowed only for empty stripped innocents.
+    pub fn assign_wtxid(self, wtxid: [u8; 64]) -> Result<Stripped, AssignWtxidError> {
+        if !self.actions.is_empty() && wtxid == [0u8; 64] {
+            return Err(AssignWtxidError::UnassignedNonEmpty);
+        }
+
+        Ok(Bundle {
+            actions: self.actions,
+            value_balance: self.value_balance,
+            binding_sig: self.binding_sig,
+            stamp: Adjunct { wtxid },
+        })
+    }
+}
+
+impl Stamped {
+    /// Strips the stamp, producing an unassigned bundle and the extracted
+    /// stamp.
+    ///
+    /// The returned `Bundle<Unassigned>` must be assigned a covering
+    /// aggregate's `wtxid` via [`assign_wtxid`](Bundle::<Unassigned>::assign_wtxid)
+    /// before it can be serialized. The stamp should be merged into an
+    /// aggregate.
     #[must_use]
-    pub fn strip(self) -> (Stripped, Stamp) {
+    pub fn strip(self) -> (Bundle<Unassigned>, Stamp) {
         (
             Bundle {
                 actions: self.actions,
                 value_balance: self.value_balance,
                 binding_sig: self.binding_sig,
-                stamp: Adjunct::default(),
+                stamp: Unassigned,
             },
             self.stamp,
         )
@@ -585,6 +630,13 @@ impl Stripped {
     /// broadcast. Stripped innocents (empty actions) may serialize with a
     /// zero wtxid if no absorbing aggregate was recorded.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        if !self.actions.is_empty() && self.stamp.wtxid == [0u8; 64] {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "non-empty stripped bundle has unassigned wtxid",
+            ));
+        }
+
         BundleState::Stripped.write(&mut writer)?;
 
         write_bundle_body(

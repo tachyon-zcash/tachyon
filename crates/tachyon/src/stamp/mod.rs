@@ -48,6 +48,16 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Unproven;
 
+/// Marker for a stripped bundle whose covering-aggregate `wtxid` has not
+/// yet been assigned.
+///
+/// Produced by [`Stamped::strip()`](crate::bundle::Stamped::strip). Must
+/// transition to [`Adjunct`] via
+/// [`assign_wtxid`](crate::Bundle::<Unassigned>::assign_wtxid) before
+/// serialization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unassigned;
+
 /// Marker for a stripped bundle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Adjunct {

@@ -16,7 +16,8 @@
 //!
 //! - `Bundle<Unproven>` — actions signed but no proof yet
 //! - [`Stamped`] — `Bundle<Stamp>`, aggregate or self-contained with stamp
-//! - [`Stripped`] — `Bundle<Adjunct>`, stamp stripped, depends on aggregate
+//! - `Bundle<Unassigned>` — stamp stripped, wtxid not yet assigned
+//! - [`Stripped`] — `Bundle<Adjunct>`, stamp stripped with wtxid, depends on aggregate
 //! - [`TachyonBundle`] — enum of stamped-or-stripped for mixed contexts
 //!
 //! ## Block Structure

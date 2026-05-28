@@ -29,8 +29,8 @@ fn stripped_bundle_retains_signatures() {
     let bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment().unwrap());
 
-    let (stripped, _stamp) = bundle.strip();
-    stripped.verify_signatures(&sighash).unwrap();
+    let (unassigned, _stamp) = bundle.strip();
+    unassigned.verify_signatures(&sighash).unwrap();
 }
 
 #[test]
@@ -325,8 +325,8 @@ fn stripped_read_write_round_trip() {
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::random(rng);
-        let (mut stripped, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        stripped.stamp.wtxid = [0x42u8; 64];
+        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+        let stripped = unassigned.assign_wtxid([0x42u8; 64]).expect("assign wtxid");
 
         let mut buf = Vec::new();
         stripped.write(&mut buf).expect("write");
@@ -378,8 +378,8 @@ fn tachyon_bundle_in_memory_round_trip() {
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::random(rng);
-        let (mut stripped, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        stripped.stamp.wtxid = [0xABu8; 64];
+        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+        let stripped = unassigned.assign_wtxid([0xABu8; 64]).expect("assign wtxid");
 
         let erased: TachyonBundle = stripped.clone().into();
         let back = Stripped::try_from(erased).expect("stripped variant");
@@ -393,8 +393,8 @@ fn tachyon_bundle_in_memory_round_trip() {
 fn bundle_wire_round_trip_via_tachyon_bundle() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
-    let (mut stripped, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-    stripped.stamp.wtxid = [0xCDu8; 64];
+    let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+    let stripped = unassigned.assign_wtxid([0xCDu8; 64]).expect("assign wtxid");
 
     let erased: TachyonBundle = stripped.clone().into();
     let mut buf = Vec::new();
@@ -405,6 +405,66 @@ fn bundle_wire_round_trip_via_tachyon_bundle() {
     let back = Stripped::try_from(decoded).expect("stripped variant");
 
     assert_eq!(stripped, back);
+}
+
+#[test]
+fn assign_wtxid_rejects_zero_wtxid_with_actions() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+
+    assert!(!unassigned.actions.is_empty());
+    assert!(matches!(
+        unassigned.assign_wtxid([0u8; 64]),
+        Err(AssignWtxidError::UnassignedNonEmpty)
+    ));
+}
+
+#[test]
+fn write_rejects_unassigned_wtxid_with_actions() {
+    // The type-state prevents this via the strip() -> assign_wtxid() path, but
+    // the runtime guard defends against direct construction or re-serialization
+    // of invalid wire data.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+
+    let stripped: Stripped = Bundle {
+        actions: unassigned.actions,
+        value_balance: unassigned.value_balance,
+        binding_sig: unassigned.binding_sig,
+        stamp: Adjunct::default(),
+    };
+
+    assert!(!stripped.actions.is_empty());
+    assert_eq!(stripped.stamp.wtxid, [0u8; 64]);
+
+    let mut buf = Vec::new();
+    let err = stripped
+        .write(&mut buf)
+        .expect_err("unassigned wtxid with non-empty actions should reject");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+}
+
+/// Stripped innocents (zero actions) may serialize with a zero wtxid.
+#[test]
+fn write_allows_zero_wtxid_for_innocents() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let plan = Plan::new(alloc::vec![], alloc::vec![]);
+    let sighash = mock_sighash(plan.commitment());
+
+    let stripped: Stripped = Bundle {
+        actions: alloc::vec![],
+        value_balance: 0,
+        binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+        stamp: Adjunct::default(),
+    };
+
+    assert!(stripped.actions.is_empty());
+    let mut buf = Vec::new();
+    stripped
+        .write(&mut buf)
+        .expect("innocent with zero wtxid should serialize");
 }
 
 #[test]
@@ -425,8 +485,8 @@ fn auth_digest_invariants() {
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let stamped_digest = stamped.auth_digest();
 
-        let (mut stripped, _stamp) = stamped.strip();
-        stripped.stamp.wtxid = [0x11u8; 64];
+        let (unassigned, _stamp) = stamped.strip();
+        let stripped = unassigned.assign_wtxid([0x11u8; 64]).expect("assign wtxid");
         assert_ne!(stamped_digest, stripped.auth_digest());
     }
 
@@ -435,12 +495,15 @@ fn auth_digest_invariants() {
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::random(rng);
-        let (mut stripped, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
 
-        stripped.stamp.wtxid = [0xAAu8; 64];
-        let digest_aa = stripped.auth_digest();
-        stripped.stamp.wtxid = [0xBBu8; 64];
-        let digest_bb = stripped.auth_digest();
+        let stripped_aa = unassigned
+            .clone()
+            .assign_wtxid([0xAAu8; 64])
+            .expect("assign wtxid");
+        let digest_aa = stripped_aa.auth_digest();
+        let stripped_bb = unassigned.assign_wtxid([0xBBu8; 64]).expect("assign wtxid");
+        let digest_bb = stripped_bb.auth_digest();
         assert_ne!(digest_aa, digest_bb);
     }
 
@@ -455,8 +518,8 @@ fn auth_digest_invariants() {
         assert_eq!(erased.auth_digest(), stamped_direct);
 
         let wallet2 = WalletSim::random(rng);
-        let (mut stripped, _stamp) = build_autonome(rng, &wallet2, 1000, 700).strip();
-        stripped.stamp.wtxid = [0x33u8; 64];
+        let (unassigned, _stamp) = build_autonome(rng, &wallet2, 1000, 700).strip();
+        let stripped = unassigned.assign_wtxid([0x33u8; 64]).expect("assign wtxid");
         let stripped_direct = stripped.auth_digest();
         let erased_stripped: TachyonBundle = stripped.into();
         assert_eq!(erased_stripped.auth_digest(), stripped_direct);
