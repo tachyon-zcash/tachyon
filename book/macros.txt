@@ -7,4 +7,12 @@
 \dot:\langle #1 , #2 \rangle
 \revdot:\, \langle \kern-0.5em \langle \kern0.1em #1, #2 \kern0.1em \rangle \kern-0.5em \rangle \,
 \conv:\revdot{#1}{#2}
-
+\PRF:\mathsf{PRF}
+\sk:\mathsf{sk}
+\pk:\mathsf{pk}
+\rpk:\mathsf{rpk}
+\ak:\mathsf{ak}
+\ask:\mathsf{ask}
+\rk:\mathsf{rk}
+\ivk:\mathsf{ivk}
+\nk:\mathsf{nk}
