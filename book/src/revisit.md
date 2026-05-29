@@ -119,15 +119,64 @@ security analysis.
 
 ## Shielded Protocol {#shielded}
 
-simplified keys, note, note cm, (mention QR)
+We incrementally cover the whole Tachyon shielded protocol in this section.
 
-pruning nullifers, a form of CSV (offloading validation to client side to reduce consensus load)
+### Payment Keys {#payment-keys}
+
+As explained [above](#decouple), Tachyon shielded protocol only expects an
+authorization key $\ak$ from a re-randomizable signature scheme[^redpalla] and
+a nullifier key $\nk$. While both keys *should* be derived from a master spending
+key as per [ZIP-32](https://zips.z.cash/zip-0032), the concrete derivation path
+is specified by wallet standards. The transfer proofs in shielded transaction only
+use them directly as secret witnesses to further derive public values including
+(randomized) spend validating key $\rk$ and nullifier $\nf$, but never constrain
+their derivations. The shielded protocol only mandates that they are
+indistinguishable from randomly sampled keys.
+    
+[^redpalla]: Tachyon sticks with $\mathsf{RedPallas}$, a Schnorr-based signature
+    over the Palla curve supporting re-randomization, as in Orchard.
+    See our [approach](#pq-rerand) when fully migrating to post-quantum world.
+
+<P align="center">
+  <img src="./assets/tachyon_keys.svg" alt="tachyon_keys" />
+</p>
+
+The payment key $\pk = H(\ak, \nk)$ represents a note owner.
+The hash-based derivation from the $(\ak, \nk)$ tuple provides a succinct owner
+field in a note and offers
+[quantum recoverability](https://zips.z.cash/draft-ecc-quantum-recoverability) today.
+Publicizing $\ak$, a Schnorr signing key, to senders who might have future access
+to a quantum computer exposes the user 
+["Harvest Now, Decrypt Later"](https://en.wikipedia.org/wiki/Harvest_now%2C_decrypt_later)
+risk.
+
+Spend authorization follows the same construction as in Orchard.
+The authorization key pair satisfies the DLog relation $\ak = [\ask],\G$, and
+can be re-randomized into an unlinkable key pair using a randomizer $\alpha\in\F$.
+Transactions are signed using the re-randomized signing key $\ask + \alpha$.
+The resulting signature is unlinkable to the original spending authority,
+while remaining verifiable against the randomized spend validating key $\rk$,
+defined as:
+
+$$
+\rk = \ak + [\alpha]\,\G = [\ask + \alpha]\,\G
+$$
+
+### Note {#note}
+
+note, note cm, (mention QR in Orchard v.s. here, link Dev post)
 
 ### Evolving Nullifier {#nf}
 
-nf derivation, ranged-delegation key in GGM, 
+pruning nullifers, a form of CSV (offloading validation to client side to reduce consensus load)
+
+nf derivation, demonstrate ranged-delegation key in GGM, 
 
 
+### Polynomial-based Accumulator {#acc}
+
+Move away from MT based to unified poly roots based accumulator for membership
+and non-membership proofs + union + substraction.
 
 ### Tachyaction Description {#action}
 
@@ -155,3 +204,9 @@ wallet key derivation
 
 chal: no rerandomizable signature scheme, DLog diverisifcation doesn't work.
 fresh encap-key per sender and STARK on PQ sigature
+
+### PQ Address Diversification {#pq-diversify}
+
+### PQ Signature Re-randomization {#pq-rerand}
+
+### PQ PCD Proofs {#pq-pcd}

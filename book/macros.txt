@@ -16,3 +16,4 @@
 \rk:\mathsf{rk}
 \ivk:\mathsf{ivk}
 \nk:\mathsf{nk}
+\nf:\mathsf{nf}
