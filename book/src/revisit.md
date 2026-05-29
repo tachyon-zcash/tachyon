@@ -121,7 +121,11 @@ security analysis.
 
 We incrementally cover the whole Tachyon shielded protocol in this section.
 
-### Payment Keys {#payment-keys}
+> Note: in practice, all derivation functions (e.g., hash, KDF, XOF, and Derive)
+> should be domain-separated;
+> we omit this detail here for simplicity of presentation.
+
+### Payment Key {#payment-key}
 
 As explained [above](#decouple), Tachyon shielded protocol only expects an
 authorization key $\ak$ from a re-randomizable signature scheme[^redpalla] and
@@ -151,7 +155,7 @@ to a quantum computer exposes the user
 risk.
 
 Spend authorization follows the same construction as in Orchard.
-The authorization key pair satisfies the DLog relation $\ak = [\ask],\G$, and
+The authorization key pair satisfies the DLog relation $\ak = [\ask]\,\G$, and
 can be re-randomized into an unlinkable key pair using a randomizer $\alpha\in\F$.
 Transactions are signed using the re-randomized signing key $\ask + \alpha$.
 The resulting signature is unlinkable to the original spending authority,
@@ -164,13 +168,153 @@ $$
 
 ### Note {#note}
 
-note, note cm, (mention QR in Orchard v.s. here, link Dev post)
+A tachyon note is a tuple:
 
+$$
+\mathsf{Note}^\mathsf{Tachyon} := (\pk, v, \rho, \rcm)
+$$
+
+where $\pk$ is the [payment key](#payment-key), $v$ is the value of the note,
+$\rho$ is pseudo-random note identity that binds to the note nullifier value
+as an input to its derivation, and $\rcm$ is a random commitment trapdoor[^cm-rho].
+In contrast to Sapling/Orchard, the note commitment in Tachyon
+$\cm = \mathsf{Com}(\pk, v, \rho; \rcm)$ is purely based on symmetric primitives[^cm].
+Thus, Tachyon doesn't require extra enforcement on $\rcm$ derivation on wallets
+to achieve quantum recoverability
+like [Orchard does](https://x.com/zkDragon/status/2026047830759182672).
+
+[^cm-rho]: Pseudorandom values like $\rho$ and $\rcm$ should be
+    deterministically derived from the wallet master key via secure KDF to avoid
+    poor operational entropy. The derivation should be standardized.
+
+[^cm]: Sapling and Orchard uses variants of the vector Pedersen commitment,
+    which relies on DLog hardness. We choose Sponge-based Hash constructed from
+    algebraic permutation Poseidon.
+    
 ### Evolving Nullifier {#nf}
 
-pruning nullifers, a form of CSV (offloading validation to client side to reduce consensus load)
+Readers should refer to Sean's 
+[post](https://seanbowe.com/blog/tachyon-scaling-zcash-oblivious-synchronization/)
+and the [short note [BM25]](https://eprint.iacr.org/2025/2031.pdf) for a
+detailed motivation and an overview of Tachyon's evolving nullifiers.
 
-nf derivation, demonstrate ranged-delegation key in GGM, 
+A scaling Zcash produces more note commitments and nullifiers, both accumulating
+in the shielded pool. The commitment set grows on disk, but luckily storage is cheap.
+The nullifier set becomes the bottleneck: every transaction must check that its
+inputs' nullifiers have never appeared before, which forces consensus nodes to
+keep the whole set in memory *on the critical path*.
+At Visa-level throughput, this nullifier state would grow by an [unattainable
+500 GB per day](https://youtu.be/D51JV1ItMGE?si=5i5ByeKYg6fhf7U8&t=201).
+
+Tachyon offloads most of this check to the user. The consensus node retains only
+nullifiers from the most recent blocks; the user supplies an *exclusion proof*
+attesting that their nullifier does not appear anywhere in the older history.
+This proof must be kept current as each new block lands, which Tachyon achieves
+incrementally via [proof-carrying data (PCD)](https://tachyon.z.cash/ragu/concepts/pcd).
+Since constantly scanning blocks and refreshing proofs is onerous, users can
+outsource the task to an *oblivious syncing service (OSS)*. However, updating
+an exclusion proof requires knowing the nullifier value, and a nullifier revealed
+to the syncing service let it trace the eventual spend of that note — a disastrous
+privacy leak. Tachyon resolves this by letting nullifiers **evolve across
+epochs**: the value a user shares with the OSS in one epoch is unlinkable to the
+value revealed at spend time. This breaks a long-standing Zcash invariant:
+each note has only *one* nullifier that is globally unique value in the pool.
+As a result, Tachyon requires both a new nullifier derivation and a new
+double-spending prevention mechanism.
+
+The ideal functionality for an epoched nullifier is a deterministic function
+
+$$\nf_e = \mathsf{KDF}(\nk, \rho, e)$$
+
+whose outputs are indistinguishable from random bytes. Such an $\nf_e$ binds to
+both the spending authority (via $\nk$) and the underlying note (via $\rho$),
+while remaining unlinkable across epochs to anyone without $\nk$.
+
+Two additional constraints shape the choice of $\mathsf{KDF}$:
+
+- **Constrained evaluation.** The wallet should be able to delegate $\nf_e$
+  computation for a *range* of epochs to an OSS while keeping every epoch
+  outside that range opaque to the service. Without this, outsourcing
+  block-scanning would cost the user their privacy.
+- **Circuit efficiency.** The spend proof constrains $\nf_e$ in-circuit, so the
+  construction should be circuit friendly.
+
+A natural abstraction for the first constraint is the *constrained PRF*
+[[BW13]](https://eprint.iacr.org/2013/352.pdf): from the master key one can
+derive a constrained key that enables the evaluation of the PRF at a certain
+subset of the input domain and nowhere else. Section 3.3 of [BW13]
+explains the *prefix-fixing* family realized by the seminal 
+[[GGM84] PRF](https://crypto.stanford.edu/pbc/notes/crypto/ggm.html)
+which is sufficient for us.
+
+#### GGM-based Nullifier {#nf-ggm}
+
+Let $\bits{e} = (e_0, e_1, \ldots, e_{\ell-1}) \in \{0,1\}^\ell$ be the
+binary expansion of $e$ (so $e_0$ is the most significant bit).
+Let $G: \{0,1\}^s \rightarrow \{0,1\}^{2s}$ be a length-doubling PRG, split into
+halves $G(x) = G_0(x)\, \|\, G_1(x)$. The GGM PRF walks down a binary tree from
+a seed, branching left or right at each level according to the input bits:
+
+$$
+F^{\mathsf{GGM}}_{\mathsf{seed}}(e) :=
+G_{e_{\ell-1}}\!\bigl( \cdots G_{e_1}\!\bigl( G_{e_0}(\mathsf{seed}) \bigr) \cdots \bigr)
+$$
+
+The Tachyon nullifier composes two PRFs: walk the tree from $\nk$ to obtain a
+per-epoch evaluation key, then key a second PRF over the note identity:
+
+$$
+\begin{aligned}
+k_e &= F^{\mathsf{GGM}}_{\nk}(e) \\
+\nf_e &= \PRF_{k_e}(\rho)
+\end{aligned}
+$$
+
+A few properties worth highlighting:
+
+- **Owner-bound**: Only the holder of $\nk$ can compute $k_e$, and hence $\nf_e$.
+- **Forward-only**: Each $G_b$ is one-way: from a node $G_{e_1}(G_{e_0}(\nk))$
+  one can walk further down, but cannot recover $G_{e_0}(\nk)$ or reach its
+  sibling subtree. A partially-walked node thus lets its holder reach every
+  leaf below it, and nothing else.
+- **Provably pseudorandom**: For uniform $\nk$, the GGM theorem gives that
+  $\{k_e\}_e$ are jointly pseudorandom over any distinct epoch queries
+  (sequential or even adversarially chosen). 
+  The outer $\PRF_{k_e}$ then yields pseudorandom $\nf_e$.
+- Circuit efficient: Each level is one PRG call, so a single $\nf_e$ costs
+  $\ell + 1$ hashes when $G_0, G_1$ are instantiated with Poseidon.
+
+The forward-only property is exactly what makes OSS delegation work. For any
+prefix $\mathbf{v}$ of length $d$, the internal node
+$k_\mathbf{v} := G_{v_{d-1}}(\cdots G_{v_0}(\nk) \cdots)$ is a
+*prefix-constrained key*: its holder can derive $\nf_e$ for every $e$ whose
+top $d$ bits equal $\mathbf{v}$, and learns nothing about any other $\nf$.
+
+Concretely, in a 3-bit epoch space, delegating the range
+$[2, 4) = \{010, 011\}$ amounts to handing the OSS the depth-2 prefix key
+
+$$k_{01} = G_1(G_0(\nk))$$
+
+from which it forward-walks $G_0$ and $G_1$ to obtain $k_{010}$, $k_{011}$ and
+thus $\nf_2, \nf_3$. Because $G$ is one-way, the OSS cannot reach any node
+outside the `01` subtree, so future revelations of $\nf_4, \nf_5, \ldots$
+remain unlinkable to anything it has seen.
+
+When the requested range does not align to a single subtree, it is delegated as
+a *set of prefix keys*: one per maximal subtree contained in the range.
+Delegating $[0, 7) = \{0, 1, \ldots, 6\}$, for example, requires three subtree
+roots:
+
+$$\bigl\{\; G_0(\nk),\quad G_0(G_1(\nk)),\quad G_0(G_1(G_1(\nk))) \;\bigr\}$$
+
+covering $\{0,1,2,3\}$, $\{4,5\}$, and $\{6\}$ respectively. In the worst case
+an arbitrary range in an $\ell$-bit epoch space needs $O(\ell)$ prefix keys, so
+the delegated key material is variable-size.
+
+
+#### Nullifier Security {#nf-sec}
+
+discuss balance, Note privacy, spend unlinkability, and how wallet protects Faerie.
 
 
 ### Polynomial-based Accumulator {#acc}
