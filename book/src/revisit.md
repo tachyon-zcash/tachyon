@@ -171,19 +171,19 @@ $$
 A tachyon note is a tuple:
 
 $$
-\mathsf{Note}^\mathsf{Tachyon} := (\pk, v, \rho, \rcm)
+\mathsf{Note}^\mathsf{Tachyon} := (\pk, v, \psi, \rcm)
 $$
 
 where $\pk$ is the [payment key](#payment-key), $v$ is the value of the note,
-$\rho$ is pseudo-random note identity that binds to the note nullifier value
-as an input to its derivation, and $\rcm$ is a random commitment trapdoor[^cm-rho].
+$\psi$ is pseudo-random note identity that binds to the note nullifier value
+as an input to its derivation, and $\rcm$ is a random commitment trapdoor[^cm-psi].
 In contrast to Sapling/Orchard, the note commitment in Tachyon
-$\cm = \mathsf{Com}(\pk, v, \rho; \rcm)$ is purely based on symmetric primitives[^cm].
+$\cm = \mathsf{Com}(\pk, v, \psi; \rcm)$ is purely based on symmetric primitives[^cm].
 Thus, Tachyon doesn't require extra enforcement on $\rcm$ derivation on wallets
 to achieve quantum recoverability
 like [Orchard does](https://x.com/zkDragon/status/2026047830759182672).
 
-[^cm-rho]: Pseudorandom values like $\rho$ and $\rcm$ should be
+[^cm-psi]: Pseudorandom values like $\psi$ and $\rcm$ should be
     deterministically derived from the wallet master key via secure KDF to avoid
     poor operational entropy. The derivation should be standardized.
 
@@ -224,11 +224,12 @@ double-spending prevention mechanism.
 
 The ideal functionality for an epoched nullifier is a deterministic function
 
-$$\nf_e = \mathsf{KDF}(\nk, \rho, e)$$
+$$\nf_e = \mathsf{KDF}(\nk, \psi, e)$$
 
 whose outputs are indistinguishable from random bytes. Such an $\nf_e$ binds to
-both the spending authority (via $\nk$) and the underlying note (via $\rho$),
-while remaining unlinkable across epochs to anyone without $\nk$.
+both the spending authority (via $\nk$) and the underlying note (via its
+per-note trapdoor $\psi$), while remaining unlinkable across epochs to anyone
+without $\nk$.
 
 Two additional constraints shape the choice of $\mathsf{KDF}$:
 
@@ -256,56 +257,73 @@ halves $G(x) = G_0(x)\, \|\, G_1(x)$. The GGM PRF walks down a binary tree from
 a seed, branching left or right at each level according to the input bits:
 
 $$
-F^{\mathsf{GGM}}_{\mathsf{seed}}(e) :=
-G_{e_{\ell-1}}\!\bigl( \cdots G_{e_1}\!\bigl( G_{e_0}(\mathsf{seed}) \bigr) \cdots \bigr)
+F^{\mathsf{GGM}}_{\seed}(e) :=
+G_{e_{\ell-1}}\!\bigl( \cdots G_{e_1}\!\bigl( G_{e_0}(\seed) \bigr) \cdots \bigr)
 $$
 
-The Tachyon nullifier composes two PRFs: walk the tree from $\nk$ to obtain a
-per-epoch evaluation key, then key a second PRF over the note identity:
+The Tachyon nullifier instantiates this GGM PRF with a per-note seed bound to
+both the user's nullifier key $\nk$ and the note's trapdoor $\psi$:
 
-$$
-\begin{aligned}
-k_e &= F^{\mathsf{GGM}}_{\nk}(e) \\
-\nf_e &= \PRF_{k_e}(\rho)
-\end{aligned}
-$$
+$$\nf_e = F^{\mathsf{GGM}}_{\PRF_\nk(\psi)}(e)$$
 
 A few properties worth highlighting:
 
-- **Owner-bound**: Only the holder of $\nk$ can compute $k_e$, and hence $\nf_e$.
-- **Forward-only**: Each $G_b$ is one-way: from a node $G_{e_1}(G_{e_0}(\nk))$
-  one can walk further down, but cannot recover $G_{e_0}(\nk)$ or reach its
-  sibling subtree. A partially-walked node thus lets its holder reach every
-  leaf below it, and nothing else.
-- **Provably pseudorandom**: For uniform $\nk$, the GGM theorem gives that
-  $\{k_e\}_e$ are jointly pseudorandom over any distinct epoch queries
-  (sequential or even adversarially chosen). 
-  The outer $\PRF_{k_e}$ then yields pseudorandom $\nf_e$.
-- Circuit efficient: Each level is one PRG call, so a single $\nf_e$ costs
-  $\ell + 1$ hashes when $G_0, G_1$ are instantiated with Poseidon.
+- **Per-note and owner-bound**: Only the holder of $\nk$ can compute the seed
+  $\PRF_\nk(\psi)$, so only the owner can derive $\nf_e$. The seed also
+  depends on the per-note $\psi$, so different notes live in completely
+  disjoint GGM trees: a prefix key delegated for one note grants the OSS
+  *nothing* about any other note's nullifiers.[^cross-note-attack]
+- **Forward-only**: Each $G_b$ is one-way — from any internal node one can
+  walk further down, but cannot recover its parent or reach a sibling
+  subtree. A partially-walked node thus lets its holder reach every leaf
+  below it, and nothing else.
+- **Provably pseudorandom**: For uniform $\nk$, the seed $\PRF_\nk(\psi)$ is
+  pseudorandom by PRF security; GGM then yields pseudorandom $\nf_e$ over
+  any distinct epoch queries, sequential or even adversarially chosen.
+- **Circuit efficient**: One PRF call to derive the seed plus $\ell$ PRG
+  calls down the tree — a single $\nf_e$ costs $\ell + 1$ hashes when both
+  the PRF and $G_0, G_1$ are instantiated with Poseidon.
+
+[^cross-note-attack]: Had we instead used a note-independent
+    $k_e = F^{\mathsf{GGM}}_\nk(e)$ and folded $\psi$ into a final
+    $\nf_e = \PRF_{k_e}(\psi)$, the same $k_e$ would be shared across every
+    note the user owns. An OSS holding a delegated $k_e$ for note $A$ could
+    then compute $\nf_e^{(B)} = \PRF_{k_e}(\psi_B)$ for any other note $B$
+    whose $\psi_B$ it knows — and since $\psi$ is sender-shared via the
+    payment protocol, a colluding sender-OSS would learn the epoch-$e$
+    nullifier of every note it ever sent the user. Worse, *future*
+    delegations would retroactively unmask past spends: receiving $k_{e+1}$
+    later lets the attacker compute $\PRF_{k_{e+1}}(\psi_A)$ for a note $A$
+    already spent at epoch $e+1$ and find the match in the on-chain
+    nullifier history. Binding the GGM seed itself to per-note $\psi$ severs
+    both attacks: each note has its own tree, and a delegated subtree key
+    cannot cross GGM trees.
 
 The forward-only property is exactly what makes OSS delegation work. For any
 prefix $\mathbf{v}$ of length $d$, the internal node
-$k_\mathbf{v} := G_{v_{d-1}}(\cdots G_{v_0}(\nk) \cdots)$ is a
-*prefix-constrained key*: its holder can derive $\nf_e$ for every $e$ whose
-top $d$ bits equal $\mathbf{v}$, and learns nothing about any other $\nf$.
+$k_\mathbf{v} := G_{v_{d-1}}(\cdots G_{v_0}(\seed) \cdots)$ is a
+*prefix-constrained key*: its holder can derive $\nf_e$ for every $e$ in
+*this note's* tree whose top $d$ bits equal $\mathbf{v}$, and learns nothing
+about any other $\nf$ — including any nullifier of a *different* note, whose
+tree is rooted at a different seed.
 
 Concretely, in a 3-bit epoch space, delegating the range
-$[2, 4) = \{010, 011\}$ amounts to handing the OSS the depth-2 prefix key
+$[2, 4) = \{010, 011\}$ for some note amounts to handing the OSS the depth-2
+prefix key
 
-$$k_{01} = G_1(G_0(\nk))$$
+$$k_{01} = G_1(G_0(\seed)), \qquad \seed = \PRF_\nk(\psi)$$
 
 from which it forward-walks $G_0$ and $G_1$ to obtain $k_{010}$, $k_{011}$ and
-thus $\nf_2, \nf_3$. Because $G$ is one-way, the OSS cannot reach any node
-outside the `01` subtree, so future revelations of $\nf_4, \nf_5, \ldots$
-remain unlinkable to anything it has seen.
+thus $\nf_2, \nf_3$ for that note. Because $G$ is one-way, the OSS cannot
+reach any node outside the `01` subtree, so future revelations of
+$\nf_4, \nf_5, \ldots$ remain unlinkable to anything it has seen.
 
 When the requested range does not align to a single subtree, it is delegated as
 a *set of prefix keys*: one per maximal subtree contained in the range.
 Delegating $[0, 7) = \{0, 1, \ldots, 6\}$, for example, requires three subtree
-roots:
+roots (all under the same per-note $\seed$):
 
-$$\bigl\{\; G_0(\nk),\quad G_0(G_1(\nk)),\quad G_0(G_1(G_1(\nk))) \;\bigr\}$$
+$$\bigl\{\; G_0(\seed),\quad G_0(G_1(\seed)),\quad G_0(G_1(G_1(\seed))) \;\bigr\}$$
 
 covering $\{0,1,2,3\}$, $\{4,5\}$, and $\{6\}$ respectively. In the worst case
 an arbitrary range in an $\ell$-bit epoch space needs $O(\ell)$ prefix keys, so

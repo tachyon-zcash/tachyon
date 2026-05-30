@@ -17,6 +17,7 @@
 \rk:\mathsf{rk}
 \ivk:\mathsf{ivk}
 \nk:\mathsf{nk}
+\seed:\mathsf{seed}
 \nf:\mathsf{nf}
 \rcm:\mathsf{rcm}
 \cm:\mathsf{cm}
