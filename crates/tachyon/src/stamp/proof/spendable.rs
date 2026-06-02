@@ -52,7 +52,7 @@ use crate::{
 /// `nf` is absent from every stamp covered by the anchor segment from
 /// `start` to `end`. Built either directly from a single stamp via
 /// [`UnspentSeed`] / [`EmptyBlockUnspentSeed`], or from a [`RangeSummary`]
-/// via [`UnspentFromRange`], then fused with adjacent fragments via
+/// via [`UnspentRange`], then fused with adjacent fragments via
 /// [`UnspentFuse`] — fusion spans block boundaries because anchor
 /// advances are continuous.
 ///
@@ -76,7 +76,7 @@ pub struct Unspent;
 
 impl Header for Unspent {
     /// `(nf, start, end)`. `nf` roots in a seed/bridge witness
-    /// ([`UnspentSeed`], [`EmptyBlockUnspentSeed`], or [`UnspentFromRange`]),
+    /// ([`UnspentSeed`], [`EmptyBlockUnspentSeed`], or [`UnspentRange`]),
     /// bound by the consumer ([`SpendableLift`] checks `unspent.nf ==
     /// spendable.nf`, and the spendable's `nf` is GGM-bound upstream).
     /// `start` is freely witnessed at a seed; `end` is the absorbed advance.
@@ -106,9 +106,9 @@ impl Header for Unspent {
 /// (set-bearing, multiset-budget-bounded) to set-free [`Unspent`]
 /// segments (composable to arbitrary length via [`UnspentFuse`]).
 #[derive(Debug)]
-pub struct UnspentFromRange;
+pub struct UnspentRange;
 
-impl Step for UnspentFromRange {
+impl Step for UnspentRange {
     type Aux<'source> = ();
     type Left = RangeSummary;
     type Output = Unspent;
@@ -126,12 +126,12 @@ impl Step for UnspentFromRange {
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         if tg_gadget.0.commit() != tg_commit.0 {
             return Err(mock_ragu::Error(
-                "UnspentFromRange: witness gadget must commit to range tg_set",
+                "UnspentRange: witness gadget must commit to range tg_set",
             ));
         }
         // Exclusion: nf ∉ set ⇔ query(nf) != 0.
         if tg_gadget.0.query(Fp::from(nf)) == Fp::ZERO {
-            return Err(mock_ragu::Error("UnspentFromRange: found nullifier in set"));
+            return Err(mock_ragu::Error("UnspentRange: found nullifier in set"));
         }
         Ok(((nf, start, end), ()))
     }
@@ -176,7 +176,7 @@ impl Step for UnspentFuse {
 ///
 /// Verifies `nf ∉ stamp_tg_set`, absorbs the stamp's commit at `start`,
 /// and produces a one-stamp [`Unspent`]. Equivalent to a
-/// [`super::pool::RangeSummaryStampSeed`] followed by [`UnspentFromRange`],
+/// [`super::pool::RangeSummaryStampSeed`] followed by [`UnspentRange`],
 /// collapsed into one step for callers that already hold the stamp's
 /// tachygram set and the target `nf`.
 ///

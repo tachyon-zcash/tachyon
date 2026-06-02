@@ -17,7 +17,7 @@ A note is essentially created when the wallet runs `SpendableInitStamp` or `Spen
 
 Maintaining the spendable means advancing its anchor forward over `Unspent` segments.
 `SpendableLift` consumes one `Unspent` whose nullifier matches the spendable's and whose start matches the spendable's current anchor, producing a fresh `SpendableHeader` at the segment's end.
-Each `Unspent` is built either by running `UnspentFromRange` against a `RangeSummary` or directly from a single stamp via `UnspentSeed` / `EmptyBlockUnspentSeed`; `UnspentFuse` composes adjacent segments.
+Each `Unspent` is built either by running `UnspentRange` against a `RangeSummary` or directly from a single stamp via `UnspentSeed` / `EmptyBlockUnspentSeed`; `UnspentFuse` composes adjacent segments.
 
 Crossing an epoch boundary requires a new-epoch nullifier and the cross-epoch anchor advance.
 `RolloverFuse` consumes two consecutive-epoch `NullifierHeader`s that share a note commitment and emits a `NullifierRolloverHeader`.
@@ -54,7 +54,7 @@ It seeds and walks the private GGM tree (`NfMasterSeed`, `NfMasterStep`, `NfPref
 
 The sync service holds a `DelegateNfPrefixHeader` produced by the wallet at delegation time.
 From there it climbs the blinded subtree (`DelegateNfPrefixStep`) to whichever leaf an epoch requires and emits a `DelegateNullifierHeader` (`DelegateNullifierStep`); it fuses two consecutive-epoch leaves with `DelegateRolloverFuse` when an epoch boundary is approached.
-It produces the `Unspent` segments that carry the spendable forward (`RangeSummaryStampSeed`, `RangeSummaryEmptySeed`, `RangeSummaryFuse`, `UnspentFromRange`, `UnspentSeed`, `EmptyBlockUnspentSeed`, `UnspentFuse`), and runs the lifts that consume them (`SpendableLift`, `SpendableRollover`, `SpendableEpochLift`).
+It produces the `Unspent` segments that carry the spendable forward (`RangeSummaryStampSeed`, `RangeSummaryEmptySeed`, `RangeSummaryFuse`, `UnspentRange`, `UnspentSeed`, `EmptyBlockUnspentSeed`, `UnspentFuse`), and runs the lifts that consume them (`SpendableLift`, `SpendableRollover`, `SpendableEpochLift`).
 
 The aggregator works only with published `StampHeader`s.
 It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `EmptyBlockSeed`, `AnchorFuse`) and fuses with `MergeStamp`.
@@ -67,7 +67,7 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `E
 | RangeSummaryStampSeed | possible | yes | no |
 | RangeSummaryEmptySeed | possible | yes | no |
 | RangeSummaryFuse | possible | yes | no |
-| UnspentFromRange | possible | yes | no |
+| UnspentRange | possible | yes | no |
 | UnspentSeed | possible | yes | no |
 | EmptyBlockUnspentSeed | possible | yes | no |
 | UnspentFuse | possible | yes | no |
@@ -112,7 +112,7 @@ A fresh trapdoor per delegation makes the delegation identifier unlinkable acros
 
 `AnchorSeed` / `EmptyBlockSeed` build single-link `AnchorChain` segments; `AnchorFuse` composes adjacent segments.
 `RangeSummaryStampSeed` / `RangeSummaryEmptySeed` build single-link `RangeSummary` segments, which additionally carry the union of every absorbed stamp's tachygram set; `RangeSummaryFuse` composes adjacent segments.
-`UnspentFromRange` consumes a `RangeSummary` and emits an `Unspent` after proving the witnessed nullifier absent from the summary's tachygram set; `UnspentSeed` / `EmptyBlockUnspentSeed` build single-stamp `Unspent` segments directly, collapsing the `RangeSummary` step for callers that already hold the stamp's tachygram set and the target nullifier; `UnspentFuse` composes adjacent `Unspent` segments.
+`UnspentRange` consumes a `RangeSummary` and emits an `Unspent` after proving the witnessed nullifier absent from the summary's tachygram set; `UnspentSeed` / `EmptyBlockUnspentSeed` build single-stamp `Unspent` segments directly, collapsing the `RangeSummary` step for callers that already hold the stamp's tachygram set and the target nullifier; `UnspentFuse` composes adjacent `Unspent` segments.
 A segment ties to real chain history only when a stamp-emitting step consumes it and the resulting stamp's anchor matches a consensus-published end-of-block value.
 
 ### Spendable lifecycle
@@ -121,7 +121,7 @@ A spendable bootstraps one of two ways.
 `SpendableInitStamp` fuses the wallet's `NullifierHeader` with a freely-witnessed pre-stamp anchor and the cm-stamp's tachygram set, verifies the note's commitment[^notes] is among those tachygrams, and advances the anchor through that stamp; it skips the absence check because the cm-stamp cannot contain the note's own nullifier.
 `SpendableInitRange` instead fuses the `NullifierHeader` with a `RangeSummary` covering the cm-stamp, verifies the commitment is among the summary's tachygrams and the nullifier is absent, and emits a `SpendableHeader` carrying the nullifier and the summary's `end` anchor; the absence check guards against a range that also covers the note's later spend.
 `SpendableLift` advances the spendable's anchor further by consuming an `Unspent` segment whose nullifier equals the spendable's and whose start matches the spendable's current anchor.
-Each `Unspent` is produced by `UnspentFromRange` against a `RangeSummary`, witnessing the nullifier and proving it absent from the summary's tachygram set[^tachygrams]; `UnspentFuse` requires both halves to share a nullifier and to meet at a common anchor.
+Each `Unspent` is produced by `UnspentRange` against a `RangeSummary`, witnessing the nullifier and proving it absent from the summary's tachygram set[^tachygrams]; `UnspentFuse` requires both halves to share a nullifier and to meet at a common anchor.
 
 ### Epoch rollover
 
@@ -301,7 +301,7 @@ flowchart LR
   s_rempty[RangeSummaryEmptySeed]
   s_rfuse[RangeSummaryFuse]
   w_unspent[/nf, tg_gadget/]
-  s_unspent[UnspentFromRange]
+  s_unspent[UnspentRange]
   w_useed[/start, stamp_tg_set, nf/]
   s_useed[UnspentSeed]
   w_uempty[/start, nf/]
@@ -378,7 +378,7 @@ A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `Delega
 | RangeSummaryStampSeed | — | — | start, stamp_tg_set | RangeSummary |
 | RangeSummaryEmptySeed | — | — | start | RangeSummary |
 | RangeSummaryFuse | RangeSummary | RangeSummary | left_tg_gadget, right_tg_gadget | RangeSummary |
-| UnspentFromRange | RangeSummary | — | nf, tg_gadget | Unspent |
+| UnspentRange | RangeSummary | — | nf, tg_gadget | Unspent |
 | UnspentSeed | — | — | start, stamp_tg_set, nf | Unspent |
 | EmptyBlockUnspentSeed | — | — | start, nf | Unspent |
 | UnspentFuse | Unspent | Unspent | — | Unspent |

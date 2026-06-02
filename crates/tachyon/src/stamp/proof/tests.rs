@@ -552,13 +552,13 @@ fn unspent_from_range_rejects_tg_present() {
     let err = PROOF_SYSTEM
         .fuse(
             rng,
-            spendable::UnspentFromRange,
+            spendable::UnspentRange,
             (nf, containing_set),
             summary,
             Proof::trivial().carry::<()>(()),
         )
         .unwrap_err();
-    assert_eq!(err.0, "UnspentFromRange: found nullifier in set");
+    assert_eq!(err.0, "UnspentRange: found nullifier in set");
 }
 
 #[test]
@@ -580,7 +580,7 @@ fn unspent_from_range_rejects_unbound_gadget() {
     let err = PROOF_SYSTEM
         .fuse(
             rng,
-            spendable::UnspentFromRange,
+            spendable::UnspentRange,
             (nf, unrelated),
             summary,
             Proof::trivial().carry::<()>(()),
@@ -588,7 +588,7 @@ fn unspent_from_range_rejects_unbound_gadget() {
         .unwrap_err();
     assert_eq!(
         err.0,
-        "UnspentFromRange: witness gadget must commit to range tg_set"
+        "UnspentRange: witness gadget must commit to range tg_set"
     );
 }
 
@@ -727,12 +727,12 @@ fn unspent_from_range_handles_empty() {
     let (unspent, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            spendable::UnspentFromRange,
+            spendable::UnspentRange,
             (nf, empty_gadget),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("UnspentFromRange over empty block");
+        .expect("UnspentRange over empty block");
     assert_eq!(unspent.data.0, nf);
     assert_eq!(unspent.data.1, Anchor::default());
     assert_eq!(unspent.data.2, summary_end);
@@ -761,7 +761,7 @@ fn unspent_seed_rejects_tg_present() {
 #[test]
 fn unspent_seed_succeeds() {
     // Direct stamp -> Unspent: nf absent, anchor advanced through the
-    // stamp, matching the RangeSummaryStampSeed + UnspentFromRange path.
+    // stamp, matching the RangeSummaryStampSeed + UnspentRange path.
     let rng = &mut StdRng::seed_from_u64(0);
     let nf = Nullifier::from(Fp::random(&mut *rng));
     let stamp_set = TachygramSetGadget::from([tg(rng)].as_slice());
@@ -1003,12 +1003,12 @@ fn build_single_stamp_unspent<'source>(
     let (unspent, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            spendable::UnspentFromRange,
+            spendable::UnspentRange,
             (nf, tg_gadget),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("UnspentFromRange");
+        .expect("UnspentRange");
     unspent
 }
 
@@ -1165,7 +1165,7 @@ fn empty_block_anchor_unique_per_height() {
 #[test]
 fn empty_block_unspent_lifts_spendable() {
     // Build a spendable, then lift it across an empty block via an
-    // Unspent built from an empty-block RangeSummary + UnspentFromRange.
+    // Unspent built from an empty-block RangeSummary + UnspentRange.
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
     let note = user.random_note(rng, 100);
@@ -1187,7 +1187,7 @@ fn empty_block_unspent_lifts_spendable() {
     let empty_height = pool.height();
 
     // Build an Unspent over the empty block via RangeSummaryEmptySeed +
-    // UnspentFromRange, then lift the spendable.
+    // UnspentRange, then lift the spendable.
     let nf = spendable.data.0;
     let unspent = build_unspent_pcd(rng, &pool, nf, empty_height..=empty_height);
     let (lifted, ()) = PROOF_SYSTEM

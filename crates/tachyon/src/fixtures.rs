@@ -388,7 +388,7 @@ pub(crate) fn build_range_summary_at<'source>(
 }
 
 /// Build an [`Unspent`] for `nf` covering blocks `range`. Per height:
-/// one [`build_range_summary_at`] then [`UnspentFromRange`].
+/// one [`build_range_summary_at`] then [`UnspentRange`].
 /// Cross-height composition via [`UnspentFuse`].
 pub(crate) fn build_unspent_pcd<'source>(
     rng: &mut (impl RngCore + CryptoRng),
@@ -408,12 +408,12 @@ pub(crate) fn build_unspent_pcd<'source>(
         let (unspent, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                spendable::UnspentFromRange,
+                spendable::UnspentRange,
                 (nf, gadget),
                 summary,
                 Proof::trivial().carry::<()>(()),
             )
-            .expect("UnspentFromRange");
+            .expect("UnspentRange");
         chain = Some(match chain.take() {
             | None => unspent,
             | Some(left) => {
@@ -576,7 +576,7 @@ impl WalletSim {
         }
 
         // Build an Unspent over stamps cm_idx+1..end of the cm-block
-        // — per-stamp RangeSummary then UnspentFromRange, fused
+        // — per-stamp RangeSummary then UnspentRange, fused
         // linearly — chained from post_cm_anchor, then SpendableLift.
         let nf = spendable.data.0;
         let mut state = spendable.data.1;
@@ -593,12 +593,12 @@ impl WalletSim {
             let (unspent, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    spendable::UnspentFromRange,
+                    spendable::UnspentRange,
                     (nf, tg_gadget),
                     summary,
                     Proof::trivial().carry::<()>(()),
                 )
-                .expect("UnspentFromRange");
+                .expect("UnspentRange");
             acc = Some(match acc.take() {
                 | None => unspent,
                 | Some(left) => {

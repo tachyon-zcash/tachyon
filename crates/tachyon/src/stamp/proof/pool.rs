@@ -9,7 +9,7 @@
 //!   inclusion and exclusion tests against a segment.
 //!
 //! Per-nf exclusion lives in [`super::spendable`] as `Unspent`, built
-//! from a [`RangeSummary`] via `UnspentFromRange`.
+//! from a [`RangeSummary`] via `UnspentRange`.
 //!
 //! Anchor advances are single-level: every link absorbs one stamp's
 //! tachygram-set commitment into the running [`Anchor`] via
@@ -20,7 +20,7 @@
 //! `RangeSummary` is bounded by the per-step multiset budget (~8192
 //! items across all sets in a single step). Above that ceiling, proofs
 //! transition into set-free `Unspent` (for per-nf exclusion) or
-//! `AnchorChain` (for anchor-only continuity); the `UnspentFromRange`
+//! `AnchorChain` (for anchor-only continuity); the `UnspentRange`
 //! step in [`super::spendable`] is the natural transition.
 
 #![allow(clippy::module_name_repetitions, reason = "intentional names")]
@@ -106,7 +106,7 @@ impl Header for AnchorChain {
 /// union of all its absorbed tachygrams stays under that ceiling
 /// (minus the bookkeeping for the merge itself). Above that, build
 /// the segment in chunks and transition to [`super::spendable::Unspent`]
-/// via [`super::spendable::UnspentFromRange`] before fusing further.
+/// via [`super::spendable::UnspentRange`] before fusing further.
 #[derive(Clone, Debug)]
 pub struct RangeSummary;
 
@@ -219,7 +219,7 @@ impl Step for AnchorFuse {
 /// the anchor, and emits `(start, end, tg_commit)`.
 ///
 /// `start` is freely witnessed; binding closes downstream at
-/// [`super::spendable::UnspentFromRange`] /
+/// [`super::spendable::UnspentRange`] /
 /// [`super::spendable::SpendableInitRange`] and ultimately through consensus
 /// anchor membership.
 ///
@@ -258,7 +258,7 @@ impl Step for RangeSummaryStampSeed {
 /// `empty_tg` is the commitment of the empty multiset; downstream
 /// queries (`query(x)` for any x) return non-zero against it, so an
 /// empty-block summary cleanly carries the "no tachygrams here"
-/// semantics needed by [`super::spendable::UnspentFromRange`].
+/// semantics needed by [`super::spendable::UnspentRange`].
 #[derive(Debug)]
 pub struct RangeSummaryEmptySeed;
 

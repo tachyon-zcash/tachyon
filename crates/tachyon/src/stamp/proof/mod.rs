@@ -33,7 +33,7 @@ fn make_app() -> Result<Application, mock_ragu::Error> {
         .register(pool::RangeSummaryStampSeed)?
         .register(pool::RangeSummaryEmptySeed)?
         .register(pool::RangeSummaryFuse)?
-        .register(spendable::UnspentFromRange)?
+        .register(spendable::UnspentRange)?
         .register(spendable::UnspentFuse)?
         .register(spendable::SpendableInitRange)?
         .register(spendable::SpendableLift)?
