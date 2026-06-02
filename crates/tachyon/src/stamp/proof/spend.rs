@@ -97,7 +97,7 @@ impl Step for SpendBind {
         Note,
     );
 
-    const INDEX: Index = Index::new(22);
+    const INDEX: Index = Index::new(25);
 
     fn witness<'source>(
         &self,

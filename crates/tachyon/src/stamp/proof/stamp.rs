@@ -72,7 +72,7 @@ impl Step for OutputStamp {
         Anchor,
     );
 
-    const INDEX: Index = Index::new(21);
+    const INDEX: Index = Index::new(24);
 
     fn witness<'source>(
         &self,
@@ -120,7 +120,7 @@ impl Step for SpendStamp {
     type Right = SpendableHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(23);
+    const INDEX: Index = Index::new(26);
 
     fn witness<'source>(
         &self,
@@ -164,7 +164,7 @@ impl Step for MergeStamp {
         TachygramSetGadget,
     );
 
-    const INDEX: Index = Index::new(24);
+    const INDEX: Index = Index::new(27);
 
     fn witness<'source>(
         &self,
@@ -217,7 +217,7 @@ impl Step for StampLift {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(25);
+    const INDEX: Index = Index::new(28);
 
     fn witness<'source>(
         &self,

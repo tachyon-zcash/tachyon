@@ -116,7 +116,7 @@ impl Step for UnspentRange {
     /// `(nf, tg_gadget)`.
     type Witness<'source> = (Nullifier, TachygramSetGadget);
 
-    const INDEX: Index = Index::new(13);
+    const INDEX: Index = Index::new(16);
 
     fn witness<'source>(
         &self,
@@ -149,7 +149,7 @@ impl Step for UnspentFuse {
     type Right = Unspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(14);
+    const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,
@@ -194,7 +194,7 @@ impl Step for UnspentSeed {
     /// `(start, stamp_tg_set, nf)`.
     type Witness<'source> = (Anchor, TachygramSetGadget, Nullifier);
 
-    const INDEX: Index = Index::new(27);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
@@ -232,7 +232,7 @@ impl Step for EmptyBlockUnspentSeed {
     /// `(start, nf)`.
     type Witness<'source> = (Anchor, Nullifier);
 
-    const INDEX: Index = Index::new(28);
+    const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,
@@ -360,7 +360,7 @@ impl Step for SpendableInitRange {
     /// `(tg_gadget,)` — the multiset gadget binding to `range.tg_set`.
     type Witness<'source> = (TachygramSetGadget,);
 
-    const INDEX: Index = Index::new(15);
+    const INDEX: Index = Index::new(18);
 
     fn witness<'source>(
         &self,
@@ -440,7 +440,7 @@ impl Step for SpendableInitStamp {
     /// `(pre_cm_anchor, stamp_tg_set)`.
     type Witness<'source> = (Anchor, TachygramSetGadget);
 
-    const INDEX: Index = Index::new(26);
+    const INDEX: Index = Index::new(17);
 
     fn witness<'source>(
         &self,
@@ -471,7 +471,7 @@ impl Step for SpendableLift {
     type Right = Unspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(16);
+    const INDEX: Index = Index::new(19);
 
     fn witness<'source>(
         &self,
@@ -507,7 +507,7 @@ impl Step for RolloverFuse {
     type Right = NullifierHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(17);
+    const INDEX: Index = Index::new(20);
 
     fn witness<'source>(
         &self,
@@ -538,7 +538,7 @@ impl Step for DelegateRolloverFuse {
     type Right = DelegateNullifierHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(18);
+    const INDEX: Index = Index::new(21);
 
     fn witness<'source>(
         &self,
@@ -581,7 +581,7 @@ impl Step for SpendableRollover {
     type Right = NullifierRolloverHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(19);
+    const INDEX: Index = Index::new(22);
 
     fn witness<'source>(
         &self,
@@ -619,7 +619,7 @@ impl Step for SpendableEpochLift {
     type Right = Unspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(20);
+    const INDEX: Index = Index::new(23);
 
     fn witness<'source>(
         &self,
