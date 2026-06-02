@@ -253,18 +253,23 @@ which is sufficient for us.
 Let $\bits{e} = (e_0, e_1, \ldots, e_{\ell-1}) \in \{0,1\}^\ell$ be the
 binary expansion of $e$ (so $e_0$ is the most significant bit).
 Let $G: \{0,1\}^s \rightarrow \{0,1\}^{2s}$ be a length-doubling PRG, split into
-halves $G(x) = G_0(x)\, \|\, G_1(x)$. The GGM PRF walks down a binary tree from
-a seed, branching left or right at each level according to the input bits:
+halves $G(x) = G_0(x)\, \|\, G_1(x)$. In practice, we can instantiate $G_0(x) =
+H(0 \| x), G_1(x) = H(1 \| x)$ with some hash function $H$ modeled as random oracle.
+The GGM PRF walks down a binary tree from a seed, branching left or right at each
+level according to the input bits:
 
 $$
 F^{\mathsf{GGM}}_{\seed}(e) :=
-G_{e_{\ell-1}}\!\bigl( \cdots G_{e_1}\!\bigl( G_{e_0}(\seed) \bigr) \cdots \bigr)
+G_{e_{\ell-1}}\!\Bigl( \cdots G_{e_1}\!\bigl( G_{e_0}(\seed) \bigr) \cdots \Bigr)
 $$
 
 The Tachyon nullifier instantiates this GGM PRF with a per-note seed bound to
 both the user's nullifier key $\nk$ and the note's trapdoor $\psi$:
 
-$$\nf_e = F^{\mathsf{GGM}}_{\PRF_\nk(\psi)}(e)$$
+$$
+\nf_e = F^{\mathsf{GGM}}_{\PRF_\nk(\psi)}(e) =
+G_{e_{\ell-1}}\!\Biggl( \cdots G_{e_1}\!\Bigl( G_{e_0}(\PRF_\nk(\psi)) \Bigr) \cdots \Biggr)
+$$
 
 A few properties worth highlighting:
 
@@ -329,6 +334,10 @@ covering $\{0,1,2,3\}$, $\{4,5\}$, and $\{6\}$ respectively. In the worst case
 an arbitrary range in an $\ell$-bit epoch space needs $O(\ell)$ prefix keys, so
 the delegated key material is variable-size.
 
+
+<P align="center">
+  <img src="./assets/ggm.svg" alt="ggm" />
+</p>
 
 #### Nullifier Security {#nf-sec}
 
