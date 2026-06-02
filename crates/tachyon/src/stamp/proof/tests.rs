@@ -523,6 +523,94 @@ fn spendable_init_from_range_succeeds() {
 }
 
 #[test]
+fn spendable_init_range_multi_stamp_succeeds() {
+    // cm sits in a middle stamp of a three-stamp range; nf absent
+    // everywhere. The spendable lands at the range's end anchor.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let note = user.random_note(rng, 500);
+    let cm = note.commitment();
+    let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
+
+    let stamp_a = TachygramSetGadget::from([tg(rng)].as_slice());
+    let stamp_b = TachygramSetGadget::from([cm.into(), tg(rng)].as_slice());
+    let stamp_c = TachygramSetGadget::from([tg(rng)].as_slice());
+    let (summary, merged) =
+        build_summary_over(rng, Anchor::default(), &[stamp_a, stamp_b, stamp_c]);
+    let range_end = summary.data.1;
+
+    let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
+    let (spendable, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableInitRange,
+            (merged,),
+            nf_pcd,
+            summary,
+        )
+        .expect("SpendableInitRange");
+
+    assert_eq!(spendable.data.0, nf);
+    assert_eq!(spendable.data.1, range_end);
+}
+
+#[test]
+fn spendable_init_range_rejects_nf_in_later_stamp() {
+    // Note minted in stamp A, then spent in a later stamp C of the same
+    // range. The fused tg_set contains both cm and nf, so the exclusion
+    // check must reject the bootstrap.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let note = user.random_note(rng, 500);
+    let cm = note.commitment();
+    let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
+
+    let stamp_a = TachygramSetGadget::from([cm.into(), tg(rng)].as_slice());
+    let stamp_b = TachygramSetGadget::from([tg(rng)].as_slice());
+    let stamp_c = TachygramSetGadget::from([nf.into(), tg(rng)].as_slice());
+    let (summary, merged) =
+        build_summary_over(rng, Anchor::default(), &[stamp_a, stamp_b, stamp_c]);
+
+    let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableInitRange,
+            (merged,),
+            nf_pcd,
+            summary,
+        )
+        .unwrap_err();
+    assert_eq!(err.0, "SpendableInitRange: nullifier found in set");
+}
+
+#[test]
+fn spendable_init_range_rejects_cm_absent_multi() {
+    // cm appears in none of the range's stamps; inclusion fails.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let note = user.random_note(rng, 500);
+
+    let stamp_a = TachygramSetGadget::from([tg(rng)].as_slice());
+    let stamp_b = TachygramSetGadget::from([tg(rng)].as_slice());
+    let stamp_c = TachygramSetGadget::from([tg(rng)].as_slice());
+    let (summary, merged) =
+        build_summary_over(rng, Anchor::default(), &[stamp_a, stamp_b, stamp_c]);
+
+    let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableInitRange,
+            (merged,),
+            nf_pcd,
+            summary,
+        )
+        .unwrap_err();
+    assert_eq!(err.0, "SpendableInitRange: commitment not in set");
+}
+
+#[test]
 fn unspent_from_range_rejects_tg_present() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
@@ -976,6 +1064,41 @@ fn build_single_stamp_unspent<'source>(
         )
         .expect("UnspentRange");
     unspent
+}
+
+/// Build a multi-stamp [`RangeSummary`] from explicit per-stamp gadgets,
+/// seeding each via [`pool::SummarySeed`] and fusing adjacent segments
+/// via [`pool::SummaryFuse`]. Returns the final summary PCD plus the
+/// merged gadget (the witness `SpendableInitRange` / `UnspentRange`
+/// require). Mirrors `build_range_summary_at` in fixtures, but over
+/// caller-chosen gadgets so a test controls which stamp holds cm/nf.
+fn build_summary_over<'source>(
+    rng: &mut (impl RngCore + CryptoRng),
+    start: Anchor,
+    stamps: &[TachygramSetGadget],
+) -> (Pcd<'source, pool::RangeSummary>, TachygramSetGadget) {
+    let (first, rest) = stamps.split_first().expect("at least one stamp");
+    let (mut summary, ()) = PROOF_SYSTEM
+        .seed(rng, pool::SummarySeed, (start, first.clone()))
+        .expect("SummarySeed");
+    let mut merged = first.clone();
+    for next in rest {
+        let (right, ()) = PROOF_SYSTEM
+            .seed(rng, pool::SummarySeed, (summary.data.1, next.clone()))
+            .expect("SummarySeed");
+        let (fused, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                pool::SummaryFuse,
+                (merged.clone(), next.clone()),
+                summary,
+                right,
+            )
+            .expect("SummaryFuse");
+        merged = TachygramSetGadget(merged.0.merge(&next.0));
+        summary = fused;
+    }
+    (summary, merged)
 }
 
 #[test]
