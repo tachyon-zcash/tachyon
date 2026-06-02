@@ -47,6 +47,8 @@ fn make_app() -> Result<Application, mock_ragu::Error> {
         .register(stamp::MergeStamp)?
         .register(stamp::StampLift)?
         .register(spendable::SpendableInitStamp)?
+        .register(spendable::UnspentSeed)?
+        .register(spendable::EmptyBlockUnspentSeed)?
         .finalize()
 }
 

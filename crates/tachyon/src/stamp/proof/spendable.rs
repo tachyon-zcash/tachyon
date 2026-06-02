@@ -50,8 +50,9 @@ use crate::{
 /// Per-nf range exclusion proof.
 ///
 /// `nf` is absent from every stamp covered by the anchor segment from
-/// `start` to `end`. Built from a [`RangeSummary`] via
-/// [`UnspentFromRange`] and fused with adjacent fragments via
+/// `start` to `end`. Built either directly from a single stamp via
+/// [`UnspentSeed`] / [`EmptyBlockUnspentSeed`], or from a [`RangeSummary`]
+/// via [`UnspentFromRange`], then fused with adjacent fragments via
 /// [`UnspentFuse`] — fusion spans block boundaries because anchor
 /// advances are continuous.
 ///
@@ -74,10 +75,11 @@ use crate::{
 pub struct Unspent;
 
 impl Header for Unspent {
-    /// `(nf, start, end)`. `nf` roots in a [`UnspentFromRange`] witness,
+    /// `(nf, start, end)`. `nf` roots in a seed/bridge witness
+    /// ([`UnspentSeed`], [`EmptyBlockUnspentSeed`], or [`UnspentFromRange`]),
     /// bound by the consumer ([`SpendableLift`] checks `unspent.nf ==
     /// spendable.nf`, and the spendable's `nf` is GGM-bound upstream).
-    /// `start` and `end` are inherited from the consumed [`RangeSummary`].
+    /// `start` is freely witnessed at a seed; `end` is the absorbed advance.
     type Data<'source> = (Nullifier, Anchor, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(6);
@@ -166,6 +168,79 @@ impl Step for UnspentFuse {
             ));
         }
         Ok(((left_nf, left_start, right_end), ()))
+    }
+}
+
+/// Per-stamp exclusion seed: the direct path from a single stamp to an
+/// [`Unspent`], without an intervening [`RangeSummary`].
+///
+/// Verifies `nf ∉ stamp_tg_set`, absorbs the stamp's commit at `start`,
+/// and produces a one-stamp [`Unspent`]. Equivalent to a
+/// [`super::pool::RangeSummaryStampSeed`] followed by [`UnspentFromRange`],
+/// collapsed into one step for callers that already hold the stamp's
+/// tachygram set and the target `nf`.
+///
+/// `start` is freely witnessed, so the seed proves nothing about real
+/// coverage on its own. Final binding happens transitively through the
+/// spendable lineage plus consensus-side anchor membership.
+#[derive(Debug)]
+pub struct UnspentSeed;
+
+impl Step for UnspentSeed {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = Unspent;
+    type Right = ();
+    /// `(start, stamp_tg_set, nf)`.
+    type Witness<'source> = (Anchor, TachygramSetGadget, Nullifier);
+
+    const INDEX: Index = Index::new(27);
+
+    fn witness<'source>(
+        &self,
+        (start, stamp_tg_set, nf): Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        // Exclusion: nf ∉ set ⇔ query(nf) != 0.
+        if stamp_tg_set.0.query(Fp::from(nf)) == Fp::ZERO {
+            return Err(mock_ragu::Error("UnspentSeed: found nullifier in set"));
+        }
+        let stamp_commit = TachygramSetCommit::from(stamp_tg_set);
+        let end = start.next_stamp(&stamp_commit);
+        Ok(((nf, start, end), ()))
+    }
+}
+
+/// One-empty-block [`Unspent`] seed for any `nf`, the direct path across
+/// an empty block. No exclusion check is needed: an empty block contains
+/// no stamps, so any nf is trivially absent.
+///
+/// Witness `(start, nf)`; emit `(nf, start, start.next_empty())`. An
+/// attacker can claim any nf at an empty-block segment, but the consumer
+/// ([`SpendableLift`]) checks `unspent.nf == spendable.nf` and the
+/// spendable's nf is GGM-bound upstream, so a fake-nf empty segment can
+/// only "advance" a non-existent fake spendable.
+#[derive(Debug)]
+pub struct EmptyBlockUnspentSeed;
+
+impl Step for EmptyBlockUnspentSeed {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = Unspent;
+    type Right = ();
+    /// `(start, nf)`.
+    type Witness<'source> = (Anchor, Nullifier);
+
+    const INDEX: Index = Index::new(28);
+
+    fn witness<'source>(
+        &self,
+        (start, nf): Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        Ok(((nf, start, start.next_empty()), ()))
     }
 }
 
@@ -318,9 +393,9 @@ impl Step for SpendableInitRange {
 /// Bootstrap a [`SpendableHeader`] directly from the wallet's
 /// [`NullifierHeader`] and a single freely-witnessed cm-stamp.
 ///
-/// The one-step counterpart to [`SpendableInitRange`]: where `SpendableInitRange`
-/// consumes a [`RangeSummary`] covering the cm-stamp, this step takes
-/// the cm-stamp's tachygram set as a bare witness, so the wallet can
+/// The one-step counterpart to [`SpendableInitRange`]: where
+/// `SpendableInitRange` consumes a [`RangeSummary`] covering the cm-stamp, this
+/// step takes the cm-stamp's tachygram set as a bare witness, so the wallet can
 /// seed a spendable from its note's creation stamp without first
 /// building a [`RangeSummary`] PCD.
 ///

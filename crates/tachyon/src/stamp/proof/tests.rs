@@ -739,6 +739,59 @@ fn unspent_from_range_handles_empty() {
 }
 
 #[test]
+fn unspent_seed_rejects_tg_present() {
+    // Direct stamp -> Unspent path: a stamp containing the nullifier
+    // must be rejected by the exclusion query.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let note = user.random_note(rng, 500);
+    let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
+
+    let containing_set = TachygramSetGadget::from([nf.into()].as_slice());
+    let err = PROOF_SYSTEM
+        .seed(
+            rng,
+            spendable::UnspentSeed,
+            (Anchor::default(), containing_set, nf),
+        )
+        .unwrap_err();
+    assert_eq!(err.0, "UnspentSeed: found nullifier in set");
+}
+
+#[test]
+fn unspent_seed_succeeds() {
+    // Direct stamp -> Unspent: nf absent, anchor advanced through the
+    // stamp, matching the RangeSummaryStampSeed + UnspentFromRange path.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let stamp_set = TachygramSetGadget::from([tg(rng)].as_slice());
+    let start = Anchor::default();
+    let expected_end = start.next_stamp(&TachygramSetCommit::from(stamp_set.clone()));
+
+    let (unspent, ()) = PROOF_SYSTEM
+        .seed(rng, spendable::UnspentSeed, (start, stamp_set, nf))
+        .expect("UnspentSeed");
+    assert_eq!(unspent.data.0, nf);
+    assert_eq!(unspent.data.1, start);
+    assert_eq!(unspent.data.2, expected_end);
+}
+
+#[test]
+fn empty_block_unspent_seed_succeeds() {
+    // Direct empty-block -> Unspent: any nf is trivially absent.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let start = Anchor::default();
+
+    let (unspent, ()) = PROOF_SYSTEM
+        .seed(rng, spendable::EmptyBlockUnspentSeed, (start, nf))
+        .expect("EmptyBlockUnspentSeed");
+    assert_eq!(unspent.data.0, nf);
+    assert_eq!(unspent.data.1, start);
+    assert_eq!(unspent.data.2, start.next_empty());
+}
+
+#[test]
 fn delegate_rollover_fuse_rejects_invalid_inputs() {
     // delegation_id mismatch (different traps yield different ids).
     {
