@@ -331,9 +331,9 @@ pub(crate) fn build_anchor_chain_pcd<'source>(
 
 /// Build a [`RangeSummary`] covering a single block height, returning
 /// the PCD alongside the accumulated tachygram gadget. Stamp links:
-/// one [`RangeSummaryStampSeed`] per stamp, fused via
-/// [`RangeSummaryFuse`]. Empty block: a single
-/// [`RangeSummaryEmptySeed`]. Per-height granularity keeps each
+/// one [`SummarySeed`] per stamp, fused via
+/// [`SummaryFuse`]. Empty block: a single
+/// [`EmptyBlockSummarySeed`]. Per-height granularity keeps each
 /// summary small (well under the per-step multiset budget) and
 /// matches the natural chunking the sync service produces.
 ///
@@ -348,8 +348,8 @@ pub(crate) fn build_range_summary_at<'source>(
     let stamps = pool.tachygrams_at(height);
     if stamps.is_empty() {
         let (pcd, ()) = PROOF_SYSTEM
-            .seed(rng, pool::RangeSummaryEmptySeed, (start,))
-            .expect("RangeSummaryEmptySeed");
+            .seed(rng, pool::EmptyBlockSummarySeed, (start,))
+            .expect("EmptyBlockSummarySeed");
         return (pcd, TachygramSetGadget::from([].as_slice()));
     }
     let mut chain: Option<(Pcd<'source, pool::RangeSummary>, TachygramSetGadget)> = None;
@@ -360,12 +360,8 @@ pub(crate) fn build_range_summary_at<'source>(
             | Some(prior) => prior.0.data.1,
         };
         let (seed, ()) = PROOF_SYSTEM
-            .seed(
-                rng,
-                pool::RangeSummaryStampSeed,
-                (seed_start, stamp_gadget.clone()),
-            )
-            .expect("RangeSummaryStampSeed");
+            .seed(rng, pool::SummarySeed, (seed_start, stamp_gadget.clone()))
+            .expect("SummarySeed");
         chain = Some(match chain.take() {
             | None => (seed, stamp_gadget),
             | Some((left_pcd, left_gadget)) => {
@@ -374,12 +370,12 @@ pub(crate) fn build_range_summary_at<'source>(
                 let (fused, ()) = PROOF_SYSTEM
                     .fuse(
                         rng,
-                        pool::RangeSummaryFuse,
+                        pool::SummaryFuse,
                         (left_gadget, right_gadget),
                         left_pcd,
                         seed,
                     )
-                    .expect("RangeSummaryFuse");
+                    .expect("SummaryFuse");
                 (fused, merged)
             },
         });
@@ -588,8 +584,8 @@ impl WalletSim {
             let next_state = state.next_stamp(commit);
             let tg_gadget = TachygramSetGadget::from(tgs.as_slice());
             let (summary, ()) = PROOF_SYSTEM
-                .seed(rng, pool::RangeSummaryStampSeed, (state, tg_gadget.clone()))
-                .expect("RangeSummaryStampSeed");
+                .seed(rng, pool::SummarySeed, (state, tg_gadget.clone()))
+                .expect("SummarySeed");
             let (unspent, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,

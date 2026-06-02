@@ -101,7 +101,7 @@ impl Header for AnchorChain {
 /// # Bounded by the per-step multiset budget
 ///
 /// The per-step multiset budget caps total items across all sets at
-/// roughly 8192. Every [`RangeSummaryFuse`] merges two
+/// roughly 8192. Every [`SummaryFuse`] merges two
 /// `TachygramSetGadget`s, so a segment can only grow as long as the
 /// union of all its absorbed tachygrams stays under that ceiling
 /// (minus the bookkeeping for the merge itself). Above that, build
@@ -112,7 +112,7 @@ pub struct RangeSummary;
 
 impl Header for RangeSummary {
     /// `(start, end, tg_set)`. `start` is freely witnessed at the seed
-    /// steps ([`RangeSummaryStampSeed`] / [`RangeSummaryEmptySeed`]).
+    /// steps ([`SummarySeed`] / [`EmptyBlockSummarySeed`]).
     /// `end` is computed in-circuit as `start.next_stamp(...)` or
     /// `start.next_empty()`. `tg_set` is the commitment of the gadget
     /// multiset witnessed at the seed (a single stamp's tachygram set,
@@ -228,9 +228,9 @@ impl Step for AnchorFuse {
 /// one step each, useful for wallets/sync services that build summaries
 /// of known shape.
 #[derive(Debug)]
-pub struct RangeSummaryStampSeed;
+pub struct SummarySeed;
 
-impl Step for RangeSummaryStampSeed {
+impl Step for SummarySeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = RangeSummary;
@@ -260,9 +260,9 @@ impl Step for RangeSummaryStampSeed {
 /// empty-block summary cleanly carries the "no tachygrams here"
 /// semantics needed by [`super::spendable::UnspentRange`].
 #[derive(Debug)]
-pub struct RangeSummaryEmptySeed;
+pub struct EmptyBlockSummarySeed;
 
-impl Step for RangeSummaryEmptySeed {
+impl Step for EmptyBlockSummarySeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = RangeSummary;
@@ -288,9 +288,9 @@ impl Step for RangeSummaryEmptySeed {
 /// right.start`. Witness gadgets bind to each side's `tg_set` so the
 /// merged commitment is verifiable.
 #[derive(Debug)]
-pub struct RangeSummaryFuse;
+pub struct SummaryFuse;
 
-impl Step for RangeSummaryFuse {
+impl Step for SummaryFuse {
     type Aux<'source> = ();
     type Left = RangeSummary;
     type Output = RangeSummary;
@@ -307,11 +307,11 @@ impl Step for RangeSummaryFuse {
         (right_start, right_end, right_tg_commit): <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         if left_end != right_start {
-            return Err(mock_ragu::Error("RangeSummaryFuse: segments not adjacent"));
+            return Err(mock_ragu::Error("SummaryFuse: segments not adjacent"));
         }
         if tgs0.0.commit() != left_tg_commit.0 || tgs1.0.commit() != right_tg_commit.0 {
             return Err(mock_ragu::Error(
-                "RangeSummaryFuse: witness gadgets must commit to header tg_set",
+                "SummaryFuse: witness gadgets must commit to header tg_set",
             ));
         }
         let merged_tg = TachygramSetGadget(tgs0.0.merge(&tgs1.0));

@@ -176,7 +176,7 @@ impl Step for UnspentFuse {
 ///
 /// Verifies `nf ∉ stamp_tg_set`, absorbs the stamp's commit at `start`,
 /// and produces a one-stamp [`Unspent`]. Equivalent to a
-/// [`super::pool::RangeSummaryStampSeed`] followed by [`UnspentRange`],
+/// [`super::pool::SummarySeed`] followed by [`UnspentRange`],
 /// collapsed into one step for callers that already hold the stamp's
 /// tachygram set and the target `nf`.
 ///

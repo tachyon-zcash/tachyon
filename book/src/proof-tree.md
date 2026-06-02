@@ -54,7 +54,7 @@ It seeds and walks the private GGM tree (`NfMasterSeed`, `NfMasterStep`, `NfPref
 
 The sync service holds a `DelegateNfPrefixHeader` produced by the wallet at delegation time.
 From there it climbs the blinded subtree (`DelegateNfPrefixStep`) to whichever leaf an epoch requires and emits a `DelegateNullifierHeader` (`DelegateNullifierStep`); it fuses two consecutive-epoch leaves with `DelegateRolloverFuse` when an epoch boundary is approached.
-It produces the `Unspent` segments that carry the spendable forward (`RangeSummaryStampSeed`, `RangeSummaryEmptySeed`, `RangeSummaryFuse`, `UnspentRange`, `UnspentSeed`, `EmptyBlockUnspentSeed`, `UnspentFuse`), and runs the lifts that consume them (`SpendableLift`, `SpendableRollover`, `SpendableEpochLift`).
+It produces the `Unspent` segments that carry the spendable forward (`SummarySeed`, `EmptyBlockSummarySeed`, `SummaryFuse`, `UnspentRange`, `UnspentSeed`, `EmptyBlockUnspentSeed`, `UnspentFuse`), and runs the lifts that consume them (`SpendableLift`, `SpendableRollover`, `SpendableEpochLift`).
 
 The aggregator works only with published `StampHeader`s.
 It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `EmptyBlockSeed`, `AnchorFuse`) and fuses with `MergeStamp`.
@@ -64,9 +64,9 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `E
 | AnchorSeed | possible | yes | yes |
 | EmptyBlockSeed | possible | yes | yes |
 | AnchorFuse | possible | yes | yes |
-| RangeSummaryStampSeed | possible | yes | no |
-| RangeSummaryEmptySeed | possible | yes | no |
-| RangeSummaryFuse | possible | yes | no |
+| SummarySeed | possible | yes | no |
+| EmptyBlockSummarySeed | possible | yes | no |
+| SummaryFuse | possible | yes | no |
 | UnspentRange | possible | yes | no |
 | UnspentSeed | possible | yes | no |
 | EmptyBlockUnspentSeed | possible | yes | no |
@@ -111,7 +111,7 @@ A fresh trapdoor per delegation makes the delegation identifier unlinkable acros
 ### Anchor segments
 
 `AnchorSeed` / `EmptyBlockSeed` build single-link `AnchorChain` segments; `AnchorFuse` composes adjacent segments.
-`RangeSummaryStampSeed` / `RangeSummaryEmptySeed` build single-link `RangeSummary` segments, which additionally carry the union of every absorbed stamp's tachygram set; `RangeSummaryFuse` composes adjacent segments.
+`SummarySeed` / `EmptyBlockSummarySeed` build single-link `RangeSummary` segments, which additionally carry the union of every absorbed stamp's tachygram set; `SummaryFuse` composes adjacent segments.
 `UnspentRange` consumes a `RangeSummary` and emits an `Unspent` after proving the witnessed nullifier absent from the summary's tachygram set; `UnspentSeed` / `EmptyBlockUnspentSeed` build single-stamp `Unspent` segments directly, collapsing the `RangeSummary` step for callers that already hold the stamp's tachygram set and the target nullifier; `UnspentFuse` composes adjacent `Unspent` segments.
 A segment ties to real chain history only when a stamp-emitting step consumes it and the resulting stamp's anchor matches a consensus-published end-of-block value.
 
@@ -296,10 +296,10 @@ flowchart LR
 flowchart LR
   sp_in((SpendableHeader))
   w_seed[/start, stamp_tg_set/]
-  s_rseed[RangeSummaryStampSeed]
+  s_rseed[SummarySeed]
   w_empty[/start/]
-  s_rempty[RangeSummaryEmptySeed]
-  s_rfuse[RangeSummaryFuse]
+  s_rempty[EmptyBlockSummarySeed]
+  s_rfuse[SummaryFuse]
   w_unspent[/nf, tg_gadget/]
   s_unspent[UnspentRange]
   w_useed[/start, stamp_tg_set, nf/]
@@ -375,9 +375,9 @@ A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `Delega
 | AnchorSeed | — | — | start, stamp_commit | AnchorChain |
 | EmptyBlockSeed | — | — | start | AnchorChain |
 | AnchorFuse | AnchorChain | AnchorChain | — | AnchorChain |
-| RangeSummaryStampSeed | — | — | start, stamp_tg_set | RangeSummary |
-| RangeSummaryEmptySeed | — | — | start | RangeSummary |
-| RangeSummaryFuse | RangeSummary | RangeSummary | left_tg_gadget, right_tg_gadget | RangeSummary |
+| SummarySeed | — | — | start, stamp_tg_set | RangeSummary |
+| EmptyBlockSummarySeed | — | — | start | RangeSummary |
+| SummaryFuse | RangeSummary | RangeSummary | left_tg_gadget, right_tg_gadget | RangeSummary |
 | UnspentRange | RangeSummary | — | nf, tg_gadget | Unspent |
 | UnspentSeed | — | — | start, stamp_tg_set, nf | Unspent |
 | EmptyBlockUnspentSeed | — | — | start, nf | Unspent |

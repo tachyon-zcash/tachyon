@@ -385,12 +385,8 @@ fn spendable_init_rejects_tg_absent() {
     let pre_cm_anchor = Anchor::default();
     let nf_pcd_absent = user.nullifier_pcd(rng, note, EpochIndex(0));
     let (summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::RangeSummaryStampSeed,
-            (pre_cm_anchor, absent_set.clone()),
-        )
-        .expect("RangeSummaryStampSeed");
+        .seed(rng, pool::SummarySeed, (pre_cm_anchor, absent_set.clone()))
+        .expect("SummarySeed");
     let err = PROOF_SYSTEM
         .fuse(
             rng,
@@ -417,12 +413,8 @@ fn spendable_init_rejects_nf_present() {
     let pre_cm_anchor = Anchor::default();
     let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
     let (summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::RangeSummaryStampSeed,
-            (pre_cm_anchor, set.clone()),
-        )
-        .expect("RangeSummaryStampSeed");
+        .seed(rng, pool::SummarySeed, (pre_cm_anchor, set.clone()))
+        .expect("SummarySeed");
     let err = PROOF_SYSTEM
         .fuse(rng, spendable::SpendableInitRange, (set,), nf_pcd, summary)
         .unwrap_err();
@@ -495,27 +487,23 @@ fn spendable_init_from_range_succeeds() {
     let (left, ()) = PROOF_SYSTEM
         .seed(
             rng,
-            pool::RangeSummaryStampSeed,
+            pool::SummarySeed,
             (Anchor::default(), gadget_a.clone()),
         )
-        .expect("RangeSummaryStampSeed left");
+        .expect("SummarySeed left");
     let left_end = left.data.1;
     let (right, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::RangeSummaryStampSeed,
-            (left_end, gadget_b.clone()),
-        )
-        .expect("RangeSummaryStampSeed right");
+        .seed(rng, pool::SummarySeed, (left_end, gadget_b.clone()))
+        .expect("SummarySeed right");
     let (summary, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            pool::RangeSummaryFuse,
+            pool::SummaryFuse,
             (gadget_a.clone(), gadget_b.clone()),
             left,
             right,
         )
-        .expect("RangeSummaryFuse");
+        .expect("SummaryFuse");
     let range_end = summary.data.1;
 
     let merged = TachygramSetGadget(gadget_a.0.merge(&gadget_b.0));
@@ -545,10 +533,10 @@ fn unspent_from_range_rejects_tg_present() {
     let (summary, ()) = PROOF_SYSTEM
         .seed(
             rng,
-            pool::RangeSummaryStampSeed,
+            pool::SummarySeed,
             (Anchor::default(), containing_set.clone()),
         )
-        .expect("RangeSummaryStampSeed");
+        .expect("SummarySeed");
     let err = PROOF_SYSTEM
         .fuse(
             rng,
@@ -571,12 +559,8 @@ fn unspent_from_range_rejects_unbound_gadget() {
     let nf = Nullifier::from(Fp::random(&mut *rng));
 
     let (summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::RangeSummaryStampSeed,
-            (Anchor::default(), range_set),
-        )
-        .expect("RangeSummaryStampSeed");
+        .seed(rng, pool::SummarySeed, (Anchor::default(), range_set))
+        .expect("SummarySeed");
     let err = PROOF_SYSTEM
         .fuse(
             rng,
@@ -606,12 +590,12 @@ fn range_summary_fuse_rejects_unbound_gadget() {
         Pcd<'source, pool::RangeSummary>,
     ) {
         let (left, ()) = PROOF_SYSTEM
-            .seed(rng, pool::RangeSummaryStampSeed, (Anchor::default(), tg_a))
-            .expect("RangeSummaryStampSeed left");
+            .seed(rng, pool::SummarySeed, (Anchor::default(), tg_a))
+            .expect("SummarySeed left");
         let left_end = left.data.1;
         let (right, ()) = PROOF_SYSTEM
-            .seed(rng, pool::RangeSummaryStampSeed, (left_end, tg_b))
-            .expect("RangeSummaryStampSeed right");
+            .seed(rng, pool::SummarySeed, (left_end, tg_b))
+            .expect("SummarySeed right");
         (left, right)
     }
 
@@ -623,11 +607,11 @@ fn range_summary_fuse_rejects_unbound_gadget() {
         let unrelated = TachygramSetGadget::from([tg(rng)].as_slice());
         let (left, right) = build_pair(rng, tg_a, tg_b.clone());
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::RangeSummaryFuse, (unrelated, tg_b), left, right)
+            .fuse(rng, pool::SummaryFuse, (unrelated, tg_b), left, right)
             .unwrap_err();
         assert_eq!(
             err.0,
-            "RangeSummaryFuse: witness gadgets must commit to header tg_set"
+            "SummaryFuse: witness gadgets must commit to header tg_set"
         );
     }
 
@@ -639,11 +623,11 @@ fn range_summary_fuse_rejects_unbound_gadget() {
         let unrelated = TachygramSetGadget::from([tg(rng)].as_slice());
         let (left, right) = build_pair(rng, tg_a.clone(), tg_b);
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::RangeSummaryFuse, (tg_a, unrelated), left, right)
+            .fuse(rng, pool::SummaryFuse, (tg_a, unrelated), left, right)
             .unwrap_err();
         assert_eq!(
             err.0,
-            "RangeSummaryFuse: witness gadgets must commit to header tg_set"
+            "SummaryFuse: witness gadgets must commit to header tg_set"
         );
     }
 }
@@ -656,25 +640,17 @@ fn range_summary_fuse_rejects_non_adjacent() {
     let tg_b = TachygramSetGadget::from([tg(rng)].as_slice());
 
     let (left, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::RangeSummaryStampSeed,
-            (Anchor::default(), tg_a.clone()),
-        )
-        .expect("RangeSummaryStampSeed left");
+        .seed(rng, pool::SummarySeed, (Anchor::default(), tg_a.clone()))
+        .expect("SummarySeed left");
     let unrelated_start = Anchor(Fp::random(&mut *rng));
     let (right, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::RangeSummaryStampSeed,
-            (unrelated_start, tg_b.clone()),
-        )
-        .expect("RangeSummaryStampSeed right");
+        .seed(rng, pool::SummarySeed, (unrelated_start, tg_b.clone()))
+        .expect("SummarySeed right");
 
     let err = PROOF_SYSTEM
-        .fuse(rng, pool::RangeSummaryFuse, (tg_a, tg_b), left, right)
+        .fuse(rng, pool::SummaryFuse, (tg_a, tg_b), left, right)
         .unwrap_err();
-    assert_eq!(err.0, "RangeSummaryFuse: segments not adjacent");
+    assert_eq!(err.0, "SummaryFuse: segments not adjacent");
 }
 
 #[test]
@@ -688,28 +664,18 @@ fn range_summary_fuse_merges_tachygrams() {
     let (left, ()) = PROOF_SYSTEM
         .seed(
             rng,
-            pool::RangeSummaryStampSeed,
+            pool::SummarySeed,
             (Anchor::default(), gadget_a.clone()),
         )
-        .expect("RangeSummaryStampSeed left");
+        .expect("SummarySeed left");
     let left_end = left.data.1;
     let (right, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::RangeSummaryStampSeed,
-            (left_end, gadget_b.clone()),
-        )
-        .expect("RangeSummaryStampSeed right");
+        .seed(rng, pool::SummarySeed, (left_end, gadget_b.clone()))
+        .expect("SummarySeed right");
 
     let (fused, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::RangeSummaryFuse,
-            (gadget_a, gadget_b),
-            left,
-            right,
-        )
-        .expect("RangeSummaryFuse");
+        .fuse(rng, pool::SummaryFuse, (gadget_a, gadget_b), left, right)
+        .expect("SummaryFuse");
 
     let expected = TachygramSetCommit::from([tg_a, tg_b].as_slice());
     assert_eq!(fused.data.2, expected);
@@ -721,8 +687,8 @@ fn unspent_from_range_handles_empty() {
     let nf = Nullifier::from(Fp::random(&mut *rng));
     let empty_gadget = TachygramSetGadget::from([].as_slice());
     let (summary, ()) = PROOF_SYSTEM
-        .seed(rng, pool::RangeSummaryEmptySeed, (Anchor::default(),))
-        .expect("RangeSummaryEmptySeed");
+        .seed(rng, pool::EmptyBlockSummarySeed, (Anchor::default(),))
+        .expect("EmptyBlockSummarySeed");
     let summary_end = summary.data.1;
     let (unspent, ()) = PROOF_SYSTEM
         .fuse(
@@ -761,7 +727,7 @@ fn unspent_seed_rejects_tg_present() {
 #[test]
 fn unspent_seed_succeeds() {
     // Direct stamp -> Unspent: nf absent, anchor advanced through the
-    // stamp, matching the RangeSummaryStampSeed + UnspentRange path.
+    // stamp, matching the SummarySeed + UnspentRange path.
     let rng = &mut StdRng::seed_from_u64(0);
     let nf = Nullifier::from(Fp::random(&mut *rng));
     let stamp_set = TachygramSetGadget::from([tg(rng)].as_slice());
@@ -998,8 +964,8 @@ fn build_single_stamp_unspent<'source>(
 ) -> Pcd<'source, spendable::Unspent> {
     let tg_gadget = TachygramSetGadget::from(stamp_tgs);
     let (summary, ()) = PROOF_SYSTEM
-        .seed(rng, pool::RangeSummaryStampSeed, (start, tg_gadget.clone()))
-        .expect("RangeSummaryStampSeed");
+        .seed(rng, pool::SummarySeed, (start, tg_gadget.clone()))
+        .expect("SummarySeed");
     let (unspent, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1186,7 +1152,7 @@ fn empty_block_unspent_lifts_spendable() {
     pool.mine(vec![]);
     let empty_height = pool.height();
 
-    // Build an Unspent over the empty block via RangeSummaryEmptySeed +
+    // Build an Unspent over the empty block via EmptyBlockSummarySeed +
     // UnspentRange, then lift the spendable.
     let nf = spendable.data.0;
     let unspent = build_unspent_pcd(rng, &pool, nf, empty_height..=empty_height);
