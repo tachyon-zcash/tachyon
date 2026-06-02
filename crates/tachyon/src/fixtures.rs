@@ -557,25 +557,17 @@ impl WalletSim {
             .iter()
             .fold(pool.prev_anchor_at(height), Anchor::next_stamp);
 
-        // Single-stamp RangeSummary over the cm-stamp.
+        // Direct one-step bootstrap from the single cm-stamp.
         let stamp_gadget = TachygramSetGadget::from(stamps[cm_idx].as_slice());
-        let (cm_summary, ()) = PROOF_SYSTEM
-            .seed(
-                rng,
-                pool::RangeSummaryStampSeed,
-                (pre_cm_anchor, stamp_gadget.clone()),
-            )
-            .expect("RangeSummaryStampSeed");
-
         let (spendable, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                spendable::SpendableInit,
-                (stamp_gadget,),
+                spendable::SpendableInitStamp,
+                (pre_cm_anchor, stamp_gadget),
                 nf_pcd,
-                cm_summary,
+                Proof::trivial().carry::<()>(()),
             )
-            .expect("SpendableInit");
+            .expect("SpendableInitStamp");
 
         // If cm is the last stamp, post_cm_anchor is already the
         // block-final anchor — no rest-of-block lift needed.

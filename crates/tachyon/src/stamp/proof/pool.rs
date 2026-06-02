@@ -220,7 +220,7 @@ impl Step for AnchorFuse {
 ///
 /// `start` is freely witnessed; binding closes downstream at
 /// [`super::spendable::UnspentFromRange`] /
-/// [`super::spendable::SpendableInit`] and ultimately through consensus
+/// [`super::spendable::SpendableInitRange`] and ultimately through consensus
 /// anchor membership.
 ///
 /// TODO: Multi-stamp composition steps (e.g. a two-stamp seed and a

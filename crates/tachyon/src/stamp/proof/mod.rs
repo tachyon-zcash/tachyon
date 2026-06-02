@@ -35,7 +35,7 @@ fn make_app() -> Result<Application, mock_ragu::Error> {
         .register(pool::RangeSummaryFuse)?
         .register(spendable::UnspentFromRange)?
         .register(spendable::UnspentFuse)?
-        .register(spendable::SpendableInit)?
+        .register(spendable::SpendableInitRange)?
         .register(spendable::SpendableLift)?
         .register(spendable::RolloverFuse)?
         .register(spendable::DelegateRolloverFuse)?
@@ -46,6 +46,7 @@ fn make_app() -> Result<Application, mock_ragu::Error> {
         .register(stamp::SpendStamp)?
         .register(stamp::MergeStamp)?
         .register(stamp::StampLift)?
+        .register(spendable::SpendableInitStamp)?
         .finalize()
 }
 

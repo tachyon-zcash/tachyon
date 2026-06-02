@@ -394,13 +394,13 @@ fn spendable_init_rejects_tg_absent() {
     let err = PROOF_SYSTEM
         .fuse(
             rng,
-            spendable::SpendableInit,
+            spendable::SpendableInitRange,
             (absent_set,),
             nf_pcd_absent,
             summary,
         )
         .unwrap_err();
-    assert_eq!(err.0, "SpendableInit: commitment not in set");
+    assert_eq!(err.0, "SpendableInitRange: commitment not in set");
 }
 
 #[test]
@@ -424,9 +424,114 @@ fn spendable_init_rejects_nf_present() {
         )
         .expect("RangeSummaryStampSeed");
     let err = PROOF_SYSTEM
-        .fuse(rng, spendable::SpendableInit, (set,), nf_pcd, summary)
+        .fuse(rng, spendable::SpendableInitRange, (set,), nf_pcd, summary)
         .unwrap_err();
-    assert_eq!(err.0, "SpendableInit: nullifier found in set");
+    assert_eq!(err.0, "SpendableInitRange: nullifier found in set");
+}
+
+#[test]
+fn spendable_init_stamp_succeeds() {
+    // Direct one-step bootstrap from a single cm-stamp: the spendable
+    // lands at the anchor immediately after the cm-stamp's absorption.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let note = user.random_note(rng, 500);
+    let cm = note.commitment();
+    let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
+
+    let stamp_set = TachygramSetGadget::from([cm.into(), tg(rng)].as_slice());
+    let pre_cm_anchor = Anchor::default();
+    let expected = pre_cm_anchor.next_stamp(&TachygramSetCommit::from(stamp_set.clone()));
+    let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
+
+    let (spendable, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableInitStamp,
+            (pre_cm_anchor, stamp_set),
+            nf_pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("SpendableInitStamp");
+
+    assert_eq!(spendable.data.0, nf);
+    assert_eq!(spendable.data.1, expected);
+}
+
+#[test]
+fn spendable_init_stamp_rejects_tg_absent() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let note = user.random_note(rng, 500);
+
+    let absent_set = TachygramSetGadget::from([tg(rng)].as_slice());
+    let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableInitStamp,
+            (Anchor::default(), absent_set),
+            nf_pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .unwrap_err();
+    assert_eq!(err.0, "SpendableInitStamp: commitment not in set");
+}
+
+#[test]
+fn spendable_init_from_range_succeeds() {
+    // Bootstrap from a multi-stamp RangeSummary: cm present somewhere in
+    // the range, nf absent everywhere, landing at the summary's end.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let note = user.random_note(rng, 500);
+    let cm = note.commitment();
+    let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
+
+    // Stamp A carries cm; stamp B is unrelated. Neither carries nf.
+    let gadget_a = TachygramSetGadget::from([cm.into(), tg(rng)].as_slice());
+    let gadget_b = TachygramSetGadget::from([tg(rng)].as_slice());
+
+    let (left, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::RangeSummaryStampSeed,
+            (Anchor::default(), gadget_a.clone()),
+        )
+        .expect("RangeSummaryStampSeed left");
+    let left_end = left.data.1;
+    let (right, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::RangeSummaryStampSeed,
+            (left_end, gadget_b.clone()),
+        )
+        .expect("RangeSummaryStampSeed right");
+    let (summary, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::RangeSummaryFuse,
+            (gadget_a.clone(), gadget_b.clone()),
+            left,
+            right,
+        )
+        .expect("RangeSummaryFuse");
+    let range_end = summary.data.1;
+
+    let merged = TachygramSetGadget(gadget_a.0.merge(&gadget_b.0));
+    let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
+    let (spendable, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableInitRange,
+            (merged,),
+            nf_pcd,
+            summary,
+        )
+        .expect("SpendableInitRange");
+
+    assert_eq!(spendable.data.0, nf);
+    assert_eq!(spendable.data.1, range_end);
 }
 
 #[test]

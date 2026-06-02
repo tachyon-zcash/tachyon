@@ -11,8 +11,9 @@ Multiple parties execute the proof tree.
 
 ## Lifecycle
 
-A note is essentially created when the wallet runs `SpendableInit`.
-The step takes the wallet's `NullifierHeader` for the creation epoch and a `RangeSummary` covering the cm-stamp; it checks the note's commitment[^notes] is among the summary's tachygrams and the nullifier is absent, then emits a `SpendableHeader` carrying the nullifier and the summary's `end` anchor.
+A note is essentially created when the wallet runs `SpendableInitStamp` or `SpendableInitRange`.
+`SpendableInitStamp` is the direct one-step path: it takes the wallet's `NullifierHeader` for the creation epoch, a freely-witnessed pre-stamp anchor, and the tachygram set of the cm-stamp; it checks the note's commitment[^notes] is among those tachygrams and advances the anchor through the stamp, emitting a `SpendableHeader` at the post-stamp anchor. No nullifier-absence check is needed: a note's nullifier cannot appear in its own creation block.
+`SpendableInitRange` instead takes the `NullifierHeader` and a `RangeSummary` covering the cm-stamp; it checks the commitment is among the summary's tachygrams and the nullifier is absent, then emits a `SpendableHeader` carrying the nullifier and the summary's `end` anchor. The absence check is required because a range may also cover a later block in which the note was spent.
 
 Maintaining the spendable means advancing its anchor forward over `Unspent` segments.
 `SpendableLift` consumes one `Unspent` whose nullifier matches the spendable's and whose start matches the spendable's current anchor, producing a fresh `SpendableHeader` at the segment's end.
@@ -49,7 +50,7 @@ The aggregated stamp has the same shape as any other, so it is itself eligible f
 ## Roles
 
 The wallet runs every step that touches the note's commitment or master key.
-It seeds and walks the private GGM tree (`NfMasterSeed`, `NfMasterStep`, `NfPrefixStep`, `NullifierStep`), produces blinded handoffs for the sync service (`DelegationStep`), fuses leaves across an epoch boundary (`RolloverFuse`), derives spendable status from its own leaf (`SpendableInit`), and produces spend and output stamps (`SpendBind`, `OutputStamp`, `SpendStamp`).
+It seeds and walks the private GGM tree (`NfMasterSeed`, `NfMasterStep`, `NfPrefixStep`, `NullifierStep`), produces blinded handoffs for the sync service (`DelegationStep`), fuses leaves across an epoch boundary (`RolloverFuse`), derives spendable status from its own leaf (`SpendableInitRange`), and produces spend and output stamps (`SpendBind`, `OutputStamp`, `SpendStamp`).
 
 The sync service holds a `DelegateNfPrefixHeader` produced by the wallet at delegation time.
 From there it climbs the blinded subtree (`DelegateNfPrefixStep`) to whichever leaf an epoch requires and emits a `DelegateNullifierHeader` (`DelegateNullifierStep`); it fuses two consecutive-epoch leaves with `DelegateRolloverFuse` when an epoch boundary is approached.
@@ -77,7 +78,8 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `E
 | DelegateNullifierStep | possible | yes | no |
 | RolloverFuse | yes | no | no |
 | DelegateRolloverFuse | no | yes | no |
-| SpendableInit | yes | no | no |
+| SpendableInitRange | yes | no | no |
+| SpendableInitStamp | yes | no | no |
 | SpendableLift | yes | possible | no |
 | SpendableRollover | yes | possible | no |
 | SpendableEpochLift | yes | possible | no |
@@ -113,7 +115,9 @@ A segment ties to real chain history only when a stamp-emitting step consumes it
 
 ### Spendable lifecycle
 
-A spendable bootstraps at `SpendableInit`, which fuses the wallet's `NullifierHeader` with a `RangeSummary` covering the cm-stamp, verifies the note's commitment[^notes] is among the summary's tachygrams and the nullifier is absent, and emits a `SpendableHeader` carrying the nullifier and the summary's `end` anchor.
+A spendable bootstraps one of two ways.
+`SpendableInitStamp` fuses the wallet's `NullifierHeader` with a freely-witnessed pre-stamp anchor and the cm-stamp's tachygram set, verifies the note's commitment[^notes] is among those tachygrams, and advances the anchor through that stamp; it skips the absence check because the cm-stamp cannot contain the note's own nullifier.
+`SpendableInitRange` instead fuses the `NullifierHeader` with a `RangeSummary` covering the cm-stamp, verifies the commitment is among the summary's tachygrams and the nullifier is absent, and emits a `SpendableHeader` carrying the nullifier and the summary's `end` anchor; the absence check guards against a range that also covers the note's later spend.
 `SpendableLift` advances the spendable's anchor further by consuming an `Unspent` segment whose nullifier equals the spendable's and whose start matches the spendable's current anchor.
 Each `Unspent` is produced by `UnspentFromRange` against a `RangeSummary`, witnessing the nullifier and proving it absent from the summary's tachygram set[^tachygrams]; `UnspentFuse` requires both halves to share a nullifier and to meet at a common anchor.
 
@@ -168,7 +172,9 @@ flowchart TB
   subgraph spendable [spendable advance]
     w_init[/tg_gadget/]
     cm_range((RangeSummary))
-    s_init[SpendableInit]
+    s_init[SpendableInitRange]
+    w_init_stamp[/pre_cm_anchor, stamp_tg_set/]
+    s_init_stamp[SpendableInitStamp]
     s_rfuse[RolloverFuse]
     s_rollover[SpendableRollover]
     s_epochlift[SpendableEpochLift]
@@ -206,6 +212,10 @@ flowchart TB
   w_init --> s_init
   cm_range --> s_init
   s_init -->|SpendableHeader| s_rollover
+
+  s_leaf_old -->|NullifierHeader e-1| s_init_stamp
+  w_init_stamp --> s_init_stamp
+  s_init_stamp -->|SpendableHeader| s_rollover
 
   s_leaf_old -->|NullifierHeader e-1| s_rfuse
   s_leaf_now -->|NullifierHeader e| s_rfuse
@@ -369,7 +379,8 @@ A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `Delega
 | DelegateNullifierStep | DelegateNfPrefixHeader | — | — | DelegateNullifierHeader |
 | RolloverFuse | NullifierHeader | NullifierHeader | — | NullifierRolloverHeader |
 | DelegateRolloverFuse | DelegateNullifierHeader | DelegateNullifierHeader | — | NullifierRolloverHeader |
-| SpendableInit | NullifierHeader | RangeSummary | tg_gadget | SpendableHeader |
+| SpendableInitRange | NullifierHeader | RangeSummary | tg_gadget | SpendableHeader |
+| SpendableInitStamp | NullifierHeader | — | pre_cm_anchor, stamp_tg_set | SpendableHeader |
 | SpendableLift | SpendableHeader | Unspent | — | SpendableHeader |
 | SpendableRollover | SpendableHeader | NullifierRolloverHeader | — | SpendableRolloverHeader |
 | SpendableEpochLift | SpendableRolloverHeader | Unspent | — | SpendableHeader |

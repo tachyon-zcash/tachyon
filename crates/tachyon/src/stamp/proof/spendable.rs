@@ -1,7 +1,7 @@
 //! Spendable bootstrap, lift, and cross-epoch rollover.
 //!
 //! Bootstrap runs entirely on the user device. The wallet's
-//! [`NullifierHeader`] carries `(cm, nf, epoch)`; [`SpendableInit`]
+//! [`NullifierHeader`] carries `(cm, nf, epoch)`; [`SpendableInitRange`]
 //! fuses it with a [`RangeSummary`] that covers the cm-stamp,
 //! verifying `cm ∈ range.tg_set` and `nf ∉ range.tg_set`, and emits a
 //! [`SpendableHeader`] carrying `(nf, range.end)` — the running anchor
@@ -15,6 +15,12 @@
 //! [`SpendableLift`] over [`Unspent`] segments, which by construction
 //! prove nf-exclusion at every covered stamp. There is no path that
 //! advances a spendable's anchor without a per-stamp nf-check.
+//!
+//! [`SpendableInitStamp`] is the one-step counterpart for the common
+//! case: the wallet seeds a spendable from a single freely-witnessed
+//! cm-stamp without first building a [`RangeSummary`]. It omits the
+//! nf-exclusion check, sound because a single cm-stamp cannot contain
+//! the note's own `nf`.
 //!
 //! Sync services update spendables via lifts ([`SpendableLift`]) and
 //! cross-epoch rollovers ([`SpendableRollover`] →
@@ -38,7 +44,7 @@ use super::{
 };
 use crate::{
     note::Nullifier,
-    primitives::{Anchor, EpochIndex, TachygramSetGadget},
+    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetGadget},
 };
 
 /// Per-nf range exclusion proof.
@@ -167,7 +173,7 @@ impl Step for UnspentFuse {
 /// encodes `(key, epoch)` via GGM determinism, so sync services can update
 /// a spendable by `nf` without knowing `delegation_id`.
 ///
-/// `anchor` at [`SpendableInit`] is inherited as the `end` of the
+/// `anchor` at [`SpendableInitRange`] is inherited as the `end` of the
 /// consumed [`RangeSummary`], but its PCD lineage roots in the
 /// freely-witnessed `start` at the [`RangeSummary`] seed steps.
 /// Binding closes only through subsequent [`SpendableLift`] steps over
@@ -180,7 +186,7 @@ pub struct SpendableHeader;
 impl Header for SpendableHeader {
     /// `(nf, anchor)`. `nf` is GGM-bound to `(note, epoch)` upstream
     /// in [`super::delegation::NullifierHeader`]. `anchor` is inherited
-    /// at [`SpendableInit`] as the `end` of a [`RangeSummary`] whose
+    /// at [`SpendableInitRange`] as the `end` of a [`RangeSummary`] whose
     /// `tg_set` contains the note's commitment and excludes the
     /// nullifier, then advanced over [`Unspent`] segments at
     /// [`SpendableLift`] / [`SpendableEpochLift`].
@@ -269,9 +275,9 @@ impl Header for SpendableRolloverHeader {
 /// on each downstream `Unspent` — without it, the bootstrap could
 /// land past a spend already made within the range.
 #[derive(Debug)]
-pub struct SpendableInit;
+pub struct SpendableInitRange;
 
-impl Step for SpendableInit {
+impl Step for SpendableInitRange {
     type Aux<'source> = ();
     type Left = NullifierHeader;
     type Output = SpendableHeader;
@@ -289,19 +295,92 @@ impl Step for SpendableInit {
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         if tg_gadget.0.commit() != tg_commit.0 {
             return Err(mock_ragu::Error(
-                "SpendableInit: witness gadget must commit to range tg_set",
+                "SpendableInitRange: witness gadget must commit to range tg_set",
             ));
         }
         // Inclusion: cm ∈ set ⇔ query(cm) == 0.
         if tg_gadget.0.query(Fp::from(cm)) != Fp::ZERO {
-            return Err(mock_ragu::Error("SpendableInit: commitment not in set"));
+            return Err(mock_ragu::Error(
+                "SpendableInitRange: commitment not in set",
+            ));
         }
         // Exclusion: nf ∉ set ⇔ query(nf) != 0. The note must not have
         // already been spent within the range.
         if tg_gadget.0.query(Fp::from(nf)) == Fp::ZERO {
-            return Err(mock_ragu::Error("SpendableInit: nullifier found in set"));
+            return Err(mock_ragu::Error(
+                "SpendableInitRange: nullifier found in set",
+            ));
         }
         Ok(((nf, end), ()))
+    }
+}
+
+/// Bootstrap a [`SpendableHeader`] directly from the wallet's
+/// [`NullifierHeader`] and a single freely-witnessed cm-stamp.
+///
+/// The one-step counterpart to [`SpendableInitRange`]: where `SpendableInitRange`
+/// consumes a [`RangeSummary`] covering the cm-stamp, this step takes
+/// the cm-stamp's tachygram set as a bare witness, so the wallet can
+/// seed a spendable from its note's creation stamp without first
+/// building a [`RangeSummary`] PCD.
+///
+/// Witness `(pre_cm_anchor, stamp_tg_set)`: verifies `cm ∈ stamp_tg_set`
+/// (cm comes from the left header) and emits a [`SpendableHeader`]
+/// carrying `(nf, pre_cm_anchor.next_stamp(commit))` — the running
+/// anchor immediately after the cm-stamp's absorption (an intra-block
+/// state, lifted to a block boundary downstream).
+///
+/// Field roles: `nf` is threaded from the [`NullifierHeader`] and
+/// GGM-bound to `(note, epoch)` upstream; `pre_cm_anchor` and
+/// `stamp_tg_set` are freely witnessed; the output anchor is derived in
+/// circuit.
+///
+/// Unlike [`SpendableInitRange`], this step performs **no** nf-exclusion
+/// check, and it is sound to omit precisely because the witnessed set
+/// is a single cm-stamp:
+///
+/// - `cm ∈ stamp_tg_set` pins the set to the note's creation stamp (a `cm`
+///   appears in exactly one stamp chain-wide).
+/// - A note's `nf` cannot appear in its own creation block: a shielded spend
+///   references a prior finalized anchor, so a note can never be created and
+///   spent in the same block.
+/// - `pre_cm_anchor` is freely witnessed; its binding closes only downstream
+///   through [`SpendableLift`] over [`Unspent`] segments (each proving
+///   per-stamp nf-exclusion) plus consensus anchor membership. A prover who
+///   witnesses a multi-stamp union as `stamp_tg_set` produces a `commit` that
+///   no real single published stamp matches, so the resulting anchor can never
+///   reach a real consensus anchor and the spendable can never be spent.
+///
+/// That single-block argument is what fails for a [`RangeSummary`] (a
+/// range can mint at its start and spend later within the same range),
+/// which is why [`SpendableInitRange`] keeps the `nf ∉ tg_set` check.
+#[derive(Debug)]
+pub struct SpendableInitStamp;
+
+impl Step for SpendableInitStamp {
+    type Aux<'source> = ();
+    type Left = NullifierHeader;
+    type Output = SpendableHeader;
+    type Right = ();
+    /// `(pre_cm_anchor, stamp_tg_set)`.
+    type Witness<'source> = (Anchor, TachygramSetGadget);
+
+    const INDEX: Index = Index::new(26);
+
+    fn witness<'source>(
+        &self,
+        (pre_cm_anchor, stamp_tg_set): Self::Witness<'source>,
+        (cm, nf, _nf_epoch): <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        // Inclusion: cm ∈ set ⇔ query(cm) == 0.
+        if stamp_tg_set.0.query(Fp::from(cm)) != Fp::ZERO {
+            return Err(mock_ragu::Error(
+                "SpendableInitStamp: commitment not in set",
+            ));
+        }
+        let stamp_commit = TachygramSetCommit::from(stamp_tg_set);
+        Ok(((nf, pre_cm_anchor.next_stamp(&stamp_commit)), ()))
     }
 }
 
