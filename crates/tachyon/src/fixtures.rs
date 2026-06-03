@@ -89,8 +89,9 @@ pub fn build_output_plan(
 ) {
     let rcv = value::CommitmentTrapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
-    let plan = action::Plan::output(note, theta, rcv);
-    let alpha = theta.randomizer::<effect::Output>(note.commitment());
+    let cm = note.commitment();
+    let plan = action::Plan::output(note, theta, rcv.clone());
+    let alpha = theta.randomizer::<effect::Output>(cm);
     (rcv, alpha, plan)
 }
 
@@ -99,7 +100,7 @@ pub fn build_output_stamp(
     anchor: Anchor,
     note: Note,
 ) -> (Stamp, action::Plan<effect::Output>) {
-    let (rcv, alpha, plan) = build_output_plan(rng, note);
+    let (rcv, alpha, plan) = build_output_plan(rng, note.clone());
     let stamp = Stamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
     (stamp, plan)
 }
@@ -412,7 +413,7 @@ pub(crate) fn build_nullifier_rollover_pcd(
     note: Note,
     epoch: EpochIndex,
 ) -> Pcd<spendable::NullifierRolloverHeader> {
-    let master_old = user.note_master(rng, note);
+    let master_old = user.note_master(rng, note.clone());
     let nf_old_pcd = ggm_tools::nullifier_from_master(rng, master_old, epoch);
     let master_new = user.note_master(rng, note);
     let nf_new_pcd = ggm_tools::nullifier_from_master(rng, master_new, EpochIndex(epoch.0 + 1));
@@ -429,10 +430,8 @@ pub struct WalletSim {
 
 impl WalletSim {
     pub fn new(sk: private::SpendingKey) -> Self {
-        Self {
-            sk,
-            pak: sk.derive_proof_private(),
-        }
+        let pak = sk.derive_proof_private();
+        Self { sk, pak }
     }
 
     pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
@@ -481,7 +480,7 @@ impl WalletSim {
         Pcd<delegation::NullifierHeader>,
         Pcd<delegation::NullifierHeader>,
     ) {
-        let nf_now = self.nullifier_pcd(rng, note, target_epoch);
+        let nf_now = self.nullifier_pcd(rng, note.clone(), target_epoch);
         let nf_next = self.nullifier_pcd(rng, note, EpochIndex(target_epoch.0 + 1));
         (nf_now, nf_next)
     }
@@ -498,10 +497,10 @@ impl WalletSim {
         Pcd<delegation::NullifierHeader>,
         Pcd<spendable::SpendableHeader>,
     ) {
-        let nf_for_init = self.nullifier_pcd(rng, spend_note, height.epoch());
-        let spendable = self.spendable_init(rng, spend_note, pool, height, nf_for_init);
+        let nf_for_init = self.nullifier_pcd(rng, spend_note.clone(), height.epoch());
+        let spendable = self.spendable_init(rng, spend_note.clone(), pool, height, nf_for_init);
 
-        let (nf_now, nf_next) = self.nullifier_pair_pcd(rng, spend_note, height.epoch());
+        let (nf_now, nf_next) = self.nullifier_pair_pcd(rng, spend_note.clone(), height.epoch());
 
         (spend_note, nf_now, nf_next, spendable)
     }

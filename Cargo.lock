@@ -803,6 +803,7 @@ dependencies = [
  "rand",
  "rand_core",
  "reddsa",
+ "zeroize",
 ]
 
 [[package]]

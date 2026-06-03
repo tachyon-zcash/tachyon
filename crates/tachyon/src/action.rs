@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// A planned Tachyon action, not yet authorized.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Plan<E: Effect> {
     /// Randomized action verification key.
     pub rk: public::ActionVerificationKey,
@@ -75,7 +75,7 @@ impl<E: Effect> Plan<E> {
     /// $$\mathsf{cv} = [\pm v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
     #[must_use]
     pub fn cv(&self) -> value::Commitment {
-        E::commit_value(self.rcv, self.note.value)
+        E::commit_value(&self.rcv, self.note.value)
     }
 
     /// Derive the action digest.

@@ -80,8 +80,8 @@ fn spend_bind_rejects_invalid_inputs() {
         let user = WalletSim::random(rng);
         let note = user.random_note(rng, 500);
 
-        let nf_pcd_l = user.nullifier_pcd(rng, note, epoch_l);
-        let nf_pcd_r = user.nullifier_pcd(rng, note, epoch_r);
+        let nf_pcd_l = user.nullifier_pcd(rng, note.clone(), epoch_l);
+        let nf_pcd_r = user.nullifier_pcd(rng, note.clone(), epoch_r);
         let (rcv, _theta, alpha) = spend_witness(rng, &note);
 
         let err = PROOF_SYSTEM
@@ -108,7 +108,7 @@ fn spend_bind_rejects_invalid_inputs() {
         let note_b = user.random_note(rng, 500);
         assert_ne!(note_a.commitment(), note_b.commitment());
 
-        let nf_now = user.nullifier_pcd(rng, note_a, EpochIndex(0));
+        let nf_now = user.nullifier_pcd(rng, note_a.clone(), EpochIndex(0));
         let nf_next = user.nullifier_pcd(rng, note_b, EpochIndex(1));
         let (rcv, _theta, alpha) = spend_witness(rng, &note_a);
 
@@ -141,7 +141,7 @@ fn spend_bind_rejects_invalid_inputs() {
             .fuse(
                 rng,
                 spend::SpendBind,
-                (rcv, alpha, user.pak, note_b),
+                (rcv, alpha, user.pak, note_b.clone()),
                 nf_now,
                 nf_next,
             )
@@ -161,7 +161,7 @@ fn spend_bind_rejects_invalid_inputs() {
         );
         let note_a = user_a.random_note(rng, 500);
 
-        let (nf_now, nf_next) = user_a.nullifier_pair_pcd(rng, note_a, EpochIndex(0));
+        let (nf_now, nf_next) = user_a.nullifier_pair_pcd(rng, note_a.clone(), EpochIndex(0));
         let (rcv, _theta, alpha) = spend_witness(rng, &note_a);
 
         let err = PROOF_SYSTEM
@@ -192,7 +192,7 @@ fn step_rejects_zero_value_note() {
 
     {
         let err = PROOF_SYSTEM
-            .seed(rng, delegation::NfMasterSeed, (zero_note, user.pak))
+            .seed(rng, delegation::NfMasterSeed, (zero_note.clone(), user.pak))
             .err().unwrap();
         assert_eq!(err.0, "NfMasterSeed: zero-value note");
     }
@@ -206,7 +206,7 @@ fn step_rejects_zero_value_note() {
             .seed(
                 rng,
                 stamp::OutputStamp,
-                (out_rcv, out_alpha, zero_note, out_anchor),
+                (out_rcv, out_alpha, zero_note.clone(), out_anchor),
             )
             .err().unwrap();
         assert_eq!(err.0, "OutputStamp: zero-value note");
@@ -215,18 +215,28 @@ fn step_rejects_zero_value_note() {
     {
         let valid_note = note::Note {
             value: note::Value(500),
-            ..zero_note
+            pk: zero_note.pk,
+            psi: zero_note.psi,
+            rcm: zero_note.rcm,
         };
-        let (nf_now_pcd, nf_next_pcd) = user.nullifier_pair_pcd(rng, valid_note, target_epoch);
+        let (nf_now_pcd, nf_next_pcd) =
+            user.nullifier_pair_pcd(rng, valid_note.clone(), target_epoch);
         let spend_rcv = value::CommitmentTrapdoor::random(rng);
         let spend_theta = ActionEntropy::random(rng);
         let spend_alpha = spend_theta.randomizer::<effect::Spend>(valid_note.commitment());
+
+        let zero_note_spend = note::Note {
+            value: note::Value(0),
+            pk: valid_note.pk,
+            psi: valid_note.psi.clone(),
+            rcm: valid_note.rcm.clone(),
+        };
 
         let err = PROOF_SYSTEM
             .fuse(
                 rng,
                 spend::SpendBind,
-                (spend_rcv, spend_alpha, user.pak, zero_note),
+                (spend_rcv, spend_alpha, user.pak, zero_note_spend.clone()),
                 nf_now_pcd,
                 nf_next_pcd,
             )
@@ -234,7 +244,7 @@ fn step_rejects_zero_value_note() {
         assert_eq!(err.0, "SpendBind: zero-value note");
 
         // this should also fail the commitment test
-        assert_ne!(valid_note.commitment(), zero_note.commitment());
+        assert_ne!(valid_note.commitment(), zero_note_spend.commitment());
     }
 }
 
@@ -247,10 +257,10 @@ fn spend_stamp_rejects_identity_cv() {
 
     pool.mine(random_block_with(rng, &[alloc::vec![note.commitment()]], 4));
     let init_height = pool.height();
-    let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
-    let spendable = user.spendable_init(rng, note, &pool, init_height, nf_pcd);
+    let nf_pcd = user.nullifier_pcd(rng, note.clone(), EpochIndex(0));
+    let spendable = user.spendable_init(rng, note.clone(), &pool, init_height, nf_pcd);
 
-    let (nf_now_pcd, nf_next_pcd) = user.nullifier_pair_pcd(rng, note, EpochIndex(0));
+    let (nf_now_pcd, nf_next_pcd) = user.nullifier_pair_pcd(rng, note.clone(), EpochIndex(0));
     let (rcv, _theta, alpha) = spend_witness(rng, &note);
     let (real_spend, ()) = PROOF_SYSTEM
         .fuse(
@@ -286,13 +296,13 @@ fn spendable_epoch_lift_across_boundary() {
     let delegation_id = user.pak.nk.derive_delegation_id(&note, trap);
 
     let epoch_0 = EpochIndex(0);
-    let master = user.note_master(rng, note);
+    let master = user.note_master(rng, note.clone());
     let delegates = delegate_range(rng, &master, trap, epoch_0.0..=epoch_0.0 + 1);
     let mut sync = SyncSim::new();
 
     pool.mine(random_block_with(rng, &[alloc::vec![note.commitment()]], 4));
     let init_height = pool.height();
-    let nf_pcd = user.nullifier_pcd(rng, note, epoch_0);
+    let nf_pcd = user.nullifier_pcd(rng, note.clone(), epoch_0);
     let spendable_pcd = user.spendable_init(rng, note, &pool, init_height, nf_pcd);
     sync.accept_spendable(delegates, spendable_pcd);
 
@@ -318,7 +328,7 @@ fn spendable_lift_rejects_invalid_inputs() {
 
         pool.mine(random_block_with(rng, &[alloc::vec![note.commitment()]], 4));
         let init_height = pool.height();
-        let nf_pcd = user.nullifier_pcd(rng, note, EpochIndex(0));
+        let nf_pcd = user.nullifier_pcd(rng, note.clone(), EpochIndex(0));
         let real_spendable = user.spendable_init(rng, note, &pool, init_height, nf_pcd);
 
         pool.advance(2, |_| random_block(rng, 1, 4));
@@ -356,7 +366,7 @@ fn spendable_lift_rejects_invalid_inputs() {
             4,
         ));
         let init_height = pool.height();
-        let nf_pcd_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
+        let nf_pcd_a = user.nullifier_pcd(rng, note_a.clone(), EpochIndex(0));
         let spendable_a = user.spendable_init(rng, note_a, &pool, init_height, nf_pcd_a);
 
         pool.advance(2, |_| random_block(rng, 1, 4));
@@ -427,7 +437,7 @@ fn delegate_rollover_fuse_rejects_invalid_inputs() {
             user.pak.nk.derive_delegation_id(&note, trap_b),
         );
 
-        let master_a = user.note_master(rng, note);
+        let master_a = user.note_master(rng, note.clone());
         let master_b = user.note_master(rng, note);
         let nf_a = delegate_nullifier_from_master(rng, master_a, trap_a, EpochIndex(0));
         let nf_b = delegate_nullifier_from_master(rng, master_b, trap_b, EpochIndex(1));
@@ -445,7 +455,7 @@ fn delegate_rollover_fuse_rejects_invalid_inputs() {
         let note = user.random_note(rng, 500);
         let trap = DelegationTrapdoor::random(rng);
 
-        let master_a = user.note_master(rng, note);
+        let master_a = user.note_master(rng, note.clone());
         let master_b = user.note_master(rng, note);
         let nf_l = delegate_nullifier_from_master(rng, master_a, trap, epoch_l);
         let nf_r = delegate_nullifier_from_master(rng, master_b, trap, epoch_r);
@@ -474,7 +484,7 @@ fn spendable_rollover_rejects_nf_mismatch() {
         4,
     ));
     let init_height = pool.height();
-    let nf_pcd_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
+    let nf_pcd_a = user.nullifier_pcd(rng, note_a.clone(), EpochIndex(0));
     let spendable_a = user.spendable_init(rng, note_a, &pool, init_height, nf_pcd_a);
 
     let rollover_b = build_nullifier_rollover_pcd(rng, &user, note_b, EpochIndex(0));
@@ -507,8 +517,8 @@ fn spendable_epoch_lift_rejects_invalid_inputs() {
             4,
         ));
         let init_height = pool.height();
-        let nf_pcd_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
-        let spendable_a = user.spendable_init(rng, note_a, &pool, init_height, nf_pcd_a);
+        let nf_pcd_a = user.nullifier_pcd(rng, note_a.clone(), EpochIndex(0));
+        let spendable_a = user.spendable_init(rng, note_a.clone(), &pool, init_height, nf_pcd_a);
 
         let rollover_a = build_nullifier_rollover_pcd(rng, &user, note_a, EpochIndex(0));
         let (rolled_a, ()) = PROOF_SYSTEM
@@ -549,9 +559,9 @@ fn spendable_epoch_lift_rejects_invalid_inputs() {
         });
         let epoch_1_first = BlockHeight(EPOCH_SIZE);
 
-        let nf_pcd_a = user.nullifier_pcd(rng, note_a, EpochIndex(0));
-        let spendable_a = user.spendable_init(rng, note_a, &pool, init_height, nf_pcd_a);
-        let rollover_a = build_nullifier_rollover_pcd(rng, &user, note_a, EpochIndex(0));
+        let nf_pcd_a = user.nullifier_pcd(rng, note_a.clone(), EpochIndex(0));
+        let spendable_a = user.spendable_init(rng, note_a.clone(), &pool, init_height, nf_pcd_a);
+        let rollover_a = build_nullifier_rollover_pcd(rng, &user, note_a.clone(), EpochIndex(0));
         let nf_a_e1 = note_a.nullifier(&user.pak.nk, EpochIndex(1));
         let (rolled_a, ()) = PROOF_SYSTEM
             .fuse(
@@ -599,7 +609,7 @@ fn rollover_fuse_rejects_invalid_inputs() {
         let user = WalletSim::random(rng);
         let note = user.random_note(rng, 500);
 
-        let nf_l = user.nullifier_pcd(rng, note, epoch_l);
+        let nf_l = user.nullifier_pcd(rng, note.clone(), epoch_l);
         let nf_r = user.nullifier_pcd(rng, note, epoch_r);
 
         let err = PROOF_SYSTEM
@@ -778,7 +788,7 @@ fn empty_block_unspent_lifts_spendable() {
     let cm_height = pool.height();
 
     // Bootstrap spendable at the cm-block's published anchor.
-    let nf_pcd = user.nullifier_pcd(rng, note, cm_height.epoch());
+    let nf_pcd = user.nullifier_pcd(rng, note.clone(), cm_height.epoch());
     let spendable = user.spendable_init(rng, note, &pool, cm_height, nf_pcd);
     let spendable_anchor_before = spendable.data().1;
 
