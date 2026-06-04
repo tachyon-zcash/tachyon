@@ -33,7 +33,7 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
-use core::fmt;
+use core::{fmt, iter, ops};
 
 use ff::Field as _;
 use pasta_curves::Fp;
@@ -122,40 +122,163 @@ pub struct Note {
 /// A note value in zatoshis. Non-zero and no greater than 2.1e15.
 ///
 /// Zero-valued notes are forbidden by construction: a zero-value action
-/// carries no economic meaning. The newtype enforces the invariant at
-/// `Value::from` (panics on zero and on overflow). Each PCD step that
-/// witnesses a `Note` *independently* rechecks `value != 0` — the
-/// compiler cannot prove the invariant from inside the circuit, and a
-/// compiled proof system sees only raw field elements without the
-/// Rust-level newtype protection.
-#[derive(Clone, Copy, Debug)]
+/// carries no economic meaning. Each PCD step that witnesses a `Note`
+/// *independently* rechecks `value != 0` — the compiler cannot prove the
+/// invariant from inside the circuit, and a compiled proof system sees
+/// only raw field elements without the Rust-level newtype protection.
+///
+/// Use [`Value::try_from`] or [`Value::new`] for fallible construction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(
     clippy::field_scoped_visibility_modifiers,
     reason = "test helpers use crate-internal construction to bypass the API check"
 )]
 pub struct Value(pub(crate) u64);
 
-impl From<u64> for Value {
-    fn from(value: u64) -> Self {
-        assert!(value > 0, "note value must be non-zero");
-        assert!(
-            value <= NOTE_VALUE_MAX,
-            "note value must not exceed maximum"
-        );
-        Self(value)
+/// Error returned when a note value is out of the valid range
+/// `1..=NOTE_VALUE_MAX`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueError {
+    /// The value was zero.
+    Zero,
+    /// The value exceeds the maximum note value (2.1e15 zatoshis).
+    Overflow,
+}
+
+impl fmt::Display for ValueError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            | Self::Zero => f.write_str("note value must be non-zero"),
+            | Self::Overflow => f.write_str("note value must not exceed maximum"),
+        }
     }
 }
 
-#[expect(clippy::expect_used, reason = "specified behavior")]
-impl From<Value> for i64 {
-    fn from(value: Value) -> Self {
-        Self::try_from(value.0).expect("note value should fit in i64 (max 2.1e15 < i64::MAX)")
+impl Value {
+    /// Checked constructor.
+    ///
+    /// Returns `Err` if `value` is zero or exceeds `NOTE_VALUE_MAX`.
+    pub const fn new(value: u64) -> Result<Self, ValueError> {
+        if value == 0 {
+            return Err(ValueError::Zero);
+        }
+        if value > NOTE_VALUE_MAX {
+            return Err(ValueError::Overflow);
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the inner `u64`.
+    #[must_use]
+    pub const fn inner(self) -> u64 {
+        self.0
+    }
+}
+
+impl TryFrom<u64> for Value {
+    type Error = ValueError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Self::new(value)
     }
 }
 
 impl From<Value> for u64 {
     fn from(value: Value) -> Self {
         value.0
+    }
+}
+
+impl From<Value> for i64 {
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_possible_wrap,
+        reason = "NOTE_VALUE_MAX (2.1e15) < i64::MAX (9.2e18), so wrapping cannot occur"
+    )]
+    fn from(value: Value) -> Self {
+        value.0 as Self
+    }
+}
+
+/// The sign of a [`ValueSum`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sign {
+    /// The value is positive (spends).
+    Positive,
+    /// The value is negative (outputs).
+    Negative,
+}
+
+/// Signed sum of note values across actions.
+///
+/// Spends contribute positive values, outputs contribute negative.
+/// The valid range is `-(max * action_count)..=(max * action_count)`,
+/// but `i128` provides ample headroom for any realistic bundle.
+///
+/// Use [`ValueSum::to_i64`] to convert to the wire-format `i64`
+/// for `value_balance`, which checks the result fits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ValueSum(i128);
+
+/// Error returned when a [`ValueSum`] operation overflows the
+/// representable range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BalanceError;
+
+impl fmt::Display for BalanceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("value balance overflow")
+    }
+}
+
+impl ValueSum {
+    /// The zero sum (identity for addition).
+    pub const ZERO: Self = Self(0);
+
+    /// Convert to `i64` for the wire format, or error if the sum
+    /// does not fit.
+    pub fn to_i64(self) -> Result<i64, BalanceError> {
+        i64::try_from(self.0).map_err(|_err| BalanceError)
+    }
+
+    /// Decompose into unsigned magnitude and sign.
+    ///
+    /// Zero is reported as `(0, Sign::Positive)`.
+    #[must_use]
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation,
+        reason = "ValueSum range is bounded by NOTE_VALUE_MAX * action_count, which fits u64"
+    )]
+    pub const fn magnitude_sign(self) -> (u64, Sign) {
+        if self.0 < 0 {
+            ((-self.0) as u64, Sign::Negative)
+        } else {
+            (self.0 as u64, Sign::Positive)
+        }
+    }
+}
+
+impl ops::Add<Value> for ValueSum {
+    type Output = Option<Self>;
+
+    fn add(self, rhs: Value) -> Self::Output {
+        self.0.checked_add(i128::from(rhs.0)).map(Self)
+    }
+}
+
+impl ops::Sub<Value> for ValueSum {
+    type Output = Option<Self>;
+
+    fn sub(self, rhs: Value) -> Self::Output {
+        self.0.checked_sub(i128::from(rhs.0)).map(Self)
+    }
+}
+
+impl iter::Sum<Value> for Option<ValueSum> {
+    fn sum<I: Iterator<Item = Value>>(mut iter: I) -> Self {
+        iter.try_fold(ValueSum::ZERO, |sum, val| sum + val)
     }
 }
 
@@ -289,21 +412,22 @@ mod tests {
     /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
     #[test]
     fn value_accepts_max() {
-        let _val: Value = Value::from(NOTE_VALUE_MAX);
+        assert!(Value::try_from(NOTE_VALUE_MAX).is_ok());
     }
 
     /// Anything above NOTE_VALUE_MAX must be rejected.
     #[test]
-    #[should_panic(expected = "note value must not exceed maximum")]
     fn value_rejects_overflow() {
-        let _val: Value = Value::from(NOTE_VALUE_MAX + 1);
+        assert_eq!(
+            Value::try_from(NOTE_VALUE_MAX + 1),
+            Err(ValueError::Overflow)
+        );
     }
 
     /// Zero must be rejected — notes carry economic value.
     #[test]
-    #[should_panic(expected = "note value must be non-zero")]
     fn value_rejects_zero() {
-        let _val: Value = Value::from(0u64);
+        assert_eq!(Value::try_from(0u64), Err(ValueError::Zero));
     }
 
     /// Different trapdoors produce different commitments.
@@ -315,13 +439,13 @@ mod tests {
 
         let note1 = Note {
             pk,
-            value: Value::from(100u64),
+            value: Value::try_from(100u64).unwrap(),
             psi,
             rcm: CommitmentTrapdoor::random(rng),
         };
         let note2 = Note {
             pk,
-            value: Value::from(100u64),
+            value: Value::try_from(100u64).unwrap(),
             psi,
             rcm: CommitmentTrapdoor::random(rng),
         };
@@ -338,7 +462,7 @@ mod tests {
         let nk = sk.derive_nullifier_private();
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: Value::from(100u64),
+            value: Value::try_from(100u64).unwrap(),
             psi: NullifierTrapdoor::random(rng),
             rcm: CommitmentTrapdoor::random(rng),
         };
@@ -372,5 +496,41 @@ mod tests {
         assert!(dbg.contains("Nullifier"), "must name the type");
         assert!(!dbg.contains("BEEF"), "must not leak field element");
         assert!(!dbg.contains("48879"), "must not leak decimal value");
+    }
+
+    #[test]
+    fn value_sum_checked_arithmetic() {
+        let va = Value::try_from(100u64).unwrap();
+        let vb = Value::try_from(200u64).unwrap();
+
+        let sum = (ValueSum::ZERO + va).unwrap();
+        let sum = (sum + vb).unwrap();
+        assert_eq!(sum.to_i64().unwrap(), 300);
+
+        let diff = (ValueSum::ZERO - va).unwrap();
+        assert_eq!(diff.to_i64().unwrap(), -100);
+    }
+
+    #[test]
+    fn magnitude_sign_positive() {
+        let sum = (ValueSum::ZERO + Value::try_from(42u64).unwrap()).unwrap();
+        let (mag, sign) = sum.magnitude_sign();
+        assert_eq!(mag, 42);
+        assert_eq!(sign, Sign::Positive);
+    }
+
+    #[test]
+    fn magnitude_sign_negative() {
+        let sum = (ValueSum::ZERO - Value::try_from(42u64).unwrap()).unwrap();
+        let (mag, sign) = sum.magnitude_sign();
+        assert_eq!(mag, 42);
+        assert_eq!(sign, Sign::Negative);
+    }
+
+    #[test]
+    fn magnitude_sign_zero() {
+        let (mag, sign) = ValueSum::ZERO.magnitude_sign();
+        assert_eq!(mag, 0);
+        assert_eq!(sign, Sign::Positive);
     }
 }

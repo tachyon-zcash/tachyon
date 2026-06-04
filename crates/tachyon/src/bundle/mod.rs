@@ -73,6 +73,7 @@ use crate::{
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
+    note,
     primitives::{ActionDigest, ActionDigestError, ActionSetCommit, Anchor, effect},
     reddsa, serialization,
     stamp::{self, AggregateId, AggregateIdError, Stamp, Stripped, Unproven},
@@ -97,12 +98,10 @@ impl BundleState {
             | 0b0000_0000u8 => Ok(Self::NoBundle),
             | 0b0000_0001u8 => Ok(Self::Stamped),
             | 0b0000_0010u8 => Ok(Self::Stripped),
-            | _other => {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid bundle state",
-                ))
-            },
+            | _other => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid bundle state",
+            )),
         }
     }
 
@@ -203,6 +202,39 @@ pub enum BuildError {
     BalanceKeyMismatch,
 }
 
+/// Errors that can occur when computing a bundle plan commitment.
+#[derive(Debug)]
+pub enum CommitError {
+    /// An action digest could not be constructed.
+    ActionDigest(ActionDigestError),
+    /// The value balance overflows the representable range.
+    BalanceOverflow,
+}
+
+impl fmt::Display for CommitError {
+    #[expect(clippy::ref_patterns, reason = "match needs ref to avoid move")]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            | Self::ActionDigest(ref err) => write!(f, "action digest: {err}"),
+            | Self::BalanceOverflow => write!(f, "value balance overflow"),
+        }
+    }
+}
+
+impl Error for CommitError {}
+
+impl From<ActionDigestError> for CommitError {
+    fn from(err: ActionDigestError) -> Self {
+        Self::ActionDigest(err)
+    }
+}
+
+impl From<note::BalanceError> for CommitError {
+    fn from(_err: note::BalanceError) -> Self {
+        Self::BalanceOverflow
+    }
+}
+
 /// Errors that can occur while signing a bundle plan.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -213,6 +245,8 @@ pub enum SignError {
     SigCountMismatch,
     /// An externally-provided signature is invalid at this index.
     InvalidActionSignature,
+    /// The value balance overflows the representable range.
+    BalanceOverflow,
 }
 
 impl fmt::Display for SignError {
@@ -221,6 +255,7 @@ impl fmt::Display for SignError {
             | Self::RkMismatch(idx) => write!(f, "derived rk mismatch at action {idx}"),
             | Self::SigCountMismatch => write!(f, "signature count mismatch"),
             | Self::InvalidActionSignature => write!(f, "invalid action signature"),
+            | Self::BalanceOverflow => write!(f, "value balance overflow"),
         }
     }
 }
@@ -264,19 +299,18 @@ impl Plan {
     ///
     /// $\mathsf{v\_balance} = \sum_i v_{\text{spend},i} - \sum_j
     /// v_{\text{output},j}$
-    #[must_use]
-    pub fn value_balance(&self) -> i64 {
-        let spend_sum: i64 = self
-            .spends
-            .iter()
-            .map(|plan| i64::from(plan.note.value))
-            .sum();
-        let output_sum: i64 = self
-            .outputs
-            .iter()
-            .map(|plan| i64::from(plan.note.value))
-            .sum();
-        spend_sum - output_sum
+    ///
+    /// Returns `Err` if the intermediate sum overflows or the result
+    /// does not fit in `i64`.
+    pub fn value_balance(&self) -> Result<i64, note::BalanceError> {
+        let mut sum = note::ValueSum::ZERO;
+        for plan in &self.spends {
+            sum = (sum + plan.note.value).ok_or(note::BalanceError)?;
+        }
+        for plan in &self.outputs {
+            sum = (sum - plan.note.value).ok_or(note::BalanceError)?;
+        }
+        sum.to_i64()
     }
 
     /// Compute a digest of all the bundle's effecting data.
@@ -293,17 +327,17 @@ impl Plan {
     /// permutation.
     ///
     /// The stamp is excluded because it is stripped during aggregation.
-    #[must_use]
-    pub fn commitment(&self) -> [u8; 64] {
-        #[expect(clippy::expect_used, reason = "todo")]
+    pub fn commitment(&self) -> Result<[u8; 64], CommitError> {
         let digests: Vec<ActionDigest> = self
             .iter_actions(action::Plan::digest, action::Plan::digest)
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
-            .expect("don't plan invalid actions");
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
 
         let action_commit = ActionSetCommit::from(digests.as_slice());
 
-        blake2b::bundle_commitment(&Eq::from(action_commit).to_affine(), self.value_balance())
+        Ok(blake2b::bundle_commitment(
+            &Eq::from(action_commit).to_affine(),
+            self.value_balance()?,
+        ))
     }
 
     /// Build a [`stamp::Plan`] from this bundle plan.
@@ -397,7 +431,9 @@ impl Plan {
 
         Ok(Bundle {
             actions: authorized,
-            value_balance: self.value_balance(),
+            value_balance: self
+                .value_balance()
+                .map_err(|_err| SignError::BalanceOverflow)?,
             binding_sig,
             stamp: Unproven,
         })
@@ -436,7 +472,9 @@ impl Plan {
 
         Ok(Bundle {
             actions: authorized,
-            value_balance: self.value_balance(),
+            value_balance: self
+                .value_balance()
+                .map_err(|_err| SignError::BalanceOverflow)?,
             binding_sig,
             stamp: Unproven,
         })
