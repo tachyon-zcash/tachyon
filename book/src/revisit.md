@@ -46,10 +46,13 @@ Therefore, *diversified address* is introduced to randomized the transmission
 key *while preserving the same incoming viewing key* $\ivk$ for memo decryption
 and detecting incoming notes.
 
-Furthermore, the **fine-grained disclosure of transaction flows** demands
-a separate *outgoing viewing key* for optional viewing of outbound notes.
-Viewing keys enable selective disclosure of incoming and outgoing notes of
-an account, to oneself or to a third party.
+Furthermore, **fine-grained disclosure of transaction flows** requires a
+distinct *outgoing viewing key* to enable optional viewing of outbound notes.
+Viewing keys support selective disclosure of both incoming and outgoing notes,
+either to the account holder or to authorized third parties.
+This separation also facilitates quantum-safe outgoing viewing keys from day
+one, as they are not subject to the address-diversification requirement that
+currently ties $\ivk$ to discrete-log–based constructions.
 
 ## Decoupling Payment Protocol from Shielded Protocol {#decouple}
 
@@ -342,6 +345,94 @@ the delegated key material is variable-size.
 #### Nullifier Security {#nf-sec}
 
 discuss balance, Note privacy, spend unlinkability, and how wallet protects Faerie.
+### Tachygram Accumulator {#acc}
+
+All shielded pools in Zcash today maintain two separate accumulators:
+a note commitment Merkle tree for efficient inclusion proofs and a nullifier
+set with constant-time membership queries for exclusion testing.
+
+Tachyon instead uses a single cryptographic accumulator whose members are
+encoded as roots of a polynomial, so that both membership and non-membership
+tests reduce to a single evaluation query.
+Conveniently, Tachyon's PCD proof system natively and cheaply supports
+evaluation queries against *online polynomial oracles*[^polyoracle].
+Because the accumulator is universal[^universal], it need not distinguish
+nullifiers from note commitments: a single accumulator collects
+indistinguishable 32-byte blobs, each a **tachygram**, that can be either a
+nullifier *or* a commitment.
+
+$$
+\tg := \begin{cases}
+    \cm = \mathsf{Com}(\pk, v, \psi; \rcm) &\quad\text{in Output actions}\\
+    \nf_e = \mathsf{KDF}(\nk, \psi, e) &\quad\text{in Spend actions}
+\end{cases}
+$$
+
+[^polyoracle]: Ragu PCD proof, through [reduction of
+    knowledge](https://eprint.iacr.org/2022/009), reduces down to a list of
+    evaluation claims of multiple opening points on multiple polynomials.
+    These claims are then
+    [folded](https://tachyon.z.cash/ragu/protocol/core/accumulation/pcs.html)
+    into a single running aggregated claim.
+    Ragu expose the capability to fuse online/application-time polynomial
+    queries into the proof system directly, without encoding the evaluation
+    through the constraint system which can be expensive.
+    This is spiritually similar to
+    [lookup argument](https://zcash.github.io/halo2/design/proving-system/lookup.html)
+    enforced as part of the PIOP relation rather than through the circuit.
+    
+[^universal]: In [crypto literature](https://eprint.iacr.org/2018/1188.pdf),
+    a universal accumulator is dynamic (supports insertion and removal) and
+    supports both membership and non-membership proofs.
+
+The accumulator is the commitment to a polynomial $f^\tg(X)$:
+
+$$
+\tgacc = \mathsf{Com}(f^\tg(X)) = \mathsf{Com}( \prod_i{(X - \tg_i)} )
+$$
+
+The key properties of this universal accumulator:
+
+- Membership is enforced via $f^\tg(x) = 0$, non-membership via
+  $f^\tg(x) \neq 0$.
+- Members are *unordered*: a set accumulator, not a vector commitment.
+  - Repeated entries count only once (equivalently, each distinct $\tg_i$
+    appears as a linear factor of multiplicity one).
+- Set union corresponds to polynomial multiplication, yielding a product
+  accumulator $f^\tg(X) \cdot g^\tg(X)$; set subtraction corresponds to division,
+  yielding a quotient accumulator $\frac{f^\tg(X)}{g^\tg(X)}$.
+  - Non-disjoint union requires a further division by the intersection;
+    subtracting a non-contained set fails to divide evenly, leaving a remainder
+    polynomial.
+  - (Disjoint) set union can be efficiently tested via
+    $p(r) \iseq f(r) \cdot g(r)$ at a random point $r\sample\F$.
+
+We emphasize a subtlety in the security of this polynomial-based accumulator.
+Since some polynomial commitment schemes are not degree-binding (KZG, Pedersen,
+etc.), the (non-)membership test is complete and sound only if the commitment
+is honestly computed.
+Concretely, consider a set of 10 items with its correct accumulator $\acc$.
+An attacker appends a malicious item $\tg_{11}$ and produces an $\acc'$
+indistinguishable from a normal Pedersen commitment. Since $\acc'$ does not
+bind the degree of the committed polynomial, a verifier could be fooled into
+accepting a membership test for $\tg_{11}$. Similarly, an attacker given an
+untrusted accumulator could drop genuine members from the polynomial. These
+attacks are impossible in Tachyon because every $\tgacc$ is verified by
+consensus validators using the technique [below](#acc-correct).
+
+#### Checking Accumulator Correctness {#acc-correct}
+
+Our goal is to check the correctness of the accumulator value $\tgacc$ given
+a public list of $\set{\tg_i}$ *without expensive recomputation*.
+
+The solution is batch verification via a randomized point check.
+The verifier samples a random $r\sample\F$ and invokes the PCS evaluation
+procedure on the (commitment, point, evaluation) claim $(\tgacc, r, y_r)$, where
+$y_r = \prod (r - \tg_i)$ is computed locally.
+Naturally, this proof can be made non-interactive with Fiat-Shamir.
+Notably, the verifier performs only cheap field operations, avoiding the group
+operations that recomputing the commitment would require (for Pedersen, KZG, or
+Bulletproof PCS).
 
 
 ### Polynomial-based Accumulator {#acc}
