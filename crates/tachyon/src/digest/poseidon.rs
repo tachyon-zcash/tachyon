@@ -51,13 +51,14 @@ pub(crate) fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     ])
 }
 
+const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 const NULLIFIER_PREFIX_DOMAIN: &[u8; 16] = b"Tachyon-NfPrefix";
 
 /// Derives a GGM root (master key) from note trapdoor and wallet nullifier key.
 #[must_use]
 pub(crate) fn nf_master(psi: Fp, nk: Fp) -> Fp {
     hash::<3>([
-        Fp::from_u128(u128::from_le_bytes(*NULLIFIER_PREFIX_DOMAIN)),
+        Fp::from_u128(u128::from_le_bytes(*NULLIFIER_MASTER_DOMAIN)),
         psi,
         nk,
     ])
@@ -140,4 +141,21 @@ pub(crate) fn anchor_epoch_step(anchor_prev: Fp, new_epoch: u32) -> Fp {
         anchor_prev,
         Fp::from(u64::from(new_epoch)),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn domain_field(domain: &[u8; 16]) -> Fp {
+        Fp::from_u128(u128::from_le_bytes(*domain))
+    }
+
+    #[test]
+    fn nullifier_master_and_prefix_domains_are_separated() {
+        assert!(
+            domain_field(NULLIFIER_MASTER_DOMAIN) != domain_field(NULLIFIER_PREFIX_DOMAIN),
+            "nullifier root derivation and GGM prefix steps must be domain-separated",
+        );
+    }
 }

@@ -86,11 +86,28 @@ The spend authorization keys follow a three-tier scheme mapping to **private sca
 
 $$\mathsf{nk} = \text{ToBase}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\texttt{0x22}])\bigr)$$
 
-An $\mathbb{F}_p$ element used in nullifier derivation. Tachyon simplifies Orchard's nullifier construction:[^faerie-gold]
+An $\mathbb{F}_p$ element used in nullifier derivation.
+Tachyon simplifies Orchard's nullifier construction
+by deriving a per-note Goldreich-Goldwasser-Micali
+(GGM) tree root from $\mathsf{nk}$ and the note's
+nullifier trapdoor, then deriving epoch-specific
+nullifiers from that tree:[^faerie-gold]
 
-$$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
+$$
+\mathsf{mk} = \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(\psi, \mathsf{nk})
+$$
 
-where $F$ is a keyed PRF (Poseidon with domain tag `Tachyon-NfDerive`), $\Psi$ is the note's nullifier trapdoor, and flavor is the epoch-id. See [Notes](./notes.md#nullifier-derivation).
+$$
+\mathsf{leaf}_e = \mathsf{GGM}_\texttt{Tachyon-NfPrefix}(\mathsf{mk}, e)
+$$
+
+$$
+\mathsf{nf}_e = \mathsf{Poseidon}_\texttt{Tachyon-NfDerive}(\mathsf{leaf}_e)
+$$
+
+where $\psi$ is the note's nullifier trapdoor and
+$e$ is the epoch-id. See [Nullifiers](./nullifiers.md)
+for the full GGM tree derivation.
 
 $\mathsf{nk}$ alone does NOT confer spend authority — combined with $\mathsf{ak}$ it forms the proof authorizing key $\mathsf{pak}$, enabling proof construction and nullifier derivation without signing capability.
 

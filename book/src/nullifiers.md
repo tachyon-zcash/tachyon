@@ -27,7 +27,7 @@ The note's master key $\mathsf{mk}$ is derived from the note's trapdoor $\psi$ a
 
 $$
 \mathsf{mk} = \mathsf{KDF}^{\mathsf{root}}_\psi(\mathsf{nk}) =
-    \mathsf{Poseidon}_\texttt{Tachyon-NfPrefix}\!(
+    \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}\!(
         \psi, \mathsf{nk}
     )
 $$

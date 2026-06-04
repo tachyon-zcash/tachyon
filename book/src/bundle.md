@@ -50,16 +50,30 @@ The proof establishes:
 - tachygrams are correctly bound to action keys
 - action balance effect matches pool balance effect
 
-The nullifier derivation uses a Poseidon-based GGM tree PRF (domain `Tachyon-NfDerive`):
+The nullifier derivation uses a Poseidon-based
+Goldreich-Goldwasser-Micali (GGM) tree PRF:
 
-$$ \mathsf{nf} = F_{\mathsf{nk}}(\Psi \parallel \tau) $$
+$$
+\mathsf{mk} = \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(\psi, \mathsf{nk})
+$$
+
+$$
+\mathsf{leaf}_e = \mathsf{GGM}_\texttt{Tachyon-NfPrefix}(\mathsf{mk}, e)
+$$
+
+$$
+\mathsf{nf}_e = \mathsf{Poseidon}_\texttt{Tachyon-NfDerive}(\mathsf{leaf}_e)
+$$
 
 where
 
-- $\Psi$ is the nullifier trapdoor[^commitment]
-- $\tau$ is an epoch index
+- $\mathsf{mk}$ is the per-note master key (tree root)
+- $\psi$ is the nullifier trapdoor[^commitment]
+- $e$ is an epoch index
 
-[^commitment]: User-controlled randomness [commitment trapdoor](https://zips.z.cash/protocol/protocol.pdf#commitment)
+See [Nullifiers](./nullifiers.md) for the full GGM tree derivation.
+
+[^commitment]: $\psi$ is user-controlled randomness for nullifier derivation. See [commitment trapdoor](https://zips.z.cash/protocol/protocol.pdf#commitment) in the protocol spec.
 
 ## Bundle Structure
 

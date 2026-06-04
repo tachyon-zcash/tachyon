@@ -17,12 +17,13 @@ use crate::{
 /// Tachyon simplifies Orchard's nullifier construction
 /// ("Tachyaction at a Distance", Bowe 2025):
 ///
-/// $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
+/// $$\mathsf{mk} = \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(\psi, \mathsf{nk})$$
+/// $$\mathsf{leaf}_e = \mathsf{GGM}_\texttt{Tachyon-NfPrefix}(\mathsf{mk}, e)$$
+/// $$\mathsf{nf}_e = \mathsf{Poseidon}_\texttt{Tachyon-NfDerive}(\mathsf{leaf}_e)$$
 ///
-/// where $F$ is a keyed PRF (Poseidon), $\Psi$ is the note's nullifier
-/// trapdoor, and flavor is the epoch-id. This replaces Orchard's more
-/// complex construction that defended against faerie gold attacks — which
-/// are moot under out-of-band payments.
+/// where $\psi$ is the note's nullifier trapdoor and $e$ is the epoch-id.
+/// This replaces Orchard's more complex construction that defended against
+/// faerie gold attacks — which are moot under out-of-band payments.
 ///
 /// ## Capabilities
 ///

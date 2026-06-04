@@ -15,7 +15,7 @@ Deterministic action randomizer for Tachyon, privately handled by transaction au
 
 ### Transaction identifiers
 
-Digests used to commit to Tachyon bundle contents for sighash and and auth digest.
+Digests used to commit to Tachyon bundle contents for sighash and auth digest.
 
 <!-- see 
     https://github.com/zcash/orchard/blob/main/src/bundle/commitments.rs 
@@ -47,6 +47,7 @@ These are all Tachyon-specific digests, performed in-circuit.
 
 | Purpose | Value |
 | ------- | ----- |
+| Nullifier master-key derivation | `Tachyon-NfMaster` |
 | Nullifier prefix key | `Tachyon-NfPrefix` |
 | Nullifier derivation | `Tachyon-NfDerive` |
 | Note commitment | `Tachyon-CmDerive` |
