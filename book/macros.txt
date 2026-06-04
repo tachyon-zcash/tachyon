@@ -1,5 +1,6 @@
 \F:\mathbb{F}
 \G:\mathbb{G}
+\H:\mathbb{H}
 \identity:\mathcal{O}
 \v:\mathbf{#1}
 \rv:\mathbf{\hat{#1}}
@@ -8,6 +9,8 @@
 \bits:\langle #1 \rangle
 \revdot:\, \langle \kern-0.5em \langle \kern0.1em #1, #2 \kern0.1em \rangle \kern-0.5em \rangle \,
 \conv:\revdot{#1}{#2}
+\iseq:\overset{?}{=}
+\sample:\overset{\$}{\leftarrow}
 \PRF:\mathsf{PRF}
 \sk:\mathsf{sk}
 \pk:\mathsf{pk}
@@ -15,6 +18,10 @@
 \ak:\mathsf{ak}
 \ask:\mathsf{ask}
 \rk:\mathsf{rk}
+\cv:\mathsf{cv}
+\rcv:\mathsf{rcv}
+\bsk:\mathsf{bsk}
+\bvk:\mathsf{bvk}
 \ivk:\mathsf{ivk}
 \nk:\mathsf{nk}
 \seed:\mathsf{seed}
@@ -22,3 +29,7 @@
 \rcm:\mathsf{rcm}
 \cm:\mathsf{cm}
 \pos:\mathsf{pos}
+\tg:\mathsf{tg}
+\acc:\mathsf{acc}
+\tgacc:\mathsf{acc^{tg}}
+\actacc:\mathsf{acc^{act}}
