@@ -435,10 +435,160 @@ operations that recomputing the commitment would require (for Pedersen, KZG, or
 Bulletproof PCS).
 
 
-### Polynomial-based Accumulator {#acc}
+### Tachyon Transaction {#tx}
 
-Move away from MT based to unified poly roots based accumulator for membership
-and non-membership proofs + union + substraction.
+![tachyon_tx](./assets/tachyon_tx.svg)
+
+Each block contains one or more transactions. Each transaction has a `txid`,
+which commits only to its _effecting data_
+([ZIP-244](https://zips.z.cash/zip-0244)) and thus serves as the stable
+identifier for p2p gossip, and a `wtxid`
+([ZIP-239](https://zips.z.cash/zip-0239)), which additionally commits to the
+potentially malleable authorization data.
+Each transaction optionally contains a bundle of transfers from each pool:
+JoinSplit for Sprout (soon deprecated), Spend/Output for Sapling, Action for
+Orchard, and now Tachyon Action for the new Tachyon pool.
+
+A **Tachyon Action transfer** either spends an old note or creates a new one.
+Whether a spend or an output, its *Action description* is uniformly represented
+by a pair $(\rk, \cv)$, where $\rk$ is the randomized spend validating key, whose
+derivation *binds to the underlying note*, and $\cv$ is a blinding commitment to
+the net value (negative for a spend).
+Unlike Sapling and Orchard, the tachygrams (nullifier or commitment) are left
+out of the description, because evolving per-epoch nullifiers are no longer
+static. We instead bind the note to $\rk$ through its randomizer $\alpha$:
+
+$$
+\begin{cases}
+\rk = [\ask + \alpha]\,\G \\
+\alpha = \PRF(\cm \| \theta)  \quad\theta\text{: arbitrary entropy}
+\end{cases}
+$$
+
+The Tachyon bundle inside a transaction carries a sequence of Action
+descriptions together with the net balance of all action transfers
+$v^{\mathsf{bal}}$, proven by a *binding signature* $\sigma^{\mathsf{bind}}$ as
+in Sapling/Orchard.
+
+<details>
+<summary>Recall: How binding signature works.</summary>
+
+The net value commitment $\cv$ in every action description is Pedersen-committed:
+
+$$
+\cv = [v]\,\G + [\rcv]\,\H
+$$
+
+where $\rcv$ is the blinding factor and $\H$ is an independent group generator.
+
+By the homomorphic property of Pedersen commitments, the verifier can sum the
+$\cv$ in a bundle to obtain $\sum_i{\cv_i}$, itself a blinding commitment to the
+net balance $v^\mathsf{bal}$ with blinding factor $\bsk = \sum_i{\rcv_i}$:
+
+$$
+\sum_i{\cv_i} = [\sum_i{v_i}]\,\G + [\sum_i{\rcv_i}]\,\H
+= [v^\mathsf{bal}]\,\G + [\bsk]\,\H.
+$$
+
+To verify the net balance, the validator reconstructs a discrete-log public key
+
+$$
+\bvk = \sum_i{\cv_i} - [v^\mathsf{bal}]\,\G,
+$$
+
+and then verifies a Schnorr signature $\sigma^\mathsf{bind}$ produced under
+$\bsk$. Effectively, the signature serves as a proof of knowledge of the secret
+scalar $\bsk$ behind the public key $\bvk$.
+
+</details>
+
+A **Tachyon Stamp** provides the PCD proof for the [Action statement](#statement)
+along with its public inputs: a set of tachygrams $\set{\tg_i}$, their
+accumulator $\tgacc$, and an anchor value from the [anchor chain](#anchor).
+Alternatively, the stamp holds a `wtxid` reference to another transaction whose
+stamp carries an aggregated PCD proof and the corresponding public inputs.
+The accumulator is included to spare miners from recomputing it over all
+tachygrams; instead, the correctness of $\tgacc$ is proven as part of the Action
+statement using the [batched verification trick](#acc-correct).
+The stamp is updateable in three main ways:
+1. **in-epoch anchor lift**: advance the anchor within the same epoch, updating
+the inclusion proof of Spend note commitments.
+2. **cross-epoch anchor lift**: advance the anchor into a new epoch, which requires
+revealing a [new nullifier](#nf) and updating the spendability proof (both the
+commitment inclusion and nullifier exclusion) of Spend notes.
+3. [**bundle aggregation**](#aggregation):
+a new aggregated transaction is created whose stamp
+contains the union of tachygrams, the accumulator of that union, an anchor, and an
+aggregated PCD proof. The stamps of all constituent transactions are replaced by a
+reference to the aggregated transaction's `wtxid`.
+
+> Note: an aggregated Tachyon bundle shares exactly the same format as a normal
+> standalone bundle (a.k.a. a _Tachyon autonome_), and may even carry additional
+> Action descriptions of its own. A purely aggregating bundle, by contrast,
+> carries an empty Action list (hence no authorization signatures), a zero value
+> balance, a trivial binding signature, and a stamp holding the aggregated proof
+> and its proof data.
+>
+> The balance check and authorization signature verification (including the
+> `SIGHASH` computation) are identical for every bundle, aggregated or standalone.
+> The only difference is proof verification: an aggregated bundle verifies against
+> the single stamp of the aggregated transaction, so its cost is amortized across
+> all constituents and thus economically incentivized.
+
+Importantly, each Action description is **associated with two tachygrams**, a
+consequence of the evolving nullifiers. If a user proves only the nullifier
+$\nf_e$ for the current epoch $e$, the epoch may advance to $e+1$ before the
+transaction is picked up from the mempool. Since neither miners nor the OSS—the
+latter responsible only for syncing past epochs, and never learning future
+nullifiers, least of all at spend time—can unilaterally update the proof, the
+transaction goes stale and requires further user input to refresh. This is poor
+UX and a potential timing side-channel that leaks privacy. We therefore require
+every spend action to reveal (and prove in circuit) the nullifiers for **both the
+current and the next epoch**, leaving an ample buffer against this cross-epoch
+race. To keep spend and output actions indistinguishable, we further require each
+output action to publish a random dummy tachygram alongside its note commitment.
+
+All non-malleable parts, collectively the *effecting data*, hash into a stable
+identifier `txid`: a bundle commitment from each pool, their value balance
+$v^{\mathsf{bal}}$, and encrypted memo bytes.
+The Tachyon bundle commitment $\actacc$ is defined similarly to the tachygram accumulator:
+
+$$
+\actacc = \mathsf{Com}(\prod_i{(X - a_i)})
+\quad\text{where }
+a_i = H(\cv_i, \rk_i)
+$$
+
+All mutable parts (orange in the diagram) commit only to the `auth_digest`, and
+hence transitively to `wtxid = txid || auth_digest`; only the stable parts
+(green in the diagram) contribute to `txid`.
+
+Specifically,
+
+- `txid` commits to $(\actacc \| v^\mathsf{bal})$. Importantly, for the Tachyon
+pool the memos are *not* effecting data and are therefore excluded from the
+`txid` inputs.
+- `auth_digest` commits to $(\set{\sigma^\mathsf{act}}, \sigma^\mathsf{bind}, \mathsf{stamp})$.
+- an additional `da_digest` commits to the (optional) opaque memo bytes, which
+are unconstrained (never parsed or interpreted) and thus have no effect on the
+shielded protocol.
+
+
+Finally, the Tachyon bundle carries a spend authorization signature for every
+Action description, each signed over the `SIGHASH`, which commits to the same
+transaction-wide effecting data (across all pools) used to derive `txid`[^txid-sighash].
+Block space can additionally serve as a data-availability layer for arbitrary
+payment-protocol data used in note transmission; the shielded protocol neither
+interprets this data nor checks its correctness. As explained [later](#payment),
+the payment protocol Tachyon targets keeps KEM key material (e.g., Orchard's
+`epk`) out of band, which shrinks the in-band footprint, is quantum-safe from
+day one, and leaves the format unchanged even through a full
+[quantum upgrade](#pq).
+
+[^txid-sighash]: `txid` and `SIGHASH` are domain-separated with different
+    personalization strings, but they commit to the same effecting data.
+    `SIGHASH` further incorporates a *SIGHASH type* byte, the `nConsensusBranchId`
+    network-version identifier (e.g., NU5, NU6), and other consensus-level metadata.
 
 ### Tachyaction Description {#action}
 
