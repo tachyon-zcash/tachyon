@@ -225,6 +225,17 @@ each note has only *one* nullifier that is globally unique value in the pool.
 As a result, Tachyon requires both a new nullifier derivation and a new
 double-spending prevention mechanism.
 
+
+> **<a id="philosophy">Philosophy:</a> Client-side Validation**
+> ([CSV](https://eprint.iacr.org/2025/068)).
+>
+> Tachyon's scaling approach rests on one principle: move validation off the
+> critical path of consensus and onto the client wherever possible. As a
+> blockchain scales, the burden on consensus nodes grows along every axis —
+> compute, memory, storage, and bandwidth. The remedy is to let the transacting
+> client prove its own correctness and leave consensus only cheap verification.
+> This principle guides many design decisions beyond our prunable nullifiers.
+
 The ideal functionality for an epoched nullifier is a deterministic function
 
 $$\nf_e = \mathsf{KDF}(\nk, \psi, e)$$
@@ -394,18 +405,20 @@ $$
 The key properties of this universal accumulator:
 
 - Membership is enforced via $f^\tg(x) = 0$, non-membership via
-  $f^\tg(x) \neq 0$.
-- Members are *unordered*: a set accumulator, not a vector commitment.
-  - Repeated entries count only once (equivalently, each distinct $\tg_i$
-    appears as a linear factor of multiplicity one).
-- Set union corresponds to polynomial multiplication, yielding a product
-  accumulator $f^\tg(X) \cdot g^\tg(X)$; set subtraction corresponds to division,
-  yielding a quotient accumulator $\frac{f^\tg(X)}{g^\tg(X)}$.
-  - Non-disjoint union requires a further division by the intersection;
-    subtracting a non-contained set fails to divide evenly, leaving a remainder
-    polynomial.
-  - (Disjoint) set union can be efficiently tested via
-    $p(r) \iseq f(r) \cdot g(r)$ at a random point $r\sample\F$.
+  $f^\tg(x) \neq 0$. Both tests are insensitive to multiplicity, so this is a
+  *multiset* accumulator: a tachygram appearing $m$ times contributes the factor
+  $(X - \tg_i)^m$, but a single occurrence already certifies membership.
+  - We do not deduplicate. In honest operation every tachygram is a distinct
+    pseudorandom blob, so multiplicity exceeds one only with negligible (or
+    adversarial) probability; and since (non-)membership ignores multiplicity,
+    such cases are harmless. 
+- Members are *unordered*: a multiset commitment, not a vector commitment.
+- Multiset union is polynomial multiplication, yielding a product accumulator
+  $f^\tg(X) \cdot g^\tg(X)$ (unconditionally, with no disjointness precondition);
+  multiset difference is division, yielding a quotient $\frac{f^\tg(X)}{g^\tg(X)}$
+  whenever the divisor is contained, and failing with a remainder otherwise.
+  - A union can always be tested via $p(r) \iseq f(r) \cdot g(r)$ at a random
+    point $r\sample\F$.
 
 We emphasize a subtlety in the security of this polynomial-based accumulator.
 Since some polynomial commitment schemes are not degree-binding (KZG, Pedersen,
@@ -501,6 +514,25 @@ $\bsk$. Effectively, the signature serves as a proof of knowledge of the secret
 scalar $\bsk$ behind the public key $\bvk$.
 
 </details>
+
+Before describing the stamp, we name a recurring object it relies on: the
+<a id="spendability"></a>**spendability proof**.
+To spend a note, its owner must convince consensus that
+the note is *currently spendable* — that its commitment was once added to the
+pool (*inclusion*) and that, in every epoch since, the note's nullifier *for that
+epoch* has stayed absent (*exclusion*).
+Since the pool retains only recent tachygrams and prunes the rest
+([above](#nf)), neither fact is checkable from a node's live state; the spender
+instead carries an updateable PCD proof of both, taken relative to a particular
+[anchor](#anchor) that pins a point in pool history. The proof can be constructed
+as soon as the note's creation transaction lands in a block, and is thereafter
+*lifted* forward with its anchor advanced over newer transactions.
+The owner need not keep it perpetually fresh: lifting is usually a
+retroactive syncing pass, run (or delegated to an OSS) only when a spend is
+intended, to carry the proof up to the spending epoch. We defer the lifting
+machinery (the [proof tree](#prooftree) and its steps) to a later section; for
+now it suffices that every spend consumes a spendability proof anchored near the
+chain tip when its transaction is published.
 
 A **Tachyon Stamp** provides the PCD proof for the [Action statement](#statement)
 along with its public inputs: a set of tachygrams $\set{\tg_i}$, their
