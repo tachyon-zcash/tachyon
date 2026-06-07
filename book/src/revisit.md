@@ -355,7 +355,62 @@ the delegated key material is variable-size.
 
 #### Nullifier Security {#nf-sec}
 
-discuss balance, Note privacy, spend unlinkability, and how wallet protects Faerie.
+We now examine how the evolving nullifier upholds the security properties [carved
+out](#decouple) for the shielded protocol. Readers can safely skip this
+section and come back later since the analysis refers to concepts introduced
+in later sections.
+
+**Balance.** Only the holder of $\nk$ can compute any $\nf_e$, since the GGM
+seed $\PRF_\nk(\psi)$ requires it. The spend circuit pins both $\nf_e$ and
+$\nf_{e+1}$ to a deterministic function of the note and epoch, so a note has
+exactly one valid nullifier per epoch and no freedom to mint a fresh value that
+dodges a past spend. Double-spending is then ruled out by two complementary
+checks that [leave no gap](#consensus-rule). The [spendability proof](#spendability)
+certifies the nullifier absent throughout pruned history up to its anchor, and
+consensus rescans the recent window (the current epoch and the one before) that
+the proof does not reach. Publishing both $\nf_e$ and $\nf_{e+1}$ extends this
+across the epoch boundary, so a note cannot be spent twice even as $e$ advances.
+
+**Note Privacy.** The adversary is a keyless third party reading the whole
+on-chain transaction, including any in-band memo. The shielded footprint, namely
+the commitment $\cm$ (hidden by $\rcm$), the spend's revealed nullifiers
+(pseudorandom by GGM PRF security), the rerandomized $\rk$, and the hiding $\cv$,
+reveals none of $\pk$, $v$, $\psi$. The in-band memo is payment-protocol data
+that the shielded protocol carries opaquely and never parses (committed only to
+`da_digest`), so its secrecy rests on the payment protocol's encryption, not on
+the shielded core.
+
+**Note Privacy (OOB).** Here the note plaintext travels out of band rather than
+as an in-band ciphertext, so the adversary of concern is the sender, who learns
+$\pk, v, \psi, \rcm$ but never the recipient's $\nk$. Because every $\nf_e$ hangs
+off the secret seed $\PRF_\nk(\psi)$, knowledge of the note plaintext alone does
+not let the sender, or anyone it colludes with, recognize the recipient's
+eventual spend on chain or link it back to the note it sent.
+
+**Spend Unlinkability.** Across epochs the $\{\nf_e\}$ of a fixed note are
+mutually pseudorandom to anyone lacking $\nk$, by GGM PRF security, and this
+holds even for the pair $\nf_e, \nf_{e+1}$ revealed together at spend. An OSS
+[delegated](#nf-ggm) a prefix key for a range $[e_1, e_2)$ can refresh exclusion
+proofs there, but the tree's forward-only structure prevents it from reaching
+any leaf beyond the range, in particular the spend leaf, since
+[syncing stops at $e-1$](#txflow). To an attacker holding only the on-chain
+$\cm$, the spend is unlinkable to it, since the two draw on disjoint randomness
+($\rcm$ versus the GGM seed). The stronger flavor of spend unlinkability, under
+incoming viewing key access, falls to the payment protocol, since Tachyon's
+shielded core has no $\ivk$.
+
+**Faerie-gold via the wallet.** In Orchard, Faerie-gold resistance comes from
+binding each new note's $\rho$ to the unique nullifier of an input note.
+Tachyon's [tachygram accumulator](#acc) does not assign notes a canonical
+position, so the shielded protocol cannot enforce that binding. A malicious
+sender could in principle pick colliding $\psi$ values across two notes sent
+to the same recipient, where only one of them is spendable. We push detection
+to the recipient's wallet: upon receiving a note, the wallet computes $\nf_e$
+at the current epoch and rejects the note if it collides with any other note
+it currently holds. Since a wallet's note set is small, the check is cheap;
+the knowledge that compliant wallets will reject such collisions is enough to
+deter the attack.
+
 ### Tachygram Accumulator {#acc}
 
 All shielded pools in Zcash today maintain two separate accumulators:
@@ -909,37 +964,35 @@ constituent's stamp is replaced by a reference to the aggregate transaction's
 Of the consensus rules, the bundle balance check and authorization-signature
 validation are unchanged from Orchard; only stamp verification is new.
 
-**Stamp verification.** Given the published tachygrams $\set{\tg_i}$ (the
-two nullifiers per spend, the commitment and dummy per output), the accumulator
-$\tgacc$, and the anchor, the validator:
+**Stamp verification.** Given the published tachygrams $\set{\tg_i}$ (a spend
+folds in $\nf_e$ and $\nf_{e+1}$, an output its commitment and a dummy), the
+accumulator $\tgacc$, and the anchor, the validator:
 
 1. confirms the `anchor` is a genuine node value in the consensus
    [anchor chain](#anchor);
 2. verifies the stamp's PCD proof against $(\set{\tg_i}, \tgacc, \mathsf{anchor})$,
    i.e. the [Action statement](#statement). The statement internally enforces
    $\tgacc$'s consistency with the published $\set{\tg_i}$ (the
-   [batched check](#acc-correct)), the integrity of each $\nf_e$, $\nf_{e+1}$,
-   and output commitments, and the spendability of every spent note up to the anchor.
+   [batched check](#acc-correct)), the integrity of the revealed nullifiers and
+   output commitments, and the spendability of every spent note up to the anchor.
 
 **The exclusion window (new double-spend rule).** A spendability proof attests
-absence only up to its anchor, back in epoch $e-1$. Between that anchor and the
-block our transaction lands in, someone else could have spent the same note.
-Consensus closes this gap with a live check: it keeps the tachygrams of recent
-blocks and rejects the bundle if any revealed tachygram already appears among
-them.
+absence only up to its anchor, which lies back in epoch $e-1$. It says nothing
+about the stretch from the anchor to the block our transaction lands in, where
+the same note could already have been spent. Consensus closes this blind spot
+with a live check: it keeps the tachygrams of recent blocks in memory and rejects
+the bundle if a spent note's nullifier already appears there.
 
-This live window spans the **current epoch and the one before it**, for two
-reasons:
+Because the anchor sits in $e-1$, the live check must also cover that epoch's
+nullifier. Consensus tests all three against the window, which spans the
+**current epoch and the one before it**:
 
-- The proof reaches only as far as its anchor, never the chain tip, so consensus
-  scans the whole current epoch to cover the rest.
-- Each spend reveals both $\nf_e$ and $\nf_{e+1}$. A double-spend started in the
-  previous epoch $e-1$ would already have published *our* $\nf_e$ — as its own
-  next-epoch nullifier — so scanning epoch $e-1$ catches the collision.
-
-Together the two regions leave no gap: the proof covers history up to its anchor,
-the live window covers the recent blocks, and the two overlap rather than merely
-abut.
+- $\nf_{e-1}$ covers the tail of epoch $e-1$ past the anchor, the range that
+spendability proof does not cover;
+- $\nf_e$ covers the current epoch, catching a competing spend ahead of ours;
+- $\nf_{e+1}$ guards the [cross-epoch race](#tx): if the transaction is mined only
+  after epoch $e+1$ begins, $\nf_{e+1}$ is the value consensus checks as current
+  then.
 
 **Standalone vs. aggregated.** Balance, authorization, and the tachygram-window
 check run per constituent bundle in both cases; only the stamp proof differs. A
@@ -973,12 +1026,15 @@ full address (and PKI infra)
 
 wallet key derivation
 
-Faerie Resistance
+Faerie Resistance, and Full spend unlinkability in the presence of ivk.
 
 ## Quantum Safety {#pq}
 
 chal: no rerandomizable signature scheme, DLog diverisifcation doesn't work.
 fresh encap-key per sender and STARK on PQ sigature
+
+rerandomization is already PQ-private, even if you get ask + alpha, it doesn't link to ask.
+it is NOT PQ-sound as it will give ability to generate spend proof and authorize with it.
 
 ### PQ Address Diversification {#pq-diversify}
 
