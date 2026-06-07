@@ -848,8 +848,105 @@ proof (shared by all) are paid once and amortized across the epoch.
 
 ### Transaction Life Cycle {#txflow}
 
+1. **Select notes, delegate syncing.** The wallet picks the input notes to spend
+and the output notes to create, fixing the target spending epoch $e$. For each
+input note the bulk of the work is bringing its [spendability proof](#spendability)
+up to date, from wherever it was last synced through epoch $e-1$. The wallet
+delegates this to an [OSS](#nf), handing over the
+[prefix-constrained keys](#nf-ggm) for exactly the epoch range to be synced. From
+those, the OSS derives the note's per-epoch nullifiers $\nf_i$ and proves their
+derivation in-circuit, while learning nothing about epochs outside the range,
+especially the eventual spend leaf $\nf_e$.
+
+2. **Lift the spendability proof.** Maintaining the proof means advancing its
+[anchor](#anchor) along the anchor chain while preserving both halves of the
+claim:
+    - *Exclusion* is extended exactly as in the [anchor chain section](#anchor):
+    for each epoch, the note's nullifier $\nf_i$ for that epoch is shown absent
+    from the epoch accumulator $e(X)$ (cheaply, via the
+    [QR-filter test](#qr-trick)), with no per-stamp membership tests.
+    - *Inclusion* needs no re-proving of membership: the note's commitment was
+    shown to lie in its creating stamp's accumulator *once*, and each lift simply
+    extends that anchor to the new one along the chain's hash links.
+    - Within an epoch this is an [in-epoch lift](#in-e); crossing a boundary is a
+    [cross-epoch lift](#cross-e), which reveals the new epoch's nullifier and runs
+    a PCD step binding $\nf_i$ and $\nf_{i+1}$ to the *same note* (matching the
+    underlying commitment), so the chain of per-epoch exclusions cannot be spliced
+    across notes. The OSS repeats this epoch by epoch up to $e-1$ and returns the
+    synced proof.
+
+3. **Generate the stamp.** With the synced spendability proof in hand, the wallet
+folds it into a final proof step establishing the spend-specific facts: the
+integrity of the current and next-epoch nullifiers $\nf_e, \nf_{e+1}$ (both
+[derived from the same note](#nf)), the output commitments, and the correct
+computation of the bundle accumulator $\tgacc$ over all revealed tachygrams (the
+[batched correctness check](#acc-correct)).
+The result is the [Tachyon stamp](#tx): the PCD proof for the
+[Action statement](#statement) together with its public inputs
+$(\set{\tg_i}, \tgacc, \mathsf{anchor})$. Revealing *both* $\nf_e$ and $\nf_{e+1}$
+is what insures the transaction against the [cross-epoch race](#tx) while it
+waits in the mempool.
+
+4. **Authorize and bind.** Concurrent to the proving path of steps 1-3,
+the wallet assembles the transaction body, computes the [`SIGHASH`](#tx) over
+the effecting data, and produces:
+    - a spend-authorization signature for every action, signed under the
+    [re-randomized key](#payment-key) $\ask + \alpha$ and verifiable against the
+    published $\rk$;
+    - the net value balance $v^\mathsf{bal}$ and a single [binding signature](#tx)
+    $\sigma^\mathsf{bind}$ over the value commitments.
+
+5. **Mempool and aggregation.** The finished transaction enters the mempool as a
+standalone *Tachyon autonome*. A miner (or any [aggregator](#aggregation)) may
+then fold it together with others: it lifts every input stamp onto a common
+anchor, takes the [multiset union](#union) of their tachygrams and the
+accumulator of that union, and produces a single aggregated PCD proof. Each
+constituent's stamp is replaced by a reference to the aggregate transaction's
+`wtxid`, moving the tachygrams, anchor, and proof onto the aggregate.
+
 #### Consensus Validation {#consensus-rule}
 
+Of the consensus rules, the bundle balance check and authorization-signature
+validation are unchanged from Orchard; only stamp verification is new.
+
+**Stamp verification.** Given the published tachygrams $\set{\tg_i}$ (the
+two nullifiers per spend, the commitment and dummy per output), the accumulator
+$\tgacc$, and the anchor, the validator:
+
+1. confirms the `anchor` is a genuine node value in the consensus
+   [anchor chain](#anchor);
+2. verifies the stamp's PCD proof against $(\set{\tg_i}, \tgacc, \mathsf{anchor})$,
+   i.e. the [Action statement](#statement). The statement internally enforces
+   $\tgacc$'s consistency with the published $\set{\tg_i}$ (the
+   [batched check](#acc-correct)), the integrity of each $\nf_e$, $\nf_{e+1}$,
+   and output commitments, and the spendability of every spent note up to the anchor.
+
+**The exclusion window (new double-spend rule).** A spendability proof attests
+absence only up to its anchor, back in epoch $e-1$. Between that anchor and the
+block our transaction lands in, someone else could have spent the same note.
+Consensus closes this gap with a live check: it keeps the tachygrams of recent
+blocks and rejects the bundle if any revealed tachygram already appears among
+them.
+
+This live window spans the **current epoch and the one before it**, for two
+reasons:
+
+- The proof reaches only as far as its anchor, never the chain tip, so consensus
+  scans the whole current epoch to cover the rest.
+- Each spend reveals both $\nf_e$ and $\nf_{e+1}$. A double-spend started in the
+  previous epoch $e-1$ would already have published *our* $\nf_e$ — as its own
+  next-epoch nullifier — so scanning epoch $e-1$ catches the collision.
+
+Together the two regions leave no gap: the proof covers history up to its anchor,
+the live window covers the recent blocks, and the two overlap rather than merely
+abut.
+
+**Standalone vs. aggregated.** Balance, authorization, and the tachygram-window
+check run per constituent bundle in both cases; only the stamp proof differs. A
+standalone autonome is verified against its own stamp, whereas the constituents of
+an [aggregated](#aggregation) bundle have had their stamps stripped and replaced
+by a reference, so one PCD proof stands in for the whole batch and amortizes
+verification across it.
 
 ### Proof Tree {#prooftree}
 
