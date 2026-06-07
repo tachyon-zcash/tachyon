@@ -413,12 +413,13 @@ The key properties of this universal accumulator:
     adversarial) probability; and since (non-)membership ignores multiplicity,
     such cases are harmless. 
 - Members are *unordered*: a multiset commitment, not a vector commitment.
-- Multiset union is polynomial multiplication, yielding a product accumulator
+- <a id="union">**Multiset union**</a>
+  is polynomial multiplication, yielding a product accumulator
   $f^\tg(X) \cdot g^\tg(X)$ (unconditionally, with no disjointness precondition);
   multiset difference is division, yielding a quotient $\frac{f^\tg(X)}{g^\tg(X)}$
   whenever the divisor is contained, and failing with a remainder otherwise.
-  - A union can always be tested via $p(r) \iseq f(r) \cdot g(r)$ at a random
-    point $r\sample\F$.
+  - A union can be tested via $p(r) \iseq f(r) \cdot g(r)$ at a random point
+    $r\sample\F$.
 
 We emphasize a subtlety in the security of this polynomial-based accumulator.
 Since some polynomial commitment schemes are not degree-binding (KZG, Pedersen,
@@ -542,12 +543,12 @@ stamp carries an aggregated PCD proof and the corresponding public inputs.
 The accumulator is included to spare miners from recomputing it over all
 tachygrams; instead, the correctness of $\tgacc$ is proven as part of the Action
 statement using the [batched verification trick](#acc-correct).
-The stamp is updateable in three main ways:
-1. **in-epoch anchor lift**: advance the anchor within the same epoch, updating
-the inclusion proof of Spend note commitments.
-2. **cross-epoch anchor lift**: advance the anchor into a new epoch, which requires
-revealing a [new nullifier](#nf) and updating the spendability proof (both the
-commitment inclusion and nullifier exclusion) of Spend notes.
+The **stamp is updateable** in three main ways:
+1. [**in-epoch anchor lift**](#in-e): advance the anchor within the same epoch,
+updating the inclusion proof of Spend note commitments.
+2. [**cross-epoch anchor lift**](#cross-e): advance the anchor into a new epoch,
+which requires revealing a [new nullifier](#nf) and updating the spendability
+proof (both the commitment inclusion and nullifier exclusion) of Spend notes.
 3. [**bundle aggregation**](#aggregation):
 a new aggregated transaction is created whose stamp
 contains the union of tachygrams, the accumulator of that union, an anchor, and an
@@ -622,19 +623,250 @@ day one, and leaves the format unchanged even through a full
     `SIGHASH` further incorporates a *SIGHASH type* byte, the `nConsensusBranchId`
     network-version identifier (e.g., NU5, NU6), and other consensus-level metadata.
 
-### Tachyaction Description {#action}
+### Anchor Chain {#anchor}
 
-structs like action, stamp, description,
+An anchor chain is a hash chain of **per-stamp** [tachygram accumulators](#acc).
+Every stamp carries a $\tgacc$ committing to the tachygrams it introduces: those
+of a single bundle for a standalone transaction (a *Tachyon autonome*), or the
+union across many for an [aggregate](#tx). Each new stamp extends the chain by
+hashing its accumulator into the running state:
 
-txid, wtxid (segwit)
+$$
+\tgst \leftarrow H(\mathsf{st^{tg}_{old}} \;\|\; \tgacc)
+$$
+
+<P align="center">
+  <img src="./assets/anchor_chain.svg" alt="anchor_chain" />
+</p>
+
+The chain therefore advances at *sub-block, above-transaction* granularity: in a
+block of transactions with all standalone Tachyon bundles it ticks once per
+transaction. A stamp's $\mathsf{anchor}$ field may reference any node value
+$\tgst$ in the chain, anchoring at a historical snapshot of the pool state.
+
+Why anchor *per-stamp rather than per-block*, when the block is the unit of
+consensus finality? The primary justification is that it minimizes validator
+work, in alignment with our [philosophy](#philosophy). Each stamp already ships a
+$\tgacc$ whose correctness is [batch-verified in circuit](#acc-correct), so a
+validator merely hashes it into the chain. A per-block anchor would instead force
+every validator to rebuild a block-wide accumulator from scratch: re-accumulating
+every tachygram in the block, interpolating the product polynomial, and
+committing it which involves an expensive multi-scalar multiplication for some PCS
+choices. A secondary benefit of sub-block granularity is allowing note creation
+and spend *in the same block* which enables true atomic swaps.[^swap]
+
+[^swap]: Atomic swaps need the miner's cooperation. Better yet, the swap
+    participants are themselves the block builder. Say Alice wants to swap her
+    Sapling coin for Bob's Orchard coin. She builds her half with a validity
+    proof but *no* authorization signature and sends it to Bob. Assuming the
+    miner agrees to place it at the top of the next block, Bob can predict the
+    exact anchor value that will exist right after her transaction is absorbed.
+    Anchoring to that not-yet-realized point, Bob builds and fully authorizes the
+    matching half and returns it to Alice, who then authorizes her own half and
+    submits both. Alice is safe because her transaction is inert until Bob
+    supplies his fully stamped and signed one; Bob is safe because Alice cannot
+    publish his transaction alone — its proof verifies only if the anchor chain
+    actually contains Alice's tachygrams ahead of his, and absent that the
+    claimed anchor is a phantom that consensus rejects.
+
+Per-stamp cadence also raises concerns about the cost of generating exclusion
+proofs. To prove $\nf_e$ never appeared in epoch $e$, a user could naively show
+$f^\tg(\nf_e) \neq 0$ against the accumulator of *every* stamp folded into the
+chain that epoch. Instead, we leverage the [multiset union](#union) operation
+on our accumulator polynomials to collapse the per-stamp checks into one.
+The product of all stamp polynomials in an epoch is itself an accumulator over
+all tachygrams of that epoch — the <a id="epoch-acc">*epoch accumulator*</a> $e(X)$:
+
+$$
+\underbrace{\circ \overset{f^\tg_1(X)}{\longrightarrow} \circ
+\overset{f^\tg_2(X)}{\longrightarrow} \circ \overset{\ldots}{\longrightarrow} \circ}
+_{\text{entire epoch: } e(X) = \prod_i{f^\tg_i(X)}}
+$$
+
+and $\nf_e$ is absent from the epoch exactly when $e(\nf_e) \neq 0$. Anyone
+(typically an OSS) can prove that $e(X)$ is the correct product of the committed
+$\tgacc_i = \mathsf{Com}(f^\tg_i(X))$ already fixed in the anchor chain by showing
+$e(r) \iseq \prod_i{f^\tg_i(r)}$ using the proof system's cheap polynomial-oracle
+queries[^polyoracle]. Since the queries are served natively by the folding scheme
+and not through a step circuit, $e(X)$ may have degree as large as the SRS of the PCS
+allows, independent of any per-PCD-step-circuit size limit. Admittedly, the prover
+cost is still linear in the epoch's stamp count, but it is paid *once* and then
+**amortized**. The epoch accumulator $e(X)$, carrying its correctness proof, can
+now be reused by every unspent note to directly test the exclusion of their
+epoched nullifiers.
+
+This removes the per-stamp checks, but $e(X)$ still has degree linear in the
+total number of tachygrams in the epoch $N$. We now present an optimization
+trick that reduces the amortized per-nullifier cost to strictly sublinear.
+
+#### Quadratic Residue Filters {#qr-trick}
+
+> This subsection is a self-contained optimization; readers can safely skip it and
+> continue to the [transaction life cycle](#txflow).
+
+Our goal: let a user prove non-membership of $\nf_e$ over an *entire epoch* at
+cost logarithmic in $N$, the number of tachygrams that epoch (equivalently, the
+anchor-chain length).
+
+The idea is **bucketing**. Suppose we sort every tachygram into one of $2^k$
+buckets by a rule that (i) a nullifier can cheaply prove it follows and (ii)
+splits the field evenly. Then $\nf_e$ falls into exactly one bucket, and it can
+only ever collide with the tachygrams sharing that bucket. Thus, non-membership
+across the whole epoch collapses to non-membership against a *single* bucket's
+accumulator, holding only $\approx N/2^k$ entries. Taking $k = \log N - \log\log N$
+shrinks each bucket to $\approx \log N$ entries while keeping the query $O(\log N)$.
+Quadratic residues give us exactly such a rule.
+
+**A number theory detour.** Over a prime field $\F$, the nonzero elements split
+perfectly in half: the *quadratic residues* ($\QR$) and the *non-residues* ($\NQR$).
+Both classes are cheap to test in-circuit:
+
+- $x \in \QR$: supply the root $y$ as advice; one constraint $y^2 = x$.
+- $x \in \NQR$: fix a public non-residue $c$ and supply $y$ with $y^2 = cx$,
+  since multiplying by a non-residue flips the class:
+
+$$
+\begin{cases}
+x\in\QR \iff c\cdot x \in\NQR \\
+x\in\NQR \iff c\cdot x \in\QR
+\end{cases}
+$$
+
+A **QR filter** is one such split with a random offset: draw $R \sample \F$ and
+classify $x$ by whether $x + R$ is a residue. A random offset cuts the field
+roughly in half, and $k$ independent offsets $R_1, \ldots, R_k$ tag every element
+with a $k$-bit **QR profile** $\v{b} = (b_1, \ldots, b_k) \in \{0,1\}^k$, where
+$b_j = 1$ iff $x + R_j \in \QR$ (written $x \in \QR_{R_j}$) and $b_j = 0$
+otherwise. The $k$ filters together sort the field into $2^k$ disjoint buckets of
+roughly equal size.
+
+<a id="batch-qr">**Batched QR Test.**</a> Given the vanishing polynomial over
+some elements $f(X)=\prod_i{(X - x_i)}$, we can batch-test that all elements are
+QR, namely $\forall x_i \in \QR$, as follows:
+
+- Prover interpolates all QR pairs $(x_i, y_i)$ into a polynomial $g(X)$ where
+$g(x_i) = y_i$ and $x_i = y_i^2$
+- Prover computes $h(X)=\frac{g(X) - X}{f(X)}$ and sends commitments to $g(X)$
+and $h(X)$ to the Verifier
+  - Observe that the numerator $g(X) - X$ vanishes over all $x_i$, thus must
+  perfectly divide the vanishing polynomial $f(X)$
+- Verifier samples a random $r\sample\F$, and test: $g(r) - r \iseq f(r)\cdot h(r)$
+
+**Building the buckets (once, by the OSS).** Fix $R_1, \ldots, R_k \sample \F$ at
+system startup. Conceptually, the buckets are the leaves of a binary tree built
+by recursively splitting the epoch accumulator by each filter. Splitting
+$e(X) = \prod_{j=1}^N (X - \tg_j)$ by $R_1$ gives
+
+$$
+\begin{cases}
+q_0(X) = \prod_{\tg_i\in\NQR_{R_1}}{(X - \tg_i)}\\
+q_1(X) = \prod_{\tg_i\in\QR_{R_1}}{(X - \tg_i)}\\
+e(X) = q_0(X) \cdot q_1(X)
+\end{cases}
+$$
+
+so $q_1$ gathers the tachygrams passing the $R_1$ filter and $q_0$ its
+complement; bisecting each by $R_2$ gives four, and so on:
+
+$$
+\begin{cases}
+q_{00}(X) = \prod_{\tg_i\in\NQR_{R_2} \,\cap\, \NQR_{R_1}}{(X - \tg_i)}\\
+q_{10}(X) = \prod_{\tg_i\in\QR_{R_2} \,\cap\, \NQR_{R_1}}{(X - \tg_i)}\\
+q_0(X) = q_{00}(X) \cdot q_{10}(X)
+\end{cases}
+\quad
+\begin{cases}
+q_{01}(X) = \prod_{\tg_i\in\NQR_{R_2} \,\cap\, \QR_{R_1}}{(X - \tg_i)}\\
+q_{11}(X) = \prod_{\tg_i\in\QR_{R_2} \,\cap\, \QR_{R_1}}{(X - \tg_i)}\\
+q_1(X) = q_{01}(X) \cdot q_{11}(X)
+\end{cases}
+$$
+
+After $k$ filters we reach $2^k$ leaves, where leaf $q_{\v{b}}(X)$ holds exactly
+the tachygrams of profile $\v{b}$.
+
+In practice the OSS never splits top-down. It keeps the $2^k$ bucket accumulators
+live and *streams* tachygrams into them: as each new stamp lands, it computes
+every tachygram's profile $\v{b}$ (its $k$ QR bits) and folds the factor
+$(X - \tg)$ into the matching leaf $q_{\v{b}}$. Internal product nodes are formed
+bottom-up only when a decomposition proof calls for them. Maintaining the buckets
+costs $O(kN)$ linear-factor multiplications across the epoch, amortized over all
+users and all nullifiers.
+
+<P align="center">
+  <img src="./assets/qr_trick.svg" alt="qr_trick" />
+</p>
+
+With the buckets maintained, a user proves $\nf_e$ absent from the *entire epoch*
+in three parts:
+
+1. **Profile.** Compute $\nf_e$'s QR profile $\v{b}$ ($k$ squaring constraints)
+   pinning down the single leaf $q_{\v{b}}$ it could possibly belong to.
+2. **Leaf non-membership.** Test $q_{\v{b}}(\nf_e) \neq 0$ against that one leaf,
+   of expected degree $N/2^k$.
+3. **Path decomposition.** Certify that $q_{\v{b}}$ is genuinely the
+   profile-$\v{b}$ bucket of the epoch accumulator $e(X)$, by walking the
+   root-to-leaf path and checking, at each level $j$, two things:
+   - *product relation*: the on-path parent equals the product of its two children,
+   tested at a random point as in the [accumulator correctness check](#acc-correct);
+   - *sibling QR purity*: the *off-path* sibling is pure in its QR class with
+     respect to $R_j$: a single [batched QR test](#batch-qr), applied directly for
+     a $\QR$ sibling or to $c\cdot(\cdot)$ for an $\NQR$ one.[^sibling]
+
+[^sibling]: Why the sibling test, and why only one per level? The product checks
+    alone are not enough: a cheating OSS could hide a tachygram equal to $\nf_e$
+    by misfiling it into the *sibling* subtree, leaving the user's leaf test to
+    wrongly report absence. Sibling purity shuts this down. If the off-path
+    sibling provably holds only elements of the opposite class at level $j$, then
+    every on-path-class element of the parent is forced into the on-path child —
+    it has nowhere else to go. Chaining this down all $k$ levels pins every
+    profile-$\v{b}$ element of $e(X)$, in particular any occurrence of $\nf_e$,
+    into the leaf $q_{\v{b}}$. Hence $e(\nf_e) = 0 \iff q_{\v{b}}(\nf_e) = 0$, and
+    a passing leaf test certifies epoch-wide exclusion. Constraining only the
+    sibling is enough: purity of the off-path side already captures all
+    on-path-class elements, and a stray wrong-class element that leaks *into* the
+    on-path child can at worst make an honest exclusion proof fail (a false
+    positive), never admit a double-spend (a false negative).
+
+The decomposition certifies $q_{\v{b}}$ only *relative to* $e(X)$. Full soundness also
+needs $e(X)$ to be canonical, the correct product of the per-stamp $\tgacc_i$
+committed in the anchor chain, which is the separate
+[epoch-accumulator correctness](#epoch-acc) proof from above.
+
+**Cost.** Each level adds one product check and one batched QR test, each settled
+by $O(1)$ random-point evaluations, so the path is $O(k)$; the leaf test adds work
+proportional to its degree $N/2^k$. Setting $2^k = N/\log N$, i.e.
+$k = \log N - \log\log N$, balances the two — leaves hold $\approx \log N$
+tachygrams and the path is $\approx \log N$ levels deep — for an $O(\log N)$
+per-nullifier proof, strictly sublinear. (Pushing $k$ all the way to $\log N$
+would shrink leaves to $O(1)$, but the $O(k)$ path cost still dominates at
+$O(\log N)$ while the bucket count doubles, so nothing is gained.) This
+per-nullifier cost sits *on top of* the OSS's one-time epoch work: maintaining the
+buckets ($O(kN)$) and proving $e(X)$ canonical. Both the path-decomposition proofs
+(shared by everyone whose nullifier lands in the same bucket) and the $e(X)$
+proof (shared by all) are paid once and amortized across the epoch.
 
 ### Transaction Life Cycle {#txflow}
 
-### Aggregated Bundle {#aggregation}
+#### Consensus Validation {#consensus-rule}
 
-aggregation of stamp (accumulator, proof folding, anchor lifting)
 
-aggregated bundle format
+### Proof Tree {#prooftree}
+
+There are a couple of statements, the final Action statement will takes Spendable proof
+as input, and folds in more standard Spend/Output-like statement including the accumulator
+correctness proof.
+
+This is where we describe the proof tree. we describe the data (header) and steps that updates
+them where each distinct step is a circuit and we specify their statement.
+
+#### In-epoch Lift {#in-e}
+
+#### Cross-epoch Lift {#cross-e}
+
+#### Aggregation {#aggregation}
+
+#### Tachyon Action Statement {#statement}
 
 ## Payment Protocol {#payment}
 
@@ -643,6 +875,8 @@ shielded sync (link to Roman post) -> PIR memo DB
 full address (and PKI infra)
 
 wallet key derivation
+
+Faerie Resistance
 
 ## Quantum Safety {#pq}
 

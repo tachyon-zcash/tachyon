@@ -33,3 +33,6 @@
 \acc:\mathsf{acc}
 \tgacc:\mathsf{acc^{tg}}
 \actacc:\mathsf{acc^{act}}
+\tgst:\mathsf{st^{tg}}
+\QR:\mathsf{QR}
+\NQR:\mathsf{NQR}
