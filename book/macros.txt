@@ -36,3 +36,9 @@
 \tgst:\mathsf{st^{tg}}
 \QR:\mathsf{QR}
 \NQR:\mathsf{NQR}
+\addr:\mathsf{addr}
+\tag:\mathsf{tag}
+\rpk:\mathsf{rpk}
+\ek:\mathsf{ek}
+\dk:\mathsf{dk}
+\tk:\mathsf{tk}
