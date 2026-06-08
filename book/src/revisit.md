@@ -57,7 +57,7 @@ currently ties $\ivk$ to discrete-log–based constructions.
 ## Decoupling Payment Protocol from Shielded Protocol {#decouple}
 
 A key observation Tachyon makes is that we can **separate the concerns of
-spend authorization and note transmission**!  This separation appears in the
+spend authorization and note transmission**! This separation appears in the
 decoupling of the shielded protocol from the payment protocol. The payment protocol
 is responsible for full payment address construction, note transmission, and
 selective disclosure capabilities, while the shielded protocol is reduced to the
@@ -113,9 +113,9 @@ security analysis.
     to reproduce all of Orchard functionalities in this decoupled framework. We
     leave it as a homework exercise for the readers. 
     As a hint, your diversified address now may look like
-    $\mathsf{addr} := (\pk, \mathsf{tk})$ where
+    $\mathsf{addr} := (\pk, \tk)$ where
     $\pk = \mathsf{Com}(\ak, \nk; \rpk)$ is the diversified payment key,
-    $\mathsf{tk} = (d, pk_d)$ is the diversified transmission key.
+    $\tk = (d, pk_d)$ is the diversified transmission key.
     Your $\ivk = \mathsf{ToScalar}(\PRF_\sk([9]))$ can now be directly
     derived from master spending key $\sk$, rather than meandering through
     layers of indirect derivation (similarly for outgoing viewing key).
@@ -1020,24 +1020,270 @@ them where each distinct step is a circuit and we specify their statement.
 
 ## Payment Protocol {#payment}
 
-shielded sync (link to Roman post) -> PIR memo DB
+As defined in the [motivation](#decouple), the payment protocol is in charge of
+secure note transmission. This goal entails a full payment address design that
+carries key material for incoming note detection, and infrastructure for fast
+memo retrieval and spending witness construction.
+The leading Tachyon-compatible payment protocol is being developed by the 
+[ValarGroup](https://github.com/valargroup). Here we explain their high-level
+architectures and design rationales.
 
-full address (and PKI infra)
+```mermaid
+flowchart TB
+    subgraph _Payment Protocol_
+    addr["**Address Creation**
+    Payment link"]
+    memo["**Memo Encryption**"]
+    discovery["**Note Discovery**
+    Incoming note detection + decryption"]
+    check["**Spendability Check**
+    Note spendability + Faerie Gold Prevention"]
+    wit["**Witness Construction**
+    OSS delegation, Stamp Generation, Authorization"]
+    end
 
-wallet key derivation
+    subgraph _Shielded Protocol_
+    transfer["**Shielded Transfer**"]
+    end
 
-Faerie Resistance, and Full spend unlinkability in the presence of ivk.
+    addr -- "`pk`" --> transfer
+    memo -- "`(tag, memo)`" --> transfer
+    transfer --> discovery --> check --> wit
+```
+
+The infamous[^sandblast] pain point around existing note transmission mechanism
+is its shielded sync through **trial decryption** of memo distributed in-band.
+We recommend [Roman's article](https://x.com/akhtariev/status/2044113751767691637)
+for a detailed motivation and problem statement. Briefly, the linear scanning for
+trial decryption leaks metadata and becomes infeasible for bandwidth-limited mobile
+wallets as Zcash throughput scales.
+
+[^sandblast]: Due to the linear cost of the shielded sync and an unprotective
+    gas price, Zcash NU5 experienced a DOS attack, referred to as [the sandblasting
+    attack](https://electriccoin.co/blog/a-look-back-nu5-and-network-sandblasting/),
+    preventing wallets from syncing fast enough to access their funds.
+
+One promising solution is a primitive called **Private Information Retrieval**
+(PIR), which allows clients to query a database without the server learning anything
+about client's query
+(slides below by [Corrigan-Gibbs](https://www.youtube.com/watch?v=Jdzrf3im1gQ)).
+With PIR, the recipient can generate a fresh `tag` for each incoming note and
+send it to the sender as part of the full payment address. The sender then publish
+the encrypted memo with the tag attached. These `(tag, encrypted_memo)` key-value
+pair are stored in a PIR database for instant retrieval without privacy leakage.
+
+<P align="center">
+  <img src="./assets/pir.png" alt="pir_corrigan_gibbs" />
+</p>
+
+Modern single-server PIR requires $\Theta(N)$ preprocessing for faster online
+response and lower per-query communication. Many performance metrics that we
+care about scale with $\Theta(\sqrt{N})$, therefore care must be taken to curb
+the database growth and their expected max sizes.
+For our scope, the payment protocol at least maintains these PIR databases
+(we use `key => value` for entry format):
+
+- Epoched memo store: per-epoch `tag => memo` store, synced from the
+[DA blobs](#tx) appearing on chain.
+- Epoched tachygram store: per-epoch, 
+[Hash-table-bucketed](https://github.com/valargroup/spendability-pir/blob/main/nullifier/README.md)
+`H(tg)[:4] => tg (32 bytes) || blk_height (u32_le) || anchor_height (u32_le) || action_count (u8)` store,
+keeping track of tachygrams and the block and anchor in which they appear.
+- Encapsulation key store: global `H(ek) => ek` store for full ML-KEM encapsulation key
+from its short digest.
+
+### Full Payment Address {#address}
+
+The [decoupling](#decouple) split the owner-binding payment key from the
+note-transmission key, leaving the latter for the payment protocol to define. A
+Tachyon full payment address is
+
+$$
+\addr = (\underbrace{\tag}_{\text{per-note}},\; \underbrace{H(\ek),\, \pk_d}_{\text{per-sender}})
+\qquad
+\begin{cases}
+    (\ek, \dk) \leftarrow \mathsf{ML\text{-}KEM.KeyGen}()\\
+    \pk_d = H(\ak, \nk; \rpk)
+\end{cases}
+$$
+
+with three pieces:
+
+- $\pk_d$, the *diversified payment key*: the owner $\pk$ a note commits to,
+  randomized by a trapdoor $\rpk$ so that two payment keys of the same
+  wallet are unlinkable. The decoupling lets us diversify the payment key
+  independently of the transmission key.
+- $(\ek, \dk)$, a fresh ML-KEM key pair sampled per sender, whose
+  encapsulation key $\ek$ is the recipient's transmission key. Since $\ek$ runs
+  to a few KB, the address carries only its short digest $H(\ek)$ and the
+  full key is fetched on demand from the encapsulation-key PIR database.
+- $\tag$, a per-note retrieval handle for looking up the encrypted memo by PIR.
+  It is derived from per-sender key material so the recipient can predict it, as
+  the [next section](#discovery) explains.
+
+**Why not Orchard's DH transmission key.** Orchard derives a diversified
+transmission key $[\ivk]\,g_d$ from a long-lived incoming viewing key. That is
+not quantum-private: a sender holding (or one day acquiring) a quantum computer
+could recover $\ivk$ from $g_d$ and $[\ivk]\,g_d$ by discrete log, and an $\ivk$
+grants viewing access to *every* incoming note of the recipient, past and future.
+This is a textbook
+["harvest now, decrypt later"](https://en.wikipedia.org/wiki/Harvest_now%2C_decrypt_later)
+exposure. ML-KEM avoids it entirely, since the shared secret is not recoverable
+by a quantum computer and the symmetric encryption keyed under it is likewise
+quantum-safe.
+
+We sample the KEM key pair *deterministically*. Although
+[ML-KEM's public `KeyGen`](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf)
+is randomized, wallets call the derandomized `KeyGen_Internal(d, z)` with
+$(d, z)$ derived from the HD-wallet master spending key, so the key pair is
+reproducible from the seed rather than dependent on fresh operational entropy.
+
+**No persistent viewing key.** Address diversification historically existed to
+stop colluding senders from recognizing that two addresses belong to the same
+recipient. Tachyon reaches full unlinkability with no long-lived $\ivk$ at all:
+$\pk_d$ is randomized per address by $\rpk$, the $(\ek, \dk)$ pair is freshly
+sampled per sender, and $\tag$ is fresh per note, so nothing persistent ties two
+addresses together. This raises a question: with no standing viewing key to scan
+against, how does a recipient still discover incoming notes efficiently? The
+[next section](#discovery) answers it.
+
+**Address PKI (optional).** Publishing only $H(\ek)$ already needs a lookup
+service for the full $\ek$ (the encapsulation-key PIR store). One could push this
+into a small PKI: map a short, stable handle $H(\addr)$ to the full address and
+fetch it by PIR. The catch is that the $\tag$ component evolves per note, so such
+a PKI can only register the *per-sender* portion $(H(\ek), \pk_d)$, never the
+whole address.
+
+### Note Discovery {#discovery}
+
+With no persistent $\ivk$, a recipient cannot scan the chain by trial-decrypting
+every memo under one viewing key. Discovery runs instead through the
+[epoched memo store](#payment) keyed by $\tag$. The idea: the $\tag$ of the
+$i$-th note from a given sender is derived deterministically from the per-sender
+key material the recipient itself established (for instance $\tag_i = \PRF(s, i)$
+for a per-sender seed $s$), so the recipient can *predict* exactly which tags to
+expect and fetch only those by PIR, leaking nothing to the server.
+
+Concretely, for each sender relationship the recipient tracks how many notes it
+has already seen and an upper bound on how many that sender might have sent. To
+sync an epoch, it regenerates the tags across that outstanding range, PIR-queries
+the `tag => memo` store for each, and keeps the hits. There is no linear scan, no
+trial decryption, and the server observes only oblivious queries.
+
+**Which key decrypts.** Each $\tag$ belongs to exactly one sender relationship,
+and that relationship fixes the recipient's decapsulation key $\dk$ (the private
+half of the per-sender $(\ek, \dk)$). So a memo fetched by $\tag$ is decrypted
+with the $\dk$ of the address under which that $\tag$ was issued. The sender
+encapsulates to $\ek$ to obtain a shared secret and ships the ML-KEM ciphertext
+beside the encrypted memo; the recipient runs $\mathsf{Decaps}(\dk, \cdot)$ to
+recover the same secret and open it. The $\tag$ thus indexes both the memo and
+the key that opens it.
+
+
+### Note Spendability {#spendable}
+
+Two questions gate whether a received note is worth keeping: is it actually
+spendable, and is it free of Faerie-gold collisions.
+
+**Spendability and witness data.** A note is spendable only if its commitment
+was added to the pool and its nullifier has stayed absent since. Building and
+maintaining the [spendability proof](#spendability) requires knowing, for any
+tachygram, whether and where it appears on chain. The
+[epoched tachygram store](#payment) supplies this privately: a
+[hash-bucketed](https://github.com/valargroup/spendability-pir/blob/main/nullifier/README.md)
+PIR database mapping a tachygram's short prefix to its full value and the block
+and anchor heights where it landed. A wallet queries it to locate its note's
+commitment (for inclusion) and to confirm its per-epoch nullifiers are absent
+(for exclusion), all without revealing which tachygram it is asking about.
+
+**Faerie-gold prevention.** Recall the shielded protocol
+[pushes Faerie-gold detection to the wallet](#nf-sec): a cheap nullifier test
+lets the recipient reject colliding notes. On receiving a note the wallet
+computes its nullifier at a fixed reference epoch and checks it against the notes
+it already holds. A malicious sender has two avenues, both blocked:
+
+- *Reused $\psi$.* Two notes sent to one recipient with the same $\psi$ share
+  every $\nf_e$; recomputing $\nf$ at the reference epoch exposes the collision,
+  and the wallet keeps only one (only one was ever spendable).
+- *Targeted collision.* Choosing a $\psi$ whose nullifier collides with that of
+  an honestly created note is a second-preimage on the nullifier derivation,
+  infeasible for a hash/PRF-based $\nf$.
+
+### Witness Construction {#witness}
+
+Witness construction is where the payment protocol's databases feed the shielded
+protocol's [transaction life cycle](#txflow). Having discovered and validated its
+notes, a spender:
+
+1. pulls inclusion and exclusion data for each input from the
+   [epoched tachygram store](#spendable), and delegates the heavy per-epoch
+   [spendability syncing](#txflow) to an OSS through
+   [prefix-constrained keys](#nf-ggm);
+2. folds the synced spendability proofs into a [stamp](#tx), then authorizes and
+   binds the bundle, as detailed in the [life cycle](#txflow).
+
+In short, the shielded protocol defines *what* the witness must prove, and the
+payment protocol supplies the data-availability and private-retrieval layer that
+makes assembling it practical at scale.
 
 ## Quantum Safety {#pq}
 
-chal: no rerandomizable signature scheme, DLog diverisifcation doesn't work.
-fresh encap-key per sender and STARK on PQ sigature
+Tachyon is designed to be **quantum-private today and quantum-sound after a
+future upgrade**. These are different bars. Privacy must hold retroactively,
+since an adversary can harvest today's chain and decrypt once it has a quantum
+computer, so anything protecting privacy must already be post-quantum. Soundness
+(no forgery, no theft) need only hold at spend time, so it can wait for a
+coordinated network upgrade before quantum computers arrive.
 
-rerandomization is already PQ-private, even if you get ask + alpha, it doesn't link to ask.
-it is NOT PQ-sound as it will give ability to generate spend proof and authorize with it.
+**Quantum-private today.** Everything Tachyon publishes is either a hiding
+commitment or encrypted under post-quantum symmetric/KEM crypto, so a future
+quantum computer learns nothing about old transactions:
 
-### PQ Address Diversification {#pq-diversify}
+- the owner field $\pk = H(\ak, \nk)$ and the note commitment $\cm$ are
+  hash/symmetric (Poseidon) commitments, hiding even against a quantum computer;
+- nullifiers are PRF/hash outputs, pseudorandom against a quantum computer, so
+  [spend unlinkability](#nf-sec) survives;
+- memos travel under [ML-KEM](#address), post-quantum from day one.
+
+The only discrete-log values on chain are the randomized validating key
+$\rk = [\ask + \alpha]\,\G$ and the binding key. Re-randomization makes even
+these quantum-*private*: a quantum computer can take the discrete log of $\rk$ to
+recover $\ask + \alpha$, but $\alpha = \PRF(\cm \,\|\, \theta)$ is a fresh secret
+mask, so the result is unlinkable to $\ask$ or to any other spend. Privacy and
+unlinkability therefore already hold against a quantum adversary.
+
+**Not yet quantum-sound.** What a quantum computer *can* do is forge. Recovering
+$\ask + \alpha$ lets it sign a spend authorization, and breaking the
+discrete-log-based PCD proof system lets it fabricate a spend proof for a note it
+does not own. Together that is theft. Closing the gap needs two post-quantum
+replacements, the only parts of Tachyon not yet quantum-safe:
+
+1. a re-randomizable signature scheme, which has no efficient post-quantum
+   analogue (Schnorr re-randomization is intrinsically discrete-log);
+2. discrete-log-based address diversification, already sidestepped by the
+   payment protocol's fresh per-sender $\ek$ (no $[\ivk]\,g_d$, see
+   [above](#address)).
 
 ### PQ Signature Re-randomization {#pq-rerand}
 
+Re-randomization buys unlinkability by publishing a fresh-looking but valid
+key/signature each spend. With no post-quantum re-randomizable signature, we
+recover the same effect from zero knowledge. Instead of broadcasting a signature
+to be checked against $\rk$, the spender proves *knowledge* of a valid
+post-quantum signature (hash- or lattice-based) in zero knowledge. The proof
+reveals nothing about the signature, so two spends by the same key stay
+unlinkable, exactly what re-randomization provided. Since authorization is now a
+proof rather than a separate signature, it folds into the transaction's
+[PCD proof](#pq-pcd), unifying authorization and validity into one post-quantum
+artifact.
+
 ### PQ PCD Proofs {#pq-pcd}
+
+The remaining gap is the proof system itself. Tachyon's PCD/folding (Ragu)
+commits with discrete-log-based polynomial commitments, which a quantum computer
+breaks, undermining the proof soundness that the theft vector above relies on. A
+full quantum upgrade swaps this for a **lattice-based folding scheme** resting on
+SIS/Module-LWE rather than discrete log. The folding structure that makes
+Tachyon's [spendability proofs](#spendability) incremental is preserved; only the
+underlying commitment and its hardness assumption change. Concrete lattice
+folding constructions are an active research area, and the details remain TBD.
