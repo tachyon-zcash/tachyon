@@ -29,8 +29,8 @@ fn stripped_bundle_retains_signatures() {
     let bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment().unwrap());
 
-    let (stripped, _stamp) = bundle.strip();
-    stripped.verify_signatures(&sighash).unwrap();
+    let (unassigned, _stamp) = bundle.strip();
+    unassigned.verify_signatures(&sighash).unwrap();
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn plan_commitment_matches_bundle_commitment() {
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
     let sighash = mock_sighash(bundle_plan.commitment());
 
-    let bundle: Stamped = bundle_plan
+    let bundle = bundle_plan
         .sign(&sighash, &ask, rng)
         .expect("sign output bundle")
         .stamp(stamp);
@@ -69,11 +69,11 @@ fn zero_action_bundle_is_valid() {
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
     let sighash = mock_sighash(plan.commitment());
 
-    let bundle: Stripped = Bundle {
+    let bundle = Bundle {
         actions: alloc::vec![],
         value_balance: 0,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-        stamp: Adjunct::default(),
+        stamp: AggregateId::ZERO,
     };
 
     bundle.verify_signatures(&sighash).unwrap();
@@ -180,7 +180,7 @@ fn innocent_aggregate_from_two_autonomes() {
     let (adjunct_a, stamp_a) = autonome_a.strip();
     let (adjunct_b, stamp_b) = autonome_b.strip();
 
-    let innocent: Stamped = {
+    let innocent = {
         let innocent_plan = Plan::new(alloc::vec![], alloc::vec![]);
         let innocent_sighash = mock_sighash(innocent_plan.commitment());
 
@@ -306,7 +306,7 @@ fn stamped_read_write_round_trip() {
     let original = build_autonome(rng, &wallet, 1000, 700);
     let mut buf = Vec::new();
     original.write(&mut buf).expect("write");
-    let deserialized = Stamped::read(&*buf).expect("read");
+    let deserialized = Bundle::<Stamp>::read(&*buf).expect("read");
 
     assert_eq!(original.actions, deserialized.actions);
     assert_eq!(original.value_balance, deserialized.value_balance);
@@ -321,52 +321,33 @@ fn stamped_read_write_round_trip() {
 
 #[test]
 fn stripped_read_write_round_trip() {
-    // Adjunct shape: wtxid preserved.
-    {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::random(rng);
-        let (mut stripped, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        stripped.stamp.wtxid = [0x42u8; 64];
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+    let stripped = unassigned
+        .assign_wtxid(AggregateId::try_from([0x42u8; 64]).expect("nonzero id"))
+        .expect("assign wtxid");
 
-        let mut buf = Vec::new();
-        stripped.write(&mut buf).expect("write");
-        let deserialized = Stripped::read(&*buf).expect("read");
+    let mut buf = Vec::new();
+    stripped.write(&mut buf).expect("write");
+    let deserialized = Bundle::<AggregateId>::read(&*buf).expect("read");
 
-        assert_eq!(stripped, deserialized);
-        assert_eq!(deserialized.stamp.wtxid, [0x42u8; 64]);
-    }
-
-    // Innocent shape: empty actions, zero wtxid.
-    {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let plan = Plan::new(alloc::vec![], alloc::vec![]);
-        let sighash = mock_sighash(plan.commitment());
-
-        let stripped: Stripped = Bundle {
-            actions: alloc::vec![],
-            value_balance: 0,
-            binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-            stamp: Adjunct::default(),
-        };
-
-        let mut buf = Vec::new();
-        stripped.write(&mut buf).expect("write");
-        let deserialized = Stripped::read(&*buf).expect("read");
-
-        assert_eq!(stripped, deserialized);
-        assert_eq!(deserialized.stamp.wtxid, [0; 64]);
-    }
+    assert_eq!(stripped, deserialized);
+    assert_eq!(
+        deserialized.stamp,
+        AggregateId::try_from([0x42u8; 64]).expect("nonzero id")
+    );
 }
 
 #[test]
-fn tachyon_bundle_in_memory_round_trip() {
-    // Stamped: actions, value_balance, tachygrams, anchor.
+fn tachyon_bundle_conversions() {
+    // Stamped Ok: actions, value_balance, tachygrams, anchor preserved.
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::random(rng);
         let original = build_autonome(rng, &wallet, 1000, 700);
         let erased: TachyonBundle = original.clone().into();
-        let back = Stamped::try_from(erased).expect("stamped variant");
+        let back = Bundle::<Stamp>::try_from(erased).expect("stamped variant");
 
         assert_eq!(original.actions, back.actions);
         assert_eq!(original.value_balance, back.value_balance);
@@ -374,45 +355,272 @@ fn tachyon_bundle_in_memory_round_trip() {
         assert_eq!(original.stamp.anchor, back.stamp.anchor);
     }
 
-    // Stripped: wtxid preserved.
+    // Stripped Ok: wtxid preserved.
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::random(rng);
-        let (mut stripped, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        stripped.stamp.wtxid = [0xABu8; 64];
+        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+        let stripped = unassigned
+            .assign_wtxid(AggregateId::try_from([0xABu8; 64]).expect("nonzero id"))
+            .expect("assign wtxid");
 
         let erased: TachyonBundle = stripped.clone().into();
-        let back = Stripped::try_from(erased).expect("stripped variant");
+        let back = Bundle::<AggregateId>::try_from(erased).expect("stripped variant");
 
         assert_eq!(stripped, back);
-        assert_eq!(back.stamp.wtxid, [0xABu8; 64]);
+        assert_eq!(
+            back.stamp,
+            AggregateId::try_from([0xABu8; 64]).expect("nonzero id")
+        );
+    }
+
+    // Err: TryFrom rejects the wrong variant in both directions.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let wallet = WalletSim::random(rng);
+        let stamped = build_autonome(rng, &wallet, 1000, 700);
+        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+        let adjunct = unassigned
+            .assign_wtxid(AggregateId::try_from([0x55u8; 64]).expect("nonzero id"))
+            .expect("assign wtxid");
+
+        let stamped_erased: TachyonBundle = stamped.into();
+        Bundle::<AggregateId>::try_from(stamped_erased).expect_err("stamped is not an adjunct");
+
+        let adjunct_erased: TachyonBundle = adjunct.into();
+        Bundle::<Stamp>::try_from(adjunct_erased).expect_err("adjunct is not stamped");
     }
 }
 
 #[test]
-fn bundle_wire_round_trip_via_tachyon_bundle() {
+fn tachyon_bundle_wire_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
-    let (mut stripped, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-    stripped.stamp.wtxid = [0xCDu8; 64];
 
-    let erased: TachyonBundle = stripped.clone().into();
-    let mut buf = Vec::new();
-    erased.write(&mut buf).expect("write");
-    let decoded = TachyonBundle::read(&*buf)
-        .expect("read")
-        .expect("some bundle");
-    let back = Stripped::try_from(decoded).expect("stripped variant");
+    // Stamped variant (0x01).
+    {
+        let stamped = build_autonome(rng, &wallet, 1000, 700);
+        let erased: TachyonBundle = stamped.clone().into();
+        let mut buf = Vec::new();
+        erased.write(&mut buf).expect("write");
+        let decoded = TachyonBundle::read(&*buf)
+            .expect("read")
+            .expect("some bundle");
+        let back = Bundle::<Stamp>::try_from(decoded).expect("stamped variant");
 
-    assert_eq!(stripped, back);
+        // Stamp carries a proof and is not PartialEq, so compare fields.
+        assert_eq!(stamped.actions, back.actions);
+        assert_eq!(stamped.value_balance, back.value_balance);
+        assert_eq!(stamped.stamp.tachygrams, back.stamp.tachygrams);
+        assert_eq!(stamped.stamp.anchor, back.stamp.anchor);
+    }
+
+    // Stripped variant (0x02).
+    {
+        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+        let stripped = unassigned
+            .assign_wtxid(AggregateId::try_from([0xCDu8; 64]).expect("nonzero id"))
+            .expect("assign wtxid");
+        let erased: TachyonBundle = stripped.clone().into();
+        let mut buf = Vec::new();
+        erased.write(&mut buf).expect("write");
+        let decoded = TachyonBundle::read(&*buf)
+            .expect("read")
+            .expect("some bundle");
+        let back = Bundle::<AggregateId>::try_from(decoded).expect("stripped variant");
+
+        assert_eq!(stripped, back);
+    }
 }
 
 #[test]
-fn wire_rejects_invalid_state_byte() {
-    let buf: &[u8] = &[0x03];
-    Stamped::read(buf).expect_err("invalid state byte must be rejected");
-    Stripped::read(buf).expect_err("invalid state byte must be rejected");
-    TachyonBundle::read(buf).expect_err("invalid state byte must be rejected");
+fn aggregate_id_try_from_rejects_zero() {
+    assert!(matches!(
+        AggregateId::try_from([0u8; 64]),
+        Err(AggregateIdError::Zero)
+    ));
+}
+
+#[test]
+fn assign_wtxid_rejects_zero_with_actions() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+
+    assert!(!unassigned.actions.is_empty());
+    assert!(matches!(
+        unassigned.assign_wtxid(AggregateId::ZERO),
+        Err(AggregateIdError::Zero)
+    ));
+}
+
+#[test]
+fn assign_wtxid_allows_zero_with_no_actions() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let plan = Plan::new(alloc::vec![], alloc::vec![]);
+    let sighash = mock_sighash(plan.commitment());
+
+    let unassigned: Bundle<Stripped> = Bundle {
+        actions: alloc::vec![],
+        value_balance: 0,
+        binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+        stamp: Stripped,
+    };
+
+    let adjunct = unassigned
+        .assign_wtxid(AggregateId::ZERO)
+        .expect("zero wtxid allowed for empty innocent");
+    assert!(adjunct.actions.is_empty());
+    assert_eq!(adjunct.stamp, AggregateId::ZERO);
+}
+
+#[test]
+fn write_rejects_zero_wtxid_with_actions() {
+    // The type-state prevents this via the strip() -> assign_wtxid() path, but
+    // the runtime guard defends against direct construction or re-serialization
+    // of invalid wire data.
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+
+    let stripped = Bundle {
+        actions: unassigned.actions,
+        value_balance: unassigned.value_balance,
+        binding_sig: unassigned.binding_sig,
+        stamp: AggregateId::ZERO,
+    };
+
+    assert!(!stripped.actions.is_empty());
+    assert_eq!(stripped.stamp, AggregateId::ZERO);
+
+    let mut buf = Vec::new();
+    let err = stripped
+        .write(&mut buf)
+        .expect_err("unassigned wtxid with non-empty actions should reject");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+}
+
+/// Stripped innocents (zero actions) may serialize with a zero wtxid.
+#[test]
+fn write_allows_zero_wtxid_with_no_actions() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let plan = Plan::new(alloc::vec![], alloc::vec![]);
+    let sighash = mock_sighash(plan.commitment());
+
+    let stripped = Bundle {
+        actions: alloc::vec![],
+        value_balance: 0,
+        binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+        stamp: AggregateId::ZERO,
+    };
+
+    assert!(stripped.actions.is_empty());
+    let mut buf = Vec::new();
+    stripped
+        .write(&mut buf)
+        .expect("innocent with zero wtxid should serialize");
+
+    let deserialized = Bundle::<AggregateId>::read(&*buf).expect("read");
+    assert_eq!(stripped, deserialized);
+}
+
+#[test]
+fn wire_state_byte_dispatch() {
+    // Garbage state byte: rejected by every reader.
+    {
+        let buf: &[u8] = &[0x03];
+        Bundle::<Stamp>::read(buf).expect_err("invalid state byte must be rejected");
+        Bundle::<AggregateId>::read(buf).expect_err("invalid state byte must be rejected");
+        TachyonBundle::read(buf).expect_err("invalid state byte must be rejected");
+    }
+
+    // No-bundle (0x00): the enum reader decodes to None, not an error.
+    {
+        let buf: &[u8] = &[0x00];
+        let decoded = TachyonBundle::read(buf).expect("read");
+        assert!(decoded.is_none(), "0x00 must decode to None");
+    }
+
+    // Valid-but-mismatched state byte: each definite reader rejects the other's.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let wallet = WalletSim::random(rng);
+
+        let stamped = build_autonome(rng, &wallet, 1000, 700);
+        let mut stamped_buf = Vec::new();
+        stamped.write(&mut stamped_buf).expect("write stamped");
+
+        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+        let adjunct = unassigned
+            .assign_wtxid(AggregateId::try_from([0x66u8; 64]).expect("nonzero id"))
+            .expect("assign wtxid");
+        let mut adjunct_buf = Vec::new();
+        adjunct.write(&mut adjunct_buf).expect("write adjunct");
+
+        Bundle::<AggregateId>::read(&*stamped_buf)
+            .expect_err("Adjunct::read must reject a stamped (0x01) buffer");
+        Bundle::<Stamp>::read(&*adjunct_buf)
+            .expect_err("Stamped::read must reject a stripped (0x02) buffer");
+    }
+}
+
+/// Both wire readers must reject the invalid shape (non-empty actions + zero
+/// wtxid) that `write()` / `assign_wtxid()` refuse to produce. Forge it by
+/// zeroing the wtxid trailer of a valid encoding.
+#[test]
+fn read_rejects_zero_wtxid_with_actions() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+    let stripped = unassigned
+        .assign_wtxid(AggregateId::try_from([0x42u8; 64]).expect("nonzero id"))
+        .expect("assign wtxid");
+    assert!(!stripped.actions.is_empty());
+
+    let mut buf = Vec::new();
+    stripped.write(&mut buf).expect("write");
+
+    // The wtxid is the trailing 64 bytes; zero it to forge the invalid shape.
+    for byte in buf.iter_mut().rev().take(64) {
+        *byte = 0;
+    }
+
+    let adjunct_err = Bundle::<AggregateId>::read(&*buf)
+        .expect_err("Adjunct::read must reject zero wtxid with actions");
+    assert_eq!(adjunct_err.kind(), io::ErrorKind::InvalidData);
+
+    let enum_err = TachyonBundle::read(&*buf)
+        .expect_err("TachyonBundle::read must reject zero wtxid with actions");
+    assert_eq!(enum_err.kind(), io::ErrorKind::InvalidData);
+}
+
+/// Partner to `read_rejects_zero_wtxid_with_actions`: the guard is scoped to
+/// bundles with actions, so an empty innocent with a zero wtxid is accepted by
+/// both readers.
+#[test]
+fn read_allows_zero_wtxid_with_no_actions() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let plan = Plan::new(alloc::vec![], alloc::vec![]);
+    let sighash = mock_sighash(plan.commitment());
+
+    let innocent = Bundle {
+        actions: alloc::vec![],
+        value_balance: 0,
+        binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+        stamp: AggregateId::ZERO,
+    };
+
+    let mut buf = Vec::new();
+    innocent.write(&mut buf).expect("write innocent");
+
+    let via_adjunct = Bundle::<AggregateId>::read(&*buf).expect("Adjunct::read innocent");
+    assert_eq!(innocent, via_adjunct);
+
+    let decoded = TachyonBundle::read(&*buf)
+        .expect("TachyonBundle::read")
+        .expect("some bundle");
+    let via_enum = Bundle::<AggregateId>::try_from(decoded).expect("adjunct variant");
+    assert_eq!(innocent, via_enum);
 }
 
 #[test]
@@ -425,8 +633,10 @@ fn auth_digest_invariants() {
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let stamped_digest = stamped.auth_digest();
 
-        let (mut stripped, _stamp) = stamped.strip();
-        stripped.stamp.wtxid = [0x11u8; 64];
+        let (unassigned, _stamp) = stamped.strip();
+        let stripped = unassigned
+            .assign_wtxid(AggregateId::try_from([0x11u8; 64]).expect("nonzero id"))
+            .expect("assign wtxid");
         assert_ne!(stamped_digest, stripped.auth_digest());
     }
 
@@ -435,12 +645,17 @@ fn auth_digest_invariants() {
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::random(rng);
-        let (mut stripped, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
 
-        stripped.stamp.wtxid = [0xAAu8; 64];
-        let digest_aa = stripped.auth_digest();
-        stripped.stamp.wtxid = [0xBBu8; 64];
-        let digest_bb = stripped.auth_digest();
+        let stripped_aa = unassigned
+            .clone()
+            .assign_wtxid(AggregateId::try_from([0xAAu8; 64]).expect("nonzero id"))
+            .expect("assign wtxid");
+        let digest_aa = stripped_aa.auth_digest();
+        let stripped_bb = unassigned
+            .assign_wtxid(AggregateId::try_from([0xBBu8; 64]).expect("nonzero id"))
+            .expect("assign wtxid");
+        let digest_bb = stripped_bb.auth_digest();
         assert_ne!(digest_aa, digest_bb);
     }
 
@@ -455,8 +670,10 @@ fn auth_digest_invariants() {
         assert_eq!(erased.auth_digest(), stamped_direct);
 
         let wallet2 = WalletSim::random(rng);
-        let (mut stripped, _stamp) = build_autonome(rng, &wallet2, 1000, 700).strip();
-        stripped.stamp.wtxid = [0x33u8; 64];
+        let (unassigned, _stamp) = build_autonome(rng, &wallet2, 1000, 700).strip();
+        let stripped = unassigned
+            .assign_wtxid(AggregateId::try_from([0x33u8; 64]).expect("nonzero id"))
+            .expect("assign wtxid");
         let stripped_direct = stripped.auth_digest();
         let erased_stripped: TachyonBundle = stripped.into();
         assert_eq!(erased_stripped.auth_digest(), stripped_direct);

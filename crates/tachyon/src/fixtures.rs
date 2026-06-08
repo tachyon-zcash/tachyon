@@ -16,7 +16,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::{
     action::{self, Action},
-    bundle::{self, Stamped},
+    bundle::{self, Bundle},
     constants::EPOCH_SIZE,
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{ProofAuthorizingKey, private},
@@ -109,7 +109,7 @@ pub fn build_autonome(
     wallet: &WalletSim,
     spend_value: u64,
     output_value: u64,
-) -> Stamped {
+) -> Bundle<Stamp> {
     let spend_note = wallet.random_note(rng, spend_value);
     let output_note = wallet.random_note(rng, output_value);
     let mut pool = PoolSim::genesis(rng);
@@ -586,7 +586,7 @@ impl WalletSim {
             Pcd<'source, spendable::SpendableHeader>,
         )>,
         output_notes: Vec<Note>,
-    ) -> Stamped {
+    ) -> Bundle<Stamp> {
         let ask = self.sk.derive_auth_private();
 
         let mut spend_plans = Vec::with_capacity(spends.len());

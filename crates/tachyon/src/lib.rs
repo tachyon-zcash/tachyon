@@ -15,8 +15,10 @@
 //! [`Bundle<S>`](Bundle) is parameterized by stamp state `S: StampState`:
 //!
 //! - `Bundle<Unproven>` — actions signed but no proof yet
-//! - [`Stamped`] — `Bundle<Stamp>`, aggregate or self-contained with stamp
-//! - [`Stripped`] — `Bundle<Adjunct>`, stamp stripped, depends on aggregate
+//! - `Bundle<Stamp>` — aggregate or self-contained, carries a [`Stamp`]
+//! - `Bundle<Stripped>` — stamp stripped, covering wtxid not yet assigned
+//! - `Bundle<AggregateId>` — stamp stripped, carries the covering
+//!   [`AggregateId`]
 //! - [`TachyonBundle`] — enum of stamped-or-stripped for mixed contexts
 //!
 //! ## Block Structure
@@ -66,8 +68,8 @@ mod serialization;
 #[cfg(test)]
 pub(crate) mod fixtures;
 
-pub use action::Action;
-pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped, TachyonBundle};
+pub use action::{Action, Plan as ActionPlan};
+pub use bundle::{Bundle, Plan as BundlePlan, TachyonBundle};
 pub use note::Note;
 pub use primitives::*;
-pub use stamp::Stamp;
+pub use stamp::{AggregateId, Stamp, Stripped, Unproven};

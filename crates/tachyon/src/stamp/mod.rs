@@ -44,39 +44,74 @@ use crate::{
 /// Marker for a bundle that has not yet been proven.
 ///
 /// This is the initial state for a newly constructed bundle.
-/// Proving produces a [`Stamp`]; stripping produces an [`Adjunct`].
+/// Proving produces a [`Stamp`]; stripping produces a `Bundle<Stripped>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Unproven;
 
-/// Marker for a stripped bundle.
+/// Marker for a stripped bundle whose covering-aggregate `wtxid` has not
+/// yet been assigned.
+///
+/// Produced by [`strip()`](crate::Bundle::strip). Must transition to a
+/// `Bundle<AggregateId>` via [`assign_wtxid`](crate::Bundle::assign_wtxid)
+/// before serialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Adjunct {
-    /// 64-byte `wtxid` (`txid || auth_digest`) of the covering aggregate in
-    /// the block. Assigned by the miner during block assembly; defaults to
-    /// all-zero bytes.
-    ///
-    /// The ref is the aggregate's wtxid (not txid) so it uniquely pins the
-    /// covering aggregate's physical auth form — different stamps on the
-    /// same effecting data produce different wtxids, so this ref remains
-    /// unambiguous even across aggregation forms.
-    pub wtxid: [u8; 64],
-}
+pub struct Stripped;
 
-impl Adjunct {
+/// A 64-byte `wtxid` of the covering aggregate in the same block, assigned by
+/// the miner during block assembly.
+///
+/// This uses the aggregate's wtxid (not txid) so it unambiguously pins the
+/// covering aggregate's authorization state, including stamp.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AggregateId([u8; 64]);
+
+impl AggregateId {
+    /// This zero wtxid is only suitable for a bundle with no actions.
+    pub const ZERO: Self = Self([0u8; 64]);
+
     pub(super) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut wtxid = [0u8; 64];
         reader.read_exact(&mut wtxid)?;
-        Ok(Self { wtxid })
+        Ok(Self(wtxid))
     }
 
     pub(super) fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        writer.write_all(&self.wtxid)
+        writer.write_all(&self.0)
     }
 }
 
-impl Default for Adjunct {
-    fn default() -> Self {
-        Self { wtxid: [0u8; 64] }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Errors that can occur when handling an aggregate id.
+pub enum AggregateIdError {
+    /// The aggregate id is zero and refers to no aggregate.
+    Zero,
+}
+impl Error for AggregateIdError {}
+
+impl fmt::Display for AggregateIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            | Self::Zero => {
+                write!(f, "aggregate id is zero and refers to no aggregate")
+            },
+        }
+    }
+}
+
+impl TryFrom<[u8; 64]> for AggregateId {
+    type Error = AggregateIdError;
+
+    fn try_from(wtxid: [u8; 64]) -> Result<Self, Self::Error> {
+        if wtxid == [0u8; 64] {
+            return Err(AggregateIdError::Zero);
+        }
+        Ok(Self(wtxid))
+    }
+}
+
+impl From<AggregateId> for [u8; 64] {
+    fn from(aggregate_id: AggregateId) -> Self {
+        aggregate_id.0
     }
 }
 
@@ -284,7 +319,7 @@ impl Error for ProveError {}
 
 /// A stamp carrying tachygrams, anchor, and proof.
 ///
-/// Present in [`Stamped`](crate::Stamped) bundles.
+/// Present in `Bundle<Stamp>` bundles.
 /// Stripped during aggregation and merged into the aggregate's stamp.
 ///
 /// The PCD header `(action_acc, tachygram_acc, anchor)` is not stored here —
