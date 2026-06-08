@@ -138,6 +138,7 @@ pub struct Value(pub(crate) u64);
 /// Error returned when a note value is out of the valid range
 /// `1..=NOTE_VALUE_MAX`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ValueError {
     /// The value was zero.
     Zero,
@@ -200,15 +201,6 @@ impl From<Value> for i64 {
     }
 }
 
-/// The sign of a [`ValueSum`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Sign {
-    /// The value is positive (spends).
-    Positive,
-    /// The value is negative (outputs).
-    Negative,
-}
-
 /// Signed sum of note values across actions.
 ///
 /// Spends contribute positive values, outputs contribute negative.
@@ -240,43 +232,31 @@ impl ValueSum {
     pub fn to_i64(self) -> Result<i64, BalanceError> {
         i64::try_from(self.0).map_err(|_err| BalanceError)
     }
-
-    /// Decompose into unsigned magnitude and sign.
-    ///
-    /// Zero is reported as `(0, Sign::Positive)`.
-    #[must_use]
-    #[expect(
-        clippy::as_conversions,
-        clippy::cast_sign_loss,
-        clippy::cast_possible_truncation,
-        reason = "ValueSum range is bounded by NOTE_VALUE_MAX * action_count, which fits u64"
-    )]
-    pub const fn magnitude_sign(self) -> (u64, Sign) {
-        if self.0 < 0 {
-            ((-self.0) as u64, Sign::Negative)
-        } else {
-            (self.0 as u64, Sign::Positive)
-        }
-    }
 }
 
 impl ops::Add<Value> for ValueSum {
-    type Output = Option<Self>;
+    type Output = Result<Self, BalanceError>;
 
     fn add(self, rhs: Value) -> Self::Output {
-        self.0.checked_add(i128::from(rhs.0)).map(Self)
+        self.0
+            .checked_add(i128::from(rhs.0))
+            .map(Self)
+            .ok_or(BalanceError)
     }
 }
 
 impl ops::Sub<Value> for ValueSum {
-    type Output = Option<Self>;
+    type Output = Result<Self, BalanceError>;
 
     fn sub(self, rhs: Value) -> Self::Output {
-        self.0.checked_sub(i128::from(rhs.0)).map(Self)
+        self.0
+            .checked_sub(i128::from(rhs.0))
+            .map(Self)
+            .ok_or(BalanceError)
     }
 }
 
-impl iter::Sum<Value> for Option<ValueSum> {
+impl iter::Sum<Value> for Result<ValueSum, BalanceError> {
     fn sum<I: Iterator<Item = Value>>(mut iter: I) -> Self {
         iter.try_fold(ValueSum::ZERO, |sum, val| sum + val)
     }
@@ -412,7 +392,7 @@ mod tests {
     /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
     #[test]
     fn value_accepts_max() {
-        assert!(Value::try_from(NOTE_VALUE_MAX).is_ok());
+        Value::try_from(NOTE_VALUE_MAX).unwrap();
     }
 
     /// Anything above NOTE_VALUE_MAX must be rejected.
@@ -504,33 +484,10 @@ mod tests {
         let vb = Value::try_from(200u64).unwrap();
 
         let sum = (ValueSum::ZERO + va).unwrap();
-        let sum = (sum + vb).unwrap();
-        assert_eq!(sum.to_i64().unwrap(), 300);
+        let total = (sum + vb).unwrap();
+        assert_eq!(total.to_i64().unwrap(), 300);
 
         let diff = (ValueSum::ZERO - va).unwrap();
         assert_eq!(diff.to_i64().unwrap(), -100);
-    }
-
-    #[test]
-    fn magnitude_sign_positive() {
-        let sum = (ValueSum::ZERO + Value::try_from(42u64).unwrap()).unwrap();
-        let (mag, sign) = sum.magnitude_sign();
-        assert_eq!(mag, 42);
-        assert_eq!(sign, Sign::Positive);
-    }
-
-    #[test]
-    fn magnitude_sign_negative() {
-        let sum = (ValueSum::ZERO - Value::try_from(42u64).unwrap()).unwrap();
-        let (mag, sign) = sum.magnitude_sign();
-        assert_eq!(mag, 42);
-        assert_eq!(sign, Sign::Negative);
-    }
-
-    #[test]
-    fn magnitude_sign_zero() {
-        let (mag, sign) = ValueSum::ZERO.magnitude_sign();
-        assert_eq!(mag, 0);
-        assert_eq!(sign, Sign::Positive);
     }
 }

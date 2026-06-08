@@ -98,10 +98,12 @@ impl BundleState {
             | 0b0000_0000u8 => Ok(Self::NoBundle),
             | 0b0000_0001u8 => Ok(Self::Stamped),
             | 0b0000_0010u8 => Ok(Self::Stripped),
-            | _other => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid bundle state",
-            )),
+            | _other => {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid bundle state",
+                ))
+            },
         }
     }
 
@@ -204,6 +206,7 @@ pub enum BuildError {
 
 /// Errors that can occur when computing a bundle plan commitment.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum CommitError {
     /// An action digest could not be constructed.
     ActionDigest(ActionDigestError),
@@ -305,10 +308,10 @@ impl Plan {
     pub fn value_balance(&self) -> Result<i64, note::BalanceError> {
         let mut sum = note::ValueSum::ZERO;
         for plan in &self.spends {
-            sum = (sum + plan.note.value).ok_or(note::BalanceError)?;
+            sum = (sum + plan.note.value)?;
         }
         for plan in &self.outputs {
-            sum = (sum - plan.note.value).ok_or(note::BalanceError)?;
+            sum = (sum - plan.note.value)?;
         }
         sum.to_i64()
     }
