@@ -56,37 +56,63 @@ pub struct Unproven;
 /// [`assign_wtxid`](crate::Bundle::<Unassigned>::assign_wtxid) before
 /// serialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Unassigned;
+pub struct Stripped;
 
-/// Marker for a stripped bundle.
+/// A 64-byte `wtxid` of the covering aggregate in the same block, assigned by
+/// the miner during block assembly.
+///
+/// This uses the aggregate's wtxid (not txid) so it unambiguously pins the
+/// covering aggregate's authorization state, including stamp.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Adjunct {
-    /// 64-byte `wtxid` (`txid || auth_digest`) of the covering aggregate in
-    /// the block. Assigned by the miner during block assembly; defaults to
-    /// all-zero bytes.
-    ///
-    /// The ref is the aggregate's wtxid (not txid) so it uniquely pins the
-    /// covering aggregate's physical auth form — different stamps on the
-    /// same effecting data produce different wtxids, so this ref remains
-    /// unambiguous even across aggregation forms.
-    pub wtxid: [u8; 64],
-}
+pub struct AggregateId([u8; 64]);
 
-impl Adjunct {
+impl AggregateId {
+    /// This zero wtxid is only suitable for a bundle with no actions.
+    pub const ZERO: Self = Self([0u8; 64]);
+
     pub(super) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut wtxid = [0u8; 64];
         reader.read_exact(&mut wtxid)?;
-        Ok(Self { wtxid })
+        Ok(Self(wtxid))
     }
 
     pub(super) fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        writer.write_all(&self.wtxid)
+        writer.write_all(&self.0)
     }
 }
 
-impl Default for Adjunct {
-    fn default() -> Self {
-        Self { wtxid: [0u8; 64] }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Errors that can occur when handling an aggregate id.
+pub enum AggregateIdError {
+    /// The aggregate id is zero and refers to no aggregate.
+    Zero,
+}
+impl Error for AggregateIdError {}
+
+impl fmt::Display for AggregateIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            | Self::Zero => {
+                write!(f, "aggregate id is zero and refers to no aggregate")
+            },
+        }
+    }
+}
+
+impl TryFrom<[u8; 64]> for AggregateId {
+    type Error = AggregateIdError;
+
+    fn try_from(wtxid: [u8; 64]) -> Result<Self, Self::Error> {
+        if wtxid == [0u8; 64] {
+            return Err(AggregateIdError::Zero);
+        }
+        Ok(Self(wtxid))
+    }
+}
+
+impl From<AggregateId> for [u8; 64] {
+    fn from(aggregate_id: AggregateId) -> Self {
+        aggregate_id.0
     }
 }
 

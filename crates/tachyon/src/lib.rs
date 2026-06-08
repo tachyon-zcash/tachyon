@@ -67,8 +67,8 @@ mod serialization;
 #[cfg(test)]
 pub(crate) mod fixtures;
 
-pub use action::Action;
-pub use bundle::{Bundle, Plan as BundlePlan, Stamped, Stripped, TachyonBundle};
+pub use action::{Action, Plan as ActionPlan};
+pub use bundle::{Bundle, Plan as BundlePlan, TachyonBundle};
 pub use note::Note;
 pub use primitives::*;
-pub use stamp::Stamp;
+pub use stamp::{AggregateId, Stamp, Stripped, Unproven};

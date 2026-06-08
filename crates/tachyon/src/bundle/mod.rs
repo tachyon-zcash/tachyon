@@ -75,7 +75,7 @@ use crate::{
     keys::{private, public},
     primitives::{ActionDigest, ActionDigestError, ActionSetCommit, Anchor, effect},
     reddsa, serialization,
-    stamp::{self, Adjunct, Stamp, Unassigned, Unproven},
+    stamp::{self, AggregateId, AggregateIdError, Stamp, Stripped, Unproven},
     value,
 };
 
@@ -97,12 +97,10 @@ impl BundleState {
             | 0b0000_0000u8 => Ok(Self::NoBundle),
             | 0b0000_0001u8 => Ok(Self::Stamped),
             | 0b0000_0010u8 => Ok(Self::Stripped),
-            | _other => {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid bundle state",
-                ))
-            },
+            | _other => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid bundle state",
+            )),
         }
     }
 
@@ -118,10 +116,10 @@ impl BundleState {
 
 mod sealed {
     pub trait Sealed {}
-    impl Sealed for super::Stamp {}
-    impl Sealed for super::Adjunct {}
     impl Sealed for super::Unproven {}
-    impl Sealed for super::Unassigned {}
+    impl Sealed for super::Stamp {}
+    impl Sealed for super::AggregateId {}
+    impl Sealed for super::Stripped {}
 }
 
 /// Sealed trait constraining stamp state types.
@@ -144,12 +142,6 @@ pub struct Bundle<S: StampState> {
     pub stamp: S,
 }
 
-/// A bundle with a stamp — can stand alone or cover adjunct bundles.
-pub type Stamped = Bundle<Stamp>;
-
-/// A bundle whose stamp has been stripped — depends on a stamped bundle.
-pub type Stripped = Bundle<Adjunct>;
-
 /// A Tachyon bundle in one of its two on-wire states: stamped or stripped.
 ///
 /// Used where code accepts either form — reading from the wire, dispatching
@@ -159,41 +151,41 @@ pub type Stripped = Bundle<Adjunct>;
 #[derive(Clone, Debug)]
 pub enum TachyonBundle {
     /// A bundle with its own stamp (autonome or aggregate).
-    Stamped(Stamped),
+    Stamped(Bundle<Stamp>),
     /// A bundle whose stamp has been stripped; carries a reference to the
     /// covering aggregate via [`Adjunct`].
-    Stripped(Stripped),
+    Adjunct(Bundle<AggregateId>),
 }
 
-impl From<Stamped> for TachyonBundle {
-    fn from(bundle: Stamped) -> Self {
+impl From<Bundle<Stamp>> for TachyonBundle {
+    fn from(bundle: Bundle<Stamp>) -> Self {
         Self::Stamped(bundle)
     }
 }
 
-impl From<Stripped> for TachyonBundle {
-    fn from(bundle: Stripped) -> Self {
-        Self::Stripped(bundle)
+impl From<Bundle<AggregateId>> for TachyonBundle {
+    fn from(bundle: Bundle<AggregateId>) -> Self {
+        Self::Adjunct(bundle)
     }
 }
 
-impl TryFrom<TachyonBundle> for Stamped {
-    type Error = Stripped;
+impl TryFrom<TachyonBundle> for Bundle<Stamp> {
+    type Error = Bundle<AggregateId>;
 
     fn try_from(bundle: TachyonBundle) -> Result<Self, Self::Error> {
         match bundle {
+            | TachyonBundle::Adjunct(stripped) => Err(stripped),
             | TachyonBundle::Stamped(stamped) => Ok(stamped),
-            | TachyonBundle::Stripped(stripped) => Err(stripped),
         }
     }
 }
 
-impl TryFrom<TachyonBundle> for Stripped {
-    type Error = Stamped;
+impl TryFrom<TachyonBundle> for Bundle<AggregateId> {
+    type Error = Bundle<Stamp>;
 
     fn try_from(bundle: TachyonBundle) -> Result<Self, Self::Error> {
         match bundle {
-            | TachyonBundle::Stripped(stripped) => Ok(stripped),
+            | TachyonBundle::Adjunct(stripped) => Ok(stripped),
             | TachyonBundle::Stamped(stamped) => Err(stamped),
         }
     }
@@ -208,25 +200,6 @@ pub enum BuildError {
     /// BSK/BVK mismatch (see Protocol §4.14)
     BalanceKeyMismatch,
 }
-
-/// Errors that can occur when assigning a covering aggregate wtxid.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AssignWtxidError {
-    /// A non-empty stripped bundle cannot be assigned the zero wtxid.
-    UnassignedNonEmpty,
-}
-
-impl fmt::Display for AssignWtxidError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            | Self::UnassignedNonEmpty => {
-                write!(f, "non-empty stripped bundle has unassigned wtxid")
-            },
-        }
-    }
-}
-
-impl Error for AssignWtxidError {}
 
 /// Errors that can occur while signing a bundle plan.
 #[derive(Debug)]
@@ -471,7 +444,7 @@ impl Plan {
 impl Bundle<Unproven> {
     /// Attach a stamp, producing a [`Stamped`] bundle.
     #[must_use]
-    pub fn stamp(self, stamp: Stamp) -> Stamped {
+    pub fn stamp(self, stamp: Stamp) -> Bundle<Stamp> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
@@ -481,28 +454,28 @@ impl Bundle<Unproven> {
     }
 }
 
-impl Bundle<Unassigned> {
+impl Bundle<Stripped> {
     /// Assign the covering aggregate's `wtxid`, producing a serializable
     /// [`Stripped`] bundle.
     ///
     /// This is the only path from [`strip()`](Stamped::strip) to a wire-ready
     /// stripped bundle — `Bundle<Unassigned>` has no `write()` method. The
     /// zero wtxid is allowed only for empty stripped innocents.
-    pub fn assign_wtxid(self, wtxid: [u8; 64]) -> Result<Stripped, AssignWtxidError> {
-        if !self.actions.is_empty() && wtxid == [0u8; 64] {
-            return Err(AssignWtxidError::UnassignedNonEmpty);
+    pub fn assign_wtxid(self, wtxid: AggregateId) -> Result<Bundle<AggregateId>, AggregateIdError> {
+        if wtxid == AggregateId::ZERO && !self.actions.is_empty() {
+            return Err(AggregateIdError::Zero);
         }
 
         Ok(Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
             binding_sig: self.binding_sig,
-            stamp: Adjunct { wtxid },
+            stamp: wtxid,
         })
     }
 }
 
-impl Stamped {
+impl Bundle<Stamp> {
     /// Strips the stamp, producing an unassigned bundle and the extracted
     /// stamp.
     ///
@@ -511,13 +484,13 @@ impl Stamped {
     /// before it can be serialized. The stamp should be merged into an
     /// aggregate.
     #[must_use]
-    pub fn strip(self) -> (Bundle<Unassigned>, Stamp) {
+    pub fn strip(self) -> (Bundle<Stripped>, Stamp) {
         (
             Bundle {
                 actions: self.actions,
                 value_balance: self.value_balance,
                 binding_sig: self.binding_sig,
-                stamp: Unassigned,
+                stamp: Stripped,
             },
             self.stamp,
         )
@@ -592,7 +565,7 @@ impl Stamped {
     }
 }
 
-impl Stripped {
+impl Bundle<AggregateId> {
     /// Read a stripped bundle from the consensus wire format.
     ///
     /// Expects `tachyonBundleState` 0x02. Always reads a 64-byte
@@ -609,7 +582,14 @@ impl Stripped {
 
         let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
 
-        let stamp = Adjunct::read(&mut reader)?;
+        let stamp = AggregateId::read(&mut reader)?;
+
+        if stamp == AggregateId::ZERO && !actions.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "stripped bundle with actions has zero aggregate id",
+            ));
+        }
 
         Ok(Self {
             actions,
@@ -630,10 +610,10 @@ impl Stripped {
     /// broadcast. Stripped innocents (empty actions) may serialize with a
     /// zero wtxid if no absorbing aggregate was recorded.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        if !self.actions.is_empty() && self.stamp.wtxid == [0u8; 64] {
+        if !self.actions.is_empty() && self.stamp == AggregateId::ZERO {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "non-empty stripped bundle has unassigned wtxid",
+                "stripped bundle with actions has zero aggregate id",
             ));
         }
 
@@ -657,7 +637,7 @@ impl Stripped {
     pub fn auth_digest(&self) -> [u8; 64] {
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
         let binding_sig: [u8; 64] = self.binding_sig.into();
-        blake2b::stripped_auth_digest(&action_sigs, &binding_sig, &self.stamp.wtxid)
+        blake2b::stripped_auth_digest(&action_sigs, &binding_sig, &self.stamp.into())
     }
 }
 
@@ -669,13 +649,14 @@ impl TachyonBundle {
     /// `0x00` (non-tachyon — the caller should decide absence at its own
     /// layer) and any other byte.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Option<Self>> {
+        // TODO: just peek at state, then delegate to the appropriate read method
         let state = BundleState::read(&mut reader)?;
 
         Ok(match state {
             | BundleState::NoBundle => None,
             | BundleState::Stamped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
-                Some(Self::Stamped(Stamped {
+                Some(Self::Stamped(Bundle {
                     actions,
                     value_balance,
                     binding_sig,
@@ -684,11 +665,11 @@ impl TachyonBundle {
             },
             | BundleState::Stripped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
-                Some(Self::Stripped(Stripped {
+                Some(Self::Adjunct(Bundle {
                     actions,
                     value_balance,
                     binding_sig,
-                    stamp: Adjunct::read(&mut reader)?,
+                    stamp: AggregateId::read(&mut reader)?,
                 }))
             },
         })
@@ -700,7 +681,7 @@ impl TachyonBundle {
     pub fn write<W: Write>(&self, writer: W) -> io::Result<()> {
         match *self {
             | Self::Stamped(ref stamped) => stamped.write(writer),
-            | Self::Stripped(ref stripped) => stripped.write(writer),
+            | Self::Adjunct(ref stripped) => stripped.write(writer),
         }
     }
 
@@ -712,7 +693,7 @@ impl TachyonBundle {
     pub fn auth_digest(&self) -> [u8; 64] {
         match *self {
             | Self::Stamped(ref stamped) => stamped.auth_digest(),
-            | Self::Stripped(ref stripped) => stripped.auth_digest(),
+            | Self::Adjunct(ref stripped) => stripped.auth_digest(),
         }
     }
 }
