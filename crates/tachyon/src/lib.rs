@@ -15,9 +15,10 @@
 //! [`Bundle<S>`](Bundle) is parameterized by stamp state `S: StampState`:
 //!
 //! - `Bundle<Unproven>` — actions signed but no proof yet
-//! - [`Stamped`] — `Bundle<Stamp>`, aggregate or self-contained with stamp
-//! - `Bundle<Unassigned>` — stamp stripped, wtxid not yet assigned
-//! - [`Stripped`] — `Bundle<Adjunct>`, stamp stripped with wtxid, depends on aggregate
+//! - `Bundle<Stamp>` — aggregate or self-contained, carries a [`Stamp`]
+//! - `Bundle<Stripped>` — stamp stripped, covering wtxid not yet assigned
+//! - `Bundle<AggregateId>` — stamp stripped, carries the covering
+//!   [`AggregateId`]
 //! - [`TachyonBundle`] — enum of stamped-or-stripped for mixed contexts
 //!
 //! ## Block Structure

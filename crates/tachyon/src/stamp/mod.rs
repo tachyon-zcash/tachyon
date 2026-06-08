@@ -44,17 +44,16 @@ use crate::{
 /// Marker for a bundle that has not yet been proven.
 ///
 /// This is the initial state for a newly constructed bundle.
-/// Proving produces a [`Stamp`]; stripping produces an [`Adjunct`].
+/// Proving produces a [`Stamp`]; stripping produces a `Bundle<Stripped>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Unproven;
 
 /// Marker for a stripped bundle whose covering-aggregate `wtxid` has not
 /// yet been assigned.
 ///
-/// Produced by [`Stamped::strip()`](crate::bundle::Stamped::strip). Must
-/// transition to [`Adjunct`] via
-/// [`assign_wtxid`](crate::Bundle::<Unassigned>::assign_wtxid) before
-/// serialization.
+/// Produced by [`strip()`](crate::Bundle::strip). Must transition to a
+/// `Bundle<AggregateId>` via [`assign_wtxid`](crate::Bundle::assign_wtxid)
+/// before serialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stripped;
 
@@ -320,7 +319,7 @@ impl Error for ProveError {}
 
 /// A stamp carrying tachygrams, anchor, and proof.
 ///
-/// Present in [`Stamped`](crate::Stamped) bundles.
+/// Present in `Bundle<Stamp>` bundles.
 /// Stripped during aggregation and merged into the aggregate's stamp.
 ///
 /// The PCD header `(action_acc, tachygram_acc, anchor)` is not stored here —

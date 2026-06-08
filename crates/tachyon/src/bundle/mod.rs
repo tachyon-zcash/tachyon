@@ -3,8 +3,8 @@
 //! A bundle is parameterized by stamp state `S: StampState`.
 //! Actions are constant through state transitions; only the stamp changes.
 //!
-//! - [`Stamped`] — self-contained bundle with a stamp
-//! - [`Stripped`] — stamp removed, depends on an aggregate
+//! - `Bundle<Stamp>` — self-contained bundle with a stamp
+//! - `Bundle<AggregateId>` — stamp removed, references the covering aggregate
 //! - [`TachyonBundle`] — enum of stamped-or-stripped for mixed contexts
 //!
 //! # Consensus wire format
@@ -97,10 +97,12 @@ impl BundleState {
             | 0b0000_0000u8 => Ok(Self::NoBundle),
             | 0b0000_0001u8 => Ok(Self::Stamped),
             | 0b0000_0010u8 => Ok(Self::Stripped),
-            | _other => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid bundle state",
-            )),
+            | _other => {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid bundle state",
+                ))
+            },
         }
     }
 
@@ -138,14 +140,14 @@ pub struct Bundle<S: StampState> {
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
 
-    /// Stamp state: `Stamp`, `Unassigned`, or `Adjunct`.
+    /// Stamp state: `Unproven`, `Stamp`, `Stripped`, or `AggregateId`.
     pub stamp: S,
 }
 
 /// A Tachyon bundle in one of its two on-wire states: stamped or stripped.
 ///
 /// Used where code accepts either form — reading from the wire, dispatching
-/// `auth_digest`, etc. The `Unproven` and `Unassigned` intermediate states are
+/// `auth_digest`, etc. The `Unproven` and `Stripped` intermediate states are
 /// outside this enum because they have no wire representation.
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
 #[derive(Clone, Debug)]
@@ -153,7 +155,7 @@ pub enum TachyonBundle {
     /// A bundle with its own stamp (autonome or aggregate).
     Stamped(Bundle<Stamp>),
     /// A bundle whose stamp has been stripped; carries a reference to the
-    /// covering aggregate via [`Adjunct`].
+    /// covering aggregate via its [`AggregateId`].
     Adjunct(Bundle<AggregateId>),
 }
 
@@ -352,7 +354,7 @@ impl Plan {
     /// signature.
     ///
     /// The result is a `Bundle<Unproven>` — combine with a [`Stamp`] via
-    /// [`Bundle::stamp`] to produce a [`Stamped`] bundle.
+    /// [`Bundle::stamp`] to produce a `Bundle<Stamp>`.
     pub fn sign<RNG: RngCore + CryptoRng>(
         &self,
         sighash: &[u8; 32],
@@ -442,7 +444,7 @@ impl Plan {
 }
 
 impl Bundle<Unproven> {
-    /// Attach a stamp, producing a [`Stamped`] bundle.
+    /// Attach a stamp, producing a `Bundle<Stamp>`.
     #[must_use]
     pub fn stamp(self, stamp: Stamp) -> Bundle<Stamp> {
         Bundle {
@@ -456,10 +458,10 @@ impl Bundle<Unproven> {
 
 impl Bundle<Stripped> {
     /// Assign the covering aggregate's `wtxid`, producing a serializable
-    /// [`Stripped`] bundle.
+    /// `Bundle<AggregateId>`.
     ///
-    /// This is the only path from [`strip()`](Stamped::strip) to a wire-ready
-    /// stripped bundle — `Bundle<Unassigned>` has no `write()` method. The
+    /// This is the only path from [`strip()`](Bundle::strip) to a wire-ready
+    /// stripped bundle — `Bundle<Stripped>` has no `write()` method. The
     /// zero wtxid is allowed only for empty stripped innocents.
     pub fn assign_wtxid(self, wtxid: AggregateId) -> Result<Bundle<AggregateId>, AggregateIdError> {
         if wtxid == AggregateId::ZERO && !self.actions.is_empty() {
@@ -479,8 +481,8 @@ impl Bundle<Stamp> {
     /// Strips the stamp, producing an unassigned bundle and the extracted
     /// stamp.
     ///
-    /// The returned `Bundle<Unassigned>` must be assigned a covering
-    /// aggregate's `wtxid` via [`assign_wtxid`](Bundle::<Unassigned>::assign_wtxid)
+    /// The returned `Bundle<Stripped>` must be assigned a covering
+    /// aggregate's `wtxid` via [`assign_wtxid`](Bundle::assign_wtxid)
     /// before it can be serialized. The stamp should be merged into an
     /// aggregate.
     #[must_use]
@@ -695,8 +697,8 @@ impl TachyonBundle {
     }
 
     /// Tachyon's contribution to the transaction `auth_digest`, dispatching
-    /// on the variant. See [`Stamped::auth_digest`] and
-    /// [`Stripped::auth_digest`].
+    /// on the variant. See the `auth_digest` methods on `Bundle<Stamp>` and
+    /// `Bundle<AggregateId>`.
     #[must_use]
     #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn auth_digest(&self) -> [u8; 64] {
