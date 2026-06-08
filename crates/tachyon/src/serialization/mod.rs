@@ -17,21 +17,18 @@ pub(crate) mod compactsize;
 use crate::{reddsa, serialization::compactsize::CompactSize};
 
 pub(crate) fn read_compactsize<R: Read>(mut reader: R) -> io::Result<u64> {
-    let compact_size = CompactSize::read(&mut reader)?
-        .enforce_valid()
-        .map_err(|err| {
-            match err {
+    let compact_size =
+        CompactSize::read(&mut reader)?
+            .enforce_valid()
+            .map_err(|err| match err {
                 | compactsize::CompactSizeError::NonCanonical(_) => {
                     io::Error::new(io::ErrorKind::InvalidData, "non-canonical compact size")
                 },
-                | compactsize::CompactSizeError::ExceedsMaximum(_) => {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "compact size exceeds consensus maximum",
-                    )
-                },
-            }
-        })?;
+                | compactsize::CompactSizeError::ExceedsMaximum(_) => io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "compact size exceeds consensus maximum",
+                ),
+            })?;
     Ok(compact_size.into())
 }
 
