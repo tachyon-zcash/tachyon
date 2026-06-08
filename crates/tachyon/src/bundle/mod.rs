@@ -665,11 +665,20 @@ impl TachyonBundle {
             },
             | BundleState::Stripped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
+                let stamp = AggregateId::read(&mut reader)?;
+
+                if stamp == AggregateId::ZERO && !actions.is_empty() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "stripped bundle with actions has zero aggregate id",
+                    ));
+                }
+
                 Some(Self::Adjunct(Bundle {
                     actions,
                     value_balance,
                     binding_sig,
-                    stamp: AggregateId::read(&mut reader)?,
+                    stamp,
                 }))
             },
         })
