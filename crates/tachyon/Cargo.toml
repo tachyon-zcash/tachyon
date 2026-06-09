@@ -41,19 +41,19 @@ blake2b_simd = { version = "1.0", default-features = false }
 corez = { version = "0.1.1", default-features = false, features = [
     "alloc",
 ] }
-ff = { workspace = true }
-group = { workspace = true }
+ff = "0.13"
+group = "0.13"
 halo2_poseidon = "0.1"
 lazy_static = { version = "1", default-features = false, features = [
     "spin_no_std",
 ] }
-pasta_curves = { workspace = true }
-ragu = { workspace = true }
-rand_core = { workspace = true }
-reddsa = { version = "0.5.2", default-features = false }
+pasta_curves = "0.5.1"
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "3baa09549fec9a2c14a6e377a5f7f533fa8361a0", default-features = false }
+rand_core = { version = "0.6", default-features = false }
+reddsa = { version = "0.5.1", default-features = false }
 
 [dev-dependencies]
-rand = { workspace = true }
+rand = "0.8"
 
 [lib]
 bench = false
