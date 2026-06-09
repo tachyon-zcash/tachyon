@@ -13,7 +13,7 @@ group = { version = "0.13", default-features = false }
 rand = "0.8"
 rand_core = { version = "0.6", default-features = false }
 pasta_curves = "0.5.1"
-ragu = { git = "https://github.com/turbocrime/ragu", rev = "794c2c6318e2d3a6bd9dd88eaa230bd9a42a5bb8", default-features = false }
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "3baa09549fec9a2c14a6e377a5f7f533fa8361a0", default-features = false }
 
 
 [workspace.lints.rust]
