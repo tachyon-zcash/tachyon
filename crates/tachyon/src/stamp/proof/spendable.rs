@@ -34,7 +34,7 @@ use ragu::{Header, Index, Step, Suffix};
 
 use super::{
     delegation::{DelegateNullifierHeader, NullifierHeader},
-    pool::Unspent,
+    pool::{AnchorChain, Unspent},
 };
 use crate::{
     note::Nullifier,
@@ -155,20 +155,23 @@ pub struct SpendableInit;
 
 impl Step for SpendableInit {
     type Aux<'source> = ();
-    type Left = NullifierHeader;
+    type Left = AnchorChain;
     type Output = SpendableHeader;
-    type Right = ();
-    /// `(pre_cm_anchor, stamp_tg_set)`.
-    type Witness<'source> = (Anchor, TachygramSetPoly);
+    type Right = NullifierHeader;
+    /// `(pre_epoch_anchor, pre_cm_anchor, stamp_tg_set)`. `pre_epoch_anchor` is
+    /// the prior epoch's terminal anchor (folded into the boundary);
+    /// `pre_cm_anchor` is the anchor immediately before the cm-stamp (the
+    /// chain's penultimate state).
+    type Witness<'source> = (Anchor, Anchor, TachygramSetPoly);
 
     const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (pre_cm_anchor, stamp_tg_set): Self::Witness<'source>,
-        (cm, nf, _epoch): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
+        (pre_epoch_anchor, pre_cm_anchor, stamp_tg_set): Self::Witness<'source>,
+        (chain_start, chain_end): <Self::Left as Header>::Data,
+        (cm, nf, epoch): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_point = Fp::from(cm);
@@ -178,7 +181,32 @@ impl Step for SpendableInit {
             return Err(ragu::Error("SpendableInit: commitment not in set"));
         }
         let stamp_commit = stamp_tg_set.commit();
+
+        // Pin the lineage's starting epoch to consensus. The boundary-rooted
+        // `AnchorChain` must root at the epoch boundary for the GGM-derived
+        // `epoch` (no longer discarded). `next_epoch` (`Tachyon-EpochStp`) is
+        // the sole epoch-folding domain and `AnchorChain` is intra-epoch by
+        // construction, so once consensus accepts the eventual spend anchor as a
+        // real epoch-E published value, collision/preimage resistance forces
+        // `epoch == E` (the same pin `SpendableRollover` applies at a crossing).
+        if chain_start != pre_epoch_anchor.next_epoch(epoch) {
+            return Err(ragu::Error(
+                "SpendableInit: chain not rooted at epoch boundary",
+            ));
+        }
+
+        // The cm-stamp is the chain's final link: `chain_end ==
+        // pre_cm_anchor.next_stamp(cm_commit)`. This ties the cm-inclusion to a
+        // real, consensus-pinned stamp and yields `post_cm_anchor` as the chain
+        // end, so a note created first-in-epoch needs only a single-link chain
+        // (`B_E -> B_E.next_stamp(cm)`) with no zero-length segment.
         let post_cm_anchor = pre_cm_anchor.next_stamp(&stamp_commit);
+        if chain_end != post_cm_anchor {
+            return Err(ragu::Error(
+                "SpendableInit: cm-stamp is not the chain's final link",
+            ));
+        }
+
         Ok(((nf, post_cm_anchor), ()))
     }
 }

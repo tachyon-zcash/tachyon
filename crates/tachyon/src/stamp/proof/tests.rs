@@ -7,7 +7,7 @@ use alloc::vec;
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::{Pcd, Proof};
+use ragu::Pcd;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
 
@@ -17,8 +17,9 @@ use crate::{
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
     fixtures::{
-        PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_nullifier_rollover_pcd,
-        build_output_stamp, build_unspent_pcd, build_unspent_seed_pcd,
+        PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_anchor_chain_prefix_pcd,
+        build_nullifier_rollover_pcd, build_output_stamp, build_unspent_pcd,
+        build_unspent_seed_pcd,
         ggm_tools::{delegate_nullifier_from_master, delegate_range},
         random_block, random_block_with, spend_witness,
     },
@@ -37,14 +38,14 @@ fn tg<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Tachygram {
     Tachygram::from(Fp::random(rng))
 }
 
-/// Drive a full same-epoch spend lineage for `note` at a freely-chosen GGM
-/// leaf index `idx`, decoupled from the cm-block's real epoch.
+/// Drive a full same-epoch spend lineage for `note` at GGM leaf index `idx`,
+/// returning the published spend [`stamp::StampHeader`] PCD.
 ///
-/// Returns the published spend [`stamp::StampHeader`] PCD. This exercises the
-/// base-case epoch gap: [`spendable::SpendableInit`] discards the nullifier's
-/// epoch, so `idx` need not equal `cm_height.epoch()` — yet the lineage is
-/// internally consistent (the spendable's `nf`, the [`spend::SpendBind`] pair,
-/// and the [`stamp::SpendStamp`] tie all share `idx`).
+/// The spendable's `nf`, the [`spend::SpendBind`] pair, and the
+/// [`stamp::SpendStamp`] tie all share `idx`. After the base-case epoch pin in
+/// [`spendable::SpendableInit`], only `idx == cm_height.epoch()` bootstraps
+/// successfully — a wrong index fails the boundary check (see
+/// `same_epoch_spend_wrong_index_rejected`).
 fn same_epoch_spend_lineage(
     rng: &mut (impl RngCore + CryptoRng),
     user: &WalletSim,
@@ -73,67 +74,92 @@ fn same_epoch_spend_lineage(
     stamp_pcd
 }
 
-/// Demonstrates the same-epoch double-spend on the current tree: one note,
-/// created in epoch `E`, spent twice within `E` at two distinct GGM leaf
-/// indices `a`, `b` with `|a - b| >= 2`. Because [`spendable::SpendableInit`]
-/// discards the GGM epoch, both lineages are internally valid; the four
-/// published nullifiers are pairwise distinct, so the consensus two-epoch
-/// duplicate scan cannot relate them and accepts both spends.
-///
-/// This test PASSES on the unfixed tree (it is the vulnerability). After the
-/// base-case epoch pin lands, the wrong-index lineage can no longer be built;
-/// this test is then superseded by `same_epoch_spend_wrong_index_rejected`.
+/// After the base-case epoch pin, an honest same-epoch spend at the correct
+/// index `E` still builds and publishes its `{N_E, N_{E+1}}` pair. False-
+/// positive guard for the fix.
 #[test]
-fn same_epoch_double_spend_distinct_indices() {
+fn same_epoch_spend_honest_index_stays_green() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
     let cm = note.commitment();
 
-    // One creation block carrying the note's cm, in epoch E.
     pool.mine(random_block_with(rng, &[alloc::vec![cm]], 4));
     let cm_height = pool.height();
     let e = cm_height.epoch().0;
 
-    // Two same-epoch lineages at distinct GGM leaf indices, |a - b| >= 2 so
-    // the published two-nullifier sets are disjoint (at |a-b|==1 the scan
-    // would relate lineage A's next-nf to lineage B's now-nf).
-    let a = e;
-    let b = e + 2;
-    assert!(b.abs_diff(a) >= 2, "indices must differ by >= 2");
+    let stamp = same_epoch_spend_lineage(rng, &user, &pool, cm_height, note, e);
 
-    let stamp_a = same_epoch_spend_lineage(rng, &user, &pool, cm_height, note, a);
-    let stamp_b = same_epoch_spend_lineage(rng, &user, &pool, cm_height, note, b);
+    let expected = TachygramSetCommit::from(
+        [
+            note.nullifier(&user.pak.nk, EpochIndex(e)).into(),
+            note.nullifier(&user.pak.nk, EpochIndex(e + 1)).into(),
+        ]
+        .as_slice(),
+    );
+    assert_eq!(stamp.data().1, expected, "publishes {{N_E, N_E+1}}");
 
-    // The four published nullifiers are pairwise distinct.
-    let nfs = [
-        note.nullifier(&user.pak.nk, EpochIndex(a)),
-        note.nullifier(&user.pak.nk, EpochIndex(a + 1)),
-        note.nullifier(&user.pak.nk, EpochIndex(b)),
-        note.nullifier(&user.pak.nk, EpochIndex(b + 1)),
-    ];
-    for i in 0..nfs.len() {
-        for j in (i + 1)..nfs.len() {
-            assert_ne!(nfs[i], nfs[j], "nullifiers {i} and {j} collide");
-        }
-    }
-
-    // Each spend publishes exactly its own disjoint two-nullifier set, so the
-    // two-epoch duplicate scan over published tachygrams finds no collision.
-    let set_a = TachygramSetCommit::from([nfs[0].into(), nfs[1].into()].as_slice());
-    let set_b = TachygramSetCommit::from([nfs[2].into(), nfs[3].into()].as_slice());
-    assert_eq!(stamp_a.data().1, set_a, "lineage A publishes {{N_a, N_a+1}}");
-    assert_eq!(stamp_b.data().1, set_b, "lineage B publishes {{N_b, N_b+1}}");
-    assert_ne!(stamp_a.data().1, stamp_b.data().1, "disjoint published sets");
-
-    // Both spends are fully valid proofs of the SAME note: a double-spend.
     PROOF_SYSTEM
-        .rerandomize(stamp_a, rng)
-        .expect("rerandomize lineage A");
-    PROOF_SYSTEM
-        .rerandomize(stamp_b, rng)
-        .expect("rerandomize lineage B");
+        .rerandomize(stamp, rng)
+        .expect("rerandomize honest same-epoch spend");
+}
+
+/// Regression guard for the same-epoch double-spend. A nullifier walked to the
+/// wrong index (`E + 2`) cannot bootstrap a spendable against a real epoch-`E`
+/// boundary chain: [`spendable::SpendableInit`] rejects because the chain roots
+/// at `B_E`, not `prev_tip.next_epoch(E + 2)`. Driven via a raw `fuse` so the
+/// `Err` surfaces (the `spendable_init` fixture would `.expect`).
+#[test]
+fn same_epoch_spend_wrong_index_rejected() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+    let note = user.random_note(rng, 500);
+    let cm = note.commitment();
+
+    pool.mine(random_block_with(rng, &[alloc::vec![cm]], 4));
+    let cm_height = pool.height();
+    let e = cm_height.epoch().0;
+    let wrong = e + 2;
+    assert!(wrong.abs_diff(e) >= 2);
+
+    // Reconstruct the honest epoch-E SpendableInit inputs (boundary chain rooted
+    // at B_E, real pre_cm_anchor)...
+    let stamps = pool.tachygrams_at(cm_height);
+    let stamp_commits = pool.stamp_commits_at(cm_height);
+    let cm_idx = stamps
+        .iter()
+        .position(|tgs| tgs.contains(&cm.into()))
+        .expect("cm present in cm-block");
+    let pre_cm_anchor = stamp_commits[..cm_idx]
+        .iter()
+        .fold(pool.prev_anchor_at(cm_height), Anchor::next_stamp);
+    let epoch_first = BlockHeight(e * EPOCH_SIZE);
+    let pre_epoch_anchor = if e == 0 {
+        Anchor::from(Fp::ZERO)
+    } else {
+        pool.anchor_at(BlockHeight(epoch_first.0 - 1))
+    };
+    let chain = build_anchor_chain_prefix_pcd(rng, &pool, epoch_first, cm_height, cm_idx);
+
+    // ...but feed a NullifierHeader walked to the wrong index.
+    let nf_wrong = user.nullifier_pcd(rng, note, EpochIndex(wrong));
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableInit,
+            (
+                pre_epoch_anchor,
+                pre_cm_anchor,
+                TachygramSetPoly::from(stamps[cm_idx].as_slice()),
+            ),
+            chain,
+            nf_wrong,
+        )
+        .err()
+        .unwrap();
+    assert_eq!(err.0, "SpendableInit: chain not rooted at epoch boundary");
 }
 
 #[test]
@@ -482,17 +508,22 @@ fn spendable_init_rejects_tg_absent() {
     let note = user.random_note(rng, 500);
 
     let absent_set = TachygramSetPoly::from([tg(rng)].as_slice());
-    let pre_cm_anchor = Anchor::default();
     let nf_pcd_absent = user.nullifier_pcd(rng, note, EpochIndex(0));
+    // cm-inclusion is checked first, so a dummy boundary chain suffices here.
+    let dummy_commit = TachygramSetCommit::from([tg(rng)].as_slice());
+    let (dummy_chain, ()) = PROOF_SYSTEM
+        .seed(rng, pool::AnchorSeed, (Anchor::default(), dummy_commit))
+        .expect("AnchorSeed");
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             spendable::SpendableInit,
-            (pre_cm_anchor, absent_set),
+            (Anchor::default(), Anchor::default(), absent_set),
+            dummy_chain,
             nf_pcd_absent,
-            Proof::trivial().carry::<()>(()),
         )
-        .err().unwrap();
+        .err()
+        .unwrap();
     assert_eq!(err.0, "SpendableInit: commitment not in set");
 }
 

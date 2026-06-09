@@ -11,7 +11,7 @@ use core::{cmp, iter, ops::RangeInclusive};
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::{Pcd, Proof};
+use ragu::Pcd;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
@@ -329,6 +329,83 @@ pub(crate) fn build_anchor_chain_pcd(
     chain.expect("AnchorChain range must cover at least one block")
 }
 
+/// Build an [`AnchorChain`](pool::AnchorChain) rooted at the epoch boundary
+/// `B_E = prev_anchor_at(epoch_first)` and ending at `post_cm_anchor` — i.e.
+/// covering blocks `epoch_first..=cm_height`, with the final (cm) block
+/// truncated to its stamps `[0..=cm_idx]` so the cm-stamp is the chain's last
+/// absorbed link.
+///
+/// This is the boundary->cm segment [`spendable::SpendableInit`] consumes to pin
+/// the spendable's starting epoch. A note created first-in-epoch
+/// (`epoch_first == cm_height`, `cm_idx == 0`) yields a single-link chain, so no
+/// zero-length segment is ever needed.
+pub(crate) fn build_anchor_chain_prefix_pcd(
+    rng: &mut (impl RngCore + CryptoRng),
+    pool: &PoolSim,
+    epoch_first: BlockHeight,
+    cm_height: BlockHeight,
+    cm_idx: usize,
+) -> Pcd<pool::AnchorChain> {
+    assert_eq!(
+        epoch_first.epoch(),
+        cm_height.epoch(),
+        "prefix chain is single-epoch"
+    );
+    assert!(epoch_first <= cm_height);
+
+    let mut state = pool.prev_anchor_at(epoch_first);
+    let mut chain: Option<Pcd<pool::AnchorChain>> = None;
+    let mut height = epoch_first;
+    loop {
+        let commits = pool.stamp_commits_at(height);
+        if commits.is_empty() {
+            let next_state = state.next_empty();
+            let (seed, ()) = PROOF_SYSTEM
+                .seed(rng, pool::EmptyBlockSeed, (state,))
+                .expect("EmptyBlockSeed");
+            chain = Some(match chain.take() {
+                | None => seed,
+                | Some(left) => {
+                    let (fused, ()) = PROOF_SYSTEM
+                        .fuse(rng, pool::AnchorFuse, (), left, seed)
+                        .expect("AnchorFuse");
+                    fused
+                },
+            });
+            state = next_state;
+        } else {
+            // On the cm-block stop right after the cm-stamp; elsewhere absorb all.
+            let upto = if height == cm_height {
+                cm_idx + 1
+            } else {
+                commits.len()
+            };
+            for commit in &commits[..upto] {
+                let next_state = state.next_stamp(commit);
+                let (seed, ()) = PROOF_SYSTEM
+                    .seed(rng, pool::AnchorSeed, (state, *commit))
+                    .expect("AnchorSeed");
+                chain = Some(match chain.take() {
+                    | None => seed,
+                    | Some(left) => {
+                        let (fused, ()) = PROOF_SYSTEM
+                            .fuse(rng, pool::AnchorFuse, (), left, seed)
+                            .expect("AnchorFuse");
+                        fused
+                    },
+                });
+                state = next_state;
+            }
+        }
+        if height >= cm_height {
+            break;
+        }
+        height = height.next().expect("height < max");
+    }
+
+    chain.expect("prefix chain covers at least the cm-stamp")
+}
+
 pub(crate) fn build_unspent_seed_pcd(
     rng: &mut (impl RngCore + CryptoRng),
     start: Anchor,
@@ -527,20 +604,35 @@ impl WalletSim {
             .position(|tgs| tgs.contains(&cm.into()))
             .expect("cm not found in any stamp at the cm-block");
 
+        // Anchor immediately before the cm-stamp (the cm-block prefix fold).
         let pre_cm_anchor = stamp_commits[..cm_idx]
             .iter()
             .fold(pool.prev_anchor_at(height), Anchor::next_stamp);
+
+        // Root the lineage at the epoch boundary B_E. `prev_tip` is the prior
+        // epoch's terminal anchor (Fp::ZERO for the genesis epoch), so
+        // `prev_tip.next_epoch(E) == B_E == prev_anchor_at(epoch_first)`. The
+        // boundary->cm chain ends at `post_cm_anchor`.
+        let epoch = height.epoch();
+        let epoch_first = BlockHeight(epoch.0 * EPOCH_SIZE);
+        let pre_epoch_anchor = if epoch.0 == 0 {
+            Anchor::from(Fp::ZERO)
+        } else {
+            pool.anchor_at(BlockHeight(epoch_first.0 - 1))
+        };
+        let boundary_chain = build_anchor_chain_prefix_pcd(rng, pool, epoch_first, height, cm_idx);
 
         let (spendable, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 spendable::SpendableInit,
                 (
+                    pre_epoch_anchor,
                     pre_cm_anchor,
                     TachygramSetPoly::from(stamps[cm_idx].as_slice()),
                 ),
+                boundary_chain,
                 nf_pcd,
-                Proof::trivial().carry::<()>(()),
             )
             .expect("SpendableInit");
 
