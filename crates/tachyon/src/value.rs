@@ -55,8 +55,8 @@ impl CommitmentTrapdoor {
         Self(Fq::random(rng))
     }
 
-    /// Borrow the inner scalar for use in arithmetic (e.g. BSK summation).
-    pub(crate) const fn scalar(&self) -> Fq {
+    /// Returns the inner scalar for use in arithmetic (e.g. BSK summation).
+    pub(crate) const fn inner(&self) -> Fq {
         self.0
     }
 
@@ -230,10 +230,10 @@ mod tests {
     fn commit_homomorphic_binding_property() {
         let rng = &mut StdRng::seed_from_u64(0);
         let rcv_a = CommitmentTrapdoor::random(rng);
-        let scalar_a = rcv_a.scalar();
+        let scalar_a = rcv_a.inner();
         let cv_a = rcv_a.commit(100);
         let rcv_b = CommitmentTrapdoor::random(rng);
-        let scalar_b = rcv_b.scalar();
+        let scalar_b = rcv_b.inner();
         let cv_b = rcv_b.commit(200);
 
         let remainder = cv_a + cv_b - Commitment::balance(300);

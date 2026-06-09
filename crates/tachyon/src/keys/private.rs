@@ -298,7 +298,8 @@ impl BindingSigningKey {
         // internal pointers, or Drop implementation.
         #[expect(unsafe_code, reason = "zeroize non-Zeroize pasta_curves::Fq")]
         unsafe {
-            zeroize_flat(&mut sum);
+            let ptr: *mut u8 = ptr::from_mut(&mut sum).cast();
+            slice::from_raw_parts_mut(ptr, size_of::<Fq>()).zeroize();
         }
 
         key
@@ -311,13 +312,14 @@ impl BindingSigningKey {
     ) -> Self {
         let mut sum = Fq::ZERO;
         for trapdoor in trapdoors {
-            let mut scalar = trapdoor.scalar();
+            let mut scalar = trapdoor.inner();
             sum += scalar;
             // Safety: Fq is a plain field element with no heap allocations,
             // internal pointers, or Drop implementation.
             #[expect(unsafe_code, reason = "zeroize non-Zeroize pasta_curves::Fq")]
             unsafe {
-                zeroize_flat(&mut scalar);
+                let ptr: *mut u8 = ptr::from_mut(&mut scalar).cast();
+                slice::from_raw_parts_mut(ptr, size_of::<Fq>()).zeroize();
             }
         }
         Self::from_scalar_sum(sum)
@@ -330,26 +332,6 @@ impl From<&[value::CommitmentTrapdoor]> for BindingSigningKey {
     fn from(trapdoors: &[value::CommitmentTrapdoor]) -> Self {
         Self::from_trapdoors(trapdoors)
     }
-}
-
-/// Zeroize the raw bytes of a value in place.
-///
-/// # Safety
-///
-/// `T` must not contain internal pointers, heap allocations, or `Drop`
-/// implementations that depend on non-zero state. Callers must not use the
-/// value again except to drop or fully reinitialize it. Suitable for field
-/// elements and signing keys that are plain data.
-#[expect(
-    unsafe_code,
-    reason = "volatile zeroization of non-Zeroize inner types"
-)]
-unsafe fn zeroize_flat<T>(val: &mut T) {
-    let ptr: *mut u8 = ptr::from_mut(val).cast();
-    let len = size_of::<T>();
-    // Safety: `T` is plain data with no internal pointers; byte-level
-    // zeroization is sound and the value is being dropped immediately after.
-    unsafe { slice::from_raw_parts_mut(ptr, len) }.zeroize();
 }
 
 impl Zeroize for SpendingKey {
@@ -372,8 +354,10 @@ impl Zeroize for SpendAuthorizingKey {
         // with no heap allocations or internal pointers.
         #[expect(unsafe_code, reason = "zeroize non-Zeroize reddsa::SigningKey")]
         unsafe {
-            zeroize_flat(&mut self.0);
-        };
+            let ptr: *mut u8 = ptr::from_mut(&mut self.0).cast();
+            slice::from_raw_parts_mut(ptr, size_of::<reddsa::SigningKey<reddsa::ActionAuth>>())
+                .zeroize();
+        }
     }
 }
 
@@ -390,8 +374,10 @@ impl<E: Effect> Zeroize for ActionSigningKey<E> {
         // Safety: same as SpendAuthorizingKey — SigningKey is plain data.
         #[expect(unsafe_code, reason = "zeroize non-Zeroize reddsa::SigningKey")]
         unsafe {
-            zeroize_flat(&mut self.0);
-        };
+            let ptr: *mut u8 = ptr::from_mut(&mut self.0).cast();
+            slice::from_raw_parts_mut(ptr, size_of::<reddsa::SigningKey<reddsa::ActionAuth>>())
+                .zeroize();
+        }
     }
 }
 
@@ -408,8 +394,10 @@ impl Zeroize for BindingSigningKey {
         // Safety: same as SpendAuthorizingKey — SigningKey is plain data.
         #[expect(unsafe_code, reason = "zeroize non-Zeroize reddsa::SigningKey")]
         unsafe {
-            zeroize_flat(&mut self.0);
-        };
+            let ptr: *mut u8 = ptr::from_mut(&mut self.0).cast();
+            slice::from_raw_parts_mut(ptr, size_of::<reddsa::SigningKey<reddsa::BindingAuth>>())
+                .zeroize();
+        }
     }
 }
 
