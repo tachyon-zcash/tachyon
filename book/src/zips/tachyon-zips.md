@@ -35,7 +35,7 @@ The ZIPs come first. The [protocol specification PDF](https://zips.z.cash/protoc
 
 ## Tachyon ZIPs
 
-This attempts to enumerate the landscape, at a high-level lacking a lot of detail, for the different kinds of ZIPs that Tachyon will need to propose: 5 'Additive' ZIPs, 3 'Update' ZIPs, 0 'Successor' ZIP, and 1 'Deployment' ZIP = 9 ZIPs.
+This attempts to enumerate the landscape, at a high-level lacking a lot of detail, for the different kinds of ZIPs that Tachyon will need to propose: 5 'Additive' ZIPs, 5 'Update' ZIPs, 0 'Successor' ZIPs, and 1 'Deployment' ZIP = 11 ZIPs.
 
 There are probably other ZIPs that need updating, but haven't examined the entire search space here yet (there are a lot of ZIPs)!
 
@@ -84,19 +84,30 @@ zip209["`
 *(update, consensus)*
 `"]:::update
 
-zip317["`
-**8. Update: ZIP 317**
+zip248["`
+**8. Update: ZIP 248**
 *(update, consensus)*
 `"]:::update
 
+zip317["`
+**9. Update: ZIP 317**
+*(update, consensus)*
+`"]:::update
+
+qr["`
+**10. QR ZIP**
+*(update, wallet)*
+`"]:::update
+
 nu_deployment["`
-**9. NU Deployment**
+**11. NU Deployment**
 *(deployment, consensus)*
 `"]:::deployment
 
 accumulator --> zip221 & aggregator & shielded & oss
-shielded --> bundle & aggregator & zip209 & zip317 & oss
+shielded --> bundle & aggregator & zip209 & zip317 & qr & oss
 
+zip248 --> bundle
 bundle --> aggregator & nu_deployment
 
 aggregator --> nu_deployment
@@ -104,7 +115,9 @@ oss --> nu_deployment
 
 zip221 --> nu_deployment
 zip209 --> nu_deployment
+zip248 --> nu_deployment
 zip317 --> nu_deployment
+qr --> nu_deployment
 ```
 
-Each ZIP entry below contains three subsections: **Dependencies**, **Design Considerations** (exploratory context and open questions), and a **ZIP Draft** (the formal specification intended to be upstreamed to [zcash/zips](https://github.com/zcash/zips)). For each ZIP entry, see the corresponding issue in the tracking issue [#111](https://github.com/tachyon-zcash/tachyon/issues/111) for more context.
+Each ZIP entry below contains three subsections: **Dependencies**, **Design Considerations** (exploratory context and open questions), and a **ZIP Draft** (the formal specification intended to be upstreamed to [zcash/zips](https://github.com/zcash/zips)). For each ZIP entry, see the corresponding issue in the tracking issue [#114](https://github.com/tachyon-zcash/tachyon/issues/114) for more context.
