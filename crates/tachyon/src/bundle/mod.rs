@@ -313,7 +313,7 @@ impl Plan {
         for plan in &self.outputs {
             sum = (sum - plan.note.value)?;
         }
-        sum.to_i64()
+        i64::try_from(sum)
     }
 
     /// Compute a digest of all the bundle's effecting data.

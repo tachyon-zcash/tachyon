@@ -479,7 +479,7 @@ fn spend_bind_rejects_invalid_inputs() {
     let spend_epoch = height.epoch();
 
     let phantom = Note {
-        value: note::Value::from(999_999),
+        value: note::Value::try_from(999_999u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };
@@ -491,7 +491,7 @@ fn spend_bind_rejects_invalid_inputs() {
         "shared psi yields shared nullifiers"
     );
 
-    let wrong_value = note::Value::from(999_999u64);
+    let wrong_value = note::Value::try_from(999_999u64).expect("test value in range");
     assert_ne!(u64::from(wrong_value), u64::from(note.value));
 
     let cases = [
@@ -788,7 +788,7 @@ fn notes_with_shared_psi_share_nullifiers() {
     let user = WalletSim::random(rng);
     let note_a = user.random_note(rng, 500);
     let note_b = Note {
-        value: note::Value::from(700),
+        value: note::Value::try_from(700u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note_a
     };
@@ -1262,7 +1262,7 @@ fn spendable_lift_rejects_wrong_cm() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
     let phantom = Note {
-        value: note::Value::from(700),
+        value: note::Value::try_from(700u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };

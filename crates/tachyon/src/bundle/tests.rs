@@ -502,7 +502,7 @@ fn assign_wtxid_rejects_zero_with_actions() {
 fn assign_wtxid_allows_zero_with_no_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
-    let sighash = mock_sighash(plan.commitment());
+    let sighash = mock_sighash(plan.commitment().unwrap());
 
     let unassigned: Bundle<Stripped> = Bundle {
         actions: alloc::vec![],
@@ -549,7 +549,7 @@ fn write_rejects_zero_wtxid_with_actions() {
 fn write_allows_zero_wtxid_with_no_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
-    let sighash = mock_sighash(plan.commitment());
+    let sighash = mock_sighash(plan.commitment().unwrap());
 
     let stripped = Bundle {
         actions: alloc::vec![],
@@ -645,7 +645,7 @@ fn read_rejects_zero_wtxid_with_actions() {
 fn read_allows_zero_wtxid_with_no_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
-    let sighash = mock_sighash(plan.commitment());
+    let sighash = mock_sighash(plan.commitment().unwrap());
 
     let innocent = Bundle {
         actions: alloc::vec![],

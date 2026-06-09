@@ -33,7 +33,7 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
-use core::{fmt, iter, ops};
+use core::{fmt, ops};
 
 use ff::Field as _;
 use pasta_curves::Fp;
@@ -168,12 +168,6 @@ impl Value {
         }
         Ok(Self(value))
     }
-
-    /// Returns the inner `u64`.
-    #[must_use]
-    pub const fn inner(self) -> u64 {
-        self.0
-    }
 }
 
 impl TryFrom<u64> for Value {
@@ -190,25 +184,24 @@ impl From<Value> for u64 {
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "Value construction enforces NOTE_VALUE_MAX < i64::MAX"
+)]
 impl From<Value> for i64 {
-    #[expect(
-        clippy::as_conversions,
-        clippy::cast_possible_wrap,
-        reason = "NOTE_VALUE_MAX (2.1e15) < i64::MAX (9.2e18), so wrapping cannot occur"
-    )]
     fn from(value: Value) -> Self {
-        value.0 as Self
+        Self::try_from(value.0).expect("Value invariant guarantees it fits in i64")
     }
 }
 
 /// Signed sum of note values across actions.
 ///
 /// Spends contribute positive values, outputs contribute negative.
-/// The valid range is `-(max * action_count)..=(max * action_count)`,
-/// but `i128` provides ample headroom for any realistic bundle.
+/// Uses `i128` internally to provide additional headroom while accumulating
+/// values. Checked arithmetic still reports overflow, and conversion to the
+/// wire-format `i64` fails if the final balance is out of range.
 ///
-/// Use [`ValueSum::to_i64`] to convert to the wire-format `i64`
-/// for `value_balance`, which checks the result fits.
+/// Use `i64::try_from(sum)` to narrow to the wire-format `i64`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ValueSum(i128);
 
@@ -226,11 +219,13 @@ impl fmt::Display for BalanceError {
 impl ValueSum {
     /// The zero sum (identity for addition).
     pub const ZERO: Self = Self(0);
+}
 
-    /// Convert to `i64` for the wire format, or error if the sum
-    /// does not fit.
-    pub fn to_i64(self) -> Result<i64, BalanceError> {
-        i64::try_from(self.0).map_err(|_err| BalanceError)
+impl TryFrom<ValueSum> for i64 {
+    type Error = BalanceError;
+
+    fn try_from(sum: ValueSum) -> Result<Self, Self::Error> {
+        Self::try_from(sum.0).map_err(|_err| BalanceError)
     }
 }
 
@@ -253,12 +248,6 @@ impl ops::Sub<Value> for ValueSum {
             .checked_sub(i128::from(rhs.0))
             .map(Self)
             .ok_or(BalanceError)
-    }
-}
-
-impl iter::Sum<Value> for Result<ValueSum, BalanceError> {
-    fn sum<I: Iterator<Item = Value>>(mut iter: I) -> Self {
-        iter.try_fold(ValueSum::ZERO, |sum, val| sum + val)
     }
 }
 
@@ -485,9 +474,9 @@ mod tests {
 
         let sum = (ValueSum::ZERO + va).unwrap();
         let total = (sum + vb).unwrap();
-        assert_eq!(total.to_i64().unwrap(), 300);
+        assert_eq!(i64::try_from(total).unwrap(), 300);
 
         let diff = (ValueSum::ZERO - va).unwrap();
-        assert_eq!(diff.to_i64().unwrap(), -100);
+        assert_eq!(i64::try_from(diff).unwrap(), -100);
     }
 }
