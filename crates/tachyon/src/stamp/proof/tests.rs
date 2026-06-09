@@ -7,7 +7,7 @@ use alloc::vec;
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::Proof;
+use ragu::{Pcd, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
 
@@ -35,6 +35,105 @@ const NON_ADJACENT_EPOCH_PAIRS: &[(EpochIndex, EpochIndex)] = &[
 
 fn tg<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Tachygram {
     Tachygram::from(Fp::random(rng))
+}
+
+/// Drive a full same-epoch spend lineage for `note` at a freely-chosen GGM
+/// leaf index `idx`, decoupled from the cm-block's real epoch.
+///
+/// Returns the published spend [`stamp::StampHeader`] PCD. This exercises the
+/// base-case epoch gap: [`spendable::SpendableInit`] discards the nullifier's
+/// epoch, so `idx` need not equal `cm_height.epoch()` — yet the lineage is
+/// internally consistent (the spendable's `nf`, the [`spend::SpendBind`] pair,
+/// and the [`stamp::SpendStamp`] tie all share `idx`).
+fn same_epoch_spend_lineage(
+    rng: &mut (impl RngCore + CryptoRng),
+    user: &WalletSim,
+    pool: &PoolSim,
+    cm_height: BlockHeight,
+    note: note::Note,
+    idx: u32,
+) -> Pcd<stamp::StampHeader> {
+    let nf_for_init = user.nullifier_pcd(rng, note, EpochIndex(idx));
+    let spendable = user.spendable_init(rng, note, pool, cm_height, nf_for_init);
+
+    let (nf_now, nf_next) = user.nullifier_pair_pcd(rng, note, EpochIndex(idx));
+    let (rcv, _theta, alpha) = spend_witness(rng, &note);
+    let (spend_pcd, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spend::SpendBind,
+            (rcv, alpha, user.pak, note),
+            nf_now,
+            nf_next,
+        )
+        .expect("SpendBind");
+    let (stamp_pcd, ()) = PROOF_SYSTEM
+        .fuse(rng, stamp::SpendStamp, (), spend_pcd, spendable)
+        .expect("SpendStamp");
+    stamp_pcd
+}
+
+/// Demonstrates the same-epoch double-spend on the current tree: one note,
+/// created in epoch `E`, spent twice within `E` at two distinct GGM leaf
+/// indices `a`, `b` with `|a - b| >= 2`. Because [`spendable::SpendableInit`]
+/// discards the GGM epoch, both lineages are internally valid; the four
+/// published nullifiers are pairwise distinct, so the consensus two-epoch
+/// duplicate scan cannot relate them and accepts both spends.
+///
+/// This test PASSES on the unfixed tree (it is the vulnerability). After the
+/// base-case epoch pin lands, the wrong-index lineage can no longer be built;
+/// this test is then superseded by `same_epoch_spend_wrong_index_rejected`.
+#[test]
+fn same_epoch_double_spend_distinct_indices() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+    let note = user.random_note(rng, 500);
+    let cm = note.commitment();
+
+    // One creation block carrying the note's cm, in epoch E.
+    pool.mine(random_block_with(rng, &[alloc::vec![cm]], 4));
+    let cm_height = pool.height();
+    let e = cm_height.epoch().0;
+
+    // Two same-epoch lineages at distinct GGM leaf indices, |a - b| >= 2 so
+    // the published two-nullifier sets are disjoint (at |a-b|==1 the scan
+    // would relate lineage A's next-nf to lineage B's now-nf).
+    let a = e;
+    let b = e + 2;
+    assert!(b.abs_diff(a) >= 2, "indices must differ by >= 2");
+
+    let stamp_a = same_epoch_spend_lineage(rng, &user, &pool, cm_height, note, a);
+    let stamp_b = same_epoch_spend_lineage(rng, &user, &pool, cm_height, note, b);
+
+    // The four published nullifiers are pairwise distinct.
+    let nfs = [
+        note.nullifier(&user.pak.nk, EpochIndex(a)),
+        note.nullifier(&user.pak.nk, EpochIndex(a + 1)),
+        note.nullifier(&user.pak.nk, EpochIndex(b)),
+        note.nullifier(&user.pak.nk, EpochIndex(b + 1)),
+    ];
+    for i in 0..nfs.len() {
+        for j in (i + 1)..nfs.len() {
+            assert_ne!(nfs[i], nfs[j], "nullifiers {i} and {j} collide");
+        }
+    }
+
+    // Each spend publishes exactly its own disjoint two-nullifier set, so the
+    // two-epoch duplicate scan over published tachygrams finds no collision.
+    let set_a = TachygramSetCommit::from([nfs[0].into(), nfs[1].into()].as_slice());
+    let set_b = TachygramSetCommit::from([nfs[2].into(), nfs[3].into()].as_slice());
+    assert_eq!(stamp_a.data().1, set_a, "lineage A publishes {{N_a, N_a+1}}");
+    assert_eq!(stamp_b.data().1, set_b, "lineage B publishes {{N_b, N_b+1}}");
+    assert_ne!(stamp_a.data().1, stamp_b.data().1, "disjoint published sets");
+
+    // Both spends are fully valid proofs of the SAME note: a double-spend.
+    PROOF_SYSTEM
+        .rerandomize(stamp_a, rng)
+        .expect("rerandomize lineage A");
+    PROOF_SYSTEM
+        .rerandomize(stamp_b, rng)
+        .expect("rerandomize lineage B");
 }
 
 #[test]
