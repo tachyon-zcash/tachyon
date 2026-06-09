@@ -72,7 +72,7 @@ impl Step for OutputStamp {
         Anchor,
     );
 
-    const INDEX: Index = Index::new(19);
+    const INDEX: Index = Index::new(24);
 
     fn witness<'source>(
         &self,
@@ -120,7 +120,7 @@ impl Step for SpendStamp {
     type Right = SpendableHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(21);
+    const INDEX: Index = Index::new(26);
 
     fn witness<'source>(
         &self,
@@ -164,11 +164,11 @@ impl Step for MergeStamp {
         TachygramSetGadget,
     );
 
-    const INDEX: Index = Index::new(22);
+    const INDEX: Index = Index::new(27);
 
     fn witness<'source>(
         &self,
-        (left_action, right_action, left_tachygram, right_tachygram): Self::Witness<'source>,
+        (actions0, actions1, tgs0, tgs1): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data<
             'source,
         >,
@@ -182,18 +182,18 @@ impl Step for MergeStamp {
         }
 
         // Bind witness accumulators to the public commitments on Data.
-        if left_action.0.commit() != left_action_commit.0
-            || right_action.0.commit() != right_action_commit.0
-            || left_tachygram.0.commit() != left_tachygram_commit.0
-            || right_tachygram.0.commit() != right_tachygram_commit.0
+        if actions0.0.commit() != left_action_commit.0
+            || actions1.0.commit() != right_action_commit.0
+            || tgs0.0.commit() != left_tachygram_commit.0
+            || tgs1.0.commit() != right_tachygram_commit.0
         {
             return Err(mock_ragu::Error(
                 "MergeStamp: witness accumulators must commit to header commits",
             ));
         }
 
-        let merged_action = ActionSetGadget(left_action.0.merge(&right_action.0));
-        let merged_tachygram = TachygramSetGadget(left_tachygram.0.merge(&right_tachygram.0));
+        let merged_action = ActionSetGadget(actions0.0.merge(&actions1.0));
+        let merged_tachygram = TachygramSetGadget(tgs0.0.merge(&tgs1.0));
 
         let data = (
             ActionSetCommit::from(merged_action),
@@ -217,7 +217,7 @@ impl Step for StampLift {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(23);
+    const INDEX: Index = Index::new(28);
 
     fn witness<'source>(
         &self,

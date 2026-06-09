@@ -329,71 +329,96 @@ pub(crate) fn build_anchor_chain_pcd<'source>(
     chain.expect("AnchorChain range must cover at least one block")
 }
 
-pub(crate) fn build_unspent_seed_pcd<'source>(
+/// Build a [`RangeSummary`] covering a single block height, returning
+/// the PCD alongside the accumulated tachygram gadget. Stamp links:
+/// one [`SummarySeed`] per stamp, fused via
+/// [`SummaryFuse`]. Empty block: a single
+/// [`EmptyBlockSummarySeed`]. Per-height granularity keeps each
+/// summary small (well under the per-step multiset budget) and
+/// matches the natural chunking the sync service produces.
+///
+/// The returned gadget commits to the summary's `tg_set` and is the
+/// witness a downstream consumer must supply.
+pub(crate) fn build_range_summary_at<'source>(
     rng: &mut (impl RngCore + CryptoRng),
-    start: Anchor,
-    stamp_tgs: &[Tachygram],
-    nf: Nullifier,
-) -> Pcd<'source, pool::Unspent> {
-    let stamp_gadget = TachygramSetGadget::from(stamp_tgs);
-    let (pcd, ()) = PROOF_SYSTEM
-        .seed(rng, pool::UnspentSeed, (start, stamp_gadget, nf))
-        .expect("UnspentSeed");
-    pcd
+    pool: &PoolSim,
+    height: BlockHeight,
+) -> (Pcd<'source, pool::RangeSummary>, TachygramSetGadget) {
+    let start = pool.prev_anchor_at(height);
+    let stamps = pool.tachygrams_at(height);
+    if stamps.is_empty() {
+        let (pcd, ()) = PROOF_SYSTEM
+            .seed(rng, pool::EmptyBlockSummarySeed, (start,))
+            .expect("EmptyBlockSummarySeed");
+        return (pcd, TachygramSetGadget::from([].as_slice()));
+    }
+    let mut chain: Option<(Pcd<'source, pool::RangeSummary>, TachygramSetGadget)> = None;
+    for tgs in &stamps {
+        let stamp_gadget = TachygramSetGadget::from(tgs.as_slice());
+        let seed_start = match chain.as_ref() {
+            | None => start,
+            | Some(prior) => prior.0.data.1,
+        };
+        let (seed, ()) = PROOF_SYSTEM
+            .seed(rng, pool::SummarySeed, (seed_start, stamp_gadget.clone()))
+            .expect("SummarySeed");
+        chain = Some(match chain.take() {
+            | None => (seed, stamp_gadget),
+            | Some((left_pcd, left_gadget)) => {
+                let right_gadget = stamp_gadget;
+                let merged = TachygramSetGadget(left_gadget.0.merge(&right_gadget.0));
+                let (fused, ()) = PROOF_SYSTEM
+                    .fuse(
+                        rng,
+                        pool::SummaryFuse,
+                        (left_gadget, right_gadget),
+                        left_pcd,
+                        seed,
+                    )
+                    .expect("SummaryFuse");
+                (fused, merged)
+            },
+        });
+    }
+    chain.expect("non-empty stamps")
 }
 
-/// Build an [`Unspent`] for `nf` covering blocks `range`. Per non-empty
-/// block: one [`UnspentSeed`] per stamp. Per empty block: one
-/// [`EmptyBlockUnspentSeed`]. All segments fused linearly via
-/// [`UnspentFuse`].
+/// Build an [`Unspent`] for `nf` covering blocks `range`. Per height:
+/// one [`build_range_summary_at`] then [`UnspentRange`].
+/// Cross-height composition via [`UnspentFuse`].
 pub(crate) fn build_unspent_pcd<'source>(
     rng: &mut (impl RngCore + CryptoRng),
     pool: &PoolSim,
     nf: Nullifier,
     range: RangeInclusive<BlockHeight>,
-) -> Pcd<'source, pool::Unspent> {
+) -> Pcd<'source, spendable::Unspent> {
     let start = *range.start();
     let end = *range.end();
     assert_eq!(start.epoch(), end.epoch(), "Unspent single-epoch range");
     assert!(start <= end);
 
-    let mut state = pool.prev_anchor_at(start);
-    let mut chain: Option<Pcd<'source, pool::Unspent>> = None;
+    let mut chain: Option<Pcd<'source, spendable::Unspent>> = None;
     let mut height = start;
     loop {
-        let stamps = pool.tachygrams_at(height);
-        let stamp_commits = pool.stamp_commits_at(height);
-        if stamps.is_empty() {
-            let next_state = state.next_empty();
-            let (seed, ()) = PROOF_SYSTEM
-                .seed(rng, pool::EmptyBlockUnspentSeed, (state, nf))
-                .expect("EmptyBlockUnspentSeed");
-            chain = Some(match chain.take() {
-                | None => seed,
-                | Some(left) => {
-                    let (fused, ()) = PROOF_SYSTEM
-                        .fuse(rng, pool::UnspentFuse, (), left, seed)
-                        .expect("UnspentFuse");
-                    fused
-                },
-            });
-            state = next_state;
-        } else {
-            for (tgs, commit) in stamps.iter().zip(stamp_commits.iter()) {
-                let next_state = state.next_stamp(commit);
-                let seed = build_unspent_seed_pcd(rng, state, tgs, nf);
-                chain = Some(match chain.take() {
-                    | None => seed,
-                    | Some(left) => {
-                        let (fused, ()) = PROOF_SYSTEM
-                            .fuse(rng, pool::UnspentFuse, (), left, seed)
-                            .expect("UnspentFuse");
-                        fused
-                    },
-                });
-                state = next_state;
-            }
-        }
+        let (summary, gadget) = build_range_summary_at(rng, pool, height);
+        let (unspent, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spendable::UnspentRange,
+                (nf, gadget),
+                summary,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("UnspentRange");
+        chain = Some(match chain.take() {
+            | None => unspent,
+            | Some(left) => {
+                let (fused, ()) = PROOF_SYSTEM
+                    .fuse(rng, spendable::UnspentFuse, (), left, unspent)
+                    .expect("UnspentFuse");
+                fused
+            },
+        });
         if height >= end {
             break;
         }
@@ -528,16 +553,17 @@ impl WalletSim {
             .iter()
             .fold(pool.prev_anchor_at(height), Anchor::next_stamp);
 
+        // Direct one-step bootstrap from the single cm-stamp.
         let stamp_gadget = TachygramSetGadget::from(stamps[cm_idx].as_slice());
         let (spendable, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                spendable::SpendableInit,
+                spendable::SpendableInitStamp,
                 (pre_cm_anchor, stamp_gadget),
                 nf_pcd,
                 Proof::trivial().carry::<()>(()),
             )
-            .expect("SpendableInit");
+            .expect("SpendableInitStamp");
 
         // If cm is the last stamp, post_cm_anchor is already the
         // block-final anchor — no rest-of-block lift needed.
@@ -545,22 +571,35 @@ impl WalletSim {
             return spendable;
         }
 
-        // Build an Unspent over stamps cm_idx+1..end of the cm-block,
-        // chained from post_cm_anchor, then SpendableLift.
+        // Build an Unspent over stamps cm_idx+1..end of the cm-block
+        // — per-stamp RangeSummary then UnspentRange, fused
+        // linearly — chained from post_cm_anchor, then SpendableLift.
         let nf = spendable.data.0;
         let mut state = spendable.data.1;
-        let mut acc: Option<Pcd<'source, pool::Unspent>> = None;
+        let mut acc: Option<Pcd<'source, spendable::Unspent>> = None;
         for (tgs, commit) in stamps[cm_idx + 1..]
             .iter()
             .zip(stamp_commits[cm_idx + 1..].iter())
         {
             let next_state = state.next_stamp(commit);
-            let seed = build_unspent_seed_pcd(rng, state, tgs, nf);
+            let tg_gadget = TachygramSetGadget::from(tgs.as_slice());
+            let (summary, ()) = PROOF_SYSTEM
+                .seed(rng, pool::SummarySeed, (state, tg_gadget.clone()))
+                .expect("SummarySeed");
+            let (unspent, ()) = PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    spendable::UnspentRange,
+                    (nf, tg_gadget),
+                    summary,
+                    Proof::trivial().carry::<()>(()),
+                )
+                .expect("UnspentRange");
             acc = Some(match acc.take() {
-                | None => seed,
+                | None => unspent,
                 | Some(left) => {
                     let (fused, ()) = PROOF_SYSTEM
-                        .fuse(rng, pool::UnspentFuse, (), left, seed)
+                        .fuse(rng, spendable::UnspentFuse, (), left, unspent)
                         .expect("UnspentFuse");
                     fused
                 },

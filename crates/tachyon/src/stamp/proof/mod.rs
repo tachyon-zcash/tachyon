@@ -30,10 +30,15 @@ fn make_app() -> Result<Application, mock_ragu::Error> {
         .register(pool::AnchorSeed)?
         .register(pool::EmptyBlockSeed)?
         .register(pool::AnchorFuse)?
-        .register(pool::UnspentSeed)?
-        .register(pool::EmptyBlockUnspentSeed)?
-        .register(pool::UnspentFuse)?
-        .register(spendable::SpendableInit)?
+        .register(pool::SummarySeed)?
+        .register(pool::EmptyBlockSummarySeed)?
+        .register(pool::SummaryFuse)?
+        .register(spendable::UnspentSeed)?
+        .register(spendable::EmptyBlockUnspentSeed)?
+        .register(spendable::UnspentFuse)?
+        .register(spendable::UnspentRange)?
+        .register(spendable::SpendableInitStamp)?
+        .register(spendable::SpendableInitRange)?
         .register(spendable::SpendableLift)?
         .register(spendable::RolloverFuse)?
         .register(spendable::DelegateRolloverFuse)?

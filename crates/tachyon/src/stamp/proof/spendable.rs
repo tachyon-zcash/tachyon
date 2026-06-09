@@ -1,20 +1,26 @@
 //! Spendable bootstrap, lift, and cross-epoch rollover.
 //!
 //! Bootstrap runs entirely on the user device. The wallet's
-//! [`NullifierHeader`] carries `(cm, nf, epoch)`; [`SpendableInit`]
-//! fuses it with a freely-witnessed `(pre_cm_anchor, stamp_tg_set)`,
-//! verifying `cm ∈ stamp_tg_set`, and emits a [`SpendableHeader`]
-//! carrying `(nf, post_cm_anchor)` — the running anchor immediately
-//! after the cm-stamp's absorption. The cm↔nf binding is structurally
-//! inherited through the [`NullifierHeader`] (GGM-bound). The wallet's
-//! epoch claim flows through `nf` itself, so no epoch alignment check
-//! is needed here.
+//! [`NullifierHeader`] carries `(cm, nf, epoch)`; [`SpendableInitRange`]
+//! fuses it with a [`RangeSummary`] that covers the cm-stamp,
+//! verifying `cm ∈ range.tg_set` and `nf ∉ range.tg_set`, and emits a
+//! [`SpendableHeader`] carrying `(nf, range.end)` — the running anchor
+//! at the end of the input range. The cm↔nf binding is structurally
+//! inherited through the [`NullifierHeader`] (GGM-bound). Because the
+//! range may cover many stamps, the bootstrap checks nf-exclusion the
+//! same way every downstream lift does.
 //!
-//! `pre_cm_anchor` is freely witnessed at this step; the spendable
-//! reaches a real published anchor only by extending through
+//! `start` of the range is freely witnessed at the seed steps; the
+//! spendable reaches a real published anchor only by extending through
 //! [`SpendableLift`] over [`Unspent`] segments, which by construction
 //! prove nf-exclusion at every covered stamp. There is no path that
 //! advances a spendable's anchor without a per-stamp nf-check.
+//!
+//! [`SpendableInitStamp`] is the one-step counterpart for the common
+//! case: the wallet seeds a spendable from a single freely-witnessed
+//! cm-stamp without first building a [`RangeSummary`]. It omits the
+//! nf-exclusion check, sound because a single cm-stamp cannot contain
+//! the note's own `nf`.
 //!
 //! Sync services update spendables via lifts ([`SpendableLift`]) and
 //! cross-epoch rollovers ([`SpendableRollover`] →
@@ -34,35 +40,231 @@ use pasta_curves::Fp;
 
 use super::{
     delegation::{DelegateNullifierHeader, NullifierHeader},
-    pool::Unspent,
+    pool::RangeSummary,
 };
 use crate::{
     note::Nullifier,
     primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetGadget},
 };
 
+/// Per-nf range exclusion proof.
+///
+/// `nf` is absent from every stamp covered by the anchor segment from
+/// `start` to `end`. Built either directly from a single stamp via
+/// [`UnspentSeed`] / [`EmptyBlockUnspentSeed`], or from a [`RangeSummary`]
+/// via [`UnspentRange`], then fused with adjacent fragments via
+/// [`UnspentFuse`] — fusion spans block boundaries because anchor
+/// advances are continuous.
+///
+/// Same-epoch is structurally guaranteed by GGM-binding of `nf` to one
+/// epoch and by the intra-epoch-only `Anchor::next_stamp` advances —
+/// crossing an epoch boundary requires matching a boundary anchor that
+/// no [`Unspent`] builder ever emits.
+///
+/// `nf`'s binding closes at the consumer ([`SpendableLift`] checks
+/// `unspent.nf == spendable.nf`; the spendable's `nf` is itself bound
+/// upstream at [`super::delegation::NullifierHeader`]); `start`'s
+/// binding closes through the spendable lineage plus consensus anchor
+/// membership.
+///
+/// `Unspent` is the natural transition point from bounded
+/// [`RangeSummary`] segments to unbounded long-range proofs: above the
+/// per-step multiset budget the proof carries an `Unspent` (no set)
+/// rather than a `RangeSummary` (with set).
+#[derive(Clone, Debug)]
+pub struct Unspent;
+
+impl Header for Unspent {
+    /// `(nf, start, end)`. `nf` roots in a seed/bridge witness
+    /// ([`UnspentSeed`], [`EmptyBlockUnspentSeed`], or [`UnspentRange`]),
+    /// bound by the consumer ([`SpendableLift`] checks `unspent.nf ==
+    /// spendable.nf`, and the spendable's `nf` is GGM-bound upstream).
+    /// `start` is freely witnessed at a seed; `end` is the absorbed advance.
+    type Data<'source> = (Nullifier, Anchor, Anchor);
+
+    const SUFFIX: Suffix = Suffix::new(6);
+
+    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+        let mut out = Vec::with_capacity(32 + 32 + 32);
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        out.extend_from_slice(&Fp::from(data.1).to_repr());
+        out.extend_from_slice(&Fp::from(data.2).to_repr());
+        out
+    }
+}
+
+/// Per-nf exclusion bridge from a [`RangeSummary`] to an [`Unspent`].
+///
+/// Witnesses `(nf, tg_gadget)`; binds the gadget to the segment's
+/// `tg_set` (so the merged commitment is real), proves `nf ∉ tg_set`
+/// via a multiset query, and emits `Unspent { nf, start: range.start,
+/// end: range.end }`. The empty-block case is folded in naturally —
+/// the empty multiset's `query(x)` is non-zero for every x, so an
+/// empty-block summary trivially excludes any nf.
+///
+/// This is the transition step from bounded [`RangeSummary`] segments
+/// (set-bearing, multiset-budget-bounded) to set-free [`Unspent`]
+/// segments (composable to arbitrary length via [`UnspentFuse`]).
+#[derive(Debug)]
+pub struct UnspentRange;
+
+impl Step for UnspentRange {
+    type Aux<'source> = ();
+    type Left = RangeSummary;
+    type Output = Unspent;
+    type Right = ();
+    /// `(nf, tg_gadget)`.
+    type Witness<'source> = (Nullifier, TachygramSetGadget);
+
+    const INDEX: Index = Index::new(16);
+
+    fn witness<'source>(
+        &self,
+        (nf, tg_gadget): Self::Witness<'source>,
+        (start, end, tg_commit): <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        if tg_gadget.0.commit() != tg_commit.0 {
+            return Err(mock_ragu::Error(
+                "UnspentRange: witness gadget must commit to range tg_set",
+            ));
+        }
+        // Exclusion: nf ∉ set ⇔ query(nf) != 0.
+        if tg_gadget.0.query(Fp::from(nf)) == Fp::ZERO {
+            return Err(mock_ragu::Error("UnspentRange: found nullifier in set"));
+        }
+        Ok(((nf, start, end), ()))
+    }
+}
+
+/// Compose two adjacent [`Unspent`] segments for the same `nf`.
+/// Verify same `nf` and `left.end == right.start`.
+#[derive(Debug)]
+pub struct UnspentFuse;
+
+impl Step for UnspentFuse {
+    type Aux<'source> = ();
+    type Left = Unspent;
+    type Output = Unspent;
+    type Right = Unspent;
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(15);
+
+    fn witness<'source>(
+        &self,
+        _witness: Self::Witness<'source>,
+        (left_nf, left_start, left_end): <Self::Left as Header>::Data<'source>,
+        (right_nf, right_start, right_end): <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        if left_nf != right_nf {
+            return Err(mock_ragu::Error(
+                "UnspentFuse: left and right must share the same nf",
+            ));
+        }
+        if left_end != right_start {
+            return Err(mock_ragu::Error(
+                "UnspentFuse: left.end must equal right.start",
+            ));
+        }
+        Ok(((left_nf, left_start, right_end), ()))
+    }
+}
+
+/// Per-stamp exclusion seed: the direct path from a single stamp to an
+/// [`Unspent`], without an intervening [`RangeSummary`].
+///
+/// Verifies `nf ∉ stamp_tg_set`, absorbs the stamp's commit at `start`,
+/// and produces a one-stamp [`Unspent`]. Equivalent to a
+/// [`super::pool::SummarySeed`] followed by [`UnspentRange`],
+/// collapsed into one step for callers that already hold the stamp's
+/// tachygram set and the target `nf`.
+///
+/// `start` is freely witnessed, so the seed proves nothing about real
+/// coverage on its own. Final binding happens transitively through the
+/// spendable lineage plus consensus-side anchor membership.
+#[derive(Debug)]
+pub struct UnspentSeed;
+
+impl Step for UnspentSeed {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = Unspent;
+    type Right = ();
+    /// `(start, stamp_tg_set, nf)`.
+    type Witness<'source> = (Anchor, TachygramSetGadget, Nullifier);
+
+    const INDEX: Index = Index::new(13);
+
+    fn witness<'source>(
+        &self,
+        (start, stamp_tg_set, nf): Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        // Exclusion: nf ∉ set ⇔ query(nf) != 0.
+        if stamp_tg_set.0.query(Fp::from(nf)) == Fp::ZERO {
+            return Err(mock_ragu::Error("UnspentSeed: found nullifier in set"));
+        }
+        let stamp_commit = TachygramSetCommit::from(stamp_tg_set);
+        let end = start.next_stamp(&stamp_commit);
+        Ok(((nf, start, end), ()))
+    }
+}
+
+/// One-empty-block [`Unspent`] seed for any `nf`, the direct path across
+/// an empty block. No exclusion check is needed: an empty block contains
+/// no stamps, so any nf is trivially absent.
+///
+/// Witness `(start, nf)`; emit `(nf, start, start.next_empty())`. An
+/// attacker can claim any nf at an empty-block segment, but the consumer
+/// ([`SpendableLift`]) checks `unspent.nf == spendable.nf` and the
+/// spendable's nf is GGM-bound upstream, so a fake-nf empty segment can
+/// only "advance" a non-existent fake spendable.
+#[derive(Debug)]
+pub struct EmptyBlockUnspentSeed;
+
+impl Step for EmptyBlockUnspentSeed {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = Unspent;
+    type Right = ();
+    /// `(start, nf)`.
+    type Witness<'source> = (Anchor, Nullifier);
+
+    const INDEX: Index = Index::new(14);
+
+    fn witness<'source>(
+        &self,
+        (start, nf): Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data<'source>,
+        _right: <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        Ok(((nf, start, start.next_empty()), ()))
+    }
+}
+
 /// Wallet's spendable position. Identified by `nf` alone — `nf` uniquely
 /// encodes `(key, epoch)` via GGM determinism, so sync services can update
 /// a spendable by `nf` without knowing `delegation_id`.
 ///
-/// `anchor` at [`SpendableInit`] is computed in-circuit as
-/// `pre_cm_anchor.next_stamp(stamp_commit)`, but its PCD lineage roots
-/// in `SpendableInit`'s unbound `pre_cm_anchor: Anchor` witness.
-/// Binding on that witness closes only through subsequent
-/// [`SpendableLift`] steps over [`Unspent`] segments (each `Unspent`
-/// proves nf-exclusion at a real stamp), plus consensus anchor
-/// membership. There is no path that advances a spendable's anchor
-/// without a per-stamp nf-check.
+/// `anchor` at [`SpendableInitRange`] is inherited as the `end` of the
+/// consumed [`RangeSummary`], but its PCD lineage roots in the
+/// freely-witnessed `start` at the [`RangeSummary`] seed steps.
+/// Binding closes only through subsequent [`SpendableLift`] steps over
+/// [`Unspent`] segments (each `Unspent` proves nf-exclusion at a real
+/// stamp), plus consensus anchor membership. There is no path that
+/// advances a spendable's anchor without a per-stamp nf-check.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
 impl Header for SpendableHeader {
     /// `(nf, anchor)`. `nf` is GGM-bound to `(note, epoch)` upstream
-    /// in [`super::delegation::NullifierHeader`]. `anchor` is computed
-    /// at [`SpendableInit`] as `pre_cm_anchor.next_stamp(stamp_commit)`
-    /// over a freely-witnessed `pre_cm_anchor`, then advanced over
-    /// [`Unspent`] segments at [`SpendableLift`] /
-    /// [`SpendableEpochLift`].
+    /// in [`super::delegation::NullifierHeader`]. `anchor` is inherited
+    /// at [`SpendableInitRange`] as the `end` of a [`RangeSummary`] whose
+    /// `tg_set` contains the note's commitment and excludes the
+    /// nullifier, then advanced over [`Unspent`] segments at
+    /// [`SpendableLift`] / [`SpendableEpochLift`].
     type Data<'source> = (Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(7);
@@ -137,23 +339,100 @@ impl Header for SpendableRolloverHeader {
     }
 }
 
-/// Bootstrap a [`SpendableHeader`] from the wallet's [`NullifierHeader`].
+/// Bootstrap a [`SpendableHeader`] from the wallet's [`NullifierHeader`]
+/// and a [`RangeSummary`] covering the cm-stamp.
+///
+/// Witness `(tg_gadget,)` that commits to `range.tg_set`; verifies
+/// `cm ∈ range.tg_set` and `nf ∉ range.tg_set`, and emits
+/// `(nf, range.end)`.
+///
+/// The nf-exclusion check matches the one [`SpendableLift`] performs
+/// on each downstream `Unspent` — without it, the bootstrap could
+/// land past a spend already made within the range.
+#[derive(Debug)]
+pub struct SpendableInitRange;
+
+impl Step for SpendableInitRange {
+    type Aux<'source> = ();
+    type Left = NullifierHeader;
+    type Output = SpendableHeader;
+    type Right = RangeSummary;
+    /// `(tg_gadget,)` — the multiset gadget binding to `range.tg_set`.
+    type Witness<'source> = (TachygramSetGadget,);
+
+    const INDEX: Index = Index::new(18);
+
+    fn witness<'source>(
+        &self,
+        (tg_gadget,): Self::Witness<'source>,
+        (cm, nf, _nf_epoch): <Self::Left as Header>::Data<'source>,
+        (_start, end, tg_commit): <Self::Right as Header>::Data<'source>,
+    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        if tg_gadget.0.commit() != tg_commit.0 {
+            return Err(mock_ragu::Error(
+                "SpendableInitRange: witness gadget must commit to range tg_set",
+            ));
+        }
+        // Inclusion: cm ∈ set ⇔ query(cm) == 0.
+        if tg_gadget.0.query(Fp::from(cm)) != Fp::ZERO {
+            return Err(mock_ragu::Error(
+                "SpendableInitRange: commitment not in set",
+            ));
+        }
+        // Exclusion: nf ∉ set ⇔ query(nf) != 0. The note must not have
+        // already been spent within the range.
+        if tg_gadget.0.query(Fp::from(nf)) == Fp::ZERO {
+            return Err(mock_ragu::Error(
+                "SpendableInitRange: nullifier found in set",
+            ));
+        }
+        Ok(((nf, end), ()))
+    }
+}
+
+/// Bootstrap a [`SpendableHeader`] directly from the wallet's
+/// [`NullifierHeader`] and a single freely-witnessed cm-stamp.
+///
+/// The one-step counterpart to [`SpendableInitRange`]: where
+/// `SpendableInitRange` consumes a [`RangeSummary`] covering the cm-stamp, this
+/// step takes the cm-stamp's tachygram set as a bare witness, so the wallet can
+/// seed a spendable from its note's creation stamp without first
+/// building a [`RangeSummary`] PCD.
 ///
 /// Witness `(pre_cm_anchor, stamp_tg_set)`: verifies `cm ∈ stamp_tg_set`
 /// (cm comes from the left header) and emits a [`SpendableHeader`]
 /// carrying `(nf, pre_cm_anchor.next_stamp(commit))` — the running
-/// anchor immediately after the cm-stamp's absorption.
+/// anchor immediately after the cm-stamp's absorption (an intra-block
+/// state, lifted to a block boundary downstream).
 ///
-/// `pre_cm_anchor` is freely witnessed; the spendable reaches a real
-/// published anchor only by extending through [`SpendableLift`] over
-/// [`Unspent`] segments built from real stamps. The cm-block itself
-/// cannot contain the wallet's `nf` (`nf` is GGM-bound to `cm`), so no
-/// nf-exclusion check is needed at the cm-stamp; the wallet's epoch
-/// claim flows through `nf` (GGM-bound at the [`NullifierHeader`]).
+/// Field roles: `nf` is threaded from the [`NullifierHeader`] and
+/// GGM-bound to `(note, epoch)` upstream; `pre_cm_anchor` and
+/// `stamp_tg_set` are freely witnessed; the output anchor is derived in
+/// circuit.
+///
+/// Unlike [`SpendableInitRange`], this step performs **no** nf-exclusion
+/// check, and it is sound to omit precisely because the witnessed set
+/// is a single cm-stamp:
+///
+/// - `cm ∈ stamp_tg_set` pins the set to the note's creation stamp (a `cm`
+///   appears in exactly one stamp chain-wide).
+/// - A note's `nf` cannot appear in its own creation block: a shielded spend
+///   references a prior finalized anchor, so a note can never be created and
+///   spent in the same block.
+/// - `pre_cm_anchor` is freely witnessed; its binding closes only downstream
+///   through [`SpendableLift`] over [`Unspent`] segments (each proving
+///   per-stamp nf-exclusion) plus consensus anchor membership. A prover who
+///   witnesses a multi-stamp union as `stamp_tg_set` produces a `commit` that
+///   no real single published stamp matches, so the resulting anchor can never
+///   reach a real consensus anchor and the spendable can never be spent.
+///
+/// That single-block argument is what fails for a [`RangeSummary`] (a
+/// range can mint at its start and spend later within the same range),
+/// which is why [`SpendableInitRange`] keeps the `nf ∉ tg_set` check.
 #[derive(Debug)]
-pub struct SpendableInit;
+pub struct SpendableInitStamp;
 
-impl Step for SpendableInit {
+impl Step for SpendableInitStamp {
     type Aux<'source> = ();
     type Left = NullifierHeader;
     type Output = SpendableHeader;
@@ -161,21 +440,22 @@ impl Step for SpendableInit {
     /// `(pre_cm_anchor, stamp_tg_set)`.
     type Witness<'source> = (Anchor, TachygramSetGadget);
 
-    const INDEX: Index = Index::new(13);
+    const INDEX: Index = Index::new(17);
 
     fn witness<'source>(
         &self,
         (pre_cm_anchor, stamp_tg_set): Self::Witness<'source>,
-        (cm, nf, _epoch): <Self::Left as Header>::Data<'source>,
+        (cm, nf, _nf_epoch): <Self::Left as Header>::Data<'source>,
         _right: <Self::Right as Header>::Data<'source>,
     ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
         // Inclusion: cm ∈ set ⇔ query(cm) == 0.
         if stamp_tg_set.0.query(Fp::from(cm)) != Fp::ZERO {
-            return Err(mock_ragu::Error("SpendableInit: commitment not in set"));
+            return Err(mock_ragu::Error(
+                "SpendableInitStamp: commitment not in set",
+            ));
         }
         let stamp_commit = TachygramSetCommit::from(stamp_tg_set);
-        let post_cm_anchor = pre_cm_anchor.next_stamp(&stamp_commit);
-        Ok(((nf, post_cm_anchor), ()))
+        Ok(((nf, pre_cm_anchor.next_stamp(&stamp_commit)), ()))
     }
 }
 
@@ -191,7 +471,7 @@ impl Step for SpendableLift {
     type Right = Unspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(14);
+    const INDEX: Index = Index::new(19);
 
     fn witness<'source>(
         &self,
@@ -227,7 +507,7 @@ impl Step for RolloverFuse {
     type Right = NullifierHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(15);
+    const INDEX: Index = Index::new(20);
 
     fn witness<'source>(
         &self,
@@ -258,7 +538,7 @@ impl Step for DelegateRolloverFuse {
     type Right = DelegateNullifierHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(16);
+    const INDEX: Index = Index::new(21);
 
     fn witness<'source>(
         &self,
@@ -301,7 +581,7 @@ impl Step for SpendableRollover {
     type Right = NullifierRolloverHeader;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(17);
+    const INDEX: Index = Index::new(22);
 
     fn witness<'source>(
         &self,
@@ -339,7 +619,7 @@ impl Step for SpendableEpochLift {
     type Right = Unspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(18);
+    const INDEX: Index = Index::new(23);
 
     fn witness<'source>(
         &self,
