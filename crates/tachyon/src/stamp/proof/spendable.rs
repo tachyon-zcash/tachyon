@@ -1,28 +1,34 @@
 //! Spendable bootstrap, lift, and cross-epoch rollover.
 //!
 //! Bootstrap runs entirely on the user device. The wallet's
-//! [`NullifierHeader`] carries `(cm, nf, epoch)`; [`SpendableInit`]
-//! fuses it with a freely-witnessed `(pre_cm_anchor, stamp_tg_set)`,
-//! verifying `cm ∈ stamp_tg_set`, and emits a [`SpendableHeader`]
-//! carrying `(nf, post_cm_anchor)` — the running anchor immediately
-//! after the cm-stamp's absorption. The cm↔nf binding is structurally
-//! inherited through the [`NullifierHeader`] (GGM-bound). The wallet's
-//! epoch claim flows through `nf` itself, so no epoch alignment check
-//! is needed here.
+//! [`NullifierHeader`] carries `(cm, nf, epoch)`; [`SpendableInit`] fuses it
+//! with a boundary-rooted [`AnchorChain`] (the segment from the epoch boundary
+//! through the cm-stamp) plus a `(pre_epoch_anchor, pre_cm_anchor,
+//! stamp_tg_set)` witness. It verifies `cm ∈ stamp_tg_set`, requires the chain
+//! to root at `pre_epoch_anchor.next_epoch(epoch)`, requires the cm-stamp to be
+//! the chain's final link, and emits a [`SpendableHeader`] carrying
+//! `(nf, post_cm_anchor)`.
 //!
-//! `pre_cm_anchor` is freely witnessed at this step; the spendable
-//! reaches a real published anchor only by extending through
-//! [`SpendableLift`] over [`Unspent`] segments, which by construction
-//! prove nf-exclusion at every covered stamp. There is no path that
-//! advances a spendable's anchor without a per-stamp nf-check.
+//! Rooting the lineage at `next_epoch(epoch)` pins the GGM leaf index to the
+//! consensus epoch. The chain's `start` is
+//! `pre_epoch_anchor.next_epoch(epoch)`, which consensus anchor membership of
+//! the eventual spend anchor requires to be the real epoch boundary `B_E =
+//! (terminal of E-1).next_epoch(E)`. [`Anchor::next_epoch`] is the sole
+//! epoch-folding domain and an [`AnchorChain`] advances only within an epoch,
+//! so matching those two epoch-folded anchors forces `epoch == E`.
+//! [`SpendableRollover`] applies the same pin at a crossing.
+//!
+//! `pre_epoch_anchor` and `pre_cm_anchor` are witnessed but pinned downstream:
+//! `pre_epoch_anchor` yields a consensus-published anchor only when it is the
+//! real prior-epoch terminal, and the spendable reaches a real published anchor
+//! only by extending through [`SpendableLift`] over [`Unspent`] segments, which
+//! by construction prove nf-exclusion at every covered stamp.
 //!
 //! Sync services update spendables via lifts ([`SpendableLift`]) and
-//! cross-epoch rollovers ([`SpendableRollover`] →
-//! [`SpendableEpochLift`]). [`SpendableRollover`] is the only step that
-//! emits the [`Anchor::next_epoch`] boundary domain — it lifts the old
-//! epoch's terminal anchor into the new epoch's initial anchor, which
-//! the new-epoch [`Unspent`] then extends with ordinary per-stamp
-//! advances.
+//! cross-epoch rollovers ([`SpendableRollover`] then [`SpendableEpochLift`]).
+//! [`SpendableRollover`] lifts the old epoch's terminal anchor into the new
+//! epoch's initial anchor via the [`Anchor::next_epoch`] boundary domain, which
+//! the new-epoch [`Unspent`] then extends with ordinary per-stamp advances.
 
 extern crate alloc;
 
@@ -45,24 +51,21 @@ use crate::{
 /// encodes `(key, epoch)` via GGM determinism, so sync services can update
 /// a spendable by `nf` without knowing `delegation_id`.
 ///
-/// `anchor` at [`SpendableInit`] is computed in-circuit as
-/// `pre_cm_anchor.next_stamp(stamp_commit)`, but its PCD lineage roots
-/// in `SpendableInit`'s unbound `pre_cm_anchor: Anchor` witness.
-/// Binding on that witness closes only through subsequent
-/// [`SpendableLift`] steps over [`Unspent`] segments (each `Unspent`
-/// proves nf-exclusion at a real stamp), plus consensus anchor
-/// membership. There is no path that advances a spendable's anchor
-/// without a per-stamp nf-check.
+/// `anchor` at [`SpendableInit`] is the cm-stamp's `post_cm_anchor`, threaded
+/// from a boundary-rooted [`AnchorChain`] whose `start` is checked to equal
+/// `pre_epoch_anchor.next_epoch(epoch)`. Its PCD lineage therefore folds the
+/// GGM `epoch` at the boundary; binding closes through consensus anchor
+/// membership of the eventual spend anchor, plus the per-stamp nf-checks of any
+/// subsequent [`SpendableLift`] over [`Unspent`] segments.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
 impl Header for SpendableHeader {
-    /// `(nf, anchor)`. `nf` is GGM-bound to `(note, epoch)` upstream
-    /// in [`super::delegation::NullifierHeader`]. `anchor` is computed
-    /// at [`SpendableInit`] as `pre_cm_anchor.next_stamp(stamp_commit)`
-    /// over a freely-witnessed `pre_cm_anchor`, then advanced over
-    /// [`Unspent`] segments at [`SpendableLift`] /
-    /// [`SpendableEpochLift`].
+    /// `(nf, anchor)`. `nf` is GGM-bound to `(note, epoch)` upstream in
+    /// [`super::delegation::NullifierHeader`]. `anchor` is the cm-stamp's
+    /// `post_cm_anchor`, computed at [`SpendableInit`] from a boundary-rooted
+    /// [`AnchorChain`], then advanced over [`Unspent`] segments at
+    /// [`SpendableLift`] / [`SpendableEpochLift`].
     type Data = (Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(7);
@@ -121,10 +124,11 @@ pub struct SpendableRolloverHeader;
 
 impl Header for SpendableRolloverHeader {
     /// `(new_nf, boundary_anchor)`. `boundary_anchor` is computed at
-    /// [`SpendableRollover`] via `Anchor::next_epoch` on the
-    /// spendable's prior anchor, the only place the `Tachyon-EpochStp`
-    /// domain is invoked. The new-epoch [`Unspent`]'s `prev_anchor` is
-    /// the only way to discharge it.
+    /// [`SpendableRollover`] via `Anchor::next_epoch` on the spendable's prior
+    /// anchor. [`SpendableInit`] is the only other in-circuit caller of the
+    /// `Tachyon-EpochStp` domain (it checks a boundary chain's root rather than
+    /// advancing one). The new-epoch [`Unspent`]'s `prev_anchor` is the only
+    /// way to discharge it.
     type Data = (Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(9);
@@ -137,19 +141,22 @@ impl Header for SpendableRolloverHeader {
     }
 }
 
-/// Bootstrap a [`SpendableHeader`] from the wallet's [`NullifierHeader`].
+/// Bootstrap a [`SpendableHeader`] from the wallet's [`NullifierHeader`] and a
+/// boundary-rooted [`AnchorChain`].
 ///
-/// Witness `(pre_cm_anchor, stamp_tg_set)`: verifies `cm ∈ stamp_tg_set`
-/// (cm comes from the left header) and emits a [`SpendableHeader`]
-/// carrying `(nf, pre_cm_anchor.next_stamp(commit))` — the running
-/// anchor immediately after the cm-stamp's absorption.
+/// Verifies `cm ∈ stamp_tg_set` (cm from the [`NullifierHeader`]), requires the
+/// chain to root at `pre_epoch_anchor.next_epoch(epoch)`, and requires the
+/// cm-stamp to be the chain's final link
+/// (`chain.end == pre_cm_anchor.next_stamp(commit)`). Emits a
+/// [`SpendableHeader`] carrying `(nf, post_cm_anchor)`.
 ///
-/// `pre_cm_anchor` is freely witnessed; the spendable reaches a real
-/// published anchor only by extending through [`SpendableLift`] over
-/// [`Unspent`] segments built from real stamps. The cm-block itself
-/// cannot contain the wallet's `nf` (`nf` is GGM-bound to `cm`), so no
-/// nf-exclusion check is needed at the cm-stamp; the wallet's epoch
-/// claim flows through `nf` (GGM-bound at the [`NullifierHeader`]).
+/// The boundary check pins the GGM leaf index to the consensus epoch: consensus
+/// anchor membership of the spend anchor requires `chain.start` to be the real
+/// epoch boundary `B_E`, and since `next_epoch` is the sole epoch-folding
+/// domain and the chain is intra-epoch, matching
+/// `pre_epoch_anchor.next_epoch(epoch)` against `B_E` forces `epoch == E`. The
+/// cm-block carries `cm`, not the wallet's `nf` (`nf` is GGM-bound to `cm`), so
+/// the cm-stamp needs no nf-exclusion check.
 #[derive(Debug)]
 pub struct SpendableInit;
 
@@ -182,12 +189,11 @@ impl Step for SpendableInit {
         }
         let stamp_commit = stamp_tg_set.commit();
 
-        // Pin the lineage's starting epoch to consensus. The boundary-rooted
-        // `AnchorChain` must root at the epoch boundary for the GGM-derived
-        // `epoch` (no longer discarded). `next_epoch` (`Tachyon-EpochStp`) is
-        // the sole epoch-folding domain and `AnchorChain` is intra-epoch by
-        // construction, so once consensus accepts the eventual spend anchor as a
-        // real epoch-E published value, collision/preimage resistance forces
+        // Pin the lineage's starting epoch to consensus. Consensus anchor
+        // membership of the eventual spend anchor requires `chain_start` to be
+        // the real epoch boundary. `next_epoch` (`Tachyon-EpochStp`) is the sole
+        // epoch-folding domain and the chain is intra-epoch, so matching
+        // `pre_epoch_anchor.next_epoch(epoch)` against that boundary forces
         // `epoch == E` (the same pin `SpendableRollover` applies at a crossing).
         if chain_start != pre_epoch_anchor.next_epoch(epoch) {
             return Err(ragu::Error(
@@ -198,8 +204,8 @@ impl Step for SpendableInit {
         // The cm-stamp is the chain's final link: `chain_end ==
         // pre_cm_anchor.next_stamp(cm_commit)`. This ties the cm-inclusion to a
         // real, consensus-pinned stamp and yields `post_cm_anchor` as the chain
-        // end, so a note created first-in-epoch needs only a single-link chain
-        // (`B_E -> B_E.next_stamp(cm)`) with no zero-length segment.
+        // end; a note created first-in-epoch produces a single-link chain
+        // (`B_E.next_stamp(cm)`).
         let post_cm_anchor = pre_cm_anchor.next_stamp(&stamp_commit);
         if chain_end != post_cm_anchor {
             return Err(ragu::Error(
@@ -317,9 +323,11 @@ impl Step for DelegateRolloverFuse {
 /// boundary_anchor)` for [`SpendableEpochLift`] to consume against a
 /// new-epoch [`Unspent`] whose `prev_anchor` equals this boundary.
 ///
-/// This is the only step in the proof tree that invokes the
-/// [`Anchor::next_epoch`] domain. `new_epoch` enters the boundary hash
-/// directly, so any tampered value diverges from the published anchor.
+/// This is the only step that *advances* a live spendable across a boundary
+/// via [`Anchor::next_epoch`]; [`SpendableInit`] also invokes that domain
+/// in-circuit, but to *check* a boundary chain's root rather than advance one.
+/// `new_epoch` enters the boundary hash directly, so any tampered value
+/// diverges from the published anchor.
 #[derive(Debug)]
 pub struct SpendableRollover;
 

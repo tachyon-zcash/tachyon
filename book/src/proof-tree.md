@@ -12,8 +12,8 @@ Multiple parties execute the proof tree.
 ## Lifecycle
 
 A note is essentially created when the wallet runs `SpendableInit`.
-The step takes the wallet's `NullifierHeader` for the creation epoch, a pre-stamp anchor, and the tachygram set of the stamp that produced the note; it checks the note's commitment[^notes] is among those tachygrams and advances the anchor through the stamp.
-The output is a `SpendableHeader` carrying the nullifier and the post-stamp anchor.
+The step takes the wallet's `NullifierHeader` for the creation epoch and an `AnchorChain` running from the creation epoch's boundary anchor through the stamp that produced the note; it checks the note's commitment[^notes] is among that stamp's tachygrams, checks the chain roots at the epoch boundary for the nullifier's epoch, and checks the cm-stamp is the chain's final link.
+The output is a `SpendableHeader` carrying the nullifier and the post-stamp anchor; rooting the chain at the epoch boundary binds the nullifier's epoch to the consensus chain.
 
 Maintaining the spendable means advancing its anchor forward over `Unspent` segments.
 `SpendableLift` consumes one `Unspent` whose nullifier matches the spendable's and whose start matches the spendable's current anchor, producing a fresh `SpendableHeader` at the segment's end.
@@ -108,11 +108,12 @@ A fresh trapdoor per delegation makes the delegation identifier unlinkable acros
 
 `AnchorSeed`, `EmptyBlockSeed`, `UnspentSeed`, and `EmptyBlockUnspentSeed` each witness a starting anchor and prove one anchor step.
 `AnchorFuse` and `UnspentFuse` compose adjacent segments by checking endpoint equality.
-A segment ties to real chain history only when a stamp-emitting step consumes it and the resulting stamp's anchor matches a consensus-published end-of-block value.
+A segment ties to real chain history only through a consensus-published stamp whose anchor matches an end-of-block value: `StampLift` emits that stamp directly, while a segment consumed by `SpendableInit` produces a private spendable whose anchor reaches consensus only once it is spent into a stamp.
 
 ### Spendable lifecycle
 
-A spendable bootstraps at `SpendableInit`, which fuses the wallet's `NullifierHeader` with a pre-stamp anchor and the tachygram set of the stamp that produced the note, verifies the note's commitment[^notes] is among those tachygrams, and advances the anchor through that stamp.
+A spendable bootstraps at `SpendableInit`, which fuses the wallet's `NullifierHeader` with a boundary-rooted `AnchorChain` covering the creation epoch's boundary through the cm-stamp, verifies the note's commitment[^notes] is among the cm-stamp's tachygrams, requires the chain to root at the epoch boundary `next_epoch(epoch)`, and requires the cm-stamp to be the chain's final link.
+Because `next_epoch` is the only epoch-folding anchor domain and an `AnchorChain` advances only within an epoch, consensus anchor membership of the eventual spend anchor fixes which epoch boundary the chain roots at, binding the GGM leaf index to the consensus epoch.
 `SpendableLift` advances the spendable's anchor further by consuming an `Unspent` segment whose nullifier equals the spendable's and whose start matches the spendable's current anchor.
 Each `UnspentSeed` link absorbs one stamp into the anchor and proves the spendable's nullifier is absent from that stamp's tachygram set[^tachygrams]; `EmptyBlockUnspentSeed` skips the absence check (no tachygrams to scan); `UnspentFuse` requires both halves to share a nullifier and to meet at a common anchor.
 
@@ -165,7 +166,8 @@ flowchart TB
   end
 
   subgraph spendable [spendable advance]
-    w_init[/anchor, stamp_tg_set/]
+    w_init[/pre_epoch_anchor, pre_cm_anchor, stamp_tg_set/]
+    anchor_init((AnchorChain))
     s_init[SpendableInit]
     s_rfuse[RolloverFuse]
     s_rollover[SpendableRollover]
@@ -201,6 +203,7 @@ flowchart TB
   s_prefix -->|NfPrefixHeader| s_leaf_next
 
   s_leaf_old -->|NullifierHeader e-1| s_init
+  anchor_init --> s_init
   w_init --> s_init
   s_init -->|SpendableHeader| s_rollover
 
@@ -357,7 +360,7 @@ A sync-service variant substitutes `DelegateRolloverFuse` (consuming two `Delega
 | DelegateNullifierStep | DelegateNfPrefixHeader | — | — | DelegateNullifierHeader |
 | RolloverFuse | NullifierHeader | NullifierHeader | — | NullifierRolloverHeader |
 | DelegateRolloverFuse | DelegateNullifierHeader | DelegateNullifierHeader | — | NullifierRolloverHeader |
-| SpendableInit | NullifierHeader | — | anchor, stamp_tg_set | SpendableHeader |
+| SpendableInit | AnchorChain | NullifierHeader | pre_epoch_anchor, pre_cm_anchor, stamp_tg_set | SpendableHeader |
 | SpendableLift | SpendableHeader | Unspent | — | SpendableHeader |
 | SpendableRollover | SpendableHeader | NullifierRolloverHeader | — | SpendableRolloverHeader |
 | SpendableEpochLift | SpendableRolloverHeader | Unspent | — | SpendableHeader |

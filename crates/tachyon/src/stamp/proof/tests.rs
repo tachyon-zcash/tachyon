@@ -17,11 +17,10 @@ use crate::{
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
     fixtures::{
-        PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_anchor_chain_prefix_pcd,
-        build_nullifier_rollover_pcd, build_output_stamp, build_unspent_pcd,
-        build_unspent_seed_pcd,
+        PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_nullifier_rollover_pcd,
+        build_output_stamp, build_unspent_pcd, build_unspent_seed_pcd,
         ggm_tools::{delegate_nullifier_from_master, delegate_range},
-        random_block, random_block_with, spend_witness,
+        random_block, random_block_with, spend_witness, spendable_init_inputs,
     },
     note::{self, Nullifier},
     primitives::{Anchor, BlockHeight, DelegationTrapdoor, EpochIndex, Tachygram, effect},
@@ -38,32 +37,20 @@ fn tg<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Tachygram {
     Tachygram::from(Fp::random(rng))
 }
 
-/// Drive a full same-epoch spend lineage for `note` at GGM leaf index `idx`,
-/// returning the published spend [`stamp::StampHeader`] PCD.
-///
-/// The spendable's `nf`, the [`spend::SpendBind`] pair, and the
-/// [`stamp::SpendStamp`] tie all share `idx`. After the base-case epoch pin in
-/// [`spendable::SpendableInit`], only `idx == cm_height.epoch()` bootstraps
-/// successfully — a wrong index fails the boundary check (see
-/// `same_epoch_spend_wrong_index_rejected`).
 fn same_epoch_spend_lineage(
     rng: &mut (impl RngCore + CryptoRng),
     user: &WalletSim,
     pool: &PoolSim,
     cm_height: BlockHeight,
     note: note::Note,
-    idx: u32,
 ) -> Pcd<stamp::StampHeader> {
-    let nf_for_init = user.nullifier_pcd(rng, note, EpochIndex(idx));
-    let spendable = user.spendable_init(rng, note, pool, cm_height, nf_for_init);
-
-    let (nf_now, nf_next) = user.nullifier_pair_pcd(rng, note, EpochIndex(idx));
-    let (rcv, _theta, alpha) = spend_witness(rng, &note);
+    let (spend_note, nf_now, nf_next, spendable) = user.fresh_spend(rng, pool, cm_height, note);
+    let (rcv, _theta, alpha) = spend_witness(rng, &spend_note);
     let (spend_pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             spend::SpendBind,
-            (rcv, alpha, user.pak, note),
+            (rcv, alpha, user.pak, spend_note),
             nf_now,
             nf_next,
         )
@@ -74,92 +61,117 @@ fn same_epoch_spend_lineage(
     stamp_pcd
 }
 
-/// After the base-case epoch pin, an honest same-epoch spend at the correct
-/// index `E` still builds and publishes its `{N_E, N_{E+1}}` pair. False-
-/// positive guard for the fix.
+fn mine_cm_in_epoch_one(
+    rng: &mut (impl RngCore + CryptoRng),
+    pool: &mut PoolSim,
+    cm: note::Commitment,
+) -> BlockHeight {
+    // Height EPOCH_SIZE is epoch 1's first block, carrying the real B_1 fold.
+    while pool.height().0 < EPOCH_SIZE {
+        pool.mine(random_block(rng, 1, 3));
+    }
+    pool.mine(random_block_with(rng, &[alloc::vec![cm]], 4));
+    let cm_height = pool.height();
+    assert_eq!(cm_height.epoch().0, 1, "cm-block is in epoch 1");
+    cm_height
+}
+
 #[test]
-fn same_epoch_spend_honest_index_stays_green() {
+fn same_epoch_honest_spend_accepted() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
-    let cm = note.commitment();
+    let cm_height = mine_cm_in_epoch_one(rng, &mut pool, note.commitment());
+    let epoch = cm_height.epoch().0;
 
-    pool.mine(random_block_with(rng, &[alloc::vec![cm]], 4));
-    let cm_height = pool.height();
-    let e = cm_height.epoch().0;
-
-    let stamp = same_epoch_spend_lineage(rng, &user, &pool, cm_height, note, e);
-
+    let stamp = same_epoch_spend_lineage(rng, &user, &pool, cm_height, note);
     let expected = TachygramSetCommit::from(
         [
-            note.nullifier(&user.pak.nk, EpochIndex(e)).into(),
-            note.nullifier(&user.pak.nk, EpochIndex(e + 1)).into(),
+            note.nullifier(&user.pak.nk, EpochIndex(epoch)).into(),
+            note.nullifier(&user.pak.nk, EpochIndex(epoch + 1)).into(),
         ]
         .as_slice(),
     );
     assert_eq!(stamp.data().1, expected, "publishes {{N_E, N_E+1}}");
-
     PROOF_SYSTEM
         .rerandomize(stamp, rng)
         .expect("rerandomize honest same-epoch spend");
 }
 
-/// Regression guard for the same-epoch double-spend. A nullifier walked to the
-/// wrong index (`E + 2`) cannot bootstrap a spendable against a real epoch-`E`
-/// boundary chain: [`spendable::SpendableInit`] rejects because the chain roots
-/// at `B_E`, not `prev_tip.next_epoch(E + 2)`. Driven via a raw `fuse` so the
-/// `Err` surfaces (the `spendable_init` fixture would `.expect`).
 #[test]
-fn same_epoch_spend_wrong_index_rejected() {
+fn same_epoch_wrong_index_rejected_against_honest_chain() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
-    let cm = note.commitment();
+    let cm_height = mine_cm_in_epoch_one(rng, &mut pool, note.commitment());
+    let wrong = cm_height.epoch().0 + 2;
 
-    pool.mine(random_block_with(rng, &[alloc::vec![cm]], 4));
-    let cm_height = pool.height();
-    let e = cm_height.epoch().0;
-    let wrong = e + 2;
-    assert!(wrong.abs_diff(e) >= 2);
-
-    // Reconstruct the honest epoch-E SpendableInit inputs (boundary chain rooted
-    // at B_E, real pre_cm_anchor)...
-    let stamps = pool.tachygrams_at(cm_height);
-    let stamp_commits = pool.stamp_commits_at(cm_height);
-    let cm_idx = stamps
-        .iter()
-        .position(|tgs| tgs.contains(&cm.into()))
-        .expect("cm present in cm-block");
-    let pre_cm_anchor = stamp_commits[..cm_idx]
-        .iter()
-        .fold(pool.prev_anchor_at(cm_height), Anchor::next_stamp);
-    let epoch_first = BlockHeight(e * EPOCH_SIZE);
-    let pre_epoch_anchor = if e == 0 {
-        Anchor::from(Fp::ZERO)
-    } else {
-        pool.anchor_at(BlockHeight(epoch_first.0 - 1))
-    };
-    let chain = build_anchor_chain_prefix_pcd(rng, &pool, epoch_first, cm_height, cm_idx);
-
-    // ...but feed a NullifierHeader walked to the wrong index.
+    let (pre_epoch_anchor, pre_cm_anchor, stamp_tg_set, chain) =
+        spendable_init_inputs(rng, &pool, note.commitment(), cm_height);
     let nf_wrong = user.nullifier_pcd(rng, note, EpochIndex(wrong));
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             spendable::SpendableInit,
-            (
-                pre_epoch_anchor,
-                pre_cm_anchor,
-                TachygramSetPoly::from(stamps[cm_idx].as_slice()),
-            ),
+            (pre_epoch_anchor, pre_cm_anchor, stamp_tg_set),
             chain,
             nf_wrong,
         )
         .err()
         .unwrap();
     assert_eq!(err.0, "SpendableInit: chain not rooted at epoch boundary");
+}
+
+#[test]
+fn spendable_init_accepts_forged_chain() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+    let note = user.random_note(rng, 500);
+    let cm = note.commitment();
+    let cm_height = mine_cm_in_epoch_one(rng, &mut pool, cm);
+    let wrong = cm_height.epoch().0 + 2;
+
+    // Forge a boundary at the wrong epoch: `pre_epoch_anchor = x` (arbitrary), a
+    // chain seeded at `forged_start = x.next_epoch(wrong)` absorbing the real
+    // cm-stamp, and `pre_cm_anchor = forged_start` so `chain_end ==
+    // pre_cm_anchor.next_stamp(cm_commit)`. Both SpendableInit checks then pass.
+    let stamps = pool.tachygrams_at(cm_height);
+    let cm_idx = stamps
+        .iter()
+        .position(|tgs| tgs.contains(&cm.into()))
+        .expect("cm present in cm-block");
+    let x = Anchor::from(Fp::random(&mut *rng));
+    let forged_start = x.next_epoch(EpochIndex(wrong));
+    let cm_set = TachygramSetPoly::from(stamps[cm_idx].as_slice());
+    let cm_commit = cm_set.commit();
+    let (forged_chain, ()) = PROOF_SYSTEM
+        .seed(rng, pool::AnchorSeed, (forged_start, cm_commit))
+        .expect("AnchorSeed");
+
+    let nf_wrong = user.nullifier_pcd(rng, note, EpochIndex(wrong));
+    let (forged_spendable, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableInit,
+            (x, forged_start, cm_set),
+            forged_chain,
+            nf_wrong,
+        )
+        .expect("SpendableInit accepts the forged wrong-index chain");
+
+    // The circuit accepted, but the produced anchor is off the published sequence,
+    // so consensus anchor membership is what rejects the eventual spend.
+    let forged_anchor = forged_spendable.data().1;
+    assert_eq!(forged_anchor, forged_start.next_stamp(&cm_commit));
+    let forged_off_sequence =
+        (0..=cm_height.0).all(|height| pool.anchor_at(BlockHeight(height)) != forged_anchor);
+    assert!(
+        forged_off_sequence,
+        "forged wrong-index anchor must be absent from the published sequence"
+    );
 }
 
 #[test]
@@ -217,7 +229,8 @@ fn spend_bind_rejects_invalid_inputs() {
                 nf_pcd_l,
                 nf_pcd_r,
             )
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(
             err.0, "SpendBind: nullifiers not adjacent",
             "epochs {epoch_l:?} {epoch_r:?}"
@@ -245,7 +258,8 @@ fn spend_bind_rejects_invalid_inputs() {
                 nf_now,
                 nf_next,
             )
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "SpendBind: nullifiers not related");
     }
 
@@ -270,7 +284,8 @@ fn spend_bind_rejects_invalid_inputs() {
                 nf_now,
                 nf_next,
             )
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "SpendBind: nullifiers not related to note");
     }
 
@@ -297,7 +312,8 @@ fn spend_bind_rejects_invalid_inputs() {
                 nf_now,
                 nf_next,
             )
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "SpendBind: pak not related to note");
     }
 }
@@ -318,7 +334,8 @@ fn step_rejects_zero_value_note() {
     {
         let err = PROOF_SYSTEM
             .seed(rng, delegation::NfMasterSeed, (zero_note, user.pak))
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "NfMasterSeed: zero-value note");
     }
 
@@ -333,7 +350,8 @@ fn step_rejects_zero_value_note() {
                 stamp::OutputStamp,
                 (out_rcv, out_alpha, zero_note, out_anchor),
             )
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "OutputStamp: zero-value note");
     }
 
@@ -355,7 +373,8 @@ fn step_rejects_zero_value_note() {
                 nf_now_pcd,
                 nf_next_pcd,
             )
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "SpendBind: zero-value note");
 
         // this should also fail the commitment test
@@ -397,7 +416,8 @@ fn spend_stamp_rejects_identity_cv() {
 
     let err = PROOF_SYSTEM
         .fuse(rng, stamp::SpendStamp, (), forged_spend, spendable)
-        .err().unwrap();
+        .err()
+        .unwrap();
     assert_eq!(err.0, "SpendStamp: action digest construction failed");
 }
 
@@ -463,7 +483,8 @@ fn spendable_lift_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), forged_spendable, unspent)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "SpendableLift: unspent not adjacent to spendable");
     }
 
@@ -496,7 +517,8 @@ fn spendable_lift_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable_a, unspent_b)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "SpendableLift: unspent does not relate to spendable");
     }
 }
@@ -539,7 +561,8 @@ fn unspent_seed_rejects_tg_present() {
 
     let err = PROOF_SYSTEM
         .seed(rng, pool::UnspentSeed, (start, containing_set, nf))
-        .err().unwrap();
+        .err()
+        .unwrap();
     assert_eq!(err.0, "UnspentSeed: found nullifier in set");
 }
 
@@ -564,7 +587,8 @@ fn delegate_rollover_fuse_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::DelegateRolloverFuse, (), nf_a, nf_b)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "DelegateRolloverFuse: nullifiers not related");
     }
 
@@ -582,7 +606,8 @@ fn delegate_rollover_fuse_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::DelegateRolloverFuse, (), nf_l, nf_r)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(
             err.0, "DelegateRolloverFuse: nullifiers not adjacent",
             "epochs {epoch_l:?} {epoch_r:?}"
@@ -617,7 +642,8 @@ fn spendable_rollover_rejects_nf_mismatch() {
             spendable_a,
             rollover_b,
         )
-        .err().unwrap();
+        .err()
+        .unwrap();
     assert_eq!(err.0, "SpendableRollover: nullifiers don't match");
 }
 
@@ -656,7 +682,8 @@ fn spendable_epoch_lift_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableEpochLift, (), rolled_a, unspent_b)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "SpendableEpochLift: nullifiers not related");
     }
 
@@ -697,7 +724,8 @@ fn spendable_epoch_lift_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableEpochLift, (), rolled_a, unspent)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(
             err.0,
             "SpendableEpochLift: unspent prev_anchor must equal rollover boundary_anchor"
@@ -719,7 +747,8 @@ fn rollover_fuse_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::RolloverFuse, (), nf_a, nf_b)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "RolloverFuse: nullifiers not related");
     }
 
@@ -734,7 +763,8 @@ fn rollover_fuse_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::RolloverFuse, (), nf_l, nf_r)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(
             err.0, "RolloverFuse: nullifiers not adjacent",
             "epochs {epoch_l:?} {epoch_r:?}"
@@ -758,7 +788,8 @@ fn unspent_fuse_rejects_invalid_compositions() {
         let shard_b = build_unspent_seed_pcd(rng, mid, &stamps_right, nf_b);
         let err = PROOF_SYSTEM
             .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "UnspentFuse: left and right must share the same nf");
     }
 
@@ -770,7 +801,8 @@ fn unspent_fuse_rejects_invalid_compositions() {
         let shard_b = build_unspent_seed_pcd(rng, start, &stamps_right, nf);
         let err = PROOF_SYSTEM
             .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
     }
 }
@@ -793,7 +825,8 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, pool::AnchorFuse, (), left, right)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "AnchorFuse: segments not adjacent");
     }
 
@@ -817,7 +850,8 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, pool::AnchorFuse, (), left, right)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "AnchorFuse: segments not adjacent");
     }
 }
@@ -847,7 +881,8 @@ fn unspent_fuse_rejects_cross_pool_or_cross_epoch() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, pool::UnspentFuse, (), left, right)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
     }
 
@@ -872,7 +907,8 @@ fn unspent_fuse_rejects_cross_pool_or_cross_epoch() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, pool::UnspentFuse, (), left, right)
-            .err().unwrap();
+            .err()
+            .unwrap();
         assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
     }
 }
