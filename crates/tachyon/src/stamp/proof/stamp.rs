@@ -5,8 +5,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use group::GroupEncoding as _;
-use mock_ragu::{Header, Index, Polynomial, Step, Suffix, enforce_poly_product};
 use pasta_curves::EqAffine;
+use ragu::{Header, Index, Polynomial, Step, Suffix, enforce_poly_product};
 
 use super::{pool::AnchorChain, spend::SpendHeader, spendable::SpendableHeader};
 use crate::{
@@ -78,21 +78,21 @@ impl Step for OutputStamp {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         (rcv, alpha, note, anchor): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if u64::from(note.value) == 0 {
-            return Err(mock_ragu::Error("OutputStamp: zero-value note"));
+            return Err(ragu::Error("OutputStamp: zero-value note"));
         }
         if u64::from(note.value) > NOTE_VALUE_MAX {
-            return Err(mock_ragu::Error("OutputStamp: note value exceeds maximum"));
+            return Err(ragu::Error("OutputStamp: note value exceeds maximum"));
         }
         let cv = rcv.commit(-i64::from(note.value));
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         let action_digest = ActionDigest::new(cv, rk)
-            .map_err(|_err| mock_ragu::Error("OutputStamp: action digest construction failed"))?;
+            .map_err(|_err| ragu::Error("OutputStamp: action digest construction failed"))?;
         let tachygram = Tachygram::from(note.commitment());
 
         let data = (
@@ -127,19 +127,19 @@ impl Step for SpendStamp {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
         (cv, rk, (now_nf, next_nf)): <Self::Left as Header>::Data,
         (anchored_nf, anchor): <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if now_nf != anchored_nf {
-            return Err(mock_ragu::Error(
+            return Err(ragu::Error(
                 "SpendStamp: spend's now_nf must equal spendable's nf",
             ));
         }
 
         let action_digest = ActionDigest::new(cv, rk)
-            .map_err(|_err| mock_ragu::Error("SpendStamp: action digest construction failed"))?;
+            .map_err(|_err| ragu::Error("SpendStamp: action digest construction failed"))?;
 
         let data = (
             ActionSetCommit::from([action_digest].as_slice()),
@@ -176,14 +176,14 @@ impl Step for MergeStamp {
 
     fn witness<'source>(
         &self,
-        ctx: &mut mock_ragu::StepCtx<'_>,
+        ctx: &mut ragu::StepCtx<'_>,
         (left_action, right_action, left_tachygram, right_tachygram): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
         (right_action_commit, right_tachygram_commit, right_anchor): <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Same-anchor constraint.
         if left_anchor != right_anchor {
-            return Err(mock_ragu::Error("MergeStamp: anchors must match"));
+            return Err(ragu::Error("MergeStamp: anchors must match"));
         }
 
         // Bind the witnessed input sets to the public commitments on Data.
@@ -192,7 +192,7 @@ impl Step for MergeStamp {
             || left_tachygram.commit() != left_tachygram_commit
             || right_tachygram.commit() != right_tachygram_commit
         {
-            return Err(mock_ragu::Error(
+            return Err(ragu::Error(
                 "MergeStamp: witness accumulators must commit to header commits",
             ));
         }
@@ -239,14 +239,14 @@ impl Step for StampLift {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         (): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, old_anchor): <Self::Left as Header>::Data,
         (segment_start, segment_end): <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // The anchor segment must root at the stamp's old anchor.
         if segment_start != old_anchor {
-            return Err(mock_ragu::Error(
+            return Err(ragu::Error(
                 "StampLift: segment start must equal stamp old_anchor",
             ));
         }

@@ -7,6 +7,15 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
 
+[workspace.dependencies]
+ff = { version = "0.13", default-features = false }
+group = { version = "0.13", default-features = false }
+rand = "0.8"
+rand_core = { version = "0.6", default-features = false }
+pasta_curves = "0.5.1"
+ragu = { git = "https://github.com/turbocrime/ragu", rev = "794c2c6318e2d3a6bd9dd88eaa230bd9a42a5bb8", default-features = false }
+
+
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }
 keyword_idents = { level = "forbid", priority = -1 }

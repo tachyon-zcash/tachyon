@@ -2,8 +2,8 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use mock_ragu::{Commitment, Polynomial};
 use pasta_curves::{EqAffine, Fp};
+use ragu::{Commitment, Polynomial};
 
 use super::{ActionDigest, Tachygram};
 use crate::{Action, ActionDigestError};

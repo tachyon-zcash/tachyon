@@ -6,8 +6,8 @@ extern crate alloc;
 use alloc::vec;
 
 use ff::Field as _;
-use mock_ragu::Proof;
 use pasta_curves::Fp;
+use ragu::Proof;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
 
@@ -92,7 +92,7 @@ fn spend_bind_rejects_invalid_inputs() {
                 nf_pcd_l,
                 nf_pcd_r,
             )
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(
             err.0, "SpendBind: nullifiers not adjacent",
             "epochs {epoch_l:?} {epoch_r:?}"
@@ -120,7 +120,7 @@ fn spend_bind_rejects_invalid_inputs() {
                 nf_now,
                 nf_next,
             )
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "SpendBind: nullifiers not related");
     }
 
@@ -145,7 +145,7 @@ fn spend_bind_rejects_invalid_inputs() {
                 nf_now,
                 nf_next,
             )
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "SpendBind: nullifiers not related to note");
     }
 
@@ -172,7 +172,7 @@ fn spend_bind_rejects_invalid_inputs() {
                 nf_now,
                 nf_next,
             )
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "SpendBind: pak not related to note");
     }
 }
@@ -193,7 +193,7 @@ fn step_rejects_zero_value_note() {
     {
         let err = PROOF_SYSTEM
             .seed(rng, delegation::NfMasterSeed, (zero_note, user.pak))
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "NfMasterSeed: zero-value note");
     }
 
@@ -208,7 +208,7 @@ fn step_rejects_zero_value_note() {
                 stamp::OutputStamp,
                 (out_rcv, out_alpha, zero_note, out_anchor),
             )
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "OutputStamp: zero-value note");
     }
 
@@ -230,7 +230,7 @@ fn step_rejects_zero_value_note() {
                 nf_now_pcd,
                 nf_next_pcd,
             )
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "SpendBind: zero-value note");
 
         // this should also fail the commitment test
@@ -272,7 +272,7 @@ fn spend_stamp_rejects_identity_cv() {
 
     let err = PROOF_SYSTEM
         .fuse(rng, stamp::SpendStamp, (), forged_spend, spendable)
-        .unwrap_err();
+        .err().unwrap();
     assert_eq!(err.0, "SpendStamp: action digest construction failed");
 }
 
@@ -338,7 +338,7 @@ fn spendable_lift_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), forged_spendable, unspent)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "SpendableLift: unspent not adjacent to spendable");
     }
 
@@ -371,7 +371,7 @@ fn spendable_lift_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable_a, unspent_b)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "SpendableLift: unspent does not relate to spendable");
     }
 }
@@ -393,7 +393,7 @@ fn spendable_init_rejects_tg_absent() {
             nf_pcd_absent,
             Proof::trivial().carry::<()>(()),
         )
-        .unwrap_err();
+        .err().unwrap();
     assert_eq!(err.0, "SpendableInit: commitment not in set");
 }
 
@@ -409,7 +409,7 @@ fn unspent_seed_rejects_tg_present() {
 
     let err = PROOF_SYSTEM
         .seed(rng, pool::UnspentSeed, (start, containing_set, nf))
-        .unwrap_err();
+        .err().unwrap();
     assert_eq!(err.0, "UnspentSeed: found nullifier in set");
 }
 
@@ -434,7 +434,7 @@ fn delegate_rollover_fuse_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::DelegateRolloverFuse, (), nf_a, nf_b)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "DelegateRolloverFuse: nullifiers not related");
     }
 
@@ -452,7 +452,7 @@ fn delegate_rollover_fuse_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::DelegateRolloverFuse, (), nf_l, nf_r)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(
             err.0, "DelegateRolloverFuse: nullifiers not adjacent",
             "epochs {epoch_l:?} {epoch_r:?}"
@@ -487,7 +487,7 @@ fn spendable_rollover_rejects_nf_mismatch() {
             spendable_a,
             rollover_b,
         )
-        .unwrap_err();
+        .err().unwrap();
     assert_eq!(err.0, "SpendableRollover: nullifiers don't match");
 }
 
@@ -526,7 +526,7 @@ fn spendable_epoch_lift_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableEpochLift, (), rolled_a, unspent_b)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "SpendableEpochLift: nullifiers not related");
     }
 
@@ -567,7 +567,7 @@ fn spendable_epoch_lift_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableEpochLift, (), rolled_a, unspent)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(
             err.0,
             "SpendableEpochLift: unspent prev_anchor must equal rollover boundary_anchor"
@@ -589,7 +589,7 @@ fn rollover_fuse_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::RolloverFuse, (), nf_a, nf_b)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "RolloverFuse: nullifiers not related");
     }
 
@@ -604,7 +604,7 @@ fn rollover_fuse_rejects_invalid_inputs() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, spendable::RolloverFuse, (), nf_l, nf_r)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(
             err.0, "RolloverFuse: nullifiers not adjacent",
             "epochs {epoch_l:?} {epoch_r:?}"
@@ -628,7 +628,7 @@ fn unspent_fuse_rejects_invalid_compositions() {
         let shard_b = build_unspent_seed_pcd(rng, mid, &stamps_right, nf_b);
         let err = PROOF_SYSTEM
             .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "UnspentFuse: left and right must share the same nf");
     }
 
@@ -640,7 +640,7 @@ fn unspent_fuse_rejects_invalid_compositions() {
         let shard_b = build_unspent_seed_pcd(rng, start, &stamps_right, nf);
         let err = PROOF_SYSTEM
             .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
     }
 }
@@ -663,7 +663,7 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, pool::AnchorFuse, (), left, right)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "AnchorFuse: segments not adjacent");
     }
 
@@ -687,7 +687,7 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, pool::AnchorFuse, (), left, right)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "AnchorFuse: segments not adjacent");
     }
 }
@@ -717,7 +717,7 @@ fn unspent_fuse_rejects_cross_pool_or_cross_epoch() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, pool::UnspentFuse, (), left, right)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
     }
 
@@ -742,7 +742,7 @@ fn unspent_fuse_rejects_cross_pool_or_cross_epoch() {
 
         let err = PROOF_SYSTEM
             .fuse(rng, pool::UnspentFuse, (), left, right)
-            .unwrap_err();
+            .err().unwrap();
         assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
     }
 }

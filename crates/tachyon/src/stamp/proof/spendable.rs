@@ -29,8 +29,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::{Field as _, PrimeField as _};
-use mock_ragu::{Header, Index, Step, Suffix};
 use pasta_curves::Fp;
+use ragu::{Header, Index, Step, Suffix};
 
 use super::{
     delegation::{DelegateNullifierHeader, NullifierHeader},
@@ -165,17 +165,17 @@ impl Step for SpendableInit {
 
     fn witness<'source>(
         &self,
-        ctx: &mut mock_ragu::StepCtx<'_>,
+        ctx: &mut ragu::StepCtx<'_>,
         (pre_cm_anchor, stamp_tg_set): Self::Witness<'source>,
         (cm, nf, _epoch): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_point = Fp::from(cm);
         let eval = stamp_tg_set.eval(cm_point);
         ctx.enforce_poly_query(stamp_tg_set.commit().into(), cm_point, eval)?;
         if eval != Fp::ZERO {
-            return Err(mock_ragu::Error("SpendableInit: commitment not in set"));
+            return Err(ragu::Error("SpendableInit: commitment not in set"));
         }
         let stamp_commit = stamp_tg_set.commit();
         let post_cm_anchor = pre_cm_anchor.next_stamp(&stamp_commit);
@@ -199,18 +199,18 @@ impl Step for SpendableLift {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
         (spendable_nf, spendable_anchor): <Self::Left as Header>::Data,
         (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if unspent_nf != spendable_nf {
-            return Err(mock_ragu::Error(
+            return Err(ragu::Error(
                 "SpendableLift: unspent does not relate to spendable",
             ));
         }
         if unspent_prev_anchor != spendable_anchor {
-            return Err(mock_ragu::Error(
+            return Err(ragu::Error(
                 "SpendableLift: unspent not adjacent to spendable",
             ));
         }
@@ -234,16 +234,16 @@ impl Step for RolloverFuse {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
         (left_cm, left_nf, left_epoch): <Self::Left as Header>::Data,
         (right_cm, right_nf, right_epoch): <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if left_cm != right_cm {
-            return Err(mock_ragu::Error("RolloverFuse: nullifiers not related"));
+            return Err(ragu::Error("RolloverFuse: nullifiers not related"));
         }
         if right_epoch.0 != left_epoch.0 + 1 {
-            return Err(mock_ragu::Error("RolloverFuse: nullifiers not adjacent"));
+            return Err(ragu::Error("RolloverFuse: nullifiers not adjacent"));
         }
         Ok(((left_nf, right_nf, right_epoch), ()))
     }
@@ -266,20 +266,16 @@ impl Step for DelegateRolloverFuse {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
         (left_nf, left_epoch, left_delegation_id): <Self::Left as Header>::Data,
         (right_nf, right_epoch, right_delegation_id): <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if left_delegation_id != right_delegation_id {
-            return Err(mock_ragu::Error(
-                "DelegateRolloverFuse: nullifiers not related",
-            ));
+            return Err(ragu::Error("DelegateRolloverFuse: nullifiers not related"));
         }
         if right_epoch.0 != left_epoch.0 + 1 {
-            return Err(mock_ragu::Error(
-                "DelegateRolloverFuse: nullifiers not adjacent",
-            ));
+            return Err(ragu::Error("DelegateRolloverFuse: nullifiers not adjacent"));
         }
         Ok(((left_nf, right_nf, right_epoch), ()))
     }
@@ -310,15 +306,13 @@ impl Step for SpendableRollover {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
         (spendable_nf, spendable_anchor): <Self::Left as Header>::Data,
         (rollover_old_nf, rollover_new_nf, rollover_new_epoch): <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if spendable_nf != rollover_old_nf {
-            return Err(mock_ragu::Error(
-                "SpendableRollover: nullifiers don't match",
-            ));
+            return Err(ragu::Error("SpendableRollover: nullifiers don't match"));
         }
         let boundary_anchor = spendable_anchor.next_epoch(rollover_new_epoch);
         Ok(((rollover_new_nf, boundary_anchor), ()))
@@ -347,18 +341,16 @@ impl Step for SpendableEpochLift {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
         (rollover_new_nf, rollover_boundary_anchor): <Self::Left as Header>::Data,
         (unspent_nf, unspent_prev_anchor, unspent_end_anchor): <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if unspent_nf != rollover_new_nf {
-            return Err(mock_ragu::Error(
-                "SpendableEpochLift: nullifiers not related",
-            ));
+            return Err(ragu::Error("SpendableEpochLift: nullifiers not related"));
         }
         if unspent_prev_anchor != rollover_boundary_anchor {
-            return Err(mock_ragu::Error(
+            return Err(ragu::Error(
                 "SpendableEpochLift: unspent prev_anchor must equal rollover boundary_anchor",
             ));
         }

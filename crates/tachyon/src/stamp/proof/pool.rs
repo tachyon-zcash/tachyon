@@ -18,8 +18,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::{Field as _, PrimeField as _};
-use mock_ragu::{Header, Index, Step, Suffix};
 use pasta_curves::Fp;
+use ragu::{Header, Index, Step, Suffix};
 
 use crate::{
     note::Nullifier,
@@ -127,11 +127,11 @@ impl Step for AnchorSeed {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         (start, stamp_commit): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let end = start.next_stamp(&stamp_commit);
         Ok(((start, end), ()))
     }
@@ -158,11 +158,11 @@ impl Step for EmptyBlockSeed {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         (start,): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         Ok(((start, start.next_empty()), ()))
     }
 }
@@ -183,13 +183,13 @@ impl Step for AnchorFuse {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
         (left_start, left_end): <Self::Left as Header>::Data,
         (right_start, right_end): <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if left_end != right_start {
-            return Err(mock_ragu::Error("AnchorFuse: segments not adjacent"));
+            return Err(ragu::Error("AnchorFuse: segments not adjacent"));
         }
         Ok(((left_start, right_end), ()))
     }
@@ -216,17 +216,17 @@ impl Step for UnspentSeed {
 
     fn witness<'source>(
         &self,
-        ctx: &mut mock_ragu::StepCtx<'_>,
+        ctx: &mut ragu::StepCtx<'_>,
         (start, stamp_tg_set, nf): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Exclusion: nf ∉ set ⇔ the set polynomial is nonzero at nf.
         let nf_point = Fp::from(nf);
         let eval = stamp_tg_set.eval(nf_point);
         ctx.enforce_poly_query(stamp_tg_set.commit().into(), nf_point, eval)?;
         if eval == Fp::ZERO {
-            return Err(mock_ragu::Error("UnspentSeed: found nullifier in set"));
+            return Err(ragu::Error("UnspentSeed: found nullifier in set"));
         }
         let stamp_commit = stamp_tg_set.commit();
         let end = start.next_stamp(&stamp_commit);
@@ -258,11 +258,11 @@ impl Step for EmptyBlockUnspentSeed {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         (start, nf): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         Ok(((nf, start, start.next_empty()), ()))
     }
 }
@@ -283,20 +283,18 @@ impl Step for UnspentFuse {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
         (left_nf, left_start, left_end): <Self::Left as Header>::Data,
         (right_nf, right_start, right_end): <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if left_nf != right_nf {
-            return Err(mock_ragu::Error(
+            return Err(ragu::Error(
                 "UnspentFuse: left and right must share the same nf",
             ));
         }
         if left_end != right_start {
-            return Err(mock_ragu::Error(
-                "UnspentFuse: left.end must equal right.start",
-            ));
+            return Err(ragu::Error("UnspentFuse: left.end must equal right.start"));
         }
         Ok(((left_nf, left_start, right_end), ()))
     }

@@ -5,8 +5,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::PrimeField as _;
-use mock_ragu::{Header, Index, Step, Suffix};
 use pasta_curves::Fp;
+use ragu::{Header, Index, Step, Suffix};
 
 use super::delegation::NullifierHeader;
 use crate::{
@@ -101,31 +101,29 @@ impl Step for SpendBind {
 
     fn witness<'source>(
         &self,
-        _ctx: &mut mock_ragu::StepCtx<'_>,
+        _ctx: &mut ragu::StepCtx<'_>,
         (rcv, alpha, pak, note): Self::Witness<'source>,
         (left_cm, nf0, left_epoch): <Self::Left as Header>::Data,
         (right_cm, nf1, right_epoch): <Self::Right as Header>::Data,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if u64::from(note.value) == 0 {
-            return Err(mock_ragu::Error("SpendBind: zero-value note"));
+            return Err(ragu::Error("SpendBind: zero-value note"));
         }
         if right_epoch.0 != left_epoch.0 + 1 {
-            return Err(mock_ragu::Error("SpendBind: nullifiers not adjacent"));
+            return Err(ragu::Error("SpendBind: nullifiers not adjacent"));
         }
         if left_cm != right_cm {
-            return Err(mock_ragu::Error("SpendBind: nullifiers not related"));
+            return Err(ragu::Error("SpendBind: nullifiers not related"));
         }
         let cm = note.commitment();
         if cm != left_cm || cm != right_cm {
-            return Err(mock_ragu::Error(
-                "SpendBind: nullifiers not related to note",
-            ));
+            return Err(ragu::Error("SpendBind: nullifiers not related to note"));
         }
         if u64::from(note.value) > NOTE_VALUE_MAX {
-            return Err(mock_ragu::Error("SpendBind: note value exceeds maximum"));
+            return Err(ragu::Error("SpendBind: note value exceeds maximum"));
         }
         if note.pk.0 != pak.derive_payment_key().0 {
-            return Err(mock_ragu::Error("SpendBind: pak not related to note"));
+            return Err(ragu::Error("SpendBind: pak not related to note"));
         }
 
         let cv = rcv.commit(i64::from(note.value));

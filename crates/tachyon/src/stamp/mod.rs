@@ -21,12 +21,12 @@ use alloc::{boxed::Box, vec::Vec};
 use core::{error::Error, fmt};
 
 use corez::io::{self, Read, Write};
-use mock_ragu::{self, proof::PROOF_SIZE_COMPRESSED};
 use pasta_curves::Fp;
 use proof::{
     PROOF_SYSTEM,
     stamp::{MergeStamp, OutputStamp, SpendStamp, StampHeader},
 };
+use ragu::{self, proof::PROOF_SIZE_COMPRESSED};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
@@ -178,9 +178,9 @@ impl Plan {
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            mock_ragu::Pcd<delegation::NullifierHeader>,
-            mock_ragu::Pcd<delegation::NullifierHeader>,
-            mock_ragu::Pcd<spendable::SpendableHeader>,
+            ragu::Pcd<delegation::NullifierHeader>,
+            ragu::Pcd<delegation::NullifierHeader>,
+            ragu::Pcd<spendable::SpendableHeader>,
         )>,
     ) -> Result<Stamp, ProveError> {
         // Each entry is (stamp, action_digests). The digest list is ephemeral —
@@ -261,9 +261,9 @@ pub enum ProveError {
     ActionDigest(ActionDigestError),
     /// Proof creation failed for an action; carries the underlying
     /// step-level error.
-    ProofFailed(mock_ragu::Error),
+    ProofFailed(ragu::Error),
     /// Stamp merge failed; carries the underlying step-level error.
-    MergeFailed(mock_ragu::Error),
+    MergeFailed(ragu::Error),
     /// Number of spendable PCDs doesn't match number of spends.
     SpendableMismatch,
 }
@@ -290,7 +290,7 @@ impl Error for ProveError {}
 /// The PCD header `(action_acc, tachygram_acc, anchor)` is not stored here —
 /// the verifier reconstructs it from public data and passes it as the header
 /// to Ragu `verify()`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     pub tachygrams: Vec<Tachygram>,
@@ -299,7 +299,17 @@ pub struct Stamp {
     pub anchor: Anchor,
 
     /// The Ragu proof bytes.
-    pub proof: mock_ragu::Proof,
+    pub proof: ragu::Proof,
+}
+
+impl fmt::Debug for Stamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Stamp {{ tachygrams: {:?}, anchor: {:?} }}",
+            self.tachygrams, self.anchor,
+        )
+    }
 }
 
 impl Stamp {
@@ -313,7 +323,7 @@ impl Stamp {
         alpha: ActionRandomizer<effect::Output>,
         note: Note,
         anchor: Anchor,
-    ) -> Result<Self, mock_ragu::Error> {
+    ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
         let (pcd, ()) = app.seed(rng, OutputStamp, (rcv, alpha, note, anchor))?;
@@ -334,10 +344,10 @@ impl Stamp {
     /// validation lives inside the spendable lineage, not here.
     pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
-        spend_pcd: mock_ragu::Pcd<spend::SpendHeader>,
-        spendable_pcd: mock_ragu::Pcd<spendable::SpendableHeader>,
+        spend_pcd: ragu::Pcd<spend::SpendHeader>,
+        spendable_pcd: ragu::Pcd<spendable::SpendableHeader>,
         tachygrams: Vec<Tachygram>,
-    ) -> Result<Self, mock_ragu::Error> {
+    ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
         let anchor = spendable_pcd.data().1;
@@ -364,7 +374,7 @@ impl Stamp {
         rng: &mut RNG,
         (left, left_digests): (Self, &[ActionDigest]),
         (right, right_digests): (Self, &[ActionDigest]),
-    ) -> Result<Self, mock_ragu::Error> {
+    ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
         let (left_acts_poly, left_tg_poly) = (
@@ -473,19 +483,19 @@ impl Stamp {
 }
 
 /// Read a proof of known constant size.
-pub(crate) fn read_proof<R: Read>(mut reader: R) -> io::Result<mock_ragu::Proof> {
+pub(crate) fn read_proof<R: Read>(mut reader: R) -> io::Result<ragu::Proof> {
     let mut bytes = alloc::vec![0u8; PROOF_SIZE_COMPRESSED];
     reader.read_exact(&mut bytes)?;
     let arr: Box<[u8; PROOF_SIZE_COMPRESSED]> = bytes
         .into_boxed_slice()
         .try_into()
         .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "proof buffer wrong size"))?;
-    mock_ragu::Proof::try_from(arr.as_ref())
+    ragu::Proof::try_from(arr.as_ref())
         .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding"))
 }
 
 /// Write a proof of known constant size.
-pub(crate) fn write_proof<W: Write>(mut writer: W, proof: &mock_ragu::Proof) -> io::Result<()> {
+pub(crate) fn write_proof<W: Write>(mut writer: W, proof: &ragu::Proof) -> io::Result<()> {
     let bytes = proof.serialize();
     writer.write_all(bytes.as_ref())
 }

@@ -10,8 +10,8 @@ use alloc::{vec, vec::Vec};
 use core::{cmp, iter, ops::RangeInclusive};
 
 use ff::Field as _;
-use mock_ragu::{Pcd, Proof};
 use pasta_curves::Fp;
+use ragu::{Pcd, Proof};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
@@ -814,7 +814,7 @@ pub mod ggm_tools {
     use alloc::vec::Vec;
     use core::ops::RangeInclusive;
 
-    use mock_ragu::{Pcd, Proof};
+    use ragu::{Pcd, Proof};
     use rand_core::{CryptoRng, RngCore};
 
     use crate::{
