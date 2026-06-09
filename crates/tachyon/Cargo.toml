@@ -23,11 +23,12 @@ rust-version.workspace = true
 [features]
 default = [
     "std",
+    "ragu/mock",
+    "ragu/legacy-deps",
 ]
 std = [
     "blake2b_simd/std",
-    "mock_ragu/std",
-    "rand_core/std",
+    "ragu/std",
     "reddsa/std",
     "corez/std",
 ]
@@ -46,8 +47,8 @@ halo2_poseidon = "0.1"
 lazy_static = { version = "1", default-features = false, features = [
     "spin_no_std",
 ] }
-mock_ragu = { path = "../mock_ragu", default-features = false }
 pasta_curves = "0.5.1"
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "3baa09549fec9a2c14a6e377a5f7f533fa8361a0", default-features = false }
 rand_core = { version = "0.6", default-features = false }
 reddsa = { version = "0.5.1", default-features = false }
 

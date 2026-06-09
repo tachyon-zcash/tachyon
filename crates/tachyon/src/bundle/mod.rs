@@ -303,7 +303,7 @@ impl Plan {
 
         let action_commit = ActionSetCommit::from(digests.as_slice());
 
-        blake2b::bundle_commitment(action_commit.0.inner(), self.value_balance())
+        blake2b::bundle_commitment(&action_commit.into(), self.value_balance())
     }
 
     /// Build a [`stamp::Plan`] from this bundle plan.
@@ -719,7 +719,7 @@ impl<S: StampState> Bundle<S> {
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
         let action_acc = ActionSetCommit::from(action_digests.as_slice());
         Ok(blake2b::bundle_commitment(
-            action_acc.0.inner(),
+            &action_acc.into(),
             self.value_balance,
         ))
     }

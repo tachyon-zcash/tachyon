@@ -43,14 +43,6 @@ extern crate std;
 
 extern crate alloc;
 
-/// `todo!` macro: code after a `todo!()` call executes with stub values.
-macro_rules! todo {
-    ($($args:tt)*) => {
-        #[cfg(feature = "std")]
-        ::std::eprintln!("TODO: {}", format_args!($($args)*));
-    };
-}
-
 pub mod action;
 pub mod bundle;
 pub mod constants;

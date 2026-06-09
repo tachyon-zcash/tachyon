@@ -5,8 +5,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::PrimeField as _;
-use mock_ragu::{Header, Index, Step, Suffix};
 use pasta_curves::Fp;
+use ragu::{Header, Index, Step, Suffix};
 
 use crate::{
     constants::NOTE_VALUE_MAX,
@@ -27,11 +27,11 @@ impl Header for NfMasterHeader {
     /// `(mk, cm)`. Both computed at [`NfMasterSeed`] from the
     /// `(note, pak)` witness, which the step constrains via
     /// `note.pk == pak.derive_payment_key()`.
-    type Data<'source> = (NoteMasterKey, note::Commitment);
+    type Data = (NoteMasterKey, note::Commitment);
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(&(mk, cm): &Self::Data<'_>) -> Vec<u8> {
+    fn encode(&(mk, cm): &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32);
         out.extend_from_slice(&mk.0.to_repr());
         out.extend_from_slice(&Fp::from(cm).to_repr());
@@ -52,11 +52,11 @@ impl Header for NfPrefixHeader {
     /// `(key, mk, cm)`. `key` advances via [`NfPrefixStep`] from a
     /// parent prefix or [`NfMasterStep`] from `mk`; `mk` and `cm`
     /// thread through unchanged.
-    type Data<'source> = (NotePrefixedKey, NoteMasterKey, note::Commitment);
+    type Data = (NotePrefixedKey, NoteMasterKey, note::Commitment);
 
     const SUFFIX: Suffix = Suffix::new(1);
 
-    fn encode(&(key, mk, cm): &Self::Data<'_>) -> Vec<u8> {
+    fn encode(&(key, mk, cm): &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 1 + 4 + 32 + 32);
         out.extend_from_slice(&key.inner.to_repr());
         out.extend_from_slice(&key.depth.get().to_le_bytes());
@@ -81,11 +81,11 @@ impl Header for NullifierHeader {
     /// `(cm, nf, epoch)`. `nf` and `epoch` are computed at
     /// [`NullifierStep`] from the input [`NfPrefixHeader`]; `cm`
     /// threads through unchanged.
-    type Data<'source> = (note::Commitment, Nullifier, EpochIndex);
+    type Data = (note::Commitment, Nullifier, EpochIndex);
 
     const SUFFIX: Suffix = Suffix::new(2);
 
-    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+    fn encode(data: &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32 + 4);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1).to_repr());
@@ -107,11 +107,11 @@ impl Header for DelegateNfPrefixHeader {
     /// from the left [`NfPrefixHeader`] plus a trapdoor witness;
     /// `delegation_id` is the Poseidon binding of `(mk, cm, trapdoor)`
     /// and supplants the `(mk, cm)` lineage from then on.
-    type Data<'source> = (NotePrefixedKey, DelegationId);
+    type Data = (NotePrefixedKey, DelegationId);
 
     const SUFFIX: Suffix = Suffix::new(3);
 
-    fn encode(&(key, id): &Self::Data<'_>) -> Vec<u8> {
+    fn encode(&(key, id): &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 1 + 4 + 32);
         out.extend_from_slice(&key.inner.to_repr());
         out.extend_from_slice(&key.depth.get().to_le_bytes());
@@ -133,11 +133,11 @@ impl Header for DelegateNullifierHeader {
     /// `(nf, epoch, delegation_id)`. `nf` and `epoch` are computed at
     /// [`DelegateNullifierStep`] from the GGM leaf; `delegation_id`
     /// threads unchanged from [`DelegateNfPrefixHeader`].
-    type Data<'source> = (Nullifier, EpochIndex, DelegationId);
+    type Data = (Nullifier, EpochIndex, DelegationId);
 
     const SUFFIX: Suffix = Suffix::new(4);
 
-    fn encode(data: &Self::Data<'_>) -> Vec<u8> {
+    fn encode(data: &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 4 + 32);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&data.1.0.to_le_bytes());
@@ -161,18 +161,19 @@ impl Step for NfMasterSeed {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut ragu::StepCtx<'_>,
         (note, pak): Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        _left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if u64::from(note.value) == 0 {
-            return Err(mock_ragu::Error("NfMasterSeed: zero-value note"));
+            return Err(ragu::Error("NfMasterSeed: zero-value note"));
         }
         if u64::from(note.value) > NOTE_VALUE_MAX {
-            return Err(mock_ragu::Error("NfMasterSeed: note value exceeds maximum"));
+            return Err(ragu::Error("NfMasterSeed: note value exceeds maximum"));
         }
         if note.pk.0 != pak.derive_payment_key().0 {
-            return Err(mock_ragu::Error("NfMasterSeed: pak not related to note"));
+            return Err(ragu::Error("NfMasterSeed: pak not related to note"));
         }
 
         let mk = pak.nk.derive_note_private(&note.psi);
@@ -196,12 +197,13 @@ impl Step for NfMasterStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut ragu::StepCtx<'_>,
         (chunk,): Self::Witness<'source>,
-        (mk, cm): <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (mk, cm): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if chunk >= GGM_TREE_ARITY {
-            return Err(mock_ragu::Error("NfMasterStep: chunk exceeds GGM arity"));
+            return Err(ragu::Error("NfMasterStep: chunk exceeds GGM arity"));
         }
         Ok(((mk.step(chunk), mk, cm), ()))
     }
@@ -222,15 +224,16 @@ impl Step for NfPrefixStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut ragu::StepCtx<'_>,
         (chunk,): Self::Witness<'source>,
-        (key, mk, cm): <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (key, mk, cm): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if key.depth.get() >= GGM_TREE_DEPTH {
-            return Err(mock_ragu::Error("NfPrefixStep: already at maximum depth"));
+            return Err(ragu::Error("NfPrefixStep: already at maximum depth"));
         }
         if chunk >= GGM_TREE_ARITY {
-            return Err(mock_ragu::Error("NfPrefixStep: chunk exceeds GGM arity"));
+            return Err(ragu::Error("NfPrefixStep: chunk exceeds GGM arity"));
         }
         Ok(((key.step(chunk), mk, cm), ()))
     }
@@ -251,12 +254,13 @@ impl Step for NullifierStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (key, _mk, cm): <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (key, _mk, cm): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if key.depth.get() != GGM_TREE_DEPTH {
-            return Err(mock_ragu::Error("NullifierStep: not at maximum depth"));
+            return Err(ragu::Error("NullifierStep: not at maximum depth"));
         }
 
         let epoch = EpochIndex(key.index);
@@ -280,10 +284,11 @@ impl Step for DelegationStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut ragu::StepCtx<'_>,
         (trap,): Self::Witness<'source>,
-        (key, mk, cm): <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (key, mk, cm): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let delegation_id =
             DelegationId::from(poseidon::delegation_id(mk.0, cm.into(), trap.into()));
         Ok(((key, delegation_id), ()))
@@ -313,19 +318,18 @@ impl Step for DelegateNfPrefixStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut ragu::StepCtx<'_>,
         (chunk,): Self::Witness<'source>,
-        (key, delegation_id): <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (key, delegation_id): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if key.depth.get() >= GGM_TREE_DEPTH {
-            return Err(mock_ragu::Error(
+            return Err(ragu::Error(
                 "DelegateNfPrefixStep: already at maximum depth",
             ));
         }
         if chunk >= GGM_TREE_ARITY {
-            return Err(mock_ragu::Error(
-                "DelegateNfPrefixStep: chunk exceeds GGM arity",
-            ));
+            return Err(ragu::Error("DelegateNfPrefixStep: chunk exceeds GGM arity"));
         }
         Ok(((key.step(chunk), delegation_id), ()))
     }
@@ -346,14 +350,13 @@ impl Step for DelegateNullifierStep {
 
     fn witness<'source>(
         &self,
+        _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (key, delegation_id): <Self::Left as Header>::Data<'source>,
-        _right: <Self::Right as Header>::Data<'source>,
-    ) -> mock_ragu::Result<(<Self::Output as Header>::Data<'source>, Self::Aux<'source>)> {
+        (key, delegation_id): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if key.depth.get() != GGM_TREE_DEPTH {
-            return Err(mock_ragu::Error(
-                "DelegateNullifierStep: not at maximum depth",
-            ));
+            return Err(ragu::Error("DelegateNullifierStep: not at maximum depth"));
         }
 
         let epoch = EpochIndex(key.index);

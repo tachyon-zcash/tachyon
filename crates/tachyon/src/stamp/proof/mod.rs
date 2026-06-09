@@ -15,10 +15,10 @@ pub mod stamp;
 mod tests;
 
 use lazy_static::lazy_static;
-pub use mock_ragu::Proof;
-use mock_ragu::{Application, ApplicationBuilder};
+pub use ragu::Proof;
+use ragu::{Application, ApplicationBuilder};
 
-fn make_app() -> Result<Application, mock_ragu::Error> {
+fn make_app() -> Result<Application, ragu::Error> {
     ApplicationBuilder::new()
         .register(delegation::NfMasterSeed)?
         .register(delegation::NfMasterStep)?
