@@ -28,14 +28,18 @@ use crate::{
 
 /// Anchor segment between two endpoints. Composable via [`AnchorFuse`].
 ///
-/// Direction-agnostic: `start` and `end` are both anchors. Consumed only
-/// by [`super::stamp::StampLift`] — extending a spendable's anchor must
-/// instead go through [`Unspent`] so each step proves nf-exclusion.
+/// Direction-agnostic: `start` and `end` are both anchors. Two consumers:
+/// [`super::stamp::StampLift`] advances a stamp's anchor, and
+/// [`super::spendable::SpendableInit`] consumes a boundary-rooted segment (from
+/// the epoch boundary through the cm-stamp) to pin a spendable's starting
+/// epoch. Extending an *existing* spendable's anchor must instead go through
+/// [`Unspent`] so each step proves nf-exclusion.
 ///
-/// Structurally intra-epoch because only intra-epoch [`Anchor::next_stamp`]
-/// is invoked anywhere in the [`AnchorChain`] builders — crossing an
-/// epoch boundary requires the [`Anchor::next_epoch`] domain only
-/// emitted by `SpendableRollover`.
+/// Structurally intra-epoch: the builders ([`AnchorSeed`] / [`EmptyBlockSeed`])
+/// invoke only [`Anchor::next_stamp`] / [`Anchor::next_empty`]. The
+/// [`Anchor::next_epoch`] boundary domain is never a chain link; it is produced
+/// by `SpendableRollover` and checked against a chain's `start` by
+/// [`super::spendable::SpendableInit`].
 ///
 /// The within-epoch property pairs with a consensus-side two-epoch
 /// tachygram scan that catches any tachygram already published earlier
@@ -44,8 +48,10 @@ use crate::{
 /// `start` at the seed steps ([`AnchorSeed`] / [`EmptyBlockSeed`]) has
 /// PCD lineage rooted in an unbound `start: Anchor` witness, so a
 /// standalone segment proves nothing about real coverage. Final binding
-/// closes when [`super::stamp::StampLift`] consumes the segment and the
-/// resulting stamp is accepted by consensus (anchor membership).
+/// closes through a consensus-published stamp's anchor membership:
+/// [`super::stamp::StampLift`] emits that stamp directly, while a segment
+/// consumed by [`super::spendable::SpendableInit`] binds only once the
+/// resulting (private) spendable is spent into a stamp.
 #[derive(Clone, Debug)]
 pub struct AnchorChain;
 
