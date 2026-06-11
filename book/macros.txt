@@ -42,3 +42,5 @@
 \ek:\mathsf{ek}
 \dk:\mathsf{dk}
 \tk:\mathsf{tk}
+\memo:\mathsf{memo}
+\blk:\mathsf{blk}
