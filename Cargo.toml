@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }
@@ -43,9 +43,11 @@ as_conversions = "deny"
 
 multiple_crate_versions = "allow"   # todo
 doc_markdown = "allow"              # https://github.com/rust-lang/rust-clippy/issues/7273
+default_numeric_fallback = "allow"  # just uselessly noisy
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 panic = "warn"
+unreachable = "allow"
 redundant_pub_crate = "allow"       # pub(crate) in private modules is fine
 little_endian_bytes = "allow"       # many specified conversions
 
@@ -87,7 +89,7 @@ undocumented_unsafe_blocks = "forbid" # every unsafe block must be documented.
 default_union_representation = "forbid" # unions must have explicit repr.
 
 # -- forbid: no panicking indexing -------------------------------------------
-indexing_slicing = "forbid" # use .get() or iterators. test/const exceptions via clippy.toml.
+indexing_slicing = "deny" # use .get() or iterators. test/const exceptions via clippy.toml.
 string_slice = "forbid" # string slicing can panic on char boundaries.
 # &container[..] instead of &*container obscures intent.
 deref_by_slicing = "forbid"
@@ -144,7 +146,6 @@ clone_on_ref_ptr = "deny"
 cognitive_complexity = "deny"
 create_dir = "deny"
 decimal_literal_representation = "deny"
-default_numeric_fallback = "deny"
 doc_include_without_cfg = "deny"
 empty_drop = "deny"
 empty_enum_variants_with_brackets = "deny"
@@ -196,7 +197,6 @@ unnecessary_safety_comment = "deny"
 unnecessary_safety_doc = "deny"
 unnecessary_self_imports = "deny"
 unneeded_field_pattern = "deny"
-unreachable = "deny"
 unused_trait_names = "deny"
 use_debug = "deny"
 verbose_file_reads = "deny"
@@ -210,3 +210,4 @@ missing_inline_in_public_items = "allow"
 todo = "allow"
 unimplemented = "allow"
 dbg_macro = "warn"
+

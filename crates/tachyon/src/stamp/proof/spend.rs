@@ -16,35 +16,39 @@ use crate::{
     constants::NOTE_VALUE_MAX,
     entropy::ActionRandomizer,
     keys::{PaymentKey, ProofAuthorizingKey, public},
-    note::{self, CommitmentTrapdoor, Note, Nullifier, NullifierTrapdoor, Value},
-    primitives::{Anchor, effect},
+    note::{self, Note, Nullifier},
+    primitives::{Anchor, EpochOffset, effect},
     value,
 };
 
 /// Header binding an action to its spendable lineage.
 ///
-/// Carries `cv`, `rk`, the lineage's `present_nf`, the pool `anchor`, and the
-/// note commitment `cm`; the nullifier pair is completed and published at
-/// [`SpendStamp`](super::stamp::SpendStamp).
+/// Carries `cv`, `rk`, the lineage's `present_nf`, the pool `anchor`, the
+/// note commitment `cm`, and the spend `offset` (`present_epoch −
+/// creation_epoch`, derived at [`SpendBind`]); the nullifier pair is completed
+/// and published at [`SpendStamp`](super::stamp::SpendStamp).
 #[derive(Debug)]
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(cv, rk, present_nf, anchor, cm)`. `cv`/`rk` are derived at
+    /// `(cv, rk, present_nf, anchor, cm, offset)`. `cv`/`rk` are derived at
     /// [`SpendBind`]; `present_nf`, `anchor`, and `cm` thread from the
-    /// spendable lineage that [`SpendBind`] consumed.
+    /// spendable lineage that [`SpendBind`] consumed; `offset` is the spend
+    /// offset `present_epoch − creation_epoch`, derived at [`SpendBind`] from
+    /// the two pinned lineage epochs and consumed by `SpendStamp`.
     type Data = (
         value::Commitment,
         public::ActionVerificationKey,
         Nullifier,
         Anchor,
         note::Commitment,
+        EpochOffset,
     );
 
     const SUFFIX: Suffix = Suffix::new(10);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 * 5);
+        let mut out = Vec::with_capacity(32 * 5 + 4);
         let cv_bytes: [u8; 32] = data.0.into();
         let rk_bytes: [u8; 32] = data.1.into();
         out.extend_from_slice(&cv_bytes);
@@ -52,6 +56,7 @@ impl Header for SpendHeader {
         out.extend_from_slice(&Fp::from(data.2).to_repr());
         out.extend_from_slice(&Fp::from(data.3).to_repr());
         out.extend_from_slice(&Fp::from(data.4).to_repr());
+        out.extend_from_slice(&data.5.0.to_le_bytes());
         out
     }
 }
@@ -60,9 +65,9 @@ impl Header for SpendHeader {
 ///
 /// Witnesses the note preimage (`pk`, `value`, `rcm`, `psi`), `pak`, and the
 /// action fields (`rcv`, `alpha`); checks `cm == spendable.cm` (so `cv` commits
-/// to the proven-minted value) and threads `present_nf`, `anchor`, and `cm`
-/// onto the output. The live pair is completed at
-/// [`SpendStamp`](super::stamp::SpendStamp).
+/// to the proven-minted value), threads `present_nf`, `anchor`, and `cm`, and
+/// derives the spend offset `present_epoch − creation_epoch` onto the output.
+/// The live pair is completed at [`SpendStamp`](super::stamp::SpendStamp).
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -72,19 +77,24 @@ impl Step for SpendBind {
     type Output = SpendHeader;
     type Right = ();
     type Witness<'source> = (
-        (PaymentKey, Value, CommitmentTrapdoor, NullifierTrapdoor),
+        (
+            PaymentKey,
+            note::Value,
+            note::CommitmentTrapdoor,
+            note::NullifierTrapdoor,
+        ),
         value::CommitmentTrapdoor,
         ActionRandomizer<effect::Spend>,
         ProofAuthorizingKey,
     );
 
-    const INDEX: Index = Index::new(15);
+    const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         ((pk, value, rcm, psi), rcv, alpha, pak): Self::Witness<'source>,
-        (present_nf, anchor, spendable_cm): <Self::Left as Header>::Data,
+        (present_nf, anchor, spendable_cm, creation_epoch, present_epoch): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_nonzero(Fp::from(u64::from(value)), "SpendBind: zero-value note")?;
@@ -113,6 +123,10 @@ impl Step for SpendBind {
         let cv = rcv.commit(i64::from(value));
         let rk = pak.ak.derive_action_public(&alpha);
 
-        Ok(((cv, rk, present_nf, anchor, cm), ()))
+        // The spend offset is the difference of the two pinned lineage epochs;
+        // SpendStamp consumes it and re-pins it via `nf_now == present_nf`.
+        let offset = present_epoch.offset_from(creation_epoch);
+
+        Ok(((cv, rk, present_nf, anchor, cm, offset), ()))
     }
 }

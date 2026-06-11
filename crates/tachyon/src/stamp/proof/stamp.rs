@@ -11,15 +11,18 @@ use ragu::{
     constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
-use super::{delegation::NullifierHeader, pool::AnchorChain, spend::SpendHeader};
 use crate::{
-    ActionSetPoly, TachygramSetPoly,
-    constants::NOTE_VALUE_MAX,
+    ActionSetPoly, NfEmitterPoly, TachygramSetPoly,
+    constants::{NF_DOMAIN, NF_EMITTERS, NOTE_VALUE_MAX},
     entropy::ActionRandomizer,
     keys::private,
-    note::{Note, Nullifier},
+    note::Note,
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
-    relations::enforce_poly_product,
+    relations::{
+        enforce::{enforce_offset_nullifier_pair, enforce_poly_product},
+        subgroup_generator,
+    },
+    stamp::proof::{delegation::NullifierDerivation, pool::AnchorChain, spend::SpendHeader},
     value,
 };
 
@@ -77,7 +80,7 @@ impl Step for OutputStamp {
         Anchor,
     );
 
-    const INDEX: Index = Index::new(14);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
@@ -124,13 +127,15 @@ impl Step for OutputStamp {
     }
 }
 
-/// Composes a [`SpendHeader`] with the live two-leaf [`NullifierHeader`] range
-/// and stamps the spend.
+/// Composes a [`SpendHeader`] with the note's certified
+/// [`NullifierDerivation`] and stamps the spend.
 ///
-/// Witnesses `nf_next` and binds the published pair to the note's genuine
-/// `GGM(mk, ·)` leaves: consumes the two-leaf range (`range.end ==
-/// range.start + 2`, `range.cm == cm`) and checks
-/// `[present_nf]G_0 + [nf_next]G_1 == range_commit`.
+/// Witnesses the `N` derivation polynomials, reads the threaded spend offset
+/// `d = present_epoch − E_0` from the [`SpendHeader`] (derived and bound at
+/// [`SpendBind`](super::spend::SpendBind)), computes the nullifier pair
+/// `(nf_d, nf_{d+1})` off the certified derivation at consecutive coset points,
+/// binds `nf_d` to the lineage's `present_nf` (which re-pins `d` to the genuine
+/// epoch), and publishes both nullifiers as the spend's tachygrams.
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -138,56 +143,68 @@ impl Step for SpendStamp {
     type Aux<'source> = ();
     type Left = SpendHeader;
     type Output = StampHeader;
-    type Right = NullifierHeader;
-    /// `(nf_next,)`.
-    type Witness<'source> = (Nullifier,);
+    type Right = NullifierDerivation;
+    /// `polys`: the `N` derivation polynomials, pinned to the certified
+    /// commitments. The spend offset is threaded on the [`SpendHeader`], not
+    /// witnessed here.
+    type Witness<'source> = ([NfEmitterPoly; NF_EMITTERS],);
 
-    const INDEX: Index = Index::new(16);
+    const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (nf_next,): Self::Witness<'source>,
-        (cv, rk, present_nf, anchor, cm): <Self::Left as Header>::Data,
-        (range_commit, range_start, range_end, range_cm): <Self::Right as Header>::Data,
+        ctx: &mut ragu::StepCtx<'_>,
+        (polys,): Self::Witness<'source>,
+        (cv, rk, present_nf, anchor, cm, offset): <Self::Left as Header>::Data,
+        (commits, _digest, derivation_cm, _creation_epoch, shift, ratios): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        // The certified derivation must be this note's.
+        enforce_zero(
+            Fp::from(derivation_cm) - Fp::from(cm),
+            "SpendStamp: derivation does not certify the note",
+        )?;
+
+        // Offset query: the present-epoch nullifier `nf_d` and its successor
+        // `nf_{d+1}`, read off the certified polys at consecutive coset points
+        // with the cm-bound shift and ratios.
+        let commitments: [Eq; NF_EMITTERS] = commits.map(|commit| commit.0);
+        let trace_polys: [Polynomial; NF_EMITTERS] = polys.map(|poly| poly.0);
+        let (nf_now, nf_next) = enforce_offset_nullifier_pair(
+            ctx,
+            &commitments,
+            &trace_polys,
+            shift.0,
+            subgroup_generator::<NF_DOMAIN>(),
+            &ratios.0,
+            u64::from(offset),
+        )?;
+
+        // Continuity: the present-epoch query must equal the lineage tip, which
+        // pins the witnessed offset to the genuine epoch (and so `nf_next` to
+        // the true successor).
+        enforce_zero(
+            nf_now - Fp::from(present_nf),
+            "SpendStamp: query does not match the lineage nullifier",
+        )?;
+
+        enforce_nonzero(nf_now, "SpendStamp: present-epoch nullifier is zero")?;
+        enforce_nonzero(nf_next, "SpendStamp: next-epoch nullifier is zero")?;
+
+        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
+            ragu::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
+        })?;
+
+        // Homomorphic set commitments (a step cannot construct a polynomial):
+        // the singleton action set {ad} = (X - ad) = [-ad, 1]; the tachygram
+        // pair {t0, t1} = (X - t0)(X - t1) = [t0·t1, -(t0+t1), 1]. These
+        // reproduce `…SetPoly::from(slice).commit()` without an in-step
+        // `from_roots`.
         #[expect(clippy::expect_used, reason = "constant size")]
         let &[g0, g1, g2] = Pasta::host_generators(Pasta::baked())
             .g()
             .split_first_chunk::<3>()
             .expect("at least three generators")
             .0;
-
-        enforce_zero(
-            Fp::from(range_end) - (Fp::from(range_start) + Fp::from(2u64)),
-            "SpendStamp: live range must span two epochs",
-        )?;
-        enforce_zero(
-            Fp::from(range_cm) - Fp::from(cm),
-            "SpendStamp: derived range does not match note",
-        )?;
-
-        // Bind the published pair to the genuine GGM leaf pair.
-        let nf_pair_ref: Eq = g0 * Fp::from(present_nf) + g1 * Fp::from(nf_next);
-        enforce_equal_point(
-            Eq::from(range_commit),
-            nf_pair_ref,
-            "SpendStamp: published scalars are not the derived leaf pair",
-        )?;
-
-        // A zero nullifier would collide with the note's own cm tachygram.
-        enforce_nonzero(
-            Fp::from(present_nf),
-            "SpendStamp: present-epoch nullifier is zero",
-        )?;
-        enforce_nonzero(
-            Fp::from(nf_next),
-            "SpendStamp: next-epoch nullifier is zero",
-        )?;
-
-        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
-            ragu::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
-        })?;
 
         // Set commitment to one action.
         let action_commit = {
@@ -197,9 +214,7 @@ impl Step for SpendStamp {
 
         // Set commitment to two nullifiers.
         let tachygram_commit = {
-            let t0 = Fp::from(present_nf);
-            let t1 = Fp::from(nf_next);
-
+            let (t0, t1) = (nf_now, nf_next);
             TachygramSetCommit::from(g0 * (t0 * t1) + g1 * (-(t0 + t1)) + g2)
         };
 
@@ -227,7 +242,7 @@ impl Step for MergeStamp {
         TachygramSetPoly,
     );
 
-    const INDEX: Index = Index::new(17);
+    const INDEX: Index = Index::new(16);
 
     fn witness<'source>(
         &self,
@@ -302,7 +317,7 @@ impl Step for StampLift {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(18);
+    const INDEX: Index = Index::new(17);
 
     fn witness<'source>(
         &self,

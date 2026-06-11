@@ -21,9 +21,8 @@ use ragu::{Application, ApplicationBuilder};
 fn make_app() -> Result<Application, ragu::Error> {
     ApplicationBuilder::new()
         .register(delegation::NfMasterSeed)?
-        .register(delegation::NfPrefixStep)?
-        .register(delegation::NullifierStep)?
-        .register(delegation::NullifierFuse)?
+        .register(delegation::NfMasterExpand)?
+        .register(delegation::NullifierDerivationStep)?
         .register(pool::AnchorSeed)?
         .register(pool::EmptyBlockSeed)?
         .register(pool::AnchorFuse)?
