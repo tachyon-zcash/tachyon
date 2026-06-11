@@ -623,6 +623,7 @@ reference to the aggregated transaction's `wtxid`.
 > the single stamp of the aggregated transaction, so its cost is amortized across
 > all constituents and thus economically incentivized.
 
+<a id="race"></a>
 Importantly, each Action description is **associated with two tachygrams**, a
 consequence of the evolving nullifiers. If a user proves only the nullifier
 $\nf_e$ for the current epoch $e$, the epoch may advance to $e+1$ before the
@@ -939,7 +940,7 @@ computation of the bundle accumulator $\tgacc$ over all revealed tachygrams (the
 The result is the [Tachyon stamp](#tx): the PCD proof for the
 [Action statement](#statement) together with its public inputs
 $(\set{\tg_i}, \tgacc, \mathsf{anchor})$. Revealing *both* $\nf_e$ and $\nf_{e+1}$
-is what insures the transaction against the [cross-epoch race](#tx) while it
+is what insures the transaction against the [cross-epoch race](#race) while it
 waits in the mempool.
 
 4. **Authorize and bind.** Concurrent to the proving path of steps 1-3,
@@ -990,7 +991,7 @@ nullifier. Consensus tests all three against the window, which spans the
 - $\nf_{e-1}$ covers the tail of epoch $e-1$ past the anchor, the range that
 spendability proof does not cover;
 - $\nf_e$ covers the current epoch, catching a competing spend ahead of ours;
-- $\nf_{e+1}$ guards the [cross-epoch race](#tx): if the transaction is mined only
+- $\nf_{e+1}$ guards the [cross-epoch race](#race): if the transaction is mined only
   after epoch $e+1$ begins, $\nf_{e+1}$ is the value consensus checks as current
   then.
 
@@ -1020,13 +1021,12 @@ them where each distinct step is a circuit and we specify their statement.
 
 ## Payment Protocol {#payment}
 
-As defined in the [motivation](#decouple), the payment protocol is in charge of
-secure note transmission. This goal entails a full payment address design that
-carries key material for incoming note detection, and infrastructure for fast
-memo retrieval and spending witness construction.
-The leading Tachyon-compatible payment protocol is being developed by the 
-[ValarGroup](https://github.com/valargroup). Here we explain their high-level
-architectures and design rationales.
+As established in the [motivation](#decouple), the payment protocol owns secure
+note transmission. That entails a full payment address carrying the key material
+for incoming-note detection, plus infrastructure for fast memo retrieval and
+spending-witness construction. The leading Tachyon-compatible payment protocol is
+being developed by [ValarGroup](https://github.com/valargroup); we sketch their
+architecture and design rationale here.
 
 ```mermaid
 flowchart TB
@@ -1051,134 +1051,271 @@ flowchart TB
     transfer --> discovery --> check --> wit
 ```
 
-The infamous[^sandblast] pain point around existing note transmission mechanism
-is its shielded sync through **trial decryption** of memo distributed in-band.
-We recommend [Roman's article](https://x.com/akhtariev/status/2044113751767691637)
-for a detailed motivation and problem statement. Briefly, the linear scanning for
-trial decryption leaks metadata and becomes infeasible for bandwidth-limited mobile
-wallets as Zcash throughput scales.
+The infamous[^sandblast] pain point of the existing note-transmission mechanism
+is shielded sync by **trial decryption** of memos distributed in-band.
+[Roman's article](https://x.com/akhtariev/status/2044113751767691637) gives a
+detailed motivation and problem statement; briefly, the linear scan it requires
+leaks metadata and grows infeasible for bandwidth-limited mobile wallets as Zcash
+throughput scales.
 
 [^sandblast]: Due to the linear cost of the shielded sync and an unprotective
     gas price, Zcash NU5 experienced a DOS attack, referred to as [the sandblasting
     attack](https://electriccoin.co/blog/a-look-back-nu5-and-network-sandblasting/),
     preventing wallets from syncing fast enough to access their funds.
 
-One promising solution is a primitive called **Private Information Retrieval**
-(PIR), which allows clients to query a database without the server learning anything
-about client's query
+One promising remedy is **Private Information Retrieval** (PIR), which lets a
+client query a database without the server learning anything about the query
 (slides below by [Corrigan-Gibbs](https://www.youtube.com/watch?v=Jdzrf3im1gQ)).
-With PIR, the recipient can generate a fresh `tag` for each incoming note and
-send it to the sender as part of the full payment address. The sender then publish
-the encrypted memo with the tag attached. These `(tag, encrypted_memo)` key-value
-pair are stored in a PIR database for instant retrieval without privacy leakage.
+With PIR, the sender publishes the encrypted memo with a short `tag` attached, and
+the resulting `(tag, encrypted_memo)` pairs are stored in a PIR database for
+instant, leak-free retrieval.
 
 <P align="center">
-  <img src="./assets/pir.png" alt="pir_corrigan_gibbs" />
+  <img src="./assets/pir.png" alt="pir_corrigan_gibbs" style="width:80%" />
 </p>
 
-Modern single-server PIR requires $\Theta(N)$ preprocessing for faster online
-response and lower per-query communication. Many performance metrics that we
-care about scale with $\Theta(\sqrt{N})$, therefore care must be taken to curb
-the database growth and their expected max sizes.
-For our scope, the payment protocol at least maintains these PIR databases
-(we use `key => value` for entry format):
+### PIR Databases {#pirdb}
 
-- Epoched memo store: per-epoch `tag => memo` store, synced from the
-[DA blobs](#tx) appearing on chain.
-- Epoched tachygram store: per-epoch, 
-[Hash-table-bucketed](https://github.com/valargroup/spendability-pir/blob/main/nullifier/README.md)
-`H(tg)[:4] => tg (32 bytes) || blk_height (u32_le) || anchor_height (u32_le) || action_count (u8)` store,
-keeping track of tachygrams and the block and anchor in which they appear.
-- Encapsulation key store: global `H(ek) => ek` store for full ML-KEM encapsulation key
-from its short digest.
+Modern single-server PIR trades $\Theta(N)$ preprocessing for a faster online
+response and lower per-query communication. Since many of the costs we care about
+scale as $\Theta(\sqrt{N})$, we keep every database bounded, capping its expected
+size to hold overhead in check. For our scope, the payment protocol maintains at
+least the following PIR databases (entries written as `key => value`):
+
+- Epoched memo DB: a per-epoch `tag => memo` store, synced from the
+  [DA blobs](#tx) on chain.
+- First-contact memo DB: a `tag => KEM.c || memo` store for the [handshake](#discovery)
+  transactions, synced from chain. It is also chunked, but over a much longer
+  horizon than per-epoch, given how rare first-contact transactions are.
+- Epoched tachygram DB: a per-epoch,
+  [hash-table-bucketed](https://github.com/valargroup/spendability-pir/blob/main/nullifier/README.md)
+  `H(tg)[:4] => tg (32 bytes) || blk_height (u32_le) || anchor_height (u32_le) || action_count (u8)`
+  store, recording each tachygram and the block and anchor it appears in, synced
+  from stamps on chain.
+- PKI DB: an off-chain address registry `H(addr) => addr`, returning a full
+  address (its ML-KEM encapsulation key and payment key) from a short digest.
 
 ### Full Payment Address {#address}
 
 The [decoupling](#decouple) split the owner-binding payment key from the
 note-transmission key, leaving the latter for the payment protocol to define. A
-Tachyon full payment address is
+Tachyon *diversified payment address* is
 
 $$
-\addr = (\underbrace{\tag}_{\text{per-note}},\; \underbrace{H(\ek),\, \pk_d}_{\text{per-sender}})
+\addr = (\pk_d,\,\ek)
 \qquad
 \begin{cases}
-    (\ek, \dk) \leftarrow \mathsf{ML\text{-}KEM.KeyGen}()\\
-    \pk_d = H(\ak, \nk; \rpk)
+    \pk_d = H(\ak, \nk; \rpk)\\
+    (\ek, \dk) \leftarrow \mathsf{ML\text{-}KEM.KeyGen}()
 \end{cases}
 $$
 
-with three pieces:
+with two components:
 
-- $\pk_d$, the *diversified payment key*: the owner $\pk$ a note commits to,
-  randomized by a trapdoor $\rpk$ so that two payment keys of the same
-  wallet are unlinkable. The decoupling lets us diversify the payment key
-  independently of the transmission key.
-- $(\ek, \dk)$, a fresh ML-KEM key pair sampled per sender, whose
-  encapsulation key $\ek$ is the recipient's transmission key. Since $\ek$ runs
-  to a few KB, the address carries only its short digest $H(\ek)$ and the
-  full key is fetched on demand from the encapsulation-key PIR database.
-- $\tag$, a per-note retrieval handle for looking up the encrypted memo by PIR.
-  It is derived from per-sender key material so the recipient can predict it, as
-  the [next section](#discovery) explains.
+- *Diversified payment key* $\pk_d$: the owner $\pk$ a note commits to, randomized
+  by a trapdoor $\rpk$ so that payment keys from the same wallet are unlinkable.
+  The decoupling lets us diversify the payment key independently of the
+  transmission key.
+- *Diversified transmission key* $\ek$: the encapsulation key of a freshly sampled
+  ML-KEM key pair.
 
-**Why not Orchard's DH transmission key.** Orchard derives a diversified
-transmission key $[\ivk]\,g_d$ from a long-lived incoming viewing key. That is
-not quantum-private: a sender holding (or one day acquiring) a quantum computer
-could recover $\ivk$ from $g_d$ and $[\ivk]\,g_d$ by discrete log, and an $\ivk$
-grants viewing access to *every* incoming note of the recipient, past and future.
-This is a textbook
-["harvest now, decrypt later"](https://en.wikipedia.org/wiki/Harvest_now%2C_decrypt_later)
-exposure. ML-KEM avoids it entirely, since the shared secret is not recoverable
-by a quantum computer and the symmetric encryption keyed under it is likewise
-quantum-safe.
+**Why not an Orchard-style transmission key.** Orchard derives a whole family of
+diversified transmission keys $[\ivk]\,\G_d$ from diversified bases $\G_d$, all
+sharing one incoming viewing key $\ivk$. This is convenient, since minting as many
+unlinkable addresses as needed never increases the number of viewing keys note
+discovery must scan. But it is not quantum-private: a sender who later gains access
+to a quantum computer could *retroactively recover* $\ivk$ by breaking discrete
+log, and a single $\ivk$ exposes every incoming note of the recipient, past and
+future. ML-KEM sidesteps this, as its encapsulation is lattice-based and
+post-quantum secure, and the symmetric encryption under the KEM-derived shared
+secret is already quantum-safe today.
 
-We sample the KEM key pair *deterministically*. Although
+**No persistent viewing key? Tags to the rescue.**
+An unfortunate byproduct of switching to ML-KEM is that the "diversified base,
+same $\ivk$" algebraic relation no longer holds[^ivk]: instead, the decapsulation
+key $\dk$ is freshly sampled for each new diversified address. Naively, this
+multiplies the cost of shielded sync by the number of $\dk$ in the wallet, since
+each must be trialed during the linear scan. PIR shortcuts that trial decryption
+by attaching to every encrypted memo a retrieval handle, the $\tag$, which the
+recipient queries the memo database with directly. The incoming viewing key in
+Tachyon is therefore effectively:
+
+$$
+\ivk^{\mathsf{Tachyon}} := (
+\underbrace{\tag}_{\text{per-note}}, \underbrace{\dk}_{\text{per-sender}})
+$$
+
+[^ivk]: The diversified-base trick yields two key pairs $(\pk, \sk)$ and
+    $(\pk', \sk)$ that are unlinkable yet share the same $\sk$. Such a relation is
+    easy in the discrete-log world but has no known secure analogue in the LWE
+    world.
+
+As the figure below shows, we sample the KEM key pair *deterministically*. Although
 [ML-KEM's public `KeyGen`](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf)
-is randomized, wallets call the derandomized `KeyGen_Internal(d, z)` with
+is randomized, wallets invoke the derandomized `KeyGen_Internal(d, z)` with
 $(d, z)$ derived from the HD-wallet master spending key, so the key pair is
-reproducible from the seed rather than dependent on fresh operational entropy.
+reproducible from the seed. The sequence of tags is bound to the shared secret of
+a channel, predictable to the two parties but opaque to everyone else. We say more
+about tags in the [next section](#discovery).
 
-**No persistent viewing key.** Address diversification historically existed to
-stop colluding senders from recognizing that two addresses belong to the same
-recipient. Tachyon reaches full unlinkability with no long-lived $\ivk$ at all:
-$\pk_d$ is randomized per address by $\rpk$, the $(\ek, \dk)$ pair is freshly
-sampled per sender, and $\tag$ is fresh per note, so nothing persistent ties two
-addresses together. This raises a question: with no standing viewing key to scan
-against, how does a recipient still discover incoming notes efficiently? The
-[next section](#discovery) answers it.
+<P align="center" id="img_ek">
+  <img src="./assets/ek_and_tag.svg" alt="ek_and_tag" />
+</p>
 
-**Address PKI (optional).** Publishing only $H(\ek)$ already needs a lookup
-service for the full $\ek$ (the encapsulation-key PIR store). One could push this
-into a small PKI: map a short, stable handle $H(\addr)$ to the full address and
-fetch it by PIR. The catch is that the $\tag$ component evolves per note, so such
-a PKI can only register the *per-sender* portion $(H(\ek), \pk_d)$, never the
-whole address.
+**Two diversification schedules: per-sender and per-note.**
+Address diversification historically existed to stop colluding senders from
+recognizing that two addresses belong to the same recipient, which calls for a
+per-sender schedule for $\ek$. Tags need a tighter one: since a $\tag$ appears
+directly on chain, any reuse would link the two transactions carrying it to the
+same recipient, so a fresh tag must be generated for every output note.
+
+**Payment address PKI.** An ML-KEM encapsulation key is a few kilobytes, too large
+for a QR code or payment URI. We therefore keep a PIR database that maps a short
+digest to the full address, $H(\addr) \mapsto \addr$, queried on demand. Two
+concerns remain open: the registry grows without bound, and rerunning PIR
+preprocessing on every new entry is expensive. In practice we will likely split
+the registry into size-capped chunks, conceding a few bits of privacy so that a
+preprocessing rerun touches only the last, not-yet-full chunk.
 
 ### Note Discovery {#discovery}
 
-With no persistent $\ivk$, a recipient cannot scan the chain by trial-decrypting
-every memo under one viewing key. Discovery runs instead through the
-[epoched memo store](#payment) keyed by $\tag$. The idea: the $\tag$ of the
-$i$-th note from a given sender is derived deterministically from the per-sender
-key material the recipient itself established (for instance $\tag_i = \PRF(s, i)$
-for a per-sender seed $s$), so the recipient can *predict* exactly which tags to
-expect and fetch only those by PIR, leaking nothing to the server.
+> **In one breath:** first contact hands the sender a diversified address, the
+> opening transaction completes the handshake, a stateful wallet then fast-syncs
+> through the PIR databases, and an AEAD-encrypted wallet state posted on chain
+> backs full recovery from the mnemonic alone.
 
-Concretely, for each sender relationship the recipient tracks how many notes it
-has already seen and an upper bound on how many that sender might have sent. To
-sync an epoch, it regenerates the tags across that outstanding range, PIR-queries
-the `tag => memo` store for each, and keeps the hits. There is no linear scan, no
-trial decryption, and the server observes only oblivious queries.
+Note discovery breaks into three interrelated procedures: handshake, stateful
+sync, and recovery. In the **handshake**, a tentative sender makes first contact
+and obtains a *distinct* KEM encapsulation key $\ek$ from the recipient,
+establishing a shared secret $K$ that will encrypt every future note sent to that
+recipient. The tags attached to those encrypted memos, the recipient's advice for
+fast PIR retrieval, are derived deterministically from $K$ and known only to the
+two channel parties. Once the recipient comes online and decapsulates $K$, its
+wallet enters **stateful sync**, updating its local state (handshake material, the
+number of notes seen on the channel, and each [note's spendability](#spendable))
+as it syncs blocks with help from the PIR databases. Finally there is the rare
+case of **recovery from mnemonic**, where a wallet rebuilds its state from scratch
+by scanning the chain alone, ideally accelerated by PIR servers when available.
 
-**Which key decrypts.** Each $\tag$ belongs to exactly one sender relationship,
-and that relationship fixes the recipient's decapsulation key $\dk$ (the private
-half of the per-sender $(\ek, \dk)$). So a memo fetched by $\tag$ is decrypted
-with the $\dk$ of the address under which that $\tag$ was issued. The sender
-encapsulates to $\ek$ to obtain a shared secret and ships the ML-KEM ciphertext
-beside the encrypted memo; the recipient runs $\mathsf{Decaps}(\dk, \cdot)$ to
-recover the same secret and open it. The $\tag$ thus indexes both the memo and
-the key that opens it.
+We examine each procedure more closely and explore possible design choices.
 
+Everything starts with the recipient sharing a diversified address: the sender
+uses its payment key to construct the output note and its transmission key for
+secure in-band secret distribution. Disseminating $\addr$ is trivial when the two
+already share a secure channel (Signal, WhatsApp, and the like), and a recipient
+may simply publicize contact info for anyone to reach. The **first-contact
+problem** arises when the recipient would rather not broadcast a private contact
+(opening an OOB channel with every sender) or is not always online to answer
+handshake requests. The simplest answer is a dynamic URI that serves a fresh $\ek$
+from a precomputed sequence on each access, in practice a self-hosted page handing
+out a new HD-derived $\ek$ on every click[^intro-service].
+
+Once the sender has $\addr$, it runs `KEM.Encaps(ek)` to obtain the shared secret
+$K$ and a KEM ciphertext $c$[^kem-ct], and from then on encrypts every note to the
+recipient symmetrically under $K$. The ciphertext $c$ is sizable, 768 bytes to 1.5
+KB in ML-KEM depending on security level, far more than the 32-byte
+$\mathsf{epk}$ that plays the analogous role in Orchard. This overhead is the
+primary reason we maximize shared-secret reuse. Three subtleties follow:
+
+- Only first-contact transactions carry the KEM ciphertext $c$; follow-ups omit
+  it. The resulting distinguishability is harmless: in the security reduction the
+  simulator emits transactions with and without the $c$ field at random, so ledger
+  indistinguishability still holds.
+- Costly as first contact is, parties with an existing secure channel should still
+  not send a randomly sampled shared secret directly: that has no forward secrecy
+  and leaks all past and future incoming notes the moment the channel is breached.
+  Nor should they send the encrypted memo over the OOB channel, unless the
+  recipient will spend it soon, since a memo with no on-chain backing complicates
+  wallet recovery and can permanently strand unspent coins.
+- For two payments to the same recipient to be mutually unlinkable, the sender
+  must open a new channel; by design, all notes on one channel trace back to the
+  same first-contact $\ek$, and hence to the same sender.
+
+[^intro-service]: A fancier option is an *introduction service* that shares a
+    channel with the recipient Bob, who hands it a list of diversified addresses
+    in advance, each authenticated by a signature under a well-known public key of
+    his. Alice then reaches the always-online service, which accepts all incoming
+    requests. Two subtleties: (1) the service must vouch for the authenticity of a
+    relayed $\ek$, via a signature or a ZKP; (2) it must defend against DOS, e.g.
+    rate-limiting through an upfront micropayment.
+
+[^kem-ct]: The KEM ciphertext $c$ is distinct from the encrypted memo, which is a
+    ciphertext under the shared secret. $c$ is analogous to the ephemeral
+    $\mathsf{epk}$ in Orchard's DH setting: the material a recipient needs to
+    decapsulate the shared secret.
+    
+Beyond the shared secret that produces the encrypted memo, the other half of the
+memo-encryption task is attaching a short tag for fast retrieval. As noted
+[above](#address), tags must be distinct per note. Ours are all derivable from the
+shared secret, except for the first-contact tag:
+
+$$
+\begin{cases}
+\tag_0 = H(\ek) &\text{first-contact tag} \\
+\tag_i = H(K, i) &\text{for follow-up } i>0
+\end{cases}
+$$
+
+The whole sequence is predictable to the channel parties but private to everyone
+else. The first-contact tag cannot depend on $K$: the recipient does not yet hold
+$K$ at first contact, and binding the tag to $K$ would force a trial decapsulation
+of every transaction with a non-empty KEM-ciphertext field. Setting
+$\tag_0 = H(\ek)$ instead lets the recipient locate the first-contact transaction
+and its memo with a single PIR query. The predictable sequence keeps wallet
+tracking state minimal, eases mnemonic recovery, and preserves unlinkability.
+
+<details>
+<summary><i>Alternative tag designs that don't work.</i></summary>
+
+First, who picks the tag values?
+
+- *Sender-picked*: too much bookkeeping for the recipient wallet, and it needs
+integration (or manual relaying) between the messaging app and the Zcash wallet.
+- *Receiver-picked, random*: the recipient must be online to issue new tags before
+more notes can be sent, and wallet state grows linearly in the number of tags.
+- *Receiver-picked, sequentially derivable*: minimal wallet state, just the
+first-contact seed and a running `num_tags` counter.
+
+Second, what does the sequential derivation look like?
+
+- $\tag_i = H^i(\ek)$: if $\ek$ leaks, anyone can derive the whole sequence,
+breaking unlinkability.
+- $\tag_i = H^i(K)$: works, but recovering the $i$-th tag means walking the entire
+hash-chain prefix.
+- $\tag_i = H(K, i)$: random access, but the first-contact tag is unknown to the
+recipient, forcing a trial decapsulation for $\tag_0$.
+- $\tag_0 = H(\ek),\ \tag_{i>0} = H(K, i)$: checks every box.
+
+</details>
+
+To detect notes, the recipient first settles any new handshakes by querying the
+first-contact memo DB at $\tag_0 = H(\ek)$, for each $\ek$ it handed out in an
+address. On a hit $(c, \memo)$ it runs `KEM.Decaps(dk, c)` to recover the shared
+secret $K$ and decrypt the memo. From there, detecting that sender's later notes
+is cheap: the subsequent tags are all computable, and querying them against the
+[epoched memo DB](#pirdb) is near-instant, at most one PIR query per unsynced
+epoch to collect every tagged memo since the last sync. The *minimal* state a
+wallet keeps locally for a fast next sync is:
+
+$$
+\set{\underbrace{(\mathsf{idx}_\ek, \blk_\mathsf{fc}, n)}_{\text{per-sender}}},
+\set{\underbrace{(\mathsf{Note}, \blk_\mathsf{mint}, \blk_\mathsf{last})}_{\text{per-note}}}
+$$
+
+where $\mathsf{idx}_\ek$ is the HD derivation index of the channel's $\ek$,
+$\blk_\mathsf{fc}$ its first-contact block, and $n$ the number of notes detected
+on it so far; each note additionally records its plaintext opening, its mint
+block, and the block where the last sync stopped. In normal operation a wallet
+caches far more, such as the $\ek, \dk, K$ of each channel, to avoid
+recomputation.
+
+Last and perhaps most important, a wallet must be recoverable from the mnemonic
+alone, even if more slowly than a stateful resync. The idea is to periodically
+encrypt the minimal state under authenticated encryption and post the ciphertext
+on chain, reusing the optional opaque data field we add to the
+[transaction format](#tx). A wallet starting from scratch reverse-scans from the
+chain tip, trial-decrypting these *wallet-state ciphertexts*; on the first hit it
+recovers its state and returns to fast, PIR-accelerated syncing.
 
 ### Note Spendability {#spendable}
 
@@ -1187,14 +1324,12 @@ spendable, and is it free of Faerie-gold collisions.
 
 **Spendability and witness data.** A note is spendable only if its commitment
 was added to the pool and its nullifier has stayed absent since. Building and
-maintaining the [spendability proof](#spendability) requires knowing, for any
-tachygram, whether and where it appears on chain. The
-[epoched tachygram store](#payment) supplies this privately: a
-[hash-bucketed](https://github.com/valargroup/spendability-pir/blob/main/nullifier/README.md)
-PIR database mapping a tachygram's short prefix to its full value and the block
-and anchor heights where it landed. A wallet queries it to locate its note's
-commitment (for inclusion) and to confirm its per-epoch nullifiers are absent
-(for exclusion), all without revealing which tachygram it is asking about.
+maintaining the [spendability proof](#spendability) means knowing, for any
+tachygram, whether and where it appears on chain, exactly what the
+[epoched tachygram DB](#pirdb) answers privately. A wallet PIR-queries it to
+locate its note's commitment (for inclusion) and to confirm its per-epoch
+nullifiers are absent (for exclusion), without revealing which tachygram it is
+asking about.
 
 **Faerie-gold prevention.** Recall the shielded protocol
 [pushes Faerie-gold detection to the wallet](#nf-sec): a cheap nullifier test
@@ -1216,7 +1351,7 @@ protocol's [transaction life cycle](#txflow). Having discovered and validated it
 notes, a spender:
 
 1. pulls inclusion and exclusion data for each input from the
-   [epoched tachygram store](#spendable), and delegates the heavy per-epoch
+   [epoched tachygram DB](#pirdb), and delegates the heavy per-epoch
    [spendability syncing](#txflow) to an OSS through
    [prefix-constrained keys](#nf-ggm);
 2. folds the synced spendability proofs into a [stamp](#tx), then authorizes and
@@ -1253,16 +1388,15 @@ mask, so the result is unlinkable to $\ask$ or to any other spend. Privacy and
 unlinkability therefore already hold against a quantum adversary.
 
 **Not yet quantum-sound.** What a quantum computer *can* do is forge. Recovering
-$\ask + \alpha$ lets it sign a spend authorization, and breaking the
+$\ask + \alpha$ from $\rk$ lets it authorize a spend, and breaking the
 discrete-log-based PCD proof system lets it fabricate a spend proof for a note it
-does not own. Together that is theft. Closing the gap needs two post-quantum
-replacements, the only parts of Tachyon not yet quantum-safe:
-
-1. a re-randomizable signature scheme, which has no efficient post-quantum
-   analogue (Schnorr re-randomization is intrinsically discrete-log);
-2. discrete-log-based address diversification, already sidestepped by the
-   payment protocol's fresh per-sender $\ek$ (no $[\ivk]\,g_d$, see
-   [above](#address)).
+does not own. Together that is theft, not a privacy break, which is why soundness
+can wait for a coordinated upgrade. Two pieces must then go post-quantum: the
+re-randomizable signature (Schnorr re-randomization is intrinsically discrete-log,
+[below](#pq-rerand)) and the proof system itself ([below](#pq-pcd)). A third
+classic obstacle, discrete-log address diversification, never arises here, as the
+payment protocol already replaced $[\ivk]\,\G_d$ with a fresh per-sender ML-KEM
+key ([above](#address)).
 
 ### PQ Signature Re-randomization {#pq-rerand}
 
@@ -1270,12 +1404,15 @@ Re-randomization buys unlinkability by publishing a fresh-looking but valid
 key/signature each spend. With no post-quantum re-randomizable signature, we
 recover the same effect from zero knowledge. Instead of broadcasting a signature
 to be checked against $\rk$, the spender proves *knowledge* of a valid
-post-quantum signature (hash- or lattice-based) in zero knowledge. The proof
-reveals nothing about the signature, so two spends by the same key stay
-unlinkable, exactly what re-randomization provided. Since authorization is now a
-proof rather than a separate signature, it folds into the transaction's
-[PCD proof](#pq-pcd), unifying authorization and validity into one post-quantum
-artifact.
+post-quantum signature in zero knowledge. The proof reveals nothing about the
+signature, so two spends by the same key stay unlinkable, exactly what
+re-randomization provided. Proving signature knowledge in-circuit puts a premium
+on a **circuit-friendly** scheme, one cheap to verify inside a proof; SNARK-friendly
+post-quantum signatures such as [CAPSS](https://eprint.iacr.org/2025/061), built
+on arithmetization-oriented permutations, are designed for exactly this. And since
+authorization is now a proof rather than a separate signature, it folds into the
+transaction's [PCD proof](#pq-pcd), unifying authorization and validity into one
+post-quantum artifact.
 
 ### PQ PCD Proofs {#pq-pcd}
 
