@@ -14,6 +14,7 @@
 \PRF:\mathsf{PRF}
 \sk:\mathsf{sk}
 \pk:\mathsf{pk}
+\pkd:\mathsf{pk_d}
 \rpk:\mathsf{rpk}
 \ak:\mathsf{ak}
 \ask:\mathsf{ask}
@@ -38,7 +39,6 @@
 \NQR:\mathsf{NQR}
 \addr:\mathsf{addr}
 \tag:\mathsf{tag}
-\rpk:\mathsf{rpk}
 \ek:\mathsf{ek}
 \dk:\mathsf{dk}
 \tk:\mathsf{tk}

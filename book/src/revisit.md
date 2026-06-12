@@ -87,8 +87,10 @@ SNARK proof.
 
 In Zcash today, a shielded payment address binds together $(\ak, \nk)$ and
 additionally includes $\ivk$ for incoming note detection. Tachyon instead
-decomposes this structure into a payment key $\pk = H(\ak, \nk)$ and a separate
-transmission key managed entirely by the payment protocol. This significantly
+decomposes this structure into a diversifiable payment key
+$\pkd = \mathsf{Com}(\ak, \nk; \rpk)$, a hiding commitment to the pair with $\rpk$
+a per-address diversifier, and a separate transmission key managed entirely by the
+payment protocol. This significantly
 simplifies the shielded protocol’s key architecture by removing functionality
 unrelated to spend authorization.
 
@@ -113,8 +115,8 @@ security analysis.
     to reproduce all of Orchard functionalities in this decoupled framework. We
     leave it as a homework exercise for the readers. 
     As a hint, your diversified address now may look like
-    $\mathsf{addr} := (\pk, \tk)$ where
-    $\pk = \mathsf{Com}(\ak, \nk; \rpk)$ is the diversified payment key,
+    $\mathsf{addr} := (\pkd, \tk)$ where
+    $\pkd = \mathsf{Com}(\ak, \nk; \rpk)$ is the diversified payment key,
     $\tk = (d, pk_d)$ is the diversified transmission key.
     Your $\ivk = \mathsf{ToScalar}(\PRF_\sk([9]))$ can now be directly
     derived from master spending key $\sk$, rather than meandering through
@@ -148,12 +150,14 @@ indistinguishable from randomly sampled keys.
   <img src="./assets/tachyon_keys.svg" alt="tachyon_keys" />
 </p>
 
-The payment key $\pk = H(\ak, \nk)$ represents a note owner.
-The hash-based derivation from the $(\ak, \nk)$ tuple provides a succinct owner
-field in a note and offers
-[quantum recoverability](https://zips.z.cash/draft-ecc-quantum-recoverability) today.
-Publicizing $\ak$, a Schnorr signing key, to senders who might have future access
-to a quantum computer exposes the user 
+The payment key $\pkd = \mathsf{Com}(\ak, \nk; \rpk)$ is the owner field every note
+commits to: a hiding commitment to the $(\ak, \nk)$ pair, diversified by a
+per-address trapdoor $\rpk$. Being a symmetric (Poseidon-based) commitment, $\pkd$
+gives a succinct owner field and
+[quantum recoverability](https://zips.z.cash/draft-ecc-quantum-recoverability)
+today.
+Publicizing $\ak$ directly, a Schnorr signing key, to senders who might have future
+access to a quantum computer exposes the user 
 ["Harvest Now, Decrypt Later"](https://en.wikipedia.org/wiki/Harvest_now%2C_decrypt_later)
 risk.
 
@@ -174,14 +178,14 @@ $$
 A tachyon note is a tuple:
 
 $$
-\mathsf{Note}^\mathsf{Tachyon} := (\pk, v, \psi, \rcm)
+\mathsf{Note}^\mathsf{Tachyon} := (\pkd, v, \psi, \rcm)
 $$
 
-where $\pk$ is the [payment key](#payment-key), $v$ is the value of the note,
+where $\pkd$ is the [payment key](#payment-key), $v$ is the value of the note,
 $\psi$ is pseudo-random note identity that binds to the note nullifier value
 as an input to its derivation, and $\rcm$ is a random commitment trapdoor[^cm-psi].
 In contrast to Sapling/Orchard, the note commitment in Tachyon
-$\cm = \mathsf{Com}(\pk, v, \psi; \rcm)$ is purely based on symmetric primitives[^cm].
+$\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$ is purely based on symmetric primitives[^cm].
 Thus, Tachyon doesn't require extra enforcement on $\rcm$ derivation on wallets
 to achieve quantum recoverability
 like [Orchard does](https://x.com/zkDragon/status/2026047830759182672).
@@ -375,14 +379,14 @@ across the epoch boundary, so a note cannot be spent twice even as $e$ advances.
 on-chain transaction, including any in-band memo. The shielded footprint, namely
 the commitment $\cm$ (hidden by $\rcm$), the spend's revealed nullifiers
 (pseudorandom by GGM PRF security), the rerandomized $\rk$, and the hiding $\cv$,
-reveals none of $\pk$, $v$, $\psi$. The in-band memo is payment-protocol data
+reveals none of $\pkd$, $v$, $\psi$. The in-band memo is payment-protocol data
 that the shielded protocol carries opaquely and never parses (committed only to
 `da_digest`), so its secrecy rests on the payment protocol's encryption, not on
 the shielded core.
 
 **Note Privacy (OOB).** Here the note plaintext travels out of band rather than
 as an in-band ciphertext, so the adversary of concern is the sender, who learns
-$\pk, v, \psi, \rcm$ but never the recipient's $\nk$. Because every $\nf_e$ hangs
+$\pkd, v, \psi, \rcm$ but never the recipient's $\nk$. Because every $\nf_e$ hangs
 off the secret seed $\PRF_\nk(\psi)$, knowledge of the note plaintext alone does
 not let the sender, or anyone it colludes with, recognize the recipient's
 eventual spend on chain or link it back to the note it sent.
@@ -405,9 +409,9 @@ Tachyon's [tachygram accumulator](#acc) does not assign notes a canonical
 position, so the shielded protocol cannot enforce that binding. A malicious
 sender could in principle pick colliding $\psi$ values across two notes sent
 to the same recipient, where only one of them is spendable. We push detection
-to the recipient's wallet: upon receiving a note, the wallet computes $\nf_e$
-at the current epoch and rejects the note if it collides with any other note
-it currently holds. Since a wallet's note set is small, the check is cheap;
+to the recipient's wallet: upon receiving a note, the wallet computes the note's
+nullifier at a fixed reference epoch and rejects the note if it collides with any
+other note it currently holds. Since a wallet's note set is small, the check is cheap;
 the knowledge that compliant wallets will reject such collisions is enough to
 deter the attack.
 
@@ -429,7 +433,7 @@ nullifier *or* a commitment.
 
 $$
 \tg := \begin{cases}
-    \cm = \mathsf{Com}(\pk, v, \psi; \rcm) &\quad\text{in Output actions}\\
+    \cm = \mathsf{Com}(\pkd, v, \psi; \rcm) &\quad\text{in Output actions}\\
     \nf_e = \mathsf{KDF}(\nk, \psi, e) &\quad\text{in Spend actions}
 \end{cases}
 $$
@@ -638,8 +642,9 @@ race. To keep spend and output actions indistinguishable, we further require eac
 output action to publish a random dummy tachygram alongside its note commitment.
 
 All non-malleable parts, collectively the *effecting data*, hash into a stable
-identifier `txid`: a bundle commitment from each pool, their value balance
-$v^{\mathsf{bal}}$, and encrypted memo bytes.
+identifier `txid`: a bundle commitment from each pool and their value balance
+$v^{\mathsf{bal}}$. In-band encrypted memos count as effecting data for the legacy
+pools, but, as detailed below, *not* for the Tachyon pool.
 The Tachyon bundle commitment $\actacc$ is defined similarly to the tachygram accumulator:
 
 $$
@@ -669,10 +674,11 @@ transaction-wide effecting data (across all pools) used to derive `txid`[^txid-s
 Block space can additionally serve as a data-availability layer for arbitrary
 payment-protocol data used in note transmission; the shielded protocol neither
 interprets this data nor checks its correctness. As explained [later](#payment),
-the payment protocol Tachyon targets keeps KEM key material (e.g., Orchard's
-`epk`) out of band, which shrinks the in-band footprint, is quantum-safe from
-day one, and leaves the format unchanged even through a full
-[quantum upgrade](#pq).
+the payment protocol Tachyon targets distributes the recipient's KEM encapsulation
+key out of band through the [address](#address), and carries a KEM ciphertext
+in-band only on rare first-contact transactions (ordinary payments carry none), so
+the in-band footprint stays small. The scheme is quantum-safe from day one and
+leaves the format unchanged even through a full [quantum upgrade](#pq).
 
 [^txid-sighash]: `txid` and `SIGHASH` are domain-separated with different
     personalization strings, but they commit to the same effecting data.
@@ -929,19 +935,24 @@ claim:
     a PCD step binding $\nf_i$ and $\nf_{i+1}$ to the *same note* (matching the
     underlying commitment), so the chain of per-epoch exclusions cannot be spliced
     across notes. The OSS repeats this epoch by epoch up to $e-1$ and returns the
-    synced proof.
+    synced proof. It deliberately stops one epoch short of the spend: lifting only
+    through $e-1$ keeps the spend-epoch nullifiers $\nf_e, \nf_{e+1}$ outside its
+    delegated range, so the [forward-only](#nf-ggm) tree leaves them, and the
+    eventual spend, opaque to the service.
 
-3. **Generate the stamp.** With the synced spendability proof in hand, the wallet
-folds it into a final proof step establishing the spend-specific facts: the
-integrity of the current and next-epoch nullifiers $\nf_e, \nf_{e+1}$ (both
+3. **Generate the stamp.** The OSS hands back a proof synced through $e-1$; the
+wallet performs the final cross-epoch lift into the spending epoch $e$
+*itself*, keeping the spend-epoch nullifiers private, and folds the result into a
+last proof step establishing the spend-specific facts: the integrity of the
+current and next-epoch nullifiers $\nf_e, \nf_{e+1}$ (both
 [derived from the same note](#nf)), the output commitments, and the correct
 computation of the bundle accumulator $\tgacc$ over all revealed tachygrams (the
 [batched correctness check](#acc-correct)).
 The result is the [Tachyon stamp](#tx): the PCD proof for the
 [Action statement](#statement) together with its public inputs
-$(\set{\tg_i}, \tgacc, \mathsf{anchor})$. Revealing *both* $\nf_e$ and $\nf_{e+1}$
-is what insures the transaction against the [cross-epoch race](#race) while it
-waits in the mempool.
+$(\set{\tg_i}, \tgacc, \mathsf{anchor})$, whose anchor now sits in epoch $e$.
+Revealing *both* $\nf_e$ and $\nf_{e+1}$ is what insures the transaction against
+the [cross-epoch race](#race) while it waits in the mempool.
 
 4. **Authorize and bind.** Concurrent to the proving path of steps 1-3,
 the wallet assembles the transaction body, computes the [`SIGHASH`](#tx) over
@@ -978,22 +989,30 @@ accumulator $\tgacc$, and the anchor, the validator:
    output commitments, and the spendability of every spent note up to the anchor.
 
 **The exclusion window (new double-spend rule).** A spendability proof attests
-absence only up to its anchor, which lies back in epoch $e-1$. It says nothing
-about the stretch from the anchor to the block our transaction lands in, where
-the same note could already have been spent. Consensus closes this blind spot
-with a live check: it keeps the tachygrams of recent blocks in memory and rejects
-the bundle if a spent note's nullifier already appears there.
+absence only up to its anchor. The wallet lifts that anchor into the spending
+epoch $e$ before stamping (see the [life cycle](#txflow)), so the proof forecloses
+every double-spend through a recent point in $e$; it is silent only on the short
+stretch from the anchor to the block the transaction lands in, where the same note
+could still have been respent. Consensus closes this blind spot with a live check:
+it keeps the tachygrams of recent blocks in memory and rejects the bundle if either
+published nullifier already appears there.
 
-Because the anchor sits in $e-1$, the live check must also cover that epoch's
-nullifier. Consensus tests all three against the window, which spans the
-**current epoch and the one before it**:
+The live window spans the **current epoch and the immediately preceding one**, and
+consensus tests the two published nullifiers, $\nf_e$ and $\nf_{e+1}$, against it:
 
-- $\nf_{e-1}$ covers the tail of epoch $e-1$ past the anchor, the range that
-spendability proof does not cover;
-- $\nf_e$ covers the current epoch, catching a competing spend ahead of ours;
-- $\nf_{e+1}$ guards the [cross-epoch race](#race): if the transaction is mined only
-  after epoch $e+1$ begins, $\nf_{e+1}$ is the value consensus checks as current
-  then.
+- scanning the **current epoch** catches a competing spend of the same note
+  already in flight, whose $\nf_e$ would clash with ours;
+- scanning the **preceding epoch** closes two gaps: a stamp's anchor can be
+  advanced in place, so it may sit at any height within its epoch and the whole
+  epoch must be swept, not just the blocks after the anchor; and a prior spend in
+  $e-1$ posted $\nf_e$ as *its* next-epoch nullifier, which surfaces here;
+- $\nf_{e+1}$ guards the [cross-epoch race](#race): mined only after epoch $e+1$
+  begins, our transaction has $\nf_{e+1}$ as the value consensus then treats as
+  current.
+
+No separate $\nf_{e-1}$ test is needed: the wallet's lifted anchor already covers
+epoch $e-1$ inside the proof, so the two published nullifiers, checked against the
+two-epoch window, catch every respend the proof does not.
 
 **Standalone vs. aggregated.** Balance, authorization, and the tachygram-window
 check run per constituent bundle in both cases; only the stamp proof differs. A
@@ -1046,7 +1065,7 @@ flowchart TB
     transfer["**Shielded Transfer**"]
     end
 
-    addr -- "`pk`" --> transfer
+    addr -- "`pk_d`" --> transfer
     memo -- "`(tag, memo)`" --> transfer
     transfer --> discovery --> check --> wit
 ```
@@ -1102,20 +1121,20 @@ note-transmission key, leaving the latter for the payment protocol to define. A
 Tachyon *diversified payment address* is
 
 $$
-\addr = (\pk_d,\,\ek)
+\addr = (\pkd,\,\ek)
 \qquad
 \begin{cases}
-    \pk_d = H(\ak, \nk; \rpk)\\
+    \pkd = \mathsf{Com}(\ak, \nk; \rpk)\\
     (\ek, \dk) \leftarrow \mathsf{ML\text{-}KEM.KeyGen}()
 \end{cases}
 $$
 
 with two components:
 
-- *Diversified payment key* $\pk_d$: the owner $\pk$ a note commits to, randomized
-  by a trapdoor $\rpk$ so that payment keys from the same wallet are unlinkable.
-  The decoupling lets us diversify the payment key independently of the
-  transmission key.
+- *Diversified payment key* $\pkd$: the owner field every note commits to
+  ([defined earlier](#payment-key)), randomized by the trapdoor $\rpk$ so that
+  payment keys from the same wallet are unlinkable. The decoupling lets us
+  diversify it independently of the transmission key.
 - *Diversified transmission key* $\ek$: the encapsulation key of a freshly sampled
   ML-KEM key pair.
 
@@ -1218,7 +1237,7 @@ $\mathsf{epk}$ that plays the analogous role in Orchard. This overhead is the
 primary reason we maximize shared-secret reuse. Three subtleties follow:
 
 - Only first-contact transactions carry the KEM ciphertext $c$; follow-ups omit
-  it. The resulting distinguishability is harmless: in the security reduction the
+  it. The resulting distinction is harmless: in the security reduction the
   simulator emits transactions with and without the $c$ field at random, so ledger
   indistinguishability still holds.
 - Costly as first contact is, parties with an existing secure channel should still
@@ -1299,7 +1318,7 @@ wallet keeps locally for a fast next sync is:
 
 $$
 \set{\underbrace{(\mathsf{idx}_\ek, \blk_\mathsf{fc}, n)}_{\text{per-sender}}},
-\set{\underbrace{(\mathsf{Note}, \blk_\mathsf{mint}, \blk_\mathsf{last})}_{\text{per-note}}}
+\set{\underbrace{(\mathsf{Note^{Tachyon}}, \blk_\mathsf{mint}, \blk_\mathsf{last})}_{\text{per-note}}}
 $$
 
 where $\mathsf{idx}_\ek$ is the HD derivation index of the channel's $\ek$,
@@ -1374,8 +1393,9 @@ coordinated network upgrade before quantum computers arrive.
 commitment or encrypted under post-quantum symmetric/KEM crypto, so a future
 quantum computer learns nothing about old transactions:
 
-- the owner field $\pk = H(\ak, \nk)$ and the note commitment $\cm$ are
-  hash/symmetric (Poseidon) commitments, hiding even against a quantum computer;
+- the owner field $\pkd = \mathsf{Com}(\ak, \nk; \rpk)$ and the note commitment
+  $\cm$ are hash/symmetric (Poseidon) commitments, hiding even against a quantum
+  computer;
 - nullifiers are PRF/hash outputs, pseudorandom against a quantum computer, so
   [spend unlinkability](#nf-sec) survives;
 - memos travel under [ML-KEM](#address), post-quantum from day one.
