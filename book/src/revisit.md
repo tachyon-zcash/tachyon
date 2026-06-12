@@ -95,7 +95,8 @@ simplifies the shielded protocol’s key architecture by removing functionality
 unrelated to spend authorization.
 
 > Among the main [security properties](https://zcash.github.io/orchard/design/nullifiers.html#security-properties),
-> Tachyon shielded protocol needs to uphold Ledger Indistinguishability, 
+> Tachyon shielded protocol needs to uphold Ledger Indistinguishability
+> (defined in [Zerocash](https://eprint.iacr.org/2014/349.pdf)),
 > Balance, Note Privacy, Note Privacy (OOB), Spend Unlinkability (but attackers access
 > restricted to only payment key).
 > Full Spend Unlinkability (attacker with $\ivk$ access) and Faerie Resistance are now
@@ -156,8 +157,8 @@ per-address trapdoor $\rpk$. Being a symmetric (Poseidon-based) commitment, $\pk
 gives a succinct owner field and
 [quantum recoverability](https://zips.z.cash/draft-ecc-quantum-recoverability)
 today.
-Publicizing $\ak$ directly, a Schnorr signing key, to senders who might have future
-access to a quantum computer exposes the user 
+Publicizing $\ak$ directly, a Schnorr verification key, to senders who might have
+future access to a quantum computer exposes the user 
 ["Harvest Now, Decrypt Later"](https://en.wikipedia.org/wiki/Harvest_now%2C_decrypt_later)
 risk.
 
@@ -357,6 +358,15 @@ the delegated key material is variable-size.
   <img src="./assets/ggm.svg" alt="ggm" />
 </p>
 
+> **Optimization: mixed-arity trees.** We use a binary tree for clarity, but the
+> arity need not be uniform across levels. A nullifier's in-circuit cost is the
+> number of hashes along its root-to-leaf path, i.e. the tree height, so a *wider*
+> branching near the root shortens every path and lowers that cost. Keeping the
+> branching binary near the *leaves* preserves fine-grained range coverage for OSS
+> delegation, where a delegated subtree should span as few surplus epochs as
+> possible. High arity at the top and arity-2 at the bottom buys both at once: a
+> shallow circuit and tight delegation ranges.
+
 #### Nullifier Security {#nf-sec}
 
 We now examine how the evolving nullifier upholds the security properties [carved
@@ -514,10 +524,11 @@ Bulletproof PCS).
 
 Each block contains one or more transactions. Each transaction has a `txid`,
 which commits only to its _effecting data_
-([ZIP-244](https://zips.z.cash/zip-0244)) and thus serves as the stable
-identifier for p2p gossip, and a `wtxid`
+([ZIP-244](https://zips.z.cash/zip-0244)) and is therefore the stable,
+non-malleable transaction identifier, and a `wtxid`
 ([ZIP-239](https://zips.z.cash/zip-0239)), which additionally commits to the
-potentially malleable authorization data.
+malleable authorization data and is the identifier used to relay v5+ transactions
+over the p2p network.
 Each transaction optionally contains a bundle of transfers from each pool:
 JoinSplit for Sprout (soon deprecated), Spend/Output for Sapling, Action for
 Orchard, and now Tachyon Action for the new Tachyon pool.
@@ -981,7 +992,7 @@ folds in $\nf_e$ and $\nf_{e+1}$, an output its commitment and a dummy), the
 accumulator $\tgacc$, and the anchor, the validator:
 
 1. confirms the `anchor` is a genuine node value in the consensus
-   [anchor chain](#anchor);
+   [anchor chain](#anchor) in the current epoch $e$;
 2. verifies the stamp's PCD proof against $(\set{\tg_i}, \tgacc, \mathsf{anchor})$,
    i.e. the [Action statement](#statement). The statement internally enforces
    $\tgacc$'s consistency with the published $\set{\tg_i}$ (the
@@ -1400,9 +1411,11 @@ quantum computer learns nothing about old transactions:
   [spend unlinkability](#nf-sec) survives;
 - memos travel under [ML-KEM](#address), post-quantum from day one.
 
-The only discrete-log values on chain are the randomized validating key
-$\rk = [\ask + \alpha]\,\G$ and the binding key. Re-randomization makes even
-these quantum-*private*: a quantum computer can take the discrete log of $\rk$ to
+The only discrete-log values on chain are the per-action value commitment $\cv$,
+the randomized validating key $\rk = [\ask + \alpha]\,\G$, and the binding key. The
+Pedersen $\cv = [v]\,\G + [\rcv]\,\H$ is perfectly hiding, so even a quantum
+computer learns nothing about $v$. Re-randomization makes the other two
+quantum-*private* as well: a quantum computer can take the discrete log of $\rk$ to
 recover $\ask + \alpha$, but $\alpha = \PRF(\cm \,\|\, \theta)$ is a fresh secret
 mask, so the result is unlinkable to $\ask$ or to any other spend. Privacy and
 unlinkability therefore already hold against a quantum adversary.
@@ -1432,7 +1445,11 @@ post-quantum signatures such as [CAPSS](https://eprint.iacr.org/2025/061), built
 on arithmetization-oriented permutations, are designed for exactly this. And since
 authorization is now a proof rather than a separate signature, it folds into the
 transaction's [PCD proof](#pq-pcd), unifying authorization and validity into one
-post-quantum artifact.
+post-quantum artifact. The randomized key $\rk$ then drops out of the
+[action description](#tx) entirely. One detail moves with it: today $\rk$'s
+randomizer $\alpha = \PRF(\cm \,\|\, \theta)$ is what
+[binds the note to its action](#tx), so with $\rk$ gone that binding has to be
+re-established as a constraint inside the proof statement.
 
 ### PQ PCD Proofs {#pq-pcd}
 
