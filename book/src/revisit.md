@@ -1034,12 +1034,154 @@ verification across it.
 
 ### Proof Tree {#prooftree}
 
-There are a couple of statements, the final Action statement will takes Spendable proof
-as input, and folds in more standard Spend/Output-like statement including the accumulator
-correctness proof.
+Every Tachyon Action transfer, whether a spend or an output, comes with a statement
+that its proof must satisfy. As in Sapling, the Spend and Output actions have
+separate statements. A Tachyon [transaction](#tx) does not ship one proof per
+action: its bundle carries a *single* aggregated proof attesting that every Action
+description satisfies its statement. This differs from both predecessors. Sapling
+emits $n$ independent proofs for an $n$-spend/output bundle; Orchard folds them
+into one proof only in name, since its size and verification still grow linearly in
+$n$. Tachyon's aggregated proof is *compressing*, sublinear in $n$, thanks to
+PCD proofs.
 
-This is where we describe the proof tree. we describe the data (header) and steps that updates
-them where each distinct step is a circuit and we specify their statement.
+What makes Tachyon's proof generation intricate is that it is built *incrementally*
+and relayed across parties, for both privacy and practicality. In every existing
+pool, proof generation is monolithic and local, with the spender producing the whole
+proof alone. Tachyon's [evolving nullifiers](#nf) change this: the onerous task of
+syncing past epochs to keep a [spendability proof](#spendability) current is
+delegated to an Oblivious Syncing Service (OSS), which assists in assembling the
+final proof yet learns nothing that would let it link a future spend. The proof that
+finally lands on chain is thus the output of a computation laid out over a binary
+(2-arity) DAG whose nodes are computed partly by the user and partly by the OSS. We
+call this graph the **proof tree**.
+
+We build up to it in stages. We first give the monolithic Spend, Output, and
+bundle-level statements, then show how the combined state of all actions in a transaction
+decomposes into a tree of steps, each step proving a subset of the statement and
+recursively folding forward the proofs beneath it. This split also modularizes the
+security analysis into two independent checks: that the monolithic statement is
+*sufficient*, and that the decomposition is *sound* (e.g., every step refers to
+the same note). A sub-statement is split into its own step for one of three reasons:
+
+- **Circuit size.** Each step is a bounded circuit (we target $2^{13}$ constraints),
+so a statement too large for one step must be spread across several.
+- **Privacy boundary.** Some sub-statements need secret witnesses that would leak
+note privacy or spend linkability if the OSS saw them, so the OSS proves up to that
+boundary and relays the partial proof to the user, who finishes the step.
+- **Proof reuse.** Some sub-statement proofs are shared across many notes, such as
+[epoch accumulator $e(X)$ integrity](#epoch-acc). Proving such a statement once lets
+it feed into many notes' proof trees as a ready-made input, with no per-note
+recomputation.
+
+<a id="statement"></a>
+
+We give the three monolithic statements an action's proof must satisfy: the
+per-action statements ([Output](#output) or [Spend](#spend)), and the
+[bundle-level](#bundle) statement that composes them. Their decomposition into
+folding steps (the in-epoch and cross-epoch lifts, and aggregation) follows in the
+remaining subsections, where each step is a circuit over a small header of data.
+
+Each condition below is tagged by who supplies its proof: **S** (shared across
+users), **U** (the user), or **O** (the OSS).
+
+#### Output Action Statement {#output}
+
+A valid instance of an *Output Action statement* assures that, given the public input:
+
+- $\cv$: net value commitment
+- $\rk$: randomized proof validation key *of the sender*
+- $\cm$: the output note commitment, published as a tachygram
+- $\tg_\bot$: a dummy tachygram, so an output reveals two tachygrams,
+  [indistinguishable](#race) from a spend's nullifier pair
+
+the prover knows the secret witness:
+
+- $\mathsf{Note} := (\pkd, v, \psi, \rcm)$: note opening, where $\pkd$ is the
+  recipient's payment key taken from their address
+- $\ak$: *sender* authorization key
+- the randomizers $\theta, \rcv$
+
+such that the following conditions hold:
+
+- **Value commitment integrity** (U): $\cv = [v]\,\G + [\rcv]\,\H$, committing the
+  (non-negative) created value $v$.
+- **Note commitment integrity** (U): $\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$, the
+  published commitment opens to this note.
+- **Authorization** (U): $\rk = \ak + [\alpha]\,\G$ and
+  $\alpha = \PRF(\cm \,\|\, \theta)$ binding the validation key to the output note.
+
+#### Spend Action Statement {#spend}
+
+A valid instance of a *Spend Action statement* assures that, given the public input:
+
+- $\cv$: net value commitment
+- $\rk$: randomized proof validation key
+- $\nf_e, \nf_{e+1}$: the spend-time nullifiers, published as tachygrams
+- $\mathsf{anchor}$: the [anchor](#anchor) the spend proves against
+
+the prover knows the secret witness:
+
+- $\mathsf{Note} := (\pkd, v, \psi, \rcm)$: note opening
+- $(\ak, \nk, \rpk)$: authorization key, nullifier key, payment-key trapdoor
+- the witness for the [spendability proof](#spendability)
+- the randomizers $\alpha, \theta, \rcv$
+
+such that the following conditions hold:
+
+- **Value commitment integrity** (U): $\cv = [-v]\,\G + [\rcv]\,\H$, committing the
+  negated spent value.
+- **Note commitment integrity** (U): $\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$.
+- **Payment key integrity** (U): $\pkd = \mathsf{Com}(\ak, \nk; \rpk)$.
+- **Spend Authority** (U): $\rk = \ak + [\alpha]\,\G$ and
+  $\alpha = \PRF(\cm \,\|\, \theta)$, binding the validating key to the note.
+- **Commitment Inclusion**: $\cm$ entered the pool at a point preceding the anchor.
+  - Initial inclusion (U): $\cm$ is a member of its creating stamp's
+    [accumulator](#acc), i.e. $f^\tg(\cm) = 0$.
+  - Lift to block boundary (U): that creating stamp is carried along the
+    [anchor chain](#anchor) to its end-of-block anchor.
+  - Flyclient anchor chain (O): the end-of-block anchor connects to the spend's
+    anchor through the hash chain, sampled flyclient-style in a logarithmic number
+    of hashes.
+- **Past Nullifier Exclusion** (until $e-1$): the note's per-epoch nullifier is
+  absent in every epoch up to the anchor.
+  - epoch accumulator integrity (S): each [epoch accumulator $e(X)$](#epoch-acc) is
+    the correct product of the per-stamp accumulators fixed in the anchor chain.
+  - delegation key integrity (U): the [prefix-constrained keys](#nf-ggm) handed to
+    the OSS are the right GGM nodes for this note's seed over the delegated range.
+  - nullifier derivation from delegation key (O): the OSS forward-walks those keys
+    to derive each in-range nullifier $\nf_i$.
+  - epoched nullifier non-membership (O): each $\nf_i$ satisfies $e_i(\nf_i) \neq 0$,
+    via the [QR-filter test](#qr-trick).
+- **Spend-time Nullifier Integrity** (U): $\nf_e, \nf_{e+1}$ are this note's
+  [GGM nullifiers](#nf-ggm) at epochs $e, e+1$, derived from the seed
+  $\PRF_\nk(\psi)$ and so bound to $\cm$.
+
+There's an obvious challenge on catching up anchor chain for inclusion proof,
+which is linear hash chain proving, scale with the anchor chain length, but with flyclient
+roots, we can prove block inclusion with *logarithmic* number of hashes to catch up. The
+gap between the anchor for initial inclusion til the end-of-block anchor that shows up
+in the block header (of the inclusion block) is still user's responsibility.
+
+#### Bundle-level Statement {#bundle}
+
+The bundle statement glues the per-action proofs together. Given the public input:
+
+- $e$: the current epoch
+- $\set{\tg_i}$: the published tachygram multiset of the bundle
+- $\tgacc$: their accumulator, a PCS commitment to $f^\tg(X) = \prod_i (X - \tg_i)$
+
+it attests that:
+
+- **Per-action satisfiability**: every action's [Spend](#spend) or [Output](#output)
+  statement holds, folded in as a sub-proof, and the tachygrams it emits
+  ($\nf_e, \nf_{e+1}$ for a spend; $\cm, \tg_\bot$ for an output) are exactly those
+  collected in $\set{\tg_i}$.
+- **Accumulator integrity** (U): $\tgacc$ accumulates the multiset $\set{\tg_i}$,
+  by the [batched correctness check](#acc-correct) at a random point.
+
+The value balance, anchor genuineness, and authorization signatures are enforced
+*outside* this statement: respectively the [binding signature](#tx), a
+[consensus check](#consensus-rule), and signature verification against $\rk$.
 
 #### In-epoch Lift {#in-e}
 
@@ -1047,7 +1189,6 @@ them where each distinct step is a circuit and we specify their statement.
 
 #### Aggregation {#aggregation}
 
-#### Tachyon Action Statement {#statement}
 
 ## Payment Protocol {#payment}
 
