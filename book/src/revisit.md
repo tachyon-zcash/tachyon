@@ -607,7 +607,8 @@ chain tip when its transaction is published.
 
 A **Tachyon Stamp** provides the PCD proof for the [Action statement](#statement)
 along with its public inputs: a set of tachygrams $\set{\tg_i}$, their
-accumulator $\tgacc$, and an anchor value from the [anchor chain](#anchor).
+accumulator $\tgacc$, an anchor value from the [anchor chain](#anchor), and the
+epoch $e$ that anchor lies in.
 Alternatively, the stamp holds a `wtxid` reference to another transaction whose
 stamp carries an aggregated PCD proof and the corresponding public inputs.
 The accumulator is included to spare miners from recomputing it over all
@@ -958,12 +959,34 @@ last proof step establishing the spend-specific facts: the integrity of the
 current and next-epoch nullifiers $\nf_e, \nf_{e+1}$ (both
 [derived from the same note](#nf)), the output commitments, and the correct
 computation of the bundle accumulator $\tgacc$ over all revealed tachygrams (the
-[batched correctness check](#acc-correct)).
+[batched correctness check](#acc-correct)). The accumulator collects *two tachygrams
+per action*: $(\nf_e, \nf_{e+1})$ for a spend, the note commitment and a
+zero-value dummy $(\cm, \tg_\bot)$ for an output.
 The result is the [Tachyon stamp](#tx): the PCD proof for the
 [Action statement](#statement) together with its public inputs
-$(\set{\tg_i}, \tgacc, \mathsf{anchor})$, whose anchor now sits in epoch $e$.
+$(\set{\tg_i}, \tgacc, \mathsf{anchor}, e)$, whose anchor now sits in epoch $e$.
 Revealing *both* $\nf_e$ and $\nf_{e+1}$ is what insures the transaction against
 the [cross-epoch race](#race) while it waits in the mempool.
+
+<details>
+<summary>Why must the user lift the spendability proof into epoch $e$?</summary>
+
+Two reasons, one for privacy and one for tachygram count.
+
+*Unlinkability.* The OSS hands back a proof anchored in $e-1$. Folding that anchor
+into the stamp *verbatim* would let the OSS recognize the very anchor it just
+produced and link the eventual spend back to the syncing session. The wallet must
+re-lift to a fresh anchor of its own to erase that handle.
+
+*Two tachygrams, not three.* Given that a lift is required, the wallet could still
+lift only *within* $e-1$, leaving the exclusion claim anchored in the previous
+epoch. But then the blind spot consensus must close with its live window would
+stretch back across $e-1$, and catching a double-spend there would force the
+wallet to also publish the $\nf_{e-1}$ — a *third* tachygram on top of
+$\nf_e, \nf_{e+1}$. Lifting across the boundary into $e$ instead shrinks the
+uncovered tail to epoch $e$ alone, which the two-epoch live window closes using only
+the pair $(\nf_e, \nf_{e+1})$ we already reveal.
+</details>
 
 4. **Authorize and bind.** Concurrent to the proving path of steps 1-3,
 the wallet assembles the transaction body, computes the [`SIGHASH`](#tx) over
@@ -976,8 +999,9 @@ the effecting data, and produces:
 
 5. **Mempool and aggregation.** The finished transaction enters the mempool as a
 standalone *Tachyon autonome*. A miner (or any [aggregator](#aggregation)) may
-then fold it together with others: it lifts every input stamp onto a common
-anchor, takes the [multiset union](#union) of their tachygrams and the
+then fold it together with others *sharing the same target epoch $e$*: it lifts
+every input stamp onto a common anchor, takes the [multiset union](#union) of their
+tachygrams and the
 accumulator of that union, and produces a single aggregated PCD proof. Each
 constituent's stamp is replaced by a reference to the aggregate transaction's
 `wtxid`, moving the tachygrams, anchor, and proof onto the aggregate.
@@ -987,43 +1011,45 @@ constituent's stamp is replaced by a reference to the aggregate transaction's
 Of the consensus rules, the bundle balance check and authorization-signature
 validation are unchanged from Orchard; only stamp verification is new.
 
-**Stamp verification.** Given the published tachygrams $\set{\tg_i}$ (a spend
-folds in $\nf_e$ and $\nf_{e+1}$, an output its commitment and a dummy), the
-accumulator $\tgacc$, and the anchor, the validator:
+**Stamp verification.** Given the published tachygrams $\set{\tg_i}$, the
+accumulator $\tgacc$, the anchor, and the anchor's epoch $e$, the validator:
 
-1. confirms the `anchor` is a genuine node value in the consensus
-   [anchor chain](#anchor) in the current epoch $e$;
-2. verifies the stamp's PCD proof against $(\set{\tg_i}, \tgacc, \mathsf{anchor})$,
+1. confirms $e$ is either the current or the preceding epoch:
+   $e = e_\mathsf{cur} \lor e = e_\mathsf{cur} - 1$
+2. confirms the $\mathsf{anchor}$ is a genuine node value in the consensus
+   [anchor chain](#anchor), lying in epoch $e$;
+3. verifies the stamp's PCD proof against $(\set{\tg_i}, \tgacc, \mathsf{anchor}, e)$,
    i.e. the [Action statement](#statement). The statement internally enforces
    $\tgacc$'s consistency with the published $\set{\tg_i}$ (the
    [batched check](#acc-correct)), the integrity of the revealed nullifiers and
    output commitments, and the spendability of every spent note up to the anchor.
 
-**The exclusion window (new double-spend rule).** A spendability proof attests
-absence only up to its anchor. The wallet lifts that anchor into the spending
-epoch $e$ before stamping (see the [life cycle](#txflow)), so the proof forecloses
-every double-spend through a recent point in $e$; it is silent only on the short
-stretch from the anchor to the block the transaction lands in, where the same note
-could still have been respent. Consensus closes this blind spot with a live check:
-it keeps the tachygrams of recent blocks in memory and rejects the bundle if either
-published nullifier already appears there.
+A stamp's proof is bound to a public epoch $e$ (i.e., the epoch its anchor lies
+in) and certifies the spent note unspent only up to that anchor. A strict rule
+would accept the stamp only while the chain is still in $e$, forcing a
+cross-epoch lift the instant the epoch advances. Tachyon *relaxes* this
+(step 1 above): a proof for $e$ is accepted while the chain tip is in epoch $e$
+*or* $e+1$. The stamp may therefore lag the chain by one epoch, so a transaction
+that drifts across an epoch boundary while waiting in the mempool stays valid.
 
-The live window spans the **current epoch and the immediately preceding one**, and
-consensus tests the two published nullifiers, $\nf_e$ and $\nf_{e+1}$, against it:
+**Consensus window (new double-spend rule).**
+To close the gap between the anchor and the block that includes the stamp,
+consensus enforces a live duplicate check spanning **the current and preceding
+epochs**. Validators hold the tachygrams of the two most recent epochs in memory
+and reject any bundle whose published tachygram already appears among them. The
+window is two epochs wide exactly because the stamp proof may be one epoch stale.
 
-- scanning the **current epoch** catches a competing spend of the same note
-  already in flight, whose $\nf_e$ would clash with ours;
-- scanning the **preceding epoch** closes two gaps: a stamp's anchor can be
-  advanced in place, so it may sit at any height within its epoch and the whole
-  epoch must be swept, not just the blocks after the anchor; and a prior spend in
-  $e-1$ posted $\nf_e$ as *its* next-epoch nullifier, which surfaces here;
-- $\nf_{e+1}$ guards the [cross-epoch race](#race): mined only after epoch $e+1$
-  begins, our transaction has $\nf_{e+1}$ as the value consensus then treats as
-  current.
+Relaxed freshness does *not* weaken soundness, because each spend publishes the
+pair $(\nf_e, \nf_{e+1})$. Whichever of the two permitted epochs accepts the
+stamp, the pair already contains that epoch's nullifier:
 
-No separate $\nf_{e-1}$ test is needed: the wallet's lifted anchor already covers
-epoch $e-1$ inside the proof, so the two published nullifiers, checked against the
-two-epoch window, catch every respend the proof does not.
+- accepted in $e$: the window covers $\set{e-1, e}$ and $\nf_e$ is the active
+  nullifier. A double-spend of the same note must publish the same $\nf_e$ and
+  collide; so does a prior spend back in $e-1$ that carried $\nf_e$ as its
+  next-epoch nullifier.
+- accepted in $e+1$: the window covers $\set{e, e+1}$ and $\nf_{e+1}$ is the active
+  nullifier, catching any competitor targeting $e+1$. A double-spend made in epoch
+  $e$ after the anchor is caught too, since its $\nf_e$ also falls in the window.
 
 **Standalone vs. aggregated.** Balance, authorization, and the tachygram-window
 check run per constituent bundle in both cases; only the stamp proof differs. A
@@ -1081,8 +1107,8 @@ per-action statements ([Output](#output) or [Spend](#spend)), and the
 folding steps (the in-epoch and cross-epoch lifts, and aggregation) follows in the
 remaining subsections, where each step is a circuit over a small header of data.
 
-Each condition below is tagged by who supplies its proof: **S** (shared across
-users), **U** (the user), or **O** (the OSS).
+Each condition below is tagged by who supplies its proof: $\Sc$ (shared across
+users), $\Uc$ (the user), or $\Oc$ (the OSS).
 
 #### Output Action Statement {#output}
 
@@ -1098,22 +1124,27 @@ the prover knows the secret witness:
 
 - $\mathsf{Note} := (\pkd, v, \psi, \rcm)$: note opening, where $\pkd$ is the
   recipient's payment key taken from their address
+- $\mathsf{Note}_\bot := (\pk_\bot, 0, \psi_\bot, \rcm_\bot)$: dummy note opening
+  with arbitrary $\pk_\bot, \psi_\bot, \rcm_\bot$ values.
 - $\ak$: *sender* authorization key
 - the randomizers $\theta, \rcv$
 
 such that the following conditions hold:
 
-- **Value commitment integrity** (U): $\cv = [v]\,\G + [\rcv]\,\H$, committing the
+- **Value commitment integrity** ($\Uc$): $\cv = [v]\,\G + [\rcv]\,\H$, committing the
   (non-negative) created value $v$.
-- **Note commitment integrity** (U): $\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$, the
+- **Note commitment integrity** ($\Uc$): $\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$, the
   published commitment opens to this note.
-- **Authorization** (U): $\rk = \ak + [\alpha]\,\G$ and
+- **Zero-value Dummy Commitment** ($\Uc$): $\tg_\bot = \mathsf{Com}
+  (\pk_\bot, 0, \psi_\bot; \rcm_\bot)$, ensures zero-value dummy note.
+- **Authorization** ($\Uc$): $\rk = \ak + [\alpha]\,\G$ and
   $\alpha = \PRF(\cm \,\|\, \theta)$ binding the validation key to the output note.
 
 #### Spend Action Statement {#spend}
 
 A valid instance of a *Spend Action statement* assures that, given the public input:
 
+- $e$: the spend (current) epoch
 - $\cv$: net value commitment
 - $\rk$: randomized proof validation key
 - $\nf_e, \nf_{e+1}$: the spend-time nullifiers, published as tachygrams
@@ -1128,31 +1159,31 @@ the prover knows the secret witness:
 
 such that the following conditions hold:
 
-- **Value commitment integrity** (U): $\cv = [-v]\,\G + [\rcv]\,\H$, committing the
+- **Value commitment integrity** ($\Uc$): $\cv = [-v]\,\G + [\rcv]\,\H$, committing the
   negated spent value.
-- **Note commitment integrity** (U): $\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$.
-- **Payment key integrity** (U): $\pkd = \mathsf{Com}(\ak, \nk; \rpk)$.
-- **Spend Authority** (U): $\rk = \ak + [\alpha]\,\G$ and
+- **Note commitment integrity** ($\Uc$): $\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$.
+- **Payment key integrity** ($\Uc$): $\pkd = \mathsf{Com}(\ak, \nk; \rpk)$.
+- **Spend Authority** ($\Uc$): $\rk = \ak + [\alpha]\,\G$ and
   $\alpha = \PRF(\cm \,\|\, \theta)$, binding the validating key to the note.
 - **Commitment Inclusion**: $\cm$ entered the pool at a point preceding the anchor.
-  - Initial inclusion (U): $\cm$ is a member of its creating stamp's
+  - Initial inclusion ($\Uc$): $\cm$ is a member of its creating stamp's
     [accumulator](#acc), i.e. $f^\tg(\cm) = 0$.
-  - Lift to block boundary (U): that creating stamp is carried along the
+  - Lift to block boundary ($\Uc$): that creating stamp is carried along the
     [anchor chain](#anchor) to its end-of-block anchor.
-  - Flyclient anchor chain (O): the end-of-block anchor connects to the spend's
+  - Flyclient anchor chain ($\Oc$): the end-of-block anchor connects to the spend's
     anchor through the hash chain, sampled flyclient-style in a logarithmic number
     of hashes.
 - **Past Nullifier Exclusion** (until $e-1$): the note's per-epoch nullifier is
   absent in every epoch up to the anchor.
-  - epoch accumulator integrity (S): each [epoch accumulator $e(X)$](#epoch-acc) is
+  - epoch accumulator integrity ($\Sc$): each [epoch accumulator $e(X)$](#epoch-acc) is
     the correct product of the per-stamp accumulators fixed in the anchor chain.
-  - delegation key integrity (U): the [prefix-constrained keys](#nf-ggm) handed to
+  - delegation key integrity ($\Uc$): the [prefix-constrained keys](#nf-ggm) handed to
     the OSS are the right GGM nodes for this note's seed over the delegated range.
-  - nullifier derivation from delegation key (O): the OSS forward-walks those keys
+  - nullifier derivation from delegation key ($\Oc$): the OSS forward-walks those keys
     to derive each in-range nullifier $\nf_i$.
-  - epoched nullifier non-membership (O): each $\nf_i$ satisfies $e_i(\nf_i) \neq 0$,
+  - epoched nullifier non-membership ($\Oc$): each $\nf_i$ satisfies $e_i(\nf_i) \neq 0$,
     via the [QR-filter test](#qr-trick).
-- **Spend-time Nullifier Integrity** (U): $\nf_e, \nf_{e+1}$ are this note's
+- **Spend-time Nullifier Integrity** ($\Uc$): $\nf_e, \nf_{e+1}$ are this note's
   [GGM nullifiers](#nf-ggm) at epochs $e, e+1$, derived from the seed
   $\PRF_\nk(\psi)$ and so bound to $\cm$.
 
@@ -1167,8 +1198,11 @@ in the block header (of the inclusion block) is still user's responsibility.
 The bundle statement glues the per-action proofs together. Given the public input:
 
 - $e$: the current epoch
-- $\set{\tg_i}$: the published tachygram multiset of the bundle
+- $\set{(\cv_i, \rk_i)}$: the list of [Action descriptions](#tx)
+- $\set{\tg_i}$: the associated tachygram multiset of the bundle, two tachygrams
+  per action
 - $\tgacc$: their accumulator, a PCS commitment to $f^\tg(X) = \prod_i (X - \tg_i)$
+- $\mathsf{anchor}$: the common [anchor](#anchor) every spend proves against
 
 it attests that:
 
@@ -1176,7 +1210,7 @@ it attests that:
   statement holds, folded in as a sub-proof, and the tachygrams it emits
   ($\nf_e, \nf_{e+1}$ for a spend; $\cm, \tg_\bot$ for an output) are exactly those
   collected in $\set{\tg_i}$.
-- **Accumulator integrity** (U): $\tgacc$ accumulates the multiset $\set{\tg_i}$,
+- **Accumulator integrity** ($\Uc$): $\tgacc$ accumulates the multiset $\set{\tg_i}$,
   by the [batched correctness check](#acc-correct) at a random point.
 
 The value balance, anchor genuineness, and authorization signatures are enforced
