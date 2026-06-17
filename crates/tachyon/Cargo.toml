@@ -48,7 +48,8 @@ lazy_static = { version = "1", default-features = false, features = [
     "spin_no_std",
 ] }
 pasta_curves = "0.5.1"
-ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "3baa09549fec9a2c14a6e377a5f7f533fa8361a0", default-features = false }
+ragu = { git = "https://github.com/turbocrime/ragu", rev = "2bf219f8", default-features = false }
+
 rand_core = { version = "0.6", default-features = false }
 reddsa = { version = "0.5.1", default-features = false }
 

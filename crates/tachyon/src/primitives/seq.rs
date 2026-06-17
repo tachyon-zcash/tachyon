@@ -1,26 +1,28 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::cmp;
 
-use pasta_curves::{EqAffine, Fp};
-use ragu::{Commitment, Polynomial};
+use group::Group as _;
+use pasta_curves::{Eq, Fp};
+use ragu::Polynomial;
 
 use crate::note::Nullifier;
 
 /// Pedersen commitment to a nullifier sequence $N$.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct NfSeqCommit(Commitment);
+#[derive(Clone, Copy, Debug, cmp::Eq, PartialEq)]
+pub struct NfSeqCommit(Eq);
 
 /// Witness polynomial for a nullifier sequence $N$ (members encoded as
 /// coefficients, ordered by ascending degree).
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct NfSeqPoly(Polynomial);
 
 impl NfSeqCommit {
     /// The identity commitment: the commit of the empty nullifier sequence.
     #[must_use]
     pub fn identity() -> Self {
-        Self(Commitment::identity())
+        Self(Eq::identity())
     }
 }
 
@@ -57,20 +59,14 @@ impl From<&[Nullifier]> for NfSeqCommit {
     }
 }
 
-impl From<Commitment> for NfSeqCommit {
-    fn from(commit: Commitment) -> Self {
-        Self(commit)
+impl From<Eq> for NfSeqCommit {
+    fn from(point: Eq) -> Self {
+        Self(point)
     }
 }
 
-impl From<NfSeqCommit> for Commitment {
+impl From<NfSeqCommit> for Eq {
     fn from(commit: NfSeqCommit) -> Self {
         commit.0
-    }
-}
-
-impl From<NfSeqCommit> for EqAffine {
-    fn from(commit: NfSeqCommit) -> Self {
-        *commit.0.inner()
     }
 }

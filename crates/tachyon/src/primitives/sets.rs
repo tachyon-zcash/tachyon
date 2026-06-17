@@ -1,28 +1,29 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::cmp;
 
-use pasta_curves::{EqAffine, Fp};
-use ragu::{Commitment, Polynomial};
+use pasta_curves::{Eq, Fp};
+use ragu::Polynomial;
 
 use super::{ActionDigest, Tachygram};
 use crate::{Action, ActionDigestError};
 
 /// Pedersen commitment to a stamp's tachygram set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TachygramSetCommit(Commitment);
+#[derive(Clone, Copy, Debug, cmp::Eq, PartialEq)]
+pub struct TachygramSetCommit(Eq);
 
 /// Pedersen commitment to a stamp's action-digest set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ActionSetCommit(Commitment);
+#[derive(Clone, Copy, Debug, cmp::Eq, PartialEq)]
+pub struct ActionSetCommit(Eq);
 
 /// Witness polynomial for a stamp's tachygram set (members encoded as roots).
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct TachygramSetPoly(Polynomial);
 
 /// Witness polynomial for a stamp's action-digest set (members encoded as
 /// roots).
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ActionSetPoly(Polynomial);
 
 impl TachygramSetPoly {
@@ -103,50 +104,26 @@ impl From<&[Tachygram]> for TachygramSetCommit {
     }
 }
 
-impl From<ActionSetCommit> for Commitment {
+impl From<ActionSetCommit> for Eq {
     fn from(commit: ActionSetCommit) -> Self {
         commit.0
     }
 }
 
-impl From<Commitment> for ActionSetCommit {
-    fn from(commit: Commitment) -> Self {
-        Self(commit)
+impl From<Eq> for ActionSetCommit {
+    fn from(point: Eq) -> Self {
+        Self(point)
     }
 }
 
-impl From<TachygramSetCommit> for Commitment {
+impl From<TachygramSetCommit> for Eq {
     fn from(commit: TachygramSetCommit) -> Self {
         commit.0
     }
 }
 
-impl From<Commitment> for TachygramSetCommit {
-    fn from(commit: Commitment) -> Self {
-        Self(commit)
-    }
-}
-
-impl From<&ActionSetCommit> for EqAffine {
-    fn from(commit: &ActionSetCommit) -> Self {
-        *commit.0.inner()
-    }
-}
-
-impl From<ActionSetCommit> for EqAffine {
-    fn from(commit: ActionSetCommit) -> Self {
-        *commit.0.inner()
-    }
-}
-
-impl From<TachygramSetCommit> for EqAffine {
-    fn from(commit: TachygramSetCommit) -> Self {
-        *commit.0.inner()
-    }
-}
-
-impl From<&TachygramSetCommit> for EqAffine {
-    fn from(commit: &TachygramSetCommit) -> Self {
-        *commit.0.inner()
+impl From<Eq> for TachygramSetCommit {
+    fn from(point: Eq) -> Self {
+        Self(point)
     }
 }

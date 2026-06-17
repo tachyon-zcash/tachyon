@@ -5,9 +5,12 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::Field as _;
-use group::GroupEncoding as _;
-use pasta_curves::{EqAffine, Fp};
-use ragu::{Header, Index, Polynomial, Step, Suffix, enforce_poly_product, generators};
+use group::{Curve as _, GroupEncoding as _};
+use pasta_curves::{Eq, Fp};
+use ragu::{
+    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
+    enforce_poly_product,
+};
 
 use super::{delegation::NullifierHeader, pool::AnchorChain, spend::SpendHeader};
 use crate::{
@@ -48,8 +51,8 @@ impl Header for StampHeader {
 
     fn encode(data: &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 32 + 32);
-        let action_bytes: [u8; 32] = EqAffine::from(&data.0).to_bytes();
-        let tachygram_bytes: [u8; 32] = EqAffine::from(&data.1).to_bytes();
+        let action_bytes: [u8; 32] = Eq::from(data.0).to_affine().to_bytes();
+        let tachygram_bytes: [u8; 32] = Eq::from(data.1).to_affine().to_bytes();
         let anchor_bytes: [u8; 32] = data.2.0.into();
         out.extend_from_slice(&action_bytes);
         out.extend_from_slice(&tachygram_bytes);
@@ -139,10 +142,12 @@ impl Step for SpendStamp {
         }
 
         // Bind the published pair to the genuine GGM leaf pair.
-        let nf_pair_ref: EqAffine = *((generators::g(0) * Fp::from(present_nf)
-            + generators::g(1) * Fp::from(nf_next))
-        .inner());
-        if EqAffine::from(range_commit) != nf_pair_ref {
+        let generators = Pasta::host_generators(Pasta::baked()).g();
+        let (Some(g0), Some(g1)) = (generators.first(), generators.get(1)) else {
+            return Err(ragu::Error("SpendStamp: insufficient generators"));
+        };
+        let nf_pair_ref: Eq = *g0 * Fp::from(present_nf) + *g1 * Fp::from(nf_next);
+        if Eq::from(range_commit) != nf_pair_ref {
             return Err(ragu::Error(
                 "SpendStamp: published scalars are not the derived leaf pair",
             ));

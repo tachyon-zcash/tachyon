@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
-use ragu::{Header, Index, Step, Suffix, generators};
+use ragu::{Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix};
 
 use super::{
     delegation::NullifierHeader,
@@ -80,7 +80,11 @@ impl Step for SpendableInit {
                 "SpendableInit: starting range must span one epoch",
             ));
         }
-        let present_commit = NfSeqCommit::from(generators::g(0) * Fp::from(present_nf));
+        let generators = Pasta::host_generators(Pasta::baked()).g();
+        let Some(g0) = generators.first() else {
+            return Err(ragu::Error("SpendableInit: insufficient generators"));
+        };
+        let present_commit = NfSeqCommit::from(*g0 * Fp::from(present_nf));
         if range_commit != present_commit {
             return Err(ragu::Error(
                 "SpendableInit: present nullifier does not match the derived leaf",

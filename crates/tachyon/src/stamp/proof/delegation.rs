@@ -7,8 +7,12 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::PrimeField as _;
-use pasta_curves::Fp;
-use ragu::{Commitment, Header, Index, Polynomial, Step, Suffix, enforce_poly_concat, generators};
+use group::{Curve as _, GroupEncoding as _};
+use pasta_curves::{Eq, Fp};
+use ragu::{
+    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
+    enforce_poly_concat,
+};
 
 use crate::{
     digest::poseidon,
@@ -53,7 +57,7 @@ impl Header for NullifierHeader {
 
     fn encode(data: &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 4 + 4 + 32);
-        let commit_bytes: [u8; 32] = Commitment::from(data.0).into();
+        let commit_bytes: [u8; 32] = Eq::from(data.0).to_affine().to_bytes();
         out.extend_from_slice(&commit_bytes);
         out.extend_from_slice(&data.1.0.to_le_bytes());
         out.extend_from_slice(&data.2.0.to_le_bytes());
@@ -158,7 +162,11 @@ impl Step for NullifierStep {
             return Err(ragu::Error("NullifierStep: not at maximum depth"));
         }
         let nf = Nullifier::from(poseidon::nullifier(node));
-        let range_commit = NfSeqCommit::from(generators::g(0) * Fp::from(nf));
+        let generators = Pasta::host_generators(Pasta::baked()).g();
+        let Some(g0) = generators.first() else {
+            return Err(ragu::Error("NullifierStep: insufficient generators"));
+        };
+        let range_commit = NfSeqCommit::from(*g0 * Fp::from(nf));
         Ok(((range_commit, index, index.next(), cm), ()))
     }
 }

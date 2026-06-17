@@ -18,10 +18,11 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::{Field as _, PrimeField as _};
-use pasta_curves::Fp;
+use group::{Curve as _, GroupEncoding as _};
+use pasta_curves::{Eq, Fp};
 use ragu::{
-    Commitment, Header, Index, Polynomial, Step, Suffix, enforce_poly_concat, enforce_poly_splice,
-    generators,
+    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
+    enforce_poly_concat, enforce_poly_splice,
 };
 
 use super::delegation::NullifierHeader;
@@ -99,7 +100,7 @@ impl Header for Unspent {
 
     fn encode(data: &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 4 + 32 + 32 + 32 + 4);
-        let elapsed_bytes: [u8; 32] = Commitment::from(data.0.0).into();
+        let elapsed_bytes: [u8; 32] = Eq::from(data.0.0).to_affine().to_bytes();
         out.extend_from_slice(&elapsed_bytes);
         out.extend_from_slice(&data.0.1.0.to_le_bytes());
         out.extend_from_slice(&Fp::from(data.1).to_repr());
@@ -471,7 +472,11 @@ impl Step for VerifyUnspent {
             ));
         }
 
-        let present_commit = NfSeqCommit::from(generators::g(0) * Fp::from(present_nf));
+        let generators = Pasta::host_generators(Pasta::baked()).g();
+        let Some(g0) = generators.first() else {
+            return Err(ragu::Error("VerifyUnspent: insufficient generators"));
+        };
+        let present_commit = NfSeqCommit::from(*g0 * Fp::from(present_nf));
         if tip_poly.commit() != present_commit {
             return Err(ragu::Error(
                 "VerifyUnspent: tip polynomial does not match present nullifier",
