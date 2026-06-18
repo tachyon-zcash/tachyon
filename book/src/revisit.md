@@ -820,11 +820,11 @@ QR, namely $\forall x_i \in \QR$, as follows:
 
 - Prover interpolates all QR pairs $(x_i, y_i)$ into a polynomial $g(X)$ where
 $g(x_i) = y_i$ and $x_i = y_i^2$
-- Prover computes $h(X)=\frac{g(X) - X}{f(X)}$ and sends commitments to $g(X)$
+- Prover computes $h(X)=\frac{g(X)^2 - X}{f(X)}$ and sends commitments to $g(X)$
 and $h(X)$ to the Verifier
-  - Observe that the numerator $g(X) - X$ vanishes over all $x_i$, thus must
-  perfectly divide the vanishing polynomial $f(X)$
-- Verifier samples a random $r\sample\F$, and test: $g(r) - r \iseq f(r)\cdot h(r)$
+  - Observe that the numerator $g(X)^2 - X$ vanishes over all $x_i$ (since
+  $g(x_i)^2 = y_i^2 = x_i$), thus must perfectly divide the vanishing polynomial $f(X)$
+- Verifier samples a random $r\sample\F$, and test: $g(r)^2 - r \iseq f(r)\cdot h(r)$
 
 **Building the buckets (once, by the OSS).** Fix $R_1, \ldots, R_k \sample \F$ at
 system startup. Conceptually, the buckets are the leaves of a binary tree built
