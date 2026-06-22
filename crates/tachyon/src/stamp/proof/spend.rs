@@ -6,7 +6,10 @@ use alloc::vec::Vec;
 
 use ff::PrimeField as _;
 use pasta_curves::Fp;
-use ragu::{Header, Index, Step, Suffix};
+use ragu::{
+    Header, Index, Step, Suffix,
+    constraint::{enforce_nonzero, enforce_zero},
+};
 
 use super::spendable::SpendableHeader;
 use crate::{
@@ -84,21 +87,16 @@ impl Step for SpendBind {
         (present_nf, anchor, spendable_cm): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if u64::from(value) == 0 {
-            return Err(ragu::Error::InvalidWitness(
-                "SpendBind: zero-value note".into(),
-            ));
-        }
+        enforce_nonzero(Fp::from(u64::from(value)), "SpendBind: zero-value note")?;
         if u64::from(value) > NOTE_VALUE_MAX {
             return Err(ragu::Error::InvalidWitness(
                 "SpendBind: note value exceeds maximum".into(),
             ));
         }
-        if pk.0 != pak.derive_payment_key().0 {
-            return Err(ragu::Error::InvalidWitness(
-                "SpendBind: pak not related to note".into(),
-            ));
-        }
+        enforce_zero(
+            pk.0 - pak.derive_payment_key().0,
+            "SpendBind: pak not related to note",
+        )?;
         let cm = Note {
             pk,
             value,
@@ -107,11 +105,10 @@ impl Step for SpendBind {
         }
         .commitment();
 
-        if spendable_cm != cm {
-            return Err(ragu::Error::InvalidWitness(
-                "SpendBind: note does not match the spendable lineage".into(),
-            ));
-        }
+        enforce_zero(
+            Fp::from(spendable_cm) - Fp::from(cm),
+            "SpendBind: note does not match the spendable lineage",
+        )?;
 
         let cv = rcv.commit(i64::from(value));
         let rk = pak.ak.derive_action_public(&alpha);
