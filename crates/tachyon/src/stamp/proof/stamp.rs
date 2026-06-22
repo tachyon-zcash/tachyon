@@ -9,7 +9,6 @@ use pasta_curves::{Eq, Fp};
 use ragu::{
     Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
     constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    enforce_poly_product,
 };
 
 use super::{delegation::NullifierHeader, pool::AnchorChain, spend::SpendHeader};
@@ -20,6 +19,7 @@ use crate::{
     keys::private,
     note::{Note, Nullifier},
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit, effect},
+    relations::enforce_poly_product,
     value,
 };
 

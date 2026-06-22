@@ -23,7 +23,6 @@ use pasta_curves::{Eq, Fp};
 use ragu::{
     Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
     constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    enforce_poly_concat, enforce_poly_splice,
 };
 
 use super::delegation::NullifierHeader;
@@ -32,6 +31,7 @@ use crate::{
     primitives::{
         Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, TachygramSetCommit, TachygramSetPoly,
     },
+    relations::{enforce_poly_concat, enforce_poly_splice},
 };
 
 /// Anchor segment between two endpoints. Composable via [`AnchorFuse`].

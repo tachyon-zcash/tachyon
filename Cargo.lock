@@ -458,7 +458,7 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 [[package]]
 name = "ragu"
 version = "0.0.0"
-source = "git+https://github.com/turbocrime/ragu?rev=108f4afa#108f4afa315eb0dcbe63d2221986c82c297425f2"
+source = "git+https://github.com/turbocrime/ragu?rev=78313d21#78313d21b9f4b3f85b0052272e454f398eb01648"
 dependencies = [
  "blake2b_simd",
  "ff",
@@ -476,7 +476,7 @@ dependencies = [
 [[package]]
 name = "ragu_arithmetic"
 version = "0.0.0"
-source = "git+https://github.com/turbocrime/ragu?rev=108f4afa#108f4afa315eb0dcbe63d2221986c82c297425f2"
+source = "git+https://github.com/turbocrime/ragu?rev=78313d21#78313d21b9f4b3f85b0052272e454f398eb01648"
 dependencies = [
  "ff",
  "group",
@@ -489,7 +489,7 @@ dependencies = [
 [[package]]
 name = "ragu_circuits"
 version = "0.0.0"
-source = "git+https://github.com/turbocrime/ragu?rev=108f4afa#108f4afa315eb0dcbe63d2221986c82c297425f2"
+source = "git+https://github.com/turbocrime/ragu?rev=78313d21#78313d21b9f4b3f85b0052272e454f398eb01648"
 dependencies = [
  "blake2b_simd",
  "maybe-rayon",
@@ -501,7 +501,7 @@ dependencies = [
 [[package]]
 name = "ragu_core"
 version = "0.0.0"
-source = "git+https://github.com/turbocrime/ragu?rev=108f4afa#108f4afa315eb0dcbe63d2221986c82c297425f2"
+source = "git+https://github.com/turbocrime/ragu?rev=78313d21#78313d21b9f4b3f85b0052272e454f398eb01648"
 dependencies = [
  "ragu_arithmetic",
  "ragu_macros",
@@ -511,7 +511,7 @@ dependencies = [
 [[package]]
 name = "ragu_macros"
 version = "0.0.0"
-source = "git+https://github.com/turbocrime/ragu?rev=108f4afa#108f4afa315eb0dcbe63d2221986c82c297425f2"
+source = "git+https://github.com/turbocrime/ragu?rev=78313d21#78313d21b9f4b3f85b0052272e454f398eb01648"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -524,7 +524,7 @@ dependencies = [
 [[package]]
 name = "ragu_pasta"
 version = "0.0.0"
-source = "git+https://github.com/turbocrime/ragu?rev=108f4afa#108f4afa315eb0dcbe63d2221986c82c297425f2"
+source = "git+https://github.com/turbocrime/ragu?rev=78313d21#78313d21b9f4b3f85b0052272e454f398eb01648"
 dependencies = [
  "lazy_static",
  "ragu_arithmetic",
@@ -533,7 +533,7 @@ dependencies = [
 [[package]]
 name = "ragu_pcd"
 version = "0.0.0"
-source = "git+https://github.com/turbocrime/ragu?rev=108f4afa#108f4afa315eb0dcbe63d2221986c82c297425f2"
+source = "git+https://github.com/turbocrime/ragu?rev=78313d21#78313d21b9f4b3f85b0052272e454f398eb01648"
 dependencies = [
  "maybe-rayon",
  "ragu_arithmetic",
@@ -545,7 +545,7 @@ dependencies = [
 [[package]]
 name = "ragu_primitives"
 version = "0.0.0"
-source = "git+https://github.com/turbocrime/ragu?rev=108f4afa#108f4afa315eb0dcbe63d2221986c82c297425f2"
+source = "git+https://github.com/turbocrime/ragu?rev=78313d21#78313d21b9f4b3f85b0052272e454f398eb01648"
 dependencies = [
  "ragu_arithmetic",
  "ragu_core",

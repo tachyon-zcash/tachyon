@@ -12,7 +12,6 @@ use pasta_curves::{Eq, Fp};
 use ragu::{
     Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
     constraint::{enforce_equal_point, enforce_zero},
-    enforce_poly_concat,
 };
 
 use crate::{
@@ -20,6 +19,7 @@ use crate::{
     keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, ProofAuthorizingKey},
     note::{self, Note, Nullifier},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
+    relations::enforce_poly_concat,
 };
 
 /// In-progress GGM walk position `(node, depth, index, cm)`: the current tree
