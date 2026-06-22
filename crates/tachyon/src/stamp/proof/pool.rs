@@ -79,9 +79,11 @@ impl Header for AnchorChain {
     }
 }
 
-/// Multi-stamp / multi-epoch nf-exclusion proof: an `elapsed` polynomial of one
-/// nullifier per crossed epoch boundary over `[start_epoch, present_epoch)`,
-/// plus the in-progress tip `present_nf` spliced in when its epoch completes.
+/// Multi-stamp / multi-epoch nf-exclusion proof
+///
+/// An `elapsed` polynomial of one nullifier per crossed epoch boundary over
+/// `[start_epoch, present_epoch)`, plus the in-progress tip `present_nf`
+/// spliced in when its epoch completes.
 #[derive(Clone, Debug)]
 pub struct Unspent;
 
@@ -222,7 +224,9 @@ impl Step for AnchorFuse {
         (right_start, right_end): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if left_end != right_start {
-            return Err(ragu::Error("AnchorFuse: segments not adjacent"));
+            return Err(ragu::Error::InvalidWitness(
+                "AnchorFuse: segments not adjacent".into(),
+            ));
         }
         Ok(((left_start, right_end), ()))
     }
@@ -255,7 +259,9 @@ impl Step for UnspentSeed {
         let eval = stamp_tg_set.eval(nf_point);
         ctx.enforce_poly_query(stamp_tg_set.commit().into(), nf_point, eval)?;
         if eval == Fp::ZERO {
-            return Err(ragu::Error("UnspentSeed: found nullifier in set"));
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentSeed: found nullifier in set".into(),
+            ));
         }
         let stamp_commit = stamp_tg_set.commit();
         let end = start.next_stamp(&stamp_commit);
@@ -301,9 +307,11 @@ impl Step for EmptyBlockUnspentSeed {
     }
 }
 
-/// Extend an [`Unspent`] within its tip epoch: the forwards half crosses no
-/// boundary, both halves share the tip `present_nf` at adjacent anchors, and
-/// the output keeps `left`'s span while only extending the anchor.
+/// Extend an [`Unspent`] within its tip epoch.
+///
+/// The forwards half crosses no boundary, both halves share the tip
+/// `present_nf` at adjacent anchors, and the output keeps `left`'s span while
+/// only extending the anchor.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -324,26 +332,28 @@ impl Step for UnspentFuse {
         ((right_elapsed, right_present_epoch), right_start, right_end, right_pnf, right_epoch): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if right_present_epoch != right_epoch {
-            return Err(ragu::Error(
-                "UnspentFuse: forwards half must stay within one epoch",
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentFuse: forwards half must stay within one epoch".into(),
             ));
         }
         if right_elapsed != NfSeqCommit::identity() {
-            return Err(ragu::Error(
-                "UnspentFuse: zero-crossing forwards half must have empty elapsed",
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentFuse: zero-crossing forwards half must have empty elapsed".into(),
             ));
         }
         if left_pnf != right_pnf {
-            return Err(ragu::Error(
-                "UnspentFuse: left and right must share the same nf",
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentFuse: left and right must share the same nf".into(),
             ));
         }
         if left_end != right_start {
-            return Err(ragu::Error("UnspentFuse: left.end must equal right.start"));
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentFuse: left.end must equal right.start".into(),
+            ));
         }
         if right_epoch != left_present_epoch {
-            return Err(ragu::Error(
-                "UnspentFuse: forwards half must sit in left's tip epoch",
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentFuse: forwards half must sit in left's tip epoch".into(),
             ));
         }
         Ok((
@@ -359,10 +369,12 @@ impl Step for UnspentFuse {
     }
 }
 
-/// Cross-epoch [`Unspent`] composition: at the boundary
-/// `left.end.next_epoch(new_epoch) == right.start`, left's tip epoch completes
-/// and splices in as `combined = left ++ [left.present_nf] ++ right`, with
-/// `new_epoch == left.present_epoch + 1`. The only step that grows `elapsed`.
+/// Cross-epoch [`Unspent`] composition
+///
+/// At the boundary left's tip epoch completes `left.end.next_epoch(new_epoch)
+/// == right.start` and splices in as `combined = left ++ [left.present_nf] ++
+/// right`, with `new_epoch == left.present_epoch + 1`. The only step that grows
+/// `elapsed`.
 #[derive(Debug)]
 pub struct UnspentEpochFuse;
 
@@ -384,29 +396,29 @@ impl Step for UnspentEpochFuse {
         ((right_elapsed, right_present_epoch), right_start, right_end, right_pnf, right_epoch): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if left_poly.commit() != left_elapsed {
-            return Err(ragu::Error(
-                "UnspentEpochFuse: left polynomial does not match header",
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentEpochFuse: left polynomial does not match header".into(),
             ));
         }
         if right_poly.commit() != right_elapsed {
-            return Err(ragu::Error(
-                "UnspentEpochFuse: right polynomial does not match header",
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentEpochFuse: right polynomial does not match header".into(),
             ));
         }
         if right_epoch != left_present_epoch.next() {
-            return Err(ragu::Error(
-                "UnspentEpochFuse: right epoch must be one past left's tip",
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentEpochFuse: right epoch must be one past left's tip".into(),
             ));
         }
         if left_end.next_epoch(right_epoch) != right_start {
-            return Err(ragu::Error(
-                "UnspentEpochFuse: boundary anchor does not match right.prev_anchor",
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentEpochFuse: boundary anchor does not match right.prev_anchor".into(),
             ));
         }
         let combined_commit = combined.commit();
         let offset =
             usize::try_from(left_present_epoch.0 - left_epoch.0).map_err(|_too_many_epochs| {
-                ragu::Error("UnspentEpochFuse: crossing count exceeds usize")
+                ragu::Error::InvalidWitness("UnspentEpochFuse: crossing count exceeds usize".into())
             })?;
         enforce_poly_splice(
             ctx,
@@ -417,7 +429,9 @@ impl Step for UnspentEpochFuse {
             &Polynomial::from(combined),
         )
         .map_err(|_relation_err| {
-            ragu::Error("UnspentEpochFuse: combined is not the splice of the halves")
+            ragu::Error::InvalidWitness(
+                "UnspentEpochFuse: combined is not the splice of the halves".into(),
+            )
         })?;
         Ok((
             (
@@ -432,10 +446,11 @@ impl Step for UnspentEpochFuse {
     }
 }
 
-/// Bind an [`Unspent`]'s free-witness nullifiers (crossings and tip) to a
-/// note's genuine `GGM(mk, ·)` leaves: proves `range == elapsed ++
-/// [present_nf]` against the derived [`NullifierHeader`], emitting a
-/// [`VerifiedUnspent`] with the `cm`.
+/// Bind an [`Unspent`]'s free-witness nullifiers to a
+/// note's genuine nullifiers.
+///
+/// Proves `range == elapsed ++ [present_nf]` against the derived
+/// [`NullifierHeader`], emitting a [`VerifiedUnspent`] with the `cm`.
 #[derive(Debug)]
 pub struct VerifyUnspent;
 
@@ -457,39 +472,41 @@ impl Step for VerifyUnspent {
         (range_commit, range_start, range_end, cm): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if range_start != start_epoch {
-            return Err(ragu::Error(
-                "VerifyUnspent: derived range does not start at the elapsed epoch",
+            return Err(ragu::Error::InvalidWitness(
+                "VerifyUnspent: derived range does not start at the elapsed epoch".into(),
             ));
         }
         if range_end != present_epoch.next() {
-            return Err(ragu::Error(
-                "VerifyUnspent: derived range does not span the crossings plus the tip",
+            return Err(ragu::Error::InvalidWitness(
+                "VerifyUnspent: derived range does not span the crossings plus the tip".into(),
             ));
         }
         if elapsed_poly.commit() != elapsed {
-            return Err(ragu::Error(
-                "VerifyUnspent: elapsed polynomial does not match header",
+            return Err(ragu::Error::InvalidWitness(
+                "VerifyUnspent: elapsed polynomial does not match header".into(),
             ));
         }
 
         let generators = Pasta::host_generators(Pasta::baked()).g();
         let Some(g0) = generators.first() else {
-            return Err(ragu::Error("VerifyUnspent: insufficient generators"));
+            return Err(ragu::Error::InvalidWitness(
+                "VerifyUnspent: insufficient generators".into(),
+            ));
         };
         let present_commit = NfSeqCommit::from(*g0 * Fp::from(present_nf));
         if tip_poly.commit() != present_commit {
-            return Err(ragu::Error(
-                "VerifyUnspent: tip polynomial does not match present nullifier",
+            return Err(ragu::Error::InvalidWitness(
+                "VerifyUnspent: tip polynomial does not match present nullifier".into(),
             ));
         }
         if range_poly.commit() != range_commit {
-            return Err(ragu::Error(
-                "VerifyUnspent: range polynomial does not match header",
+            return Err(ragu::Error::InvalidWitness(
+                "VerifyUnspent: range polynomial does not match header".into(),
             ));
         }
         let offset =
             usize::try_from(present_epoch.0 - start_epoch.0).map_err(|_too_many_epochs| {
-                ragu::Error("VerifyUnspent: crossing count exceeds usize")
+                ragu::Error::InvalidWitness("VerifyUnspent: crossing count exceeds usize".into())
             })?;
         enforce_poly_concat(
             ctx,
@@ -499,7 +516,9 @@ impl Step for VerifyUnspent {
             &Polynomial::from(range_poly.clone()),
         )
         .map_err(|_relation_err| {
-            ragu::Error("VerifyUnspent: range is not elapsed followed by the tip")
+            ragu::Error::InvalidWitness(
+                "VerifyUnspent: range is not elapsed followed by the tip".into(),
+            )
         })?;
         // `start_nf` is the range's degree-0 coefficient, pinned by opening at zero.
         let start_nf_val = range_poly.eval(Fp::ZERO);

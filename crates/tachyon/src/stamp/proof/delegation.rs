@@ -91,7 +91,9 @@ impl Step for NfMasterSeed {
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if note.pk.0 != pak.derive_payment_key().0 {
-            return Err(ragu::Error("NfMasterSeed: pak not related to note"));
+            return Err(ragu::Error::InvalidWitness(
+                "NfMasterSeed: pak not related to note".into(),
+            ));
         }
         let mk = pak.nk.derive_note_private(&note.psi);
         let cm = note.commitment();
@@ -123,10 +125,14 @@ impl Step for NfPrefixStep {
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if depth >= GGM_TREE_DEPTH {
-            return Err(ragu::Error("NfPrefixStep: already at maximum depth"));
+            return Err(ragu::Error::InvalidWitness(
+                "NfPrefixStep: already at maximum depth".into(),
+            ));
         }
         if chunk >= GGM_TREE_ARITY {
-            return Err(ragu::Error("NfPrefixStep: chunk exceeds GGM arity"));
+            return Err(ragu::Error::InvalidWitness(
+                "NfPrefixStep: chunk exceeds GGM arity".into(),
+            ));
         }
         let child = poseidon::nf_prefix(node, chunk);
         let child_index = EpochIndex(index.0 * u32::from(GGM_TREE_ARITY) + u32::from(chunk));
@@ -159,12 +165,16 @@ impl Step for NullifierStep {
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if depth != GGM_TREE_DEPTH {
-            return Err(ragu::Error("NullifierStep: not at maximum depth"));
+            return Err(ragu::Error::InvalidWitness(
+                "NullifierStep: not at maximum depth".into(),
+            ));
         }
         let nf = Nullifier::from(poseidon::nullifier(node));
         let generators = Pasta::host_generators(Pasta::baked()).g();
         let Some(g0) = generators.first() else {
-            return Err(ragu::Error("NullifierStep: insufficient generators"));
+            return Err(ragu::Error::InvalidWitness(
+                "NullifierStep: insufficient generators".into(),
+            ));
         };
         let range_commit = NfSeqCommit::from(*g0 * Fp::from(nf));
         Ok(((range_commit, index, index.next(), cm), ()))
@@ -198,24 +208,29 @@ impl Step for NullifierFuse {
         (right_commit, right_start, right_end, right_cm): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if left_cm != right_cm {
-            return Err(ragu::Error("NullifierFuse: note commitments differ"));
+            return Err(ragu::Error::InvalidWitness(
+                "NullifierFuse: note commitments differ".into(),
+            ));
         }
         if right_start != left_end {
-            return Err(ragu::Error("NullifierFuse: ranges not contiguous"));
+            return Err(ragu::Error::InvalidWitness(
+                "NullifierFuse: ranges not contiguous".into(),
+            ));
         }
         if left_poly.commit() != left_commit {
-            return Err(ragu::Error(
-                "NullifierFuse: left polynomial does not match header",
+            return Err(ragu::Error::InvalidWitness(
+                "NullifierFuse: left polynomial does not match header".into(),
             ));
         }
         if right_poly.commit() != right_commit {
-            return Err(ragu::Error(
-                "NullifierFuse: right polynomial does not match header",
+            return Err(ragu::Error::InvalidWitness(
+                "NullifierFuse: right polynomial does not match header".into(),
             ));
         }
         let merged_commit = merged.commit();
-        let offset = usize::try_from(left_end.0 - left_start.0)
-            .map_err(|_too_long| ragu::Error("NullifierFuse: range length exceeds usize"))?;
+        let offset = usize::try_from(left_end.0 - left_start.0).map_err(|_too_long| {
+            ragu::Error::InvalidWitness("NullifierFuse: range length exceeds usize".into())
+        })?;
         enforce_poly_concat(
             ctx,
             &Polynomial::from(left_poly),
@@ -224,7 +239,9 @@ impl Step for NullifierFuse {
             &Polynomial::from(merged),
         )
         .map_err(|_relation_err| {
-            ragu::Error("NullifierFuse: merged is not the concat of the halves")
+            ragu::Error::InvalidWitness(
+                "NullifierFuse: merged is not the concat of the halves".into(),
+            )
         })?;
         Ok(((merged_commit, left_start, right_end, left_cm), ()))
     }

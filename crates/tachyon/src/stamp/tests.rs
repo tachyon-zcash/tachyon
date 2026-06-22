@@ -137,7 +137,7 @@ fn plan_prove_rejects_invalid_inputs() {
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
         assert_eq!(
             alloc::format!("{err}"),
-            "action proof failed: Error(\"SpendBind: note does not match the spendable lineage\")",
+            "action proof failed: invalid witness: SpendBind: note does not match the spendable lineage",
         );
     }
 }

@@ -85,13 +85,19 @@ impl Step for SpendBind {
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if u64::from(value) == 0 {
-            return Err(ragu::Error("SpendBind: zero-value note"));
+            return Err(ragu::Error::InvalidWitness(
+                "SpendBind: zero-value note".into(),
+            ));
         }
         if u64::from(value) > NOTE_VALUE_MAX {
-            return Err(ragu::Error("SpendBind: note value exceeds maximum"));
+            return Err(ragu::Error::InvalidWitness(
+                "SpendBind: note value exceeds maximum".into(),
+            ));
         }
         if pk.0 != pak.derive_payment_key().0 {
-            return Err(ragu::Error("SpendBind: pak not related to note"));
+            return Err(ragu::Error::InvalidWitness(
+                "SpendBind: pak not related to note".into(),
+            ));
         }
         let cm = Note {
             pk,
@@ -102,8 +108,8 @@ impl Step for SpendBind {
         .commitment();
 
         if spendable_cm != cm {
-            return Err(ragu::Error(
-                "SpendBind: note does not match the spendable lineage",
+            return Err(ragu::Error::InvalidWitness(
+                "SpendBind: note does not match the spendable lineage".into(),
             ));
         }
 

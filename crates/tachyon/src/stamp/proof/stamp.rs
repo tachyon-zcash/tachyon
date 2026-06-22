@@ -87,15 +87,20 @@ impl Step for OutputStamp {
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if u64::from(note.value) == 0 {
-            return Err(ragu::Error("OutputStamp: zero-value note"));
+            return Err(ragu::Error::InvalidWitness(
+                "OutputStamp: zero-value note".into(),
+            ));
         }
         if u64::from(note.value) > NOTE_VALUE_MAX {
-            return Err(ragu::Error("OutputStamp: note value exceeds maximum"));
+            return Err(ragu::Error::InvalidWitness(
+                "OutputStamp: note value exceeds maximum".into(),
+            ));
         }
         let cv = rcv.commit(-i64::from(note.value));
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
-        let action_digest = ActionDigest::new(cv, rk)
-            .map_err(|_err| ragu::Error("OutputStamp: action digest construction failed"))?;
+        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
+            ragu::Error::InvalidWitness("OutputStamp: action digest construction failed".into())
+        })?;
         let tachygram = Tachygram::from(note.commitment());
 
         let data = (
@@ -111,9 +116,9 @@ impl Step for OutputStamp {
 /// and stamps the spend.
 ///
 /// Witnesses `nf_next` and binds the published pair to the note's genuine
-/// `GGM(mk, ·)` leaves: consumes the two-leaf range (`range.end == range.start +
-/// 2`, `range.cm == cm`) and checks `[present_nf]G_0 + [nf_next]G_1 ==
-/// range_commit`.
+/// `GGM(mk, ·)` leaves: consumes the two-leaf range (`range.end ==
+/// range.start + 2`, `range.cm == cm`) and checks
+/// `[present_nf]G_0 + [nf_next]G_1 == range_commit`.
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -135,34 +140,45 @@ impl Step for SpendStamp {
         (range_commit, range_start, range_end, range_cm): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if range_end.0 != range_start.0 + 2 {
-            return Err(ragu::Error("SpendStamp: live range must span two epochs"));
+            return Err(ragu::Error::InvalidWitness(
+                "SpendStamp: live range must span two epochs".into(),
+            ));
         }
         if range_cm != cm {
-            return Err(ragu::Error("SpendStamp: derived range does not match note"));
+            return Err(ragu::Error::InvalidWitness(
+                "SpendStamp: derived range does not match note".into(),
+            ));
         }
 
         // Bind the published pair to the genuine GGM leaf pair.
         let generators = Pasta::host_generators(Pasta::baked()).g();
         let (Some(g0), Some(g1)) = (generators.first(), generators.get(1)) else {
-            return Err(ragu::Error("SpendStamp: insufficient generators"));
+            return Err(ragu::Error::InvalidWitness(
+                "SpendStamp: insufficient generators".into(),
+            ));
         };
         let nf_pair_ref: Eq = *g0 * Fp::from(present_nf) + *g1 * Fp::from(nf_next);
         if Eq::from(range_commit) != nf_pair_ref {
-            return Err(ragu::Error(
-                "SpendStamp: published scalars are not the derived leaf pair",
+            return Err(ragu::Error::InvalidWitness(
+                "SpendStamp: published scalars are not the derived leaf pair".into(),
             ));
         }
 
         // A zero nullifier would collide with the note's own cm tachygram.
         if Fp::from(present_nf) == Fp::ZERO {
-            return Err(ragu::Error("SpendStamp: present-epoch nullifier is zero"));
+            return Err(ragu::Error::InvalidWitness(
+                "SpendStamp: present-epoch nullifier is zero".into(),
+            ));
         }
         if Fp::from(nf_next) == Fp::ZERO {
-            return Err(ragu::Error("SpendStamp: next-epoch nullifier is zero"));
+            return Err(ragu::Error::InvalidWitness(
+                "SpendStamp: next-epoch nullifier is zero".into(),
+            ));
         }
 
-        let action_digest = ActionDigest::new(cv, rk)
-            .map_err(|_err| ragu::Error("SpendStamp: action digest construction failed"))?;
+        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
+            ragu::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
+        })?;
 
         let data = (
             ActionSetCommit::from([action_digest].as_slice()),
@@ -206,7 +222,9 @@ impl Step for MergeStamp {
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Same-anchor constraint.
         if left_anchor != right_anchor {
-            return Err(ragu::Error("MergeStamp: anchors must match"));
+            return Err(ragu::Error::InvalidWitness(
+                "MergeStamp: anchors must match".into(),
+            ));
         }
 
         // Bind the witnessed input sets to the public commitments on Data.
@@ -215,8 +233,8 @@ impl Step for MergeStamp {
             || left_tachygram.commit() != left_tachygram_commit
             || right_tachygram.commit() != right_tachygram_commit
         {
-            return Err(ragu::Error(
-                "MergeStamp: witness accumulators must commit to header commits",
+            return Err(ragu::Error::InvalidWitness(
+                "MergeStamp: witness accumulators must commit to header commits".into(),
             ));
         }
 
@@ -269,8 +287,8 @@ impl Step for StampLift {
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // The anchor segment must root at the stamp's old anchor.
         if segment_start != old_anchor {
-            return Err(ragu::Error(
-                "StampLift: segment start must equal stamp old_anchor",
+            return Err(ragu::Error::InvalidWitness(
+                "StampLift: segment start must equal stamp old_anchor".into(),
             ));
         }
 

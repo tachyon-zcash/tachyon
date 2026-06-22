@@ -23,10 +23,11 @@ use crate::{
     primitives::{Anchor, NfSeqCommit, TachygramSetPoly},
 };
 
-/// Wallet's spendable position `(present_nf, anchor, cm)`: the note's
-/// current-epoch nullifier and pool position (advanced per lift) plus the
-/// minted-note commitment, threaded unchanged so the spent value cannot drift
-/// to a different same-`mk` note.
+/// Wallet's spendable position `(present_nf, anchor, cm)`
+///
+/// The note's current-epoch nullifier and pool position (advanced per lift)
+/// plus the minted-note commitment, threaded unchanged so the spent value
+/// cannot drift to a different same-`mk` note.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
@@ -76,18 +77,20 @@ impl Step for SpendableInit {
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Bind `present_nf` to the single derived starting leaf `GGM(mk, epoch)`.
         if range_end.0 != range_start.0 + 1 {
-            return Err(ragu::Error(
-                "SpendableInit: starting range must span one epoch",
+            return Err(ragu::Error::InvalidWitness(
+                "SpendableInit: starting range must span one epoch".into(),
             ));
         }
         let generators = Pasta::host_generators(Pasta::baked()).g();
         let Some(g0) = generators.first() else {
-            return Err(ragu::Error("SpendableInit: insufficient generators"));
+            return Err(ragu::Error::InvalidWitness(
+                "SpendableInit: insufficient generators".into(),
+            ));
         };
         let present_commit = NfSeqCommit::from(*g0 * Fp::from(present_nf));
         if range_commit != present_commit {
-            return Err(ragu::Error(
-                "SpendableInit: present nullifier does not match the derived leaf",
+            return Err(ragu::Error::InvalidWitness(
+                "SpendableInit: present nullifier does not match the derived leaf".into(),
             ));
         }
         let epoch = range_start;
@@ -97,7 +100,9 @@ impl Step for SpendableInit {
         let eval = creation_set.eval(cm_point);
         ctx.enforce_poly_query(creation_set.commit().into(), cm_point, eval)?;
         if eval != Fp::ZERO {
-            return Err(ragu::Error("SpendableInit: commitment not in set"));
+            return Err(ragu::Error::InvalidWitness(
+                "SpendableInit: commitment not in set".into(),
+            ));
         }
         let creation_commit = creation_set.commit();
 
@@ -108,8 +113,8 @@ impl Step for SpendableInit {
         // `pre_epoch_anchor.next_epoch(epoch)` against that boundary forces
         // `epoch == E`, tying the GGM leaf index to the creation epoch.
         if chain_start != pre_epoch_anchor.next_epoch(epoch) {
-            return Err(ragu::Error(
-                "SpendableInit: chain not rooted at epoch boundary",
+            return Err(ragu::Error::InvalidWitness(
+                "SpendableInit: chain not rooted at epoch boundary".into(),
             ));
         }
 
@@ -119,8 +124,8 @@ impl Step for SpendableInit {
         // end; a note created first-in-epoch produces a single-link chain.
         let post_cm_anchor = pre_cm_anchor.next_stamp(&creation_commit);
         if chain_end != post_cm_anchor {
-            return Err(ragu::Error(
-                "SpendableInit: cm-stamp is not the chain's final link",
+            return Err(ragu::Error::InvalidWitness(
+                "SpendableInit: cm-stamp is not the chain's final link".into(),
             ));
         }
 
@@ -152,18 +157,18 @@ impl Step for SpendableLift {
         (start_anchor, start_nf, end_anchor, end_nf, verified_cm, _epoch): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if verified_cm != cm {
-            return Err(ragu::Error(
-                "SpendableLift: verified unspent cm does not match spendable",
+            return Err(ragu::Error::InvalidWitness(
+                "SpendableLift: verified unspent cm does not match spendable".into(),
             ));
         }
         if start_nf != present_nf {
-            return Err(ragu::Error(
-                "SpendableLift: segment does not start at the lineage nullifier",
+            return Err(ragu::Error::InvalidWitness(
+                "SpendableLift: segment does not start at the lineage nullifier".into(),
             ));
         }
         if start_anchor != spendable_anchor {
-            return Err(ragu::Error(
-                "SpendableLift: unspent not adjacent to spendable",
+            return Err(ragu::Error::InvalidWitness(
+                "SpendableLift: unspent not adjacent to spendable".into(),
             ));
         }
         Ok(((end_nf, end_anchor, cm), ()))
