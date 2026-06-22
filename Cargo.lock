@@ -233,18 +233,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "halo2_poseidon"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fa3da60b81f02f9b33ebc6252d766f843291fb4d2247a07ae73d20b791fc56f"
-dependencies = [
- "bitvec",
- "ff",
- "group",
- "pasta_curves",
-]
-
-[[package]]
 name = "hash32"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -806,7 +794,6 @@ dependencies = [
  "corez",
  "ff",
  "group",
- "halo2_poseidon",
  "lazy_static",
  "pasta_curves",
  "ragu",

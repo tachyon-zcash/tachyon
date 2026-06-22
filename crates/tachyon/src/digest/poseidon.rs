@@ -2,14 +2,20 @@
 //!
 //! Each named function provides one protocol-defined hash.
 
-// TODO(#39): replace halo2_poseidon with Ragu Poseidon params
-
 use ff::PrimeField as _;
-use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::{EpAffine, EqAffine, Fp, arithmetic::Coordinates};
+use ragu::Sponge;
 
+#[expect(
+    clippy::expect_used,
+    reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
+)]
 fn hash<const L: usize>(input: [Fp; L]) -> Fp {
-    Hash::<Fp, P128Pow5T3, ConstantLength<L>, 3, 2>::init().hash(input)
+    let mut sponge = Sponge::new();
+    for value in input {
+        sponge.absorb(value).expect("infallible");
+    }
+    sponge.squeeze().expect("infallible")
 }
 
 const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
