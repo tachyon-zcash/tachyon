@@ -14,8 +14,7 @@ use crate::{digest::poseidon, serialization};
 /// - [`Anchor::next_empty`] (`Tachyon-EmptyBlk`) advances through one block
 ///   that contains zero stamps, preserving per-height anchor uniqueness.
 /// - [`Anchor::next_epoch`] (`Tachyon-EpochStp`) lifts across an epoch
-///   boundary; advanced by `SpendableRollover` and checked against a boundary
-///   chain's root by `SpendableInit`.
+///   boundary; checked against a boundary chain's root by `SpendableInit`.
 ///
 /// Opening reveals each link's role by its domain.
 #[derive(Clone, Copy, Debug, Eq)]

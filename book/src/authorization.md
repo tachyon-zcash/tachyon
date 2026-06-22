@@ -225,6 +225,8 @@ A modified action breaks both checks.
 
 ## Detailed Sequence
 
+<!-- todo: this is significantly outdated -->
+
 ```mermaid
 sequenceDiagram
 
@@ -305,16 +307,18 @@ and Proving
         critical anchor, action plan { rk, note, theta, rcv, effect }, pak { ak, nk }
                 alt effect == spend
                     User --> User: rk == ak + [alpha]G
-                    note over User: flavor = epoch(anchor)
-                    note over User: nf = Poseidon(nk, psi, flavor)
-                    note over User: tg_root = Poseidon(nf)
+                    note over User: mk = Poseidon(psi, nk)
+                    note over User: nf_e0 = GGM(mk, e)
+                    note over User: nf_e1 = GGM(mk, e+1)
+                    note over User: tg_roots = nf_e0, nf_e1
                 else effect == output
                     User --> User: rk == [alpha]G
                     note over User: cm = Poseidon(pk, psi, rcm, v)
-                    note over User: tg_root = Poseidon(cm)
+                    note over User: tg_root = cm
                 end
                 note over User: action_root = Poseidon(cv || rk)
-                note over User: action_poly = (X - action_root), tg_poly = (X - tg_root)
+                note over User: action_poly = (X - action_root)
+                note over User: tg_poly = product over tg_roots of (X - tg_root)
                 note over User: pcd: leaf stamp(Commit(action_poly), Commit(tg_poly), anchor)
             end
         end

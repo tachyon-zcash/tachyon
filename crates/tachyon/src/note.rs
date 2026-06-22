@@ -23,9 +23,9 @@
 //! tree PRF instantiated from Poseidon. The "flavor" is the epoch at which the
 //! nullifier is revealed, enabling range-restricted delegation.
 //!
-//! Evaluated natively by wallets and the Oblivious Syncing Service (via
-//! delegated GGM prefix keys). The Ragu circuit constrains that the
-//! externally-provided nullifier matches the note's private fields.
+//! Evaluated natively by wallets; the sync service handles only opaque
+//! nullifier values. The Ragu circuit constrains that each consumed
+//! nullifier matches the note's private fields.
 //!
 //! ## Note Commitment
 //!

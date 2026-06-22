@@ -1,5 +1,7 @@
 # Key Hierarchy
 
+<!-- todo: this is significantly outdated -->
+
 Tachyon simplifies the Zcash key hierarchy by removing key diversification, viewing keys, and payment addresses from the core protocol. These capabilities are handled by higher-level wallet software through out-of-band payment protocols.[^out-of-band]
 
 [^out-of-band]: See [Tachyaction at a Distance](https://seanbowe.com/blog/tachyaction-at-a-distance/) for the full design rationale behind out-of-band payments and the simplified key hierarchy.
@@ -40,7 +42,6 @@ The payment key $\mathsf{pk}$ is then derived from both $\mathsf{ak}$ and $\math
 | Address | Diversifier $d$, transmission key $\mathsf{pk_d}$ | $\mathsf{pk} = \text{Poseidon}(\mathsf{ak}_x, \mathsf{nk})$ | No diversification; binds to pak |
 | Proof authorization | Not separated | $\mathsf{pak} = (\mathsf{ak}, \mathsf{nk})$ | Authorize proofs for all notes |
 | Per-note delegation | Not separated | $(\mathsf{ak}, \mathsf{mk})$ | Delegate proofs for one note |
-| Epoch delegation | Not separated | $(\mathsf{ak}, \Psi_t)$ | Delegate non-inclusion proving for epochs $e \leq t$ |
 
 The key insight is that removing in-band secret distribution (on-chain ciphertexts) eliminates the need for viewing keys, diversified addresses, and the entire key tree that supports them.
 
@@ -86,15 +87,9 @@ The spend authorization keys follow a three-tier scheme mapping to **private sca
 
 $$\mathsf{nk} = \text{ToBase}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\texttt{0x22}])\bigr)$$
 
-An $\mathbb{F}_p$ element used in nullifier derivation. Tachyon simplifies Orchard's nullifier construction:[^faerie-gold]
+An $\mathbb{F}_p$ element used in nullifier derivation.[^nullifiers] With the note's trapdoor $\psi$ it forms the GGM master key, from which each epoch's nullifier descends.
 
-$$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
-
-where $F$ is a keyed PRF (Poseidon with domain tag `Tachyon-NfDerive`), $\Psi$ is the note's nullifier trapdoor, and flavor is the epoch-id. See [Notes](./notes.md#nullifier-derivation).
-
-$\mathsf{nk}$ alone does NOT confer spend authority — combined with $\mathsf{ak}$ it forms the proof authorizing key $\mathsf{pak}$, enabling proof construction and nullifier derivation without signing capability.
-
-[^faerie-gold]: Orchard's more complex nullifier construction defended against faerie gold attacks. These are moot under out-of-band payments because the recipient controls $\Psi$ (via payment requests or URI redemption). See footnote 1 in "Tachyaction at a Distance."
+[^nullifiers]: See [Nullifiers](./nullifiers.md) for the full derivation.
 
 ### Payment key ($\mathsf{pk}$)
 
@@ -121,4 +116,3 @@ $\mathsf{pak}$ covers **all notes** because $\mathsf{nk}$ is wallet-wide. For na
 | ------ | ---- | ------ | ----- |
 | $\mathsf{pak}$ | $(\mathsf{ak}, \mathsf{nk})$ | Prover | All notes, all epochs |
 | per-note | $(\mathsf{ak}, \mathsf{mk})$ | Per-note prover | One note, all epochs |
-| delegate | $(\mathsf{ak}, \Psi_t)$ | OSS | One note, epochs $e \leq t$ |
