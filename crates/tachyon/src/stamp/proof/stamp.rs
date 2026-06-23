@@ -18,7 +18,7 @@ use crate::{
     entropy::ActionRandomizer,
     keys::private,
     note::{Note, Nullifier},
-    primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit, effect},
+    primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
     relations::enforce_poly_product,
     value,
 };
@@ -86,6 +86,13 @@ impl Step for OutputStamp {
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &[g0, g1] = Pasta::host_generators(Pasta::baked())
+            .g()
+            .split_first_chunk::<2>()
+            .expect("at least two generators")
+            .0;
+
         enforce_nonzero(
             Fp::from(u64::from(note.value)),
             "OutputStamp: zero-value note",
@@ -100,14 +107,20 @@ impl Step for OutputStamp {
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
             ragu::Error::InvalidWitness("OutputStamp: action digest construction failed".into())
         })?;
-        let tachygram = Tachygram::from(note.commitment());
 
-        let data = (
-            ActionSetCommit::from([action_digest].as_slice()),
-            TachygramSetCommit::from([tachygram].as_slice()),
-            anchor,
-        );
-        Ok((data, ()))
+        // Set commitment to one action.
+        let action_commit = {
+            let a0 = Fp::from(action_digest);
+            ActionSetCommit::from(g0 * (-a0) + g1)
+        };
+
+        // Set commitment to one note commitment.
+        let tachygram_commit = {
+            let t0 = Fp::from(note.commitment());
+            TachygramSetCommit::from(g0 * (-t0) + g1)
+        };
+
+        Ok(((action_commit, tachygram_commit, anchor), ()))
     }
 }
 
@@ -138,6 +151,13 @@ impl Step for SpendStamp {
         (cv, rk, present_nf, anchor, cm): <Self::Left as Header>::Data,
         (range_commit, range_start, range_end, range_cm): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &[g0, g1, g2] = Pasta::host_generators(Pasta::baked())
+            .g()
+            .split_first_chunk::<3>()
+            .expect("at least three generators")
+            .0;
+
         enforce_zero(
             Fp::from(range_end) - (Fp::from(range_start) + Fp::from(2u64)),
             "SpendStamp: live range must span two epochs",
@@ -148,14 +168,6 @@ impl Step for SpendStamp {
         )?;
 
         // Bind the published pair to the genuine GGM leaf pair.
-        let generators = Pasta::host_generators(Pasta::baked()).g();
-
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let (g0, g1) = (
-            generators.first().expect("at least one generator"),
-            generators.get(1).expect("at least two generators"),
-        );
-
         let nf_pair_ref: Eq = g0 * Fp::from(present_nf) + g1 * Fp::from(nf_next);
         enforce_equal_point(
             Eq::from(range_commit),
@@ -177,14 +189,21 @@ impl Step for SpendStamp {
             ragu::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
         })?;
 
-        let data = (
-            ActionSetCommit::from([action_digest].as_slice()),
-            TachygramSetCommit::from(
-                [Tachygram::from(present_nf), Tachygram::from(nf_next)].as_slice(),
-            ),
-            anchor,
-        );
-        Ok((data, ()))
+        // Set commitment to one action.
+        let action_commit = {
+            let a0 = Fp::from(action_digest);
+            ActionSetCommit::from(g0 * (-a0) + g1)
+        };
+
+        // Set commitment to two nullifiers.
+        let tachygram_commit = {
+            let t0 = Fp::from(present_nf);
+            let t1 = Fp::from(nf_next);
+
+            TachygramSetCommit::from(g0 * (t0 * t1) + g1 * (-(t0 + t1)) + g2)
+        };
+
+        Ok(((action_commit, tachygram_commit, anchor), ()))
     }
 }
 

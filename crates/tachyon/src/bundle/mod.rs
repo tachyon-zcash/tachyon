@@ -75,7 +75,7 @@ use crate::{
     digest::blake2b,
     keys::{private, public},
     note,
-    primitives::{ActionDigest, ActionDigestError, ActionSetCommit, Anchor, effect},
+    primitives::{ActionDigest, ActionDigestError, ActionSetPoly, Anchor, effect},
     reddsa, serialization,
     stamp::{self, AggregateId, AggregateIdError, Stamp, Stripped, Unproven},
     value,
@@ -307,7 +307,7 @@ impl Plan {
             .iter_actions(action::Plan::digest, action::Plan::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
 
-        let action_commit = ActionSetCommit::from(digests.as_slice());
+        let action_commit = ActionSetPoly::from(digests.as_slice()).commit();
 
         Ok(blake2b::bundle_commitment(
             &Eq::from(action_commit).to_affine(),
@@ -730,7 +730,7 @@ impl<S: StampState> Bundle<S> {
             .iter()
             .map(Action::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
-        let action_acc = ActionSetCommit::from(action_digests.as_slice());
+        let action_acc = ActionSetPoly::from(action_digests.as_slice()).commit();
         Ok(blake2b::bundle_commitment(
             &Eq::from(action_acc).to_affine(),
             self.value_balance,

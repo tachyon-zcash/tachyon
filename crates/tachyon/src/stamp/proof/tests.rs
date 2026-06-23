@@ -15,7 +15,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
-    ActionSetCommit, Note, TachygramSetCommit, TachygramSetPoly,
+    ActionSetPoly, Note, TachygramSetPoly,
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
     fixtures::{
@@ -104,13 +104,14 @@ fn same_epoch_honest_spend_accepted() {
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable);
     let stamp = honest_spend_stamp(rng, &user, &note, spend_pcd, epoch);
 
-    let expected = TachygramSetCommit::from(
+    let expected = TachygramSetPoly::from(
         [
             user.nf_at(&note, epoch).into(),
             user.nf_at(&note, epoch.next()).into(),
         ]
         .as_slice(),
-    );
+    )
+    .commit();
     assert_eq!(stamp.data().1, expected, "publishes {{N_E, N_E+1}}");
     PROOF_SYSTEM
         .rerandomize(stamp, rng)
@@ -212,10 +213,9 @@ fn stamp_lift_within_epoch() {
     let note = user.random_note(rng, 200);
     let (stamp, plan) = build_output_stamp(rng, stamp_anchor, note);
 
-    let action_commit: ActionSetCommit =
-        ActionSetCommit::from([plan.digest().expect("valid plan")].as_slice());
-    let tachygram_commit: TachygramSetCommit =
-        TachygramSetCommit::from(stamp.tachygrams.as_slice());
+    let action_commit =
+        ActionSetPoly::from([plan.digest().expect("valid plan")].as_slice()).commit();
+    let tachygram_commit = TachygramSetPoly::from(stamp.tachygrams.as_slice()).commit();
 
     pool.advance(usize::try_from(EPOCH_SIZE - 2).expect("fits"), |_| {
         random_block(rng, 1, 4)
@@ -245,7 +245,7 @@ fn spendable_init_rejects_tg_absent() {
     let present_nf = user.nf_at(&note, EpochIndex(0));
     let absent_set = TachygramSetPoly::from([tg(rng)].as_slice());
     // cm-inclusion is checked first, so a dummy boundary chain suffices here.
-    let dummy_commit = TachygramSetCommit::from([tg(rng)].as_slice());
+    let dummy_commit = TachygramSetPoly::from([tg(rng)].as_slice()).commit();
     let (dummy_chain, ()) = PROOF_SYSTEM
         .seed(rng, pool::AnchorSeed, (Anchor::default(), dummy_commit))
         .expect("AnchorSeed");
@@ -296,7 +296,7 @@ fn unspent_fuse_rejects_invalid_compositions() {
     let stamps_left = vec![tg(rng)];
     let stamps_right = vec![tg(rng)];
     let start = Anchor::default();
-    let mid = start.next_stamp(&TachygramSetCommit::from(stamps_left.as_slice()));
+    let mid = start.next_stamp(&TachygramSetPoly::from(stamps_left.as_slice()).commit());
 
     // nf mismatch: contiguous states but different nfs.
     {
@@ -726,13 +726,14 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     );
 
     let stamp = honest_spend_stamp(rng, &user, &note, spend_pcd, EpochIndex(1));
-    let expected = TachygramSetCommit::from(
+    let expected = TachygramSetPoly::from(
         [
             user.nf_at(&note, EpochIndex(1)).into(),
             user.nf_at(&note, EpochIndex(2)).into(),
         ]
         .as_slice(),
-    );
+    )
+    .commit();
     assert_eq!(stamp.data().1, expected);
 }
 
@@ -750,13 +751,14 @@ fn spend_stamp_assembles_tachygrams() {
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let stamp_pcd = honest_spend_stamp(rng, &user, &note, spend_pcd, spend_epoch);
     let (_actions, tg_commit, _anchor) = *stamp_pcd.data();
-    let expected = TachygramSetCommit::from(
+    let expected = TachygramSetPoly::from(
         [
             Tachygram::from(user.nf_at(&note, spend_epoch)),
             Tachygram::from(user.nf_at(&note, spend_epoch.next())),
         ]
         .as_slice(),
-    );
+    )
+    .commit();
     assert_eq!(tg_commit, expected);
 }
 

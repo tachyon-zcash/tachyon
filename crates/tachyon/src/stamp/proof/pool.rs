@@ -461,6 +461,12 @@ impl Step for VerifyUnspent {
         ((elapsed, present_epoch), prev_anchor, end_anchor, present_nf, start_epoch): <Self::Left as Header>::Data,
         (range_commit, range_start, range_end, cm): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &g0 = Pasta::host_generators(Pasta::baked())
+            .g()
+            .first()
+            .expect("at least one generator");
+
         enforce_zero(
             Fp::from(range_start) - Fp::from(start_epoch),
             "VerifyUnspent: derived range does not start at the elapsed epoch",
@@ -474,11 +480,6 @@ impl Step for VerifyUnspent {
             Eq::from(elapsed),
             "VerifyUnspent: elapsed polynomial does not match header",
         )?;
-
-        let generators = Pasta::host_generators(Pasta::baked()).g();
-
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let g0 = generators.first().expect("at least one generator");
 
         let present_commit = NfSeqCommit::from(g0 * Fp::from(present_nf));
         enforce_equal_point(

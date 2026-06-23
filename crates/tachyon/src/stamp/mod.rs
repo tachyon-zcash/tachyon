@@ -30,7 +30,7 @@ use ragu::{self, proof::PROOF_SIZE_COMPRESSED};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    ActionSetCommit, ActionSetPoly, Note, TachygramSetCommit, TachygramSetPoly,
+    ActionSetPoly, Note, TachygramSetPoly,
     action::Action,
     effect,
     entropy::ActionRandomizer,
@@ -417,9 +417,14 @@ impl Stamp {
     ) -> Result<(), VerificationError> {
         let app = &*PROOF_SYSTEM;
 
+        let action_digests = actions
+            .iter()
+            .map(Action::digest)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(VerificationError::ActionDigest)?;
         let header = (
-            ActionSetCommit::try_from(actions).map_err(VerificationError::ActionDigest)?,
-            TachygramSetCommit::from(&*self.tachygrams),
+            ActionSetPoly::from(action_digests.as_slice()).commit(),
+            TachygramSetPoly::from(&*self.tachygrams).commit(),
             self.anchor,
         );
 

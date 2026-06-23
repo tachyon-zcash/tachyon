@@ -7,7 +7,6 @@ use pasta_curves::{Eq, Fp};
 use ragu::Polynomial;
 
 use super::{ActionDigest, Tachygram};
-use crate::{Action, ActionDigestError};
 
 /// Pedersen commitment to a stamp's tachygram set.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
@@ -65,29 +64,5 @@ impl From<&[Tachygram]> for TachygramSetPoly {
     fn from(tgs: &[Tachygram]) -> Self {
         let roots: Vec<Fp> = tgs.iter().map(|&tg| Fp::from(tg)).collect();
         Self(Polynomial::from_roots(&roots))
-    }
-}
-
-impl From<&[ActionDigest]> for ActionSetCommit {
-    fn from(ads: &[ActionDigest]) -> Self {
-        ActionSetPoly::from(ads).commit()
-    }
-}
-
-impl TryFrom<&[Action]> for ActionSetCommit {
-    type Error = ActionDigestError;
-
-    fn try_from(actions: &[Action]) -> Result<Self, Self::Error> {
-        let ads: Vec<ActionDigest> = actions
-            .iter()
-            .map(Action::digest)
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
-        Ok(ActionSetPoly::from(ads.as_slice()).commit())
-    }
-}
-
-impl From<&[Tachygram]> for TachygramSetCommit {
-    fn from(tgs: &[Tachygram]) -> Self {
-        TachygramSetPoly::from(tgs).commit()
     }
 }

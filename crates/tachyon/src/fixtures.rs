@@ -209,7 +209,7 @@ impl PoolSim {
     pub fn stamp_commits_at(&self, height: BlockHeight) -> Vec<TachygramSetCommit> {
         self.tachygrams_at(height)
             .iter()
-            .map(|tgs| TachygramSetCommit::from(tgs.as_slice()))
+            .map(|tgs| TachygramSetPoly::from(tgs.as_slice()).commit())
             .collect()
     }
 
