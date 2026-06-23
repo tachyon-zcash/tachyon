@@ -250,12 +250,15 @@ impl ActionSigningKey<effect::Output> {
 #[derive(Clone, Copy, Debug)]
 pub struct BindingSigningKey(#[debug(skip)] reddsa::SigningKey<reddsa::BindingAuth>);
 
-impl BindingSigningKey {
-    /// Attempt to parse a binding signing key from 32 bytes.
-    pub fn from_bytes(bytes: [u8; 32]) -> Result<Self, reddsa::Error> {
+impl TryFrom<[u8; 32]> for BindingSigningKey {
+    type Error = reddsa::Error;
+
+    fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
         reddsa::SigningKey::<reddsa::BindingAuth>::try_from(bytes).map(Self)
     }
+}
 
+impl BindingSigningKey {
     /// Sign a transaction sighash with this binding key.
     pub fn sign<RNG: RngCore + CryptoRng>(
         &self,
