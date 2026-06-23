@@ -1099,7 +1099,7 @@ boundary and relays the partial proof to the user, who finishes the step.
 it feed into many notes' proof trees as a ready-made input, with no per-note
 recomputation.
 
-<a id="statement"></a>
+#### Action Statements {#statement}
 
 We give the three monolithic statements an action's proof must satisfy: the
 per-action statements ([Output](#output) or [Spend](#spend)), and the
@@ -1110,7 +1110,7 @@ remaining subsections, where each step is a circuit over a small header of data.
 Each condition below is tagged by who supplies its proof: $\Sc$ (shared across
 users), $\Uc$ (the user), or $\Oc$ (the OSS).
 
-#### Output Action Statement {#output}
+<a id="output">**Output Action Statement**</a>
 
 A valid instance of an *Output Action statement* assures that, given the public input:
 
@@ -1140,7 +1140,7 @@ such that the following conditions hold:
 - **Authorization** ($\Uc$): $\rk = \ak + [\alpha]\,\G$ and
   $\alpha = \PRF(\cm \,\|\, \theta)$ binding the validation key to the output note.
 
-#### Spend Action Statement {#spend}
+<a id="spend">**Spend Action Statement**</a>
 
 A valid instance of a *Spend Action statement* assures that, given the public input:
 
@@ -1193,7 +1193,7 @@ roots, we can prove block inclusion with *logarithmic* number of hashes to catch
 gap between the anchor for initial inclusion til the end-of-block anchor that shows up
 in the block header (of the inclusion block) is still user's responsibility.
 
-#### Bundle-level Statement {#bundle}
+<a id="bundle">**Bundle-level Statement**</a>
 
 The bundle statement glues the per-action proofs together. Given the public input:
 
@@ -1216,6 +1216,257 @@ it attests that:
 The value balance, anchor genuineness, and authorization signatures are enforced
 *outside* this statement: respectively the [binding signature](#tx), a
 [consensus check](#consensus-rule), and signature verification against $\rk$.
+
+#### Steps, Headers, and Bridging {#steps}
+
+We now decompose the three statements above into the proof tree. Each node is a
+**step**: a bounded circuit that consumes up to two child PCD proofs and some
+private witness, checks a subset of the statement, and emits a fresh PCD proof.
+The step output (namely "data" in the proof-carrying data), referred to as its
+**header**, is used as public inputs to the PCD proof in order to represent the
+current state of computation. Headers are updated and carried upward in the
+computational graph from children to their parents. A parent step **bridges**
+its two children steps by loading both output headers and equality-checking the
+fields they must agree on (the same note $\cm$, a shared $\mathsf{anchor}$,
+contiguous epochs, etc.) as part of its step logic before emitting its own
+header. Sufficiently bridged headers gives sound decomposition: steps in the
+proof tree are consistently proving sub-statements of the same overall
+bundle-level statement.
+
+- The entire [Output statement](#output) is cheap and all $\Uc$: it stays a
+  single step `OutputCore`.
+- The [spend-time nullifiers](#nf-ggm) $\nf_e, \nf_{e+1}$ get their own step
+  `NfDerive` ($\Uc$): one nullifier is a PRF seed plus an $\ell$-step GGM
+  walk, and deriving the pair already saturates a step's size budget.
+  `NfDerive` emits the two nullifiers and a binding tag $\kappa = H(\seed)$ over
+  the GGM seed $\seed = \PRF_\nk(\psi)$.
+- The remaining algebraic [Spend conditions](#spend) — value, note, payment-key,
+  and authority — are cheap, all $\Uc$, and all bound to one note, so they stay
+  together in `SpendCore`, which consumes `NfDerive` and re-derives the seed
+  from the note's own $(\nk,\psi)$ to check $\kappa$, binding the two nullifiers
+  to this $\cm$.
+- **Commitment inclusion** splits at the $\Uc/\Oc$ line. `InclusionInit`
+  ($\Uc$) proves initial inclusion and the lift to the note's block-boundary
+  anchor $a_0$, emitting a $\cm$-bearing header. `AnchorLift` ($\Oc$) is the
+  flyclient catch-up from $a_0$ to the spend's anchor; because it touches only
+  public anchor-chain hashes it must stay $\cm$-free, so it emits an anchor-only
+  `AnchorChainHeader` that `InclusionLift` ($\Uc$) folds back onto $\cm$.
+  That privacy split — keeping $\cm$ off the OSS-run catch-up — is what forces
+  the extra $\Uc$ merge. `InclusionInit` also stays apart from `SpendCore`
+  even though the two would fit one circuit: merging them would drag
+  `SpendCore`'s spend fields into the header that rides the OSS-facing lift
+  spine through `InclusionLift`, inflating `InclusionHeader` for no reason.
+  Kept apart, the inclusion header stays lean — $(\cm, e_0, \mathsf{anchor})$ —
+  across the lift, and the spend fields wait on their own spine until
+  `SpendBind`.
+- **Past-nullifier exclusion** is forced apart all three ways. `EpochAccCert`
+  ($\Sc$) certifies one epoch accumulator $e_i(X)$; a past epoch's $e_i(X)$ is
+  canonical, so this is proved *once* and reused by every note (proof reuse).
+  `DelegateCert` ($\Uc$) is the privacy boundary: it certifies that the
+  [prefix-constrained key](#nf-ggm) $\pck$ — the GGM node at prefix depth
+  $\ell'$ that the OSS will forward-walk — genuinely hangs off this note's seed,
+  and emits $\pck$, the seed tag $\kappa$, and $\ell'$. The depth $\ell'$ alone
+  fixes the covered epochs (the aligned subtree under $\pck$), so the header
+  names no explicit range; an unaligned span is delegated as a set of prefix
+  keys, one `DelegateCert` per maximal subtree ([GGM delegation](#nf-ggm)).
+  `ExclusionLift` ($\Oc$) walks $\pck$ down the remaining $\ell - \ell'$
+  levels to each epoch leaf $\nf_i$, tests $e_i(\nf_i)\neq 0$, and carries
+  $\kappa$ unchanged so consecutive epochs stay bound to one note. One step can
+  advance several epochs at once: the $\Sc$ `EpochAccCert` folds are
+  note-independent, so a shared balanced sub-tree pre-folds a contiguous batch
+  of epoch accumulators into a single header that one `ExclusionLift`
+  consumes — keeping the fold 2-ary while amortizing recursion overhead over the
+  whole batch (the exclusion test itself is cheap, a native polynomial-query
+  oracle that barely dents the step budget).
+- Assembly is folds paired by 2-arity. `ProveSpendable` ($\Uc$) fuses the
+  (lifted) inclusion and exclusion subtrees, anchoring the exclusion range to
+  the note's creation epoch $e_0$ and performing the final cross-epoch lift from
+  the exclusion frontier $e\!-\!1$ to the spend epoch $e$ — reconciling the
+  inclusion anchor (which lies in epoch $e$) with the exclusion range (closed
+  through $e\!-\!1$) so its header reports the same $e$ that `SpendCore` does.
+  `SpendBind` ($\Uc$) fuses `SpendCore` with the spendability proof; this is the
+  seam that ties the OSS's exclusion to $\cm$, by checking the exclusion's
+  $\kappa$ against `SpendCore`'s note-bound $\kappa$. `BundleAssemble` ($\Uc$)
+  fuses action proofs pairwise and folds in the [accumulator-integrity](#bundle)
+  check, emitting the published stamp.
+
+$\pck$ is bound to the note by *construction* — it is a GGM node hanging off
+$\seed = \PRF_\nk(\psi)$, which already commits to the spender's $\nk$ and the
+note's identity $\psi$ — so the exclusion chain is self-binding: every $\nf_i$
+the OSS derives comes from the same $\pck$, hence the same note. The only thing
+the proof tree must add is carrying that fact across the OSS's $\cm$-free
+portion to the final bind, which the seed tag $\kappa = H(\seed)$ does:
+`NfDerive` and `DelegateCert` emit the same $\kappa$, the OSS forwards it
+opaquely, and `SpendBind` checks it against the note. No separate
+delegation-identifier or trapdoor commitment is needed for soundness.[^unlink]
+
+The reusable steps are `AnchorLift` (the [in-epoch lift](#in-e), re-run as
+the anchor advances) and `ExclusionLift` (the exclusion half of the
+[cross-epoch lift](#cross-e), one per synced epoch), `EpochAccCert` (reused
+across all notes), and `BundleAssemble` (within a transaction and again during
+[aggregation](#aggregation), where it folds whole stamps rather than action
+proofs — the same multiset-union-by-product, since a single action is just a
+one-action stamp, preceded by an `AnchorLift` to align the two stamps'
+independently chosen anchors).
+
+An OSS serving many users can batch the exclusion spine a second way, across
+*notes*. A single `ExclusionLift` step can walk the $\pck$ of several
+notes against the same batched `EpochAccHeader`, emitting one `ExclusionHeader`
+that carries a $(\kappa, \text{range})$ entry per note. This defers the
+per-note bridge: rather than each note running its own exclusion spine off
+`DelegateCert`, every note's `ProveSpendable` later *extracts* its own
+$(\kappa, \text{range})$ from the batch and checks membership. With
+$M$ notes per step the dominant $N \cdot E / B$ exclusion-step count (over $N$
+notes, $E$ epochs, $B$-epoch batches) drops to $(N/M) \cdot E / B$, at the cost
+of larger per-step circuits — bounded by the $2^{13}$ budget — plus $N$ cheap
+$\Uc$ extraction folds. This is a throughput optimization internal to the OSS;
+it changes neither the soundness argument nor the $\cm$-free boundary.
+
+[^unlink]: $\kappa$ (and $\pck$) is a per-note constant, so an OSS that syncs
+    the same note twice would see it repeat and link the two sessions as one
+    note. That is a *re-delegation* unlinkability concern, not a soundness one;
+    a production design blinds the carried handle per delegation with a fresh
+    trapdoor (the delegation identifier of the [GGM delegation](#nf-ggm)), which
+    leaves this argument unchanged.
+
+**Headers.** Each header carries only its binding fields. $\kappa$ is the seed
+tag, $\pck$ the prefix-constrained key, $\ell'$ its prefix depth, $e_0$ the
+note's creation epoch, $\mathsf{Com}(e_i(X))$ the committed epoch accumulator,
+and $[\cdot,\cdot]$ a covered epoch range.
+
+| Header | Fields | Party |
+| ------ | ------ | ----- |
+| `NfHeader` | $(\kappa, \nf_e, \nf_{e+1}, e)$ | $\Uc$ |
+| `SpendCoreHeader` | $(\cm, \cv, \rk, \nf_e, \nf_{e+1}, e, \kappa)$ | $\Uc$ |
+| `InclusionHeader` | $(\cm, e_0, \mathsf{anchor})$ | $\Uc$ |
+| `AnchorChainHeader` | $(\mathsf{anchor}_\mathsf{start}, \mathsf{anchor}_\mathsf{end})$ | $\Oc$ |
+| `DelegationHeader` | $(\kappa, \pck, \ell')$ | $\Uc\!\to\!\Oc$ |
+| `EpochAccHeader` | $(i, \mathsf{Com}(e_i(X)))$ | $\Sc$ |
+| `ExclusionHeader` | $(\kappa, [e_0, j])$ | $\Oc$ |
+| `SpendableHeader` | $(\kappa, \cm, \mathsf{anchor}, e)$ | $\Uc$ |
+| `SpendHeader` | $(\cm, \cv, \rk, \nf_e, \nf_{e+1}, \mathsf{anchor}, e)$ | $\Uc$ |
+| `OutputHeader` | $(\cm, \tg_\bot, \cv, \rk)$ | $\Uc$ |
+| `StampHeader` | $(\set{(\cv_i, \rk_i)}, \tgacc, \mathsf{anchor}, e)$ | $\Uc$ |
+
+No $\Oc$ header carries $\cm$, $\nk$, $\psi$, or the seed itself: the OSS works
+under the prefix-constrained key $\pck$, the one-way seed tag $\kappa$, and
+public anchors. $\cm$ re-enters only at the $\Uc$ seams `InclusionLift` (anchor)
+and `SpendBind` ($\kappa$).
+
+**Steps.** Left/Right are PCD inputs (— means a leaf with witness only).
+
+| Step | Party | Left | Right | Output | Witness |
+| ---- | ----- | ---- | ----- | ------ | ------- |
+| `NfDerive` | $\Uc$ | — | — | `NfHeader` | $\nk, \psi$ |
+| `SpendCore` | $\Uc$ | `NfHeader` | — | `SpendCoreHeader` | $\mathsf{Note}, (\ak,\nk,\rpk), (\alpha,\theta,\rcv)$ |
+| `OutputCore` | $\Uc$ | — | — | `OutputHeader` | $\mathsf{Note}, \mathsf{Note}_\bot, \ak, (\alpha,\theta,\rcv)$ |
+| `InclusionInit` | $\Uc$ | — | — | `InclusionHeader` | creating stamp opening, in-block anchor segment |
+| `DelegateCert` | $\Uc$ | — | — | `DelegationHeader` | $\mathsf{Note}$ opening, $\nk$, prefix path |
+| `EpochAccCert` | $\Sc$ | — | — | `EpochAccHeader` | epoch batch's per-stamp accumulators |
+| `AnchorLift` | $\Oc$ | — | — | `AnchorChainHeader` | start anchor (public), flyclient samples |
+| `InclusionLift` | $\Uc$ | `InclusionHeader` | `AnchorChainHeader` | `InclusionHeader` | — |
+| `ExclusionLift` | $\Oc$ | `DelegationHeader` / `ExclusionHeader` | `EpochAccHeader` | `ExclusionHeader` | $\pck$ walk over the epoch batch |
+| `ProveSpendable` | $\Uc$ | `InclusionHeader` | `ExclusionHeader` | `SpendableHeader` | — |
+| `SpendBind` | $\Uc$ | `SpendCoreHeader` | `SpendableHeader` | `SpendHeader` | — |
+| `BundleAssemble` | $\Uc$ | action/stamp header | action/stamp header | `StampHeader` | multiset gadgets |
+
+**Bridging checks.** Each fold's equality checks across its two headers:
+
+- `SpendCore` recomputes the seed $\seed = \PRF_\nk(\psi)$ from the note's own
+  key material and checks $H(\seed)$ equals `NfHeader`'s $\kappa$, forcing the
+  two published nullifiers to come from *this* note's seed; it carries
+  $\nf_e, \nf_{e+1}, \kappa$ upward alongside $\cm, \cv, \rk$.
+- `AnchorLift` proves the public start anchor connects to the end anchor through
+  the hash chain (flyclient-sampled); $\cm$ never appears.
+- `InclusionLift` checks `InclusionHeader`'s $\mathsf{anchor}$ equals
+  `AnchorChainHeader`'s start, and re-emits the inclusion header at the chain's
+  end — carrying $\cm$ and $e_0$ forward across the OSS's $\cm$-free segment.
+- `ExclusionLift` checks the incoming `EpochAccHeader`'s epoch batch is
+  exactly contiguous with the `ExclusionHeader`'s covered range (no gap); it
+  forward-walks $\pck$ to each $\nf_j$, tests $e_j(\nf_j)\neq 0$, extends the
+  range over the batch, and passes $\kappa$ through unchanged so the chain
+  cannot be spliced across notes. Past epochs are settled, so no anchor enters
+  here.
+- `ProveSpendable` checks the exclusion range starts at the creation epoch $e_0$
+  (no early epoch skipped) and reaches $e\!-\!1$, then performs the final
+  cross-epoch lift to $e \!:=\! (e\!-\!1)+1$: it binds the inclusion anchor
+  (which lies in epoch $e$) to the exclusion frontier $e\!-\!1$, and emits
+  `SpendableHeader` carrying `InclusionHeader`'s $\cm$ and anchor alongside the
+  exclusion's $\kappa$ — so the header reports the same $e$ that `SpendCore`
+  meets at `SpendBind`. (That the anchor genuinely lies in epoch $e$ is the
+  external [anchor-genuineness](#consensus-rule) check.)
+- `SpendBind` checks `SpendCore` and the spendability proof carry the same $\cm$
+  and $e$, **and** the same $\kappa$ — the latter binding the OSS's exclusion to
+  this note's seed, since `SpendCore` already tied $\kappa$ to $\cm$.
+- `BundleAssemble` checks both children share the bundle $\mathsf{anchor}$ and
+  multiplies their tachygram accumulators (multiset union,
+  [verified at a random point](#acc-correct)) into $\tgacc$, collecting their
+  $(\cv,\rk)$.
+
+**The tree.** For a one-spend, one-output transaction (colored by proving
+party):
+
+```mermaid
+flowchart BT
+  classDef u fill:#e8eeff,stroke:#4169E1,color:#1a1a1a;
+  classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
+  classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
+
+  subgraph shared [shared, once per epoch]
+    eacc["EpochAccCert (per epoch batch)"]:::s
+  end
+
+  w_nk[/nk, psi/]
+  w_note[/Note, keys, randomizers/]
+  w_inc[/creating stamp/]
+  w_fly[/start anchor, flyclient samples/]
+  w_out[/Note, dummy, keys/]
+
+  nfderive[NfDerive]:::u
+  score[SpendCore]:::u
+  iinit[InclusionInit]:::u
+  dcert[DelegateCert]:::u
+  alift[AnchorLift]:::o
+  ilift[InclusionLift]:::u
+  cexcl["ExclusionLift (per epoch batch)"]:::o
+  spendable[ProveSpendable]:::u
+  sbind[SpendBind]:::u
+  ocore[OutputCore]:::u
+  bmerge[BundleAssemble]:::u
+  stamp((stamp))
+
+  w_nk --> nfderive
+  nfderive -->|NfHeader| score
+  w_note --> score
+  w_note --> dcert
+  w_inc --> iinit
+  w_fly --> alift
+
+  iinit -->|InclusionHeader| ilift
+  alift -->|AnchorChainHeader| ilift
+  ilift -->|InclusionHeader @ spend anchor| spendable
+
+  dcert -->|"DelegationHeader (kappa, pck)"| cexcl
+  eacc -->|EpochAccHeader| cexcl
+  cexcl -->|ExclusionHeader| spendable
+
+  spendable -->|SpendableHeader| sbind
+  score -->|SpendCoreHeader| sbind
+
+  sbind -->|SpendHeader| bmerge
+  w_out --> ocore
+  ocore -->|OutputHeader| bmerge
+  bmerge -->|StampHeader| stamp
+```
+
+The spend's left spine ($\Oc$, the OSS) does the unbounded syncing work — the
+flyclient `AnchorLift` and the per-epoch `ExclusionLift` — under the
+prefix-constrained key $\pck$, the seed tag $\kappa$, and public anchors alone,
+never touching $\cm$ or the note's keys. The note re-enters at two $\Uc$ seams:
+`InclusionLift` folds the OSS's $\cm$-free anchor catch-up back onto $\cm$, and
+`SpendBind` checks the exclusion's $\kappa$ against the note to pin the OSS's
+exclusion to this spend. An Output needs none of this: it is a lone `OutputCore`
+leaf folded straight into `BundleAssemble`.
 
 #### In-epoch Lift {#in-e}
 

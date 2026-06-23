@@ -41,6 +41,7 @@
 \tag:\mathsf{tag}
 \ek:\mathsf{ek}
 \dk:\mathsf{dk}
+\pck:\mathsf{pck}
 \tk:\mathsf{tk}
 \memo:\mathsf{memo}
 \blk:\mathsf{blk}
