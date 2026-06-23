@@ -3,8 +3,9 @@
 //! A value commitment hides the value transferred in an action:
 //! `cv = [v]V + [rcv]R` where `rcv` is the [`CommitmentTrapdoor`].
 
-use core::{fmt, iter, ops, ops::Neg as _};
+use core::{iter, ops, ops::Neg as _};
 
+use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
 use lazy_static::lazy_static;
 use pasta_curves::{
@@ -45,8 +46,8 @@ lazy_static! {
 /// An $\mathbb{F}_q$ element (Pallas scalar field, 32 bytes). Lives
 /// in the scalar field because $\mathsf{rcv}$ is used as a scalar in
 /// point multiplication $[\mathsf{rcv}]\,\mathcal{R}$.
-#[derive(Clone, Copy)]
-pub struct CommitmentTrapdoor(Fq);
+#[derive(Clone, Copy, Debug, Into)]
+pub struct CommitmentTrapdoor(#[debug(skip)] Fq);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
@@ -81,12 +82,6 @@ impl CommitmentTrapdoor {
     }
 }
 
-impl From<CommitmentTrapdoor> for Fq {
-    fn from(trapdoor: CommitmentTrapdoor) -> Self {
-        trapdoor.0
-    }
-}
-
 /// A value commitment for a Tachyon action.
 ///
 /// Commits to the value being transferred in an action without
@@ -103,8 +98,8 @@ impl From<CommitmentTrapdoor> for Fq {
 /// ## Type representation
 ///
 /// An EpAffine (Pallas affine curve point, 32 compressed bytes).
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Commitment(pub(super) EpAffine);
+#[derive(Clone, Copy, Debug, TotalEq, PartialEq, From, Into)]
+pub struct Commitment(#[debug(skip)] pub(super) EpAffine);
 
 impl Commitment {
     /// Create the value balance commitment
@@ -130,21 +125,9 @@ impl Commitment {
     }
 }
 
-impl From<Commitment> for EpAffine {
-    fn from(cv: Commitment) -> Self {
-        cv.0
-    }
-}
-
 impl From<Commitment> for [u8; 32] {
     fn from(cv: Commitment) -> Self {
         cv.0.to_bytes()
-    }
-}
-
-impl From<EpAffine> for Commitment {
-    fn from(affine: EpAffine) -> Self {
-        Self(affine)
     }
 }
 
@@ -169,18 +152,6 @@ impl iter::Sum for Commitment {
     /// commitments. Identity element is the point at infinity.
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self(EpAffine::identity()), |acc, cv| acc + cv)
-    }
-}
-
-impl fmt::Debug for CommitmentTrapdoor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for Commitment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Commitment").finish_non_exhaustive()
     }
 }
 

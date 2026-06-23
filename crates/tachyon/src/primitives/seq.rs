@@ -1,8 +1,8 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::cmp;
 
+use derive_more::{Debug, Eq as TotalEq, PartialEq};
 use group::Group as _;
 use pasta_curves::{Eq, Fp};
 use ragu::Polynomial;
@@ -10,7 +10,7 @@ use ragu::Polynomial;
 use crate::note::Nullifier;
 
 /// Pedersen commitment to a nullifier sequence $N$.
-#[derive(Clone, Copy, Debug, cmp::Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, TotalEq, PartialEq)]
 pub struct NfSeqCommit(Eq);
 
 /// Witness polynomial for a nullifier sequence $N$ (members encoded as

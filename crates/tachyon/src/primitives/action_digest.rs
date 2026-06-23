@@ -1,5 +1,4 @@
-use core::{error::Error, fmt};
-
+use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use ff::PrimeField as _;
 use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
 
@@ -10,28 +9,19 @@ use crate::{digest::poseidon, keys::public, value};
 /// Each action produces one digest, which serves as a root in the
 /// accumulator polynomial. Multiple actions are accumulated via
 /// polynomial commitment, not on this type.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, TotalEq, PartialEq, From, Into)]
 pub struct ActionDigest(Fp);
 
 /// Errors from action digest computation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Display, Error)]
 pub enum ActionDigestError {
     /// The cv is the identity point, so the digest cannot be computed.
+    #[display("cv is the identity point")]
     IdentityCv,
     /// The rk is the identity point, so the digest cannot be computed.
+    #[display("rk is the identity point")]
     IdentityRk,
 }
-
-impl fmt::Display for ActionDigestError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            | Self::IdentityCv => write!(f, "cv is the identity point"),
-            | Self::IdentityRk => write!(f, "rk is the identity point"),
-        }
-    }
-}
-
-impl Error for ActionDigestError {}
 
 impl ActionDigest {
     /// Digest a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
@@ -48,19 +38,6 @@ impl ActionDigest {
             .into_option()
             .ok_or(ActionDigestError::IdentityRk)?;
         Ok(Self(poseidon::action_digest(cv_coords, rk_coords)))
-    }
-}
-
-/// Extract the inner field element (polynomial root).
-impl From<ActionDigest> for Fp {
-    fn from(digest: ActionDigest) -> Self {
-        digest.0
-    }
-}
-
-impl From<Fp> for ActionDigest {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
     }
 }
 

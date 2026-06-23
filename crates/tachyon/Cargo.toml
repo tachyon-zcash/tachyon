@@ -40,6 +40,9 @@ blake2b_simd = { version = "1.0", default-features = false }
 corez = { version = "0.1.1", default-features = false, features = [
     "alloc",
 ] }
+derive_more = { version = "~2.1", default-features = false, features = [
+    "full", # todo: use more specific features
+] }
 ff = "0.13"
 group = "0.13"
 lazy_static = { version = "1", default-features = false, features = [

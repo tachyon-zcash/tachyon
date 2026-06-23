@@ -1,7 +1,8 @@
 //! Public (verification) keys.
 
-use core::fmt;
+use core::cmp::Eq as CoreTotalEq;
 
+use derive_more::{Debug, Display, PartialEq};
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 
 use crate::{action, action::Action, bundle, reddsa, value};
@@ -22,7 +23,8 @@ use crate::{action, action::Action, bundle, reddsa, value};
 ///
 /// This unification lets consensus treat all actions identically while
 /// the type system enforces the authority boundary at construction time.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, Display, PartialEq)]
+#[display("ActionVerificationKey({:?})", <[u8; 32]>::from(self.0))]
 pub struct ActionVerificationKey(pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>);
 
 impl ActionVerificationKey {
@@ -32,11 +34,7 @@ impl ActionVerificationKey {
     }
 }
 
-#[expect(
-    clippy::missing_trait_methods,
-    reason = "default assert_receiver_is_total_eq is correct"
-)]
-impl Eq for ActionVerificationKey {}
+impl CoreTotalEq for ActionVerificationKey {}
 
 impl From<ActionVerificationKey> for [u8; 32] {
     fn from(avk: ActionVerificationKey) -> Self {
@@ -48,7 +46,9 @@ impl TryFrom<[u8; 32]> for ActionVerificationKey {
     type Error = reddsa::Error;
 
     fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
-        reddsa::VerificationKey::<reddsa::ActionAuth>::try_from(bytes).map(Self)
+        Ok(Self(
+            reddsa::VerificationKey::<reddsa::ActionAuth>::try_from(bytes)?,
+        ))
     }
 }
 
@@ -104,8 +104,10 @@ pub fn derive_bvk(
 ///
 /// Wraps `reddsa::VerificationKey<reddsa::BindingAuth>`, which internally
 /// stores a Pallas curve point (EpAffine, encoded as 32 compressed bytes).
-#[derive(Clone, Copy)]
-pub struct BindingVerificationKey(pub(super) reddsa::VerificationKey<reddsa::BindingAuth>);
+#[derive(Clone, Copy, Debug)]
+pub struct BindingVerificationKey(
+    #[debug(skip)] pub(super) reddsa::VerificationKey<reddsa::BindingAuth>,
+);
 
 impl BindingVerificationKey {
     /// Derive the binding verification key from public action data.
@@ -155,17 +157,3 @@ impl PartialEq for BindingVerificationKey {
     reason = "default assert_receiver_is_total_eq is correct"
 )]
 impl Eq for BindingVerificationKey {}
-
-impl fmt::Debug for ActionVerificationKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ActionVerificationKey")
-            .finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for BindingVerificationKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BindingVerificationKey")
-            .finish_non_exhaustive()
-    }
-}

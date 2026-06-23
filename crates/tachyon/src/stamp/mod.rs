@@ -18,9 +18,9 @@ extern crate alloc;
 pub mod proof;
 
 use alloc::{boxed::Box, vec::Vec};
-use core::{error::Error, fmt};
 
 use corez::io::{self, Read, Write};
+use derive_more::{Debug, Display, Eq, Error, Into, PartialEq};
 use pasta_curves::Fp;
 use proof::{
     PROOF_SYSTEM,
@@ -63,7 +63,7 @@ pub struct Stripped;
 ///
 /// This uses the aggregate's wtxid (not txid) so it unambiguously pins the
 /// covering aggregate's authorization state, including stamp.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Into)]
 pub struct AggregateId([u8; 64]);
 
 impl AggregateId {
@@ -81,22 +81,12 @@ impl AggregateId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Display, Eq, PartialEq, Error)]
 /// Errors that can occur when handling an aggregate id.
 pub enum AggregateIdError {
     /// The aggregate id is zero and refers to no aggregate.
+    #[display("aggregate id is zero and refers to no aggregate")]
     Zero,
-}
-impl Error for AggregateIdError {}
-
-impl fmt::Display for AggregateIdError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            | Self::Zero => {
-                write!(f, "aggregate id is zero and refers to no aggregate")
-            },
-        }
-    }
 }
 
 impl TryFrom<[u8; 64]> for AggregateId {
@@ -110,34 +100,19 @@ impl TryFrom<[u8; 64]> for AggregateId {
     }
 }
 
-impl From<AggregateId> for [u8; 64] {
-    fn from(aggregate_id: AggregateId) -> Self {
-        aggregate_id.0
-    }
-}
-
 /// Error during stamp verification.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Display, Error)]
 pub enum VerificationError {
     /// An action's cv or rk is the identity point.
+    #[display("action digest error: {_0}")]
     ActionDigest(ActionDigestError),
     /// The proof system returned an error.
+    #[display("proof system error")]
     ProofSystem,
     /// The proof did not verify against the reconstructed header.
+    #[display("proof did not verify")]
     Disproved,
 }
-
-impl fmt::Display for VerificationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            | &Self::ActionDigest(err) => write!(f, "action digest error: {err}"),
-            | &Self::ProofSystem => write!(f, "proof system error"),
-            | &Self::Disproved => write!(f, "proof did not verify"),
-        }
-    }
-}
-
-impl Error for VerificationError {}
 
 /// Everything needed to produce a [`Stamp`].
 ///
@@ -281,36 +256,26 @@ impl Plan {
 }
 
 /// Errors that can occur while proving a stamp.
-#[derive(Debug)]
+#[derive(Debug, Display, Error)]
 #[non_exhaustive]
 pub enum ProveError {
     /// The plan has no actions to prove.
+    #[display("no actions to prove")]
     NoActions,
     /// Action digest construction failed (cv or rk was the identity point).
+    #[display("action digest failed: {_0}")]
     ActionDigest(ActionDigestError),
     /// Proof creation failed for an action; carries the underlying
     /// step-level error.
+    #[display("action proof failed: {_0}")]
     ProofFailed(ragu::Error),
     /// Stamp merge failed; carries the underlying step-level error.
+    #[display("stamp merge failed: {_0}")]
     MergeFailed(ragu::Error),
     /// Number of spendable PCDs doesn't match number of spends.
+    #[display("spendable PCD count mismatch")]
     SpendableMismatch,
 }
-
-impl fmt::Display for ProveError {
-    #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            | Self::NoActions => write!(f, "no actions to prove"),
-            | Self::ActionDigest(err) => write!(f, "action digest failed: {err}"),
-            | Self::ProofFailed(ref inner) => write!(f, "action proof failed: {inner}"),
-            | Self::MergeFailed(ref inner) => write!(f, "stamp merge failed: {inner}"),
-            | Self::SpendableMismatch => write!(f, "spendable PCD count mismatch"),
-        }
-    }
-}
-
-impl Error for ProveError {}
 
 /// A stamp carrying tachygrams, anchor, and proof.
 ///
@@ -320,7 +285,7 @@ impl Error for ProveError {}
 /// The PCD header `(action_acc, tachygram_acc, anchor)` is not stored here —
 /// the verifier reconstructs it from public data and passes it as the header
 /// to Ragu `verify()`.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     pub tachygrams: Vec<Tachygram>,
@@ -329,17 +294,8 @@ pub struct Stamp {
     pub anchor: Anchor,
 
     /// The Ragu proof bytes.
+    #[debug(skip)]
     pub proof: ragu::Proof,
-}
-
-impl fmt::Debug for Stamp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Stamp {{ tachygrams: {:?}, anchor: {:?} }}",
-            self.tachygrams, self.anchor,
-        )
-    }
 }
 
 impl Stamp {

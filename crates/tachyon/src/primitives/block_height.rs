@@ -1,22 +1,12 @@
 use core::num::TryFromIntError;
 
+use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
+
 use crate::{constants::EPOCH_SIZE, primitives::EpochIndex};
 
 /// A block height in the pool chain.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, TotalEq, PartialEq, Ord, PartialOrd, From, Into)]
 pub struct BlockHeight(pub u32);
-
-impl From<BlockHeight> for u32 {
-    fn from(height: BlockHeight) -> Self {
-        height.0
-    }
-}
-
-impl From<u32> for BlockHeight {
-    fn from(height: u32) -> Self {
-        Self(height)
-    }
-}
 
 impl TryFrom<BlockHeight> for usize {
     type Error = TryFromIntError;
