@@ -47,15 +47,6 @@ impl From<ActionDigest> for [u8; 32] {
     }
 }
 
-impl TryFrom<&[u8; 32]> for ActionDigest {
-    type Error = &'static str;
-
-    fn try_from(bytes: &[u8; 32]) -> Result<Self, Self::Error> {
-        let fp: Fp = Option::from(Fp::from_repr(*bytes)).ok_or("invalid field element")?;
-        Ok(Self(fp))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use rand::{CryptoRng, RngCore, SeedableRng as _, rngs::StdRng};

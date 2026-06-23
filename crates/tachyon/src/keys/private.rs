@@ -52,9 +52,9 @@ impl SpendingKey {
     /// # Key derivation (Orchard §4.2.3)
     ///
     /// $$\mathsf{ask} = \text{ToScalar}\bigl(\text{PRF}^{\text{expand}}_
-    /// {\mathsf{sk}}([0\text{x}09])\bigr)$$
+    /// {\mathsf{sk}}([0\text{x}21])\bigr)$$
     ///
-    /// BLAKE2b-512 of $(\mathsf{sk} \| \texttt{0x09})$, reduced to
+    /// BLAKE2b-512 of $(\mathsf{sk} \| \texttt{0x21})$, reduced to
     /// $\mathbb{F}_q$ via `from_uniform_bytes`.
     ///
     /// # Sign normalization (§5.4.7.1)
@@ -101,7 +101,7 @@ impl SpendingKey {
 
     /// Derive `nk` from `sk`.
     ///
-    /// `nk = ToBase(PRF^expand_sk([0x0a]))` — BLAKE2b-512 reduced to Fp.
+    /// `nk = ToBase(PRF^expand_sk([0x22]))` — BLAKE2b-512 reduced to Fp.
     #[must_use]
     pub fn derive_nullifier_private(&self) -> NullifierKey {
         NullifierKey(Fp::from_uniform_bytes(&blake2b::prf_expand_nk(&self.0)))
@@ -250,15 +250,15 @@ impl ActionSigningKey<effect::Output> {
 #[derive(Clone, Copy, Debug)]
 pub struct BindingSigningKey(#[debug(skip)] reddsa::SigningKey<reddsa::BindingAuth>);
 
-impl BindingSigningKey {
-    /// Attempt to parse a binding signing key from 32 bytes.
-    #[must_use]
-    pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
-        reddsa::SigningKey::<reddsa::BindingAuth>::try_from(bytes)
-            .ok()
-            .map(Self)
-    }
+impl TryFrom<[u8; 32]> for BindingSigningKey {
+    type Error = reddsa::Error;
 
+    fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
+        reddsa::SigningKey::<reddsa::BindingAuth>::try_from(bytes).map(Self)
+    }
+}
+
+impl BindingSigningKey {
     /// Sign a transaction sighash with this binding key.
     pub fn sign<RNG: RngCore + CryptoRng>(
         &self,

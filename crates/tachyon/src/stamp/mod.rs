@@ -81,7 +81,7 @@ impl AggregateId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
+#[derive(Clone, Copy, Debug, Display, Error)]
 /// Errors that can occur when handling an aggregate id.
 pub enum AggregateIdError {
     /// The aggregate id is zero and refers to no aggregate.
