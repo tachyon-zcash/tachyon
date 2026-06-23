@@ -94,10 +94,10 @@ impl BundleState {
         let mut byte = [0u8; 1];
         reader.read_exact(&mut byte)?;
         match u8::from_le_bytes(byte) {
-            | 0b0000_0000u8 => Ok(Self::NoBundle),
-            | 0b0000_0001u8 => Ok(Self::Stamped),
-            | 0b0000_0010u8 => Ok(Self::Stripped),
-            | _other => {
+            0b0000_0000u8 => Ok(Self::NoBundle),
+            0b0000_0001u8 => Ok(Self::Stamped),
+            0b0000_0010u8 => Ok(Self::Stripped),
+            _other => {
                 Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "invalid bundle state",
@@ -108,9 +108,9 @@ impl BundleState {
 
     pub(super) fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
         let byte = u8::to_le_bytes(match self {
-            | Self::NoBundle => 0b0000_0000u8,
-            | Self::Stamped => 0b0000_0001u8,
-            | Self::Stripped => 0b0000_0010u8,
+            Self::NoBundle => 0b0000_0000u8,
+            Self::Stamped => 0b0000_0001u8,
+            Self::Stripped => 0b0000_0010u8,
         });
         writer.write_all(&byte)
     }
@@ -164,8 +164,8 @@ impl TryFrom<TachyonBundle> for Bundle<Stamp> {
 
     fn try_from(bundle: TachyonBundle) -> Result<Self, Self::Error> {
         match bundle {
-            | TachyonBundle::Adjunct(stripped) => Err(stripped),
-            | TachyonBundle::Stamped(stamped) => Ok(stamped),
+            TachyonBundle::Adjunct(stripped) => Err(stripped),
+            TachyonBundle::Stamped(stamped) => Ok(stamped),
         }
     }
 }
@@ -175,8 +175,8 @@ impl TryFrom<TachyonBundle> for Bundle<AggregateId> {
 
     fn try_from(bundle: TachyonBundle) -> Result<Self, Self::Error> {
         match bundle {
-            | TachyonBundle::Adjunct(stripped) => Ok(stripped),
-            | TachyonBundle::Stamped(stamped) => Err(stamped),
+            TachyonBundle::Adjunct(stripped) => Ok(stripped),
+            TachyonBundle::Stamped(stamped) => Err(stamped),
         }
     }
 }
@@ -634,8 +634,8 @@ impl TachyonBundle {
         let state = BundleState::read(&mut reader)?;
 
         Ok(match state {
-            | BundleState::NoBundle => None,
-            | BundleState::Stamped => {
+            BundleState::NoBundle => None,
+            BundleState::Stamped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
                 Some(Self::Stamped(Bundle {
                     actions,
@@ -644,7 +644,7 @@ impl TachyonBundle {
                     stamp: Stamp::read(&mut reader)?,
                 }))
             },
-            | BundleState::Stripped => {
+            BundleState::Stripped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
                 let stamp = AggregateId::read(&mut reader)?;
 
@@ -670,8 +670,8 @@ impl TachyonBundle {
     #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn write<W: Write>(&self, writer: W) -> io::Result<()> {
         match *self {
-            | Self::Stamped(ref stamped) => stamped.write(writer),
-            | Self::Adjunct(ref stripped) => stripped.write(writer),
+            Self::Stamped(ref stamped) => stamped.write(writer),
+            Self::Adjunct(ref stripped) => stripped.write(writer),
         }
     }
 
@@ -682,8 +682,8 @@ impl TachyonBundle {
     #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn auth_digest(&self) -> [u8; 64] {
         match *self {
-            | Self::Stamped(ref stamped) => stamped.auth_digest(),
-            | Self::Adjunct(ref stripped) => stripped.auth_digest(),
+            Self::Stamped(ref stamped) => stamped.auth_digest(),
+            Self::Adjunct(ref stripped) => stripped.auth_digest(),
         }
     }
 }

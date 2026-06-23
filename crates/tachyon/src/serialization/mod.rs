@@ -21,10 +21,10 @@ pub(crate) fn read_compactsize<R: Read>(mut reader: R) -> io::Result<u64> {
         .enforce_valid()
         .map_err(|err| {
             match err {
-                | compactsize::CompactSizeError::NonCanonical(_) => {
+                compactsize::CompactSizeError::NonCanonical(_) => {
                     io::Error::new(io::ErrorKind::InvalidData, "non-canonical compact size")
                 },
-                | compactsize::CompactSizeError::ExceedsMaximum(_) => {
+                compactsize::CompactSizeError::ExceedsMaximum(_) => {
                     io::Error::new(
                         io::ErrorKind::InvalidData,
                         "compact size exceeds consensus maximum",

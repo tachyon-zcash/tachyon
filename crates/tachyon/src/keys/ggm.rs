@@ -231,10 +231,9 @@ pub fn cover_candidates(range: RangeInclusive<u32>) -> Vec<RangeInclusive<u32>> 
     let mut candidates: Vec<RangeInclusive<u32>> = Vec::new();
     for j in 0u8..=GGM_TREE_DEPTH {
         let alignment_bits = j * GGM_CHUNK_SIZE;
-        let s_j = match 1u32.checked_shl(u32::from(alignment_bits)) {
-            | Some(alignment) => range.start() & !(alignment - 1u32),
-            | None => 0u32,
-        };
+        let s_j = 1u32
+            .checked_shl(u32::from(alignment_bits))
+            .map_or(0u32, |alignment| range.start() & !(alignment - 1u32));
         if candidates.last().is_some_and(|prev| *prev.start() == s_j) {
             continue;
         }
@@ -253,19 +252,16 @@ fn ggm_step(node: Fp, chunk: u8) -> Fp {
 /// Recursive GGM walk: consume the top `GGM_CHUNK_SIZE` bits of `leaf` at each
 /// level, MSB-first, for `remaining` levels.
 fn ggm_walk(node: Fp, leaf: u32, remaining: u8) -> Fp {
-    match remaining.checked_sub(1) {
-        | None => node,
-        | Some(next) => {
-            let shift = next * GGM_CHUNK_SIZE;
-            let chunk_u32 = (leaf >> shift) & u32::from(GGM_CHUNK_MASK);
-            #[expect(
-                clippy::expect_used,
-                reason = "chunk bits fit in u8 because GGM_CHUNK_SIZE <= u8::BITS"
-            )]
-            let chunk = u8::try_from(chunk_u32).expect("chunk fits in u8");
-            ggm_walk(ggm_step(node, chunk), leaf, next)
-        },
-    }
+    remaining.checked_sub(1).map_or(node, |next| {
+        let shift = next * GGM_CHUNK_SIZE;
+        let chunk_u32 = (leaf >> shift) & u32::from(GGM_CHUNK_MASK);
+        #[expect(
+            clippy::expect_used,
+            reason = "chunk bits fit in u8 because GGM_CHUNK_SIZE <= u8::BITS"
+        )]
+        let chunk = u8::try_from(chunk_u32).expect("chunk fits in u8");
+        ggm_walk(ggm_step(node, chunk), leaf, next)
+    })
 }
 
 #[cfg(test)]
