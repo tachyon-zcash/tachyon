@@ -124,11 +124,10 @@ pub enum ValueError {
     Overflow,
 }
 
-impl Value {
-    /// Checked constructor.
-    ///
-    /// Returns `Err` if `value` is zero or exceeds `NOTE_VALUE_MAX`.
-    pub const fn new(value: u64) -> Result<Self, ValueError> {
+impl TryFrom<u64> for Value {
+    type Error = ValueError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
         if value == 0 {
             return Err(ValueError::Zero);
         }
@@ -136,14 +135,6 @@ impl Value {
             return Err(ValueError::Overflow);
         }
         Ok(Self(value))
-    }
-}
-
-impl TryFrom<u64> for Value {
-    type Error = ValueError;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Self::new(value)
     }
 }
 
