@@ -33,7 +33,8 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
-use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
+
+use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
@@ -97,34 +98,55 @@ pub struct Note {
 /// A note value in zatoshis. Non-zero and no greater than 2.1e15.
 ///
 /// Zero-valued notes are forbidden by construction: a zero-value action
-/// carries no economic meaning. The newtype enforces the invariant at
-/// `Value::from` (panics on zero and on overflow). Each PCD step that
-/// witnesses a `Note` *independently* rechecks `value != 0` — the
-/// compiler cannot prove the invariant from inside the circuit, and a
-/// compiled proof system sees only raw field elements without the
-/// Rust-level newtype protection.
-#[derive(Clone, Copy, Debug, Into)]
-#[expect(
-    clippy::field_scoped_visibility_modifiers,
-    reason = "test helpers use crate-internal construction to bypass the API check"
-)]
-pub struct Value(pub(crate) u64);
+/// carries no economic meaning. Each PCD step that witnesses a `Note`
+/// *independently* rechecks `value != 0` — the compiler cannot prove the
+/// invariant from inside the circuit, and a compiled proof system sees
+/// only raw field elements without the Rust-level newtype protection.
+///
+/// Use [`Value::try_from`] or [`Value::new`] for fallible construction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Into)]
+pub struct Value(u64);
 
-impl From<u64> for Value {
-    fn from(value: u64) -> Self {
-        assert!(value > 0, "note value must be non-zero");
-        assert!(
-            value <= NOTE_VALUE_MAX,
-            "note value must not exceed maximum"
-        );
-        Self(value)
+impl Value {
+    /// The forbidden zero value.
+    #[cfg(test)]
+    pub(crate) const ZERO: Self = Self(0);
+}
+
+/// Error returned when a note value is out of the valid range
+/// `1..=NOTE_VALUE_MAX`.
+#[derive(Clone, Copy, Debug, Display, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ValueError {
+    /// The value was zero.
+    #[display("note value must be non-zero")]
+    Zero,
+    /// The value exceeds the maximum note value (2.1e15 zatoshis).
+    #[display("note value must not exceed maximum")]
+    Overflow,
+}
+
+impl TryFrom<u64> for Value {
+    type Error = ValueError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        if value == 0 {
+            return Err(ValueError::Zero);
+        }
+        if value > NOTE_VALUE_MAX {
+            return Err(ValueError::Overflow);
+        }
+        Ok(Self(value))
     }
 }
 
-#[expect(clippy::expect_used, reason = "specified behavior")]
+#[expect(
+    clippy::expect_used,
+    reason = "Value construction enforces NOTE_VALUE_MAX < i64::MAX"
+)]
 impl From<Value> for i64 {
     fn from(value: Value) -> Self {
-        Self::try_from(value.0).expect("note value should fit in i64 (max 2.1e15 < i64::MAX)")
+        Self::try_from(value.0).expect("Value invariant guarantees it fits in i64")
     }
 }
 
@@ -210,21 +232,22 @@ mod tests {
     /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
     #[test]
     fn value_accepts_max() {
-        let _val: Value = Value::from(NOTE_VALUE_MAX);
+        Value::try_from(NOTE_VALUE_MAX).unwrap();
     }
 
     /// Anything above NOTE_VALUE_MAX must be rejected.
     #[test]
-    #[should_panic(expected = "note value must not exceed maximum")]
     fn value_rejects_overflow() {
-        let _val: Value = Value::from(NOTE_VALUE_MAX + 1);
+        assert_eq!(
+            Value::try_from(NOTE_VALUE_MAX + 1),
+            Err(ValueError::Overflow)
+        );
     }
 
     /// Zero must be rejected — notes carry economic value.
     #[test]
-    #[should_panic(expected = "note value must be non-zero")]
     fn value_rejects_zero() {
-        let _val: Value = Value::from(0u64);
+        assert_eq!(Value::try_from(0u64), Err(ValueError::Zero));
     }
 
     /// Different trapdoors produce different commitments.
@@ -236,13 +259,13 @@ mod tests {
 
         let note1 = Note {
             pk,
-            value: Value::from(100u64),
+            value: Value::try_from(100u64).unwrap(),
             psi,
             rcm: CommitmentTrapdoor::random(rng),
         };
         let note2 = Note {
             pk,
-            value: Value::from(100u64),
+            value: Value::try_from(100u64).unwrap(),
             psi,
             rcm: CommitmentTrapdoor::random(rng),
         };
@@ -259,7 +282,7 @@ mod tests {
         let nk = sk.derive_nullifier_private();
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: Value::from(100u64),
+            value: Value::try_from(100u64).unwrap(),
             psi: NullifierTrapdoor::random(rng),
             rcm: CommitmentTrapdoor::random(rng),
         };

@@ -62,6 +62,7 @@
 //! | `tachyonAggregateId`  | 64 bytes             | wtxid of the relevant aggregate          |
 
 use alloc::vec::Vec;
+use core::ops;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
@@ -73,6 +74,7 @@ use crate::{
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
+    note,
     primitives::{ActionDigest, ActionDigestError, ActionSetCommit, Anchor, effect},
     reddsa, serialization,
     stamp::{self, AggregateId, AggregateIdError, Stamp, Stripped, Unproven},
@@ -193,6 +195,18 @@ pub enum BuildError {
     BalanceKeyMismatch,
 }
 
+/// Errors that can occur when computing a bundle plan commitment.
+#[derive(Debug, Display, Error, From)]
+#[non_exhaustive]
+pub enum CommitError {
+    /// An action digest could not be constructed.
+    #[display("action digest: {_0}")]
+    ActionDigest(#[error(not(source))] ActionDigestError),
+    /// The value balance overflows the representable range.
+    #[display("value balance overflow")]
+    BalanceOverflow(#[error(not(source))] BalanceError),
+}
+
 /// Errors from bundle signature verification.
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
@@ -218,6 +232,9 @@ pub enum SignError {
     /// An externally-provided signature is invalid.
     #[display("signature {:?} does not verify", _0)]
     InvalidActionSignature(#[error(not(source))] action::Signature),
+    /// The value balance overflows the representable range.
+    #[display("value balance overflow")]
+    BalanceOverflow,
 }
 
 /// A complete bundle plan, awaiting authorization.
@@ -257,19 +274,18 @@ impl Plan {
     ///
     /// $\mathsf{v\_balance} = \sum_i v_{\text{spend},i} - \sum_j
     /// v_{\text{output},j}$
-    #[must_use]
-    pub fn value_balance(&self) -> i64 {
-        let spend_sum: i64 = self
-            .spends
-            .iter()
-            .map(|plan| i64::from(plan.note.value))
-            .sum();
-        let output_sum: i64 = self
-            .outputs
-            .iter()
-            .map(|plan| i64::from(plan.note.value))
-            .sum();
-        spend_sum - output_sum
+    ///
+    /// Returns `Err` if the intermediate sum overflows or the result
+    /// does not fit in `i64`.
+    pub fn value_balance(&self) -> Result<i64, BalanceError> {
+        let mut sum = ValueBalance::ZERO;
+        for plan in &self.spends {
+            sum = (sum + plan.note.value)?;
+        }
+        for plan in &self.outputs {
+            sum = (sum - plan.note.value)?;
+        }
+        i64::try_from(sum)
     }
 
     /// Compute a digest of all the bundle's effecting data.
@@ -286,17 +302,17 @@ impl Plan {
     /// permutation.
     ///
     /// The stamp is excluded because it is stripped during aggregation.
-    #[must_use]
-    pub fn commitment(&self) -> [u8; 64] {
-        #[expect(clippy::expect_used, reason = "todo")]
+    pub fn commitment(&self) -> Result<[u8; 64], CommitError> {
         let digests: Vec<ActionDigest> = self
             .iter_actions(action::Plan::digest, action::Plan::digest)
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
-            .expect("don't plan invalid actions");
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
 
         let action_commit = ActionSetCommit::from(digests.as_slice());
 
-        blake2b::bundle_commitment(&Eq::from(action_commit).to_affine(), self.value_balance())
+        Ok(blake2b::bundle_commitment(
+            &Eq::from(action_commit).to_affine(),
+            self.value_balance()?,
+        ))
     }
 
     /// Build a [`stamp::Plan`] from this bundle plan.
@@ -390,7 +406,9 @@ impl Plan {
 
         Ok(Bundle {
             actions: authorized,
-            value_balance: self.value_balance(),
+            value_balance: self
+                .value_balance()
+                .map_err(|_err| SignError::BalanceOverflow)?,
             binding_sig,
             stamp: Unproven,
         })
@@ -429,7 +447,9 @@ impl Plan {
 
         Ok(Bundle {
             actions: authorized,
-            value_balance: self.value_balance(),
+            value_balance: self
+                .value_balance()
+                .map_err(|_err| SignError::BalanceOverflow)?,
             binding_sig,
             stamp: Unproven,
         })
@@ -735,6 +755,59 @@ impl<S: StampState> Bundle<S> {
         }
 
         Ok(())
+    }
+}
+
+/// Signed sum of note values across actions.
+///
+/// Spends contribute positive values, outputs contribute negative.
+/// Uses `i128` internally to provide additional headroom while accumulating
+/// values. Checked arithmetic still reports overflow, and conversion to the
+/// wire-format `i64` fails if the final balance is out of range.
+///
+/// Use `i64::try_from(sum)` to narrow to the wire-format `i64`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ValueBalance(i128);
+
+/// Error returned when a [`ValueBalance`] operation overflows the
+/// representable range.
+#[derive(Clone, Copy, Debug, Display, Error)]
+#[display("value balance overflow")]
+pub struct BalanceError;
+
+impl ValueBalance {
+    /// The zero sum (identity for addition).
+    pub const ZERO: Self = Self(0);
+}
+
+impl TryFrom<ValueBalance> for i64 {
+    type Error = BalanceError;
+
+    // This doesn't need to check against NOTE_VALUE_MAX
+    fn try_from(sum: ValueBalance) -> Result<Self, Self::Error> {
+        Self::try_from(sum.0).map_err(|_err| BalanceError)
+    }
+}
+
+impl ops::Add<note::Value> for ValueBalance {
+    type Output = Result<Self, BalanceError>;
+
+    fn add(self, rhs: note::Value) -> Self::Output {
+        self.0
+            .checked_add(u64::from(rhs).into())
+            .map(Self)
+            .ok_or(BalanceError)
+    }
+}
+
+impl ops::Sub<note::Value> for ValueBalance {
+    type Output = Result<Self, BalanceError>;
+
+    fn sub(self, rhs: note::Value) -> Self::Output {
+        self.0
+            .checked_sub(u64::from(rhs).into())
+            .map(Self)
+            .ok_or(BalanceError)
     }
 }
 

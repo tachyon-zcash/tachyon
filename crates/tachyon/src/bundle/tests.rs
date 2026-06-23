@@ -16,6 +16,19 @@ use crate::{
 };
 
 #[test]
+fn value_sum_checked_arithmetic() {
+    let va = note::Value::try_from(100u64).unwrap();
+    let vb = note::Value::try_from(200u64).unwrap();
+
+    let sum = (ValueBalance::ZERO + va).unwrap();
+    let total = (sum + vb).unwrap();
+    assert_eq!(i64::try_from(total).unwrap(), 300);
+
+    let diff = (ValueBalance::ZERO - va).unwrap();
+    assert_eq!(i64::try_from(diff).unwrap(), -100);
+}
+
+#[test]
 fn wrong_value_balance_fails_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
@@ -50,14 +63,17 @@ fn plan_commitment_matches_bundle_commitment() {
     let (stamp, output_plan) = build_output_stamp(rng, pool.anchor(), note);
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
-    let sighash = mock_sighash(bundle_plan.commitment());
+    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
 
     let bundle = bundle_plan
         .sign(&sighash, &ask, rng)
         .expect("sign output bundle")
         .stamp(stamp);
 
-    assert_eq!(bundle_plan.commitment(), bundle.commitment().unwrap());
+    assert_eq!(
+        bundle_plan.commitment().unwrap(),
+        bundle.commitment().unwrap()
+    );
 }
 
 #[test]
@@ -65,7 +81,7 @@ fn no_bundle_commitment_differs_from_empty_bundle() {
     let empty_plan = Plan::new(alloc::vec![], alloc::vec![]);
     assert_ne!(
         *COMMIT_NO_BUNDLE,
-        empty_plan.commitment(),
+        empty_plan.commitment().unwrap(),
         "absent bundle must differ from empty bundle"
     );
 }
@@ -74,7 +90,7 @@ fn no_bundle_commitment_differs_from_empty_bundle() {
 fn zero_action_bundle_is_valid() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
-    let sighash = mock_sighash(plan.commitment());
+    let sighash = mock_sighash(plan.commitment().unwrap());
 
     let bundle = Bundle {
         actions: alloc::vec![],
@@ -208,7 +224,7 @@ fn innocent_aggregate_from_two_autonomes() {
 
     let innocent = {
         let innocent_plan = Plan::new(alloc::vec![], alloc::vec![]);
-        let innocent_sighash = mock_sighash(innocent_plan.commitment());
+        let innocent_sighash = mock_sighash(innocent_plan.commitment().unwrap());
 
         let stamp = Stamp::prove_merge(rng, (stamp_a, &digests_a), (stamp_b, &digests_b))
             .expect("prove_merge");
@@ -503,7 +519,7 @@ fn assign_wtxid_rejects_zero_with_actions() {
 fn assign_wtxid_allows_zero_with_no_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
-    let sighash = mock_sighash(plan.commitment());
+    let sighash = mock_sighash(plan.commitment().unwrap());
 
     let unassigned: Bundle<Stripped> = Bundle {
         actions: alloc::vec![],
@@ -550,7 +566,7 @@ fn write_rejects_zero_wtxid_with_actions() {
 fn write_allows_zero_wtxid_with_no_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
-    let sighash = mock_sighash(plan.commitment());
+    let sighash = mock_sighash(plan.commitment().unwrap());
 
     let stripped = Bundle {
         actions: alloc::vec![],
@@ -646,7 +662,7 @@ fn read_rejects_zero_wtxid_with_actions() {
 fn read_allows_zero_wtxid_with_no_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
-    let sighash = mock_sighash(plan.commitment());
+    let sighash = mock_sighash(plan.commitment().unwrap());
 
     let innocent = Bundle {
         actions: alloc::vec![],

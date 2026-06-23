@@ -58,7 +58,7 @@ pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {
     let note = wallet.random_note(rng, 400);
     let (_, _, plan) = build_output_plan(rng, note);
     let bundle_plan = bundle::Plan::new(alloc::vec![], alloc::vec![plan]);
-    let sighash = mock_sighash(bundle_plan.commitment());
+    let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
     let unproven = bundle_plan
         .sign(&sighash, &ask, rng)
         .expect("sign foreign output");
@@ -519,7 +519,7 @@ impl WalletSim {
     pub fn random_note(&self, rng: &mut (impl RngCore + CryptoRng), value_amount: u64) -> Note {
         Note {
             pk: self.sk.derive_payment_key(),
-            value: note::Value::from(value_amount),
+            value: note::Value::try_from(value_amount).expect("fixture value in range"),
             psi: NullifierTrapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         }
@@ -726,7 +726,7 @@ impl WalletSim {
             .collect();
 
         let bundle_plan = bundle::Plan::new(spend_plans, output_plans);
-        let sighash = mock_sighash(bundle_plan.commitment());
+        let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
         let unproven = bundle_plan
             .sign(&sighash, &ask, rng)
             .expect("sign autonome");
