@@ -210,7 +210,6 @@ impl ops::Sub<Value> for ValueSum {
     }
 }
 
-
 impl Note {
     /// Computes the note commitment `cm`.
     ///

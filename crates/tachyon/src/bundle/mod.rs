@@ -248,7 +248,6 @@ pub enum SignError {
     BalanceOverflow,
 }
 
-
 /// A complete bundle plan, awaiting authorization.
 #[derive(Clone, Debug)]
 pub struct Plan {
