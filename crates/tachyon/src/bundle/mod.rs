@@ -62,9 +62,9 @@
 //! | `tachyonAggregateId`  | 64 bytes             | wtxid of the relevant aggregate          |
 
 use alloc::vec::Vec;
-use core::{error::Error, fmt};
 
 use corez::io::{self, Read, Write};
+use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
 use pasta_curves::{Eq, Fp, group::Curve as _};
 use rand_core::{CryptoRng, RngCore};
 
@@ -81,7 +81,7 @@ use crate::{
 
 /// The `tachyonBundleState` wire byte. See the module-level wire format
 /// documentation for its role.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 #[repr(u8)]
 enum BundleState {
     NoBundle = 0b0000_0000u8,
@@ -129,7 +129,7 @@ pub trait StampState: sealed::Sealed {}
 impl<T: sealed::Sealed> StampState for T {}
 
 /// A Tachyon transaction bundle parameterized by stamp state `S`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, TotalEq)]
 pub struct Bundle<S: StampState> {
     /// Actions (cv, rk, sig).
     pub actions: Vec<Action>,
@@ -150,25 +150,13 @@ pub struct Bundle<S: StampState> {
 /// `auth_digest`, etc. The `Unproven` and `Stripped` intermediate states are
 /// outside this enum because they have no wire representation.
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, From)]
 pub enum TachyonBundle {
     /// A bundle with its own stamp (autonome or aggregate).
     Stamped(Bundle<Stamp>),
     /// A bundle whose stamp has been stripped; carries a reference to the
     /// covering aggregate via its [`AggregateId`].
     Adjunct(Bundle<AggregateId>),
-}
-
-impl From<Bundle<Stamp>> for TachyonBundle {
-    fn from(bundle: Bundle<Stamp>) -> Self {
-        Self::Stamped(bundle)
-    }
-}
-
-impl From<Bundle<AggregateId>> for TachyonBundle {
-    fn from(bundle: Bundle<AggregateId>) -> Self {
-        Self::Adjunct(bundle)
-    }
 }
 
 impl TryFrom<TachyonBundle> for Bundle<Stamp> {
@@ -204,28 +192,19 @@ pub enum BuildError {
 }
 
 /// Errors that can occur while signing a bundle plan.
-#[derive(Debug)]
+#[derive(Debug, Display, Error)]
 #[non_exhaustive]
 pub enum SignError {
-    /// The derived rk does not match the stored rk at this index.
-    RkMismatch(usize),
+    /// The derived rk does not match the stored rk.
+    #[display("plan rk {_0:?} does not match")]
+    RkMismatch(#[error(not(source))] reddsa::VerificationKeyBytes<reddsa::ActionAuth>),
     /// The number of signatures does not match the number of actions.
-    SigCountMismatch,
-    /// An externally-provided signature is invalid at this index.
-    InvalidActionSignature,
+    #[display("expected {_0} signatures")]
+    SigCountMismatch(#[error(not(source))] usize),
+    /// An externally-provided signature is invalid.
+    #[display("signature {:?} does not verify", _0)]
+    InvalidActionSignature(#[error(not(source))] action::Signature),
 }
-
-impl fmt::Display for SignError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            | Self::RkMismatch(idx) => write!(f, "derived rk mismatch at action {idx}"),
-            | Self::SigCountMismatch => write!(f, "signature count mismatch"),
-            | Self::InvalidActionSignature => write!(f, "invalid action signature"),
-        }
-    }
-}
-
-impl Error for SignError {}
 
 /// A complete bundle plan, awaiting authorization.
 #[derive(Clone, Debug)]
@@ -364,12 +343,12 @@ impl Plan {
         let n_actions = self.spends.len() + self.outputs.len();
         let mut authorized = Vec::with_capacity(n_actions);
 
-        for (idx, plan) in self.spends.iter().enumerate() {
+        for plan in &self.spends {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Spend>(cm);
             let rsk = ask.derive_action_private(&alpha);
             if rsk.derive_action_public() != plan.rk {
-                return Err(SignError::RkMismatch(idx));
+                return Err(SignError::RkMismatch(plan.rk.0.into()));
             }
             authorized.push(Action {
                 cv: plan.cv(),
@@ -378,12 +357,12 @@ impl Plan {
             });
         }
 
-        for (idx, plan) in self.outputs.iter().enumerate() {
+        for plan in &self.outputs {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Output>(cm);
             let rsk = private::ActionSigningKey::new(&alpha);
             if rsk.derive_action_public() != plan.rk {
-                return Err(SignError::RkMismatch(self.spends.len() + idx));
+                return Err(SignError::RkMismatch(plan.rk.0.into()));
             }
             authorized.push(Action {
                 cv: plan.cv(),
@@ -415,7 +394,7 @@ impl Plan {
     ) -> Result<Bundle<Unproven>, SignError> {
         let n_actions = self.spends.len() + self.outputs.len();
         if sigs.len() != n_actions {
-            return Err(SignError::SigCountMismatch);
+            return Err(SignError::SigCountMismatch(n_actions));
         }
 
         let mut authorized = Vec::with_capacity(n_actions);
@@ -426,7 +405,7 @@ impl Plan {
 
         for ((cv, rk), sig) in all_descriptors {
             if rk.verify(sighash, &sig).is_err() {
-                return Err(SignError::InvalidActionSignature);
+                return Err(SignError::InvalidActionSignature(sig));
             }
             authorized.push(Action { cv, rk, sig });
         }
@@ -754,7 +733,7 @@ impl<S: StampState> Bundle<S> {
 /// digest computed at the transaction layer. The validator checks:
 /// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\mathsf{sighash},
 ///   \text{bindingSig}) = 1$
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Signature(pub(crate) reddsa::Signature<reddsa::BindingAuth>);
 
 impl From<[u8; 64]> for Signature {

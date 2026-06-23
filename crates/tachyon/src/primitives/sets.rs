@@ -1,8 +1,8 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::cmp;
 
+use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use pasta_curves::{Eq, Fp};
 use ragu::Polynomial;
 
@@ -10,20 +10,20 @@ use super::{ActionDigest, Tachygram};
 use crate::{Action, ActionDigestError};
 
 /// Pedersen commitment to a stamp's tachygram set.
-#[derive(Clone, Copy, Debug, cmp::Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetCommit(Eq);
 
 /// Pedersen commitment to a stamp's action-digest set.
-#[derive(Clone, Copy, Debug, cmp::Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct ActionSetCommit(Eq);
 
 /// Witness polynomial for a stamp's tachygram set (members encoded as roots).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial);
 
 /// Witness polynomial for a stamp's action-digest set (members encoded as
 /// roots).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Into)]
 pub struct ActionSetPoly(Polynomial);
 
 impl TachygramSetPoly {
@@ -40,12 +40,6 @@ impl TachygramSetPoly {
     }
 }
 
-impl From<TachygramSetPoly> for Polynomial {
-    fn from(poly: TachygramSetPoly) -> Self {
-        poly.0
-    }
-}
-
 impl ActionSetPoly {
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
@@ -57,12 +51,6 @@ impl ActionSetPoly {
     #[must_use]
     pub fn eval(&self, x: Fp) -> Fp {
         self.0.eval(x)
-    }
-}
-
-impl From<ActionSetPoly> for Polynomial {
-    fn from(poly: ActionSetPoly) -> Self {
-        poly.0
     }
 }
 
@@ -101,29 +89,5 @@ impl TryFrom<&[Action]> for ActionSetCommit {
 impl From<&[Tachygram]> for TachygramSetCommit {
     fn from(tgs: &[Tachygram]) -> Self {
         TachygramSetPoly::from(tgs).commit()
-    }
-}
-
-impl From<ActionSetCommit> for Eq {
-    fn from(commit: ActionSetCommit) -> Self {
-        commit.0
-    }
-}
-
-impl From<Eq> for ActionSetCommit {
-    fn from(point: Eq) -> Self {
-        Self(point)
-    }
-}
-
-impl From<TachygramSetCommit> for Eq {
-    fn from(commit: TachygramSetCommit) -> Self {
-        commit.0
-    }
-}
-
-impl From<Eq> for TachygramSetCommit {
-    fn from(point: Eq) -> Self {
-        Self(point)
     }
 }
