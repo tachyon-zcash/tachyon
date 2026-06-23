@@ -13,7 +13,6 @@ use crate::{
         random_action, random_block, random_block_with,
     },
     primitives::BlockHeight,
-    reddsa,
 };
 
 #[test]
@@ -25,7 +24,7 @@ fn wrong_value_balance_fails_verification() {
 
     bundle.value_balance = 999;
     let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Binding = err else {
+    let SignatureError::Binding(_) = err else {
         panic!("expected SignatureError::Binding, got {err:?}");
     };
 }
@@ -341,14 +340,14 @@ fn invalid_action_sig_fails_verification() {
 
     let mut sig_bytes: [u8; 64] = bundle.actions[0].sig.into();
     sig_bytes[0] ^= 0xFF;
-    bundle.actions[0].sig = action::Signature::from(sig_bytes);
+    let bad_sig = action::Signature::from(sig_bytes);
+    bundle.actions[0].sig = bad_sig;
 
-    let expected_rk = reddsa::VerificationKeyBytes::from(bundle.actions[0].rk.0);
     let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Action(rk) = err else {
+    let SignatureError::Action(sig) = err else {
         panic!("expected SignatureError::Action, got {err:?}");
     };
-    assert_eq!(rk, expected_rk);
+    assert_eq!(sig, bad_sig);
 }
 
 #[test]

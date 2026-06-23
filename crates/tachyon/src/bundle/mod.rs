@@ -194,15 +194,15 @@ pub enum BuildError {
 }
 
 /// Errors from bundle signature verification.
-#[derive(Debug, Display, Error)]
+#[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
 pub enum SignatureError {
     /// The binding signature is invalid.
-    #[display("invalid binding signature")]
-    Binding,
+    #[display("invalid binding signature {_0:?}")]
+    Binding(#[error(not(source))] Signature),
     /// An action signature is invalid.
-    #[display("invalid action signature for {_0:?}")]
-    Action(#[error(not(source))] reddsa::VerificationKeyBytes<reddsa::ActionAuth>),
+    #[display("invalid action signature {_0:?}")]
+    Action(#[error(not(source))] action::Signature),
 }
 
 /// Errors that can occur while signing a bundle plan.
@@ -724,14 +724,14 @@ impl<S: StampState> Bundle<S> {
 
         // 2. Verify binding signature
         bvk.verify(sighash, &self.binding_sig)
-            .map_err(|_err| SignatureError::Binding)?;
+            .map_err(|_err| SignatureError::Binding(self.binding_sig))?;
 
         // 3. Verify each action signature against the SAME sighash
         for action in &self.actions {
             action
                 .rk
                 .verify(sighash, &action.sig)
-                .map_err(|_err| SignatureError::Action(action.rk.0.into()))?;
+                .map_err(|_err| SignatureError::Action(action.sig))?;
         }
 
         Ok(())
