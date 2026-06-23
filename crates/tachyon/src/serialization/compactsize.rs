@@ -9,6 +9,7 @@
 use core::{num::TryFromIntError, ops::RangeInclusive};
 
 use corez::io::{self, Read, Write};
+use derive_more::{Debug, Eq as TotalEq, PartialEq};
 
 #[derive(Debug)]
 pub(crate) enum CompactSizeError {
@@ -58,7 +59,7 @@ const VALID_EIGHT_BYTES: RangeInclusive<u64> = (u32::MAX as u64) + 1..=u64::MAX;
 /// Zcash protocol spec §7.1 (page 132): "Like other serialized fields of
 /// type compactSize, ... MUST be encoded with the minimum number of bytes
 /// ..., and other encodings MUST be rejected."
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub(crate) enum CompactSize {
     /// Single-byte form (no flag prefix), `0..=MAX_ONE_BYTE`.
     OneByte(u8),

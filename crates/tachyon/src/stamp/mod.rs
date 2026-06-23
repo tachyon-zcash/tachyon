@@ -20,7 +20,7 @@ pub mod proof;
 use alloc::{boxed::Box, vec::Vec};
 
 use corez::io::{self, Read, Write};
-use derive_more::{Debug, Display, Eq, Error, Into, PartialEq};
+use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
 use pasta_curves::Fp;
 use proof::{
     PROOF_SYSTEM,
@@ -46,7 +46,7 @@ use crate::{
 ///
 /// This is the initial state for a newly constructed bundle.
 /// Proving produces a [`Stamp`]; stripping produces a `Bundle<Stripped>`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Unproven;
 
 /// Marker for a stripped bundle whose covering-aggregate `wtxid` has not
@@ -55,7 +55,7 @@ pub struct Unproven;
 /// Produced by [`strip()`](crate::Bundle::strip). Must transition to a
 /// `Bundle<AggregateId>` via [`assign_wtxid`](crate::Bundle::assign_wtxid)
 /// before serialization.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Stripped;
 
 /// A 64-byte `wtxid` of the covering aggregate in the same block, assigned by
@@ -63,7 +63,7 @@ pub struct Stripped;
 ///
 /// This uses the aggregate's wtxid (not txid) so it unambiguously pins the
 /// covering aggregate's authorization state, including stamp.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Into)]
+#[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
 pub struct AggregateId([u8; 64]);
 
 impl AggregateId {
@@ -81,7 +81,7 @@ impl AggregateId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Display, Eq, PartialEq, Error)]
+#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
 /// Errors that can occur when handling an aggregate id.
 pub enum AggregateIdError {
     /// The aggregate id is zero and refers to no aggregate.
@@ -285,7 +285,7 @@ pub enum ProveError {
 /// The PCD header `(action_acc, tachygram_acc, anchor)` is not stored here —
 /// the verifier reconstructs it from public data and passes it as the header
 /// to Ragu `verify()`.
-#[derive(Clone, derive_more::Debug)]
+#[derive(Clone, Debug)]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     pub tachygrams: Vec<Tachygram>,

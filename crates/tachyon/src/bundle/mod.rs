@@ -129,7 +129,7 @@ pub trait StampState: sealed::Sealed {}
 impl<T: sealed::Sealed> StampState for T {}
 
 /// A Tachyon transaction bundle parameterized by stamp state `S`.
-#[derive(Clone, Debug, TotalEq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TotalEq)]
 pub struct Bundle<S: StampState> {
     /// Actions (cv, rk, sig).
     pub actions: Vec<Action>,

@@ -10,7 +10,7 @@ use ragu::Polynomial;
 use crate::note::Nullifier;
 
 /// Pedersen commitment to a nullifier sequence $N$.
-#[derive(Clone, Copy, Debug, TotalEq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct NfSeqCommit(Eq);
 
 /// Witness polynomial for a nullifier sequence $N$ (members encoded as

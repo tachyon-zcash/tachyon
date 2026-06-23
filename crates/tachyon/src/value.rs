@@ -98,7 +98,7 @@ impl CommitmentTrapdoor {
 /// ## Type representation
 ///
 /// An EpAffine (Pallas affine curve point, 32 compressed bytes).
-#[derive(Clone, Copy, Debug, TotalEq, PartialEq, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Commitment(#[debug(skip)] pub(super) EpAffine);
 
 impl Commitment {

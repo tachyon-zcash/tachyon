@@ -15,5 +15,5 @@ use pasta_curves::Fp;
 /// Consensus rejects a published tachygram that has already appeared in
 /// any block of the current or immediately preceding epoch. See the
 /// Tachygrams book chapter for why the window spans two epochs.
-#[derive(Clone, Copy, Debug, TotalEq, PartialEq, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Tachygram(Fp);

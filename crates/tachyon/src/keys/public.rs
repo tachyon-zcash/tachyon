@@ -46,9 +46,7 @@ impl TryFrom<[u8; 32]> for ActionVerificationKey {
     type Error = reddsa::Error;
 
     fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
-        Ok(Self(
-            reddsa::VerificationKey::<reddsa::ActionAuth>::try_from(bytes)?,
-        ))
+        reddsa::VerificationKey::<reddsa::ActionAuth>::try_from(bytes).map(Self)
     }
 }
 

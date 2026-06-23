@@ -172,7 +172,7 @@ impl Note {
 /// the value that becomes a tachygram:
 /// - For **output** operations, `cm` IS the tachygram directly.
 /// - For **spend** operations, `cm` is a private witness.
-#[derive(Clone, Copy, Debug, TotalEq, PartialEq, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Commitment(#[debug(skip)] Fp);
 
 impl From<Commitment> for Tachygram {
@@ -191,7 +191,7 @@ impl From<Commitment> for Tachygram {
 /// - Don't need collision resistance (no faerie gold defense)
 /// - Have an epoch "flavor" component for sync delegation
 /// - Are prunable by validators after a window of blocks
-#[derive(Clone, Copy, Debug, TotalEq, PartialEq, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Nullifier(#[debug(skip)] Fp);
 
 impl From<Nullifier> for Tachygram {

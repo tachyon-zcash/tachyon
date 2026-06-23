@@ -18,7 +18,7 @@ use crate::{digest::poseidon, serialization};
 ///   boundary; checked against a boundary chain's root by `SpendableInit`.
 ///
 /// Opening reveals each link's role by its domain.
-#[derive(Clone, Copy, Debug, TotalEq, PartialEq, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Anchor(pub Fp);
 
 impl Anchor {

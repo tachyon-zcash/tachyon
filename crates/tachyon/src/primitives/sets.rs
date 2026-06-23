@@ -10,11 +10,11 @@ use super::{ActionDigest, Tachygram};
 use crate::{Action, ActionDigestError};
 
 /// Pedersen commitment to a stamp's tachygram set.
-#[derive(Clone, Copy, Debug, TotalEq, PartialEq, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct TachygramSetCommit(Eq);
 
 /// Pedersen commitment to a stamp's action-digest set.
-#[derive(Clone, Copy, Debug, TotalEq, PartialEq, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct ActionSetCommit(Eq);
 
 /// Witness polynomial for a stamp's tachygram set (members encoded as roots).

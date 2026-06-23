@@ -10,7 +10,7 @@ use pasta_curves::Fp;
 /// $mk = \text{KDF}(\psi, nk)$, then $nf = F_{mk}(\text{flavor})$.
 /// Different epochs produce different nullifiers for the same note,
 /// enabling range-restricted delegation via the GGM tree PRF.
-#[derive(Clone, Copy, Debug, TotalEq, Ord, PartialEq, PartialOrd, From, Into)]
+#[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct EpochIndex(pub u32);
 
 impl EpochIndex {
