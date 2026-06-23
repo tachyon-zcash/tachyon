@@ -78,15 +78,17 @@ impl Step for SpendableInit {
         (chain_start, chain_end): <Self::Left as Header>::Data,
         (range_commit, range_start, range_end, cm): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &g0 = Pasta::host_generators(Pasta::baked())
+            .g()
+            .first()
+            .expect("at least one generator");
+
         // Bind `present_nf` to the single derived starting leaf `GGM(mk, epoch)`.
         enforce_zero(
             Fp::from(range_end) - (Fp::from(range_start) + Fp::ONE),
             "SpendableInit: starting range must span one epoch",
         )?;
-        let generators = Pasta::host_generators(Pasta::baked()).g();
-
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let g0 = generators.first().expect("at least one generator");
 
         let present_commit = NfSeqCommit::from(g0 * Fp::from(present_nf));
         enforce_equal_point(

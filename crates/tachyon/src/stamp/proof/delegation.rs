@@ -164,15 +164,17 @@ impl Step for NullifierStep {
         (node, depth, index, cm): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &g0 = Pasta::host_generators(Pasta::baked())
+            .g()
+            .first()
+            .expect("at least one generator");
+
         enforce_zero(
             Fp::from(u64::from(depth)) - Fp::from(u64::from(GGM_TREE_DEPTH)),
             "NullifierStep: not at maximum depth",
         )?;
         let nf = Nullifier::from(poseidon::nullifier(node));
-        let generators = Pasta::host_generators(Pasta::baked()).g();
-
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let g0 = generators.first().expect("at least one generator");
 
         let range_commit = NfSeqCommit::from(g0 * Fp::from(nf));
         Ok(((range_commit, index, index.next(), cm), ()))
