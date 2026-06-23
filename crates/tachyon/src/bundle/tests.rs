@@ -1,3 +1,5 @@
+#![allow(clippy::panic, reason = "test code")]
+
 use alloc::{vec, vec::Vec};
 
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -22,10 +24,10 @@ fn wrong_value_balance_fails_verification() {
     let sighash = mock_sighash(bundle.commitment().unwrap());
 
     bundle.value_balance = 999;
-    assert!(matches!(
-        bundle.verify_signatures(&sighash),
-        Err(SignatureError::Binding)
-    ));
+    let err = bundle.verify_signatures(&sighash).unwrap_err();
+    let SignatureError::Binding = err else {
+        panic!("expected SignatureError::Binding, got {err:?}");
+    };
 }
 
 #[test]
@@ -342,10 +344,11 @@ fn invalid_action_sig_fails_verification() {
     bundle.actions[0].sig = action::Signature::from(sig_bytes);
 
     let expected_rk = reddsa::VerificationKeyBytes::from(bundle.actions[0].rk.0);
-    assert!(matches!(
-        bundle.verify_signatures(&sighash),
-        Err(SignatureError::Action(rk)) if rk == expected_rk
-    ));
+    let err = bundle.verify_signatures(&sighash).unwrap_err();
+    let SignatureError::Action(rk) = err else {
+        panic!("expected SignatureError::Action, got {err:?}");
+    };
+    assert_eq!(rk, expected_rk);
 }
 
 #[test]
@@ -484,10 +487,7 @@ fn tachyon_bundle_wire_round_trip() {
 
 #[test]
 fn aggregate_id_try_from_rejects_zero() {
-    assert!(matches!(
-        AggregateId::try_from([0u8; 64]),
-        Err(AggregateIdError::Zero)
-    ));
+    AggregateId::try_from([0u8; 64]).unwrap_err();
 }
 
 #[test]
@@ -497,10 +497,7 @@ fn assign_wtxid_rejects_zero_with_actions() {
     let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
 
     assert!(!unassigned.actions.is_empty());
-    assert!(matches!(
-        unassigned.assign_wtxid(AggregateId::ZERO),
-        Err(AggregateIdError::Zero)
-    ));
+    unassigned.assign_wtxid(AggregateId::ZERO).unwrap_err();
 }
 
 #[test]

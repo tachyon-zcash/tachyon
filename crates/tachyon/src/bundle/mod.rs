@@ -206,7 +206,7 @@ pub enum SignatureError {
 }
 
 /// Errors that can occur while signing a bundle plan.
-#[derive(Debug, Display, Error)]
+#[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
 pub enum SignError {
     /// The derived rk does not match the stored rk.
