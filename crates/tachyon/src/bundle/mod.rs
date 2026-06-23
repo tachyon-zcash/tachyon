@@ -65,7 +65,7 @@ use alloc::vec::Vec;
 use core::{error::Error, fmt};
 
 use corez::io::{self, Read, Write};
-use pasta_curves::Fp;
+use pasta_curves::{Eq, Fp, group::Curve as _};
 use rand_core::{CryptoRng, RngCore};
 
 pub use crate::digest::blake2b::{AUTH_DIGEST_NO_BUNDLE, COMMIT_NO_BUNDLE};
@@ -303,7 +303,7 @@ impl Plan {
 
         let action_commit = ActionSetCommit::from(digests.as_slice());
 
-        blake2b::bundle_commitment(&action_commit.into(), self.value_balance())
+        blake2b::bundle_commitment(&Eq::from(action_commit).to_affine(), self.value_balance())
     }
 
     /// Build a [`stamp::Plan`] from this bundle plan.
@@ -719,7 +719,7 @@ impl<S: StampState> Bundle<S> {
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
         let action_acc = ActionSetCommit::from(action_digests.as_slice());
         Ok(blake2b::bundle_commitment(
-            &action_acc.into(),
+            &Eq::from(action_acc).to_affine(),
             self.value_balance,
         ))
     }

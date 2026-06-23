@@ -11,8 +11,11 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::{Field as _, PrimeField as _};
-use pasta_curves::Fp;
-use ragu::{Header, Index, Step, Suffix, generators};
+use pasta_curves::{Eq, Fp};
+use ragu::{
+    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
+    constraint::{enforce_equal_point, enforce_zero},
+};
 
 use super::{
     delegation::NullifierHeader,
@@ -23,10 +26,11 @@ use crate::{
     primitives::{Anchor, NfSeqCommit, TachygramSetPoly},
 };
 
-/// Wallet's spendable position `(present_nf, anchor, cm)`: the note's
-/// current-epoch nullifier and pool position (advanced per lift) plus the
-/// minted-note commitment, threaded unchanged so the spent value cannot drift
-/// to a different same-`mk` note.
+/// Wallet's spendable position `(present_nf, anchor, cm)`
+///
+/// The note's current-epoch nullifier and pool position (advanced per lift)
+/// plus the minted-note commitment, threaded unchanged so the spent value
+/// cannot drift to a different same-`mk` note.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
@@ -75,26 +79,28 @@ impl Step for SpendableInit {
         (range_commit, range_start, range_end, cm): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Bind `present_nf` to the single derived starting leaf `GGM(mk, epoch)`.
-        if range_end.0 != range_start.0 + 1 {
-            return Err(ragu::Error(
-                "SpendableInit: starting range must span one epoch",
-            ));
-        }
-        let present_commit = NfSeqCommit::from(generators::g(0) * Fp::from(present_nf));
-        if range_commit != present_commit {
-            return Err(ragu::Error(
-                "SpendableInit: present nullifier does not match the derived leaf",
-            ));
-        }
+        enforce_zero(
+            Fp::from(range_end) - (Fp::from(range_start) + Fp::ONE),
+            "SpendableInit: starting range must span one epoch",
+        )?;
+        let generators = Pasta::host_generators(Pasta::baked()).g();
+
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let g0 = generators.first().expect("at least one generator");
+
+        let present_commit = NfSeqCommit::from(g0 * Fp::from(present_nf));
+        enforce_equal_point(
+            Eq::from(range_commit),
+            Eq::from(present_commit),
+            "SpendableInit: present nullifier does not match the derived leaf",
+        )?;
         let epoch = range_start;
 
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_point = Fp::from(cm);
         let eval = creation_set.eval(cm_point);
         ctx.enforce_poly_query(creation_set.commit().into(), cm_point, eval)?;
-        if eval != Fp::ZERO {
-            return Err(ragu::Error("SpendableInit: commitment not in set"));
-        }
+        enforce_zero(eval, "SpendableInit: commitment not in set")?;
         let creation_commit = creation_set.commit();
 
         // Pin the lineage's starting epoch to consensus. Consensus anchor
@@ -103,22 +109,20 @@ impl Step for SpendableInit {
         // epoch-folding domain and the chain is intra-epoch, so matching
         // `pre_epoch_anchor.next_epoch(epoch)` against that boundary forces
         // `epoch == E`, tying the GGM leaf index to the creation epoch.
-        if chain_start != pre_epoch_anchor.next_epoch(epoch) {
-            return Err(ragu::Error(
-                "SpendableInit: chain not rooted at epoch boundary",
-            ));
-        }
+        enforce_zero(
+            Fp::from(chain_start) - Fp::from(pre_epoch_anchor.next_epoch(epoch)),
+            "SpendableInit: chain not rooted at epoch boundary",
+        )?;
 
         // The cm-stamp is the chain's final link: `chain_end ==
         // pre_cm_anchor.next_stamp(cm_commit)`. This ties the cm-inclusion to a
         // real, consensus-pinned stamp and yields `post_cm_anchor` as the chain
         // end; a note created first-in-epoch produces a single-link chain.
         let post_cm_anchor = pre_cm_anchor.next_stamp(&creation_commit);
-        if chain_end != post_cm_anchor {
-            return Err(ragu::Error(
-                "SpendableInit: cm-stamp is not the chain's final link",
-            ));
-        }
+        enforce_zero(
+            Fp::from(chain_end) - Fp::from(post_cm_anchor),
+            "SpendableInit: cm-stamp is not the chain's final link",
+        )?;
 
         Ok(((present_nf, post_cm_anchor, cm), ()))
     }
@@ -147,21 +151,18 @@ impl Step for SpendableLift {
         (present_nf, spendable_anchor, cm): <Self::Left as Header>::Data,
         (start_anchor, start_nf, end_anchor, end_nf, verified_cm, _epoch): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if verified_cm != cm {
-            return Err(ragu::Error(
-                "SpendableLift: verified unspent cm does not match spendable",
-            ));
-        }
-        if start_nf != present_nf {
-            return Err(ragu::Error(
-                "SpendableLift: segment does not start at the lineage nullifier",
-            ));
-        }
-        if start_anchor != spendable_anchor {
-            return Err(ragu::Error(
-                "SpendableLift: unspent not adjacent to spendable",
-            ));
-        }
+        enforce_zero(
+            Fp::from(verified_cm) - Fp::from(cm),
+            "SpendableLift: verified unspent cm does not match spendable",
+        )?;
+        enforce_zero(
+            Fp::from(start_nf) - Fp::from(present_nf),
+            "SpendableLift: segment does not start at the lineage nullifier",
+        )?;
+        enforce_zero(
+            Fp::from(start_anchor) - Fp::from(spendable_anchor),
+            "SpendableLift: unspent not adjacent to spendable",
+        )?;
         Ok(((end_nf, end_anchor, cm), ()))
     }
 }

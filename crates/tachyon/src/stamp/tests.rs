@@ -1,4 +1,6 @@
-use alloc::vec;
+#![allow(clippy::panic, reason = "test code")]
+
+use alloc::{string::ToString as _, vec};
 
 use rand::{SeedableRng as _, rngs::StdRng};
 
@@ -107,7 +109,7 @@ fn plan_prove_rejects_invalid_inputs() {
     {
         let plan = Plan::new(alloc::vec![], alloc::vec![], anchor);
         let err = plan.prove(rng, &user.pak, alloc::vec![]).unwrap_err();
-        assert_eq!(alloc::format!("{err}"), "no actions to prove");
+        assert!(matches!(err, ProveError::NoActions), "expected NoActions");
     }
 
     let bundle_a = || (range_a.clone(), pair_a, sp_a.clone());
@@ -118,7 +120,10 @@ fn plan_prove_rejects_invalid_inputs() {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_a()];
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
-        assert_eq!(alloc::format!("{err}"), "spendable PCD count mismatch");
+        assert!(
+            matches!(err, ProveError::SpendableMismatch),
+            "expected SpendableMismatch"
+        );
     }
 
     // Too many PCDs: 2 spends, 3 PCDs.
@@ -126,7 +131,10 @@ fn plan_prove_rejects_invalid_inputs() {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_a(), bundle_b(), bundle_a()];
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
-        assert_eq!(alloc::format!("{err}"), "spendable PCD count mismatch");
+        assert!(
+            matches!(err, ProveError::SpendableMismatch),
+            "expected SpendableMismatch"
+        );
     }
 
     // Correspondence swap: lengths match, pairing is wrong. SpendBind's
@@ -136,8 +144,11 @@ fn plan_prove_rejects_invalid_inputs() {
         let pcds = alloc::vec![bundle_b(), bundle_a()];
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
         assert_eq!(
-            alloc::format!("{err}"),
-            "action proof failed: Error(\"SpendBind: note does not match the spendable lineage\")",
+            match err {
+                | ProveError::ProofFailed(ragu::Error::InvalidWitness(inner)) => inner.to_string(),
+                | _ => panic!("expected ProofFailed(InvalidWitness)"),
+            },
+            "SpendBind: note does not match the spendable lineage",
         );
     }
 }

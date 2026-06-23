@@ -1,3 +1,5 @@
+use pasta_curves::Fp;
+
 /// A tachyon epoch — a point in the accumulator's history.
 ///
 /// The tachyon accumulator evolves as tachygrams are included. Each
@@ -27,5 +29,11 @@ impl From<u32> for EpochIndex {
 impl From<EpochIndex> for u32 {
     fn from(epoch: EpochIndex) -> Self {
         epoch.0
+    }
+}
+
+impl From<EpochIndex> for Fp {
+    fn from(epoch: EpochIndex) -> Self {
+        Self::from(u64::from(epoch.0))
     }
 }

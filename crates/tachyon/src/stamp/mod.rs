@@ -298,12 +298,13 @@ pub enum ProveError {
 }
 
 impl fmt::Display for ProveError {
+    #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             | Self::NoActions => write!(f, "no actions to prove"),
             | Self::ActionDigest(err) => write!(f, "action digest failed: {err}"),
-            | Self::ProofFailed(inner) => write!(f, "action proof failed: {inner}"),
-            | Self::MergeFailed(inner) => write!(f, "stamp merge failed: {inner}"),
+            | Self::ProofFailed(ref inner) => write!(f, "action proof failed: {inner}"),
+            | Self::MergeFailed(ref inner) => write!(f, "stamp merge failed: {inner}"),
             | Self::SpendableMismatch => write!(f, "spendable PCD count mismatch"),
         }
     }

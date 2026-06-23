@@ -7,14 +7,19 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::PrimeField as _;
-use pasta_curves::Fp;
-use ragu::{Commitment, Header, Index, Polynomial, Step, Suffix, enforce_poly_concat, generators};
+use group::{Curve as _, GroupEncoding as _};
+use pasta_curves::{Eq, Fp};
+use ragu::{
+    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
+    constraint::{enforce_equal_point, enforce_zero},
+};
 
 use crate::{
     digest::poseidon,
     keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, ProofAuthorizingKey},
     note::{self, Note, Nullifier},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
+    relations::enforce_poly_concat,
 };
 
 /// In-progress GGM walk position `(node, depth, index, cm)`: the current tree
@@ -53,7 +58,7 @@ impl Header for NullifierHeader {
 
     fn encode(data: &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 4 + 4 + 32);
-        let commit_bytes: [u8; 32] = Commitment::from(data.0).into();
+        let commit_bytes: [u8; 32] = Eq::from(data.0).to_affine().to_bytes();
         out.extend_from_slice(&commit_bytes);
         out.extend_from_slice(&data.1.0.to_le_bytes());
         out.extend_from_slice(&data.2.0.to_le_bytes());
@@ -86,9 +91,10 @@ impl Step for NfMasterSeed {
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if note.pk.0 != pak.derive_payment_key().0 {
-            return Err(ragu::Error("NfMasterSeed: pak not related to note"));
-        }
+        enforce_zero(
+            note.pk.0 - pak.derive_payment_key().0,
+            "NfMasterSeed: pak not related to note",
+        )?;
         let mk = pak.nk.derive_note_private(&note.psi);
         let cm = note.commitment();
         Ok(((mk.0, 0, EpochIndex(0), cm), ()))
@@ -119,10 +125,14 @@ impl Step for NfPrefixStep {
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if depth >= GGM_TREE_DEPTH {
-            return Err(ragu::Error("NfPrefixStep: already at maximum depth"));
+            return Err(ragu::Error::InvalidWitness(
+                "NfPrefixStep: already at maximum depth".into(),
+            ));
         }
         if chunk >= GGM_TREE_ARITY {
-            return Err(ragu::Error("NfPrefixStep: chunk exceeds GGM arity"));
+            return Err(ragu::Error::InvalidWitness(
+                "NfPrefixStep: chunk exceeds GGM arity".into(),
+            ));
         }
         let child = poseidon::nf_prefix(node, chunk);
         let child_index = EpochIndex(index.0 * u32::from(GGM_TREE_ARITY) + u32::from(chunk));
@@ -154,11 +164,17 @@ impl Step for NullifierStep {
         (node, depth, index, cm): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if depth != GGM_TREE_DEPTH {
-            return Err(ragu::Error("NullifierStep: not at maximum depth"));
-        }
+        enforce_zero(
+            Fp::from(u64::from(depth)) - Fp::from(u64::from(GGM_TREE_DEPTH)),
+            "NullifierStep: not at maximum depth",
+        )?;
         let nf = Nullifier::from(poseidon::nullifier(node));
-        let range_commit = NfSeqCommit::from(generators::g(0) * Fp::from(nf));
+        let generators = Pasta::host_generators(Pasta::baked()).g();
+
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let g0 = generators.first().expect("at least one generator");
+
+        let range_commit = NfSeqCommit::from(g0 * Fp::from(nf));
         Ok(((range_commit, index, index.next(), cm), ()))
     }
 }
@@ -189,25 +205,28 @@ impl Step for NullifierFuse {
         (left_commit, left_start, left_end, left_cm): <Self::Left as Header>::Data,
         (right_commit, right_start, right_end, right_cm): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if left_cm != right_cm {
-            return Err(ragu::Error("NullifierFuse: note commitments differ"));
-        }
-        if right_start != left_end {
-            return Err(ragu::Error("NullifierFuse: ranges not contiguous"));
-        }
-        if left_poly.commit() != left_commit {
-            return Err(ragu::Error(
-                "NullifierFuse: left polynomial does not match header",
-            ));
-        }
-        if right_poly.commit() != right_commit {
-            return Err(ragu::Error(
-                "NullifierFuse: right polynomial does not match header",
-            ));
-        }
+        enforce_zero(
+            Fp::from(left_cm) - Fp::from(right_cm),
+            "NullifierFuse: note commitments differ",
+        )?;
+        enforce_zero(
+            Fp::from(right_start) - Fp::from(left_end),
+            "NullifierFuse: ranges not contiguous",
+        )?;
+        enforce_equal_point(
+            Eq::from(left_poly.commit()),
+            Eq::from(left_commit),
+            "NullifierFuse: left polynomial does not match header",
+        )?;
+        enforce_equal_point(
+            Eq::from(right_poly.commit()),
+            Eq::from(right_commit),
+            "NullifierFuse: right polynomial does not match header",
+        )?;
         let merged_commit = merged.commit();
-        let offset = usize::try_from(left_end.0 - left_start.0)
-            .map_err(|_too_long| ragu::Error("NullifierFuse: range length exceeds usize"))?;
+        let offset = usize::try_from(left_end.0 - left_start.0).map_err(|_too_long| {
+            ragu::Error::InvalidWitness("NullifierFuse: range length exceeds usize".into())
+        })?;
         enforce_poly_concat(
             ctx,
             &Polynomial::from(left_poly),
@@ -216,7 +235,9 @@ impl Step for NullifierFuse {
             &Polynomial::from(merged),
         )
         .map_err(|_relation_err| {
-            ragu::Error("NullifierFuse: merged is not the concat of the halves")
+            ragu::Error::InvalidWitness(
+                "NullifierFuse: merged is not the concat of the halves".into(),
+            )
         })?;
         Ok(((merged_commit, left_start, right_end, left_cm), ()))
     }

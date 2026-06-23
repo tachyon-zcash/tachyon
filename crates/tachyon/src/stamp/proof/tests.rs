@@ -1,9 +1,11 @@
 //! Proof-step tests: `StampLift`, `SpendBind` / `SpendStamp`, the GGM
 //! derivation chain, `Unspent` composition, and the `Spendable*` lineage.
 
+#![allow(clippy::panic, reason = "test code")]
+
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::{string::ToString as _, vec, vec::Vec};
 
 use ff::Field as _;
 use pasta_curves::Fp;
@@ -138,7 +140,13 @@ fn same_epoch_wrong_index_rejected_against_honest_chain() {
         )
         .err()
         .unwrap();
-    assert_eq!(err.0, "SpendableInit: chain not rooted at epoch boundary");
+    assert_eq!(
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
+        "SpendableInit: chain not rooted at epoch boundary"
+    );
 }
 
 #[test]
@@ -252,7 +260,13 @@ fn spendable_init_rejects_tg_absent() {
         )
         .err()
         .unwrap();
-    assert_eq!(err.0, "SpendableInit: commitment not in set");
+    assert_eq!(
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
+        "SpendableInit: commitment not in set"
+    );
 }
 
 #[test]
@@ -273,7 +287,13 @@ fn unspent_seed_rejects_tg_present() {
         )
         .err()
         .unwrap();
-    assert_eq!(err.0, "UnspentSeed: found nullifier in set");
+    assert_eq!(
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
+        "UnspentSeed: found nullifier in set"
+    );
 }
 
 #[test]
@@ -294,7 +314,13 @@ fn unspent_fuse_rejects_invalid_compositions() {
             .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
             .err()
             .unwrap();
-        assert_eq!(err.0, "UnspentFuse: left and right must share the same nf");
+        assert_eq!(
+            match err {
+                | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+                | _ => panic!("expected InvalidWitness"),
+            },
+            "UnspentFuse: left and right must share the same nf"
+        );
     }
 
     // state discontinuity: same nf, but right's start matches `start`
@@ -307,7 +333,13 @@ fn unspent_fuse_rejects_invalid_compositions() {
             .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
             .err()
             .unwrap();
-        assert_eq!(err.0, "UnspentFuse: left.end must equal right.start");
+        assert_eq!(
+            match err {
+                | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+                | _ => panic!("expected InvalidWitness"),
+            },
+            "UnspentFuse: left.end must equal right.start"
+        );
     }
 }
 
@@ -331,7 +363,13 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
             .fuse(rng, pool::AnchorFuse, (), left, right)
             .err()
             .unwrap();
-        assert_eq!(err.0, "AnchorFuse: segments not adjacent");
+        assert_eq!(
+            match err {
+                | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+                | _ => panic!("expected InvalidWitness"),
+            },
+            "AnchorFuse: segments not adjacent"
+        );
     }
 
     // cross-epoch: left segment ends at epoch_0_final's anchor, right segment
@@ -356,7 +394,13 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
             .fuse(rng, pool::AnchorFuse, (), left, right)
             .err()
             .unwrap();
-        assert_eq!(err.0, "AnchorFuse: segments not adjacent");
+        assert_eq!(
+            match err {
+                | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+                | _ => panic!("expected InvalidWitness"),
+            },
+            "AnchorFuse: segments not adjacent"
+        );
     }
 }
 
@@ -484,7 +528,14 @@ fn spend_bind_rejects_invalid_inputs() {
             )
             .err()
             .unwrap();
-        assert_eq!(err.0, expected, "{label}");
+        assert_eq!(
+            match err {
+                | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+                | _ => panic!("expected InvalidWitness"),
+            },
+            expected,
+            "{label}"
+        );
     }
 }
 
@@ -508,7 +559,10 @@ fn spend_stamp_rejects_forged_next() {
         .err()
         .unwrap();
     assert_eq!(
-        err.0,
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
         "SpendStamp: published scalars are not the derived leaf pair"
     );
 }
@@ -533,7 +587,10 @@ fn spend_stamp_rejects_zero_next_nullifier() {
         .err()
         .unwrap();
     assert_eq!(
-        err.0,
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
         "SpendStamp: published scalars are not the derived leaf pair"
     );
 }
@@ -566,7 +623,13 @@ fn spend_stamp_rejects_identity_cv() {
         .fuse(rng, stamp::SpendStamp, (nf_next,), forged_spend, derived)
         .err()
         .unwrap();
-    assert_eq!(err.0, "SpendStamp: action digest construction failed");
+    assert_eq!(
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
+        "SpendStamp: action digest construction failed"
+    );
 }
 
 #[test]
@@ -594,7 +657,13 @@ fn step_rejects_zero_value_note() {
             )
             .err()
             .unwrap();
-        assert_eq!(err.0, "OutputStamp: zero-value note");
+        assert_eq!(
+            match err {
+                | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+                | _ => panic!("expected InvalidWitness"),
+            },
+            "OutputStamp: zero-value note"
+        );
     }
 
     {
@@ -621,7 +690,13 @@ fn step_rejects_zero_value_note() {
             )
             .err()
             .unwrap();
-        assert_eq!(err.0, "SpendBind: zero-value note");
+        assert_eq!(
+            match err {
+                | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+                | _ => panic!("expected InvalidWitness"),
+            },
+            "SpendBind: zero-value note"
+        );
     }
 }
 
@@ -906,7 +981,10 @@ fn unspent_fuse_rejects_nonzero_forward_half() {
         .err()
         .unwrap();
     assert_eq!(
-        err.0,
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
         "UnspentFuse: forwards half must stay within one epoch"
     );
 }
@@ -960,7 +1038,10 @@ fn unspent_epoch_fuse_rejects_wrong_left_poly() {
         .err()
         .unwrap();
     assert_eq!(
-        err.0,
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
         "UnspentEpochFuse: left polynomial does not match header"
     );
 }
@@ -984,7 +1065,10 @@ fn unspent_epoch_fuse_rejects_wrong_combined() {
         .err()
         .unwrap();
     assert_eq!(
-        err.0,
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
         "UnspentEpochFuse: combined is not the splice of the halves"
     );
 }
@@ -1025,7 +1109,10 @@ fn unspent_epoch_fuse_rejects_epoch_skip() {
         .err()
         .unwrap();
     assert_eq!(
-        err.0,
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
         "UnspentEpochFuse: right epoch must be one past left's tip"
     );
 }
@@ -1082,7 +1169,10 @@ fn verify_unspent_rejects_tip_mismatch() {
         .err()
         .unwrap();
     assert_eq!(
-        err.0,
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
         "VerifyUnspent: tip polynomial does not match present nullifier"
     );
 }
@@ -1118,7 +1208,10 @@ fn verify_unspent_rejects_elapsed_mismatch() {
         .err()
         .unwrap();
     assert_eq!(
-        err.0,
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
         "VerifyUnspent: elapsed polynomial does not match header"
     );
 }
@@ -1154,7 +1247,10 @@ fn verify_unspent_rejects_wrong_start_epoch() {
         .err()
         .unwrap();
     assert_eq!(
-        err.0,
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
         "VerifyUnspent: derived range does not start at the elapsed epoch"
     );
 }
@@ -1202,7 +1298,10 @@ fn spendable_lift_rejects_wrong_cm() {
         .err()
         .unwrap();
     assert_eq!(
-        err.0,
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
         "SpendableLift: verified unspent cm does not match spendable"
     );
 }
@@ -1229,7 +1328,13 @@ fn spendable_lift_rejects_non_adjacent_unspent() {
         .fuse(rng, spendable::SpendableLift, (), spendable, verified)
         .err()
         .unwrap();
-    assert_eq!(err.0, "SpendableLift: unspent not adjacent to spendable");
+    assert_eq!(
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
+        "SpendableLift: unspent not adjacent to spendable"
+    );
 }
 
 #[test]
@@ -1260,7 +1365,13 @@ fn nullifier_fuse_rejects_non_contiguous() {
         )
         .err()
         .unwrap();
-    assert_eq!(err.0, "NullifierFuse: ranges not contiguous");
+    assert_eq!(
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
+        "NullifierFuse: ranges not contiguous"
+    );
 }
 
 #[test]
@@ -1292,5 +1403,11 @@ fn nullifier_fuse_rejects_wrong_cm() {
         )
         .err()
         .unwrap();
-    assert_eq!(err.0, "NullifierFuse: note commitments differ");
+    assert_eq!(
+        match err {
+            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
+            | _ => panic!("expected InvalidWitness"),
+        },
+        "NullifierFuse: note commitments differ"
+    );
 }
