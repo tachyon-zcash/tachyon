@@ -105,28 +105,28 @@ impl CompactSize {
 
     pub(crate) fn enforce_canon(self) -> Result<Self, CompactSizeError> {
         match self {
-            | Self::OneByte(inner_u8) => {
+            Self::OneByte(inner_u8) => {
                 if VALID_ONE_BYTE.contains(&inner_u8.into()) {
                     Ok(self)
                 } else {
                     Err(CompactSizeError::NonCanonical(self))
                 }
             },
-            | Self::TwoBytes(inner_u16) => {
+            Self::TwoBytes(inner_u16) => {
                 if VALID_TWO_BYTES.contains(&inner_u16.into()) {
                     Ok(self)
                 } else {
                     Err(CompactSizeError::NonCanonical(self))
                 }
             },
-            | Self::FourBytes(inner_u32) => {
+            Self::FourBytes(inner_u32) => {
                 if VALID_FOUR_BYTES.contains(&inner_u32.into()) {
                     Ok(self)
                 } else {
                     Err(CompactSizeError::NonCanonical(self))
                 }
             },
-            | Self::EightBytes(inner_u64) => {
+            Self::EightBytes(inner_u64) => {
                 if VALID_EIGHT_BYTES.contains(&inner_u64) {
                     Ok(self)
                 } else {
@@ -158,18 +158,18 @@ impl CompactSize {
         reader.read_exact(&mut flag)?;
 
         Ok(match flag[0] {
-            | 0..=MAX_ONE_BYTE => Self::OneByte(flag[0]),
-            | FLAG_TWO_BYTES => {
+            0..=MAX_ONE_BYTE => Self::OneByte(flag[0]),
+            FLAG_TWO_BYTES => {
                 let mut bytes = [0u8; 2];
                 reader.read_exact(&mut bytes)?;
                 Self::TwoBytes(u16::from_le_bytes(bytes))
             },
-            | FLAG_FOUR_BYTES => {
+            FLAG_FOUR_BYTES => {
                 let mut bytes = [0u8; 4];
                 reader.read_exact(&mut bytes)?;
                 Self::FourBytes(u32::from_le_bytes(bytes))
             },
-            | FLAG_EIGHT_BYTES => {
+            FLAG_EIGHT_BYTES => {
                 let mut bytes = [0u8; 8];
                 reader.read_exact(&mut bytes)?;
                 Self::EightBytes(u64::from_le_bytes(bytes))
@@ -180,16 +180,16 @@ impl CompactSize {
     /// Write this [`CompactSize`] to `writer`.
     pub(crate) fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
         match self {
-            | Self::OneByte(value) => writer.write_all(&[value]),
-            | Self::TwoBytes(value) => {
+            Self::OneByte(value) => writer.write_all(&[value]),
+            Self::TwoBytes(value) => {
                 writer.write_all(&[FLAG_TWO_BYTES])?;
                 writer.write_all(&value.to_le_bytes())
             },
-            | Self::FourBytes(value) => {
+            Self::FourBytes(value) => {
                 writer.write_all(&[FLAG_FOUR_BYTES])?;
                 writer.write_all(&value.to_le_bytes())
             },
-            | Self::EightBytes(value) => {
+            Self::EightBytes(value) => {
                 writer.write_all(&[FLAG_EIGHT_BYTES])?;
                 writer.write_all(&value.to_le_bytes())
             },
@@ -236,10 +236,10 @@ impl From<u64> for CompactSize {
 impl From<CompactSize> for u64 {
     fn from(csize: CompactSize) -> Self {
         match csize {
-            | CompactSize::OneByte(inner_u8) => Self::from(inner_u8),
-            | CompactSize::TwoBytes(inner_u16) => Self::from(inner_u16),
-            | CompactSize::FourBytes(inner_u32) => Self::from(inner_u32),
-            | CompactSize::EightBytes(inner_u64) => inner_u64,
+            CompactSize::OneByte(inner_u8) => Self::from(inner_u8),
+            CompactSize::TwoBytes(inner_u16) => Self::from(inner_u16),
+            CompactSize::FourBytes(inner_u32) => Self::from(inner_u32),
+            CompactSize::EightBytes(inner_u64) => inner_u64,
         }
     }
 }
@@ -257,10 +257,10 @@ impl TryFrom<CompactSize> for usize {
 
     fn try_from(csize: CompactSize) -> Result<Self, Self::Error> {
         match csize {
-            | CompactSize::OneByte(inner_u8) => Ok(Self::from(inner_u8)),
-            | CompactSize::TwoBytes(inner_u16) => Ok(Self::from(inner_u16)),
-            | CompactSize::FourBytes(inner_u32) => Self::try_from(inner_u32),
-            | CompactSize::EightBytes(inner_u64) => Self::try_from(inner_u64),
+            CompactSize::OneByte(inner_u8) => Ok(Self::from(inner_u8)),
+            CompactSize::TwoBytes(inner_u16) => Ok(Self::from(inner_u16)),
+            CompactSize::FourBytes(inner_u32) => Self::try_from(inner_u32),
+            CompactSize::EightBytes(inner_u64) => Self::try_from(inner_u64),
         }
     }
 }
@@ -273,10 +273,10 @@ mod tests {
 
     fn sized_value(value: &[u8]) -> Vec<u8> {
         let flag = match value.len() {
-            | 2 => [FLAG_TWO_BYTES].as_slice(),
-            | 4 => [FLAG_FOUR_BYTES].as_slice(),
-            | 8 => [FLAG_EIGHT_BYTES].as_slice(),
-            | _ => [].as_slice(),
+            2 => [FLAG_TWO_BYTES].as_slice(),
+            4 => [FLAG_FOUR_BYTES].as_slice(),
+            8 => [FLAG_EIGHT_BYTES].as_slice(),
+            _ => [].as_slice(),
         };
         [flag, value].concat()
     }
