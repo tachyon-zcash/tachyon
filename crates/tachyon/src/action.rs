@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use derive_more::{Debug, Eq as TotalEq, PartialEq};
+use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
 
 use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
@@ -112,7 +112,8 @@ impl Action {
 }
 
 /// A spend authorization signature (RedPallas over reddsa::ActionAuth).
-#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+#[derive(Clone, Copy, Debug, Display, PartialEq, TotalEq)]
+#[display("Signature({:?})", self.0)]
 pub struct Signature(pub(crate) reddsa::Signature<reddsa::ActionAuth>);
 
 impl From<[u8; 64]> for Signature {

@@ -24,8 +24,10 @@ use crate::{action, action::Action, bundle, reddsa, value};
 /// This unification lets consensus treat all actions identically while
 /// the type system enforces the authority boundary at construction time.
 #[derive(Clone, Copy, Debug, Display, PartialEq)]
-#[display("ActionVerificationKey({:?})", <[u8; 32]>::from(self.0))]
+#[display("ActionVerificationKey({:?})", reddsa::VerificationKeyBytes::from(self.0))]
 pub struct ActionVerificationKey(pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>);
+
+impl CoreTotalEq for ActionVerificationKey {}
 
 impl ActionVerificationKey {
     /// Verify an action signature against a transaction sighash.
@@ -33,8 +35,6 @@ impl ActionVerificationKey {
         self.0.verify(sighash, &sig.0)
     }
 }
-
-impl CoreTotalEq for ActionVerificationKey {}
 
 impl From<ActionVerificationKey> for [u8; 32] {
     fn from(avk: ActionVerificationKey) -> Self {
@@ -104,10 +104,11 @@ pub fn derive_bvk(
 ///
 /// Wraps `reddsa::VerificationKey<reddsa::BindingAuth>`, which internally
 /// stores a Pallas curve point (EpAffine, encoded as 32 compressed bytes).
-#[derive(Clone, Copy, Debug)]
-pub struct BindingVerificationKey(
-    #[debug(skip)] pub(super) reddsa::VerificationKey<reddsa::BindingAuth>,
-);
+#[derive(Clone, Copy, Debug, Display, PartialEq)]
+#[display("BindingVerificationKey({:?})", reddsa::VerificationKeyBytes::from(self.0))]
+pub struct BindingVerificationKey(pub(super) reddsa::VerificationKey<reddsa::BindingAuth>);
+
+impl CoreTotalEq for BindingVerificationKey {}
 
 impl BindingVerificationKey {
     /// Derive the binding verification key from public action data.
@@ -141,19 +142,3 @@ impl From<EpAffine> for BindingVerificationKey {
         )
     }
 }
-
-#[expect(
-    clippy::missing_trait_methods,
-    reason = "default ne/assert impls are correct"
-)]
-impl PartialEq for BindingVerificationKey {
-    fn eq(&self, other: &Self) -> bool {
-        <[u8; 32]>::from(self.0) == <[u8; 32]>::from(other.0)
-    }
-}
-
-#[expect(
-    clippy::missing_trait_methods,
-    reason = "default assert_receiver_is_total_eq is correct"
-)]
-impl Eq for BindingVerificationKey {}

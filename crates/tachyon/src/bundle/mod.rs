@@ -97,10 +97,12 @@ impl BundleState {
             | 0b0000_0000u8 => Ok(Self::NoBundle),
             | 0b0000_0001u8 => Ok(Self::Stamped),
             | 0b0000_0010u8 => Ok(Self::Stripped),
-            | _other => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid bundle state",
-            )),
+            | _other => {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid bundle state",
+                ))
+            },
         }
     }
 
@@ -193,15 +195,15 @@ pub enum BuildError {
 #[derive(Debug, Display, Error)]
 #[non_exhaustive]
 pub enum SignError {
-    /// The derived rk does not match the stored rk at this index.
+    /// The derived rk does not match the stored rk.
     #[display("plan rk {_0:?} does not match")]
     RkMismatch(#[error(not(source))] reddsa::VerificationKeyBytes<reddsa::ActionAuth>),
     /// The number of signatures does not match the number of actions.
-    #[display("signature count mismatch")]
-    SigCountMismatch,
-    /// An externally-provided signature is invalid at this index.
-    #[display("invalid action signature")]
-    InvalidActionSignature,
+    #[display("expected {_0} signatures")]
+    SigCountMismatch(#[error(not(source))] usize),
+    /// An externally-provided signature is invalid.
+    #[display("signature {:?} does not verify", _0)]
+    InvalidActionSignature(#[error(not(source))] action::Signature),
 }
 
 /// A complete bundle plan, awaiting authorization.
@@ -392,7 +394,7 @@ impl Plan {
     ) -> Result<Bundle<Unproven>, SignError> {
         let n_actions = self.spends.len() + self.outputs.len();
         if sigs.len() != n_actions {
-            return Err(SignError::SigCountMismatch);
+            return Err(SignError::SigCountMismatch(n_actions));
         }
 
         let mut authorized = Vec::with_capacity(n_actions);
@@ -403,7 +405,7 @@ impl Plan {
 
         for ((cv, rk), sig) in all_descriptors {
             if rk.verify(sighash, &sig).is_err() {
-                return Err(SignError::InvalidActionSignature);
+                return Err(SignError::InvalidActionSignature(sig));
             }
             authorized.push(Action { cv, rk, sig });
         }
