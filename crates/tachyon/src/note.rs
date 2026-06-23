@@ -105,11 +105,13 @@ pub struct Note {
 ///
 /// Use [`Value::try_from`] or [`Value::new`] for fallible construction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Into)]
-#[expect(
-    clippy::field_scoped_visibility_modifiers,
-    reason = "test helpers use crate-internal construction to bypass the API check"
-)]
-pub struct Value(pub(crate) u64);
+pub struct Value(u64);
+
+impl Value {
+    /// The forbidden zero value.
+    #[cfg(test)]
+    pub(crate) const ZERO: Self = Self(0);
+}
 
 /// Error returned when a note value is out of the valid range
 /// `1..=NOTE_VALUE_MAX`.

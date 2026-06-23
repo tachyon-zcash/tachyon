@@ -99,10 +99,12 @@ impl BundleState {
             0b0000_0000u8 => Ok(Self::NoBundle),
             0b0000_0001u8 => Ok(Self::Stamped),
             0b0000_0010u8 => Ok(Self::Stripped),
-            _other => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid bundle state",
-            )),
+            _other => {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid bundle state",
+                ))
+            },
         }
     }
 
@@ -781,7 +783,7 @@ impl ValueBalance {
 impl TryFrom<ValueBalance> for i64 {
     type Error = BalanceError;
 
-    // TODO: does this need to check against NOTE_VALUE_MAX?
+    // This doesn't need to check against NOTE_VALUE_MAX
     fn try_from(sum: ValueBalance) -> Result<Self, Self::Error> {
         Self::try_from(sum.0).map_err(|_err| BalanceError)
     }
@@ -792,7 +794,7 @@ impl ops::Add<note::Value> for ValueBalance {
 
     fn add(self, rhs: note::Value) -> Self::Output {
         self.0
-            .checked_add(i128::from(rhs.0))
+            .checked_add(u64::from(rhs).into())
             .map(Self)
             .ok_or(BalanceError)
     }
@@ -803,7 +805,7 @@ impl ops::Sub<note::Value> for ValueBalance {
 
     fn sub(self, rhs: note::Value) -> Self::Output {
         self.0
-            .checked_sub(i128::from(rhs.0))
+            .checked_sub(u64::from(rhs).into())
             .map(Self)
             .ok_or(BalanceError)
     }

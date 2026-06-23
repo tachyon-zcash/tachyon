@@ -623,7 +623,7 @@ fn step_rejects_zero_value_note() {
 
     let zero_note = Note {
         pk: user.pak.derive_payment_key(),
-        value: note::Value(0),
+        value: note::Value::ZERO,
         psi: note::NullifierTrapdoor::random(rng),
         rcm: note::CommitmentTrapdoor::random(rng),
     };
@@ -661,7 +661,7 @@ fn step_rejects_zero_value_note() {
                 rng,
                 spend::SpendBind,
                 (
-                    (note.pk, note::Value(0), note.rcm, note.psi),
+                    (note.pk, note::Value::ZERO, note.rcm, note.psi),
                     rcv,
                     alpha,
                     user.pak,
