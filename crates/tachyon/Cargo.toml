@@ -23,14 +23,13 @@ rust-version.workspace = true
 [features]
 default = [
     "std",
-    "ragu/mock",
-    "ragu/legacy-deps",
 ]
 std = [
     "blake2b_simd/std",
     "ragu/std",
     "reddsa/std",
     "corez/std",
+    "ragu/multicore",
 ]
 
 [lints]
@@ -47,7 +46,10 @@ lazy_static = { version = "1", default-features = false, features = [
     "spin_no_std",
 ] }
 pasta_curves = "0.5.1"
-ragu = { git = "https://github.com/turbocrime/ragu", rev = "78313d21", default-features = false }
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "2f926fdcb5f1d402ca06aad4230b16540367e850", default-features = false, features = [
+    "mock",
+    "legacy-deps",
+] }
 
 rand_core = { version = "0.6", default-features = false }
 reddsa = { version = "0.5.1", default-features = false }
