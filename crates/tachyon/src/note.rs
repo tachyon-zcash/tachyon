@@ -33,8 +33,9 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
-use core::{fmt, ops};
+use core::ops;
 
+use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
@@ -51,9 +52,9 @@ use crate::{
 /// Used to derive the master root key: $mk = \text{KDF}(\psi, nk)$.
 /// The GGM tree PRF then evaluates $nf = F_{mk}(\text{flavor})$.
 /// Prefix keys derived from $mk$ enable range-restricted delegation.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, From, Into)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct NullifierTrapdoor(pub(super) Fp);
+pub struct NullifierTrapdoor(#[debug(skip)] pub(super) Fp);
 
 impl NullifierTrapdoor {
     /// Generate a fresh random trapdoor.
@@ -62,41 +63,17 @@ impl NullifierTrapdoor {
     }
 }
 
-impl From<Fp> for NullifierTrapdoor {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-impl From<NullifierTrapdoor> for Fp {
-    fn from(trapdoor: NullifierTrapdoor) -> Self {
-        trapdoor.0
-    }
-}
-
 /// Note commitment trapdoor ($rcm$) — randomness that blinds the note
 /// commitment.
 ///
 /// Can be derived from a shared secret negotiated out-of-band.
-#[derive(Clone, Copy)]
-pub struct CommitmentTrapdoor(Fp);
+#[derive(Clone, Copy, Debug, From, Into)]
+pub struct CommitmentTrapdoor(#[debug(skip)] Fp);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fp::random(rng))
-    }
-}
-
-impl From<Fp> for CommitmentTrapdoor {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-impl From<CommitmentTrapdoor> for Fp {
-    fn from(trapdoor: CommitmentTrapdoor) -> Self {
-        trapdoor.0
     }
 }
 
@@ -128,7 +105,7 @@ pub struct Note {
 /// only raw field elements without the Rust-level newtype protection.
 ///
 /// Use [`Value::try_from`] or [`Value::new`] for fallible construction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Into)]
 #[expect(
     clippy::field_scoped_visibility_modifiers,
     reason = "test helpers use crate-internal construction to bypass the API check"
@@ -137,22 +114,15 @@ pub struct Value(pub(crate) u64);
 
 /// Error returned when a note value is out of the valid range
 /// `1..=NOTE_VALUE_MAX`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Display, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ValueError {
     /// The value was zero.
+    #[display("note value must be non-zero")]
     Zero,
     /// The value exceeds the maximum note value (2.1e15 zatoshis).
+    #[display("note value must not exceed maximum")]
     Overflow,
-}
-
-impl fmt::Display for ValueError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            | Self::Zero => f.write_str("note value must be non-zero"),
-            | Self::Overflow => f.write_str("note value must not exceed maximum"),
-        }
-    }
 }
 
 impl Value {
@@ -175,12 +145,6 @@ impl TryFrom<u64> for Value {
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         Self::new(value)
-    }
-}
-
-impl From<Value> for u64 {
-    fn from(value: Value) -> Self {
-        value.0
     }
 }
 
@@ -207,14 +171,9 @@ pub struct ValueSum(i128);
 
 /// Error returned when a [`ValueSum`] operation overflows the
 /// representable range.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Display, Error, PartialEq, Eq)]
+#[display("value balance overflow")]
 pub struct BalanceError;
-
-impl fmt::Display for BalanceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("value balance overflow")
-    }
-}
 
 impl ValueSum {
     /// The zero sum (identity for addition).
@@ -250,6 +209,7 @@ impl ops::Sub<Value> for ValueSum {
             .ok_or(BalanceError)
     }
 }
+
 
 impl Note {
     /// Computes the note commitment `cm`.
@@ -295,20 +255,8 @@ impl Note {
 /// the value that becomes a tachygram:
 /// - For **output** operations, `cm` IS the tachygram directly.
 /// - For **spend** operations, `cm` is a private witness.
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Commitment(Fp);
-
-impl From<Fp> for Commitment {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-impl From<Commitment> for Fp {
-    fn from(cm: Commitment) -> Self {
-        cm.0
-    }
-}
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct Commitment(#[debug(skip)] Fp);
 
 impl From<Commitment> for Tachygram {
     fn from(commitment: Commitment) -> Self {
@@ -326,48 +274,12 @@ impl From<Commitment> for Tachygram {
 /// - Don't need collision resistance (no faerie gold defense)
 /// - Have an epoch "flavor" component for sync delegation
 /// - Are prunable by validators after a window of blocks
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Nullifier(Fp);
-
-impl From<Fp> for Nullifier {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-impl From<Nullifier> for Fp {
-    fn from(nf: Nullifier) -> Self {
-        nf.0
-    }
-}
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct Nullifier(#[debug(skip)] Fp);
 
 impl From<Nullifier> for Tachygram {
     fn from(nullifier: Nullifier) -> Self {
         Self::from(nullifier.0)
-    }
-}
-
-impl fmt::Debug for NullifierTrapdoor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NullifierTrapdoor").finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for CommitmentTrapdoor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for Commitment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Commitment").finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for Nullifier {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Nullifier").finish_non_exhaustive()
     }
 }
 

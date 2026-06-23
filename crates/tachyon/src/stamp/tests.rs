@@ -143,12 +143,12 @@ fn plan_prove_rejects_invalid_inputs() {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
+        let ProveError::ProofFailed(ragu::Error::InvalidWitness(inner)) = err else {
+            panic!("expected ProofFailed(InvalidWitness), got {err:?}");
+        };
         assert_eq!(
-            match err {
-                | ProveError::ProofFailed(ragu::Error::InvalidWitness(inner)) => inner.to_string(),
-                | _ => panic!("expected ProofFailed(InvalidWitness)"),
-            },
-            "SpendBind: note does not match the spendable lineage",
+            inner.to_string(),
+            "SpendBind: note does not match the spendable lineage"
         );
     }
 }

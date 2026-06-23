@@ -2,6 +2,8 @@
 
 use core::marker::PhantomData;
 
+use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
+
 use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{private, public},
@@ -89,7 +91,7 @@ impl<E: Effect> Plan<E> {
 /// - `cv`: Commitment to a value effect
 /// - `rk`: Public key (randomized counterpart to `rsk`)
 /// - `sig`: Signature (by single-use `rsk`) over transaction sighash
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Action {
     /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
     /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
@@ -110,7 +112,8 @@ impl Action {
 }
 
 /// A spend authorization signature (RedPallas over reddsa::ActionAuth).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Display, PartialEq, TotalEq)]
+#[display("Signature({:?})", self.0)]
 pub struct Signature(pub(crate) reddsa::Signature<reddsa::ActionAuth>);
 
 impl From<[u8; 64]> for Signature {

@@ -1,4 +1,5 @@
 use corez::io::{self, Read, Write};
+use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::{Eq, Fp, arithmetic::CurveAffine as _, group::Curve as _};
 
@@ -17,7 +18,7 @@ use crate::{digest::poseidon, serialization};
 ///   boundary; checked against a boundary chain's root by `SpendableInit`.
 ///
 /// Opening reveals each link's role by its domain.
-#[derive(Clone, Copy, Debug, Eq)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Anchor(pub Fp);
 
 impl Anchor {
@@ -63,26 +64,6 @@ impl Default for Anchor {
     /// The genesis epoch boundary.
     fn default() -> Self {
         Self(Fp::ZERO).next_epoch(EpochIndex(0))
-    }
-}
-
-impl From<Fp> for Anchor {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-/// Anchor's underlying `Fp` — the value used as a Poseidon input or as a
-/// polynomial root in the per-epoch blocks set.
-impl From<Anchor> for Fp {
-    fn from(anchor: Anchor) -> Self {
-        anchor.0
-    }
-}
-
-impl PartialEq<Self> for Anchor {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
     }
 }
 

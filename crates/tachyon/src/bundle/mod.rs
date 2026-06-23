@@ -62,9 +62,9 @@
 //! | `tachyonAggregateId`  | 64 bytes             | wtxid of the relevant aggregate          |
 
 use alloc::vec::Vec;
-use core::{error::Error, fmt};
 
 use corez::io::{self, Read, Write};
+use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
 use pasta_curves::{Eq, Fp, group::Curve as _};
 use rand_core::{CryptoRng, RngCore};
 
@@ -82,7 +82,7 @@ use crate::{
 
 /// The `tachyonBundleState` wire byte. See the module-level wire format
 /// documentation for its role.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 #[repr(u8)]
 enum BundleState {
     NoBundle = 0b0000_0000u8,
@@ -95,10 +95,10 @@ impl BundleState {
         let mut byte = [0u8; 1];
         reader.read_exact(&mut byte)?;
         match u8::from_le_bytes(byte) {
-            | 0b0000_0000u8 => Ok(Self::NoBundle),
-            | 0b0000_0001u8 => Ok(Self::Stamped),
-            | 0b0000_0010u8 => Ok(Self::Stripped),
-            | _other => {
+            0b0000_0000u8 => Ok(Self::NoBundle),
+            0b0000_0001u8 => Ok(Self::Stamped),
+            0b0000_0010u8 => Ok(Self::Stripped),
+            _other => {
                 Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "invalid bundle state",
@@ -109,9 +109,9 @@ impl BundleState {
 
     pub(super) fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
         let byte = u8::to_le_bytes(match self {
-            | Self::NoBundle => 0b0000_0000u8,
-            | Self::Stamped => 0b0000_0001u8,
-            | Self::Stripped => 0b0000_0010u8,
+            Self::NoBundle => 0b0000_0000u8,
+            Self::Stamped => 0b0000_0001u8,
+            Self::Stripped => 0b0000_0010u8,
         });
         writer.write_all(&byte)
     }
@@ -130,7 +130,7 @@ pub trait StampState: sealed::Sealed {}
 impl<T: sealed::Sealed> StampState for T {}
 
 /// A Tachyon transaction bundle parameterized by stamp state `S`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, TotalEq)]
 pub struct Bundle<S: StampState> {
     /// Actions (cv, rk, sig).
     pub actions: Vec<Action>,
@@ -151,7 +151,7 @@ pub struct Bundle<S: StampState> {
 /// `auth_digest`, etc. The `Unproven` and `Stripped` intermediate states are
 /// outside this enum because they have no wire representation.
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, From)]
 pub enum TachyonBundle {
     /// A bundle with its own stamp (autonome or aggregate).
     Stamped(Bundle<Stamp>),
@@ -160,25 +160,13 @@ pub enum TachyonBundle {
     Adjunct(Bundle<AggregateId>),
 }
 
-impl From<Bundle<Stamp>> for TachyonBundle {
-    fn from(bundle: Bundle<Stamp>) -> Self {
-        Self::Stamped(bundle)
-    }
-}
-
-impl From<Bundle<AggregateId>> for TachyonBundle {
-    fn from(bundle: Bundle<AggregateId>) -> Self {
-        Self::Adjunct(bundle)
-    }
-}
-
 impl TryFrom<TachyonBundle> for Bundle<Stamp> {
     type Error = Bundle<AggregateId>;
 
     fn try_from(bundle: TachyonBundle) -> Result<Self, Self::Error> {
         match bundle {
-            | TachyonBundle::Adjunct(stripped) => Err(stripped),
-            | TachyonBundle::Stamped(stamped) => Ok(stamped),
+            TachyonBundle::Adjunct(stripped) => Err(stripped),
+            TachyonBundle::Stamped(stamped) => Ok(stamped),
         }
     }
 }
@@ -188,43 +176,35 @@ impl TryFrom<TachyonBundle> for Bundle<AggregateId> {
 
     fn try_from(bundle: TachyonBundle) -> Result<Self, Self::Error> {
         match bundle {
-            | TachyonBundle::Adjunct(stripped) => Ok(stripped),
-            | TachyonBundle::Stamped(stamped) => Err(stamped),
+            TachyonBundle::Adjunct(stripped) => Ok(stripped),
+            TachyonBundle::Stamped(stamped) => Err(stamped),
         }
     }
 }
 
 /// Errors during bundle construction.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Display, Error)]
 pub enum BuildError {
-    /// Ragu proof verification failed
+    /// Ragu proof verification failed.
+    #[display("proof verification failed")]
     ProofInvalid,
 
-    /// BSK/BVK mismatch (see Protocol §4.14)
+    /// BSK/BVK mismatch (see Protocol §4.14).
+    #[display("binding signing key does not match verification key")]
     BalanceKeyMismatch,
 }
 
 /// Errors that can occur when computing a bundle plan commitment.
-#[derive(Debug)]
+#[derive(Debug, Display, Error)]
 #[non_exhaustive]
 pub enum CommitError {
     /// An action digest could not be constructed.
-    ActionDigest(ActionDigestError),
+    #[display("action digest: {_0}")]
+    ActionDigest(#[error(not(source))] ActionDigestError),
     /// The value balance overflows the representable range.
+    #[display("value balance overflow")]
     BalanceOverflow,
 }
-
-impl fmt::Display for CommitError {
-    #[expect(clippy::ref_patterns, reason = "match needs ref to avoid move")]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            | Self::ActionDigest(ref err) => write!(f, "action digest: {err}"),
-            | Self::BalanceOverflow => write!(f, "value balance overflow"),
-        }
-    }
-}
-
-impl Error for CommitError {}
 
 impl From<ActionDigestError> for CommitError {
     fn from(err: ActionDigestError) -> Self {
@@ -238,32 +218,36 @@ impl From<note::BalanceError> for CommitError {
     }
 }
 
+/// Errors from bundle signature verification.
+#[derive(Clone, Copy, Debug, Display, Error)]
+#[non_exhaustive]
+pub enum SignatureError {
+    /// The binding signature is invalid.
+    #[display("invalid binding signature {_0:?}")]
+    Binding(#[error(not(source))] Signature),
+    /// An action signature is invalid.
+    #[display("invalid action signature {_0:?}")]
+    Action(#[error(not(source))] action::Signature),
+}
+
 /// Errors that can occur while signing a bundle plan.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
 pub enum SignError {
-    /// The derived rk does not match the stored rk at this index.
-    RkMismatch(usize),
+    /// The derived rk does not match the stored rk.
+    #[display("plan rk {_0:?} does not match")]
+    RkMismatch(#[error(not(source))] reddsa::VerificationKeyBytes<reddsa::ActionAuth>),
     /// The number of signatures does not match the number of actions.
-    SigCountMismatch,
-    /// An externally-provided signature is invalid at this index.
-    InvalidActionSignature,
+    #[display("expected {_0} signatures")]
+    SigCountMismatch(#[error(not(source))] usize),
+    /// An externally-provided signature is invalid.
+    #[display("signature {:?} does not verify", _0)]
+    InvalidActionSignature(#[error(not(source))] action::Signature),
     /// The value balance overflows the representable range.
+    #[display("value balance overflow")]
     BalanceOverflow,
 }
 
-impl fmt::Display for SignError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            | Self::RkMismatch(idx) => write!(f, "derived rk mismatch at action {idx}"),
-            | Self::SigCountMismatch => write!(f, "signature count mismatch"),
-            | Self::InvalidActionSignature => write!(f, "invalid action signature"),
-            | Self::BalanceOverflow => write!(f, "value balance overflow"),
-        }
-    }
-}
-
-impl Error for SignError {}
 
 /// A complete bundle plan, awaiting authorization.
 #[derive(Clone, Debug)]
@@ -401,12 +385,12 @@ impl Plan {
         let n_actions = self.spends.len() + self.outputs.len();
         let mut authorized = Vec::with_capacity(n_actions);
 
-        for (idx, plan) in self.spends.iter().enumerate() {
+        for plan in &self.spends {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Spend>(cm);
             let rsk = ask.derive_action_private(&alpha);
             if rsk.derive_action_public() != plan.rk {
-                return Err(SignError::RkMismatch(idx));
+                return Err(SignError::RkMismatch(plan.rk.0.into()));
             }
             authorized.push(Action {
                 cv: plan.cv(),
@@ -415,12 +399,12 @@ impl Plan {
             });
         }
 
-        for (idx, plan) in self.outputs.iter().enumerate() {
+        for plan in &self.outputs {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Output>(cm);
             let rsk = private::ActionSigningKey::new(&alpha);
             if rsk.derive_action_public() != plan.rk {
-                return Err(SignError::RkMismatch(self.spends.len() + idx));
+                return Err(SignError::RkMismatch(plan.rk.0.into()));
             }
             authorized.push(Action {
                 cv: plan.cv(),
@@ -454,7 +438,7 @@ impl Plan {
     ) -> Result<Bundle<Unproven>, SignError> {
         let n_actions = self.spends.len() + self.outputs.len();
         if sigs.len() != n_actions {
-            return Err(SignError::SigCountMismatch);
+            return Err(SignError::SigCountMismatch(n_actions));
         }
 
         let mut authorized = Vec::with_capacity(n_actions);
@@ -465,7 +449,7 @@ impl Plan {
 
         for ((cv, rk), sig) in all_descriptors {
             if rk.verify(sighash, &sig).is_err() {
-                return Err(SignError::InvalidActionSignature);
+                return Err(SignError::InvalidActionSignature(sig));
             }
             authorized.push(Action { cv, rk, sig });
         }
@@ -696,8 +680,8 @@ impl TachyonBundle {
         let state = BundleState::read(&mut reader)?;
 
         Ok(match state {
-            | BundleState::NoBundle => None,
-            | BundleState::Stamped => {
+            BundleState::NoBundle => None,
+            BundleState::Stamped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
                 Some(Self::Stamped(Bundle {
                     actions,
@@ -706,7 +690,7 @@ impl TachyonBundle {
                     stamp: Stamp::read(&mut reader)?,
                 }))
             },
-            | BundleState::Stripped => {
+            BundleState::Stripped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
                 let stamp = AggregateId::read(&mut reader)?;
 
@@ -732,8 +716,8 @@ impl TachyonBundle {
     #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn write<W: Write>(&self, writer: W) -> io::Result<()> {
         match *self {
-            | Self::Stamped(ref stamped) => stamped.write(writer),
-            | Self::Adjunct(ref stripped) => stripped.write(writer),
+            Self::Stamped(ref stamped) => stamped.write(writer),
+            Self::Adjunct(ref stripped) => stripped.write(writer),
         }
     }
 
@@ -744,8 +728,8 @@ impl TachyonBundle {
     #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn auth_digest(&self) -> [u8; 64] {
         match *self {
-            | Self::Stamped(ref stamped) => stamped.auth_digest(),
-            | Self::Adjunct(ref stripped) => stripped.auth_digest(),
+            Self::Stamped(ref stamped) => stamped.auth_digest(),
+            Self::Adjunct(ref stripped) => stripped.auth_digest(),
         }
     }
 }
@@ -766,16 +750,20 @@ impl<S: StampState> Bundle<S> {
     }
 
     /// Verify the bundle's binding signature and all action signatures.
-    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), reddsa::Error> {
+    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
         // 1. Derive bvk from public data (validator-side, §4.14)
         let bvk = public::BindingVerificationKey::derive(&self.actions, self.value_balance);
 
         // 2. Verify binding signature
-        bvk.verify(sighash, &self.binding_sig)?;
+        bvk.verify(sighash, &self.binding_sig)
+            .map_err(|_err| SignatureError::Binding(self.binding_sig))?;
 
         // 3. Verify each action signature against the SAME sighash
         for action in &self.actions {
-            action.rk.verify(sighash, &action.sig)?;
+            action
+                .rk
+                .verify(sighash, &action.sig)
+                .map_err(|_err| SignatureError::Action(action.sig))?;
         }
 
         Ok(())
@@ -795,7 +783,7 @@ impl<S: StampState> Bundle<S> {
 /// digest computed at the transaction layer. The validator checks:
 /// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\mathsf{sighash},
 ///   \text{bindingSig}) = 1$
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Signature(pub(crate) reddsa::Signature<reddsa::BindingAuth>);
 
 impl From<[u8; 64]> for Signature {

@@ -299,8 +299,8 @@ fn build_anchor_chain_inner(
                 .seed(rng, pool::EmptyBlockSeed, (state,))
                 .expect("EmptyBlockSeed");
             chain = Some(match chain.take() {
-                | None => seed,
-                | Some(left) => {
+                None => seed,
+                Some(left) => {
                     let (fused, ()) = PROOF_SYSTEM
                         .fuse(rng, pool::AnchorFuse, (), left, seed)
                         .expect("AnchorFuse");
@@ -321,8 +321,8 @@ fn build_anchor_chain_inner(
                     .seed(rng, pool::AnchorSeed, (state, *commit))
                     .expect("AnchorSeed");
                 chain = Some(match chain.take() {
-                    | None => seed,
-                    | Some(left) => {
+                    None => seed,
+                    Some(left) => {
                         let (fused, ()) = PROOF_SYSTEM
                             .fuse(rng, pool::AnchorFuse, (), left, seed)
                             .expect("AnchorFuse");
@@ -465,8 +465,8 @@ pub(crate) fn build_unspent_pcd(
                 .seed(rng, pool::EmptyBlockUnspentSeed, (state, epoch, nf))
                 .expect("EmptyBlockUnspentSeed");
             chain = Some(match chain.take() {
-                | None => seed,
-                | Some(left) => {
+                None => seed,
+                Some(left) => {
                     let (fused, ()) = PROOF_SYSTEM
                         .fuse(rng, pool::UnspentFuse, (), left, seed)
                         .expect("UnspentFuse");
@@ -479,8 +479,8 @@ pub(crate) fn build_unspent_pcd(
                 let next_state = state.next_stamp(commit);
                 let seed = build_unspent_seed_pcd(rng, state, epoch, tgs, nf);
                 chain = Some(match chain.take() {
-                    | None => seed,
-                    | Some(left) => {
+                    None => seed,
+                    Some(left) => {
                         let (fused, ()) = PROOF_SYSTEM
                             .fuse(rng, pool::UnspentFuse, (), left, seed)
                             .expect("UnspentFuse");
@@ -937,11 +937,11 @@ pub mod ggm_tools {
                 )
                 .expect("nullifier step");
             acc = Some(match acc {
-                | None => {
+                None => {
                     nfs.push(nf);
                     leaf
                 },
-                | Some(left) => {
+                Some(left) => {
                     let left_poly = NfSeqPoly::from(nfs.as_slice());
                     let right_poly = NfSeqPoly::from([nf].as_slice());
                     nfs.push(nf);
@@ -996,8 +996,8 @@ fn build_partial_multi_epoch_unspent(
         let seed = build_unspent_seed_pcd(rng, state, first_epoch, tgs, nf0);
         state = state.next_stamp(commit);
         first_segment = Some(match first_segment.take() {
-            | None => seed,
-            | Some(left) => {
+            None => seed,
+            Some(left) => {
                 let (fused, ()) = PROOF_SYSTEM
                     .fuse(rng, pool::UnspentFuse, (), left, seed)
                     .expect("UnspentFuse rest-of-block");
@@ -1009,8 +1009,8 @@ fn build_partial_multi_epoch_unspent(
     while height <= first_epoch_end {
         let segment = build_unspent_pcd(rng, pool, nf0, height..=height);
         first_segment = Some(match first_segment.take() {
-            | None => segment,
-            | Some(left) => {
+            None => segment,
+            Some(left) => {
                 let (fused, ()) = PROOF_SYSTEM
                     .fuse(rng, pool::UnspentFuse, (), left, segment)
                     .expect("UnspentFuse subsequent-block");

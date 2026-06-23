@@ -1,3 +1,4 @@
+use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use pasta_curves::Fp;
 
 /// A tachygram is a field element ($\mathbb{F}_p$) representing either a
@@ -14,17 +15,5 @@ use pasta_curves::Fp;
 /// Consensus rejects a published tachygram that has already appeared in
 /// any block of the current or immediately preceding epoch. See the
 /// Tachygrams book chapter for why the window spans two epochs.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Tachygram(Fp);
-
-impl From<Fp> for Tachygram {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-impl From<Tachygram> for Fp {
-    fn from(tg: Tachygram) -> Self {
-        tg.0
-    }
-}

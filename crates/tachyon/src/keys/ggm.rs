@@ -10,8 +10,9 @@
 //! `GGM_ARITY^GGM_DEPTH == GGM_MAX_INDEX + 1`.
 
 use alloc::vec::Vec;
-use core::{fmt, num::NonZeroU8, ops::RangeInclusive};
+use core::{num::NonZeroU8, ops::RangeInclusive};
 
+use derive_more::{Debug, Eq as TotalEq, PartialEq};
 use pasta_curves::Fp;
 
 use crate::{constants::EPOCH_MAX, digest::poseidon, note::Nullifier, primitives::EpochIndex};
@@ -56,8 +57,8 @@ pub const GGM_TREE_DEPTH: u8 = GGM_MAX_INDEX.trailing_ones() as u8 / GGM_CHUNK_S
 ///              ├── nf = F_mk(flavor)     nullifier for a specific epoch
 ///              └── psi_t = GGM(mk, t)    prefix key for epochs e ≤ t (OSS)
 /// ```
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct NoteMasterKey(pub(crate) Fp);
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct NoteMasterKey(#[debug(skip)] pub(crate) Fp);
 
 impl NoteMasterKey {
     /// Descend one level from the root of the GGM tree.
@@ -113,9 +114,10 @@ impl NoteMasterKey {
 /// At depth `d` there are `GGM_ARITY^d` nodes. Node `i` covers the contiguous
 /// epoch range of size `GGM_ARITY^(GGM_DEPTH - d)`. At depth
 /// `GGM_DEPTH`, a key is a leaf whose `index` equals its single epoch.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct NotePrefixedKey {
     /// GGM tree node value.
+    #[debug(skip)]
     pub(crate) inner: Fp,
     /// The number of levels already descended.
     pub(crate) depth: NonZeroU8,
@@ -229,10 +231,9 @@ pub fn cover_candidates(range: RangeInclusive<u32>) -> Vec<RangeInclusive<u32>> 
     let mut candidates: Vec<RangeInclusive<u32>> = Vec::new();
     for j in 0u8..=GGM_TREE_DEPTH {
         let alignment_bits = j * GGM_CHUNK_SIZE;
-        let s_j = match 1u32.checked_shl(u32::from(alignment_bits)) {
-            | Some(alignment) => range.start() & !(alignment - 1u32),
-            | None => 0u32,
-        };
+        let s_j = 1u32
+            .checked_shl(u32::from(alignment_bits))
+            .map_or(0u32, |alignment| range.start() & !(alignment - 1u32));
         if candidates.last().is_some_and(|prev| *prev.start() == s_j) {
             continue;
         }
@@ -251,34 +252,16 @@ fn ggm_step(node: Fp, chunk: u8) -> Fp {
 /// Recursive GGM walk: consume the top `GGM_CHUNK_SIZE` bits of `leaf` at each
 /// level, MSB-first, for `remaining` levels.
 fn ggm_walk(node: Fp, leaf: u32, remaining: u8) -> Fp {
-    match remaining.checked_sub(1) {
-        | None => node,
-        | Some(next) => {
-            let shift = next * GGM_CHUNK_SIZE;
-            let chunk_u32 = (leaf >> shift) & u32::from(GGM_CHUNK_MASK);
-            #[expect(
-                clippy::expect_used,
-                reason = "chunk bits fit in u8 because GGM_CHUNK_SIZE <= u8::BITS"
-            )]
-            let chunk = u8::try_from(chunk_u32).expect("chunk fits in u8");
-            ggm_walk(ggm_step(node, chunk), leaf, next)
-        },
-    }
-}
-
-impl fmt::Debug for NoteMasterKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NoteMasterKey").finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for NotePrefixedKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NotePrefixedKey")
-            .field("depth", &self.depth)
-            .field("index", &self.index)
-            .finish_non_exhaustive()
-    }
+    remaining.checked_sub(1).map_or(node, |next| {
+        let shift = next * GGM_CHUNK_SIZE;
+        let chunk_u32 = (leaf >> shift) & u32::from(GGM_CHUNK_MASK);
+        #[expect(
+            clippy::expect_used,
+            reason = "chunk bits fit in u8 because GGM_CHUNK_SIZE <= u8::BITS"
+        )]
+        let chunk = u8::try_from(chunk_u32).expect("chunk fits in u8");
+        ggm_walk(ggm_step(node, chunk), leaf, next)
+    })
 }
 
 #[cfg(test)]

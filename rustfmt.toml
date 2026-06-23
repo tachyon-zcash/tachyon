@@ -2,7 +2,6 @@ edition = "2024"
 
 newline_style = "Unix"
 
-match_arm_leading_pipes = "Always"
 match_block_trailing_comma = true
 remove_nested_parens = true
 reorder_imports = true
