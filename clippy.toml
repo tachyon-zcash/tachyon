@@ -11,4 +11,3 @@ allow-unwrap-in-consts = true # unwrap_used
 
 # other lints
 allow-exact-repetitions = true # module_name_repetitions
-allow-comparison-to-zero = true # modulo_arithmetic: allow comparing modulo operation to zero
