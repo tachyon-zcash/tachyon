@@ -33,7 +33,6 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
-use core::ops;
 
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use ff::Field as _;
@@ -155,58 +154,6 @@ impl TryFrom<u64> for Value {
 impl From<Value> for i64 {
     fn from(value: Value) -> Self {
         Self::try_from(value.0).expect("Value invariant guarantees it fits in i64")
-    }
-}
-
-/// Signed sum of note values across actions.
-///
-/// Spends contribute positive values, outputs contribute negative.
-/// Uses `i128` internally to provide additional headroom while accumulating
-/// values. Checked arithmetic still reports overflow, and conversion to the
-/// wire-format `i64` fails if the final balance is out of range.
-///
-/// Use `i64::try_from(sum)` to narrow to the wire-format `i64`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ValueSum(i128);
-
-/// Error returned when a [`ValueSum`] operation overflows the
-/// representable range.
-#[derive(Clone, Copy, Debug, Display, Error, PartialEq, Eq)]
-#[display("value balance overflow")]
-pub struct BalanceError;
-
-impl ValueSum {
-    /// The zero sum (identity for addition).
-    pub const ZERO: Self = Self(0);
-}
-
-impl TryFrom<ValueSum> for i64 {
-    type Error = BalanceError;
-
-    fn try_from(sum: ValueSum) -> Result<Self, Self::Error> {
-        Self::try_from(sum.0).map_err(|_err| BalanceError)
-    }
-}
-
-impl ops::Add<Value> for ValueSum {
-    type Output = Result<Self, BalanceError>;
-
-    fn add(self, rhs: Value) -> Self::Output {
-        self.0
-            .checked_add(i128::from(rhs.0))
-            .map(Self)
-            .ok_or(BalanceError)
-    }
-}
-
-impl ops::Sub<Value> for ValueSum {
-    type Output = Result<Self, BalanceError>;
-
-    fn sub(self, rhs: Value) -> Self::Output {
-        self.0
-            .checked_sub(i128::from(rhs.0))
-            .map(Self)
-            .ok_or(BalanceError)
     }
 }
 
@@ -376,18 +323,5 @@ mod tests {
         assert!(dbg.contains("Nullifier"), "must name the type");
         assert!(!dbg.contains("BEEF"), "must not leak field element");
         assert!(!dbg.contains("48879"), "must not leak decimal value");
-    }
-
-    #[test]
-    fn value_sum_checked_arithmetic() {
-        let va = Value::try_from(100u64).unwrap();
-        let vb = Value::try_from(200u64).unwrap();
-
-        let sum = (ValueSum::ZERO + va).unwrap();
-        let total = (sum + vb).unwrap();
-        assert_eq!(i64::try_from(total).unwrap(), 300);
-
-        let diff = (ValueSum::ZERO - va).unwrap();
-        assert_eq!(i64::try_from(diff).unwrap(), -100);
     }
 }

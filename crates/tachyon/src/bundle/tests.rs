@@ -16,6 +16,19 @@ use crate::{
 };
 
 #[test]
+fn value_sum_checked_arithmetic() {
+    let va = note::Value::try_from(100u64).unwrap();
+    let vb = note::Value::try_from(200u64).unwrap();
+
+    let sum = (ValueBalance::ZERO + va).unwrap();
+    let total = (sum + vb).unwrap();
+    assert_eq!(i64::try_from(total).unwrap(), 300);
+
+    let diff = (ValueBalance::ZERO - va).unwrap();
+    assert_eq!(i64::try_from(diff).unwrap(), -100);
+}
+
+#[test]
 fn wrong_value_balance_fails_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
