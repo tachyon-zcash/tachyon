@@ -227,8 +227,16 @@ pub enum SignatureError {
 #[non_exhaustive]
 pub enum SignError {
     /// The derived rk does not match the stored rk.
-    #[display("plan rk {_0:?} does not match")]
-    RkMismatch(#[error(not(source))] reddsa::VerificationKeyBytes<reddsa::ActionAuth>),
+    #[display("plan rk {rk:?} does not match at action {index}")]
+    RkMismatch {
+        /// Index of the offending action in the bundle (spends first, then
+        /// outputs).
+        #[error(not(source))]
+        index: usize,
+        /// The stored rk that did not match the derived one.
+        #[error(not(source))]
+        rk: reddsa::VerificationKeyBytes<reddsa::ActionAuth>,
+    },
     /// The number of signatures does not match the number of actions.
     #[display("expected {_0} signatures")]
     SigCountMismatch(#[error(not(source))] usize),
@@ -377,12 +385,15 @@ impl Plan {
         let n_actions = self.spends.len() + self.outputs.len();
         let mut authorized = Vec::with_capacity(n_actions);
 
-        for plan in &self.spends {
+        for (index, plan) in self.spends.iter().enumerate() {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Spend>(cm);
             let rsk = ask.derive_action_private(&alpha);
             if rsk.derive_action_public() != plan.rk {
-                return Err(SignError::RkMismatch(plan.rk.0.into()));
+                return Err(SignError::RkMismatch {
+                    index,
+                    rk: plan.rk.0.into(),
+                });
             }
             authorized.push(Action {
                 cv: plan.cv(),
@@ -391,12 +402,15 @@ impl Plan {
             });
         }
 
-        for plan in &self.outputs {
+        for (idx, plan) in self.outputs.iter().enumerate() {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Output>(cm);
             let rsk = private::ActionSigningKey::new(&alpha);
             if rsk.derive_action_public() != plan.rk {
-                return Err(SignError::RkMismatch(plan.rk.0.into()));
+                return Err(SignError::RkMismatch {
+                    index: self.spends.len() + idx,
+                    rk: plan.rk.0.into(),
+                });
             }
             authorized.push(Action {
                 cv: plan.cv(),
