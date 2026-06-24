@@ -4,8 +4,9 @@
 //! Combined with a note commitment it deterministically derives an
 //! [`ActionRandomizer`].
 
-use core::{any::type_name, fmt, marker::PhantomData};
+use core::{any::type_name, marker::PhantomData};
 
+use derive_more::Debug;
 use pasta_curves::Fq;
 use rand_core::{CryptoRng, RngCore};
 
@@ -25,9 +26,9 @@ use crate::{note, primitives::Effect};
 /// (possibly untrusted) device constructs the proof later using $\theta$
 /// and $\mathsf{cm}$ to recover $\alpha$
 /// ("Tachyaction at a Distance", Bowe 2025).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
-pub struct ActionEntropy(pub(crate) [u8; 32]);
+pub struct ActionEntropy(#[debug(skip)] pub(crate) [u8; 32]);
 
 impl ActionEntropy {
     /// Parse action entropy from 32 bytes.
@@ -65,26 +66,13 @@ mod sealed {
 /// - [`ActionRandomizer<Spend>`]: $\mathsf{rsk} = \mathsf{ask} + \alpha$,
 ///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
 /// - [`ActionRandomizer<Output>`]: $\mathsf{rsk} = \alpha$.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
+#[debug("ActionRandomizer<{}>", type_name::<S>())]
 pub struct ActionRandomizer<S: sealed::RandomizerState>(pub(crate) Fq, pub(crate) PhantomData<S>);
 
 impl<S: sealed::RandomizerState> From<ActionRandomizer<S>> for Fq {
     fn from(randomizer: ActionRandomizer<S>) -> Self {
         randomizer.0
-    }
-}
-
-impl fmt::Debug for ActionEntropy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ActionEntropy").finish_non_exhaustive()
-    }
-}
-
-impl<S: sealed::RandomizerState> fmt::Debug for ActionRandomizer<S> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ActionRandomizer")
-            .field("state", &type_name::<S>())
-            .finish_non_exhaustive()
     }
 }
 

@@ -11,7 +11,7 @@ use core::{cmp, iter, ops::RangeInclusive};
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::{Pcd, Proof};
+use ragu::Pcd;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
@@ -19,10 +19,10 @@ use crate::{
     bundle::{self, Bundle},
     constants::EPOCH_SIZE,
     entropy::{ActionEntropy, ActionRandomizer},
-    keys::{ProofAuthorizingKey, private},
-    note::{self, Note, Nullifier},
+    keys::{NoteMasterKey, ProofAuthorizingKey, private},
+    note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        ActionDigest, Anchor, BlockHeight, DelegationId, EpochIndex, Tachygram, TachygramSetCommit,
+        ActionDigest, Anchor, BlockHeight, EpochIndex, NfSeqPoly, Tachygram, TachygramSetCommit,
         TachygramSetPoly, effect,
     },
     stamp::{
@@ -58,7 +58,7 @@ pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {
     let note = wallet.random_note(rng, 400);
     let (_, _, plan) = build_output_plan(rng, note);
     let bundle_plan = bundle::Plan::new(alloc::vec![], alloc::vec![plan]);
-    let sighash = mock_sighash(bundle_plan.commitment());
+    let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
     let unproven = bundle_plan
         .sign(&sighash, &ask, rng)
         .expect("sign foreign output");
@@ -89,9 +89,8 @@ pub fn build_output_plan(
 ) {
     let rcv = value::CommitmentTrapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
-    let cm = note.commitment();
+    let alpha = theta.randomizer::<effect::Output>(note.commitment());
     let plan = action::Plan::output(note, theta, rcv.clone());
-    let alpha = theta.randomizer::<effect::Output>(cm);
     (rcv, alpha, plan)
 }
 
@@ -117,9 +116,15 @@ pub fn build_autonome(
     let stamps_cms = vec![vec![spend_note.commitment()]];
     pool.mine(random_block_with(rng, &stamps_cms, 50));
     let height = pool.height();
-    let anchor = pool.anchor_at(height);
-    let spend = wallet.fresh_spend(rng, &pool, height, spend_note);
-    wallet.autonome(rng, anchor, alloc::vec![spend], alloc::vec![output_note])
+    let spendable_pcd = wallet.fresh_spend(rng, &pool, height, &spend_note);
+    let spend_epoch = height.epoch();
+    let anchor = spendable_pcd.data().1;
+    wallet.autonome(
+        rng,
+        anchor,
+        alloc::vec![(spend_note, spendable_pcd, spend_epoch)],
+        alloc::vec![output_note],
+    )
 }
 
 pub fn random_block(
@@ -204,7 +209,7 @@ impl PoolSim {
     pub fn stamp_commits_at(&self, height: BlockHeight) -> Vec<TachygramSetCommit> {
         self.tachygrams_at(height)
             .iter()
-            .map(|tgs| TachygramSetCommit::from(tgs.as_slice()))
+            .map(|tgs| TachygramSetPoly::from(tgs.as_slice()).commit())
             .collect()
     }
 
@@ -227,19 +232,16 @@ impl PoolSim {
         }
     }
 
-    /// Resolve the height at which `anchor` was produced. `block.prev` already
-    /// holds the anchor of the preceding block, so a single scan over the
-    /// `prev` linkage suffices; only the tip anchor needs recomputing.
+    /// The prior-epoch terminal anchor that folds into `epoch`'s boundary
+    /// `B_epoch = pre_epoch_anchor(epoch).next_epoch(epoch)`. This is the
+    /// single owner of the genesis convention: `Fp::ZERO` for the genesis
+    /// epoch (matching [`Anchor::default`]'s `ZERO.next_epoch(0)`),
+    /// otherwise the terminal anchor of the previous epoch's final block.
     #[must_use]
-    pub fn height_at(&self, anchor: Anchor) -> BlockHeight {
-        self.history
-            .iter()
-            .enumerate()
-            .skip(1)
-            .find(|&(_, block)| block.prev == anchor)
-            .map(|(idx, _)| BlockHeight::from(idx - 1))
-            .or_else(|| (self.anchor() == anchor).then(|| self.height()))
-            .expect("anchor not in pool history")
+    pub fn pre_epoch_anchor(&self, epoch: EpochIndex) -> Anchor {
+        epoch_first_of(epoch)
+            .prev()
+            .map_or_else(|| Anchor::from(Fp::ZERO), |height| self.anchor_at(height))
     }
 
     pub fn advance(
@@ -267,16 +269,19 @@ impl PoolSim {
     }
 }
 
-/// Build an [`AnchorChain`] covering blocks `range`, rooted at the
-/// block-start anchor of `*range.start()`.
+/// Build an [`AnchorChain`] covering blocks `range`, rooted at the block-start
+/// anchor of `*range.start()`. When `last_block_upto` is `Some(n)` the final
+/// block absorbs only its first `n` stamps (stopping the chain right after the
+/// cm-stamp); `None` absorbs every block in full.
 ///
-/// Per non-empty block: one [`AnchorSeed`] per stamp, fused via
-/// [`AnchorFuse`]. Per empty block: one [`EmptyBlockSeed`].
-/// All segments fused linearly.
-pub(crate) fn build_anchor_chain_pcd(
+/// Per non-empty block: one [`AnchorSeed`] per absorbed stamp, fused via
+/// [`AnchorFuse`]. Per empty block: one [`EmptyBlockSeed`]. All segments fused
+/// linearly.
+fn build_anchor_chain_inner(
     rng: &mut (impl RngCore + CryptoRng),
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
+    last_block_upto: Option<usize>,
 ) -> Pcd<pool::AnchorChain> {
     let start = *range.start();
     let end = *range.end();
@@ -294,8 +299,8 @@ pub(crate) fn build_anchor_chain_pcd(
                 .seed(rng, pool::EmptyBlockSeed, (state,))
                 .expect("EmptyBlockSeed");
             chain = Some(match chain.take() {
-                | None => seed,
-                | Some(left) => {
+                None => seed,
+                Some(left) => {
                     let (fused, ()) = PROOF_SYSTEM
                         .fuse(rng, pool::AnchorFuse, (), left, seed)
                         .expect("AnchorFuse");
@@ -304,14 +309,20 @@ pub(crate) fn build_anchor_chain_pcd(
             });
             state = next_state;
         } else {
-            for commit in commits {
-                let next_state = state.next_stamp(&commit);
+            // The final block may be truncated (cm-block prefix); others absorb all.
+            let upto = if height == end {
+                last_block_upto.unwrap_or(commits.len())
+            } else {
+                commits.len()
+            };
+            for commit in &commits[..upto] {
+                let next_state = state.next_stamp(commit);
                 let (seed, ()) = PROOF_SYSTEM
-                    .seed(rng, pool::AnchorSeed, (state, commit))
+                    .seed(rng, pool::AnchorSeed, (state, *commit))
                     .expect("AnchorSeed");
                 chain = Some(match chain.take() {
-                    | None => seed,
-                    | Some(left) => {
+                    None => seed,
+                    Some(left) => {
                         let (fused, ()) = PROOF_SYSTEM
                             .fuse(rng, pool::AnchorFuse, (), left, seed)
                             .expect("AnchorFuse");
@@ -330,18 +341,98 @@ pub(crate) fn build_anchor_chain_pcd(
     chain.expect("AnchorChain range must cover at least one block")
 }
 
+/// Build an [`AnchorChain`] covering blocks `range` in full, rooted at the
+/// block-start anchor of `*range.start()`.
+pub(crate) fn build_anchor_chain_pcd(
+    rng: &mut (impl RngCore + CryptoRng),
+    pool: &PoolSim,
+    range: RangeInclusive<BlockHeight>,
+) -> Pcd<pool::AnchorChain> {
+    build_anchor_chain_inner(rng, pool, range, None)
+}
+
+/// Build the boundary->cm segment [`spendable::SpendableInit`] consumes to pin
+/// a spendable's starting epoch: an [`AnchorChain`](pool::AnchorChain) rooted
+/// at the epoch boundary `B_E = prev_anchor_at(epoch_first)` and ending at
+/// `post_cm_anchor`, covering blocks `epoch_first..=cm_height` with the final
+/// (cm) block truncated to its stamps `[0..=cm_idx]` so the cm-stamp is the
+/// chain's last absorbed link. A note created first-in-epoch (`epoch_first ==
+/// cm_height`, `cm_idx == 0`) produces a single-link chain.
+pub(crate) fn build_anchor_chain_prefix_pcd(
+    rng: &mut (impl RngCore + CryptoRng),
+    pool: &PoolSim,
+    epoch_first: BlockHeight,
+    cm_height: BlockHeight,
+    cm_idx: usize,
+) -> Pcd<pool::AnchorChain> {
+    assert_eq!(
+        epoch_first.epoch(),
+        cm_height.epoch(),
+        "prefix chain is single-epoch"
+    );
+    assert!(epoch_first <= cm_height);
+    // The cm-block must be non-empty and `cm_idx` in range; otherwise the
+    // truncation is silently dropped and the chain would not end at the
+    // cm-stamp (surfacing only later as SpendableInit's "cm-stamp is not the
+    // chain's final link").
+    let cm_commits = pool.stamp_commits_at(cm_height);
+    assert!(
+        !cm_commits.is_empty(),
+        "cm-block at {cm_height:?} has no stamps; cm_idx is meaningless"
+    );
+    assert!(
+        cm_idx < cm_commits.len(),
+        "cm_idx {cm_idx} out of range for {}-stamp cm-block",
+        cm_commits.len()
+    );
+    build_anchor_chain_inner(rng, pool, epoch_first..=cm_height, Some(cm_idx + 1))
+}
+
+/// The honest [`spendable::SpendableInit`] inputs for `cm` at `height`,
+/// reconstructed from pool state: the witness `(pre_epoch_anchor,
+/// pre_cm_anchor, stamp_tg_set)` plus the boundary-rooted
+/// [`AnchorChain`](pool::AnchorChain) for the left input. Shared by
+/// [`WalletSim::spendable_init`] (which `.expect`s the fuse) and tests that
+/// drive a raw fuse to capture the `Err`.
+pub(crate) fn spendable_init_inputs(
+    rng: &mut (impl RngCore + CryptoRng),
+    pool: &PoolSim,
+    cm: note::Commitment,
+    height: BlockHeight,
+) -> (Anchor, Anchor, TachygramSetPoly, Pcd<pool::AnchorChain>) {
+    let stamps = pool.tachygrams_at(height);
+    let stamp_commits = pool.stamp_commits_at(height);
+    let cm_idx = stamps
+        .iter()
+        .position(|tgs| tgs.contains(&cm.into()))
+        .expect("cm not found in any stamp at the cm-block");
+
+    // Anchor immediately before the cm-stamp (the cm-block prefix fold).
+    let pre_cm_anchor = stamp_commits[..cm_idx]
+        .iter()
+        .fold(pool.prev_anchor_at(height), Anchor::next_stamp);
+
+    // Root the lineage at the epoch boundary `B_E = pre_epoch_anchor.next_epoch(E)
+    // == prev_anchor_at(epoch_first)`; the boundary->cm chain ends at
+    // post_cm_anchor.
+    let epoch = height.epoch();
+    let pre_epoch_anchor = pool.pre_epoch_anchor(epoch);
+    let chain = build_anchor_chain_prefix_pcd(rng, pool, epoch_first_of(epoch), height, cm_idx);
+    let stamp_tg_set = TachygramSetPoly::from(stamps[cm_idx].as_slice());
+
+    (pre_epoch_anchor, pre_cm_anchor, stamp_tg_set, chain)
+}
+
 pub(crate) fn build_unspent_seed_pcd(
     rng: &mut (impl RngCore + CryptoRng),
     start: Anchor,
-    stamp_tgs: &[Tachygram],
+    epoch: EpochIndex,
+    tgs: &[Tachygram],
     nf: Nullifier,
 ) -> Pcd<pool::Unspent> {
+    let tg_set = TachygramSetPoly::from(tgs);
     let (pcd, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::UnspentSeed,
-            (start, TachygramSetPoly::from(stamp_tgs), nf),
-        )
+        .seed(rng, pool::UnspentSeed, (start, epoch, tg_set, nf))
         .expect("UnspentSeed");
     pcd
 }
@@ -360,6 +451,7 @@ pub(crate) fn build_unspent_pcd(
     let end = *range.end();
     assert_eq!(start.epoch(), end.epoch(), "Unspent single-epoch range");
     assert!(start <= end);
+    let epoch = start.epoch();
 
     let mut state = pool.prev_anchor_at(start);
     let mut chain: Option<Pcd<pool::Unspent>> = None;
@@ -370,11 +462,11 @@ pub(crate) fn build_unspent_pcd(
         if stamps.is_empty() {
             let next_state = state.next_empty();
             let (seed, ()) = PROOF_SYSTEM
-                .seed(rng, pool::EmptyBlockUnspentSeed, (state, nf))
+                .seed(rng, pool::EmptyBlockUnspentSeed, (state, epoch, nf))
                 .expect("EmptyBlockUnspentSeed");
             chain = Some(match chain.take() {
-                | None => seed,
-                | Some(left) => {
+                None => seed,
+                Some(left) => {
                     let (fused, ()) = PROOF_SYSTEM
                         .fuse(rng, pool::UnspentFuse, (), left, seed)
                         .expect("UnspentFuse");
@@ -385,10 +477,10 @@ pub(crate) fn build_unspent_pcd(
         } else {
             for (tgs, commit) in stamps.iter().zip(stamp_commits.iter()) {
                 let next_state = state.next_stamp(commit);
-                let seed = build_unspent_seed_pcd(rng, state, tgs, nf);
+                let seed = build_unspent_seed_pcd(rng, state, epoch, tgs, nf);
                 chain = Some(match chain.take() {
-                    | None => seed,
-                    | Some(left) => {
+                    None => seed,
+                    Some(left) => {
                         let (fused, ()) = PROOF_SYSTEM
                             .fuse(rng, pool::UnspentFuse, (), left, seed)
                             .expect("UnspentFuse");
@@ -405,22 +497,6 @@ pub(crate) fn build_unspent_pcd(
     }
 
     chain.expect("Unspent range must cover at least one block")
-}
-
-pub(crate) fn build_nullifier_rollover_pcd(
-    rng: &mut (impl RngCore + CryptoRng),
-    user: &WalletSim,
-    note: Note,
-    epoch: EpochIndex,
-) -> Pcd<spendable::NullifierRolloverHeader> {
-    let master_old = user.note_master(rng, note.clone());
-    let nf_old_pcd = ggm_tools::nullifier_from_master(rng, master_old, epoch);
-    let master_new = user.note_master(rng, note);
-    let nf_new_pcd = ggm_tools::nullifier_from_master(rng, master_new, EpochIndex(epoch.0 + 1));
-    let (pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, spendable::RolloverFuse, (), nf_old_pcd, nf_new_pcd)
-        .expect("RolloverFuse");
-    pcd
 }
 
 pub struct WalletSim {
@@ -441,17 +517,27 @@ impl WalletSim {
     pub fn random_note(&self, rng: &mut (impl RngCore + CryptoRng), value_amount: u64) -> Note {
         Note {
             pk: self.sk.derive_payment_key(),
-            value: note::Value::from(value_amount),
-            psi: note::NullifierTrapdoor::random(rng),
+            value: note::Value::try_from(value_amount).expect("fixture value in range"),
+            psi: NullifierTrapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         }
+    }
+
+    #[must_use]
+    pub fn mk(&self, note: &Note) -> NoteMasterKey {
+        self.pak.nk.derive_note_private(&note.psi)
+    }
+
+    #[must_use]
+    pub fn nf_at(&self, note: &Note, epoch: EpochIndex) -> Nullifier {
+        self.mk(note).derive_nullifier(epoch)
     }
 
     pub fn note_master(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
-    ) -> Pcd<delegation::NfMasterHeader> {
+    ) -> Pcd<delegation::NfPrefixHeader> {
         let (pcd, ()) = PROOF_SYSTEM
             .seed(rng, delegation::NfMasterSeed, (note, self.pak))
             .expect("note seed");
@@ -468,21 +554,41 @@ impl WalletSim {
         ggm_tools::nullifier_from_master(rng, master, target_epoch)
     }
 
-    /// User-device nullifier pair for `target_epoch` and `target_epoch + 1`.
-    /// Used by the spend path — `SpendBind` consumes two `NullifierHeader`s
-    /// carrying the wallet's `cm`.
-    pub fn nullifier_pair_pcd(
+    pub fn derived_range(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
-        note: Note,
-        target_epoch: EpochIndex,
-    ) -> (
-        Pcd<delegation::NullifierHeader>,
-        Pcd<delegation::NullifierHeader>,
-    ) {
-        let nf_now = self.nullifier_pcd(rng, note.clone(), target_epoch);
-        let nf_next = self.nullifier_pcd(rng, note, EpochIndex(target_epoch.0 + 1));
-        (nf_now, nf_next)
+        note: &Note,
+        start_epoch: EpochIndex,
+        len: u32,
+    ) -> Pcd<delegation::NullifierHeader> {
+        let master = self.note_master(rng, note.clone());
+        ggm_tools::nullifier_range_from_master(rng, &master, start_epoch, len)
+    }
+
+    pub fn spendable_init(
+        &self,
+        rng: &mut (impl RngCore + CryptoRng),
+        note: &Note,
+        pool: &PoolSim,
+        init_height: BlockHeight,
+    ) -> Pcd<spendable::SpendableHeader> {
+        let cm = note.commitment();
+        let epoch = init_height.epoch();
+        let present_nf = self.nf_at(note, epoch);
+        let (pre_epoch_anchor, pre_cm_anchor, creation_set, chain) =
+            spendable_init_inputs(rng, pool, cm, init_height);
+        let nf_header = self.nullifier_pcd(rng, note.clone(), epoch);
+
+        let (spendable, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spendable::SpendableInit,
+                (pre_epoch_anchor, pre_cm_anchor, creation_set, present_nf),
+                chain,
+                nf_header,
+            )
+            .expect("SpendableInit");
+        spendable
     }
 
     pub fn fresh_spend(
@@ -490,119 +596,122 @@ impl WalletSim {
         rng: &mut (impl RngCore + CryptoRng),
         pool: &PoolSim,
         height: BlockHeight,
-        spend_note: Note,
-    ) -> (
-        Note,
-        Pcd<delegation::NullifierHeader>,
-        Pcd<delegation::NullifierHeader>,
-        Pcd<spendable::SpendableHeader>,
-    ) {
-        let nf_for_init = self.nullifier_pcd(rng, spend_note.clone(), height.epoch());
-        let spendable = self.spendable_init(rng, spend_note.clone(), pool, height, nf_for_init);
-
-        let (nf_now, nf_next) = self.nullifier_pair_pcd(rng, spend_note.clone(), height.epoch());
-
-        (spend_note, nf_now, nf_next, spendable)
+        spend_note: &Note,
+    ) -> Pcd<spendable::SpendableHeader> {
+        self.spendable_init(rng, spend_note, pool, height)
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "method on WalletSim for ergonomics; wallet's keys produced nf_pcd"
-    )]
-    pub fn spendable_init(
+    pub fn verify_unspent(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
-        note: Note,
-        pool: &PoolSim,
-        height: BlockHeight,
-        nf_pcd: Pcd<delegation::NullifierHeader>,
-    ) -> Pcd<spendable::SpendableHeader> {
-        let cm = note.commitment();
-
-        let stamps = pool.tachygrams_at(height);
-        let stamp_commits = pool.stamp_commits_at(height);
-        let cm_idx = stamps
-            .iter()
-            .position(|tgs| tgs.contains(&cm.into()))
-            .expect("cm not found in any stamp at the cm-block");
-
-        let pre_cm_anchor = stamp_commits[..cm_idx]
-            .iter()
-            .fold(pool.prev_anchor_at(height), Anchor::next_stamp);
-
-        let (spendable, ()) = PROOF_SYSTEM
+        unspent: Pcd<pool::Unspent>,
+        note: &Note,
+        start_epoch: EpochIndex,
+        present_epoch: EpochIndex,
+    ) -> Pcd<pool::VerifiedUnspent> {
+        let len = present_epoch.0 - start_epoch.0 + 1;
+        let range = self.derived_range(rng, note, start_epoch, len);
+        let elapsed: Vec<Nullifier> = (start_epoch.0..present_epoch.0)
+            .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
+            .collect();
+        let tip = self.nf_at(note, present_epoch);
+        let range_nfs: Vec<Nullifier> = (start_epoch.0..=present_epoch.0)
+            .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
+            .collect();
+        let (verified, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                spendable::SpendableInit,
+                pool::VerifyUnspent,
                 (
-                    pre_cm_anchor,
-                    TachygramSetPoly::from(stamps[cm_idx].as_slice()),
+                    NfSeqPoly::from(elapsed.as_slice()),
+                    NfSeqPoly::from([tip].as_slice()),
+                    NfSeqPoly::from(range_nfs.as_slice()),
                 ),
-                nf_pcd,
-                Proof::trivial().carry::<()>(()),
+                unspent,
+                range,
             )
-            .expect("SpendableInit");
+            .expect("VerifyUnspent");
+        verified
+    }
 
-        // If cm is the last stamp, post_cm_anchor is already the
-        // block-final anchor — no rest-of-block lift needed.
-        if cm_idx + 1 == stamps.len() {
-            return spendable;
-        }
-
-        // Build an Unspent over stamps cm_idx+1..end of the cm-block,
-        // chained from post_cm_anchor, then SpendableLift.
-        let nf = spendable.data().0;
-        let mut state = spendable.data().1;
-        let mut acc: Option<Pcd<pool::Unspent>> = None;
-        for (tgs, commit) in stamps[cm_idx + 1..]
-            .iter()
-            .zip(stamp_commits[cm_idx + 1..].iter())
-        {
-            let next_state = state.next_stamp(commit);
-            let seed = build_unspent_seed_pcd(rng, state, tgs, nf);
-            acc = Some(match acc.take() {
-                | None => seed,
-                | Some(left) => {
-                    let (fused, ()) = PROOF_SYSTEM
-                        .fuse(rng, pool::UnspentFuse, (), left, seed)
-                        .expect("UnspentFuse");
-                    fused
-                },
-            });
-            state = next_state;
-        }
-        let rest = acc.expect("rest-of-block has at least one stamp");
-
+    pub fn lift(
+        &self,
+        rng: &mut (impl RngCore + CryptoRng),
+        spendable: Pcd<spendable::SpendableHeader>,
+        unspent: Pcd<pool::Unspent>,
+        note: &Note,
+        start_epoch: EpochIndex,
+        present_epoch: EpochIndex,
+    ) -> Pcd<spendable::SpendableHeader> {
+        let verified = self.verify_unspent(rng, unspent, note, start_epoch, present_epoch);
         let (lifted, ()) = PROOF_SYSTEM
-            .fuse(rng, spendable::SpendableLift, (), spendable, rest)
+            .fuse(rng, spendable::SpendableLift, (), spendable, verified)
             .expect("SpendableLift");
         lifted
+    }
+
+    pub fn lift_over_creation_epoch(
+        &self,
+        rng: &mut (impl RngCore + CryptoRng),
+        pool: &PoolSim,
+        note: &Note,
+        cm_height: BlockHeight,
+        spendable: Pcd<spendable::SpendableHeader>,
+    ) -> Pcd<spendable::SpendableHeader> {
+        let cm_idx = pool
+            .tachygrams_at(cm_height)
+            .iter()
+            .position(|tgs| tgs.contains(&note.commitment().into()))
+            .expect("cm in creation block");
+        let start_anchor = spendable.data().1;
+        let creation_epoch = cm_height.epoch();
+        let end_height = BlockHeight(epoch_final_of(creation_epoch).0 + 1);
+        let unspent = build_partial_multi_epoch_unspent(
+            rng,
+            pool,
+            &[
+                self.nf_at(note, creation_epoch),
+                self.nf_at(note, creation_epoch.next()),
+            ],
+            cm_height,
+            cm_idx + 1,
+            start_anchor,
+            end_height,
+        );
+        self.lift(
+            rng,
+            spendable,
+            unspent,
+            note,
+            creation_epoch,
+            creation_epoch.next(),
+        )
     }
 
     pub fn autonome(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         anchor: Anchor,
-        spends: Vec<(
-            Note,
-            Pcd<delegation::NullifierHeader>,
-            Pcd<delegation::NullifierHeader>,
-            Pcd<spendable::SpendableHeader>,
-        )>,
+        spends: Vec<(Note, Pcd<spendable::SpendableHeader>, EpochIndex)>,
         output_notes: Vec<Note>,
     ) -> Bundle<Stamp> {
         let ask = self.sk.derive_auth_private();
 
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
-        for (note, nf_now, nf_next, spendable) in spends {
+        for (note, spendable_pcd, spend_epoch) in spends {
+            let range_pcd = self.derived_range(rng, &note, spend_epoch, 2);
+            let pair = [
+                self.nf_at(&note, spend_epoch),
+                self.nf_at(&note, spend_epoch.next()),
+            ];
             let rcv = value::CommitmentTrapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((nf_now, nf_next, spendable));
+            spend_pcds.push((range_pcd, pair, spendable_pcd));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
@@ -615,7 +724,7 @@ impl WalletSim {
             .collect();
 
         let bundle_plan = bundle::Plan::new(spend_plans, output_plans);
-        let sighash = mock_sighash(bundle_plan.commitment());
+        let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
         let unproven = bundle_plan
             .sign(&sighash, &ask, rng)
             .expect("sign autonome");
@@ -630,11 +739,16 @@ impl WalletSim {
 }
 
 pub struct SyncSim {
-    entries: Vec<(
-        DelegationId,
-        Vec<Pcd<delegation::DelegateNfPrefixHeader>>,
-        Pcd<spendable::SpendableHeader>,
-    )>,
+    entries: Vec<SyncEntry>,
+}
+
+struct SyncEntry {
+    handle: usize,
+    nfs: Vec<Nullifier>,
+    consumed: u32,
+    next_height: BlockHeight,
+    next_stamp_idx: usize,
+    cursor_anchor: Anchor,
 }
 
 impl SyncSim {
@@ -645,142 +759,77 @@ impl SyncSim {
         }
     }
 
-    /// Record (or replace) the spendable for the wallet identified by the
-    /// `delegates` cover. `delegation_id` is derived from `delegates[0]`;
-    /// all delegates must share it.
-    pub fn accept_spendable(
+    pub fn accept_delegation(
         &mut self,
-        delegates: Vec<Pcd<delegation::DelegateNfPrefixHeader>>,
-        spendable: Pcd<spendable::SpendableHeader>,
+        handle: usize,
+        nfs: Vec<Nullifier>,
+        cm_height: BlockHeight,
+        cm_idx: usize,
+        start_anchor: Anchor,
     ) {
-        let delegation_id = delegates.first().expect("at least one delegate").data().1;
-        assert!(
-            delegates.iter().all(|del| del.data().1 == delegation_id),
-            "delegates must share a single delegation_id"
-        );
-        if let Some(entry) = self
+        let entry = SyncEntry {
+            handle,
+            nfs,
+            consumed: 0,
+            next_height: cm_height,
+            next_stamp_idx: cm_idx + 1,
+            cursor_anchor: start_anchor,
+        };
+        if let Some(slot) = self
             .entries
             .iter_mut()
-            .find(|entry| entry.0 == delegation_id)
+            .find(|stored| stored.handle == handle)
         {
-            entry.1 = delegates;
-            entry.2 = spendable;
+            *slot = entry;
         } else {
-            self.entries.push((delegation_id, delegates, spendable));
+            self.entries.push(entry);
         }
     }
 
-    pub fn spendable(&self, delegation_id: DelegationId) -> Pcd<spendable::SpendableHeader> {
-        self.entries
-            .iter()
-            .find(|entry| entry.0 == delegation_id)
-            .expect("no maintained spendable for delegation_id")
-            .2
-            .clone()
+    pub fn consumed(&self, handle: usize) -> u32 {
+        self.entry(handle).consumed
     }
 
-    /// Advance every maintained spendable up to `pool`'s current anchor,
-    /// composing same-epoch and cross-epoch lifts as needed. Stored
-    /// spendables locate their current height by asking `pool` to resolve
-    /// the spendable's anchor.
-    pub fn lift(&mut self, rng: &mut (impl RngCore + CryptoRng), pool: &PoolSim) {
-        let ids: Vec<DelegationId> = self.entries.iter().map(|entry| entry.0).collect();
-        for id in ids {
-            self.lift_one(rng, id, pool);
-        }
-    }
-
-    fn lift_one(
+    pub fn build_next_unspent(
         &mut self,
         rng: &mut (impl RngCore + CryptoRng),
-        delegation_id: DelegationId,
+        handle: usize,
         pool: &PoolSim,
-    ) {
-        loop {
-            let target_height = pool.height();
-            let idx = self
-                .entries
-                .iter()
-                .position(|entry| entry.0 == delegation_id)
-                .expect("no entry for delegation_id");
-            let stored_anchor = self.entries[idx].2.data().1;
-            let stored_height = pool.height_at(stored_anchor);
-            if stored_height == target_height {
-                return;
-            }
-            assert!(stored_height < target_height);
+        target_height: BlockHeight,
+    ) -> Pcd<pool::Unspent> {
+        let idx = self
+            .entries
+            .iter()
+            .position(|entry| entry.handle == handle)
+            .expect("no delegation for handle");
+        let entry = &self.entries[idx];
+        assert!(
+            target_height >= entry.next_height,
+            "target_height must be at least the next uncovered height"
+        );
+        let nfs_from = usize::try_from(entry.consumed).expect("fits usize");
+        let unspent = build_partial_multi_epoch_unspent(
+            rng,
+            pool,
+            &entry.nfs[nfs_from..],
+            entry.next_height,
+            entry.next_stamp_idx,
+            entry.cursor_anchor,
+            target_height,
+        );
+        let new_consumed = entry.consumed + (target_height.epoch().0 - entry.next_height.epoch().0);
+        self.entries[idx].consumed = new_consumed;
+        self.entries[idx].next_height = BlockHeight(target_height.0 + 1);
+        self.entries[idx].next_stamp_idx = 0;
+        self.entries[idx].cursor_anchor = pool.anchor_at(target_height);
+        unspent
+    }
 
-            let (_, delegates, spendable_pcd) = self.entries.swap_remove(idx);
-            let stored_epoch = stored_height.epoch();
-            let stored_epoch_final = epoch_final_of(stored_epoch);
-
-            // Lift inside the current epoch first, up to either target_height
-            // or stored_epoch_final, whichever comes first.
-            let same_epoch_target = cmp::min(target_height, stored_epoch_final);
-
-            let after_same_epoch_pcd = if same_epoch_target == stored_height {
-                spendable_pcd
-            } else {
-                let nf = spendable_pcd.data().0;
-                let unspent = build_unspent_pcd(
-                    rng,
-                    pool,
-                    nf,
-                    BlockHeight(stored_height.0 + 1)..=same_epoch_target,
-                );
-                let (pcd, ()) = PROOF_SYSTEM
-                    .fuse(rng, spendable::SpendableLift, (), spendable_pcd, unspent)
-                    .expect("SpendableLift");
-                pcd
-            };
-
-            if same_epoch_target == target_height {
-                self.entries
-                    .push((delegation_id, delegates, after_same_epoch_pcd));
-                continue;
-            }
-
-            // Cross the epoch boundary. Walk the local delegates cover
-            // directly so we don't have to re-insert the popped entry.
-            let new_epoch = EpochIndex(stored_epoch.0 + 1);
-            let old_nf_pcd = walk_delegate_for_epoch(rng, &delegates, stored_epoch);
-            let new_nf_pcd = walk_delegate_for_epoch(rng, &delegates, new_epoch);
-            let new_nf = new_nf_pcd.data().0;
-
-            let (rollover_pcd, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    spendable::DelegateRolloverFuse,
-                    (),
-                    old_nf_pcd,
-                    new_nf_pcd,
-                )
-                .expect("DelegateRolloverFuse");
-
-            let (rollover_header_pcd, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    spendable::SpendableRollover,
-                    (),
-                    after_same_epoch_pcd,
-                    rollover_pcd,
-                )
-                .expect("SpendableRollover");
-
-            let next_target = cmp::min(target_height, epoch_final_of(new_epoch));
-            let new_epoch_first = BlockHeight(stored_epoch_final.0 + 1);
-            let unspent = build_unspent_pcd(rng, pool, new_nf, new_epoch_first..=next_target);
-            let (landed, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    spendable::SpendableEpochLift,
-                    (),
-                    rollover_header_pcd,
-                    unspent,
-                )
-                .expect("SpendableEpochLift");
-            self.entries.push((delegation_id, delegates, landed));
-        }
+    fn entry(&self, handle: usize) -> &SyncEntry {
+        self.entries
+            .iter()
+            .find(|entry| entry.handle == handle)
+            .expect("no delegation for handle")
     }
 }
 
@@ -790,17 +839,8 @@ impl Default for SyncSim {
     }
 }
 
-fn walk_delegate_for_epoch(
-    rng: &mut (impl RngCore + CryptoRng),
-    delegates: &[Pcd<delegation::DelegateNfPrefixHeader>],
-    target_epoch: EpochIndex,
-) -> Pcd<delegation::DelegateNullifierHeader> {
-    let delegate = delegates
-        .iter()
-        .find(|pcd| pcd.data().0.range().contains(&target_epoch.0))
-        .expect("no delegate covers target_epoch")
-        .clone();
-    ggm_tools::walk_delegate_to_delegate_nullifier(rng, delegate, target_epoch)
+fn epoch_first_of(epoch: EpochIndex) -> BlockHeight {
+    BlockHeight(epoch.0 * EPOCH_SIZE)
 }
 
 fn epoch_final_of(epoch: EpochIndex) -> BlockHeight {
@@ -811,22 +851,23 @@ fn epoch_final_of(epoch: EpochIndex) -> BlockHeight {
 pub mod ggm_tools {
     extern crate alloc;
     use alloc::vec::Vec;
-    use core::ops::RangeInclusive;
 
     use ragu::{Pcd, Proof};
     use rand_core::{CryptoRng, RngCore};
 
     use crate::{
         EpochIndex,
+        digest::poseidon,
         keys::{GGM_CHUNK_SIZE, GGM_TREE_DEPTH},
-        primitives::DelegationTrapdoor,
+        note::Nullifier,
+        primitives::NfSeqPoly,
         stamp::proof::{PROOF_SYSTEM, delegation},
     };
 
     pub fn walk_master_to_depth(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<delegation::NfMasterHeader>,
-        epoch_bits: u32,
+        master_pcd: Pcd<delegation::NfPrefixHeader>,
+        epoch: EpochIndex,
         target_depth: u8,
     ) -> Pcd<delegation::NfPrefixHeader> {
         assert!(
@@ -834,20 +875,10 @@ pub mod ggm_tools {
             "target_depth must be in 1..=GGM_DEPTH",
         );
 
-        let first_chunk = chunk_at(epoch_bits, 1);
-        let (mut pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                delegation::NfMasterStep,
-                (first_chunk,),
-                master_pcd,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("note master step");
-
-        while pcd.data().0.depth.get() < target_depth {
-            let next_step = pcd.data().0.depth.get() + 1;
-            let chunk = chunk_at(epoch_bits, next_step);
+        let mut pcd = master_pcd;
+        while pcd.data().1 < target_depth {
+            let next_step = pcd.data().1 + 1;
+            let chunk = chunk_at(epoch.0, next_step);
             let (next_pcd, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
@@ -863,32 +894,12 @@ pub mod ggm_tools {
         pcd
     }
 
-    pub fn delegate_range(
-        rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: &Pcd<delegation::NfMasterHeader>,
-        trap: DelegationTrapdoor,
-        epoch_range: RangeInclusive<u32>,
-    ) -> Vec<Pcd<delegation::DelegateNfPrefixHeader>> {
-        let mk = master_pcd.data().0;
-        mk.derive_note_delegates(epoch_range)
-            .into_iter()
-            .map(|target_key| {
-                let target_depth = target_key.depth.get();
-                let span_bits = (GGM_TREE_DEPTH - target_depth) * GGM_CHUNK_SIZE;
-                let epoch_bits = target_key.index << span_bits;
-                let prefix_pcd =
-                    walk_master_to_depth(rng, master_pcd.clone(), epoch_bits, target_depth);
-                blind_prefix(rng, prefix_pcd, trap)
-            })
-            .collect()
-    }
-
     pub fn nullifier_from_master(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<delegation::NfMasterHeader>,
+        master_pcd: Pcd<delegation::NfPrefixHeader>,
         target_epoch: EpochIndex,
     ) -> Pcd<delegation::NullifierHeader> {
-        let prefix_pcd = walk_master_to_depth(rng, master_pcd, target_epoch.0, GGM_TREE_DEPTH);
+        let prefix_pcd = walk_master_to_depth(rng, master_pcd, target_epoch, GGM_TREE_DEPTH);
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
@@ -901,68 +912,52 @@ pub mod ggm_tools {
         pcd
     }
 
-    pub fn delegate_nullifier_from_master(
+    pub fn nullifier_range_from_master(
         rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<delegation::NfMasterHeader>,
-        trap: DelegationTrapdoor,
-        target_epoch: EpochIndex,
-    ) -> Pcd<delegation::DelegateNullifierHeader> {
-        let depth_one = walk_master_to_depth(rng, master_pcd, target_epoch.0, 1);
-        let blinded = blind_prefix(rng, depth_one, trap);
-        walk_delegate_to_delegate_nullifier(rng, blinded, target_epoch)
-    }
-
-    /// Apply [`DelegationStep`](delegation::DelegationStep) to a
-    /// pre-blind prefix PCD, returning a post-blind delegate PCD.
-    pub fn blind_prefix(
-        rng: &mut (impl RngCore + CryptoRng),
-        prefix_pcd: Pcd<delegation::NfPrefixHeader>,
-        trap: DelegationTrapdoor,
-    ) -> Pcd<delegation::DelegateNfPrefixHeader> {
-        let (pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                delegation::DelegationStep,
-                (trap,),
-                prefix_pcd,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("delegation blind step");
-        pcd
-    }
-
-    pub fn walk_delegate_to_delegate_nullifier(
-        rng: &mut (impl RngCore + CryptoRng),
-        delegate_pcd: Pcd<delegation::DelegateNfPrefixHeader>,
-        target_epoch: EpochIndex,
-    ) -> Pcd<delegation::DelegateNullifierHeader> {
-        let mut pcd = delegate_pcd;
-
-        while pcd.data().0.depth.get() < GGM_TREE_DEPTH {
-            let next_step = pcd.data().0.depth.get() + 1;
-            let chunk = chunk_at(target_epoch.0, next_step);
-            let (next_pcd, ()) = PROOF_SYSTEM
+        master_pcd: &Pcd<delegation::NfPrefixHeader>,
+        start_epoch: EpochIndex,
+        len: u32,
+    ) -> Pcd<delegation::NullifierHeader> {
+        assert!(len >= 1, "range length must be at least 1");
+        let mut nfs: Vec<Nullifier> = Vec::new();
+        let mut acc: Option<Pcd<delegation::NullifierHeader>> = None;
+        for offset in 0..len {
+            let epoch = EpochIndex(start_epoch.0 + offset);
+            let prefix_pcd = walk_master_to_depth(rng, master_pcd.clone(), epoch, GGM_TREE_DEPTH);
+            let nf = Nullifier::from(poseidon::nullifier(prefix_pcd.data().0));
+            let (leaf, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    delegation::DelegateNfPrefixStep,
-                    (chunk,),
-                    pcd,
+                    delegation::NullifierStep,
+                    (),
+                    prefix_pcd,
                     Proof::trivial().carry::<()>(()),
                 )
-                .expect("delegation step");
-            pcd = next_pcd;
+                .expect("nullifier step");
+            acc = Some(match acc {
+                None => {
+                    nfs.push(nf);
+                    leaf
+                },
+                Some(left) => {
+                    let left_poly = NfSeqPoly::from(nfs.as_slice());
+                    let right_poly = NfSeqPoly::from([nf].as_slice());
+                    nfs.push(nf);
+                    let merged = NfSeqPoly::from(nfs.as_slice());
+                    let (fused, ()) = PROOF_SYSTEM
+                        .fuse(
+                            rng,
+                            delegation::NullifierFuse,
+                            (left_poly, right_poly, merged),
+                            left,
+                            leaf,
+                        )
+                        .expect("NullifierFuse");
+                    fused
+                },
+            });
         }
-
-        let (nf_pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                delegation::DelegateNullifierStep,
-                (),
-                pcd,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("delegate nullifier step");
-        nf_pcd
+        acc.expect("len >= 1 produced a range")
     }
 
     fn chunk_at(epoch_bits: u32, level: u8) -> u8 {
@@ -971,4 +966,100 @@ pub mod ggm_tools {
         let chunk_u32 = (epoch_bits >> shift) & chunk_mask;
         u8::try_from(chunk_u32).expect("chunk fits in u8")
     }
+}
+
+fn build_partial_multi_epoch_unspent(
+    rng: &mut (impl RngCore + CryptoRng),
+    pool: &PoolSim,
+    nfs: &[Nullifier],
+    first_height: BlockHeight,
+    first_stamp_idx: usize,
+    start_anchor: Anchor,
+    end_height: BlockHeight,
+) -> Pcd<pool::Unspent> {
+    let first_epoch = first_height.epoch();
+    let first_epoch_final = epoch_final_of(first_epoch);
+    let first_epoch_end = cmp::min(end_height, first_epoch_final);
+    let nf0 = nfs[0];
+
+    let stamps = pool.tachygrams_at(first_height);
+    let stamp_commits = pool.stamp_commits_at(first_height);
+    assert!(first_stamp_idx <= stamps.len(), "first_stamp_idx in range");
+    let mut state = start_anchor;
+    let mut first_segment: Option<Pcd<pool::Unspent>> = None;
+    for (tgs, commit) in stamps[first_stamp_idx..]
+        .iter()
+        .zip(stamp_commits[first_stamp_idx..].iter())
+    {
+        let seed = build_unspent_seed_pcd(rng, state, first_epoch, tgs, nf0);
+        state = state.next_stamp(commit);
+        first_segment = Some(match first_segment.take() {
+            None => seed,
+            Some(left) => {
+                let (fused, ()) = PROOF_SYSTEM
+                    .fuse(rng, pool::UnspentFuse, (), left, seed)
+                    .expect("UnspentFuse rest-of-block");
+                fused
+            },
+        });
+    }
+    let mut height = BlockHeight(first_height.0 + 1);
+    while height <= first_epoch_end {
+        let segment = build_unspent_pcd(rng, pool, nf0, height..=height);
+        first_segment = Some(match first_segment.take() {
+            None => segment,
+            Some(left) => {
+                let (fused, ()) = PROOF_SYSTEM
+                    .fuse(rng, pool::UnspentFuse, (), left, segment)
+                    .expect("UnspentFuse subsequent-block");
+                fused
+            },
+        });
+        height = BlockHeight(height.0 + 1);
+    }
+
+    let mut chain = first_segment.expect("first epoch covers at least one stamp");
+    let mut elapsed_nfs: Vec<Nullifier> = Vec::new();
+    let mut present_nf = nf0;
+
+    if first_epoch_end == end_height {
+        return chain;
+    }
+
+    let mut current_height = BlockHeight(first_epoch_end.0 + 1);
+    let mut current_epoch = EpochIndex(first_epoch.0 + 1);
+    let mut nfs_idx = 1usize;
+    loop {
+        let epoch_final = epoch_final_of(current_epoch);
+        let epoch_end_height = cmp::min(end_height, epoch_final);
+        let nf = nfs[nfs_idx];
+        let intra = build_unspent_pcd(rng, pool, nf, current_height..=epoch_end_height);
+
+        let left_poly = NfSeqPoly::from(elapsed_nfs.as_slice());
+        let right_poly = NfSeqPoly::from(Vec::<Nullifier>::new().as_slice());
+        let mut combined_nfs = elapsed_nfs.clone();
+        combined_nfs.push(present_nf);
+        let combined = NfSeqPoly::from(combined_nfs.as_slice());
+        let (fused, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                pool::UnspentEpochFuse,
+                (left_poly, right_poly, combined),
+                chain,
+                intra,
+            )
+            .expect("UnspentEpochFuse");
+        chain = fused;
+        elapsed_nfs.push(present_nf);
+        present_nf = nf;
+
+        if epoch_end_height == end_height {
+            break;
+        }
+        current_height = BlockHeight(epoch_end_height.0 + 1);
+        current_epoch = EpochIndex(current_epoch.0 + 1);
+        nfs_idx += 1;
+    }
+
+    chain
 }

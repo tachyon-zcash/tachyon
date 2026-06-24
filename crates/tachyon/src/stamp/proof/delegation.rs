@@ -1,159 +1,84 @@
-//! GGM walk headers and steps.
+//! GGM nullifier-derivation chain: prove a contiguous range of a note's
+//! per-epoch nullifiers `GGM(mk, ·)`. Wallet-only; every range header carries
+//! `cm` for its consumers.
 
 extern crate alloc;
 
 use alloc::vec::Vec;
 
 use ff::PrimeField as _;
-use pasta_curves::Fp;
-use ragu::{Header, Index, Step, Suffix};
-
-use crate::{
-    constants::NOTE_VALUE_MAX,
-    digest::poseidon,
-    keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey, NotePrefixedKey, ProofAuthorizingKey},
-    note::{self, Note, Nullifier},
-    primitives::{DelegationId, DelegationTrapdoor, EpochIndex},
+use group::{Curve as _, GroupEncoding as _};
+use pasta_curves::{Eq, Fp};
+use ragu::{
+    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
+    constraint::{enforce_equal_point, enforce_zero},
 };
 
-/// Private header for a master key at depth 0.
-///
-/// Carries the `(mk, cm)` lineage established at [`NfMasterSeed`]. No
-/// delegation identifier — both leaf paths attach below this point.
-#[derive(Clone, Debug)]
-pub struct NfMasterHeader;
+use crate::{
+    digest::poseidon,
+    keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, ProofAuthorizingKey},
+    note::{self, Note, Nullifier},
+    primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
+    relations::enforce_poly_concat,
+};
 
-impl Header for NfMasterHeader {
-    /// `(mk, cm)`. Both computed at [`NfMasterSeed`] from the
-    /// `(note, pak)` witness, which the step constrains via
-    /// `note.pk == pak.derive_payment_key()`.
-    type Data = (NoteMasterKey, note::Commitment);
-
-    const SUFFIX: Suffix = Suffix::new(0);
-
-    fn encode(&(mk, cm): &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32);
-        out.extend_from_slice(&mk.0.to_repr());
-        out.extend_from_slice(&Fp::from(cm).to_repr());
-        out
-    }
-}
-
-/// Private header for a prefix key at depth ≥ 1.
-///
-/// Lineage `(mk, cm)` is threaded unchanged through [`NfMasterStep`] and
-/// [`NfPrefixStep`] so that either leaf path can attach at any depth —
-/// [`NullifierStep`] for the user-device leaf, or [`DelegationStep`] for the
-/// sync-service leaf.
+/// In-progress GGM walk position `(node, depth, index, cm)`: the current tree
+/// `node`, levels descended `depth`, leaf `index`, and the note commitment `cm`
+/// carried for the final binding. Wallet-only.
 #[derive(Clone, Debug)]
 pub struct NfPrefixHeader;
 
 impl Header for NfPrefixHeader {
-    /// `(key, mk, cm)`. `key` advances via [`NfPrefixStep`] from a
-    /// parent prefix or [`NfMasterStep`] from `mk`; `mk` and `cm`
-    /// thread through unchanged.
-    type Data = (NotePrefixedKey, NoteMasterKey, note::Commitment);
+    type Data = (Fp, u8, EpochIndex, note::Commitment);
 
     const SUFFIX: Suffix = Suffix::new(1);
 
-    fn encode(&(key, mk, cm): &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 1 + 4 + 32 + 32);
-        out.extend_from_slice(&key.inner.to_repr());
-        out.extend_from_slice(&key.depth.get().to_le_bytes());
-        out.extend_from_slice(&key.index.to_le_bytes());
-        out.extend_from_slice(&mk.0.to_repr());
-        out.extend_from_slice(&Fp::from(cm).to_repr());
+    fn encode(data: &Self::Data) -> Vec<u8> {
+        let mut out = Vec::with_capacity(32 + 1 + 4 + 32);
+        out.extend_from_slice(&data.0.to_repr());
+        out.extend_from_slice(&data.1.to_le_bytes());
+        out.extend_from_slice(&data.2.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.3).to_repr());
         out
     }
 }
 
-/// Private header after nullifier derivation.
+/// A proven contiguous range of derived nullifiers (wallet-only).
 ///
-/// Carries `(cm, nf, epoch)` — the wallet's private GGM-leaf state. `cm` is
-/// required at [`SpendableInit`](super::spendable::SpendableInit) to bind
-/// the spendable to the cm-stamp's anchor advance, and at
-/// [`SpendBind`](super::spend::SpendBind) to bind the action to the note
-/// via `note.commitment() == cm_tg`. User device only — `cm` is private.
+/// `(range_commit, start_epoch, end_epoch, cm)`: `range_commit` commits to the
+/// half-open range `[N_start, .., N_{end-1}]` (`N_e = GGM(mk, e)`) at degree 0;
+/// `cm` lets every consumer bind the range to the real note.
 #[derive(Clone, Debug)]
 pub struct NullifierHeader;
 
 impl Header for NullifierHeader {
-    /// `(cm, nf, epoch)`. `nf` and `epoch` are computed at
-    /// [`NullifierStep`] from the input [`NfPrefixHeader`]; `cm`
-    /// threads through unchanged.
-    type Data = (note::Commitment, Nullifier, EpochIndex);
+    type Data = (NfSeqCommit, EpochIndex, EpochIndex, note::Commitment);
 
     const SUFFIX: Suffix = Suffix::new(2);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 4);
-        out.extend_from_slice(&Fp::from(data.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.1).to_repr());
-        out.extend_from_slice(&data.2.0.to_le_bytes());
-        out
-    }
-}
-
-/// Blinded header for a prefix key at depth ≥ 1.
-///
-/// Replaces the `(mk, cm)` lineage carried by [`NfPrefixHeader`] with a
-/// `delegation_id` opaque to the holder. After [`DelegationStep`] there
-/// is no way to recover `cm` or `mk` from this header.
-#[derive(Clone, Debug)]
-pub struct DelegateNfPrefixHeader;
-
-impl Header for DelegateNfPrefixHeader {
-    /// `(key, delegation_id)`. Both computed at [`DelegationStep`]
-    /// from the left [`NfPrefixHeader`] plus a trapdoor witness;
-    /// `delegation_id` is the Poseidon binding of `(mk, cm, trapdoor)`
-    /// and supplants the `(mk, cm)` lineage from then on.
-    type Data = (NotePrefixedKey, DelegationId);
-
-    const SUFFIX: Suffix = Suffix::new(3);
-
-    fn encode(&(key, id): &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 1 + 4 + 32);
-        out.extend_from_slice(&key.inner.to_repr());
-        out.extend_from_slice(&key.depth.get().to_le_bytes());
-        out.extend_from_slice(&key.index.to_le_bytes());
-        out.extend_from_slice(&id.0.to_repr());
-        out
-    }
-}
-
-/// Blinded header after nullifier derivation.
-///
-/// Sync-service-visible leaf state. Consumed only by
-/// [`DelegateRolloverFuse`](super::spendable::DelegateRolloverFuse),
-/// which checks lineage equality on `delegation_id`.
-#[derive(Clone, Debug)]
-pub struct DelegateNullifierHeader;
-
-impl Header for DelegateNullifierHeader {
-    /// `(nf, epoch, delegation_id)`. `nf` and `epoch` are computed at
-    /// [`DelegateNullifierStep`] from the GGM leaf; `delegation_id`
-    /// threads unchanged from [`DelegateNfPrefixHeader`].
-    type Data = (Nullifier, EpochIndex, DelegationId);
-
-    const SUFFIX: Suffix = Suffix::new(4);
-
-    fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 4 + 32);
-        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        let mut out = Vec::with_capacity(32 + 4 + 4 + 32);
+        let commit_bytes: [u8; 32] = Eq::from(data.0).to_affine().to_bytes();
+        out.extend_from_slice(&commit_bytes);
         out.extend_from_slice(&data.1.0.to_le_bytes());
-        out.extend_from_slice(&Fp::from(data.2).to_repr());
+        out.extend_from_slice(&data.2.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.3).to_repr());
         out
     }
 }
 
-/// Seeds the GGM tree root from `(note, pak)`.
+/// Seed the GGM walk at the master root.
+///
+/// Witnesses the note and `pak`, proves `mk` is the note's master key
+/// (`note.pk == pak.derive_payment_key()`), and emits the depth-0 node carrying
+/// the note's `cm`.
 #[derive(Debug)]
 pub struct NfMasterSeed;
 
 impl Step for NfMasterSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = NfMasterHeader;
+    type Output = NfPrefixHeader;
     type Right = ();
     type Witness<'source> = (Note, ProofAuthorizingKey);
 
@@ -166,50 +91,20 @@ impl Step for NfMasterSeed {
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if u64::from(note.value) == 0 {
-            return Err(ragu::Error("NfMasterSeed: zero-value note"));
-        }
-        if u64::from(note.value) > NOTE_VALUE_MAX {
-            return Err(ragu::Error("NfMasterSeed: note value exceeds maximum"));
-        }
-        if note.pk.0 != pak.derive_payment_key().0 {
-            return Err(ragu::Error("NfMasterSeed: pak not related to note"));
-        }
-
+        enforce_zero(
+            note.pk.0 - pak.derive_payment_key().0,
+            "NfMasterSeed: pak not related to note",
+        )?;
         let mk = pak.nk.derive_note_private(&note.psi);
         let cm = note.commitment();
-        Ok(((mk, cm), ()))
+        Ok(((mk.0, 0, EpochIndex(0), cm), ()))
     }
 }
 
-/// First GGM step: master → depth-1 prefix.
-#[derive(Debug)]
-pub struct NfMasterStep;
-
-impl Step for NfMasterStep {
-    type Aux<'source> = ();
-    type Left = NfMasterHeader;
-    type Output = NfPrefixHeader;
-    type Right = ();
-    type Witness<'source> = (u8,);
-
-    const INDEX: Index = Index::new(1);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (chunk,): Self::Witness<'source>,
-        (mk, cm): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if chunk >= GGM_TREE_ARITY {
-            return Err(ragu::Error("NfMasterStep: chunk exceeds GGM arity"));
-        }
-        Ok(((mk.step(chunk), mk, cm), ()))
-    }
-}
-
-/// Recursive private GGM step.
+/// Descend one level of the GGM tree.
+///
+/// Witnesses a free `chunk`; `node' = nf_prefix(node, chunk)`, `index' =
+/// index*ARITY + chunk`, `depth' = depth + 1`.
 #[derive(Debug)]
 pub struct NfPrefixStep;
 
@@ -220,26 +115,36 @@ impl Step for NfPrefixStep {
     type Right = ();
     type Witness<'source> = (u8,);
 
-    const INDEX: Index = Index::new(2);
+    const INDEX: Index = Index::new(1);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (chunk,): Self::Witness<'source>,
-        (key, mk, cm): <Self::Left as Header>::Data,
+        (node, depth, index, cm): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if key.depth.get() >= GGM_TREE_DEPTH {
-            return Err(ragu::Error("NfPrefixStep: already at maximum depth"));
+        if depth >= GGM_TREE_DEPTH {
+            return Err(ragu::Error::InvalidWitness(
+                "NfPrefixStep: already at maximum depth".into(),
+            ));
         }
         if chunk >= GGM_TREE_ARITY {
-            return Err(ragu::Error("NfPrefixStep: chunk exceeds GGM arity"));
+            return Err(ragu::Error::InvalidWitness(
+                "NfPrefixStep: chunk exceeds GGM arity".into(),
+            ));
         }
-        Ok(((key.step(chunk), mk, cm), ()))
+        let child = poseidon::nf_prefix(node, chunk);
+        let child_index = EpochIndex(index.0 * u32::from(GGM_TREE_ARITY) + u32::from(chunk));
+        Ok(((child, depth + 1, child_index, cm), ()))
     }
 }
 
-/// Derives a nullifier from a private prefix key.
+/// Turn a leaf node into a single-leaf [`NullifierHeader`].
+///
+/// Requires the walk to be at a leaf (`depth == GGM_TREE_DEPTH`); the nullifier
+/// is `Poseidon(node)` and the range commits to it alone at degree 0, spanning
+/// the single epoch `[index, index + 1)`.
 #[derive(Debug)]
 pub struct NullifierStep;
 
@@ -250,118 +155,92 @@ impl Step for NullifierStep {
     type Right = ();
     type Witness<'source> = ();
 
+    const INDEX: Index = Index::new(2);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        _witness: Self::Witness<'source>,
+        (node, depth, index, cm): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &g0 = Pasta::host_generators(Pasta::baked())
+            .g()
+            .first()
+            .expect("at least one generator");
+
+        enforce_zero(
+            Fp::from(u64::from(depth)) - Fp::from(u64::from(GGM_TREE_DEPTH)),
+            "NullifierStep: not at maximum depth",
+        )?;
+        let nf = Nullifier::from(poseidon::nullifier(node));
+
+        let range_commit = NfSeqCommit::from(g0 * Fp::from(nf));
+        Ok(((range_commit, index, index.next(), cm), ()))
+    }
+}
+
+/// Merge two adjacent derived ranges into one (`left ++ right`).
+///
+/// Requires the same `cm` and contiguity (`right.start == left.end`). Witnesses
+/// the two range polynomials and their concatenation, binds each by
+/// commit-equality, and proves the concat at `offset = left.end - left.start`
+/// via the faithful opening relation.
+#[derive(Debug)]
+pub struct NullifierFuse;
+
+impl Step for NullifierFuse {
+    type Aux<'source> = ();
+    type Left = NullifierHeader;
+    type Output = NullifierHeader;
+    type Right = NullifierHeader;
+    /// `(left_poly, right_poly, merged)`.
+    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
+
     const INDEX: Index = Index::new(3);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (key, _mk, cm): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
+        ctx: &mut ragu::StepCtx<'_>,
+        (left_poly, right_poly, merged): Self::Witness<'source>,
+        (left_commit, left_start, left_end, left_cm): <Self::Left as Header>::Data,
+        (right_commit, right_start, right_end, right_cm): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if key.depth.get() != GGM_TREE_DEPTH {
-            return Err(ragu::Error("NullifierStep: not at maximum depth"));
-        }
-
-        let epoch = EpochIndex(key.index);
-        let nf = key.derive_nullifier(epoch);
-        Ok(((cm, nf, epoch), ()))
-    }
-}
-
-/// Blinds a private prefix key with a delegation trapdoor.
-#[derive(Debug)]
-pub struct DelegationStep;
-
-impl Step for DelegationStep {
-    type Aux<'source> = ();
-    type Left = NfPrefixHeader;
-    type Output = DelegateNfPrefixHeader;
-    type Right = ();
-    type Witness<'source> = (DelegationTrapdoor,);
-
-    const INDEX: Index = Index::new(4);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (trap,): Self::Witness<'source>,
-        (key, mk, cm): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let delegation_id =
-            DelegationId::from(poseidon::delegation_id(mk.0, cm.into(), trap.into()));
-        Ok(((key, delegation_id), ()))
-    }
-}
-
-/// Recursive blinded GGM step.
-///
-/// Each directional chunk in the climb is freely witnessed, rather than bound
-/// to some specific target epoch.
-///
-/// A delegate holding a depth-`d` prefix key holds the cryptographic material
-/// to walk to any leaf in the covered subtree, regardless of the proof
-/// constraints. Free-chunk descent lets them prove which leaf they walked to;
-/// it does not extend the set of leaves they can reach.
-#[derive(Debug)]
-pub struct DelegateNfPrefixStep;
-
-impl Step for DelegateNfPrefixStep {
-    type Aux<'source> = ();
-    type Left = DelegateNfPrefixHeader;
-    type Output = DelegateNfPrefixHeader;
-    type Right = ();
-    type Witness<'source> = (u8,);
-
-    const INDEX: Index = Index::new(5);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (chunk,): Self::Witness<'source>,
-        (key, delegation_id): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if key.depth.get() >= GGM_TREE_DEPTH {
-            return Err(ragu::Error(
-                "DelegateNfPrefixStep: already at maximum depth",
-            ));
-        }
-        if chunk >= GGM_TREE_ARITY {
-            return Err(ragu::Error("DelegateNfPrefixStep: chunk exceeds GGM arity"));
-        }
-        Ok(((key.step(chunk), delegation_id), ()))
-    }
-}
-
-/// Derives a nullifier from a blinded prefix key.
-#[derive(Debug)]
-pub struct DelegateNullifierStep;
-
-impl Step for DelegateNullifierStep {
-    type Aux<'source> = ();
-    type Left = DelegateNfPrefixHeader;
-    type Output = DelegateNullifierHeader;
-    type Right = ();
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(6);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (key, delegation_id): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if key.depth.get() != GGM_TREE_DEPTH {
-            return Err(ragu::Error("DelegateNullifierStep: not at maximum depth"));
-        }
-
-        let epoch = EpochIndex(key.index);
-        let nullifier = key.derive_nullifier(EpochIndex(key.index));
-
-        Ok(((nullifier, epoch, delegation_id), ()))
+        enforce_zero(
+            Fp::from(left_cm) - Fp::from(right_cm),
+            "NullifierFuse: note commitments differ",
+        )?;
+        enforce_zero(
+            Fp::from(right_start) - Fp::from(left_end),
+            "NullifierFuse: ranges not contiguous",
+        )?;
+        enforce_equal_point(
+            Eq::from(left_poly.commit()),
+            Eq::from(left_commit),
+            "NullifierFuse: left polynomial does not match header",
+        )?;
+        enforce_equal_point(
+            Eq::from(right_poly.commit()),
+            Eq::from(right_commit),
+            "NullifierFuse: right polynomial does not match header",
+        )?;
+        let merged_commit = merged.commit();
+        let offset = usize::try_from(left_end.0 - left_start.0).map_err(|_too_long| {
+            ragu::Error::InvalidWitness("NullifierFuse: range length exceeds usize".into())
+        })?;
+        enforce_poly_concat(
+            ctx,
+            &Polynomial::from(left_poly),
+            &Polynomial::from(right_poly),
+            offset,
+            &Polynomial::from(merged),
+        )
+        .map_err(|_relation_err| {
+            ragu::Error::InvalidWitness(
+                "NullifierFuse: merged is not the concat of the halves".into(),
+            )
+        })?;
+        Ok(((merged_commit, left_start, right_end, left_cm), ()))
     }
 }

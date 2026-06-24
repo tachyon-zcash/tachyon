@@ -1,5 +1,4 @@
-use core::{error::Error, fmt};
-
+use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use ff::PrimeField as _;
 use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
 
@@ -10,28 +9,19 @@ use crate::{digest::poseidon, keys::public, value};
 /// Each action produces one digest, which serves as a root in the
 /// accumulator polynomial. Multiple actions are accumulated via
 /// polynomial commitment, not on this type.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct ActionDigest(Fp);
 
 /// Errors from action digest computation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Display, Error)]
 pub enum ActionDigestError {
     /// The cv is the identity point, so the digest cannot be computed.
+    #[display("cv is the identity point")]
     IdentityCv,
     /// The rk is the identity point, so the digest cannot be computed.
+    #[display("rk is the identity point")]
     IdentityRk,
 }
-
-impl fmt::Display for ActionDigestError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            | Self::IdentityCv => write!(f, "cv is the identity point"),
-            | Self::IdentityRk => write!(f, "rk is the identity point"),
-        }
-    }
-}
-
-impl Error for ActionDigestError {}
 
 impl ActionDigest {
     /// Digest a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
@@ -51,31 +41,9 @@ impl ActionDigest {
     }
 }
 
-/// Extract the inner field element (polynomial root).
-impl From<ActionDigest> for Fp {
-    fn from(digest: ActionDigest) -> Self {
-        digest.0
-    }
-}
-
-impl From<Fp> for ActionDigest {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
 impl From<ActionDigest> for [u8; 32] {
     fn from(digest: ActionDigest) -> Self {
         digest.0.to_repr()
-    }
-}
-
-impl TryFrom<&[u8; 32]> for ActionDigest {
-    type Error = &'static str;
-
-    fn try_from(bytes: &[u8; 32]) -> Result<Self, Self::Error> {
-        let fp: Fp = Option::from(Fp::from_repr(*bytes)).ok_or("invalid field element")?;
-        Ok(Self(fp))
     }
 }
 
@@ -99,7 +67,7 @@ mod tests {
         let sk = private::SpendingKey::random(rng);
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: note::Value::from(val),
+            value: note::Value::try_from(val).unwrap(),
             psi: note::NullifierTrapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };

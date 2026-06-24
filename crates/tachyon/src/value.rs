@@ -3,8 +3,9 @@
 //! A value commitment hides the value transferred in an action:
 //! `cv = [v]V + [rcv]R` where `rcv` is the [`CommitmentTrapdoor`].
 
-use core::{fmt, iter, mem::size_of, ops, ops::Neg as _, ptr, slice};
+use core::{iter, mem::size_of, ops, ops::Neg as _, ptr, slice};
 
+use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
 use lazy_static::lazy_static;
 use pasta_curves::{
@@ -46,8 +47,8 @@ lazy_static! {
 /// An $\mathbb{F}_q$ element (Pallas scalar field, 32 bytes). Lives
 /// in the scalar field because $\mathsf{rcv}$ is used as a scalar in
 /// point multiplication $[\mathsf{rcv}]\,\mathcal{R}$.
-#[derive(Clone)]
-pub struct CommitmentTrapdoor(Fq);
+#[derive(Clone, Debug, Into)]
+pub struct CommitmentTrapdoor(#[debug(skip)] Fq);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
@@ -87,12 +88,6 @@ impl CommitmentTrapdoor {
     }
 }
 
-impl From<CommitmentTrapdoor> for Fq {
-    fn from(trapdoor: CommitmentTrapdoor) -> Self {
-        trapdoor.0
-    }
-}
-
 /// A value commitment for a Tachyon action.
 ///
 /// Commits to the value being transferred in an action without
@@ -109,8 +104,8 @@ impl From<CommitmentTrapdoor> for Fq {
 /// ## Type representation
 ///
 /// An EpAffine (Pallas affine curve point, 32 compressed bytes).
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Commitment(pub(super) EpAffine);
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct Commitment(#[debug(skip)] pub(super) EpAffine);
 
 impl Commitment {
     /// Create the value balance commitment
@@ -136,21 +131,9 @@ impl Commitment {
     }
 }
 
-impl From<Commitment> for EpAffine {
-    fn from(cv: Commitment) -> Self {
-        cv.0
-    }
-}
-
 impl From<Commitment> for [u8; 32] {
     fn from(cv: Commitment) -> Self {
         cv.0.to_bytes()
-    }
-}
-
-impl From<EpAffine> for Commitment {
-    fn from(affine: EpAffine) -> Self {
-        Self(affine)
     }
 }
 
@@ -198,18 +181,6 @@ impl Drop for CommitmentTrapdoor {
 }
 
 impl ZeroizeOnDrop for CommitmentTrapdoor {}
-
-impl fmt::Debug for CommitmentTrapdoor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for Commitment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Commitment").finish_non_exhaustive()
-    }
-}
 
 #[cfg(test)]
 mod tests {

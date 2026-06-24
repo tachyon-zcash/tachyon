@@ -1,3 +1,6 @@
+use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
+use pasta_curves::Fp;
+
 /// A tachyon epoch — a point in the accumulator's history.
 ///
 /// The tachyon accumulator evolves as tachygrams are included. Each
@@ -7,7 +10,7 @@
 /// $mk = \text{KDF}(\psi, nk)$, then $nf = F_{mk}(\text{flavor})$.
 /// Different epochs produce different nullifiers for the same note,
 /// enabling range-restricted delegation via the GGM tree PRF.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct EpochIndex(pub u32);
 
 impl EpochIndex {
@@ -18,14 +21,8 @@ impl EpochIndex {
     }
 }
 
-impl From<u32> for EpochIndex {
-    fn from(val: u32) -> Self {
-        Self(val)
-    }
-}
-
-impl From<EpochIndex> for u32 {
+impl From<EpochIndex> for Fp {
     fn from(epoch: EpochIndex) -> Self {
-        epoch.0
+        Self::from(u64::from(epoch.0))
     }
 }

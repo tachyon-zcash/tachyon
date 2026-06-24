@@ -1,15 +1,32 @@
+#![allow(clippy::panic, reason = "test code")]
+
 use alloc::{vec, vec::Vec};
 
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
 use crate::{
+    constants::EPOCH_SIZE,
     digest::blake2b::COMMIT_NO_BUNDLE,
     fixtures::{
         PoolSim, WalletSim, action_digests, build_autonome, build_output_stamp, mock_sighash,
-        random_action, random_block_with,
+        random_action, random_block, random_block_with,
     },
+    primitives::BlockHeight,
 };
+
+#[test]
+fn value_sum_checked_arithmetic() {
+    let va = note::Value::try_from(100u64).unwrap();
+    let vb = note::Value::try_from(200u64).unwrap();
+
+    let sum = (ValueBalance::ZERO + va).unwrap();
+    let total = (sum + vb).unwrap();
+    assert_eq!(i64::try_from(total).unwrap(), 300);
+
+    let diff = (ValueBalance::ZERO - va).unwrap();
+    assert_eq!(i64::try_from(diff).unwrap(), -100);
+}
 
 #[test]
 fn wrong_value_balance_fails_verification() {
@@ -19,7 +36,10 @@ fn wrong_value_balance_fails_verification() {
     let sighash = mock_sighash(bundle.commitment().unwrap());
 
     bundle.value_balance = 999;
-    assert!(bundle.verify_signatures(&sighash).is_err());
+    let err = bundle.verify_signatures(&sighash).unwrap_err();
+    let SignatureError::Binding(_) = err else {
+        panic!("expected SignatureError::Binding, got {err:?}");
+    };
 }
 
 #[test]
@@ -43,14 +63,17 @@ fn plan_commitment_matches_bundle_commitment() {
     let (stamp, output_plan) = build_output_stamp(rng, pool.anchor(), note);
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
-    let sighash = mock_sighash(bundle_plan.commitment());
+    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
 
     let bundle = bundle_plan
         .sign(&sighash, &ask, rng)
         .expect("sign output bundle")
         .stamp(stamp);
 
-    assert_eq!(bundle_plan.commitment(), bundle.commitment().unwrap());
+    assert_eq!(
+        bundle_plan.commitment().unwrap(),
+        bundle.commitment().unwrap()
+    );
 }
 
 #[test]
@@ -58,7 +81,7 @@ fn no_bundle_commitment_differs_from_empty_bundle() {
     let empty_plan = Plan::new(alloc::vec![], alloc::vec![]);
     assert_ne!(
         *COMMIT_NO_BUNDLE,
-        empty_plan.commitment(),
+        empty_plan.commitment().unwrap(),
         "absent bundle must differ from empty bundle"
     );
 }
@@ -67,7 +90,7 @@ fn no_bundle_commitment_differs_from_empty_bundle() {
 fn zero_action_bundle_is_valid() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
-    let sighash = mock_sighash(plan.commitment());
+    let sighash = mock_sighash(plan.commitment().unwrap());
 
     let bundle = Bundle {
         actions: alloc::vec![],
@@ -91,12 +114,13 @@ fn payment_bundle_verifies() {
     let mut pool = PoolSim::genesis(rng);
     pool.mine(random_block_with(rng, &[vec![input_note.commitment()]], 50));
     let height = pool.height();
-    let anchor = pool.anchor_at(height);
-    let spend = sender.fresh_spend(rng, &pool, height, input_note);
+    let spend_epoch = height.epoch();
+    let spendable_pcd = sender.fresh_spend(rng, &pool, height, &input_note);
+    let anchor = spendable_pcd.data().1;
     let stamped = sender.autonome(
         rng,
         anchor,
-        alloc::vec![spend],
+        alloc::vec![(input_note, spendable_pcd, spend_epoch)],
         alloc::vec![output_note, change_note],
     );
     let sighash = mock_sighash(stamped.commitment().unwrap());
@@ -160,20 +184,38 @@ fn innocent_aggregate_from_two_autonomes() {
     let spend_b = wallet.random_note(rng, 500);
     let output_b = wallet.random_note(rng, 200);
 
-    // Mine both spend cms into the same block so both autonomes share anchor.
     let mut pool = PoolSim::genesis(rng);
     pool.mine(random_block_with(
         rng,
         &[vec![spend_a.commitment()], vec![spend_b.commitment()]],
         50,
     ));
-    let height = pool.height();
-    let anchor = pool.anchor_at(height);
+    let cm_height = pool.height();
+    while pool.height() < BlockHeight(EPOCH_SIZE) {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
 
-    let tuple_a = wallet.fresh_spend(rng, &pool, height, spend_a);
-    let tuple_b = wallet.fresh_spend(rng, &pool, height, spend_b);
-    let autonome_a = wallet.autonome(rng, anchor, alloc::vec![tuple_a], alloc::vec![output_a]);
-    let autonome_b = wallet.autonome(rng, anchor, alloc::vec![tuple_b], alloc::vec![output_b]);
+    let init_a = wallet.spendable_init(rng, &spend_a, &pool, cm_height);
+    let sp_a = wallet.lift_over_creation_epoch(rng, &pool, &spend_a, cm_height, init_a);
+    let init_b = wallet.spendable_init(rng, &spend_b, &pool, cm_height);
+    let sp_b = wallet.lift_over_creation_epoch(rng, &pool, &spend_b, cm_height, init_b);
+    let anchor_a = sp_a.data().1;
+    let anchor_b = sp_b.data().1;
+    assert_eq!(anchor_a, anchor_b, "lifts land on a common anchor");
+
+    let spend_epoch = cm_height.epoch().next();
+    let autonome_a = wallet.autonome(
+        rng,
+        anchor_a,
+        alloc::vec![(spend_a, sp_a, spend_epoch)],
+        alloc::vec![output_a],
+    );
+    let autonome_b = wallet.autonome(
+        rng,
+        anchor_b,
+        alloc::vec![(spend_b, sp_b, spend_epoch)],
+        alloc::vec![output_b],
+    );
 
     let digests_a = action_digests(&autonome_a.actions);
     let digests_b = action_digests(&autonome_b.actions);
@@ -182,7 +224,7 @@ fn innocent_aggregate_from_two_autonomes() {
 
     let innocent = {
         let innocent_plan = Plan::new(alloc::vec![], alloc::vec![]);
-        let innocent_sighash = mock_sighash(innocent_plan.commitment());
+        let innocent_sighash = mock_sighash(innocent_plan.commitment().unwrap());
 
         let stamp = Stamp::prove_merge(rng, (stamp_a, &digests_a), (stamp_b, &digests_b))
             .expect("prove_merge");
@@ -230,20 +272,40 @@ fn based_aggregate_with_two_adjuncts() {
         ],
         50,
     ));
-    let height = pool.height();
-    let anchor = pool.anchor_at(height);
+    let cm_height = pool.height();
+    while pool.height() < BlockHeight(EPOCH_SIZE) {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
 
-    let based_tuple = wallet.fresh_spend(rng, &pool, height, based_spend);
-    let a_tuple = wallet.fresh_spend(rng, &pool, height, a_spend);
-    let b_tuple = wallet.fresh_spend(rng, &pool, height, b_spend);
+    let based_init = wallet.spendable_init(rng, &based_spend, &pool, cm_height);
+    let based_sp = wallet.lift_over_creation_epoch(rng, &pool, &based_spend, cm_height, based_init);
+    let a_init = wallet.spendable_init(rng, &a_spend, &pool, cm_height);
+    let a_sp = wallet.lift_over_creation_epoch(rng, &pool, &a_spend, cm_height, a_init);
+    let b_init = wallet.spendable_init(rng, &b_spend, &pool, cm_height);
+    let b_sp = wallet.lift_over_creation_epoch(rng, &pool, &b_spend, cm_height, b_init);
+    let anchor = based_sp.data().1;
+    assert_eq!(anchor, a_sp.data().1, "lifts land on a common anchor");
+    assert_eq!(anchor, b_sp.data().1, "lifts land on a common anchor");
+
+    let spend_epoch = cm_height.epoch().next();
     let mut becomes_based = wallet.autonome(
         rng,
         anchor,
-        alloc::vec![based_tuple],
+        alloc::vec![(based_spend, based_sp, spend_epoch)],
         alloc::vec![based_output],
     );
-    let autonome_a = wallet.autonome(rng, anchor, alloc::vec![a_tuple], alloc::vec![a_output]);
-    let autonome_b = wallet.autonome(rng, anchor, alloc::vec![b_tuple], alloc::vec![b_output]);
+    let autonome_a = wallet.autonome(
+        rng,
+        anchor,
+        alloc::vec![(a_spend, a_sp, spend_epoch)],
+        alloc::vec![a_output],
+    );
+    let autonome_b = wallet.autonome(
+        rng,
+        anchor,
+        alloc::vec![(b_spend, b_sp, spend_epoch)],
+        alloc::vec![b_output],
+    );
 
     let sighash = mock_sighash(becomes_based.commitment().unwrap());
 
@@ -294,9 +356,14 @@ fn invalid_action_sig_fails_verification() {
 
     let mut sig_bytes: [u8; 64] = bundle.actions[0].sig.into();
     sig_bytes[0] ^= 0xFF;
-    bundle.actions[0].sig = action::Signature::from(sig_bytes);
+    let bad_sig = action::Signature::from(sig_bytes);
+    bundle.actions[0].sig = bad_sig;
 
-    assert!(bundle.verify_signatures(&sighash).is_err());
+    let err = bundle.verify_signatures(&sighash).unwrap_err();
+    let SignatureError::Action(sig) = err else {
+        panic!("expected SignatureError::Action, got {err:?}");
+    };
+    assert_eq!(sig, bad_sig);
 }
 
 #[test]
@@ -435,10 +502,7 @@ fn tachyon_bundle_wire_round_trip() {
 
 #[test]
 fn aggregate_id_try_from_rejects_zero() {
-    assert!(matches!(
-        AggregateId::try_from([0u8; 64]),
-        Err(AggregateIdError::Zero)
-    ));
+    AggregateId::try_from([0u8; 64]).unwrap_err();
 }
 
 #[test]
@@ -448,17 +512,14 @@ fn assign_wtxid_rejects_zero_with_actions() {
     let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
 
     assert!(!unassigned.actions.is_empty());
-    assert!(matches!(
-        unassigned.assign_wtxid(AggregateId::ZERO),
-        Err(AggregateIdError::Zero)
-    ));
+    unassigned.assign_wtxid(AggregateId::ZERO).unwrap_err();
 }
 
 #[test]
 fn assign_wtxid_allows_zero_with_no_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
-    let sighash = mock_sighash(plan.commitment());
+    let sighash = mock_sighash(plan.commitment().unwrap());
 
     let unassigned: Bundle<Stripped> = Bundle {
         actions: alloc::vec![],
@@ -505,7 +566,7 @@ fn write_rejects_zero_wtxid_with_actions() {
 fn write_allows_zero_wtxid_with_no_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
-    let sighash = mock_sighash(plan.commitment());
+    let sighash = mock_sighash(plan.commitment().unwrap());
 
     let stripped = Bundle {
         actions: alloc::vec![],
@@ -601,7 +662,7 @@ fn read_rejects_zero_wtxid_with_actions() {
 fn read_allows_zero_wtxid_with_no_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
-    let sighash = mock_sighash(plan.commitment());
+    let sighash = mock_sighash(plan.commitment().unwrap());
 
     let innocent = Bundle {
         actions: alloc::vec![],

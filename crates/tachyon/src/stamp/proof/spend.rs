@@ -6,129 +6,113 @@ use alloc::vec::Vec;
 
 use ff::PrimeField as _;
 use pasta_curves::Fp;
-use ragu::{Header, Index, Step, Suffix};
+use ragu::{
+    Header, Index, Step, Suffix,
+    constraint::{enforce_nonzero, enforce_zero},
+};
 
-use super::delegation::NullifierHeader;
+use super::spendable::SpendableHeader;
 use crate::{
     constants::NOTE_VALUE_MAX,
     entropy::ActionRandomizer,
-    keys::{ProofAuthorizingKey, public},
-    note::{Note, Nullifier},
-    primitives::effect,
+    keys::{PaymentKey, ProofAuthorizingKey, public},
+    note::{self, CommitmentTrapdoor, Note, Nullifier, NullifierTrapdoor, Value},
+    primitives::{Anchor, effect},
     value,
 };
 
-/// Header binding an action to a nullifier pair.
+/// Header binding an action to its spendable lineage.
 ///
-/// Publishing `next_nf` one epoch early lets consensus catch a same-note
-/// spend made in epoch `e+1`: that spend's present-epoch nullifier would
-/// collide with this `next_nf`, which the two-epoch tachygram scan
-/// rejects. See the Tachygrams book chapter.
+/// Carries `cv`, `rk`, the lineage's `present_nf`, the pool `anchor`, and the
+/// note commitment `cm`; the nullifier pair is completed and published at
+/// [`SpendStamp`](super::stamp::SpendStamp).
 #[derive(Debug)]
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(cv, rk, (now_nf, next_nf))`. `cv` and `rk` are derived at
-    /// [`SpendBind`] from the witnessed `(rcv, alpha, pak, note)`.
-    /// [`SpendStamp`](super::stamp::SpendStamp) hashes `(cv, rk)`
-    /// into the per-action `ActionDigest` when committing the
-    /// action set. `now_nf` and `next_nf` are computed upstream by
-    /// [`NullifierStep`](super::delegation::NullifierStep) on two
-    /// [`NullifierHeader`](super::delegation::NullifierHeader)s
-    /// that [`SpendBind`] constrains to share a `cm` lineage and
-    /// to live on consecutive epochs.
+    /// `(cv, rk, present_nf, anchor, cm)`. `cv`/`rk` are derived at
+    /// [`SpendBind`]; `present_nf`, `anchor`, and `cm` thread from the
+    /// spendable lineage that [`SpendBind`] consumed.
     type Data = (
         value::Commitment,
         public::ActionVerificationKey,
-        (Nullifier, Nullifier),
+        Nullifier,
+        Anchor,
+        note::Commitment,
     );
 
     const SUFFIX: Suffix = Suffix::new(10);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 32 + 32);
+        let mut out = Vec::with_capacity(32 * 5);
         let cv_bytes: [u8; 32] = data.0.into();
         let rk_bytes: [u8; 32] = data.1.into();
         out.extend_from_slice(&cv_bytes);
         out.extend_from_slice(&rk_bytes);
-        out.extend_from_slice(&Fp::from(data.2.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.2.1).to_repr());
+        out.extend_from_slice(&Fp::from(data.2).to_repr());
+        out.extend_from_slice(&Fp::from(data.3).to_repr());
+        out.extend_from_slice(&Fp::from(data.4).to_repr());
         out
     }
 }
 
-/// Fuses two epoch-adjacent nullifier leaves and binds them to an action.
+/// Binds an action to its spendable lineage's note.
 ///
-/// The `note.commitment() == left_cm == right_cm` fold is the cv-to-value
-/// seam: the witnessed note's value flows into `cv = rcv.commit(note.value)`,
-/// which becomes the on-chain action's value commitment. Without binding
-/// the witnessed note to the upstream nullifier's `cm`, a prover could
-/// publish a nullifier for a high-value note while committing `cv` to a
-/// low-value note.
-///
-/// [`NullifierRolloverHeader`](super::spendable::NullifierRolloverHeader)
-/// drops `cm` and cannot expose it without leaking note material via
-/// [`DelegateRolloverFuse`](super::spendable::DelegateRolloverFuse), so
-/// this step is the only place where `cm` is in scope alongside the
-/// action witness.
-///
-/// Outputs `SpendHeader::Data = (cv, rk, (now_nf, next_nf))`. The
-/// `ActionDigest = Poseidon(cv, rk)` derivation lives downstream in
-/// [`SpendStamp`](super::stamp::SpendStamp) to keep this step's gate
-/// budget under the per-step bound. `SpendBind` and `SpendStamp` are both
-/// wallet-private; the `SpendHeader` boundary between them is not exposed
-/// to consensus or the sync service.
-///
-/// The `DelegationTrapdoor` is not needed because `delegation_id` is
-/// consumed only by the sync-service rollover steps on
-/// `DelegateNullifierHeader`.
+/// Witnesses the note preimage (`pk`, `value`, `rcm`, `psi`), `pak`, and the
+/// action fields (`rcv`, `alpha`); checks `cm == spendable.cm` (so `cv` commits
+/// to the proven-minted value) and threads `present_nf`, `anchor`, and `cm`
+/// onto the output. The live pair is completed at
+/// [`SpendStamp`](super::stamp::SpendStamp).
 #[derive(Debug)]
 pub struct SpendBind;
 
 impl Step for SpendBind {
     type Aux<'source> = ();
-    type Left = NullifierHeader;
+    type Left = SpendableHeader;
     type Output = SpendHeader;
-    type Right = NullifierHeader;
+    type Right = ();
     type Witness<'source> = (
+        (PaymentKey, Value, CommitmentTrapdoor, NullifierTrapdoor),
         value::CommitmentTrapdoor,
         ActionRandomizer<effect::Spend>,
         ProofAuthorizingKey,
-        Note,
     );
 
-    const INDEX: Index = Index::new(20);
+    const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (rcv, alpha, pak, note): Self::Witness<'source>,
-        (left_cm, nf0, left_epoch): <Self::Left as Header>::Data,
-        (right_cm, nf1, right_epoch): <Self::Right as Header>::Data,
+        ((pk, value, rcm, psi), rcv, alpha, pak): Self::Witness<'source>,
+        (present_nf, anchor, spendable_cm): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if u64::from(note.value) == 0 {
-            return Err(ragu::Error("SpendBind: zero-value note"));
+        enforce_nonzero(Fp::from(u64::from(value)), "SpendBind: zero-value note")?;
+        if u64::from(value) > NOTE_VALUE_MAX {
+            return Err(ragu::Error::InvalidWitness(
+                "SpendBind: note value exceeds maximum".into(),
+            ));
         }
-        if right_epoch.0 != left_epoch.0 + 1 {
-            return Err(ragu::Error("SpendBind: nullifiers not adjacent"));
+        enforce_zero(
+            pk.0 - pak.derive_payment_key().0,
+            "SpendBind: pak not related to note",
+        )?;
+        let cm = Note {
+            pk,
+            value,
+            psi,
+            rcm,
         }
-        if left_cm != right_cm {
-            return Err(ragu::Error("SpendBind: nullifiers not related"));
-        }
-        let cm = note.commitment();
-        if cm != left_cm || cm != right_cm {
-            return Err(ragu::Error("SpendBind: nullifiers not related to note"));
-        }
-        if u64::from(note.value) > NOTE_VALUE_MAX {
-            return Err(ragu::Error("SpendBind: note value exceeds maximum"));
-        }
-        if note.pk.0 != pak.derive_payment_key().0 {
-            return Err(ragu::Error("SpendBind: pak not related to note"));
-        }
+        .commitment();
 
-        let cv = rcv.commit(i64::from(note.value));
+        enforce_zero(
+            Fp::from(spendable_cm) - Fp::from(cm),
+            "SpendBind: note does not match the spendable lineage",
+        )?;
+
+        let cv = rcv.commit(i64::from(value));
         let rk = pak.ak.derive_action_public(&alpha);
 
-        Ok(((cv, rk, (nf0, nf1)), ()))
+        Ok(((cv, rk, present_nf, anchor, cm), ()))
     }
 }

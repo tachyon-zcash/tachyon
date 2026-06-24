@@ -1,6 +1,6 @@
 //! Proof-related keys: ProofAuthorizingKey.
 
-use core::fmt;
+use derive_more::Debug;
 
 use super::{
     note::{NullifierKey, PaymentKey},
@@ -25,11 +25,13 @@ use crate::{entropy::ActionRandomizer, primitives::effect, reddsa};
 /// specified.
 // TODO: add proof-construction methods (e.g., create_action_proof, create_merge_proof)
 // once the Ragu circuit API is available.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ProofAuthorizingKey {
     /// The spend validating key `ak = [ask] G`.
+    #[debug(skip)]
     pub ak: SpendValidatingKey,
     /// The nullifier deriving key.
+    #[debug(skip)]
     pub nk: NullifierKey,
 }
 
@@ -56,8 +58,10 @@ impl ProofAuthorizingKey {
 /// per-action `rk` for the proof witness. Component of
 /// [`ProofAuthorizingKey`](super::ProofAuthorizingKey) for proof authorization
 /// without spend authority.
-#[derive(Clone, Copy)]
-pub struct SpendValidatingKey(pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>);
+#[derive(Clone, Copy, Debug)]
+pub struct SpendValidatingKey(
+    #[debug(skip)] pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>,
+);
 
 impl SpendValidatingKey {
     /// Derive the per-action public (verification) key: $\mathsf{rk} =
@@ -80,18 +84,5 @@ impl SpendValidatingKey {
         alpha: &ActionRandomizer<effect::Spend>,
     ) -> public::ActionVerificationKey {
         public::ActionVerificationKey(self.0.randomize(&alpha.0))
-    }
-}
-
-impl fmt::Debug for ProofAuthorizingKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProofAuthorizingKey")
-            .finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for SpendValidatingKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SpendValidatingKey").finish_non_exhaustive()
     }
 }

@@ -18,9 +18,9 @@ extern crate alloc;
 pub mod proof;
 
 use alloc::{boxed::Box, vec::Vec};
-use core::{error::Error, fmt};
 
 use corez::io::{self, Read, Write};
+use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
 use pasta_curves::Fp;
 use proof::{
     PROOF_SYSTEM,
@@ -30,11 +30,12 @@ use ragu::{self, proof::PROOF_SIZE_COMPRESSED};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    ActionSetCommit, ActionSetPoly, Note, TachygramSetCommit, TachygramSetPoly,
+    ActionSetPoly, Note, TachygramSetPoly,
     action::Action,
     effect,
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, public},
+    note::Nullifier,
     primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram},
     serialization,
     stamp::proof::{delegation, spend, spendable},
@@ -45,7 +46,7 @@ use crate::{
 ///
 /// This is the initial state for a newly constructed bundle.
 /// Proving produces a [`Stamp`]; stripping produces a `Bundle<Stripped>`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Unproven;
 
 /// Marker for a stripped bundle whose covering-aggregate `wtxid` has not
@@ -54,7 +55,7 @@ pub struct Unproven;
 /// Produced by [`strip()`](crate::Bundle::strip). Must transition to a
 /// `Bundle<AggregateId>` via [`assign_wtxid`](crate::Bundle::assign_wtxid)
 /// before serialization.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Stripped;
 
 /// A 64-byte `wtxid` of the covering aggregate in the same block, assigned by
@@ -62,7 +63,7 @@ pub struct Stripped;
 ///
 /// This uses the aggregate's wtxid (not txid) so it unambiguously pins the
 /// covering aggregate's authorization state, including stamp.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
 pub struct AggregateId([u8; 64]);
 
 impl AggregateId {
@@ -80,22 +81,12 @@ impl AggregateId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Display, Error)]
 /// Errors that can occur when handling an aggregate id.
 pub enum AggregateIdError {
     /// The aggregate id is zero and refers to no aggregate.
+    #[display("aggregate id is zero and refers to no aggregate")]
     Zero,
-}
-impl Error for AggregateIdError {}
-
-impl fmt::Display for AggregateIdError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            | Self::Zero => {
-                write!(f, "aggregate id is zero and refers to no aggregate")
-            },
-        }
-    }
 }
 
 impl TryFrom<[u8; 64]> for AggregateId {
@@ -109,34 +100,19 @@ impl TryFrom<[u8; 64]> for AggregateId {
     }
 }
 
-impl From<AggregateId> for [u8; 64] {
-    fn from(aggregate_id: AggregateId) -> Self {
-        aggregate_id.0
-    }
-}
-
 /// Error during stamp verification.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Display, Error)]
 pub enum VerificationError {
     /// An action's cv or rk is the identity point.
+    #[display("action digest error: {_0}")]
     ActionDigest(ActionDigestError),
     /// The proof system returned an error.
+    #[display("proof system error")]
     ProofSystem,
     /// The proof did not verify against the reconstructed header.
+    #[display("proof did not verify")]
     Disproved,
 }
-
-impl fmt::Display for VerificationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            | &Self::ActionDigest(err) => write!(f, "action digest error: {err}"),
-            | &Self::ProofSystem => write!(f, "proof system error"),
-            | &Self::Disproved => write!(f, "proof did not verify"),
-        }
-    }
-}
-
-impl Error for VerificationError {}
 
 /// Everything needed to produce a [`Stamp`].
 ///
@@ -201,7 +177,7 @@ impl Plan {
     /// Prove a single [`Stamp`] for this plan.
     ///
     /// For each **spend**, uses [`SpendBind`] to prepare PCD inputs, then runs
-    /// [`SpendStamp`] to attach the spendable chain.
+    /// [`SpendStamp`] to attach the live nullifier pair.
     ///
     /// For each **output**, runs [`OutputStamp`] with no PCD inputs.
     ///
@@ -214,7 +190,7 @@ impl Plan {
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
             ragu::Pcd<delegation::NullifierHeader>,
-            ragu::Pcd<delegation::NullifierHeader>,
+            [Nullifier; 2],
             ragu::Pcd<spendable::SpendableHeader>,
         )>,
     ) -> Result<Stamp, ProveError> {
@@ -227,33 +203,26 @@ impl Plan {
             return Err(ProveError::SpendableMismatch);
         }
 
-        for (((cv, rk), (alpha, note, rcv)), (nf_now_pcd, nf_next_pcd, spendable_pcd)) in
+        for (((cv, rk), (alpha, note, rcv)), (range_pcd, [nf_now, nf_next], spendable_pcd)) in
             self.spends.into_iter().zip(spend_pcds)
         {
             let action_digest = ActionDigest::new(cv, rk).map_err(ProveError::ActionDigest)?;
 
-            // Extract nullifier values for the downstream tachygram list; the
-            // step itself consumes the input PCDs.
-            let nf0 = nf_now_pcd.data().1;
-            let nf1 = nf_next_pcd.data().1;
-
             let app = &*PROOF_SYSTEM;
 
-            // SpendBind: fuse two epoch-adjacent nullifier headers with
-            // action data.
             let (bind_pcd, ()) = app
                 .fuse(
                     rng,
                     spend::SpendBind,
-                    (rcv, alpha, *pak, note),
-                    nf_now_pcd,
-                    nf_next_pcd,
+                    ((note.pk, note.value, note.rcm, note.psi), rcv, alpha, *pak),
+                    spendable_pcd,
+                    ragu::Proof::trivial().carry::<()>(()),
                 )
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: fuse spend with spendable.
-            let tachygrams = alloc::vec![Tachygram::from(nf0), Tachygram::from(nf1)];
-            let stamp = Stamp::prove_spend(rng, bind_pcd, spendable_pcd, tachygrams)
+            // SpendStamp: bind the live pair to the derived range and publish.
+            let tachygrams = alloc::vec![Tachygram::from(nf_now), Tachygram::from(nf_next)];
+            let stamp = Stamp::prove_spend(rng, bind_pcd, range_pcd, nf_next, tachygrams)
                 .map_err(ProveError::ProofFailed)?;
 
             entries.push((stamp, alloc::vec![action_digest]));
@@ -287,35 +256,26 @@ impl Plan {
 }
 
 /// Errors that can occur while proving a stamp.
-#[derive(Debug)]
+#[derive(Debug, Display, Error)]
 #[non_exhaustive]
 pub enum ProveError {
     /// The plan has no actions to prove.
+    #[display("no actions to prove")]
     NoActions,
     /// Action digest construction failed (cv or rk was the identity point).
+    #[display("action digest failed: {_0}")]
     ActionDigest(ActionDigestError),
     /// Proof creation failed for an action; carries the underlying
     /// step-level error.
+    #[display("action proof failed: {_0}")]
     ProofFailed(ragu::Error),
     /// Stamp merge failed; carries the underlying step-level error.
+    #[display("stamp merge failed: {_0}")]
     MergeFailed(ragu::Error),
     /// Number of spendable PCDs doesn't match number of spends.
+    #[display("spendable PCD count mismatch")]
     SpendableMismatch,
 }
-
-impl fmt::Display for ProveError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            | Self::NoActions => write!(f, "no actions to prove"),
-            | Self::ActionDigest(err) => write!(f, "action digest failed: {err}"),
-            | Self::ProofFailed(inner) => write!(f, "action proof failed: {inner}"),
-            | Self::MergeFailed(inner) => write!(f, "stamp merge failed: {inner}"),
-            | Self::SpendableMismatch => write!(f, "spendable PCD count mismatch"),
-        }
-    }
-}
-
-impl Error for ProveError {}
 
 /// A stamp carrying tachygrams, anchor, and proof.
 ///
@@ -325,7 +285,7 @@ impl Error for ProveError {}
 /// The PCD header `(action_acc, tachygram_acc, anchor)` is not stored here —
 /// the verifier reconstructs it from public data and passes it as the header
 /// to Ragu `verify()`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Stamp {
     /// Tachygrams (nullifiers and note commitments) for data availability.
     pub tachygrams: Vec<Tachygram>,
@@ -334,17 +294,8 @@ pub struct Stamp {
     pub anchor: Anchor,
 
     /// The Ragu proof bytes.
+    #[debug(skip)]
     pub proof: ragu::Proof,
-}
-
-impl fmt::Debug for Stamp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Stamp {{ tachygrams: {:?}, anchor: {:?} }}",
-            self.tachygrams, self.anchor,
-        )
-    }
 }
 
 impl Stamp {
@@ -372,22 +323,23 @@ impl Stamp {
         })
     }
 
-    /// Creates a stamp for a spend action from pre-built spend and spendable
-    /// PCDs.
+    /// Creates a stamp for a spend action from pre-built spend and
+    /// nullifier-range PCDs.
     ///
-    /// The spendable's `anchor` is taken as the stamp's anchor — chain
+    /// The spend's `anchor` is taken as the stamp's anchor — chain
     /// validation lives inside the spendable lineage, not here.
     pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         spend_pcd: ragu::Pcd<spend::SpendHeader>,
-        spendable_pcd: ragu::Pcd<spendable::SpendableHeader>,
+        range_pcd: ragu::Pcd<delegation::NullifierHeader>,
+        nf_next: Nullifier,
         tachygrams: Vec<Tachygram>,
     ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let anchor = spendable_pcd.data().1;
+        let anchor = spend_pcd.data().3;
 
-        let (pcd, ()) = app.fuse(rng, SpendStamp, (), spend_pcd, spendable_pcd)?;
+        let (pcd, ()) = app.fuse(rng, SpendStamp, (nf_next,), spend_pcd, range_pcd)?;
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok(Self {
@@ -465,9 +417,14 @@ impl Stamp {
     ) -> Result<(), VerificationError> {
         let app = &*PROOF_SYSTEM;
 
+        let action_digests = actions
+            .iter()
+            .map(Action::digest)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(VerificationError::ActionDigest)?;
         let header = (
-            ActionSetCommit::try_from(actions).map_err(VerificationError::ActionDigest)?,
-            TachygramSetCommit::from(&*self.tachygrams),
+            ActionSetPoly::from(action_digests.as_slice()).commit(),
+            TachygramSetPoly::from(&*self.tachygrams).commit(),
             self.anchor,
         );
 

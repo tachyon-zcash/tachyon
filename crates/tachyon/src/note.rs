@@ -23,9 +23,9 @@
 //! tree PRF instantiated from Poseidon. The "flavor" is the epoch at which the
 //! nullifier is revealed, enabling range-restricted delegation.
 //!
-//! Evaluated natively by wallets and the Oblivious Syncing Service (via
-//! delegated GGM prefix keys). The Ragu circuit constrains that the
-//! externally-provided nullifier matches the note's private fields.
+//! Evaluated natively by wallets; the sync service handles only opaque
+//! nullifier values. The Ragu circuit constrains that each consumed
+//! nullifier matches the note's private fields.
 //!
 //! ## Note Commitment
 //!
@@ -33,8 +33,9 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
-use core::{fmt, mem::size_of, ptr, slice};
+use core::{mem::size_of, ptr, slice};
 
+use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
@@ -52,9 +53,9 @@ use crate::{
 /// Used to derive the master root key: $mk = \text{KDF}(\psi, nk)$.
 /// The GGM tree PRF then evaluates $nf = F_{mk}(\text{flavor})$.
 /// Prefix keys derived from $mk$ enable range-restricted delegation.
-#[derive(Clone)]
+#[derive(Clone, Debug, From, Into)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct NullifierTrapdoor(pub(super) Fp);
+pub struct NullifierTrapdoor(#[debug(skip)] pub(super) Fp);
 
 impl NullifierTrapdoor {
     /// Generate a fresh random trapdoor.
@@ -63,41 +64,17 @@ impl NullifierTrapdoor {
     }
 }
 
-impl From<Fp> for NullifierTrapdoor {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-impl From<NullifierTrapdoor> for Fp {
-    fn from(trapdoor: NullifierTrapdoor) -> Self {
-        trapdoor.0
-    }
-}
-
 /// Note commitment trapdoor ($rcm$) — randomness that blinds the note
 /// commitment.
 ///
 /// Can be derived from a shared secret negotiated out-of-band.
-#[derive(Clone)]
-pub struct CommitmentTrapdoor(Fp);
+#[derive(Clone, Debug, From, Into)]
+pub struct CommitmentTrapdoor(#[debug(skip)] Fp);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fp::random(rng))
-    }
-}
-
-impl From<Fp> for CommitmentTrapdoor {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-impl From<CommitmentTrapdoor> for Fp {
-    fn from(trapdoor: CommitmentTrapdoor) -> Self {
-        trapdoor.0
     }
 }
 
@@ -123,40 +100,55 @@ pub struct Note {
 /// A note value in zatoshis. Non-zero and no greater than 2.1e15.
 ///
 /// Zero-valued notes are forbidden by construction: a zero-value action
-/// carries no economic meaning. The newtype enforces the invariant at
-/// `Value::from` (panics on zero and on overflow). Each PCD step that
-/// witnesses a `Note` *independently* rechecks `value != 0` — the
-/// compiler cannot prove the invariant from inside the circuit, and a
-/// compiled proof system sees only raw field elements without the
-/// Rust-level newtype protection.
-#[derive(Clone, Copy, Debug)]
-#[expect(
-    clippy::field_scoped_visibility_modifiers,
-    reason = "test helpers use crate-internal construction to bypass the API check"
-)]
-pub struct Value(pub(crate) u64);
+/// carries no economic meaning. Each PCD step that witnesses a `Note`
+/// *independently* rechecks `value != 0` — the compiler cannot prove the
+/// invariant from inside the circuit, and a compiled proof system sees
+/// only raw field elements without the Rust-level newtype protection.
+///
+/// Use [`Value::try_from`] or [`Value::new`] for fallible construction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Into)]
+pub struct Value(u64);
 
-impl From<u64> for Value {
-    fn from(value: u64) -> Self {
-        assert!(value > 0, "note value must be non-zero");
-        assert!(
-            value <= NOTE_VALUE_MAX,
-            "note value must not exceed maximum"
-        );
-        Self(value)
+impl Value {
+    /// The forbidden zero value.
+    #[cfg(test)]
+    pub(crate) const ZERO: Self = Self(0);
+}
+
+/// Error returned when a note value is out of the valid range
+/// `1..=NOTE_VALUE_MAX`.
+#[derive(Clone, Copy, Debug, Display, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ValueError {
+    /// The value was zero.
+    #[display("note value must be non-zero")]
+    Zero,
+    /// The value exceeds the maximum note value (2.1e15 zatoshis).
+    #[display("note value must not exceed maximum")]
+    Overflow,
+}
+
+impl TryFrom<u64> for Value {
+    type Error = ValueError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        if value == 0 {
+            return Err(ValueError::Zero);
+        }
+        if value > NOTE_VALUE_MAX {
+            return Err(ValueError::Overflow);
+        }
+        Ok(Self(value))
     }
 }
 
-#[expect(clippy::expect_used, reason = "specified behavior")]
+#[expect(
+    clippy::expect_used,
+    reason = "Value construction enforces NOTE_VALUE_MAX < i64::MAX"
+)]
 impl From<Value> for i64 {
     fn from(value: Value) -> Self {
-        Self::try_from(value.0).expect("note value should fit in i64 (max 2.1e15 < i64::MAX)")
-    }
-}
-
-impl From<Value> for u64 {
-    fn from(value: Value) -> Self {
-        value.0
+        Self::try_from(value.0).expect("Value invariant guarantees it fits in i64")
     }
 }
 
@@ -204,20 +196,8 @@ impl Note {
 /// the value that becomes a tachygram:
 /// - For **output** operations, `cm` IS the tachygram directly.
 /// - For **spend** operations, `cm` is a private witness.
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Commitment(Fp);
-
-impl From<Fp> for Commitment {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-impl From<Commitment> for Fp {
-    fn from(cm: Commitment) -> Self {
-        cm.0
-    }
-}
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct Commitment(#[debug(skip)] Fp);
 
 impl From<Commitment> for Tachygram {
     fn from(commitment: Commitment) -> Self {
@@ -235,20 +215,8 @@ impl From<Commitment> for Tachygram {
 /// - Don't need collision resistance (no faerie gold defense)
 /// - Have an epoch "flavor" component for sync delegation
 /// - Are prunable by validators after a window of blocks
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct Nullifier(Fp);
-
-impl From<Fp> for Nullifier {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-impl From<Nullifier> for Fp {
-    fn from(nf: Nullifier) -> Self {
-        nf.0
-    }
-}
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct Nullifier(#[debug(skip)] Fp);
 
 impl From<Nullifier> for Tachygram {
     fn from(nullifier: Nullifier) -> Self {
@@ -297,30 +265,6 @@ impl Drop for CommitmentTrapdoor {
 
 impl ZeroizeOnDrop for CommitmentTrapdoor {}
 
-impl fmt::Debug for NullifierTrapdoor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NullifierTrapdoor").finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for CommitmentTrapdoor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CommitmentTrapdoor").finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for Commitment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Commitment").finish_non_exhaustive()
-    }
-}
-
-impl fmt::Debug for Nullifier {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Nullifier").finish_non_exhaustive()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
@@ -331,21 +275,22 @@ mod tests {
     /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
     #[test]
     fn value_accepts_max() {
-        let _val: Value = Value::from(NOTE_VALUE_MAX);
+        Value::try_from(NOTE_VALUE_MAX).unwrap();
     }
 
     /// Anything above NOTE_VALUE_MAX must be rejected.
     #[test]
-    #[should_panic(expected = "note value must not exceed maximum")]
     fn value_rejects_overflow() {
-        let _val: Value = Value::from(NOTE_VALUE_MAX + 1);
+        assert_eq!(
+            Value::try_from(NOTE_VALUE_MAX + 1),
+            Err(ValueError::Overflow)
+        );
     }
 
     /// Zero must be rejected — notes carry economic value.
     #[test]
-    #[should_panic(expected = "note value must be non-zero")]
     fn value_rejects_zero() {
-        let _val: Value = Value::from(0u64);
+        assert_eq!(Value::try_from(0u64), Err(ValueError::Zero));
     }
 
     /// Different trapdoors produce different commitments.
@@ -357,13 +302,13 @@ mod tests {
 
         let note1 = Note {
             pk,
-            value: Value::from(100u64),
+            value: Value::try_from(100u64).unwrap(),
             psi: psi.clone(),
             rcm: CommitmentTrapdoor::random(rng),
         };
         let note2 = Note {
             pk,
-            value: Value::from(100u64),
+            value: Value::try_from(100u64).unwrap(),
             psi,
             rcm: CommitmentTrapdoor::random(rng),
         };
@@ -380,7 +325,7 @@ mod tests {
         let nk = sk.derive_nullifier_private();
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: Value::from(100u64),
+            value: Value::try_from(100u64).unwrap(),
             psi: NullifierTrapdoor::random(rng),
             rcm: CommitmentTrapdoor::random(rng),
         };

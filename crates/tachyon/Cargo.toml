@@ -23,14 +23,13 @@ rust-version.workspace = true
 [features]
 default = [
     "std",
-    "ragu/mock",
-    "ragu/legacy-deps",
 ]
 std = [
     "blake2b_simd/std",
     "ragu/std",
     "reddsa/std",
     "corez/std",
+    "ragu/multicore",
 ]
 
 [lints]
@@ -41,14 +40,20 @@ blake2b_simd = { version = "1.0", default-features = false }
 corez = { version = "0.1.1", default-features = false, features = [
     "alloc",
 ] }
+derive_more = { version = "~2.1", default-features = false, features = [
+    "full", # todo: use more specific features
+] }
 ff = "0.13"
 group = "0.13"
-halo2_poseidon = "0.1"
 lazy_static = { version = "1", default-features = false, features = [
     "spin_no_std",
 ] }
 pasta_curves = "0.5.1"
-ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "3baa09549fec9a2c14a6e377a5f7f533fa8361a0", default-features = false }
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "2f926fdcb5f1d402ca06aad4230b16540367e850", default-features = false, features = [
+    "mock",
+    "legacy-deps",
+] }
+
 rand_core = { version = "0.6", default-features = false }
 reddsa = { version = "0.5.1", default-features = false }
 zeroize = { version = "1.8", default-features = false }

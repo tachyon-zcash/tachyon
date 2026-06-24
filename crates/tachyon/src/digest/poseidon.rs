@@ -2,14 +2,20 @@
 //!
 //! Each named function provides one protocol-defined hash.
 
-// TODO(#39): replace halo2_poseidon with Ragu Poseidon params
-
 use ff::PrimeField as _;
-use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
 use pasta_curves::{EpAffine, EqAffine, Fp, arithmetic::Coordinates};
+use ragu::Sponge;
 
+#[expect(
+    clippy::expect_used,
+    reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
+)]
 fn hash<const L: usize>(input: [Fp; L]) -> Fp {
-    Hash::<Fp, P128Pow5T3, ConstantLength<L>, 3, 2>::init().hash(input)
+    let mut sponge = Sponge::new();
+    for value in input {
+        sponge.absorb(value).expect("infallible");
+    }
+    sponge.squeeze().expect("infallible")
 }
 
 const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
@@ -79,19 +85,6 @@ const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 #[must_use]
 pub(crate) fn nullifier(leaf: Fp) -> Fp {
     hash::<2>([Fp::from_u128(u128::from_le_bytes(*NULLIFIER_DOMAIN)), leaf])
-}
-
-const DELEGATION_DOMAIN: &[u8; 16] = b"Tachyon-Delegate";
-
-/// Derives a delegation identifier from a note commitment and trapdoor.
-#[must_use]
-pub(crate) fn delegation_id(mk: Fp, cm: Fp, trap: Fp) -> Fp {
-    hash::<4>([
-        Fp::from_u128(u128::from_le_bytes(*DELEGATION_DOMAIN)),
-        mk,
-        cm,
-        trap,
-    ])
 }
 
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-StampFld";

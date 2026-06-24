@@ -1,6 +1,7 @@
 use corez::io::{self, Read, Write};
+use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
-use pasta_curves::{EqAffine, Fp, arithmetic::CurveAffine as _};
+use pasta_curves::{Eq, Fp, arithmetic::CurveAffine as _, group::Curve as _};
 
 use super::{EpochIndex, TachygramSetCommit};
 use crate::{digest::poseidon, serialization};
@@ -14,10 +15,10 @@ use crate::{digest::poseidon, serialization};
 /// - [`Anchor::next_empty`] (`Tachyon-EmptyBlk`) advances through one block
 ///   that contains zero stamps, preserving per-height anchor uniqueness.
 /// - [`Anchor::next_epoch`] (`Tachyon-EpochStp`) lifts across an epoch
-///   boundary; performed by `SpendableRollover`.
+///   boundary; checked against a boundary chain's root by `SpendableInit`.
 ///
 /// Opening reveals each link's role by its domain.
-#[derive(Clone, Copy, Debug, Eq)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Anchor(pub Fp);
 
 impl Anchor {
@@ -28,7 +29,7 @@ impl Anchor {
     /// Panics if `stamp_commit` is the identity point.
     #[must_use]
     pub fn next_stamp(self, stamp_commit: &TachygramSetCommit) -> Self {
-        let point = EqAffine::from(stamp_commit);
+        let point = Eq::from(*stamp_commit).to_affine();
         let coords = point
             .coordinates()
             .expect("must not be identity commitment"); // TODO: error?
@@ -66,39 +67,21 @@ impl Default for Anchor {
     }
 }
 
-impl From<Fp> for Anchor {
-    fn from(fp: Fp) -> Self {
-        Self(fp)
-    }
-}
-
-/// Anchor's underlying `Fp` — the value used as a Poseidon input or as a
-/// polynomial root in the per-epoch blocks set.
-impl From<Anchor> for Fp {
-    fn from(anchor: Anchor) -> Self {
-        anchor.0
-    }
-}
-
-impl PartialEq<Self> for Anchor {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::Tachygram;
+    use crate::{Tachygram, TachygramSetPoly};
 
     /// Folding the same stamps in the same order yields the same anchor.
     #[test]
     fn next_stamp_is_deterministic() {
         let rng = &mut StdRng::seed_from_u64(0);
-        let first = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
-        let second = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
+        let first =
+            TachygramSetPoly::from([Tachygram::from(Fp::random(&mut *rng))].as_slice()).commit();
+        let second =
+            TachygramSetPoly::from([Tachygram::from(Fp::random(&mut *rng))].as_slice()).commit();
 
         let run_one = Anchor::default().next_stamp(&first).next_stamp(&second);
         let run_two = Anchor::default().next_stamp(&first).next_stamp(&second);
@@ -109,8 +92,10 @@ mod tests {
     #[test]
     fn distinct_stamps_distinct_anchors() {
         let rng = &mut StdRng::seed_from_u64(0);
-        let first = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
-        let second = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
+        let first =
+            TachygramSetPoly::from([Tachygram::from(Fp::random(&mut *rng))].as_slice()).commit();
+        let second =
+            TachygramSetPoly::from([Tachygram::from(Fp::random(&mut *rng))].as_slice()).commit();
 
         assert_ne!(
             Anchor::default().next_stamp(&first),
@@ -122,8 +107,10 @@ mod tests {
     #[test]
     fn order_matters() {
         let rng = &mut StdRng::seed_from_u64(0);
-        let first = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
-        let second = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
+        let first =
+            TachygramSetPoly::from([Tachygram::from(Fp::random(&mut *rng))].as_slice()).commit();
+        let second =
+            TachygramSetPoly::from([Tachygram::from(Fp::random(&mut *rng))].as_slice()).commit();
 
         let forward = Anchor::default().next_stamp(&first).next_stamp(&second);
         let reverse = Anchor::default().next_stamp(&second).next_stamp(&first);
@@ -149,7 +136,8 @@ mod tests {
     #[test]
     fn next_empty_distinct_from_next_stamp() {
         let rng = &mut StdRng::seed_from_u64(0);
-        let stamp = TachygramSetCommit::from([Tachygram::from(Fp::random(&mut *rng))].as_slice());
+        let stamp =
+            TachygramSetPoly::from([Tachygram::from(Fp::random(&mut *rng))].as_slice()).commit();
         let via_empty = Anchor::default().next_empty();
         let via_stamp = Anchor::default().next_stamp(&stamp);
         assert_ne!(via_empty, via_stamp);
