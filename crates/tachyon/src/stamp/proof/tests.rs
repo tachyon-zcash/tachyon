@@ -18,7 +18,6 @@ use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
     ActionSetPoly, CONSTANT_SCHEDULE, Note, TachygramSetPoly,
     constants::{EPOCH_SIZE, NF_EMITTERS},
-    digest::poseidon,
     entropy::ActionEntropy,
     fixtures::{
         PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_stamp, build_unspent_pcd,
@@ -52,7 +51,8 @@ fn nullifier_derivation_certifies_a_note() {
     let cm_expected = note.commitment();
     let mk = wallet.master_key(&note);
     let keyset = mk.derive_expanded();
-    let (salts, ratios_expected, shift_expected) = poseidon::nf_query_params(mk.0);
+    let salts = mk.query_salts();
+    let (ratios_expected, shift_expected) = mk.query_weights();
     let polys_expected = keyset.derivation_polys(&salts);
 
     let pcd = wallet.derivation_pcd(rng, note, creation_epoch);
@@ -1384,11 +1384,12 @@ fn spendable_lift_rejects_epoch_discontinuity() {
         .fuse(rng, spendable::SpendableLift, (), spendable, forged)
         .err()
         .unwrap();
+
+    let ragu::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
     assert_eq!(
-        match err {
-            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
-            | _ => panic!("expected InvalidWitness"),
-        },
+        inner.to_string(),
         "SpendableLift: segment does not start at the lineage epoch"
     );
 }
@@ -1527,14 +1528,10 @@ fn nf_master_expand_rejects_forged_witnesses() {
             )
             .err()
             .unwrap_or_else(|| panic!("{label}: expected rejection"));
-        assert_eq!(
-            match err {
-                | ragu::Error::InvalidWitness(inner) => inner.to_string(),
-                | _ => panic!("expected InvalidWitness"),
-            },
-            expected,
-            "{label}"
-        );
+        let ragu::Error::InvalidWitness(inner) = err else {
+            panic!("expected InvalidWitness, got {err:?}");
+        };
+        assert_eq!(inner.to_string(), expected, "{label}");
     }
 }
 
@@ -1575,7 +1572,7 @@ fn derivation_rejects_mismatched_key_poly() {
     let mut tampered = keyset.0;
     tampered[0] += Fp::ONE;
     let bad_key = ExpandedKey::from(tampered).key_poly().0;
-    let (salts, _ratios, _shift) = poseidon::nf_query_params(mk.0);
+    let salts = mk.query_salts();
     let polys = keyset.derivation_polys(&salts);
     let round_quotients: [_; NF_EMITTERS] = array::from_fn(|poly| {
         quotient::nf_emitter_round_quotient(polys[poly].0.coefficients(), &keyset.0)
@@ -1606,11 +1603,11 @@ fn derivation_rejects_mismatched_key_poly() {
         )
         .err()
         .unwrap_or_else(|| panic!("expected rejection"));
+    let ragu::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
     assert_eq!(
-        match err {
-            | ragu::Error::InvalidWitness(inner) => inner.to_string(),
-            | _ => panic!("expected InvalidWitness"),
-        },
+        inner.to_string(),
         "NullifierDerivationStep: key poly does not match the committed keyset"
     );
 }

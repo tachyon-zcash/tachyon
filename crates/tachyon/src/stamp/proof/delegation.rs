@@ -33,7 +33,6 @@ use zcash_mimc::spec::tachyon::TachyonP5R64;
 use crate::{
     CONSTANT_SCHEDULE_COMMIT, ExpandedKeyCommit, NfEmitterCommit, NfEmitterPoly, NfEmittersDigest,
     constants::{NF_EMITTERS, POLY_LEN_MAX},
-    digest::poseidon,
     keys::{ExpandedKey, NoteMasterKey, ProofAuthorizingKey},
     note::{Commitment as NoteCommitment, Note},
     primitives::{EpochIndex, ExpKeySpectrumPoly},
@@ -265,10 +264,9 @@ impl Step for NfMasterExpand {
             whitening,
         )?;
 
-        // Derive the note's query parameters from the bound `mk` (a sponge
-        // stand-in, pending ragu's sponge). Threaded on the header so the
-        // Poseidon-bearing derivation step reads them rather than re-deriving.
-        let (salts, ratios, shift) = poseidon::nf_query_params(mk.0);
+        // Derive the note's query parameters from the bound `mk`
+        let salts = mk.query_salts();
+        let (ratios, shift) = mk.query_weights();
 
         Ok((
             (

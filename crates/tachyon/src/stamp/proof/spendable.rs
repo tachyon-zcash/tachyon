@@ -100,6 +100,7 @@ impl Step for SpendableInit {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
+        // TODO: this pre_epoch_anchor seems unbound from pre_cm_anchor
         (pre_epoch_anchor, pre_cm_anchor, creation_set, polys): Self::Witness<'source>,
         (chain_start, chain_end): <Self::Left as Header>::Data,
         (commits, _digest, cm, creation_epoch, shift, _ratios): <Self::Right as Header>::Data,

@@ -15,10 +15,14 @@ use zcash_mimc::spec::tachyon::{TachyonP5R64, TachyonP5R8192};
 
 use super::proof::SpendValidatingKey;
 use crate::{
-    constants::{NF_EMITTERS, POLY_LEN_MAX},
+    constants::{NF_DOMAIN, NF_EMITTERS, POLY_LEN_MAX},
     digest::{mimc, poseidon},
-    note,
-    primitives::{ExpKeySpectrumPoly, ExpandedKeyPoly, NfEmitterPoly},
+    note::{self, Nullifier},
+    primitives::{EpochOffset, ExpKeySpectrumPoly, ExpandedKeyPoly, NfEmitterPoly},
+    relations::{
+        quotient::{QueryShift, WeightRatios, nullifier_query},
+        subgroup_generator,
+    },
 };
 
 /// A Tachyon nullifier deriving key.
@@ -60,6 +64,23 @@ impl NoteMasterKey {
     pub const fn round_key(&self, index: usize) -> Fp {
         #[expect(clippy::integer_division_remainder_used, reason = "constant size")]
         self.0[index % self.0.len()]
+    }
+
+    /// The per-emitter nullifier-query salts `mk_s^{(j)}`, each seeding one
+    /// derivation poly's 8192-round cipher. Domain-separated from
+    /// [`query_weights`](Self::query_weights) so the two cannot collide.
+    #[must_use]
+    pub fn query_salts(&self) -> [Fp; NF_EMITTERS] {
+        poseidon::nf_query_salts(self.0)
+    }
+
+    /// The nullifier-query weight parameters `(ρ_j, c)`: the per-poly
+    /// geometric weight bases `ρ_j` and the secret query-coset origin `c`
+    /// (the `shift`). Domain-separated from
+    /// [`query_salts`](Self::query_salts).
+    #[must_use]
+    pub fn query_weights(&self) -> ([Fp; NF_EMITTERS], Fp) {
+        poseidon::nf_query_weights(self.0)
     }
 
     #[must_use]
@@ -111,7 +132,7 @@ impl NoteMasterKey {
 /// the order-`ExpandedKey::EK_LENGTH` subgroup `⟨ζ⟩` (`K(ζ^r) = k_r`), and
 /// [`commit`](Self::commit) is the commitment the key-expansion step emits. The
 /// per-poly salts, the weight bases `ρ_j`, and the shift `c` come from `mk`
-/// (via the nullifier-query sponge, [`poseidon::nf_query_params`]), not from
+/// (via the nullifier-query sponge methods on [`NoteMasterKey`]), not from
 /// these outputs.
 ///
 /// Wallet-only secret material: the wallet is the sole prover of derivation,
@@ -169,6 +190,37 @@ impl ExpandedKey {
     #[must_use]
     pub fn derivation_polys(&self, salts: &[Fp; NF_EMITTERS]) -> [NfEmitterPoly; NF_EMITTERS] {
         salts.map(|salt| self.derivation_poly(salt))
+    }
+
+    /// The first key of the schedule, used as the boundary-quotient anchor.
+    /// `EK_LENGTH > 0` by construction.
+    ///
+    /// TODO: remove this, it's wrong
+    #[must_use]
+    pub fn first_key(&self) -> Fp {
+        self.0.first().copied().unwrap_or(Fp::ZERO)
+    }
+
+    /// The new-scheme nullifier at epoch offset `d` from the note's creation:
+    /// `nf_d = Σ_j ρ_j^d·T_j(c·γ^d)`, the query the spend circuit reproduces.
+    ///
+    /// This is the wallet's native nullifier — the in-circuit query relation
+    /// mirrors it. The `keyset` (the FFT product of `mk`) is `self`, borrowed
+    /// so the wallet can expand once and query many offsets cheaply; `mk`
+    /// supplies the query salts and weights via its domain-separated sponge
+    /// methods.
+    #[must_use]
+    pub fn derive_nullifier(&self, mk: &NoteMasterKey, offset: EpochOffset) -> Nullifier {
+        let salts = mk.query_salts();
+        let (ratios, shift) = mk.query_weights();
+        let polys = self.derivation_polys(&salts);
+        Nullifier::from(nullifier_query(
+            &polys,
+            QueryShift(shift),
+            WeightRatios(ratios),
+            subgroup_generator::<NF_DOMAIN>(),
+            u64::from(offset),
+        ))
     }
 }
 
@@ -239,13 +291,11 @@ impl PaymentKey {
     }
 }
 
-
 impl fmt::Debug for NoteMasterKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NoteMasterKey").finish_non_exhaustive()
     }
 }
-
 
 #[cfg(test)]
 mod tests {

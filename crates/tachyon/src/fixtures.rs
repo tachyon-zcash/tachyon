@@ -12,8 +12,7 @@ use alloc::{vec, vec::Vec};
 use core::{array, cell::RefCell, cmp, iter, ops::RangeInclusive};
 
 use ff::Field as _;
-use group::Curve as _;
-use pasta_curves::{Eq, Fp, arithmetic::CurveAffine as _};
+use pasta_curves::Fp;
 use ragu::{Pcd, Polynomial, Proof};
 use rand_core::{CryptoRng, RngCore};
 
@@ -21,27 +20,20 @@ use crate::{
     EpochIndex, EpochOffset,
     action::{self, Action},
     bundle::{self, Bundle},
-    constants::{EPOCH_SIZE, NF_DOMAIN, NF_EMITTERS},
-    digest::poseidon,
+    constants::{EPOCH_SIZE, NF_EMITTERS},
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{ExpandedKey, NoteMasterKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        ActionDigest, Anchor, BlockHeight, CONSTANT_SCHEDULE, NfEmitterPoly, NfSeqPoly, Tachygram,
-        TachygramSetCommit, TachygramSetPoly, effect,
+        ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, Tachygram, TachygramSetCommit,
+        TachygramSetPoly, effect,
     },
-    relations::{
-        quotient::{
-            self, LIFT_SPLITS, QueryShift, WeightRatios, accumulator_recurrence, nullifier_query,
-            weight_recurrence,
-        },
-        subgroup_generator,
-    },
+    relations::quotient::LIFT_SPLITS,
     stamp::{
         Stamp,
         proof::{PROOF_SYSTEM, delegation, pool, spendable},
     },
-    value,
+    value, witness,
 };
 
 pub fn mock_sighash(bundle_digest: [u8; 64]) -> [u8; 32] {
@@ -564,15 +556,7 @@ impl WalletSim {
     pub fn query_nf(&self, note: &Note, offset: EpochOffset) -> Nullifier {
         let mk = self.master_key(note);
         let keyset = mk.derive_expanded();
-        let (salts, ratios, shift) = poseidon::nf_query_params(mk.0);
-        let polys = keyset.derivation_polys(&salts);
-        Nullifier::from(nullifier_query(
-            &polys,
-            QueryShift(shift),
-            WeightRatios(ratios),
-            subgroup_generator::<NF_DOMAIN>(),
-            u64::from(offset),
-        ))
+        keyset.derive_nullifier(&mk, offset)
     }
 
     /// Seed one half of the note's master key (the three parts at `part_idx`),
@@ -606,56 +590,20 @@ impl WalletSim {
         let left = self.note_master_half(rng, note, [0, 1, 2]);
         let right = self.note_master_half(rng, note, [3, 4, 5]);
 
-        // Key expansion: the trace spectrum `T` and key poly `K` come from their
-        // mainline producers (already interpolant-form), plus the three quotients.
+        // Key expansion: derive the trace and keyset once (the FFTs), then
+        // build the NfMasterExpand witness from them.
         let (spectrum, keyset) = mk.derive_expanded_trace();
-        let key_poly = keyset.key_poly().0;
-        let (round_quotient, boundary_quotient, decimation_quotient) =
-            quotient::expansion_quotients(spectrum.0.coefficients(), mk, key_poly.coefficients());
+        let expansion = witness::nf_master_expand(&mk, &spectrum, &keyset);
         let (keyset_pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                delegation::NfMasterExpand,
-                (
-                    spectrum,
-                    round_quotient,
-                    boundary_quotient,
-                    key_poly.clone(),
-                    decimation_quotient,
-                ),
-                left,
-                right,
-            )
+            .fuse(rng, delegation::NfMasterExpand, expansion, left, right)
             .expect("NfMasterExpand");
 
-        // Certify the derivation polynomials against the committed keyset, the
-        // full 128-key schedule shared across the polys (differing by salt).
-        let (salts, _ratios, _shift) = poseidon::nf_query_params(mk.0);
-        let polys = keyset.derivation_polys(&salts);
-        let round_quotients: [_; NF_EMITTERS] = array::from_fn(|poly| {
-            quotient::nf_emitter_round_quotient(polys[poly].0.coefficients(), &keyset.0)
-        });
-        let boundary_quotients: [_; NF_EMITTERS] = array::from_fn(|poly| {
-            quotient::nf_emitter_boundary_quotient(
-                polys[poly].0.coefficients(),
-                salts[poly],
-                keyset.0[0],
-            )
-        });
-        let constants = CONSTANT_SCHEDULE.clone();
-
+        let polys = keyset.derivation_polys(&mk.query_salts());
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 delegation::NullifierDerivationStep,
-                (
-                    key_poly,
-                    polys,
-                    round_quotients,
-                    boundary_quotients,
-                    constants,
-                    creation_epoch,
-                ),
+                witness::nullifier_derivation(&keyset, &mk, &polys, creation_epoch),
                 keyset_pcd,
                 Proof::trivial().carry::<()>(()),
             )
@@ -690,8 +638,7 @@ impl WalletSim {
 
         let mk = self.master_key(note);
         let keyset = mk.derive_expanded();
-        let (salts, _ratios, _shift) = poseidon::nf_query_params(mk.0);
-        let polys = keyset.derivation_polys(&salts);
+        let polys = keyset.derivation_polys(&mk.query_salts());
         let pcd = self.derivation_pcd(rng, *note, creation_epoch);
         self.derivations.borrow_mut().push(CachedDerivation {
             cm,
@@ -722,7 +669,7 @@ impl WalletSim {
             .fuse(
                 rng,
                 spendable::SpendableInit,
-                (pre_epoch_anchor, pre_cm_anchor, creation_set, polys),
+                witness::spendable_init(&polys, pre_epoch_anchor, pre_cm_anchor, creation_set),
                 chain,
                 derivation,
             )
@@ -770,50 +717,24 @@ impl WalletSim {
         ),
         Pcd<delegation::NullifierDerivation>,
     ) {
-        let (derivation, polys, _keyset) = self.derivation(rng, note, creation_epoch);
+        let (derivation, polys, keyset) = self.derivation(rng, note, creation_epoch);
+        let mk = self.master_key(note);
 
-        // Tested values q over [start, present]: query nullifiers at offsets E_0.
+        // Tested values q over [start, present]: query nullifiers at offsets E_0,
+        // reusing the expanded keyset for every offset (one FFT, N queries).
         let nfs: Vec<Nullifier> = (start_epoch.0..=present_epoch.0)
-            .map(|epoch| self.query_nf(note, EpochIndex(epoch).offset_from(creation_epoch)))
+            .map(|epoch| {
+                keyset.derive_nullifier(&mk, EpochIndex(epoch).offset_from(creation_epoch))
+            })
             .collect();
-        let split = nfs.len() - 1;
-        let elapsed = NfSeqPoly::from(&nfs[..split]);
-        let tip = NfSeqPoly::from(&nfs[split..]);
-        let range_poly = NfSeqPoly::from(nfs.as_slice());
 
-        // Lift challenge β over the certified digest, commit(q), and [start, end).
+        // The derivation PCD's header carries the certified transcript digest
+        // the lift challenge opens against; read it off here so the witness
+        // builder stays free of PCD inputs.
         let digest = derivation.data().1;
-        let range_coords = Eq::from(range_poly.commit())
-            .to_affine()
-            .coordinates()
-            .expect("range commitment is not identity");
-        let beta =
-            poseidon::lift_challenge(digest.0, range_coords, start_epoch, present_epoch.next());
-
-        let (_salts, ratios, shift) = poseidon::nf_query_params(self.master_key(note).0);
-
-        // Per-poly geometric weights w_j (split) and their quotients; the
-        // exclusive-prefix accumulator A (split) and its recurrence quotient.
-        let weight_pairs: [([Polynomial; LIFT_SPLITS], Polynomial); NF_EMITTERS] =
-            array::from_fn(|poly| weight_recurrence(ratios[poly] * beta, shift));
-        let weights: [[Polynomial; LIFT_SPLITS]; NF_EMITTERS] =
-            array::from_fn(|poly| weight_pairs[poly].0.clone());
-        let weight_quotients: [Polynomial; NF_EMITTERS] =
-            array::from_fn(|poly| weight_pairs[poly].1.clone());
-        let (accumulator, accumulator_quotient) =
-            accumulator_recurrence(&polys, &ratios, shift, beta);
 
         (
-            (
-                elapsed,
-                tip,
-                range_poly,
-                polys,
-                weights,
-                accumulator,
-                weight_quotients,
-                accumulator_quotient,
-            ),
+            witness::verify_unspent(&polys, &mk, digest, &nfs, start_epoch, present_epoch),
             derivation,
         )
     }
@@ -918,27 +839,11 @@ impl WalletSim {
             // that present-epoch nullifier and its successor at the same offset.
             let creation_epoch = spendable_pcd.data().3;
             let offset = spend_epoch.offset_from(creation_epoch);
-            let (derivation_pcd, polys, _keyset) = self.derivation(rng, &note, creation_epoch);
-            let (_salts, ratios_raw, shift_raw) =
-                poseidon::nf_query_params(self.master_key(&note).0);
-            let shift = QueryShift(shift_raw);
-            let ratios = WeightRatios(ratios_raw);
-            let gamma = subgroup_generator::<NF_DOMAIN>();
+            let (derivation_pcd, polys, keyset) = self.derivation(rng, &note, creation_epoch);
+            let mk = self.master_key(&note);
             let pair = [
-                Nullifier::from(nullifier_query(
-                    &polys,
-                    shift,
-                    ratios,
-                    gamma,
-                    u64::from(offset),
-                )),
-                Nullifier::from(nullifier_query(
-                    &polys,
-                    shift,
-                    ratios,
-                    gamma,
-                    u64::from(offset.next()),
-                )),
+                keyset.derive_nullifier(&mk, offset),
+                keyset.derive_nullifier(&mk, offset.next()),
             ];
             let rcv = value::CommitmentTrapdoor::random(rng);
             let theta = ActionEntropy::random(rng);

@@ -72,37 +72,48 @@ pub(crate) fn nf_master(psi: Fp, nk: Fp, index: Fp) -> Fp {
     ])
 }
 
-const NF_QUERY_DOMAIN: &[u8; 16] = b"Tachyon-NfQuery_";
+const NF_QUERY_SALT_DOMAIN: &[u8; 16] = b"Tachyon-NfSalt__";
+const NF_QUERY_WEIGHT_DOMAIN: &[u8; 16] = b"Tachyon-NfWeight";
 
-/// Derive a note's nullifier query parameters from its master key `mk`:
-/// `(salts, ratios, shift)`. The `salts` seed each derivation poly's
-/// 8192-round cipher, the `ratios` are the per-poly geometric weight bases
-/// `ρ_j`, and `shift` is the secret query-coset origin `c`.
-///
-/// One sponge absorbs the domain tag and `mk`, then squeezes the `2·N + 1`
-/// parameters in sequence. The squeezes advance the sponge state, so the
-/// outputs are distinct and deterministic in `mk`.
+/// Derive the note's per-emitter nullifier-query salts from its master key
+/// `mk`. Each salt seeds one derivation poly's 8192-round cipher. Domain-
+/// separated from the weight/shift derivation below so the two outputs are
+/// cryptographically independent.
 #[expect(
     clippy::expect_used,
     reason = "mock sponge absorb/squeeze is infallible"
 )]
 #[must_use]
-pub(crate) fn nf_query_params(
-    mk: [Fp; NoteMasterKey::MK_LENGTH],
-) -> ([Fp; NF_EMITTERS], [Fp; NF_EMITTERS], Fp) {
+pub(crate) fn nf_query_salts(mk: [Fp; NoteMasterKey::MK_LENGTH]) -> [Fp; NF_EMITTERS] {
     let mut sponge = Sponge::new();
     sponge
-        .absorb(Fp::from_u128(u128::from_le_bytes(*NF_QUERY_DOMAIN)))
+        .absorb(Fp::from_u128(u128::from_le_bytes(*NF_QUERY_SALT_DOMAIN)))
         .expect("infallible");
     for part in mk {
         sponge.absorb(part).expect("infallible");
     }
+    [Fp::ZERO; NF_EMITTERS].map(|_| sponge.squeeze().expect("infallible"))
+}
 
-    let salts = [Fp::ZERO; NF_EMITTERS].map(|_| sponge.squeeze().expect("infallible"));
+/// Derive the note's nullifier-query weight parameters from its master key
+/// `mk`: the per-poly geometric weight bases `ρ_j` and the secret query-coset
+/// origin `c` (the `shift`). Domain-separated from the salt derivation above.
+#[expect(
+    clippy::expect_used,
+    reason = "mock sponge absorb/squeeze is infallible"
+)]
+#[must_use]
+pub(crate) fn nf_query_weights(mk: [Fp; NoteMasterKey::MK_LENGTH]) -> ([Fp; NF_EMITTERS], Fp) {
+    let mut sponge = Sponge::new();
+    sponge
+        .absorb(Fp::from_u128(u128::from_le_bytes(*NF_QUERY_WEIGHT_DOMAIN)))
+        .expect("infallible");
+    for part in mk {
+        sponge.absorb(part).expect("infallible");
+    }
     let ratios = [Fp::ZERO; NF_EMITTERS].map(|_| sponge.squeeze().expect("infallible"));
     let shift = sponge.squeeze().expect("infallible");
-
-    (salts, ratios, shift)
+    (ratios, shift)
 }
 
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-StampFld";
