@@ -1286,6 +1286,7 @@ bundle-level statement.
   there is no `EpochHeader` to fast-track against. It is a single per-stamp step to
   the first anchor in $e$, extending inclusion and running one exclusion test that
   $\nf_e$ (already revealed in `SpendCoreHeader`) is absent up to that anchor.
+  ([The figure below](#step-range) previews which stamps each step covers.)
   `BundleAssemble` ($\Uc$) then fuses action proofs pairwise and folds in the
   [accumulator-integrity](#bundle) check, emitting the published stamp.
 
@@ -1549,6 +1550,14 @@ wallet and the OSS.
    $e$](#lift-e). The output needs none of this machinery: it is a lone
    `OutputCore` leaf that `BundleAssemble` folds together with the bound spend into
    the stamp.
+
+<a id="step-range"></a>
+
+The figure below shows the range of stamps each proving step attests, spanning a
+note's spendability from its creation through to the spend in epoch $e$ across the
+two handoffs:
+
+![step_range](./assets/step_range.svg)
 
 #### In-epoch Lift {#in-e}
 
