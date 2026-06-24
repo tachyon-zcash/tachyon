@@ -13,8 +13,12 @@
 //! and [`NoteMasterKey::derive_expanded_trace`](crate::keys::NoteMasterKey::derive_expanded_trace)
 //! should be called once by the wallet and the results reused across steps.
 
+use core::array;
+
 use alloc::vec::Vec;
 
+use ff::Field as _;
+use pasta_curves::Fp;
 use ragu::{Polynomial, Step};
 
 use crate::{
@@ -26,7 +30,9 @@ use crate::{
         Anchor, EpochIndex, ExpKeySpectrumPoly, NfEmitterPoly, NfEmittersDigest, NfSeqPoly,
         TachygramSetPoly,
     },
-    relations::quotient::{self, LIFT_SPLITS, accumulator_recurrence, weight_recurrence},
+    relations::quotient::{
+        self, LIFT_SPLITS, RoundBoundaryQuotients, accumulator_recurrence, weight_recurrence,
+    },
     stamp::proof::{
         delegation::{NfMasterExpand, NullifierDerivationStep},
         pool::VerifyUnspent,
@@ -35,45 +41,41 @@ use crate::{
 };
 
 /// Prepare the witness for [`NfMasterExpand`]:
-/// `(trace T, round quotient splits, boundary quotient, key poly K, decimation
-/// quotient)`.
+/// `(trace T, round/boundary quotients, key poly K, decimation quotient)`.
 ///
 /// The caller supplies the expansion products — `spectrum` (the trace `T`) and
 /// `keyset` (the expanded key schedule) — produced once by
 /// [`NoteMasterKey::derive_expanded_trace`](crate::keys::NoteMasterKey::derive_expanded_trace).
 /// `mk` is passed in for the round-key lookups the quotient builders use. This
-/// function only builds the three quotients the in-circuit relations open
-/// against; it does not re-run the expansion cipher or any FFT.
+/// function only builds the quotients the in-circuit relations open against;
+/// it does not re-run the expansion cipher or any FFT.
 #[must_use]
 pub fn nf_master_expand<'key>(
     mk: &'key NoteMasterKey,
     spectrum: &'key ExpKeySpectrumPoly,
     keyset: &'key ExpandedKey,
 ) -> <NfMasterExpand as Step>::Witness<'key> {
-    let key_poly = keyset.key_poly().0;
-    let (round_quotient, boundary_quotient, decimation_quotient) =
-        quotient::expansion_quotients(spectrum.0.coefficients(), *mk, key_poly.coefficients());
+    let key_poly = keyset.key_poly();
+    let (round, boundary, decimation_quotient) =
+        quotient::expansion_quotients(spectrum.0.coefficients(), *mk, key_poly.0.coefficients());
     (
         spectrum.clone(),
-        round_quotient,
-        boundary_quotient,
+        RoundBoundaryQuotients { round, boundary },
         key_poly,
         decimation_quotient,
     )
 }
 
 /// Prepare the witness for [`NullifierDerivationStep`]:
-/// `(K, T_j, round_quotients_j, boundary_quotients_j, C, E_0)`.
+/// `(K, T_j, quotients_j, E_0)`.
 ///
 /// The key poly `K` is interpolated from `keyset` (the FFT); `polys` are the
 /// caller-supplied derivation polynomials `T_j` (the per-emitter IFFTs,
 /// produced once by
 /// [`ExpandedKey::derivation_polys`](crate::keys::ExpandedKey::derivation_polys)
 /// and reused across steps); `mk` supplies the per-poly salts (a cheap
-/// sponge) the boundary quotients bind against. The constant schedule `C` is
-/// the public [`CONSTANT_SCHEDULE`](crate::CONSTANT_SCHEDULE);
-/// `creation_epoch` (`E_0`) is the caller-supplied offset origin (later pinned
-/// by `SpendableInit`).
+/// sponge) the boundary quotients bind against. `creation_epoch` (`E_0`) is
+/// the caller-supplied offset origin (later pinned by `SpendableInit`).
 #[must_use]
 pub fn nullifier_derivation<'key>(
     keyset: &'key ExpandedKey,
@@ -81,38 +83,21 @@ pub fn nullifier_derivation<'key>(
     polys: &'key [NfEmitterPoly; NF_EMITTERS],
     creation_epoch: EpochIndex,
 ) -> <NullifierDerivationStep as Step>::Witness<'key> {
-    let key_poly = keyset.key_poly().0;
+    let key_poly = keyset.key_poly();
     let salts = mk.query_salts();
-    let first_key = keyset.first_key();
-    let (round_quotients, boundary_quotients): (Vec<_>, Vec<_>) = polys
-        .iter()
-        .zip(salts)
-        .map(|(poly, salt)| {
-            let round = quotient::nf_emitter_round_quotient(poly.0.coefficients(), &keyset.0);
-            let boundary =
-                quotient::nf_emitter_boundary_quotient(poly.0.coefficients(), salt, first_key);
-            (round, boundary)
-        })
-        .unzip();
-    let round_quotients_arr: [_; NF_EMITTERS] =
-        round_quotients.try_into().unwrap_or_else(|extra: Vec<_>| {
-            unreachable!("NF_EMITTERS is {NF_EMITTERS}, got {}", extra.len())
+    let first_key = key_poly.0.eval(Fp::ONE);
+
+    #[expect(clippy::indexing_slicing, reason = "todo")]
+    let quotients: [RoundBoundaryQuotients<_>; NF_EMITTERS] =
+        array::from_fn(|i| RoundBoundaryQuotients {
+            round: quotient::nf_emitter_round_quotient(polys[i].0.coefficients(), &keyset.0),
+            boundary: quotient::nf_emitter_boundary_quotient(
+                polys[i].0.coefficients(),
+                salts.0[i],
+                first_key,
+            ),
         });
-    let boundary_quotients_arr: [_; NF_EMITTERS] =
-        boundary_quotients
-            .try_into()
-            .unwrap_or_else(|extra: Vec<_>| {
-                unreachable!("NF_EMITTERS is {NF_EMITTERS}, got {}", extra.len())
-            });
-    let constants = crate::CONSTANT_SCHEDULE.clone();
-    (
-        key_poly,
-        polys.clone(),
-        round_quotients_arr,
-        boundary_quotients_arr,
-        constants,
-        creation_epoch,
-    )
+    (key_poly, polys.clone(), quotients, creation_epoch)
 }
 
 /// Prepare the witness for [`SpendableInit`]:
@@ -177,7 +162,8 @@ pub fn verify_unspent<'key>(
     // Per-poly geometric weights w_j (split) and quotients; the
     // exclusive-prefix accumulator A (split) and its recurrence quotient.
     let (weights, weight_quotients): (Vec<_>, Vec<_>) = ratios
-        .map(|ratio| weight_recurrence(ratio * beta, shift))
+        .0
+        .map(|ratio| weight_recurrence(ratio * beta, shift.0))
         .into_iter()
         .unzip();
     let weights_arr: [[Polynomial; LIFT_SPLITS]; NF_EMITTERS] =
@@ -188,7 +174,8 @@ pub fn verify_unspent<'key>(
         weight_quotients.try_into().unwrap_or_else(|extra: Vec<_>| {
             unreachable!("NF_EMITTERS is {NF_EMITTERS}, got {}", extra.len())
         });
-    let (accumulator, accumulator_quotient) = accumulator_recurrence(polys, &ratios, shift, beta);
+    let (accumulator, accumulator_quotient) =
+        accumulator_recurrence(polys, &ratios.0, shift.0, beta);
 
     (
         elapsed,

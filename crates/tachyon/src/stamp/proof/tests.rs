@@ -6,7 +6,6 @@
 extern crate alloc;
 
 use alloc::{string::ToString as _, vec, vec::Vec};
-use core::array;
 
 use ff::Field as _;
 use pasta_curves::Fp;
@@ -16,8 +15,8 @@ use rand_core::{CryptoRng, RngCore};
 
 use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
-    ActionSetPoly, CONSTANT_SCHEDULE, Note, TachygramSetPoly,
-    constants::{EPOCH_SIZE, NF_EMITTERS},
+    ActionSetPoly, Note, TachygramSetPoly,
+    constants::EPOCH_SIZE,
     entropy::ActionEntropy,
     fixtures::{
         PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_stamp, build_unspent_pcd,
@@ -29,8 +28,7 @@ use crate::{
     primitives::{
         Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqCommit, NfSeqPoly, Tachygram, effect,
     },
-    relations::quotient,
-    value,
+    value, witness,
 };
 
 fn tg<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Tachygram {
@@ -61,11 +59,11 @@ fn nullifier_derivation_certifies_a_note() {
     assert_eq!(cm, cm_expected, "header carries the note commitment");
     assert_eq!(e0, creation_epoch, "header carries the creation epoch");
     assert_eq!(
-        shift.0, shift_expected,
+        shift.0, shift_expected.0,
         "header forwards the mk-derived shift c"
     );
     assert_eq!(
-        ratios.0, ratios_expected,
+        ratios.0, ratios_expected.0,
         "header forwards the mk-derived ratios"
     );
 
@@ -1454,20 +1452,7 @@ fn nf_master_expand_rejects_forged_witnesses() {
     // note `mk` disagrees in the mismatched/hybrid cases).
     let assemble = |builder_mk: NoteMasterKey| {
         let (spectrum, keyset) = builder_mk.derive_expanded_trace();
-        let key_poly = keyset.key_poly().0;
-        let (round_quotient, boundary_quotient, decimation_quotient) =
-            quotient::expansion_quotients(
-                spectrum.0.coefficients(),
-                builder_mk,
-                key_poly.coefficients(),
-            );
-        (
-            spectrum,
-            round_quotient,
-            boundary_quotient,
-            key_poly,
-            decimation_quotient,
-        )
+        witness::nf_master_expand(&builder_mk, &spectrum, &keyset)
     };
 
     // Trace under a foreign keyset: round 0 (the first column) binds k_0, so the
@@ -1485,18 +1470,11 @@ fn nf_master_expand_rejects_forged_witnesses() {
     // Honest trace and quotients but a tampered key poly: the decimation
     // identity binding `K` to the trace's final column fails.
     let forged_key = {
-        let (trace, round_quotient, boundary_quotient, _honest_key, decimation_quotient) =
-            assemble(mk);
+        let (trace, quotients, _honest_key, decimation_quotient) = assemble(mk);
         let mut tampered = mk.derive_expanded().0;
         tampered[0] += Fp::ONE;
-        let bad_key = ExpandedKey::from(tampered).key_poly().0;
-        (
-            trace,
-            round_quotient,
-            boundary_quotient,
-            bad_key,
-            decimation_quotient,
-        )
+        let bad_key = ExpandedKey::from(tampered).key_poly();
+        (trace, quotients, bad_key, decimation_quotient)
     };
 
     let cases = [
@@ -1549,55 +1527,30 @@ fn derivation_rejects_mismatched_key_poly() {
     let right = user.note_master_half(rng, note, [3, 4, 5]);
 
     let (spectrum, keyset) = mk.derive_expanded_trace();
-    let key_poly = keyset.key_poly().0;
-    let (round_quotient, boundary_quotient, decimation_quotient) =
-        quotient::expansion_quotients(spectrum.0.coefficients(), mk, key_poly.coefficients());
     let (keyset_pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NfMasterExpand,
-            (
-                spectrum,
-                round_quotient,
-                boundary_quotient,
-                key_poly,
-                decimation_quotient,
-            ),
+            witness::nf_master_expand(&mk, &spectrum, &keyset),
             left,
             right,
         )
         .unwrap();
 
     // A key poly with a tampered output no longer matches the committed keyset.
-    let mut tampered = keyset.0;
-    tampered[0] += Fp::ONE;
-    let bad_key = ExpandedKey::from(tampered).key_poly().0;
     let salts = mk.query_salts();
     let polys = keyset.derivation_polys(&salts);
-    let round_quotients: [_; NF_EMITTERS] = array::from_fn(|poly| {
-        quotient::nf_emitter_round_quotient(polys[poly].0.coefficients(), &keyset.0)
-    });
-    let boundary_quotients: [_; NF_EMITTERS] = array::from_fn(|poly| {
-        quotient::nf_emitter_boundary_quotient(
-            polys[poly].0.coefficients(),
-            salts[poly],
-            keyset.0[0],
-        )
-    });
-    let constants = CONSTANT_SCHEDULE.clone();
+    let (_, _same_polys, quotients, _) =
+        witness::nullifier_derivation(&keyset, &mk, &polys, creation_epoch);
+    let mut tampered = keyset.0;
+    tampered[0] += Fp::ONE;
+    let bad_key = ExpandedKey::from(tampered).key_poly();
 
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NullifierDerivationStep,
-            (
-                bad_key,
-                polys,
-                round_quotients,
-                boundary_quotients,
-                constants,
-                creation_epoch,
-            ),
+            (bad_key, polys, quotients, creation_epoch),
             keyset_pcd,
             Proof::trivial().carry::<()>(()),
         )

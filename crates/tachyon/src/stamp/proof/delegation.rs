@@ -31,7 +31,8 @@ use ragu::{
 use zcash_mimc::spec::tachyon::TachyonP5R64;
 
 use crate::{
-    CONSTANT_SCHEDULE_COMMIT, ExpandedKeyCommit, NfEmitterCommit, NfEmitterPoly, NfEmittersDigest,
+    CONSTANT_SCHEDULE, ExpandedKeyCommit, ExpandedKeyPoly, NfEmitterCommit, NfEmitterPoly,
+    NfEmittersDigest,
     constants::{NF_EMITTERS, POLY_LEN_MAX},
     keys::{ExpandedKey, NoteMasterKey, ProofAuthorizingKey},
     note::{Commitment as NoteCommitment, Note},
@@ -42,7 +43,8 @@ use crate::{
             enforce_row_recurrence, enforce_strided_column,
         },
         quotient::{
-            EMITTER_ROUND_SPLITS, EXPANSION_ROUND_SPLITS, QuerySalts, QueryShift, WeightRatios,
+            EMITTER_ROUND_SPLITS, EXPANSION_ROUND_SPLITS, QueryShift, RoundBoundaryQuotients,
+            WeightRatios,
         },
         subgroup_generator,
     },
@@ -149,13 +151,12 @@ impl Step for NfMasterExpand {
     type Left = NfMasterHeader;
     type Output = NfExpandedKeyset;
     type Right = NfMasterHeader;
-    /// `(trace, Q_round splits, Q_boundary, key poly K, decimation Q)`.
+    /// `(trace T, round/boundary quotients, key poly K, decimation quotient)`.
     type Witness<'source> = (
-        ExpKeySpectrumPoly,                   // expansion trace T
-        [Polynomial; EXPANSION_ROUND_SPLITS], // round quotient splits
-        Polynomial,                           // boundary quotient
-        Polynomial,                           // eval-form key poly K
-        Polynomial,                           // decimation quotient Q
+        ExpKeySpectrumPoly,
+        RoundBoundaryQuotients<EXPANSION_ROUND_SPLITS>,
+        ExpandedKeyPoly,
+        Polynomial, // decimation quotient binding K to T's final column
     );
 
     const INDEX: Index = Index::new(1);
@@ -163,9 +164,7 @@ impl Step for NfMasterExpand {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (expansion_trace, round_quotient, boundary_quotient, key_poly, decimation_quotient): Self::Witness<
-            'source,
-        >,
+        (expansion_trace, quotients, key_poly, decimation_quotient): Self::Witness<'source>,
         left: <Self::Left as Header>::Data,
         right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -206,7 +205,7 @@ impl Step for NfMasterExpand {
         // so the relation stays a generic first-column pinning; the prover's
         // boundary quotient pins the same values.
         {
-            let base = Fp::ZERO; // salt used in key expansion
+            let base = Fp::ZERO; // no salt; base = Fp::ZERO
             let first_key = mk.round_key(0);
             let boundary: [Fp; ExpandedKey::EK_LENGTH] = array::from_fn(|row| {
                 #[expect(clippy::as_conversions, reason = "row index conversion")]
@@ -216,7 +215,7 @@ impl Step for NfMasterExpand {
             enforce_first_column_values(
                 ctx,
                 &expansion_trace.0,
-                &boundary_quotient,
+                &quotients.boundary,
                 Fp::ZERO,
                 &boundary,
             )?;
@@ -240,7 +239,7 @@ impl Step for NfMasterExpand {
             enforce_row_recurrence(
                 ctx,
                 &expansion_trace.0,
-                &round_quotient,
+                &quotients.round,
                 &schedule,
                 TachyonP5R64::POW,
             )?;
@@ -258,68 +257,41 @@ impl Step for NfMasterExpand {
         enforce_strided_column::<{ ExpandedKey::EK_LENGTH }>(
             ctx,
             &expansion_trace.0,
-            &key_poly,
+            &key_poly.0,
             &decimation_quotient,
             stride,
             whitening,
         )?;
 
-        // Derive the note's query parameters from the bound `mk`
-        let salts = mk.query_salts();
-        let (ratios, shift) = mk.query_weights();
-
-        Ok((
-            (
-                ExpandedKeyCommit(key_poly.commit()),
-                QuerySalts(salts),
-                WeightRatios(ratios),
-                QueryShift(shift),
-                cm,
-            ),
-            (),
-        ))
+        Ok(((ExpandedKeyCommit(key_poly.0.commit()), mk, cm), ()))
     }
 }
 
-/// The note's derivation keyset commitment, query parameters, and note
-/// commitment `(keyset_commit, salts, ratios, shift, cm)`. Wallet-only.
+/// The note's derivation keyset commitment, master key, and note commitment
+/// `(keyset_commit, mk, cm)`. Wallet-only.
 ///
 /// Carries the [`ExpandedKeyCommit`] to the eval-form key polynomial `K` (the
 /// `ExpandedKey::EK_LENGTH` keyed-cipher expansion outputs), proven by
-/// [`NfMasterExpand`], plus the note's query parameters derived from `mk` by
-/// the same step: the per-poly salts `mk_s^{(j)}`, weight bases `ρ_j`, and
-/// shift `c`. The raw `mk` is not forwarded; `keyset_commit` already binds the
-/// schedule, and the parameters are the only `mk`-derived values the consumer
-/// needs. [`NullifierDerivationStep`] re-witnesses `K`, binds it to
-/// `keyset_commit`, reads the keys through `K` openings, and reads the
-/// parameters directly. The header is private to the wallet's own proof tree
-/// and is never published.
+/// [`NfMasterExpand`], plus the raw `mk` forwarded for [`NullifierDerivationStep`]
+/// to derive its query parameters (per-poly salts, weight bases `ρ_j`, and
+/// shift `c`). The header is private to the wallet's own proof tree and is
+/// never published.
 #[derive(Clone, Debug)]
 pub struct NfExpandedKeyset;
 
 impl Header for NfExpandedKeyset {
-    type Data = (
-        ExpandedKeyCommit,
-        QuerySalts,
-        WeightRatios,
-        QueryShift,
-        NoteCommitment,
-    );
+    type Data = (ExpandedKeyCommit, NoteMasterKey, NoteCommitment);
 
     const SUFFIX: Suffix = Suffix::new(12);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let (keyset_commit, salts, ratios, shift, cm) = *data;
-        let mut out = Vec::with_capacity(32 + ((2 * NF_EMITTERS + 1) * 32) + 32);
+        let (keyset_commit, mk, cm) = *data;
+        let mut out = Vec::with_capacity(32 + (NoteMasterKey::MK_LENGTH * 32) + 32);
         let commit_bytes: [u8; 32] = keyset_commit.0.to_affine().to_bytes();
         out.extend_from_slice(&commit_bytes);
-        for salt in salts.0 {
-            out.extend_from_slice(&salt.to_repr());
+        for part in mk.0 {
+            out.extend_from_slice(&part.to_repr());
         }
-        for ratio in ratios.0 {
-            out.extend_from_slice(&ratio.to_repr());
-        }
-        out.extend_from_slice(&shift.0.to_repr());
         out.extend_from_slice(&Fp::from(cm).to_repr());
         out
     }
@@ -396,69 +368,50 @@ impl Step for NullifierDerivationStep {
     type Left = NfExpandedKeyset;
     type Output = NullifierDerivation;
     type Right = ();
-    /// `(K, T_j, round_quotients_j, boundary_quotients_j, C, E_0)`.
+    /// `(K, T_j, quotients_j, E_0)`.
     type Witness<'source> = (
-        Polynomial,
+        ExpandedKeyPoly,
         [NfEmitterPoly; NF_EMITTERS],
-        [[Polynomial; EMITTER_ROUND_SPLITS]; NF_EMITTERS],
-        [Polynomial; NF_EMITTERS],
-        Polynomial,
+        [RoundBoundaryQuotients<EMITTER_ROUND_SPLITS>; NF_EMITTERS],
         EpochIndex,
     );
 
     const INDEX: Index = Index::new(2);
 
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "poly index is bounded by the fixed-size witness arrays"
-    )]
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (key_poly, polys, round_quotients, boundary_quotients, constants, creation_epoch): Self::Witness<
-            'source,
-        >,
-        (keyset_commit, salts, ratios, shift, cm): <Self::Left as Header>::Data,
+        (key_poly, polys, quotients, creation_epoch): Self::Witness<'source>,
+        (keyset_commit, mk, cm): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Bind the witnessed key poly `K` to the threaded keyset commitment, so
         // every key read below is the proven 128-key schedule.
         let keyset_commitment = keyset_commit.0;
         enforce_equal_point(
-            key_poly.commit(),
+            key_poly.0.commit(),
             keyset_commitment,
             "NullifierDerivationStep: key poly does not match the committed keyset",
         )?;
 
-        // Query parameters, derived from the bound `mk` by `NfMasterExpand` and
-        // threaded on the keyset header. `salts` fix the per-poly boundaries;
-        // `shift`/`ratios` are forwarded for the downstream query and lift.
+        // Query parameters derived from `mk` forwarded on the keyset header.
+        // `salts` fix the per-poly boundaries; `shift`/`ratios` are forwarded
+        // for the downstream query and lift.
+        let salts = mk.query_salts();
+        let (ratios, shift) = mk.query_weights();
 
         // Round-0 boundary key `k_0 = K(1)`, shared across all polys.
-        let first_key = key_poly.eval(Fp::ONE);
+        let first_key = key_poly.0.eval(Fp::ONE);
         ctx.enforce_poly_query(keyset_commitment, Fp::ONE, first_key)?;
 
-        // Bind the witnessed constant schedule to the public commitment, so the
-        // committed offset cannot use a forged `C`.
-        enforce_equal_point(
-            constants.commit(),
-            *CONSTANT_SCHEDULE_COMMIT,
-            "NullifierDerivationStep: constant schedule does not match the public commitment",
-        )?;
-
-        for (poly_index, ((poly, round_quotient), boundary_quotient)) in polys
-            .iter()
-            .zip(&round_quotients)
-            .zip(&boundary_quotients)
-            .enumerate()
-        {
+        for (poly_index, (poly, poly_quotients)) in polys.iter().zip(&quotients).enumerate() {
             // Boundary: round 0 from the salt, `T_j(1) = (mk_s^{(j)} + k_0)^5`.
             let alpha = salts.0[poly_index] + first_key;
             let boundary = alpha.square().square() * alpha;
             enforce_first_column_values::<1>(
                 ctx,
                 &poly.0,
-                boundary_quotient,
+                &poly_quotients.boundary,
                 Fp::ZERO,
                 &[boundary],
             )?;
@@ -468,7 +421,14 @@ impl Step for NullifierDerivationStep {
             enforce_committed_offset_recurrence::<
                 { EMITTER_ROUND_SPLITS },
                 { ExpandedKey::EK_LENGTH },
-            >(ctx, &poly.0, round_quotient, &constants, &key_poly, 5)?;
+            >(
+                ctx,
+                &poly.0,
+                &poly_quotients.round,
+                &CONSTANT_SCHEDULE,
+                &key_poly.0,
+                5,
+            )?;
         }
 
         let commits: [NfEmitterCommit; NF_EMITTERS] =

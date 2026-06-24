@@ -20,7 +20,7 @@ use crate::{
     note::{self, Nullifier},
     primitives::{EpochOffset, ExpKeySpectrumPoly, ExpandedKeyPoly, NfEmitterPoly},
     relations::{
-        quotient::{QueryShift, WeightRatios, nullifier_query},
+        quotient::{QuerySalts, QueryShift, WeightRatios, nullifier_query},
         subgroup_generator,
     },
 };
@@ -70,8 +70,8 @@ impl NoteMasterKey {
     /// derivation poly's 8192-round cipher. Domain-separated from
     /// [`query_weights`](Self::query_weights) so the two cannot collide.
     #[must_use]
-    pub fn query_salts(&self) -> [Fp; NF_EMITTERS] {
-        poseidon::nf_query_salts(self.0)
+    pub fn query_salts(&self) -> QuerySalts {
+        QuerySalts(poseidon::nf_query_salts(self.0))
     }
 
     /// The nullifier-query weight parameters `(ρ_j, c)`: the per-poly
@@ -79,8 +79,9 @@ impl NoteMasterKey {
     /// (the `shift`). Domain-separated from
     /// [`query_salts`](Self::query_salts).
     #[must_use]
-    pub fn query_weights(&self) -> ([Fp; NF_EMITTERS], Fp) {
-        poseidon::nf_query_weights(self.0)
+    pub fn query_weights(&self) -> (WeightRatios, QueryShift) {
+        let (rt, sh) = poseidon::nf_query_weights(self.0);
+        (WeightRatios(rt), QueryShift(sh))
     }
 
     #[must_use]
@@ -188,17 +189,8 @@ impl ExpandedKey {
 
     /// The note's `N` derivation polynomials, one per per-poly `salt`.
     #[must_use]
-    pub fn derivation_polys(&self, salts: &[Fp; NF_EMITTERS]) -> [NfEmitterPoly; NF_EMITTERS] {
-        salts.map(|salt| self.derivation_poly(salt))
-    }
-
-    /// The first key of the schedule, used as the boundary-quotient anchor.
-    /// `EK_LENGTH > 0` by construction.
-    ///
-    /// TODO: remove this, it's wrong
-    #[must_use]
-    pub fn first_key(&self) -> Fp {
-        self.0.first().copied().unwrap_or(Fp::ZERO)
+    pub fn derivation_polys(&self, salts: &QuerySalts) -> [NfEmitterPoly; NF_EMITTERS] {
+        salts.0.map(|salt| self.derivation_poly(salt))
     }
 
     /// The new-scheme nullifier at epoch offset `d` from the note's creation:
@@ -216,8 +208,8 @@ impl ExpandedKey {
         let polys = self.derivation_polys(&salts);
         Nullifier::from(nullifier_query(
             &polys,
-            QueryShift(shift),
-            WeightRatios(ratios),
+            shift,
+            ratios,
             subgroup_generator::<NF_DOMAIN>(),
             u64::from(offset),
         ))

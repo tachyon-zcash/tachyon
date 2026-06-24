@@ -71,6 +71,16 @@ pub struct WeightRatios(pub [Fp; NF_EMITTERS]);
 #[derive(Clone, Copy, Debug)]
 pub struct QuerySalts(pub [Fp; NF_EMITTERS]);
 
+/// Round and boundary quotients for one cipher trace: the masked round quotient
+/// (as `N` capacity-wide splits) and the boundary quotient `(T − B)/(z − 1)`.
+/// Use `EMITTER_ROUND_SPLITS` for derivation polys and `EXPANSION_ROUND_SPLITS`
+/// for the expansion trace.
+#[derive(Clone, Debug)]
+pub struct RoundBoundaryQuotients<const N: usize> {
+    pub round: [Polynomial; N],
+    pub boundary: Polynomial,
+}
+
 // ---------------------------------------------------------------------------
 // Shared generic coset arithmetic
 // ---------------------------------------------------------------------------
