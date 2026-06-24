@@ -41,13 +41,12 @@ suspicious = { level = "deny", priority = -1 }
 cast_possible_truncation = "deny"
 as_conversions = "deny"
 
+panic = "warn"
+
 multiple_crate_versions = "allow"   # todo
 doc_markdown = "allow"              # https://github.com/rust-lang/rust-clippy/issues/7273
 default_numeric_fallback = "allow"  # just uselessly noisy
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-panic = "warn"
-unreachable = "allow"
+unreachable = "allow"               # awkward to disable
 redundant_pub_crate = "allow"       # pub(crate) in private modules is fine
 little_endian_bytes = "allow"       # many specified conversions
 
@@ -155,7 +154,6 @@ host_endian_bytes = "deny"
 if_then_some_else_none = "deny"
 infinite_loop = "deny"
 integer_division = "deny"
-integer_division_remainder_used = "deny"
 iter_over_hash_type = "deny"
 large_include_file = "deny"
 let_underscore_must_use = "deny"
@@ -202,6 +200,8 @@ use_debug = "deny"
 verbose_file_reads = "deny"
 
 # deny later
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
 arbitrary_source_item_ordering = "allow"
 arithmetic_side_effects = "allow"
 exhaustive_enums = "allow"
@@ -210,4 +210,4 @@ missing_inline_in_public_items = "allow"
 todo = "allow"
 unimplemented = "allow"
 dbg_macro = "warn"
-
+integer_division_remainder_used = "warn"
