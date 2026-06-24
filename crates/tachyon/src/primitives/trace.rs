@@ -71,16 +71,21 @@ mod tests {
             Fp::from(9u64),
             Fp::from(10u64),
         ];
-        let mut states =
-            zcash_mimc::state_sequence::<TachyonP5R8192, Fp, 5, 8192>(&keys, Fp::from(3u64));
-        let evaluations = states;
-        Domain::new(TachyonP5R8192::ROUNDS.ilog2()).ifft(&mut states);
-        let poly = NfEmitterPoly(Polynomial::from_coeffs(&states));
+
+        let states =
+            &mut zcash_mimc::state_sequence::<TachyonP5R8192, Fp, 5, 8192>(&keys, Fp::from(3u64));
+
+        let expect_evaluations =
+            [0, 1, 4096, TachyonP5R8192::ROUNDS - 1].map(|index| (index, states[index]));
+
+        Domain::new(TachyonP5R8192::ROUNDS.ilog2()).ifft(states);
+        let poly = NfEmitterPoly(Polynomial::from_coeffs(states));
         let omega = subgroup_generator::<{ TachyonP5R8192::ROUNDS }>();
-        for index in [0, 1, 4096, TachyonP5R8192::ROUNDS - 1] {
+
+        for (index, eval) in expect_evaluations {
             assert_eq!(
                 poly.0.eval(omega.pow_vartime([index as u64])),
-                evaluations[index],
+                eval,
                 "T(omega^i) must reproduce cipher state i"
             );
         }
