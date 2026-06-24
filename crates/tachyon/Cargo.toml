@@ -41,7 +41,12 @@ corez = { version = "0.1.1", default-features = false, features = [
     "alloc",
 ] }
 derive_more = { version = "~2.1", default-features = false, features = [
-    "full", # todo: use more specific features
+    "debug",
+    "display",
+    "eq",
+    "error",
+    "from",
+    "into",
 ] }
 ff = "0.13"
 group = "0.13"
