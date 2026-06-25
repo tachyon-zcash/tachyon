@@ -89,8 +89,8 @@ pub fn build_output_plan(
 ) {
     let rcv = value::CommitmentTrapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
-    let plan = action::Plan::output(note, theta, rcv);
     let alpha = theta.randomizer::<effect::Output>(note.commitment());
+    let plan = action::Plan::output(note, theta, rcv.clone());
     (rcv, alpha, plan)
 }
 
@@ -99,7 +99,7 @@ pub fn build_output_stamp(
     anchor: Anchor,
     note: Note,
 ) -> (Stamp, action::Plan<effect::Output>) {
-    let (rcv, alpha, plan) = build_output_plan(rng, note);
+    let (rcv, alpha, plan) = build_output_plan(rng, note.clone());
     let stamp = Stamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
     (stamp, plan)
 }
@@ -506,10 +506,8 @@ pub struct WalletSim {
 
 impl WalletSim {
     pub fn new(sk: private::SpendingKey) -> Self {
-        Self {
-            sk,
-            pak: sk.derive_proof_private(),
-        }
+        let pak = sk.derive_proof_private();
+        Self { sk, pak }
     }
 
     pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
@@ -563,7 +561,7 @@ impl WalletSim {
         start_epoch: EpochIndex,
         len: u32,
     ) -> Pcd<delegation::NullifierHeader> {
-        let master = self.note_master(rng, *note);
+        let master = self.note_master(rng, note.clone());
         ggm_tools::nullifier_range_from_master(rng, &master, start_epoch, len)
     }
 
@@ -579,7 +577,7 @@ impl WalletSim {
         let present_nf = self.nf_at(note, epoch);
         let (pre_epoch_anchor, pre_cm_anchor, creation_set, chain) =
             spendable_init_inputs(rng, pool, cm, init_height);
-        let nf_header = self.nullifier_pcd(rng, *note, epoch);
+        let nf_header = self.nullifier_pcd(rng, note.clone(), epoch);
 
         let (spendable, ()) = PROOF_SYSTEM
             .fuse(

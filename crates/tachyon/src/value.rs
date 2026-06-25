@@ -3,7 +3,7 @@
 //! A value commitment hides the value transferred in an action:
 //! `cv = [v]V + [rcv]R` where `rcv` is the [`CommitmentTrapdoor`].
 
-use core::{iter, ops, ops::Neg as _};
+use core::{iter, mem::size_of, ops, ops::Neg as _, ptr, slice};
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
@@ -15,6 +15,7 @@ use pasta_curves::{
     pallas,
 };
 use rand_core::{CryptoRng, RngCore};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Hash-to-curve domain for value commitment generators $\mathcal{V}$ and
 /// $\mathcal{R}$. Shared with Orchard to reuse `reddsa::orchard::Binding` —
@@ -46,13 +47,18 @@ lazy_static! {
 /// An $\mathbb{F}_q$ element (Pallas scalar field, 32 bytes). Lives
 /// in the scalar field because $\mathsf{rcv}$ is used as a scalar in
 /// point multiplication $[\mathsf{rcv}]\,\mathcal{R}$.
-#[derive(Clone, Copy, Debug, Into)]
+#[derive(Clone, Debug, Into)]
 pub struct CommitmentTrapdoor(#[debug(skip)] Fq);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fq::random(rng))
+    }
+
+    /// Returns the inner scalar for use in arithmetic (e.g. BSK summation).
+    pub(crate) const fn inner(&self) -> Fq {
+        self.0
     }
 
     /// Commit to a value with this trapdoor.
@@ -62,7 +68,7 @@ impl CommitmentTrapdoor {
     /// Positive $v$ for spends (balance contributed), negative for
     /// outputs (balance exhausted).
     #[must_use]
-    pub fn commit(self, raw_value: i64) -> Commitment {
+    pub fn commit(&self, raw_value: i64) -> Commitment {
         assert_ne!(self.0, Fq::ZERO, "commitment trapdoor should not be zero");
 
         let value_abs: Fq = Fq::from(raw_value.unsigned_abs());
@@ -155,6 +161,27 @@ impl iter::Sum for Commitment {
     }
 }
 
+impl Zeroize for CommitmentTrapdoor {
+    fn zeroize(&mut self) {
+        // Safety: pasta_curves::Fq is a plain field element with no heap
+        // allocations, internal pointers, or Drop implementation.
+        #[expect(unsafe_code, reason = "zeroize non-Zeroize pasta_curves::Fq")]
+        unsafe {
+            let ptr: *mut u8 = ptr::from_mut(&mut self.0).cast();
+            let len = size_of::<Fq>();
+            slice::from_raw_parts_mut(ptr, len).zeroize();
+        }
+    }
+}
+
+impl Drop for CommitmentTrapdoor {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for CommitmentTrapdoor {}
+
 #[cfg(test)]
 mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
@@ -174,13 +201,15 @@ mod tests {
     fn commit_homomorphic_binding_property() {
         let rng = &mut StdRng::seed_from_u64(0);
         let rcv_a = CommitmentTrapdoor::random(rng);
+        let scalar_a = rcv_a.inner();
         let cv_a = rcv_a.commit(100);
         let rcv_b = CommitmentTrapdoor::random(rng);
+        let scalar_b = rcv_b.inner();
         let cv_b = rcv_b.commit(200);
 
         let remainder = cv_a + cv_b - Commitment::balance(300);
 
-        let rcv_sum: Fq = Into::<Fq>::into(rcv_a) + Into::<Fq>::into(rcv_b);
+        let rcv_sum: Fq = scalar_a + scalar_b;
         let expected: EpAffine = (*VALUE_COMMIT_R * rcv_sum).into();
 
         assert_eq!(remainder, Commitment(expected));

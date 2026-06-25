@@ -327,7 +327,10 @@ impl Plan {
             .iter()
             .map(|plan| {
                 let alpha = plan.theta.randomizer(plan.note.commitment());
-                ((plan.cv(), plan.rk), (alpha, plan.note, plan.rcv))
+                (
+                    (plan.cv(), plan.rk),
+                    (alpha, plan.note.clone(), plan.rcv.clone()),
+                )
             })
             .collect();
 
@@ -336,7 +339,10 @@ impl Plan {
             .iter()
             .map(|plan| {
                 let alpha = plan.theta.randomizer(plan.note.commitment());
-                ((plan.cv(), plan.rk), (alpha, plan.note, plan.rcv))
+                (
+                    (plan.cv(), plan.rk),
+                    (alpha, plan.note.clone(), plan.rcv.clone()),
+                )
             })
             .collect();
 
@@ -349,10 +355,9 @@ impl Plan {
     /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i$.
     #[must_use]
     pub fn derive_bsk_private(&self) -> private::BindingSigningKey {
-        let trapdoors: Vec<_> = self
-            .iter_actions(|plan| plan.rcv, |plan| plan.rcv)
-            .collect();
-        private::BindingSigningKey::from(trapdoors.as_slice())
+        let spend_rcvs = self.spends.iter().map(|plan| &plan.rcv);
+        let output_rcvs = self.outputs.iter().map(|plan| &plan.rcv);
+        private::BindingSigningKey::from_trapdoors(spend_rcvs.chain(output_rcvs))
     }
 
     /// Sign all actions with a spend authorizing key.

@@ -1,11 +1,12 @@
 //! Private (signing) keys.
 
-use core::marker::PhantomData;
+use core::{marker::PhantomData, mem::size_of, ptr, slice};
 
 use derive_more::{Debug, From};
 use ff::{Field as _, FromUniformBytes as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
 use rand_core::{CryptoRng, RngCore};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use super::{
     note::{NullifierKey, PaymentKey},
@@ -35,7 +36,7 @@ use crate::{
 /// - [`derive_payment_key`](Self::derive_payment_key) → [`PaymentKey`] (`pk`)
 /// - [`derive_proof_private`](Self::derive_proof_private) →
 ///   [`ProofAuthorizingKey`] (`ak` + `nk`)
-#[derive(Clone, Copy, Debug, From)]
+#[derive(Clone, Debug, From)]
 pub struct SpendingKey(#[debug(skip)] [u8; 32]);
 
 impl SpendingKey {
@@ -153,7 +154,7 @@ impl SpendingKey {
 /// `ask` derives [`SpendValidatingKey`](super::proof::SpendValidatingKey)
 /// (`ak`) via [`derive_auth_public`](Self::derive_auth_public) — the
 /// circuit witness that validates spend authorization.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct SpendAuthorizingKey(#[debug(skip)] reddsa::SigningKey<reddsa::ActionAuth>);
 
 impl SpendAuthorizingKey {
@@ -188,7 +189,7 @@ impl SpendAuthorizingKey {
 ///
 /// Both variants sign via [`sign`](Self::sign) and derive `rk` via
 /// [`derive_action_public`](Self::derive_action_public).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ActionSigningKey<E: Effect>(
     #[debug(skip)] reddsa::SigningKey<reddsa::ActionAuth>,
     PhantomData<E>,
@@ -247,7 +248,7 @@ impl ActionSigningKey<effect::Output> {
 /// commitment (and commitments from other pools). The stamp is
 /// excluded from the bundle commitment because it is stripped during
 /// aggregation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct BindingSigningKey(#[debug(skip)] reddsa::SigningKey<reddsa::BindingAuth>);
 
 impl TryFrom<[u8; 32]> for BindingSigningKey {
@@ -274,25 +275,134 @@ impl BindingSigningKey {
     pub fn derive_binding_public(&self) -> public::BindingVerificationKey {
         public::BindingVerificationKey(reddsa::VerificationKey::from(&self.0))
     }
+
+    /// Construct from the scalar sum of value commitment trapdoors.
+    ///
+    /// Every Pallas scalar field element, including zero, is a valid binding
+    /// signing key. See Zcash protocol §4.14.
+    #[expect(
+        clippy::expect_used,
+        reason = "all Fq are valid RedPallas signing keys"
+    )]
+    fn from_scalar_sum(mut sum: Fq) -> Self {
+        let mut repr = sum.to_repr();
+        let key = Self(
+            reddsa::SigningKey::<reddsa::BindingAuth>::try_from(repr)
+                .expect("all Fq are valid RedPallas signing keys"),
+        );
+
+        repr.zeroize();
+        // Safety: Fq is a plain field element with no heap allocations,
+        // internal pointers, or Drop implementation.
+        #[expect(unsafe_code, reason = "zeroize non-Zeroize pasta_curves::Fq")]
+        unsafe {
+            let ptr: *mut u8 = ptr::from_mut(&mut sum).cast();
+            slice::from_raw_parts_mut(ptr, size_of::<Fq>()).zeroize();
+        }
+
+        key
+    }
+
+    /// Construct from borrowed value commitment trapdoors without materializing
+    /// a vector of copied trapdoor scalars.
+    pub(crate) fn from_trapdoors<'source>(
+        trapdoors: impl IntoIterator<Item = &'source value::CommitmentTrapdoor>,
+    ) -> Self {
+        let mut sum = Fq::ZERO;
+        for trapdoor in trapdoors {
+            let mut scalar = trapdoor.inner();
+            sum += scalar;
+            // Safety: Fq is a plain field element with no heap allocations,
+            // internal pointers, or Drop implementation.
+            #[expect(unsafe_code, reason = "zeroize non-Zeroize pasta_curves::Fq")]
+            unsafe {
+                let ptr: *mut u8 = ptr::from_mut(&mut scalar).cast();
+                slice::from_raw_parts_mut(ptr, size_of::<Fq>()).zeroize();
+            }
+        }
+        Self::from_scalar_sum(sum)
+    }
 }
 
 impl From<&[value::CommitmentTrapdoor]> for BindingSigningKey {
     /// BindingAuth signing key is the scalar sum of all value commitment
     /// trapdoors.
-    ///
-    /// Every Pallas scalar field element, including zero, is a valid binding
-    /// signing key. See Zcash protocol §4.14.
     fn from(trapdoors: &[value::CommitmentTrapdoor]) -> Self {
-        let sum: Fq = trapdoors
-            .iter()
-            .fold(Fq::ZERO, |acc, rcv| acc + Into::<Fq>::into(*rcv));
-        #[expect(
-            clippy::expect_used,
-            reason = "all Fq are valid RedPallas signing keys"
-        )]
-        Self(
-            reddsa::SigningKey::<reddsa::BindingAuth>::try_from(sum.to_repr())
-                .expect("all Fq are valid RedPallas signing keys"),
-        )
+        Self::from_trapdoors(trapdoors)
     }
 }
+
+impl Zeroize for SpendingKey {
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl Drop for SpendingKey {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for SpendingKey {}
+
+impl Zeroize for SpendAuthorizingKey {
+    fn zeroize(&mut self) {
+        // Safety: reddsa::SigningKey is a plain data struct (scalar + point),
+        // with no heap allocations or internal pointers.
+        #[expect(unsafe_code, reason = "zeroize non-Zeroize reddsa::SigningKey")]
+        unsafe {
+            let ptr: *mut u8 = ptr::from_mut(&mut self.0).cast();
+            slice::from_raw_parts_mut(ptr, size_of::<reddsa::SigningKey<reddsa::ActionAuth>>())
+                .zeroize();
+        }
+    }
+}
+
+impl Drop for SpendAuthorizingKey {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for SpendAuthorizingKey {}
+
+impl<E: Effect> Zeroize for ActionSigningKey<E> {
+    fn zeroize(&mut self) {
+        // Safety: same as SpendAuthorizingKey — SigningKey is plain data.
+        #[expect(unsafe_code, reason = "zeroize non-Zeroize reddsa::SigningKey")]
+        unsafe {
+            let ptr: *mut u8 = ptr::from_mut(&mut self.0).cast();
+            slice::from_raw_parts_mut(ptr, size_of::<reddsa::SigningKey<reddsa::ActionAuth>>())
+                .zeroize();
+        }
+    }
+}
+
+impl<E: Effect> Drop for ActionSigningKey<E> {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl<E: Effect> ZeroizeOnDrop for ActionSigningKey<E> {}
+
+impl Zeroize for BindingSigningKey {
+    fn zeroize(&mut self) {
+        // Safety: same as SpendAuthorizingKey — SigningKey is plain data.
+        #[expect(unsafe_code, reason = "zeroize non-Zeroize reddsa::SigningKey")]
+        unsafe {
+            let ptr: *mut u8 = ptr::from_mut(&mut self.0).cast();
+            slice::from_raw_parts_mut(ptr, size_of::<reddsa::SigningKey<reddsa::BindingAuth>>())
+                .zeroize();
+        }
+    }
+}
+
+impl Drop for BindingSigningKey {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for BindingSigningKey {}

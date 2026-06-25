@@ -33,11 +33,13 @@
 //! enters the polynomial accumulator. The concrete commitment scheme
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
+use core::{mem::size_of, ptr, slice};
 
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
     constants::NOTE_VALUE_MAX,
@@ -51,7 +53,7 @@ use crate::{
 /// Used to derive the master root key: $mk = \text{KDF}(\psi, nk)$.
 /// The GGM tree PRF then evaluates $nf = F_{mk}(\text{flavor})$.
 /// Prefix keys derived from $mk$ enable range-restricted delegation.
-#[derive(Clone, Copy, Debug, From, Into)]
+#[derive(Clone, Debug, From, Into)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct NullifierTrapdoor(#[debug(skip)] pub(super) Fp);
 
@@ -66,7 +68,7 @@ impl NullifierTrapdoor {
 /// commitment.
 ///
 /// Can be derived from a shared secret negotiated out-of-band.
-#[derive(Clone, Copy, Debug, From, Into)]
+#[derive(Clone, Debug, From, Into)]
 pub struct CommitmentTrapdoor(#[debug(skip)] Fp);
 
 impl CommitmentTrapdoor {
@@ -80,7 +82,7 @@ impl CommitmentTrapdoor {
 ///
 /// Represents a discrete unit of value in the Tachyon shielded pool.
 /// Created by output operations, consumed by spend operations.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Note {
     /// The recipient's payment key.
     pub pk: PaymentKey,
@@ -222,6 +224,47 @@ impl From<Nullifier> for Tachygram {
     }
 }
 
+impl Zeroize for NullifierTrapdoor {
+    fn zeroize(&mut self) {
+        // Safety: pasta_curves::Fp is a plain field element with no heap
+        // allocations, internal pointers, or Drop implementation.
+        #[expect(unsafe_code, reason = "zeroize non-Zeroize pasta_curves::Fp")]
+        unsafe {
+            let ptr: *mut u8 = ptr::from_mut(&mut self.0).cast();
+            let len = size_of::<Fp>();
+            slice::from_raw_parts_mut(ptr, len).zeroize();
+        }
+    }
+}
+
+impl Drop for NullifierTrapdoor {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for NullifierTrapdoor {}
+
+impl Zeroize for CommitmentTrapdoor {
+    fn zeroize(&mut self) {
+        // Safety: same as NullifierTrapdoor — Fp is plain data.
+        #[expect(unsafe_code, reason = "zeroize non-Zeroize pasta_curves::Fp")]
+        unsafe {
+            let ptr: *mut u8 = ptr::from_mut(&mut self.0).cast();
+            let len = size_of::<Fp>();
+            slice::from_raw_parts_mut(ptr, len).zeroize();
+        }
+    }
+}
+
+impl Drop for CommitmentTrapdoor {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for CommitmentTrapdoor {}
+
 #[cfg(test)]
 mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
@@ -260,7 +303,7 @@ mod tests {
         let note1 = Note {
             pk,
             value: Value::try_from(100u64).unwrap(),
-            psi,
+            psi: psi.clone(),
             rcm: CommitmentTrapdoor::random(rng),
         };
         let note2 = Note {

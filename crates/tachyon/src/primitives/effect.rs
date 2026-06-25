@@ -27,7 +27,7 @@ pub trait Effect: sealed::Sealed + 'static {
 
     /// Commit to this effect's signed value contribution using the given
     /// trapdoor.
-    fn commit_value(rcv: value::CommitmentTrapdoor, value: note::Value) -> value::Commitment;
+    fn commit_value(rcv: &value::CommitmentTrapdoor, value: note::Value) -> value::Commitment;
 }
 
 /// Spend effect marker.
@@ -43,7 +43,7 @@ impl Effect for Spend {
         Fq::from_uniform_bytes(&blake2b::alpha_spend(&theta.0, &Fp::from(cm).to_repr()))
     }
 
-    fn commit_value(rcv: value::CommitmentTrapdoor, value: note::Value) -> value::Commitment {
+    fn commit_value(rcv: &value::CommitmentTrapdoor, value: note::Value) -> value::Commitment {
         let raw: i64 = value.into();
         rcv.commit(raw)
     }
@@ -54,7 +54,7 @@ impl Effect for Output {
         Fq::from_uniform_bytes(&blake2b::alpha_output(&theta.0, &Fp::from(cm).to_repr()))
     }
 
-    fn commit_value(rcv: value::CommitmentTrapdoor, value: note::Value) -> value::Commitment {
+    fn commit_value(rcv: &value::CommitmentTrapdoor, value: note::Value) -> value::Commitment {
         let raw: i64 = value.into();
         rcv.commit(-raw)
     }

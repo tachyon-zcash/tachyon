@@ -64,7 +64,7 @@ fn honest_spend_bind(
             rng,
             spend::SpendBind,
             (
-                (note.pk, note.value, note.rcm, note.psi),
+                (note.pk, note.value, note.rcm.clone(), note.psi.clone()),
                 rcv,
                 alpha,
                 user.pak,
@@ -469,9 +469,13 @@ fn spend_bind_rejects_invalid_inputs() {
     let phantom = Note {
         value: note::Value::try_from(999_999u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
-        ..note
+        ..note.clone()
     };
-    assert_eq!(Fp::from(note.psi), Fp::from(phantom.psi), "shared psi");
+    assert_eq!(
+        Fp::from(note.psi.clone()),
+        Fp::from(phantom.psi.clone()),
+        "shared psi"
+    );
     assert_ne!(note.commitment(), phantom.commitment(), "distinct cm");
     assert_eq!(
         user.nf_at(&note, spend_epoch),
@@ -491,13 +495,13 @@ fn spend_bind_rejects_invalid_inputs() {
         ),
         (
             "wrong value",
-            (note.pk, wrong_value, note.rcm, note.psi),
+            (note.pk, wrong_value, note.rcm.clone(), note.psi.clone()),
             user.pak,
             "SpendBind: note does not match the spendable lineage",
         ),
         (
             "unrelated pak",
-            (note.pk, note.value, note.rcm, note.psi),
+            (note.pk, note.value, note.rcm.clone(), note.psi.clone()),
             other.pak,
             "SpendBind: pak not related to note",
         ),
@@ -770,9 +774,13 @@ fn notes_with_shared_psi_share_nullifiers() {
     let note_b = Note {
         value: note::Value::try_from(700u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
-        ..note_a
+        ..note_a.clone()
     };
-    assert_eq!(Fp::from(note_a.psi), Fp::from(note_b.psi), "shared psi");
+    assert_eq!(
+        Fp::from(note_a.psi.clone()),
+        Fp::from(note_b.psi.clone()),
+        "shared psi"
+    );
     assert_ne!(
         note_a.commitment(),
         note_b.commitment(),
@@ -1244,7 +1252,7 @@ fn spendable_lift_rejects_wrong_cm() {
     let phantom = Note {
         value: note::Value::try_from(700u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
-        ..note
+        ..note.clone()
     };
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let cm_idx = pool

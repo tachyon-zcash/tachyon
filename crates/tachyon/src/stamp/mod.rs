@@ -312,8 +312,8 @@ impl Stamp {
     ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let (pcd, ()) = app.seed(rng, OutputStamp, (rcv, alpha, note, anchor))?;
         let tachygram = Tachygram::from(note.commitment());
+        let (pcd, ()) = app.seed(rng, OutputStamp, (rcv, alpha, note, anchor))?;
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok(Self {

@@ -89,19 +89,25 @@ fn plan_prove_rejects_invalid_inputs() {
     ];
 
     let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
-    let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
+    let plan_a = action::Plan::spend(note_a.clone(), theta_a, rcv_a.clone(), |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
     let (rcv_b, theta_b, alpha_b) = spend_witness(rng, &note_b);
-    let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, |alpha| {
+    let plan_b = action::Plan::spend(note_b.clone(), theta_b, rcv_b.clone(), |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
     let two_spends = || {
         alloc::vec![
-            ((plan_a.cv(), plan_a.rk), (alpha_a, note_a, rcv_a)),
-            ((plan_b.cv(), plan_b.rk), (alpha_b, note_b, rcv_b)),
+            (
+                (plan_a.cv(), plan_a.rk),
+                (alpha_a, note_a.clone(), rcv_a.clone())
+            ),
+            (
+                (plan_b.cv(), plan_b.rk),
+                (alpha_b, note_b.clone(), rcv_b.clone())
+            ),
         ]
     };
 

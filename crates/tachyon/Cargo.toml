@@ -56,6 +56,7 @@ ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "2f926fdcb5f1d402c
 
 rand_core = { version = "0.6", default-features = false }
 reddsa = { version = "0.5.1", default-features = false }
+zeroize = { version = "1.8", default-features = false }
 
 [dev-dependencies]
 rand = "0.8"
