@@ -1,44 +1,236 @@
-//! Note-related keys: NullifierKey, PaymentKey.
+//! Note-related keys: NullifierKey, NoteMasterKey, PaymentKey.
+
+#![allow(missing_docs, reason = "todo")]
+
+extern crate alloc;
+
+use alloc::vec::Vec;
+use core::{array, fmt};
 
 use derive_more::Debug;
-use ff::PrimeField as _;
+use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
+use ragu::{Domain, Polynomial};
+use zcash_mimc::spec::tachyon::{TachyonP5R64, TachyonP5R8192};
 
-use super::{ggm::NoteMasterKey, proof::SpendValidatingKey};
-use crate::{digest::poseidon, note};
+use super::proof::SpendValidatingKey;
+use crate::{
+    constants::{NF_DOMAIN, NF_EMITTERS, POLY_LEN_MAX},
+    digest::{mimc, poseidon},
+    note::{self, Nullifier},
+    primitives::{EpochOffset, ExpKeySpectrumPoly, ExpandedKeyPoly, NfEmitterPoly},
+    relations::{
+        quotient::{QuerySalts, QueryShift, WeightRatios, nullifier_query},
+        subgroup_generator,
+    },
+};
 
 /// A Tachyon nullifier deriving key.
 ///
 /// Tachyon simplifies Orchard's nullifier construction
-/// ("Tachyaction at a Distance", Bowe 2025):
+/// ("Tachyaction at a Distance", Bowe 2025): a per-note keyset
+/// $[\mathsf{mk}_0, \ldots, \mathsf{mk}_{n-1}]$, each $\mathsf{mk}_i =
+/// \text{Poseidon}(\Psi, \mathsf{nk}, i)$; the leading keys key the
+/// multi-key MiMC cipher and the last key is the input salt $\mathsf{mk}_s$,
+/// so the nullifier for an epoch is
 ///
-/// $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
+/// $$\mathsf{nf}_e = E_{\mathsf{mk}}(\mathsf{mk}_s + e)$$
 ///
-/// where $F$ is a keyed PRF (Poseidon), $\Psi$ is the note's nullifier
-/// trapdoor, and flavor is the epoch-id. This replaces Orchard's more
-/// complex construction that defended against faerie gold attacks — which
-/// are moot under out-of-band payments.
+/// where $\Psi$ is the note's nullifier trapdoor and $e$ the epoch-id.
 ///
-/// ## Capabilities
-///
-/// - **Nullifier derivation**: detecting when a note has been spent
-/// - **Oblivious sync delegation** (Nullifier Derivation Scheme doc): the
-///   master root key $\mathsf{mk} = \text{KDF}(\Psi, \mathsf{nk})$ seeds a GGM
-///   tree PRF; prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
-///   $e \leq t$, enabling range-restricted delegation without revealing spend
-///   capability
-///
-/// `nk` alone does NOT confer spend authority — combined with `ak` it
+/// `nk` alone does NOT confer spend authority; combined with `ak` it
 /// forms the proof authorizing key `pak`, enabling proof construction
 /// and nullifier derivation without signing capability.
 #[derive(Clone, Copy, Debug)]
 pub struct NullifierKey(#[debug(skip)] pub(super) Fp);
 
 impl NullifierKey {
-    /// Derive a note's GGM master root from its nullifier trapdoor `psi`.
+    /// Derive a note's master-key seed from its nullifier trapdoor `psi`.
     #[must_use]
-    pub fn derive_note_private(&self, psi: &note::NullifierTrapdoor) -> NoteMasterKey {
-        NoteMasterKey(poseidon::nf_master(psi.0, self.0))
+    pub fn derive_note_private(&self, psi: &note::NullifierTrapdoor, index: u64) -> Fp {
+        poseidon::nf_master(psi.0, self.0, Fp::from(index))
+    }
+}
+
+/// Per-note master secret.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct NoteMasterKey(pub [Fp; Self::MK_LENGTH]);
+
+impl NoteMasterKey {
+    pub const MK_LENGTH: usize = 6;
+
+    /// Get the round key at the given index.
+    #[must_use]
+    pub const fn round_key(&self, index: usize) -> Fp {
+        #[expect(clippy::integer_division_remainder_used, reason = "constant size")]
+        self.0[index % self.0.len()]
+    }
+
+    /// The per-emitter nullifier-query salts `mk_s^{(j)}`, each seeding one
+    /// derivation poly's 8192-round cipher. Domain-separated from
+    /// [`query_weights`](Self::query_weights) so the two cannot collide.
+    #[must_use]
+    pub fn query_salts(&self) -> QuerySalts {
+        QuerySalts(poseidon::nf_query_salts(self.0))
+    }
+
+    /// The nullifier-query weight parameters `(ρ_j, c)`: the per-poly
+    /// geometric weight bases `ρ_j` and the secret query-coset origin `c`
+    /// (the `shift`). Domain-separated from
+    /// [`query_salts`](Self::query_salts).
+    #[must_use]
+    pub fn query_weights(&self) -> (WeightRatios, QueryShift) {
+        let (rt, sh) = poseidon::nf_query_weights(self.0);
+        (WeightRatios(rt), QueryShift(sh))
+    }
+
+    #[must_use]
+    pub fn derive_expanded(&self) -> ExpandedKey {
+        ExpandedKey(array::from_fn(|index| {
+            #[expect(clippy::as_conversions, reason = "constant expansion size")]
+            mimc::mk_dk_expand(Fp::ZERO, self.0, Fp::from(index as u64))
+        }))
+    }
+
+    /// The note's expansion trace polynomial and keyset. Runs the
+    /// `ExpandedKey::EK_LENGTH` keyed-cipher expansions and interpolates their
+    /// row-major `EK_LENGTH × ROUNDS` cells over `⟨ω⟩` into the trace
+    /// polynomial `T` (so `T(ω^{ROUNDS·r + c})` is row `r`'s `c`-th cipher
+    /// state); the per-row whitened outputs are the keyset. `T` is only
+    /// ever the interpolant (the quotient builders and the in-circuit
+    /// relations both treat it that way), so the inverse FFT lives here,
+    /// with its producer.
+    #[must_use]
+    pub fn derive_expanded_trace(&self) -> (ExpKeySpectrumPoly, ExpandedKey) {
+        let mut cells: Vec<Fp> = Vec::with_capacity(ExpandedKey::EK_LENGTH * TachyonP5R64::ROUNDS);
+        let mut keys: Vec<Fp> = Vec::with_capacity(ExpandedKey::EK_LENGTH);
+
+        #[expect(clippy::as_conversions, reason = "constant size")]
+        for (row, key) in (0..(ExpandedKey::EK_LENGTH as u64))
+            .map(|index| mimc::mk_dk_expand_sequence(Fp::ZERO, self.0, Fp::from(index)))
+        {
+            cells.extend_from_slice(&row);
+            keys.push(key);
+        }
+
+        Domain::new(cells.len().ilog2()).ifft(&mut cells);
+        #[expect(clippy::expect_used, reason = "constant size")]
+        (
+            ExpKeySpectrumPoly(Polynomial::from_coeffs(&cells)),
+            ExpandedKey(keys.try_into().expect("constant size")),
+        )
+    }
+}
+
+/// Per-note nullifier derivation material.
+///
+/// The `ExpandedKey::EK_LENGTH` keyed-cipher expansion outputs `E_mk(mk_s +
+/// i)`, used as the full `κ = ExpandedKey::EK_LENGTH` cyclic round-key schedule
+/// of the note's derivation polynomials.
+///
+/// A flat `[Fp; ExpandedKey::EK_LENGTH]` newtype handled only as a polynomial
+/// downstream: [`key_poly`](Self::key_poly) is the eval-form interpolant over
+/// the order-`ExpandedKey::EK_LENGTH` subgroup `⟨ζ⟩` (`K(ζ^r) = k_r`), and
+/// [`commit`](Self::commit) is the commitment the key-expansion step emits. The
+/// per-poly salts, the weight bases `ρ_j`, and the shift `c` come from `mk`
+/// (via the nullifier-query sponge methods on [`NoteMasterKey`]), not from
+/// these outputs.
+///
+/// Wallet-only secret material: the wallet is the sole prover of derivation,
+/// and delegation operates on value windows only (no key-material delegation
+/// API).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ExpandedKey(pub [Fp; Self::EK_LENGTH]);
+
+impl ExpandedKey {
+    /// The expansion trace is `TachyonP5R64::ROUNDS` rows of `EK_LENGTH` cells
+    /// (`ROUNDS x EK_LENGTH = POLY_LEN_MAX`), so the key length is derived.
+    #[expect(
+        clippy::integer_division,
+        clippy::integer_division_remainder_used,
+        reason = "constant size"
+    )]
+    pub const EK_LENGTH: usize = POLY_LEN_MAX / TachyonP5R64::ROUNDS;
+
+    /// Get the round key at the given index.
+    #[must_use]
+    pub const fn round_key(&self, index: usize) -> Fp {
+        #[expect(clippy::integer_division_remainder_used, reason = "constant size")]
+        self.0[index % self.0.len()]
+    }
+
+    /// The eval-form key polynomial `K` over the order-`EK_LENGTH` subgroup
+    /// `⟨ζ⟩` (`K(ζ^r) = self.0[r]`). The strided-column and committed-offset
+    /// relations open `K` by evaluation, so it is always the interpolant; the
+    /// inverse FFT into coefficient form lives here.
+    #[must_use]
+    pub fn key_poly(&self) -> ExpandedKeyPoly {
+        let mut coeffs = self.0.to_vec();
+        Domain::new(Self::EK_LENGTH.ilog2()).ifft(&mut coeffs);
+        ExpandedKeyPoly(Polynomial::from_coeffs(&coeffs))
+    }
+
+    /// One derivation polynomial: the 8192-round keyed cipher on input `salt`
+    /// under this full 128-key schedule, interpolated over `⟨ω⟩` (so `T(ω^i)`
+    /// is the `i`-th cipher state). The query reads it by evaluation, so it
+    /// is always the interpolant, never raw cipher states as coefficients.
+    #[must_use]
+    pub fn derivation_poly(&self, salt: Fp) -> NfEmitterPoly {
+        let mut coeffs = zcash_mimc::state_sequence::<
+            TachyonP5R8192,
+            Fp,
+            { TachyonP5R8192::POW },
+            { TachyonP5R8192::ROUNDS },
+        >(&self.0, salt)
+        .to_vec();
+        Domain::new(TachyonP5R8192::ROUNDS.ilog2()).ifft(&mut coeffs);
+        NfEmitterPoly(Polynomial::from_coeffs(&coeffs))
+    }
+
+    /// The note's `N` derivation polynomials, one per per-poly `salt`.
+    #[must_use]
+    pub fn derivation_polys(&self, salts: &QuerySalts) -> [NfEmitterPoly; NF_EMITTERS] {
+        salts.0.map(|salt| self.derivation_poly(salt))
+    }
+
+    /// The new-scheme nullifier at epoch offset `d` from the note's creation:
+    /// `nf_d = Σ_j ρ_j^d·T_j(c·γ^d)`, the query the spend circuit reproduces.
+    ///
+    /// This is the wallet's native nullifier — the in-circuit query relation
+    /// mirrors it. The `keyset` (the FFT product of `mk`) is `self`, borrowed
+    /// so the wallet can expand once and query many offsets cheaply; `mk`
+    /// supplies the query salts and weights via its domain-separated sponge
+    /// methods.
+    #[must_use]
+    pub fn derive_nullifier(&self, mk: &NoteMasterKey, offset: EpochOffset) -> Nullifier {
+        let salts = mk.query_salts();
+        let (ratios, shift) = mk.query_weights();
+        let polys = self.derivation_polys(&salts);
+        Nullifier::from(nullifier_query(
+            &polys,
+            shift,
+            ratios,
+            subgroup_generator::<NF_DOMAIN>(),
+            u64::from(offset),
+        ))
+    }
+}
+
+impl From<[Fp; Self::EK_LENGTH]> for ExpandedKey {
+    fn from(keys: [Fp; Self::EK_LENGTH]) -> Self {
+        Self(keys)
+    }
+}
+
+impl From<ExpandedKey> for [Fp; ExpandedKey::EK_LENGTH] {
+    fn from(keyset: ExpandedKey) -> Self {
+        keyset.0
+    }
+}
+
+impl fmt::Debug for ExpandedKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DerivationKeyset").finish_non_exhaustive()
     }
 }
 
@@ -91,22 +283,35 @@ impl PaymentKey {
     }
 }
 
+impl fmt::Debug for NoteMasterKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NoteMasterKey").finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::primitives::EpochIndex;
+
+    /// The note's `MK_LENGTH`-part master key, one part per index.
+    fn master_key(nk: &NullifierKey, psi: &note::NullifierTrapdoor) -> NoteMasterKey {
+        NoteMasterKey(array::from_fn(|index| {
+            nk.derive_note_private(psi, u64::try_from(index).expect("index fits u64"))
+        }))
+    }
 
     #[test]
     fn derive_note_private_deterministic() {
         let rng = &mut StdRng::seed_from_u64(0);
         let nk = NullifierKey(Fp::random(&mut *rng));
         let psi = note::NullifierTrapdoor::random(rng);
-        let mk1 = nk.derive_note_private(&psi);
-        let mk2 = nk.derive_note_private(&psi);
-        assert_eq!(mk1, mk2);
+        assert_eq!(
+            nk.derive_note_private(&psi, 0),
+            nk.derive_note_private(&psi, 0),
+        );
     }
 
     #[test]
@@ -115,54 +320,49 @@ mod tests {
         let nk = NullifierKey(Fp::random(&mut *rng));
         let psi1 = note::NullifierTrapdoor::random(rng);
         let psi2 = note::NullifierTrapdoor::random(rng);
-        let mk1 = nk.derive_note_private(&psi1);
-        let mk2 = nk.derive_note_private(&psi2);
-        assert_ne!(mk1, mk2);
-    }
-
-    #[test]
-    fn different_epochs_different_nullifiers() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let nk = NullifierKey(Fp::random(&mut *rng));
-        let psi = note::NullifierTrapdoor::random(rng);
-        let mk = nk.derive_note_private(&psi);
         assert_ne!(
-            mk.derive_nullifier(EpochIndex(0u32)),
-            mk.derive_nullifier(EpochIndex(1u32)),
+            nk.derive_note_private(&psi1, 0),
+            nk.derive_note_private(&psi2, 0),
         );
     }
 
-    /// Delegate key produces same nullifiers as master for epochs in range.
     #[test]
-    fn delegate_matches_master() {
-        let rng = &mut StdRng::seed_from_u64(0);
+    fn derivation_keyset_deterministic() {
+        let rng = &mut StdRng::seed_from_u64(1);
         let nk = NullifierKey(Fp::random(&mut *rng));
         let psi = note::NullifierTrapdoor::random(rng);
-        let mk = nk.derive_note_private(&psi);
-
-        for dk in &mk.derive_note_delegates(0..=99) {
-            for epoch in dk.range() {
-                assert_eq!(
-                    mk.derive_nullifier(EpochIndex(epoch)),
-                    dk.derive_nullifier(EpochIndex(epoch)),
-                    "mismatch at epoch {epoch} with delegate {dk:?}"
-                );
-            }
-        }
+        assert_eq!(
+            master_key(&nk, &psi).derive_expanded(),
+            master_key(&nk, &psi).derive_expanded(),
+        );
     }
 
-    /// A delegate key panics for epochs outside its authorized range.
     #[test]
-    #[should_panic(expected = "epoch out of range")]
-    fn delegate_rejects_outside_range() {
-        let rng = &mut StdRng::seed_from_u64(0);
+    fn different_psi_different_keyset() {
+        let rng = &mut StdRng::seed_from_u64(1);
+        let nk = NullifierKey(Fp::random(&mut *rng));
+        let psi1 = note::NullifierTrapdoor::random(rng);
+        let psi2 = note::NullifierTrapdoor::random(rng);
+        assert_ne!(
+            master_key(&nk, &psi1).derive_expanded(),
+            master_key(&nk, &psi2).derive_expanded(),
+        );
+    }
+
+    #[test]
+    fn derivation_keyset_elements_are_distinct() {
+        // The expansion's per-index domain separation gives distinct key
+        // outputs across the schedule.
+        let rng = &mut StdRng::seed_from_u64(3);
         let nk = NullifierKey(Fp::random(&mut *rng));
         let psi = note::NullifierTrapdoor::random(rng);
-        let mk = nk.derive_note_private(&psi);
+        let keys = master_key(&nk, &psi).derive_expanded().0;
 
-        // Delegate covering [0..=63]
-        let dk = &mk.derive_note_delegates(0..=63)[0];
-        // epoch 64 is outside the authorized range
-        let _compute = dk.derive_nullifier(EpochIndex(64u32));
+        assert_ne!(keys[0], keys[1], "distinct successive keys");
+        assert_ne!(
+            keys[0],
+            keys[ExpandedKey::EK_LENGTH - 1],
+            "distinct first and last keys"
+        );
     }
 }

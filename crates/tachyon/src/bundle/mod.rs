@@ -71,11 +71,12 @@ use rand_core::{CryptoRng, RngCore};
 
 pub use crate::digest::blake2b::{AUTH_DIGEST_NO_BUNDLE, COMMIT_NO_BUNDLE};
 use crate::{
+    ActionSetPoly,
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
     note,
-    primitives::{ActionDigest, ActionDigestError, ActionSetPoly, Anchor, effect},
+    primitives::{ActionDigest, ActionDigestError, Anchor, effect},
     reddsa, serialization,
     stamp::{self, AggregateId, AggregateIdError, Stamp, Stripped, Unproven},
     value,

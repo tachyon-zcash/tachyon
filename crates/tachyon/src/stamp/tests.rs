@@ -11,7 +11,7 @@ use crate::{
     fixtures::{
         PoolSim, WalletSim, build_output_stamp, random_block, random_block_with, spend_witness,
     },
-    primitives::BlockHeight,
+    primitives::{BlockHeight, EpochOffset},
 };
 
 const WITHIN_EPOCH_ANCHOR_PAIRS: &[(BlockHeight, BlockHeight)] = &[
@@ -77,15 +77,17 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
-    let range_a = user.derived_range(rng, &note_a, spend_epoch, 2);
+    // Same-epoch spends: creation epoch == spend epoch, so the derived offset
+    // on each SpendHeader is 0.
+    let (deriv_a, polys_a, _keyset_a) = user.derivation(rng, &note_a, spend_epoch);
+    let (deriv_b, polys_b, _keyset_b) = user.derivation(rng, &note_b, spend_epoch);
     let pair_a = [
-        user.nf_at(&note_a, spend_epoch),
-        user.nf_at(&note_a, spend_epoch.next()),
+        user.query_nf(&note_a, EpochOffset(0)),
+        user.query_nf(&note_a, EpochOffset(1)),
     ];
-    let range_b = user.derived_range(rng, &note_b, spend_epoch, 2);
     let pair_b = [
-        user.nf_at(&note_b, spend_epoch),
-        user.nf_at(&note_b, spend_epoch.next()),
+        user.query_nf(&note_b, EpochOffset(0)),
+        user.query_nf(&note_b, EpochOffset(1)),
     ];
 
     let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
@@ -112,8 +114,8 @@ fn plan_prove_rejects_invalid_inputs() {
         assert!(matches!(err, ProveError::NoActions), "expected NoActions");
     }
 
-    let bundle_a = || (range_a.clone(), pair_a, sp_a.clone());
-    let bundle_b = || (range_b.clone(), pair_b, sp_b.clone());
+    let bundle_a = || (deriv_a.clone(), polys_a.clone(), pair_a, sp_a.clone());
+    let bundle_b = || (deriv_b.clone(), polys_b.clone(), pair_b, sp_b.clone());
 
     // Too few PCDs: 2 spends, 1 PCD.
     {

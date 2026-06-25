@@ -1,4 +1,6 @@
 #![allow(unreachable_pub, reason = "test code")]
+#![allow(clippy::as_conversions, reason = "test code")]
+#![allow(clippy::cast_possible_truncation, reason = "test code")]
 #![allow(clippy::type_complexity, reason = "test code")]
 #![allow(clippy::partial_pub_fields, reason = "test code")]
 #![allow(clippy::too_many_lines, reason = "test code")]
@@ -7,29 +9,31 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
-use core::{cmp, iter, ops::RangeInclusive};
+use core::{array, cell::RefCell, cmp, iter, ops::RangeInclusive};
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::Pcd;
+use ragu::{Pcd, Polynomial, Proof};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
+    EpochIndex, EpochOffset,
     action::{self, Action},
     bundle::{self, Bundle},
-    constants::EPOCH_SIZE,
+    constants::{EPOCH_SIZE, NF_EMITTERS},
     entropy::{ActionEntropy, ActionRandomizer},
-    keys::{NoteMasterKey, ProofAuthorizingKey, private},
+    keys::{ExpandedKey, NoteMasterKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        ActionDigest, Anchor, BlockHeight, EpochIndex, NfSeqPoly, Tachygram, TachygramSetCommit,
+        ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, Tachygram, TachygramSetCommit,
         TachygramSetPoly, effect,
     },
+    relations::quotient::LIFT_SPLITS,
     stamp::{
         Stamp,
         proof::{PROOF_SYSTEM, delegation, pool, spendable},
     },
-    value,
+    value, witness,
 };
 
 pub fn mock_sighash(bundle_digest: [u8; 64]) -> [u8; 32] {
@@ -499,9 +503,21 @@ pub(crate) fn build_unspent_pcd(
     chain.expect("Unspent range must cover at least one block")
 }
 
+/// A note's certified derivation, memoized so the (expensive) certify proof is
+/// produced once per `(cm, creation_epoch)` and reused across `spendable_init`
+/// and the spend.
+struct CachedDerivation {
+    cm: note::Commitment,
+    creation_epoch: EpochIndex,
+    pcd: Pcd<delegation::NullifierDerivation>,
+    polys: [NfEmitterPoly; NF_EMITTERS],
+    keyset: ExpandedKey,
+}
+
 pub struct WalletSim {
     pub sk: private::SpendingKey,
     pub pak: ProofAuthorizingKey,
+    derivations: RefCell<Vec<CachedDerivation>>,
 }
 
 impl WalletSim {
@@ -509,6 +525,7 @@ impl WalletSim {
         Self {
             sk,
             pak: sk.derive_proof_private(),
+            derivations: RefCell::new(Vec::new()),
         }
     }
 
@@ -525,46 +542,112 @@ impl WalletSim {
         }
     }
 
+    /// The note's `MK_LENGTH`-part master key, one part per index.
     #[must_use]
-    pub fn mk(&self, note: &Note) -> NoteMasterKey {
-        self.pak.nk.derive_note_private(&note.psi)
+    pub fn master_key(&self, note: &Note) -> NoteMasterKey {
+        NoteMasterKey(array::from_fn(|index| {
+            self.pak.nk.derive_note_private(&note.psi, index as u64)
+        }))
     }
 
+    /// The new-scheme nullifier at epoch offset `d` from the note's creation:
+    /// `nf_d = Σ_j ρ_j^d·T_j(c·γ^d)`, the query the spend circuit reproduces.
     #[must_use]
-    pub fn nf_at(&self, note: &Note, epoch: EpochIndex) -> Nullifier {
-        self.mk(note).derive_nullifier(epoch)
+    pub fn query_nf(&self, note: &Note, offset: EpochOffset) -> Nullifier {
+        let mk = self.master_key(note);
+        let keyset = mk.derive_expanded();
+        keyset.derive_nullifier(&mk, offset)
     }
 
-    pub fn note_master(
+    /// Seed one half of the note's master key (the three parts at `part_idx`),
+    /// proving they are the note's master secrets.
+    pub fn note_master_half(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
-    ) -> Pcd<delegation::NfPrefixHeader> {
+        part_idx: [u64; 3],
+    ) -> Pcd<delegation::NfMasterHeader> {
         let (pcd, ()) = PROOF_SYSTEM
-            .seed(rng, delegation::NfMasterSeed, (note, self.pak))
+            .seed(rng, delegation::NfMasterSeed, (note, self.pak, part_idx))
             .expect("note seed");
         pcd
     }
 
-    pub fn nullifier_pcd(
+    /// Certify a note's `N`-polynomial derivation: prove the key expansion
+    /// ([`NfMasterExpand`](delegation::NfMasterExpand)) by fusing the two
+    /// complementary master-key seeds, then certify the derivation polynomials
+    /// against the committed keyset
+    /// ([`NullifierDerivationStep`](delegation::NullifierDerivationStep)).
+    pub fn derivation_pcd(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
-        target_epoch: EpochIndex,
-    ) -> Pcd<delegation::NullifierHeader> {
-        let master = self.note_master(rng, note);
-        ggm_tools::nullifier_from_master(rng, master, target_epoch)
+        creation_epoch: EpochIndex,
+    ) -> Pcd<delegation::NullifierDerivation> {
+        let mk = self.master_key(&note);
+
+        // Two complementary master-key seeds: parts (0,1,2) and (3,4,5).
+        let left = self.note_master_half(rng, note, [0, 1, 2]);
+        let right = self.note_master_half(rng, note, [3, 4, 5]);
+
+        // Key expansion: derive the trace and keyset once (the FFTs), then
+        // build the NfMasterExpand witness from them.
+        let (spectrum, keyset) = mk.derive_expanded_trace();
+        let expansion = witness::nf_master_expand(&mk, &spectrum, &keyset);
+        let (keyset_pcd, ()) = PROOF_SYSTEM
+            .fuse(rng, delegation::NfMasterExpand, expansion, left, right)
+            .expect("NfMasterExpand");
+
+        let polys = keyset.derivation_polys(&mk.query_salts());
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                delegation::NullifierDerivationStep,
+                witness::nullifier_derivation(&keyset, &mk, &polys, creation_epoch),
+                keyset_pcd,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("NullifierDerivationStep");
+        pcd
     }
 
-    pub fn derived_range(
+    /// The note's certified derivation, its `N` polynomials, and its keyset,
+    /// memoized per `(cm, creation_epoch)`. The first call proves
+    /// [`NullifierDerivationStep`](delegation::NullifierDerivationStep) (the
+    /// expensive certify); later calls for the same note return the cached PCD.
+    pub fn derivation(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: &Note,
-        start_epoch: EpochIndex,
-        len: u32,
-    ) -> Pcd<delegation::NullifierHeader> {
-        let master = self.note_master(rng, *note);
-        ggm_tools::nullifier_range_from_master(rng, &master, start_epoch, len)
+        creation_epoch: EpochIndex,
+    ) -> (
+        Pcd<delegation::NullifierDerivation>,
+        [NfEmitterPoly; NF_EMITTERS],
+        ExpandedKey,
+    ) {
+        let cm = note.commitment();
+        {
+            let cache = self.derivations.borrow();
+            if let Some(entry) = cache
+                .iter()
+                .find(|entry| entry.cm == cm && entry.creation_epoch == creation_epoch)
+            {
+                return (entry.pcd.clone(), entry.polys.clone(), entry.keyset);
+            }
+        }
+
+        let mk = self.master_key(note);
+        let keyset = mk.derive_expanded();
+        let polys = keyset.derivation_polys(&mk.query_salts());
+        let pcd = self.derivation_pcd(rng, *note, creation_epoch);
+        self.derivations.borrow_mut().push(CachedDerivation {
+            cm,
+            creation_epoch,
+            pcd: pcd.clone(),
+            polys: polys.clone(),
+            keyset,
+        });
+        (pcd, polys, keyset)
     }
 
     pub fn spendable_init(
@@ -576,18 +659,19 @@ impl WalletSim {
     ) -> Pcd<spendable::SpendableHeader> {
         let cm = note.commitment();
         let epoch = init_height.epoch();
-        let present_nf = self.nf_at(note, epoch);
         let (pre_epoch_anchor, pre_cm_anchor, creation_set, chain) =
             spendable_init_inputs(rng, pool, cm, init_height);
-        let nf_header = self.nullifier_pcd(rng, *note, epoch);
+        // The creation epoch E_0 is this init height's epoch; SpendableInit pins
+        // it to the creation anchor and computes present_nf = nf_0 in-circuit.
+        let (derivation, polys, _keyset) = self.derivation(rng, note, epoch);
 
         let (spendable, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 spendable::SpendableInit,
-                (pre_epoch_anchor, pre_cm_anchor, creation_set, present_nf),
+                witness::spendable_init(&polys, pre_epoch_anchor, pre_cm_anchor, creation_set),
                 chain,
-                nf_header,
+                derivation,
             )
             .expect("SpendableInit");
         spendable
@@ -603,35 +687,71 @@ impl WalletSim {
         self.spendable_init(rng, spend_note, pool, height)
     }
 
+    /// Bind a sync [`Unspent`](pool::Unspent) to the note's genuine derivation
+    /// nullifiers via the homomorphic lift. The tested values are the query
+    /// nullifiers `query_nf` at offsets `[start − E_0, present − E_0]`; the
+    /// lift witnesses (per-poly weights `w_j`, accumulator `A`, quotients)
+    /// are built for the challenge `β` over the certified digest and the
+    /// tested poly `q`. Build the honest
+    /// [`VerifyUnspent`](pool::VerifyUnspent) witness and the derivation
+    /// PCD for the tested range `[start, present]`. Split out so the
+    /// negative tests can fuse the honest witness against a tampered
+    /// [`Unspent`](pool::Unspent), or tamper one witness field.
+    pub fn verify_unspent_witness(
+        &self,
+        rng: &mut (impl RngCore + CryptoRng),
+        note: &Note,
+        creation_epoch: EpochIndex,
+        start_epoch: EpochIndex,
+        present_epoch: EpochIndex,
+    ) -> (
+        (
+            NfSeqPoly,
+            NfSeqPoly,
+            NfSeqPoly,
+            [NfEmitterPoly; NF_EMITTERS],
+            [[Polynomial; LIFT_SPLITS]; NF_EMITTERS],
+            [Polynomial; LIFT_SPLITS],
+            [Polynomial; NF_EMITTERS],
+            Polynomial,
+        ),
+        Pcd<delegation::NullifierDerivation>,
+    ) {
+        let (derivation, polys, keyset) = self.derivation(rng, note, creation_epoch);
+        let mk = self.master_key(note);
+
+        // Tested values q over [start, present]: query nullifiers at offsets E_0,
+        // reusing the expanded keyset for every offset (one FFT, N queries).
+        let nfs: Vec<Nullifier> = (start_epoch.0..=present_epoch.0)
+            .map(|epoch| {
+                keyset.derive_nullifier(&mk, EpochIndex(epoch).offset_from(creation_epoch))
+            })
+            .collect();
+
+        // The derivation PCD's header carries the certified transcript digest
+        // the lift challenge opens against; read it off here so the witness
+        // builder stays free of PCD inputs.
+        let digest = derivation.data().1;
+
+        (
+            witness::verify_unspent(&polys, &mk, digest, &nfs, start_epoch, present_epoch),
+            derivation,
+        )
+    }
+
     pub fn verify_unspent(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         unspent: Pcd<pool::Unspent>,
         note: &Note,
+        creation_epoch: EpochIndex,
         start_epoch: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<pool::VerifiedUnspent> {
-        let len = present_epoch.0 - start_epoch.0 + 1;
-        let range = self.derived_range(rng, note, start_epoch, len);
-        let elapsed: Vec<Nullifier> = (start_epoch.0..present_epoch.0)
-            .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
-            .collect();
-        let tip = self.nf_at(note, present_epoch);
-        let range_nfs: Vec<Nullifier> = (start_epoch.0..=present_epoch.0)
-            .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
-            .collect();
+        let (witness, derivation) =
+            self.verify_unspent_witness(rng, note, creation_epoch, start_epoch, present_epoch);
         let (verified, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                pool::VerifyUnspent,
-                (
-                    NfSeqPoly::from(elapsed.as_slice()),
-                    NfSeqPoly::from([tip].as_slice()),
-                    NfSeqPoly::from(range_nfs.as_slice()),
-                ),
-                unspent,
-                range,
-            )
+            .fuse(rng, pool::VerifyUnspent, witness, unspent, derivation)
             .expect("VerifyUnspent");
         verified
     }
@@ -645,7 +765,17 @@ impl WalletSim {
         start_epoch: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<spendable::SpendableHeader> {
-        let verified = self.verify_unspent(rng, unspent, note, start_epoch, present_epoch);
+        // The lift's offset origin E_0 is the lineage's consensus-bound creation
+        // epoch, carried on the spendable header; SpendableLift reconciles it.
+        let creation_epoch = spendable.data().3;
+        let verified = self.verify_unspent(
+            rng,
+            unspent,
+            note,
+            creation_epoch,
+            start_epoch,
+            present_epoch,
+        );
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable, verified)
             .expect("SpendableLift");
@@ -672,8 +802,8 @@ impl WalletSim {
             rng,
             pool,
             &[
-                self.nf_at(note, creation_epoch),
-                self.nf_at(note, creation_epoch.next()),
+                self.query_nf(note, EpochOffset(0)),
+                self.query_nf(note, EpochOffset(1)),
             ],
             cm_height,
             cm_idx + 1,
@@ -702,10 +832,18 @@ impl WalletSim {
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
         for (note, spendable_pcd, spend_epoch) in spends {
-            let range_pcd = self.derived_range(rng, &note, spend_epoch, 2);
+            // The spend offset is measured from the lineage's true creation epoch
+            // E_0, threaded on the spendable header (field .3) and pinned to
+            // consensus at SpendableInit. A spendable lifted to `spend_epoch`
+            // carries present_nf = nf_{spend_epoch − E_0}, so the spend reproduces
+            // that present-epoch nullifier and its successor at the same offset.
+            let creation_epoch = spendable_pcd.data().3;
+            let offset = spend_epoch.offset_from(creation_epoch);
+            let (derivation_pcd, polys, keyset) = self.derivation(rng, &note, creation_epoch);
+            let mk = self.master_key(&note);
             let pair = [
-                self.nf_at(&note, spend_epoch),
-                self.nf_at(&note, spend_epoch.next()),
+                keyset.derive_nullifier(&mk, offset),
+                keyset.derive_nullifier(&mk, offset.next()),
             ];
             let rcv = value::CommitmentTrapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
@@ -713,7 +851,7 @@ impl WalletSim {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((range_pcd, pair, spendable_pcd));
+            spend_pcds.push((derivation_pcd, polys, pair, spendable_pcd));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
@@ -850,126 +988,9 @@ fn epoch_final_of(epoch: EpochIndex) -> BlockHeight {
     BlockHeight(next_first - 1)
 }
 
-pub mod ggm_tools {
-    extern crate alloc;
-    use alloc::vec::Vec;
-
-    use ragu::{Pcd, Proof};
-    use rand_core::{CryptoRng, RngCore};
-
-    use crate::{
-        EpochIndex,
-        digest::poseidon,
-        keys::{GGM_CHUNK_SIZE, GGM_TREE_DEPTH},
-        note::Nullifier,
-        primitives::NfSeqPoly,
-        stamp::proof::{PROOF_SYSTEM, delegation},
-    };
-
-    pub fn walk_master_to_depth(
-        rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<delegation::NfPrefixHeader>,
-        epoch: EpochIndex,
-        target_depth: u8,
-    ) -> Pcd<delegation::NfPrefixHeader> {
-        assert!(
-            (1..=GGM_TREE_DEPTH).contains(&target_depth),
-            "target_depth must be in 1..=GGM_DEPTH",
-        );
-
-        let mut pcd = master_pcd;
-        while pcd.data().1 < target_depth {
-            let next_step = pcd.data().1 + 1;
-            let chunk = chunk_at(epoch.0, next_step);
-            let (next_pcd, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    delegation::NfPrefixStep,
-                    (chunk,),
-                    pcd,
-                    Proof::trivial().carry::<()>(()),
-                )
-                .expect("note step");
-            pcd = next_pcd;
-        }
-
-        pcd
-    }
-
-    pub fn nullifier_from_master(
-        rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<delegation::NfPrefixHeader>,
-        target_epoch: EpochIndex,
-    ) -> Pcd<delegation::NullifierHeader> {
-        let prefix_pcd = walk_master_to_depth(rng, master_pcd, target_epoch, GGM_TREE_DEPTH);
-        let (pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                delegation::NullifierStep,
-                (),
-                prefix_pcd,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("nullifier step");
-        pcd
-    }
-
-    pub fn nullifier_range_from_master(
-        rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: &Pcd<delegation::NfPrefixHeader>,
-        start_epoch: EpochIndex,
-        len: u32,
-    ) -> Pcd<delegation::NullifierHeader> {
-        assert!(len >= 1, "range length must be at least 1");
-        let mut nfs: Vec<Nullifier> = Vec::new();
-        let mut acc: Option<Pcd<delegation::NullifierHeader>> = None;
-        for offset in 0..len {
-            let epoch = EpochIndex(start_epoch.0 + offset);
-            let prefix_pcd = walk_master_to_depth(rng, master_pcd.clone(), epoch, GGM_TREE_DEPTH);
-            let nf = Nullifier::from(poseidon::nullifier(prefix_pcd.data().0));
-            let (leaf, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    delegation::NullifierStep,
-                    (),
-                    prefix_pcd,
-                    Proof::trivial().carry::<()>(()),
-                )
-                .expect("nullifier step");
-            acc = Some(match acc {
-                None => {
-                    nfs.push(nf);
-                    leaf
-                },
-                Some(left) => {
-                    let left_poly = NfSeqPoly::from(nfs.as_slice());
-                    let right_poly = NfSeqPoly::from([nf].as_slice());
-                    nfs.push(nf);
-                    let merged = NfSeqPoly::from(nfs.as_slice());
-                    let (fused, ()) = PROOF_SYSTEM
-                        .fuse(
-                            rng,
-                            delegation::NullifierFuse,
-                            (left_poly, right_poly, merged),
-                            left,
-                            leaf,
-                        )
-                        .expect("NullifierFuse");
-                    fused
-                },
-            });
-        }
-        acc.expect("len >= 1 produced a range")
-    }
-
-    fn chunk_at(epoch_bits: u32, level: u8) -> u8 {
-        let shift = (GGM_TREE_DEPTH * GGM_CHUNK_SIZE) - level * GGM_CHUNK_SIZE;
-        let chunk_mask = (1u32 << GGM_CHUNK_SIZE) - 1u32;
-        let chunk_u32 = (epoch_bits >> shift) & chunk_mask;
-        u8::try_from(chunk_u32).expect("chunk fits in u8")
-    }
-}
-
+/// Prove one 128-epoch era off the master PCD: derive the trace, assemble the
+/// honest witness tuple, and fuse it through
+/// [`NullifierEraStep`](delegation::NullifierEraStep).
 fn build_partial_multi_epoch_unspent(
     rng: &mut (impl RngCore + CryptoRng),
     pool: &PoolSim,
