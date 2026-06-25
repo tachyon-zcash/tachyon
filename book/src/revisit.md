@@ -703,11 +703,15 @@ An anchor chain is a hash chain of **per-stamp** [tachygram accumulators](#acc).
 Every stamp carries a $\tgacc$ committing to the tachygrams it introduces: those
 of a single bundle for a standalone transaction (a *Tachyon autonome*), or the
 union across many for an [aggregate](#tx). Each new stamp extends the chain by
-hashing its accumulator into the running state:
+hashing its accumulator and its epoch index $e$ into the running state:
 
 $$
-\tgst \leftarrow H(\mathsf{st^{tg}_{old}} \;\|\; \tgacc)
+\tgst \leftarrow H(\mathsf{st^{tg}_{old}} \;\|\; e \;\|\; \tgacc)
 $$
+
+Binding $e$ at every tick lets a chain node authenticate which epoch it belongs
+to without relying on external validation. This becomes relevant during stamp
+lifting.
 
 <P align="center">
   <img src="./assets/anchor_chain.svg" alt="anchor_chain" />
@@ -1265,14 +1269,14 @@ bundle-level statement.
   `DelegationHeader` and the witnessed creating stamp: it proves $\cm$ is in that
   stamp, opens the exclusion at $e_0$, and emits the first `UnspentHeader` at an
   anchor just past the creation block (still mid-epoch), keeping $\cm$ and $e_0$
-  as witness. Two $\Oc$ steps then advance it in **lock-step**, inclusion and
-  exclusion moving together. `InEpochLift` (the [in-epoch lift](#in-e)) walks the
+  as witness. Stamp lift steps then advance it in **lock-step**, inclusion and
+  exclusion moving together. [`InEpochLift` step](#in-e) walks the
   anchor forward one stamp at a time, extending inclusion and testing $\pck$'s
-  epoch leaf $\nf_j$ absent from each stamp. It runs where no shared
+  epoch leaf $\nf_j$ absent from each stamp. Users and OSS run it where no shared
   `EpochHeader` applies, carrying the note from `UnspentInit`'s mid-epoch creation
   anchor up to the next end-of-epoch boundary anchor (the start anchor of some
   shared `EpochHeader`), since a `CrossEpochLift` can begin only once the note's
-  anchor sits on such a boundary. `CrossEpochLift` (the [cross-epoch lift](#cross-e)) then
+  anchor sits on such a boundary. [`CrossEpochLift` step](#cross-e) then
   fast-tracks each *full* intermediate epoch in one step: it consumes the shared
   `EpochHeader` whose start anchor equals the note's current boundary anchor,
   tests $e_i(\nf_i) \neq 0$ against the whole-epoch accumulator, and jumps the
@@ -1416,7 +1420,7 @@ re-binds to it through $\kappa$ at `SpendBind`.
 | `AnchorLift` | $\Sc$ | — | — | `AnchorChainHeader` | end-of-epoch anchors, flyclient samples |
 | `EpochEvidenceFuse` | $\Sc$ | `AnchorChainHeader` | `EpochAccHeader` | `EpochHeader` | — |
 | `UnspentInit` | $\Uc$ | `DelegationHeader` | — | `UnspentHeader` | $\mathsf{Note}$ opening, creating stamp opening |
-| `InEpochLift` | $\Oc$ | `UnspentHeader` | — | `UnspentHeader` | per-stamp tachygram accumulators and anchors |
+| `InEpochLift` | $\Uc/\Oc$ | `UnspentHeader` | — | `UnspentHeader` | per-stamp tachygram accumulators and anchors |
 | `CrossEpochLift` | $\Oc$ | `UnspentHeader` | `EpochHeader` | `UnspentHeader` | $\pck$ walk to $\nf_i$ |
 | `SpendBind` | $\Uc$ | `SpendCoreHeader` | `UnspentHeader` | `SpendHeader` | — |
 | `BundleAssemble` | $\Uc$ | action/stamp header | action/stamp header | `StampHeader` | multiset gadgets |
