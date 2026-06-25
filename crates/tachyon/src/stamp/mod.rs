@@ -223,7 +223,7 @@ impl Plan {
                 .fuse(
                     rng,
                     spend::SpendBind,
-                    ((note.pk, note.value, note.rcm, note.psi), rcv, alpha, *pak),
+                    (note, rcv, alpha, *pak),
                     spendable_pcd,
                     ragu::Proof::trivial().carry::<()>(()),
                 )
@@ -378,13 +378,20 @@ impl Stamp {
         let app = &*PROOF_SYSTEM;
 
         let (left_acts_poly, left_tg_poly) = (
-            ActionSetPoly::from(left_digests),
-            TachygramSetPoly::from(&*left.tachygrams),
+            left_digests.iter().copied().collect::<ActionSetPoly>(),
+            left.tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>(),
         );
 
         let (right_acts_poly, right_tg_poly) = (
-            ActionSetPoly::from(right_digests),
-            TachygramSetPoly::from(&*right.tachygrams),
+            right_digests.iter().copied().collect::<ActionSetPoly>(),
+            right
+                .tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>(),
         );
 
         let left_pcd = left.proof.carry::<StampHeader>((
@@ -438,13 +445,20 @@ impl Stamp {
             .map(Action::digest)
             .collect::<Result<Vec<_>, _>>()
             .map_err(VerificationError::ActionDigest)?;
-        let action_set = ActionSetPoly::from(action_digests.as_slice()).commit();
+        let action_set = action_digests
+            .into_iter()
+            .collect::<ActionSetPoly>()
+            .commit();
         if action_set != self.action_set {
             return Err(VerificationError::ActionSetMismatch);
         }
         let header = (
             action_set,
-            TachygramSetPoly::from(&*self.tachygrams).commit(),
+            self.tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>()
+                .commit(),
             self.anchor,
         );
 

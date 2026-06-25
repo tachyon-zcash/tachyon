@@ -133,7 +133,7 @@ impl Step for SpendableInit {
 /// Advance the spendable over one [`VerifiedUnspent`] segment.
 ///
 /// Wallet-only, witness-free. Checks `cm`, `start_nf == present_nf`, and anchor
-/// adjacency, then advances to the tip `(end_nf, end_anchor)`.
+/// adjacency, then advances to the tip `(end_nf, last_anchor)`.
 #[derive(Debug)]
 pub struct SpendableLift;
 
@@ -151,7 +151,7 @@ impl Step for SpendableLift {
         _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
         (present_nf, spendable_anchor, cm): <Self::Left as Header>::Data,
-        (start_anchor, start_nf, end_anchor, end_nf, verified_cm, _epoch): <Self::Right as Header>::Data,
+        (prev_anchor, start_nf, last_anchor, end_nf, verified_cm, _epoch): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(verified_cm) - Fp::from(cm),
@@ -162,9 +162,9 @@ impl Step for SpendableLift {
             "SpendableLift: segment does not start at the lineage nullifier",
         )?;
         enforce_zero(
-            Fp::from(start_anchor) - Fp::from(spendable_anchor),
+            Fp::from(prev_anchor) - Fp::from(spendable_anchor),
             "SpendableLift: unspent not adjacent to spendable",
         )?;
-        Ok(((end_nf, end_anchor, cm), ()))
+        Ok(((end_nf, last_anchor, cm), ()))
     }
 }

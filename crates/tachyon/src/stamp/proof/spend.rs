@@ -15,8 +15,8 @@ use super::spendable::SpendableHeader;
 use crate::{
     constants::NOTE_VALUE_MAX,
     entropy::ActionRandomizer,
-    keys::{PaymentKey, ProofAuthorizingKey, public},
-    note::{self, CommitmentTrapdoor, Note, Nullifier, NullifierTrapdoor, Value},
+    keys::{ProofAuthorizingKey, public},
+    note::{self, Note, Nullifier},
     primitives::{Anchor, effect},
     value,
 };
@@ -72,7 +72,7 @@ impl Step for SpendBind {
     type Output = SpendHeader;
     type Right = ();
     type Witness<'source> = (
-        (PaymentKey, Value, CommitmentTrapdoor, NullifierTrapdoor),
+        Note,
         value::CommitmentTrapdoor,
         ActionRandomizer<effect::Spend>,
         ProofAuthorizingKey,
@@ -83,34 +83,31 @@ impl Step for SpendBind {
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        ((pk, value, rcm, psi), rcv, alpha, pak): Self::Witness<'source>,
+        (note, rcv, alpha, pak): Self::Witness<'source>,
         (present_nf, anchor, spendable_cm): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_nonzero(Fp::from(u64::from(value)), "SpendBind: zero-value note")?;
-        if u64::from(value) > NOTE_VALUE_MAX {
+        enforce_nonzero(
+            Fp::from(u64::from(note.value)),
+            "SpendBind: zero-value note",
+        )?;
+        if u64::from(note.value) > NOTE_VALUE_MAX {
             return Err(ragu::Error::InvalidWitness(
                 "SpendBind: note value exceeds maximum".into(),
             ));
         }
         enforce_zero(
-            pk.0 - pak.derive_payment_key().0,
+            note.pk.0 - pak.derive_payment_key().0,
             "SpendBind: pak not related to note",
         )?;
-        let cm = Note {
-            pk,
-            value,
-            psi,
-            rcm,
-        }
-        .commitment();
+        let cm = note.commitment();
 
         enforce_zero(
             Fp::from(spendable_cm) - Fp::from(cm),
             "SpendBind: note does not match the spendable lineage",
         )?;
 
-        let cv = rcv.commit(i64::from(value));
+        let cv = rcv.commit(i64::from(note.value));
         let rk = pak.ak.derive_action_public(&alpha);
 
         Ok(((cv, rk, present_nf, anchor, cm), ()))
