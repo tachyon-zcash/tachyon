@@ -320,9 +320,10 @@ To confirm it holds the right set, the observer reconstructs the action-set comm
 from its candidate set of autonomes, together with the based aggregate's own actions, and
 compares it to the aggregate's `cActionsTachyon` indicator. Each action digest
 $d_i = \text{Poseidon}_\texttt{Tachyon-ActionDg}(\mathsf{cv}_i \,\|\, \mathsf{rk}_i)$ is
-computable from public action data, so the reconstruction is cheap and needs no proof
-verification. A match confirms the candidate set is exactly the aggregate's cover; a
-mismatch is fail-fast, signalling a missing or extra autonome. Coverage is taken over the
+computable from public action data, so the reconstruction is cheap ($O(n)$ polynomial
+arithmetic plus one Pedersen commitment) and needs no proof verification. A match confirms
+the candidate set is exactly the aggregate's cover; a mismatch is fail-fast, signalling a
+missing or extra autonome, or a match against the wrong aggregate. Coverage is taken over the
 action-digest set, one digest per action, not over tachygrams, whose count differs from
 the action count because a spend publishes two tachygrams.
 
