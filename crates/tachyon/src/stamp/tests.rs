@@ -1,6 +1,6 @@
 #![allow(clippy::panic, reason = "test code")]
 
-use alloc::{string::ToString as _, vec};
+use alloc::{string::ToString as _, vec, vec::Vec};
 
 use rand::{SeedableRng as _, rngs::StdRng};
 
@@ -151,4 +151,64 @@ fn plan_prove_rejects_invalid_inputs() {
             "SpendBind: note does not match the spendable lineage"
         );
     }
+}
+
+/// `prove_output` populates `action_set` with the commit of the single
+/// action's digest, reconstructed independently.
+#[test]
+fn prove_output_populates_action_set() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+    let note = wallet.random_note(rng, 200);
+    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 50));
+    let anchor = pool.anchor();
+
+    let (stamp, plan) = build_output_stamp(rng, anchor, note);
+    let digest = plan.digest().expect("valid plan");
+    let expected = ActionSetPoly::from([digest].as_slice()).commit();
+    assert_eq!(stamp.action_set, expected);
+}
+
+/// `prove_merge` populates `action_set` with the commit of the merged
+/// (concatenated) digest list.
+#[test]
+fn prove_merge_populates_action_set() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user_a = WalletSim::random(rng);
+    let user_b = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let anchor = pool.anchor();
+    let note_a = user_a.random_note(rng, 200);
+    let note_b = user_b.random_note(rng, 300);
+    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note_a);
+    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note_b);
+
+    let digests = [
+        plan_a.digest().expect("valid plan"),
+        plan_b.digest().expect("valid plan"),
+    ];
+    let expected = ActionSetPoly::from(digests.as_slice()).commit();
+
+    let merged =
+        Stamp::prove_merge(rng, (stamp_a, &[digests[0]]), (stamp_b, &[digests[1]])).expect("merge");
+    assert_eq!(merged.action_set, expected);
+}
+
+/// `cActionsTachyon` survives a `write`/`read` round-trip.
+#[test]
+fn stamp_action_set_round_trip() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let note = wallet.random_note(rng, 200);
+    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+
+    let mut buf = Vec::new();
+    stamp.write(&mut buf).expect("write");
+    let decoded = Stamp::read(&*buf).expect("read");
+
+    assert_eq!(decoded.action_set, stamp.action_set);
+    assert_eq!(decoded.anchor, stamp.anchor);
+    assert_eq!(decoded.tachygrams, stamp.tachygrams);
 }
