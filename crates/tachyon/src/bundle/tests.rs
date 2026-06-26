@@ -12,7 +12,7 @@ use crate::{
         PoolSim, WalletSim, action_digests, build_autonome, build_output_stamp, mock_sighash,
         random_action, random_block, random_block_with,
     },
-    primitives::BlockHeight,
+    primitives::{ActionDigest, ActionSetPoly, BlockHeight},
 };
 
 #[test]
@@ -739,4 +739,120 @@ fn auth_digest_invariants() {
         let erased_stripped: TachyonBundle = stripped.into();
         assert_eq!(erased_stripped.auth_digest(), stripped_direct);
     }
+}
+
+/// Coverage-check protocol: an observer reconstructs the merged action-digest
+/// set commitment from a based aggregate's own actions plus all covered
+/// adjuncts' visible actions, and checks it against the stamped aggregate's
+/// serialized `cActionsTachyon`.
+#[test]
+fn coverage_check_matches_stamped_action_set() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+
+    let based_spend = wallet.random_note(rng, 800);
+    let based_output = wallet.random_note(rng, 400);
+    let a_spend = wallet.random_note(rng, 1000);
+    let a_output = wallet.random_note(rng, 700);
+    let b_spend = wallet.random_note(rng, 500);
+    let b_output = wallet.random_note(rng, 200);
+
+    let mut pool = PoolSim::genesis(rng);
+    pool.mine(random_block_with(
+        rng,
+        &[
+            vec![based_spend.commitment()],
+            vec![a_spend.commitment()],
+            vec![b_spend.commitment()],
+        ],
+        50,
+    ));
+    let cm_height = pool.height();
+    while pool.height() < BlockHeight(EPOCH_SIZE) {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
+
+    let based_init = wallet.spendable_init(rng, &based_spend, &pool, cm_height);
+    let based_sp = wallet.lift_over_creation_epoch(rng, &pool, &based_spend, cm_height, based_init);
+    let a_init = wallet.spendable_init(rng, &a_spend, &pool, cm_height);
+    let a_sp = wallet.lift_over_creation_epoch(rng, &pool, &a_spend, cm_height, a_init);
+    let b_init = wallet.spendable_init(rng, &b_spend, &pool, cm_height);
+    let b_sp = wallet.lift_over_creation_epoch(rng, &pool, &b_spend, cm_height, b_init);
+    let anchor = based_sp.data().1;
+
+    let spend_epoch = cm_height.epoch().next();
+    let mut becomes_based = wallet.autonome(
+        rng,
+        anchor,
+        alloc::vec![(based_spend, based_sp, spend_epoch)],
+        alloc::vec![based_output],
+    );
+    let autonome_a = wallet.autonome(
+        rng,
+        anchor,
+        alloc::vec![(a_spend, a_sp, spend_epoch)],
+        alloc::vec![a_output],
+    );
+    let autonome_b = wallet.autonome(
+        rng,
+        anchor,
+        alloc::vec![(b_spend, b_sp, spend_epoch)],
+        alloc::vec![b_output],
+    );
+
+    let based_digests = action_digests(&becomes_based.actions);
+    let digests_a = action_digests(&autonome_a.actions);
+    let digests_b = action_digests(&autonome_b.actions);
+
+    let (adjunct_a, stamp_a) = autonome_a.strip();
+    let (adjunct_b, stamp_b) = autonome_b.strip();
+
+    let innocent_digests: Vec<ActionDigest> =
+        digests_a.iter().chain(digests_b.iter()).copied().collect();
+    let innocent_stamp = Stamp::prove_merge(rng, (stamp_a, &digests_a), (stamp_b, &digests_b))
+        .expect("innocent merge");
+
+    let based_stamp = Stamp::prove_merge(
+        rng,
+        (becomes_based.stamp, &based_digests),
+        (innocent_stamp, &innocent_digests),
+    )
+    .expect("based merge");
+    becomes_based.stamp = based_stamp;
+
+    // Observer's coverage check: reconstruct the merged commitment from the
+    // based aggregate's own actions + both adjuncts' visible actions.
+    let observed_digests: Vec<ActionDigest> = based_digests
+        .iter()
+        .chain(action_digests(&adjunct_a.actions).iter())
+        .chain(action_digests(&adjunct_b.actions).iter())
+        .copied()
+        .collect();
+    let observed = ActionSetPoly::from(observed_digests.as_slice()).commit();
+    assert_eq!(
+        observed, becomes_based.stamp.action_set,
+        "coverage check must match the serialized cActionsTachyon"
+    );
+
+    // Missing an adjunct: product is too small (fewer roots).
+    let partial: Vec<ActionDigest> = based_digests
+        .iter()
+        .chain(action_digests(&adjunct_a.actions).iter())
+        .copied()
+        .collect();
+    let partial_commit = ActionSetPoly::from(partial.as_slice()).commit();
+    assert_ne!(
+        partial_commit, becomes_based.stamp.action_set,
+        "missing adjunct must not match"
+    );
+
+    // Extra foreign action: product is too large (extra root).
+    let foreign = random_action(rng);
+    let mut with_extra = observed_digests;
+    with_extra.push(foreign.digest().expect("valid foreign action"));
+    let extra_commit = ActionSetPoly::from(with_extra.as_slice()).commit();
+    assert_ne!(
+        extra_commit, becomes_based.stamp.action_set,
+        "extra foreign action must not match"
+    );
 }

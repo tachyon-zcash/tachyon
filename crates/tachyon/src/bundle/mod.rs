@@ -48,6 +48,7 @@
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
+//! | `cActionsTachyon`     | 32 bytes             | action set for this proof                |
 //! | `anchorTachyon`       | 32 bytes             | pool state reference                     |
 //! | `nTachygrams`         | compactsize          | number of tachygrams                     |
 //! | `vTachygrams`         | 32 * nTachygrams     | tachygrams for this proof                |
@@ -66,6 +67,7 @@ use core::ops;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
+use group::GroupEncoding as _;
 use pasta_curves::{Eq, Fp, group::Curve as _};
 use rand_core::{CryptoRng, RngCore};
 
@@ -99,12 +101,10 @@ impl BundleState {
             0b0000_0000u8 => Ok(Self::NoBundle),
             0b0000_0001u8 => Ok(Self::Stamped),
             0b0000_0010u8 => Ok(Self::Stripped),
-            _other => {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid bundle state",
-                ))
-            },
+            _other => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid bundle state",
+            )),
         }
     }
 
@@ -556,26 +556,32 @@ impl Bundle<Stamp> {
 
     /// Tachyon's contribution to the transaction `auth_digest`.
     ///
-    /// Hashes action signatures, the binding signature, and the serialized
-    /// stamp trailer (anchor + tachygrams + proof).
+    /// Hashes action signatures, the binding signature, and the trailer.
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 64] {
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
         let binding_sig: [u8; 64] = self.binding_sig.into();
-        let anchor: [u8; 32] = self.stamp.anchor.0.into();
-        let tachygrams: Vec<Fp> = self
-            .stamp
-            .tachygrams
-            .iter()
-            .map(|&tg| Fp::from(tg))
-            .collect();
-        let proof = self.stamp.proof.serialize();
+
+        let trailer = {
+            let action_set: [u8; 32] = Eq::from(self.stamp.action_set).to_bytes();
+            let anchor: [u8; 32] = self.stamp.anchor.0.into();
+            let tachygrams: Vec<Fp> = self
+                .stamp
+                .tachygrams
+                .iter()
+                .map(|&tg| Fp::from(tg))
+                .collect();
+            let proof = self.stamp.proof.serialize();
+            (action_set, anchor, tachygrams, proof)
+        };
+
         blake2b::stamped_auth_digest(
             &action_sigs,
             &binding_sig,
-            &anchor,
-            &tachygrams,
-            proof.as_ref(),
+            &trailer.0,
+            &trailer.1,
+            &trailer.2,
+            trailer.3.as_ref(),
         )
     }
 }
