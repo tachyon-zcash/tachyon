@@ -103,6 +103,9 @@ pub enum VerificationError {
     /// The proof did not verify against the reconstructed header.
     #[display("proof did not verify")]
     Disproved,
+    /// The carried `cActionsTachyon` indicator does not match the actions.
+    #[display("action set indicator mismatch")]
+    ActionSetMismatch,
 }
 
 /// Everything needed to produce a [`Stamp`].
@@ -405,8 +408,9 @@ impl Stamp {
     /// Verifies this stamp's proof by reconstructing the PCD header from
     /// public data.
     ///
-    /// The verifier recomputes action and tachygram accumulators as raw Fp
-    /// products, constructs the PCD header, and calls Ragu `verify()`.
+    /// The verifier recomputes the action and tachygram accumulators, fails
+    /// early if the computed action set disagrees with the carried action set
+    /// commitment, and calls Ragu `verify()`.
     pub fn verify<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -419,8 +423,12 @@ impl Stamp {
             .map(Action::digest)
             .collect::<Result<Vec<_>, _>>()
             .map_err(VerificationError::ActionDigest)?;
+        let action_set = ActionSetPoly::from(action_digests.as_slice()).commit();
+        if action_set != self.action_set {
+            return Err(VerificationError::ActionSetMismatch);
+        }
         let header = (
-            ActionSetPoly::from(action_digests.as_slice()).commit(),
+            action_set,
             TachygramSetPoly::from(&*self.tachygrams).commit(),
             self.anchor,
         );

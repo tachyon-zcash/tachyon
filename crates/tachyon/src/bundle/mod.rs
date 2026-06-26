@@ -511,6 +511,26 @@ impl Bundle<Stamp> {
         )
     }
 
+    /// Confirm published coverage without verifying the proof: reconstruct the
+    /// action-set commitment from this bundle's actions plus every adjunct's and
+    /// check it against the carried `cActionsTachyon`. Assistive, not soundness.
+    pub fn covers<T: StampState>(
+        &self,
+        associates: &[Bundle<T>],
+    ) -> Result<bool, ActionDigestError> {
+        let associate_actions = associates.iter().flat_map(|adjunct| adjunct.actions.iter());
+
+        let cover_actions = self.actions.iter().chain(associate_actions);
+
+        let cover_digests = cover_actions
+            .map(Action::digest)
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
+
+        let cover_set = ActionSetPoly::from(cover_digests.as_slice());
+
+        Ok(cover_set.commit() == self.stamp.action_set)
+    }
+
     /// Read a stamped bundle from the consensus wire format.
     ///
     /// Expects `tachyonBundleState == 0x01`. See the module-level wire format

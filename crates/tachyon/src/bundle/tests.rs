@@ -1,6 +1,7 @@
 #![allow(clippy::panic, reason = "test code")]
 
 use alloc::{vec, vec::Vec};
+use core::slice::from_ref;
 
 use rand::{SeedableRng as _, rngs::StdRng};
 
@@ -12,7 +13,7 @@ use crate::{
         PoolSim, WalletSim, action_digests, build_autonome, build_output_stamp, mock_sighash,
         random_action, random_block, random_block_with,
     },
-    primitives::{ActionDigest, ActionSetPoly, BlockHeight},
+    primitives::{ActionDigest, BlockHeight},
 };
 
 #[test]
@@ -820,39 +821,28 @@ fn coverage_check_matches_stamped_action_set() {
     .expect("based merge");
     becomes_based.stamp = based_stamp;
 
-    // Observer's coverage check: reconstruct the merged commitment from the
-    // based aggregate's own actions + both adjuncts' visible actions.
-    let observed_digests: Vec<ActionDigest> = based_digests
-        .iter()
-        .chain(action_digests(&adjunct_a.actions).iter())
-        .chain(action_digests(&adjunct_b.actions).iter())
-        .copied()
-        .collect();
-    let observed = ActionSetPoly::from(observed_digests.as_slice()).commit();
-    assert_eq!(
-        observed, becomes_based.stamp.action_set,
-        "coverage check must match the serialized cActionsTachyon"
+    // Coverage confirmation: the based aggregate's carried commitment matches
+    // its own actions plus both covered adjuncts'.
+    assert!(
+        becomes_based
+            .covers(&[adjunct_a.clone(), adjunct_b.clone()])
+            .expect("valid digests"),
+        "full covered set matches cActionsTachyon"
     );
 
-    // Missing an adjunct: product is too small (fewer roots).
-    let partial: Vec<ActionDigest> = based_digests
-        .iter()
-        .chain(action_digests(&adjunct_a.actions).iter())
-        .copied()
-        .collect();
-    let partial_commit = ActionSetPoly::from(partial.as_slice()).commit();
-    assert_ne!(
-        partial_commit, becomes_based.stamp.action_set,
-        "missing adjunct must not match"
+    // Missing an adjunct: fewer roots, no match.
+    assert!(
+        !becomes_based
+            .covers(from_ref(&adjunct_a))
+            .expect("valid digests"),
+        "missing adjunct must mismatch"
     );
 
-    // Extra foreign action: product is too large (extra root).
-    let foreign = random_action(rng);
-    let mut with_extra = observed_digests;
-    with_extra.push(foreign.digest().expect("valid foreign action"));
-    let extra_commit = ActionSetPoly::from(with_extra.as_slice()).commit();
-    assert_ne!(
-        extra_commit, becomes_based.stamp.action_set,
-        "extra foreign action must not match"
+    // Extra (duplicated) adjunct: more roots, no match.
+    assert!(
+        !becomes_based
+            .covers(&[adjunct_a.clone(), adjunct_b, adjunct_a])
+            .expect("valid digests"),
+        "extra adjunct must mismatch"
     );
 }
