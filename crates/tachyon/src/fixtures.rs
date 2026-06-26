@@ -213,7 +213,7 @@ impl PoolSim {
     pub fn stamp_commits_at(&self, height: BlockHeight) -> Vec<TachygramSetCommit> {
         self.tachygrams_at(height)
             .iter()
-            .map(|tgs| TachygramSetPoly::from(tgs.as_slice()).commit())
+            .map(|tgs| tgs.iter().copied().collect::<TachygramSetPoly>().commit())
             .collect()
     }
 
@@ -422,7 +422,7 @@ pub(crate) fn spendable_init_inputs(
     let epoch = height.epoch();
     let pre_epoch_anchor = pool.pre_epoch_anchor(epoch);
     let chain = build_anchor_chain_prefix_pcd(rng, pool, epoch_first_of(epoch), height, cm_idx);
-    let stamp_tg_set = TachygramSetPoly::from(stamps[cm_idx].as_slice());
+    let stamp_tg_set = stamps[cm_idx].iter().copied().collect::<TachygramSetPoly>();
 
     (pre_epoch_anchor, pre_cm_anchor, stamp_tg_set, chain)
 }
@@ -434,7 +434,7 @@ pub(crate) fn build_unspent_seed_pcd(
     tgs: &[Tachygram],
     nf: Nullifier,
 ) -> Pcd<pool::Unspent> {
-    let tg_set = TachygramSetPoly::from(tgs);
+    let tg_set = tgs.iter().copied().collect::<TachygramSetPoly>();
     let (pcd, ()) = PROOF_SYSTEM
         .seed(rng, pool::UnspentSeed, (start, epoch, tg_set, nf))
         .expect("UnspentSeed");
@@ -593,7 +593,8 @@ impl WalletSim {
         // Key expansion: derive the trace and keyset once (the FFTs), then
         // build the NfMasterExpand witness from them.
         let (spectrum, keyset) = mk.derive_expanded_trace();
-        let expansion = witness::nf_master_expand(&mk, &spectrum, &keyset);
+        let expansion =
+            witness::nf_master_expand((*left.data(), *right.data()), &mk, &spectrum, &keyset);
         let (keyset_pcd, ()) = PROOF_SYSTEM
             .fuse(rng, delegation::NfMasterExpand, expansion, left, right)
             .expect("NfMasterExpand");
@@ -603,7 +604,13 @@ impl WalletSim {
             .fuse(
                 rng,
                 delegation::NullifierDerivationStep,
-                witness::nullifier_derivation(&keyset, &mk, &polys, creation_epoch),
+                witness::nullifier_derivation(
+                    (*keyset_pcd.data(), ()),
+                    &keyset,
+                    &mk,
+                    &polys,
+                    creation_epoch,
+                ),
                 keyset_pcd,
                 Proof::trivial().carry::<()>(()),
             )
@@ -669,7 +676,13 @@ impl WalletSim {
             .fuse(
                 rng,
                 spendable::SpendableInit,
-                witness::spendable_init(&polys, pre_epoch_anchor, pre_cm_anchor, creation_set),
+                witness::spendable_init(
+                    (*chain.data(), *derivation.data()),
+                    &polys,
+                    pre_epoch_anchor,
+                    pre_cm_anchor,
+                    creation_set,
+                ),
                 chain,
                 derivation,
             )
@@ -700,6 +713,7 @@ impl WalletSim {
     pub fn verify_unspent_witness(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
+        unspent: &Pcd<pool::Unspent>,
         note: &Note,
         creation_epoch: EpochIndex,
         start_epoch: EpochIndex,
@@ -728,13 +742,15 @@ impl WalletSim {
             })
             .collect();
 
-        // The derivation PCD's header carries the certified transcript digest
-        // the lift challenge opens against; read it off here so the witness
-        // builder stays free of PCD inputs.
-        let digest = derivation.data().1;
-
         (
-            witness::verify_unspent(&polys, &mk, digest, &nfs, start_epoch, present_epoch),
+            witness::verify_unspent(
+                (*unspent.data(), *derivation.data()),
+                &polys,
+                &mk,
+                &nfs,
+                start_epoch,
+                present_epoch,
+            ),
             derivation,
         )
     }
@@ -748,8 +764,14 @@ impl WalletSim {
         start_epoch: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<pool::VerifiedUnspent> {
-        let (witness, derivation) =
-            self.verify_unspent_witness(rng, note, creation_epoch, start_epoch, present_epoch);
+        let (witness, derivation) = self.verify_unspent_witness(
+            rng,
+            &unspent,
+            note,
+            creation_epoch,
+            start_epoch,
+            present_epoch,
+        );
         let (verified, ()) = PROOF_SYSTEM
             .fuse(rng, pool::VerifyUnspent, witness, unspent, derivation)
             .expect("VerifyUnspent");
@@ -1058,11 +1080,11 @@ fn build_partial_multi_epoch_unspent(
         let nf = nfs[nfs_idx];
         let intra = build_unspent_pcd(rng, pool, nf, current_height..=epoch_end_height);
 
-        let left_poly = NfSeqPoly::from(elapsed_nfs.as_slice());
-        let right_poly = NfSeqPoly::from(Vec::<Nullifier>::new().as_slice());
+        let left_poly = elapsed_nfs.iter().copied().collect::<NfSeqPoly>();
+        let right_poly = NfSeqPoly::from_iter([]);
         let mut combined_nfs = elapsed_nfs.clone();
         combined_nfs.push(present_nf);
-        let combined = NfSeqPoly::from(combined_nfs.as_slice());
+        let combined = combined_nfs.into_iter().collect::<NfSeqPoly>();
         let (fused, ()) = PROOF_SYSTEM
             .fuse(
                 rng,

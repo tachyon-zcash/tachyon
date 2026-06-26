@@ -373,13 +373,17 @@ impl Stamp {
         let app = &*PROOF_SYSTEM;
 
         let (left_acts_poly, left_tg_poly) = (
-            ActionSetPoly::from(left_digests),
-            TachygramSetPoly::from(&*left.tachygrams),
+            left_digests.iter().copied().collect::<ActionSetPoly>(),
+            left.tachygrams.iter().copied().collect::<TachygramSetPoly>(),
         );
 
         let (right_acts_poly, right_tg_poly) = (
-            ActionSetPoly::from(right_digests),
-            TachygramSetPoly::from(&*right.tachygrams),
+            right_digests.iter().copied().collect::<ActionSetPoly>(),
+            right
+                .tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>(),
         );
 
         let left_pcd = left.proof.carry::<StampHeader>((
@@ -431,8 +435,12 @@ impl Stamp {
             .collect::<Result<Vec<_>, _>>()
             .map_err(VerificationError::ActionDigest)?;
         let header = (
-            ActionSetPoly::from(action_digests.as_slice()).commit(),
-            TachygramSetPoly::from(&*self.tachygrams).commit(),
+            action_digests.into_iter().collect::<ActionSetPoly>().commit(),
+            self.tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>()
+                .commit(),
             self.anchor,
         );
 

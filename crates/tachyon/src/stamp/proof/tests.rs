@@ -5,7 +5,7 @@
 
 extern crate alloc;
 
-use alloc::{string::ToString as _, vec, vec::Vec};
+use alloc::{string::ToString as _, vec};
 
 use ff::Field as _;
 use pasta_curves::Fp;
@@ -26,7 +26,7 @@ use crate::{
     keys::{ExpandedKey, NoteMasterKey},
     note::{self, Nullifier},
     primitives::{
-        Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqCommit, NfSeqPoly, Tachygram, effect,
+        Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqPoly, Tachygram, effect,
     },
     value, witness,
 };
@@ -151,13 +151,10 @@ fn same_epoch_honest_spend_accepted() {
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable);
     let stamp = honest_spend_stamp(rng, &user, &note, spend_pcd, epoch);
 
-    let expected = TachygramSetPoly::from(
-        [
-            user.query_nf(&note, EpochOffset(0)).into(),
-            user.query_nf(&note, EpochOffset(1)).into(),
-        ]
-        .as_slice(),
-    )
+    let expected = TachygramSetPoly::from_iter([
+        user.query_nf(&note, EpochOffset(0)).into(),
+        user.query_nf(&note, EpochOffset(1)).into(),
+    ])
     .commit();
     assert_eq!(stamp.data().1, expected, "publishes {{nf_0, nf_1}}");
     PROOF_SYSTEM
@@ -219,7 +216,7 @@ fn spendable_init_accepts_forged_chain() {
         .expect("cm present in cm-block");
     let x = Anchor::from(Fp::random(&mut *rng));
     let forged_start = x.next_epoch(wrong);
-    let cm_set = TachygramSetPoly::from(stamps[cm_idx].as_slice());
+    let cm_set = stamps[cm_idx].iter().copied().collect::<TachygramSetPoly>();
     let cm_commit = cm_set.commit();
     let (forged_chain, ()) = PROOF_SYSTEM
         .seed(rng, pool::AnchorSeed, (forged_start, cm_commit))
@@ -261,8 +258,13 @@ fn stamp_lift_within_epoch() {
     let (stamp, plan) = build_output_stamp(rng, stamp_anchor, note);
 
     let action_commit =
-        ActionSetPoly::from([plan.digest().expect("valid plan")].as_slice()).commit();
-    let tachygram_commit = TachygramSetPoly::from(stamp.tachygrams.as_slice()).commit();
+        ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
+    let tachygram_commit = stamp
+        .tachygrams
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>()
+        .commit();
 
     pool.advance(usize::try_from(EPOCH_SIZE - 2).expect("fits"), |_| {
         random_block(rng, 1, 4)
@@ -289,9 +291,9 @@ fn spendable_init_rejects_tg_absent() {
     let note = user.random_note(rng, 500);
 
     let (derivation, polys, _keyset) = user.derivation(rng, &note, EpochIndex(0));
-    let absent_set = TachygramSetPoly::from([tg(rng)].as_slice());
+    let absent_set = TachygramSetPoly::from_iter([tg(rng)]);
     // cm-inclusion is checked first, so a dummy boundary chain suffices here.
-    let dummy_commit = TachygramSetPoly::from([tg(rng)].as_slice()).commit();
+    let dummy_commit = TachygramSetPoly::from_iter([tg(rng)]).commit();
     let (dummy_chain, ()) = PROOF_SYSTEM
         .seed(rng, pool::AnchorSeed, (Anchor::default(), dummy_commit))
         .expect("AnchorSeed");
@@ -319,7 +321,7 @@ fn unspent_seed_rejects_tg_present() {
     let note = user.random_note(rng, 500);
     let nf = user.query_nf(&note, EpochOffset(0));
 
-    let containing_set = TachygramSetPoly::from([nf.into()].as_slice());
+    let containing_set = TachygramSetPoly::from_iter([nf.into()]);
     let start = Anchor::default();
 
     let err = PROOF_SYSTEM
@@ -342,7 +344,8 @@ fn unspent_fuse_rejects_invalid_compositions() {
     let stamps_left = vec![tg(rng)];
     let stamps_right = vec![tg(rng)];
     let start = Anchor::default();
-    let mid = start.next_stamp(&TachygramSetPoly::from(stamps_left.as_slice()).commit());
+    let mid =
+        start.next_stamp(&stamps_left.iter().copied().collect::<TachygramSetPoly>().commit());
 
     // nf mismatch: contiguous states but different nfs.
     {
@@ -783,13 +786,10 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
 
     // E_0 = 0 (cm minted in epoch 0); the spend at epoch 1 is offset d = 1.
     let stamp = honest_spend_stamp(rng, &user, &note, spend_pcd, EpochIndex(0));
-    let expected = TachygramSetPoly::from(
-        [
-            user.query_nf(&note, EpochOffset(1)).into(),
-            user.query_nf(&note, EpochOffset(2)).into(),
-        ]
-        .as_slice(),
-    )
+    let expected = TachygramSetPoly::from_iter([
+        user.query_nf(&note, EpochOffset(1)).into(),
+        user.query_nf(&note, EpochOffset(2)).into(),
+    ])
     .commit();
     assert_eq!(stamp.data().1, expected);
 }
@@ -808,13 +808,10 @@ fn spend_stamp_assembles_tachygrams() {
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let stamp_pcd = honest_spend_stamp(rng, &user, &note, spend_pcd, spend_epoch);
     let (_actions, tg_commit, _anchor) = *stamp_pcd.data();
-    let expected = TachygramSetPoly::from(
-        [
-            Tachygram::from(user.query_nf(&note, EpochOffset(0))),
-            Tachygram::from(user.query_nf(&note, EpochOffset(1))),
-        ]
-        .as_slice(),
-    )
+    let expected = TachygramSetPoly::from_iter([
+        Tachygram::from(user.query_nf(&note, EpochOffset(0))),
+        Tachygram::from(user.query_nf(&note, EpochOffset(1))),
+    ])
     .commit();
     assert_eq!(tg_commit, expected);
 }
@@ -868,9 +865,9 @@ fn unspent_epoch_fuse_concatenates_polynomials() {
         BlockHeight(EPOCH_SIZE)..=BlockHeight(EPOCH_SIZE),
     );
 
-    let left_elapsed_poly = NfSeqPoly::from(Vec::<Nullifier>::new().as_slice());
-    let right_elapsed_poly = NfSeqPoly::from(Vec::<Nullifier>::new().as_slice());
-    let combined_elapsed_poly = NfSeqPoly::from([nf_e0].as_slice());
+    let left_elapsed_poly = NfSeqPoly::from_iter([]);
+    let right_elapsed_poly = NfSeqPoly::from_iter([]);
+    let combined_elapsed_poly = NfSeqPoly::from_iter([nf_e0]);
     let (fused, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -883,7 +880,7 @@ fn unspent_epoch_fuse_concatenates_polynomials() {
 
     let ((elapsed, present_epoch), _prev_anchor, _last_anchor, present_nf, start_epoch) =
         *fused.data();
-    assert_eq!(elapsed, NfSeqCommit::from([nf_e0].as_slice()));
+    assert_eq!(elapsed, NfSeqPoly::from_iter([nf_e0]).commit());
     assert_eq!(present_epoch.0 - start_epoch.0, 1, "one crossing");
     assert_eq!(present_nf, nf_e1, "new tip is the right half's present nf");
 }
@@ -1007,12 +1004,12 @@ fn unspent_fuse_rejects_nonzero_forward_half() {
         nf1,
         BlockHeight(EPOCH_SIZE)..=BlockHeight(EPOCH_SIZE),
     );
-    let empty = NfSeqPoly::from(Vec::<Nullifier>::new().as_slice());
+    let empty = NfSeqPoly::from_iter([]);
     let (multi, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             pool::UnspentEpochFuse,
-            (empty.clone(), empty, NfSeqPoly::from([nf0].as_slice())),
+            (empty.clone(), empty, NfSeqPoly::from_iter([nf0])),
             m_left,
             m_right,
         )
@@ -1071,9 +1068,9 @@ fn unspent_epoch_fuse_rejects_wrong_left_poly() {
             rng,
             pool::UnspentEpochFuse,
             (
-                NfSeqPoly::from([nf_e1].as_slice()),
-                NfSeqPoly::from(Vec::<Nullifier>::new().as_slice()),
-                NfSeqPoly::from([nf_e0].as_slice()),
+                NfSeqPoly::from_iter([nf_e1]),
+                NfSeqPoly::from_iter([]),
+                NfSeqPoly::from_iter([nf_e0]),
             ),
             left,
             right,
@@ -1098,9 +1095,9 @@ fn unspent_epoch_fuse_rejects_wrong_combined() {
             rng,
             pool::UnspentEpochFuse,
             (
-                NfSeqPoly::from(Vec::<Nullifier>::new().as_slice()),
-                NfSeqPoly::from(Vec::<Nullifier>::new().as_slice()),
-                NfSeqPoly::from([nf_e1].as_slice()),
+                NfSeqPoly::from_iter([]),
+                NfSeqPoly::from_iter([]),
+                NfSeqPoly::from_iter([nf_e1]),
             ),
             left,
             right,
@@ -1142,9 +1139,9 @@ fn unspent_epoch_fuse_rejects_epoch_skip() {
             rng,
             pool::UnspentEpochFuse,
             (
-                NfSeqPoly::from(Vec::<Nullifier>::new().as_slice()),
-                NfSeqPoly::from(Vec::<Nullifier>::new().as_slice()),
-                NfSeqPoly::from([nf_e0].as_slice()),
+                NfSeqPoly::from_iter([]),
+                NfSeqPoly::from_iter([]),
+                NfSeqPoly::from_iter([nf_e0]),
             ),
             left,
             right,
@@ -1194,9 +1191,15 @@ fn verify_unspent_rejects_tip_mismatch() {
 
     // Honest witness, but the tip poly's commitment no longer matches the
     // Unspent's present nullifier.
-    let (mut witness, derivation) =
-        user.verify_unspent_witness(rng, &note, EpochIndex(0), EpochIndex(0), EpochIndex(1));
-    witness.1 = NfSeqPoly::from([Nullifier::from(Fp::random(&mut *rng))].as_slice());
+    let (mut witness, derivation) = user.verify_unspent_witness(
+        rng,
+        &unspent,
+        &note,
+        EpochIndex(0),
+        EpochIndex(0),
+        EpochIndex(1),
+    );
+    witness.1 = NfSeqPoly::from_iter([Nullifier::from(Fp::random(&mut *rng))]);
 
     let err = PROOF_SYSTEM
         .fuse(rng, pool::VerifyUnspent, witness, unspent, derivation)
@@ -1245,9 +1248,15 @@ fn verify_unspent_rejects_elapsed_mismatch() {
 
     // Honest witness, but the elapsed poly's commitment no longer matches the
     // Unspent header's elapsed commitment.
-    let (mut witness, derivation) =
-        user.verify_unspent_witness(rng, &note, EpochIndex(0), EpochIndex(0), EpochIndex(1));
-    witness.0 = NfSeqPoly::from([Nullifier::from(Fp::random(&mut *rng))].as_slice());
+    let (mut witness, derivation) = user.verify_unspent_witness(
+        rng,
+        &unspent,
+        &note,
+        EpochIndex(0),
+        EpochIndex(0),
+        EpochIndex(1),
+    );
+    witness.0 = NfSeqPoly::from_iter([Nullifier::from(Fp::random(&mut *rng))]);
 
     let err = PROOF_SYSTEM
         .fuse(rng, pool::VerifyUnspent, witness, unspent, derivation)
@@ -1452,7 +1461,7 @@ fn nf_master_expand_rejects_forged_witnesses() {
     // note `mk` disagrees in the mismatched/hybrid cases).
     let assemble = |builder_mk: NoteMasterKey| {
         let (spectrum, keyset) = builder_mk.derive_expanded_trace();
-        witness::nf_master_expand(&builder_mk, &spectrum, &keyset)
+        witness::nf_master_expand((*left.data(), *right.data()), &builder_mk, &spectrum, &keyset)
     };
 
     // Trace under a foreign keyset: round 0 (the first column) binds k_0, so the
@@ -1531,7 +1540,7 @@ fn derivation_rejects_mismatched_key_poly() {
         .fuse(
             rng,
             delegation::NfMasterExpand,
-            witness::nf_master_expand(&mk, &spectrum, &keyset),
+            witness::nf_master_expand((*left.data(), *right.data()), &mk, &spectrum, &keyset),
             left,
             right,
         )
@@ -1540,8 +1549,13 @@ fn derivation_rejects_mismatched_key_poly() {
     // A key poly with a tampered output no longer matches the committed keyset.
     let salts = mk.query_salts();
     let polys = keyset.derivation_polys(&salts);
-    let (_, _same_polys, quotients, _) =
-        witness::nullifier_derivation(&keyset, &mk, &polys, creation_epoch);
+    let (_, _same_polys, quotients, _) = witness::nullifier_derivation(
+        (*keyset_pcd.data(), ()),
+        &keyset,
+        &mk,
+        &polys,
+        creation_epoch,
+    );
     let mut tampered = keyset.0;
     tampered[0] += Fp::ONE;
     let bad_key = ExpandedKey::from(tampered).key_poly();
