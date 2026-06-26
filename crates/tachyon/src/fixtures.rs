@@ -122,7 +122,7 @@ pub fn build_autonome(
     let height = pool.height();
     let spendable_pcd = wallet.fresh_spend(rng, &pool, height, &spend_note);
     let spend_epoch = height.epoch();
-    let anchor = spendable_pcd.data().1;
+    let anchor = spendable_pcd.data().2;
     wallet.autonome(
         rng,
         anchor,
@@ -817,7 +817,7 @@ impl WalletSim {
             .iter()
             .position(|tgs| tgs.contains(&note.commitment().into()))
             .expect("cm in creation block");
-        let start_anchor = spendable.data().1;
+        let start_anchor = spendable.data().2;
         let creation_epoch = cm_height.epoch();
         let end_height = BlockHeight(epoch_final_of(creation_epoch).0 + 1);
         let unspent = build_partial_multi_epoch_unspent(

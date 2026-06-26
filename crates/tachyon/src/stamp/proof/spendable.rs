@@ -1,12 +1,12 @@
 //! Spendable bootstrap and lift.
 //!
-//! The spendable carries `(present_nf, anchor, cm, creation_epoch,
-//! present_epoch)`: the note's current nullifier `E_mk(psi' + e)`, its pool
-//! position, the minted-note commitment binding the lineage (and its value),
-//! the creation epoch `E_0` (the offset origin), and the present epoch (the
-//! absolute epoch at which `present_nf` is active). `present_nf`, `anchor`, and
-//! `present_epoch` advance per lift; `cm` and `creation_epoch` thread
-//! unchanged. [`SpendableInit`] bootstraps it from a minted note;
+//! The spendable carries `(cm, (present_epoch, present_nf), anchor,
+//! creation_epoch)`: the minted-note commitment binding the lineage (and its
+//! value), the note's current nullifier `E_mk(psi' + e)` at its active absolute
+//! epoch, its pool position, and the creation epoch `E_0` (the offset origin).
+//! The `(present_epoch, present_nf)` pair and `anchor` advance per lift; `cm`
+//! and `creation_epoch` thread unchanged. [`SpendableInit`] bootstraps it from
+//! a minted note;
 //! [`SpendableLift`] advances it over
 //! [`VerifiedUnspent`](super::pool::VerifiedUnspent) segments.
 
@@ -42,24 +42,24 @@ use crate::{
 pub struct SpendableHeader;
 
 impl Header for SpendableHeader {
-    /// `(present_nf, anchor, cm, creation_epoch, present_epoch)`. `present_nf`,
-    /// `anchor`, and `present_epoch` advance per lift; `cm` and
-    /// `creation_epoch` (the offset origin `E_0`, bound at
+    /// `(cm, (present_epoch, present_nf), anchor, creation_epoch)`. The
+    /// `(present_epoch, present_nf)` pair and `anchor` advance per lift; `cm`
+    /// and `creation_epoch` (the offset origin `E_0`, bound at
     /// [`SpendableInit`]) thread unchanged, so the lift's `E_0` can be
     /// reconciled against it. `present_epoch` is the absolute epoch at
     /// which `present_nf` is the active nullifier, so the spend offset is
     /// `present_epoch − creation_epoch`.
-    type Data = (Nullifier, Anchor, NoteCommitment, EpochIndex, EpochIndex);
+    type Data = (NoteCommitment, (EpochIndex, Nullifier), Anchor, EpochIndex);
 
     const SUFFIX: Suffix = Suffix::new(7);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 32 + 4 + 4);
+        let mut out = Vec::with_capacity(32 + 4 + 32 + 32 + 4);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.1).to_repr());
+        out.extend_from_slice(&data.1.0.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.1.1).to_repr());
         out.extend_from_slice(&Fp::from(data.2).to_repr());
         out.extend_from_slice(&data.3.0.to_le_bytes());
-        out.extend_from_slice(&data.4.0.to_le_bytes());
         out
     }
 }
@@ -152,10 +152,9 @@ impl Step for SpendableInit {
         // so the present epoch is the creation epoch itself.
         Ok((
             (
-                present_nf,
-                post_cm_anchor,
                 cm,
-                creation_epoch,
+                (creation_epoch, present_nf),
+                post_cm_anchor,
                 creation_epoch,
             ),
             (),
@@ -192,16 +191,14 @@ impl Step for SpendableLift {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (present_nf, spendable_anchor, cm, creation_epoch, present_epoch): <Self::Left as Header>::Data,
+        (cm, (present_epoch, present_nf), spendable_anchor, creation_epoch): <Self::Left as Header>::Data,
         (
-            prev_anchor,
-            start_nf,
-            last_anchor,
-            end_nf,
             verified_cm,
+            prev_anchor,
+            (verified_start_epoch, start_nf),
+            (verified_present_epoch, end_nf),
+            last_anchor,
             verified_e0,
-            verified_start_epoch,
-            verified_present_epoch,
         ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
@@ -226,11 +223,10 @@ impl Step for SpendableLift {
         )?;
         Ok((
             (
-                end_nf,
-                last_anchor,
                 cm,
+                (verified_present_epoch, end_nf),
+                last_anchor,
                 creation_epoch,
-                verified_present_epoch,
             ),
             (),
         ))

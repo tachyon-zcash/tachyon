@@ -31,17 +31,16 @@ use crate::{
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(cv, rk, present_nf, anchor, cm, offset)`. `cv`/`rk` are derived at
+    /// `(cm, (cv, rk), present_nf, anchor, offset)`. `cv`/`rk` are derived at
     /// [`SpendBind`]; `present_nf`, `anchor`, and `cm` thread from the
     /// spendable lineage that [`SpendBind`] consumed; `offset` is the spend
     /// offset `present_epoch − creation_epoch`, derived at [`SpendBind`] from
     /// the two pinned lineage epochs and consumed by `SpendStamp`.
     type Data = (
-        value::Commitment,
-        public::ActionVerificationKey,
+        note::Commitment,
+        (value::Commitment, public::ActionVerificationKey),
         Nullifier,
         Anchor,
-        note::Commitment,
         EpochOffset,
     );
 
@@ -49,14 +48,14 @@ impl Header for SpendHeader {
 
     fn encode(data: &Self::Data) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 * 5 + 4);
-        let cv_bytes: [u8; 32] = data.0.into();
-        let rk_bytes: [u8; 32] = data.1.into();
+        let cv_bytes: [u8; 32] = data.1.0.into();
+        let rk_bytes: [u8; 32] = data.1.1.into();
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&cv_bytes);
         out.extend_from_slice(&rk_bytes);
         out.extend_from_slice(&Fp::from(data.2).to_repr());
         out.extend_from_slice(&Fp::from(data.3).to_repr());
-        out.extend_from_slice(&Fp::from(data.4).to_repr());
-        out.extend_from_slice(&data.5.0.to_le_bytes());
+        out.extend_from_slice(&data.4.0.to_le_bytes());
         out
     }
 }
@@ -94,7 +93,7 @@ impl Step for SpendBind {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         ((pk, value, rcm, psi), rcv, alpha, pak): Self::Witness<'source>,
-        (present_nf, anchor, spendable_cm, creation_epoch, present_epoch): <Self::Left as Header>::Data,
+        (spendable_cm, (present_epoch, present_nf), anchor, creation_epoch): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_nonzero(Fp::from(u64::from(value)), "SpendBind: zero-value note")?;
@@ -127,6 +126,6 @@ impl Step for SpendBind {
         // SpendStamp consumes it and re-pins it via `nf_now == present_nf`.
         let offset = present_epoch.offset_from(creation_epoch);
 
-        Ok(((cv, rk, present_nf, anchor, cm, offset), ()))
+        Ok(((cm, (cv, rk), present_nf, anchor, offset), ()))
     }
 }

@@ -235,7 +235,7 @@ fn spendable_init_accepts_forged_chain() {
 
     // The circuit accepted, but the produced anchor is off the published sequence,
     // so consensus anchor membership is what rejects the eventual spend.
-    let forged_anchor = forged_spendable.data().1;
+    let forged_anchor = forged_spendable.data().2;
     assert_eq!(forged_anchor, forged_start.next_stamp(&cm_commit));
     let forged_off_sequence =
         (0..=cm_height.0).all(|height| pool.anchor_at(BlockHeight(height)) != forged_anchor);
@@ -472,7 +472,7 @@ fn empty_block_unspent_lifts_spendable() {
 
     // Bootstrap spendable at the cm-block's published anchor.
     let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let spendable_anchor_before = spendable.data().1;
+    let spendable_anchor_before = spendable.data().2;
 
     // Mine one empty block.
     pool.mine(vec![]);
@@ -480,12 +480,12 @@ fn empty_block_unspent_lifts_spendable() {
 
     // Build an Unspent over the empty block via EmptyBlockUnspentSeed,
     // then lift the spendable.
-    let nf = spendable.data().0;
+    let nf = spendable.data().1.1;
     let unspent = build_unspent_pcd(rng, &pool, nf, empty_height..=empty_height);
     let lifted = user.lift(rng, spendable, unspent, &note, epoch, epoch);
 
-    assert_eq!(lifted.data().1, spendable_anchor_before.next_empty());
-    assert_eq!(lifted.data().1, pool.anchor_at(empty_height));
+    assert_eq!(lifted.data().2, spendable_anchor_before.next_empty());
+    assert_eq!(lifted.data().2, pool.anchor_at(empty_height));
 }
 
 #[test]
@@ -499,7 +499,7 @@ fn spend_bind_honest() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let (_cv, _rk, present_nf, _anchor, _cm, _offset) = *spend_pcd.data();
+    let (_cm, (_cv, _rk), present_nf, _anchor, _offset) = *spend_pcd.data();
     assert_eq!(present_nf, user.query_nf(&note, EpochOffset(0)));
 }
 
@@ -587,13 +587,12 @@ fn spend_stamp_rejects_wrong_offset() {
     // stays the creation-epoch nullifier; SpendStamp queries the derivation at
     // the forged offset, gets a different nf, and the continuity check against
     // present_nf rejects it.
-    let (cv, rk, present_nf, anchor, cm, _offset) = *spend_pcd.data();
+    let (cm, (cv, rk), present_nf, anchor, _offset) = *spend_pcd.data();
     let forged = spend_pcd.proof().clone().carry::<spend::SpendHeader>((
-        cv,
-        rk,
+        cm,
+        (cv, rk),
         present_nf,
         anchor,
-        cm,
         EpochOffset(1),
     ));
     let (derivation, polys, _keyset) = user.derivation(rng, &note, spend_epoch);
@@ -650,14 +649,13 @@ fn spend_stamp_rejects_identity_cv() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let real_spend = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let (_real_cv, real_rk, present_nf, anchor, cm, offset) = *real_spend.data();
+    let (cm, (_real_cv, real_rk), present_nf, anchor, offset) = *real_spend.data();
     let identity_cv = value::Commitment::balance(0);
     let forged_spend = real_spend.proof().clone().carry::<spend::SpendHeader>((
-        identity_cv,
-        real_rk,
+        cm,
+        (identity_cv, real_rk),
         present_nf,
         anchor,
-        cm,
         offset,
     ));
 
@@ -755,7 +753,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     }
 
     let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -772,7 +770,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let lifted = user.lift(rng, spendable, unspent, &note, EpochIndex(0), EpochIndex(1));
 
     let spend_pcd = honest_spend_bind(rng, &user, &note, lifted);
-    let (_cv, _rk, present_nf, _anchor, _cm, _offset) = *spend_pcd.data();
+    let (_cm, (_cv, _rk), present_nf, _anchor, _offset) = *spend_pcd.data();
     assert_eq!(
         present_nf,
         user.query_nf(&note, EpochOffset(1)),
@@ -878,7 +876,7 @@ fn unspent_epoch_fuse_concatenates_polynomials() {
         )
         .expect("UnspentEpochFuse");
 
-    let ((elapsed, present_epoch), _prev_anchor, _last_anchor, present_nf, start_epoch) =
+    let (_prev_anchor, start_epoch, elapsed, (present_epoch, present_nf), _last_anchor) =
         *fused.data();
     assert_eq!(elapsed, NfSeqPoly::from_iter([nf_e0]).commit());
     assert_eq!(present_epoch.0 - start_epoch.0, 1, "one crossing");
@@ -899,7 +897,7 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
         .expect("cm in block");
 
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -924,16 +922,16 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
     let lifted = user.lift(rng, spendable, unspent, &note, EpochIndex(0), EpochIndex(1));
 
     assert_eq!(
-        lifted.data().0,
+        lifted.data().1.1,
         user.query_nf(&note, EpochOffset(1)),
         "tip advanced to nf_1"
     );
     assert_eq!(
-        lifted.data().1,
+        lifted.data().2,
         pool.anchor_at(target_height),
         "anchor advanced"
     );
-    assert_eq!(lifted.data().2, note.commitment(), "cm threaded unchanged");
+    assert_eq!(lifted.data().0, note.commitment(), "cm threaded unchanged");
 }
 
 #[test]
@@ -949,7 +947,7 @@ fn sync_unspent_spans_two_crossings() {
         .position(|tgs| tgs.contains(&note.commitment().into()))
         .expect("cm in block");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -973,10 +971,10 @@ fn sync_unspent_spans_two_crossings() {
     assert_eq!(sync.consumed(0), 2, "two epoch crossings");
 
     let lifted = user.lift(rng, spendable, unspent, &note, EpochIndex(0), EpochIndex(2));
-    assert_eq!(lifted.data().0, user.query_nf(&note, EpochOffset(2)));
-    assert_eq!(lifted.data().1, pool.anchor_at(target_height));
+    assert_eq!(lifted.data().1.1, user.query_nf(&note, EpochOffset(2)));
+    assert_eq!(lifted.data().2, pool.anchor_at(target_height));
     assert_eq!(
-        lifted.data().4,
+        lifted.data().1.0,
         EpochIndex(2),
         "present_epoch advances to the unspent tip epoch"
     );
@@ -1170,7 +1168,7 @@ fn verify_unspent_rejects_tip_mismatch() {
         .position(|tgs| tgs.contains(&note.commitment().into()))
         .expect("cm in block");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -1227,7 +1225,7 @@ fn verify_unspent_rejects_elapsed_mismatch() {
         .position(|tgs| tgs.contains(&note.commitment().into()))
         .expect("cm in block");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -1289,7 +1287,7 @@ fn spendable_lift_rejects_wrong_cm() {
         .position(|tgs| tgs.contains(&note.commitment().into()))
         .expect("cm in block");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -1344,8 +1342,8 @@ fn spendable_lift_rejects_epoch_discontinuity() {
         .position(|tgs| tgs.contains(&note.commitment().into()))
         .expect("cm in block");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().1;
-    let present_epoch = spendable.data().4;
+    let start_anchor = spendable.data().2;
+    let present_epoch = spendable.data().1.0;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -1375,16 +1373,14 @@ fn spendable_lift_rejects_epoch_discontinuity() {
     // Forge the verified unspent to advertise a start_epoch that does not match
     // the lineage's present_epoch; cm, E_0, start_nf, and anchor stay honest, so
     // only the additive epoch-continuity guard fires.
-    let (sa, snf, ea, enf, cm, e0, _start_epoch, tip) = *verified.data();
+    let (cm, sa, (_start_epoch, snf), (tip, enf), ea, e0) = *verified.data();
     let forged = verified.proof().clone().carry::<pool::VerifiedUnspent>((
-        sa,
-        snf,
-        ea,
-        enf,
         cm,
+        sa,
+        (present_epoch.next(), snf),
+        (tip, enf),
+        ea,
         e0,
-        present_epoch.next(),
-        tip,
     ));
 
     let err = PROOF_SYSTEM

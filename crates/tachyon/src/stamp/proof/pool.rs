@@ -101,27 +101,27 @@ impl Header for AnchorChain {
 pub struct Unspent;
 
 impl Header for Unspent {
-    /// `((elapsed, present_epoch), prev_anchor, last_anchor, present_nf,
-    /// start_epoch)`.
+    /// `(prev_anchor, start_epoch, elapsed, (present_epoch, present_nf),
+    /// last_anchor)`.
     type Data = (
-        (NfSeqCommit, EpochIndex),
         Anchor,
-        Anchor,
-        Nullifier,
         EpochIndex,
+        NfSeqCommit,
+        (EpochIndex, Nullifier),
+        Anchor,
     );
 
     const SUFFIX: Suffix = Suffix::new(6);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 4 + 32 + 32 + 32 + 4);
-        let elapsed_bytes: [u8; 32] = Eq::from(data.0.0).to_affine().to_bytes();
+        let mut out = Vec::with_capacity(32 + 4 + 32 + 4 + 32 + 32);
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        out.extend_from_slice(&data.1.0.to_le_bytes());
+        let elapsed_bytes: [u8; 32] = Eq::from(data.2).to_affine().to_bytes();
         out.extend_from_slice(&elapsed_bytes);
-        out.extend_from_slice(&data.0.1.0.to_le_bytes());
-        out.extend_from_slice(&Fp::from(data.1).to_repr());
-        out.extend_from_slice(&Fp::from(data.2).to_repr());
-        out.extend_from_slice(&Fp::from(data.3).to_repr());
-        out.extend_from_slice(&data.4.0.to_le_bytes());
+        out.extend_from_slice(&data.3.0.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.3.1).to_repr());
+        out.extend_from_slice(&Fp::from(data.4).to_repr());
         out
     }
 }
@@ -132,8 +132,8 @@ impl Header for Unspent {
 pub struct VerifiedUnspent;
 
 impl Header for VerifiedUnspent {
-    /// `(prev_anchor, start_nf, last_anchor, end_nf, cm, creation_epoch,
-    /// start_epoch, present_epoch)`. `creation_epoch` is the certified offset
+    /// `(cm, prev_anchor, (start_epoch, start_nf), (present_epoch, end_nf),
+    /// last_anchor, creation_epoch)`. `creation_epoch` is the certified offset
     /// origin `E_0` carried from the derivation;
     /// [`super::spendable::SpendableLift`] reconciles it against the spendable
     /// lineage's `E_0` so the lift's offset arc cannot be shifted.
@@ -142,28 +142,26 @@ impl Header for VerifiedUnspent {
     /// lift-match); the lift checks `start_epoch` against the lineage and
     /// advances to `present_epoch`.
     type Data = (
-        Anchor,
-        Nullifier,
-        Anchor,
-        Nullifier,
         note::Commitment,
-        EpochIndex,
-        EpochIndex,
+        Anchor,
+        (EpochIndex, Nullifier),
+        (EpochIndex, Nullifier),
+        Anchor,
         EpochIndex,
     );
 
     const SUFFIX: Suffix = Suffix::new(8);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 32 + 32 + 32 + 4 + 4 + 4);
+        let mut out = Vec::with_capacity(32 + 32 + 4 + 32 + 4 + 32 + 32 + 4);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1).to_repr());
-        out.extend_from_slice(&Fp::from(data.2).to_repr());
-        out.extend_from_slice(&Fp::from(data.3).to_repr());
+        out.extend_from_slice(&data.2.0.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.2.1).to_repr());
+        out.extend_from_slice(&data.3.0.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.3.1).to_repr());
         out.extend_from_slice(&Fp::from(data.4).to_repr());
         out.extend_from_slice(&data.5.0.to_le_bytes());
-        out.extend_from_slice(&data.6.0.to_le_bytes());
-        out.extend_from_slice(&data.7.0.to_le_bytes());
         out
     }
 }
@@ -290,11 +288,11 @@ impl Step for UnspentSeed {
         let tested_anchor = prev_anchor.next_stamp(&stamp_commit);
         Ok((
             (
-                (NfSeqCommit::identity(), epoch),
                 prev_anchor,
-                tested_anchor,
-                nf,
                 epoch,
+                NfSeqCommit::identity(),
+                (epoch, nf),
+                tested_anchor,
             ),
             (),
         ))
@@ -326,11 +324,11 @@ impl Step for EmptyBlockUnspentSeed {
         let tested_anchor = prev_anchor.next_empty();
         Ok((
             (
-                (NfSeqCommit::identity(), epoch),
                 prev_anchor,
-                tested_anchor,
-                nf,
                 epoch,
+                NfSeqCommit::identity(),
+                (epoch, nf),
+                tested_anchor,
             ),
             (),
         ))
@@ -359,18 +357,18 @@ impl Step for UnspentFuse {
         _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
         (
-            (left_elapsed, left_present_epoch),
             left_prev_anchor,
-            left_last_anchor,
-            left_present_nf,
             left_start_epoch,
+            left_elapsed,
+            (left_present_epoch, left_present_nf),
+            left_last_anchor,
         ): <Self::Left as Header>::Data,
         (
-            (right_elapsed, right_present_epoch),
             right_prev_anchor,
-            right_last_anchor,
-            right_present_nf,
             right_start_epoch,
+            right_elapsed,
+            (right_present_epoch, right_present_nf),
+            right_last_anchor,
         ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
@@ -396,11 +394,11 @@ impl Step for UnspentFuse {
         )?;
         Ok((
             (
-                (left_elapsed, left_present_epoch),
                 left_prev_anchor,
-                right_last_anchor,
-                left_present_nf,
                 left_start_epoch,
+                left_elapsed,
+                (left_present_epoch, left_present_nf),
+                right_last_anchor,
             ),
             (),
         ))
@@ -432,18 +430,18 @@ impl Step for UnspentEpochFuse {
         ctx: &mut ragu::StepCtx<'_>,
         (left_elapsed_poly, right_elapsed_poly, combined_elapsed_poly): Self::Witness<'source>,
         (
-            (left_elapsed, left_present_epoch),
             left_prev_anchor,
-            left_last_anchor,
-            left_present_nf,
             left_start_epoch,
+            left_elapsed,
+            (left_present_epoch, left_present_nf),
+            left_last_anchor,
         ): <Self::Left as Header>::Data,
         (
-            (right_elapsed, right_present_epoch),
             right_prev_anchor,
-            right_last_anchor,
-            right_present_nf,
             right_start_epoch,
+            right_elapsed,
+            (right_present_epoch, right_present_nf),
+            right_last_anchor,
         ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
@@ -485,11 +483,11 @@ impl Step for UnspentEpochFuse {
         })?;
         Ok((
             (
-                (combined_commit, right_present_epoch),
                 left_prev_anchor,
-                right_last_anchor,
-                right_present_nf,
                 left_start_epoch,
+                combined_commit,
+                (right_present_epoch, right_present_nf),
+                right_last_anchor,
             ),
             (),
         ))
@@ -553,11 +551,11 @@ impl Step for VerifyUnspent {
             accumulator_quotient,
         ): Self::Witness<'source>,
         (
-            (unspent_elapsed, unspent_present_epoch),
             unspent_prev_anchor,
-            unspent_last_anchor,
-            unspent_present_nf,
             unspent_start_epoch,
+            unspent_elapsed,
+            (unspent_present_epoch, unspent_present_nf),
+            unspent_last_anchor,
         ): <Self::Left as Header>::Data,
         (commits, digest, cm, creation_epoch, shift, ratios): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -660,14 +658,12 @@ impl Step for VerifyUnspent {
 
         Ok((
             (
-                unspent_prev_anchor,
-                start_nf,
-                unspent_last_anchor,
-                unspent_present_nf,
                 cm,
+                unspent_prev_anchor,
+                (unspent_start_epoch, start_nf),
+                (unspent_present_epoch, unspent_present_nf),
+                unspent_last_anchor,
                 creation_epoch,
-                unspent_start_epoch,
-                unspent_present_epoch,
             ),
             (),
         ))
