@@ -95,17 +95,19 @@ impl Header for AnchorChain {
 /// An `elapsed` polynomial holds one nullifier per crossed epoch boundary over
 /// `[start_epoch, present_epoch)`.
 ///
-/// The in-progress `present_nf` corresponds to `present_epoch`. It will be
-/// folded into `elapsed` when its epoch completes.
+/// `nf_start` is the range's first tested nullifier (the leaf at `start_epoch`);
+/// the in-progress `present_nf` corresponds to `present_epoch` and is folded
+/// into `elapsed` when its epoch completes. [`VerifyUnspent`] binds both
+/// endpoints to the note's genuine derivation nullifiers.
 #[derive(Clone, Debug)]
 pub struct Unspent;
 
 impl Header for Unspent {
-    /// `(prev_anchor, start_epoch, elapsed, (present_epoch, present_nf),
-    /// last_anchor)`.
+    /// `(prev_anchor, (start_epoch, nf_start), elapsed,
+    /// (present_epoch, present_nf), last_anchor)`.
     type Data = (
         Anchor,
-        EpochIndex,
+        (EpochIndex, Nullifier),
         NfSeqCommit,
         (EpochIndex, Nullifier),
         Anchor,
@@ -114,9 +116,10 @@ impl Header for Unspent {
     const SUFFIX: Suffix = Suffix::new(6);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 4 + 32 + 4 + 32 + 32);
+        let mut out = Vec::with_capacity(32 + 4 + 32 + 32 + 4 + 32 + 32);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
-        out.extend_from_slice(&data.1.0.to_le_bytes());
+        out.extend_from_slice(&data.1.0.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.1.1).to_repr());
         let elapsed_bytes: [u8; 32] = Eq::from(data.2).to_affine().to_bytes();
         out.extend_from_slice(&elapsed_bytes);
         out.extend_from_slice(&data.3.0.0.to_le_bytes());
@@ -289,7 +292,7 @@ impl Step for UnspentSeed {
         Ok((
             (
                 prev_anchor,
-                epoch,
+                (epoch, nf),
                 NfSeqCommit::identity(),
                 (epoch, nf),
                 tested_anchor,
@@ -325,7 +328,7 @@ impl Step for EmptyBlockUnspentSeed {
         Ok((
             (
                 prev_anchor,
-                epoch,
+                (epoch, nf),
                 NfSeqCommit::identity(),
                 (epoch, nf),
                 tested_anchor,
@@ -358,14 +361,14 @@ impl Step for UnspentFuse {
         _witness: Self::Witness<'source>,
         (
             left_prev_anchor,
-            left_start_epoch,
+            (left_start_epoch, left_nf_start),
             left_elapsed,
             (left_present_epoch, left_present_nf),
             left_last_anchor,
         ): <Self::Left as Header>::Data,
         (
             right_prev_anchor,
-            right_start_epoch,
+            (right_start_epoch, _right_nf_start),
             right_elapsed,
             (right_present_epoch, right_present_nf),
             right_last_anchor,
@@ -395,7 +398,7 @@ impl Step for UnspentFuse {
         Ok((
             (
                 left_prev_anchor,
-                left_start_epoch,
+                (left_start_epoch, left_nf_start),
                 left_elapsed,
                 (left_present_epoch, left_present_nf),
                 right_last_anchor,
@@ -431,14 +434,14 @@ impl Step for UnspentEpochFuse {
         (left_elapsed_poly, right_elapsed_poly, combined_elapsed_poly): Self::Witness<'source>,
         (
             left_prev_anchor,
-            left_start_epoch,
+            (left_start_epoch, left_nf_start),
             left_elapsed,
             (left_present_epoch, left_present_nf),
             left_last_anchor,
         ): <Self::Left as Header>::Data,
         (
             right_prev_anchor,
-            right_start_epoch,
+            (right_start_epoch, _right_nf_start),
             right_elapsed,
             (right_present_epoch, right_present_nf),
             right_last_anchor,
@@ -484,7 +487,7 @@ impl Step for UnspentEpochFuse {
         Ok((
             (
                 left_prev_anchor,
-                left_start_epoch,
+                (left_start_epoch, left_nf_start),
                 combined_commit,
                 (right_present_epoch, right_present_nf),
                 right_last_anchor,
@@ -552,7 +555,7 @@ impl Step for VerifyUnspent {
         ): Self::Witness<'source>,
         (
             unspent_prev_anchor,
-            unspent_start_epoch,
+            (unspent_start_epoch, unspent_nf_start),
             unspent_elapsed,
             (unspent_present_epoch, unspent_present_nf),
             unspent_last_anchor,
@@ -654,6 +657,12 @@ impl Step for VerifyUnspent {
         // start_nf is q's degree-0 coefficient (the tested value at start_epoch).
         let start_nf_val = range.eval(Fp::ZERO);
         ctx.enforce_poly_query(range_commit.into(), Fp::ZERO, start_nf_val)?;
+        // Bind the Unspent's carried nf_start to the genuine range-start leaf,
+        // mirroring the tip binding above (`present_nf`).
+        enforce_zero(
+            Fp::from(unspent_nf_start) - start_nf_val,
+            "VerifyUnspent: header nf_start does not match the verified range start",
+        )?;
         let start_nf = Nullifier::from(start_nf_val);
 
         Ok((

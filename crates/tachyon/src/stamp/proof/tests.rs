@@ -876,7 +876,7 @@ fn unspent_epoch_fuse_concatenates_polynomials() {
         )
         .expect("UnspentEpochFuse");
 
-    let (_prev_anchor, start_epoch, elapsed, (present_epoch, present_nf), _last_anchor) =
+    let (_prev_anchor, (start_epoch, _nf_start), elapsed, (present_epoch, present_nf), _last_anchor) =
         *fused.data();
     assert_eq!(elapsed, NfSeqPoly::from_iter([nf_e0]).commit());
     assert_eq!(present_epoch.0 - start_epoch.0, 1, "one crossing");
@@ -1266,6 +1266,71 @@ fn verify_unspent_rejects_elapsed_mismatch() {
     assert_eq!(
         inner.to_string(),
         "VerifyUnspent: elapsed polynomial does not match header"
+    );
+}
+
+#[test]
+fn verify_unspent_rejects_nf_start_mismatch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+    let note = user.random_note(rng, 500);
+    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
+    let cm_idx = pool
+        .tachygrams_at(init_height)
+        .iter()
+        .position(|tgs| tgs.contains(&note.commitment().into()))
+        .expect("cm in block");
+    let spendable = user.spendable_init(rng, &note, &pool, init_height);
+    let start_anchor = spendable.data().2;
+
+    let mut sync = SyncSim::new();
+    sync.accept_delegation(
+        0,
+        alloc::vec![
+            user.query_nf(&note, EpochOffset(0)),
+            user.query_nf(&note, EpochOffset(1))
+        ],
+        init_height,
+        cm_idx,
+        start_anchor,
+    );
+    let target_height = BlockHeight(EPOCH_SIZE);
+    while pool.height() < target_height {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
+    let unspent = sync.build_next_unspent(rng, 0, &pool, target_height);
+
+    // Forge the Unspent header's nf_start; elapsed, present_nf, and anchors stay
+    // honest, so only the new range-start binding fires.
+    let (prev_anchor, (start_epoch, _nf_start), elapsed, present, last_anchor) = *unspent.data();
+    let forged_unspent = unspent.proof().clone().carry::<pool::Unspent>((
+        prev_anchor,
+        (start_epoch, Nullifier::from(Fp::random(&mut *rng))),
+        elapsed,
+        present,
+        last_anchor,
+    ));
+
+    let (witness, derivation) = user.verify_unspent_witness(
+        rng,
+        &forged_unspent,
+        &note,
+        EpochIndex(0),
+        EpochIndex(0),
+        EpochIndex(1),
+    );
+
+    let err = PROOF_SYSTEM
+        .fuse(rng, pool::VerifyUnspent, witness, forged_unspent, derivation)
+        .err()
+        .unwrap();
+    let ragu::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "VerifyUnspent: header nf_start does not match the verified range start"
     );
 }
 
