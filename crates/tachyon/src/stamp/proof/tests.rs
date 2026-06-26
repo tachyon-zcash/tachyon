@@ -876,11 +876,11 @@ fn unspent_epoch_fuse_concatenates_polynomials() {
         )
         .expect("UnspentEpochFuse");
 
-    let (_prev_anchor, (start_epoch, _nf_start), elapsed, (present_epoch, present_nf), _last_anchor) =
+    let (_anchor_prev, (epoch_start, _nf_start), elapsed, (epoch_end, nf_end), _anchor_last) =
         *fused.data();
     assert_eq!(elapsed, NfSeqPoly::from_iter([nf_e0]).commit());
-    assert_eq!(present_epoch.0 - start_epoch.0, 1, "one crossing");
-    assert_eq!(present_nf, nf_e1, "new tip is the right half's present nf");
+    assert_eq!(epoch_end.0 - epoch_start.0, 1, "one crossing");
+    assert_eq!(nf_end, nf_e1, "new tip is the right half's tip nf");
 }
 
 #[test]
@@ -1303,13 +1303,13 @@ fn verify_unspent_rejects_nf_start_mismatch() {
 
     // Forge the Unspent header's nf_start; elapsed, present_nf, and anchors stay
     // honest, so only the new range-start binding fires.
-    let (prev_anchor, (start_epoch, _nf_start), elapsed, present, last_anchor) = *unspent.data();
+    let (anchor_prev, (epoch_start, _nf_start), elapsed, tip, anchor_last) = *unspent.data();
     let forged_unspent = unspent.proof().clone().carry::<pool::Unspent>((
-        prev_anchor,
-        (start_epoch, Nullifier::from(Fp::random(&mut *rng))),
+        anchor_prev,
+        (epoch_start, Nullifier::from(Fp::random(&mut *rng))),
         elapsed,
-        present,
-        last_anchor,
+        tip,
+        anchor_last,
     ));
 
     let (witness, derivation) = user.verify_unspent_witness(
@@ -1438,7 +1438,7 @@ fn spendable_lift_rejects_epoch_discontinuity() {
     // Forge the verified unspent to advertise a start_epoch that does not match
     // the lineage's present_epoch; cm, E_0, start_nf, and anchor stay honest, so
     // only the additive epoch-continuity guard fires.
-    let (cm, sa, (_start_epoch, snf), (tip, enf), ea, e0) = *verified.data();
+    let (cm, sa, (_epoch_start, snf), (tip, enf), ea, e0) = *verified.data();
     let forged = verified.proof().clone().carry::<pool::VerifiedUnspent>((
         cm,
         sa,

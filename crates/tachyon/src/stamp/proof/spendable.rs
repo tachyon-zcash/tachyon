@@ -164,16 +164,16 @@ impl Step for SpendableInit {
 
 /// Advance the spendable over one [`VerifiedUnspent`] segment.
 ///
-/// Wallet-only, witness-free. Checks `cm`, `start_nf == present_nf`, anchor
+/// Wallet-only, witness-free. Checks `cm`, `nf_start == present_nf`, anchor
 /// adjacency, that the lift's certified offset origin `E_0` matches the
 /// lineage's consensus-bound `creation_epoch`, and that the segment's
 /// `start_epoch` matches the lineage's `present_epoch`, then advances to the
-/// tip `(end_nf, last_anchor)` at `present_epoch`. The `E_0` reconciliation is
+/// tip `(nf_end, anchor_last)` at `present_epoch`. The `E_0` reconciliation is
 /// load-bearing: it forbids lifting against a same-`cm` derivation whose `E_0`
 /// was witnessed at a shifted origin, which would otherwise test the pool at
 /// the wrong offset arc. The `start_epoch == present_epoch` check is an
 /// additive, injectivity-independent absolute-epoch continuity guard; the
-/// anchor-exact `prev_anchor == spendable_anchor` check (chain identity) is
+/// anchor-exact `anchor_prev == spendable_anchor` check (chain identity) is
 /// never relaxed.
 #[derive(Debug)]
 pub struct SpendableLift;
@@ -194,10 +194,10 @@ impl Step for SpendableLift {
         (cm, (present_epoch, present_nf), spendable_anchor, creation_epoch): <Self::Left as Header>::Data,
         (
             verified_cm,
-            prev_anchor,
-            (verified_start_epoch, start_nf),
-            (verified_present_epoch, end_nf),
-            last_anchor,
+            anchor_prev,
+            (verified_epoch_start, nf_start),
+            (verified_epoch_end, nf_end),
+            anchor_last,
             verified_e0,
         ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -210,22 +210,22 @@ impl Step for SpendableLift {
             "SpendableLift: lift origin E_0 does not match the lineage creation epoch",
         )?;
         enforce_zero(
-            Fp::from(start_nf) - Fp::from(present_nf),
+            Fp::from(nf_start) - Fp::from(present_nf),
             "SpendableLift: segment does not start at the lineage nullifier",
         )?;
         enforce_zero(
-            Fp::from(verified_start_epoch) - Fp::from(present_epoch),
+            Fp::from(verified_epoch_start) - Fp::from(present_epoch),
             "SpendableLift: segment does not start at the lineage epoch",
         )?;
         enforce_zero(
-            Fp::from(prev_anchor) - Fp::from(spendable_anchor),
+            Fp::from(anchor_prev) - Fp::from(spendable_anchor),
             "SpendableLift: unspent not adjacent to spendable",
         )?;
         Ok((
             (
                 cm,
-                (verified_present_epoch, end_nf),
-                last_anchor,
+                (verified_epoch_end, nf_end),
+                anchor_last,
                 creation_epoch,
             ),
             (),
