@@ -17,7 +17,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ff::{Field as _, PrimeField as _};
+use ff::PrimeField as _;
 use group::{Curve as _, GroupEncoding as _};
 use pasta_curves::{Eq, Fp};
 use ragu::{
@@ -83,38 +83,40 @@ impl Header for AnchorChain {
 /// Multi-stamp / multi-epoch nf-exclusion proof
 ///
 /// An `elapsed` polynomial of one nullifier per crossed epoch boundary over
-/// `[start_epoch, end_epoch)`, the lineage's first nullifier `start_nf`,
-/// and the in-progress tip `end_nf`.
+/// `[epoch_start, epoch_end)`, the lineage's first nullifier `nf_start`,
+/// and the in-progress tip `nf_end`.
 #[derive(Clone, Debug)]
 pub struct Unspent;
 
 impl Header for Unspent {
-    /// `((elapsed, end_epoch), prev_anchor, last_anchor, start_nf, end_nf,
-    /// start_epoch)`, where `start_nf`/`end_nf` are the nullifiers at
-    /// `start_epoch`/`end_epoch` (coinciding for a single-epoch lineage).
-    /// `prev_anchor` is the exclusive predecessor frontier; `last_anchor` the
-    /// inclusive last-covered anchor.
+    /// `(anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end),
+    /// anchor_last)`. The anchors bracket the span: `anchor_prev` is the
+    /// exclusive predecessor frontier, `anchor_last` the inclusive last-covered
+    /// anchor. `(epoch_start, nf_start)` and `(epoch_end, nf_end)` are the
+    /// boundary epoch/nullifier pairs (each epoch is its nullifier's derivation
+    /// input; they coincide for a single-epoch lineage). `elapsed` holds one
+    /// nullifier per crossed epoch boundary.
     type Data = (
-        (NfSeqCommit, EpochIndex),
         Anchor,
+        (EpochIndex, Nullifier),
+        NfSeqCommit,
+        (EpochIndex, Nullifier),
         Anchor,
-        Nullifier,
-        Nullifier,
-        EpochIndex,
     );
 
     const SUFFIX: Suffix = Suffix::new(6);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 4 + 32 + 32 + 32 + 32 + 4);
-        let elapsed_bytes: [u8; 32] = Eq::from(data.0.0).to_affine().to_bytes();
-        out.extend_from_slice(&elapsed_bytes);
-        out.extend_from_slice(&data.0.1.0.to_le_bytes());
-        out.extend_from_slice(&Fp::from(data.1).to_repr());
-        out.extend_from_slice(&Fp::from(data.2).to_repr());
-        out.extend_from_slice(&Fp::from(data.3).to_repr());
-        out.extend_from_slice(&Fp::from(data.4).to_repr());
-        out.extend_from_slice(&data.5.0.to_le_bytes());
+        let (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), anchor_last) =
+            *data;
+        let mut out = Vec::with_capacity(32 + 4 + 32 + 32 + 4 + 32 + 32);
+        out.extend_from_slice(&Fp::from(anchor_prev).to_repr());
+        out.extend_from_slice(&epoch_start.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(nf_start).to_repr());
+        out.extend_from_slice(&Eq::from(elapsed).to_affine().to_bytes());
+        out.extend_from_slice(&epoch_end.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(nf_end).to_repr());
+        out.extend_from_slice(&Fp::from(anchor_last).to_repr());
         out
     }
 }
@@ -125,26 +127,29 @@ impl Header for Unspent {
 pub struct VerifiedUnspent;
 
 impl Header for VerifiedUnspent {
-    /// `(prev_anchor, start_nf, last_anchor, end_nf, cm, end_epoch)`.
+    /// `(cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end),
+    /// anchor_last)`. `cm` leads; the rest mirrors the [`Unspent`] boundaries
+    /// collapsed to scalars (no `elapsed` poly).
     type Data = (
-        Anchor,
-        Nullifier,
-        Anchor,
-        Nullifier,
         note::Commitment,
-        EpochIndex,
+        Anchor,
+        (EpochIndex, Nullifier),
+        (EpochIndex, Nullifier),
+        Anchor,
     );
 
     const SUFFIX: Suffix = Suffix::new(8);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 32 + 32 + 32 + 4);
-        out.extend_from_slice(&Fp::from(data.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.1).to_repr());
-        out.extend_from_slice(&Fp::from(data.2).to_repr());
-        out.extend_from_slice(&Fp::from(data.3).to_repr());
-        out.extend_from_slice(&Fp::from(data.4).to_repr());
-        out.extend_from_slice(&data.5.0.to_le_bytes());
+        let (cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end), anchor_last) = *data;
+        let mut out = Vec::with_capacity(32 + 32 + 4 + 32 + 4 + 32 + 32);
+        out.extend_from_slice(&Fp::from(cm).to_repr());
+        out.extend_from_slice(&Fp::from(anchor_prev).to_repr());
+        out.extend_from_slice(&epoch_start.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(nf_start).to_repr());
+        out.extend_from_slice(&epoch_end.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(nf_end).to_repr());
+        out.extend_from_slice(&Fp::from(anchor_last).to_repr());
         out
     }
 }
@@ -218,6 +223,7 @@ impl Step for AnchorFuse {
     type Left = AnchorChain;
     type Output = AnchorChain;
     type Right = AnchorChain;
+    /// `()`.
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(6);
@@ -238,7 +244,7 @@ impl Step for AnchorFuse {
 }
 
 /// Per-stamp exclusion seed: verify `nf ∉ stamp_tg_set` and absorb the stamp's
-/// commit at `prev_anchor`, in absolute epoch `epoch` (crosses no boundary).
+/// commit at `anchor_prev`, in absolute epoch `epoch` (crosses no boundary).
 #[derive(Debug)]
 pub struct UnspentSeed;
 
@@ -247,15 +253,15 @@ impl Step for UnspentSeed {
     type Left = ();
     type Output = Unspent;
     type Right = ();
-    /// `(prev_anchor, epoch, stamp_tg_set, nf)`.
-    type Witness<'source> = (Anchor, EpochIndex, TachygramSetPoly, Nullifier);
+    /// `(anchor_prev, (epoch, nf), stamp_tg_set)`.
+    type Witness<'source> = (Anchor, (EpochIndex, Nullifier), TachygramSetPoly);
 
     const INDEX: Index = Index::new(7);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (prev_anchor, epoch, stamp_tg_set, nf): Self::Witness<'source>,
+        (anchor_prev, (epoch, nf), stamp_tg_set): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -265,15 +271,14 @@ impl Step for UnspentSeed {
         ctx.enforce_poly_query(stamp_tg_set.commit().into(), nf_point, eval)?;
         enforce_nonzero(eval, "UnspentSeed: found nullifier in set")?;
         let stamp_commit = stamp_tg_set.commit();
-        let tested_anchor = prev_anchor.next_stamp(&stamp_commit);
+        let tested_anchor = anchor_prev.next_stamp(&stamp_commit);
         Ok((
             (
-                (NfSeqCommit::identity(), epoch),
-                prev_anchor,
+                anchor_prev,
+                (epoch, nf),
+                NfSeqCommit::identity(),
+                (epoch, nf),
                 tested_anchor,
-                nf,
-                nf,
-                epoch,
             ),
             (),
         ))
@@ -290,27 +295,26 @@ impl Step for EmptyBlockUnspentSeed {
     type Left = ();
     type Output = Unspent;
     type Right = ();
-    /// `(prev_anchor, epoch, nf)`.
-    type Witness<'source> = (Anchor, EpochIndex, Nullifier);
+    /// `(anchor_prev, (epoch, nf))`.
+    type Witness<'source> = (Anchor, (EpochIndex, Nullifier));
 
     const INDEX: Index = Index::new(8);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (prev_anchor, epoch, nf): Self::Witness<'source>,
+        (anchor_prev, (epoch, nf)): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let tested_anchor = prev_anchor.next_empty();
+        let tested_anchor = anchor_prev.next_empty();
         Ok((
             (
-                (NfSeqCommit::identity(), epoch),
-                prev_anchor,
+                anchor_prev,
+                (epoch, nf),
+                NfSeqCommit::identity(),
+                (epoch, nf),
                 tested_anchor,
-                nf,
-                nf,
-                epoch,
             ),
             (),
         ))
@@ -319,10 +323,10 @@ impl Step for EmptyBlockUnspentSeed {
 
 /// Compose two [`Unspent`] lineages sharing a mid-epoch junction.
 ///
-/// Enforces that the halves meet inside one epoch (`right_start_epoch ==
-/// left_end_epoch`), at adjacent anchors (`left_last_anchor ==
-/// right_prev_anchor`), and agree on the junction nullifier (`left_end_nf ==
-/// right_start_nf`), then concatenates their histories (`combined =
+/// Enforces that the halves meet inside one epoch (`right_epoch_start ==
+/// left_epoch_end`), at adjacent anchors (`left_anchor_last ==
+/// right_anchor_prev`), and agree on the junction nullifier (`left_nf_end ==
+/// right_nf_start`), then concatenates their histories (`combined =
 /// left_elapsed ++ right_elapsed`).
 #[derive(Debug)]
 pub struct UnspentFuse;
@@ -332,7 +336,7 @@ impl Step for UnspentFuse {
     type Left = Unspent;
     type Output = Unspent;
     type Right = Unspent;
-    /// `(left_elapsed_poly, right_elapsed_poly, combined_elapsed_poly)`.
+    /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(9);
@@ -340,63 +344,61 @@ impl Step for UnspentFuse {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (left_elapsed_poly, right_elapsed_poly, combined_elapsed_poly): Self::Witness<'source>,
+        (left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq): Self::Witness<'source>,
         (
-            (left_elapsed, left_end_epoch),
-            left_prev_anchor,
-            left_last_anchor,
-            left_start_nf,
-            left_end_nf,
-            left_start_epoch,
+            left_anchor_prev,
+            (left_epoch_start, left_nf_start),
+            left_elapsed,
+            (left_epoch_end, left_nf_end),
+            left_anchor_last,
         ): <Self::Left as Header>::Data,
         (
-            (right_elapsed, right_end_epoch),
-            right_prev_anchor,
-            right_last_anchor,
-            right_start_nf,
-            right_end_nf,
-            right_start_epoch,
+            right_anchor_prev,
+            (right_epoch_start, right_nf_start),
+            right_elapsed,
+            (right_epoch_end, right_nf_end),
+            right_anchor_last,
         ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
-            Eq::from(left_elapsed_poly.commit()),
+            Eq::from(left_elapsed_seq.commit()),
             Eq::from(left_elapsed),
             "UnspentFuse: left polynomial does not match header",
         )?;
         enforce_equal_point(
-            Eq::from(right_elapsed_poly.commit()),
+            Eq::from(right_elapsed_seq.commit()),
             Eq::from(right_elapsed),
             "UnspentFuse: right polynomial does not match header",
         )?;
         // Anchor step: the junction is a within-epoch `next_stamp` continuation,
         // and the shared epoch forbids an epoch boundary slipping through (a
-        // crossing would put `right_start_epoch` one past `left_end_epoch` and
+        // crossing would put `right_epoch_start` one past `left_epoch_end` and
         // need a `next_epoch` fold instead).
         enforce_zero(
-            Fp::from(left_last_anchor) - Fp::from(right_prev_anchor),
-            "UnspentFuse: left.last_anchor must equal right.prev_anchor",
+            Fp::from(left_anchor_last) - Fp::from(right_anchor_prev),
+            "UnspentFuse: left.anchor_last must equal right.anchor_prev",
         )?;
         enforce_zero(
-            Fp::from(right_start_epoch) - Fp::from(left_end_epoch),
+            Fp::from(right_epoch_start) - Fp::from(left_epoch_end),
             "UnspentFuse: forwards half must sit in left's tip epoch",
         )?;
         // Seam bind: both halves tested the junction epoch against the same
         // nullifier, so the merged history's view of it is unambiguous.
         enforce_zero(
-            Fp::from(left_end_nf) - Fp::from(right_start_nf),
+            Fp::from(left_nf_end) - Fp::from(right_nf_start),
             "UnspentFuse: halves disagree on the junction nullifier",
         )?;
-        let combined_commit = combined_elapsed_poly.commit();
+        let combined_commit = combined_elapsed_seq.commit();
         let offset =
-            usize::try_from(left_end_epoch.0 - left_start_epoch.0).map_err(|_too_many_epochs| {
+            usize::try_from(left_epoch_end.0 - left_epoch_start.0).map_err(|_too_many_epochs| {
                 ragu::Error::InvalidWitness("UnspentFuse: crossing count exceeds usize".into())
             })?;
         enforce_poly_concat(
             ctx,
-            &Polynomial::from(left_elapsed_poly),
-            &Polynomial::from(right_elapsed_poly),
+            &Polynomial::from(left_elapsed_seq),
+            &Polynomial::from(right_elapsed_seq),
             offset,
-            &Polynomial::from(combined_elapsed_poly),
+            &Polynomial::from(combined_elapsed_seq),
         )
         .map_err(|_relation_err| {
             ragu::Error::InvalidWitness(
@@ -405,12 +407,11 @@ impl Step for UnspentFuse {
         })?;
         Ok((
             (
-                (combined_commit, right_end_epoch),
-                left_prev_anchor,
-                right_last_anchor,
-                left_start_nf,
-                right_end_nf,
-                left_start_epoch,
+                left_anchor_prev,
+                (left_epoch_start, left_nf_start),
+                combined_commit,
+                (right_epoch_end, right_nf_end),
+                right_anchor_last,
             ),
             (),
         ))
@@ -420,9 +421,9 @@ impl Step for UnspentFuse {
 /// Cross-epoch [`Unspent`] composition
 ///
 /// At the boundary left's tip epoch completes
-/// (`left.last_anchor.next_epoch(new_epoch) == right.prev_anchor`) and splices
-/// in as `combined = left ++ [left.end_nf] ++ right`, with `new_epoch ==
-/// left.end_epoch + 1`. The only step that grows `elapsed`.
+/// (`left.anchor_last.next_epoch(new_epoch) == right.anchor_prev`) and splices
+/// in as `combined = left ++ [left.nf_end] ++ right`, with `new_epoch ==
+/// left.epoch_end + 1`. The only step that grows `elapsed`.
 #[derive(Debug)]
 pub struct UnspentEpochFuse;
 
@@ -431,7 +432,7 @@ impl Step for UnspentEpochFuse {
     type Left = Unspent;
     type Output = Unspent;
     type Right = Unspent;
-    /// `(left_elapsed_poly, right_elapsed_poly, combined_elapsed_poly)`.
+    /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(10);
@@ -439,54 +440,52 @@ impl Step for UnspentEpochFuse {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (left_elapsed_poly, right_elapsed_poly, combined_elapsed_poly): Self::Witness<'source>,
+        (left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq): Self::Witness<'source>,
         (
-            (left_elapsed, left_end_epoch),
-            left_prev_anchor,
-            left_last_anchor,
-            left_start_nf,
-            left_end_nf,
-            left_start_epoch,
+            left_anchor_prev,
+            (left_epoch_start, left_nf_start),
+            left_elapsed,
+            (left_epoch_end, left_nf_end),
+            left_anchor_last,
         ): <Self::Left as Header>::Data,
         (
-            (right_elapsed, right_end_epoch),
-            right_prev_anchor,
-            right_last_anchor,
-            _right_start_nf,
-            right_end_nf,
-            right_start_epoch,
+            right_anchor_prev,
+            (right_epoch_start, _right_nf_start),
+            right_elapsed,
+            (right_epoch_end, right_nf_end),
+            right_anchor_last,
         ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
-            Eq::from(left_elapsed_poly.commit()),
+            Eq::from(left_elapsed_seq.commit()),
             Eq::from(left_elapsed),
             "UnspentEpochFuse: left polynomial does not match header",
         )?;
         enforce_equal_point(
-            Eq::from(right_elapsed_poly.commit()),
+            Eq::from(right_elapsed_seq.commit()),
             Eq::from(right_elapsed),
             "UnspentEpochFuse: right polynomial does not match header",
         )?;
         enforce_zero(
-            Fp::from(right_start_epoch) - Fp::from(left_end_epoch.next()),
+            Fp::from(right_epoch_start) - Fp::from(left_epoch_end.next()),
             "UnspentEpochFuse: right epoch must be one past left's tip",
         )?;
         enforce_zero(
-            Fp::from(left_last_anchor.next_epoch(right_start_epoch)) - Fp::from(right_prev_anchor),
-            "UnspentEpochFuse: boundary anchor does not match right.prev_anchor",
+            Fp::from(left_anchor_last.next_epoch(right_epoch_start)) - Fp::from(right_anchor_prev),
+            "UnspentEpochFuse: boundary anchor does not match right.anchor_prev",
         )?;
-        let combined_commit = combined_elapsed_poly.commit();
+        let combined_commit = combined_elapsed_seq.commit();
         let offset =
-            usize::try_from(left_end_epoch.0 - left_start_epoch.0).map_err(|_too_many_epochs| {
+            usize::try_from(left_epoch_end.0 - left_epoch_start.0).map_err(|_too_many_epochs| {
                 ragu::Error::InvalidWitness("UnspentEpochFuse: crossing count exceeds usize".into())
             })?;
         enforce_poly_splice(
             ctx,
-            &Polynomial::from(left_elapsed_poly),
-            Fp::from(left_end_nf),
-            &Polynomial::from(right_elapsed_poly),
+            &Polynomial::from(left_elapsed_seq),
+            Fp::from(left_nf_end),
+            &Polynomial::from(right_elapsed_seq),
             offset,
-            &Polynomial::from(combined_elapsed_poly),
+            &Polynomial::from(combined_elapsed_seq),
         )
         .map_err(|_relation_err| {
             ragu::Error::InvalidWitness(
@@ -495,12 +494,11 @@ impl Step for UnspentEpochFuse {
         })?;
         Ok((
             (
-                (combined_commit, right_end_epoch),
-                left_prev_anchor,
-                right_last_anchor,
-                left_start_nf,
-                right_end_nf,
-                left_start_epoch,
+                left_anchor_prev,
+                (left_epoch_start, left_nf_start),
+                combined_commit,
+                (right_epoch_end, right_nf_end),
+                right_anchor_last,
             ),
             (),
         ))
@@ -510,7 +508,7 @@ impl Step for UnspentEpochFuse {
 /// Bind an [`Unspent`]'s free-witness nullifiers to a
 /// note's genuine nullifiers.
 ///
-/// Proves `range == elapsed ++ [end_nf]` against the derived
+/// Proves `range == elapsed ++ [nf_end]` against the derived
 /// [`NullifierHeader`], emitting a [`VerifiedUnspent`] with the `cm`.
 #[derive(Debug)]
 pub struct VerifyUnspent;
@@ -520,7 +518,7 @@ impl Step for VerifyUnspent {
     type Left = Unspent;
     type Output = VerifiedUnspent;
     type Right = NullifierHeader;
-    /// `(elapsed_poly, tip_poly, range_poly)`.
+    /// `(elapsed_seq, nf_seq, tip_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(11);
@@ -528,16 +526,15 @@ impl Step for VerifyUnspent {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (elapsed_poly, tip_poly, range_poly): Self::Witness<'source>,
+        (elapsed_seq, nf_seq, tip_seq): Self::Witness<'source>,
         (
-            (unspent_elapsed, unspent_end_epoch),
-            unspent_prev_anchor,
-            unspent_last_anchor,
-            unspent_start_nf,
-            unspent_end_nf,
-            unspent_start_epoch,
+            unspent_anchor_prev,
+            (unspent_epoch_start, unspent_nf_start),
+            unspent_elapsed,
+            (unspent_epoch_end, unspent_nf_end),
+            unspent_anchor_last,
         ): <Self::Left as Header>::Data,
-        (range_commit, range_start_epoch, range_end_epoch, range_cm): <Self::Right as Header>::Data,
+        (nf_cm, (nf_epoch_start, nf_start), nf_seq_commit, (nf_epoch_end, nf_end)): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(clippy::expect_used, reason = "constant size")]
         let &g0 = Pasta::host_generators(Pasta::baked())
@@ -546,65 +543,65 @@ impl Step for VerifyUnspent {
             .expect("at least one generator");
 
         enforce_zero(
-            Fp::from(range_start_epoch) - Fp::from(unspent_start_epoch),
+            Fp::from(nf_epoch_start) - Fp::from(unspent_epoch_start),
             "VerifyUnspent: derived range does not start at the unspent's start epoch",
         )?;
         enforce_zero(
-            Fp::from(range_end_epoch) - Fp::from(unspent_end_epoch.next()),
+            Fp::from(nf_epoch_end) - Fp::from(unspent_epoch_end.next()),
             "VerifyUnspent: derived range does not span the crossings plus the tip",
         )?;
         enforce_equal_point(
-            Eq::from(elapsed_poly.commit()),
+            Eq::from(elapsed_seq.commit()),
             Eq::from(unspent_elapsed),
             "VerifyUnspent: elapsed polynomial does not match header",
         )?;
 
-        let end_commit = NfSeqCommit::from(g0 * Fp::from(unspent_end_nf));
+        let end_commit = NfSeqCommit::from(g0 * Fp::from(unspent_nf_end));
         enforce_equal_point(
-            Eq::from(tip_poly.commit()),
+            Eq::from(tip_seq.commit()),
             Eq::from(end_commit),
             "VerifyUnspent: tip polynomial does not match the end nullifier",
         )?;
         enforce_equal_point(
-            Eq::from(range_poly.commit()),
-            Eq::from(range_commit),
+            Eq::from(nf_seq.commit()),
+            Eq::from(nf_seq_commit),
             "VerifyUnspent: range polynomial does not match header",
         )?;
-        let offset = usize::try_from(unspent_end_epoch.0 - unspent_start_epoch.0).map_err(
+        let offset = usize::try_from(unspent_epoch_end.0 - unspent_epoch_start.0).map_err(
             |_too_many_epochs| {
                 ragu::Error::InvalidWitness("VerifyUnspent: crossing count exceeds usize".into())
             },
         )?;
         enforce_poly_concat(
             ctx,
-            &Polynomial::from(elapsed_poly),
-            &Polynomial::from(tip_poly),
+            &Polynomial::from(elapsed_seq),
+            &Polynomial::from(tip_seq),
             offset,
-            &Polynomial::from(range_poly.clone()),
+            &Polynomial::from(nf_seq),
         )
         .map_err(|_relation_err| {
             ragu::Error::InvalidWitness(
                 "VerifyUnspent: range is not elapsed followed by the tip".into(),
             )
         })?;
-        // The range's degree-0 coefficient is the note's nullifier at
-        // `unspent_start_epoch`; pin it by opening at zero and bind the header's
-        // `start_nf` to it (belt-and-braces: `start_nf` was threaded from a seed
-        // through the fuses, here it is tied to the note).
-        let start_nf_val = range_poly.eval(Fp::ZERO);
-        ctx.enforce_poly_query(range_commit.into(), Fp::ZERO, start_nf_val)?;
+        // Bind the unspent's free-witness boundary nullifiers to the range's
+        // genuine boundary leaves, which the derivation header proved by
+        // construction.
         enforce_zero(
-            Fp::from(unspent_start_nf) - start_nf_val,
+            Fp::from(unspent_nf_start) - Fp::from(nf_start),
             "VerifyUnspent: start nullifier does not match the derived range",
+        )?;
+        enforce_zero(
+            Fp::from(unspent_nf_end) - Fp::from(nf_end),
+            "VerifyUnspent: end nullifier does not match the derived range",
         )?;
         Ok((
             (
-                unspent_prev_anchor,
-                unspent_start_nf,
-                unspent_last_anchor,
-                unspent_end_nf,
-                range_cm,
-                unspent_end_epoch,
+                nf_cm,
+                unspent_anchor_prev,
+                (unspent_epoch_start, unspent_nf_start),
+                (unspent_epoch_end, unspent_nf_end),
+                unspent_anchor_last,
             ),
             (),
         ))

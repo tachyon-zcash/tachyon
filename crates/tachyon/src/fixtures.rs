@@ -122,7 +122,7 @@ pub fn build_autonome(
     let height = pool.height();
     let spendable_pcd = wallet.fresh_spend(rng, &pool, height, &spend_note);
     let spend_epoch = height.epoch();
-    let anchor = spendable_pcd.data().1;
+    let anchor = spendable_pcd.data().2;
     wallet.autonome(
         rng,
         anchor,
@@ -424,8 +424,8 @@ fn build_anchor_chain_inner(
     let mut chain: Option<Pcd<pool::AnchorChain>> = None;
     let mut height = start;
     loop {
-        let commits = pool.stamp_commits_at(height);
-        if commits.is_empty() {
+        let stamps = pool.tachygrams_at(height);
+        if stamps.is_empty() {
             let next_state = state.next_empty();
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::EmptyBlockSeed, (state,))
@@ -443,14 +443,15 @@ fn build_anchor_chain_inner(
         } else {
             // The final block may be truncated (cm-block prefix); others absorb all.
             let upto = if height == end {
-                last_block_upto.unwrap_or(commits.len())
+                last_block_upto.unwrap_or(stamps.len())
             } else {
-                commits.len()
+                stamps.len()
             };
-            for commit in &commits[..upto] {
-                let next_state = state.next_stamp(commit);
+            for tgs in &stamps[..upto] {
+                let witness = witness::anchor_seed(((), ()), state, tgs);
+                let next_state = state.next_stamp(&witness.1);
                 let (seed, ()) = PROOF_SYSTEM
-                    .seed(rng, pool::AnchorSeed, (state, *commit))
+                    .seed(rng, pool::AnchorSeed, witness)
                     .expect("AnchorSeed");
                 chain = Some(match chain.take() {
                     None => seed,
@@ -633,7 +634,7 @@ pub(crate) fn build_unspent_pcd_between_anchors(
         };
         if block_stamps.is_empty() {
             let (seed, ()) = PROOF_SYSTEM
-                .seed(rng, pool::EmptyBlockUnspentSeed, (entry, epoch, leaf_nf))
+                .seed(rng, pool::EmptyBlockUnspentSeed, (entry, (epoch, leaf_nf)))
                 .expect("EmptyBlockUnspentSeed");
             leaves.push((seed, epoch));
         } else {
@@ -765,11 +766,11 @@ impl WalletSim {
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: &Note,
-        start_epoch: EpochIndex,
+        epoch_start: EpochIndex,
         len: u32,
     ) -> Pcd<delegation::NullifierHeader> {
         let master = self.note_master(rng, *note);
-        ggm_tools::nullifier_range_from_master(rng, &master, start_epoch, len)
+        ggm_tools::nullifier_range_from_master(rng, &master, epoch_start, len)
     }
 
     pub fn spendable_init(
@@ -819,12 +820,12 @@ impl WalletSim {
         rng: &mut (impl RngCore + CryptoRng),
         unspent: Pcd<pool::Unspent>,
         note: &Note,
-        start_epoch: EpochIndex,
+        epoch_start: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<pool::VerifiedUnspent> {
-        let len = present_epoch.0 - start_epoch.0 + 1;
-        let range = self.derived_range(rng, note, start_epoch, len);
-        let elapsed: Vec<Nullifier> = (start_epoch.0..present_epoch.0)
+        let len = present_epoch.0 - epoch_start.0 + 1;
+        let range = self.derived_range(rng, note, epoch_start, len);
+        let elapsed: Vec<Nullifier> = (epoch_start.0..present_epoch.0)
             .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
             .collect();
         let (verified, ()) = PROOF_SYSTEM
@@ -845,10 +846,10 @@ impl WalletSim {
         spendable: Pcd<spendable::SpendableHeader>,
         unspent: Pcd<pool::Unspent>,
         note: &Note,
-        start_epoch: EpochIndex,
+        epoch_start: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<spendable::SpendableHeader> {
-        let verified = self.verify_unspent(rng, unspent, note, start_epoch, present_epoch);
+        let verified = self.verify_unspent(rng, unspent, note, epoch_start, present_epoch);
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable, verified)
             .expect("SpendableLift");
@@ -863,7 +864,7 @@ impl WalletSim {
         cm_height: BlockHeight,
         spendable: Pcd<spendable::SpendableHeader>,
     ) -> Pcd<spendable::SpendableHeader> {
-        let start_anchor = spendable.data().1;
+        let start_anchor = spendable.data().2;
         let creation_epoch = cm_height.epoch();
         let end_height = BlockHeight(epoch_final_of(creation_epoch).0 + 1);
         let unspent = build_unspent_pcd_between_anchors(
@@ -1066,8 +1067,8 @@ pub mod ggm_tools {
         );
 
         let mut pcd = master_pcd;
-        while pcd.data().1 < target_depth {
-            let next_step = pcd.data().1 + 1;
+        while pcd.data().2 < target_depth {
+            let next_step = pcd.data().2 + 1;
             let chunk = chunk_at(epoch.0, next_step);
             let (next_pcd, ()) = PROOF_SYSTEM
                 .fuse(
@@ -1105,16 +1106,16 @@ pub mod ggm_tools {
     pub fn nullifier_range_from_master(
         rng: &mut (impl RngCore + CryptoRng),
         master_pcd: &Pcd<delegation::NfPrefixHeader>,
-        start_epoch: EpochIndex,
+        epoch_start: EpochIndex,
         len: u32,
     ) -> Pcd<delegation::NullifierHeader> {
         assert!(len >= 1, "range length must be at least 1");
         let mut nfs: Vec<Nullifier> = Vec::new();
         let mut acc: Option<Pcd<delegation::NullifierHeader>> = None;
         for offset in 0..len {
-            let epoch = EpochIndex(start_epoch.0 + offset);
+            let epoch = EpochIndex(epoch_start.0 + offset);
             let prefix_pcd = walk_master_to_depth(rng, master_pcd.clone(), epoch, GGM_TREE_DEPTH);
-            let nf = Nullifier::from(poseidon::nullifier(prefix_pcd.data().0));
+            let nf = Nullifier::from(poseidon::nullifier(prefix_pcd.data().1));
             let (leaf, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,

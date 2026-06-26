@@ -377,46 +377,47 @@ impl Stamp {
     ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let (left_acts_poly, left_tg_poly) = (
-            left_digests.iter().copied().collect::<ActionSetPoly>(),
-            left.tachygrams
-                .iter()
-                .copied()
-                .collect::<TachygramSetPoly>(),
-        );
-
-        let (right_acts_poly, right_tg_poly) = (
-            right_digests.iter().copied().collect::<ActionSetPoly>(),
-            right
-                .tachygrams
-                .iter()
-                .copied()
-                .collect::<TachygramSetPoly>(),
-        );
-
+        let left_tachygram_set = left
+            .tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>();
+        let left_action_set = left_digests.iter().copied().collect::<ActionSetPoly>();
         let left_pcd = left.proof.carry::<StampHeader>((
-            left_acts_poly.commit(),
-            left_tg_poly.commit(),
+            left_action_set.commit(),
+            left_tachygram_set.commit(),
             left.anchor,
         ));
+
+        let right_tachygram_set = right
+            .tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>();
+        let right_action_set = right_digests.iter().copied().collect::<ActionSetPoly>();
         let right_pcd = right.proof.carry::<StampHeader>((
-            right_acts_poly.commit(),
-            right_tg_poly.commit(),
+            right_action_set.commit(),
+            right_tachygram_set.commit(),
             right.anchor,
         ));
 
-        let anchor = left.anchor;
-        let mut tachygrams = left.tachygrams;
-        tachygrams.extend(right.tachygrams.iter().copied());
+        let tachygrams = [left.tachygrams, right.tachygrams].concat();
+        let merged_tachygram_set = TachygramSetPoly::from_iter(tachygrams.clone());
+        let merged_action_set = ActionSetPoly::from_iter([left_digests, right_digests].concat());
 
         let (pcd, ()) = app.fuse(
             rng,
             MergeStamp,
-            (left_acts_poly, right_acts_poly, left_tg_poly, right_tg_poly),
+            (
+                (left_action_set, left_tachygram_set),
+                (merged_action_set, merged_tachygram_set),
+                (right_action_set, right_tachygram_set),
+            ),
             left_pcd,
             right_pcd,
         )?;
         let action_set = pcd.data().0;
+        let anchor = pcd.data().2;
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok(Self {

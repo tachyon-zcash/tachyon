@@ -1,13 +1,10 @@
 //! Utilities for preparing step witnesses.
 //!
-//! Each function interpolates raw nullifiers and tachygrams into the
-//! polynomials a single [`Step`] opens against, returning its
-//! [`Witness`](ragu::Step::Witness) ready to seed or fuse through
-//! `PROOF_SYSTEM`. Functions are named after the step they serve.
-//!
-//! They assemble the polynomial witness only: no key derivation, GGM walk, or
-//! pool query. Steps whose witness is plain value bundling are assembled at the
-//! call site instead.
+//! One function per [`Step`] with a non-empty witness: it assembles the step's
+//! [`Witness`](ragu::Step::Witness) tuple from raw inputs (interpolating
+//! nullifiers and tachygrams into the polynomials the step opens against),
+//! ready to seed or fuse through `PROOF_SYSTEM`. Functions are named after the
+//! step they serve. Steps with an empty `()` witness need no utility.
 
 use alloc::vec::Vec;
 
@@ -15,156 +12,167 @@ use ragu::{Header, Step};
 
 use crate::{
     note::Nullifier,
-    primitives::{Anchor, EpochIndex, NfSeqPoly, Tachygram, TachygramSetPoly},
+    primitives::{
+        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, Tachygram, TachygramSetPoly,
+    },
     stamp::proof::{
         delegation::NullifierFuse,
-        pool::{UnspentEpochFuse, UnspentFuse, UnspentSeed, VerifyUnspent},
+        pool::{AnchorSeed, UnspentEpochFuse, UnspentFuse, UnspentSeed, VerifyUnspent},
         spendable::SpendableInit,
+        stamp::MergeStamp,
     },
 };
 
-/// Prepare the witness for [`NullifierFuse`]: `(left, leaf, merged)`.
-///
-/// Folds the fresh nullifier `leaf` onto the accumulated range `left` (in epoch
-/// order): `merged = left ++ [leaf]`.
+type StepLeft<S> = <<S as Step>::Left as Header>::Data;
+
+type StepRight<S> = <<S as Step>::Right as Header>::Data;
+
+type StepWitness<'src, S> = <S as Step>::Witness<'src>;
+
+/// Prepare the witness for [`NullifierFuse`]: `(left, merged, leaf)`.
 #[must_use]
 pub fn nullifier_fuse(
-    (_left, _right): (
-        <<NullifierFuse as Step>::Left as Header>::Data,
-        <<NullifierFuse as Step>::Right as Header>::Data,
-    ),
+    (_left, _right): (StepLeft<NullifierFuse>, StepRight<NullifierFuse>),
     left: &[Nullifier],
     leaf: Nullifier,
-) -> <NullifierFuse as Step>::Witness<'static> {
+) -> StepWitness<'static, NullifierFuse> {
     let mut merged: Vec<Nullifier> = left.to_vec();
     merged.push(leaf);
     (
         left.iter().copied().collect::<NfSeqPoly>(),
-        NfSeqPoly::from_iter([leaf]),
         merged.into_iter().collect::<NfSeqPoly>(),
+        NfSeqPoly::from_iter([leaf]),
     )
 }
 
-/// Prepare the witness for [`UnspentSeed`]: `(prev_anchor, epoch, tg_set, nf)`.
-///
-/// `prev_anchor` is the anchor before the seeded stamp, `tgs` its tachygrams,
-/// and `nf` the nullifier whose absence the seed attests.
+/// Prepare the witness for [`UnspentSeed`]: `(anchor_prev, (epoch, nf),
+/// tg_set)`.
 #[must_use]
 pub fn unspent_seed(
-    (_left, _right): (
-        <<UnspentSeed as Step>::Left as Header>::Data,
-        <<UnspentSeed as Step>::Right as Header>::Data,
-    ),
-    prev_anchor: Anchor,
+    (_left, _right): (StepLeft<UnspentSeed>, StepRight<UnspentSeed>),
+    anchor_prev: Anchor,
     epoch: EpochIndex,
     tgs: &[Tachygram],
     nf: Nullifier,
-) -> <UnspentSeed as Step>::Witness<'static> {
+) -> StepWitness<'static, UnspentSeed> {
     (
-        prev_anchor,
-        epoch,
+        anchor_prev,
+        (epoch, nf),
         tgs.iter().copied().collect::<TachygramSetPoly>(),
-        nf,
     )
 }
 
 /// Prepare the witness for [`UnspentFuse`]:
-/// `(left_elapsed_poly, right_elapsed_poly, combined_elapsed_poly)`.
-///
-/// Composes two unspent lineages sharing a mid-epoch junction:
-/// `combined = left_elapsed ++ right_elapsed`. No splice, since the shared
-/// junction nullifier is read from the headers by the step.
+/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
 #[must_use]
 pub fn unspent_fuse(
-    (_left, _right): (
-        <<UnspentFuse as Step>::Left as Header>::Data,
-        <<UnspentFuse as Step>::Right as Header>::Data,
-    ),
+    (_left, _right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
     left_elapsed: &[Nullifier],
     right_elapsed: &[Nullifier],
-) -> <UnspentFuse as Step>::Witness<'static> {
+) -> StepWitness<'static, UnspentFuse> {
     let mut combined: Vec<Nullifier> = left_elapsed.to_vec();
     combined.extend_from_slice(right_elapsed);
     (
         left_elapsed.iter().copied().collect::<NfSeqPoly>(),
-        right_elapsed.iter().copied().collect::<NfSeqPoly>(),
         combined.into_iter().collect::<NfSeqPoly>(),
+        right_elapsed.iter().copied().collect::<NfSeqPoly>(),
     )
 }
 
 /// Prepare the witness for [`UnspentEpochFuse`]:
-/// `(left_elapsed_poly, right_elapsed_poly, combined_elapsed_poly)`.
-///
-/// Composes two unspent lineages across the epoch boundary between them:
-/// `combined = left_elapsed ++ [end_nf] ++ right_elapsed`, where the boundary
-/// nullifier `end_nf` is the left
-/// [`Unspent`](crate::stamp::proof::pool::Unspent) header's tip. Extending by
-/// one fresh epoch passes an empty `right_elapsed`.
+/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
 #[must_use]
 pub fn unspent_epoch_fuse(
-    (left, _right): (
-        <<UnspentEpochFuse as Step>::Left as Header>::Data,
-        <<UnspentEpochFuse as Step>::Right as Header>::Data,
-    ),
+    (left, _right): (StepLeft<UnspentEpochFuse>, StepRight<UnspentEpochFuse>),
     left_elapsed: &[Nullifier],
     right_elapsed: &[Nullifier],
-) -> <UnspentEpochFuse as Step>::Witness<'static> {
-    let ((..), _, _, _, end_nf, _) = left;
+) -> StepWitness<'static, UnspentEpochFuse> {
+    let (_, _, _, (_, nf_end), _) = left;
     let mut combined: Vec<Nullifier> = left_elapsed.to_vec();
-    combined.push(end_nf);
+    combined.push(nf_end);
     combined.extend_from_slice(right_elapsed);
     (
         left_elapsed.iter().copied().collect::<NfSeqPoly>(),
-        right_elapsed.iter().copied().collect::<NfSeqPoly>(),
         combined.into_iter().collect::<NfSeqPoly>(),
+        right_elapsed.iter().copied().collect::<NfSeqPoly>(),
     )
 }
 
-/// Prepare the witness for [`VerifyUnspent`]: `(elapsed, tip, range)`.
-///
-/// `elapsed` is the tested nullifier sequence over the crossed epochs
-/// `[start_epoch, end_epoch)`. The `tip` is the end-epoch nullifier `end_nf`
-/// from the left [`Unspent`](crate::stamp::proof::pool::Unspent) header; `range
-/// = elapsed ++ [end_nf]`.
+/// Prepare the witness for [`VerifyUnspent`]: `(elapsed, nf_seq, tip)`.
 #[must_use]
 pub fn verify_unspent(
-    (left, _right): (
-        <<VerifyUnspent as Step>::Left as Header>::Data,
-        <<VerifyUnspent as Step>::Right as Header>::Data,
-    ),
+    (left, _right): (StepLeft<VerifyUnspent>, StepRight<VerifyUnspent>),
     elapsed: &[Nullifier],
-) -> <VerifyUnspent as Step>::Witness<'static> {
-    let ((..), _, _, _, end_nf, _) = left;
-    let mut range: Vec<Nullifier> = elapsed.to_vec();
-    range.push(end_nf);
+) -> StepWitness<'static, VerifyUnspent> {
+    let (_, _, _, (_, nf_end), _) = left;
+    let mut nf_seq: Vec<Nullifier> = elapsed.to_vec();
+    nf_seq.push(nf_end);
     (
         elapsed.iter().copied().collect::<NfSeqPoly>(),
-        NfSeqPoly::from_iter([end_nf]),
-        range.into_iter().collect::<NfSeqPoly>(),
+        nf_seq.into_iter().collect::<NfSeqPoly>(),
+        NfSeqPoly::from_iter([nf_end]),
     )
 }
 
 /// Prepare the witness for [`SpendableInit`]:
-/// `(pre_epoch_anchor, pre_cm_anchor, creation_set, present_nf)`.
-///
-/// `creation_tgs` are the creation stamp's tachygrams. The two anchors are
-/// caller-reconstructed consensus state and `present_nf` is the spendable's
-/// present-epoch nullifier.
+/// `((pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf)`.
 #[must_use]
 pub fn spendable_init(
-    (_left, _right): (
-        <<SpendableInit as Step>::Left as Header>::Data,
-        <<SpendableInit as Step>::Right as Header>::Data,
-    ),
+    (_left, _right): (StepLeft<SpendableInit>, StepRight<SpendableInit>),
     pre_epoch_anchor: Anchor,
     pre_cm_anchor: Anchor,
     creation_tgs: &[Tachygram],
     present_nf: Nullifier,
-) -> <SpendableInit as Step>::Witness<'static> {
+) -> StepWitness<'static, SpendableInit> {
     (
-        pre_epoch_anchor,
-        pre_cm_anchor,
+        (pre_epoch_anchor, pre_cm_anchor),
         creation_tgs.iter().copied().collect::<TachygramSetPoly>(),
         present_nf,
+    )
+}
+
+/// Prepare the witness for [`AnchorSeed`]: `(start, stamp_commit)`.
+#[must_use]
+pub fn anchor_seed(
+    (_left, _right): (StepLeft<AnchorSeed>, StepRight<AnchorSeed>),
+    start: Anchor,
+    tgs: &[Tachygram],
+) -> StepWitness<'static, AnchorSeed> {
+    (
+        start,
+        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
+    )
+}
+
+/// Prepare the witness for [`MergeStamp`]: `((left_action_set, left_tg_set),
+/// (merged_action_set, merged_tg_set), (right_action_set, right_tg_set))`.
+#[must_use]
+pub fn merge_stamp(
+    (_left, _right): (StepLeft<MergeStamp>, StepRight<MergeStamp>),
+    left_actions: &[ActionDigest],
+    left_tgs: &[Tachygram],
+    right_actions: &[ActionDigest],
+    right_tgs: &[Tachygram],
+) -> StepWitness<'static, MergeStamp> {
+    let merged_action_set = left_actions
+        .iter()
+        .copied()
+        .chain(right_actions.iter().copied())
+        .collect::<ActionSetPoly>();
+    let merged_tg_set = left_tgs
+        .iter()
+        .copied()
+        .chain(right_tgs.iter().copied())
+        .collect::<TachygramSetPoly>();
+    (
+        (
+            left_actions.iter().copied().collect::<ActionSetPoly>(),
+            left_tgs.iter().copied().collect::<TachygramSetPoly>(),
+        ),
+        (merged_action_set, merged_tg_set),
+        (
+            right_actions.iter().copied().collect::<ActionSetPoly>(),
+            right_tgs.iter().copied().collect::<TachygramSetPoly>(),
+        ),
     )
 }

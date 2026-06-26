@@ -30,39 +30,39 @@ use crate::{
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(cv, rk, present_nf, anchor, cm)`. `cv`/`rk` are derived at
-    /// [`SpendBind`]; `present_nf`, `anchor`, and `cm` thread from the
-    /// spendable lineage that [`SpendBind`] consumed.
+    /// `(cm, (cv, rk), present_nf, anchor)`. `cm` leads; `(cv, rk)` are the
+    /// spend's published action pair, derived together at [`SpendBind`];
+    /// `present_nf` and `anchor` thread from the spendable lineage that
+    /// [`SpendBind`] consumed.
     type Data = (
-        value::Commitment,
-        public::ActionVerificationKey,
+        note::Commitment,
+        (value::Commitment, public::ActionVerificationKey),
         Nullifier,
         Anchor,
-        note::Commitment,
     );
 
     const SUFFIX: Suffix = Suffix::new(10);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
+        let (cm, (cv, rk), present_nf, anchor) = *data;
         let mut out = Vec::with_capacity(32 * 5);
-        let cv_bytes: [u8; 32] = data.0.into();
-        let rk_bytes: [u8; 32] = data.1.into();
+        out.extend_from_slice(&Fp::from(cm).to_repr());
+        let cv_bytes: [u8; 32] = cv.into();
+        let rk_bytes: [u8; 32] = rk.into();
         out.extend_from_slice(&cv_bytes);
         out.extend_from_slice(&rk_bytes);
-        out.extend_from_slice(&Fp::from(data.2).to_repr());
-        out.extend_from_slice(&Fp::from(data.3).to_repr());
-        out.extend_from_slice(&Fp::from(data.4).to_repr());
+        out.extend_from_slice(&Fp::from(present_nf).to_repr());
+        out.extend_from_slice(&Fp::from(anchor).to_repr());
         out
     }
 }
 
 /// Binds an action to its spendable lineage's note.
 ///
-/// Witnesses the note preimage (`pk`, `value`, `rcm`, `psi`), `pak`, and the
-/// action fields (`rcv`, `alpha`); checks `cm == spendable.cm` (so `cv` commits
-/// to the proven-minted value) and threads `present_nf`, `anchor`, and `cm`
-/// onto the output. The live pair is completed at
-/// [`SpendStamp`](super::stamp::SpendStamp).
+/// Witnesses the `note` and `pak`, plus the action randomizers (`rcv`,
+/// `alpha`); checks `cm == spendable.cm` (so `cv` commits to the proven-minted
+/// value) and threads `present_nf`, `anchor`, and `cm` onto the output. The
+/// live pair is completed at [`SpendStamp`](super::stamp::SpendStamp).
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -71,6 +71,7 @@ impl Step for SpendBind {
     type Left = SpendableHeader;
     type Output = SpendHeader;
     type Right = ();
+    /// `(note, rcv, alpha, pak)`.
     type Witness<'source> = (
         Note,
         value::CommitmentTrapdoor,
@@ -84,7 +85,7 @@ impl Step for SpendBind {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (note, rcv, alpha, pak): Self::Witness<'source>,
-        (present_nf, anchor, spendable_cm): <Self::Left as Header>::Data,
+        (spendable_cm, present_nf, anchor): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_nonzero(
@@ -110,6 +111,6 @@ impl Step for SpendBind {
         let cv = rcv.commit(i64::from(note.value));
         let rk = pak.ak.derive_action_public(&alpha);
 
-        Ok(((cv, rk, present_nf, anchor, cm), ()))
+        Ok(((cm, (cv, rk), present_nf, anchor), ()))
     }
 }

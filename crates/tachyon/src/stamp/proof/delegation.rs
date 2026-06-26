@@ -6,7 +6,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ff::PrimeField as _;
+use ff::{Field as _, PrimeField as _};
 use group::{Curve as _, GroupEncoding as _};
 use pasta_curves::{Eq, Fp};
 use ragu::{
@@ -22,47 +22,58 @@ use crate::{
     relations::enforce_poly_concat,
 };
 
-/// In-progress GGM walk position `(node, depth, index, cm)`: the current tree
-/// `node`, levels descended `depth`, leaf `index`, and the note commitment `cm`
-/// carried for the final binding. Wallet-only.
+/// In-progress GGM walk position `(cm, node, depth, index)`: the note
+/// commitment `cm` carried for the final binding, the current tree `node`,
+/// levels descended `depth`, and leaf `index`. Wallet-only.
 #[derive(Clone, Debug)]
 pub struct NfPrefixHeader;
 
 impl Header for NfPrefixHeader {
-    type Data = (Fp, u8, EpochIndex, note::Commitment);
+    type Data = (note::Commitment, Fp, u8, EpochIndex);
 
     const SUFFIX: Suffix = Suffix::new(1);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 1 + 4 + 32);
-        out.extend_from_slice(&data.0.to_repr());
-        out.extend_from_slice(&data.1.to_le_bytes());
-        out.extend_from_slice(&data.2.0.to_le_bytes());
-        out.extend_from_slice(&Fp::from(data.3).to_repr());
+        let mut out = Vec::with_capacity(32 + 32 + 1 + 4);
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        out.extend_from_slice(&data.1.to_repr());
+        out.extend_from_slice(&data.2.to_le_bytes());
+        out.extend_from_slice(&data.3.0.to_le_bytes());
         out
     }
 }
 
 /// A proven contiguous range of derived nullifiers (wallet-only).
 ///
-/// `(range_commit, start_epoch, end_epoch, cm)`: `range_commit` commits to the
-/// half-open range `[N_start, .., N_{end-1}]` (`N_e = GGM(mk, e)`) at degree 0;
-/// `cm` lets every consumer bind the range to the real note.
+/// `(cm, (epoch_start, nf_start), nf_seq_commit, (epoch_end, nf_end))`: `cm`
+/// lets every consumer bind the range to the real note; `nf_seq_commit` (the
+/// nullifier sequence) sits between its boundary `(epoch, nullifier)` pairs and
+/// commits to the half-open range `[nf_start, .., nf_end]` (`N_e = GGM(mk, e)`)
+/// at degree 0. `nf_start`/`nf_end` are the genuine boundary leaves, so a
+/// consumer can bind them without opening the sequence.
 #[derive(Clone, Debug)]
 pub struct NullifierHeader;
 
 impl Header for NullifierHeader {
-    type Data = (NfSeqCommit, EpochIndex, EpochIndex, note::Commitment);
+    type Data = (
+        note::Commitment,
+        (EpochIndex, Nullifier),
+        NfSeqCommit,
+        (EpochIndex, Nullifier),
+    );
 
     const SUFFIX: Suffix = Suffix::new(2);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 4 + 4 + 32);
-        let commit_bytes: [u8; 32] = Eq::from(data.0).to_affine().to_bytes();
+        let (cm, (epoch_start, nf_start), nf_seq_commit, (epoch_end, nf_end)) = *data;
+        let mut out = Vec::with_capacity(32 + 4 + 32 + 32 + 4 + 32);
+        out.extend_from_slice(&Fp::from(cm).to_repr());
+        out.extend_from_slice(&epoch_start.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(nf_start).to_repr());
+        let commit_bytes: [u8; 32] = Eq::from(nf_seq_commit).to_affine().to_bytes();
         out.extend_from_slice(&commit_bytes);
-        out.extend_from_slice(&data.1.0.to_le_bytes());
-        out.extend_from_slice(&data.2.0.to_le_bytes());
-        out.extend_from_slice(&Fp::from(data.3).to_repr());
+        out.extend_from_slice(&epoch_end.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(nf_end).to_repr());
         out
     }
 }
@@ -80,6 +91,7 @@ impl Step for NfMasterSeed {
     type Left = ();
     type Output = NfPrefixHeader;
     type Right = ();
+    /// `(note, pak)`.
     type Witness<'source> = (Note, ProofAuthorizingKey);
 
     const INDEX: Index = Index::new(0);
@@ -97,7 +109,7 @@ impl Step for NfMasterSeed {
         )?;
         let mk = pak.nk.derive_note_private(&note.psi);
         let cm = note.commitment();
-        Ok(((mk.0, 0, EpochIndex(0), cm), ()))
+        Ok(((cm, mk.0, 0, EpochIndex(0)), ()))
     }
 }
 
@@ -113,6 +125,7 @@ impl Step for NfPrefixStep {
     type Left = NfPrefixHeader;
     type Output = NfPrefixHeader;
     type Right = ();
+    /// `(chunk,)`.
     type Witness<'source> = (u8,);
 
     const INDEX: Index = Index::new(1);
@@ -121,7 +134,7 @@ impl Step for NfPrefixStep {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (chunk,): Self::Witness<'source>,
-        (node, depth, index, cm): <Self::Left as Header>::Data,
+        (cm, node, depth, index): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if depth >= GGM_TREE_DEPTH {
@@ -136,7 +149,7 @@ impl Step for NfPrefixStep {
         }
         let child = poseidon::nf_prefix(node, chunk);
         let child_index = EpochIndex(index.0 * u32::from(GGM_TREE_ARITY) + u32::from(chunk));
-        Ok(((child, depth + 1, child_index, cm), ()))
+        Ok(((cm, child, depth + 1, child_index), ()))
     }
 }
 
@@ -153,6 +166,7 @@ impl Step for NullifierStep {
     type Left = NfPrefixHeader;
     type Output = NullifierHeader;
     type Right = ();
+    /// `()`.
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(2);
@@ -161,7 +175,7 @@ impl Step for NullifierStep {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (node, depth, index, cm): <Self::Left as Header>::Data,
+        (cm, node, depth, index): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(clippy::expect_used, reason = "constant size")]
@@ -176,8 +190,8 @@ impl Step for NullifierStep {
         )?;
         let nf = Nullifier::from(poseidon::nullifier(node));
 
-        let range_commit = NfSeqCommit::from(g0 * Fp::from(nf));
-        Ok(((range_commit, index, index.next(), cm), ()))
+        let nf_seq_commit = NfSeqCommit::from(g0 * Fp::from(nf));
+        Ok(((cm, (index, nf), nf_seq_commit, (index.next(), nf)), ()))
     }
 }
 
@@ -195,7 +209,7 @@ impl Step for NullifierFuse {
     type Left = NullifierHeader;
     type Output = NullifierHeader;
     type Right = NullifierHeader;
-    /// `(left_poly, right_poly, merged)`.
+    /// `(left_seq, merged_seq, right_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(3);
@@ -203,44 +217,78 @@ impl Step for NullifierFuse {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (left_poly, right_poly, merged): Self::Witness<'source>,
-        (left_commit, left_start, left_end, left_cm): <Self::Left as Header>::Data,
-        (right_commit, right_start, right_end, right_cm): <Self::Right as Header>::Data,
+        (left_seq, merged_seq, right_seq): Self::Witness<'source>,
+        (
+            left_cm,
+            (left_epoch_start, left_nf_start),
+            left_nf_seq_commit,
+            (left_epoch_end, _left_nf_end),
+        ): <Self::Left as Header>::Data,
+        (
+            right_cm,
+            (right_epoch_start, right_nf_start),
+            right_nf_seq_commit,
+            (right_epoch_end, right_nf_end),
+        ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(left_cm) - Fp::from(right_cm),
             "NullifierFuse: note commitments differ",
         )?;
         enforce_zero(
-            Fp::from(right_start) - Fp::from(left_end),
+            Fp::from(right_epoch_start) - Fp::from(left_epoch_end),
             "NullifierFuse: ranges not contiguous",
         )?;
         enforce_equal_point(
-            Eq::from(left_poly.commit()),
-            Eq::from(left_commit),
+            Eq::from(left_seq.commit()),
+            Eq::from(left_nf_seq_commit),
             "NullifierFuse: left polynomial does not match header",
         )?;
         enforce_equal_point(
-            Eq::from(right_poly.commit()),
-            Eq::from(right_commit),
+            Eq::from(right_seq.commit()),
+            Eq::from(right_nf_seq_commit),
             "NullifierFuse: right polynomial does not match header",
         )?;
-        let merged_commit = merged.commit();
-        let offset = usize::try_from(left_end.0 - left_start.0).map_err(|_too_long| {
-            ragu::Error::InvalidWitness("NullifierFuse: range length exceeds usize".into())
-        })?;
+        let merged_nf_seq_commit = merged_seq.commit();
+        let offset =
+            usize::try_from(left_epoch_end.0 - left_epoch_start.0).map_err(|_too_long| {
+                ragu::Error::InvalidWitness("NullifierFuse: range length exceeds usize".into())
+            })?;
         enforce_poly_concat(
             ctx,
-            &Polynomial::from(left_poly),
-            &Polynomial::from(right_poly),
+            &Polynomial::from(left_seq),
+            &Polynomial::from(right_seq),
             offset,
-            &Polynomial::from(merged),
+            &Polynomial::from(merged_seq),
         )
         .map_err(|_relation_err| {
             ragu::Error::InvalidWitness(
                 "NullifierFuse: merged is not the concat of the halves".into(),
             )
         })?;
-        Ok(((merged_commit, left_start, right_end, left_cm), ()))
+        // Pin the boundary nullifiers that sit at a queryable degree-0 position:
+        // the merged sequence opens to `left_nf_start` (its first leaf), and the
+        // right half opens to `right_nf_start`. Each ties a witnessed sequence to
+        // the header value its seed proved by construction. (`left_nf_end` is the
+        // left half's top coefficient, not extractable by a single opening.)
+        ctx.enforce_poly_query(
+            merged_nf_seq_commit.into(),
+            Fp::ZERO,
+            Fp::from(left_nf_start),
+        )?;
+        ctx.enforce_poly_query(
+            right_nf_seq_commit.into(),
+            Fp::ZERO,
+            Fp::from(right_nf_start),
+        )?;
+        Ok((
+            (
+                left_cm,
+                (left_epoch_start, left_nf_start),
+                merged_nf_seq_commit,
+                (right_epoch_end, right_nf_end),
+            ),
+            (),
+        ))
     }
 }

@@ -127,10 +127,11 @@ fn same_epoch_wrong_index_rejected_against_honest_chain() {
         .fuse(
             rng,
             spendable::SpendableInit,
-            (
+            witness::spendable_init(
+                (*chain.data(), *nf_wrong.data()),
                 pre_epoch_anchor,
                 pre_cm_anchor,
-                TachygramSetPoly::from_iter(creation_set),
+                &creation_set,
                 present_nf,
             ),
             chain,
@@ -171,7 +172,11 @@ fn spendable_init_accepts_forged_chain() {
     let cm_set = TachygramSetPoly::from_iter(stamps[cm_idx].clone());
     let cm_commit = cm_set.commit();
     let (forged_chain, ()) = PROOF_SYSTEM
-        .seed(rng, pool::AnchorSeed, (forged_start, cm_commit))
+        .seed(
+            rng,
+            pool::AnchorSeed,
+            witness::anchor_seed(((), ()), forged_start, &stamps[cm_idx]),
+        )
         .expect("AnchorSeed");
 
     let present_nf = user.nf_at(&note, wrong);
@@ -180,7 +185,13 @@ fn spendable_init_accepts_forged_chain() {
         .fuse(
             rng,
             spendable::SpendableInit,
-            (x, forged_start, cm_set, present_nf),
+            witness::spendable_init(
+                (*forged_chain.data(), *nf_wrong.data()),
+                x,
+                forged_start,
+                &stamps[cm_idx],
+                present_nf,
+            ),
             forged_chain,
             nf_wrong,
         )
@@ -188,7 +199,7 @@ fn spendable_init_accepts_forged_chain() {
 
     // The circuit accepted, but the produced anchor is off the published sequence,
     // so consensus anchor membership is what rejects the eventual spend.
-    let forged_anchor = forged_spendable.data().1;
+    let forged_anchor = forged_spendable.data().2;
     assert_eq!(forged_anchor, forged_start.next_stamp(&cm_commit));
     let forged_off_sequence =
         (0..=cm_height.0).all(|height| pool.anchor_at(BlockHeight(height)) != forged_anchor);
@@ -239,18 +250,28 @@ fn spendable_init_rejects_tg_absent() {
 
     let nf_header = user.derived_range(rng, &note, EpochIndex(0), 1);
     let present_nf = user.nf_at(&note, EpochIndex(0));
-    let absent_set = TachygramSetPoly::from_iter([tg(rng)]);
+    let absent_tg = tg(rng);
     // cm-inclusion is checked first, so a dummy boundary chain suffices here.
-    let dummy_commit = TachygramSetPoly::from_iter([tg(rng)]).commit();
+    let dummy_tg = tg(rng);
     let (dummy_chain, ()) = PROOF_SYSTEM
-        .seed(rng, pool::AnchorSeed, (Anchor::default(), dummy_commit))
+        .seed(
+            rng,
+            pool::AnchorSeed,
+            witness::anchor_seed(((), ()), Anchor::default(), &[dummy_tg]),
+        )
         .expect("AnchorSeed");
 
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             spendable::SpendableInit,
-            (Anchor::default(), Anchor::default(), absent_set, present_nf),
+            witness::spendable_init(
+                (*dummy_chain.data(), *nf_header.data()),
+                Anchor::default(),
+                Anchor::default(),
+                &[absent_tg],
+                present_nf,
+            ),
             dummy_chain,
             nf_header,
         )
@@ -269,14 +290,13 @@ fn unspent_seed_rejects_tg_present() {
     let note = user.random_note(rng, 500);
     let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
 
-    let containing_set = TachygramSetPoly::from_iter([nf.into()]);
     let start = Anchor::default();
 
     let err = PROOF_SYSTEM
         .seed(
             rng,
             pool::UnspentSeed,
-            (start, EpochIndex(0), containing_set, nf),
+            witness::unspent_seed(((), ()), start, EpochIndex(0), &[nf.into()], nf),
         )
         .err()
         .unwrap();
@@ -330,7 +350,7 @@ fn unspent_fuse_rejects_invalid_compositions() {
         };
         assert_eq!(
             inner.to_string(),
-            "UnspentFuse: left.last_anchor must equal right.prev_anchor"
+            "UnspentFuse: left.anchor_last must equal right.anchor_prev"
         );
     }
 }
@@ -346,9 +366,13 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
         let left = build_anchor_chain_pcd(rng, &pool, BlockHeight(0)..=BlockHeight(0));
 
         let bogus_start = Anchor(Fp::random(&mut *rng));
-        let commit = pool.stamp_commits_at(BlockHeight(1))[0];
+        let stamps = pool.tachygrams_at(BlockHeight(1));
         let (right, ()) = PROOF_SYSTEM
-            .seed(rng, pool::AnchorSeed, (bogus_start, commit))
+            .seed(
+                rng,
+                pool::AnchorSeed,
+                witness::anchor_seed(((), ()), bogus_start, &stamps[0]),
+            )
             .expect("AnchorSeed");
 
         let err = PROOF_SYSTEM
@@ -421,7 +445,7 @@ fn empty_block_unspent_lifts_spendable() {
 
     // Bootstrap spendable at the cm-block's published anchor.
     let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let spendable_anchor_before = spendable.data().1;
+    let spendable_anchor_before = spendable.data().2;
 
     // Mine one empty block.
     pool.mine(vec![]);
@@ -429,12 +453,12 @@ fn empty_block_unspent_lifts_spendable() {
 
     // Build an Unspent over the empty block via EmptyBlockUnspentSeed,
     // then lift the spendable.
-    let nf = spendable.data().0;
+    let nf = spendable.data().1;
     let unspent = build_unspent_pcd_between_blocks(rng, &pool, &[nf], empty_height..=empty_height);
     let lifted = user.lift(rng, spendable, unspent, &note, epoch, epoch);
 
-    assert_eq!(lifted.data().1, spendable_anchor_before.next_empty());
-    assert_eq!(lifted.data().1, pool.anchor_at(empty_height));
+    assert_eq!(lifted.data().2, spendable_anchor_before.next_empty());
+    assert_eq!(lifted.data().2, pool.anchor_at(empty_height));
 }
 
 #[test]
@@ -449,7 +473,7 @@ fn spend_bind_honest() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let (_cv, _rk, present_nf, _anchor, _cm) = *spend_pcd.data();
+    let (_cm, (_cv, _rk), present_nf, _anchor) = *spend_pcd.data();
     assert_eq!(present_nf, user.nf_at(&note, spend_epoch));
 }
 
@@ -548,7 +572,7 @@ fn spend_stamp_rejects_forged_next() {
     };
     assert_eq!(
         inner.to_string(),
-        "SpendStamp: published scalars are not the derived leaf pair"
+        "SpendStamp: next nullifier is not the range's end leaf"
     );
 }
 
@@ -576,7 +600,7 @@ fn spend_stamp_rejects_zero_next_nullifier() {
     };
     assert_eq!(
         inner.to_string(),
-        "SpendStamp: published scalars are not the derived leaf pair"
+        "SpendStamp: next nullifier is not the range's end leaf"
     );
 }
 
@@ -592,14 +616,13 @@ fn spend_stamp_rejects_identity_cv() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let real_spend = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let (_real_cv, real_rk, present_nf, anchor, cm) = *real_spend.data();
+    let (cm, (_real_cv, real_rk), present_nf, anchor) = *real_spend.data();
     let identity_cv = value::Commitment::balance(0);
     let forged_spend = real_spend.proof().clone().carry::<spend::SpendHeader>((
-        identity_cv,
-        real_rk,
+        cm,
+        (identity_cv, real_rk),
         present_nf,
         anchor,
-        cm,
     ));
 
     let derived = user.derived_range(rng, &note, spend_epoch, 2);
@@ -695,7 +718,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     }
 
     let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -711,7 +734,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let lifted = user.lift(rng, spendable, unspent, &note, EpochIndex(0), EpochIndex(1));
 
     let spend_pcd = honest_spend_bind(rng, &user, &note, lifted);
-    let (_cv, _rk, present_nf, _anchor, _cm) = *spend_pcd.data();
+    let (_cm, (_cv, _rk), present_nf, _anchor) = *spend_pcd.data();
     assert_eq!(
         present_nf,
         user.nf_at(&note, EpochIndex(1)),
@@ -803,24 +826,21 @@ fn unspent_epoch_fuse_concatenates_polynomials() {
         BlockHeight(EPOCH_SIZE)..=BlockHeight(EPOCH_SIZE),
     );
 
-    let left_elapsed_poly = NfSeqPoly::from_iter([]);
-    let right_elapsed_poly = NfSeqPoly::from_iter([]);
-    let combined_elapsed_poly = NfSeqPoly::from_iter([nf_e0]);
     let (fused, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             pool::UnspentEpochFuse,
-            (left_elapsed_poly, right_elapsed_poly, combined_elapsed_poly),
+            witness::unspent_epoch_fuse((*left.data(), *right.data()), &[], &[]),
             left,
             right,
         )
         .expect("UnspentEpochFuse");
 
-    let ((elapsed, end_epoch), _prev_anchor, _last_anchor, _start_nf, end_nf, start_epoch) =
+    let (_anchor_prev, (epoch_start, _nf_start), elapsed, (epoch_end, nf_end), _anchor_last) =
         *fused.data();
     assert_eq!(elapsed, NfSeqPoly::from_iter([nf_e0]).commit());
-    assert_eq!(end_epoch.0 - start_epoch.0, 1, "one crossing");
-    assert_eq!(end_nf, nf_e1, "new tip is the right half's present nf");
+    assert_eq!(epoch_end.0 - epoch_start.0, 1, "one crossing");
+    assert_eq!(nf_end, nf_e1, "new tip is the right half's present nf");
 }
 
 #[test]
@@ -899,16 +919,16 @@ fn unspent_epoch_fuse_composes_contiguous_ranges() {
         )
         .expect("merge halves into the full range");
 
-    let ((elapsed, end_epoch), _prev_anchor, _last_anchor, _start_nf, end_nf, start_epoch) =
+    let (_anchor_prev, (epoch_start, _nf_start), elapsed, (epoch_end, nf_end), _anchor_last) =
         *full.data();
     assert_eq!(
         elapsed,
         NfSeqPoly::from_iter([nf0, nf1, nf2]).commit(),
         "merged elapsed covers every crossed epoch's tip in order"
     );
-    assert_eq!(end_nf, nf3, "tip is the last lineage's present nf");
-    assert_eq!(start_epoch.0, 0, "range starts at the first epoch");
-    assert_eq!(end_epoch.0, 3, "range ends at the last epoch");
+    assert_eq!(nf_end, nf3, "tip is the last lineage's present nf");
+    assert_eq!(epoch_start.0, 0, "range starts at the first epoch");
+    assert_eq!(epoch_end.0, 3, "range ends at the last epoch");
 }
 
 #[test]
@@ -920,7 +940,7 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
 
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -944,16 +964,16 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
     let lifted = user.lift(rng, spendable, unspent, &note, EpochIndex(0), EpochIndex(1));
 
     assert_eq!(
-        lifted.data().0,
+        lifted.data().1,
         user.nf_at(&note, EpochIndex(1)),
         "tip advanced to nf_1"
     );
     assert_eq!(
-        lifted.data().1,
+        lifted.data().2,
         pool.anchor_at(target_height),
         "anchor advanced"
     );
-    assert_eq!(lifted.data().2, note.commitment(), "cm threaded unchanged");
+    assert_eq!(lifted.data().0, note.commitment(), "cm threaded unchanged");
 }
 
 #[test]
@@ -964,7 +984,7 @@ fn sync_unspent_spans_two_crossings() {
     let note = user.random_note(rng, 500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -987,8 +1007,8 @@ fn sync_unspent_spans_two_crossings() {
     assert_eq!(sync.consumed(0), 2, "two epoch crossings");
 
     let lifted = user.lift(rng, spendable, unspent, &note, EpochIndex(0), EpochIndex(2));
-    assert_eq!(lifted.data().0, user.nf_at(&note, EpochIndex(2)));
-    assert_eq!(lifted.data().1, pool.anchor_at(target_height));
+    assert_eq!(lifted.data().1, user.nf_at(&note, EpochIndex(2)));
+    assert_eq!(lifted.data().2, pool.anchor_at(target_height));
 }
 
 #[test]
@@ -1002,7 +1022,7 @@ fn unspent_lift_spans_partial_and_whole_epochs() {
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     assert_eq!(init_height.epoch().0, 0, "cm in epoch 0");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -1035,16 +1055,16 @@ fn unspent_lift_spans_partial_and_whole_epochs() {
 
     let lifted = user.lift(rng, spendable, unspent, &note, EpochIndex(0), EpochIndex(3));
     assert_eq!(
-        lifted.data().0,
+        lifted.data().1,
         user.nf_at(&note, EpochIndex(3)),
         "tip advanced to nf_3 across partial first/last and whole interior epochs"
     );
     assert_eq!(
-        lifted.data().1,
+        lifted.data().2,
         pool.anchor_at(target_height),
         "anchor advanced to the mid-epoch-3 target"
     );
-    assert_eq!(lifted.data().2, note.commitment(), "cm threaded unchanged");
+    assert_eq!(lifted.data().0, note.commitment(), "cm threaded unchanged");
 }
 
 #[test]
@@ -1079,18 +1099,18 @@ fn unspent_fuse_composes_multi_epoch_right() {
         )
         .expect("UnspentFuse mid-epoch with multi-epoch right");
 
-    let ((elapsed, end_epoch), _prev_anchor, _last_anchor, start_nf, end_nf, start_epoch) =
+    let (_anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), _anchor_last) =
         *fused.data();
     assert_eq!(
         elapsed,
         NfSeqPoly::from_iter([nf0]).commit(),
         "junction epoch recorded once, not duplicated"
     );
-    assert_eq!(start_nf, nf0);
-    assert_eq!(end_nf, nf1, "tip advances to the right half's present nf");
-    assert_eq!(start_epoch.0, 0);
+    assert_eq!(nf_start, nf0);
+    assert_eq!(nf_end, nf1, "tip advances to the right half's present nf");
+    assert_eq!(epoch_start.0, 0);
     assert_eq!(
-        end_epoch.0, 1,
+        epoch_end.0, 1,
         "merged range spans the boundary the right half crossed"
     );
 }
@@ -1112,10 +1132,10 @@ fn unspent_fuse_rejects_epoch_boundary_crossing() {
         &[nf0],
         BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1),
     );
-    let left_end = left.data().2;
-    // A forged epoch-1 right half rooted directly at `left.end` (no `next_epoch`
-    // fold). The anchors line up, but the epoch labels reveal a boundary the fuse
-    // refuses to cross: that is `UnspentEpochFuse`'s job.
+    let left_end = left.data().4;
+    // A forged epoch-1 right half rooted directly at `left.anchor_last` (no
+    // `next_epoch` fold). The anchors line up, but the epoch labels reveal a
+    // boundary the fuse refuses to cross: that is `UnspentEpochFuse`'s job.
     let stamp = [tg(rng)];
     let forged_right = build_unspent_seed_pcd(rng, left_end, EpochIndex(1), &stamp, nf1);
 
@@ -1169,7 +1189,7 @@ fn epoch_fuse_setup(
 }
 
 #[test]
-fn unspent_epoch_fuse_rejects_wrong_left_poly() {
+fn unspent_epoch_fuse_rejects_wrong_left_seq() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_pool, nf_e0, nf_e1, left, right) = epoch_fuse_setup(rng);
     let err = PROOF_SYSTEM
@@ -1178,8 +1198,8 @@ fn unspent_epoch_fuse_rejects_wrong_left_poly() {
             pool::UnspentEpochFuse,
             (
                 NfSeqPoly::from_iter([nf_e1]),
-                NfSeqPoly::from_iter(Vec::<Nullifier>::new()),
                 NfSeqPoly::from_iter([nf_e0]),
+                NfSeqPoly::from_iter(Vec::<Nullifier>::new()),
             ),
             left,
             right,
@@ -1205,8 +1225,8 @@ fn unspent_epoch_fuse_rejects_wrong_combined() {
             pool::UnspentEpochFuse,
             (
                 NfSeqPoly::from_iter(Vec::<Nullifier>::new()),
-                NfSeqPoly::from_iter(Vec::<Nullifier>::new()),
                 NfSeqPoly::from_iter([nf_e1]),
+                NfSeqPoly::from_iter(Vec::<Nullifier>::new()),
             ),
             left,
             right,
@@ -1247,11 +1267,7 @@ fn unspent_epoch_fuse_rejects_epoch_skip() {
         .fuse(
             rng,
             pool::UnspentEpochFuse,
-            (
-                NfSeqPoly::from_iter(Vec::<Nullifier>::new()),
-                NfSeqPoly::from_iter(Vec::<Nullifier>::new()),
-                NfSeqPoly::from_iter([nf_e0]),
-            ),
+            witness::unspent_epoch_fuse((*left.data(), *right.data()), &[], &[]),
             left,
             right,
         )
@@ -1274,7 +1290,7 @@ fn verify_unspent_rejects_tip_mismatch() {
     let note = user.random_note(rng, 500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let wrong_tip = Nullifier::from(Fp::random(&mut *rng));
     let mut sync = SyncSim::new();
@@ -1293,7 +1309,7 @@ fn verify_unspent_rejects_tip_mismatch() {
     let range = user.derived_range(rng, &note, EpochIndex(0), 2);
     let elapsed = NfSeqPoly::from_iter([user.nf_at(&note, EpochIndex(0))]);
     let tip = NfSeqPoly::from_iter([user.nf_at(&note, EpochIndex(1))]);
-    let range_poly = NfSeqPoly::from_iter([
+    let nf_seq = NfSeqPoly::from_iter([
         user.nf_at(&note, EpochIndex(0)),
         user.nf_at(&note, EpochIndex(1)),
     ]);
@@ -1302,7 +1318,7 @@ fn verify_unspent_rejects_tip_mismatch() {
         .fuse(
             rng,
             pool::VerifyUnspent,
-            (elapsed, tip, range_poly),
+            (elapsed, tip, nf_seq),
             unspent,
             range,
         )
@@ -1335,13 +1351,13 @@ fn verify_unspent_rejects_elapsed_mismatch() {
     let range = user.derived_range(rng, &note, EpochIndex(0), 1);
     let bogus_elapsed = NfSeqPoly::from_iter([Nullifier::from(Fp::random(&mut *rng))]);
     let tip = NfSeqPoly::from_iter([user.nf_at(&note, EpochIndex(0))]);
-    let range_poly = NfSeqPoly::from_iter([user.nf_at(&note, EpochIndex(0))]);
+    let nf_seq = NfSeqPoly::from_iter([user.nf_at(&note, EpochIndex(0))]);
 
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             pool::VerifyUnspent,
-            (bogus_elapsed, tip, range_poly),
+            (bogus_elapsed, tip, nf_seq),
             unspent,
             range,
         )
@@ -1374,13 +1390,13 @@ fn verify_unspent_rejects_wrong_start_epoch() {
     let range = user.derived_range(rng, &note, EpochIndex(1), 1);
     let elapsed = NfSeqPoly::from_iter(Vec::<Nullifier>::new());
     let tip = NfSeqPoly::from_iter([user.nf_at(&note, EpochIndex(1))]);
-    let range_poly = NfSeqPoly::from_iter([user.nf_at(&note, EpochIndex(1))]);
+    let nf_seq = NfSeqPoly::from_iter([user.nf_at(&note, EpochIndex(1))]);
 
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             pool::VerifyUnspent,
-            (elapsed, tip, range_poly),
+            (elapsed, tip, nf_seq),
             unspent,
             range,
         )
@@ -1408,7 +1424,7 @@ fn spendable_lift_rejects_wrong_cm() {
     };
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().1;
+    let start_anchor = spendable.data().2;
 
     let mut sync = SyncSim::new();
     sync.accept_delegation(
@@ -1479,21 +1495,14 @@ fn nullifier_fuse_rejects_non_contiguous() {
 
     let range_a = user.derived_range(rng, &note, EpochIndex(0), 1);
     let range_b = user.derived_range(rng, &note, EpochIndex(2), 1);
-    let left_poly = NfSeqPoly::from_iter([user.nf_at(&note, EpochIndex(0))]);
-    let right_poly = NfSeqPoly::from_iter([user.nf_at(&note, EpochIndex(2))]);
-    let merged = NfSeqPoly::from_iter([
-        user.nf_at(&note, EpochIndex(0)),
+    let witness = witness::nullifier_fuse(
+        (*range_a.data(), *range_b.data()),
+        &[user.nf_at(&note, EpochIndex(0))],
         user.nf_at(&note, EpochIndex(2)),
-    ]);
+    );
 
     let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            delegation::NullifierFuse,
-            (left_poly, right_poly, merged),
-            range_a,
-            range_b,
-        )
+        .fuse(rng, delegation::NullifierFuse, witness, range_a, range_b)
         .err()
         .unwrap();
     let ragu::Error::InvalidWitness(inner) = err else {
@@ -1511,21 +1520,14 @@ fn nullifier_fuse_rejects_wrong_cm() {
 
     let range_a = user.derived_range(rng, &note_a, EpochIndex(0), 1);
     let range_b = user.derived_range(rng, &note_b, EpochIndex(1), 1);
-    let left_poly = NfSeqPoly::from_iter([user.nf_at(&note_a, EpochIndex(0))]);
-    let right_poly = NfSeqPoly::from_iter([user.nf_at(&note_b, EpochIndex(1))]);
-    let merged = NfSeqPoly::from_iter([
-        user.nf_at(&note_a, EpochIndex(0)),
+    let witness = witness::nullifier_fuse(
+        (*range_a.data(), *range_b.data()),
+        &[user.nf_at(&note_a, EpochIndex(0))],
         user.nf_at(&note_b, EpochIndex(1)),
-    ]);
+    );
 
     let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            delegation::NullifierFuse,
-            (left_poly, right_poly, merged),
-            range_a,
-            range_b,
-        )
+        .fuse(rng, delegation::NullifierFuse, witness, range_a, range_b)
         .err()
         .unwrap();
     let ragu::Error::InvalidWitness(inner) = err else {
