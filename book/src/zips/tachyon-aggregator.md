@@ -7,7 +7,7 @@
 ## I. Dependencies
 
 - [Tachyon Shielded Protocol (#103)](https://github.com/tachyon-zcash/tachyon/issues/103)
-  defines the Tachyon pool, tachyactions, tachygrams, and the per-action authorization
+  defines the Tachyon pool, Tachyon actions, tachygrams, and the per-action authorization
   layer that aggregation preserves.
 - [Tachyon Bundle / Aggregate Transaction Format (#104)](https://github.com/tachyon-zcash/tachyon/issues/104)
   defines the stamped and stripped bundle wire encodings, the `tachyonBundleState` byte,
@@ -23,74 +23,11 @@
   trees. A Tachyon amendment to ZIP 244 (tracked separately) fixes the
   `"ZTxAuthTachyHash"` personalization and the Tachyon digest branches; this ZIP does
   not re-specify that algorithm.
-- [ZIP 248](https://zips.z.cash/zip-0248) (extensible transaction format) is required
-  for registering the Tachyon bundle type on the v5 transaction format.
 
 ## II. Design Considerations
 
-### Aggregation as a network role
-
-Tachyon seeks to reduce chain costs by recursively merging per-transaction Ragu PCD
-stamps into a single aggregate proof that covers many transactions. The act of merging
-proofs is **aggregation**, and **aggregators** are the nodes that perform it. Miners
-are likely to vertically integrate aggregation, but the protocol must also work for
-third-party aggregators that publish aggregates to the mempool. See
-[Network Roles](../network_roles/overview.md) and [Aggregation](../aggregation.md).
-
-### The 10-step lifecycle
-
-The Specification is organised around the following lifecycle, distilled in
-[Aggregation](../aggregation.md):
-
-1. Autonome transactions are published to the mempool.
-2. Aggregators observe transactions in the mempool.
-3. Aggregators produce their own transactions with merged stamps.
-4. Aggregators publish their own transactions to the mempool, and do not re-publish the
-   autonomes they covered.
-5. Miners see transactions in the mempool.
-6. Miners identify which autonomes each aggregate covers.
-7. Miners may perform their own aggregation privately, without publishing to the
-   mempool.
-8. Miners compose their block at will, stripping stamps and assigning the covering
-   aggregate `wtxid` to each adjunct.
-9. The miner proposes a block.
-10. Block validation only passes if the appropriate adjuncts are included and properly
-    assigned aggregate ids, enabling header reconstruction and verification.
-
-### Identifying covered transactions
-
-A mempool observer associates an aggregate with the autonomes it covers primarily by
-matching tachygrams it has already seen against the aggregate's published tachygram set.
-Tachygram matching associates but does not confirm completeness: a based aggregate's own
-tachygrams are unlabelled and tachygrams do not distinguish nullifiers from commitments
-([Bundles](../bundle.md)), so overlap alone cannot tell an observer it holds every autonome
-an aggregate covers. The stamp trailer carries `cActionsTachyon`, an assistive action-set
-indicator that lets an observer confirm a candidate set cheaply (Step 6). It is an
-identification aid, not a soundness mechanism.
-
-### Open questions
-
-The following remain unresolved at Draft and are not normatively specified below:
-
-- **Aggregate limits.** Fan-in, recursion depth, proof size, tachygram vector size,
-  action count, and per-block aggregate count. Aggregate size is commitment-size-limited
-  before block-size-limited (on the order of thousands of actions); exact limits TBD.
-- **Anchor publication and membership.** Specified by the accumulator/anchor ZIP (#105);
-  this draft states the dependency.
-- **Fee accounting (ZIP 317).** `contribution_Tachyon` must account for logical work
-  split between adjuncts (actions) and aggregates (proofs); under discussion.
-- **Value-pool balance (ZIP 209).** `valueBalanceTachyon` turnstile integration; under
-  discussion.
-- **Block commitments (ZIP 221).** How Tachyon's end-of-block anchor enters the MMR
-  leaf; under discussion.
-- **Bundle serialization registration (ZIP 248).** Pending ZIP-248 editor consensus.
-- **P2P aggregation gossip.** Secondary objective; selection criteria (covered-
-  transaction set, size, anchor alignment) remain an open policy question. Single-
-  aggregate merge is not parallelizable, but multiple aggregates can be built in
-  parallel.
-- **`mock_ragu` vs real Ragu.** The normative text below describes the intended real
-  Ragu PCD semantics. The current Tachyon implementation uses a permissive mock; a green
-  test suite against the mock is not soundness.
+**Aggregation** is the act of recursively merging per-transaction Ragu PCD *stamps into a single aggregate proof, and **aggregators** are the nodes that perform it.
+Miners are likely to vertically integrate aggregation, but a protocol is established for dedicated aggregator nodes to contribute aggregates to the mempool. See [Network Roles](../network_roles/overview.md) and [Aggregation](../aggregation.md).
 
 ## III. ZIP Draft
 
@@ -117,85 +54,57 @@ interpreted as described in section 3.12 of the Zcash Protocol Specification.
 
 - **Tachygram.** A `byte[32]` field element ($\mathbb{F}_p$) representing either a note
   nullifier or a note commitment. Consensus treats nullifiers and commitments
-  identically; one accumulator handles both. See [Tachygrams](../tachygrams.md).
-- **Tachyaction.** An indistinguishable representation of either the creation or
-  destruction of a note. Contains `cv`, `rk`, and `sig`; each tachyaction is
-  cryptographically bound to one tachygram but does not contain it. A spend additionally
-  publishes a next-epoch nullifier, so a stamp's tachygram set is not in 1:1
-  correspondence with its actions. See [Bundles](../bundle.md).
-- **Stamp.** The recursive Ragu PCD proof data carried by a stamped bundle:
-  `cActionsTachyon`, `anchor`, `tachygrams`, and `proof`. The proof establishes that the
-  tachyactions follow the correct rules and that the published tachygrams and action
-  digests correspond to those actions.
-- **Autonome.** A stamped bundle produced by a wallet, carrying a complete proof with
-  all inputs. The standard form of a user-originated Tachyon transaction.
-- **Aggregate.** A stamped bundle produced by an aggregator, carrying a merged stamp
-  that covers multiple bundles. An *innocent* aggregate contains no Tachyon actions of
-  its own; a *based* aggregate carries its own Tachyon actions in addition to the merged
-  stamp.
-- **Adjunct.** A stripped bundle whose stamp has been removed and replaced by a
-  `tachyonAggregateId` reference to the covering aggregate. Adjuncts retain action data,
-  action signatures, the binding signature, and `value_balance`.
-- **`cActionsTachyon`.** An assistive action-set indicator on the stamp trailer: a 32-byte
-  Pedersen commitment to the action-digest set,
-  $\mathsf{Commit}\bigl(\prod_i (X - d_i)\bigr)$, with action digest
-  $d_i = \text{Poseidon}_\texttt{Tachyon-ActionDg}(\mathsf{cv}_i \,\|\, \mathsf{rk}_i)$
-  defined in [Authorization](../authorization.md). It is the same commitment the book
-  calls `action_acc` and that the proof attests to in its header, copied onto the trailer
-  so observers can identify covered transactions without verifying the proof (Step 6). It
-  is authorization data: it contributes to `auth_digest` and strips away with the stamp.
-  Its wire encoding is specified by the bundle-format ZIP (#104).
-- **`tachyonAggregateId`.** The wire field on a stripped bundle that replaces its stamp:
-  the `byte[64]` `wtxid` of the covering aggregate (the implementation type is
-  `AggregateId`). It is a `wtxid`, not a `txid`, so it pins a specific physical aggregate
-  including its stamp state. The `auth_digest` contribution refers to this same value as
-  `stampWtxid` (see [Transaction Identifiers](../transaction-identifiers.md)).
-- **`txid`.** The transaction identifier, committing only to effecting data. For a
-  Tachyon bundle, the `txid` contribution is `action_acc || value_balance`. Stable
-  across stamping, merging, and stripping.
-- **`auth_digest`.** The authorizing-data commitment. For a Tachyon bundle, commits to
-  action signatures, the binding signature, and the stamp trailer. Each physical
-  authorization form yields a distinct `auth_digest`.
-- **`wtxid`.** The `byte[64]` witnessed transaction identifier `txid || auth_digest`. The
-  unit of physical relay per [ZIP 239](https://zips.z.cash/zip-0239).
+  identically.
+- **Stamp.** A bundle trailer which may replaced with a reference to another
+  transaction. Contains a Ragu proof and some associated data necessary for
+  verification, including tachygrams.The proof establishes that the actions follow
+  the correct rules.
+- **Autonome.** A stand-alone transaction with a stamped bundle, containing a
+  proof covering only its own actions. The standard form of a user-originated
+  Tachyon transaction. An autonome may appear in a block or in the mempool.
+- **Aggregate.** A transaction with a stamped bundle, containing a merged stamp
+  that covers other transactions. More specifically, an *innocent aggregate*
+  contains no Tachyon actions of its own; and a *based aggregate* contains Tachyon
+  actions. An aggregate may appear in a block or in the mempool.
+- **Adjunct.** A transaction with a stripped bundle. Its proof has been removed
+  and replaced by a `wtxid` reference to a covering aggregate. Adjuncts retain
+  action data, action signatures, the binding signature, and `value_balance`. An
+  adjunct should only appear in a block.
 
 ## Abstract
 
-Tachyon shielded transactions carry recursive Ragu PCD stamps whose verification cost
-is substantial. Verifying each transaction's stamp independently at consensus would
-dominate block-validation cost. This ZIP specifies the Tachyon aggregator protocol: a
-network role that merges stamps from multiple stamped transactions into a single
-aggregate stamp, and a block-layout discipline under which miners strip the now-
-redundant per-transaction stamps and replace them with a reference to the covering
-aggregate. The same effecting data (tachyactions, value balances, action signatures,
-and binding signatures) remains independently verifiable; only the proof bytes are
-deduplicated. The ZIP defines the 10-step aggregation lifecycle from autonome
-publication through block validation, the transaction-identifier semantics that make
-stripping safe, and the P2P relay rules that extend ZIP 239 to Tachyon's
-authorization-form malleability. Aggregation introduces a new network participant but no
-new trust assumption: every invariant is enforced either inside the Ragu PCD or by
-consensus checks on public data.
+Tachyon shielded transactions use a recursive proof system. To reduce proof
+verification costs, recursion is used to combine many per-transaction proofs
+into a single proof covering all contributing transactions.
+
+This recursion provides an opportunity to introduce a new participant role
+without creating a new trust assumption.
+
+This ZIP specifies: the aggregator protocol, a block-layout discipline under
+which miners strip redundant proofs, the semantics about effecting data and
+authorizing data that make stripping safe, and P2P rules that extend ZIP 239 to
+Tachyon's authorization-form malleability.
+
+Aggregation involves a 10-step lifecycle from transaction authorization, through
+the mempool, to block layout, and final validation. All effecting data (actions,
+value balances, action signatures, and binding signatures) remains present and
+valid when a proof is stripped.
 
 ## Motivation
 
-Without aggregation, every Tachyon transaction in a block carries its own Ragu PCD
-stamp, and validators must verify each stamp independently. Stamp verification is the
-dominant per-transaction cost; at scale this limits throughput and raises the barrier
-to running a validating node.
+Every proof must be verified to reach consensus. Without aggregation, every
+Tachyon bundle would carry a stamp, and consensus costs would be dominated by
+stamp data and verification. By specifying an aggregation protocol, consensus
+avoids this complexity.
 
-Ragu PCD stamps are recursively composable: two stamps at a common anchor can be merged
-into a single stamp that attests to the union of the two action-digest and tachygram
-sets. This composition is what aggregation exploits. An aggregator merges stamps off-
-chain and publishes a single aggregate transaction carrying the merged stamp; miners
-strip the redundant per-transaction stamps at block-assembly time, leaving each covered
-transaction as an adjunct that carries its effecting data plus a reference to the
-covering aggregate.
+A block in which a large number of Tachyon stamps are aggregated into a smaller
+number of Tachyon stamps is completely verified by that smaller number of
+stamps, while still allowing every action, signature, and balance to remain
+independently valid. In the ideal case, a single proof MAY verify all Tachyon
+transactions in a block.
 
-The result is that a block containing $N$ Tachyon transactions need only verify a small
-number of aggregate stamps rather than $N$ independent proofs, while still allowing every
-action, signature, and value balance to be independently checked. This ZIP specifies
-the network behaviour, the block-layout rules, and the identification mechanism that
-makes the scheme work without a trusted aggregator.
+Aggregation is RECOMMENDED, not required. A miner MAY choose to include
+completely independent non-aggregated transactions.
 
 ## Requirements
 
@@ -209,12 +118,11 @@ the Specification.)
   without trusting the aggregator.
 - Preserve transaction-identifier stability: a transaction's `txid` is invariant across
   stamping, merging, and stripping.
-- Allow any participant (miner or third-party) to act as aggregator; no protocol-level
-  exclusivity or claim on autonomes.
-- Enable a validating observer or miner to confirm, cheaply and fail-fast, that they
-  hold every autonome covered by an aggregate before assembling or validating a block.
-- Introduce no new trust assumption: every invariant is enforced either inside the Ragu
-  PCD or by consensus checks on public data.
+- Allow any participant to act as aggregator; no protocol-level exclusivity.
+- Enable a validator or miner to confirm they hold all necessary data before
+  attempting proof verification.
+- Introduce no new trust assumption: every invariant is enforced either by proof
+  or by consensus rules.
 
 ## Specification
 
@@ -222,55 +130,55 @@ The specification is organised around the 10-step aggregation lifecycle. Each st
 a subsection with conformance language. Transaction-identifier semantics and P2P relay
 rules are folded into the relevant steps rather than specified as parallel sections.
 
-This specification applies identically to Mainnet and Testnet.
-
 ### Step 1: Publication of autonomes
 
-Wallets construct stamped bundles (**autonomes**) and broadcast them to the mempool
-via the existing wallet RPC or P2P path. An autonome is a standard stamped transaction
-with a complete Ragu PCD proof and a distinct `wtxid`. Autonomes are announced and
-relayed by `wtxid` per Step 5.
+Transaction authors produce complete and independently verifiable transactions
+with stamped bundles (**autonomes**) and broadcast them to the mempool via the
+existing wallet RPC or P2P path.
 
 ### Step 2: Aggregator mempool observation
 
-Aggregators observe stamped transactions in mempool gossip. An aggregator MAY select
-any subset of autonomes (and existing aggregates) for merging. There is no protocol-
-level exclusivity or claim on autonomes: multiple aggregators MAY attempt to cover the
-same autonome, and a miner MAY prefer one aggregate over another at block-assembly
-time.
+Aggregators observe transactions in mempool gossip.
 
-### Step 3: Aggregate construction
+An aggregator selects two transactions (autonomes or existing aggregates) for
+merging into a new aggregate. Selected transactions SHOULD bear disjoint
+tachygram sets.
 
-Aggregators merge stamps as follows:
+### Step 3: Prepare witnesses and PCD
 
-1. Deserialize and validate each input stamp.
-2. Align anchors: each input stamp is lifted to a common later anchor using `StampLift`
-   over an `AnchorChain` segment whose `start` equals the stamp's current anchor. The
-   merged stamp's anchor is the segment `end`.
-3. Merge the stamps with `MergeStamp`, which constrains `left.anchor == right.anchor`,
-   binds the witnessed input action-digest and tachygram polynomials to the input
-   header commitments, and proves the merged polynomials are the products of the input
-   polynomials (multiset union by polynomial product).
-4. Serialize and compress the merged stamp.
+Aggregators reconstruct two stamp PCD from proofs and data available directly on
+the input transactions.
 
-The aggregator constructs a new stamped transaction carrying the merged stamp. For a
-**based** aggregate the transaction also carries the aggregator's own tachyactions; for
-an **innocent** aggregate it carries no Tachyon actions.
+If selected transactions bear unequal anchors, aggregators MUST align stamp anchors by
+fusing with an anchor PCD that represents the difference. Aggregators are
+RECOMMENDED to maintain recent consensus data and cache anchor PCD likely to be
+relevant to anchor adjustment.
 
-### Step 4: Aggregate publication
+If selected transactions are autonomes, all necessary witness data is directly
+available.
 
-Aggregators publish the aggregate transaction to the mempool. Aggregators MUST NOT
-re-publish the covered autonomes; the autonome remains in the mempool independently and
-the aggregate is published alongside it. The aggregate is a new `wtxid` distinct from
-each covered autonome's `wtxid`, because its `auth_digest` commits to a different
-stamp trailer (the merged stamp) even though the covered effecting data is recoverable
-from the aggregate's action-digest and tachygram sets.
+Any selected transaction that is already an aggregate will require additional
+action digests from all contributing transactions. Aggregators are RECOMMENDED
+to maintain an index of recent mempool transactions likely to be relevant to
+witness preparation. A correct and complete collection of relevant action
+digests will reproduce the action set commitment on the selected stamp.
 
-### Step 5: Miner mempool observation and P2P relay
+### Step 4: Aggregate construction
 
-Miners see both autonomes and aggregates in the mempool. A miner MAY also vertically
-integrate aggregation and produce its own aggregates privately without publishing them
-to the mempool (Step 7).
+Holding two stamp PCD and an appropriate witness, the aggregator may execute a
+fuse step to prove a new stamp PCD that covers the selected transactions and all
+transactions contributing to the selected transactions.
+
+The aggregator may construct a new transaction bearing the merged stamp, or
+simply update one or both of the contributing transactions.
+
+### Step 5: Aggregate publication
+
+Aggregators publish the aggregate transaction to the mempool.
+
+A freshly constructed transaction obviously has a distinct `txid` and `wtxid`,
+but an updated transaction maintains the same `txid` and produces a new `wtxid`
+distinct from the original selected input.
 
 P2P relay for Tachyon bundles follows [ZIP 239](https://zips.z.cash/zip-0239):
 transactions are announced and fetched by `wtxid` using the `MSG_WTX` inv type. A single
@@ -279,6 +187,14 @@ that share that `txid` and differ only in `auth_digest`: a wallet's autonome, an
 anchor-lifted or proof-rerandomized restamp, and the stripped adjunct form a miner
 produces. Each is a distinct `wtxid`, and nodes MUST treat distinct `wtxid`s as distinct
 objects.
+
+### Step 5: Miner mempool observation
+
+Miners see both autonomes and aggregates in the mempool. A miner MAY also vertically
+integrate aggregation.
+
+A miner that vertically integrates aggregation MAY produce its own aggregates
+privately without publishing them to the mempool (Step 7).
 
 `MSG_WTX`-style relay is mandatory for Tachyon bundles: restamping, proof rerandomization,
 and stripping all change `wtxid` while leaving `txid` unchanged, so announcement by `txid`
@@ -316,16 +232,18 @@ coverage. Because a based aggregate's own tachygrams are not labelled and tachyg
 not distinguish nullifiers from commitments, tachygram matching narrows the candidate set
 but does not confirm it is complete.
 
-To confirm it holds the right set, the observer reconstructs the action-set commitment
-from its candidate set of autonomes, together with the based aggregate's own actions, and
-compares it to the aggregate's `cActionsTachyon` indicator. Each action digest
-$d_i = \text{Poseidon}_\texttt{Tachyon-ActionDg}(\mathsf{cv}_i \,\|\, \mathsf{rk}_i)$ is
-computable from public action data, so the reconstruction is cheap ($O(n)$ polynomial
-arithmetic plus one Pedersen commitment) and needs no proof verification. A match confirms
-the candidate set is exactly the aggregate's cover; a mismatch is fail-fast, signalling a
-missing or extra autonome, or a match against the wrong aggregate. Coverage is taken over the
-action-digest set, one digest per action, not over tachygrams, whose count differs from
-the action count because a spend publishes two tachygrams.
+To confirm it holds the right set, the observer reconstructs the action-set
+commitment from its candidate set of autonomes, together with the aggregate's
+own actions (none, for an innocent aggregate), and compares it to the
+aggregate's `cActionsTachyon` indicator.  Each action digest $d_i =
+\text{Poseidon}_\texttt{Tachyon-ActionDg}(\mathsf{cv}_i \,\|\, \mathsf{rk}_i)$
+is computable from public action data, so the reconstruction is cheap ($O(n)$
+polynomial arithmetic plus one Pedersen commitment) and needs no proof
+verification. A match confirms the candidate set is exactly the aggregate's
+cover; a mismatch is fail-fast, signalling a missing or extra autonome, or a
+match against the wrong aggregate. Coverage is taken over the action-digest set,
+one digest per action, not over tachygrams, whose count differs from the action
+count because a spend publishes two tachygrams.
 
 ### Step 7: Private miner aggregation (optional)
 
@@ -371,15 +289,30 @@ algorithm is specified there, not in this ZIP.
 
 ### Step 9: Block proposal
 
-The miner proposes the block containing:
+The miner proposes a block. Aggregation is not required: a block MAY contain no aggregates
+at all, including stamped autonomes directly. A block MAY contain, in any combination:
 
-- one or more top-level unstripped aggregates;
-- for each transaction covered by an aggregate, an adjunct carrying the action data,
-  action signatures, binding signature, `value_balance`, and the covering `wtxid`;
+- zero or more top-level unstripped stamped bundles (autonomes included directly, and/or
+  aggregates);
+- for each transaction covered by an aggregate in the block, an adjunct carrying the
+  action data, action signatures, binding signature, `value_balance`, and the covering
+  `wtxid`;
 - any non-Tachyon transactions; and
 - the coinbase transaction, which MAY itself be a based aggregate.
 
+A block need not aggregate anything, but every aggregate it does contain MUST be fully
+backed by its covered transactions in the same block (Step 10): a miner cannot include an
+aggregate whose covered transactions are not all present, as adjuncts or as the aggregate's
+own based actions.
+
 ### Step 10: Block validation
+
+A block is validated bundle by bundle. The conditions below are written for a covering
+aggregate and the adjuncts it covers; a stamped autonome included directly is the
+degenerate case, validated by the same conditions over its own actions, with item 1
+(adjunct resolution) vacuous because it has no adjuncts. Every stripped bundle (adjunct)
+MUST be covered by an aggregate in the same block. Aggregation is not required: a block MAY
+contain only autonomes, or no Tachyon bundles at all.
 
 Nodes MUST reject a block containing Tachyon bundles unless, for every covering aggregate
 in the block, all of the following hold:
@@ -387,11 +320,17 @@ in the block, all of the following hold:
 1. **Adjunct resolution.** Every adjunct whose `tachyonAggregateId` refers to that
    aggregate is present in the same block, and the aggregate is top-level, unstripped,
    and not further aggregated in that block.
-2. **Action-set reconstruction.** Consensus reconstructs $\mathsf{action\_acc}$ from the
-   visible actions: the multiset union of the action-digest sets of all adjuncts covered
-   by the aggregate and the based aggregate's own action-digest set (empty for an innocent
-   aggregate). The reconstructed commitment is the header value used in item 4; the stamp's
-   carried `cActionsTachyon` is an assistive fail-fast indicator, not the binding.
+2. **Action-set reconstruction.** Consensus assembles the action digests of the actions
+   actually present in the block: those of every adjunct covered by the aggregate together
+   with the aggregate's own actions (none for an innocent aggregate). It then commits to the
+   polynomial $\prod_i (X - d_i)$ over that reconstructed collection of digests to obtain
+   $\mathsf{action\_acc}$. This freshly reconstructed commitment, never the carried
+   `cActionsTachyon`, is the header value used in item 4; the carried field is only the
+   assistive fail-fast indicator of Step 6. Reconstructing from the block's own actions is
+   what binds the proof to the effecting data the block actually carries: if any transaction
+   the aggregate covers is absent from the block, the reconstructed $\mathsf{action\_acc}$
+   cannot match the proof and the block is rejected, so an aggregate must be fully backed by
+   its covered transactions in the same block.
 3. **Tachygram-set binding.** The aggregate stamp publishes the merged tachygram set
    (`vTachygrams`); adjuncts carry no tachygrams of their own. The Ragu PCD proof binds
    the tachygram-set commitment to the action-set commitment reconstructed in item 2, so
@@ -430,9 +369,7 @@ consensus checks above. This split is by design.
 
 A reference implementation of the Tachyon aggregator protocol (the bundle state machine,
 stamp merging, stripping, and the `cActionsTachyon` coverage check) is in the
-`zcash_tachyon` crate under [`crates/tachyon/src/`](../../crates/tachyon/src/). It uses
-`mock_ragu`, a permissive stand-in for real Ragu; the protocol semantics specified above
-describe the intended real-Ragu behaviour.
+`zcash_tachyon` crate under [`crates/tachyon/src/`](../../crates/tachyon/src/).
 
 ## Rationale
 
@@ -448,6 +385,12 @@ based aggregate's own tachygrams are indistinguishable from its covered autonome
 `cActionsTachyon` indicator gives observers a fail-fast completeness check over the
 action-digest set, reusing the commitment the proof already attests to rather than adding
 a signed coverage manifest or a tachygram-origin query protocol.
+
+**Aggregate limits.** Two hard limits bound an aggregate. Its tachygram vector is committed
+as a ragu polynomial, so it cannot exceed the maximum ragu polynomial size; and the
+aggregate transaction, like any transaction, is bounded by block size. Construction is also
+shaped by parallelism: a single merge is sequential, since each `MergeStamp` consumes the
+previous result, but independent aggregates can be built in parallel.
 
 **`wtxid`, not `txid`, for adjunct references.** A `txid` would be ambiguous across
 the autonome/aggregate forms (they share effecting data). The `wtxid` pins a specific
@@ -481,11 +424,15 @@ validators reconstruct the aggregate header from this public data. An aggregate 
 alone is insufficient: the covered effecting data is present in the block as adjuncts,
 and Step 10 rejects any block where it is not.
 
-**`cActionsTachyon` is an indicator, not a binding.** The action set is bound by the
-proof, whose header consensus reconstructs from the visible actions; the carried indicator
-only lets observers identify coverage cheaply, and a wrong value harms only its author. The
-indicator is reconstructable from visible actions, so it reveals nothing the actions do
-not, and for a based aggregate it does not expose which actions are the aggregator's own.
+**`cActionsTachyon` is an indicator, not a binding.** The action set is bound by the proof.
+To verify, consensus commits afresh to the action digests of the actions present in the
+block and uses that reconstructed $\mathsf{action\_acc}$ as the proof header; it never
+builds the header from the carried `cActionsTachyon`. Reconstructing from the block's
+actual actions is what ties the proof to the adjuncts the block carries, not to a value the
+prover supplies. The carried indicator only lets observers identify coverage cheaply
+(Step 6), and a wrong value harms only its author; it is reconstructable from visible
+actions, so it reveals nothing the actions do not, and for a based aggregate it does not
+expose which actions are the aggregator's own.
 
 **Privacy of aggregation relationships.** An observer who sees an aggregate in the
 mempool can identify covered autonomes by the `cActionsTachyon` check (Step 6). This
@@ -503,11 +450,9 @@ the proof alone establishes these properties.
 
 - [ZIP 0: ZIP Process](https://zips.z.cash/zip-0000)
 - [ZIP 200: Network Upgrade Mechanism](https://zips.z.cash/zip-0200)
-- [ZIP 221: FlyClient - Consensus Layer Changes](https://zips.z.cash/zip-0221)
 - [ZIP 225: Version 5 Transaction Format](https://zips.z.cash/zip-0225)
 - [ZIP 239: Relay of Version 5 Transactions](https://zips.z.cash/zip-0239)
 - [ZIP 244: Transaction Identifier Non-Malleability](https://zips.z.cash/zip-0244)
-- [ZIP 248: Extensible Transaction Format](https://zips.z.cash/zip-0248)
 - [ZIP 252: Deployment of the NU5 Network Upgrade](https://zips.z.cash/zip-0252)
 - [ZIP 317: Proportional Transfer Fee Mechanism](https://zips.z.cash/zip-0317)
 - [BIP 339: WTXID-based transaction relay](https://github.com/bitcoin/bips/blob/master/bip-0339.mediawiki)
