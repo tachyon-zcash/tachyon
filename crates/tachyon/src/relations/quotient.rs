@@ -556,8 +556,7 @@ pub(crate) fn accumulator_recurrence(
 /// [`EMITTER_ROUND_SPLITS`].
 pub(crate) const EXPANSION_ROUND_SPLITS: usize = {
     #[expect(clippy::cast_possible_truncation, reason = "constant size")]
-    let numerator_len =
-        TachyonP5R64::POW as usize * (POLY_LEN_MAX - 1) + ExpandedKey::EK_LENGTH + 1;
+    let numerator_len = TachyonP5R64::POW as usize * (POLY_LEN_MAX - 1) + ExpandedKey::EK_HALF + 1;
     (numerator_len - POLY_LEN_MAX).div_ceil(POLY_LEN_MAX)
 };
 
@@ -566,7 +565,7 @@ pub(crate) const EXPANSION_ROUND_SPLITS: usize = {
 /// output-cell mask) exactly. Was the hand-set `ROUND_COSET`.
 #[expect(clippy::cast_possible_truncation, reason = "constant size")]
 const ROUND_COSET: usize =
-    (TachyonP5R64::POW as usize * (POLY_LEN_MAX - 1) + ExpandedKey::EK_LENGTH + 1)
+    (TachyonP5R64::POW as usize * (POLY_LEN_MAX - 1) + ExpandedKey::EK_HALF + 1)
         .next_power_of_two();
 
 /// Boundary-numerator eval coset. The boundary numerator is `complement ·
@@ -575,7 +574,7 @@ const ROUND_COSET: usize =
 /// `(ROUNDS-1)·EK_LENGTH + POLY_LEN_MAX − 1`; the coset covers its `degree + 1`
 /// coefficients. Was the hand-set `BOUNDARY_COSET`.
 const BOUNDARY_COSET: usize =
-    ((TachyonP5R64::ROUNDS - 1) * ExpandedKey::EK_LENGTH + POLY_LEN_MAX).next_power_of_two();
+    ((TachyonP5R64::ROUNDS - 1) * ExpandedKey::EK_HALF + POLY_LEN_MAX).next_power_of_two();
 
 /// Row step: the round-coset-to-trace size ratio. `T(gX)` on the round coset is
 /// `trace_ext` rotated by this, since ω_trace = ω_round^ROW_STEP.
@@ -587,17 +586,17 @@ const ROW_STEP: usize = ROUND_COSET / POLY_LEN_MAX;
 const REDUCE_STRIDE: usize = ROUND_COSET / BOUNDARY_COSET;
 
 /// Length of a column-stride spread: coefficient `k` of a `TRACE_COLUMNS`-term
-/// polynomial lands at degree `k·ExpandedKey::EK_LENGTH`.
-const SPREAD_LEN: usize = (TachyonP5R64::ROUNDS - 1) * ExpandedKey::EK_LENGTH + 1;
+/// polynomial lands at degree `k·ExpandedKey::EK_HALF`.
+const SPREAD_LEN: usize = (TachyonP5R64::ROUNDS - 1) * ExpandedKey::EK_HALF + 1;
 
 lazy_static! {
     /// Output-cell mask `M(X) = X^ERA − column_root^OUTPUT_CELL` evaluated on
     /// the quintic coset. Keyset-independent, so it is built once.
     static ref MASK_EXT: Vec<Fp> = {
         let column_root = subgroup_generator::<{ TachyonP5R64::ROUNDS }>();
-        let mut mask = vec![Fp::ZERO; ExpandedKey::EK_LENGTH + 1];
+        let mut mask = vec![Fp::ZERO; ExpandedKey::EK_HALF + 1];
         mask[0] = -column_root.pow_vartime([(TachyonP5R64::ROUNDS - 1) as u64]);
-        mask[ExpandedKey::EK_LENGTH] = Fp::ONE;
+        mask[ExpandedKey::EK_HALF] = Fp::ONE;
         coset_evaluations(&mask, ROUND_COSET, COSET_SHIFT)
     };
 
@@ -619,10 +618,10 @@ lazy_static! {
     /// scalars (see `expansion_boundary_quotient`). Built once.
     static ref ROW_POWER_EXT: Vec<Vec<Fp>> = (0..=TachyonP5R64::POW)
         .map(|power| {
-            let mut samples: Vec<Fp> = (0..ExpandedKey::EK_LENGTH as u64)
+            let mut samples: Vec<Fp> = (0..ExpandedKey::EK_HALF as u64)
                 .map(|row| Fp::from(row).pow_vartime([power]))
                 .collect();
-            Domain::new(ExpandedKey::EK_LENGTH.ilog2()).ifft(&mut samples);
+            Domain::new(ExpandedKey::EK_HALF.ilog2()).ifft(&mut samples);
             coset_evaluations(&samples, BOUNDARY_COSET, COSET_SHIFT)
         })
         .collect();
@@ -675,20 +674,22 @@ fn offset_basis_ext(values: &[Fp]) -> Vec<Fp> {
 }
 
 /// Prover-side bundle of the expansion step's three witness quotients, from the
-/// coefficient vectors of the trace poly `T` and the eval-form key poly `K`.
-/// `keyset` is the note's master key `mk` (the expansion cipher's round-key
-/// schedule). Builds the shared quintic-coset trace evaluation once and returns
-/// `(round splits, boundary, decimation)`, matching what [`NfMasterExpand`]
-/// opens: base `0`, first key `mk.round_key(0)`, whitening
-/// `mk.round_key(TachyonP5R64::ROUNDS)`.
+/// coefficient vectors of the trace poly `T` and the eval-form half-key poly
+/// `K`. `keyset` is the note's master key `mk` (the expansion cipher's
+/// round-key schedule); `base = half · EK_HALF` is this half's cipher-input
+/// window origin. Builds the shared quintic-coset trace evaluation once and
+/// returns `(round splits, boundary, decimation)`, matching what
+/// [`NfMasterExpand`] opens: cipher input `base + row`, first key
+/// `mk.round_key(0)`, whitening `mk.round_key(TachyonP5R64::ROUNDS)`.
 pub(crate) fn expansion_quotients(
     trace_coeffs: &[Fp],
     keyset: NoteMasterKey,
     key_coeffs: &[Fp],
+    base: Fp,
 ) -> ([Polynomial; EXPANSION_ROUND_SPLITS], Polynomial, Polynomial) {
     let trace_ext = coset_evaluations(trace_coeffs, ROUND_COSET, COSET_SHIFT);
     let round = expansion_round_quotient(&trace_ext, keyset);
-    let boundary = expansion_boundary_quotient(&trace_ext, Fp::ZERO, keyset.round_key(0));
+    let boundary = expansion_boundary_quotient(&trace_ext, base, keyset.round_key(0));
     let decimation = expansion_decimation_quotient(
         trace_coeffs,
         key_coeffs,
@@ -799,13 +800,13 @@ pub(crate) fn expansion_boundary_quotient(trace_ext: &[Fp], base: Fp, first_key:
 }
 
 /// The decimation quotient `Q` binding the eval-form key poly `K` to the
-/// trace's final column: `Q = (K(X) − w − T(σX)) / (X^ExpandedKey::EK_LENGTH −
+/// trace's final column: `Q = (K(X) − w − T(σX)) / (X^ExpandedKey::EK_HALF −
 /// 1)`, with the final-column stride `σ = ω^{TRACE_COLUMNS-1}` (`ω` the
 /// order-`TRACE_SIZE` root) and the whitening key `w`. The numerator vanishes
-/// on the order-`ExpandedKey::EK_LENGTH` subgroup `⟨ζ⟩` (`ζ =
+/// on the order-`ExpandedKey::EK_HALF` subgroup `⟨ζ⟩` (`ζ =
 /// ω^{TRACE_COLUMNS}`) exactly when `K(ζ^r) = (row-r final cell) + w`, so exact
 /// division certifies the keys. `key_coeffs` is the eval-form interpolant's
-/// coefficient vector (degree `< ExpandedKey::EK_LENGTH`).
+/// coefficient vector (degree `< ExpandedKey::EK_HALF`).
 pub(crate) fn expansion_decimation_quotient(
     trace_coeffs: &[Fp],
     key_coeffs: &[Fp],
@@ -828,7 +829,7 @@ pub(crate) fn expansion_decimation_quotient(
         *constant -= whitening;
     }
 
-    let (quotient, remainder) = divide_by_vanishing(&numerator, ExpandedKey::EK_LENGTH);
+    let (quotient, remainder) = divide_by_vanishing(&numerator, ExpandedKey::EK_HALF);
     assert!(
         remainder.iter().all(|coeff| *coeff == Fp::ZERO),
         "decimation numerator is not divisible by Z_<zeta>: key poly mismatches the trace column",
@@ -843,12 +844,12 @@ fn trace_at_reduced(trace_ext: &[Fp], point: usize) -> Fp {
 }
 
 /// Spread `coeffs` by the column stride: place coefficient `k` at degree
-/// `k·ExpandedKey::EK_LENGTH`, zero elsewhere. `coeffs.len()` must not exceed
+/// `k·ExpandedKey::EK_HALF`, zero elsewhere. `coeffs.len()` must not exceed
 /// `TRACE_COLUMNS`.
 fn spread_by_stride(coeffs: &[Fp]) -> Vec<Fp> {
     let mut spread = vec![Fp::ZERO; SPREAD_LEN];
     for (column, &coeff) in coeffs.iter().enumerate() {
-        spread[column * ExpandedKey::EK_LENGTH] = coeff;
+        spread[column * ExpandedKey::EK_HALF] = coeff;
     }
     spread
 }
@@ -888,7 +889,11 @@ mod tests {
     use zcash_mimc::spec::tachyon::TachyonP5R8192;
 
     use super::*;
-    use crate::{keys::NoteMasterKey, primitives::NfEmitterPoly, relations::subgroup_generator};
+    use crate::{
+        keys::{ExpandedKey, NoteMasterKey},
+        primitives::NfEmitterPoly,
+        relations::subgroup_generator,
+    };
 
     #[test]
     fn expansion_quotients_fit_the_pow_derived_cosets() {
@@ -903,10 +908,14 @@ mod tests {
         assert_eq!(REDUCE_STRIDE, 4, "decimation stride");
 
         let mk = NoteMasterKey(array::from_fn(|index| Fp::from(index as u64 + 1)));
-        let (spectrum, keyset) = mk.derive_expanded_trace();
-        let key_poly = keyset.key_poly();
-        let (round, boundary, decimation) =
-            expansion_quotients(spectrum.0.coefficients(), mk, key_poly.0.coefficients());
+        let (spectrum, half_keys) = mk.derive_expanded_trace(0);
+        let key_poly = ExpandedKey::half_key_poly(&half_keys);
+        let (round, boundary, decimation) = expansion_quotients(
+            spectrum.0.coefficients(),
+            mk,
+            key_poly.0.coefficients(),
+            Fp::ZERO,
+        );
 
         assert_eq!(round.len(), EXPANSION_ROUND_SPLITS);
         assert!(
