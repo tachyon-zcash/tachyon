@@ -789,6 +789,7 @@ anchor-chain length).
 The idea is **bucketing**. Suppose we sort every tachygram into one of $2^k$
 buckets by a rule that (i) a nullifier can cheaply prove it follows and (ii)
 splits the field evenly. Then $\nf_e$ falls into exactly one bucket, and it can
+
 only ever collide with the tachygrams sharing that bucket. Thus, non-membership
 across the whole epoch collapses to non-membership against a *single* bucket's
 accumulator, holding only $\approx N/2^k$ entries. Taking $k = \log N - \log\log N$
@@ -1363,10 +1364,8 @@ of a different value.
 
 The reusable steps are the shared per-epoch evidence (`EpochAccCert`,
 `AnchorLift`, `EpochEvidenceFuse`, built once per epoch and consumed by every
-note), `CrossEpochLift` (the [cross-epoch lift](#cross-e), one per synced epoch
-per note), and `BundleAssemble` (used within a transaction and again during
-[aggregation](#aggregation), where it folds whole stamps rather than action
-proofs).
+note) and `CrossEpochLift` (the [cross-epoch lift](#cross-e), one per synced epoch
+per note).
 
 An OSS serving many users can batch `CrossEpochLift` a second way, across
 *notes*: it carries many notes' tags in one bundled header and advances them all
@@ -1418,8 +1417,8 @@ Left and Right are PCD inputs; a dash marks a leaf with witness only.
 | `UnspentInit` | $\Uc$ | `DelegationHeader` | — | `UnspentHeader` | $\mathsf{Note}$ opening, creating stamp opening |
 | `InEpochLift` | $\Uc/\Oc$ | `UnspentHeader` | — | `UnspentHeader` | per-stamp tachygram accumulators and anchors |
 | `CrossEpochLift` | $\Oc$ | `UnspentHeader` | `EpochHeader` | `UnspentHeader` | $\pck$ walk to $\nf_i$ |
-| `SpendBind` | $\Uc$ | `SpendCoreHeader` | `UnspentHeader` | `SpendHeader` | — |
-| `BundleAssemble` | $\Uc$ | action/stamp header | action/stamp header | `StampHeader` | multiset gadgets |
+| `SpendBind` | $\Uc$ | `SpendCoreHeader` | `UnspentHeader` | `SpendHeader` | single-stamp $f^\tg(X)$ and anchor link |
+| `BundleAssemble` | $\Uc$ | `SpendHeader` | `OutputHeader` | `StampHeader` | multiset gadgets |
 
 **Bridging checks.** Each fold's equality checks across its two headers:
 
@@ -1548,17 +1547,171 @@ wallet and the OSS.
    output side is a lone `OutputCore`, which `BundleAssemble` folds with the bound
    spend into the published stamp.
 
-
-
-
-
-
 #### In-epoch Lift {#in-e}
+
+The in-epoch lift advances the `UnspentHeader` one stamp at a time *within a
+single epoch*. Users run it right after the [`UnspentInit`](#steps) to hide the
+creation block; then the OSS carries on from the handoff up to the next epoch
+boundary (i.e., the last anchor of an epoch, see the [diagram](#step-range)).
+
+A valid instance of an [`InEpochLift`](#steps) assures that, given the public input:
+
+- the input [`UnspentHeader`](#headers) $(\kappa, \pck, \mathsf{anchor}, j)$
+- the output `UnspentHeader` $(\kappa, \pck, \mathsf{anchor}', j)$, with
+  note tag $\kappa$, prefix key $\pck$, and frontier epoch $j$ unchanged, only
+  $\mathsf{anchor}'$ advanced.
+
+the prover knows the secret witness:
+
+- the child PCD proof carried by the input header
+- the length $\ell'$ of the prefix-constrained key $\pck$ of the $\ell$-depth
+  GGM tree
+- a list of tachygram accumulator polynomial $\set{f^\tg_i(X)}$ whose commitments
+  $\set{ \acc^\tg_i }$ establish the [anchor chain](#anchor) linkage from
+  $\mathsf{anchor}$ to $\mathsf{anchor}'$
+
+such that the following conditions hold:
+
+- **Child proof recursion**: fold child proofs into running the PCD proof.
+- **Inclusion extension**: 
+  $$
+  \mathsf{anchor} \overset{\acc^\tg_0}{\longrightarrow} \ldots
+  \overset{\acc^\tg_i}{\longrightarrow} \mathsf{anchor}^\mathsf{tmp}_i :=
+  H(\mathsf{anchor}^\mathsf{tmp}_{i-1} \| j \| \acc^\tg_i)
+  \overset{\ldots}{\longrightarrow} \mathsf{anchor}'
+  $$.
+- **Epoched nullifier integrity**: forward-walk $\pck$ to its $j$-epoch leaf,
+  $\nf_j = F^\mathsf{GGM}_{\ell'\rightarrow\ell}(\pck, j)$.
+- **Exclusion extension**: for all intermediary anchor index $i$ from
+  $\mathsf{anchor}$ to $\mathsf{anchor}'$: $f^\tg_i(\nf_j) \neq 0$,
+  attested through the [poly-query oracle](#acc). 
 
 #### Cross-epoch Lift {#cross-e}
 
+The cross-epoch lift advances spendability *across* an epoch boundary, in two
+variants set apart by whether the crossed epoch is already closed (so shared
+per-epoch evidence exists) or is still the active epoch.
+
+**Full-epoch fast-track**. For a *closed* past epoch, the OSS consumes the
+shared [`EpochHeader`](#headers) and clears the whole epoch in one step.
+
+A valid instance of a [`CrossEpochLift`](#steps) ($\Oc$) assures that, given the
+public input:
+
+- the input [`UnspentHeader`](#headers) $(\kappa, \pck, \mathsf{anchor}_{i-1}, j)$
+- the shared [`EpochHeader`](#headers)
+  $(i, \mathsf{anchor}_{i-1}, \mathsf{anchor}_i, \mathsf{Com}(e_i(X)))$, certifying
+  epoch $i$ boundary-to-boundary with its [whole-epoch accumulator](#epoch-acc)
+  $e_i(X)$
+- the output `UnspentHeader` $(\kappa, \pck, \mathsf{anchor}_i, i)$, the anchor
+  jumped to $\mathsf{anchor}_i$ and the frontier advanced $j \to i$
+
+the prover knows the secret witness:
+
+- the child PCD proofs carried by the two input headers
+- the length $\ell'$ of the prefix-constrained key $\pck$ in the $\ell$-depth GGM
+  tree
+- the epoch polynomial $e_i(X)$ for epoch $i$
+
+such that the following conditions hold:
+
+- **Child proof recursion**: fold the child proofs into the running PCD proof.
+- **Consecutive epoch**: $i = j+1$.
+- **Epoched nullifier integrity**: forward-walk $\pck$ to its $i$-epoch leaf,
+  $\nf_i = F^\mathsf{GGM}_{\ell'\rightarrow\ell}(\pck, i)$.
+- **Anchor advancement**: two input headers carry the same
+  $\mathsf{anchor}_{i-1}$, implicitly proving inclusion extension.
+- **Exclusion extension**: $e_i(\nf_i) \neq 0$ against the committed
+  $\mathsf{Com}(e_i(X))$, attested through the [poly-query oracle](#acc); one query
+  clearing all of epoch $i$.
+
+The `EpochHeader` is note-independent, so crossing a full epoch costs one per-note
+step, and an OSS may [batch many notes](#steps) against the same one.
+
+**Final lift into the active epoch**. The active epoch $e$ is still open,
+so no `EpochHeader` exists; [`SpendBind`](#steps) runs a single-stamp cross-epoch
+lift, from the last anchor in epoch $e-1$ to the first epoch in $e$, [for the
+reasons given here](#lift-e).
+
+A valid instance assures that, given the public input:
+
+- the [`UnspentHeader`](#headers) $(\kappa, \pck, \mathsf{anchor}_j, j)$
+  returned by the OSS
+- the [`SpendCoreHeader`](#headers) $(\kappa, \cv, \rk, \nf_e, \nf_{e+1}, e)$,
+  already revealing the spend nullifier $\nf_e$
+- the output [`SpendHeader`](#headers)
+  $(\cv, \rk, \nf_e, \nf_{e+1}, \mathsf{anchor}, e)$, with $\mathsf{anchor}$ the
+  first anchor reached inside epoch $e$
+
+the prover knows the secret witness:
+
+- the child PCD proofs carried by the two input headers
+- the tachygram accumulator polynomial $f^\tg(X)$, with commitment $\acc^\tg$,
+  linking $\mathsf{anchor}_j$ to $\mathsf{anchor}$ along the
+  [anchor chain](#anchor)
+
+such that the following conditions hold:
+
+- **Child proof recursion**: fold the child proofs into the running PCD proof.
+- **Note tag integrity**: the two headers carry the same $\kappa$.
+- **Consecutive epoch**: $j + 1 = e$.
+- **Anchor advancement**: a single-stamp update, implicitly extending inclusion
+  $$
+  \mathsf{anchor} = H(\mathsf{anchor}_j\,\|\, e \,\|\, \acc^\tg)
+  $$.
+- **Exclusion extension**: $f^\tg(\nf_e) \neq 0$ for the single stamp, note that
+  the integrity of $\nf_e$ is attested in the carried proof of `SpendCoreHeader`.
+
+Epoch $e$'s tail and all of epoch $e+1$ fall to the consensus [two-epoch
+live-window check](#consensus-rule) on $(\nf_e, \nf_{e+1})$;
+[anchor-genuineness](#consensus-rule) confirms $\mathsf{anchor} \in e$.
+
 #### Aggregation {#aggregation}
 
+Aggregation folds several finished stamps into one, run by any aggregator or miner.
+It is a distinct step from [`BundleAssemble`](#steps): where `BundleAssemble`
+composes one transaction's `SpendHeader`s and `OutputHeader`s into that
+transaction's stamp, aggregation merges the [`StampHeader`](#headers)s of
+already-stamped transactions — the same multiset-union-by-product, one level up. It
+first lifts each stamp's independently chosen anchor onto a common one; afterward
+each constituent's stamp can be replaced by a reference to the aggregate's `wtxid`.
+
+A valid Aggregation step assures that, given the public input:
+
+- the constituent `StampHeader`s $\set{\mathsf{StampHeader}_k}$, each
+  $(\set{(\cv_i, \rk_i)}_k, \tgacc_k, \mathsf{anchor}_k, e)$
+- the output aggregate `StampHeader`
+  $(\set{(\cv_i, \rk_i)}, \tgacc, \mathsf{anchor}^\ast, e)$, the anchors aligned to a
+  common $\mathsf{anchor}^\ast$ and the tachygrams unioned into $\tgacc$
+
+the prover knows the secret witness:
+
+- the child PCD proofs carried by the constituent `StampHeader`s
+- for each constituent, the accumulator commitments establishing the
+  [anchor-chain](#anchor) linkage from $\mathsf{anchor}_k$ to the common
+  $\mathsf{anchor}^\ast$
+
+such that the following conditions hold:
+
+- **Child proof recursion**: fold the child proofs into the running PCD proof.
+- **Common epoch**: every constituent shares the epoch $e$.
+- **Anchor alignment**: each $\mathsf{anchor}_k$ lifts forward to the common
+  $\mathsf{anchor}^\ast$ — an anchor-only lift adding no tachygram, so inclusion
+  carries over unchanged.
+- **Multiset union**: $\tgacc = \prod_k \tgacc_k$, the [multiset union](#union) of
+  the constituents' tachygrams, [verified at a random point](#acc-correct).
+- **Action aggregation**: the aggregate action list $\set{(\cv_i, \rk_i)}$ concatenates
+  the constituents'.
+
+Value balance and per-action authorization stay *outside* the proof, as in the
+[bundle-level statement](#bundle): the constituents' [binding signatures](#tx) and
+the [consensus anchor check](#consensus-rule) carry over unchanged, since
+aggregation neither creates nor destroys value and only unions already-valid
+tachygram sets.
+
+Stated N-ary over the $\set{\mathsf{StampHeader}_k}$, aggregation folds on the
+binary DAG as a tree of two-input `MergeStamp`s, each preceded by a `StampLift`
+that aligns a constituent's anchor onto the common $\mathsf{anchor}^\ast$.
 
 ## Payment Protocol {#payment}
 
