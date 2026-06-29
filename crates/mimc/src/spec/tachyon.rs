@@ -32,6 +32,9 @@ pub struct TachyonP5R8192;
 
 impl TachyonP5R8192 {
     /// The round-constant values.
+    // TODO: both specs read the same `Tachyon-MiMCv1.bin`, so the 64-round
+    // schedule is a prefix of the 8192-round one. Each spec should use distinct
+    // round keys to domain-separate the expansion cipher from the emitter cipher.
     pub const CONSTANTS: &'static [Fp; Self::ROUNDS] =
         &pallas_bytes(include_bytes!("Tachyon-MiMCv1.bin"));
     /// The S-box exponent.
