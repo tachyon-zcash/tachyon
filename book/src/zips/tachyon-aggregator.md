@@ -223,63 +223,32 @@ A stripped innocent (a former innocent aggregate) SHOULD carry a
 `tachyonAggregateId` referring to the aggregate which ultimately absorbed its
 stamp.
 
-### Step 10: Block validation
+### Step 9: Block validation
 
-A block is validated bundle by bundle. The conditions below are written for a covering
-aggregate and the adjuncts it covers; a stamped autonome included directly is the
-degenerate case, validated by the same conditions over its own actions, with item 1
-(adjunct resolution) vacuous because it has no adjuncts. Every stripped bundle (adjunct)
-MUST be covered by an aggregate in the same block.
+All proofs in a block must verify.
 
-Nodes MUST reject a block containing Tachyon bundles unless, for every covering aggregate
-in the block, all of the following hold:
+All stripped Tachyon transactions MUST bear a `tachyonAggregateId` referring to
+the stamped transaction in the same block covering its actions.
 
-1. **Adjunct resolution.** Every adjunct whose `tachyonAggregateId` refers to that
-   aggregate is present in the same block.
-2. **Action-set reconstruction.** Consensus assembles the action digests of the actions
-   actually present in the block: those of every adjunct covered by the aggregate together
-   with the aggregate's own actions (none for an innocent aggregate). It then commits to the
-   polynomial $\prod_i (X - d_i)$ over that reconstructed collection of digests to obtain
-   $\mathsf{action\_acc}$. This freshly reconstructed commitment, never the carried
-   `cActionsTachyon`, is the header value used in item 4; the carried field is only the
-   assistive fail-fast indicator described under
-   [Covered-transaction identification](#covered-transaction-identification). Reconstructing from the block's own actions is
-   what binds the proof to the effecting data the block actually carries: if any transaction
-   the aggregate covers is absent from the block, the reconstructed $\mathsf{action\_acc}$
-   cannot match the proof and the block is rejected, so an aggregate must be fully backed by
-   its covered transactions in the same block.
-3. **Tachygram-set binding.** The aggregate stamp publishes the merged tachygram set
-   (`vTachygrams`); adjuncts carry no tachygrams of their own. The Ragu PCD proof binds
-   the tachygram-set commitment to the action-set commitment reconstructed in item 2, so
-   consensus takes the tachygram set from the aggregate's stamp rather than
-   reconstructing it from the adjuncts.
-4. **Stamp proof verification.** The header
-   $(\mathsf{action\_acc}, \mathsf{tachygram\_acc}, \mathsf{anchor})$, with
-   $\mathsf{action\_acc}$ reconstructed in item 2, $\mathsf{tachygram\_acc}$ committed
-   from the stamp's published tachygrams, and $\mathsf{anchor}$ taken from the stamp,
-   verifies against the Ragu PCD proof.
-5. **Signatures and value balance.** Action signatures and the binding signature verify
-   against the transaction sighash, and the bundle's value commitments are consistent
-   with the declared `value_balance`.
-6. **Anchor membership.** The aggregate's anchor is a member of the published per-block
-   anchor sequence, as specified by the accumulator/anchor ZIP (#105).
-7. **Tachygram uniqueness.** No tachygram published in this block, in any stamp the
-   block contains, duplicates a tachygram published in the current epoch or the
-   immediately preceding epoch, as specified by the tachygram-uniqueness consensus rule.
+All stamped Tachyon transactions MUST bear a `cActionsTachyon` opening to the
+complete set of actions for all of its covered transactions in the same block.
 
-The above checks split into two layers:
-
-- **Circuit-enforced (Ragu PCD):** spend/output validity, stamp header binding, anchor
-  equality after lifting, and the multiset-product merge relations. The proof attests
-  that the header was produced by a valid execution; the proof will only verify with
-  the correct header.
-- **Consensus-enforced:** canonical anchor membership and end-of-block anchor
-  progression; two-epoch tachygram non-reuse; action and binding signatures; value-
-  balance rules; and adjunct-to-aggregate resolution.
-
-Several security properties (notably spendable-lineage epoch pinning and double-spend
-prevention) are intentionally not fully proven inside the stamp and depend on the
-consensus checks above. This split is by design.
+1. **Adjunct association.** Every Tachyon transaction with a stripped bundle
+contains a `tachyonAggregateId` that MUST identify a stamped transaction in the
+same block. If no transaction is located, or the located transaction bears no
+stamp, the validator MUST reject the block.
+2. **Action set commitment per stamp.** Every stamp contains a `cActionsTachyon`
+which MUST be confirmed by reconstruction. Compute a Pedersen commitment to the
+action digests of each Tachyon transaction in the block. Multiply the computed
+commitment of each stamped bundle by the computed commitment of each stripped
+bundle which refers to it by `tachyonAggregateId`. If the result of this
+multiplication is not equal to `cActionsTachyon`, the validator MUST reject the
+block.
+3. **Stamp proof verification.** Every Tachyon transaction with a stamped bundle
+contains a proof which MUST verify. Reassemble the stamp PCD from the stamp
+proof, the stamp's `anchorTachyon`, a pedersen commitment to the stamp's
+`vTachygrams` list of tachygrams, and the confirmed `cActionsTachyon`. If a
+proof does not verify, the validator MUST reject the block.
 
 ### Transaction identifiers and P2P relay
 
