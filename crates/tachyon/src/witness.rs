@@ -18,14 +18,15 @@ use crate::{
     keys::{ExpandedKey, NoteMasterKey},
     note::Nullifier,
     primitives::{
-        Anchor, EpochIndex, ExpKeySpectrumPoly, NfEmitterPoly, NfSeqPoly, TachygramSetPoly,
+        Anchor, EpochIndex, ExpKeySpectrumPoly, NfEmitterPoly, NfSeqPoly, Tachygram,
+        TachygramSetPoly,
     },
     relations::quotient::{
         self, LIFT_SPLITS, RoundBoundaryQuotients, accumulator_recurrence, weight_recurrence,
     },
     stamp::proof::{
         delegation::{NfMasterExpand, NullifierDerivationStep},
-        pool::VerifyUnspent,
+        pool::{UnspentEpochFuse, UnspentFuse, UnspentSeed, VerifyUnspent},
         spendable::SpendableInit,
     },
 };
@@ -162,5 +163,63 @@ pub fn verify_unspent<'key>(
         accumulator,
         weight_quotients_arr,
         accumulator_quotient,
+    )
+}
+
+/// Witness for [`UnspentSeed`]: `(anchor_prev, (epoch, nf), stamp_tg_set)`.
+#[must_use]
+pub fn unspent_seed(
+    headers: (StepLeft<UnspentSeed>, StepRight<UnspentSeed>),
+    anchor_prev: Anchor,
+    epoch: EpochIndex,
+    tgs: &[Tachygram],
+    nf: Nullifier,
+) -> StepWitness<'static, UnspentSeed> {
+    let ((), ()) = headers;
+    (
+        anchor_prev,
+        (epoch, nf),
+        tgs.iter().copied().collect::<TachygramSetPoly>(),
+    )
+}
+
+/// Witness for [`UnspentFuse`]:
+/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`. The junction
+/// epoch is shared, so no nullifier is inserted between the histories.
+#[must_use]
+pub fn unspent_fuse(
+    headers: (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
+    left_elapsed: &[Nullifier],
+    right_elapsed: &[Nullifier],
+) -> StepWitness<'static, UnspentFuse> {
+    let (_left, _right) = headers;
+    let mut combined: Vec<Nullifier> = left_elapsed.to_vec();
+    combined.extend_from_slice(right_elapsed);
+    (
+        left_elapsed.iter().copied().collect::<NfSeqPoly>(),
+        combined.into_iter().collect::<NfSeqPoly>(),
+        right_elapsed.iter().copied().collect::<NfSeqPoly>(),
+    )
+}
+
+/// Witness for [`UnspentEpochFuse`]:
+/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`. The crossed
+/// boundary splices the left tip `nf_end` (read off the left header) between the
+/// histories.
+#[must_use]
+pub fn unspent_epoch_fuse(
+    headers: (StepLeft<UnspentEpochFuse>, StepRight<UnspentEpochFuse>),
+    left_elapsed: &[Nullifier],
+    right_elapsed: &[Nullifier],
+) -> StepWitness<'static, UnspentEpochFuse> {
+    let (left, _right) = headers;
+    let (_, _, _, (_, nf_end), _) = left;
+    let mut combined: Vec<Nullifier> = left_elapsed.to_vec();
+    combined.push(nf_end);
+    combined.extend_from_slice(right_elapsed);
+    (
+        left_elapsed.iter().copied().collect::<NfSeqPoly>(),
+        combined.into_iter().collect::<NfSeqPoly>(),
+        right_elapsed.iter().copied().collect::<NfSeqPoly>(),
     )
 }

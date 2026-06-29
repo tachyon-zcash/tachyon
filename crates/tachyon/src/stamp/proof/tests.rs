@@ -19,7 +19,8 @@ use crate::{
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
     fixtures::{
-        PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_stamp, build_unspent_pcd,
+        PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_stamp,
+        build_unspent_pcd_between_blocks,
         build_unspent_seed_pcd, random_block, random_block_with, spend_witness,
         spendable_init_inputs,
     },
@@ -320,15 +321,13 @@ fn unspent_seed_rejects_tg_present() {
     let user = WalletSim::random(rng);
     let note = user.random_note(rng, 500);
     let nf = user.query_nf(&note, EpochOffset(0));
-
-    let containing_set = TachygramSetPoly::from_iter([nf.into()]);
     let start = Anchor::default();
 
     let err = PROOF_SYSTEM
         .seed(
             rng,
             pool::UnspentSeed,
-            (start, EpochIndex(0), containing_set, nf),
+            witness::unspent_seed(((), ()), start, EpochIndex(0), &[nf.into()], nf),
         )
         .err()
         .unwrap();
@@ -353,8 +352,9 @@ fn unspent_fuse_rejects_invalid_compositions() {
         let nf_b = Nullifier::from(Fp::random(&mut *rng));
         let shard_a = build_unspent_seed_pcd(rng, start, EpochIndex(0), &stamps_left, nf_a);
         let shard_b = build_unspent_seed_pcd(rng, mid, EpochIndex(0), &stamps_right, nf_b);
+        let w = witness::unspent_fuse((*shard_a.data(), *shard_b.data()), &[], &[]);
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
+            .fuse(rng, pool::UnspentFuse, w, shard_a, shard_b)
             .err()
             .unwrap();
         let ragu::Error::InvalidWitness(inner) = err else {
@@ -362,7 +362,7 @@ fn unspent_fuse_rejects_invalid_compositions() {
         };
         assert_eq!(
             inner.to_string(),
-            "UnspentFuse: left and right must share the same nf"
+            "UnspentFuse: halves disagree on the junction nullifier"
         );
     }
 
@@ -372,8 +372,9 @@ fn unspent_fuse_rejects_invalid_compositions() {
         let nf = Nullifier::from(Fp::random(&mut *rng));
         let shard_a = build_unspent_seed_pcd(rng, start, EpochIndex(0), &stamps_left, nf);
         let shard_b = build_unspent_seed_pcd(rng, start, EpochIndex(0), &stamps_right, nf);
+        let w = witness::unspent_fuse((*shard_a.data(), *shard_b.data()), &[], &[]);
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
+            .fuse(rng, pool::UnspentFuse, w, shard_a, shard_b)
             .err()
             .unwrap();
         let ragu::Error::InvalidWitness(inner) = err else {
@@ -381,7 +382,7 @@ fn unspent_fuse_rejects_invalid_compositions() {
         };
         assert_eq!(
             inner.to_string(),
-            "UnspentFuse: left.last_anchor must equal right.prev_anchor"
+            "UnspentFuse: left.anchor_last must equal right.anchor_prev"
         );
     }
 }
@@ -481,7 +482,7 @@ fn empty_block_unspent_lifts_spendable() {
     // Build an Unspent over the empty block via EmptyBlockUnspentSeed,
     // then lift the spendable.
     let nf = spendable.data().1.1;
-    let unspent = build_unspent_pcd(rng, &pool, nf, empty_height..=empty_height);
+    let unspent = build_unspent_pcd_between_blocks(rng, &pool, &[nf], empty_height..=empty_height);
     let lifted = user.lift(rng, spendable, unspent, &note, epoch, epoch);
 
     assert_eq!(lifted.data().2, spendable_anchor_before.next_empty());
@@ -742,11 +743,6 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
     let cm_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let cm_idx = pool
-        .tachygrams_at(cm_height)
-        .iter()
-        .position(|tgs| tgs.contains(&note.commitment().into()))
-        .expect("cm in block");
     let target_height = BlockHeight(EPOCH_SIZE);
     while pool.height() < target_height {
         pool.advance(1, |_| random_block(rng, 1, 2));
@@ -763,7 +759,6 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
             user.query_nf(&note, EpochOffset(1))
         ],
         cm_height,
-        cm_idx,
         start_anchor,
     );
     let unspent = sync.build_next_unspent(rng, 0, &pool, target_height);
@@ -850,27 +845,24 @@ fn unspent_epoch_fuse_concatenates_polynomials() {
 
     let nf_e0 = Nullifier::from(Fp::random(&mut *rng));
     let nf_e1 = Nullifier::from(Fp::random(&mut *rng));
-    let left = build_unspent_pcd(
+    let left = build_unspent_pcd_between_blocks(
         rng,
         &pool,
-        nf_e0,
+        &[nf_e0],
         BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1),
     );
-    let right = build_unspent_pcd(
+    let right = build_unspent_pcd_between_blocks(
         rng,
         &pool,
-        nf_e1,
+        &[nf_e1],
         BlockHeight(EPOCH_SIZE)..=BlockHeight(EPOCH_SIZE),
     );
 
-    let left_elapsed_poly = NfSeqPoly::from_iter([]);
-    let right_elapsed_poly = NfSeqPoly::from_iter([]);
-    let combined_elapsed_poly = NfSeqPoly::from_iter([nf_e0]);
     let (fused, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             pool::UnspentEpochFuse,
-            (left_elapsed_poly, right_elapsed_poly, combined_elapsed_poly),
+            witness::unspent_epoch_fuse((*left.data(), *right.data()), &[], &[]),
             left,
             right,
         )
@@ -890,11 +882,6 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let cm_idx = pool
-        .tachygrams_at(init_height)
-        .iter()
-        .position(|tgs| tgs.contains(&note.commitment().into()))
-        .expect("cm in block");
 
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let start_anchor = spendable.data().2;
@@ -907,7 +894,6 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
             user.query_nf(&note, EpochOffset(1))
         ],
         init_height,
-        cm_idx,
         start_anchor,
     );
 
@@ -941,11 +927,6 @@ fn sync_unspent_spans_two_crossings() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let cm_idx = pool
-        .tachygrams_at(init_height)
-        .iter()
-        .position(|tgs| tgs.contains(&note.commitment().into()))
-        .expect("cm in block");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let start_anchor = spendable.data().2;
 
@@ -958,7 +939,6 @@ fn sync_unspent_spans_two_crossings() {
             user.query_nf(&note, EpochOffset(2))
         ],
         init_height,
-        cm_idx,
         start_anchor,
     );
 
@@ -981,7 +961,7 @@ fn sync_unspent_spans_two_crossings() {
 }
 
 #[test]
-fn unspent_fuse_rejects_nonzero_forward_half() {
+fn unspent_fuse_composes_multi_epoch_right() {
     let rng = &mut StdRng::seed_from_u64(0);
     let mut pool = PoolSim::genesis(rng);
     pool.advance(usize::try_from(EPOCH_SIZE + 1).expect("fits"), |_| {
@@ -990,32 +970,72 @@ fn unspent_fuse_rejects_nonzero_forward_half() {
 
     let nf0 = Nullifier::from(Fp::random(&mut *rng));
     let nf1 = Nullifier::from(Fp::random(&mut *rng));
-    let m_left = build_unspent_pcd(
+    // Left: epoch 0's first block only (single-epoch). Right: the rest of epoch 0
+    // plus epoch 1's first block — multi-epoch, sharing the mid-epoch junction.
+    let left =
+        build_unspent_pcd_between_blocks(rng, &pool, &[nf0], BlockHeight(0)..=BlockHeight(0));
+    let right = build_unspent_pcd_between_blocks(
         rng,
         &pool,
-        nf0,
-        BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1),
+        &[nf0, nf1],
+        BlockHeight(1)..=BlockHeight(EPOCH_SIZE),
     );
-    let m_right = build_unspent_pcd(
-        rng,
-        &pool,
-        nf1,
-        BlockHeight(EPOCH_SIZE)..=BlockHeight(EPOCH_SIZE),
-    );
-    let empty = NfSeqPoly::from_iter([]);
-    let (multi, ()) = PROOF_SYSTEM
+
+    let (fused, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            pool::UnspentEpochFuse,
-            (empty.clone(), empty, NfSeqPoly::from_iter([nf0])),
-            m_left,
-            m_right,
+            pool::UnspentFuse,
+            witness::unspent_fuse((*left.data(), *right.data()), &[], &[nf0]),
+            left,
+            right,
         )
-        .expect("multi-epoch segment");
+        .expect("UnspentFuse mid-epoch with multi-epoch right");
 
-    let left = build_unspent_pcd(rng, &pool, nf0, BlockHeight(0)..=BlockHeight(0));
+    let (_anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), _anchor_last) =
+        *fused.data();
+    assert_eq!(
+        elapsed,
+        NfSeqPoly::from_iter([nf0]).commit(),
+        "junction epoch recorded once, not duplicated"
+    );
+    assert_eq!(nf_start, nf0);
+    assert_eq!(nf_end, nf1, "tip advances to the right half's present nf");
+    assert_eq!(epoch_start.0, 0);
+    assert_eq!(epoch_end.0, 1, "merged range spans the boundary the right crossed");
+}
+
+#[test]
+fn unspent_fuse_rejects_epoch_boundary_crossing() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis(rng);
+    pool.advance(usize::try_from(EPOCH_SIZE + 1).expect("fits"), |_| {
+        random_block(rng, 1, 2)
+    });
+
+    let nf0 = Nullifier::from(Fp::random(&mut *rng));
+    let nf1 = Nullifier::from(Fp::random(&mut *rng));
+    // Left spans all of epoch 0; `left.anchor_last` is epoch 0's terminal anchor.
+    let left = build_unspent_pcd_between_blocks(
+        rng,
+        &pool,
+        &[nf0],
+        BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1),
+    );
+    let left_end = left.data().4;
+    // A forged epoch-1 right rooted directly at `left.anchor_last` (no
+    // `next_epoch` fold): anchors line up, but the epoch labels reveal a boundary
+    // this fuse refuses to cross (that is `UnspentEpochFuse`'s job).
+    let stamp = [tg(rng)];
+    let forged_right = build_unspent_seed_pcd(rng, left_end, EpochIndex(1), &stamp, nf1);
+
     let err = PROOF_SYSTEM
-        .fuse(rng, pool::UnspentFuse, (), left, multi)
+        .fuse(
+            rng,
+            pool::UnspentFuse,
+            witness::unspent_fuse((*left.data(), *forged_right.data()), &[], &[]),
+            left,
+            forged_right,
+        )
         .err()
         .unwrap();
     let ragu::Error::InvalidWitness(inner) = err else {
@@ -1023,7 +1043,7 @@ fn unspent_fuse_rejects_nonzero_forward_half() {
     };
     assert_eq!(
         inner.to_string(),
-        "UnspentFuse: forwards half must stay within one epoch"
+        "UnspentFuse: forwards half must sit in left's tip epoch"
     );
 }
 
@@ -1042,23 +1062,23 @@ fn epoch_fuse_setup(
     });
     let nf_e0 = Nullifier::from(Fp::random(&mut *rng));
     let nf_e1 = Nullifier::from(Fp::random(&mut *rng));
-    let left = build_unspent_pcd(
+    let left = build_unspent_pcd_between_blocks(
         rng,
         &pool,
-        nf_e0,
+        &[nf_e0],
         BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1),
     );
-    let right = build_unspent_pcd(
+    let right = build_unspent_pcd_between_blocks(
         rng,
         &pool,
-        nf_e1,
+        &[nf_e1],
         BlockHeight(EPOCH_SIZE)..=BlockHeight(EPOCH_SIZE),
     );
     (pool, nf_e0, nf_e1, left, right)
 }
 
 #[test]
-fn unspent_epoch_fuse_rejects_wrong_left_poly() {
+fn unspent_epoch_fuse_rejects_wrong_left_seq() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_pool, nf_e0, nf_e1, left, right) = epoch_fuse_setup(rng);
     let err = PROOF_SYSTEM
@@ -1067,8 +1087,8 @@ fn unspent_epoch_fuse_rejects_wrong_left_poly() {
             pool::UnspentEpochFuse,
             (
                 NfSeqPoly::from_iter([nf_e1]),
-                NfSeqPoly::from_iter([]),
                 NfSeqPoly::from_iter([nf_e0]),
+                NfSeqPoly::from_iter([]),
             ),
             left,
             right,
@@ -1094,8 +1114,8 @@ fn unspent_epoch_fuse_rejects_wrong_combined() {
             pool::UnspentEpochFuse,
             (
                 NfSeqPoly::from_iter([]),
-                NfSeqPoly::from_iter([]),
                 NfSeqPoly::from_iter([nf_e1]),
+                NfSeqPoly::from_iter([]),
             ),
             left,
             right,
@@ -1120,27 +1140,23 @@ fn unspent_epoch_fuse_rejects_epoch_skip() {
     });
     let nf_e0 = Nullifier::from(Fp::random(&mut *rng));
     let nf_e2 = Nullifier::from(Fp::random(&mut *rng));
-    let left = build_unspent_pcd(
+    let left = build_unspent_pcd_between_blocks(
         rng,
         &pool,
-        nf_e0,
+        &[nf_e0],
         BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1),
     );
-    let right = build_unspent_pcd(
+    let right = build_unspent_pcd_between_blocks(
         rng,
         &pool,
-        nf_e2,
+        &[nf_e2],
         BlockHeight(2 * EPOCH_SIZE)..=BlockHeight(2 * EPOCH_SIZE),
     );
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             pool::UnspentEpochFuse,
-            (
-                NfSeqPoly::from_iter([]),
-                NfSeqPoly::from_iter([]),
-                NfSeqPoly::from_iter([nf_e0]),
-            ),
+            witness::unspent_epoch_fuse((*left.data(), *right.data()), &[], &[]),
             left,
             right,
         )
@@ -1162,11 +1178,6 @@ fn verify_unspent_rejects_tip_mismatch() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let cm_idx = pool
-        .tachygrams_at(init_height)
-        .iter()
-        .position(|tgs| tgs.contains(&note.commitment().into()))
-        .expect("cm in block");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let start_anchor = spendable.data().2;
 
@@ -1178,7 +1189,6 @@ fn verify_unspent_rejects_tip_mismatch() {
             user.query_nf(&note, EpochOffset(1))
         ],
         init_height,
-        cm_idx,
         start_anchor,
     );
     let target_height = BlockHeight(EPOCH_SIZE);
@@ -1219,11 +1229,6 @@ fn verify_unspent_rejects_elapsed_mismatch() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let cm_idx = pool
-        .tachygrams_at(init_height)
-        .iter()
-        .position(|tgs| tgs.contains(&note.commitment().into()))
-        .expect("cm in block");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let start_anchor = spendable.data().2;
 
@@ -1235,7 +1240,6 @@ fn verify_unspent_rejects_elapsed_mismatch() {
             user.query_nf(&note, EpochOffset(1))
         ],
         init_height,
-        cm_idx,
         start_anchor,
     );
     let target_height = BlockHeight(EPOCH_SIZE);
@@ -1276,11 +1280,6 @@ fn verify_unspent_rejects_nf_start_mismatch() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let cm_idx = pool
-        .tachygrams_at(init_height)
-        .iter()
-        .position(|tgs| tgs.contains(&note.commitment().into()))
-        .expect("cm in block");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let start_anchor = spendable.data().2;
 
@@ -1292,7 +1291,6 @@ fn verify_unspent_rejects_nf_start_mismatch() {
             user.query_nf(&note, EpochOffset(1))
         ],
         init_height,
-        cm_idx,
         start_anchor,
     );
     let target_height = BlockHeight(EPOCH_SIZE);
@@ -1346,11 +1344,6 @@ fn spendable_lift_rejects_wrong_cm() {
         ..note
     };
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let cm_idx = pool
-        .tachygrams_at(init_height)
-        .iter()
-        .position(|tgs| tgs.contains(&note.commitment().into()))
-        .expect("cm in block");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let start_anchor = spendable.data().2;
 
@@ -1362,7 +1355,6 @@ fn spendable_lift_rejects_wrong_cm() {
             user.query_nf(&phantom, EpochOffset(1))
         ],
         init_height,
-        cm_idx,
         start_anchor,
     );
     let target_height = BlockHeight(EPOCH_SIZE);
@@ -1401,11 +1393,6 @@ fn spendable_lift_rejects_epoch_discontinuity() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let cm_idx = pool
-        .tachygrams_at(init_height)
-        .iter()
-        .position(|tgs| tgs.contains(&note.commitment().into()))
-        .expect("cm in block");
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let start_anchor = spendable.data().2;
     let present_epoch = spendable.data().1.0;
@@ -1418,7 +1405,6 @@ fn spendable_lift_rejects_epoch_discontinuity() {
             user.query_nf(&note, EpochOffset(1))
         ],
         init_height,
-        cm_idx,
         start_anchor,
     );
     let target_height = BlockHeight(EPOCH_SIZE);
@@ -1472,10 +1458,10 @@ fn spendable_lift_rejects_non_adjacent_unspent() {
     pool.advance(1, |_| random_block(rng, 1, 2));
 
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let unspent = build_unspent_pcd(
+    let unspent = build_unspent_pcd_between_blocks(
         rng,
         &pool,
-        user.query_nf(&note, EpochOffset(0)),
+        &[user.query_nf(&note, EpochOffset(0))],
         init_height..=init_height,
     );
     let verified = user.verify_unspent(
