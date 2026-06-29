@@ -31,10 +31,10 @@ pub struct ExpKeySpectrumCommit(pub Eq);
 pub struct ExpKeySpectrumPoly(pub Polynomial);
 
 #[derive(Clone, Copy, Debug)]
-pub struct ExpandedKeyCommit(pub Eq);
+pub struct HalfKeyCommit(pub Eq);
 
 #[derive(Clone, Debug)]
-pub struct ExpandedKeyPoly(pub Polynomial);
+pub struct HalfKeyPoly(pub Polynomial);
 
 #[derive(Clone, Debug)]
 pub struct NfEmitterPoly(pub Polynomial);

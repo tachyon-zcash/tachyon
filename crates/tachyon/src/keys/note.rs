@@ -18,7 +18,7 @@ use crate::{
     constants::{NF_DOMAIN, NF_EMITTERS, POLY_LEN_MAX},
     digest::{mimc, poseidon},
     note::{self, Nullifier},
-    primitives::{EpochOffset, ExpKeySpectrumPoly, ExpandedKeyPoly, NfEmitterPoly},
+    primitives::{EpochOffset, ExpKeySpectrumPoly, HalfKeyPoly, NfEmitterPoly},
     relations::{
         quotient::{QuerySalts, QueryShift, WeightRatios, nullifier_query},
         subgroup_generator,
@@ -208,10 +208,10 @@ impl ExpandedKey {
     /// strided-column relation binds it to that half's trace, and the
     /// derivation step's interleaved offset recurrence opens the two halves.
     #[must_use]
-    pub fn half_key_poly(half_keys: &[Fp; Self::EK_HALF]) -> ExpandedKeyPoly {
+    pub fn half_key_poly(half_keys: &[Fp; Self::EK_HALF]) -> HalfKeyPoly {
         let mut coeffs = half_keys.to_vec();
         Domain::new(Self::EK_HALF.ilog2()).ifft(&mut coeffs);
-        ExpandedKeyPoly(Polynomial::from_coeffs(&coeffs))
+        HalfKeyPoly(Polynomial::from_coeffs(&coeffs))
     }
 
     /// One derivation polynomial: the 8192-round keyed cipher on input `salt`

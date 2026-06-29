@@ -17,7 +17,7 @@ use crate::{
     keys::{ExpandedKey, NoteMasterKey},
     note::Nullifier,
     primitives::{
-        Anchor, EpochIndex, ExpKeySpectrumPoly, ExpandedKeyPoly, NfEmitterPoly, NfSeqPoly,
+        Anchor, EpochIndex, ExpKeySpectrumPoly, HalfKeyPoly, NfEmitterPoly, NfSeqPoly,
         Tachygram, TachygramSetPoly,
     },
     relations::quotient::{
@@ -78,8 +78,8 @@ pub fn nf_master_expand<'key>(
 pub fn nullifier_derivation<'key>(
     headers: (StepLeft<NullifierDerivationStep>, StepRight<NullifierDerivationStep>),
     keyset: &'key ExpandedKey,
-    key_a: ExpandedKeyPoly,
-    key_b: ExpandedKeyPoly,
+    key_a: HalfKeyPoly,
+    key_b: HalfKeyPoly,
     mk: &'key NoteMasterKey,
     polys: &'key [NfEmitterPoly; NF_EMITTERS],
     creation_epoch: EpochIndex,

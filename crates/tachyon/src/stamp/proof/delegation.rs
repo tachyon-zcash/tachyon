@@ -32,7 +32,7 @@ use ragu::{
 use zcash_mimc::spec::tachyon::TachyonP5R64;
 
 use crate::{
-    CONSTANT_SCHEDULE, ExpandedKeyCommit, ExpandedKeyPoly, NfEmitterCommit, NfEmitterPoly,
+    CONSTANT_SCHEDULE, HalfKeyCommit, HalfKeyPoly, NfEmitterCommit, NfEmitterPoly,
     NfEmittersDigest,
     constants::{NF_EMITTERS, POLY_LEN_MAX},
     keys::{ExpandedKey, NoteMasterKey, ProofAuthorizingKey},
@@ -158,7 +158,7 @@ impl Step for NfMasterExpand {
     type Witness<'source> = (
         ExpKeySpectrumPoly,
         RoundBoundaryQuotients<EXPANSION_ROUND_SPLITS>,
-        ExpandedKeyPoly,
+        HalfKeyPoly,
         Polynomial, // decimation quotient binding K to T's final column
         Fp,         // half ∈ {0,1}
     );
@@ -277,14 +277,14 @@ impl Step for NfMasterExpand {
             whitening,
         )?;
 
-        Ok(((ExpandedKeyCommit(key_poly.0.commit()), mk, cm, half), ()))
+        Ok(((HalfKeyCommit(key_poly.0.commit()), mk, cm, half), ()))
     }
 }
 
 /// One expansion half's keyset commitment, master key, note commitment, and
 /// half tag `(keyset_commit, mk, cm, half)`. Wallet-only.
 ///
-/// Carries the [`ExpandedKeyCommit`] to the eval-form half-key polynomial (this
+/// Carries the [`HalfKeyCommit`] to the eval-form half-key polynomial (this
 /// half's `ExpandedKey::EK_HALF` keyed-cipher expansion outputs), proven by
 /// [`NfMasterExpand`], plus the raw `mk` forwarded for
 /// [`NullifierDerivationStep`] to derive its query parameters (per-poly salts,
@@ -295,7 +295,7 @@ impl Step for NfMasterExpand {
 pub struct NfExpandedKeyset;
 
 impl Header for NfExpandedKeyset {
-    type Data = (ExpandedKeyCommit, NoteMasterKey, NoteCommitment, Fp);
+    type Data = (HalfKeyCommit, NoteMasterKey, NoteCommitment, Fp);
 
     const SUFFIX: Suffix = Suffix::new(12);
 
@@ -362,7 +362,7 @@ impl Header for NullifierDerivation {
 /// `T_j`, their round- and boundary-quotients, the public constant schedule
 /// `C`, and the creation epoch `E_0`. It first checks the seam (both halves
 /// carry one `mk`/`cm`, and they are the even half `0` and odd half `1`), then
-/// binds `A`/`B` to the threaded [`ExpandedKeyCommit`]s by commit-equality, so
+/// binds `A`/`B` to the threaded [`HalfKeyCommit`]s by commit-equality, so
 /// every key it reads is the proven 256-key interleaved schedule; the per-poly
 /// salts, weight bases `ρ_j`, and shift `c` arrive on the keyset header,
 /// derived from the bound `mk` by [`NfMasterExpand`].
@@ -389,8 +389,8 @@ impl Step for NullifierDerivationStep {
     /// `(A, B, T_j, quotients_j, E_0)`: the even/odd half-key polys, the `N`
     /// derivation polys, their quotients, and the creation epoch.
     type Witness<'source> = (
-        ExpandedKeyPoly,
-        ExpandedKeyPoly,
+        HalfKeyPoly,
+        HalfKeyPoly,
         [NfEmitterPoly; NF_EMITTERS],
         [RoundBoundaryQuotients<EMITTER_ROUND_SPLITS>; NF_EMITTERS],
         EpochIndex,
