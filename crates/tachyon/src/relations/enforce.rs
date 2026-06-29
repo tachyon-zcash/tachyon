@@ -840,7 +840,6 @@ mod tests {
     use alloc::vec::Vec;
     use core::{array, iter::repeat_with};
 
-    use ff::Field as _;
     use ragu::Domain;
     use rand::{SeedableRng as _, rngs::StdRng};
 

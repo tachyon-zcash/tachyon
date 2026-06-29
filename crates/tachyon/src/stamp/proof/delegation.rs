@@ -189,7 +189,7 @@ impl Step for NfMasterExpand {
 
             let all_parts: [Fp; NoteMasterKey::MK_LENGTH] = left_parts
                 .into_iter()
-                .zip(right_parts.into_iter())
+                .zip(right_parts)
                 .map(|(left_key, right_key)| {
                     if bool::from(left_key.is_zero()) == bool::from(right_key.is_zero()) {
                         return Err(ragu::Error::InvalidWitness(

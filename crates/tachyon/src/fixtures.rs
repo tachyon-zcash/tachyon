@@ -13,7 +13,7 @@ use core::{array, cell::RefCell, iter, ops::RangeInclusive};
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::{Pcd, Polynomial, Proof};
+use ragu::{Pcd, Polynomial};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
@@ -756,33 +756,68 @@ impl WalletSim {
     ) -> Pcd<delegation::NullifierDerivation> {
         let mk = self.master_key(&note);
 
-        // Two complementary master-key seeds: parts (0,1,2) and (3,4,5).
-        let left = self.note_master_half(rng, note, [0, 1, 2]);
-        let right = self.note_master_half(rng, note, [3, 4, 5]);
+        // Even half (cipher window 0..EK_HALF) and odd half
+        // (EK_HALF..2·EK_HALF), each certified by one NfMasterExpand fusing the
+        // two complementary master-key seeds (parts 0,1,2 and 3,4,5).
+        let even_left = self.note_master_half(rng, note, [0, 1, 2]);
+        let even_right = self.note_master_half(rng, note, [3, 4, 5]);
+        let (even_spectrum, even_keys) = mk.derive_expanded_trace(0);
+        let key_a = ExpandedKey::half_key_poly(&even_keys);
+        let (keyset_even_pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                delegation::NfMasterExpand,
+                witness::nf_master_expand(
+                    (*even_left.data(), *even_right.data()),
+                    &mk,
+                    &even_spectrum,
+                    &even_keys,
+                    0,
+                ),
+                even_left,
+                even_right,
+            )
+            .expect("NfMasterExpand even");
 
-        // Key expansion: derive the trace and keyset once (the FFTs), then
-        // build the NfMasterExpand witness from them.
-        let (spectrum, keyset) = mk.derive_expanded_trace();
-        let expansion =
-            witness::nf_master_expand((*left.data(), *right.data()), &mk, &spectrum, &keyset);
-        let (keyset_pcd, ()) = PROOF_SYSTEM
-            .fuse(rng, delegation::NfMasterExpand, expansion, left, right)
-            .expect("NfMasterExpand");
+        let odd_left = self.note_master_half(rng, note, [0, 1, 2]);
+        let odd_right = self.note_master_half(rng, note, [3, 4, 5]);
+        let (odd_spectrum, odd_keys) = mk.derive_expanded_trace(1);
+        let key_b = ExpandedKey::half_key_poly(&odd_keys);
+        let (keyset_odd_pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                delegation::NfMasterExpand,
+                witness::nf_master_expand(
+                    (*odd_left.data(), *odd_right.data()),
+                    &mk,
+                    &odd_spectrum,
+                    &odd_keys,
+                    1,
+                ),
+                odd_left,
+                odd_right,
+            )
+            .expect("NfMasterExpand odd");
 
+        // Assemble the interleaved 256-key schedule and certify the derivation
+        // polynomials against both halves.
+        let keyset = ExpandedKey::from_halves(&even_keys, &odd_keys);
         let polys = keyset.derivation_polys(&mk.query_salts());
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 delegation::NullifierDerivationStep,
                 witness::nullifier_derivation(
-                    (*keyset_pcd.data(), ()),
+                    (*keyset_even_pcd.data(), *keyset_odd_pcd.data()),
                     &keyset,
+                    key_a,
+                    key_b,
                     &mk,
                     &polys,
                     creation_epoch,
                 ),
-                keyset_pcd,
-                Proof::trivial().carry::<()>(()),
+                keyset_even_pcd,
+                keyset_odd_pcd,
             )
             .expect("NullifierDerivationStep");
         pcd

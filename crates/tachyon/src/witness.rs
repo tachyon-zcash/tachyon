@@ -8,7 +8,6 @@ use core::array;
 
 use alloc::vec::Vec;
 
-use ff::Field as _;
 use pasta_curves::Fp;
 use ragu::{Header, Polynomial, Step};
 
@@ -18,8 +17,8 @@ use crate::{
     keys::{ExpandedKey, NoteMasterKey},
     note::Nullifier,
     primitives::{
-        Anchor, EpochIndex, ExpKeySpectrumPoly, NfEmitterPoly, NfSeqPoly, Tachygram,
-        TachygramSetPoly,
+        Anchor, EpochIndex, ExpKeySpectrumPoly, ExpandedKeyPoly, NfEmitterPoly, NfSeqPoly,
+        Tachygram, TachygramSetPoly,
     },
     relations::quotient::{
         self, LIFT_SPLITS, RoundBoundaryQuotients, accumulator_recurrence, weight_recurrence,
@@ -37,41 +36,58 @@ type StepRight<S> = <<S as Step>::Right as Header>::Data;
 
 type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 
-/// Witness for [`NfMasterExpand`]:
-/// `(trace, round_boundary_quotients, key_poly, decimation_quotient)`.
+/// Witness for [`NfMasterExpand`] for one half.
+///
+/// `(trace, round_boundary_quotients, half_key_poly, decimation_quotient,
+/// half)`. `half ∈ {0,1}` selects the cipher-input window `base = half ·
+/// EK_HALF`; the caller supplies that half's `EK_HALF` keys.
 #[must_use]
 pub fn nf_master_expand<'key>(
     headers: (StepLeft<NfMasterExpand>, StepRight<NfMasterExpand>),
     mk: &'key NoteMasterKey,
     spectrum: &'key ExpKeySpectrumPoly,
-    keyset: &'key ExpandedKey,
+    half_keys: &'key [Fp; ExpandedKey::EK_HALF],
+    half: usize,
 ) -> StepWitness<'key, NfMasterExpand> {
     let (_left, _right) = headers;
-    let key_poly = keyset.key_poly();
-    let (round, boundary, decimation_quotient) =
-        quotient::expansion_quotients(spectrum.0.coefficients(), *mk, key_poly.0.coefficients());
+    let key_poly = ExpandedKey::half_key_poly(half_keys);
+    #[expect(clippy::as_conversions, reason = "constant size")]
+    let base = Fp::from((half * ExpandedKey::EK_HALF) as u64);
+    let (round, boundary, decimation_quotient) = quotient::expansion_quotients(
+        spectrum.0.coefficients(),
+        *mk,
+        key_poly.0.coefficients(),
+        base,
+    );
+    #[expect(clippy::as_conversions, reason = "half is 0 or 1")]
     (
         spectrum.clone(),
         RoundBoundaryQuotients { round, boundary },
         key_poly,
         decimation_quotient,
+        Fp::from(half as u64),
     )
 }
 
-/// Witness for [`NullifierDerivationStep`]:
-/// `(key_poly, derivation_polys, quotients, creation_epoch)`.
+/// Witness for [`NullifierDerivationStep`].
+///
+/// `(key_a, key_b, derivation_polys, quotients, creation_epoch)`. `key_a`/`key_b`
+/// are the even/odd half-key polys; `keyset` is the assembled interleaved
+/// schedule the round quotients are built against.
 #[must_use]
 pub fn nullifier_derivation<'key>(
     headers: (StepLeft<NullifierDerivationStep>, StepRight<NullifierDerivationStep>),
     keyset: &'key ExpandedKey,
+    key_a: ExpandedKeyPoly,
+    key_b: ExpandedKeyPoly,
     mk: &'key NoteMasterKey,
     polys: &'key [NfEmitterPoly; NF_EMITTERS],
     creation_epoch: EpochIndex,
 ) -> StepWitness<'key, NullifierDerivationStep> {
-    let (_keyset_header, ()) = headers;
-    let key_poly = keyset.key_poly();
+    let (_keyset_even, _keyset_odd) = headers;
     let salts = mk.query_salts();
-    let first_key = key_poly.0.eval(Fp::ONE);
+    // k_0 = K(1) = A(1) = the even-position-0 key.
+    let first_key = keyset.round_key(0);
 
     #[expect(clippy::indexing_slicing, reason = "todo")]
     let quotients: [RoundBoundaryQuotients<_>; NF_EMITTERS] =
@@ -83,7 +99,7 @@ pub fn nullifier_derivation<'key>(
                 first_key,
             ),
         });
-    (key_poly, polys.clone(), quotients, creation_epoch)
+    (key_a, key_b, polys.clone(), quotients, creation_epoch)
 }
 
 /// Witness for [`SpendableInit`]:

@@ -336,7 +336,6 @@ impl fmt::Debug for NoteMasterKey {
 
 #[cfg(test)]
 mod tests {
-    use ff::Field as _;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;

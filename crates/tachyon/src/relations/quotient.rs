@@ -883,7 +883,6 @@ fn expansion_quotient_coeffs(numerator: &[Fp]) -> Vec<Fp> {
 mod tests {
     use core::array;
 
-    use ff::{Field as _, PrimeField as _};
     use pasta_curves::Fp;
     use ragu::{Domain, Polynomial};
     use zcash_mimc::spec::tachyon::TachyonP5R8192;
