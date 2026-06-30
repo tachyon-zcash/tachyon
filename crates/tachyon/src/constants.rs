@@ -1,9 +1,15 @@
 //! Protocol-wide non-hash constants.
 
-#![allow(clippy::cfg_not_test, reason = "module swap")]
+#![allow(
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
+    reason = "constant definitions"
+)]
+
+use zcash_mimc::TachyonP5R64;
 
 /// Number of blocks per epoch.
-pub const EPOCH_SIZE: u32 = 1 << { if cfg!(test) { 4 } else { 12 } };
+pub const EPOCH_SIZE: u32 = 1 << 12;
 
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)
 pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
@@ -51,3 +57,12 @@ pub const NF_DOMAIN: usize = {
     );
     (NF_EMITTERS * POLY_LEN_MAX) >> 1
 };
+
+/// One expansion part fits as many `TachyonP5R64::ROUNDS` rows into a
+/// polynomial as possible.
+pub const EK_PART_SIZE: usize = POLY_LEN_MAX / TachyonP5R64::ROUNDS;
+
+/// The full cyclic round-key schedule width: two interleaved halves. The
+/// emitter's 8192-round cipher cycles this many distinct keys
+/// (`8192 / EK_FULL_SIZE = 32` cycles).
+pub const EK_FULL_SIZE: usize = 2 * EK_PART_SIZE;

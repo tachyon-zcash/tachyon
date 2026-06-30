@@ -23,7 +23,7 @@ use crate::{
         build_unspent_pcd_between_blocks, build_unspent_seed_pcd, random_block, random_block_with,
         spend_witness, spendable_init_inputs,
     },
-    keys::{ExpandedKey, NoteMasterKey},
+    keys::{ExpandedKey, HalfKey, NoteMasterKey},
     note::{self, Nullifier},
     primitives::{Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqPoly, Tachygram, effect},
     value, witness,
@@ -1545,8 +1545,8 @@ fn nf_master_expand_rejects_forged_witnesses() {
         let (trace, quotients, _honest_key, decimation_quotient, half) = assemble(mk, 0);
         let (_, even_keys) = mk.derive_expanded_trace(0);
         let mut tampered = even_keys;
-        tampered[0] += Fp::ONE;
-        let bad_key = ExpandedKey::half_key_poly(&tampered);
+        tampered.0[0] += Fp::ONE;
+        let bad_key = tampered.key_poly();
         (trace, quotients, bad_key, decimation_quotient, half)
     };
 
@@ -1639,8 +1639,8 @@ fn derivation_rejects_mismatched_key_poly() {
     let keyset = ExpandedKey::from_halves(&even_keys, &odd_keys);
     let salts = mk.query_salts();
     let polys = keyset.derivation_polys(&salts);
-    let key_a = ExpandedKey::half_key_poly(&even_keys);
-    let key_b = ExpandedKey::half_key_poly(&odd_keys);
+    let key_a = even_keys.key_poly();
+    let key_b = odd_keys.key_poly();
     let (_orig_a, good_b, good_polys, good_quotients, _) = witness::nullifier_derivation(
         (*keyset_even_pcd.data(), *keyset_odd_pcd.data()),
         &keyset,
@@ -1651,8 +1651,8 @@ fn derivation_rejects_mismatched_key_poly() {
         creation_epoch,
     );
     let mut tampered = even_keys;
-    tampered[0] += Fp::ONE;
-    let bad_key_a = ExpandedKey::half_key_poly(&tampered);
+    tampered.0[0] += Fp::ONE;
+    let bad_key_a = tampered.key_poly();
 
     let err = PROOF_SYSTEM
         .fuse(
@@ -1679,17 +1679,14 @@ fn derivation_rejects_mismatched_key_poly() {
     );
 }
 
-/// Certify one expansion half (the `NfExpandedKeyset` PCD) for a note,
+/// Certify one expansion half (the `NfHalfKeyset` PCD) for a note,
 /// returning it with that half's keys.
 fn keyset_half_pcd(
     user: &WalletSim,
     rng: &mut StdRng,
     note: Note,
     half: usize,
-) -> (
-    Pcd<delegation::NfExpandedKeyset>,
-    [Fp; ExpandedKey::EK_HALF],
-) {
+) -> (Pcd<delegation::NfHalfKeyset>, HalfKey) {
     let mk = user.master_key(&note);
     let (spectrum, keys) = mk.derive_expanded_trace(half);
     let left = user.note_master_half(rng, note, [0, 1, 2]);
@@ -1733,12 +1730,12 @@ fn derivation_rejects_seam_violations() {
     let keyset_a = ExpandedKey::from_halves(&even_a_keys, &odd_a_keys);
     let polys = keyset_a.derivation_polys(&mk_a.query_salts());
     let even_a_header = *even_a_pcd.data();
-    let make_witness = |right_header, key_b_keys: &[Fp; ExpandedKey::EK_HALF]| {
+    let make_witness = |right_header, key_b_keys: &HalfKey| {
         witness::nullifier_derivation(
             (even_a_header, right_header),
             &keyset_a,
-            ExpandedKey::half_key_poly(&even_a_keys),
-            ExpandedKey::half_key_poly(key_b_keys),
+            even_a_keys.key_poly(),
+            key_b_keys.key_poly(),
             &mk_a,
             &polys,
             creation_epoch,

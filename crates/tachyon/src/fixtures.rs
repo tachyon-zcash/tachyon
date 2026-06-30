@@ -766,13 +766,13 @@ impl WalletSim {
     ) -> Pcd<delegation::NullifierDerivation> {
         let mk = self.master_key(&note);
 
-        // Even half (cipher window 0..EK_HALF) and odd half
-        // (EK_HALF..2·EK_HALF), each certified by one NfMasterExpand fusing the
-        // two complementary master-key seeds (parts 0,1,2 and 3,4,5).
+        // Even half (cipher window 0..EK_PART_SIZE) and odd half
+        // (EK_PART_SIZE..2·EK_PART_SIZE), each certified by one NfMasterExpand fusing
+        // the two complementary master-key seeds (parts 0,1,2 and 3,4,5).
         let even_left = self.note_master_half(rng, note, [0, 1, 2]);
         let even_right = self.note_master_half(rng, note, [3, 4, 5]);
         let (even_spectrum, even_keys) = mk.derive_expanded_trace(0);
-        let key_a = ExpandedKey::half_key_poly(&even_keys);
+        let key_a = even_keys.key_poly();
         let (keyset_even_pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
@@ -792,7 +792,7 @@ impl WalletSim {
         let odd_left = self.note_master_half(rng, note, [0, 1, 2]);
         let odd_right = self.note_master_half(rng, note, [3, 4, 5]);
         let (odd_spectrum, odd_keys) = mk.derive_expanded_trace(1);
-        let key_b = ExpandedKey::half_key_poly(&odd_keys);
+        let key_b = odd_keys.key_poly();
         let (keyset_odd_pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,

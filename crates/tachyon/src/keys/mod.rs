@@ -75,7 +75,7 @@ mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use note::{ExpandedKey, NoteMasterKey, NullifierKey, PaymentKey};
+pub use note::{ExpandedKey, HalfKey, NoteMasterKey, NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]

@@ -11,9 +11,9 @@ use pasta_curves::Fp;
 use ragu::{Header, Polynomial, Step};
 
 use crate::{
-    constants::NF_EMITTERS,
+    constants::{EK_PART_SIZE, NF_EMITTERS},
     digest::poseidon,
-    keys::{ExpandedKey, NoteMasterKey},
+    keys::{ExpandedKey, HalfKey, NoteMasterKey},
     note::Nullifier,
     primitives::{
         Anchor, EpochIndex, HalfKeyPoly, HalfKeySpectrumPoly, NfEmitterPoly, NfSeqPoly, Tachygram,
@@ -39,19 +39,19 @@ type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 ///
 /// `(trace, round_boundary_quotients, half_key_poly, decimation_quotient,
 /// half)`. `half ∈ {0,1}` selects the cipher-input window `base = half ·
-/// EK_HALF`; the caller supplies that half's `EK_HALF` keys.
+/// EK_PART_SIZE`; the caller supplies that half's `EK_PART_SIZE` keys.
 #[must_use]
 pub fn nf_master_expand<'key>(
     headers: (StepLeft<NfMasterExpand>, StepRight<NfMasterExpand>),
     mk: &'key NoteMasterKey,
     spectrum: &'key HalfKeySpectrumPoly,
-    half_keys: &'key [Fp; ExpandedKey::EK_HALF],
+    half_keys: &'key HalfKey,
     half: usize,
 ) -> StepWitness<'key, NfMasterExpand> {
     let (_left, _right) = headers;
-    let key_poly = ExpandedKey::half_key_poly(half_keys);
+    let key_poly = half_keys.key_poly();
     #[expect(clippy::as_conversions, reason = "constant size")]
-    let base = Fp::from((half * ExpandedKey::EK_HALF) as u64);
+    let base = Fp::from((half * EK_PART_SIZE) as u64);
     let (round, boundary, decimation_quotient) = quotient::expansion_quotients(
         spectrum.0.coefficients(),
         *mk,

@@ -2,8 +2,8 @@
 //! carries `cm` for its consumers.
 //!
 //! [`NfMasterExpand`] proves one half of a note's keyset expansion -- the
-//! `ExpandedKey::EK_HALF` keyed-cipher outputs of that half -- in a single
-//! trace-based step, committing them on the [`NfExpandedKeyset`] header. Two
+//! `EK_PART_SIZE` keyed-cipher outputs of that half -- in a single
+//! trace-based step, committing them on the [`NfHalfKeyset`] header. Two
 //! invocations (even/odd halves) make the full 256-key interleaved schedule.
 //! [`NullifierDerivationStep`] then certifies the note's derivation polynomials
 //! against the two halves, reconstructing the schedule inline.
@@ -34,8 +34,8 @@ use zcash_mimc::spec::tachyon::TachyonP5R64;
 use crate::{
     CONSTANT_SCHEDULE, HalfKeyCommit, HalfKeyPoly, NfEmitterCommit, NfEmitterPoly,
     NfEmittersDigest,
-    constants::{NF_EMITTERS, POLY_LEN_MAX},
-    keys::{ExpandedKey, NoteMasterKey, ProofAuthorizingKey},
+    constants::{EK_FULL_SIZE, EK_PART_SIZE, NF_EMITTERS, POLY_LEN_MAX},
+    keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{Commitment as NoteCommitment, Note},
     primitives::{EpochIndex, HalfKeySpectrumPoly},
     relations::{
@@ -127,10 +127,10 @@ impl Step for NfMasterSeed {
 
 /// Prove one half of a note's keyset expansion in one trace-based step.
 ///
-/// The `ExpandedKey::EK_HALF` keyed-cipher outputs of this half, committed as
+/// The `EK_PART_SIZE` keyed-cipher outputs of this half, committed as
 /// the eval-form half-key polynomial `A` (`A(ζ^r) = E_mk(base + r)` over the
-/// order-`ExpandedKey::EK_HALF` subgroup `⟨ζ⟩`) on the [`NfExpandedKeyset`]
-/// header, tagged with `half ∈ {0,1}`. `base = half · EK_HALF` selects the
+/// order-`EK_PART_SIZE` subgroup `⟨ζ⟩`) on the [`NfHalfKeyset`]
+/// header, tagged with `half ∈ {0,1}`. `base = half · EK_PART_SIZE` selects the
 /// cipher-input window; the two halves interleave (even/odd cosets) into the
 /// full 256-key schedule, reconstructed at [`NullifierDerivationStep`].
 ///
@@ -151,7 +151,7 @@ pub struct NfMasterExpand;
 impl Step for NfMasterExpand {
     type Aux<'source> = ();
     type Left = NfMasterHeader;
-    type Output = NfExpandedKeyset;
+    type Output = NfHalfKeyset;
     type Right = NfMasterHeader;
     /// `(trace T, round/boundary quotients, half-key poly A/B, decimation
     /// quotient, half)`. `half ∈ {0,1}` selects this invocation's window.
@@ -174,15 +174,15 @@ impl Step for NfMasterExpand {
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // This invocation computes one half of the schedule. `half ∈ {0,1}` is
         // range-checked and fixes the cipher-input window origin
-        // `base = half · EK_HALF`, so half 0 runs inputs 0..EK_HALF (the even
-        // schedule positions) and half 1 runs EK_HALF..2·EK_HALF (odd). The
+        // `base = half · EK_PART_SIZE`, so half 0 runs inputs 0..EK_PART_SIZE (the even
+        // schedule positions) and half 1 runs EK_PART_SIZE..2·EK_PART_SIZE (odd). The
         // header carries `half` so the derivation step pins one of each.
         enforce_zero(
             half * (half - Fp::ONE),
             "NfMasterExpand: half must be 0 or 1",
         )?;
         #[expect(clippy::as_conversions, reason = "constant size")]
-        let base = half * Fp::from(ExpandedKey::EK_HALF as u64);
+        let base = half * Fp::from(EK_PART_SIZE as u64);
         let (cm, mk) = {
             let (left_cm, left_parts) = left;
             let (right_cm, right_parts) = right;
@@ -221,7 +221,7 @@ impl Step for NfMasterExpand {
         // boundary quotient pins the same values.
         {
             let first_key = mk.round_key(0);
-            let boundary: [Fp; ExpandedKey::EK_HALF] = array::from_fn(|row| {
+            let boundary: [Fp; EK_PART_SIZE] = array::from_fn(|row| {
                 #[expect(clippy::as_conversions, reason = "row index conversion")]
                 let cipher_in = base + Fp::from(row as u64) + first_key;
                 cipher_in.square().square() * cipher_in
@@ -260,15 +260,15 @@ impl Step for NfMasterExpand {
         }
 
         // Bind the eval-form half-key poly `A` to the trace's final column. On
-        // the order-`ExpandedKey::EK_HALF` subgroup `⟨ζ⟩` (`ζ = ω^{TRACE_COLUMNS}`),
+        // the order-`EK_PART_SIZE` subgroup `⟨ζ⟩` (`ζ = ω^{TRACE_COLUMNS}`),
         // `A(ζ^r) = (row-r final cell) + whitening = E_mk(base + r)`, so `A`
-        // commits this half's `ExpandedKey::EK_HALF` expansion outputs. `σ =
+        // commits this half's `EK_PART_SIZE` expansion outputs. `σ =
         // ω^{TRACE_COLUMNS-1}` is the final-column stride within a row.
         #[expect(clippy::as_conversions, reason = "constant column index")]
         let stride =
             subgroup_generator::<POLY_LEN_MAX>().pow_vartime([(TachyonP5R64::ROUNDS - 1) as u64]);
         let whitening = mk.round_key(TachyonP5R64::ROUNDS);
-        enforce_strided_column::<{ ExpandedKey::EK_HALF }>(
+        enforce_strided_column::<{ EK_PART_SIZE }>(
             ctx,
             &expansion_trace.0,
             &key_poly.0,
@@ -285,16 +285,16 @@ impl Step for NfMasterExpand {
 /// half tag `(keyset_commit, mk, cm, half)`. Wallet-only.
 ///
 /// Carries the [`HalfKeyCommit`] to the eval-form half-key polynomial (this
-/// half's `ExpandedKey::EK_HALF` keyed-cipher expansion outputs), proven by
+/// half's `EK_PART_SIZE` keyed-cipher expansion outputs), proven by
 /// [`NfMasterExpand`], plus the raw `mk` forwarded for
 /// [`NullifierDerivationStep`] to derive its query parameters (per-poly salts,
 /// weight bases `ρ_j`, and shift `c`), and `half ∈ {0,1}` so the derivation
 /// step pins one even and one odd half. The header is private to the wallet's
 /// own proof tree and is never published.
 #[derive(Clone, Debug)]
-pub struct NfExpandedKeyset;
+pub struct NfHalfKeyset;
 
-impl Header for NfExpandedKeyset {
+impl Header for NfHalfKeyset {
     type Data = (HalfKeyCommit, NoteMasterKey, NoteCommitment, Fp);
 
     const SUFFIX: Suffix = Suffix::new(12);
@@ -383,9 +383,9 @@ pub struct NullifierDerivationStep;
 
 impl Step for NullifierDerivationStep {
     type Aux<'source> = ();
-    type Left = NfExpandedKeyset;
+    type Left = NfHalfKeyset;
     type Output = NullifierDerivation;
-    type Right = NfExpandedKeyset;
+    type Right = NfHalfKeyset;
     /// `(A, B, T_j, quotients_j, E_0)`: the even/odd half-key polys, the `N`
     /// derivation polys, their quotients, and the creation epoch.
     type Witness<'source> = (
@@ -464,10 +464,7 @@ impl Step for NullifierDerivationStep {
             // Rounds 1..: the committed-offset quintic recurrence (x^5 S-box),
             // the full 256-key interleaved schedule reconstructed inline from
             // the two committed half-key polys.
-            enforce_committed_offset_recurrence::<
-                { EMITTER_ROUND_SPLITS },
-                { ExpandedKey::EK_LENGTH },
-            >(
+            enforce_committed_offset_recurrence::<{ EMITTER_ROUND_SPLITS }, { EK_FULL_SIZE }>(
                 ctx,
                 &poly.0,
                 &poly_quotients.round,
