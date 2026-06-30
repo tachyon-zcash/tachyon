@@ -790,7 +790,7 @@ pub(crate) fn expansion_boundary_quotient(trace_ext: &[Fp], base: Fp, first_key:
             .fold(Fp::ZERO, |acc, (weight, basis)| {
                 acc + *weight * basis[point]
             });
-        complement_ext[point] * (trace_at_reduced(trace_ext, point) - target)
+        complement_ext[point] * (trace_ext[point * REDUCE_STRIDE] - target)
     });
     assert!(
         quotient.len() <= POLY_LEN_MAX,
@@ -835,12 +835,6 @@ pub(crate) fn expansion_decimation_quotient(
         "decimation numerator is not divisible by Z_<zeta>: key poly mismatches the trace column",
     );
     Polynomial::from_coeffs(&quotient)
-}
-
-/// Trace value on the reduced coset, decimated from the shared quintic
-/// evaluation `trace_ext`.
-fn trace_at_reduced(trace_ext: &[Fp], point: usize) -> Fp {
-    trace_ext[point * REDUCE_STRIDE]
 }
 
 /// Spread `coeffs` by the column stride: place coefficient `k` at degree
