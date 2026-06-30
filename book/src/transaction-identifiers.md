@@ -21,7 +21,7 @@ $$
 \text{BLAKE2b-256}_{\text{``ZTxAuthTachyHash''}}\bigl(\\
 \quad \mathsf{vActionSigs} \,\|\, \mathsf{bindingSig} \\
 \quad\|\,\begin{cases}
-    \text{cActionsTachyon}_{32} \,\|\, \text{anchor}_h \,\|\, \text{anchor}_{\text{pc}} \,\|\, \text{nTachygrams} \,\|\, \text{vTachygrams} \,\|\, \text{proof} & \text{if stamped}\\
+    \text{cActionsTachyon}_{32} \,\|\, \text{anchor}_{32} \,\|\, \text{vTachygrams} \,\|\, \text{proof} & \text{if stamped}\\
     \text{stampWtxid}_{64} & \text{if stripped}
 \end{cases}\bigr)
 $$

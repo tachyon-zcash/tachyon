@@ -14,6 +14,7 @@ use crate::{
         random_action, random_block, random_block_with,
     },
     primitives::{ActionDigest, BlockHeight},
+    stamp::VerificationError,
 };
 
 #[test]
@@ -150,28 +151,40 @@ fn stamp_verify_action_multiset_invariants() {
     {
         let mut actions = stamped.actions.clone();
         actions.pop();
-        assert!(stamped.stamp.verify(rng, &actions).is_err(), "drop");
+        let err = stamped.stamp.verify(rng, &actions).unwrap_err();
+        let VerificationError::ActionSetMismatch = err else {
+            panic!("drop: expected ActionSetMismatch, got {err:?}");
+        };
     }
 
     // Duplicate rejects.
     {
         let mut actions = stamped.actions.clone();
         actions.push(actions[0]);
-        assert!(stamped.stamp.verify(rng, &actions).is_err(), "duplicate");
+        let err = stamped.stamp.verify(rng, &actions).unwrap_err();
+        let VerificationError::ActionSetMismatch = err else {
+            panic!("duplicate: expected ActionSetMismatch, got {err:?}");
+        };
     }
 
     // Foreign-extra rejects.
     {
         let mut actions = stamped.actions.clone();
         actions.push(random_action(rng));
-        assert!(stamped.stamp.verify(rng, &actions).is_err(), "extra");
+        let err = stamped.stamp.verify(rng, &actions).unwrap_err();
+        let VerificationError::ActionSetMismatch = err else {
+            panic!("extra: expected ActionSetMismatch, got {err:?}");
+        };
     }
 
     // Replace-with-foreign rejects.
     {
         let mut actions = stamped.actions.clone();
         actions[0] = random_action(rng);
-        assert!(stamped.stamp.verify(rng, &actions).is_err(), "replaced");
+        let err = stamped.stamp.verify(rng, &actions).unwrap_err();
+        let VerificationError::ActionSetMismatch = err else {
+            panic!("replaced: expected ActionSetMismatch, got {err:?}");
+        };
     }
 }
 
