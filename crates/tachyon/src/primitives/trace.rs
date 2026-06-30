@@ -24,11 +24,8 @@ lazy_static! {
     pub static ref CONSTANT_SCHEDULE_COMMIT: Eq = CONSTANT_SCHEDULE.commit();
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct ExpKeySpectrumCommit(pub Eq);
-
 #[derive(Clone, Debug)]
-pub struct ExpKeySpectrumPoly(pub Polynomial);
+pub struct HalfKeySpectrumPoly(pub Polynomial);
 
 #[derive(Clone, Copy, Debug)]
 pub struct HalfKeyCommit(pub Eq);

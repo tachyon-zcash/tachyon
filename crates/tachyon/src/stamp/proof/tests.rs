@@ -20,15 +20,12 @@ use crate::{
     entropy::ActionEntropy,
     fixtures::{
         PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_stamp,
-        build_unspent_pcd_between_blocks,
-        build_unspent_seed_pcd, random_block, random_block_with, spend_witness,
-        spendable_init_inputs,
+        build_unspent_pcd_between_blocks, build_unspent_seed_pcd, random_block, random_block_with,
+        spend_witness, spendable_init_inputs,
     },
     keys::{ExpandedKey, NoteMasterKey},
     note::{self, Nullifier},
-    primitives::{
-        Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqPoly, Tachygram, effect,
-    },
+    primitives::{Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqPoly, Tachygram, effect},
     value, witness,
 };
 
@@ -258,8 +255,7 @@ fn stamp_lift_within_epoch() {
     let note = user.random_note(rng, 200);
     let (stamp, plan) = build_output_stamp(rng, stamp_anchor, note);
 
-    let action_commit =
-        ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
+    let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
     let tachygram_commit = stamp
         .tachygrams
         .iter()
@@ -343,8 +339,13 @@ fn unspent_fuse_rejects_invalid_compositions() {
     let stamps_left = vec![tg(rng)];
     let stamps_right = vec![tg(rng)];
     let start = Anchor::default();
-    let mid =
-        start.next_stamp(&stamps_left.iter().copied().collect::<TachygramSetPoly>().commit());
+    let mid = start.next_stamp(
+        &stamps_left
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit(),
+    );
 
     // nf mismatch: contiguous states but different nfs.
     {
@@ -1001,7 +1002,10 @@ fn unspent_fuse_composes_multi_epoch_right() {
     assert_eq!(nf_start, nf0);
     assert_eq!(nf_end, nf1, "tip advances to the right half's present nf");
     assert_eq!(epoch_start.0, 0);
-    assert_eq!(epoch_end.0, 1, "merged range spans the boundary the right crossed");
+    assert_eq!(
+        epoch_end.0, 1,
+        "merged range spans the boundary the right crossed"
+    );
 }
 
 #[test]
@@ -1320,7 +1324,13 @@ fn verify_unspent_rejects_nf_start_mismatch() {
     );
 
     let err = PROOF_SYSTEM
-        .fuse(rng, pool::VerifyUnspent, witness, forged_unspent, derivation)
+        .fuse(
+            rng,
+            pool::VerifyUnspent,
+            witness,
+            forged_unspent,
+            derivation,
+        )
         .err()
         .unwrap();
     let ragu::Error::InvalidWitness(inner) = err else {
@@ -1723,18 +1733,17 @@ fn derivation_rejects_seam_violations() {
     let keyset_a = ExpandedKey::from_halves(&even_a_keys, &odd_a_keys);
     let polys = keyset_a.derivation_polys(&mk_a.query_salts());
     let even_a_header = *even_a_pcd.data();
-    let make_witness =
-        |right_header, key_b_keys: &[Fp; ExpandedKey::EK_HALF]| {
-            witness::nullifier_derivation(
-                (even_a_header, right_header),
-                &keyset_a,
-                ExpandedKey::half_key_poly(&even_a_keys),
-                ExpandedKey::half_key_poly(key_b_keys),
-                &mk_a,
-                &polys,
-                creation_epoch,
-            )
-        };
+    let make_witness = |right_header, key_b_keys: &[Fp; ExpandedKey::EK_HALF]| {
+        witness::nullifier_derivation(
+            (even_a_header, right_header),
+            &keyset_a,
+            ExpandedKey::half_key_poly(&even_a_keys),
+            ExpandedKey::half_key_poly(key_b_keys),
+            &mk_a,
+            &polys,
+            creation_epoch,
+        )
+    };
 
     // Case 1: the even half (half = 0) supplied as both Left and Right; the
     // right-half pin rejects it.

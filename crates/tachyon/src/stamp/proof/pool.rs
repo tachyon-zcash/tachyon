@@ -95,9 +95,9 @@ impl Header for AnchorChain {
 /// An `elapsed` polynomial holds one nullifier per crossed epoch boundary over
 /// `[epoch_start, epoch_end)`.
 ///
-/// `nf_start` is the range's first tested nullifier (the leaf at `epoch_start`);
-/// the in-progress `nf_end` corresponds to `epoch_end` and is folded
-/// into `elapsed` when its epoch completes. [`VerifyUnspent`] binds both
+/// `nf_start` is the range's first tested nullifier (the leaf at
+/// `epoch_start`); the in-progress `nf_end` corresponds to `epoch_end` and is
+/// folded into `elapsed` when its epoch completes. [`VerifyUnspent`] binds both
 /// endpoints to the note's genuine derivation nullifiers.
 #[derive(Clone, Debug)]
 pub struct Unspent;
@@ -489,11 +489,10 @@ impl Step for UnspentEpochFuse {
             "UnspentEpochFuse: boundary anchor does not match right.anchor_prev",
         )?;
         let combined_commit = combined_elapsed_seq.commit();
-        let offset = usize::try_from(left_epoch_end.0 - left_epoch_start.0).map_err(
-            |_too_many_epochs| {
+        let offset =
+            usize::try_from(left_epoch_end.0 - left_epoch_start.0).map_err(|_too_many_epochs| {
                 ragu::Error::InvalidWitness("UnspentEpochFuse: crossing count exceeds usize".into())
-            },
-        )?;
+            })?;
         enforce_poly_splice(
             ctx,
             &Polynomial::from(left_elapsed_seq),

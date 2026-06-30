@@ -18,7 +18,7 @@ use crate::{
     constants::{NF_DOMAIN, NF_EMITTERS, POLY_LEN_MAX},
     digest::{mimc, poseidon},
     note::{self, Nullifier},
-    primitives::{EpochOffset, ExpKeySpectrumPoly, HalfKeyPoly, NfEmitterPoly},
+    primitives::{EpochOffset, HalfKeyPoly, HalfKeySpectrumPoly, NfEmitterPoly},
     relations::{
         quotient::{QuerySalts, QueryShift, WeightRatios, nullifier_query},
         subgroup_generator,
@@ -115,7 +115,7 @@ impl NoteMasterKey {
     pub fn derive_expanded_trace(
         &self,
         half: usize,
-    ) -> (ExpKeySpectrumPoly, [Fp; ExpandedKey::EK_HALF]) {
+    ) -> (HalfKeySpectrumPoly, [Fp; ExpandedKey::EK_HALF]) {
         let mut cells: Vec<Fp> = Vec::with_capacity(ExpandedKey::EK_HALF * TachyonP5R64::ROUNDS);
         let mut keys: Vec<Fp> = Vec::with_capacity(ExpandedKey::EK_HALF);
 
@@ -132,7 +132,7 @@ impl NoteMasterKey {
         Domain::new(cells.len().ilog2()).ifft(&mut cells);
         #[expect(clippy::expect_used, reason = "constant size")]
         (
-            ExpKeySpectrumPoly(Polynomial::from_coeffs(&cells)),
+            HalfKeySpectrumPoly(Polynomial::from_coeffs(&cells)),
             keys.try_into().expect("constant size"),
         )
     }

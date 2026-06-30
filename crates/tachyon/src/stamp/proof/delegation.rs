@@ -37,7 +37,7 @@ use crate::{
     constants::{NF_EMITTERS, POLY_LEN_MAX},
     keys::{ExpandedKey, NoteMasterKey, ProofAuthorizingKey},
     note::{Commitment as NoteCommitment, Note},
-    primitives::{EpochIndex, ExpKeySpectrumPoly},
+    primitives::{EpochIndex, HalfKeySpectrumPoly},
     relations::{
         enforce::{
             enforce_committed_offset_recurrence, enforce_first_column_values,
@@ -156,7 +156,7 @@ impl Step for NfMasterExpand {
     /// `(trace T, round/boundary quotients, half-key poly A/B, decimation
     /// quotient, half)`. `half ∈ {0,1}` selects this invocation's window.
     type Witness<'source> = (
-        ExpKeySpectrumPoly,
+        HalfKeySpectrumPoly,
         RoundBoundaryQuotients<EXPANSION_ROUND_SPLITS>,
         HalfKeyPoly,
         Polynomial, // decimation quotient binding K to T's final column

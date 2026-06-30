@@ -276,7 +276,10 @@ impl PoolSim {
     /// anchor (it is `E`'s first block's entry), so it returns
     /// `Err((pre_boundary_anchor, E))`; `Anchor::default()` is the epoch-0
     /// boundary.
-    fn locate_anchor(&self, anchor: Anchor) -> Result<(BlockHeight, PoolSimBlock), (Anchor, EpochIndex)> {
+    fn locate_anchor(
+        &self,
+        anchor: Anchor,
+    ) -> Result<(BlockHeight, PoolSimBlock), (Anchor, EpochIndex)> {
         if anchor == Anchor::default() {
             return Err((self.pre_epoch_anchor(EpochIndex(0)), EpochIndex(0)));
         }
@@ -332,7 +335,11 @@ impl PoolSim {
             if height_idx != start_height.0 && height.is_epoch_first() {
                 steps.push(Err(height.epoch()));
             }
-            let lo = if height_idx == start_height.0 { from } else { 0 };
+            let lo = if height_idx == start_height.0 {
+                from
+            } else {
+                0
+            };
             let hi = if height_idx == end_height.0 {
                 to
             } else {
@@ -612,7 +619,10 @@ pub(crate) fn build_unspent_pcd_between_anchors(
         } else {
             for tgs in block_stamps {
                 let commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
-                leaves.push((build_unspent_seed_pcd(rng, entry, epoch, &tgs, leaf_nf), epoch));
+                leaves.push((
+                    build_unspent_seed_pcd(rng, entry, epoch, &tgs, leaf_nf),
+                    epoch,
+                ));
                 entry = entry.next_stamp(&commit);
             }
         }
@@ -1199,4 +1209,3 @@ fn epoch_final_of(epoch: EpochIndex) -> BlockHeight {
     let next_first = (epoch.0 + 1) * EPOCH_SIZE;
     BlockHeight(next_first - 1)
 }
-

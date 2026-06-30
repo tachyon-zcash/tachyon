@@ -4,9 +4,8 @@
 //! the step it serves. Key material is passed in, never derived here; the
 //! expensive expansion/FFT runs once on the wallet and is reused.
 
-use core::array;
-
 use alloc::vec::Vec;
+use core::array;
 
 use pasta_curves::Fp;
 use ragu::{Header, Polynomial, Step};
@@ -17,8 +16,8 @@ use crate::{
     keys::{ExpandedKey, NoteMasterKey},
     note::Nullifier,
     primitives::{
-        Anchor, EpochIndex, ExpKeySpectrumPoly, HalfKeyPoly, NfEmitterPoly, NfSeqPoly,
-        Tachygram, TachygramSetPoly,
+        Anchor, EpochIndex, HalfKeyPoly, HalfKeySpectrumPoly, NfEmitterPoly, NfSeqPoly, Tachygram,
+        TachygramSetPoly,
     },
     relations::quotient::{
         self, LIFT_SPLITS, RoundBoundaryQuotients, accumulator_recurrence, weight_recurrence,
@@ -45,7 +44,7 @@ type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 pub fn nf_master_expand<'key>(
     headers: (StepLeft<NfMasterExpand>, StepRight<NfMasterExpand>),
     mk: &'key NoteMasterKey,
-    spectrum: &'key ExpKeySpectrumPoly,
+    spectrum: &'key HalfKeySpectrumPoly,
     half_keys: &'key [Fp; ExpandedKey::EK_HALF],
     half: usize,
 ) -> StepWitness<'key, NfMasterExpand> {
@@ -71,12 +70,15 @@ pub fn nf_master_expand<'key>(
 
 /// Witness for [`NullifierDerivationStep`].
 ///
-/// `(key_a, key_b, derivation_polys, quotients, creation_epoch)`. `key_a`/`key_b`
-/// are the even/odd half-key polys; `keyset` is the assembled interleaved
-/// schedule the round quotients are built against.
+/// `(key_a, key_b, derivation_polys, quotients, creation_epoch)`.
+/// `key_a`/`key_b` are the even/odd half-key polys; `keyset` is the assembled
+/// interleaved schedule the round quotients are built against.
 #[must_use]
 pub fn nullifier_derivation<'key>(
-    headers: (StepLeft<NullifierDerivationStep>, StepRight<NullifierDerivationStep>),
+    headers: (
+        StepLeft<NullifierDerivationStep>,
+        StepRight<NullifierDerivationStep>,
+    ),
     keyset: &'key ExpandedKey,
     key_a: HalfKeyPoly,
     key_b: HalfKeyPoly,
@@ -90,15 +92,16 @@ pub fn nullifier_derivation<'key>(
     let first_key = keyset.round_key(0);
 
     #[expect(clippy::indexing_slicing, reason = "todo")]
-    let quotients: [RoundBoundaryQuotients<_>; NF_EMITTERS] =
-        array::from_fn(|i| RoundBoundaryQuotients {
+    let quotients: [RoundBoundaryQuotients<_>; NF_EMITTERS] = array::from_fn(|i| {
+        RoundBoundaryQuotients {
             round: quotient::nf_emitter_round_quotient(polys[i].0.coefficients(), &keyset.0),
             boundary: quotient::nf_emitter_boundary_quotient(
                 polys[i].0.coefficients(),
                 salts.0[i],
                 first_key,
             ),
-        });
+        }
+    });
     (key_a, key_b, polys.clone(), quotients, creation_epoch)
 }
 
@@ -220,8 +223,8 @@ pub fn unspent_fuse(
 
 /// Witness for [`UnspentEpochFuse`]:
 /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`. The crossed
-/// boundary splices the left tip `nf_end` (read off the left header) between the
-/// histories.
+/// boundary splices the left tip `nf_end` (read off the left header) between
+/// the histories.
 #[must_use]
 pub fn unspent_epoch_fuse(
     headers: (StepLeft<UnspentEpochFuse>, StepRight<UnspentEpochFuse>),

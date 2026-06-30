@@ -374,7 +374,10 @@ impl Stamp {
 
         let (left_acts_poly, left_tg_poly) = (
             left_digests.iter().copied().collect::<ActionSetPoly>(),
-            left.tachygrams.iter().copied().collect::<TachygramSetPoly>(),
+            left.tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>(),
         );
 
         let (right_acts_poly, right_tg_poly) = (
@@ -435,7 +438,10 @@ impl Stamp {
             .collect::<Result<Vec<_>, _>>()
             .map_err(VerificationError::ActionDigest)?;
         let header = (
-            action_digests.into_iter().collect::<ActionSetPoly>().commit(),
+            action_digests
+                .into_iter()
+                .collect::<ActionSetPoly>()
+                .commit(),
             self.tachygrams
                 .iter()
                 .copied()
