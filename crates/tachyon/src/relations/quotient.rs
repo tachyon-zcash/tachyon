@@ -896,8 +896,8 @@ mod tests {
         assert_eq!(REDUCE_STRIDE, 4, "decimation stride");
 
         let mk = NoteMasterKey(array::from_fn(|index| Fp::from(index as u64 + 1)));
-        let (spectrum, half_keys) = mk.derive_expanded_trace(0);
-        let key_poly = half_keys.key_poly();
+        let (spectrum, part_keys) = mk.derive_expanded_trace(0);
+        let key_poly = part_keys.key_poly();
         let (round, boundary, decimation) = expansion_quotients(
             spectrum.0.coefficients(),
             mk,

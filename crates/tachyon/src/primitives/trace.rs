@@ -25,13 +25,13 @@ lazy_static! {
 }
 
 #[derive(Clone, Debug)]
-pub struct HalfKeySpectrumPoly(pub Polynomial);
+pub struct PartKeySpectrumPoly(pub Polynomial);
 
 #[derive(Clone, Copy, Debug)]
-pub struct HalfKeyCommit(pub Eq);
+pub struct PartKeyCommit(pub Eq);
 
 #[derive(Clone, Debug)]
-pub struct HalfKeyPoly(pub Polynomial);
+pub struct PartKeyPoly(pub Polynomial);
 
 #[derive(Clone, Debug)]
 pub struct NfEmitterPoly(pub Polynomial);

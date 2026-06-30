@@ -15,10 +15,10 @@ use zcash_mimc::spec::tachyon::{TachyonP5R64, TachyonP5R8192};
 
 use super::proof::SpendValidatingKey;
 use crate::{
-    constants::{EK_FULL_SIZE, EK_PART_SIZE, NF_DOMAIN, NF_EMITTERS},
+    constants::{EK_FULL_SIZE, EK_PART_SIZE, EK_PARTS, NF_DOMAIN, NF_EMITTERS},
     digest::{mimc, poseidon},
     note::{self, Nullifier},
-    primitives::{EpochOffset, HalfKeyPoly, HalfKeySpectrumPoly, NfEmitterPoly},
+    primitives::{EpochOffset, NfEmitterPoly, PartKeyPoly, PartKeySpectrumPoly},
     relations::{
         quotient::{QuerySalts, QueryShift, WeightRatios, nullifier_query},
         subgroup_generator,
@@ -84,12 +84,11 @@ impl NoteMasterKey {
         (WeightRatios(rt), QueryShift(sh))
     }
 
-    /// The note's full interleaved 256-key schedule. Even position `2r` holds
-    /// half 0's key `E_mk(r)`, odd position `2r+1` holds half 1's key
-    /// `E_mk(EK_PART_SIZE + r)`, matching
-    /// [`from_halves`](ExpandedKey::from_halves) and the in-circuit offset
-    /// recurrence. The wallet's emitter cipher cycles this same interleaved
-    /// schedule.
+    /// The note's full interleaved `EK_FULL_SIZE`-key schedule. Position
+    /// `p + EK_PARTS·r` holds part `p`'s key `E_mk(p·EK_PART_SIZE + r)`,
+    /// matching [`from_parts`](ExpandedKey::from_parts) and the in-circuit
+    /// offset recurrence. The wallet's emitter cipher cycles this same
+    /// interleaved schedule.
     #[must_use]
     pub fn derive_expanded(&self) -> ExpandedKey {
         ExpandedKey(array::from_fn(|index| {
@@ -99,27 +98,28 @@ impl NoteMasterKey {
                 clippy::integer_division_remainder_used,
                 reason = "constant expansion size; index < EK_FULL_SIZE"
             )]
-            let cipher_index = ((index % 2) * EK_PART_SIZE + index / 2) as u64;
+            let cipher_index = ((index % EK_PARTS) * EK_PART_SIZE + index / EK_PARTS) as u64;
             mimc::mk_dk_expand(Fp::ZERO, self.0, Fp::from(cipher_index))
         }))
     }
 
-    /// One expansion half's trace polynomial and its `EK_PART_SIZE` keys. The
-    /// `half` (0 or 1) selects the cipher-input window via `base = half ·
-    /// EK_PART_SIZE`, so half 0 runs inputs `0..EK_PART_SIZE` and half 1
-    /// runs `EK_PART_SIZE..2·EK_PART_SIZE`. Runs `EK_PART_SIZE`
-    /// keyed-cipher expansions and interpolates their row-major
-    /// `EK_PART_SIZE × ROUNDS = POLY_LEN_MAX` cells over `⟨ω⟩` into the trace
-    /// `T` (so `T(ω^{ROUNDS·r + c})` is row `r`'s `c`-th cipher state); the
-    /// per-row whitened outputs are this half's keys. `T` is only ever the
-    /// interpolant, so the inverse FFT lives here with its producer.
+    /// One expansion part's trace polynomial and its `EK_PART_SIZE` keys. The
+    /// `part` (`0..EK_PARTS`) selects the cipher-input window via `base = part
+    /// · EK_PART_SIZE`, so part `p` runs inputs
+    /// `p·EK_PART_SIZE..(p+1)·EK_PART_SIZE`. Runs `EK_PART_SIZE`
+    /// keyed-cipher expansions and interpolates their
+    /// row-major `EK_PART_SIZE × ROUNDS = POLY_LEN_MAX` cells over `⟨ω⟩` into
+    /// the trace `T` (so `T(ω^{ROUNDS·r + c})` is row `r`'s `c`-th cipher
+    /// state); the per-row whitened outputs are this part's keys. `T` is
+    /// only ever the interpolant, so the inverse FFT lives here with its
+    /// producer.
     #[must_use]
-    pub fn derive_expanded_trace(&self, half: usize) -> (HalfKeySpectrumPoly, HalfKey) {
+    pub fn derive_expanded_trace(&self, part: usize) -> (PartKeySpectrumPoly, PartKey) {
         let mut cells: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE * TachyonP5R64::ROUNDS);
         let mut keys: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE);
 
         #[expect(clippy::as_conversions, reason = "constant size")]
-        let base = Fp::from((half * EK_PART_SIZE) as u64);
+        let base = Fp::from((part * EK_PART_SIZE) as u64);
         #[expect(clippy::as_conversions, reason = "constant size")]
         for (states, key) in (0..(EK_PART_SIZE as u64))
             .map(|row| mimc::mk_dk_expand_sequence(base, self.0, Fp::from(row)))
@@ -131,8 +131,8 @@ impl NoteMasterKey {
         Domain::new(cells.len().ilog2()).ifft(&mut cells);
         #[expect(clippy::expect_used, reason = "constant size")]
         (
-            HalfKeySpectrumPoly(Polynomial::from_coeffs(&cells)),
-            HalfKey(keys.try_into().expect("constant size")),
+            PartKeySpectrumPoly(Polynomial::from_coeffs(&cells)),
+            PartKey(keys.try_into().expect("constant size")),
         )
     }
 }
@@ -140,14 +140,14 @@ impl NoteMasterKey {
 /// Per-note nullifier derivation material.
 ///
 /// The full `κ = EK_FULL_SIZE` cyclic round-key schedule of the
-/// note's derivation polynomials, assembled by interleaving two expansion
-/// halves of `EK_PART_SIZE` keyed-cipher outputs each.
+/// note's derivation polynomials, assembled by interleaving `EK_PARTS`
+/// expansion parts of `EK_PART_SIZE` keyed-cipher outputs each.
 ///
 /// A flat `[Fp; EK_FULL_SIZE]` newtype handled only as a
-/// polynomial downstream: each half is the eval-form interpolant
-/// [`HalfKey::key_poly`] over the order-`EK_PART_SIZE` subgroup
+/// polynomial downstream: each part is the eval-form interpolant
+/// [`PartKey::key_poly`] over the order-`EK_PART_SIZE` subgroup
 /// `⟨ζ⟩`, and the derivation step's interleaved offset recurrence reconstructs
-/// the full schedule from the two halves. The per-poly salts, the weight bases
+/// the full schedule from the parts. The per-poly salts, the weight bases
 /// `ρ_j`, and the shift `c` come from `mk` (via the nullifier-query sponge
 /// methods on [`NoteMasterKey`]), not from these outputs.
 ///
@@ -165,24 +165,20 @@ impl ExpandedKey {
         self.0[index % self.0.len()]
     }
 
-    /// Assemble the full interleaved schedule from two expansion halves: even
-    /// position `2r` takes `half_even[r]`, odd position `2r+1` takes
-    /// `half_odd[r]`. This is the ordering the in-circuit offset recurrence
-    /// reconstructs (`K(ζ_256^{2r}) = A_r`, `K(ζ_256^{2r+1}) = B_r`).
+    /// Assemble the full interleaved schedule from the `EK_PARTS` expansion
+    /// parts: position `p + EK_PARTS·r` takes `parts[p].0[r]`. This is the
+    /// ordering the in-circuit offset recurrence reconstructs
+    /// (`K(ζ^{p+EK_PARTS·r}) = A_p[r]`).
     #[must_use]
-    pub fn from_halves(half_even: &HalfKey, half_odd: &HalfKey) -> Self {
+    pub fn from_parts(parts: &[PartKey; EK_PARTS]) -> Self {
         Self(array::from_fn(|index| {
             #[expect(
                 clippy::indexing_slicing,
                 clippy::integer_division,
                 clippy::integer_division_remainder_used,
-                reason = "index < EK_FULL_SIZE = 2*EK_PART_SIZE, so index/2 < EK_PART_SIZE"
+                reason = "index < EK_FULL_SIZE = EK_PARTS*EK_PART_SIZE, so part < EK_PARTS and row < EK_PART_SIZE"
             )]
-            let key = if index % 2 == 0 {
-                half_even.0[index / 2]
-            } else {
-                half_odd.0[index / 2]
-            };
+            let key = parts[index % EK_PARTS].0[index / EK_PARTS];
             key
         }))
     }
@@ -252,33 +248,33 @@ impl fmt::Debug for ExpandedKey {
     }
 }
 
-/// One expansion half's `EK_PART_SIZE` keyed-cipher outputs.
+/// One expansion part's `EK_PART_SIZE` keyed-cipher outputs.
 ///
-/// Half 0 is the even schedule positions, half 1 the odd;
-/// [`ExpandedKey::from_halves`] interleaves two of these into the full
+/// Part `p` occupies schedule positions `≡ p (mod EK_PARTS)`;
+/// [`ExpandedKey::from_parts`] interleaves the `EK_PARTS` parts into the full
 /// schedule. Each is certified by one
 /// [`NfMasterExpand`](crate::stamp::proof::delegation::NfMasterExpand) step.
 ///
 /// Wallet-only secret material, like [`ExpandedKey`].
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct HalfKey(pub [Fp; EK_PART_SIZE]);
+pub struct PartKey(pub [Fp; EK_PART_SIZE]);
 
-impl HalfKey {
-    /// The eval-form half-key polynomial over the order-`EK_PART_SIZE` subgroup
+impl PartKey {
+    /// The eval-form part-key polynomial over the order-`EK_PART_SIZE` subgroup
     /// `⟨ζ⟩` (`A(ζ^r) = self.0[r]`). The strided-column relation binds it to
-    /// that half's trace, and the derivation step's interleaved offset
-    /// recurrence opens the two halves.
+    /// that part's trace, and the derivation step's interleaved offset
+    /// recurrence opens the parts.
     #[must_use]
-    pub fn key_poly(&self) -> HalfKeyPoly {
+    pub fn key_poly(&self) -> PartKeyPoly {
         let mut coeffs = self.0.to_vec();
         Domain::new(EK_PART_SIZE.ilog2()).ifft(&mut coeffs);
-        HalfKeyPoly(Polynomial::from_coeffs(&coeffs))
+        PartKeyPoly(Polynomial::from_coeffs(&coeffs))
     }
 }
 
-impl fmt::Debug for HalfKey {
+impl fmt::Debug for PartKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("HalfKey").finish_non_exhaustive()
+        f.debug_struct("PartKey").finish_non_exhaustive()
     }
 }
 
@@ -414,26 +410,31 @@ mod tests {
     }
 
     #[test]
-    fn derive_expanded_matches_interleaved_halves() {
+    fn derive_expanded_matches_interleaved_parts() {
         // The native full-schedule path (derive_expanded) and the proof path
-        // (two half traces assembled by from_halves) must produce the identical
-        // interleaved 256-key schedule, or the certified nullifier would diverge
-        // from the wallet's native one.
+        // (EK_PARTS part traces assembled by from_parts) must produce the
+        // identical interleaved schedule, or the certified nullifier would
+        // diverge from the wallet's native one.
         let rng = &mut StdRng::seed_from_u64(4);
         let nk = NullifierKey(Fp::random(&mut *rng));
         let psi = note::NullifierTrapdoor::random(rng);
         let mk = master_key(&nk, &psi);
 
         let full = mk.derive_expanded();
-        let (_, even) = mk.derive_expanded_trace(0);
-        let (_, odd) = mk.derive_expanded_trace(1);
+        let parts: [PartKey; EK_PARTS] = array::from_fn(|part| mk.derive_expanded_trace(part).1);
 
         assert_eq!(
             full,
-            ExpandedKey::from_halves(&even, &odd),
-            "derive_expanded equals the interleaved expansion halves"
+            ExpandedKey::from_parts(&parts),
+            "derive_expanded equals the interleaved expansion parts"
         );
-        // Domain separation: the two halves run disjoint cipher-input windows.
-        assert_ne!(even.0[0], odd.0[0], "halves use distinct cipher inputs");
+        // Domain separation: the parts run disjoint cipher-input windows.
+        for part in 1..EK_PARTS {
+            assert_ne!(
+                parts[part].0[0],
+                parts[part - 1].0[0],
+                "parts use distinct cipher inputs"
+            );
+        }
     }
 }

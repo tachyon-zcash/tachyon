@@ -766,68 +766,66 @@ impl WalletSim {
     ) -> Pcd<delegation::NullifierDerivation> {
         let mk = self.master_key(&note);
 
-        // Even half (cipher window 0..EK_PART_SIZE) and odd half
-        // (EK_PART_SIZE..2·EK_PART_SIZE), each certified by one NfMasterExpand fusing
-        // the two complementary master-key seeds (parts 0,1,2 and 3,4,5).
-        let even_left = self.note_master_half(rng, note, [0, 1, 2]);
-        let even_right = self.note_master_half(rng, note, [3, 4, 5]);
-        let (even_spectrum, even_keys) = mk.derive_expanded_trace(0);
-        let key_a = even_keys.key_poly();
-        let (keyset_even_pcd, ()) = PROOF_SYSTEM
+        // Each of the EK_PARTS parts is certified by one NfMasterExpand fusing
+        // the two complementary master-key seeds (parts 0,1,2 and 3,4,5). The
+        // derivation step is binary, so it consumes the two part PCDs directly.
+        let part0_left = self.note_master_half(rng, note, [0, 1, 2]);
+        let part0_right = self.note_master_half(rng, note, [3, 4, 5]);
+        let (part0_spectrum, part0_keys) = mk.derive_expanded_trace(0);
+        let (part0_pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 delegation::NfMasterExpand,
                 witness::nf_master_expand(
-                    (*even_left.data(), *even_right.data()),
+                    (*part0_left.data(), *part0_right.data()),
                     &mk,
-                    &even_spectrum,
-                    &even_keys,
+                    &part0_spectrum,
+                    &part0_keys,
                     0,
                 ),
-                even_left,
-                even_right,
+                part0_left,
+                part0_right,
             )
-            .expect("NfMasterExpand even");
+            .expect("NfMasterExpand part 0");
 
-        let odd_left = self.note_master_half(rng, note, [0, 1, 2]);
-        let odd_right = self.note_master_half(rng, note, [3, 4, 5]);
-        let (odd_spectrum, odd_keys) = mk.derive_expanded_trace(1);
-        let key_b = odd_keys.key_poly();
-        let (keyset_odd_pcd, ()) = PROOF_SYSTEM
+        let part1_left = self.note_master_half(rng, note, [0, 1, 2]);
+        let part1_right = self.note_master_half(rng, note, [3, 4, 5]);
+        let (part1_spectrum, part1_keys) = mk.derive_expanded_trace(1);
+        let (part1_pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 delegation::NfMasterExpand,
                 witness::nf_master_expand(
-                    (*odd_left.data(), *odd_right.data()),
+                    (*part1_left.data(), *part1_right.data()),
                     &mk,
-                    &odd_spectrum,
-                    &odd_keys,
+                    &part1_spectrum,
+                    &part1_keys,
                     1,
                 ),
-                odd_left,
-                odd_right,
+                part1_left,
+                part1_right,
             )
-            .expect("NfMasterExpand odd");
+            .expect("NfMasterExpand part 1");
 
-        // Assemble the interleaved 256-key schedule and certify the derivation
-        // polynomials against both halves.
-        let keyset = ExpandedKey::from_halves(&even_keys, &odd_keys);
+        // Assemble the interleaved schedule and certify the derivation
+        // polynomials against the parts.
+        let parts = [part0_keys, part1_keys];
+        let keyset = ExpandedKey::from_parts(&parts);
         let polys = keyset.derivation_polys(&mk.query_salts());
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 delegation::NullifierDerivationStep,
                 witness::nullifier_derivation(
-                    (*keyset_even_pcd.data(), *keyset_odd_pcd.data()),
+                    (*part0_pcd.data(), *part1_pcd.data()),
                     &keyset,
-                    key_a,
-                    key_b,
+                    parts.map(|part| part.key_poly()),
                     &mk,
                     &polys,
                     creation_epoch,
                 ),
-                keyset_even_pcd,
-                keyset_odd_pcd,
+                part0_pcd,
+                part1_pcd,
             )
             .expect("NullifierDerivationStep");
         pcd

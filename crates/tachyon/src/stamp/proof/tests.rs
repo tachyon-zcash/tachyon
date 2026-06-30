@@ -23,7 +23,7 @@ use crate::{
         build_unspent_pcd_between_blocks, build_unspent_seed_pcd, random_block, random_block_with,
         spend_witness, spendable_init_inputs,
     },
-    keys::{ExpandedKey, HalfKey, NoteMasterKey},
+    keys::{ExpandedKey, NoteMasterKey, PartKey},
     note::{self, Nullifier},
     primitives::{Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqPoly, Tachygram, effect},
     value, witness,
@@ -1516,14 +1516,14 @@ fn nf_master_expand_rejects_forged_witnesses() {
     // Build the expansion-step witness from `builder_mk`'s trace, with quotients
     // honest for `builder_mk` (so the witness is well-formed; only the threaded
     // note `mk` disagrees in the mismatched/hybrid cases).
-    let assemble = |builder_mk: NoteMasterKey, half: usize| {
-        let (spectrum, half_keys) = builder_mk.derive_expanded_trace(half);
+    let assemble = |builder_mk: NoteMasterKey, part: usize| {
+        let (spectrum, part_keys) = builder_mk.derive_expanded_trace(part);
         witness::nf_master_expand(
             (*left.data(), *right.data()),
             &builder_mk,
             &spectrum,
-            &half_keys,
-            half,
+            &part_keys,
+            part,
         )
     };
 
@@ -1539,15 +1539,15 @@ fn nf_master_expand_rejects_forged_witnesses() {
         assemble(hybrid, 0)
     };
 
-    // Honest trace and quotients but a tampered half-key poly: the decimation
-    // identity binding `A` to the trace's final column fails.
+    // Honest trace and quotients but a tampered part-key poly: the decimation
+    // identity binding `A_p` to the trace's final column fails.
     let forged_key = {
-        let (trace, quotients, _honest_key, decimation_quotient, half) = assemble(mk, 0);
-        let (_, even_keys) = mk.derive_expanded_trace(0);
-        let mut tampered = even_keys;
+        let (trace, quotients, _honest_key, decimation_quotient, part) = assemble(mk, 0);
+        let (_, part0_keys) = mk.derive_expanded_trace(0);
+        let mut tampered = part0_keys;
         tampered.0[0] += Fp::ONE;
         let bad_key = tampered.key_poly();
-        (trace, quotients, bad_key, decimation_quotient, half)
+        (trace, quotients, bad_key, decimation_quotient, part)
     };
 
     let cases = [
@@ -1597,76 +1597,72 @@ fn derivation_rejects_mismatched_key_poly() {
 
     let mk = user.master_key(&note);
 
-    let even_left = user.note_master_half(rng, note, [0, 1, 2]);
-    let even_right = user.note_master_half(rng, note, [3, 4, 5]);
-    let (even_spectrum, even_keys) = mk.derive_expanded_trace(0);
-    let (keyset_even_pcd, ()) = PROOF_SYSTEM
+    let part0_left = user.note_master_half(rng, note, [0, 1, 2]);
+    let part0_right = user.note_master_half(rng, note, [3, 4, 5]);
+    let (part0_spectrum, part0_keys) = mk.derive_expanded_trace(0);
+    let (keyset0_pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NfMasterExpand,
             witness::nf_master_expand(
-                (*even_left.data(), *even_right.data()),
+                (*part0_left.data(), *part0_right.data()),
                 &mk,
-                &even_spectrum,
-                &even_keys,
+                &part0_spectrum,
+                &part0_keys,
                 0,
             ),
-            even_left,
-            even_right,
+            part0_left,
+            part0_right,
         )
         .unwrap();
-    let odd_left = user.note_master_half(rng, note, [0, 1, 2]);
-    let odd_right = user.note_master_half(rng, note, [3, 4, 5]);
-    let (odd_spectrum, odd_keys) = mk.derive_expanded_trace(1);
-    let (keyset_odd_pcd, ()) = PROOF_SYSTEM
+    let part1_left = user.note_master_half(rng, note, [0, 1, 2]);
+    let part1_right = user.note_master_half(rng, note, [3, 4, 5]);
+    let (part1_spectrum, part1_keys) = mk.derive_expanded_trace(1);
+    let (keyset1_pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NfMasterExpand,
             witness::nf_master_expand(
-                (*odd_left.data(), *odd_right.data()),
+                (*part1_left.data(), *part1_right.data()),
                 &mk,
-                &odd_spectrum,
-                &odd_keys,
+                &part1_spectrum,
+                &part1_keys,
                 1,
             ),
-            odd_left,
-            odd_right,
+            part1_left,
+            part1_right,
         )
         .unwrap();
 
-    // A half-key poly with a tampered output no longer matches its committed
-    // half-keyset, so the consumer's commit-equality check rejects it.
-    let keyset = ExpandedKey::from_halves(&even_keys, &odd_keys);
+    // A part-key poly with a tampered output no longer matches its committed
+    // part-keyset, so the consumer's commit-equality check rejects it.
+    let keyset = ExpandedKey::from_parts(&[part0_keys, part1_keys]);
     let salts = mk.query_salts();
     let polys = keyset.derivation_polys(&salts);
-    let key_a = even_keys.key_poly();
-    let key_b = odd_keys.key_poly();
-    let (_orig_a, good_b, good_polys, good_quotients, _) = witness::nullifier_derivation(
-        (*keyset_even_pcd.data(), *keyset_odd_pcd.data()),
+    let (_good_parts, good_polys, good_quotients, _) = witness::nullifier_derivation(
+        (*keyset0_pcd.data(), *keyset1_pcd.data()),
         &keyset,
-        key_a,
-        key_b,
+        [part0_keys.key_poly(), part1_keys.key_poly()],
         &mk,
         &polys,
         creation_epoch,
     );
-    let mut tampered = even_keys;
+    let mut tampered = part0_keys;
     tampered.0[0] += Fp::ONE;
-    let bad_key_a = tampered.key_poly();
+    let bad_part0 = tampered.key_poly();
 
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NullifierDerivationStep,
             (
-                bad_key_a,
-                good_b,
+                [bad_part0, part1_keys.key_poly()],
                 good_polys,
                 good_quotients,
                 creation_epoch,
             ),
-            keyset_even_pcd,
-            keyset_odd_pcd,
+            keyset0_pcd,
+            keyset1_pcd,
         )
         .err()
         .unwrap_or_else(|| panic!("expected rejection"));
@@ -1675,31 +1671,31 @@ fn derivation_rejects_mismatched_key_poly() {
     };
     assert_eq!(
         inner.to_string(),
-        "NullifierDerivationStep: even half-key poly does not match its commitment"
+        "NullifierDerivationStep: part-key poly does not match its commitment"
     );
 }
 
-/// Certify one expansion half (the `NfHalfKeyset` PCD) for a note,
-/// returning it with that half's keys.
-fn keyset_half_pcd(
+/// Certify one expansion part (the `NfPartKeyset` PCD) for a note, returning it
+/// with that part's keys.
+fn keyset_part_pcd(
     user: &WalletSim,
     rng: &mut StdRng,
     note: Note,
-    half: usize,
-) -> (Pcd<delegation::NfHalfKeyset>, HalfKey) {
+    part: usize,
+) -> (Pcd<delegation::NfPartKeyset>, PartKey) {
     let mk = user.master_key(&note);
-    let (spectrum, keys) = mk.derive_expanded_trace(half);
+    let (spectrum, keys) = mk.derive_expanded_trace(part);
     let left = user.note_master_half(rng, note, [0, 1, 2]);
     let right = user.note_master_half(rng, note, [3, 4, 5]);
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NfMasterExpand,
-            witness::nf_master_expand((*left.data(), *right.data()), &mk, &spectrum, &keys, half),
+            witness::nf_master_expand((*left.data(), *right.data()), &mk, &spectrum, &keys, part),
             left,
             right,
         )
-        .expect("NfMasterExpand half");
+        .expect("NfMasterExpand part");
     (pcd, keys)
 }
 
@@ -1710,11 +1706,10 @@ fn assert_invalid(err: ragu::Error, expected: &str) {
     assert_eq!(inner.to_string(), expected);
 }
 
-/// The derivation step's seam rejects malformed half pairs: the same half twice
-/// (the right-half pin), and halves from different notes (the cm seam). The
+/// The derivation step's seam rejects malformed part pairs: the same part twice
+/// (the part-index pin), and parts from different notes (the cm seam). The
 /// honest witness is never reached -- the seam checks fire before binding.
 #[test]
-#[expect(clippy::similar_names, reason = "note A vs note B half-key bindings")]
 fn derivation_rejects_seam_violations() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
@@ -1723,54 +1718,53 @@ fn derivation_rejects_seam_violations() {
     let creation_epoch = EpochIndex(7);
     let mk_a = user.master_key(&note_a);
 
-    let (even_a_pcd, even_a_keys) = keyset_half_pcd(&user, rng, note_a, 0);
-    let (_odd_a_pcd, odd_a_keys) = keyset_half_pcd(&user, rng, note_a, 1);
-    let (odd_b_pcd, odd_b_keys) = keyset_half_pcd(&user, rng, note_b, 1);
+    let (a_part0_pcd, a_part0_keys) = keyset_part_pcd(&user, rng, note_a, 0);
+    let (_a_part1_pcd, a_part1_keys) = keyset_part_pcd(&user, rng, note_a, 1);
+    let (b_part1_pcd, b_part1_keys) = keyset_part_pcd(&user, rng, note_b, 1);
 
-    let keyset_a = ExpandedKey::from_halves(&even_a_keys, &odd_a_keys);
+    let keyset_a = ExpandedKey::from_parts(&[a_part0_keys, a_part1_keys]);
     let polys = keyset_a.derivation_polys(&mk_a.query_salts());
-    let even_a_header = *even_a_pcd.data();
-    let make_witness = |right_header, key_b_keys: &HalfKey| {
+    let a_part0_header = *a_part0_pcd.data();
+    let make_witness = |right_header, right_keys: &PartKey| {
         witness::nullifier_derivation(
-            (even_a_header, right_header),
+            (a_part0_header, right_header),
             &keyset_a,
-            even_a_keys.key_poly(),
-            key_b_keys.key_poly(),
+            [a_part0_keys.key_poly(), right_keys.key_poly()],
             &mk_a,
             &polys,
             creation_epoch,
         )
     };
 
-    // Case 1: the even half (half = 0) supplied as both Left and Right; the
-    // right-half pin rejects it.
-    let dup_witness = make_witness(even_a_header, &even_a_keys);
+    // Case 1: part 0 supplied as both Left and Right; the right input's part
+    // index (0) fails the `part_indices[1] == 1` pin.
+    let dup_witness = make_witness(a_part0_header, &a_part0_keys);
     let dup_err = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NullifierDerivationStep,
             dup_witness,
-            even_a_pcd.clone(),
-            even_a_pcd.clone(),
+            a_part0_pcd.clone(),
+            a_part0_pcd.clone(),
         )
         .err()
-        .unwrap_or_else(|| panic!("expected rejection: duplicated half"));
-    assert_invalid(dup_err, "NullifierDerivationStep: right half must be 1");
+        .unwrap_or_else(|| panic!("expected rejection: duplicated part"));
+    assert_invalid(dup_err, "NullifierDerivationStep: part index mismatch");
 
-    // Case 2: even from note A, odd from note B; the cm seam rejects it.
-    let cross_witness = make_witness(*odd_b_pcd.data(), &odd_b_keys);
+    // Case 2: part 0 from note A, part 1 from note B; the cm seam rejects it.
+    let cross_witness = make_witness(*b_part1_pcd.data(), &b_part1_keys);
     let cross_err = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NullifierDerivationStep,
             cross_witness,
-            even_a_pcd,
-            odd_b_pcd,
+            a_part0_pcd,
+            b_part1_pcd,
         )
         .err()
         .unwrap_or_else(|| panic!("expected rejection: mismatched note"));
     assert_invalid(
         cross_err,
-        "NullifierDerivationStep: half commitments do not match",
+        "NullifierDerivationStep: part commitments do not match",
     );
 }

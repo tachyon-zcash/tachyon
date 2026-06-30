@@ -156,22 +156,24 @@ pub(crate) fn enforce_row_recurrence<const COLUMNS: usize, const SPLITS: usize>(
 /// Prove the flat keyed-cipher recurrence `T(ωz) = (T(z) + O(z))^e` over the
 /// whole order-`POLY_LEN_MAX` domain, with the per-step offset carried as a
 /// *committed* constant polynomial plus the `FULL`-wide cyclic key schedule
-/// reconstructed inline from two *committed* half-key polynomials rather than
-/// `POLY_LEN_MAX` public offsets. The offset is `O(z) = C(z) + K(ζ·z^{|D|/κ})`,
-/// `κ = FULL`: `constants` is the committed `C` (the public constant schedule,
-/// opened at `z`), and the order-`κ` key interpolant `K` is the two half
-/// schedules interleaved on the even/odd cosets of `⟨ζ⟩`,
+/// reconstructed inline from `PARTS` *committed* part-key polynomials rather
+/// than `POLY_LEN_MAX` public offsets. The offset is `O(z) = C(z) +
+/// K(ζ·z^{|D|/κ})`, `κ = FULL`: `constants` is the committed `C` (the public
+/// constant schedule, opened at `z`), and the order-`κ` key interpolant `K` is
+/// the `P = PARTS` part schedules interleaved on the `P` cosets of `⟨ζ⟩`,
 ///
-/// $$ K(x) = s_e(x)\,A(x) + s_o(x)\,B(x\,ζ^{-1}),\quad
-///    s_e = \tfrac{x^{κ/2}+1}{2},\ s_o = \tfrac{1-x^{κ/2}}{2}, $$
+/// $$ K(x) = \sum_{p=0}^{P-1} s_p(x)\,A_p\!\left(x\,ζ^{-p}\right),\quad
+///    s_p(x) = \tfrac{1}{P}\sum_{j=0}^{P-1} ω_P^{-pj}\,\bigl(x^{κ/P}\bigr)^{j},
+/// $$
 ///
-/// with `A`, `B` the eval-form half-key polys over the order-`κ/2` subgroup
-/// (`A(ζ^{2r}) = k_{2r}`, `B(ζ^{2r}) = k_{2r+1}`). This is an exact degree-`<κ`
-/// polynomial identity, so reconstructing `K(ζ·z^{|D|/κ})` needs only one
-/// opening of `A` (at `key_point`) and one of `B` (at `key_point·ζ^{-1}`) plus
-/// the public selectors — no merged key commitment and no quotient. As an
-/// identity at the Fiat-Shamir point `z` (`|D|` = `POLY_LEN_MAX`, single-wrap
-/// mask $m(z) = z - ω^{-1}$):
+/// with `ω_P` a primitive `P`-th root and `A_p` the eval-form part-key poly
+/// over the order-`κ/P` subgroup (`A_p(ζ^{P·r}) = k_{P·r+p}`). The `s_p` are
+/// the inverse-DFT coset indicators (`s_p(ζ^m) = [m ≡ p mod P]`), so this is an
+/// exact degree-`<κ` polynomial identity: reconstructing `K(ζ·z^{|D|/κ})` needs
+/// one opening of each `A_p` (at `key_point·ζ^{-p}`) plus the public selectors
+/// — no merged key commitment and no quotient. As an identity at the
+/// Fiat-Shamir point `z` (`|D|` = `POLY_LEN_MAX`, single-wrap mask $m(z) = z -
+/// ω^{-1}$):
 ///
 /// $$
 ///     m(z) \bigl( T(gz) - (T(z) + O(z))^{\,e} \bigr) = Q(z) \, (z^{|D|} - 1).
@@ -179,40 +181,41 @@ pub(crate) fn enforce_row_recurrence<const COLUMNS: usize, const SPLITS: usize>(
 ///
 /// The quotient `Q` is carried as `SPLITS` capacity-wide splits. The offset
 /// needs no per-node inversion and is independent of `κ`, so a full-length key
-/// schedule stays in budget.
+/// schedule stays in budget. `PARTS` is the inferred length of `keys`; the
+/// per-part domain size `κ/P` is computed here, not threaded.
 ///
 /// # Caller obligations (soundness)
 ///
-/// - **Binding.** `matrix`, `constants`, `key_a`, `key_b`, and every split must
+/// - **Binding.** `matrix`, `constants`, every `keys[p]`, and every split must
 ///   be commitment-bound to a statement-fixed value; all feed `z`. In
 ///   particular `constants` must be pinned (by commit-equality) to the public
-///   constant schedule and `key_a`/`key_b` to the certified half-keyset
+///   constant schedule and each `keys[p]` to the certified part-keyset
 ///   commitments, or the offset is a free witness and the relation is vacuous.
 /// - **Public structure.** `exponent` is fixed and not witness-chosen after
-///   `z`. `B` must be opened at `key_point·ζ^{-1}` (the odd-coset realignment),
-///   not at `key_point`, or the reconstructed key is wrong.
-#[expect(
-    clippy::similar_names,
-    reason = "key_a_commit / key_b_commit name the two interleaved halves"
-)]
-pub(crate) fn enforce_committed_offset_recurrence<const SPLITS: usize, const FULL: usize>(
+///   `z`. Part `p`'s poly is opened at `key_point·ζ^{-p}` (the coset
+///   realignment); the `keys` order must match the part indices `0..P`, or the
+///   reconstruction is wrong.
+pub(crate) fn enforce_committed_offset_recurrence<
+    const SPLITS: usize,
+    const FULL: usize,
+    const PARTS: usize,
+>(
     ctx: &mut ragu::StepCtx<'_>,
     matrix: &Polynomial,
     quotient: &[Polynomial; SPLITS],
     constants: &Polynomial,
-    key_a: &Polynomial,
-    key_b: &Polynomial,
+    keys: &[&Polynomial; PARTS],
     exponent: u64,
 ) -> ragu::Result<()> {
     let matrix_commit = matrix.commit();
     let constants_commit = constants.commit();
-    let key_a_commit = key_a.commit();
-    let key_b_commit = key_b.commit();
+    let key_commits: [Eq; PARTS] = keys.each_ref().map(|key| key.commit());
     let quotient_commits: [Eq; SPLITS] = quotient.each_ref().map(Polynomial::commit);
 
     let z = ctx.derive_challenge(
         &[
-            [matrix_commit, constants_commit, key_a_commit, key_b_commit].as_slice(),
+            [matrix_commit, constants_commit].as_slice(),
+            key_commits.as_slice(),
             quotient_commits.as_slice(),
         ]
         .concat(),
@@ -243,22 +246,39 @@ pub(crate) fn enforce_committed_offset_recurrence<const SPLITS: usize, const FUL
     ctx.enforce_poly_query(matrix_commit, znext, matrix_at_znext)?;
 
     // O(z) = C(z) + K(ζ·z^{|D|/κ}): committed constant schedule plus the cyclic
-    // key value, reconstructed inline from the two half-key polys by the
-    // interleaved-coset identity `K = s_e·A + s_o·B(·ζ^{-1})`. `A`, `B`
-    // interpolate the even/odd halves over `⟨ζ^2⟩`, so `K(ζ·z^{|D|/κ})` is the
-    // order-`|D|` interpolant of the cyclic schedule `k_{(j+1) mod κ}`.
+    // key value, reconstructed inline from the `PARTS` part-key polys by the
+    // interleaved-coset identity `K(x) = Σ_p s_p(x)·A_p(x·ζ^{-p})`. Each `A_p`
+    // interpolates part `p` over `⟨ζ^P⟩`; `s_p` is the inverse-DFT indicator of
+    // coset `p`. `y = (key_point)^{κ/P}` maps `⟨ζ⟩` onto the `P`-th roots, where
+    // `s_p(x) = (1/P)·Σ_j (ω_P^{-p}·y)^j`.
     let zeta = subgroup_generator::<FULL>();
     let key_point = zeta * z.pow_vartime([(POLY_LEN_MAX / FULL) as u64]);
-    let a_at = key_a.eval(key_point);
-    ctx.enforce_poly_query(key_a_commit, key_point, a_at)?;
-    let b_point = key_point * zeta.invert().expect("a root of unity is nonzero");
-    let b_at = key_b.eval(b_point);
-    ctx.enforce_poly_query(key_b_commit, b_point, b_at)?;
-    let half_pow = key_point.pow_vartime([(FULL / 2) as u64]);
-    let two_inv = Fp::from(2u64).invert().expect("two is invertible in Fp");
-    let selector_even = (half_pow + Fp::ONE) * two_inv;
-    let selector_odd = (Fp::ONE - half_pow) * two_inv;
-    let key_at = selector_even * a_at + selector_odd * b_at;
+    let zeta_inv = zeta.invert().expect("a root of unity is nonzero");
+    let part_root = subgroup_generator::<PARTS>();
+    let part_root_inv = part_root.invert().expect("a root of unity is nonzero");
+    let parts_inv = Fp::from(PARTS as u64)
+        .invert()
+        .expect("PARTS is invertible in Fp");
+    let y = key_point.pow_vartime([(FULL / PARTS) as u64]);
+
+    // Open each part `p` at `key_point·ζ^{-p}`, weight by `s_p(key_point)`.
+    let mut key_at = Fp::ZERO;
+    let mut point = key_point; // key_point·ζ^{-p}
+    let mut root_negp = Fp::ONE; // ω_P^{-p}
+    for (key, key_commit) in keys.iter().zip(key_commits) {
+        let a_at = key.eval(point);
+        ctx.enforce_poly_query(key_commit, point, a_at)?;
+        let base = root_negp * y;
+        let mut selector = Fp::ZERO;
+        let mut term = Fp::ONE;
+        for _ in 0..PARTS {
+            selector += term;
+            term *= base;
+        }
+        key_at += selector * parts_inv * a_at;
+        point *= zeta_inv;
+        root_negp *= part_root_inv;
+    }
     let offset = constants_at_z + key_at;
 
     // Single-wrap mask z − ω^{-1} (= z − ω^{|D|-1}).
@@ -846,46 +866,52 @@ mod tests {
     use super::*;
 
     /// The interleaved-coset key reconstruction the offset recurrence relies
-    /// on: `K(x) = s_e(x)·A(x) + s_o(x)·B(x·ζ⁻¹)` (with `s_e =
-    /// (x^HALF+1)/2`, `s_o = (1−x^HALF)/2`, `ζ` the order-`FULL` root)
-    /// equals the direct order-`FULL` interpolant of the interleaved
-    /// schedule (even half on the even coset, odd half on the odd coset) at
-    /// any `x`. The reference `K` is interpolated directly, so the check is
-    /// not impl-frozen.
-    fn check_interleave_identity<const HALF: usize, const FULL: usize>(
-        even: &[Fp; HALF],
-        odd: &[Fp; HALF],
+    /// on: `K(x) = Σ_p s_p(x)·A_p(x·ζ⁻ᵖ)` (the inverse-DFT coset selectors
+    /// `s_p`, `ζ` the order-`FULL` root) equals the direct order-`FULL`
+    /// interpolant of the interleaved schedule at any `x`. The reference
+    /// `K` is interpolated directly, so the check is not impl-frozen.
+    /// `PART_SIZE = FULL / PARTS` is computed, not threaded.
+    fn check_interleave_identity<const PARTS: usize, const FULL: usize>(
+        schedule: &[Fp; FULL],
         point: Fp,
     ) {
-        let mut a_coeffs = even.to_vec();
-        Domain::new(HALF.ilog2()).ifft(&mut a_coeffs);
-        let a_poly = Polynomial::from_coeffs(&a_coeffs);
-        let mut b_coeffs = odd.to_vec();
-        Domain::new(HALF.ilog2()).ifft(&mut b_coeffs);
-        let b_poly = Polynomial::from_coeffs(&b_coeffs);
+        let part_size = FULL / PARTS;
+        let zeta = subgroup_generator::<FULL>();
+        let zeta_inv = zeta.invert().expect("a root of unity is nonzero");
+        let part_root = subgroup_generator::<PARTS>();
+        let part_root_inv = part_root.invert().expect("a root of unity is nonzero");
+        let parts_inv = Fp::from(PARTS as u64)
+            .invert()
+            .expect("PARTS is invertible");
+        let y = point.pow_vartime([part_size as u64]);
 
-        // Independent reference: interpolate the interleaved schedule directly.
-        let interleaved: Vec<Fp> = (0..FULL)
-            .map(|position| {
-                if position % 2 == 0 {
-                    even[position / 2]
-                } else {
-                    odd[position / 2]
-                }
-            })
-            .collect();
-        let mut k_coeffs = interleaved;
+        // Reconstruct via the P-point coset identity: part p = the schedule
+        // values at positions ≡ p (mod PARTS), interpolated over ⟨ζ^P⟩.
+        let mut recon = Fp::ZERO;
+        let mut coset_point = point;
+        let mut root_negp = Fp::ONE;
+        for part in 0..PARTS {
+            let mut coeffs: Vec<Fp> = (0..part_size)
+                .map(|row| schedule[part + PARTS * row])
+                .collect();
+            Domain::new(part_size.ilog2()).ifft(&mut coeffs);
+            let a_p = Polynomial::from_coeffs(&coeffs);
+            let base = root_negp * y;
+            let mut selector = Fp::ZERO;
+            let mut term = Fp::ONE;
+            for _ in 0..PARTS {
+                selector += term;
+                term *= base;
+            }
+            recon += selector * parts_inv * a_p.eval(coset_point);
+            coset_point *= zeta_inv;
+            root_negp *= part_root_inv;
+        }
+
+        // Independent reference: interpolate the full interleaved schedule directly.
+        let mut k_coeffs = schedule.to_vec();
         Domain::new(FULL.ilog2()).ifft(&mut k_coeffs);
         let k_direct = Polynomial::from_coeffs(&k_coeffs);
-
-        let zeta = subgroup_generator::<FULL>();
-        let two_inv = Fp::from(2u64).invert().expect("two is invertible");
-        let half_pow = point.pow_vartime([HALF as u64]);
-        let selector_even = (half_pow + Fp::ONE) * two_inv;
-        let selector_odd = (Fp::ONE - half_pow) * two_inv;
-        let recon = selector_even * a_poly.eval(point)
-            + selector_odd
-                * b_poly.eval(point * zeta.invert().expect("a root of unity is nonzero"));
 
         assert_eq!(
             k_direct.eval(point),
@@ -894,22 +920,25 @@ mod tests {
         );
     }
 
-    /// The offset recurrence reconstructs the full key schedule from the two
-    /// committed halves by the interleaved-coset identity. Checked on the tiny
-    /// order-4 case (two order-2 halves) per the L=2 habit, then at the
-    /// production order-256 (two order-128 halves), at random points.
+    /// The offset recurrence reconstructs the full key schedule from the
+    /// committed parts by the interleaved-coset identity. Checked on the tiny
+    /// order-4 (`PARTS = 2`) case per the L=2 habit, a tiny order-8 `PARTS = 4`
+    /// case that exercises the P-point generalization beyond binary, and the
+    /// production order-256 (`PARTS = 2`), at random points.
     #[test]
     fn interleave_identity_reconstructs_the_full_schedule() {
         let rng = &mut StdRng::seed_from_u64(7);
         for _ in 0..8 {
-            let even: [Fp; 2] = array::from_fn(|_| Fp::random(&mut *rng));
-            let odd: [Fp; 2] = array::from_fn(|_| Fp::random(&mut *rng));
-            check_interleave_identity::<2, 4>(&even, &odd, Fp::random(&mut *rng));
+            let schedule: [Fp; 4] = array::from_fn(|_| Fp::random(&mut *rng));
+            check_interleave_identity::<2, 4>(&schedule, Fp::random(&mut *rng));
         }
-        let even: [Fp; 128] = array::from_fn(|_| Fp::random(&mut *rng));
-        let odd: [Fp; 128] = array::from_fn(|_| Fp::random(&mut *rng));
         for _ in 0..8 {
-            check_interleave_identity::<128, 256>(&even, &odd, Fp::random(&mut *rng));
+            let schedule: [Fp; 8] = array::from_fn(|_| Fp::random(&mut *rng));
+            check_interleave_identity::<4, 8>(&schedule, Fp::random(&mut *rng));
+        }
+        for _ in 0..8 {
+            let schedule: [Fp; 256] = array::from_fn(|_| Fp::random(&mut *rng));
+            check_interleave_identity::<2, 256>(&schedule, Fp::random(&mut *rng));
         }
     }
 

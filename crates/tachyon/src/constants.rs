@@ -65,7 +65,8 @@ pub const EK_PART_SIZE: usize = POLY_LEN_MAX / TachyonP5R64::ROUNDS;
 /// The number of expansion parts which make up a full expanded key.
 pub const EK_PARTS: usize = 2;
 
-/// The full cyclic round-key schedule width: two interleaved halves. The
-/// emitter's 8192-round cipher cycles this many distinct keys
-/// (`8192 / EK_FULL_SIZE = 32` cycles).
+/// The full cyclic round-key schedule width.
+///
+/// The emitter's 8192-round cipher cycles this many distinct keys
+/// (`POLY_LEN_MAX / EK_FULL_SIZE` cycles).
 pub const EK_FULL_SIZE: usize = EK_PARTS * EK_PART_SIZE;
