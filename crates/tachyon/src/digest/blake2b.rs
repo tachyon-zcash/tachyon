@@ -98,10 +98,11 @@ pub(crate) fn bundle_commitment(action_commit: &EqAffine, value_balance: i64) ->
 
 /// A stamped bundle's contribution to the transaction auth_digest.
 ///
-/// Hashes action signatures, the binding signature, and the stamp.
+/// Hashes action signatures, the binding signature, and the trailer.
 pub(crate) fn stamped_auth_digest(
     action_sigs: &[[u8; 64]],
     binding_sig: &[u8; 64],
+    action_set: &[u8; 32],
     anchor: &[u8; 32],
     tachygrams: &[Fp],
     proof: &[u8],
@@ -113,6 +114,8 @@ pub(crate) fn stamped_auth_digest(
     }
 
     state.update(binding_sig);
+
+    state.update(action_set);
 
     state.update(anchor);
 
