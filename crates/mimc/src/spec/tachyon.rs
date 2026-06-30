@@ -8,6 +8,25 @@ use pasta_curves::Fp;
 
 use crate::Spec;
 
+/// The Tachyon MiMC instantiation over the Pallas base field with 32 rounds.
+pub struct TachyonP5R32;
+
+impl TachyonP5R32 {
+    /// The round-constant values.
+    pub const CONSTANTS: &'static [Fp; Self::ROUNDS] =
+        &pallas_bytes(include_bytes!("Tachyon-MiMCv1.bin"));
+    /// The S-box exponent.
+    pub const POW: u64 = 5;
+    /// The number of rounds.
+    pub const ROUNDS: usize = 32;
+}
+
+impl Spec<Fp, 5, 32> for TachyonP5R32 {
+    type Field = Fp;
+
+    const CONSTANTS: &'static [Fp; Self::ROUNDS] = Self::CONSTANTS;
+}
+
 /// The Tachyon MiMC instantiation over the Pallas base field with 64 rounds.
 pub struct TachyonP5R64;
 

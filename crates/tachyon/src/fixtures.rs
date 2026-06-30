@@ -722,11 +722,11 @@ impl WalletSim {
         }
     }
 
-    /// The note's `MK_LENGTH`-part master key, one part per index.
+    /// The note's master key, assembled from its `MK_PARTS` parts.
     #[must_use]
     pub fn master_key(&self, note: &Note) -> NoteMasterKey {
-        NoteMasterKey(array::from_fn(|index| {
-            self.pak.nk.derive_note_private(&note.psi, index as u64)
+        NoteMasterKey::from_parts(&array::from_fn(|part| {
+            self.pak.nk.derive_note_part(&note.psi, part as u64)
         }))
     }
 

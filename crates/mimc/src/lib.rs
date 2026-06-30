@@ -19,7 +19,7 @@ use ff::PrimeField;
 
 pub mod spec;
 
-pub use spec::tachyon::{TachyonP5R64, TachyonP5R8192};
+pub use spec::tachyon::{TachyonP5R32, TachyonP5R64, TachyonP5R8192};
 
 /// A specification for a MiMC instance over a prime field: `R` rounds of the
 /// monomial S-box $x \mapsto x^P$ under a pinned constant schedule.

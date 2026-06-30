@@ -29,12 +29,14 @@ use ragu::{
     Header, Index, Polynomial, Step, Suffix,
     constraint::{enforce_equal_point, enforce_zero},
 };
-use zcash_mimc::spec::tachyon::TachyonP5R64;
+use zcash_mimc::spec::tachyon::TachyonP5R32;
 
 use crate::{
     CONSTANT_SCHEDULE, NfEmitterCommit, NfEmitterPoly, NfEmittersDigest, PartKeyCommit,
     PartKeyPoly,
-    constants::{EK_FULL_SIZE, EK_PART_SIZE, EK_PARTS, NF_EMITTERS, POLY_LEN_MAX},
+    constants::{
+        EK_FULL_SIZE, EK_PART_SIZE, EK_PARTS, MK_PART_LEN, MK_PARTS, NF_EMITTERS, POLY_LEN_MAX,
+    },
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{Commitment as NoteCommitment, Note},
     primitives::{EpochIndex, PartKeySpectrumPoly},
@@ -51,77 +53,78 @@ use crate::{
     },
 };
 
-/// The note's keyset, input salt, and commitment `([mk_0..mk_{κ-1}], mk_s,
-/// cm)`. Wallet-only.
+/// One `mk` part and its originating note, emitted by [`MasterSeed`].
 ///
-/// Carrying the raw keyset and `mk_s` is required: they are the witness
-/// anchors every derivation step proves against. The header is private to
-/// the wallet's own proof tree and is never published.
+/// Carries this part's `MK_PART_LEN` round keys, its part index, and the whole
+/// note (kept collected so the deferred `cm` can be computed downstream).
+/// Wallet-only: the per-note secrets ride a header that never leaves the
+/// wallet's own proof tree and is never published.
 #[derive(Clone, Debug)]
-pub struct NfMasterHeader;
+pub struct MasterKeyPart;
 
-impl Header for NfMasterHeader {
-    type Data = (NoteCommitment, [Fp; NoteMasterKey::MK_LENGTH]);
+impl Header for MasterKeyPart {
+    /// `(mk_part, part, note)`.
+    type Data = ([Fp; MK_PART_LEN], Fp, Note);
 
     const SUFFIX: Suffix = Suffix::new(1);
 
-    fn encode(&(cm, mk_parts): &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + (32 * mk_parts.len()));
-        out.extend_from_slice(&Fp::from(cm).to_repr());
-        for part in mk_parts {
-            out.extend_from_slice(&<[u8; 32]>::from(part));
+    fn encode(data: &Self::Data) -> Vec<u8> {
+        let (mk_part, part, note) = data;
+        let mut out = Vec::with_capacity(32 * (MK_PART_LEN + 1 + 4));
+        for key in mk_part {
+            out.extend_from_slice(&key.to_repr());
         }
+        out.extend_from_slice(&part.to_repr());
+        out.extend_from_slice(&Fp::from(note.pk).to_repr());
+        out.extend_from_slice(&Fp::from(note.value).to_repr());
+        out.extend_from_slice(&Fp::from(note.psi).to_repr());
+        out.extend_from_slice(&Fp::from(note.rcm).to_repr());
         out
     }
 }
 
-/// Seed the derivation chain at the note's master secrets.
+/// Derive one `mk` part at the note's master secrets.
 ///
-/// Witnesses the note and `pak`, proves the keyset and `mk_s` are the
-/// note's master secrets (`note.pk == pak.derive_payment_key()` pins `nk`,
-/// and the keyset and `mk_s` are Poseidon outputs of `(psi, nk)`), and
-/// emits `([mk_0..mk_{κ-1}], mk_s, cm)`.
+/// Witnesses the note, its proof authorizing key `pak`, and the part index.
+/// Proves `note.pk == pak.derive_payment_key()` (pinning the nullifier key
+/// `nk`), range-checks `part ∈ 0..MK_PARTS`, derives `mk_part =
+/// nf_master_part(psi, nk, part)`, and emits `(mk_part, part, note)`. The note
+/// rides the header so the deferred `cm` binds downstream; `nk` is discarded
+/// and never leaves the seed (only the payment key `pk` does, and it
+/// preimage-hides `nk`).
 #[derive(Debug)]
-pub struct NfMasterSeed;
+pub struct MasterSeed;
 
-impl Step for NfMasterSeed {
+impl Step for MasterSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = NfMasterHeader;
+    type Output = MasterKeyPart;
     type Right = ();
-    type Witness<'source> = (
-        Note,
-        ProofAuthorizingKey,
-        [u64; 3], // MK_LENGTH / 2
-    );
+    type Witness<'source> = (Note, ProofAuthorizingKey, u64);
 
     const INDEX: Index = Index::new(0);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (note, pak, part_idx): Self::Witness<'source>,
+        (note, pak, part): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             note.pk.0 - pak.derive_payment_key().0,
-            "NfMasterSeed: pak not related to note",
+            "MasterSeed: pak not related to note",
         )?;
 
-        let cm = note.commitment();
+        let part_fp = Fp::from(part);
+        let part_in_range = (0..MK_PARTS).fold(Fp::ONE, |product, index| {
+            product * (part_fp - Fp::from(index as u64))
+        });
+        enforce_zero(part_in_range, "MasterSeed: part out of range 0..MK_PARTS")?;
 
-        let mut mk_parts: [Fp; NoteMasterKey::MK_LENGTH] = [Fp::ZERO; NoteMasterKey::MK_LENGTH];
-        for index in part_idx {
-            if index >= (NoteMasterKey::MK_LENGTH as u64) {
-                return Err(ragu::Error::InvalidWitness(
-                    "NfMasterSeed: key index out of bounds".into(),
-                ));
-            }
-            mk_parts[index as usize] = pak.nk.derive_note_private(&note.psi, index);
-        }
+        let mk_part = pak.nk.derive_note_part(&note.psi, part);
 
-        Ok(((cm, mk_parts), ()))
+        Ok(((mk_part, part_fp, note), ()))
     }
 }
 
@@ -249,8 +252,8 @@ impl Step for NfMasterExpand {
         // cell's successor is the next row, so its offset is unused: `get(64)`
         // is `None` -> `Fp::ZERO`, and the recurrence masks that row-wrap step.
         {
-            let schedule: [Fp; TachyonP5R64::ROUNDS] = array::from_fn(|cell| {
-                TachyonP5R64::CONSTANTS
+            let schedule: [Fp; TachyonP5R32::ROUNDS] = array::from_fn(|cell| {
+                TachyonP5R32::CONSTANTS
                     .get(cell + 1)
                     .map_or(Fp::ZERO, |round_const| mk.round_key(cell + 1) + round_const)
             });
@@ -260,7 +263,7 @@ impl Step for NfMasterExpand {
                 &expansion_trace.0,
                 &quotients.round,
                 &schedule,
-                TachyonP5R64::POW,
+                TachyonP5R32::POW,
             )?;
         }
 
@@ -271,8 +274,8 @@ impl Step for NfMasterExpand {
         // ω^{TRACE_COLUMNS-1}` is the final-column stride within a row.
         #[expect(clippy::as_conversions, reason = "constant column index")]
         let stride =
-            subgroup_generator::<POLY_LEN_MAX>().pow_vartime([(TachyonP5R64::ROUNDS - 1) as u64]);
-        let whitening = mk.round_key(TachyonP5R64::ROUNDS);
+            subgroup_generator::<POLY_LEN_MAX>().pow_vartime([(TachyonP5R32::ROUNDS - 1) as u64]);
+        let whitening = mk.round_key(TachyonP5R32::ROUNDS);
         enforce_strided_column::<{ EK_PART_SIZE }>(
             ctx,
             &expansion_trace.0,

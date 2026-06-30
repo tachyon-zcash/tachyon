@@ -11,11 +11,13 @@ use derive_more::Debug;
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
 use ragu::{Domain, Polynomial};
-use zcash_mimc::spec::tachyon::{TachyonP5R64, TachyonP5R8192};
+use zcash_mimc::spec::tachyon::{TachyonP5R32, TachyonP5R8192};
 
 use super::proof::SpendValidatingKey;
 use crate::{
-    constants::{EK_FULL_SIZE, EK_PART_SIZE, EK_PARTS, NF_DOMAIN, NF_EMITTERS},
+    constants::{
+        EK_FULL_SIZE, EK_PART_SIZE, EK_PARTS, MK_PART_LEN, MK_PARTS, NF_DOMAIN, NF_EMITTERS,
+    },
     digest::{mimc, poseidon},
     note::{self, Nullifier},
     primitives::{EpochOffset, NfEmitterPoly, PartKeyPoly, PartKeySpectrumPoly},
@@ -45,10 +47,19 @@ use crate::{
 pub struct NullifierKey(#[debug(skip)] pub(super) Fp);
 
 impl NullifierKey {
-    /// Derive a note's master-key seed from its nullifier trapdoor `psi`.
+    /// Derive one `mk` part (`MK_PART_LEN` round keys) of a note's master key
+    /// from its nullifier trapdoor `psi` and the part index. One [`MasterSeed`]
+    /// step derives one part; the parts concatenate into the full schedule via
+    /// [`NoteMasterKey::from_parts`].
+    ///
+    /// [`MasterSeed`]: crate::stamp::proof::delegation::MasterSeed
     #[must_use]
-    pub fn derive_note_private(&self, psi: &note::NullifierTrapdoor, index: u64) -> Fp {
-        poseidon::nf_master(psi.0, self.0, Fp::from(index))
+    pub fn derive_note_part(
+        &self,
+        psi: &note::NullifierTrapdoor,
+        part: u64,
+    ) -> [Fp; MK_PART_LEN] {
+        poseidon::nf_master_part(psi.0, self.0, part)
     }
 }
 
@@ -57,7 +68,25 @@ impl NullifierKey {
 pub struct NoteMasterKey(pub [Fp; Self::MK_LENGTH]);
 
 impl NoteMasterKey {
-    pub const MK_LENGTH: usize = 6;
+    pub const MK_LENGTH: usize = crate::constants::MK_LENGTH;
+
+    /// Assemble the full master key by concatenating its `MK_PARTS` parts, in
+    /// order. Each part is one [`MasterSeed`] step's `nf_master_part` output;
+    /// part `i` occupies `mk[i·MK_PART_LEN .. (i+1)·MK_PART_LEN]`.
+    ///
+    /// [`MasterSeed`]: crate::stamp::proof::delegation::MasterSeed
+    #[must_use]
+    pub fn from_parts(parts: &[[Fp; MK_PART_LEN]; MK_PARTS]) -> Self {
+        Self(array::from_fn(|index| {
+            #[expect(
+                clippy::integer_division,
+                clippy::integer_division_remainder_used,
+                reason = "index < MK_LENGTH = MK_PARTS*MK_PART_LEN"
+            )]
+            let key = parts[index / MK_PART_LEN][index % MK_PART_LEN];
+            key
+        }))
+    }
 
     /// Get the round key at the given index.
     #[must_use]
@@ -115,7 +144,7 @@ impl NoteMasterKey {
     /// producer.
     #[must_use]
     pub fn derive_expanded_trace(&self, part: usize) -> (PartKeySpectrumPoly, PartKey) {
-        let mut cells: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE * TachyonP5R64::ROUNDS);
+        let mut cells: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE * TachyonP5R32::ROUNDS);
         let mut keys: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE);
 
         #[expect(clippy::as_conversions, reason = "constant size")]
@@ -339,22 +368,19 @@ mod tests {
 
     use super::*;
 
-    /// The note's `MK_LENGTH`-part master key, one part per index.
+    /// The note's master key, assembled from its `MK_PARTS` parts.
     fn master_key(nk: &NullifierKey, psi: &note::NullifierTrapdoor) -> NoteMasterKey {
-        NoteMasterKey(array::from_fn(|index| {
-            nk.derive_note_private(psi, u64::try_from(index).expect("index fits u64"))
+        NoteMasterKey::from_parts(&array::from_fn(|part| {
+            nk.derive_note_part(psi, u64::try_from(part).expect("part fits u64"))
         }))
     }
 
     #[test]
-    fn derive_note_private_deterministic() {
+    fn derive_note_part_deterministic() {
         let rng = &mut StdRng::seed_from_u64(0);
         let nk = NullifierKey(Fp::random(&mut *rng));
         let psi = note::NullifierTrapdoor::random(rng);
-        assert_eq!(
-            nk.derive_note_private(&psi, 0),
-            nk.derive_note_private(&psi, 0),
-        );
+        assert_eq!(nk.derive_note_part(&psi, 0), nk.derive_note_part(&psi, 0));
     }
 
     #[test]
@@ -364,8 +390,8 @@ mod tests {
         let psi1 = note::NullifierTrapdoor::random(rng);
         let psi2 = note::NullifierTrapdoor::random(rng);
         assert_ne!(
-            nk.derive_note_private(&psi1, 0),
-            nk.derive_note_private(&psi2, 0),
+            nk.derive_note_part(&psi1, 0),
+            nk.derive_note_part(&psi2, 0),
         );
     }
 

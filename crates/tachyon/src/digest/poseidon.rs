@@ -6,7 +6,11 @@ use ff::{Field as _, PrimeField as _};
 use pasta_curves::{EpAffine, EqAffine, Fp, arithmetic::Coordinates};
 use ragu::Sponge;
 
-use crate::{EpochIndex, constants::NF_EMITTERS, keys::NoteMasterKey};
+use crate::{
+    EpochIndex,
+    constants::{MK_PART_LEN, NF_EMITTERS},
+    keys::NoteMasterKey,
+};
 
 #[expect(
     clippy::expect_used,
@@ -61,19 +65,36 @@ pub(crate) fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
 
 const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 
-/// Derives a master key element from note trapdoor and wallet nullifier key.
+/// Derive one `mk` part: `MK_PART_LEN` round keys from the note trapdoor `psi`,
+/// the nullifier key `nk`, and the part index. One sponge absorbs
+/// `(domain, part, psi, nk)` and squeezes `MK_PART_LEN` elements; the squeeze
+/// position is the key index within the part. The two parts concatenate into
+/// the full master key.
+#[expect(
+    clippy::expect_used,
+    reason = "mock sponge absorb/squeeze is infallible"
+)]
 #[must_use]
-pub(crate) fn nf_master(psi: Fp, nk: Fp, index: Fp) -> Fp {
-    hash::<4>([
-        Fp::from_u128(u128::from_le_bytes(*NULLIFIER_MASTER_DOMAIN)),
-        psi,
-        nk,
-        index,
-    ])
+pub(crate) fn nf_master_part(psi: Fp, nk: Fp, part: u64) -> [Fp; MK_PART_LEN] {
+    let mut sponge = Sponge::new();
+    sponge
+        .absorb(Fp::from_u128(u128::from_le_bytes(*NULLIFIER_MASTER_DOMAIN)))
+        .expect("infallible");
+    sponge.absorb(Fp::from(part)).expect("infallible");
+    sponge.absorb(psi).expect("infallible");
+    sponge.absorb(nk).expect("infallible");
+    [Fp::ZERO; MK_PART_LEN].map(|_| sponge.squeeze().expect("infallible"))
 }
 
 const NF_QUERY_SALT_DOMAIN: &[u8; 16] = b"Tachyon-NfSalt__";
 const NF_QUERY_WEIGHT_DOMAIN: &[u8; 16] = b"Tachyon-NfWeight";
+
+/// The fixed `mk` prefix absorbed by the query-parameter sponges. Rooting the
+/// salts and weights in a fixed-length prefix keeps these sponges (which run
+/// inside `NullifierDerivation`) flat in `MK_LENGTH`: the full `mk` is sound by
+/// construction, and a Poseidon sponge seeded by a few `mk` elements already
+/// yields full-entropy outputs.
+const NF_QUERY_MK_PREFIX: usize = 4;
 
 /// Derive the note's per-emitter nullifier-query salts from its master key
 /// `mk`. Each salt seeds one derivation poly's 8192-round cipher. Domain-
@@ -89,7 +110,7 @@ pub(crate) fn nf_query_salts(mk: [Fp; NoteMasterKey::MK_LENGTH]) -> [Fp; NF_EMIT
     sponge
         .absorb(Fp::from_u128(u128::from_le_bytes(*NF_QUERY_SALT_DOMAIN)))
         .expect("infallible");
-    for part in mk {
+    for &part in mk.iter().take(NF_QUERY_MK_PREFIX) {
         sponge.absorb(part).expect("infallible");
     }
     [Fp::ZERO; NF_EMITTERS].map(|_| sponge.squeeze().expect("infallible"))
@@ -108,7 +129,7 @@ pub(crate) fn nf_query_weights(mk: [Fp; NoteMasterKey::MK_LENGTH]) -> ([Fp; NF_E
     sponge
         .absorb(Fp::from_u128(u128::from_le_bytes(*NF_QUERY_WEIGHT_DOMAIN)))
         .expect("infallible");
-    for part in mk {
+    for &part in mk.iter().take(NF_QUERY_MK_PREFIX) {
         sponge.absorb(part).expect("infallible");
     }
     let ratios = [Fp::ZERO; NF_EMITTERS].map(|_| sponge.squeeze().expect("infallible"));

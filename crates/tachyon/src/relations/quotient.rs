@@ -7,7 +7,7 @@
 //!   masked-quintic round quotient, the boundary quotient, and the lift's
 //!   weight/accumulator recurrences, plus the native off-domain nullifier
 //!   query.
-//! - the 64x128 **expansion** trace (`TachyonP5R64`): the masked-quintic round
+//! - the 64x128 **expansion** trace (`TachyonP5R32`): the masked-quintic round
 //!   quotient, the boundary quotient, and the decimation quotient binding the
 //!   key polynomial to the trace's final column.
 //!
@@ -32,7 +32,7 @@ use ff::{Field as _, PrimeField as _};
 use lazy_static::lazy_static;
 use pasta_curves::Fp;
 use ragu::{Domain, Polynomial};
-use zcash_mimc::spec::tachyon::{TachyonP5R64, TachyonP5R8192};
+use zcash_mimc::spec::tachyon::{TachyonP5R32, TachyonP5R8192};
 
 use super::subgroup_generator;
 use crate::{
@@ -545,7 +545,7 @@ pub(crate) fn accumulator_recurrence(
 }
 
 // ---------------------------------------------------------------------------
-// Expansion trace (64x128 TachyonP5R64)
+// Expansion trace (64x128 TachyonP5R32)
 // ---------------------------------------------------------------------------
 
 /// Committed splits of the expansion trace's masked round quotient. The
@@ -556,7 +556,7 @@ pub(crate) fn accumulator_recurrence(
 /// what pushes it one split past [`EMITTER_ROUND_SPLITS`].
 pub(crate) const EXPANSION_ROUND_SPLITS: usize = {
     #[expect(clippy::cast_possible_truncation, reason = "constant size")]
-    let numerator_len = TachyonP5R64::POW as usize * (POLY_LEN_MAX - 1) + EK_PART_SIZE + 1;
+    let numerator_len = TachyonP5R32::POW as usize * (POLY_LEN_MAX - 1) + EK_PART_SIZE + 1;
     (numerator_len - POLY_LEN_MAX).div_ceil(POLY_LEN_MAX)
 };
 
@@ -565,7 +565,7 @@ pub(crate) const EXPANSION_ROUND_SPLITS: usize = {
 /// output-cell mask) exactly. Was the hand-set `ROUND_COSET`.
 #[expect(clippy::cast_possible_truncation, reason = "constant size")]
 const ROUND_COSET: usize =
-    (TachyonP5R64::POW as usize * (POLY_LEN_MAX - 1) + EK_PART_SIZE + 1).next_power_of_two();
+    (TachyonP5R32::POW as usize * (POLY_LEN_MAX - 1) + EK_PART_SIZE + 1).next_power_of_two();
 
 /// Boundary-numerator eval coset. The boundary numerator is `complement ·
 /// (T − target)`: `complement` has degree `(ROUNDS-1)·EK_FULL_SIZE`, `T` degree
@@ -573,7 +573,7 @@ const ROUND_COSET: usize =
 /// degree `(ROUNDS-1)·EK_FULL_SIZE + POLY_LEN_MAX − 1`; the coset covers its
 /// `degree + 1` coefficients. Was the hand-set `BOUNDARY_COSET`.
 const BOUNDARY_COSET: usize =
-    ((TachyonP5R64::ROUNDS - 1) * EK_PART_SIZE + POLY_LEN_MAX).next_power_of_two();
+    ((TachyonP5R32::ROUNDS - 1) * EK_PART_SIZE + POLY_LEN_MAX).next_power_of_two();
 
 /// Row step: the round-coset-to-trace size ratio. `T(gX)` on the round coset is
 /// `trace_ext` rotated by this, since ω_trace = ω_round^ROW_STEP.
@@ -586,15 +586,15 @@ const REDUCE_STRIDE: usize = ROUND_COSET / BOUNDARY_COSET;
 
 /// Length of a column-stride spread: coefficient `k` of a `TRACE_COLUMNS`-term
 /// polynomial lands at degree `k·EK_PART_SIZE`.
-const SPREAD_LEN: usize = (TachyonP5R64::ROUNDS - 1) * EK_PART_SIZE + 1;
+const SPREAD_LEN: usize = (TachyonP5R32::ROUNDS - 1) * EK_PART_SIZE + 1;
 
 lazy_static! {
     /// Output-cell mask `M(X) = X^ERA − column_root^OUTPUT_CELL` evaluated on
     /// the quintic coset. Keyset-independent, so it is built once.
     static ref MASK_EXT: Vec<Fp> = {
-        let column_root = subgroup_generator::<{ TachyonP5R64::ROUNDS }>();
+        let column_root = subgroup_generator::<{ TachyonP5R32::ROUNDS }>();
         let mut mask = vec![Fp::ZERO; EK_PART_SIZE + 1];
-        mask[0] = -column_root.pow_vartime([(TachyonP5R64::ROUNDS - 1) as u64]);
+        mask[0] = -column_root.pow_vartime([(TachyonP5R32::ROUNDS - 1) as u64]);
         mask[EK_PART_SIZE] = Fp::ONE;
         coset_evaluations(&mask, ROUND_COSET, COSET_SHIFT)
     };
@@ -602,7 +602,7 @@ lazy_static! {
     /// Boundary complement `E(X) = Σ X^(ERA·m)` evaluated on the reduced coset.
     /// Keyset-independent, so it is built once.
     static ref COMPLEMENT_EXT: Vec<Fp> = coset_evaluations(
-        &spread_by_stride(&[Fp::ONE; TachyonP5R64::ROUNDS]),
+        &spread_by_stride(&[Fp::ONE; TachyonP5R32::ROUNDS]),
         BOUNDARY_COSET,
         COSET_SHIFT,
     );
@@ -615,7 +615,7 @@ lazy_static! {
     /// · a^{POW−j} · row^j`; since ifft and coset_evaluations are linear, its
     /// coset evaluation is this keyset-independent basis combined with per-call
     /// scalars (see `expansion_boundary_quotient`). Built once.
-    static ref ROW_POWER_EXT: Vec<Vec<Fp>> = (0..=TachyonP5R64::POW)
+    static ref ROW_POWER_EXT: Vec<Vec<Fp>> = (0..=TachyonP5R32::POW)
         .map(|power| {
             let mut samples: Vec<Fp> = (0..EK_PART_SIZE as u64)
                 .map(|row| Fp::from(row).pow_vartime([power]))
@@ -630,7 +630,7 @@ lazy_static! {
     /// column zeroed), with no key material. The keyset-independent half of the
     /// cached `offset_ext` basis (see `expansion_round_quotient`). Built once.
     static ref OFFSET_CONST_EXT: Vec<Fp> = offset_basis_ext(
-        &TachyonP5R64::CONSTANTS
+        &TachyonP5R32::CONSTANTS
             .iter()
             .skip(1)
             .copied()
@@ -646,9 +646,9 @@ lazy_static! {
     /// `expansion_round_quotient`). Built once.
     static ref OFFSET_KEY_EXT: Vec<Vec<Fp>> = (0..NoteMasterKey::MK_LENGTH)
         .map(|residue| {
-            let selector: Vec<Fp> = (0..TachyonP5R64::ROUNDS)
+            let selector: Vec<Fp> = (0..TachyonP5R32::ROUNDS)
                 .map(|col| {
-                    if col + 1 < TachyonP5R64::ROUNDS
+                    if col + 1 < TachyonP5R32::ROUNDS
                         && (col + 1) % NoteMasterKey::MK_LENGTH == residue
                     {
                         Fp::ONE
@@ -668,7 +668,7 @@ lazy_static! {
 /// basis (see `expansion_round_quotient`).
 fn offset_basis_ext(values: &[Fp]) -> Vec<Fp> {
     let mut coeffs = values.to_vec();
-    Domain::new(TachyonP5R64::ROUNDS.ilog2()).ifft(&mut coeffs);
+    Domain::new(TachyonP5R32::ROUNDS.ilog2()).ifft(&mut coeffs);
     coset_evaluations(&spread_by_stride(&coeffs), ROUND_COSET, COSET_SHIFT)
 }
 
@@ -679,7 +679,7 @@ fn offset_basis_ext(values: &[Fp]) -> Vec<Fp> {
 /// cipher-input window origin. Builds the shared quintic-coset trace evaluation
 /// once and returns `(round splits, boundary, decimation)`, matching what
 /// [`NfMasterExpand`] opens: cipher input `base + row`, first key
-/// `mk.round_key(0)`, whitening `mk.round_key(TachyonP5R64::ROUNDS)`.
+/// `mk.round_key(0)`, whitening `mk.round_key(TachyonP5R32::ROUNDS)`.
 pub(crate) fn expansion_quotients(
     trace_coeffs: &[Fp],
     keyset: NoteMasterKey,
@@ -692,7 +692,7 @@ pub(crate) fn expansion_quotients(
     let decimation = expansion_decimation_quotient(
         trace_coeffs,
         key_coeffs,
-        keyset.round_key(TachyonP5R64::ROUNDS),
+        keyset.round_key(TachyonP5R32::ROUNDS),
     );
     (round, boundary, decimation)
 }
@@ -736,7 +736,7 @@ pub(crate) fn expansion_round_quotient(
         let cipher_in = trace_ext[point] + offset_ext[point];
         // T(gX) is trace_ext rotated cyclically by ROW_STEP.
         let shifted = trace_ext[(point + ROW_STEP) % ROUND_COSET];
-        mask_ext[point] * (shifted - cipher_in.pow_vartime([TachyonP5R64::POW]))
+        mask_ext[point] * (shifted - cipher_in.pow_vartime([TachyonP5R32::POW]))
     });
     assert!(
         quotient.len() <= EXPANSION_ROUND_SPLITS * POLY_LEN_MAX,
@@ -763,7 +763,7 @@ pub(crate) fn expansion_boundary_quotient(trace_ext: &[Fp], base: Fp, first_key:
     const BINOMIAL: [u64; 6] = [1, 5, 10, 10, 5, 1];
     const {
         assert!(
-            TachyonP5R64::POW == 5,
+            TachyonP5R32::POW == 5,
             "boundary binomial coefficients assume the x^5 S-box"
         );
     }
@@ -812,7 +812,7 @@ pub(crate) fn expansion_decimation_quotient(
     whitening: Fp,
 ) -> Polynomial {
     let stride =
-        subgroup_generator::<POLY_LEN_MAX>().pow_vartime([(TachyonP5R64::ROUNDS - 1) as u64]);
+        subgroup_generator::<POLY_LEN_MAX>().pow_vartime([(TachyonP5R32::ROUNDS - 1) as u64]);
 
     // numerator(X) = K(X) − w − T(σX): coefficient `i` is `key_coeffs[i] −
     // σ^i·trace_coeffs[i]`, with `w` removed from the constant term.

@@ -6,7 +6,7 @@
     reason = "constant definitions"
 )]
 
-use zcash_mimc::TachyonP5R64;
+use zcash_mimc::TachyonP5R32;
 
 /// Number of blocks per epoch.
 pub const EPOCH_SIZE: u32 = 1 << 12;
@@ -58,15 +58,34 @@ pub const NF_DOMAIN: usize = {
     (NF_EMITTERS * POLY_LEN_MAX) >> 1
 };
 
-/// One expansion part fits as many `TachyonP5R64::ROUNDS` rows into a
+/// One expansion part fits as many `TachyonP5R32::ROUNDS` rows into a
 /// polynomial as possible.
-pub const EK_PART_SIZE: usize = POLY_LEN_MAX / TachyonP5R64::ROUNDS;
+pub const EK_PART_SIZE: usize = POLY_LEN_MAX / TachyonP5R32::ROUNDS;
 
-/// The number of expansion parts which make up a full expanded key.
-pub const EK_PARTS: usize = 2;
+/// The number of `ExpandedKey` parts which make up a full expanded key.
+///
+/// Width lever: with the expansion held at a credible depth (`TachyonP5R32`),
+/// `P = EK_PARTS` parts interleave into one `EK_FULL_SIZE`-key orbit, so the
+/// schedule width is `P · EK_PART_SIZE` independent of the round count.
+pub const EK_PARTS: usize = 4;
 
-/// The full cyclic round-key schedule width.
+/// The full cyclic round-key schedule width (one orbit).
 ///
 /// The emitter's 8192-round cipher cycles this many distinct keys
-/// (`POLY_LEN_MAX / EK_FULL_SIZE` cycles).
+/// (`POLY_LEN_MAX / EK_FULL_SIZE` cycles; 8x at the default width).
 pub const EK_FULL_SIZE: usize = EK_PARTS * EK_PART_SIZE;
+
+/// The number of `mk` parts, one derived per `MasterSeed` step.
+///
+/// Splitting the master key across `MK_PARTS` seeds keeps each seed's Poseidon
+/// squeeze under the per-step gate ceiling (a single `MK_LENGTH` squeeze busts
+/// it). The parts concatenate into the full `mk`.
+pub const MK_PARTS: usize = 2;
+
+/// The number of round keys per `mk` part.
+pub const MK_PART_LEN: usize = 16;
+
+/// The master-key round-key schedule width: the round keys cycled by the
+/// `TachyonP5R32` expansion cipher (`round_key(0..=ROUNDS)`; the whitening key
+/// at index `ROUNDS` wraps to key `0`).
+pub const MK_LENGTH: usize = MK_PARTS * MK_PART_LEN;
