@@ -149,14 +149,13 @@ impl Step for MasterSeed {
 /// - `enforce_strided_column` binds `K` to `T`'s final column plus the
 ///   whitening key, so `commit(K)` is exactly the expansion outputs.
 #[derive(Debug)]
-pub struct NfMasterExpand;
+pub struct ExpandedKeyStep;
 
-/// TODO: add more tests
-impl Step for NfMasterExpand {
+impl Step for ExpandedKeyStep {
     type Aux<'source> = ();
-    type Left = NfMasterHeader;
-    type Output = NfPartKeyset;
-    type Right = NfMasterHeader;
+    type Left = MasterKeyPart;
+    type Output = ExpandedKeyPart;
+    type Right = MasterKeyPart;
     /// `(trace T, round/boundary quotients, part-key poly A_p, decimation
     /// quotient, part)`. `part ∈ 0..EK_PARTS` selects this invocation's window.
     type Witness<'source> = (
@@ -185,40 +184,42 @@ impl Step for NfMasterExpand {
         let part_in_range = (0..EK_PARTS).fold(Fp::ONE, |product, index| {
             product * (part - Fp::from(index as u64))
         });
-        enforce_zero(
-            part_in_range,
-            "NfMasterExpand: part out of range 0..EK_PARTS",
-        )?;
-        #[expect(clippy::as_conversions, reason = "constant size")]
+        enforce_zero(part_in_range, "ExpandedKeyStep: part out of range 0..EK_PARTS")?;
         let base = part * Fp::from(EK_PART_SIZE as u64);
-        let (cm, mk) = {
-            let (left_cm, left_parts) = left;
-            let (right_cm, right_parts) = right;
 
-            let all_parts: [Fp; NoteMasterKey::MK_LENGTH] = left_parts
-                .into_iter()
-                .zip(right_parts)
-                .map(|(left_key, right_key)| {
-                    if bool::from(left_key.is_zero()) == bool::from(right_key.is_zero()) {
-                        return Err(ragu::Error::InvalidWitness(
-                            "NfMasterExpand: left and right keys are not complementary".into(),
-                        ));
-                    }
-                    Ok(left_key + right_key)
-                })
-                .collect::<Result<Vec<Fp>, ragu::Error>>()?
-                .try_into()
-                .map_err(|_err| {
-                    ragu::Error::InvalidWitness("NfMasterExpand: unreachable, constant size".into())
-                })?;
-
+        // Assemble the 32-key `mk` from the two `mk parts` (pinned to indices 0
+        // and 1) of the same note, concatenated -- not the old complementary-sum
+        // fuse. The note is reconciled across both seeds and forwarded so the
+        // deferred `cm` binds downstream.
+        let (mk, note) = {
+            let (left_mk_part, left_index, left_note) = left;
+            let (right_mk_part, right_index, right_note) = right;
+            enforce_zero(left_index, "ExpandedKeyStep: left input is not mk part 0")?;
             enforce_zero(
-                Fp::from(left_cm) - Fp::from(right_cm),
-                "NfMasterExpand: left and right commitments do not match",
+                right_index - Fp::ONE,
+                "ExpandedKeyStep: right input is not mk part 1",
             )?;
-
-            Ok((left_cm, NoteMasterKey(all_parts)))
-        }?;
+            enforce_zero(
+                Fp::from(left_note.pk) - Fp::from(right_note.pk),
+                "ExpandedKeyStep: note pk mismatch across mk parts",
+            )?;
+            enforce_zero(
+                Fp::from(left_note.value) - Fp::from(right_note.value),
+                "ExpandedKeyStep: note value mismatch across mk parts",
+            )?;
+            enforce_zero(
+                Fp::from(left_note.psi) - Fp::from(right_note.psi),
+                "ExpandedKeyStep: note psi mismatch across mk parts",
+            )?;
+            enforce_zero(
+                Fp::from(left_note.rcm) - Fp::from(right_note.rcm),
+                "ExpandedKeyStep: note rcm mismatch across mk parts",
+            )?;
+            (
+                NoteMasterKey::from_parts(&[left_mk_part, right_mk_part]),
+                left_note,
+            )
+        };
 
         // Round 0, the salt step. The expansion runs from index 0, so the
         // cipher input for row `row` is `mk_s + row`. The input is not stored
@@ -285,38 +286,40 @@ impl Step for NfMasterExpand {
             whitening,
         )?;
 
-        Ok(((PartKeyCommit(key_poly.0.commit()), mk, cm, part), ()))
+        Ok(((PartKeyCommit(key_poly.0.commit()), part, mk, note), ()))
     }
 }
 
-/// One expansion part's keyset commitment, master key, note commitment, and
-/// part index `(keyset_commit, mk, cm, part)`. Wallet-only.
+/// One `ExpandedKey` part: its key-poly commitment, window index, the full
+/// `mk`, and the originating note `(keyset_commit, part, mk, note)`. Wallet-only.
 ///
 /// Carries the [`PartKeyCommit`] to the eval-form part-key polynomial (this
-/// part's `EK_PART_SIZE` keyed-cipher expansion outputs), proven by
-/// [`NfMasterExpand`], plus the raw `mk` forwarded for
-/// [`NullifierDerivationStep`] to derive its query parameters (per-poly salts,
-/// weight bases `ρ_j`, and shift `c`), and the `part` index `0..EK_PARTS` so
-/// the derivation step pins one of each. The header is private to the wallet's
-/// own proof tree and is never published.
+/// window's `EK_PART_SIZE` keyed-cipher expansion outputs), proven by
+/// [`ExpandedKeyStep`], the `part` index `0..EK_PARTS` so the funnel pins one of
+/// each, the full `mk` (for the downstream query parameters), and the note (so
+/// the deferred `cm` binds at the funnel root). The header is private to the
+/// wallet's own proof tree and is never published.
 #[derive(Clone, Debug)]
-pub struct NfPartKeyset;
+pub struct ExpandedKeyPart;
 
-impl Header for NfPartKeyset {
-    type Data = (PartKeyCommit, NoteMasterKey, NoteCommitment, Fp);
+impl Header for ExpandedKeyPart {
+    type Data = (PartKeyCommit, Fp, NoteMasterKey, Note);
 
     const SUFFIX: Suffix = Suffix::new(12);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let (keyset_commit, mk, cm, part_index) = *data;
-        let mut out = Vec::with_capacity(32 + (NoteMasterKey::MK_LENGTH * 32) + 32 + 32);
+        let (keyset_commit, part, mk, note) = data;
+        let mut out = Vec::with_capacity(32 + 32 + (NoteMasterKey::MK_LENGTH * 32) + (4 * 32));
         let commit_bytes: [u8; 32] = keyset_commit.0.to_affine().to_bytes();
         out.extend_from_slice(&commit_bytes);
-        for part in mk.0 {
-            out.extend_from_slice(&part.to_repr());
+        out.extend_from_slice(&part.to_repr());
+        for key in mk.0 {
+            out.extend_from_slice(&key.to_repr());
         }
-        out.extend_from_slice(&Fp::from(cm).to_repr());
-        out.extend_from_slice(&part_index.to_repr());
+        out.extend_from_slice(&Fp::from(note.pk).to_repr());
+        out.extend_from_slice(&Fp::from(note.value).to_repr());
+        out.extend_from_slice(&Fp::from(note.psi).to_repr());
+        out.extend_from_slice(&Fp::from(note.rcm).to_repr());
         out
     }
 }

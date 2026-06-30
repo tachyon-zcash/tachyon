@@ -8,7 +8,7 @@ use ragu::Sponge;
 
 use crate::{
     EpochIndex,
-    constants::{MK_PART_LEN, NF_EMITTERS},
+    constants::{MK_PART_LEN, NF_EMITTERS, NF_QUERY_MK_PREFIX},
     keys::NoteMasterKey,
 };
 
@@ -89,12 +89,6 @@ pub(crate) fn nf_master_part(psi: Fp, nk: Fp, part: u64) -> [Fp; MK_PART_LEN] {
 const NF_QUERY_SALT_DOMAIN: &[u8; 16] = b"Tachyon-NfSalt__";
 const NF_QUERY_WEIGHT_DOMAIN: &[u8; 16] = b"Tachyon-NfWeight";
 
-/// The fixed `mk` prefix absorbed by the query-parameter sponges. Rooting the
-/// salts and weights in a fixed-length prefix keeps these sponges (which run
-/// inside `NullifierDerivation`) flat in `MK_LENGTH`: the full `mk` is sound by
-/// construction, and a Poseidon sponge seeded by a few `mk` elements already
-/// yields full-entropy outputs.
-const NF_QUERY_MK_PREFIX: usize = 4;
 
 /// Derive the note's per-emitter nullifier-query salts from its master key
 /// `mk`. Each salt seeds one derivation poly's 8192-round cipher. Domain-

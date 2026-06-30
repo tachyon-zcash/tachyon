@@ -89,3 +89,11 @@ pub const MK_PART_LEN: usize = 16;
 /// `TachyonP5R32` expansion cipher (`round_key(0..=ROUNDS)`; the whitening key
 /// at index `ROUNDS` wraps to key `0`).
 pub const MK_LENGTH: usize = MK_PARTS * MK_PART_LEN;
+
+/// The fixed `mk` prefix that seeds the nullifier-query parameter sponges
+/// (`nf_query_salts`/`nf_query_weights`). Rooting the salts and weights in a
+/// fixed-length prefix keeps those sponges flat in `MK_LENGTH` and lets the
+/// single-input `NullifierDerivation` carry only the prefix on its header. A
+/// Poseidon sponge seeded by a few `mk` elements already yields full-entropy
+/// outputs; `mk` is sound by construction.
+pub const NF_QUERY_MK_PREFIX: usize = 4;
