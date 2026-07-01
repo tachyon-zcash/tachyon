@@ -50,14 +50,14 @@ The proof establishes:
 - tachygrams are correctly bound to action keys
 - action balance effect matches pool balance effect
 
-The nullifier for epoch $e$ is the leaf of the note's GGM tree at index $e$:
+The nullifier at epoch offset $d$ from the note's creation is a weighted off-domain query over the note's certified derivation polynomials $T_j$:
 
-$$ \mathsf{nf}_e = \mathrm{Poseidon}\bigl(\mathrm{walk}(\mathsf{mk}, e)\bigr) $$
+$$ \mathsf{nf}_d = \sum_{j} \rho_j^{\,d}\; T_j\!\left(c\,\gamma^{d}\right) $$
 
 where
 
-- $\mathsf{mk} = \mathrm{Poseidon}(\psi, \mathsf{nk})$ is the note's GGM master key, seeded by the trapdoor $\psi$ committed in the $\psi$ field[^commitment]
-- $e$ is an epoch index
+- the $T_j$, the weight bases $\rho_j$, and the secret shift $c$ all derive from the note's master key $\mathsf{mk}$, seeded by the trapdoor $\psi$ committed in the $\psi$ field[^commitment] and the wallet's nullifier key $\mathsf{nk}$
+- $d$ is the epoch offset from the note's creation epoch
 
 [^commitment]: User-controlled randomness [commitment trapdoor](https://zips.z.cash/protocol/protocol.pdf#commitment)
 

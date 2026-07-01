@@ -16,10 +16,8 @@ $$
 A spend action involves a nullifier[^nullifiers].
 
 $$
-\mathsf{tg} = \mathsf{nf} =
-    \mathsf{Poseidon}_\texttt{Tachyon-NfDerive}\!\left(
-        \mathsf{KDF}^{\mathsf{climb}}_\psi(e, D)
-    \right)
+\mathsf{tg} = \mathsf{nf}_d =
+    \sum_{j} \rho_j^{\,d}\; T_j\!\left(c\,\gamma^{d}\right)
 $$
 
 ## Tachygram sets
@@ -53,7 +51,7 @@ A spend publishes a nullifier for the current epoch and one for the next epoch[^
 
 [^notes]: See [Notes](./notes.md) for the note's field structure: $\mathsf{pk}$, $v$, $\psi$, $\mathsf{rcm}$.
 
-[^nullifiers]: See [Nullifiers](./nullifiers.md) for the GGM derivation that yields $\mathsf{KDF}^\mathsf{climb}_\psi(e, D)$.
+[^nullifiers]: See [Nullifiers](./nullifiers.md) for the master-key expansion and the off-domain query that yields $\mathsf{nf}_d$.
 
 [^aggregation]: See [Aggregation](./aggregation.md) for how stamps merge their tachygram sets.
 

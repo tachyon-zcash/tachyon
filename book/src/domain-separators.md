@@ -47,8 +47,11 @@ These are all Tachyon-specific digests, performed in-circuit.
 
 | Purpose | Value |
 | ------- | ----- |
-| Nullifier prefix key | `Tachyon-NfPrefix` |
-| Nullifier derivation | `Tachyon-NfDerive` |
+| Nullifier master key part | `Tachyon-NfMaster` |
+| Nullifier keyset fold | `Tachyon-NfKeyset` |
+| Nullifier query salts | `Tachyon-NfSalt__` |
+| Nullifier query weights | `Tachyon-NfWeight` |
+| Nullifier lift challenge | `Tachyon-NfLiftCh` |
 | Note commitment | `Tachyon-CmDerive` |
 | Action digest | `Tachyon-ActionDg` |
 | Payment key derivation | `Tachyon-PkDerive` |
