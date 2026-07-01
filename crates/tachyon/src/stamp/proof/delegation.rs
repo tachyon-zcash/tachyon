@@ -1,12 +1,16 @@
 //! MiMC key expansion and nullifier derivation. Wallet-only; every header
-//! carries `cm` for its consumers.
+//! carries the note so the deferred `cm` binds at the derivation.
 //!
-//! [`ExpandedKeyStep`] proves one part of a note's keyset expansion -- the
-//! `EK_PART_SIZE` keyed-cipher outputs of that part -- in a single
-//! trace-based step, committing them on the [`ExpandedKeyPart`] header. `EK_PARTS`
-//! invocations make the full interleaved schedule.
-//! [`NullifierDerivationStep`] then certifies the note's derivation polynomials
-//! against the parts, reconstructing the schedule inline.
+//! [`MasterSeed`] derives one `mk` part at the note's master secrets, pinning
+//! `nk` through the payment-key check. [`ExpandedKeyStep`] proves one part of a
+//! note's keyset expansion -- the `EK_PART_SIZE` keyed-cipher outputs of that
+//! part -- in a single trace-based step, committing them on the
+//! [`ExpandedKeyPart`] header; `EK_PARTS` invocations make the full interleaved
+//! schedule. [`ExpandedKeysetLift`] and [`ExpandedKeyFuse`] funnel the parts
+//! into one [`ExpandedKeyset`], folding each part commitment into a running
+//! scalar. The single-input [`NullifierDerivationStep`] then certifies the
+//! note's derivation polynomials against the funnelled parts, reconstructing
+//! the schedule inline and computing the deferred `cm`.
 
 #![allow(
     clippy::as_conversions,
@@ -248,14 +252,15 @@ impl Step for ExpandedKeyStep {
             )?;
         }
 
-        // Rounds 1..63: advance each row through the rest of the cipher. The
+        // Rounds 1..: advance each row through the rest of the cipher. The
         // recurrence enforces every in-row step `T[cell + 1] = (T[cell] +
         // schedule[cell])^5` as one round; `schedule[cell]` is that round's
         // additive `key + constant`, the same per-column layout for all rows.
         // Cell `cell` holds round `cell`'s output, so the step out of it is
         // round `cell + 1` (round 0 is pinned above, not a step). The last
-        // cell's successor is the next row, so its offset is unused: `get(64)`
-        // is `None` -> `Fp::ZERO`, and the recurrence masks that row-wrap step.
+        // cell's successor is the next row, so its offset is unused:
+        // `get(ROUNDS)` is `None` -> `Fp::ZERO`, and the recurrence masks that
+        // row-wrap step.
         {
             let schedule: [Fp; TachyonP5R32::ROUNDS] = array::from_fn(|cell| {
                 TachyonP5R32::CONSTANTS

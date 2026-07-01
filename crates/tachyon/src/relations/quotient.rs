@@ -7,9 +7,10 @@
 //!   masked-quintic round quotient, the boundary quotient, and the lift's
 //!   weight/accumulator recurrences, plus the native off-domain nullifier
 //!   query.
-//! - the 64x128 **expansion** trace (`TachyonP5R32`): the masked-quintic round
-//!   quotient, the boundary quotient, and the decimation quotient binding the
-//!   key polynomial to the trace's final column.
+//! - the 32x256 **expansion** trace (`TachyonP5R32`, `ROUNDS` columns by
+//!   `EK_PART_SIZE` rows): the masked-quintic round quotient, the boundary
+//!   quotient, and the decimation quotient binding the key polynomial to the
+//!   trace's final column.
 //!
 //! Both families share one generic coset-arithmetic layer (FFT evaluation,
 //! vanishing-polynomial division, capacity splitting) defined at the top of the
@@ -226,7 +227,7 @@ fn multiply_by_linear(coeffs: &[Fp], root: Fp) -> Vec<Fp> {
 /// numerator `mask·(T(omega z) − (T + O)^POW)` has degree `POW·(DOMAIN-1) + 1`
 /// (degree-1 row-wrap mask), so over the degree-`DOMAIN` vanisher the quotient
 /// spans this many capacity-wide splits. Derived from `POW`; differs from
-/// [`EXPANSION_ROUND_SPLITS`] only by the mask degree (1 vs `EK_FULL_SIZE`).
+/// [`EXPANSION_ROUND_SPLITS`] only by the mask degree (1 vs `EK_PART_SIZE`).
 pub(crate) const EMITTER_ROUND_SPLITS: usize = {
     #[expect(clippy::cast_possible_truncation, reason = "constant size")]
     let numerator_len = TachyonP5R8192::POW as usize * (POLY_LEN_MAX - 1) + 1 + 1;
@@ -545,14 +546,14 @@ pub(crate) fn accumulator_recurrence(
 }
 
 // ---------------------------------------------------------------------------
-// Expansion trace (64x128 TachyonP5R32)
+// Expansion trace (32x256 TachyonP5R32)
 // ---------------------------------------------------------------------------
 
 /// Committed splits of the expansion trace's masked round quotient. The
-/// numerator has degree `POW·(DOMAIN-1) + EK_FULL_SIZE` (the
-/// degree-`EK_FULL_SIZE` output-cell mask), so over the degree-`DOMAIN`
+/// numerator has degree `POW·(DOMAIN-1) + EK_PART_SIZE` (the
+/// degree-`EK_PART_SIZE` output-cell mask), so over the degree-`DOMAIN`
 /// vanisher the quotient spans this many capacity-wide splits. Derived from
-/// `POW`; the larger mask degree (`EK_FULL_SIZE` vs the derivation poly's 1) is
+/// `POW`; the larger mask degree (`EK_PART_SIZE` vs the derivation poly's 1) is
 /// what pushes it one split past [`EMITTER_ROUND_SPLITS`].
 pub(crate) const EXPANSION_ROUND_SPLITS: usize = {
     #[expect(clippy::cast_possible_truncation, reason = "constant size")]
@@ -561,16 +562,16 @@ pub(crate) const EXPANSION_ROUND_SPLITS: usize = {
 };
 
 /// Round-numerator eval coset (expansion). Sized from `POW` to cover the
-/// degree-`POW·(DOMAIN-1) + EK_FULL_SIZE` numerator (the degree-`EK_FULL_SIZE`
+/// degree-`POW·(DOMAIN-1) + EK_PART_SIZE` numerator (the degree-`EK_PART_SIZE`
 /// output-cell mask) exactly. Was the hand-set `ROUND_COSET`.
 #[expect(clippy::cast_possible_truncation, reason = "constant size")]
 const ROUND_COSET: usize =
     (TachyonP5R32::POW as usize * (POLY_LEN_MAX - 1) + EK_PART_SIZE + 1).next_power_of_two();
 
 /// Boundary-numerator eval coset. The boundary numerator is `complement ·
-/// (T − target)`: `complement` has degree `(ROUNDS-1)·EK_FULL_SIZE`, `T` degree
-/// `< POLY_LEN_MAX`, `target` degree `< EK_FULL_SIZE`, so the product has
-/// degree `(ROUNDS-1)·EK_FULL_SIZE + POLY_LEN_MAX − 1`; the coset covers its
+/// (T − target)`: `complement` has degree `(ROUNDS-1)·EK_PART_SIZE`, `T` degree
+/// `< POLY_LEN_MAX`, `target` degree `< EK_PART_SIZE`, so the product has
+/// degree `(ROUNDS-1)·EK_PART_SIZE + POLY_LEN_MAX − 1`; the coset covers its
 /// `degree + 1` coefficients. Was the hand-set `BOUNDARY_COSET`.
 const BOUNDARY_COSET: usize =
     ((TachyonP5R32::ROUNDS - 1) * EK_PART_SIZE + POLY_LEN_MAX).next_power_of_two();

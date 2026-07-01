@@ -215,7 +215,8 @@ impl ExpandedKey {
     }
 
     /// One derivation polynomial: the 8192-round keyed cipher on input `salt`
-    /// under this full 256-key interleaved schedule (cycled 32 times),
+    /// under this full `EK_FULL_SIZE`-key interleaved schedule (cycled
+    /// `POLY_LEN_MAX / EK_FULL_SIZE` times),
     /// interpolated over `⟨ω⟩` (so `T(ω^i)` is the `i`-th cipher state). The
     /// query reads it by evaluation, so it is always the interpolant, never raw
     /// cipher states as coefficients.
@@ -275,7 +276,7 @@ impl From<ExpandedKey> for [Fp; EK_FULL_SIZE] {
 
 impl fmt::Debug for ExpandedKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DerivationKeyset").finish_non_exhaustive()
+        f.debug_struct("ExpandedKey").finish_non_exhaustive()
     }
 }
 
