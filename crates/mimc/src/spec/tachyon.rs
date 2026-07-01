@@ -9,12 +9,15 @@ use pasta_curves::Fp;
 use crate::Spec;
 
 /// The Tachyon MiMC instantiation over the Pallas base field with 32 rounds.
+///
+/// Round constants are domain-separated under BLAKE2b personalization
+/// `Tachyon-MiMC0032`, independent of the 64- and 8192-round instances.
 pub struct TachyonP5R32;
 
 impl TachyonP5R32 {
     /// The round-constant values.
     pub const CONSTANTS: &'static [Fp; Self::ROUNDS] =
-        &pallas_bytes(include_bytes!("Tachyon-MiMCv1.bin"));
+        &pallas_bytes(include_bytes!("Tachyon-MiMC0032.bin"));
     /// The S-box exponent.
     pub const POW: u64 = 5;
     /// The number of rounds.
@@ -28,12 +31,15 @@ impl Spec<Fp, 5, 32> for TachyonP5R32 {
 }
 
 /// The Tachyon MiMC instantiation over the Pallas base field with 64 rounds.
+///
+/// Round constants are domain-separated under BLAKE2b personalization
+/// `Tachyon-MiMC0064`, independent of the 32- and 8192-round instances.
 pub struct TachyonP5R64;
 
 impl TachyonP5R64 {
     /// The round-constant values.
     pub const CONSTANTS: &'static [Fp; Self::ROUNDS] =
-        &pallas_bytes(include_bytes!("Tachyon-MiMCv1.bin"));
+        &pallas_bytes(include_bytes!("Tachyon-MiMC0064.bin"));
     /// The S-box exponent.
     pub const POW: u64 = 5;
     /// The number of rounds.
@@ -47,15 +53,16 @@ impl Spec<Fp, 5, 64> for TachyonP5R64 {
 }
 
 /// The Tachyon MiMC instantiation over the Pallas base field with 8192 rounds.
+///
+/// Round constants are domain-separated under BLAKE2b personalization
+/// `Tachyon-MiMC8192`, independent of the 32- and 64-round instances, so the
+/// emitter cipher shares no round keys with the expansion ciphers.
 pub struct TachyonP5R8192;
 
 impl TachyonP5R8192 {
     /// The round-constant values.
-    // TODO: both specs read the same `Tachyon-MiMCv1.bin`, so the 64-round
-    // schedule is a prefix of the 8192-round one. Each spec should use distinct
-    // round keys to domain-separate the expansion cipher from the emitter cipher.
     pub const CONSTANTS: &'static [Fp; Self::ROUNDS] =
-        &pallas_bytes(include_bytes!("Tachyon-MiMCv1.bin"));
+        &pallas_bytes(include_bytes!("Tachyon-MiMC8192.bin"));
     /// The S-box exponent.
     pub const POW: u64 = 5;
     /// The number of rounds.

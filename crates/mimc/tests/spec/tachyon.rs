@@ -2,34 +2,6 @@ use pasta_curves::Fp;
 
 use super::*;
 
-const EXPECTED_C1: Fp = Fp::from_raw([
-    0xc772_90a6_3e7a_d8b9,
-    0xc235_b3ac_cbef_23f6,
-    0x4a0e_38e1_66f2_9757,
-    0x145f_cac0_7566_b9ff,
-]);
-
-const EXPECTED_C5: Fp = Fp::from_raw([
-    0x9058_fdbd_a0ab_27ee,
-    0xab37_2b90_6793_09c4,
-    0xedea_5733_1021_8d39,
-    0x3e64_fad0_7af6_5c79,
-]);
-
-const EXPECTED_C63: Fp = Fp::from_raw([
-    0xdc93_c5bd_fe42_f11f,
-    0xe711_66f7_5380_68a2,
-    0x3fd2_8b7c_965c_cf2d,
-    0x149f_f4bc_ecab_5e32,
-]);
-
-const EXPECTED_C8191: Fp = Fp::from_raw([
-    0x26ed_b91a_0932_1064,
-    0x982b_73c3_b191_bfe7,
-    0xe647_3451_7bf3_18bc,
-    0x219d_94d9_54f9_638b,
-]);
-
 /// Shared cipher inputs `(keys, input)`; each module runs them against its own
 /// spec. A single-element `keys` slice is the §2.1 cipher, several keys the
 /// §5.2 cyclic variant. `-1` and `-2` are the field elements `p - 1` and
@@ -129,6 +101,84 @@ const CIPHER_INPUTS: &[(&[Fp], Fp)] = &[
     ),
 ];
 
+mod tachyon_32 {
+    use zcash_mimc::spec::tachyon::TachyonP5R32;
+
+    use super::*;
+
+    #[test]
+    fn pinned_round_constants() {
+        check_constants::<TachyonP5R32, Fp, 5, 32>(&[
+            (
+                1,
+                Fp::from_raw([
+                    0x6983_504b_3dbc_2b22,
+                    0x1d3b_0898_7039_c175,
+                    0xd5bc_01c0_e8d5_94f6,
+                    0x2267_c77e_4561_9970,
+                ]),
+            ),
+            (
+                5,
+                Fp::from_raw([
+                    0x2480_efb0_8adf_28ad,
+                    0x514e_36d1_5bb2_cc3d,
+                    0x2901_1e6e_7392_afca,
+                    0x051e_df43_c24f_d2c7,
+                ]),
+            ),
+            (
+                31,
+                Fp::from_raw([
+                    0xca28_1a4d_9bcc_4fac,
+                    0x5aa7_f8d1_96fc_0732,
+                    0x1e53_ad9f_cdb2_b774,
+                    0x15c7_23cf_4aee_1c67,
+                ]),
+            ),
+        ]);
+    }
+
+    #[test]
+    fn pinned_encryption_outputs() {
+        check_encryptions::<TachyonP5R32, Fp, 5, 32>(
+            CIPHER_INPUTS,
+            &[
+                Fp::from_raw([
+                    0x0a1e_30a7_ca75_d2ae,
+                    0xb18c_87e2_9316_919f,
+                    0xc868_ba65_cc93_2abb,
+                    0x3060_f007_b514_f606,
+                ]),
+                Fp::from_raw([
+                    0x641c_f56f_3438_fee7,
+                    0x527f_abaf_7f80_73ad,
+                    0x1355_e36b_3ab8_4dc6,
+                    0x3e0a_008c_8319_5448,
+                ]),
+                Fp::from_raw([
+                    0x2d8c_b91d_6f42_f5e3,
+                    0x8485_d61f_e7c6_e8b1,
+                    0xdb52_153e_55a5_c2af,
+                    0x2e90_87e0_8858_0195,
+                ]),
+                Fp::from_raw([
+                    0xefc4_a748_b75d_f80b,
+                    0xadc7_b081_82f2_e515,
+                    0xc4a6_8166_ea28_2b1b,
+                    0x0cd2_a91c_b37c_735e,
+                ]),
+                Fp::from_raw([
+                    0x5b0e_20de_c3d6_8cca,
+                    0xd204_373a_3937_6604,
+                    0x71db_5dc7_2bc3_f19b,
+                    0x209a_335a_a79c_d0d4,
+                ]),
+            ],
+        );
+    }
+}
+
 mod tachyon_64 {
     use zcash_mimc::spec::tachyon::TachyonP5R64;
 
@@ -137,9 +187,33 @@ mod tachyon_64 {
     #[test]
     fn pinned_round_constants() {
         check_constants::<TachyonP5R64, Fp, 5, 64>(&[
-            (1, EXPECTED_C1),
-            (5, EXPECTED_C5),
-            (63, EXPECTED_C63),
+            (
+                1,
+                Fp::from_raw([
+                    0x094d_1825_2871_f3ee,
+                    0x9838_6ebe_9cc2_f067,
+                    0x56ae_910d_412a_5915,
+                    0x1864_d848_98a8_fc70,
+                ]),
+            ),
+            (
+                5,
+                Fp::from_raw([
+                    0x4e5a_6394_9b2e_6e57,
+                    0x9f04_6294_2fa2_da23,
+                    0x9a0b_b762_e636_4d7c,
+                    0x2445_b0a2_f5fa_44e3,
+                ]),
+            ),
+            (
+                63,
+                Fp::from_raw([
+                    0x8471_af86_0a8c_d582,
+                    0x3e5d_1504_356c_b5a6,
+                    0xcad8_da78_5b7e_d10d,
+                    0x3f51_4957_78d1_c78b,
+                ]),
+            ),
         ]);
     }
 
@@ -149,34 +223,34 @@ mod tachyon_64 {
             CIPHER_INPUTS,
             &[
                 Fp::from_raw([
-                    0x4e98_3435_226c_17aa,
-                    0x1666_4366_6dc2_211b,
-                    0x8342_eb80_6578_4f80,
-                    0x3abc_9c58_bd9e_3e49,
+                    0x0de4_2c9e_bc89_a1ea,
+                    0x77df_d24c_c45b_1352,
+                    0x30c1_9033_7a14_c8d6,
+                    0x1c7a_0b19_0d17_a34d,
                 ]),
                 Fp::from_raw([
-                    0x523a_8c8a_cdf3_55ee,
-                    0x7871_1bb7_6617_b464,
-                    0xc3ac_90a9_e977_a40b,
-                    0x07b8_9754_45f8_4884,
+                    0x1f7a_d53f_7e9a_252a,
+                    0x9d89_414a_1941_7666,
+                    0x64e7_8bab_943f_d83d,
+                    0x10fd_4ffc_9092_be76,
                 ]),
                 Fp::from_raw([
-                    0x19e4_4443_51d1_4e9b,
-                    0x037b_f013_3cc6_1773,
-                    0x2c39_dadf_2982_1bcd,
-                    0x1957_f633_9a41_fdbb,
+                    0xdf94_2108_9afd_e488,
+                    0x0b31_86a7_f883_0da2,
+                    0xc9ef_2c76_155c_624f,
+                    0x2b4a_4284_1fb2_1642,
                 ]),
                 Fp::from_raw([
-                    0x0ba2_ebe6_538e_5036,
-                    0xb950_b7cd_14ab_44e0,
-                    0xc234_a0c4_b790_1b62,
-                    0x3114_db1e_d215_2ecb,
+                    0x2665_9839_fc69_846e,
+                    0x0701_2dc4_166e_3df8,
+                    0x87ff_294a_3d0a_eb90,
+                    0x09cc_44e9_fba0_d8d8,
                 ]),
                 Fp::from_raw([
-                    0x3a75_f830_61ca_ab48,
-                    0x6ea7_7381_021f_53eb,
-                    0xc4dd_067a_bc81_19ed,
-                    0x0ed3_aa1c_6282_d870,
+                    0x53e8_5c44_1361_0fa7,
+                    0x8b12_c0fc_3dc1_ed12,
+                    0x973a_8358_9753_147c,
+                    0x2631_5900_3c9e_1633,
                 ]),
             ],
         );
@@ -191,10 +265,42 @@ mod tachyon_8192 {
     #[test]
     fn pinned_round_constants() {
         check_constants::<TachyonP5R8192, Fp, 5, 8192>(&[
-            (1, EXPECTED_C1),
-            (5, EXPECTED_C5),
-            (63, EXPECTED_C63),
-            (8191, EXPECTED_C8191),
+            (
+                1,
+                Fp::from_raw([
+                    0x93b2_5b35_f211_f932,
+                    0x493a_ed9c_18a3_1a78,
+                    0xff85_f7a1_6cd1_3edd,
+                    0x1e0b_9b47_8f59_bf41,
+                ]),
+            ),
+            (
+                5,
+                Fp::from_raw([
+                    0x4cfa_35b9_3b76_c949,
+                    0x4d72_4f1d_d2f9_326c,
+                    0x35e1_bd68_2c41_c89e,
+                    0x0c24_9b2c_00bd_f96d,
+                ]),
+            ),
+            (
+                63,
+                Fp::from_raw([
+                    0xf177_5ae7_34e6_621a,
+                    0xa157_b1c7_9d38_02a8,
+                    0x80ba_5de2_df5a_fca1,
+                    0x3777_69fd_b717_e566,
+                ]),
+            ),
+            (
+                8191,
+                Fp::from_raw([
+                    0xf247_baef_0b70_a072,
+                    0x2dad_cc75_c440_5999,
+                    0x8f35_b569_9723_53fe,
+                    0x129d_2dd6_02a1_f711,
+                ]),
+            ),
         ]);
     }
 
@@ -204,34 +310,34 @@ mod tachyon_8192 {
             CIPHER_INPUTS,
             &[
                 Fp::from_raw([
-                    0xb1e0_0e5e_3472_4a51,
-                    0xe777_ce56_0ada_f16d,
-                    0xb905_7a21_2f6a_ce0f,
-                    0x01d5_337f_22fd_95c2,
+                    0xc801_b3a8_75c9_cf49,
+                    0x0565_5276_da81_3af2,
+                    0x74f8_69aa_7b83_f967,
+                    0x0edb_a58a_b47d_74d3,
                 ]),
                 Fp::from_raw([
-                    0xf889_d714_7e34_6971,
-                    0xa76f_9279_5384_1abe,
-                    0x5f19_0b71_30e3_4214,
-                    0x22b9_1581_7673_e836,
+                    0x1f0c_1de7_dd40_f21d,
+                    0xf7ee_dc47_ad81_4a97,
+                    0x49d6_504e_0513_bfc8,
+                    0x3d33_6836_90f4_fc16,
                 ]),
                 Fp::from_raw([
-                    0x948f_3da7_373f_b276,
-                    0xf803_626a_881b_54a9,
-                    0x9dcf_cae4_0b26_e5df,
-                    0x38e3_f121_174f_2c9e,
+                    0xed6c_4e3c_53d3_a92f,
+                    0xce62_81b6_43de_423d,
+                    0xc45d_7306_235d_e1da,
+                    0x1822_88f9_46db_d7ef,
                 ]),
                 Fp::from_raw([
-                    0x097f_0dca_5ca6_e098,
-                    0x0122_3fc6_4d22_759c,
-                    0x0292_008c_42c6_3c7f,
-                    0x35fb_03ed_b915_1d97,
+                    0x4f5a_39e1_14ee_cdb7,
+                    0xa90e_f6d5_0f2f_da55,
+                    0xb6b0_651b_2d4d_a9fa,
+                    0x18ca_9533_250e_5696,
                 ]),
                 Fp::from_raw([
-                    0xd84a_cd95_dac0_480b,
-                    0x6150_e780_0efb_11e4,
-                    0x23ff_1a57_e2e5_6388,
-                    0x0692_87e5_1885_b0c4,
+                    0x0296_75ee_abd7_cea6,
+                    0x1675_cc36_93f4_8ca7,
+                    0x7f4d_b9b1_09bb_5f9f,
+                    0x34cb_fd7d_78ca_c566,
                 ]),
             ],
         );
