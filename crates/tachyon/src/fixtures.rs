@@ -8,7 +8,7 @@
 
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::{collections::BTreeMap, rc::Rc, vec, vec::Vec};
 use core::{array, cell::RefCell, iter, ops::RangeInclusive};
 
 use ff::Field as _;
@@ -20,7 +20,7 @@ use crate::{
     EpochIndex, EpochOffset,
     action::{self, Action},
     bundle::{self, Bundle},
-    constants::{EK_PARTS, EPOCH_SIZE, NF_EMITTERS},
+    constants::{EK_PARTS, EPOCH_SIZE, NF_DOMAIN, NF_EMITTERS},
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{ExpandedKey, NoteMasterKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
@@ -28,7 +28,13 @@ use crate::{
         ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, PartKeyPoly, Tachygram,
         TachygramSetCommit, TachygramSetPoly, effect,
     },
-    relations::quotient::LIFT_SPLITS,
+    relations::{
+        quotient::{
+            EMITTER_ROUND_SPLITS, LIFT_SPLITS, RoundBoundaryQuotients, nf_emitter_boundary_quotient,
+            nf_emitter_round_quotient, nullifier_query,
+        },
+        subgroup_generator,
+    },
     stamp::{
         Stamp,
         proof::{PROOF_SYSTEM, delegation, pool, spendable},
@@ -683,21 +689,51 @@ pub(crate) fn build_unspent_pcd_between_anchors(
         .0
 }
 
-/// A note's certified derivation, memoized so the (expensive) certify proof is
-/// produced once per `(cm, creation_epoch)` and reused across `spendable_init`
-/// and the spend.
+/// The `NullifierDerivationStep`'s epoch-independent witness material: the
+/// part-key polynomials and the emitter certify quotients. Both are pure
+/// functions of the note's `(psi, nk)`. The step's full witness is this tuple
+/// plus the cached emitter polynomials and the per-call creation epoch; the
+/// epoch is a witness input the step echoes onto its header, so it is composed
+/// in fresh at proving time and never cached here.
+type CertifyWitness = (
+    [PartKeyPoly; EK_PARTS],
+    [RoundBoundaryQuotients<EMITTER_ROUND_SPLITS>; NF_EMITTERS],
+);
+
+/// A note's epoch-independent derivation values, memoized per `cm` (tier 1,
+/// no proof system): the master key, the expanded schedule, and the `N`
+/// emitter polynomials. Pure functions of the note's `(psi, nk)`, so one build
+/// serves every epoch, every query offset, and every proof. `query_nf` reads
+/// these without touching the prover.
 struct CachedDerivation {
-    cm: note::Commitment,
-    creation_epoch: EpochIndex,
-    pcd: Pcd<delegation::NullifierDerivation>,
-    polys: [NfEmitterPoly; NF_EMITTERS],
+    mk: NoteMasterKey,
     keyset: ExpandedKey,
+    polys: [NfEmitterPoly; NF_EMITTERS],
+}
+
+/// A note's epoch-independent certify inputs, memoized per `cm` (tier 2, needs
+/// the proof system): the funnelled keyset PCD that `NullifierDerivationStep`
+/// consumes, and the prepared [`CertifyWitness`] material. Both are things a
+/// real prover legitimately reuses across the note's derivations; the epoch is
+/// not among them (see [`CertifyWitness`]).
+struct CachedCertifyInputs {
+    keyset_pcd: Pcd<delegation::ExpandedKeyset>,
+    witness: CertifyWitness,
+}
+
+/// The `cm` scalar, the memoization key. `Fp` is `Ord`, so it keys a no_std
+/// `BTreeMap` directly.
+type NoteKey = Fp;
+
+fn note_key(cm: note::Commitment) -> NoteKey {
+    Fp::from(cm)
 }
 
 pub struct WalletSim {
     pub sk: private::SpendingKey,
     pub pak: ProofAuthorizingKey,
-    derivations: RefCell<Vec<CachedDerivation>>,
+    derivations: RefCell<BTreeMap<NoteKey, Rc<CachedDerivation>>>,
+    certify_inputs: RefCell<BTreeMap<NoteKey, Rc<CachedCertifyInputs>>>,
 }
 
 impl WalletSim {
@@ -705,7 +741,8 @@ impl WalletSim {
         Self {
             sk,
             pak: sk.derive_proof_private(),
-            derivations: RefCell::new(Vec::new()),
+            derivations: RefCell::new(BTreeMap::new()),
+            certify_inputs: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -730,13 +767,36 @@ impl WalletSim {
         }))
     }
 
-    /// The new-scheme nullifier at epoch offset `d` from the note's creation:
-    /// `nf_d = Σ_j ρ_j^d·T_j(c·γ^d)`, the query the spend circuit reproduces.
-    #[must_use]
-    pub fn query_nf(&self, note: &Note, offset: EpochOffset) -> Nullifier {
+    /// The note's memoized epoch-independent derivation values, built once per
+    /// `cm`.
+    fn cached_derivation(&self, note: &Note) -> Rc<CachedDerivation> {
+        let key = note_key(note.commitment());
+        if let Some(entry) = self.derivations.borrow().get(&key) {
+            return Rc::clone(entry);
+        }
+
         let mk = self.master_key(note);
         let keyset = mk.derive_expanded();
-        keyset.derive_nullifier(&mk, offset)
+        let polys = keyset.derivation_polys(&mk.query_salts());
+        let entry = Rc::new(CachedDerivation { mk, keyset, polys });
+        self.derivations.borrow_mut().insert(key, Rc::clone(&entry));
+        entry
+    }
+
+    /// The new-scheme nullifier at epoch offset `d` from the note's creation:
+    /// `nf_d = Σ_j ρ_j^d·T_j(c·γ^d)`, the query the spend circuit reproduces.
+    /// Evaluates the memoized emitter polynomials rather than re-deriving them.
+    #[must_use]
+    pub fn query_nf(&self, note: &Note, offset: EpochOffset) -> Nullifier {
+        let derivation = self.cached_derivation(note);
+        let (ratios, shift) = derivation.mk.query_weights();
+        Nullifier::from(nullifier_query(
+            &derivation.polys,
+            shift,
+            ratios,
+            subgroup_generator::<NF_DOMAIN>(),
+            u64::from(offset),
+        ))
     }
 
     /// Seed one `mk` part (part index `part`), proving it is the note's master
@@ -753,40 +813,41 @@ impl WalletSim {
         pcd
     }
 
-    /// Certify a note's `N`-polynomial derivation. Seeds the `MK_PARTS` master
-    /// key parts, certifies each of the `EK_PARTS` expansion windows
-    /// ([`ExpandedKeyStep`](delegation::ExpandedKeyStep)) against them, funnels
-    /// the parts into one [`ExpandedKeyset`](delegation::ExpandedKeyset)
-    /// (`ExpandedKeysetLift` + `ExpandedKeyFuse`), then certifies the
-    /// derivation polynomials against the assembled keyset in one
-    /// single-input
-    /// [`NullifierDerivationStep`](delegation::NullifierDerivationStep).
-    pub fn derivation_pcd(
+    /// The note's memoized certify inputs, built once per `cm`. Seeds the
+    /// `MK_PARTS` master key parts, certifies each of the `EK_PARTS` expansion
+    /// windows ([`ExpandedKeyStep`](delegation::ExpandedKeyStep)) against them,
+    /// funnels the parts into one
+    /// [`ExpandedKeyset`](delegation::ExpandedKeyset) (`ExpandedKeysetLift` +
+    /// `ExpandedKeyFuse`), and prepares the epoch-independent
+    /// [`CertifyWitness`] material.
+    fn cached_certify_inputs(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
-        creation_epoch: EpochIndex,
-    ) -> Pcd<delegation::NullifierDerivation> {
-        let mk = self.master_key(&note);
+    ) -> Rc<CachedCertifyInputs> {
+        let key = note_key(note.commitment());
+        if let Some(entry) = self.certify_inputs.borrow().get(&key) {
+            return Rc::clone(entry);
+        }
+        let derivation = self.cached_derivation(&note);
 
         // The two mk parts, each pinned to the note by the payment-key check.
         let mk_part0 = self.master_key_part(rng, note, 0);
         let mk_part1 = self.master_key_part(rng, note, 1);
 
         // Each of the EK_PARTS expansion windows is certified by one
-        // ExpandedKeyStep fusing the two mk parts; collect the PCDs and their
-        // native keys (for the derivation's round quotients).
+        // ExpandedKeyStep fusing the two mk parts.
         let mut part_pcds: Vec<Pcd<delegation::ExpandedKeyPart>> = Vec::with_capacity(EK_PARTS);
         let mut part_keys = Vec::with_capacity(EK_PARTS);
         for part in 0..EK_PARTS {
-            let (spectrum, keys) = mk.derive_expanded_trace(part);
+            let (spectrum, keys) = derivation.mk.derive_expanded_trace(part);
             let (pcd, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
                     delegation::ExpandedKeyStep,
                     witness::nf_master_expand(
                         (*mk_part0.data(), *mk_part1.data()),
-                        &mk,
+                        &derivation.mk,
                         &spectrum,
                         &keys,
                         part,
@@ -819,33 +880,71 @@ impl WalletSim {
             keyset_pcd = next;
         }
 
-        // Certify the derivation polynomials against the assembled keyset.
+        // Prepare the epoch-independent witness material: the part-key polys and
+        // the emitter certify quotients (both pure in the keyset and salts, no
+        // epoch). The creation epoch is not built in; `derivation_pcd` composes
+        // it into the full step witness fresh at proving time.
         let part_polys: [PartKeyPoly; EK_PARTS] = array::from_fn(|part| part_keys[part].key_poly());
-        let keyset = ExpandedKey::from_parts(&array::from_fn(|part| part_keys[part]));
-        let polys = keyset.derivation_polys(&mk.query_salts());
+        let salts = derivation.mk.query_salts();
+        let first_key = derivation.keyset.round_key(0);
+        let quotients = array::from_fn(|poly| RoundBoundaryQuotients {
+            round: nf_emitter_round_quotient(
+                derivation.polys[poly].0.coefficients(),
+                &derivation.keyset.0,
+            ),
+            boundary: nf_emitter_boundary_quotient(
+                derivation.polys[poly].0.coefficients(),
+                salts.0[poly],
+                first_key,
+            ),
+        });
+
+        let entry = Rc::new(CachedCertifyInputs {
+            keyset_pcd,
+            witness: (part_polys, quotients),
+        });
+        self.certify_inputs
+            .borrow_mut()
+            .insert(key, Rc::clone(&entry));
+        entry
+    }
+
+    /// Certify a note's `N`-polynomial derivation at `creation_epoch` in one
+    /// single-input
+    /// [`NullifierDerivationStep`](delegation::NullifierDerivationStep),
+    /// reusing the memoized per-note inputs. The full step witness
+    /// `(part_polys, polys, quotients, creation_epoch)` is composed fresh here
+    /// from the epoch-independent [`CertifyWitness`] material, the cached
+    /// emitter polys, and the per-call epoch; the step emits the header.
+    pub fn derivation_pcd(
+        &self,
+        rng: &mut (impl RngCore + CryptoRng),
+        note: Note,
+        creation_epoch: EpochIndex,
+    ) -> Pcd<delegation::NullifierDerivation> {
+        let derivation = self.cached_derivation(&note);
+        let inputs = self.cached_certify_inputs(rng, note);
+        let (part_polys, quotients) = inputs.witness.clone();
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 delegation::NullifierDerivationStep,
-                witness::nullifier_derivation(
-                    (*keyset_pcd.data(), ()),
-                    &keyset,
+                (
                     part_polys,
-                    &mk,
-                    &polys,
+                    derivation.polys.clone(),
+                    quotients,
                     creation_epoch,
                 ),
-                keyset_pcd,
+                inputs.keyset_pcd.clone(),
                 Proof::trivial().carry::<()>(()),
             )
             .expect("NullifierDerivationStep");
         pcd
     }
 
-    /// The note's certified derivation, its `N` polynomials, and its keyset,
-    /// memoized per `(cm, creation_epoch)`. The first call proves
-    /// [`NullifierDerivationStep`](delegation::NullifierDerivationStep) (the
-    /// expensive certify); later calls for the same note return the cached PCD.
+    /// The note's certified derivation, its `N` polynomials, and its keyset.
+    /// The heavy artifacts are memoized per `cm`; the final certify fuse is
+    /// per-epoch and cheap, so it is not cached.
     pub fn derivation(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
@@ -856,29 +955,9 @@ impl WalletSim {
         [NfEmitterPoly; NF_EMITTERS],
         ExpandedKey,
     ) {
-        let cm = note.commitment();
-        {
-            let cache = self.derivations.borrow();
-            if let Some(entry) = cache
-                .iter()
-                .find(|entry| entry.cm == cm && entry.creation_epoch == creation_epoch)
-            {
-                return (entry.pcd.clone(), entry.polys.clone(), entry.keyset);
-            }
-        }
-
-        let mk = self.master_key(note);
-        let keyset = mk.derive_expanded();
-        let polys = keyset.derivation_polys(&mk.query_salts());
+        let derivation = self.cached_derivation(note);
         let pcd = self.derivation_pcd(rng, *note, creation_epoch);
-        self.derivations.borrow_mut().push(CachedDerivation {
-            cm,
-            creation_epoch,
-            pcd: pcd.clone(),
-            polys: polys.clone(),
-            keyset,
-        });
-        (pcd, polys, keyset)
+        (pcd, derivation.polys.clone(), derivation.keyset)
     }
 
     pub fn spendable_init(

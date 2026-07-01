@@ -27,7 +27,8 @@ use crate::{
     keys::{ExpandedKey, NoteMasterKey, PartKey},
     note::{self, Nullifier},
     primitives::{
-        Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqPoly, PartKeyPoly, Tachygram, effect,
+        Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqPoly, PartKeyPoly, PartKeySpectrumPoly,
+        Tachygram, effect,
     },
     value, witness,
 };
@@ -1516,37 +1517,45 @@ fn nf_master_expand_rejects_forged_witnesses() {
     let left = user.master_key_part(rng, note, 0);
     let right = user.master_key_part(rng, note, 1);
 
-    // Build the expansion-step witness from `builder_mk`'s trace, with quotients
+    // Build the expansion-step witness from a prepared trace, with quotients
     // honest for `builder_mk` (so the witness is well-formed; only the threaded
     // note `mk` disagrees in the mismatched/hybrid cases).
-    let assemble = |builder_mk: NoteMasterKey, part: usize| {
-        let (spectrum, part_keys) = builder_mk.derive_expanded_trace(part);
+    let assemble = |builder_mk: &NoteMasterKey,
+                    spectrum: &PartKeySpectrumPoly,
+                    part_keys: &PartKey,
+                    part: usize| {
         witness::nf_master_expand(
             (*left.data(), *right.data()),
-            &builder_mk,
-            &spectrum,
-            &part_keys,
+            builder_mk,
+            spectrum,
+            part_keys,
             part,
         )
     };
 
     // Trace under a foreign keyset: round 0 (the first column) binds k_0, so the
     // boundary rejects it before the recurrence is reached.
-    let mismatched = assemble(other_mk, 0);
+    let mismatched = {
+        let (spectrum, part_keys) = other_mk.derive_expanded_trace(0);
+        assemble(&other_mk, &spectrum, &part_keys, 0)
+    };
 
     // Hybrid keyset sharing the round-0 key but a different mk_1: round 0 matches
     // (the boundary passes), rounds 1.. diverge (the row recurrence rejects).
     let hybrid_rounds = {
         let mut hybrid = mk;
         hybrid.0[1] += Fp::ONE;
-        assemble(hybrid, 0)
+        let (spectrum, part_keys) = hybrid.derive_expanded_trace(0);
+        assemble(&hybrid, &spectrum, &part_keys, 0)
     };
 
     // Honest trace and quotients but a tampered part-key poly: the decimation
-    // identity binding `A_p` to the trace's final column fails.
+    // identity binding `A_p` to the trace's final column fails. The one honest
+    // trace is built once and shared between the witness and the tampering.
     let forged_key = {
-        let (trace, quotients, _honest_key, decimation_quotient, part) = assemble(mk, 0);
-        let (_, part0_keys) = mk.derive_expanded_trace(0);
+        let (spectrum, part0_keys) = mk.derive_expanded_trace(0);
+        let (trace, quotients, _honest_key, decimation_quotient, part) =
+            assemble(&mk, &spectrum, &part0_keys, 0);
         let mut tampered = part0_keys;
         tampered.0[0] += Fp::ONE;
         let bad_key = tampered.key_poly();
@@ -1673,14 +1682,12 @@ fn keyset_pcd(
     rng: &mut StdRng,
     note: Note,
 ) -> (Pcd<delegation::ExpandedKeyset>, [PartKey; EK_PARTS]) {
-    let keys: [PartKey; EK_PARTS] = array::from_fn(|part| {
-        let (_spectrum, part_key) = user.master_key(&note).derive_expanded_trace(part);
-        part_key
-    });
-    // Eagerly certify the parts (releasing `rng` before the funnel borrows it).
-    let part_pcds: [Pcd<delegation::ExpandedKeyPart>; EK_PARTS] =
-        array::from_fn(|part| keyset_part_pcd(user, rng, note, part).0);
-    let mut parts = part_pcds.into_iter();
+    // Eagerly certify the parts (releasing `rng` before the funnel borrows
+    // it); each certification also yields that part's native keys.
+    let parts_with_keys: [(Pcd<delegation::ExpandedKeyPart>, PartKey); EK_PARTS] =
+        array::from_fn(|part| keyset_part_pcd(user, rng, note, part));
+    let keys: [PartKey; EK_PARTS] = array::from_fn(|part| parts_with_keys[part].1);
+    let mut parts = parts_with_keys.into_iter().map(|(pcd, _keys)| pcd);
     let first = parts.next().expect("EK_PARTS >= 1");
     let (mut keyset, ()) = PROOF_SYSTEM
         .fuse(
