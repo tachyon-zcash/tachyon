@@ -18,13 +18,14 @@ A wallet certifies its note's nullifier derivation once; every later consumer re
 `ExpandedKeyStep` fuses the two `MasterKeyPart`s, concatenates them into the full `mk`, and proves one window of the key expansion as a committed cipher trace: the window's expansion outputs are committed as an eval-form part-key polynomial on the `ExpandedKeyPart` header, tagged with the window index. Four invocations produce the four parts that interleave into the full schedule.
 `ExpandedKeysetLift` and `ExpandedKeyFuse` funnel the parts into one `ExpandedKeyset`: each part's commitment is folded, at its schedule position, into a running Poseidon scalar, while `mk` and the note are reconciled across every part.
 `NullifierDerivationStep` consumes the single `ExpandedKeyset`, recomputes the fold from its witnessed part polynomials in canonical order (binding the whole ordered set of part commitments with one equality), computes the deferred `cm` from the funnelled note, and certifies the note's derivation polynomials against the schedule.
-The result is a `NullifierDerivation` header carrying the derivation-polynomial commitments, a transcript digest over them, `cm`, the creation epoch, and the query parameters, proving every future nullifier query reads the genuine derivation of the note identified by `cm`.
+The result is a `NullifierDerivation` header carrying the derivation-polynomial commitments, a transcript digest over them, `cm`, and the query parameters, proving every future nullifier query reads the genuine derivation of the note identified by `cm`.
+The derivation carries no offset origin: it is epoch-independent, a function of the note alone. Each consumer that needs the origin witnesses it locally.
 
 ### Bootstrapping a spendable
 
 A spendable starts when `SpendableInit` fuses a boundary-rooted `AnchorChain` with the note's certified `NullifierDerivation`.
-It witnesses `(pre_epoch_anchor, pre_cm_anchor, creation_set, polys)`: it computes the creation-epoch nullifier in-circuit as the offset-zero query over the derivation polynomials (binding the witnessed polynomials to the certified commitments), takes `cm` from the derivation header, checks `cm` is among the creation stamp's tachygrams[^tachygrams], requires the chain to root at `pre_epoch_anchor.next_epoch(creation_epoch)`, requires the cm-stamp to be the chain's final link, and emits a `SpendableHeader` carrying `(cm, (present_epoch, present_nf), anchor, creation_epoch)`.
-Rooting the chain at `next_epoch(creation_epoch)` pins the derivation's offset origin to the consensus epoch: consensus anchor membership of the eventual spend anchor forces the boundary, and hence the creation epoch, to be real. Without it a note spent in its creation epoch crosses no boundary, leaving the origin a free witness.
+It witnesses `(pre_epoch_anchor, pre_cm_anchor, creation_set, polys, creation_epoch)`: it computes the creation-epoch nullifier in-circuit as the offset-zero query over the derivation polynomials (binding the witnessed polynomials to the certified commitments), takes `cm` from the derivation header, checks `cm` is among the creation stamp's tachygrams[^tachygrams], requires the chain to root at `pre_epoch_anchor.next_epoch(creation_epoch)`, requires the cm-stamp to be the chain's final link, and emits a `SpendableHeader` carrying `(cm, (present_epoch, present_nf), anchor, creation_epoch)`.
+The witnessed `creation_epoch` is where the lineage's offset origin is fixed: rooting the chain at `next_epoch(creation_epoch)` pins it to the consensus epoch, since consensus anchor membership of the eventual spend anchor forces the boundary, and hence the creation epoch, to be real. Without it a note spent in its creation epoch crosses no boundary, leaving the origin a free witness.
 The anchor is set initially to the position immediately after the creation stamp and advanced by each lift.
 
 ### Maintaining a spendable
@@ -37,11 +38,12 @@ The sync service produces `Unspent` segments without ever holding the note, its 
 `UnspentEpochFuse` crosses an epoch boundary: it advances the anchor across the boundary and splices the left half's completing tip into `elapsed`, so the crossing count grows by exactly one while `nf_end` becomes the right half's tip.
 An `Unspent` records its span as two absolute epoch endpoints, `epoch_start` and `epoch_end`; the crossing count is their difference.
 
-`VerifyUnspent` binds a sync-built `Unspent` to genuine derivation. It is wallet-side: it consumes the `Unspent` and the note's certified `NullifierDerivation`, reconstructs the tested-value polynomial (the `elapsed` crossings followed by the tip nullifier), and proves every tested value is the note's genuine query with a homomorphic running-sum argument over the certified derivation polynomials, indexed by epoch offsets from the certified creation epoch.
-It emits a `VerifiedUnspent` carrying the span's boundary nullifiers and anchors, the boundary epochs, the note's `cm`, and the creation epoch.
+`VerifyUnspent` binds a sync-built `Unspent` to genuine derivation. It is wallet-side: it consumes the `Unspent` and the note's certified `NullifierDerivation`, reconstructs the tested-value polynomial (the `elapsed` crossings followed by the tip nullifier), and proves every tested value is the note's genuine query with a homomorphic running-sum argument over the certified derivation polynomials, indexed by epoch offsets from a witnessed offset origin.
+The origin is unconstrained here (the derivation carries none); it gains meaning only at `SpendableLift`, which reconciles it against the lineage's anchor-bound creation epoch.
+It emits a `VerifiedUnspent` carrying the span's boundary nullifiers and anchors, the boundary epochs, the note's `cm`, and that witnessed origin.
 
 `SpendableLift` is wallet-side and witness-free: it consumes a `SpendableHeader` and a `VerifiedUnspent`.
-It checks the verified segment's `cm` equals the spendable's (so the absence-proven nullifiers are this note's, and the value cannot drift), the segment's offset origin equals the lineage's creation epoch (so the tested arc cannot be shifted), the segment's starting nullifier and epoch equal the spendable's `present_nf` and `present_epoch` (continuity), and the segment's starting anchor equals the spendable's anchor (adjacency).
+It checks the verified segment's `cm` equals the spendable's (so the absence-proven nullifiers are this note's, and the value cannot drift), the segment's witnessed offset origin equals the lineage's anchor-bound creation epoch (so the tested arc cannot be shifted), the segment's starting nullifier and epoch equal the spendable's `present_nf` and `present_epoch` (continuity), and the segment's starting anchor equals the spendable's anchor (adjacency).
 It advances to the segment's tip nullifier, tip epoch, and end anchor, threading `cm` and the creation epoch unchanged.
 A single lift can consume an arbitrarily long composed `Unspent`, including one that crosses many epoch boundaries.
 
@@ -153,18 +155,19 @@ It then proves every tested value genuine with the homomorphic lift: a challenge
 
 $$q(\beta)\,\beta^{\,\texttt{start} - E_0} = A(p_{\texttt{end} - E_0}) - A(p_{\texttt{start} - E_0})$$
 
-forces each tested value to the note's genuine $\mathsf{nf}$ at its offset, indexed from the certified creation epoch $E_0$: the tip nullifier is a genuine query value, not a free one.
-It surfaces the span's first nullifier as `nf_start` (the range's degree-zero coefficient, pinned by its commitment), the tip as `nf_end`, and threads the derivation's `cm` and $E_0$.
+forces each tested value to the note's genuine $\mathsf{nf}$ at its offset, indexed from a witnessed offset origin $E_0$: the tip nullifier is a genuine query value, not a free one.
+The derivation carries no origin, so $E_0$ is a free witness here; it is unconstrained at this step and reconciled against the lineage's anchor-bound creation epoch at `SpendableLift`.
+It surfaces the span's first nullifier as `nf_start` (the range's degree-zero coefficient, pinned by its commitment), the tip as `nf_end`, and threads the derivation's `cm` and the witnessed $E_0$.
 
 ### Spendable lineage
 
 `SpendableInit` is the lineage's only seed and is wallet-only. It fuses a boundary-rooted `AnchorChain` with the note's certified `NullifierDerivation`.
-It witnesses the creation stamp's tachygrams, the anchors around the creation stamp, and the derivation polynomials.
+It witnesses the creation stamp's tachygrams, the anchors around the creation stamp, the derivation polynomials, and the creation epoch.
 It computes the creation-epoch nullifier in-circuit as the offset-zero query (the witnessed polynomials pinned to the certified commitments), takes `cm` from the derivation, and binds the note to the pool (`cm` in `creation_set`).
-It emits `SpendableHeader(cm, (present_epoch, present_nf), anchor, creation_epoch)`, with the boundary rooting pinning `creation_epoch` to consensus.
+It emits `SpendableHeader(cm, (present_epoch, present_nf), anchor, creation_epoch)`, with the boundary rooting pinning the witnessed `creation_epoch` to consensus. This is where the lineage's offset origin is fixed; the derivation supplies none.
 
 `SpendableLift` advances the lineage over a `VerifiedUnspent` and is witness-free.
-It threads `cm` by equality (`verified.cm == spendable.cm`), so every consumed segment belongs to the lineage's one note and the spent value cannot drift to a different same-`mk` note, and reconciles the segment's offset origin against the lineage's `creation_epoch`, so the tested arc cannot be shifted.
+It threads `cm` by equality (`verified.cm == spendable.cm`), so every consumed segment belongs to the lineage's one note and the spent value cannot drift to a different same-`mk` note, and reconciles the segment's witnessed offset origin against the lineage's anchor-bound `creation_epoch`, so the tested arc cannot be shifted. Since the derivation certifies no origin, this reconciliation is what ties the pool branch's witnessed $E_0$ to the anchor-bound one.
 Continuity holds through nullifier values and epochs: `verified.nf_start == spendable.present_nf` and `verified.epoch_start == spendable.present_epoch`.
 Both nullifiers are PRF outputs of `mk` and the offset, so value-equality forces the same note and the same epoch; combined with the tip binding at `VerifyUnspent` (which makes each new `present_nf` itself a genuine query value), a lineage cannot skip an epoch or splice in another note.
 The anchor adjacency check (`verified.anchor_prev == spendable.anchor`) welds the segment to the lineage's current position.
@@ -325,7 +328,7 @@ flowchart LR
 | MasterKeyPart | (mk_part, part, note) |
 | ExpandedKeyPart | (part_commit, part, mk, note) |
 | ExpandedKeyset | (keyset_fold, mk, note) |
-| NullifierDerivation | (commits, digest, cm, creation_epoch, shift, ratios) |
+| NullifierDerivation | (commits, digest, cm, shift, ratios) |
 | SpendableHeader | (cm, (present_epoch, present_nf), anchor, creation_epoch) |
 | SpendHeader | (cm, (cv, rk), present_nf, anchor, offset) |
 | StampHeader | (action_commit, tachygram_commit, anchor) |
@@ -341,13 +344,13 @@ flowchart LR
 | EmptyBlockUnspentSeed | — | — | anchor_prev, (epoch, nf) | Unspent |
 | UnspentFuse | Unspent | Unspent | left_seq, combined_seq, right_seq | Unspent |
 | UnspentEpochFuse | Unspent | Unspent | left_seq, combined_seq, right_seq | Unspent |
-| VerifyUnspent | Unspent | NullifierDerivation | elapsed, tip, range, polys, weights, accumulator, quotients | VerifiedUnspent |
+| VerifyUnspent | Unspent | NullifierDerivation | elapsed, tip, range, polys, weights, accumulator, quotients, creation_epoch | VerifiedUnspent |
 | MasterSeed | — | — | note, pak, part | MasterKeyPart |
 | ExpandedKeyStep | MasterKeyPart | MasterKeyPart | trace, quotients, key_poly, decimation_quotient, part | ExpandedKeyPart |
 | ExpandedKeysetLift | ExpandedKeyPart | — | — | ExpandedKeyset |
 | ExpandedKeyFuse | ExpandedKeyset | ExpandedKeyPart | — | ExpandedKeyset |
-| NullifierDerivationStep | ExpandedKeyset | — | parts, polys, quotients, creation_epoch | NullifierDerivation |
-| SpendableInit | AnchorChain | NullifierDerivation | pre_epoch_anchor, pre_cm_anchor, creation_set, polys | SpendableHeader |
+| NullifierDerivationStep | ExpandedKeyset | — | parts, polys, quotients | NullifierDerivation |
+| SpendableInit | AnchorChain | NullifierDerivation | pre_epoch_anchor, pre_cm_anchor, creation_set, polys, creation_epoch | SpendableHeader |
 | SpendableLift | SpendableHeader | VerifiedUnspent | — | SpendableHeader |
 | SpendBind | SpendableHeader | — | pk, value, rcm, psi, rcv, alpha, pak | SpendHeader |
 | OutputStamp | — | — | rcv, alpha, note, anchor | StampHeader |

@@ -136,10 +136,10 @@ pub struct VerifiedUnspent;
 
 impl Header for VerifiedUnspent {
     /// `(cm, anchor_prev, (epoch_start, nf_start), (epoch_end, end_nf),
-    /// anchor_last, creation_epoch)`. `creation_epoch` is the certified offset
-    /// origin `E_0` carried from the derivation;
+    /// anchor_last, creation_epoch)`. `creation_epoch` is the offset origin
+    /// `E_0` witnessed at [`VerifyUnspent`];
     /// [`super::spendable::SpendableLift`] reconciles it against the spendable
-    /// lineage's `E_0` so the lift's offset arc cannot be shifted.
+    /// lineage's anchor-bound `E_0` so the lift's offset arc cannot be shifted.
     /// `epoch_start` and `epoch_end` are the verified range's start and
     /// tip absolute epochs (bound to `nf_start` / `end_nf` by the
     /// lift-match); the lift checks `epoch_start` against the lineage and
@@ -528,8 +528,11 @@ impl Step for UnspentEpochFuse {
 /// ([`enforce_weight_recurrence`]), the exclusive-prefix accumulator `A(p_d) =
 /// Σ_{k<d} β^k·nf_k` ([`enforce_accumulator_recurrence`]), and the
 /// offset-indexed match `q(β)·β^{start − E_0} == A(p_{end − E_0}) − A(p_{start
-/// − E_0})` ([`enforce_lift_match`]). Emits a [`VerifiedUnspent`] carrying the
-/// boundary nullifiers, the `cm`, and the certified offset origin `E_0`.
+/// − E_0})` ([`enforce_lift_match`]). The offset origin `E_0` is witnessed here
+/// (the derivation is epoch-independent); it is unconstrained at this step and
+/// gains meaning only when `SpendableLift` reconciles the emitted `E_0` against
+/// the lineage's anchor-bound creation epoch. Emits a [`VerifiedUnspent`]
+/// carrying the boundary nullifiers, the `cm`, and that witnessed origin `E_0`.
 ///
 /// The lift challenge `β = Poseidon(derivation_digest, commit(q), start, end)`
 /// is derived after `q` is committed, so the prover builds `w_j`/`A` for this
@@ -544,11 +547,11 @@ impl Step for VerifyUnspent {
     type Output = VerifiedUnspent;
     type Right = NullifierDerivation;
     /// `(elapsed_poly, tip_poly, range_poly, trace_polys, weights, accumulator,
-    /// weight_quotients, accumulator_quotient)`: the `q`-reconstruction polys,
-    /// the `N` derivation polys `T_j`, the `N` geometric weights `w_j`
-    /// (each [`LIFT_SPLITS`] splits), the accumulator `A` (`LIFT_SPLITS`
-    /// splits), the `N` weight recurrence quotients, and the accumulator
-    /// recurrence quotient.
+    /// weight_quotients, accumulator_quotient, creation_epoch)`: the
+    /// `q`-reconstruction polys, the `N` derivation polys `T_j`, the `N`
+    /// geometric weights `w_j` (each [`LIFT_SPLITS`] splits), the accumulator
+    /// `A` (`LIFT_SPLITS` splits), the `N` weight recurrence quotients, the
+    /// accumulator recurrence quotient, and the offset origin `E_0`.
     type Witness<'source> = (
         NfSeqPoly,
         NfSeqPoly,
@@ -558,6 +561,7 @@ impl Step for VerifyUnspent {
         [Polynomial; LIFT_SPLITS],
         [Polynomial; NF_EMITTERS],
         Polynomial,
+        EpochIndex,
     );
 
     const INDEX: Index = Index::new(10);
@@ -574,6 +578,7 @@ impl Step for VerifyUnspent {
             accumulator,
             weight_quotients,
             accumulator_quotient,
+            creation_epoch,
         ): Self::Witness<'source>,
         (
             unspent_anchor_prev,
@@ -582,7 +587,7 @@ impl Step for VerifyUnspent {
             (unspent_epoch_end, unspent_nf_end),
             unspent_anchor_last,
         ): <Self::Left as Header>::Data,
-        (commits, digest, cm, creation_epoch, shift, ratios): <Self::Right as Header>::Data,
+        (commits, digest, cm, shift, ratios): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Reconstruct the tested-value polynomial q = elapsed ++ [nf_end].
         enforce_equal_point(
@@ -661,7 +666,7 @@ impl Step for VerifyUnspent {
             shift.0,
         )?;
 
-        // Offset-indexed range match against the certified origin E_0.
+        // Offset-indexed range match against the witnessed origin E_0.
         let start_offset = u64::from(unspent_epoch_start.0 - creation_epoch.0);
         let end_offset = u64::from(end_epoch.0 - creation_epoch.0);
         enforce_lift_match::<LIFT_SPLITS>(

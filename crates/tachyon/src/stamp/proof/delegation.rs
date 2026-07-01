@@ -44,7 +44,7 @@ use crate::{
     digest::poseidon,
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{Commitment as NoteCommitment, Note},
-    primitives::{EpochIndex, PartKeySpectrumPoly},
+    primitives::PartKeySpectrumPoly,
     relations::{
         enforce::{
             enforce_committed_offset_recurrence, enforce_first_column_values,
@@ -479,11 +479,16 @@ impl Step for ExpandedKeyFuse {
 ///
 /// Holds the `N` derivation-poly commitments (for opening), a transcript
 /// challenge over them (so the lift's challenge absorbs one element, not `N`),
-/// the note commitment, the creation
-/// epoch `E_0` (the offset origin, bound downstream at `SpendableInit`), and
-/// the secret shift `c` and ratios `ρ_j` forwarded from the keyset for the
-/// query and lift. Secret material rides this wallet-only header without
-/// leaking; the public consumer emits only the resulting `nf`.
+/// the note commitment, and the secret shift `c` and ratios `ρ_j` forwarded
+/// from the keyset for the query and lift. Secret material rides this
+/// wallet-only header without leaking; the public consumer emits only the
+/// resulting `nf`.
+///
+/// The offset origin `E_0` is deliberately absent: the derivation is
+/// epoch-independent (a function of the note alone), so it does not fix an
+/// epoch. Each consumer that needs the origin witnesses it locally --
+/// `SpendableInit` binds it to the creation anchor, `VerifyUnspent` indexes the
+/// arc with it -- and `SpendableLift` reconciles the two branches' origins.
 #[derive(Clone, Debug)]
 pub struct NullifierDerivation;
 
@@ -492,7 +497,6 @@ impl Header for NullifierDerivation {
         [NfEmitterCommit; NF_EMITTERS],
         NfEmittersDigest,
         NoteCommitment,
-        EpochIndex,
         QueryShift,
         WeightRatios,
     );
@@ -500,7 +504,7 @@ impl Header for NullifierDerivation {
     const SUFFIX: Suffix = Suffix::new(13);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let (commits, digest, cm, creation_epoch, shift, ratios) = *data;
+        let (commits, digest, cm, shift, ratios) = *data;
         let mut out = Vec::new();
         for commit in commits {
             let commit_bytes: [u8; 32] = commit.0.to_affine().to_bytes();
@@ -508,7 +512,6 @@ impl Header for NullifierDerivation {
         }
         out.extend_from_slice(&digest.0.to_repr());
         out.extend_from_slice(&Fp::from(cm).to_repr());
-        out.extend_from_slice(&creation_epoch.0.to_le_bytes());
         out.extend_from_slice(&shift.0.to_repr());
         for ratio in ratios.0 {
             out.extend_from_slice(&ratio.to_repr());
@@ -520,8 +523,8 @@ impl Header for NullifierDerivation {
 /// Certify the note's `N` derivation polynomials in one single-input step.
 ///
 /// Consumes the funnelled [`ExpandedKeyset`] and witnesses the note's
-/// `EK_PARTS` part-key polynomials `A_p`, the `N` polynomials `T_j`, their
-/// round- and boundary-quotients, and the creation epoch `E_0`. It recomputes
+/// `EK_PARTS` part-key polynomials `A_p`, the `N` polynomials `T_j`, and their
+/// round- and boundary-quotients. It recomputes
 /// the [`ExpandedKeyset`] fold from the witnessed `A_p` in canonical part order
 /// (each `A_p.commit()` folded at position `p` by [`poseidon::keyset_fold`])
 /// and checks it against the header, so one equality binds the full ordered set
@@ -540,8 +543,9 @@ impl Header for NullifierDerivation {
 /// one transcript challenge and emits the derivation, forwarding `c`/`ρ_j` for
 /// the downstream query and lift.
 ///
-/// `E_0` is a free witness here, carrying no claim until `SpendableInit` (its
-/// sole gatekeeper) binds it to the creation anchor.
+/// The derivation is epoch-independent: no `E_0` enters here. The offset origin
+/// is witnessed by each downstream consumer that needs it (`SpendableInit`,
+/// `VerifyUnspent`) and reconciled at `SpendableLift`.
 #[derive(Debug)]
 pub struct NullifierDerivationStep;
 
@@ -550,13 +554,12 @@ impl Step for NullifierDerivationStep {
     type Left = ExpandedKeyset;
     type Output = NullifierDerivation;
     type Right = ();
-    /// `([A_p; EK_PARTS], T_j, quotients_j, E_0)`: the part-key polys, the `N`
-    /// derivation polys, their quotients, and the creation epoch.
+    /// `([A_p; EK_PARTS], T_j, quotients_j)`: the part-key polys, the `N`
+    /// derivation polys, and their quotients.
     type Witness<'source> = (
         [PartKeyPoly; EK_PARTS],
         [NfEmitterPoly; NF_EMITTERS],
         [RoundBoundaryQuotients<EMITTER_ROUND_SPLITS>; NF_EMITTERS],
-        EpochIndex,
     );
 
     const INDEX: Index = Index::new(2);
@@ -564,7 +567,7 @@ impl Step for NullifierDerivationStep {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (parts, polys, quotients, creation_epoch): Self::Witness<'source>,
+        (parts, polys, quotients): Self::Witness<'source>,
         (keyset_fold, mk, note): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -642,6 +645,6 @@ impl Step for NullifierDerivationStep {
         // whole set. The native prover reads this scalar off the header.
         let digest = NfEmittersDigest(ctx.derive_challenge(&commits.map(|commit| commit.0))?);
 
-        Ok(((commits, digest, cm, creation_epoch, shift, ratios), ()))
+        Ok(((commits, digest, cm, shift, ratios), ()))
     }
 }

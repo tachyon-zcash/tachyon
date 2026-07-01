@@ -70,9 +70,9 @@ pub fn nf_master_expand<'key>(
 
 /// Witness for [`NullifierDerivationStep`].
 ///
-/// `(parts, derivation_polys, quotients, creation_epoch)`. `parts` are the
-/// `EK_PARTS` part-key polys; `keyset` is the assembled interleaved schedule
-/// the round quotients are built against.
+/// `(parts, derivation_polys, quotients)`. `parts` are the `EK_PARTS` part-key
+/// polys; `keyset` is the assembled interleaved schedule the round quotients
+/// are built against. The derivation is epoch-independent, so no origin enters.
 #[must_use]
 pub fn nullifier_derivation<'key>(
     headers: (
@@ -83,7 +83,6 @@ pub fn nullifier_derivation<'key>(
     parts: [PartKeyPoly; EK_PARTS],
     mk: &'key NoteMasterKey,
     polys: &'key [NfEmitterPoly; NF_EMITTERS],
-    creation_epoch: EpochIndex,
 ) -> StepWitness<'key, NullifierDerivationStep> {
     let (_keyset_left, _keyset_right) = headers;
     let salts = mk.query_salts();
@@ -101,11 +100,14 @@ pub fn nullifier_derivation<'key>(
             ),
         }
     });
-    (parts, polys.clone(), quotients, creation_epoch)
+    (parts, polys.clone(), quotients)
 }
 
-/// Witness for [`SpendableInit`]:
-/// `(pre_epoch_anchor, pre_cm_anchor, creation_set, derivation_polys)`.
+/// Witness for [`SpendableInit`].
+///
+/// `(pre_epoch_anchor, pre_cm_anchor, creation_set, derivation_polys,
+/// creation_epoch)`. `creation_epoch` is the offset origin `E_0`, witnessed
+/// here and bound to the creation anchor.
 #[must_use]
 pub fn spendable_init(
     headers: (StepLeft<SpendableInit>, StepRight<SpendableInit>),
@@ -113,13 +115,24 @@ pub fn spendable_init(
     pre_epoch_anchor: Anchor,
     pre_cm_anchor: Anchor,
     creation_set: TachygramSetPoly,
+    creation_epoch: EpochIndex,
 ) -> StepWitness<'_, SpendableInit> {
     let (_anchor_chain, _derivation) = headers;
-    (pre_epoch_anchor, pre_cm_anchor, creation_set, polys.clone())
+    (
+        pre_epoch_anchor,
+        pre_cm_anchor,
+        creation_set,
+        polys.clone(),
+        creation_epoch,
+    )
 }
 
-/// Witness for [`VerifyUnspent`]: `(elapsed, tip, range, derivation_polys,
-/// weights, accumulator, weight_quotients, accumulator_quotient)`.
+/// Witness for [`VerifyUnspent`].
+///
+/// `(elapsed, tip, range, derivation_polys, weights, accumulator,
+/// weight_quotients, accumulator_quotient, creation_epoch)`. `creation_epoch`
+/// is the offset origin `E_0`, witnessed here to index the arc and reconciled
+/// downstream at `SpendableLift`.
 #[must_use]
 pub fn verify_unspent<'key>(
     headers: (StepLeft<VerifyUnspent>, StepRight<VerifyUnspent>),
@@ -128,6 +141,7 @@ pub fn verify_unspent<'key>(
     range_nfs: &'key [Nullifier],
     start: EpochIndex,
     present: EpochIndex,
+    creation_epoch: EpochIndex,
 ) -> StepWitness<'key, VerifyUnspent> {
     use group::Curve as _;
     use pasta_curves::{Eq, arithmetic::CurveAffine as _};
@@ -181,6 +195,7 @@ pub fn verify_unspent<'key>(
         accumulator,
         weight_quotients_arr,
         accumulator_quotient,
+        creation_epoch,
     )
 }
 

@@ -83,16 +83,19 @@ impl Step for SpendableInit {
     type Left = AnchorChain;
     type Output = SpendableHeader;
     type Right = NullifierDerivation;
-    /// `(pre_epoch_anchor, pre_cm_anchor, creation_set, polys)`.
+    /// `(pre_epoch_anchor, pre_cm_anchor, creation_set, polys, creation_epoch)`.
     /// `pre_epoch_anchor` is the prior epoch's terminal anchor (folded into the
     /// boundary); `pre_cm_anchor` the anchor immediately before the cm-stamp;
     /// `polys` the `N` derivation polynomials, bound to the header commitments
-    /// (the present nullifier is computed in-circuit, not witnessed).
+    /// (the present nullifier is computed in-circuit, not witnessed);
+    /// `creation_epoch` the offset origin `E_0`, witnessed here and bound to the
+    /// creation anchor.
     type Witness<'source> = (
         Anchor,
         Anchor,
         TachygramSetPoly,
         [NfEmitterPoly; NF_EMITTERS],
+        EpochIndex,
     );
 
     const INDEX: Index = Index::new(11);
@@ -101,9 +104,11 @@ impl Step for SpendableInit {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         // TODO: this pre_epoch_anchor seems unbound from pre_cm_anchor
-        (pre_epoch_anchor, pre_cm_anchor, creation_set, polys): Self::Witness<'source>,
+        (pre_epoch_anchor, pre_cm_anchor, creation_set, polys, creation_epoch): Self::Witness<
+            'source,
+        >,
         (chain_start, chain_end): <Self::Left as Header>::Data,
-        (commits, _digest, cm, creation_epoch, shift, _ratios): <Self::Right as Header>::Data,
+        (commits, _digest, cm, shift, _ratios): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // The present nullifier is the creation-epoch query `nf_0 = Σ_j T_j(c)`
         // (offset d = 0: unit weights, point = the secret shift c). The query
@@ -127,12 +132,13 @@ impl Step for SpendableInit {
         enforce_zero(eval, "SpendableInit: commitment not in set")?;
         let creation_commit = creation_set.commit();
 
-        // Pin the lineage's starting epoch to consensus and bind the header's
+        // Pin the lineage's starting epoch to consensus and bind the witnessed
         // creation epoch E_0 to it. `next_epoch` (`Tachyon-EpochStp`) is the sole
         // epoch-folding domain and the chain is intra-epoch, so matching
         // `pre_epoch_anchor.next_epoch(creation_epoch)` against that boundary
         // forces `creation_epoch == E` — SpendableInit is the sole gatekeeper
-        // pinning E_0 to the real creation epoch.
+        // pinning E_0 to the real creation epoch. The derivation carries no
+        // origin, so this witnessed E_0 is where the lineage's origin is fixed.
         enforce_zero(
             Fp::from(chain_start) - Fp::from(pre_epoch_anchor.next_epoch(creation_epoch)),
             "SpendableInit: chain not rooted at the creation-epoch boundary",
@@ -165,13 +171,14 @@ impl Step for SpendableInit {
 /// Advance the spendable over one [`VerifiedUnspent`] segment.
 ///
 /// Wallet-only, witness-free. Checks `cm`, `nf_start == present_nf`, anchor
-/// adjacency, that the lift's certified offset origin `E_0` matches the
-/// lineage's consensus-bound `creation_epoch`, and that the segment's
+/// adjacency, that the segment's witnessed offset origin `E_0` matches the
+/// lineage's anchor-bound `creation_epoch`, and that the segment's
 /// `start_epoch` matches the lineage's `present_epoch`, then advances to the
 /// tip `(nf_end, anchor_last)` at `present_epoch`. The `E_0` reconciliation is
-/// load-bearing: it forbids lifting against a same-`cm` derivation whose `E_0`
-/// was witnessed at a shifted origin, which would otherwise test the pool at
-/// the wrong offset arc. The `start_epoch == present_epoch` check is an
+/// load-bearing: the derivation carries no origin, so `VerifyUnspent` and
+/// `SpendableInit` each witness their own `E_0` freely; this check is what ties
+/// the pool branch's origin to the anchor-bound one, forbidding a segment
+/// tested at a shifted offset arc. The `start_epoch == present_epoch` check is an
 /// additive, injectivity-independent absolute-epoch continuity guard; the
 /// anchor-exact `anchor_prev == spendable_anchor` check (chain identity) is
 /// never relaxed.

@@ -156,7 +156,7 @@ impl Step for SpendStamp {
         ctx: &mut ragu::StepCtx<'_>,
         (polys,): Self::Witness<'source>,
         (cm, (cv, rk), present_nf, anchor, offset): <Self::Left as Header>::Data,
-        (commits, _digest, derivation_cm, _creation_epoch, shift, ratios): <Self::Right as Header>::Data,
+        (commits, _digest, derivation_cm, shift, ratios): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // The certified derivation must be this note's.
         enforce_zero(

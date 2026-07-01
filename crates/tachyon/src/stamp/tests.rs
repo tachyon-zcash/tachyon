@@ -73,14 +73,13 @@ fn plan_prove_rejects_invalid_inputs() {
     ));
     let height = pool.height();
     let anchor = pool.anchor_at(height);
-    let spend_epoch = height.epoch();
 
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
     // Same-epoch spends: creation epoch == spend epoch, so the derived offset
     // on each SpendHeader is 0.
-    let (deriv_a, polys_a, _keyset_a) = user.derivation(rng, &note_a, spend_epoch);
-    let (deriv_b, polys_b, _keyset_b) = user.derivation(rng, &note_b, spend_epoch);
+    let (deriv_a, polys_a, _keyset_a) = user.derivation(rng, &note_a);
+    let (deriv_b, polys_b, _keyset_b) = user.derivation(rng, &note_b);
     let pair_a = [
         user.query_nf(&note_a, EpochOffset(0)),
         user.query_nf(&note_a, EpochOffset(1)),

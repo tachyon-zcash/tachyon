@@ -41,12 +41,11 @@ fn tg<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Tachygram {
 fn nullifier_derivation_certifies_a_note() {
     // Proving the step end-to-end asserts the certify relations hold: the
     // committed-offset recurrence (periodic offset == C + closed-form selectors)
-    // and the ROWS=1 boundary, per poly. The header must then reflect the keyset
-    // and creation epoch.
+    // and the ROWS=1 boundary, per poly. The header must then reflect the
+    // keyset. The derivation is epoch-independent, so it carries no origin.
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let note = wallet.random_note(rng, 400);
-    let creation_epoch = EpochIndex(7);
 
     let cm_expected = note.commitment();
     let mk = wallet.master_key(&note);
@@ -55,11 +54,10 @@ fn nullifier_derivation_certifies_a_note() {
     let (ratios_expected, shift_expected) = mk.query_weights();
     let polys_expected = keyset.derivation_polys(&salts);
 
-    let pcd = wallet.derivation_pcd(rng, note, creation_epoch);
-    let (commits, _digest, cm, e0, shift, ratios) = *pcd.data();
+    let pcd = wallet.derivation_pcd(rng, note);
+    let (commits, _digest, cm, shift, ratios) = *pcd.data();
 
     assert_eq!(cm, cm_expected, "header carries the note commitment");
-    assert_eq!(e0, creation_epoch, "header carries the creation epoch");
     assert_eq!(
         shift.0, shift_expected.0,
         "header forwards the mk-derived shift c"
@@ -127,13 +125,11 @@ fn honest_spend_stamp(
     user: &WalletSim,
     note: &Note,
     spend_pcd: Pcd<spend::SpendHeader>,
-    creation_epoch: EpochIndex,
 ) -> Pcd<stamp::StampHeader> {
     // SpendStamp reads the spend offset `d = present_epoch - E_0` from the
-    // SpendHeader (derived at SpendBind); here we only supply the derivation
-    // (keyed by the note's creation epoch E_0, the same PCD the spendable
-    // lineage used) and its polynomials.
-    let (derivation, polys, _keyset) = user.derivation(rng, note, creation_epoch);
+    // SpendHeader (derived at SpendBind); here we only supply the note's
+    // epoch-independent derivation and its polynomials.
+    let (derivation, polys, _keyset) = user.derivation(rng, note);
     let (stamp, ()) = PROOF_SYSTEM
         .fuse(rng, stamp::SpendStamp, (polys,), spend_pcd, derivation)
         .expect("SpendStamp honest");
@@ -147,11 +143,10 @@ fn same_epoch_honest_spend_accepted() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(rng, 500);
     let cm_height = mine_cm_in_epoch_one(rng, &mut pool, note.commitment());
-    let epoch = cm_height.epoch();
 
     let spendable = user.spendable_init(rng, &note, &pool, cm_height);
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable);
-    let stamp = honest_spend_stamp(rng, &user, &note, spend_pcd, epoch);
+    let stamp = honest_spend_stamp(rng, &user, &note, spend_pcd);
 
     let expected = TachygramSetPoly::from_iter([
         user.query_nf(&note, EpochOffset(0)).into(),
@@ -175,14 +170,14 @@ fn same_epoch_wrong_index_rejected_against_honest_chain() {
 
     let (pre_epoch_anchor, pre_cm_anchor, creation_set, chain) =
         spendable_init_inputs(rng, &pool, note.commitment(), cm_height);
-    // The derivation pins E_0 = `wrong`, but the chain is rooted at the real
+    // SpendableInit witnesses E_0 = `wrong`, but the chain is rooted at the real
     // creation-epoch boundary, so the E_0 binding rejects it.
-    let (derivation, polys, _keyset) = user.derivation(rng, &note, wrong);
+    let (derivation, polys, _keyset) = user.derivation(rng, &note);
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             spendable::SpendableInit,
-            (pre_epoch_anchor, pre_cm_anchor, creation_set, polys),
+            (pre_epoch_anchor, pre_cm_anchor, creation_set, polys, wrong),
             chain,
             derivation,
         )
@@ -224,12 +219,12 @@ fn spendable_init_accepts_forged_chain() {
         .seed(rng, pool::AnchorSeed, (forged_start, cm_commit))
         .expect("AnchorSeed");
 
-    let (derivation, polys, _keyset) = user.derivation(rng, &note, wrong);
+    let (derivation, polys, _keyset) = user.derivation(rng, &note);
     let (forged_spendable, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             spendable::SpendableInit,
-            (x, forged_start, cm_set, polys),
+            (x, forged_start, cm_set, polys, wrong),
             forged_chain,
             derivation,
         )
@@ -291,7 +286,7 @@ fn spendable_init_rejects_tg_absent() {
     let user = WalletSim::random(rng);
     let note = user.random_note(rng, 500);
 
-    let (derivation, polys, _keyset) = user.derivation(rng, &note, EpochIndex(0));
+    let (derivation, polys, _keyset) = user.derivation(rng, &note);
     let absent_set = TachygramSetPoly::from_iter([tg(rng)]);
     // cm-inclusion is checked first, so a dummy boundary chain suffices here.
     let dummy_commit = TachygramSetPoly::from_iter([tg(rng)]).commit();
@@ -303,7 +298,13 @@ fn spendable_init_rejects_tg_absent() {
         .fuse(
             rng,
             spendable::SpendableInit,
-            (Anchor::default(), Anchor::default(), absent_set, polys),
+            (
+                Anchor::default(),
+                Anchor::default(),
+                absent_set,
+                polys,
+                EpochIndex(0),
+            ),
             dummy_chain,
             derivation,
         )
@@ -584,7 +585,6 @@ fn spend_stamp_rejects_wrong_offset() {
     let note = user.random_note(rng, 500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
-    let spend_epoch = height.epoch();
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
@@ -601,7 +601,7 @@ fn spend_stamp_rejects_wrong_offset() {
         anchor,
         EpochOffset(1),
     ));
-    let (derivation, polys, _keyset) = user.derivation(rng, &note, spend_epoch);
+    let (derivation, polys, _keyset) = user.derivation(rng, &note);
     let err = PROOF_SYSTEM
         .fuse(rng, stamp::SpendStamp, (polys,), forged, derivation)
         .err()
@@ -623,13 +623,12 @@ fn spend_stamp_rejects_foreign_derivation() {
     let note = user.random_note(rng, 500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
-    let spend_epoch = height.epoch();
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     // A derivation certifying a *different* note does not match this spend's cm.
     let other = user.random_note(rng, 500);
-    let (derivation, polys, _keyset) = user.derivation(rng, &other, spend_epoch);
+    let (derivation, polys, _keyset) = user.derivation(rng, &other);
     let err = PROOF_SYSTEM
         .fuse(rng, stamp::SpendStamp, (polys,), spend_pcd, derivation)
         .err()
@@ -651,7 +650,6 @@ fn spend_stamp_rejects_identity_cv() {
     let note = user.random_note(rng, 500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
-    let spend_epoch = height.epoch();
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let real_spend = honest_spend_bind(rng, &user, &note, spendable_pcd);
@@ -665,7 +663,7 @@ fn spend_stamp_rejects_identity_cv() {
         offset,
     ));
 
-    let (derivation, polys, _keyset) = user.derivation(rng, &note, spend_epoch);
+    let (derivation, polys, _keyset) = user.derivation(rng, &note);
     let err = PROOF_SYSTEM
         .fuse(rng, stamp::SpendStamp, (polys,), forged_spend, derivation)
         .err()
@@ -783,7 +781,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     );
 
     // E_0 = 0 (cm minted in epoch 0); the spend at epoch 1 is offset d = 1.
-    let stamp = honest_spend_stamp(rng, &user, &note, spend_pcd, EpochIndex(0));
+    let stamp = honest_spend_stamp(rng, &user, &note, spend_pcd);
     let expected = TachygramSetPoly::from_iter([
         user.query_nf(&note, EpochOffset(1)).into(),
         user.query_nf(&note, EpochOffset(2)).into(),
@@ -800,11 +798,10 @@ fn spend_stamp_assembles_tachygrams() {
     let note = user.random_note(rng, 500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
-    let spend_epoch = height.epoch();
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let stamp_pcd = honest_spend_stamp(rng, &user, &note, spend_pcd, spend_epoch);
+    let stamp_pcd = honest_spend_stamp(rng, &user, &note, spend_pcd);
     let (_actions, tg_commit, _anchor) = *stamp_pcd.data();
     let expected = TachygramSetPoly::from_iter([
         Tachygram::from(user.query_nf(&note, EpochOffset(0))),
@@ -1605,7 +1602,6 @@ fn derivation_rejects_mismatched_key_poly() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
     let note = user.random_note(rng, 500);
-    let creation_epoch = EpochIndex(7);
 
     let mk = user.master_key(&note);
 
@@ -1617,13 +1613,12 @@ fn derivation_rejects_mismatched_key_poly() {
     let keyset = ExpandedKey::from_parts(&part_keys);
     let salts = mk.query_salts();
     let polys = keyset.derivation_polys(&salts);
-    let (_good_parts, good_polys, good_quotients, _) = witness::nullifier_derivation(
+    let (_good_parts, good_polys, good_quotients) = witness::nullifier_derivation(
         (*keyset_pcd.data(), ()),
         &keyset,
         array::from_fn(|part| part_keys[part].key_poly()),
         &mk,
         &polys,
-        creation_epoch,
     );
     let mut tampered = part_keys[0];
     tampered.0[0] += Fp::ONE;
@@ -1634,7 +1629,7 @@ fn derivation_rejects_mismatched_key_poly() {
         .fuse(
             rng,
             delegation::NullifierDerivationStep,
-            (bad_parts, good_polys, good_quotients, creation_epoch),
+            (bad_parts, good_polys, good_quotients),
             keyset_pcd,
             Proof::trivial().carry::<()>(()),
         )
@@ -1724,7 +1719,6 @@ fn derivation_rejects_seam_violations() {
     let user = WalletSim::random(rng);
     let note_a = user.random_note(rng, 500);
     let note_b = user.random_note(rng, 500);
-    let creation_epoch = EpochIndex(7);
     let mk_a = user.master_key(&note_a);
 
     // Case 1 (funnel seam): a part from note B cannot be folded into note A's
@@ -1760,13 +1754,12 @@ fn derivation_rejects_seam_violations() {
     let (keyset_pcd, part_keys) = keyset_pcd(&user, rng, note_a);
     let keyset = ExpandedKey::from_parts(&part_keys);
     let polys = keyset.derivation_polys(&mk_a.query_salts());
-    let (_p, good_polys, good_quotients, _) = witness::nullifier_derivation(
+    let (_p, good_polys, good_quotients) = witness::nullifier_derivation(
         (*keyset_pcd.data(), ()),
         &keyset,
         array::from_fn(|part| part_keys[part].key_poly()),
         &mk_a,
         &polys,
-        creation_epoch,
     );
     let mut swapped: [PartKeyPoly; EK_PARTS] = array::from_fn(|part| part_keys[part].key_poly());
     swapped.swap(0, 1);
@@ -1774,7 +1767,7 @@ fn derivation_rejects_seam_violations() {
         .fuse(
             rng,
             delegation::NullifierDerivationStep,
-            (swapped, good_polys, good_quotients, creation_epoch),
+            (swapped, good_polys, good_quotients),
             keyset_pcd,
             Proof::trivial().carry::<()>(()),
         )
