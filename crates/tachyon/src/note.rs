@@ -144,6 +144,12 @@ impl From<Value> for i64 {
     }
 }
 
+impl From<Value> for Fp {
+    fn from(value: Value) -> Self {
+        Self::from(value.0)
+    }
+}
+
 impl Note {
     /// Computes the note commitment `cm`.
     ///

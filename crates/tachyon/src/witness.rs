@@ -23,7 +23,7 @@ use crate::{
         self, LIFT_SPLITS, RoundBoundaryQuotients, accumulator_recurrence, weight_recurrence,
     },
     stamp::proof::{
-        delegation::{NfMasterExpand, NullifierDerivationStep},
+        delegation::{ExpandedKeyStep, NullifierDerivationStep},
         pool::{UnspentEpochFuse, UnspentFuse, UnspentSeed, VerifyUnspent},
         spendable::SpendableInit,
     },
@@ -35,26 +35,26 @@ type StepRight<S> = <<S as Step>::Right as Header>::Data;
 
 type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 
-/// Witness for [`NfMasterExpand`] for one part.
+/// Witness for [`ExpandedKeyStep`] for one part.
 ///
 /// `(trace, round_boundary_quotients, part_key_poly, decimation_quotient,
 /// part)`. `part ∈ 0..EK_PARTS` selects the cipher-input window `base = part ·
 /// EK_PART_SIZE`; the caller supplies that part's `EK_PART_SIZE` keys.
 #[must_use]
 pub fn nf_master_expand<'key>(
-    headers: (StepLeft<NfMasterExpand>, StepRight<NfMasterExpand>),
+    headers: (StepLeft<ExpandedKeyStep>, StepRight<ExpandedKeyStep>),
     mk: &'key NoteMasterKey,
     spectrum: &'key PartKeySpectrumPoly,
     part_keys: &'key PartKey,
     part: usize,
-) -> StepWitness<'key, NfMasterExpand> {
+) -> StepWitness<'key, ExpandedKeyStep> {
     let (_left, _right) = headers;
     let key_poly = part_keys.key_poly();
     #[expect(clippy::as_conversions, reason = "constant size")]
     let base = Fp::from((part * EK_PART_SIZE) as u64);
     let (round, boundary, decimation_quotient) = quotient::expansion_quotients(
         spectrum.0.coefficients(),
-        *mk,
+        mk,
         key_poly.0.coefficients(),
         base,
     );

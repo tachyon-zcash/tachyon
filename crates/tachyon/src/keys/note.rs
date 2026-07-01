@@ -16,7 +16,8 @@ use zcash_mimc::spec::tachyon::{TachyonP5R32, TachyonP5R8192};
 use super::proof::SpendValidatingKey;
 use crate::{
     constants::{
-        EK_FULL_SIZE, EK_PART_SIZE, EK_PARTS, MK_PART_LEN, MK_PARTS, NF_DOMAIN, NF_EMITTERS,
+        EK_FULL_SIZE, EK_PART_SIZE, EK_PARTS, MK_LENGTH, MK_PART_LEN, MK_PARTS, NF_DOMAIN,
+        NF_EMITTERS,
     },
     digest::{mimc, poseidon},
     note::{self, Nullifier},
@@ -68,7 +69,7 @@ impl NullifierKey {
 pub struct NoteMasterKey(pub [Fp; Self::MK_LENGTH]);
 
 impl NoteMasterKey {
-    pub const MK_LENGTH: usize = crate::constants::MK_LENGTH;
+    pub const MK_LENGTH: usize = MK_LENGTH;
 
     /// Assemble the full master key by concatenating its `MK_PARTS` parts, in
     /// order. Each part is one [`MasterSeed`] step's `nf_master_part` output;
@@ -79,6 +80,7 @@ impl NoteMasterKey {
     pub fn from_parts(parts: &[[Fp; MK_PART_LEN]; MK_PARTS]) -> Self {
         Self(array::from_fn(|index| {
             #[expect(
+                clippy::indexing_slicing,
                 clippy::integer_division,
                 clippy::integer_division_remainder_used,
                 reason = "index < MK_LENGTH = MK_PARTS*MK_PART_LEN"
@@ -100,7 +102,7 @@ impl NoteMasterKey {
     /// [`query_weights`](Self::query_weights) so the two cannot collide.
     #[must_use]
     pub fn query_salts(&self) -> QuerySalts {
-        QuerySalts(poseidon::nf_query_salts(self.0))
+        QuerySalts(poseidon::nf_query_salts(&self.0))
     }
 
     /// The nullifier-query weight parameters `(ρ_j, c)`: the per-poly
@@ -109,7 +111,7 @@ impl NoteMasterKey {
     /// [`query_salts`](Self::query_salts).
     #[must_use]
     pub fn query_weights(&self) -> (WeightRatios, QueryShift) {
-        let (rt, sh) = poseidon::nf_query_weights(self.0);
+        let (rt, sh) = poseidon::nf_query_weights(&self.0);
         (WeightRatios(rt), QueryShift(sh))
     }
 
@@ -128,7 +130,7 @@ impl NoteMasterKey {
                 reason = "constant expansion size; index < EK_FULL_SIZE"
             )]
             let cipher_index = ((index % EK_PARTS) * EK_PART_SIZE + index / EK_PARTS) as u64;
-            mimc::mk_dk_expand(Fp::ZERO, self.0, Fp::from(cipher_index))
+            mimc::mk_dk_expand(Fp::ZERO, &self.0, Fp::from(cipher_index))
         }))
     }
 
@@ -151,7 +153,7 @@ impl NoteMasterKey {
         let base = Fp::from((part * EK_PART_SIZE) as u64);
         #[expect(clippy::as_conversions, reason = "constant size")]
         for (states, key) in (0..(EK_PART_SIZE as u64))
-            .map(|row| mimc::mk_dk_expand_sequence(base, self.0, Fp::from(row)))
+            .map(|row| mimc::mk_dk_expand_sequence(base, &self.0, Fp::from(row)))
         {
             cells.extend_from_slice(&states);
             keys.push(key);
@@ -282,7 +284,7 @@ impl fmt::Debug for ExpandedKey {
 /// Part `p` occupies schedule positions `≡ p (mod EK_PARTS)`;
 /// [`ExpandedKey::from_parts`] interleaves the `EK_PARTS` parts into the full
 /// schedule. Each is certified by one
-/// [`NfMasterExpand`](crate::stamp::proof::delegation::NfMasterExpand) step.
+/// [`ExpandedKeyStep`](crate::stamp::proof::delegation::ExpandedKeyStep) step.
 ///
 /// Wallet-only secret material, like [`ExpandedKey`].
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -343,6 +345,12 @@ impl fmt::Debug for PartKey {
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct PaymentKey(#[debug(skip)] pub(crate) Fp);
+
+impl From<PaymentKey> for Fp {
+    fn from(pk: PaymentKey) -> Self {
+        pk.0
+    }
+}
 
 impl PaymentKey {
     /// Derive the payment key from `ak` and `nk`:

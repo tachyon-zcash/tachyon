@@ -13,20 +13,20 @@ use core::{array, cell::RefCell, iter, ops::RangeInclusive};
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::{Pcd, Polynomial};
+use ragu::{Pcd, Polynomial, Proof};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
     EpochIndex, EpochOffset,
     action::{self, Action},
     bundle::{self, Bundle},
-    constants::{EPOCH_SIZE, NF_EMITTERS},
+    constants::{EK_PARTS, EPOCH_SIZE, NF_EMITTERS},
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{ExpandedKey, NoteMasterKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, Tachygram, TachygramSetCommit,
-        TachygramSetPoly, effect,
+        ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, PartKeyPoly, Tachygram,
+        TachygramSetCommit, TachygramSetPoly, effect,
     },
     relations::quotient::LIFT_SPLITS,
     stamp::{
@@ -739,25 +739,27 @@ impl WalletSim {
         keyset.derive_nullifier(&mk, offset)
     }
 
-    /// Seed one half of the note's master key (the three parts at `part_idx`),
-    /// proving they are the note's master secrets.
-    pub fn note_master_half(
+    /// Seed one `mk` part (part index `part`), proving it is the note's master
+    /// secret via the payment-key check.
+    pub fn master_key_part(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
-        part_idx: [u64; 3],
-    ) -> Pcd<delegation::NfMasterHeader> {
+        part: u64,
+    ) -> Pcd<delegation::MasterKeyPart> {
         let (pcd, ()) = PROOF_SYSTEM
-            .seed(rng, delegation::NfMasterSeed, (note, self.pak, part_idx))
-            .expect("note seed");
+            .seed(rng, delegation::MasterSeed, (note, self.pak, part))
+            .expect("master key part seed");
         pcd
     }
 
-    /// Certify a note's `N`-polynomial derivation: prove the key expansion
-    /// ([`NfMasterExpand`](delegation::NfMasterExpand)) by fusing the two
-    /// complementary master-key seeds, then certify the derivation polynomials
-    /// against the committed keyset
-    /// ([`NullifierDerivationStep`](delegation::NullifierDerivationStep)).
+    /// Certify a note's `N`-polynomial derivation. Seeds the `MK_PARTS` master
+    /// key parts, certifies each of the `EK_PARTS` expansion windows
+    /// ([`ExpandedKeyStep`](delegation::ExpandedKeyStep)) against them, funnels
+    /// the parts into one [`ExpandedKeyset`](delegation::ExpandedKeyset)
+    /// (`ExpandedKeysetLift` + `ExpandedKeyFuse`), then certifies the derivation
+    /// polynomials against the assembled keyset in one single-input
+    /// [`NullifierDerivationStep`](delegation::NullifierDerivationStep).
     pub fn derivation_pcd(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
@@ -766,66 +768,75 @@ impl WalletSim {
     ) -> Pcd<delegation::NullifierDerivation> {
         let mk = self.master_key(&note);
 
-        // Each of the EK_PARTS parts is certified by one NfMasterExpand fusing
-        // the two complementary master-key seeds (parts 0,1,2 and 3,4,5). The
-        // derivation step is binary, so it consumes the two part PCDs directly.
-        let part0_left = self.note_master_half(rng, note, [0, 1, 2]);
-        let part0_right = self.note_master_half(rng, note, [3, 4, 5]);
-        let (part0_spectrum, part0_keys) = mk.derive_expanded_trace(0);
-        let (part0_pcd, ()) = PROOF_SYSTEM
+        // The two mk parts, each pinned to the note by the payment-key check.
+        let mk_part0 = self.master_key_part(rng, note, 0);
+        let mk_part1 = self.master_key_part(rng, note, 1);
+
+        // Each of the EK_PARTS expansion windows is certified by one
+        // ExpandedKeyStep fusing the two mk parts; collect the PCDs and their
+        // native keys (for the derivation's round quotients).
+        let mut part_pcds: Vec<Pcd<delegation::ExpandedKeyPart>> = Vec::with_capacity(EK_PARTS);
+        let mut part_keys = Vec::with_capacity(EK_PARTS);
+        for part in 0..EK_PARTS {
+            let (spectrum, keys) = mk.derive_expanded_trace(part);
+            let (pcd, ()) = PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    delegation::ExpandedKeyStep,
+                    witness::nf_master_expand(
+                        (*mk_part0.data(), *mk_part1.data()),
+                        &mk,
+                        &spectrum,
+                        &keys,
+                        part,
+                    ),
+                    mk_part0.clone(),
+                    mk_part1.clone(),
+                )
+                .expect("ExpandedKeyStep");
+            part_pcds.push(pcd);
+            part_keys.push(keys);
+        }
+
+        // Funnel the parts into one ExpandedKeyset: lift part 0, fold the rest.
+        // Single-input steps take a trivial () PCD on the empty side.
+        let mut parts = part_pcds.into_iter();
+        let first = parts.next().expect("EK_PARTS >= 1");
+        let (mut keyset_pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                delegation::NfMasterExpand,
-                witness::nf_master_expand(
-                    (*part0_left.data(), *part0_right.data()),
-                    &mk,
-                    &part0_spectrum,
-                    &part0_keys,
-                    0,
-                ),
-                part0_left,
-                part0_right,
+                delegation::ExpandedKeysetLift,
+                (),
+                first,
+                Proof::trivial().carry::<()>(()),
             )
-            .expect("NfMasterExpand part 0");
+            .expect("ExpandedKeysetLift");
+        for part_pcd in parts {
+            let (next, ()) = PROOF_SYSTEM
+                .fuse(rng, delegation::ExpandedKeyFuse, (), keyset_pcd, part_pcd)
+                .expect("ExpandedKeyFuse");
+            keyset_pcd = next;
+        }
 
-        let part1_left = self.note_master_half(rng, note, [0, 1, 2]);
-        let part1_right = self.note_master_half(rng, note, [3, 4, 5]);
-        let (part1_spectrum, part1_keys) = mk.derive_expanded_trace(1);
-        let (part1_pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                delegation::NfMasterExpand,
-                witness::nf_master_expand(
-                    (*part1_left.data(), *part1_right.data()),
-                    &mk,
-                    &part1_spectrum,
-                    &part1_keys,
-                    1,
-                ),
-                part1_left,
-                part1_right,
-            )
-            .expect("NfMasterExpand part 1");
-
-        // Assemble the interleaved schedule and certify the derivation
-        // polynomials against the parts.
-        let parts = [part0_keys, part1_keys];
-        let keyset = ExpandedKey::from_parts(&parts);
+        // Certify the derivation polynomials against the assembled keyset.
+        let part_polys: [PartKeyPoly; EK_PARTS] =
+            array::from_fn(|part| part_keys[part].key_poly());
+        let keyset = ExpandedKey::from_parts(&array::from_fn(|part| part_keys[part]));
         let polys = keyset.derivation_polys(&mk.query_salts());
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 delegation::NullifierDerivationStep,
                 witness::nullifier_derivation(
-                    (*part0_pcd.data(), *part1_pcd.data()),
+                    (*keyset_pcd.data(), ()),
                     &keyset,
-                    parts.map(|part| part.key_poly()),
+                    part_polys,
                     &mk,
                     &polys,
                     creation_epoch,
                 ),
-                part0_pcd,
-                part1_pcd,
+                keyset_pcd,
+                Proof::trivial().carry::<()>(()),
             )
             .expect("NullifierDerivationStep");
         pcd

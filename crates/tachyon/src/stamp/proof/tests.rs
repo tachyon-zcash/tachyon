@@ -6,6 +6,7 @@
 extern crate alloc;
 
 use alloc::{string::ToString as _, vec};
+use core::array;
 
 use ff::Field as _;
 use pasta_curves::Fp;
@@ -16,7 +17,7 @@ use rand_core::{CryptoRng, RngCore};
 use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly,
-    constants::EPOCH_SIZE,
+    constants::{EK_PARTS, EPOCH_SIZE},
     entropy::ActionEntropy,
     fixtures::{
         PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_stamp,
@@ -25,7 +26,9 @@ use crate::{
     },
     keys::{ExpandedKey, NoteMasterKey, PartKey},
     note::{self, Nullifier},
-    primitives::{Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqPoly, Tachygram, effect},
+    primitives::{
+        Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqPoly, PartKeyPoly, Tachygram, effect,
+    },
     value, witness,
 };
 
@@ -1508,10 +1511,10 @@ fn nf_master_expand_rejects_forged_witnesses() {
     let mk = user.master_key(&note);
     let other_mk = user.master_key(&other);
 
-    // The genuine complementary seeds thread the note's `mk`; each case forges
+    // The genuine two mk parts thread the note's `mk`; each case forges
     // only the witness, so the violated relation rejects it.
-    let left = user.note_master_half(rng, note, [0, 1, 2]);
-    let right = user.note_master_half(rng, note, [3, 4, 5]);
+    let left = user.master_key_part(rng, note, 0);
+    let right = user.master_key_part(rng, note, 1);
 
     // Build the expansion-step witness from `builder_mk`'s trace, with quotients
     // honest for `builder_mk` (so the witness is well-formed; only the threaded
@@ -1572,7 +1575,7 @@ fn nf_master_expand_rejects_forged_witnesses() {
         let err = PROOF_SYSTEM
             .fuse(
                 rng,
-                delegation::NfMasterExpand,
+                delegation::ExpandedKeyStep,
                 witness,
                 left.clone(),
                 right.clone(),
@@ -1597,72 +1600,34 @@ fn derivation_rejects_mismatched_key_poly() {
 
     let mk = user.master_key(&note);
 
-    let part0_left = user.note_master_half(rng, note, [0, 1, 2]);
-    let part0_right = user.note_master_half(rng, note, [3, 4, 5]);
-    let (part0_spectrum, part0_keys) = mk.derive_expanded_trace(0);
-    let (keyset0_pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            delegation::NfMasterExpand,
-            witness::nf_master_expand(
-                (*part0_left.data(), *part0_right.data()),
-                &mk,
-                &part0_spectrum,
-                &part0_keys,
-                0,
-            ),
-            part0_left,
-            part0_right,
-        )
-        .unwrap();
-    let part1_left = user.note_master_half(rng, note, [0, 1, 2]);
-    let part1_right = user.note_master_half(rng, note, [3, 4, 5]);
-    let (part1_spectrum, part1_keys) = mk.derive_expanded_trace(1);
-    let (keyset1_pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            delegation::NfMasterExpand,
-            witness::nf_master_expand(
-                (*part1_left.data(), *part1_right.data()),
-                &mk,
-                &part1_spectrum,
-                &part1_keys,
-                1,
-            ),
-            part1_left,
-            part1_right,
-        )
-        .unwrap();
+    // Funnel the genuine parts, then feed the derivation a tampered part 0: its
+    // commitment no longer matches the certified keyset fold, so the fold
+    // recomputation rejects it.
+    let (keyset_pcd, part_keys) = keyset_pcd(&user, rng, note);
 
-    // A part-key poly with a tampered output no longer matches its committed
-    // part-keyset, so the consumer's commit-equality check rejects it.
-    let keyset = ExpandedKey::from_parts(&[part0_keys, part1_keys]);
+    let keyset = ExpandedKey::from_parts(&part_keys);
     let salts = mk.query_salts();
     let polys = keyset.derivation_polys(&salts);
     let (_good_parts, good_polys, good_quotients, _) = witness::nullifier_derivation(
-        (*keyset0_pcd.data(), *keyset1_pcd.data()),
+        (*keyset_pcd.data(), ()),
         &keyset,
-        [part0_keys.key_poly(), part1_keys.key_poly()],
+        array::from_fn(|part| part_keys[part].key_poly()),
         &mk,
         &polys,
         creation_epoch,
     );
-    let mut tampered = part0_keys;
+    let mut tampered = part_keys[0];
     tampered.0[0] += Fp::ONE;
-    let bad_part0 = tampered.key_poly();
+    let mut bad_parts: [PartKeyPoly; EK_PARTS] = array::from_fn(|part| part_keys[part].key_poly());
+    bad_parts[0] = tampered.key_poly();
 
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NullifierDerivationStep,
-            (
-                [bad_part0, part1_keys.key_poly()],
-                good_polys,
-                good_quotients,
-                creation_epoch,
-            ),
-            keyset0_pcd,
-            keyset1_pcd,
+            (bad_parts, good_polys, good_quotients, creation_epoch),
+            keyset_pcd,
+            Proof::trivial().carry::<()>(()),
         )
         .err()
         .unwrap_or_else(|| panic!("expected rejection"));
@@ -1671,32 +1636,68 @@ fn derivation_rejects_mismatched_key_poly() {
     };
     assert_eq!(
         inner.to_string(),
-        "NullifierDerivationStep: part-key poly does not match its commitment"
+        "NullifierDerivationStep: parts do not match the certified keyset fold"
     );
 }
 
-/// Certify one expansion part (the `NfPartKeyset` PCD) for a note, returning it
+/// Certify one expansion part (the `ExpandedKeyPart` PCD) for a note, returning it
 /// with that part's keys.
 fn keyset_part_pcd(
     user: &WalletSim,
     rng: &mut StdRng,
     note: Note,
     part: usize,
-) -> (Pcd<delegation::NfPartKeyset>, PartKey) {
+) -> (Pcd<delegation::ExpandedKeyPart>, PartKey) {
     let mk = user.master_key(&note);
     let (spectrum, keys) = mk.derive_expanded_trace(part);
-    let left = user.note_master_half(rng, note, [0, 1, 2]);
-    let right = user.note_master_half(rng, note, [3, 4, 5]);
+    let left = user.master_key_part(rng, note, 0);
+    let right = user.master_key_part(rng, note, 1);
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            delegation::NfMasterExpand,
+            delegation::ExpandedKeyStep,
             witness::nf_master_expand((*left.data(), *right.data()), &mk, &spectrum, &keys, part),
             left,
             right,
         )
-        .expect("NfMasterExpand part");
+        .expect("ExpandedKeyStep part");
     (pcd, keys)
+}
+
+/// Funnel a note's `EK_PARTS` certified expansion parts into one
+/// [`ExpandedKeyset`](delegation::ExpandedKeyset) PCD (the lift + fold chain the
+/// single-input derivation consumes), returning the keyset PCD and the parts'
+/// native keys in order.
+fn keyset_pcd(
+    user: &WalletSim,
+    rng: &mut StdRng,
+    note: Note,
+) -> (Pcd<delegation::ExpandedKeyset>, [PartKey; EK_PARTS]) {
+    let keys: [PartKey; EK_PARTS] = array::from_fn(|part| {
+        let (_spectrum, part_key) = user.master_key(&note).derive_expanded_trace(part);
+        part_key
+    });
+    // Eagerly certify the parts (releasing `rng` before the funnel borrows it).
+    let part_pcds: [Pcd<delegation::ExpandedKeyPart>; EK_PARTS] =
+        array::from_fn(|part| keyset_part_pcd(user, rng, note, part).0);
+    let mut parts = part_pcds.into_iter();
+    let first = parts.next().expect("EK_PARTS >= 1");
+    let (mut keyset, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            delegation::ExpandedKeysetLift,
+            (),
+            first,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("ExpandedKeysetLift");
+    for part_pcd in parts {
+        let (next, ()) = PROOF_SYSTEM
+            .fuse(rng, delegation::ExpandedKeyFuse, (), keyset, part_pcd)
+            .expect("ExpandedKeyFuse");
+        keyset = next;
+    }
+    (keyset, keys)
 }
 
 fn assert_invalid(err: ragu::Error, expected: &str) {
@@ -1706,9 +1707,10 @@ fn assert_invalid(err: ragu::Error, expected: &str) {
     assert_eq!(inner.to_string(), expected);
 }
 
-/// The derivation step's seam rejects malformed part pairs: the same part twice
-/// (the part-index pin), and parts from different notes (the cm seam). The
-/// honest witness is never reached -- the seam checks fire before binding.
+/// The new seam locations reject malformed assemblies: a part from a foreign
+/// note cannot be folded into a keyset (the funnel's `ExpandedKeyFuse`
+/// reconciliation), and a genuine keyset fed to the derivation with its parts
+/// reordered fails the canonical fold recomputation.
 #[test]
 fn derivation_rejects_seam_violations() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1718,53 +1720,61 @@ fn derivation_rejects_seam_violations() {
     let creation_epoch = EpochIndex(7);
     let mk_a = user.master_key(&note_a);
 
-    let (a_part0_pcd, a_part0_keys) = keyset_part_pcd(&user, rng, note_a, 0);
-    let (_a_part1_pcd, a_part1_keys) = keyset_part_pcd(&user, rng, note_a, 1);
-    let (b_part1_pcd, b_part1_keys) = keyset_part_pcd(&user, rng, note_b, 1);
-
-    let keyset_a = ExpandedKey::from_parts(&[a_part0_keys, a_part1_keys]);
-    let polys = keyset_a.derivation_polys(&mk_a.query_salts());
-    let a_part0_header = *a_part0_pcd.data();
-    let make_witness = |right_header, right_keys: &PartKey| {
-        witness::nullifier_derivation(
-            (a_part0_header, right_header),
-            &keyset_a,
-            [a_part0_keys.key_poly(), right_keys.key_poly()],
-            &mk_a,
-            &polys,
-            creation_epoch,
-        )
-    };
-
-    // Case 1: part 0 supplied as both Left and Right; the right input's part
-    // index (0) fails the `part_indices[1] == 1` pin.
-    let dup_witness = make_witness(a_part0_header, &a_part0_keys);
-    let dup_err = PROOF_SYSTEM
+    // Case 1 (funnel seam): a part from note B cannot be folded into note A's
+    // keyset; `ExpandedKeyFuse`'s mk/note reconciliation rejects it.
+    let (a_part0_pcd, _a_part0_keys) = keyset_part_pcd(&user, rng, note_a, 0);
+    let (b_part1_pcd, _b_part1_keys) = keyset_part_pcd(&user, rng, note_b, 1);
+    let (keyset_a_lift, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            delegation::NullifierDerivationStep,
-            dup_witness,
-            a_part0_pcd.clone(),
-            a_part0_pcd.clone(),
+            delegation::ExpandedKeysetLift,
+            (),
+            a_part0_pcd,
+            Proof::trivial().carry::<()>(()),
         )
-        .err()
-        .unwrap_or_else(|| panic!("expected rejection: duplicated part"));
-    assert_invalid(dup_err, "NullifierDerivationStep: part index mismatch");
-
-    // Case 2: part 0 from note A, part 1 from note B; the cm seam rejects it.
-    let cross_witness = make_witness(*b_part1_pcd.data(), &b_part1_keys);
+        .expect("ExpandedKeysetLift");
     let cross_err = PROOF_SYSTEM
         .fuse(
             rng,
-            delegation::NullifierDerivationStep,
-            cross_witness,
-            a_part0_pcd,
+            delegation::ExpandedKeyFuse,
+            (),
+            keyset_a_lift,
             b_part1_pcd,
         )
         .err()
-        .unwrap_or_else(|| panic!("expected rejection: mismatched note"));
+        .unwrap_or_else(|| panic!("expected rejection: cross-note fold"));
     assert_invalid(
         cross_err,
-        "NullifierDerivationStep: part commitments do not match",
+        "ExpandedKeyFuse: master key mismatch across parts",
+    );
+
+    // Case 2 (derivation fold): the genuine keyset, but the derivation is fed
+    // its parts in the wrong order; the canonical fold recomputation rejects it.
+    let (keyset_pcd, part_keys) = keyset_pcd(&user, rng, note_a);
+    let keyset = ExpandedKey::from_parts(&part_keys);
+    let polys = keyset.derivation_polys(&mk_a.query_salts());
+    let (_p, good_polys, good_quotients, _) = witness::nullifier_derivation(
+        (*keyset_pcd.data(), ()),
+        &keyset,
+        array::from_fn(|part| part_keys[part].key_poly()),
+        &mk_a,
+        &polys,
+        creation_epoch,
+    );
+    let mut swapped: [PartKeyPoly; EK_PARTS] = array::from_fn(|part| part_keys[part].key_poly());
+    swapped.swap(0, 1);
+    let reorder_err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            delegation::NullifierDerivationStep,
+            (swapped, good_polys, good_quotients, creation_epoch),
+            keyset_pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .err()
+        .unwrap_or_else(|| panic!("expected rejection: reordered parts"));
+    assert_invalid(
+        reorder_err,
+        "NullifierDerivationStep: parts do not match the certified keyset fold",
     );
 }

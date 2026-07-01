@@ -86,6 +86,41 @@ pub(crate) fn nf_master_part(psi: Fp, nk: Fp, part: u64) -> [Fp; MK_PART_LEN] {
     [Fp::ZERO; MK_PART_LEN].map(|_| sponge.squeeze().expect("infallible"))
 }
 
+const NULLIFIER_KEYSET_DOMAIN: &[u8; 16] = b"Tachyon-NfKeyset";
+
+/// Fold one expansion part's key commitment, at its schedule position, into a
+/// running keyset accumulator. The expansion funnel chains one fold per
+/// `ExpandedKeyPart`; `NullifierDerivation` recomputes the fold from the
+/// witnessed part polynomials in canonical part order and checks it, binding
+/// the full ordered set of part commitments with a single equality (no per-slot
+/// array, no conditional placement, no count). `position` is the part's
+/// schedule index, folded in so the order is pinned to `0..EK_PARTS`: a part
+/// fed out of order shifts the sequential hash and fails the derivation's
+/// canonical recomputation.
+#[expect(
+    clippy::expect_used,
+    reason = "constant-size coordinate decomposition into fixed input"
+)]
+#[must_use]
+pub(crate) fn keyset_fold(acc: Fp, commit: Coordinates<EqAffine>, position: Fp) -> Fp {
+    let (x, y) = (commit.x().to_repr(), commit.y().to_repr());
+    let (x_lo, x_hi, y_lo, y_hi) = (
+        Fp::from_u128(u128::from_le_bytes(x[..16].try_into().expect("16 bytes"))),
+        Fp::from_u128(u128::from_le_bytes(x[16..].try_into().expect("16 bytes"))),
+        Fp::from_u128(u128::from_le_bytes(y[..16].try_into().expect("16 bytes"))),
+        Fp::from_u128(u128::from_le_bytes(y[16..].try_into().expect("16 bytes"))),
+    );
+    hash::<7>([
+        Fp::from_u128(u128::from_le_bytes(*NULLIFIER_KEYSET_DOMAIN)),
+        acc,
+        position,
+        x_lo,
+        x_hi,
+        y_lo,
+        y_hi,
+    ])
+}
+
 const NF_QUERY_SALT_DOMAIN: &[u8; 16] = b"Tachyon-NfSalt__";
 const NF_QUERY_WEIGHT_DOMAIN: &[u8; 16] = b"Tachyon-NfWeight";
 
@@ -99,7 +134,7 @@ const NF_QUERY_WEIGHT_DOMAIN: &[u8; 16] = b"Tachyon-NfWeight";
     reason = "mock sponge absorb/squeeze is infallible"
 )]
 #[must_use]
-pub(crate) fn nf_query_salts(mk: [Fp; NoteMasterKey::MK_LENGTH]) -> [Fp; NF_EMITTERS] {
+pub(crate) fn nf_query_salts(mk: &[Fp; NoteMasterKey::MK_LENGTH]) -> [Fp; NF_EMITTERS] {
     let mut sponge = Sponge::new();
     sponge
         .absorb(Fp::from_u128(u128::from_le_bytes(*NF_QUERY_SALT_DOMAIN)))
@@ -118,7 +153,7 @@ pub(crate) fn nf_query_salts(mk: [Fp; NoteMasterKey::MK_LENGTH]) -> [Fp; NF_EMIT
     reason = "mock sponge absorb/squeeze is infallible"
 )]
 #[must_use]
-pub(crate) fn nf_query_weights(mk: [Fp; NoteMasterKey::MK_LENGTH]) -> ([Fp; NF_EMITTERS], Fp) {
+pub(crate) fn nf_query_weights(mk: &[Fp; NoteMasterKey::MK_LENGTH]) -> ([Fp; NF_EMITTERS], Fp) {
     let mut sponge = Sponge::new();
     sponge
         .absorb(Fp::from_u128(u128::from_le_bytes(*NF_QUERY_WEIGHT_DOMAIN)))

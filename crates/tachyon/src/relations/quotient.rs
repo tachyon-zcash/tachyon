@@ -678,11 +678,11 @@ fn offset_basis_ext(values: &[Fp]) -> Vec<Fp> {
 /// round-key schedule); `base = half · EK_PART_SIZE` is this half's
 /// cipher-input window origin. Builds the shared quintic-coset trace evaluation
 /// once and returns `(round splits, boundary, decimation)`, matching what
-/// [`NfMasterExpand`] opens: cipher input `base + row`, first key
+/// [`ExpandedKeyStep`] opens: cipher input `base + row`, first key
 /// `mk.round_key(0)`, whitening `mk.round_key(TachyonP5R32::ROUNDS)`.
 pub(crate) fn expansion_quotients(
     trace_coeffs: &[Fp],
-    keyset: NoteMasterKey,
+    keyset: &NoteMasterKey,
     key_coeffs: &[Fp],
     base: Fp,
 ) -> ([Polynomial; EXPANSION_ROUND_SPLITS], Polynomial, Polynomial) {
@@ -702,7 +702,7 @@ pub(crate) fn expansion_quotients(
 /// `mask·(T(gX) − (T + offset)^5)` on the quintic coset and divides by `Z_D`.
 pub(crate) fn expansion_round_quotient(
     trace_ext: &[Fp],
-    keyset: NoteMasterKey,
+    keyset: &NoteMasterKey,
 ) -> [Polynomial; EXPANSION_ROUND_SPLITS] {
     // Per-column offset `round_key(col + 1) + CONSTANTS[col + 1]`, evaluated on
     // the quintic coset. The transition out of column `col` produces round `col
@@ -900,7 +900,7 @@ mod tests {
         let key_poly = part_keys.key_poly();
         let (round, boundary, decimation) = expansion_quotients(
             spectrum.0.coefficients(),
-            mk,
+            &mk,
             key_poly.0.coefficients(),
             Fp::ZERO,
         );
