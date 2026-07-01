@@ -55,11 +55,7 @@ impl NullifierKey {
     ///
     /// [`MasterSeed`]: crate::stamp::proof::delegation::MasterSeed
     #[must_use]
-    pub fn derive_note_part(
-        &self,
-        psi: &note::NullifierTrapdoor,
-        part: u64,
-    ) -> [Fp; MK_PART_LEN] {
+    pub fn derive_note_part(&self, psi: &note::NullifierTrapdoor, part: u64) -> [Fp; MK_PART_LEN] {
         poseidon::nf_master_part(psi.0, self.0, part)
     }
 }
@@ -398,10 +394,7 @@ mod tests {
         let nk = NullifierKey(Fp::random(&mut *rng));
         let psi1 = note::NullifierTrapdoor::random(rng);
         let psi2 = note::NullifierTrapdoor::random(rng);
-        assert_ne!(
-            nk.derive_note_part(&psi1, 0),
-            nk.derive_note_part(&psi2, 0),
-        );
+        assert_ne!(nk.derive_note_part(&psi1, 0), nk.derive_note_part(&psi2, 0),);
     }
 
     #[test]

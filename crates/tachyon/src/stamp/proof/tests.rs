@@ -1640,8 +1640,8 @@ fn derivation_rejects_mismatched_key_poly() {
     );
 }
 
-/// Certify one expansion part (the `ExpandedKeyPart` PCD) for a note, returning it
-/// with that part's keys.
+/// Certify one expansion part (the `ExpandedKeyPart` PCD) for a note, returning
+/// it with that part's keys.
 fn keyset_part_pcd(
     user: &WalletSim,
     rng: &mut StdRng,
@@ -1665,9 +1665,9 @@ fn keyset_part_pcd(
 }
 
 /// Funnel a note's `EK_PARTS` certified expansion parts into one
-/// [`ExpandedKeyset`](delegation::ExpandedKeyset) PCD (the lift + fold chain the
-/// single-input derivation consumes), returning the keyset PCD and the parts'
-/// native keys in order.
+/// [`ExpandedKeyset`](delegation::ExpandedKeyset) PCD (the lift + fold chain
+/// the single-input derivation consumes), returning the keyset PCD and the
+/// parts' native keys in order.
 fn keyset_pcd(
     user: &WalletSim,
     rng: &mut StdRng,

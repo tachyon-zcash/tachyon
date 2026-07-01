@@ -124,7 +124,6 @@ pub(crate) fn keyset_fold(acc: Fp, commit: Coordinates<EqAffine>, position: Fp) 
 const NF_QUERY_SALT_DOMAIN: &[u8; 16] = b"Tachyon-NfSalt__";
 const NF_QUERY_WEIGHT_DOMAIN: &[u8; 16] = b"Tachyon-NfWeight";
 
-
 /// Derive the note's per-emitter nullifier-query salts from its master key
 /// `mk`. Each salt seeds one derivation poly's 8192-round cipher. Domain-
 /// separated from the weight/shift derivation below so the two outputs are

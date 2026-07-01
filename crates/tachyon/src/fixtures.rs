@@ -757,8 +757,9 @@ impl WalletSim {
     /// key parts, certifies each of the `EK_PARTS` expansion windows
     /// ([`ExpandedKeyStep`](delegation::ExpandedKeyStep)) against them, funnels
     /// the parts into one [`ExpandedKeyset`](delegation::ExpandedKeyset)
-    /// (`ExpandedKeysetLift` + `ExpandedKeyFuse`), then certifies the derivation
-    /// polynomials against the assembled keyset in one single-input
+    /// (`ExpandedKeysetLift` + `ExpandedKeyFuse`), then certifies the
+    /// derivation polynomials against the assembled keyset in one
+    /// single-input
     /// [`NullifierDerivationStep`](delegation::NullifierDerivationStep).
     pub fn derivation_pcd(
         &self,
@@ -819,8 +820,7 @@ impl WalletSim {
         }
 
         // Certify the derivation polynomials against the assembled keyset.
-        let part_polys: [PartKeyPoly; EK_PARTS] =
-            array::from_fn(|part| part_keys[part].key_poly());
+        let part_polys: [PartKeyPoly; EK_PARTS] = array::from_fn(|part| part_keys[part].key_poly());
         let keyset = ExpandedKey::from_parts(&array::from_fn(|part| part_keys[part]));
         let polys = keyset.derivation_polys(&mk.query_salts());
         let (pcd, ()) = PROOF_SYSTEM

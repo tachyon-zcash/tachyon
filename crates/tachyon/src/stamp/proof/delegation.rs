@@ -32,10 +32,7 @@ use pasta_curves::{
     EqAffine, Fp,
     arithmetic::{Coordinates, CurveAffine as _},
 };
-use ragu::{
-    Header, Index, Polynomial, Step, Suffix,
-    constraint::enforce_zero,
-};
+use ragu::{Header, Index, Polynomial, Step, Suffix, constraint::enforce_zero};
 use zcash_mimc::spec::tachyon::TachyonP5R32;
 
 use crate::{
@@ -192,7 +189,10 @@ impl Step for ExpandedKeyStep {
         let part_in_range = (0..EK_PARTS).fold(Fp::ONE, |product, index| {
             product * (part - Fp::from(index as u64))
         });
-        enforce_zero(part_in_range, "ExpandedKeyStep: part out of range 0..EK_PARTS")?;
+        enforce_zero(
+            part_in_range,
+            "ExpandedKeyStep: part out of range 0..EK_PARTS",
+        )?;
         let base = part * Fp::from(EK_PART_SIZE as u64);
 
         // Assemble the 32-key `mk` from the two `mk parts` (pinned to indices 0
@@ -300,14 +300,15 @@ impl Step for ExpandedKeyStep {
 }
 
 /// One `ExpandedKey` part: its key-poly commitment, window index, the full
-/// `mk`, and the originating note `(keyset_commit, part, mk, note)`. Wallet-only.
+/// `mk`, and the originating note `(keyset_commit, part, mk, note)`.
+/// Wallet-only.
 ///
 /// Carries the [`PartKeyCommit`] to the eval-form part-key polynomial (this
 /// window's `EK_PART_SIZE` keyed-cipher expansion outputs), proven by
-/// [`ExpandedKeyStep`], the `part` index `0..EK_PARTS` so the funnel pins one of
-/// each, the full `mk` (for the downstream query parameters), and the note (so
-/// the deferred `cm` binds at the funnel root). The header is private to the
-/// wallet's own proof tree and is never published.
+/// [`ExpandedKeyStep`], the `part` index `0..EK_PARTS` so the funnel pins one
+/// of each, the full `mk` (for the downstream query parameters), and the note
+/// (so the deferred `cm` binds at the funnel root). The header is private to
+/// the wallet's own proof tree and is never published.
 #[derive(Clone, Debug)]
 pub struct ExpandedKeyPart;
 
@@ -522,13 +523,13 @@ impl Header for NullifierDerivation {
 /// `EK_PARTS` part-key polynomials `A_p`, the `N` polynomials `T_j`, their
 /// round- and boundary-quotients, and the creation epoch `E_0`. It recomputes
 /// the [`ExpandedKeyset`] fold from the witnessed `A_p` in canonical part order
-/// (each `A_p.commit()` folded at position `p` by [`poseidon::keyset_fold`]) and
-/// checks it against the header, so one equality binds the full ordered set of
-/// part commitments to the certified expansion -- every key it reads is the
+/// (each `A_p.commit()` folded at position `p` by [`poseidon::keyset_fold`])
+/// and checks it against the header, so one equality binds the full ordered set
+/// of part commitments to the certified expansion -- every key it reads is the
 /// proven interleaved schedule, no part substituted or reordered. The per-poly
-/// salts, weight bases `ρ_j`, and shift `c` are derived from the funnelled `mk`;
-/// the deferred `cm` is computed from the funnelled note here, pinning the
-/// note's value and `ψ`.
+/// salts, weight bases `ρ_j`, and shift `c` are derived from the funnelled
+/// `mk`; the deferred `cm` is computed from the funnelled note here, pinning
+/// the note's value and `ψ`.
 ///
 /// Per poly, two relations certify `T_j` is the genuine keyed-cipher
 /// interpolant: [`enforce_first_column_values`] pins
