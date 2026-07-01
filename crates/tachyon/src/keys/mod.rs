@@ -56,32 +56,26 @@
 //!
 //! ## Nullifier Derivation
 //!
-//! Nullifiers are derived via a GGM tree PRF instantiated from Poseidon:
+//! Nullifiers are MiMC evaluations under a per-note Poseidon-derived key,
+//! at inputs blinded by its domain-separated sibling salt:
 //!
-//! $$\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk})$$
-//! $$\mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$$
+//! $$\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk}) \qquad
+//! \psi' = \text{KDF}'(\psi, \mathsf{nk})$$
+//! $$\mathsf{nf}_e = E_{\mathsf{mk}}(\psi' + e)$$
 //!
 //! where $\psi$ is the note's nullifier trapdoor, $\mathsf{nk}$ is the
-//! nullifier key, and flavor is the epoch-id.
-//!
-//! The master root key $\mathsf{mk}$ supports oblivious sync delegation:
-//! prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
-//! $e \leq t$, enabling range-restricted delegation without revealing
-//! spend capability.
+//! nullifier key, and $e$ is the epoch-id. The wallet is the sole prover
+//! of derivation; no key-material delegation exists (see
+//! [`NoteMasterKey`]).
 
 pub mod private;
 pub mod public;
 
-mod ggm;
 mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use ggm::{
-    GGM_CHUNK_MASK, GGM_CHUNK_SIZE, GGM_MAX_INDEX, GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey,
-    NotePrefixedKey, cover_candidates,
-};
-pub use note::{NullifierKey, PaymentKey};
+pub use note::{ExpandedKey, NoteMasterKey, NullifierKey, PartKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]

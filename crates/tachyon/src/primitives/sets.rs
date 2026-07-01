@@ -53,16 +53,16 @@ impl ActionSetPoly {
     }
 }
 
-impl From<&[ActionDigest]> for ActionSetPoly {
-    fn from(ads: &[ActionDigest]) -> Self {
-        let roots: Vec<Fp> = ads.iter().map(|&ad| Fp::from(ad)).collect();
+impl FromIterator<ActionDigest> for ActionSetPoly {
+    fn from_iter<I: IntoIterator<Item = ActionDigest>>(iter: I) -> Self {
+        let roots: Vec<Fp> = iter.into_iter().map(Fp::from).collect();
         Self(Polynomial::from_roots(&roots))
     }
 }
 
-impl From<&[Tachygram]> for TachygramSetPoly {
-    fn from(tgs: &[Tachygram]) -> Self {
-        let roots: Vec<Fp> = tgs.iter().map(|&tg| Fp::from(tg)).collect();
+impl FromIterator<Tachygram> for TachygramSetPoly {
+    fn from_iter<I: IntoIterator<Item = Tachygram>>(iter: I) -> Self {
+        let roots: Vec<Fp> = iter.into_iter().map(Fp::from).collect();
         Self(Polynomial::from_roots(&roots))
     }
 }

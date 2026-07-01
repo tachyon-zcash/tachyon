@@ -30,8 +30,9 @@ use ragu::{self, proof::PROOF_SIZE_COMPRESSED};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    ActionSetPoly, Note, TachygramSetPoly,
+    ActionSetPoly, NfEmitterPoly, Note, TachygramSetPoly,
     action::Action,
+    constants::NF_EMITTERS,
     effect,
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, public},
@@ -189,7 +190,8 @@ impl Plan {
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<delegation::NullifierHeader>,
+            ragu::Pcd<delegation::NullifierDerivation>,
+            [NfEmitterPoly; NF_EMITTERS],
             [Nullifier; 2],
             ragu::Pcd<spendable::SpendableHeader>,
         )>,
@@ -203,8 +205,10 @@ impl Plan {
             return Err(ProveError::SpendableMismatch);
         }
 
-        for (((cv, rk), (alpha, note, rcv)), (range_pcd, [nf_now, nf_next], spendable_pcd)) in
-            self.spends.into_iter().zip(spend_pcds)
+        for (
+            ((cv, rk), (alpha, note, rcv)),
+            (derivation_pcd, polys, [nf_now, nf_next], spendable_pcd),
+        ) in self.spends.into_iter().zip(spend_pcds)
         {
             let action_digest = ActionDigest::new(cv, rk).map_err(ProveError::ActionDigest)?;
 
@@ -220,9 +224,10 @@ impl Plan {
                 )
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: bind the live pair to the derived range and publish.
+            // SpendStamp: query the certified derivation for the rank-2 pair and
+            // publish both nullifiers as the spend's tachygrams.
             let tachygrams = alloc::vec![Tachygram::from(nf_now), Tachygram::from(nf_next)];
-            let stamp = Stamp::prove_spend(rng, bind_pcd, range_pcd, nf_next, tachygrams)
+            let stamp = Stamp::prove_spend(rng, bind_pcd, derivation_pcd, polys, tachygrams)
                 .map_err(ProveError::ProofFailed)?;
 
             entries.push((stamp, alloc::vec![action_digest]));
@@ -323,23 +328,26 @@ impl Stamp {
         })
     }
 
-    /// Creates a stamp for a spend action from pre-built spend and
-    /// nullifier-range PCDs.
+    /// Creates a stamp for a spend action from a pre-built spend PCD and the
+    /// note's certified derivation.
     ///
-    /// The spend's `anchor` is taken as the stamp's anchor — chain
-    /// validation lives inside the spendable lineage, not here.
+    /// `polys` are the `N` derivation polynomials; [`SpendStamp`] computes the
+    /// rank-2 nullifier pair from them, reading the spend offset `d` threaded
+    /// on the [`SpendHeader`](spend::SpendHeader). The spend's `anchor` is
+    /// taken as the stamp's anchor — chain validation lives inside the
+    /// spendable lineage, not here.
     pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         spend_pcd: ragu::Pcd<spend::SpendHeader>,
-        range_pcd: ragu::Pcd<delegation::NullifierHeader>,
-        nf_next: Nullifier,
+        derivation_pcd: ragu::Pcd<delegation::NullifierDerivation>,
+        polys: [NfEmitterPoly; NF_EMITTERS],
         tachygrams: Vec<Tachygram>,
     ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
         let anchor = spend_pcd.data().3;
 
-        let (pcd, ()) = app.fuse(rng, SpendStamp, (nf_next,), spend_pcd, range_pcd)?;
+        let (pcd, ()) = app.fuse(rng, SpendStamp, (polys,), spend_pcd, derivation_pcd)?;
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok(Self {
@@ -365,13 +373,20 @@ impl Stamp {
         let app = &*PROOF_SYSTEM;
 
         let (left_acts_poly, left_tg_poly) = (
-            ActionSetPoly::from(left_digests),
-            TachygramSetPoly::from(&*left.tachygrams),
+            left_digests.iter().copied().collect::<ActionSetPoly>(),
+            left.tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>(),
         );
 
         let (right_acts_poly, right_tg_poly) = (
-            ActionSetPoly::from(right_digests),
-            TachygramSetPoly::from(&*right.tachygrams),
+            right_digests.iter().copied().collect::<ActionSetPoly>(),
+            right
+                .tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>(),
         );
 
         let left_pcd = left.proof.carry::<StampHeader>((
@@ -423,8 +438,15 @@ impl Stamp {
             .collect::<Result<Vec<_>, _>>()
             .map_err(VerificationError::ActionDigest)?;
         let header = (
-            ActionSetPoly::from(action_digests.as_slice()).commit(),
-            TachygramSetPoly::from(&*self.tachygrams).commit(),
+            action_digests
+                .into_iter()
+                .collect::<ActionSetPoly>()
+                .commit(),
+            self.tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>()
+                .commit(),
             self.anchor,
         );
 

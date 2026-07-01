@@ -26,9 +26,10 @@ default = [
 ]
 std = [
     "blake2b_simd/std",
+    "corez/std",
     "ragu/std",
     "reddsa/std",
-    "corez/std",
+    "zcash_mimc/std",
     "ragu/multicore",
 ]
 
@@ -56,6 +57,7 @@ ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "2f926fdcb5f1d402c
 
 rand_core = { version = "0.6", default-features = false }
 reddsa = { version = "0.5.1", default-features = false }
+zcash_mimc = { path = "../mimc", default-features = false }
 
 [dev-dependencies]
 rand = "0.8"

@@ -71,11 +71,12 @@ use rand_core::{CryptoRng, RngCore};
 
 pub use crate::digest::blake2b::{AUTH_DIGEST_NO_BUNDLE, COMMIT_NO_BUNDLE};
 use crate::{
+    ActionSetPoly,
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
     note,
-    primitives::{ActionDigest, ActionDigestError, ActionSetPoly, Anchor, effect},
+    primitives::{ActionDigest, ActionDigestError, Anchor, effect},
     reddsa, serialization,
     stamp::{self, AggregateId, AggregateIdError, Stamp, Stripped, Unproven},
     value,
@@ -307,7 +308,7 @@ impl Plan {
             .iter_actions(action::Plan::digest, action::Plan::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
 
-        let action_commit = ActionSetPoly::from(digests.as_slice()).commit();
+        let action_commit = ActionSetPoly::from_iter(digests).commit();
 
         Ok(blake2b::bundle_commitment(
             &Eq::from(action_commit).to_affine(),
@@ -730,7 +731,7 @@ impl<S: StampState> Bundle<S> {
             .iter()
             .map(Action::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
-        let action_acc = ActionSetPoly::from(action_digests.as_slice()).commit();
+        let action_acc = ActionSetPoly::from_iter(action_digests).commit();
         Ok(blake2b::bundle_commitment(
             &Eq::from(action_acc).to_affine(),
             self.value_balance,

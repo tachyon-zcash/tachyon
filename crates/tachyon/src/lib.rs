@@ -52,6 +52,7 @@ pub mod note;
 pub mod reddsa;
 pub mod stamp;
 pub mod value;
+pub mod witness;
 
 mod digest;
 mod primitives;

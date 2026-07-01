@@ -46,16 +46,10 @@ impl From<NfSeqPoly> for Polynomial {
     }
 }
 
-impl From<&[Nullifier]> for NfSeqPoly {
-    fn from(nfs: &[Nullifier]) -> Self {
-        let coeffs: Vec<Fp> = nfs.iter().map(|&nf| Fp::from(nf)).collect();
+impl FromIterator<Nullifier> for NfSeqPoly {
+    fn from_iter<I: IntoIterator<Item = Nullifier>>(iter: I) -> Self {
+        let coeffs: Vec<Fp> = iter.into_iter().map(Fp::from).collect();
         Self(Polynomial::from_coeffs(&coeffs))
-    }
-}
-
-impl From<&[Nullifier]> for NfSeqCommit {
-    fn from(nfs: &[Nullifier]) -> Self {
-        NfSeqPoly::from(nfs).commit()
     }
 }
 

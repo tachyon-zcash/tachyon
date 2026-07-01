@@ -116,7 +116,7 @@ fn payment_bundle_verifies() {
     let height = pool.height();
     let spend_epoch = height.epoch();
     let spendable_pcd = sender.fresh_spend(rng, &pool, height, &input_note);
-    let anchor = spendable_pcd.data().1;
+    let anchor = spendable_pcd.data().2;
     let stamped = sender.autonome(
         rng,
         anchor,
@@ -199,8 +199,8 @@ fn innocent_aggregate_from_two_autonomes() {
     let sp_a = wallet.lift_over_creation_epoch(rng, &pool, &spend_a, cm_height, init_a);
     let init_b = wallet.spendable_init(rng, &spend_b, &pool, cm_height);
     let sp_b = wallet.lift_over_creation_epoch(rng, &pool, &spend_b, cm_height, init_b);
-    let anchor_a = sp_a.data().1;
-    let anchor_b = sp_b.data().1;
+    let anchor_a = sp_a.data().2;
+    let anchor_b = sp_b.data().2;
     assert_eq!(anchor_a, anchor_b, "lifts land on a common anchor");
 
     let spend_epoch = cm_height.epoch().next();
@@ -283,9 +283,9 @@ fn based_aggregate_with_two_adjuncts() {
     let a_sp = wallet.lift_over_creation_epoch(rng, &pool, &a_spend, cm_height, a_init);
     let b_init = wallet.spendable_init(rng, &b_spend, &pool, cm_height);
     let b_sp = wallet.lift_over_creation_epoch(rng, &pool, &b_spend, cm_height, b_init);
-    let anchor = based_sp.data().1;
-    assert_eq!(anchor, a_sp.data().1, "lifts land on a common anchor");
-    assert_eq!(anchor, b_sp.data().1, "lifts land on a common anchor");
+    let anchor = based_sp.data().2;
+    assert_eq!(anchor, a_sp.data().2, "lifts land on a common anchor");
+    assert_eq!(anchor, b_sp.data().2, "lifts land on a common anchor");
 
     let spend_epoch = cm_height.epoch().next();
     let mut becomes_based = wallet.autonome(
