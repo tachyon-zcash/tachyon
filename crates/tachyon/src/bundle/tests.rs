@@ -741,7 +741,7 @@ fn coverage_check_matches_stamped_action_set() {
     let a_sp = wallet.lift_over_creation_epoch(rng, &pool, &a_spend, cm_height, a_init);
     let b_init = wallet.spendable_init(rng, &b_spend, &pool, cm_height);
     let b_sp = wallet.lift_over_creation_epoch(rng, &pool, &b_spend, cm_height, b_init);
-    let anchor = based_sp.data().1;
+    let anchor = based_sp.data().2;
 
     let spend_epoch = cm_height.epoch().next();
     let mut becomes_based = wallet.autonome(
