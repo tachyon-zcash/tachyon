@@ -67,6 +67,20 @@
 //! nullifier key, and $e$ is the epoch-id. The wallet is the sole prover
 //! of derivation; no key-material delegation exists (see
 //! [`NoteMasterKey`]).
+//!
+//! The wallet-side chain from note to nullifier, one method hop per stage:
+//!
+//! 1. [`NullifierKey::derive_note_part`] derives each of the `MK_PARTS` master
+//!    key parts from `(psi, nk)`; [`NoteMasterKey::from_parts`] concatenates
+//!    them into `mk`.
+//! 2. [`NoteMasterKey::derive_emitter_schedule`] expands `mk` (the 32-round
+//!    expansion cipher) into the [`EmitterKeySchedule`], the emitter cipher's
+//!    interleaved round keys.
+//! 3. [`EmitterKeySchedule::derivation_polys`] interpolates the `NF_EMITTERS`
+//!    emitter polynomials at the salts [`NoteMasterKey::query_salts`].
+//! 4. [`EmitterKeySchedule::derive_nullifier`] evaluates the weighted
+//!    off-domain query at an epoch offset from the creation epoch, yielding
+//!    that epoch's nullifier.
 
 pub mod private;
 pub mod public;

@@ -194,6 +194,17 @@ impl Plan {
     /// Stamps are recursively merged via [`MergeStamp`] into a single stamp.
     ///
     /// `spend_pcds` items must correspond to each planned spend, in order.
+    /// Each entry is a pre-built PCD stack the wallet assembles ahead of time
+    /// (the [`crate::witness`] functions build each step's witness):
+    ///
+    /// 1. `MasterSeed` x`MK_PARTS` -> `KeyExpansionStep` x`EK_PARTS` ->
+    ///    `EmitterKeysetFuse` x`EK_PARTS - 1` -> `NullifierDerivationStep`
+    ///    yields the `NullifierDerivation` PCD, once per note.
+    /// 2. The same build interpolates the note's `NfEmitterPoly` array and
+    ///    queries the nullifier pair `[nf_now, nf_next]` at the spend offset.
+    /// 3. `SpendableInit`, advanced by `UnspentBind` + `SpendableLift` over
+    ///    sync-built `Unspent` segments, yields the `SpendableHeader` PCD at
+    ///    the spend anchor.
     pub fn prove<RNG: RngCore + CryptoRng>(
         self,
         rng: &mut RNG,

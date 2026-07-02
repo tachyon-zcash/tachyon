@@ -6,6 +6,22 @@
 //! - [`quotient`]: the off-circuit native side. Pure field/FFT arithmetic that
 //!   builds the witness polynomials those relations open.
 //!
+//! Each vanishing relation pairs with the quotient builder that produces its
+//! witness; the remaining relations are constraint-only (they open committed
+//! operands directly and need no prover-built quotient):
+//!
+//! | [`enforce`] relation | [`quotient`] builder |
+//! | --- | --- |
+//! | `enforce_row_recurrence` | `expansion_round_quotient` |
+//! | `enforce_committed_offset_recurrence` | `nf_emitter_round_quotient` |
+//! | `enforce_first_column_values` | `expansion_boundary_quotient` / `nf_emitter_boundary_quotient` |
+//! | `enforce_strided_column` | `expansion_decimation_quotient` |
+//! | `enforce_weight_recurrence` | `weight_recurrence` |
+//! | `enforce_accumulator_recurrence` | `accumulator_recurrence` |
+//! | `enforce_arc_match` | constraint-only (opens the accumulator splits) |
+//! | `enforce_nullifier_query`, `enforce_offset_nullifier_pair` | constraint-only |
+//! | `enforce_poly_product`, `enforce_poly_concat`, `enforce_poly_splice` | constraint-only |
+//!
 //! [`subgroup_generator`] is the evaluation-domain vocabulary both faces share.
 
 use ff::PrimeField as _;
