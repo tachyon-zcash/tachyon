@@ -177,6 +177,14 @@ struct PoolSimBlock {
     stamps: Vec<Vec<Tachygram>>,
 }
 
+/// A block's memoized curve work: its per-stamp tachygram-set commitments and
+/// the post anchors those commitments fold to. Both require a polynomial commit
+/// (MSM) per stamp, so they are computed once per block and shared via [`Rc`].
+struct BlockDigest {
+    commits: Vec<TachygramSetCommit>,
+    anchors: Vec<Anchor>,
+}
+
 impl PoolSimBlock {
     /// Per-stamp tachygram-set commitments, in stamp order.
     fn commits(&self) -> Vec<TachygramSetCommit> {
@@ -186,22 +194,35 @@ impl PoolSimBlock {
             .collect()
     }
 
-    /// The block's post anchors: one per stamp (folding `next_stamp` from
-    /// `prev`), or a single `next_empty` tick for an empty block.
-    fn anchors(&self) -> Vec<Anchor> {
-        if self.stamps.is_empty() {
-            return alloc::vec![self.prev.next_empty()];
-        }
-        self.commits().iter().fold(Vec::new(), |mut acc, commit| {
-            let last = acc.last().unwrap_or(&self.prev);
-            acc.push(last.next_stamp(commit));
-            acc
-        })
+    /// The block's commitments and post anchors in one pass: one anchor per
+    /// stamp (folding `next_stamp` from `prev`), or a single `next_empty` tick
+    /// for an empty block. The anchors reuse the commitments, so the MSMs run
+    /// once.
+    fn digest(&self) -> BlockDigest {
+        let commits = self.commits();
+        let anchors = if commits.is_empty() {
+            alloc::vec![self.prev.next_empty()]
+        } else {
+            commits.iter().fold(Vec::new(), |mut acc, commit| {
+                let last = acc.last().unwrap_or(&self.prev);
+                acc.push(last.next_stamp(commit));
+                acc
+            })
+        };
+        BlockDigest { commits, anchors }
     }
 }
 
 pub struct PoolSim {
     history: Vec<PoolSimBlock>,
+    /// Per-block digest memo, keyed by block height. The history is append-only,
+    /// so a cached digest never goes stale.
+    digests: RefCell<BTreeMap<usize, Rc<BlockDigest>>>,
+    /// Post-anchor -> (height, stamp position) index, populated alongside the
+    /// digests, so anchor lookup is a map hit rather than a full-history scan.
+    /// Keyed by the anchor's inner `Fp` (an ordering of `Anchor` itself would
+    /// mean by field value, not chain relationship, so it is not exposed).
+    anchor_locs: RefCell<BTreeMap<Fp, (BlockHeight, usize)>>,
 }
 
 impl PoolSim {
@@ -216,6 +237,32 @@ impl PoolSim {
                 prev: Anchor::default(),
                 stamps
             }],
+            digests: RefCell::new(BTreeMap::new()),
+            anchor_locs: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    /// The block's memoized digest, computed (and its anchors indexed) once.
+    fn digest_at(&self, height: BlockHeight) -> Rc<BlockDigest> {
+        let idx = usize::try_from(height).expect("fits usize");
+        if let Some(digest) = self.digests.borrow().get(&idx) {
+            return Rc::clone(digest);
+        }
+        let digest = Rc::new(self.history[idx].digest());
+        let mut locs = self.anchor_locs.borrow_mut();
+        for (position, anchor) in digest.anchors.iter().enumerate() {
+            locs.insert(Fp::from(*anchor), (height, position));
+        }
+        drop(locs);
+        self.digests.borrow_mut().insert(idx, Rc::clone(&digest));
+        digest
+    }
+
+    /// Ensure every block's anchors are indexed, so [`anchor_locs`] is
+    /// authoritative for a lookup miss.
+    fn ensure_digests(&self) {
+        for idx in 0..self.history.len() {
+            drop(self.digest_at(BlockHeight::from(idx)));
         }
     }
 
@@ -240,10 +287,7 @@ impl PoolSim {
 
     #[must_use]
     pub fn stamp_commits_at(&self, height: BlockHeight) -> Vec<TachygramSetCommit> {
-        self.tachygrams_at(height)
-            .iter()
-            .map(|tgs| tgs.iter().copied().collect::<TachygramSetPoly>().commit())
-            .collect()
+        self.digest_at(height).commits.clone()
     }
 
     #[must_use]
@@ -256,13 +300,13 @@ impl PoolSim {
 
     #[must_use]
     pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
-        let prev = self.prev_anchor_at(height);
-        let commits = self.stamp_commits_at(height);
-        if commits.is_empty() {
-            prev.next_empty()
-        } else {
-            commits.iter().fold(prev, Anchor::next_stamp)
-        }
+        // The block's terminal anchor is the last of its memoized post anchors
+        // (the single `next_empty` tick for an empty block).
+        *self
+            .digest_at(height)
+            .anchors
+            .last()
+            .expect("block digest has at least one anchor")
     }
 
     /// The prior-epoch terminal anchor that folds into `epoch`'s boundary
@@ -282,18 +326,24 @@ impl PoolSim {
     /// anchor (it is `E`'s first block's entry), so it returns
     /// `Err((pre_boundary_anchor, E))`; `Anchor::default()` is the epoch-0
     /// boundary.
+    /// Returns `(height, position)` where `position` is the anchor's index among
+    /// its block's post anchors.
     fn locate_anchor(
         &self,
         anchor: Anchor,
-    ) -> Result<(BlockHeight, PoolSimBlock), (Anchor, EpochIndex)> {
+    ) -> Result<(BlockHeight, usize), (Anchor, EpochIndex)> {
         if anchor == Anchor::default() {
             return Err((self.pre_epoch_anchor(EpochIndex(0)), EpochIndex(0)));
         }
+        self.ensure_digests();
+        if let Some(&location) = self.anchor_locs.borrow().get(&Fp::from(anchor)) {
+            return Ok(location);
+        }
+        // Not a post anchor: an epoch boundary `B_E = old_tip.next_epoch(E)`, no
+        // block's post anchor but the epoch-first block's `prev` (a distinct
+        // domain from post anchors, so no post/boundary overlap is possible).
         for (height_idx, block) in self.history.iter().enumerate() {
             let height = BlockHeight::from(height_idx);
-            if block.anchors().contains(&anchor) {
-                return Ok((height, block.clone()));
-            }
             if height.is_epoch_first() && block.prev == anchor {
                 let epoch = height.epoch();
                 return Err((self.pre_epoch_anchor(epoch), epoch));
@@ -312,28 +362,21 @@ impl PoolSim {
         end: Anchor,
     ) -> Vec<Result<(BlockHeight, Vec<Vec<Tachygram>>), EpochIndex>> {
         let mut steps: Vec<Result<(BlockHeight, Vec<Vec<Tachygram>>), EpochIndex>> = Vec::new();
+        let stamp_len = |height: BlockHeight| -> usize {
+            self.history[usize::try_from(height).expect("fits usize")]
+                .stamps
+                .len()
+        };
         let (start_height, from) = match self.locate_anchor(start) {
-            Ok((height, block)) => {
-                let position = block
-                    .anchors()
-                    .iter()
-                    .position(|&post| post == start)
-                    .expect("located by its own anchors");
-                (height, (position + 1).min(block.stamps.len()))
-            },
+            Ok((height, position)) => (height, (position + 1).min(stamp_len(height))),
             Err((_pre_boundary, epoch)) => {
                 steps.push(Err(epoch));
                 (epoch_first_of(epoch), 0)
             },
         };
 
-        let (end_height, end_block) = self.locate_anchor(end).expect("end anchor must exist");
-        let to = end_block
-            .anchors()
-            .iter()
-            .position(|&post| post == end)
-            .map_or(0, |position| position + 1)
-            .min(end_block.stamps.len());
+        let (end_height, end_position) = self.locate_anchor(end).expect("end anchor must exist");
+        let to = (end_position + 1).min(stamp_len(end_height));
 
         for height_idx in start_height.0..=end_height.0 {
             let height = BlockHeight(height_idx);

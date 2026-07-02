@@ -61,7 +61,7 @@ impl NullifierKey {
 }
 
 /// Per-note master secret.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct NoteMasterKey(pub [Fp; Self::MK_LENGTH]);
 
 impl NoteMasterKey {
@@ -181,7 +181,7 @@ impl NoteMasterKey {
 /// Wallet-only secret material: the wallet is the sole prover of derivation,
 /// and delegation operates on value windows only (no key-material delegation
 /// API).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ExpandedKey(pub [Fp; EK_FULL_SIZE]);
 
 impl ExpandedKey {
@@ -284,7 +284,7 @@ impl fmt::Debug for ExpandedKey {
 /// [`ExpandedKeyStep`](crate::stamp::proof::delegation::ExpandedKeyStep) step.
 ///
 /// Wallet-only secret material, like [`ExpandedKey`].
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct PartKey(pub [Fp; EK_PART_SIZE]);
 
 impl PartKey {
