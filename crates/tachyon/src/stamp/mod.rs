@@ -1,14 +1,4 @@
 //! Stamps and anchors.
-//!
-//! A stamp carries the tachygram list, the anchor, and the proof:
-//!
-//! - **Tachygrams**: Listed individually
-//! - **Anchor**: A `Fp` from the per-block Poseidon hash chain
-//! - **Proof**: The Ragu PCD proof (rerandomized)
-//!
-//! The PCD header data `(action_acc, tachygram_acc, anchor)` is **not
-//! serialized** on the stamp — the verifier reconstructs the accumulators from
-//! public data and passes them as the header to Ragu `verify()`.
 
 #![allow(clippy::type_complexity, reason = "todo")]
 #![allow(clippy::module_name_repetitions, reason = "intentional names")]
@@ -17,11 +7,12 @@ extern crate alloc;
 
 pub mod proof;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, vec, vec::Vec};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
-use pasta_curves::Fp;
+use group::Curve as _;
+use pasta_curves::{Eq, Fp};
 use proof::{
     PROOF_SYSTEM,
     stamp::{MergeStamp, OutputStamp, SpendStamp, StampHeader},
@@ -36,7 +27,7 @@ use crate::{
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, public},
     note::Nullifier,
-    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram},
+    primitives::{ActionDigest, ActionDigestError, ActionSetCommit, Anchor, Tachygram},
     serialization,
     stamp::proof::{delegation, spend, spendable},
     value,
@@ -63,20 +54,35 @@ pub struct Stripped;
 ///
 /// This uses the aggregate's wtxid (not txid) so it unambiguously pins the
 /// covering aggregate's authorization state, including stamp.
+///
+/// An `AggregateId` is always nonzero: every stripped bundle, innocent or
+/// adjunct, names a covering transaction, so the all-zero wtxid (which refers
+/// to no aggregate) is rejected at every construction site.
 #[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
 pub struct AggregateId([u8; 64]);
 
 impl AggregateId {
-    /// This zero wtxid is only suitable for a bundle with no actions.
-    pub const ZERO: Self = Self([0u8; 64]);
-
-    pub(super) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+    /// Read an aggregate id from the consensus wire format.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut wtxid = [0u8; 64];
         reader.read_exact(&mut wtxid)?;
-        Ok(Self(wtxid))
+        Self::try_from(wtxid).map_err(|_err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "aggregate id is zero and refers to no aggregate",
+            )
+        })
     }
 
-    pub(super) fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+    /// Write an aggregate id to the consensus wire format.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        if self.0 == [0u8; 64] {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "aggregate id is zero and refers to no aggregate",
+            ));
+        }
+
         writer.write_all(&self.0)
     }
 }
@@ -112,6 +118,9 @@ pub enum VerificationError {
     /// The proof did not verify against the reconstructed header.
     #[display("proof did not verify")]
     Disproved,
+    /// The carried `cActionsTachyon` indicator does not match the actions.
+    #[display("action set indicator mismatch")]
+    ActionSetMismatch,
 }
 
 /// Everything needed to produce a [`Stamp`].
@@ -221,11 +230,11 @@ impl Plan {
                 .map_err(ProveError::ProofFailed)?;
 
             // SpendStamp: bind the live pair to the derived range and publish.
-            let tachygrams = alloc::vec![Tachygram::from(nf_now), Tachygram::from(nf_next)];
+            let tachygrams = vec![Tachygram::from(nf_now), Tachygram::from(nf_next)];
             let stamp = Stamp::prove_spend(rng, bind_pcd, range_pcd, nf_next, tachygrams)
                 .map_err(ProveError::ProofFailed)?;
 
-            entries.push((stamp, alloc::vec![action_digest]));
+            entries.push((stamp, vec![action_digest]));
         }
 
         for ((cv, rk), (alpha, note, rcv)) in self.outputs {
@@ -234,7 +243,7 @@ impl Plan {
             let stamp = Stamp::prove_output(rng, rcv, alpha, note, self.anchor)
                 .map_err(ProveError::ProofFailed)?;
 
-            entries.push((stamp, alloc::vec![action_digest]));
+            entries.push((stamp, vec![action_digest]));
         }
 
         entries
@@ -277,16 +286,16 @@ pub enum ProveError {
     SpendableMismatch,
 }
 
-/// A stamp carrying tachygrams, anchor, and proof.
+/// A stamp carrying tachygrams, anchor, and a proof for specific actions.
 ///
-/// Present in `Bundle<Stamp>` bundles.
-/// Stripped during aggregation and merged into the aggregate's stamp.
-///
-/// The PCD header `(action_acc, tachygram_acc, anchor)` is not stored here —
-/// the verifier reconstructs it from public data and passes it as the header
-/// to Ragu `verify()`.
+/// The PCD header `(action_acc, tachygram_acc, anchor)` is entirely not stored
+/// here.  The action set is present only as reference. A verifier must
+/// reconstruct the header from public data.
 #[derive(Clone, Debug)]
 pub struct Stamp {
+    /// Merged action-digest set commitment for this proof.
+    pub action_set: ActionSetCommit,
+
     /// Tachygrams (nullifiers and note commitments) for data availability.
     pub tachygrams: Vec<Tachygram>,
 
@@ -295,7 +304,7 @@ pub struct Stamp {
 
     /// The Ragu proof bytes.
     #[debug(skip)]
-    pub proof: ragu::Proof,
+    pub proof: Box<ragu::Proof>,
 }
 
 impl Stamp {
@@ -313,13 +322,15 @@ impl Stamp {
         let app = &*PROOF_SYSTEM;
 
         let (pcd, ()) = app.seed(rng, OutputStamp, (rcv, alpha, note, anchor))?;
-        let tachygram = Tachygram::from(note.commitment());
+        let action_set = pcd.data().0;
+        let tachygrams = vec![Tachygram::from(note.commitment())];
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok(Self {
-            tachygrams: alloc::vec![tachygram],
+            action_set,
+            tachygrams,
             anchor,
-            proof: rerand.proof().clone(),
+            proof: Box::new(rerand.proof().clone()),
         })
     }
 
@@ -340,12 +351,14 @@ impl Stamp {
         let anchor = spend_pcd.data().3;
 
         let (pcd, ()) = app.fuse(rng, SpendStamp, (nf_next,), spend_pcd, range_pcd)?;
+        let action_set = pcd.data().0;
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok(Self {
+            action_set,
             tachygrams,
             anchor,
-            proof: rerand.proof().clone(),
+            proof: Box::new(rerand.proof().clone()),
         })
     }
 
@@ -396,20 +409,23 @@ impl Stamp {
             left_pcd,
             right_pcd,
         )?;
+        let action_set = pcd.data().0;
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok(Self {
+            action_set,
             tachygrams,
             anchor,
-            proof: rerand.proof().clone(),
+            proof: Box::new(rerand.proof().clone()),
         })
     }
 
     /// Verifies this stamp's proof by reconstructing the PCD header from
     /// public data.
     ///
-    /// The verifier recomputes action and tachygram accumulators as raw Fp
-    /// products, constructs the PCD header, and calls Ragu `verify()`.
+    /// The verifier recomputes the action and tachygram accumulators, fails
+    /// early if the computed action set disagrees with the carried action set
+    /// commitment, and calls Ragu `verify()`.
     pub fn verify<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -422,8 +438,12 @@ impl Stamp {
             .map(Action::digest)
             .collect::<Result<Vec<_>, _>>()
             .map_err(VerificationError::ActionDigest)?;
+        let action_set = ActionSetPoly::from(action_digests.as_slice()).commit();
+        if action_set != self.action_set {
+            return Err(VerificationError::ActionSetMismatch);
+        }
         let header = (
-            ActionSetPoly::from(action_digests.as_slice()).commit(),
+            action_set,
             TachygramSetPoly::from(&*self.tachygrams).commit(),
             self.anchor,
         );
@@ -443,6 +463,9 @@ impl Stamp {
 
     /// Read a stamp from the consensus wire format.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let action_set = serialization::read_eq_affine(&mut reader)
+            .map(|eq_affine| ActionSetCommit::from(Eq::from(eq_affine)))?;
+
         let anchor = Anchor::read(&mut reader)?;
 
         let tachygrams = serialization::read_fp_list(&mut reader)?
@@ -450,9 +473,10 @@ impl Stamp {
             .map(Tachygram::from)
             .collect();
 
-        let proof = read_proof(&mut reader)?;
+        let proof = Box::new(read_proof(&mut reader)?);
 
         Ok(Self {
+            action_set,
             tachygrams,
             anchor,
             proof,
@@ -461,6 +485,7 @@ impl Stamp {
 
     /// Write a stamp to the consensus wire format.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        serialization::write_eq_affine(&mut writer, &Eq::from(self.action_set).to_affine())?;
         self.anchor.write(&mut writer)?;
         serialization::write_fp_list(
             &mut writer,
@@ -476,7 +501,7 @@ impl Stamp {
 
 /// Read a proof of known constant size.
 pub(crate) fn read_proof<R: Read>(mut reader: R) -> io::Result<ragu::Proof> {
-    let mut bytes = alloc::vec![0u8; PROOF_SIZE_COMPRESSED];
+    let mut bytes = vec![0u8; PROOF_SIZE_COMPRESSED];
     reader.read_exact(&mut bytes)?;
     let arr: Box<[u8; PROOF_SIZE_COMPRESSED]> = bytes
         .into_boxed_slice()

@@ -31,6 +31,8 @@ Aggregates may be further named:
 - *based* aggregate proving its own Tachyon actions.  
   For example, a miner's coin*base* transaction might be an aggregate, and also output miner rewards via Tachyon action.
 
+When stripped, an innocent contributes no actions but still names a covering transaction: its `tachyonAggregateId` is a nonzero reference to the aggregate that absorbed its stamp, never the all-zero `wtxid`.
+
 [^bundle-format]: See [Bundles](./bundle.md) to understand bundle format.
 
 ## Aggregation Process
@@ -132,6 +134,16 @@ flowchart LR
         end
     end
 ```
+
+## Action set indicator
+
+An aggregate's stamp proves its own actions together with every covered adjunct's actions, but carries no proof header: a verifier reconstructs the header from the covered actions. Within a block that material is all at hand, since each adjunct points to its aggregate by `wtxid`. Before block inclusion it is not: aggregators publish only their merged transactions, and the ambiguity between actions and tachygrams makes a nearly-complete collection of adjuncts hard to recognize without falling back on full proof verification.
+
+To make that recognition cheap, the stamp trailer carries `cActionsTachyon`, an assistive indicator the transaction author provides: the action-set commitment the proof already attests to, mirrored onto the trailer (see [Bundles → Wire Format](./bundle.md#stamp-trailer)). It commits to the action digests of every action the stamp covers, so an observer can cheaply tell an autonome from an aggregate and judge whether a collection of adjuncts is complete, without verifying the proof.
+
+The indicator is authorization data, not effecting data: it rides on the strippable stamp trailer, contributes to `auth_digest`, and is absent from adjuncts. It is not a soundness mechanism. The proof binds the action set regardless; a wrong indicator only harms its author, since mempool actors decline to handle a transaction whose indicator they cannot satisfy, and a subset, superset, or partial overlap simply fails to validate.
+
+`Stamp::verify` uses it as a fast-fail gate: it reconstructs the action-set commitment from the actions it is given and, on disagreement with the carried `cActionsTachyon`, fails before attempting the expensive proof verification.
 
 <!-- TODO
 p2p aggregation gossip is a secondary objective and aggregation has some complex constraints.

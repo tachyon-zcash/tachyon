@@ -139,3 +139,39 @@ end
 Users create transactions containing their individual actions and individual stamp, known as **autonomes**. These are broadcast to the p2p network. Before block inclusion, aggregators strip and merge stamps from selected transactions, producing **aggregates** (transactions carrying merged stamps) and **adjuncts** (transactions stripped of their stamp).
 
 See [Aggregation](./aggregation.md) for transaction categories, block layout, and validation.
+
+## Wire Format
+
+The first byte `tachyonBundleState` selects one of three bundle states:
+
+| value | state | bundle contents |
+| --- | --- | --- |
+| `0b0000_0000` | non-tachyon | no bundle |
+| `0b0000_0001` | stamped | bundle with `cActionsTachyon`, anchor, tachygrams, proof |
+| `0b0000_0010` | stripped | bundle with the covering aggregate's `wtxid` |
+
+### Stamp trailer
+
+When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp trailer:
+
+| Name | Format | Description |
+| --- | --- | --- |
+| `cActionsTachyon` | 32 bytes | compressed Pedersen commitment to the stamp's merged action-digest set |
+| `anchorTachyon` | 32 bytes | pool state reference |
+| `nTachygrams` | compactsize | number of tachygrams |
+| `vTachygrams` | 32 * nTachygrams | tachygrams for this proof |
+| `proofTachyon` | PROOF_SIZE blob | serialized proof of fixed size |
+
+`cActionsTachyon` is an assistive indicator committing to the action digests of every action the stamp covers, mirroring the commitment the proof attests to. It is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
+
+### Stripped trailer
+
+When `tachyonBundleState == 0x02`, the bundle body is followed by a stripped trailer:
+
+| Name | Format | Description |
+| --- | --- | --- |
+| `tachyonAggregateId` | 64 bytes | nonzero `wtxid` of the covering aggregate |
+
+Every stripped bundle names a covering aggregate, so `tachyonAggregateId` is always nonzero. This holds even for a stripped innocent (an aggregate with no Tachyon actions of its own): the all-zero `wtxid`, which refers to no aggregate, is rejected on read.
+
+The stripped trailer carries no `cActionsTachyon`: that field rides on the stamp, so it strips away when a bundle becomes an adjunct. Observers read the covering aggregate's `cActionsTachyon` from the stamped aggregate, not from the adjunct.

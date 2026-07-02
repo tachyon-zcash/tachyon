@@ -19,7 +19,8 @@
 //! | `...`         | *reserved*  | *n/a*                                 |
 //!
 //! Any other byte is invalid. Stripped innocents and stripped adjuncts share
-//! the same wire layout (both write `0x02` + body + 64-byte `wtxid`).
+//! the same wire layout (both write `0x02` + body + a nonzero 64-byte `wtxid`
+//! naming the covering aggregate).
 //!
 //! ## No Bundle
 //!
@@ -48,6 +49,7 @@
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
+//! | `cActionsTachyon`     | 32 bytes             | action set for this proof                |
 //! | `anchorTachyon`       | 32 bytes             | pool state reference                     |
 //! | `nTachygrams`         | compactsize          | number of tachygrams                     |
 //! | `vTachygrams`         | 32 * nTachygrams     | tachygrams for this proof                |
@@ -66,6 +68,7 @@ use core::ops;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
+use group::GroupEncoding as _;
 use pasta_curves::{Eq, Fp, group::Curve as _};
 use rand_core::{CryptoRng, RngCore};
 
@@ -77,7 +80,7 @@ use crate::{
     note,
     primitives::{ActionDigest, ActionDigestError, ActionSetPoly, Anchor, effect},
     reddsa, serialization,
-    stamp::{self, AggregateId, AggregateIdError, Stamp, Stripped, Unproven},
+    stamp::{self, AggregateId, Stamp, Stripped, Unproven},
     value,
 };
 
@@ -475,18 +478,16 @@ impl Bundle<Stripped> {
     ///
     /// This is the only path from [`strip()`](Bundle::strip) to a wire-ready
     /// stripped bundle — `Bundle<Stripped>` has no `write()` method. The
-    /// zero wtxid is allowed only for empty stripped innocents.
-    pub fn assign_wtxid(self, wtxid: AggregateId) -> Result<Bundle<AggregateId>, AggregateIdError> {
-        if wtxid == AggregateId::ZERO && !self.actions.is_empty() {
-            return Err(AggregateIdError::Zero);
-        }
-
-        Ok(Bundle {
+    /// `wtxid` is an already-validated nonzero [`AggregateId`], so every
+    /// stripped bundle (innocent or adjunct) names a covering aggregate.
+    #[must_use]
+    pub fn assign_wtxid(self, wtxid: AggregateId) -> Bundle<AggregateId> {
+        Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
             binding_sig: self.binding_sig,
             stamp: wtxid,
-        })
+        }
     }
 }
 
@@ -509,6 +510,27 @@ impl Bundle<Stamp> {
             },
             self.stamp,
         )
+    }
+
+    /// Confirm published coverage without verifying the proof: reconstruct the
+    /// action-set commitment from this bundle's actions plus every adjunct's
+    /// and check it against the carried `cActionsTachyon`. Assistive, not
+    /// soundness.
+    pub fn covers<T: StampState>(
+        &self,
+        associates: &[Bundle<T>],
+    ) -> Result<bool, ActionDigestError> {
+        let associate_actions = associates.iter().flat_map(|adjunct| adjunct.actions.iter());
+
+        let cover_actions = self.actions.iter().chain(associate_actions);
+
+        let cover_digests = cover_actions
+            .map(Action::digest)
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
+
+        let cover_set = ActionSetPoly::from(cover_digests.as_slice());
+
+        Ok(cover_set.commit() == self.stamp.action_set)
     }
 
     /// Read a stamped bundle from the consensus wire format.
@@ -556,26 +578,32 @@ impl Bundle<Stamp> {
 
     /// Tachyon's contribution to the transaction `auth_digest`.
     ///
-    /// Hashes action signatures, the binding signature, and the serialized
-    /// stamp trailer (anchor + tachygrams + proof).
+    /// Hashes action signatures, the binding signature, and the trailer.
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 64] {
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
         let binding_sig: [u8; 64] = self.binding_sig.into();
-        let anchor: [u8; 32] = self.stamp.anchor.0.into();
-        let tachygrams: Vec<Fp> = self
-            .stamp
-            .tachygrams
-            .iter()
-            .map(|&tg| Fp::from(tg))
-            .collect();
-        let proof = self.stamp.proof.serialize();
+
+        let trailer = {
+            let action_set: [u8; 32] = Eq::from(self.stamp.action_set).to_bytes();
+            let anchor: [u8; 32] = self.stamp.anchor.0.into();
+            let tachygrams: Vec<Fp> = self
+                .stamp
+                .tachygrams
+                .iter()
+                .map(|&tg| Fp::from(tg))
+                .collect();
+            let proof = self.stamp.proof.serialize();
+            (action_set, anchor, tachygrams, proof)
+        };
+
         blake2b::stamped_auth_digest(
             &action_sigs,
             &binding_sig,
-            &anchor,
-            &tachygrams,
-            proof.as_ref(),
+            &trailer.0,
+            &trailer.1,
+            &trailer.2,
+            trailer.3.as_ref(),
         )
     }
 }
@@ -583,8 +611,9 @@ impl Bundle<Stamp> {
 impl Bundle<AggregateId> {
     /// Read a stripped bundle from the consensus wire format.
     ///
-    /// Expects `tachyonBundleState` 0x02. Always reads a 64-byte
-    /// `stampWtxid` trailer. See the module-level wire format documentation.
+    /// Expects `tachyonBundleState` 0x02. Always reads a nonzero 64-byte
+    /// `stampWtxid` trailer; [`AggregateId::read`] rejects the all-zero
+    /// encoding. See the module-level wire format documentation.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let head = BundleState::read(&mut reader)?;
 
@@ -599,13 +628,6 @@ impl Bundle<AggregateId> {
 
         let stamp = AggregateId::read(&mut reader)?;
 
-        if stamp == AggregateId::ZERO && !actions.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "stripped bundle with actions has zero aggregate id",
-            ));
-        }
-
         Ok(Self {
             actions,
             value_balance,
@@ -616,22 +638,14 @@ impl Bundle<AggregateId> {
 
     /// Write a stripped bundle in the consensus wire format.
     ///
-    /// Always writes flag `0x02` and a 64-byte `stampWtxid` trailer. Rejects
-    /// unassigned-wtxid (`[0; 64]`) when actions are non-empty — an adjunct
-    /// whose covering-aggregate wtxid the miner never assigned.
+    /// Always writes flag `0x02` and a nonzero 64-byte `stampWtxid` trailer.
+    /// The trailer names the covering aggregate for every stripped bundle,
+    /// innocent or adjunct; [`AggregateId`] cannot hold the all-zero value.
     ///
     /// Miners assign the covering aggregate's wtxid during block assembly,
     /// locating it via tachygram matching against the original autonome
-    /// broadcast. Stripped innocents (empty actions) may serialize with a
-    /// zero wtxid if no absorbing aggregate was recorded.
+    /// broadcast.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        if !self.actions.is_empty() && self.stamp == AggregateId::ZERO {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "stripped bundle with actions has zero aggregate id",
-            ));
-        }
-
         BundleState::Stripped.write(&mut writer)?;
 
         write_bundle_body(
@@ -681,13 +695,6 @@ impl TachyonBundle {
             BundleState::Stripped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
                 let stamp = AggregateId::read(&mut reader)?;
-
-                if stamp == AggregateId::ZERO && !actions.is_empty() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "stripped bundle with actions has zero aggregate id",
-                    ));
-                }
 
                 Some(Self::Adjunct(Bundle {
                     actions,

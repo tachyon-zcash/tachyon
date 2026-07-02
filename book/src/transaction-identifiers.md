@@ -21,12 +21,12 @@ $$
 \text{BLAKE2b-256}_{\text{``ZTxAuthTachyHash''}}\bigl(\\
 \quad \mathsf{vActionSigs} \,\|\, \mathsf{bindingSig} \\
 \quad\|\,\begin{cases}
-    \text{anchor}_h \,\|\, \text{anchor}_{\text{pc}} \,\|\, \text{nTachygrams} \,\|\, \text{vTachygrams} \,\|\, \text{proof} & \text{if stamped}\\
+    \text{cActionsTachyon}_{32} \,\|\, \text{anchor}_{32} \,\|\, \text{vTachygrams} \,\|\, \text{proof} & \text{if stamped}\\
     \text{stampWtxid}_{64} & \text{if stripped}
 \end{cases}\bigr)
 $$
 
-A stamped bundle's trailer is its stamp (anchor + tachygrams + proof); a stripped bundle's trailer is the 64-byte `wtxid` of the covering aggregate. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
+A stamped bundle's trailer is its stamp (`cActionsTachyon` + anchor + tachygrams + proof); a stripped bundle's trailer is the 64-byte `wtxid` of the covering aggregate. The `cActionsTachyon` is an assistive action-set indicator that strips away with the rest of the stamp when a bundle becomes an adjunct. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
 
 ## Covering-aggregate references
 
