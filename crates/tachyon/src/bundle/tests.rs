@@ -1,6 +1,6 @@
 #![allow(clippy::panic, reason = "test code")]
 
-use alloc::{vec, vec::Vec};
+use alloc::{string::ToString as _, vec, vec::Vec};
 use core::slice::from_ref;
 
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -405,8 +405,8 @@ fn stripped_read_write_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-    let stripped = unassigned
-        .assign_wtxid(AggregateId::try_from([0x42u8; 64]).expect("nonzero id"));
+    let stripped =
+        unassigned.assign_wtxid(AggregateId::try_from([0x42u8; 64]).expect("nonzero id"));
 
     let mut buf = Vec::new();
     stripped.write(&mut buf).expect("write");
@@ -440,8 +440,8 @@ fn tachyon_bundle_conversions() {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::random(rng);
         let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        let stripped = unassigned
-            .assign_wtxid(AggregateId::try_from([0xABu8; 64]).expect("nonzero id"));
+        let stripped =
+            unassigned.assign_wtxid(AggregateId::try_from([0xABu8; 64]).expect("nonzero id"));
 
         let erased: TachyonBundle = stripped.clone().into();
         let back = Bundle::<AggregateId>::try_from(erased).expect("stripped variant");
@@ -459,8 +459,8 @@ fn tachyon_bundle_conversions() {
         let wallet = WalletSim::random(rng);
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        let adjunct = unassigned
-            .assign_wtxid(AggregateId::try_from([0x55u8; 64]).expect("nonzero id"));
+        let adjunct =
+            unassigned.assign_wtxid(AggregateId::try_from([0x55u8; 64]).expect("nonzero id"));
 
         let stamped_erased: TachyonBundle = stamped.into();
         Bundle::<AggregateId>::try_from(stamped_erased).expect_err("stamped is not an adjunct");
@@ -496,8 +496,8 @@ fn tachyon_bundle_wire_round_trip() {
     // Stripped variant (0x02).
     {
         let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        let stripped = unassigned
-            .assign_wtxid(AggregateId::try_from([0xCDu8; 64]).expect("nonzero id"));
+        let stripped =
+            unassigned.assign_wtxid(AggregateId::try_from([0xCDu8; 64]).expect("nonzero id"));
         let erased: TachyonBundle = stripped.clone().into();
         let mut buf = Vec::new();
         erased.write(&mut buf).expect("write");
@@ -520,9 +520,14 @@ fn wire_state_byte_dispatch() {
     // Garbage state byte: rejected by every reader.
     {
         let buf: &[u8] = &[0x03];
-        Bundle::<Stamp>::read(buf).expect_err("invalid state byte must be rejected");
-        Bundle::<AggregateId>::read(buf).expect_err("invalid state byte must be rejected");
-        TachyonBundle::read(buf).expect_err("invalid state byte must be rejected");
+        for err in [
+            Bundle::<Stamp>::read(buf).expect_err("invalid state byte must be rejected"),
+            Bundle::<AggregateId>::read(buf).expect_err("invalid state byte must be rejected"),
+            TachyonBundle::read(buf).expect_err("invalid state byte must be rejected"),
+        ] {
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert_eq!(err.to_string(), "invalid bundle state");
+        }
     }
 
     // No-bundle (0x00): the enum reader decodes to None, not an error.
@@ -542,15 +547,23 @@ fn wire_state_byte_dispatch() {
         stamped.write(&mut stamped_buf).expect("write stamped");
 
         let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        let adjunct = unassigned
-            .assign_wtxid(AggregateId::try_from([0x66u8; 64]).expect("nonzero id"));
+        let adjunct =
+            unassigned.assign_wtxid(AggregateId::try_from([0x66u8; 64]).expect("nonzero id"));
         let mut adjunct_buf = Vec::new();
         adjunct.write(&mut adjunct_buf).expect("write adjunct");
 
-        Bundle::<AggregateId>::read(&*stamped_buf)
+        let adjunct_on_stamped = Bundle::<AggregateId>::read(&*stamped_buf)
             .expect_err("Adjunct::read must reject a stamped (0x01) buffer");
-        Bundle::<Stamp>::read(&*adjunct_buf)
+        assert_eq!(
+            adjunct_on_stamped.to_string(),
+            "stripped bundle requires tachyonBundleState 0x02"
+        );
+        let stamped_on_adjunct = Bundle::<Stamp>::read(&*adjunct_buf)
             .expect_err("Stamped::read must reject a stripped (0x02) buffer");
+        assert_eq!(
+            stamped_on_adjunct.to_string(),
+            "stamped bundle requires tachyonBundleState 0x01"
+        );
     }
 }
 
@@ -592,18 +605,26 @@ fn read_rejects_zero_wtxid() {
             *byte = 0;
         }
 
-        let adjunct_err = Bundle::<AggregateId>::read(&*buf)
-            .expect_err("Adjunct::read must reject zero wtxid");
+        let adjunct_err =
+            Bundle::<AggregateId>::read(&*buf).expect_err("Adjunct::read must reject zero wtxid");
         assert_eq!(adjunct_err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            adjunct_err.to_string(),
+            "aggregate id is zero and refers to no aggregate"
+        );
 
-        let enum_err = TachyonBundle::read(&*buf)
-            .expect_err("TachyonBundle::read must reject zero wtxid");
+        let enum_err =
+            TachyonBundle::read(&*buf).expect_err("TachyonBundle::read must reject zero wtxid");
         assert_eq!(enum_err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            enum_err.to_string(),
+            "aggregate id is zero and refers to no aggregate"
+        );
     }
 }
 
-/// A stripped innocent (empty actions) remains representable: assigned a nonzero
-/// covering wtxid, it serializes and round-trips through both readers.
+/// A stripped innocent (empty actions) remains representable: assigned a
+/// nonzero covering wtxid, it serializes and round-trips through both readers.
 #[test]
 fn innocent_round_trips_with_nonzero_wtxid() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -641,8 +662,8 @@ fn auth_digest_invariants() {
         let stamped_digest = stamped.auth_digest();
 
         let (unassigned, _stamp) = stamped.strip();
-        let stripped = unassigned
-            .assign_wtxid(AggregateId::try_from([0x11u8; 64]).expect("nonzero id"));
+        let stripped =
+            unassigned.assign_wtxid(AggregateId::try_from([0x11u8; 64]).expect("nonzero id"));
         assert_ne!(stamped_digest, stripped.auth_digest());
     }
 
@@ -657,8 +678,8 @@ fn auth_digest_invariants() {
             .clone()
             .assign_wtxid(AggregateId::try_from([0xAAu8; 64]).expect("nonzero id"));
         let digest_aa = stripped_aa.auth_digest();
-        let stripped_bb = unassigned
-            .assign_wtxid(AggregateId::try_from([0xBBu8; 64]).expect("nonzero id"));
+        let stripped_bb =
+            unassigned.assign_wtxid(AggregateId::try_from([0xBBu8; 64]).expect("nonzero id"));
         let digest_bb = stripped_bb.auth_digest();
         assert_ne!(digest_aa, digest_bb);
     }
@@ -675,8 +696,8 @@ fn auth_digest_invariants() {
 
         let wallet2 = WalletSim::random(rng);
         let (unassigned, _stamp) = build_autonome(rng, &wallet2, 1000, 700).strip();
-        let stripped = unassigned
-            .assign_wtxid(AggregateId::try_from([0x33u8; 64]).expect("nonzero id"));
+        let stripped =
+            unassigned.assign_wtxid(AggregateId::try_from([0x33u8; 64]).expect("nonzero id"));
         let stripped_direct = stripped.auth_digest();
         let erased_stripped: TachyonBundle = stripped.into();
         assert_eq!(erased_stripped.auth_digest(), stripped_direct);
