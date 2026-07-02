@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.90"
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }
@@ -41,11 +41,12 @@ suspicious = { level = "deny", priority = -1 }
 cast_possible_truncation = "deny"
 as_conversions = "deny"
 
+panic = "warn"
+
 multiple_crate_versions = "allow"   # todo
 doc_markdown = "allow"              # https://github.com/rust-lang/rust-clippy/issues/7273
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-panic = "warn"
+default_numeric_fallback = "allow"  # just uselessly noisy
+unreachable = "allow"               # awkward to disable
 redundant_pub_crate = "allow"       # pub(crate) in private modules is fine
 little_endian_bytes = "allow"       # many specified conversions
 
@@ -87,7 +88,7 @@ undocumented_unsafe_blocks = "forbid" # every unsafe block must be documented.
 default_union_representation = "forbid" # unions must have explicit repr.
 
 # -- forbid: no panicking indexing -------------------------------------------
-indexing_slicing = "forbid" # use .get() or iterators. test/const exceptions via clippy.toml.
+indexing_slicing = "deny" # use .get() or iterators. test/const exceptions via clippy.toml.
 string_slice = "forbid" # string slicing can panic on char boundaries.
 # &container[..] instead of &*container obscures intent.
 deref_by_slicing = "forbid"
@@ -144,7 +145,6 @@ clone_on_ref_ptr = "deny"
 cognitive_complexity = "deny"
 create_dir = "deny"
 decimal_literal_representation = "deny"
-default_numeric_fallback = "deny"
 doc_include_without_cfg = "deny"
 empty_drop = "deny"
 empty_enum_variants_with_brackets = "deny"
@@ -154,7 +154,6 @@ host_endian_bytes = "deny"
 if_then_some_else_none = "deny"
 infinite_loop = "deny"
 integer_division = "deny"
-integer_division_remainder_used = "deny"
 iter_over_hash_type = "deny"
 large_include_file = "deny"
 let_underscore_must_use = "deny"
@@ -196,12 +195,13 @@ unnecessary_safety_comment = "deny"
 unnecessary_safety_doc = "deny"
 unnecessary_self_imports = "deny"
 unneeded_field_pattern = "deny"
-unreachable = "deny"
 unused_trait_names = "deny"
 use_debug = "deny"
 verbose_file_reads = "deny"
 
 # deny later
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
 arbitrary_source_item_ordering = "allow"
 arithmetic_side_effects = "allow"
 exhaustive_enums = "allow"
@@ -210,3 +210,4 @@ missing_inline_in_public_items = "allow"
 todo = "allow"
 unimplemented = "allow"
 dbg_macro = "warn"
+integer_division_remainder_used = "warn"
