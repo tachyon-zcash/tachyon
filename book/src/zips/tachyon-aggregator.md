@@ -151,9 +151,7 @@ Aggregators observe transactions in mempool gossip (see
 
 An aggregator selects two transactions (autonomes or existing aggregates) for
 merging into a new aggregate. Selected transactions SHOULD bear disjoint
-tachygram sets: merging combines tachygram sets, and a block containing a
-duplicate tachygram is invalid (Step 8), so an aggregate built from
-overlapping sets can never be included in a valid block.
+tachygram sets.
 
 ### Step 3: Witness and PCD preparation
 
@@ -161,10 +159,8 @@ The aggregator reconstructs each selected transaction's stamp PCD from the
 proof and data carried on that transaction.
 
 Merging is defined only over stamps bearing identical anchors. If the selected
-transactions bear unequal anchors, the aggregator MUST first align them by
-fusing with an anchor PCD that proves the sequence from one anchor to the
-other. Aggregators SHOULD maintain recent consensus data and cache anchor PCD
-likely to be relevant to anchor alignment.
+transactions bear unequal anchors, the aggregator first aligns them by fusing
+with an anchor PCD that proves the sequence from one anchor to the other.
 
 If both selected transactions are autonomes, all necessary witness data is
 directly available on the transactions themselves.
@@ -174,8 +170,12 @@ action digests of every transaction contributing to it. Recovering those
 contributors is
 [covered-transaction identification](#covered-transaction-identification): a correct and
 complete collection of action digests reproduces the action set commitment on the
-selected stamp. Aggregators SHOULD maintain an index of recent mempool
-transactions likely to be relevant to witness preparation.
+selected stamp.
+
+Aggregators typically maintain recent consensus data, cached anchor PCD, and
+an index of recent mempool transactions to support alignment and witness
+preparation. These are implementation concerns; this ZIP does not constrain
+them.
 
 ### Step 4: Aggregate construction
 
@@ -183,8 +183,8 @@ Holding two stamp PCD with identical anchors and the prepared witness, the
 aggregator executes a merge, proving a new stamp PCD that covers the selected
 transactions and every transaction contributing to them.
 
-The aggregator MAY construct a new transaction bearing the merged stamp, or
-MAY update either contributing transaction in place, replacing its stamp with
+The aggregator MAY carry the merged stamp on a newly constructed transaction,
+or update either contributing transaction in place, replacing its stamp with
 the merged stamp.
 
 ### Step 5: Aggregate publication
@@ -202,8 +202,8 @@ Miners observe both autonomes and aggregates in the mempool (see
 the aggregates and the transactions they cover to include in a block. Determining which
 transactions a candidate aggregate covers is
 [covered-transaction identification](#covered-transaction-identification). A miner MAY also
-vertically integrate aggregation, producing its own aggregates privately (Step 7) rather
-than sourcing them from the mempool.
+vertically integrate aggregation, producing its own aggregates privately during block
+assembly rather than sourcing them from the mempool.
 
 ### Step 7: Block assembly
 
@@ -228,12 +228,11 @@ aggregate's `wtxid`.
 A stripped innocent (a former innocent aggregate) contributes no actions, but
 the stripped form still names a covering transaction. Its `tachyonAggregateId`
 MUST identify a stamped transaction in the same block, and SHOULD refer to the
-aggregate that ultimately absorbed its stamp. An actionless bundle is,
-however, valid against any claimed covering stamp: it contributes no action
-digests to any reconstruction, so the association checks of Step 8 pass for
-whichever stamped transaction it names.
+aggregate that ultimately absorbed its stamp.
 
 ### Step 8: Block validation
+
+The tachygrams of every stamped bundle MUST be distinct.
 
 All tachygrams in a block MUST be distinct.
 
@@ -252,9 +251,11 @@ the [Tachyon Shielded Protocol](tachyon-shielded-protocol.md) and
 confirms the rules above as follows, deferring the costly proof verification until the
 cheaper checks pass:
 
-1. **Tachygram uniqueness.** The validator MUST reject the block if any
-tachygram appears more than once. Reuse within the wider epoch window is
-governed by the duplicate-tachygram consensus rule of the
+1. **Tachygram uniqueness.** A block's tachygrams are the multiset union of
+the `vTachygrams` of every stamp it contains. The validator MUST reject the
+block if any tachygram appears more than once. This single scan enforces
+distinctness both within each stamp and across stamps. Reuse within the wider
+epoch window is governed by the duplicate-tachygram consensus rule of the
 [Tachyon Shielded Protocol](tachyon-shielded-protocol.md).
 2. **Adjunct association.** The `tachyonAggregateId` of every stripped bundle
 MUST identify a stamped transaction in the same block. If the referenced
@@ -306,6 +307,20 @@ These semantics underpin publication (Step 5), observation (Steps 2 and 6), and 
 objects. `MSG_WTX` relay is mandatory: restamping changes a transaction's
 `wtxid` while leaving `txid` unchanged, so announcement by `txid` alone could
 not distinguish the stamped forms a node may be offered.
+
+**Duplicate tachygrams are transaction-invalid.** Tachygram distinctness applies at the
+transaction level: a stamped bundle whose `vTachygrams` contains a duplicate tachygram is
+invalid, and a node MUST NOT accept it into the mempool or relay it. The check is a scan
+of the public list, requiring no proof verification.
+
+**Proof verification precedes relay.** A node MUST verify a stamped bundle's proof before
+accepting the transaction into its mempool or relaying it. The stamp is sufficient for
+this: the node assembles the proof header from the carried `cActionsTachyon`, the stamp's
+`anchorTachyon`, and a Pedersen commitment to its `vTachygrams`, and verifies the proof
+against that header. A wrong `cActionsTachyon` cannot pass, because the proof verifies
+only against the action-set commitment it actually attests to. Mempool acceptance
+therefore requires no covered transactions; confirming that a block's actions match the
+carried commitment is a block-validation concern (Step 8).
 
 **Stripped bundles are forbidden from the mempool.** A bundle in the stripped state
 (`tachyonBundleState == 0x02`) MUST NOT be accepted into the mempool, relayed, or published
@@ -363,11 +378,30 @@ based aggregate's own tachygrams are indistinguishable from its covered autonome
 action-digest set, reusing the commitment the proof already attests to rather than adding
 a signed coverage manifest or a tachygram-origin query protocol.
 
+**Overlapping merges self-invalidate.** The disjoint-selection guidance of Step 2 is a
+SHOULD rather than a consensus rule because a violation cannot survive: merging stamps
+whose tachygram sets overlap produces a stamp bearing duplicate tachygrams, which no node
+accepts into its mempool and no valid block can contain (Step 8). The deeper reason is
+that the merge is homomorphic over the stamps' set commitments, so the overlapping stamp
+commits to multiply-counted multiset members that no reconstruction over a block's
+distinct transactions can reproduce. The aggregator's proving work is simply wasted, so
+the selection rule needs no enforcement of its own.
+
 **Aggregate limits.** Two hard limits bound an aggregate. Its tachygram vector is committed
 as a Ragu polynomial, so it cannot exceed the maximum Ragu polynomial size; and the
 aggregate transaction, like any transaction, is bounded by block size. Construction is also
 shaped by parallelism: a chain of merges is sequential, since each merge consumes the
 previous result, but independent aggregates can be built in parallel.
+
+**Verified relay.** Requiring proof verification before relay is standard mempool
+hygiene, and aggregation sharpens it: an invalid stamp is a dead end, since a merge
+cannot produce a valid aggregate from an invalid input and no valid block can carry an
+unverifiable proof (Step 8). Aggregators would therefore hit every invalid proof
+themselves at the fuse; verifying at relay pushes that discovery to the network edge
+rather than spending bandwidth propagating transactions no aggregator can use and no
+block can include. The carried `cActionsTachyon` is what makes this check self-contained:
+the stamp supplies its own header, so relay verification needs no coverage data, and
+block validation later confirms the same commitment against the block's actual actions.
 
 **`wtxid`, not `txid`, for adjunct references.** A `txid` would be ambiguous across
 the autonome/aggregate forms (they share effecting data). The `wtxid` pins a specific
@@ -407,8 +441,9 @@ from the actions actually present in the block, rejects on any mismatch, and onl
 the confirmed value as the proof header. That confirmation is what ties the proof to the
 adjuncts the block carries, not to a value the prover supplies, so a wrong `cActionsTachyon`
 cannot pass and only harms its author. The carried value lets observers identify coverage
-cheaply (see [Covered-transaction identification](#covered-transaction-identification)); it
-is reconstructable from visible actions, so it reveals nothing the actions do not, and for a
+cheaply (see [Covered-transaction identification](#covered-transaction-identification)) and
+lets relay nodes verify a stamp's proof without its covered transactions; it is
+reconstructable from visible actions, so it reveals nothing the actions do not, and for a
 based aggregate it does not expose which actions are the aggregator's own.
 
 **Privacy of aggregation relationships.** An observer who sees an aggregate in the
