@@ -2,6 +2,7 @@
     unreachable_pub,
     clippy::type_complexity,
     clippy::as_conversions,
+    clippy::cast_possible_truncation,
     clippy::partial_pub_fields,
     clippy::too_many_lines,
     clippy::too_many_arguments,
@@ -11,29 +12,39 @@
 extern crate alloc;
 extern crate std;
 
-use alloc::{collections::BTreeMap, rc::Rc, vec, vec::Vec};
+use alloc::{collections::BTreeMap, rc::Rc, sync::Arc, vec, vec::Vec};
 use core::{
+    array,
     cell::{Cell, RefCell},
     iter,
     ops::RangeInclusive,
 };
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
-use ragu::Pcd;
+use ragu::{Pcd, Polynomial, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
+    EpochIndex, EpochOffset,
     action::{self, Action},
     bundle::{self, Bundle},
-    constants::EPOCH_SIZE,
+    constants::{EK_PARTS, EPOCH_SIZE, NF_DOMAIN, NF_EMITTERS},
     entropy::{ActionEntropy, ActionRandomizer},
-    keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
+    keys::{ExpandedKey, NoteMasterKey, PartKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        ActionDigest, Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit,
-        TachygramSetPoly, effect,
+        ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, PartKeyPoly, Tachygram,
+        TachygramSetCommit, TachygramSetPoly, effect,
+    },
+    relations::{
+        quotient::{
+            LIFT_SPLITS, RoundBoundaryQuotients, nf_emitter_boundary_quotient,
+            nf_emitter_round_quotient, nullifier_query,
+        },
+        subgroup_generator,
     },
     stamp::{
         Stamp,
@@ -329,77 +340,23 @@ impl PoolSim {
             .expect("block digest has at least one anchor")
     }
 
-    /// The pool blocks spanning the anchor range `(start, end]`, in forward
-    /// order: each `Ok((height, stamps))` is a block's in-span tachygrams
-    /// (empty for an empty block), each `Err(epoch)` a `next_epoch` lift
-    /// into `epoch`. `start`/`end` may sit mid-block; the first and last
-    /// blocks are trimmed to the span. Anchors are not returned (the caller
-    /// folds them).
+    /// The prior-epoch terminal anchor that folds into `epoch`'s boundary
+    /// `B_epoch = pre_epoch_anchor(epoch).next_epoch(epoch)`. This is the
+    /// single owner of the genesis convention: `Fp::ZERO` for the genesis
+    /// epoch (matching [`Anchor::default`]'s `ZERO.next_epoch(0)`),
+    /// otherwise the terminal anchor of the previous epoch's final block.
     #[must_use]
-    pub fn anchor_steps(
-        &self,
-        start: Anchor,
-        end: Anchor,
-    ) -> Vec<Result<(BlockHeight, Vec<Vec<Tachygram>>), EpochIndex>> {
-        // `start` enters the first stamp. A post anchor sits mid-block, so the
-        // span starts at the next stamp. An epoch-boundary lift (including the
-        // genesis entry) is produced by no stamp: the span then starts at the
-        // entered block's stamp 0, with the lift contributing a leading marker.
-        let mut steps: Vec<Result<(BlockHeight, Vec<Vec<Tachygram>>), EpochIndex>> = Vec::new();
-        let stamp_len = |height: BlockHeight| -> usize {
-            self.history[usize::try_from(height).expect("fits usize")]
-                .stamps
-                .len()
-        };
-        let (start_height, from) = match self.locate_anchor(start) {
-            Ok((height, position)) => (height, (position + 1).min(stamp_len(height))),
-            Err((_pre_boundary, epoch)) => {
-                steps.push(Err(epoch));
-                (epoch_first_of(epoch), 0)
-            },
-        };
-
-        // One past the last included stamp of the end block (whose post is `end`).
-        let (end_height, end_position) = self.locate_anchor(end).expect("end anchor must exist");
-        let to = (end_position + 1).min(stamp_len(end_height));
-
-        // Forward walk. The first block is trimmed at its head (`from`), the last
-        // at its tail (`to`); a `start`-terminal first block contributes no `Ok`
-        // entry. A boundary marker precedes every epoch-first block after the
-        // start block.
-        for height_idx in start_height.0..=end_height.0 {
-            let height = BlockHeight(height_idx);
-            let block = &self.history[usize::try_from(height_idx).expect("fits usize")];
-            if height_idx != start_height.0 && height.is_epoch_first() {
-                steps.push(Err(height.epoch()));
-            }
-            let lo = if height_idx == start_height.0 {
-                from
-            } else {
-                0
-            };
-            let hi = if height_idx == end_height.0 {
-                to
-            } else {
-                block.stamps.len()
-            };
-            let stamps = block.stamps[lo..hi].to_vec();
-            // Skip a head-trimmed first block that the `start` terminal empties,
-            // but keep a genuinely empty block (it still advances the anchor).
-            if height_idx == start_height.0 && stamps.is_empty() && !block.stamps.is_empty() {
-                continue;
-            }
-            steps.push(Ok((height, stamps)));
-        }
-
-        steps
+    pub fn pre_epoch_anchor(&self, epoch: EpochIndex) -> Anchor {
+        epoch_first_of(epoch)
+            .prev()
+            .map_or_else(|| Anchor::from(Fp::ZERO), |height| self.anchor_at(height))
     }
 
     /// The block that produced `anchor` (matched by its post anchors). An
     /// epoch-boundary anchor `B_E = old_tip.next_epoch(E)` is no block's post
-    /// anchor (it is `E`'s first block's entry), so it instead returns
-    /// `Err((pre_boundary_anchor, E))` with the lifted previous-epoch terminal;
-    /// `Anchor::default()` is the epoch-0 boundary, resolved up front.
+    /// anchor (it is `E`'s first block's entry), so it returns
+    /// `Err((pre_boundary_anchor, E))`; `Anchor::default()` is the epoch-0
+    /// boundary.
     /// Returns `(height, position)` where `position` is the anchor's index
     /// among its block's post anchors.
     fn locate_anchor(&self, anchor: Anchor) -> Result<(BlockHeight, usize), (Anchor, EpochIndex)> {
@@ -423,16 +380,58 @@ impl PoolSim {
         unreachable!("anchor not found: {anchor:?}");
     }
 
-    /// The prior-epoch terminal anchor that folds into `epoch`'s boundary
-    /// `B_epoch = pre_epoch_anchor(epoch).next_epoch(epoch)`. This is the
-    /// single owner of the genesis convention: `Fp::ZERO` for the genesis
-    /// epoch (matching [`Anchor::default`]'s `ZERO.next_epoch(0)`),
-    /// otherwise the terminal anchor of the previous epoch's final block.
-    #[must_use]
-    pub fn pre_epoch_anchor(&self, epoch: EpochIndex) -> Anchor {
-        epoch_first_of(epoch)
-            .prev()
-            .map_or_else(|| Anchor::from(Fp::ZERO), |height| self.anchor_at(height))
+    /// Walk the blocks an anchor span covers, head/tail-trimmed for mid-block
+    /// endpoints. `Ok((height, stamps))` is a covered block's (trimmed) stamps;
+    /// `Err(epoch)` marks each epoch boundary crossed. Either endpoint may sit
+    /// mid-block.
+    fn anchor_steps(
+        &self,
+        start: Anchor,
+        end: Anchor,
+    ) -> Vec<Result<(BlockHeight, Vec<Vec<Tachygram>>), EpochIndex>> {
+        let mut steps: Vec<Result<(BlockHeight, Vec<Vec<Tachygram>>), EpochIndex>> = Vec::new();
+        let stamp_len = |height: BlockHeight| -> usize {
+            self.history[usize::try_from(height).expect("fits usize")]
+                .stamps
+                .len()
+        };
+        let (start_height, from) = match self.locate_anchor(start) {
+            Ok((height, position)) => (height, (position + 1).min(stamp_len(height))),
+            Err((_pre_boundary, epoch)) => {
+                steps.push(Err(epoch));
+                (epoch_first_of(epoch), 0)
+            },
+        };
+
+        let (end_height, end_position) = self.locate_anchor(end).expect("end anchor must exist");
+        let to = (end_position + 1).min(stamp_len(end_height));
+
+        for height_idx in start_height.0..=end_height.0 {
+            let height = BlockHeight(height_idx);
+            let block = &self.history[usize::try_from(height_idx).expect("fits usize")];
+            if height_idx != start_height.0 && height.is_epoch_first() {
+                steps.push(Err(height.epoch()));
+            }
+            let lo = if height_idx == start_height.0 {
+                from
+            } else {
+                0
+            };
+            let hi = if height_idx == end_height.0 {
+                to
+            } else {
+                block.stamps.len()
+            };
+            let stamps = block.stamps[lo..hi].to_vec();
+            // Skip a head-trimmed first block emptied by a mid-block `start`, but
+            // keep a genuinely empty block (it still advanced the anchor).
+            if height_idx == start_height.0 && stamps.is_empty() && !block.stamps.is_empty() {
+                continue;
+            }
+            steps.push(Ok((height, stamps)));
+        }
+
+        steps
     }
 
     pub fn advance(
@@ -483,8 +482,8 @@ fn build_anchor_chain_inner(
     let mut chain: Option<Pcd<pool::AnchorChain>> = None;
     let mut height = start;
     loop {
-        let stamps = pool.tachygrams_at(height);
-        if stamps.is_empty() {
+        let commits = pool.stamp_commits_at(height);
+        if commits.is_empty() {
             let next_state = state.next_empty();
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::EmptyBlockSeed, (state,))
@@ -502,15 +501,14 @@ fn build_anchor_chain_inner(
         } else {
             // The final block may be truncated (cm-block prefix); others absorb all.
             let upto = if height == end {
-                last_block_upto.unwrap_or(stamps.len())
+                last_block_upto.unwrap_or(commits.len())
             } else {
-                stamps.len()
+                commits.len()
             };
-            for tgs in &stamps[..upto] {
-                let witness = witness::anchor_seed(((), ()), state, tgs);
-                let next_state = state.next_stamp(&witness.1);
+            for commit in &commits[..upto] {
+                let next_state = state.next_stamp(commit);
                 let (seed, ()) = PROOF_SYSTEM
-                    .seed(rng, pool::AnchorSeed, witness)
+                    .seed(rng, pool::AnchorSeed, (state, *commit))
                     .expect("AnchorSeed");
                 chain = Some(match chain.take() {
                     None => seed,
@@ -582,7 +580,7 @@ pub(crate) fn build_anchor_chain_prefix_pcd(
 
 /// The honest [`spendable::SpendableInit`] inputs for `cm` at `height`,
 /// reconstructed from pool state: the witness `(pre_epoch_anchor,
-/// pre_cm_anchor, creation_tgs)` plus the boundary-rooted
+/// pre_cm_anchor, stamp_tg_set)` plus the boundary-rooted
 /// [`AnchorChain`](pool::AnchorChain) for the left input. Shared by
 /// [`WalletSim::spendable_init`] (which `.expect`s the fuse) and tests that
 /// drive a raw fuse to capture the `Err`.
@@ -591,7 +589,7 @@ pub(crate) fn spendable_init_inputs(
     pool: &PoolSim,
     cm: note::Commitment,
     height: BlockHeight,
-) -> (Anchor, Anchor, Vec<Tachygram>, Pcd<pool::AnchorChain>) {
+) -> (Anchor, Anchor, TachygramSetPoly, Pcd<pool::AnchorChain>) {
     let stamps = pool.tachygrams_at(height);
     let stamp_commits = pool.stamp_commits_at(height);
     let cm_idx = stamps
@@ -610,9 +608,9 @@ pub(crate) fn spendable_init_inputs(
     let epoch = height.epoch();
     let pre_epoch_anchor = pool.pre_epoch_anchor(epoch);
     let chain = build_anchor_chain_prefix_pcd(rng, pool, epoch_first_of(epoch), height, cm_idx);
-    let creation_tgs = stamps[cm_idx].clone();
+    let stamp_tg_set = stamps[cm_idx].iter().copied().collect::<TachygramSetPoly>();
 
-    (pre_epoch_anchor, pre_cm_anchor, creation_tgs, chain)
+    (pre_epoch_anchor, pre_cm_anchor, stamp_tg_set, chain)
 }
 
 pub(crate) fn build_unspent_seed_pcd(
@@ -665,10 +663,9 @@ pub(crate) fn build_unspent_pcd_between_anchors(
     nf: &[Nullifier],
     (start_anchor, end_anchor): (Anchor, Anchor),
 ) -> Pcd<pool::Unspent> {
-    // The balanced-tree merge derives epoch and fuse kind from block heights, so
-    // the interleaved boundary markers are dropped; only `Ok` segments seed
-    // leaves. Anchors are folded here: the first block runs from `start_anchor`
-    // (possibly mid-block), every other from its recorded entry anchor.
+    // The merge derives epoch and fuse kind from block heights, so the boundary
+    // markers are dropped; only `Ok` blocks seed leaves. The first block runs
+    // from `start_anchor` (possibly mid-block), the rest from their entry anchor.
     let steps: Vec<(BlockHeight, Vec<Vec<Tachygram>>)> = pool
         .anchor_steps(start_anchor, end_anchor)
         .into_iter()
@@ -698,7 +695,7 @@ pub(crate) fn build_unspent_pcd_between_anchors(
             leaves.push((seed, epoch));
         } else {
             for tgs in block_stamps {
-                let commit = TachygramSetPoly::from_iter(tgs.clone()).commit();
+                let commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
                 leaves.push((
                     build_unspent_seed_pcd(rng, entry, epoch, &tgs, leaf_nf),
                     epoch,
@@ -709,10 +706,9 @@ pub(crate) fn build_unspent_pcd_between_anchors(
     }
 
     // Balanced bottom-up merge. Each item tracks the inclusive epoch range
-    // `[ep_lo..=ep_hi]` its chain covers, so its `elapsed` is `nf[ep_lo..ep_hi]`
-    // (one per crossed boundary). Merging adjacent chains is a mid-epoch concat
-    // when they share an epoch (`rlo == lhi`) and a boundary splice when
-    // consecutive (`rlo == lhi + 1`).
+    // `[lo..=hi]` its chain covers, so its `elapsed` is `nf[lo..hi]` (one per
+    // crossed boundary). Adjacent chains merge as a mid-epoch concat when they
+    // share an epoch (`rlo == lhi`) and a boundary splice when consecutive.
     let elapsed_slice = |lo: EpochIndex, hi: EpochIndex| -> &[Nullifier] {
         let from = usize::try_from(lo.0 - base.0).expect("epoch within span");
         let to = usize::try_from(hi.0 - base.0).expect("epoch within span");
@@ -764,9 +760,79 @@ pub(crate) fn build_unspent_pcd_between_anchors(
         .0
 }
 
+/// A note's epoch-independent derivation values, memoized per `cm` (tier 1,
+/// no proof system): the master key, the `EK_PARTS` expansion traces, the
+/// interleaved schedule assembled from them, and the `N` emitter polynomials.
+/// Pure functions of the note's `(psi, nk)`, so one build serves every epoch,
+/// every query offset, and every proof. `query_nf` reads these without touching
+/// the prover.
+///
+/// The keyset is the cheap keys-only expansion
+/// ([`NoteMasterKey::derive_expanded`], no per-round state trace and no FFT),
+/// so keyset-only callers like [`WalletSim::query_nf`] never pay for the
+/// cipher-state traces. The certify PCD (itself memoized) recovers the per-part
+/// raw states and keys on demand via [`NoteMasterKey::derive_expanded_states`],
+/// interpolating each [`PartKeyStates::spectrum`] only for the parts it proves.
+struct CachedDerivation {
+    mk: NoteMasterKey,
+    keyset: ExpandedKey,
+    polys: [NfEmitterPoly; NF_EMITTERS],
+}
+
+/// A note's derivation is a pure function of its `cm` (which pins `nk` through
+/// the payment key and absorbs `psi`), so it is identical across every
+/// `WalletSim` that holds the note. These module-level caches share it across
+/// all wallets and tests: the FFT-heavy expansion, emitter polynomials, and
+/// certify PCD are built once per distinct `cm` for the whole test run, not
+/// once per wallet.
+///
+/// Each entry is a per-`cm` [`OnceLock`], so the build is single-flight: the
+/// outer `Mutex` is held only to hand out the cell, then released, and
+/// [`OnceLock::get_or_init`] ensures exactly one thread builds a given `cm`
+/// while any others racing the same `cm` park until it lands. Distinct `cm`s
+/// build fully in parallel; the same `cm` is never built twice.
+type DerivationCell<T> = Arc<OnceLock<T>>;
+
+static DERIVATIONS: LazyLock<
+    Mutex<BTreeMap<note::Commitment, DerivationCell<Arc<CachedDerivation>>>>,
+> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+static DERIVATION_PCDS: LazyLock<
+    Mutex<BTreeMap<note::Commitment, DerivationCell<Pcd<delegation::NullifierDerivation>>>>,
+> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+/// Emit a one-line cache-access trace to stderr (visible under
+/// `cargo test -- --nocapture`). `built` is whether this call ran the build
+/// (miss) or found the cell already populated (hit).
+fn log_cache(cache: &str, cm: note::Commitment, built: bool) {
+    if built {
+        let repr = Fp::from(cm).to_repr();
+        std::eprintln!(
+            "[walletsim] {cache} cm={:02x}{:02x}{:02x}{:02x}",
+            repr[0],
+            repr[1],
+            repr[2],
+            repr[3],
+        );
+    }
+}
+
+/// The per-`cm` [`OnceLock`] for `map`, creating an empty one on first request.
+/// The outer lock is released before the caller initializes the cell.
+fn derivation_cell<T>(
+    map: &Mutex<BTreeMap<note::Commitment, DerivationCell<T>>>,
+    cm: note::Commitment,
+) -> DerivationCell<T> {
+    Arc::clone(
+        map.lock()
+            .expect("derivation cache")
+            .entry(cm)
+            .or_insert_with(|| Arc::new(OnceLock::new())),
+    )
+}
+
 /// A fixed, deterministic spending key. Tests that don't need a distinct wallet
-/// build from this so their notes' `cm`s collide and shared per-note work is
-/// reused across tests instead of busted by fresh random key material.
+/// build from this so their notes' `cm`s collide and reuse the global
+/// derivation cache instead of busting it with fresh random key material.
 pub(crate) fn shared_sk() -> private::SpendingKey {
     private::SpendingKey::random(&mut StdRng::seed_from_u64(0x7AC0_05EED))
 }
@@ -778,7 +844,7 @@ fn note_stream_seed(pk: PaymentKey, value: u64) -> [u8; 32] {
         .hash_length(32)
         .personal(b"Tachyon-NoteRnd")
         .to_state()
-        .update(&pk.0.to_repr())
+        .update(&Fp::from(pk).to_repr())
         .update(&value.to_le_bytes())
         .finalize();
     let mut seed = [0u8; 32];
@@ -793,8 +859,8 @@ pub struct WalletSim {
     /// deterministically from `(sk, value)` (independent of any caller
     /// RNG). `random_note(value)` draws the next note from that value's
     /// stream, so the k-th note of a given value is identical across every
-    /// wallet built from the same `sk`, and its `cm` collides, reusing
-    /// shared per-note work. Keying by value keeps distinct asks independent:
+    /// wallet built from the same `sk`, and its `cm` collides, reusing the
+    /// derivation cache. Keying by value keeps distinct asks independent:
     /// different values draw from disjoint field sequences, and interleaved
     /// draws of other values never shift a stream's position.
     notes: RefCell<BTreeMap<u64, StdRng>>,
@@ -816,7 +882,7 @@ impl WalletSim {
     /// The next note in this value's stream, at the given value. Each value has
     /// its own stream seeded from `(pk, value)`, so the k-th note of a given
     /// value is identical across wallets built from the same `sk` (its `cm`
-    /// collides, reusing shared per-note work), while distinct values draw
+    /// collides, reusing the derivation cache), while distinct values draw
     /// fully independent field sequences.
     pub fn random_note(&self, value_amount: u64) -> Note {
         let pk = self.sk.derive_payment_key();
@@ -832,46 +898,206 @@ impl WalletSim {
         }
     }
 
+    /// The note's master key, assembled from its `MK_PARTS` parts.
     #[must_use]
-    pub fn mk(&self, note: &Note) -> NoteMasterKey {
-        self.pak.nk.derive_note_private(&note.psi)
+    pub fn master_key(&self, note: &Note) -> NoteMasterKey {
+        NoteMasterKey::from_parts(&array::from_fn(|part| {
+            self.pak.nk.derive_note_part(&note.psi, part as u64)
+        }))
     }
 
-    #[must_use]
-    pub fn nf_at(&self, note: &Note, epoch: EpochIndex) -> Nullifier {
-        self.mk(note).derive_nullifier(epoch)
+    /// The note's epoch-independent derivation values, memoized per `cm` in the
+    /// module-level [`DERIVATIONS`] cache and thus shared across all wallets.
+    fn cached_derivation(&self, note: &Note) -> Arc<CachedDerivation> {
+        let cell = derivation_cell(&DERIVATIONS, note.commitment());
+        // Single-flight: exactly one thread runs the expensive expansion/FFT for
+        // this cm; any others racing the same cm park here until it lands.
+        let mut built = false;
+        let derivation = Arc::clone(cell.get_or_init(|| {
+            built = true;
+            let mk = self.master_key(note);
+            // The keys-only keyset (no state trace, no FFT); the emitter polys
+            // hang off it. The certify PCD recovers per-part states on demand.
+            let keyset = mk.derive_expanded();
+            let polys = keyset.derivation_polys(&mk.query_salts());
+            Arc::new(CachedDerivation { mk, keyset, polys })
+        }));
+        log_cache("derive\t", note.commitment(), built);
+        derivation
     }
 
-    pub fn note_master(
+    /// The new-scheme nullifier at epoch offset `d` from the note's creation:
+    /// `nf_d = Σ_j ρ_j^d·T_j(c·γ^d)`, the query the spend circuit reproduces.
+    /// Evaluates the memoized emitter polynomials rather than re-deriving them.
+    #[must_use]
+    pub fn query_nf(&self, note: &Note, offset: EpochOffset) -> Nullifier {
+        let derivation = self.cached_derivation(note);
+        let (ratios, shift) = derivation.mk.query_weights();
+        Nullifier::from(nullifier_query(
+            &derivation.polys,
+            shift,
+            ratios,
+            subgroup_generator::<NF_DOMAIN>(),
+            u64::from(offset),
+        ))
+    }
+
+    /// Seed one `mk` part (part index `part`), proving it is the note's master
+    /// secret via the payment-key check.
+    pub fn master_key_part(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
-    ) -> Pcd<delegation::NfPrefixHeader> {
+        part: u64,
+    ) -> Pcd<delegation::MasterKeyPart> {
         let (pcd, ()) = PROOF_SYSTEM
-            .seed(rng, delegation::NfMasterSeed, (note, self.pak))
-            .expect("note seed");
+            .seed(rng, delegation::MasterSeed, (note, self.pak, part))
+            .expect("master key part seed");
         pcd
     }
 
-    pub fn nullifier_pcd(
+    /// The note's certified derivation PCD, built once per `cm` and memoized.
+    /// Seeds the `MK_PARTS` master key parts, certifies each of the `EK_PARTS`
+    /// expansion windows ([`ExpandedKeyStep`](delegation::ExpandedKeyStep))
+    /// against them, funnels the parts into one
+    /// [`ExpandedKeyset`](delegation::ExpandedKeyset) (`ExpandedKeysetLift` +
+    /// `ExpandedKeyFuse`), and certifies the `N` derivation polynomials in one
+    /// [`NullifierDerivationStep`](delegation::NullifierDerivationStep).
+    ///
+    /// The derivation carries no offset origin, so the resulting PCD is a
+    /// function of the note alone: one build serves every spend epoch. The
+    /// origin enters only at the consuming steps (`SpendableInit`,
+    /// `VerifyUnspent`), which witness it and have it reconciled at
+    /// `SpendableLift`.
+    fn cached_derivation_pcd(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
-        target_epoch: EpochIndex,
-    ) -> Pcd<delegation::NullifierHeader> {
-        let master = self.note_master(rng, note);
-        ggm_tools::nullifier_from_master(rng, master, target_epoch)
+    ) -> Pcd<delegation::NullifierDerivation> {
+        let cell = derivation_cell(&DERIVATION_PCDS, note.commitment());
+        // Single-flight: one thread certifies this cm (the ~28-FFT PCD build);
+        // others racing the same cm park until it lands.
+        let mut built = false;
+        let pcd = cell
+            .get_or_init(|| {
+                built = true;
+                let derivation = self.cached_derivation(&note);
+
+                // The two mk parts, each pinned to the note by the payment-key check.
+                let mk_part0 = self.master_key_part(rng, note, 0);
+                let mk_part1 = self.master_key_part(rng, note, 1);
+
+                // Each of the EK_PARTS expansion windows is certified by one
+                // ExpandedKeyStep fusing the two mk parts. Recover each part's raw
+                // states and keys on demand (one part at a time, so the POLY_LEN_MAX
+                // state grid never all sits on the stack), spectrum it for the
+                // witness, and stash the keys for the derivation step below.
+                let mut part_pcds: Vec<Pcd<delegation::ExpandedKeyPart>> =
+                    Vec::with_capacity(EK_PARTS);
+                let mut part_keys: Vec<PartKey> = Vec::with_capacity(EK_PARTS);
+                for part in 0..EK_PARTS {
+                    let (states, keys) = derivation.mk.derive_expanded_states(part);
+                    let spectrum = states.spectrum();
+                    let (pcd, ()) = PROOF_SYSTEM
+                        .fuse(
+                            rng,
+                            delegation::ExpandedKeyStep,
+                            witness::nf_master_expand(
+                                (*mk_part0.data(), *mk_part1.data()),
+                                &derivation.mk,
+                                &spectrum,
+                                &keys,
+                                part,
+                            ),
+                            mk_part0.clone(),
+                            mk_part1.clone(),
+                        )
+                        .expect("ExpandedKeyStep");
+                    part_pcds.push(pcd);
+                    part_keys.push(keys);
+                }
+
+                // Funnel the parts into one ExpandedKeyset: lift part 0, fold the rest.
+                // Single-input steps take a trivial () PCD on the empty side.
+                let mut parts = part_pcds.into_iter();
+                let first = parts.next().expect("EK_PARTS >= 1");
+                let (mut keyset_pcd, ()) = PROOF_SYSTEM
+                    .fuse(
+                        rng,
+                        delegation::ExpandedKeysetLift,
+                        (),
+                        first,
+                        Proof::trivial().carry::<()>(()),
+                    )
+                    .expect("ExpandedKeysetLift");
+                for part_pcd in parts {
+                    let (next, ()) = PROOF_SYSTEM
+                        .fuse(rng, delegation::ExpandedKeyFuse, (), keyset_pcd, part_pcd)
+                        .expect("ExpandedKeyFuse");
+                    keyset_pcd = next;
+                }
+
+                // The epoch-independent step witness: the part-key polys, the emitter
+                // polys, and the emitter certify quotients (all pure in the keyset and
+                // salts, no epoch).
+                let part_polys: [PartKeyPoly; EK_PARTS] =
+                    array::from_fn(|part| part_keys[part].key_poly());
+                let salts = derivation.mk.query_salts();
+                let first_key = derivation.keyset.round_key(0);
+                let quotients = array::from_fn(|poly| {
+                    RoundBoundaryQuotients {
+                        round: nf_emitter_round_quotient(
+                            derivation.polys[poly].0.coefficients(),
+                            &derivation.keyset.0,
+                        ),
+                        boundary: nf_emitter_boundary_quotient(
+                            derivation.polys[poly].0.coefficients(),
+                            salts.0[poly],
+                            first_key,
+                        ),
+                    }
+                });
+
+                let (pcd, ()) = PROOF_SYSTEM
+                    .fuse(
+                        rng,
+                        delegation::NullifierDerivationStep,
+                        (part_polys, derivation.polys.clone(), quotients),
+                        keyset_pcd,
+                        Proof::trivial().carry::<()>(()),
+                    )
+                    .expect("NullifierDerivationStep");
+                pcd
+            })
+            .clone();
+        log_cache("pcd\t", note.commitment(), built);
+        pcd
     }
 
-    pub fn derived_range(
+    /// The note's certified derivation PCD. Epoch-independent, so it is
+    /// memoized per `cm` and every spend epoch reuses the same PCD.
+    pub fn derivation_pcd(
+        &self,
+        rng: &mut (impl RngCore + CryptoRng),
+        note: Note,
+    ) -> Pcd<delegation::NullifierDerivation> {
+        self.cached_derivation_pcd(rng, note)
+    }
+
+    /// The note's certified derivation, its `N` polynomials, and its keyset,
+    /// all memoized per `cm`.
+    pub fn derivation(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: &Note,
-        epoch_start: EpochIndex,
-        len: u32,
-    ) -> Pcd<delegation::NullifierHeader> {
-        let master = self.note_master(rng, *note);
-        ggm_tools::nullifier_range_from_master(rng, &master, epoch_start, len)
+    ) -> (
+        Pcd<delegation::NullifierDerivation>,
+        [NfEmitterPoly; NF_EMITTERS],
+        ExpandedKey,
+    ) {
+        let derivation = self.cached_derivation(note);
+        let pcd = self.cached_derivation_pcd(rng, *note);
+        (pcd, derivation.polys.clone(), derivation.keyset)
     }
 
     pub fn spendable_init(
@@ -883,24 +1109,27 @@ impl WalletSim {
     ) -> Pcd<spendable::SpendableHeader> {
         let cm = note.commitment();
         let epoch = init_height.epoch();
-        let present_nf = self.nf_at(note, epoch);
-        let (pre_epoch_anchor, pre_cm_anchor, creation_tgs, chain) =
+        let (pre_epoch_anchor, pre_cm_anchor, creation_set, chain) =
             spendable_init_inputs(rng, pool, cm, init_height);
-        let nf_header = self.nullifier_pcd(rng, *note, epoch);
+        // The creation epoch E_0 is this init height's epoch; it is witnessed
+        // into SpendableInit, which pins it to the creation anchor and computes
+        // present_nf = nf_0 in-circuit.
+        let (derivation, polys, _keyset) = self.derivation(rng, note);
 
         let (spendable, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 spendable::SpendableInit,
                 witness::spendable_init(
-                    (*chain.data(), *nf_header.data()),
+                    (*chain.data(), *derivation.data()),
+                    &polys,
                     pre_epoch_anchor,
                     pre_cm_anchor,
-                    &creation_tgs,
-                    present_nf,
+                    creation_set,
+                    epoch,
                 ),
                 chain,
-                nf_header,
+                derivation,
             )
             .expect("SpendableInit");
         spendable
@@ -916,27 +1145,81 @@ impl WalletSim {
         self.spendable_init(rng, spend_note, pool, height)
     }
 
+    /// Bind a sync [`Unspent`](pool::Unspent) to the note's genuine derivation
+    /// nullifiers via the homomorphic lift. The tested values are the query
+    /// nullifiers `query_nf` at offsets `[start − E_0, present − E_0]`; the
+    /// lift witnesses (per-poly weights `w_j`, accumulator `A`, quotients)
+    /// are built for the challenge `β` over the certified digest and the
+    /// tested poly `q`. Build the honest
+    /// [`VerifyUnspent`](pool::VerifyUnspent) witness and the derivation
+    /// PCD for the tested range `[start, present]`. Split out so the
+    /// negative tests can fuse the honest witness against a tampered
+    /// [`Unspent`](pool::Unspent), or tamper one witness field.
+    pub fn verify_unspent_witness(
+        &self,
+        rng: &mut (impl RngCore + CryptoRng),
+        unspent: &Pcd<pool::Unspent>,
+        note: &Note,
+        creation_epoch: EpochIndex,
+        start_epoch: EpochIndex,
+        present_epoch: EpochIndex,
+    ) -> (
+        (
+            NfSeqPoly,
+            NfSeqPoly,
+            NfSeqPoly,
+            [NfEmitterPoly; NF_EMITTERS],
+            [[Polynomial; LIFT_SPLITS]; NF_EMITTERS],
+            [Polynomial; LIFT_SPLITS],
+            [Polynomial; NF_EMITTERS],
+            Polynomial,
+            EpochIndex,
+        ),
+        Pcd<delegation::NullifierDerivation>,
+    ) {
+        let (derivation, polys, _keyset) = self.derivation(rng, note);
+        let mk = self.master_key(note);
+
+        // Tested values q over [start, present]: query nullifiers at offsets from
+        // E_0. `query_nf` evaluates the memoized emitter polynomials, so the
+        // whole range reuses one build rather than re-expanding per offset.
+        let nfs: Vec<Nullifier> = (start_epoch.0..=present_epoch.0)
+            .map(|epoch| self.query_nf(note, EpochIndex(epoch).offset_from(creation_epoch)))
+            .collect();
+
+        (
+            witness::verify_unspent(
+                (*unspent.data(), *derivation.data()),
+                &polys,
+                &mk,
+                &nfs,
+                start_epoch,
+                present_epoch,
+                creation_epoch,
+            ),
+            derivation,
+        )
+    }
+
     pub fn verify_unspent(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         unspent: Pcd<pool::Unspent>,
         note: &Note,
-        epoch_start: EpochIndex,
+        creation_epoch: EpochIndex,
+        start_epoch: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<pool::VerifiedUnspent> {
-        let len = present_epoch.0 - epoch_start.0 + 1;
-        let range = self.derived_range(rng, note, epoch_start, len);
-        let elapsed: Vec<Nullifier> = (epoch_start.0..present_epoch.0)
-            .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
-            .collect();
+        let (witness, derivation) = self.verify_unspent_witness(
+            rng,
+            &unspent,
+            note,
+            creation_epoch,
+            start_epoch,
+            present_epoch,
+        );
         let (verified, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                pool::VerifyUnspent,
-                witness::verify_unspent((*unspent.data(), *range.data()), &elapsed),
-                unspent,
-                range,
-            )
+            .fuse(rng, pool::VerifyUnspent, witness, unspent, derivation)
             .expect("VerifyUnspent");
         verified
     }
@@ -947,10 +1230,20 @@ impl WalletSim {
         spendable: Pcd<spendable::SpendableHeader>,
         unspent: Pcd<pool::Unspent>,
         note: &Note,
-        epoch_start: EpochIndex,
+        start_epoch: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<spendable::SpendableHeader> {
-        let verified = self.verify_unspent(rng, unspent, note, epoch_start, present_epoch);
+        // The lift's offset origin E_0 is the lineage's consensus-bound creation
+        // epoch, carried on the spendable header; SpendableLift reconciles it.
+        let creation_epoch = spendable.data().3;
+        let verified = self.verify_unspent(
+            rng,
+            unspent,
+            note,
+            creation_epoch,
+            start_epoch,
+            present_epoch,
+        );
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable, verified)
             .expect("SpendableLift");
@@ -972,8 +1265,8 @@ impl WalletSim {
             rng,
             pool,
             &[
-                self.nf_at(note, creation_epoch),
-                self.nf_at(note, creation_epoch.next()),
+                self.query_nf(note, EpochOffset(0)),
+                self.query_nf(note, EpochOffset(1)),
             ],
             (start_anchor, pool.anchor_at(end_height)),
         );
@@ -999,10 +1292,17 @@ impl WalletSim {
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
         for (note, spendable_pcd, spend_epoch) in spends {
-            let range_pcd = self.derived_range(rng, &note, spend_epoch, 2);
+            // The spend offset is measured from the lineage's true creation epoch
+            // E_0, threaded on the spendable header (field .3) and pinned to
+            // consensus at SpendableInit. A spendable lifted to `spend_epoch`
+            // carries present_nf = nf_{spend_epoch − E_0}, so the spend reproduces
+            // that present-epoch nullifier and its successor at the same offset.
+            let creation_epoch = spendable_pcd.data().3;
+            let offset = spend_epoch.offset_from(creation_epoch);
+            let (derivation_pcd, polys, _keyset) = self.derivation(rng, &note);
             let pair = [
-                self.nf_at(&note, spend_epoch),
-                self.nf_at(&note, spend_epoch.next()),
+                self.query_nf(&note, offset),
+                self.query_nf(&note, offset.next()),
             ];
             let rcv = value::CommitmentTrapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
@@ -1010,7 +1310,7 @@ impl WalletSim {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((range_pcd, pair, spendable_pcd));
+            spend_pcds.push((derivation_pcd, polys, pair, spendable_pcd));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
@@ -1138,117 +1438,4 @@ fn epoch_first_of(epoch: EpochIndex) -> BlockHeight {
 fn epoch_final_of(epoch: EpochIndex) -> BlockHeight {
     let next_first = (epoch.0 + 1) * EPOCH_SIZE;
     BlockHeight(next_first - 1)
-}
-
-pub mod ggm_tools {
-    extern crate alloc;
-    use alloc::vec::Vec;
-
-    use ragu::{Pcd, Proof};
-    use rand_core::{CryptoRng, RngCore};
-
-    use crate::{
-        EpochIndex,
-        digest::poseidon,
-        keys::{GGM_CHUNK_SIZE, GGM_TREE_DEPTH},
-        note::Nullifier,
-        stamp::proof::{PROOF_SYSTEM, delegation},
-        witness,
-    };
-
-    pub fn walk_master_to_depth(
-        rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<delegation::NfPrefixHeader>,
-        epoch: EpochIndex,
-        target_depth: u8,
-    ) -> Pcd<delegation::NfPrefixHeader> {
-        assert!(
-            (1..=GGM_TREE_DEPTH).contains(&target_depth),
-            "target_depth must be in 1..=GGM_DEPTH",
-        );
-
-        let mut pcd = master_pcd;
-        while pcd.data().2 < target_depth {
-            let next_step = pcd.data().2 + 1;
-            let chunk = chunk_at(epoch.0, next_step);
-            let (next_pcd, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    delegation::NfPrefixStep,
-                    (chunk,),
-                    pcd,
-                    Proof::trivial().carry::<()>(()),
-                )
-                .expect("note step");
-            pcd = next_pcd;
-        }
-
-        pcd
-    }
-
-    pub fn nullifier_from_master(
-        rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<delegation::NfPrefixHeader>,
-        target_epoch: EpochIndex,
-    ) -> Pcd<delegation::NullifierHeader> {
-        let prefix_pcd = walk_master_to_depth(rng, master_pcd, target_epoch, GGM_TREE_DEPTH);
-        let (pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                delegation::NullifierStep,
-                (),
-                prefix_pcd,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("nullifier step");
-        pcd
-    }
-
-    pub fn nullifier_range_from_master(
-        rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: &Pcd<delegation::NfPrefixHeader>,
-        epoch_start: EpochIndex,
-        len: u32,
-    ) -> Pcd<delegation::NullifierHeader> {
-        assert!(len >= 1, "range length must be at least 1");
-        let mut nfs: Vec<Nullifier> = Vec::new();
-        let mut acc: Option<Pcd<delegation::NullifierHeader>> = None;
-        for offset in 0..len {
-            let epoch = EpochIndex(epoch_start.0 + offset);
-            let prefix_pcd = walk_master_to_depth(rng, master_pcd.clone(), epoch, GGM_TREE_DEPTH);
-            let nf = Nullifier::from(poseidon::nullifier(prefix_pcd.data().1));
-            let (leaf, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    delegation::NullifierStep,
-                    (),
-                    prefix_pcd,
-                    Proof::trivial().carry::<()>(()),
-                )
-                .expect("nullifier step");
-            acc = Some(match acc {
-                None => {
-                    nfs.push(nf);
-                    leaf
-                },
-                Some(left) => {
-                    let fuse_witness =
-                        witness::nullifier_fuse((*left.data(), *leaf.data()), nfs.as_slice(), nf);
-                    nfs.push(nf);
-                    let (fused, ()) = PROOF_SYSTEM
-                        .fuse(rng, delegation::NullifierFuse, fuse_witness, left, leaf)
-                        .expect("NullifierFuse");
-                    fused
-                },
-            });
-        }
-        acc.expect("len >= 1 produced a range")
-    }
-
-    fn chunk_at(epoch_bits: u32, level: u8) -> u8 {
-        let shift = (GGM_TREE_DEPTH * GGM_CHUNK_SIZE) - level * GGM_CHUNK_SIZE;
-        let chunk_mask = (1u32 << GGM_CHUNK_SIZE) - 1u32;
-        let chunk_u32 = (epoch_bits >> shift) & chunk_mask;
-        u8::try_from(chunk_u32).expect("chunk fits in u8")
-    }
 }
