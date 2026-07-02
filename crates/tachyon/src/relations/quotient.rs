@@ -4,7 +4,7 @@
 //! `relations` enforcers, for both cipher families:
 //!
 //! - the 8192-round **derivation** polynomials (`TachyonP5R8192`): the
-//!   masked-quintic round quotient, the boundary quotient, and the lift's
+//!   masked-quintic round quotient, the boundary quotient, and the arc's
 //!   weight/accumulator recurrences, plus the native off-domain nullifier
 //!   query.
 //! - the 32x256 **expansion** trace (`TachyonP5R32`, `ROUNDS` columns by
@@ -42,18 +42,18 @@ use crate::{
     primitives::NfEmitterPoly,
 };
 
-/// Splits per full-length lift polynomial, `NF_DOMAIN / POLY_LEN_MAX`.
+/// Splits per full-length arc polynomial, `NF_DOMAIN / POLY_LEN_MAX`.
 ///
-/// The lift's weight `w_j` and accumulator `A` span the order-`NF_DOMAIN` query
+/// The arc's weight `w_j` and accumulator `A` span the order-`NF_DOMAIN` query
 /// coset `c·⟨γ⟩` and so exceed commitment capacity; each is committed as this
-/// many capacity-wide splits. Derived from [`NF_DOMAIN`], so the lift scales
+/// many capacity-wide splits. Derived from [`NF_DOMAIN`], so the arc scales
 /// with the nullifier domain with nothing pinned to a specific split count.
 #[expect(
     clippy::integer_division,
     clippy::integer_division_remainder_used,
     reason = "safe conversion"
 )]
-pub(crate) const LIFT_SPLITS: usize = NF_DOMAIN / POLY_LEN_MAX;
+pub(crate) const ARC_SPLITS: usize = NF_DOMAIN / POLY_LEN_MAX;
 
 /// The secret query-coset shift `c`: the coset origin `c·⟨gamma⟩` (with
 /// `c ∉ ⟨gamma⟩`), constant across a note's epochs. A randomizer that hides the
@@ -165,7 +165,7 @@ fn divide_by_vanishing(poly: &[Fp], domain: usize) -> (Vec<Fp>, Vec<Fp>) {
 /// Carve `coeffs` into `SPLITS` adjacent `width`-wide pieces, the
 /// commitment-capacity splits the circuit recombines by Horner in `z^width`. A
 /// polynomial spanning more than one commitment's capacity (a round quotient,
-/// the lift's weight `w_j` and accumulator `A`) cannot ride one commitment, so
+/// the arc's weight `w_j` and accumulator `A`) cannot ride one commitment, so
 /// it is committed and opened this way. Production passes `POLY_LEN_MAX`;
 /// domain-generic callers pass their `DOMAIN`.
 fn split_coeffs<const SPLITS: usize>(coeffs: &[Fp], width: usize) -> [Polynomial; SPLITS] {
@@ -220,7 +220,7 @@ fn multiply_by_linear(coeffs: &[Fp], root: Fp) -> Vec<Fp> {
 }
 
 // ---------------------------------------------------------------------------
-// Derivation polynomials (8192-round TachyonP5R8192) and the lift
+// Derivation polynomials (8192-round TachyonP5R8192) and the arc
 // ---------------------------------------------------------------------------
 
 /// Committed splits of the derivation poly's masked round quotient. The
@@ -451,7 +451,7 @@ fn accumulator_quotient_inner<const N: usize, const POLYS: usize>(
 }
 
 // ---------------------------------------------------------------------------
-// Derivation / lift production wrappers and the native nullifier query
+// Derivation / arc production wrappers and the native nullifier query
 // ---------------------------------------------------------------------------
 
 /// The masked-quintic round quotient, as [`EMITTER_ROUND_SPLITS`] adjacent
@@ -498,37 +498,37 @@ pub(crate) fn nullifier_query(
         })
 }
 
-/// Native masked weight polynomial (as [`LIFT_SPLITS`] capacity-wide splits)
-/// and its recurrence quotient for one derivation poly's lift, at the
+/// Native masked weight polynomial (as [`ARC_SPLITS`] capacity-wide splits)
+/// and its recurrence quotient for one derivation poly's arc, at the
 /// production query-coset order `S = NF_DOMAIN`.
 ///
-/// `ratio = rho_j·β` (the per-poly geometric base scaled by the lift challenge)
+/// `ratio = rho_j·β` (the per-poly geometric base scaled by the arc challenge)
 /// and `shift = c` (the secret query-coset shift). The weight `w_j`
 /// interpolates `[ratio^d]_{d<S}` over `c·⟨gamma⟩`, so `w_j(c·gamma^d) =
 /// (rho_j·β)^d`; the quotient witnesses the masked recurrence `w_j(gammaz) =
 /// ratio·w_j(z)`. The weight spans the order-`S` coset and so exceeds
-/// commitment capacity; it is returned as `LIFT_SPLITS` splits the circuit
+/// commitment capacity; it is returned as `ARC_SPLITS` splits the circuit
 /// recombines by Horner in `z^POLY_LEN_MAX`. The quotient has degree below
 /// `POLY_LEN_MAX`, so it is a single polynomial.
 #[must_use]
-pub(crate) fn weight_recurrence(ratio: Fp, shift: Fp) -> ([Polynomial; LIFT_SPLITS], Polynomial) {
+pub(crate) fn weight_recurrence(ratio: Fp, shift: Fp) -> ([Polynomial; ARC_SPLITS], Polynomial) {
     let (weight, quotient) = weight_quotient_inner::<NF_DOMAIN>(ratio, shift);
     (
-        split_coeffs::<LIFT_SPLITS>(&weight, POLY_LEN_MAX),
+        split_coeffs::<ARC_SPLITS>(&weight, POLY_LEN_MAX),
         Polynomial::from_coeffs(&quotient),
     )
 }
 
-/// Native running-sum accumulator (as [`LIFT_SPLITS`] capacity-wide splits)
-/// with its recurrence quotient for the lift, at the production query-coset
+/// Native running-sum accumulator (as [`ARC_SPLITS`] capacity-wide splits)
+/// with its recurrence quotient for the arc, at the production query-coset
 /// order `S = NF_DOMAIN`.
 ///
 /// `A(c·gamma^d) = sum_{k<d} β^k·nf_k` (exclusive prefix; `A(c) = 0`)
 /// accumulates the `β`-weighted nullifiers over the coset, so a range `[start,
 /// end)` reads as the endpoint difference `A(p_end) − A(p_start)`. `ratios` are
-/// the `rho_j`, `shift` is the secret `c`, `beta` the lift challenge. The
+/// the `rho_j`, `shift` is the secret `c`, `beta` the arc challenge. The
 /// accumulator spans the order-`S` coset and exceeds commitment capacity, so it
-/// is returned as `LIFT_SPLITS` splits; the boundary `A(c) = 0` is a direct
+/// is returned as `ARC_SPLITS` splits; the boundary `A(c) = 0` is a direct
 /// circuit open (no boundary quotient). Returns `(A splits, Q_recurrence)`.
 #[must_use]
 pub(crate) fn accumulator_recurrence(
@@ -536,11 +536,11 @@ pub(crate) fn accumulator_recurrence(
     ratios: &[Fp; NF_EMITTERS],
     shift: Fp,
     beta: Fp,
-) -> ([Polynomial; LIFT_SPLITS], Polynomial) {
+) -> ([Polynomial; ARC_SPLITS], Polynomial) {
     let (accumulator, recurrence, _boundary) =
         accumulator_quotient_inner::<NF_DOMAIN, NF_EMITTERS>(polys, ratios, shift, beta);
     (
-        split_coeffs::<LIFT_SPLITS>(&accumulator, POLY_LEN_MAX),
+        split_coeffs::<ARC_SPLITS>(&accumulator, POLY_LEN_MAX),
         Polynomial::from_coeffs(&recurrence),
     )
 }
@@ -679,7 +679,7 @@ fn offset_basis_ext(values: &[Fp]) -> Vec<Fp> {
 /// round-key schedule); `base = half · EK_PART_SIZE` is this half's
 /// cipher-input window origin. Builds the shared quintic-coset trace evaluation
 /// once and returns `(round splits, boundary, decimation)`, matching what
-/// [`ExpandedKeyStep`] opens: cipher input `base + row`, first key
+/// [`KeyExpansionStep`] opens: cipher input `base + row`, first key
 /// `mk.round_key(0)`, whitening `mk.round_key(TachyonP5R32::ROUNDS)`.
 pub(crate) fn expansion_quotients(
     trace_coeffs: &[Fp],
@@ -897,7 +897,7 @@ mod tests {
         assert_eq!(REDUCE_STRIDE, 4, "decimation stride");
 
         let mk = NoteMasterKey(array::from_fn(|index| Fp::from(index as u64 + 1)));
-        let (states, part_keys) = mk.derive_expanded_states(0);
+        let (states, part_keys) = mk.derive_schedule_part(0);
         let spectrum = states.spectrum();
         let key_poly = part_keys.key_poly();
         let (round, boundary, decimation) = expansion_quotients(
@@ -1218,7 +1218,7 @@ mod tests {
         );
 
         // Range read [start, end): exclusive-prefix endpoint difference
-        // A(p_end) − A(p_start). The first-lift case start = 0 reads its left
+        // A(p_end) − A(p_start). An origin-rooted arc start = 0 reads its left
         // endpoint at the coset origin (A(c) = 0), never the wrap.
         let range_read = |start: u64, end: u64| {
             acc.eval(shift * gamma.pow_vartime([end]))
@@ -1237,7 +1237,7 @@ mod tests {
         assert_eq!(
             range_read(0, 4),
             expected(0, 4),
-            "first-lift range [0, 4) reads the origin, not the wrap"
+            "origin-rooted arc [0, 4) reads the origin, not the wrap"
         );
     }
 }

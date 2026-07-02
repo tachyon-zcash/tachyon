@@ -35,10 +35,10 @@ use crate::{
     },
     relations::{
         enforce::{
-            enforce_accumulator_recurrence, enforce_lift_match, enforce_poly_concat,
+            enforce_accumulator_recurrence, enforce_arc_match, enforce_poly_concat,
             enforce_poly_splice, enforce_weight_recurrence,
         },
-        quotient::LIFT_SPLITS,
+        quotient::ARC_SPLITS,
         subgroup_generator,
     },
     stamp::proof::delegation::NullifierDerivation,
@@ -53,17 +53,17 @@ use crate::{
 /// epoch. Extending an *existing* spendable's anchor must instead go through
 /// [`Unspent`] so each step proves nf-exclusion.
 ///
-/// Structurally intra-epoch: the builders ([`AnchorSeed`] / [`EmptyBlockSeed`])
-/// invoke only [`Anchor::next_stamp`] / [`Anchor::next_empty`]. The
-/// [`Anchor::next_epoch`] boundary domain is never a chain link; it is folded
-/// at a crossing by [`UnspentEpochFuse`] and checked against a chain's `start`
-/// by [`super::spendable::SpendableInit`].
+/// Structurally intra-epoch: the builders ([`AnchorSeed`] /
+/// [`EmptyBlockAnchorSeed`]) invoke only [`Anchor::next_stamp`] /
+/// [`Anchor::next_empty`]. The [`Anchor::next_epoch`] boundary domain is never
+/// a chain link; it is folded at a crossing by [`UnspentEpochFuse`] and checked
+/// against a chain's `start` by [`super::spendable::SpendableInit`].
 ///
 /// The within-epoch property pairs with a consensus-side two-epoch
 /// tachygram scan that catches any tachygram already published earlier
 /// in the epoch a stamp is lifted across. See the Tachygrams book chapter.
 ///
-/// `start` at the seed steps ([`AnchorSeed`] / [`EmptyBlockSeed`]) has
+/// `start` at the seed steps ([`AnchorSeed`] / [`EmptyBlockAnchorSeed`]) has
 /// PCD lineage rooted in an unbound `start: Anchor` witness, so a
 /// standalone segment proves nothing about real coverage. Final binding
 /// closes through a consensus-published stamp's anchor membership:
@@ -75,9 +75,9 @@ pub struct AnchorChain;
 
 impl Header for AnchorChain {
     /// `(start, end)`. `start` roots in an unbound witness at [`AnchorSeed`] or
-    /// [`EmptyBlockSeed`] and flows to [`super::stamp::StampLift`] which must
-    /// ultimately be checked by consensus. `end` is always computed in-circuit
-    /// as `start.next_stamp(...)` or `start.next_empty()`.
+    /// [`EmptyBlockAnchorSeed`] and flows to [`super::stamp::StampLift`] which
+    /// must ultimately be checked by consensus. `end` is always computed
+    /// in-circuit as `start.next_stamp(...)` or `start.next_empty()`.
     type Data = (Anchor, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(5);
@@ -97,7 +97,7 @@ impl Header for AnchorChain {
 ///
 /// `nf_start` is the range's first tested nullifier (the leaf at
 /// `epoch_start`); the in-progress `nf_end` corresponds to `epoch_end` and is
-/// folded into `elapsed` when its epoch completes. [`VerifyUnspent`] binds both
+/// folded into `elapsed` when its epoch completes. [`UnspentBind`] binds both
 /// endpoints to the note's genuine derivation nullifiers.
 #[derive(Clone, Debug)]
 pub struct Unspent;
@@ -130,19 +130,19 @@ impl Header for Unspent {
 }
 
 /// An [`Unspent`] bound to a note's genuine derivation nullifiers by
-/// [`VerifyUnspent`], collapsed to boundary scalars.
+/// [`UnspentBind`], collapsed to boundary scalars.
 #[derive(Clone, Debug)]
 pub struct VerifiedUnspent;
 
 impl Header for VerifiedUnspent {
     /// `(cm, anchor_prev, (epoch_start, nf_start), (epoch_end, end_nf),
     /// anchor_last, creation_epoch)`. `creation_epoch` is the offset origin
-    /// `E_0` witnessed at [`VerifyUnspent`];
+    /// `E_0` witnessed at [`UnspentBind`];
     /// [`super::spendable::SpendableLift`] reconciles it against the spendable
-    /// lineage's anchor-bound `E_0` so the lift's offset arc cannot be shifted.
+    /// lineage's anchor-bound `E_0` so the offset arc cannot be shifted.
     /// `epoch_start` and `epoch_end` are the verified range's start and
     /// tip absolute epochs (bound to `nf_start` / `end_nf` by the
-    /// lift-match); the lift checks `epoch_start` against the lineage and
+    /// arc match); the lift checks `epoch_start` against the lineage and
     /// advances to `epoch_end`.
     type Data = (
         note::Commitment,
@@ -205,9 +205,9 @@ impl Step for AnchorSeed {
 /// Used alongside [`AnchorSeed`] when an anchor segment must traverse
 /// a mix of empty and non-empty blocks.
 #[derive(Debug)]
-pub struct EmptyBlockSeed;
+pub struct EmptyBlockAnchorSeed;
 
-impl Step for EmptyBlockSeed {
+impl Step for EmptyBlockAnchorSeed {
     type Aux<'source> = ();
     type Left = ();
     type Output = AnchorChain;
@@ -519,7 +519,7 @@ impl Step for UnspentEpochFuse {
     }
 }
 
-/// Bind an [`Unspent`]'s free-witness nullifiers via the homomorphic range lift
+/// Bind an [`Unspent`]'s free-witness nullifiers via the homomorphic arc match
 ///
 /// Reconstructs the sync-tested polynomial `q = elapsed ++ [nf_end]` over
 /// `[epoch_start, epoch_end + 1)`, then proves every tested value is the
@@ -528,20 +528,20 @@ impl Step for UnspentEpochFuse {
 /// ([`enforce_weight_recurrence`]), the exclusive-prefix accumulator `A(p_d) =
 /// Σ_{k<d} β^k·nf_k` ([`enforce_accumulator_recurrence`]), and the
 /// offset-indexed match `q(β)·β^{start − E_0} == A(p_{end − E_0}) − A(p_{start
-/// − E_0})` ([`enforce_lift_match`]). The offset origin `E_0` is witnessed here
+/// − E_0})` ([`enforce_arc_match`]). The offset origin `E_0` is witnessed here
 /// (the derivation is epoch-independent); it is unconstrained at this step and
 /// gains meaning only when `SpendableLift` reconciles the emitted `E_0` against
 /// the lineage's anchor-bound creation epoch. Emits a [`VerifiedUnspent`]
 /// carrying the boundary nullifiers, the `cm`, and that witnessed origin `E_0`.
 ///
-/// The lift challenge `β = Poseidon(derivation_digest, commit(q), start, end)`
+/// The arc challenge `β = Poseidon(derivation_digest, commit(q), start, end)`
 /// is derived after `q` is committed, so the prover builds `w_j`/`A` for this
 /// `β`; `derivation_digest` binds all `N` certified `commit(T_j)`, and the
 /// witnessed `T_j` are bound to those commitments here.
 #[derive(Debug)]
-pub struct VerifyUnspent;
+pub struct UnspentBind;
 
-impl Step for VerifyUnspent {
+impl Step for UnspentBind {
     type Aux<'source> = ();
     type Left = Unspent;
     type Output = VerifiedUnspent;
@@ -553,8 +553,8 @@ impl Step for VerifyUnspent {
         NfSeqPoly,
         NfSeqPoly,
         [NfEmitterPoly; NF_EMITTERS],
-        [[Polynomial; LIFT_SPLITS]; NF_EMITTERS],
-        [Polynomial; LIFT_SPLITS],
+        [[Polynomial; ARC_SPLITS]; NF_EMITTERS],
+        [Polynomial; ARC_SPLITS],
         [Polynomial; NF_EMITTERS],
         Polynomial,
         EpochIndex,
@@ -589,22 +589,22 @@ impl Step for VerifyUnspent {
         enforce_equal_point(
             Eq::from(elapsed_poly.commit()),
             Eq::from(unspent_elapsed),
-            "VerifyUnspent: elapsed polynomial does not match header",
+            "UnspentBind: elapsed polynomial does not match header",
         )?;
         let host_generators = Pasta::host_generators(Pasta::baked()).g();
         let g0 = host_generators.first().ok_or(ragu::Error::InvalidWitness(
-            "VerifyUnspent: missing host generator".into(),
+            "UnspentBind: missing host generator".into(),
         ))?;
         let present_commit = NfSeqCommit::from(g0 * Fp::from(unspent_nf_end));
         enforce_equal_point(
             Eq::from(tip_poly.commit()),
             Eq::from(present_commit),
-            "VerifyUnspent: tip polynomial does not match present nullifier",
+            "UnspentBind: tip polynomial does not match present nullifier",
         )?;
         let range_commit = range_poly.commit();
         let offset = usize::try_from(unspent_epoch_end.0 - unspent_epoch_start.0).map_err(
             |_too_many_epochs| {
-                ragu::Error::InvalidWitness("VerifyUnspent: crossing count exceeds usize".into())
+                ragu::Error::InvalidWitness("UnspentBind: crossing count exceeds usize".into())
             },
         )?;
         let range = Polynomial::from(range_poly);
@@ -617,7 +617,7 @@ impl Step for VerifyUnspent {
         )
         .map_err(|_relation_err| {
             ragu::Error::InvalidWitness(
-                "VerifyUnspent: range is not elapsed followed by the tip".into(),
+                "UnspentBind: range is not elapsed followed by the tip".into(),
             )
         })?;
 
@@ -626,7 +626,7 @@ impl Step for VerifyUnspent {
             enforce_equal_point(
                 trace.0.commit(),
                 commit.0,
-                "VerifyUnspent: derivation polynomial does not match the certified commitment",
+                "UnspentBind: derivation polynomial does not match the certified commitment",
             )?;
         }
 
@@ -636,14 +636,14 @@ impl Step for VerifyUnspent {
             .to_affine()
             .coordinates()
             .expect("range commitment is not identity");
-        let beta = poseidon::lift_challenge(digest.0, range_coords, unspent_epoch_start, end_epoch);
+        let beta = poseidon::arc_challenge(digest.0, range_coords, unspent_epoch_start, end_epoch);
         let coset_gen = subgroup_generator::<NF_DOMAIN>();
 
         // Per-poly geometric weight w_j(p_d) = (ρ_j·β)^d.
         for (weight, (ratio, quotient)) in
             weights.iter().zip(ratios.0.iter().zip(&weight_quotients))
         {
-            enforce_weight_recurrence::<NF_DOMAIN, LIFT_SPLITS>(
+            enforce_weight_recurrence::<NF_DOMAIN, ARC_SPLITS>(
                 ctx,
                 weight,
                 quotient,
@@ -653,7 +653,7 @@ impl Step for VerifyUnspent {
         }
 
         // Exclusive-prefix accumulator A(p_d) = Σ_{k<d} β^k·nf_k.
-        enforce_accumulator_recurrence::<NF_DOMAIN, LIFT_SPLITS, NF_EMITTERS>(
+        enforce_accumulator_recurrence::<NF_DOMAIN, ARC_SPLITS, NF_EMITTERS>(
             ctx,
             &accumulator,
             &accumulator_quotient,
@@ -665,7 +665,7 @@ impl Step for VerifyUnspent {
         // Offset-indexed range match against the witnessed origin E_0.
         let start_offset = u64::from(unspent_epoch_start.0 - creation_epoch.0);
         let end_offset = u64::from(end_epoch.0 - creation_epoch.0);
-        enforce_lift_match::<LIFT_SPLITS>(
+        enforce_arc_match::<ARC_SPLITS>(
             ctx,
             &accumulator,
             &range,
@@ -684,7 +684,7 @@ impl Step for VerifyUnspent {
         // mirroring the tip binding above (`nf_end`).
         enforce_zero(
             Fp::from(unspent_nf_start) - nf_start_val,
-            "VerifyUnspent: header nf_start does not match the verified range start",
+            "UnspentBind: header nf_start does not match the verified range start",
         )?;
         let nf_start = Nullifier::from(nf_start_val);
 

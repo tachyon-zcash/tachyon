@@ -170,7 +170,7 @@ impl Step for SpendableInit {
 /// lineage's anchor-bound `creation_epoch`, and that the segment's
 /// `start_epoch` matches the lineage's `present_epoch`, then advances to the
 /// tip `(nf_end, anchor_last)` at `present_epoch`. The `E_0` reconciliation is
-/// load-bearing: the derivation carries no origin, so `VerifyUnspent` and
+/// load-bearing: the derivation carries no origin, so `UnspentBind` and
 /// `SpendableInit` each witness their own `E_0` freely; this check is what ties
 /// the pool branch's origin to the anchor-bound one, forbidding a segment
 /// tested at a shifted offset arc. The `start_epoch == present_epoch` check is

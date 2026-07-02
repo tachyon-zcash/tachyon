@@ -2,11 +2,11 @@
 //! carries the note so the deferred `cm` binds at the derivation.
 //!
 //! [`MasterSeed`] derives one `mk` part at the note's master secrets, pinning
-//! `nk` through the payment-key check. [`ExpandedKeyStep`] proves one part of a
-//! note's keyset expansion -- the `EK_PART_SIZE` keyed-cipher outputs of that
+//! `nk` through the payment-key check. [`KeyExpansionStep`] proves one part of
+//! a note's keyset expansion -- the `EK_PART_SIZE` keyed-cipher outputs of that
 //! part -- in a single trace-based step, emitting a one-slot
-//! [`ExpandedKeyset`]; `EK_PARTS` invocations make the full interleaved
-//! schedule. [`ExpandedKeyFuse`] merges disjoint keysets slot-wise, in any
+//! [`EmitterKeyset`]; `EK_PARTS` invocations make the full interleaved
+//! schedule. [`EmitterKeysetFuse`] merges disjoint keysets slot-wise, in any
 //! tree shape, until one keyset covers every part. The single-input
 //! [`NullifierDerivationStep`] then certifies the note's derivation
 //! polynomials against the covered slots, reconstructing the schedule inline
@@ -138,7 +138,7 @@ impl Step for MasterSeed {
 /// The `EK_PART_SIZE` keyed-cipher outputs of this part, committed as
 /// the eval-form part-key polynomial `A_p` (`A_p(ζ^r) = E_mk(base + r)` over
 /// the order-`EK_PART_SIZE` subgroup `⟨ζ⟩`) into slot `part ∈ 0..EK_PARTS` of
-/// a one-slot [`ExpandedKeyset`]. `base = part · EK_PART_SIZE` selects the
+/// a one-slot [`EmitterKeyset`]. `base = part · EK_PART_SIZE` selects the
 /// cipher-input window; the `EK_PARTS` parts interleave (over the cosets of
 /// `⟨ζ⟩`) into the full schedule, reconstructed at
 /// [`NullifierDerivationStep`].
@@ -154,12 +154,12 @@ impl Step for MasterSeed {
 /// - `enforce_strided_column` binds `K` to `T`'s final column plus the
 ///   whitening key, so `commit(K)` is exactly the expansion outputs.
 #[derive(Debug)]
-pub struct ExpandedKeyStep;
+pub struct KeyExpansionStep;
 
-impl Step for ExpandedKeyStep {
+impl Step for KeyExpansionStep {
     type Aux<'source> = ();
     type Left = MasterKeyPart;
-    type Output = ExpandedKeyset;
+    type Output = EmitterKeyset;
     type Right = MasterKeyPart;
     /// `(expansion_trace, quotients, key_poly, decimation_quotient, part)`.
     type Witness<'source> = (
@@ -190,7 +190,7 @@ impl Step for ExpandedKeyStep {
         });
         enforce_zero(
             part_in_range,
-            "ExpandedKeyStep: part out of range 0..EK_PARTS",
+            "KeyExpansionStep: part out of range 0..EK_PARTS",
         )?;
         let base = part * Fp::from(EK_PART_SIZE as u64);
 
@@ -201,26 +201,26 @@ impl Step for ExpandedKeyStep {
         let (mk, note) = {
             let (left_mk_part, left_index, left_note) = left;
             let (right_mk_part, right_index, right_note) = right;
-            enforce_zero(left_index, "ExpandedKeyStep: left input is not mk part 0")?;
+            enforce_zero(left_index, "KeyExpansionStep: left input is not mk part 0")?;
             enforce_zero(
                 right_index - Fp::ONE,
-                "ExpandedKeyStep: right input is not mk part 1",
+                "KeyExpansionStep: right input is not mk part 1",
             )?;
             enforce_zero(
                 Fp::from(left_note.pk) - Fp::from(right_note.pk),
-                "ExpandedKeyStep: note pk mismatch across mk parts",
+                "KeyExpansionStep: note pk mismatch across mk parts",
             )?;
             enforce_zero(
                 Fp::from(left_note.value) - Fp::from(right_note.value),
-                "ExpandedKeyStep: note value mismatch across mk parts",
+                "KeyExpansionStep: note value mismatch across mk parts",
             )?;
             enforce_zero(
                 Fp::from(left_note.psi) - Fp::from(right_note.psi),
-                "ExpandedKeyStep: note psi mismatch across mk parts",
+                "KeyExpansionStep: note psi mismatch across mk parts",
             )?;
             enforce_zero(
                 Fp::from(left_note.rcm) - Fp::from(right_note.rcm),
-                "ExpandedKeyStep: note rcm mismatch across mk parts",
+                "KeyExpansionStep: note rcm mismatch across mk parts",
             )?;
             (
                 NoteMasterKey::from_parts(&[left_mk_part, right_mk_part]),
@@ -322,19 +322,19 @@ impl Step for ExpandedKeyStep {
 ///
 /// `slots[p]` holds `commit(A_p)`, the [`PartKeyCommit`] to part `p`'s
 /// eval-form part-key polynomial (that window's `EK_PART_SIZE` keyed-cipher
-/// expansion outputs, proven by [`ExpandedKeyStep`]), or the identity point
+/// expansion outputs, proven by [`KeyExpansionStep`]), or the identity point
 /// while part `p` is uncovered; `coverage[p]` is the matching boolean flag.
-/// [`ExpandedKeyStep`] emits a one-slot keyset and [`ExpandedKeyFuse`] merges
-/// disjoint keysets, so any fuse order covers the schedule; slot position pins
-/// each part's schedule index without a fold or per-part ordering. `mk`
-/// carries the master key for the downstream query parameters and `note` the
-/// per-note fields for the deferred `cm`; both are reconciled across every
-/// merge. The header is private to the wallet's own proof tree and is never
-/// published.
+/// [`KeyExpansionStep`] emits a one-slot keyset and [`EmitterKeysetFuse`]
+/// merges disjoint keysets, so any fuse order covers the schedule; slot
+/// position pins each part's schedule index without a fold or per-part
+/// ordering. `mk` carries the master key for the downstream query parameters
+/// and `note` the per-note fields for the deferred `cm`; both are reconciled
+/// across every merge. The header is private to the wallet's own proof tree and
+/// is never published.
 #[derive(Clone, Debug)]
-pub struct ExpandedKeyset;
+pub struct EmitterKeyset;
 
-impl Header for ExpandedKeyset {
+impl Header for EmitterKeyset {
     /// `(slots, coverage, mk, note)`.
     type Data = (
         [PartKeyCommit; EK_PARTS],
@@ -368,7 +368,7 @@ impl Header for ExpandedKeyset {
     }
 }
 
-/// Merge two disjoint [`ExpandedKeyset`]s slot-wise.
+/// Merge two disjoint [`EmitterKeyset`]s slot-wise.
 ///
 /// Reconciles the two keysets' `mk` and note (so every covered part belongs to
 /// one note), enforces disjoint coverage (no part certified twice), and emits
@@ -379,13 +379,13 @@ impl Header for ExpandedKeyset {
 /// Completeness is enforced downstream: [`NullifierDerivationStep`] requires
 /// full coverage and matches every witnessed part against its slot.
 #[derive(Debug)]
-pub struct ExpandedKeyFuse;
+pub struct EmitterKeysetFuse;
 
-impl Step for ExpandedKeyFuse {
+impl Step for EmitterKeysetFuse {
     type Aux<'source> = ();
-    type Left = ExpandedKeyset;
-    type Output = ExpandedKeyset;
-    type Right = ExpandedKeyset;
+    type Left = EmitterKeyset;
+    type Output = EmitterKeyset;
+    type Right = EmitterKeyset;
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(18);
@@ -403,24 +403,24 @@ impl Step for ExpandedKeyFuse {
         for (left_key, right_key) in left_mk.0.iter().zip(right_mk.0.iter()) {
             enforce_zero(
                 *left_key - *right_key,
-                "ExpandedKeyFuse: master key mismatch across parts",
+                "EmitterKeysetFuse: master key mismatch across parts",
             )?;
         }
         enforce_zero(
             Fp::from(left_note.pk) - Fp::from(right_note.pk),
-            "ExpandedKeyFuse: note pk mismatch across parts",
+            "EmitterKeysetFuse: note pk mismatch across parts",
         )?;
         enforce_zero(
             Fp::from(left_note.value) - Fp::from(right_note.value),
-            "ExpandedKeyFuse: note value mismatch across parts",
+            "EmitterKeysetFuse: note value mismatch across parts",
         )?;
         enforce_zero(
             Fp::from(left_note.psi) - Fp::from(right_note.psi),
-            "ExpandedKeyFuse: note psi mismatch across parts",
+            "EmitterKeysetFuse: note psi mismatch across parts",
         )?;
         enforce_zero(
             Fp::from(left_note.rcm) - Fp::from(right_note.rcm),
-            "ExpandedKeyFuse: note rcm mismatch across parts",
+            "EmitterKeysetFuse: note rcm mismatch across parts",
         )?;
 
         // Disjoint coverage: flags are boolean by construction upstream, so a
@@ -428,7 +428,7 @@ impl Step for ExpandedKeyFuse {
         for slot in 0..EK_PARTS {
             enforce_zero(
                 left_coverage[slot] * right_coverage[slot],
-                "ExpandedKeyFuse: overlapping part coverage",
+                "EmitterKeysetFuse: overlapping part coverage",
             )?;
         }
 
@@ -444,16 +444,16 @@ impl Step for ExpandedKeyFuse {
 /// [ρ_j])`. Wallet-only.
 ///
 /// Holds the `N` derivation-poly commitments (for opening), a transcript
-/// challenge over them (so the lift's challenge absorbs one element, not `N`),
+/// challenge over them (so the arc challenge absorbs one element, not `N`),
 /// the note commitment, and the secret shift `c` and ratios `ρ_j` forwarded
-/// from the keyset for the query and lift. Secret material rides this
+/// from the keyset for the query and arc match. Secret material rides this
 /// wallet-only header without leaking; the public consumer emits only the
 /// resulting `nf`.
 ///
 /// The offset origin `E_0` is deliberately absent: the derivation is
 /// epoch-independent (a function of the note alone), so it does not fix an
 /// epoch. Each consumer that needs the origin witnesses it locally --
-/// `SpendableInit` binds it to the creation anchor, `VerifyUnspent` indexes the
+/// `SpendableInit` binds it to the creation anchor, `UnspentBind` indexes the
 /// arc with it -- and `SpendableLift` reconciles the two branches' origins.
 #[derive(Clone, Debug)]
 pub struct NullifierDerivation;
@@ -488,7 +488,7 @@ impl Header for NullifierDerivation {
 
 /// Certify the note's `N` derivation polynomials in one single-input step.
 ///
-/// Consumes the fused [`ExpandedKeyset`] and witnesses the note's
+/// Consumes the fused [`EmitterKeyset`] and witnesses the note's
 /// `EK_PARTS` part-key polynomials `A_p`, the `N` polynomials `T_j`, and their
 /// round- and boundary-quotients. It requires full coverage (every slot
 /// certified) and matches each witnessed `A_p.commit()` against its slot, so
@@ -506,17 +506,17 @@ impl Header for NullifierDerivation {
 /// the schedule reconstructed inline from the `A_p` (the interleaved-coset
 /// offset key term) and the committed `C`. Then it binds the commitments into
 /// one transcript challenge and emits the derivation, forwarding `c`/`ρ_j` for
-/// the downstream query and lift.
+/// the downstream query and arc match.
 ///
 /// The derivation is epoch-independent: no `E_0` enters here. The offset origin
 /// is witnessed by each downstream consumer that needs it (`SpendableInit`,
-/// `VerifyUnspent`) and reconciled at `SpendableLift`.
+/// `UnspentBind`) and reconciled at `SpendableLift`.
 #[derive(Debug)]
 pub struct NullifierDerivationStep;
 
 impl Step for NullifierDerivationStep {
     type Aux<'source> = ();
-    type Left = ExpandedKeyset;
+    type Left = EmitterKeyset;
     type Output = NullifierDerivation;
     type Right = ();
     /// `(parts, polys, quotients)`.
@@ -561,7 +561,7 @@ impl Step for NullifierDerivationStep {
 
         // Query parameters derived from the fused `mk`. `salts` fix the
         // per-poly boundaries; `shift`/`ratios` are forwarded for the downstream
-        // query and lift.
+        // query and arc match.
         let salts = mk.query_salts();
         let (ratios, shift) = mk.query_weights();
 
@@ -603,7 +603,7 @@ impl Step for NullifierDerivationStep {
             array::from_fn(|poly_index| NfEmitterCommit(polys[poly_index].0.commit()));
 
         // Bind all `N` commitments into one transcript challenge, so the
-        // downstream lift challenge `β` absorbs a single element rather than the
+        // downstream arc challenge `β` absorbs a single element rather than the
         // whole set. The native prover reads this scalar off the header.
         let digest = NfEmittersDigest(ctx.derive_challenge(&commits.map(|commit| commit.0))?);
 

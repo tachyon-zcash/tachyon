@@ -50,7 +50,7 @@ These are all Tachyon-specific digests, performed in-circuit.
 | Nullifier master key part | `Tachyon-NfMaster` |
 | Nullifier query salts | `Tachyon-NfSalt__` |
 | Nullifier query weights | `Tachyon-NfWeight` |
-| Nullifier lift challenge | `Tachyon-NfLiftCh` |
+| Nullifier arc challenge | `Tachyon-NfArcCh_` |
 | Note commitment | `Tachyon-CmDerive` |
 | Action digest | `Tachyon-ActionDg` |
 | Payment key derivation | `Tachyon-PkDerive` |

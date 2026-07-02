@@ -113,12 +113,12 @@ impl NoteMasterKey {
 
     /// The note's full interleaved `EK_FULL_SIZE`-key schedule. Position
     /// `p + EK_PARTS·r` holds part `p`'s key `E_mk(p·EK_PART_SIZE + r)`,
-    /// matching [`from_parts`](ExpandedKey::from_parts) and the in-circuit
-    /// offset recurrence. The wallet's emitter cipher cycles this same
-    /// interleaved schedule.
+    /// matching [`EmitterKeySchedule::from_interleaved_parts`] and the
+    /// in-circuit offset recurrence. The wallet's emitter cipher cycles this
+    /// same interleaved schedule.
     #[must_use]
-    pub fn derive_expanded(&self) -> ExpandedKey {
-        ExpandedKey(array::from_fn(|index| {
+    pub fn derive_emitter_schedule(&self) -> EmitterKeySchedule {
+        EmitterKeySchedule(array::from_fn(|index| {
             #[expect(
                 clippy::as_conversions,
                 clippy::integer_division,
@@ -126,14 +126,14 @@ impl NoteMasterKey {
                 reason = "constant expansion size; index < EK_FULL_SIZE"
             )]
             let cipher_index = ((index % EK_PARTS) * EK_PART_SIZE + index / EK_PARTS) as u64;
-            mimc::mk_dk_expand(Fp::ZERO, &self.0, Fp::from(cipher_index))
+            mimc::schedule_key(Fp::ZERO, &self.0, Fp::from(cipher_index))
         }))
     }
 
     /// One expansion part's raw internal cipher states and its `EK_PART_SIZE`
     /// keys.
     #[must_use]
-    pub fn derive_expanded_states(&self, part: usize) -> (PartKeyStates, PartKey) {
+    pub fn derive_schedule_part(&self, part: usize) -> (PartKeyStates, PartKey) {
         let mut cells: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE * TachyonP5R32::ROUNDS);
         let mut keys: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE);
 
@@ -141,7 +141,7 @@ impl NoteMasterKey {
         let base = Fp::from((part * EK_PART_SIZE) as u64);
         #[expect(clippy::as_conversions, reason = "constant size")]
         for (states, key) in (0..(EK_PART_SIZE as u64))
-            .map(|row| mimc::mk_dk_expand_sequence(base, &self.0, Fp::from(row)))
+            .map(|row| mimc::schedule_key_trace(base, &self.0, Fp::from(row)))
         {
             cells.extend_from_slice(&states);
             keys.push(key);
@@ -173,9 +173,9 @@ impl NoteMasterKey {
 /// and delegation operates on value windows only (no key-material delegation
 /// API).
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub struct ExpandedKey(pub [Fp; EK_FULL_SIZE]);
+pub struct EmitterKeySchedule(pub [Fp; EK_FULL_SIZE]);
 
-impl ExpandedKey {
+impl EmitterKeySchedule {
     /// Get the round key at the given index.
     #[must_use]
     pub const fn round_key(&self, index: usize) -> Fp {
@@ -186,9 +186,10 @@ impl ExpandedKey {
     /// Assemble the full interleaved schedule from the `EK_PARTS` expansion
     /// parts: position `p + EK_PARTS·r` takes `parts[p].0[r]`. This is the
     /// ordering the in-circuit offset recurrence reconstructs
-    /// (`K(ζ^{p+EK_PARTS·r}) = A_p[r]`).
+    /// (`K(ζ^{p+EK_PARTS·r}) = A_p[r]`). Named for the interleave to keep it
+    /// apart from [`NoteMasterKey::from_parts`], which concatenates.
     #[must_use]
-    pub fn from_parts(parts: &[PartKey; EK_PARTS]) -> Self {
+    pub fn from_interleaved_parts(parts: &[PartKey; EK_PARTS]) -> Self {
         Self(array::from_fn(|index| {
             #[expect(
                 clippy::indexing_slicing,
@@ -249,32 +250,33 @@ impl ExpandedKey {
     }
 }
 
-impl From<[Fp; EK_FULL_SIZE]> for ExpandedKey {
+impl From<[Fp; EK_FULL_SIZE]> for EmitterKeySchedule {
     fn from(keys: [Fp; EK_FULL_SIZE]) -> Self {
         Self(keys)
     }
 }
 
-impl From<ExpandedKey> for [Fp; EK_FULL_SIZE] {
-    fn from(keyset: ExpandedKey) -> Self {
+impl From<EmitterKeySchedule> for [Fp; EK_FULL_SIZE] {
+    fn from(keyset: EmitterKeySchedule) -> Self {
         keyset.0
     }
 }
 
-impl fmt::Debug for ExpandedKey {
+impl fmt::Debug for EmitterKeySchedule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ExpandedKey").finish_non_exhaustive()
+        f.debug_struct("EmitterKeySchedule").finish_non_exhaustive()
     }
 }
 
 /// One expansion part's `EK_PART_SIZE` keyed-cipher outputs.
 ///
 /// Part `p` occupies schedule positions `≡ p (mod EK_PARTS)`;
-/// [`ExpandedKey::from_parts`] interleaves the `EK_PARTS` parts into the full
-/// schedule. Each is certified by one
-/// [`ExpandedKeyStep`](crate::stamp::proof::delegation::ExpandedKeyStep) step.
+/// [`EmitterKeySchedule::from_interleaved_parts`] interleaves the `EK_PARTS`
+/// parts into the full schedule. Each is certified by one
+/// [`KeyExpansionStep`](crate::stamp::proof::delegation::KeyExpansionStep)
+/// step.
 ///
-/// Wallet-only secret material, like [`ExpandedKey`].
+/// Wallet-only secret material, like [`EmitterKeySchedule`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PartKey(#[debug(skip)] pub [Fp; EK_PART_SIZE]);
 
@@ -411,8 +413,8 @@ mod tests {
         let nk = NullifierKey(Fp::random(&mut *rng));
         let psi = note::NullifierTrapdoor::random(rng);
         assert_eq!(
-            master_key(&nk, &psi).derive_expanded(),
-            master_key(&nk, &psi).derive_expanded(),
+            master_key(&nk, &psi).derive_emitter_schedule(),
+            master_key(&nk, &psi).derive_emitter_schedule(),
         );
     }
 
@@ -423,8 +425,8 @@ mod tests {
         let psi1 = note::NullifierTrapdoor::random(rng);
         let psi2 = note::NullifierTrapdoor::random(rng);
         assert_ne!(
-            master_key(&nk, &psi1).derive_expanded(),
-            master_key(&nk, &psi2).derive_expanded(),
+            master_key(&nk, &psi1).derive_emitter_schedule(),
+            master_key(&nk, &psi2).derive_emitter_schedule(),
         );
     }
 
@@ -435,7 +437,7 @@ mod tests {
         let rng = &mut StdRng::seed_from_u64(3);
         let nk = NullifierKey(Fp::random(&mut *rng));
         let psi = note::NullifierTrapdoor::random(rng);
-        let keys = master_key(&nk, &psi).derive_expanded();
+        let keys = master_key(&nk, &psi).derive_emitter_schedule();
 
         assert_ne!(
             keys.round_key(0),
@@ -450,9 +452,9 @@ mod tests {
     }
 
     #[test]
-    fn derive_expanded_matches_interleaved_parts() {
-        // The keys-only keyset path (derive_expanded) and the proof path
-        // (EK_PARTS part keys from derive_expanded_states, assembled by
+    fn derive_emitter_schedule_matches_interleaved_parts() {
+        // The keys-only keyset path (derive_emitter_schedule) and the proof path
+        // (EK_PARTS part keys from derive_schedule_part, assembled by
         // from_parts) must produce the identical interleaved schedule, or the
         // certified nullifier would diverge from the wallet's native one.
         let rng = &mut StdRng::seed_from_u64(4);
@@ -460,13 +462,13 @@ mod tests {
         let psi = note::NullifierTrapdoor::random(rng);
         let mk = master_key(&nk, &psi);
 
-        let full = mk.derive_expanded();
-        let parts: [PartKey; EK_PARTS] = array::from_fn(|part| mk.derive_expanded_states(part).1);
+        let full = mk.derive_emitter_schedule();
+        let parts: [PartKey; EK_PARTS] = array::from_fn(|part| mk.derive_schedule_part(part).1);
 
         assert_eq!(
             full,
-            ExpandedKey::from_parts(&parts),
-            "derive_expanded equals the interleaved expansion parts"
+            EmitterKeySchedule::from_interleaved_parts(&parts),
+            "derive_emitter_schedule equals the interleaved expansion parts"
         );
         // Domain separation: the parts run disjoint cipher-input windows.
         for part in 1..EK_PARTS {

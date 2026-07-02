@@ -33,7 +33,7 @@ use crate::{
     bundle::{self, Bundle},
     constants::{EK_PARTS, EPOCH_SIZE, NF_DOMAIN, NF_EMITTERS},
     entropy::{ActionEntropy, ActionRandomizer},
-    keys::{ExpandedKey, NoteMasterKey, PartKey, PaymentKey, ProofAuthorizingKey, private},
+    keys::{EmitterKeySchedule, NoteMasterKey, PartKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
         ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, PartKeyPoly, Tachygram,
@@ -41,7 +41,7 @@ use crate::{
     },
     relations::{
         quotient::{
-            LIFT_SPLITS, RoundBoundaryQuotients, nf_emitter_boundary_quotient,
+            ARC_SPLITS, RoundBoundaryQuotients, nf_emitter_boundary_quotient,
             nf_emitter_round_quotient, nullifier_query,
         },
         subgroup_generator,
@@ -465,8 +465,8 @@ impl PoolSim {
 /// cm-stamp); `None` absorbs every block in full.
 ///
 /// Per non-empty block: one [`AnchorSeed`] per absorbed stamp, fused via
-/// [`AnchorFuse`]. Per empty block: one [`EmptyBlockSeed`]. All segments fused
-/// linearly.
+/// [`AnchorFuse`]. Per empty block: one [`EmptyBlockAnchorSeed`]. All segments
+/// fused linearly.
 fn build_anchor_chain_inner(
     rng: &mut (impl RngCore + CryptoRng),
     pool: &PoolSim,
@@ -486,8 +486,8 @@ fn build_anchor_chain_inner(
         if commits.is_empty() {
             let next_state = state.next_empty();
             let (seed, ()) = PROOF_SYSTEM
-                .seed(rng, pool::EmptyBlockSeed, (state,))
-                .expect("EmptyBlockSeed");
+                .seed(rng, pool::EmptyBlockAnchorSeed, (state,))
+                .expect("EmptyBlockAnchorSeed");
             chain = Some(match chain.take() {
                 None => seed,
                 Some(left) => {
@@ -768,14 +768,14 @@ pub(crate) fn build_unspent_pcd_between_anchors(
 /// the prover.
 ///
 /// The keyset is the cheap keys-only expansion
-/// ([`NoteMasterKey::derive_expanded`], no per-round state trace and no FFT),
-/// so keyset-only callers like [`WalletSim::query_nf`] never pay for the
+/// ([`NoteMasterKey::derive_emitter_schedule`], no per-round state trace and no
+/// FFT), so keyset-only callers like [`WalletSim::query_nf`] never pay for the
 /// cipher-state traces. The certify PCD (itself memoized) recovers the per-part
-/// raw states and keys on demand via [`NoteMasterKey::derive_expanded_states`],
+/// raw states and keys on demand via [`NoteMasterKey::derive_schedule_part`],
 /// interpolating each [`PartKeyStates::spectrum`] only for the parts it proves.
 struct CachedDerivation {
     mk: NoteMasterKey,
-    keyset: ExpandedKey,
+    keyset: EmitterKeySchedule,
     polys: [NfEmitterPoly; NF_EMITTERS],
 }
 
@@ -918,7 +918,7 @@ impl WalletSim {
             let mk = self.master_key(note);
             // The keys-only keyset (no state trace, no FFT); the emitter polys
             // hang off it. The certify PCD recovers per-part states on demand.
-            let keyset = mk.derive_expanded();
+            let keyset = mk.derive_emitter_schedule();
             let polys = keyset.derivation_polys(&mk.query_salts());
             Arc::new(CachedDerivation { mk, keyset, polys })
         }));
@@ -958,16 +958,16 @@ impl WalletSim {
 
     /// The note's certified derivation PCD, built once per `cm` and memoized.
     /// Seeds the `MK_PARTS` master key parts, certifies each of the `EK_PARTS`
-    /// expansion windows ([`ExpandedKeyStep`](delegation::ExpandedKeyStep))
+    /// expansion windows ([`KeyExpansionStep`](delegation::KeyExpansionStep))
     /// against them as one-slot keysets, fuses them into one fully covered
-    /// [`ExpandedKeyset`](delegation::ExpandedKeyset) (`ExpandedKeyFuse`), and
+    /// [`EmitterKeyset`](delegation::EmitterKeyset) (`EmitterKeysetFuse`), and
     /// certifies the `N` derivation polynomials in one
     /// [`NullifierDerivationStep`](delegation::NullifierDerivationStep).
     ///
     /// The derivation carries no offset origin, so the resulting PCD is a
     /// function of the note alone: one build serves every spend epoch. The
     /// origin enters only at the consuming steps (`SpendableInit`,
-    /// `VerifyUnspent`), which witness it and have it reconciled at
+    /// `UnspentBind`), which witness it and have it reconciled at
     /// `SpendableLift`.
     fn cached_derivation_pcd(
         &self,
@@ -988,21 +988,21 @@ impl WalletSim {
                 let mk_part1 = self.master_key_part(rng, note, 1);
 
                 // Each of the EK_PARTS expansion windows is certified by one
-                // ExpandedKeyStep fusing the two mk parts. Recover each part's raw
+                // KeyExpansionStep fusing the two mk parts. Recover each part's raw
                 // states and keys on demand (one part at a time, so the POLY_LEN_MAX
                 // state grid never all sits on the stack), spectrum it for the
                 // witness, and stash the keys for the derivation step below.
-                let mut part_pcds: Vec<Pcd<delegation::ExpandedKeyset>> =
+                let mut part_pcds: Vec<Pcd<delegation::EmitterKeyset>> =
                     Vec::with_capacity(EK_PARTS);
                 let mut part_keys: Vec<PartKey> = Vec::with_capacity(EK_PARTS);
                 for part in 0..EK_PARTS {
-                    let (states, keys) = derivation.mk.derive_expanded_states(part);
+                    let (states, keys) = derivation.mk.derive_schedule_part(part);
                     let spectrum = states.spectrum();
                     let (pcd, ()) = PROOF_SYSTEM
                         .fuse(
                             rng,
-                            delegation::ExpandedKeyStep,
-                            witness::nf_master_expand(
+                            delegation::KeyExpansionStep,
+                            witness::key_expansion(
                                 (*mk_part0.data(), *mk_part1.data()),
                                 &derivation.mk,
                                 &spectrum,
@@ -1012,19 +1012,19 @@ impl WalletSim {
                             mk_part0.clone(),
                             mk_part1.clone(),
                         )
-                        .expect("ExpandedKeyStep");
+                        .expect("KeyExpansionStep");
                     part_pcds.push(pcd);
                     part_keys.push(keys);
                 }
 
                 // Fuse the one-slot keysets into one fully covered
-                // ExpandedKeyset; any fuse order works, so chain left to right.
+                // EmitterKeyset; any fuse order works, so chain left to right.
                 let mut parts = part_pcds.into_iter();
                 let mut keyset_pcd = parts.next().expect("EK_PARTS >= 1");
                 for part_pcd in parts {
                     let (next, ()) = PROOF_SYSTEM
-                        .fuse(rng, delegation::ExpandedKeyFuse, (), keyset_pcd, part_pcd)
-                        .expect("ExpandedKeyFuse");
+                        .fuse(rng, delegation::EmitterKeysetFuse, (), keyset_pcd, part_pcd)
+                        .expect("EmitterKeysetFuse");
                     keyset_pcd = next;
                 }
 
@@ -1084,7 +1084,7 @@ impl WalletSim {
     ) -> (
         Pcd<delegation::NullifierDerivation>,
         [NfEmitterPoly; NF_EMITTERS],
-        ExpandedKey,
+        EmitterKeySchedule,
     ) {
         let derivation = self.cached_derivation(note);
         let pcd = self.cached_derivation_pcd(rng, *note);
@@ -1137,16 +1137,16 @@ impl WalletSim {
     }
 
     /// Bind a sync [`Unspent`](pool::Unspent) to the note's genuine derivation
-    /// nullifiers via the homomorphic lift. The tested values are the query
-    /// nullifiers `query_nf` at offsets `[start − E_0, present − E_0]`; the
-    /// lift witnesses (per-poly weights `w_j`, accumulator `A`, quotients)
-    /// are built for the challenge `β` over the certified digest and the
-    /// tested poly `q`. Build the honest
-    /// [`VerifyUnspent`](pool::VerifyUnspent) witness and the derivation
+    /// nullifiers via the homomorphic arc match. The tested values are the
+    /// query nullifiers `query_nf` at offsets `[start − E_0, present −
+    /// E_0]`; the arc witnesses (per-poly weights `w_j`, accumulator `A`,
+    /// quotients) are built for the challenge `β` over the certified digest
+    /// and the tested poly `q`. Build the honest
+    /// [`UnspentBind`](pool::UnspentBind) witness and the derivation
     /// PCD for the tested range `[start, present]`. Split out so the
     /// negative tests can fuse the honest witness against a tampered
     /// [`Unspent`](pool::Unspent), or tamper one witness field.
-    pub fn verify_unspent_witness(
+    pub fn unspent_bind_witness(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         unspent: &Pcd<pool::Unspent>,
@@ -1160,8 +1160,8 @@ impl WalletSim {
             NfSeqPoly,
             NfSeqPoly,
             [NfEmitterPoly; NF_EMITTERS],
-            [[Polynomial; LIFT_SPLITS]; NF_EMITTERS],
-            [Polynomial; LIFT_SPLITS],
+            [[Polynomial; ARC_SPLITS]; NF_EMITTERS],
+            [Polynomial; ARC_SPLITS],
             [Polynomial; NF_EMITTERS],
             Polynomial,
             EpochIndex,
@@ -1179,7 +1179,7 @@ impl WalletSim {
             .collect();
 
         (
-            witness::verify_unspent(
+            witness::unspent_bind(
                 (*unspent.data(), *derivation.data()),
                 &polys,
                 &mk,
@@ -1192,7 +1192,7 @@ impl WalletSim {
         )
     }
 
-    pub fn verify_unspent(
+    pub fn unspent_bind(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         unspent: Pcd<pool::Unspent>,
@@ -1201,7 +1201,7 @@ impl WalletSim {
         start_epoch: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<pool::VerifiedUnspent> {
-        let (witness, derivation) = self.verify_unspent_witness(
+        let (witness, derivation) = self.unspent_bind_witness(
             rng,
             &unspent,
             note,
@@ -1210,8 +1210,8 @@ impl WalletSim {
             present_epoch,
         );
         let (verified, ()) = PROOF_SYSTEM
-            .fuse(rng, pool::VerifyUnspent, witness, unspent, derivation)
-            .expect("VerifyUnspent");
+            .fuse(rng, pool::UnspentBind, witness, unspent, derivation)
+            .expect("UnspentBind");
         verified
     }
 
@@ -1227,7 +1227,7 @@ impl WalletSim {
         // The lift's offset origin E_0 is the lineage's consensus-bound creation
         // epoch, carried on the spendable header; SpendableLift reconciles it.
         let creation_epoch = spendable.data().3;
-        let verified = self.verify_unspent(
+        let verified = self.unspent_bind(
             rng,
             unspent,
             note,

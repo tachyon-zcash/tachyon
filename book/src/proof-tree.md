@@ -15,9 +15,9 @@ Multiple parties execute the proof tree.
 
 A wallet certifies its note's nullifier derivation once; every later consumer re-evaluates queries against the certified commitments[^nullifiers].
 `MasterSeed` witnesses the note, the proof-authorizing key `pak`, and a part index; it checks `note.pk == pak.derive_payment_key()` (which pins `nk`), derives that part of the master key `mk`, and emits a `MasterKeyPart` carrying the part's round keys, the part index, and the whole note (so the deferred `cm` can bind downstream). Two seeds cover the two `mk` parts.
-`ExpandedKeyStep` fuses the two `MasterKeyPart`s, concatenates them into the full `mk`, and proves one window of the key expansion as a committed cipher trace: the window's expansion outputs are committed as an eval-form part-key polynomial into that window's slot of a one-slot `ExpandedKeyset`. Four invocations produce the four parts that interleave into the full schedule.
-`ExpandedKeyFuse` merges disjoint keysets slot-wise, in any tree shape, while `mk` and the note are reconciled across every merge; each covered slot carries its part commitment at its schedule position.
-`NullifierDerivationStep` consumes the single fully covered `ExpandedKeyset`, matches each witnessed part polynomial's commitment against its slot (binding the whole ordered set of part commitments), computes the deferred `cm` from the fused note, and certifies the note's derivation polynomials against the schedule.
+`KeyExpansionStep` fuses the two `MasterKeyPart`s, concatenates them into the full `mk`, and proves one window of the key expansion as a committed cipher trace: the window's expansion outputs are committed as an eval-form part-key polynomial into that window's slot of a one-slot `EmitterKeyset`. Four invocations produce the four parts that interleave into the full schedule.
+`EmitterKeysetFuse` merges disjoint keysets slot-wise, in any tree shape, while `mk` and the note are reconciled across every merge; each covered slot carries its part commitment at its schedule position.
+`NullifierDerivationStep` consumes the single fully covered `EmitterKeyset`, matches each witnessed part polynomial's commitment against its slot (binding the whole ordered set of part commitments), computes the deferred `cm` from the fused note, and certifies the note's derivation polynomials against the schedule.
 The result is a `NullifierDerivation` header carrying the derivation-polynomial commitments, a transcript digest over them, `cm`, and the query parameters, proving every future nullifier query reads the genuine derivation of the note identified by `cm`.
 The derivation carries no offset origin: it is epoch-independent, a function of the note alone. Each consumer that needs the origin witnesses it locally.
 
@@ -38,7 +38,7 @@ The sync service produces `Unspent` segments without ever holding the note, its 
 `UnspentEpochFuse` crosses an epoch boundary: it advances the anchor across the boundary and splices the left half's completing tip into `elapsed`, so the crossing count grows by exactly one while `nf_end` becomes the right half's tip.
 An `Unspent` records its span as two absolute epoch endpoints, `epoch_start` and `epoch_end`; the crossing count is their difference.
 
-`VerifyUnspent` binds a sync-built `Unspent` to genuine derivation. It is wallet-side: it consumes the `Unspent` and the note's certified `NullifierDerivation`, reconstructs the tested-value polynomial (the `elapsed` crossings followed by the tip nullifier), and proves every tested value is the note's genuine query with a homomorphic running-sum argument over the certified derivation polynomials, indexed by epoch offsets from a witnessed offset origin.
+`UnspentBind` binds a sync-built `Unspent` to genuine derivation. It is wallet-side: it consumes the `Unspent` and the note's certified `NullifierDerivation`, reconstructs the tested-value polynomial (the `elapsed` crossings followed by the tip nullifier), and proves every tested value is the note's genuine query with a homomorphic running-sum argument over the certified derivation polynomials, indexed by epoch offsets from a witnessed offset origin.
 The origin is unconstrained here (the derivation carries none); it gains meaning only at `SpendableLift`, which reconciles it against the lineage's anchor-bound creation epoch.
 It emits a `VerifiedUnspent` carrying the span's boundary nullifiers and anchors, the boundary epochs, the note's `cm`, and that witnessed origin.
 
@@ -80,28 +80,28 @@ The aggregated stamp has the same shape as any other, so it is itself eligible f
 ## Roles
 
 The wallet runs every step that touches the note's commitment or master key.
-It seeds and certifies the private derivation (`MasterSeed`, `ExpandedKeyStep`, `ExpandedKeyFuse`, `NullifierDerivationStep`), derives spendable status from its own creation-epoch query (`SpendableInit`), binds and lifts over sync-built segments (`VerifyUnspent`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `OutputStamp`, `SpendStamp`).
+It seeds and certifies the private derivation (`MasterSeed`, `KeyExpansionStep`, `EmitterKeysetFuse`, `NullifierDerivationStep`), derives spendable status from its own creation-epoch query (`SpendableInit`), binds and lifts over sync-built segments (`UnspentBind`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `OutputStamp`, `SpendStamp`).
 
 The sync service holds the per-epoch nullifier values the wallet shared and pool history.
 It produces the `Unspent` segments that carry the spendable forward (`UnspentSeed`, `EmptyBlockUnspentSeed`, `UnspentFuse`, `UnspentEpochFuse`) and hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
 
 The aggregator works only with published `StampHeader`s.
-It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `EmptyBlockSeed`, `AnchorFuse`) and fuses with `MergeStamp`.
+It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `EmptyBlockAnchorSeed`, `AnchorFuse`) and fuses with `MergeStamp`.
 
 | step | wallet | sync service | aggregator |
 | ---- | ------ | ------------ | ---------- |
 | AnchorSeed | possible | yes | yes |
-| EmptyBlockSeed | possible | yes | yes |
+| EmptyBlockAnchorSeed | possible | yes | yes |
 | AnchorFuse | possible | yes | yes |
 | UnspentSeed | possible | yes | no |
 | EmptyBlockUnspentSeed | possible | yes | no |
 | UnspentFuse | possible | yes | no |
 | UnspentEpochFuse | possible | yes | no |
 | MasterSeed | yes | no | no |
-| ExpandedKeyStep | yes | no | no |
-| ExpandedKeyFuse | yes | no | no |
+| KeyExpansionStep | yes | no | no |
+| EmitterKeysetFuse | yes | no | no |
 | NullifierDerivationStep | yes | no | no |
-| VerifyUnspent | yes | no | no |
+| UnspentBind | yes | no | no |
 | SpendableInit | yes | no | no |
 | SpendableLift | yes | no | no |
 | SpendBind | yes | no | no |
@@ -112,11 +112,11 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `E
 
 ## Soundness
 
-The subsections below walk each subtree bottom-up: the chain segments that act as primitives, then the `Unspent` segments and the derivation chain that consume them, then the binding at `VerifyUnspent`, the spendable lineage, then spend binding and stamps.
+The subsections below walk each subtree bottom-up: the chain segments that act as primitives, then the `Unspent` segments and the derivation chain that consume them, then the binding at `UnspentBind`, the spendable lineage, then spend binding and stamps.
 
 ### Anchor segments
 
-`AnchorSeed`, `EmptyBlockSeed`, `UnspentSeed`, and `EmptyBlockUnspentSeed` each witness a starting anchor and prove one anchor step.
+`AnchorSeed`, `EmptyBlockAnchorSeed`, `UnspentSeed`, and `EmptyBlockUnspentSeed` each witness a starting anchor and prove one anchor step.
 `AnchorFuse` and `UnspentFuse` compose adjacent segments by checking endpoint equality.
 A segment ties to real chain history only through a consensus-published stamp whose anchor matches an end-of-block value: `StampLift` emits that stamp directly, while a segment consumed by `SpendableInit` produces a private spendable whose anchor reaches consensus only once it is spent into a stamp.
 
@@ -137,20 +137,20 @@ The crossing epoch is the right half's `epoch_start`, which must be exactly one 
 ### Derivation chain
 
 `MasterSeed` is the chain's only seed. It binds the master key to the note: `note.pk == pak.derive_payment_key()` pins `nk`, and the note commitment digests `nk` (through `pk`) and `psi`, so each derived `mk` part is consistent with the note the seed threads forward. `nk` is witnessed and discarded, never carried on a header.
-`ExpandedKeyStep` pins its two inputs as `mk` parts zero and one of the same note, then proves the expansion window as a committed cipher trace: a boundary relation applies round zero outside the trace, a masked recurrence advances every remaining round, and a decimation relation binds the eval-form part-key polynomial to the trace's final column plus the whitening key. So each covered slot's commitment is exactly that window's expansion outputs under the note's `mk`.
-`ExpandedKeyFuse` merges disjoint keysets slot-wise, reconciling `mk` and the note across every merge; the range-checked window index selects each part's slot, so slot position is identity- and order-binding, and the boolean coverage flags make double-certification impossible.
+`KeyExpansionStep` pins its two inputs as `mk` parts zero and one of the same note, then proves the expansion window as a committed cipher trace: a boundary relation applies round zero outside the trace, a masked recurrence advances every remaining round, and a decimation relation binds the eval-form part-key polynomial to the trace's final column plus the whitening key. So each covered slot's commitment is exactly that window's expansion outputs under the note's `mk`.
+`EmitterKeysetFuse` merges disjoint keysets slot-wise, reconciling `mk` and the note across every merge; the range-checked window index selects each part's slot, so slot position is identity- and order-binding, and the boolean coverage flags make double-certification impossible.
 `NullifierDerivationStep` requires full coverage and matches each witnessed part polynomial's commitment against its slot, so every key the certify relations read is the proven interleaved schedule. Per derivation polynomial, a boundary relation pins round zero from the per-polynomial salt and a committed-offset recurrence pins the remaining rounds against the schedule reconstructed from the part polynomials.
 So a `NullifierDerivation` is a sound proof that the committed derivation polynomials are the genuine emitter traces of the note identified by `cm`, with `cm` computed in-step from the fused note.
 
 ### Verifying unspent against derivation
 
-`VerifyUnspent` consumes the sync's `Unspent` and the wallet's certified `NullifierDerivation`.
+`UnspentBind` consumes the sync's `Unspent` and the wallet's certified `NullifierDerivation`.
 It witnesses the `elapsed` polynomial, a singleton tip polynomial, and the range polynomial, binding the elapsed by commit-equality and the tip to the single-coefficient commitment of `nf_end`, and confirms
 
 $$R(X) = E(X) + X^{s}\,\texttt{nf\_end}$$
 
 for the range $R$, elapsed $E$, and crossing count $s$, at a Fiat-Shamir challenge.
-It then proves every tested value genuine with the homomorphic lift: a challenge $\beta$ is derived over the certified derivation digest, the range commitment, and the span; per derivation polynomial a committed geometric weight is proven, an exclusive-prefix accumulator of $\beta$-weighted queries is proven over the query coset, and the range match
+It then proves every tested value genuine with the homomorphic arc match: a challenge $\beta$ is derived over the certified derivation digest, the range commitment, and the span; per derivation polynomial a committed geometric weight is proven, an exclusive-prefix accumulator of $\beta$-weighted queries is proven over the query coset, and the range match
 
 $$q(\beta)\,\beta^{\,\texttt{start} - E_0} = A(p_{\texttt{end} - E_0}) - A(p_{\texttt{start} - E_0})$$
 
@@ -168,7 +168,7 @@ It emits `SpendableHeader(cm, (present_epoch, present_nf), anchor, creation_epoc
 `SpendableLift` advances the lineage over a `VerifiedUnspent` and is witness-free.
 It threads `cm` by equality (`verified.cm == spendable.cm`), so every consumed segment belongs to the lineage's one note and the spent value cannot drift to a different same-`mk` note, and reconciles the segment's witnessed offset origin against the lineage's anchor-bound `creation_epoch`, so the tested arc cannot be shifted. Since the derivation certifies no origin, this reconciliation is what ties the pool branch's witnessed $E_0$ to the anchor-bound one.
 Continuity holds through nullifier values and epochs: `verified.nf_start == spendable.present_nf` and `verified.epoch_start == spendable.present_epoch`.
-Both nullifiers are PRF outputs of `mk` and the offset, so value-equality forces the same note and the same epoch; combined with the tip binding at `VerifyUnspent` (which makes each new `present_nf` itself a genuine query value), a lineage cannot skip an epoch or splice in another note.
+Both nullifiers are PRF outputs of `mk` and the offset, so value-equality forces the same note and the same epoch; combined with the tip binding at `UnspentBind` (which makes each new `present_nf` itself a genuine query value), a lineage cannot skip an epoch or splice in another note.
 The anchor adjacency check (`verified.anchor_prev == spendable.anchor`) welds the segment to the lineage's current position.
 
 ### Spend binding
@@ -210,8 +210,8 @@ flowchart TB
   subgraph derive [nullifier derivation]
     w_seed[/note, pak, part/]
     s_seed[MasterSeed]
-    s_expand[ExpandedKeyStep]
-    s_kfuse[ExpandedKeyFuse]
+    s_expand[KeyExpansionStep]
+    s_kfuse[EmitterKeysetFuse]
     s_derive[NullifierDerivationStep]
     nf_derivation((NullifierDerivation))
   end
@@ -221,7 +221,7 @@ flowchart TB
     anchor_init((AnchorChain))
     s_init[SpendableInit]
     unspent_in((Unspent))
-    s_verify[VerifyUnspent]
+    s_verify[UnspentBind]
     s_lift[SpendableLift]
   end
 
@@ -242,9 +242,9 @@ flowchart TB
 
   w_seed --> s_seed
   s_seed -->|MasterKeyPart| s_expand
-  s_expand -->|ExpandedKeyset| s_kfuse
-  s_expand -->|ExpandedKeyset| s_kfuse
-  s_kfuse -->|ExpandedKeyset| s_derive
+  s_expand -->|EmitterKeyset| s_kfuse
+  s_expand -->|EmitterKeyset| s_kfuse
+  s_kfuse -->|EmitterKeyset| s_derive
   s_derive --> nf_derivation
 
   anchor_init --> s_init
@@ -279,7 +279,7 @@ flowchart LR
   w_seed[/start, stamp_commit/]
   s_seed[AnchorSeed]
   w_fuse[/empty start/]
-  s_empty[EmptyBlockSeed]
+  s_empty[EmptyBlockAnchorSeed]
   s_fuse[AnchorFuse]
   s_lift[StampLift]
   sh_out((StampHeader))
@@ -323,7 +323,7 @@ flowchart LR
 | Unspent | (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), anchor_last) |
 | VerifiedUnspent | (cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end), anchor_last, creation_epoch) |
 | MasterKeyPart | (mk_part, part, note) |
-| ExpandedKeyset | (slots, coverage, mk, note) |
+| EmitterKeyset | (slots, coverage, mk, note) |
 | NullifierDerivation | (commits, digest, cm, shift, ratios) |
 | SpendableHeader | (cm, (present_epoch, present_nf), anchor, creation_epoch) |
 | SpendHeader | (cm, (cv, rk), present_nf, anchor, offset) |
@@ -334,17 +334,17 @@ flowchart LR
 | Step | Left | Right | Witness | Output |
 | ---- | ---- | ----- | ------- | ------ |
 | AnchorSeed | — | — | start, stamp_commit | AnchorChain |
-| EmptyBlockSeed | — | — | start | AnchorChain |
+| EmptyBlockAnchorSeed | — | — | start | AnchorChain |
 | AnchorFuse | AnchorChain | AnchorChain | — | AnchorChain |
 | UnspentSeed | — | — | anchor_prev, (epoch, nf), stamp_tg_set | Unspent |
 | EmptyBlockUnspentSeed | — | — | anchor_prev, (epoch, nf) | Unspent |
 | UnspentFuse | Unspent | Unspent | left_seq, combined_seq, right_seq | Unspent |
 | UnspentEpochFuse | Unspent | Unspent | left_seq, combined_seq, right_seq | Unspent |
-| VerifyUnspent | Unspent | NullifierDerivation | elapsed, tip, range, polys, weights, accumulator, quotients, creation_epoch | VerifiedUnspent |
+| UnspentBind | Unspent | NullifierDerivation | elapsed, tip, range, polys, weights, accumulator, quotients, creation_epoch | VerifiedUnspent |
 | MasterSeed | — | — | note, pak, part | MasterKeyPart |
-| ExpandedKeyStep | MasterKeyPart | MasterKeyPart | trace, quotients, key_poly, decimation_quotient, part | ExpandedKeyset |
-| ExpandedKeyFuse | ExpandedKeyset | ExpandedKeyset | — | ExpandedKeyset |
-| NullifierDerivationStep | ExpandedKeyset | — | parts, polys, quotients | NullifierDerivation |
+| KeyExpansionStep | MasterKeyPart | MasterKeyPart | trace, quotients, key_poly, decimation_quotient, part | EmitterKeyset |
+| EmitterKeysetFuse | EmitterKeyset | EmitterKeyset | — | EmitterKeyset |
+| NullifierDerivationStep | EmitterKeyset | — | parts, polys, quotients | NullifierDerivation |
 | SpendableInit | AnchorChain | NullifierDerivation | pre_epoch_anchor, pre_cm_anchor, creation_set, polys, creation_epoch | SpendableHeader |
 | SpendableLift | SpendableHeader | VerifiedUnspent | — | SpendableHeader |
 | SpendBind | SpendableHeader | — | pk, value, rcm, psi, rcv, alpha, pak | SpendHeader |

@@ -62,7 +62,7 @@ pub const NF_DOMAIN: usize = {
 /// polynomial as possible.
 pub const EK_PART_SIZE: usize = POLY_LEN_MAX / TachyonP5R32::ROUNDS;
 
-/// The number of `ExpandedKey` parts which make up a full expanded key.
+/// The number of expansion parts which make up a full `EmitterKeySchedule`.
 ///
 /// Width lever: with the expansion held at a credible depth (`TachyonP5R32`),
 /// `P = EK_PARTS` parts interleave into one `EK_FULL_SIZE`-key orbit, so the

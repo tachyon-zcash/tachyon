@@ -13,18 +13,18 @@ use ragu::{Header, Polynomial, Step};
 use crate::{
     constants::{EK_PART_SIZE, EK_PARTS, NF_EMITTERS},
     digest::poseidon,
-    keys::{ExpandedKey, NoteMasterKey, PartKey},
+    keys::{EmitterKeySchedule, NoteMasterKey, PartKey},
     note::Nullifier,
     primitives::{
         Anchor, EpochIndex, NfEmitterPoly, NfSeqPoly, PartKeyPoly, PartKeySpectrumPoly, Tachygram,
         TachygramSetPoly,
     },
     relations::quotient::{
-        self, LIFT_SPLITS, RoundBoundaryQuotients, accumulator_recurrence, weight_recurrence,
+        self, ARC_SPLITS, RoundBoundaryQuotients, accumulator_recurrence, weight_recurrence,
     },
     stamp::proof::{
-        delegation::{ExpandedKeyStep, NullifierDerivationStep},
-        pool::{UnspentEpochFuse, UnspentFuse, UnspentSeed, VerifyUnspent},
+        delegation::{KeyExpansionStep, NullifierDerivationStep},
+        pool::{UnspentBind, UnspentEpochFuse, UnspentFuse, UnspentSeed},
         spendable::SpendableInit,
     },
 };
@@ -35,19 +35,19 @@ type StepRight<S> = <<S as Step>::Right as Header>::Data;
 
 type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 
-/// Witness for [`ExpandedKeyStep`] for one part.
+/// Witness for [`KeyExpansionStep`] for one part.
 ///
 /// `(trace, round_boundary_quotients, part_key_poly, decimation_quotient,
 /// part)`. `part ∈ 0..EK_PARTS` selects the cipher-input window `base = part ·
 /// EK_PART_SIZE`; the caller supplies that part's `EK_PART_SIZE` keys.
 #[must_use]
-pub fn nf_master_expand<'key>(
-    headers: (StepLeft<ExpandedKeyStep>, StepRight<ExpandedKeyStep>),
+pub fn key_expansion<'key>(
+    headers: (StepLeft<KeyExpansionStep>, StepRight<KeyExpansionStep>),
     mk: &'key NoteMasterKey,
     spectrum: &'key PartKeySpectrumPoly,
     part_keys: &'key PartKey,
     part: usize,
-) -> StepWitness<'key, ExpandedKeyStep> {
+) -> StepWitness<'key, KeyExpansionStep> {
     let (_left, _right) = headers;
     let key_poly = part_keys.key_poly();
     #[expect(clippy::as_conversions, reason = "constant size")]
@@ -79,7 +79,7 @@ pub fn nullifier_derivation<'key>(
         StepLeft<NullifierDerivationStep>,
         StepRight<NullifierDerivationStep>,
     ),
-    keyset: &'key ExpandedKey,
+    keyset: &'key EmitterKeySchedule,
     parts: [PartKeyPoly; EK_PARTS],
     mk: &'key NoteMasterKey,
     polys: &'key [NfEmitterPoly; NF_EMITTERS],
@@ -127,22 +127,22 @@ pub fn spendable_init(
     )
 }
 
-/// Witness for [`VerifyUnspent`].
+/// Witness for [`UnspentBind`].
 ///
 /// `(elapsed, tip, range, derivation_polys, weights, accumulator,
 /// weight_quotients, accumulator_quotient, creation_epoch)`. `creation_epoch`
 /// is the offset origin `E_0`, witnessed here to index the arc and reconciled
 /// downstream at `SpendableLift`.
 #[must_use]
-pub fn verify_unspent<'key>(
-    headers: (StepLeft<VerifyUnspent>, StepRight<VerifyUnspent>),
+pub fn unspent_bind<'key>(
+    headers: (StepLeft<UnspentBind>, StepRight<UnspentBind>),
     polys: &'key [NfEmitterPoly; NF_EMITTERS],
     mk: &'key NoteMasterKey,
     range_nfs: &'key [Nullifier],
     start: EpochIndex,
     present: EpochIndex,
     creation_epoch: EpochIndex,
-) -> StepWitness<'key, VerifyUnspent> {
+) -> StepWitness<'key, UnspentBind> {
     use group::Curve as _;
     use pasta_curves::{Eq, arithmetic::CurveAffine as _};
 
@@ -166,7 +166,7 @@ pub fn verify_unspent<'key>(
         .to_affine()
         .coordinates()
         .expect("range commitment is not identity");
-    let beta = poseidon::lift_challenge(digest.0, range_coords, start, present.next());
+    let beta = poseidon::arc_challenge(digest.0, range_coords, start, present.next());
 
     // Per-poly geometric weights w_j (split) and quotients; the
     // exclusive-prefix accumulator A (split) and its recurrence quotient.
@@ -175,7 +175,7 @@ pub fn verify_unspent<'key>(
         .map(|ratio| weight_recurrence(ratio * beta, shift.0))
         .into_iter()
         .unzip();
-    let weights_arr: [[Polynomial; LIFT_SPLITS]; NF_EMITTERS] =
+    let weights_arr: [[Polynomial; ARC_SPLITS]; NF_EMITTERS] =
         weights.try_into().unwrap_or_else(|extra: Vec<_>| {
             unreachable!("NF_EMITTERS is {NF_EMITTERS}, got {}", extra.len())
         });

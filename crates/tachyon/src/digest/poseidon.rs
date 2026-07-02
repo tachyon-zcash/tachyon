@@ -178,9 +178,9 @@ pub(crate) fn anchor_epoch_step(anchor_prev: Fp, new_epoch: EpochIndex) -> Fp {
     ])
 }
 
-const LIFT_CHALLENGE_DOMAIN: &[u8; 16] = b"Tachyon-NfLiftCh";
+const ARC_CHALLENGE_DOMAIN: &[u8; 16] = b"Tachyon-NfArcCh_";
 
-/// Derive the lift challenge `β`, binding the certified derivation (through the
+/// Derive the arc challenge `β`, binding the certified derivation (through the
 /// `derivation_digest` scalar, a transcript challenge over all `N` commitments
 /// so one element stands for the set), the sync-tested value polynomial `q` (by
 /// its commitment's affine coordinates, split into 128-bit halves), and the
@@ -192,7 +192,7 @@ const LIFT_CHALLENGE_DOMAIN: &[u8; 16] = b"Tachyon-NfLiftCh";
     reason = "constant-size coordinate decomposition into fixed input"
 )]
 #[must_use]
-pub(crate) fn lift_challenge(
+pub(crate) fn arc_challenge(
     derivation_digest: Fp,
     range_commit: Coordinates<EqAffine>,
     start: EpochIndex,
@@ -201,7 +201,7 @@ pub(crate) fn lift_challenge(
     let x = range_commit.x().to_repr();
     let y = range_commit.y().to_repr();
     hash::<8>([
-        Fp::from_u128(u128::from_le_bytes(*LIFT_CHALLENGE_DOMAIN)),
+        Fp::from_u128(u128::from_le_bytes(*ARC_CHALLENGE_DOMAIN)),
         derivation_digest,
         Fp::from_u128(u128::from_le_bytes(x[..16].try_into().expect("16 bytes"))),
         Fp::from_u128(u128::from_le_bytes(x[16..].try_into().expect("16 bytes"))),

@@ -24,7 +24,7 @@ use crate::{
         build_unspent_pcd_between_blocks, build_unspent_seed_pcd, random_block, random_block_with,
         shared_sk, spend_witness, spendable_init_inputs,
     },
-    keys::{ExpandedKey, NoteMasterKey, PartKey},
+    keys::{EmitterKeySchedule, NoteMasterKey, PartKey},
     note::{self, Nullifier},
     primitives::{
         Anchor, BlockHeight, EpochIndex, EpochOffset, NfSeqPoly, PartKeyPoly, PartKeySpectrumPoly,
@@ -49,7 +49,7 @@ fn nullifier_derivation_certifies_a_note() {
 
     let cm_expected = note.commitment();
     let mk = wallet.master_key(&note);
-    let keyset = mk.derive_expanded();
+    let keyset = mk.derive_emitter_schedule();
     let salts = mk.query_salts();
     let (ratios_expected, shift_expected) = mk.query_weights();
     let polys_expected = keyset.derivation_polys(&salts);
@@ -1178,7 +1178,7 @@ fn unspent_epoch_fuse_rejects_epoch_skip() {
 }
 
 #[test]
-fn verify_unspent_rejects_tip_mismatch() {
+fn unspent_bind_rejects_tip_mismatch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
@@ -1205,7 +1205,7 @@ fn verify_unspent_rejects_tip_mismatch() {
 
     // Honest witness, but the tip poly's commitment no longer matches the
     // Unspent's present nullifier.
-    let (mut witness, derivation) = user.verify_unspent_witness(
+    let (mut witness, derivation) = user.unspent_bind_witness(
         rng,
         &unspent,
         &note,
@@ -1216,7 +1216,7 @@ fn verify_unspent_rejects_tip_mismatch() {
     witness.1 = NfSeqPoly::from_iter([Nullifier::from(Fp::random(&mut *rng))]);
 
     let err = PROOF_SYSTEM
-        .fuse(rng, pool::VerifyUnspent, witness, unspent, derivation)
+        .fuse(rng, pool::UnspentBind, witness, unspent, derivation)
         .err()
         .unwrap();
     let ragu::Error::InvalidWitness(inner) = err else {
@@ -1224,12 +1224,12 @@ fn verify_unspent_rejects_tip_mismatch() {
     };
     assert_eq!(
         inner.to_string(),
-        "VerifyUnspent: tip polynomial does not match present nullifier"
+        "UnspentBind: tip polynomial does not match present nullifier"
     );
 }
 
 #[test]
-fn verify_unspent_rejects_elapsed_mismatch() {
+fn unspent_bind_rejects_elapsed_mismatch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
@@ -1256,7 +1256,7 @@ fn verify_unspent_rejects_elapsed_mismatch() {
 
     // Honest witness, but the elapsed poly's commitment no longer matches the
     // Unspent header's elapsed commitment.
-    let (mut witness, derivation) = user.verify_unspent_witness(
+    let (mut witness, derivation) = user.unspent_bind_witness(
         rng,
         &unspent,
         &note,
@@ -1267,7 +1267,7 @@ fn verify_unspent_rejects_elapsed_mismatch() {
     witness.0 = NfSeqPoly::from_iter([Nullifier::from(Fp::random(&mut *rng))]);
 
     let err = PROOF_SYSTEM
-        .fuse(rng, pool::VerifyUnspent, witness, unspent, derivation)
+        .fuse(rng, pool::UnspentBind, witness, unspent, derivation)
         .err()
         .unwrap();
     let ragu::Error::InvalidWitness(inner) = err else {
@@ -1275,12 +1275,12 @@ fn verify_unspent_rejects_elapsed_mismatch() {
     };
     assert_eq!(
         inner.to_string(),
-        "VerifyUnspent: elapsed polynomial does not match header"
+        "UnspentBind: elapsed polynomial does not match header"
     );
 }
 
 #[test]
-fn verify_unspent_rejects_nf_start_mismatch() {
+fn unspent_bind_rejects_nf_start_mismatch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
@@ -1316,7 +1316,7 @@ fn verify_unspent_rejects_nf_start_mismatch() {
         anchor_last,
     ));
 
-    let (witness, derivation) = user.verify_unspent_witness(
+    let (witness, derivation) = user.unspent_bind_witness(
         rng,
         &forged_unspent,
         &note,
@@ -1326,13 +1326,7 @@ fn verify_unspent_rejects_nf_start_mismatch() {
     );
 
     let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::VerifyUnspent,
-            witness,
-            forged_unspent,
-            derivation,
-        )
+        .fuse(rng, pool::UnspentBind, witness, forged_unspent, derivation)
         .err()
         .unwrap();
     let ragu::Error::InvalidWitness(inner) = err else {
@@ -1340,7 +1334,7 @@ fn verify_unspent_rejects_nf_start_mismatch() {
     };
     assert_eq!(
         inner.to_string(),
-        "VerifyUnspent: header nf_start does not match the verified range start"
+        "UnspentBind: header nf_start does not match the verified range start"
     );
 }
 
@@ -1376,7 +1370,7 @@ fn spendable_lift_rejects_wrong_cm() {
     let unspent = sync.build_next_unspent(rng, 0, &pool, target_height);
     // Verify against the phantom's own derivation (E_0 = 0); the resulting
     // VerifiedUnspent carries the phantom's cm, which SpendableLift rejects.
-    let verified = user.verify_unspent(
+    let verified = user.unspent_bind(
         rng,
         unspent,
         &phantom,
@@ -1424,7 +1418,7 @@ fn spendable_lift_rejects_epoch_discontinuity() {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
     let unspent = sync.build_next_unspent(rng, 0, &pool, target_height);
-    let verified = user.verify_unspent(
+    let verified = user.unspent_bind(
         rng,
         unspent,
         &note,
@@ -1476,7 +1470,7 @@ fn spendable_lift_rejects_non_adjacent_unspent() {
         &[user.query_nf(&note, EpochOffset(0))],
         init_height..=init_height,
     );
-    let verified = user.verify_unspent(
+    let verified = user.unspent_bind(
         rng,
         unspent,
         &note,
@@ -1502,7 +1496,7 @@ fn spendable_lift_rejects_non_adjacent_unspent() {
 /// A note's master and a foreign master are built once; each case forges a
 /// witness off the trace's keyed cipher.
 #[test]
-fn nf_master_expand_rejects_forged_witnesses() {
+fn key_expansion_rejects_forged_witnesses() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
@@ -1522,7 +1516,7 @@ fn nf_master_expand_rejects_forged_witnesses() {
                     spectrum: &PartKeySpectrumPoly,
                     part_keys: &PartKey,
                     part: usize| {
-        witness::nf_master_expand(
+        witness::key_expansion(
             (*left.data(), *right.data()),
             builder_mk,
             spectrum,
@@ -1534,7 +1528,7 @@ fn nf_master_expand_rejects_forged_witnesses() {
     // Trace under a foreign keyset: round 0 (the first column) binds k_0, so the
     // boundary rejects it before the recurrence is reached.
     let mismatched = {
-        let (states, part_keys) = other_mk.derive_expanded_states(0);
+        let (states, part_keys) = other_mk.derive_schedule_part(0);
         assemble(&other_mk, &states.spectrum(), &part_keys, 0)
     };
 
@@ -1543,7 +1537,7 @@ fn nf_master_expand_rejects_forged_witnesses() {
     let hybrid_rounds = {
         let mut hybrid = mk;
         hybrid.0[1] += Fp::ONE;
-        let (states, part_keys) = hybrid.derive_expanded_states(0);
+        let (states, part_keys) = hybrid.derive_schedule_part(0);
         assemble(&hybrid, &states.spectrum(), &part_keys, 0)
     };
 
@@ -1551,7 +1545,7 @@ fn nf_master_expand_rejects_forged_witnesses() {
     // identity binding `A_p` to the trace's final column fails. The one honest
     // trace is built once and shared between the witness and the tampering.
     let forged_key = {
-        let (part0_states, part0_keys) = mk.derive_expanded_states(0);
+        let (part0_states, part0_keys) = mk.derive_schedule_part(0);
         let (trace, quotients, _honest_key, decimation_quotient, part) =
             assemble(&mk, &part0_states.spectrum(), &part0_keys, 0);
         let mut tampered = part0_keys;
@@ -1582,7 +1576,7 @@ fn nf_master_expand_rejects_forged_witnesses() {
         let err = PROOF_SYSTEM
             .fuse(
                 rng,
-                delegation::ExpandedKeyStep,
+                delegation::KeyExpansionStep,
                 witness,
                 left.clone(),
                 right.clone(),
@@ -1611,7 +1605,7 @@ fn derivation_rejects_mismatched_key_poly() {
     // rejects it.
     let (keyset_pcd, part_keys) = keyset_pcd(&user, rng, note);
 
-    let keyset = ExpandedKey::from_parts(&part_keys);
+    let keyset = EmitterKeySchedule::from_interleaved_parts(&part_keys);
     let salts = mk.query_salts();
     let polys = keyset.derivation_polys(&salts);
     let (_good_parts, good_polys, good_quotients) = witness::nullifier_derivation(
@@ -1645,23 +1639,23 @@ fn derivation_rejects_mismatched_key_poly() {
     );
 }
 
-/// Certify one expansion part (a one-slot `ExpandedKeyset` PCD) for a note,
+/// Certify one expansion part (a one-slot `EmitterKeyset` PCD) for a note,
 /// returning it with that part's keys.
 fn keyset_part_pcd(
     user: &WalletSim,
     rng: &mut StdRng,
     note: Note,
     part: usize,
-) -> (Pcd<delegation::ExpandedKeyset>, PartKey) {
+) -> (Pcd<delegation::EmitterKeyset>, PartKey) {
     let mk = user.master_key(&note);
-    let (states, keys) = mk.derive_expanded_states(part);
+    let (states, keys) = mk.derive_schedule_part(part);
     let left = user.master_key_part(rng, note, 0);
     let right = user.master_key_part(rng, note, 1);
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            delegation::ExpandedKeyStep,
-            witness::nf_master_expand(
+            delegation::KeyExpansionStep,
+            witness::key_expansion(
                 (*left.data(), *right.data()),
                 &mk,
                 &states.spectrum(),
@@ -1671,30 +1665,30 @@ fn keyset_part_pcd(
             left,
             right,
         )
-        .expect("ExpandedKeyStep part");
+        .expect("KeyExpansionStep part");
     (pcd, keys)
 }
 
 /// Fuse a note's `EK_PARTS` certified one-slot keysets into one fully covered
-/// [`ExpandedKeyset`](delegation::ExpandedKeyset) PCD (the chain the
+/// [`EmitterKeyset`](delegation::EmitterKeyset) PCD (the chain the
 /// single-input derivation consumes), returning the keyset PCD and the
 /// parts' native keys in order.
 fn keyset_pcd(
     user: &WalletSim,
     rng: &mut StdRng,
     note: Note,
-) -> (Pcd<delegation::ExpandedKeyset>, [PartKey; EK_PARTS]) {
+) -> (Pcd<delegation::EmitterKeyset>, [PartKey; EK_PARTS]) {
     // Eagerly certify the parts (releasing `rng` before the fuse chain borrows
     // it); each certification also yields that part's native keys.
-    let parts_with_keys: [(Pcd<delegation::ExpandedKeyset>, PartKey); EK_PARTS] =
+    let parts_with_keys: [(Pcd<delegation::EmitterKeyset>, PartKey); EK_PARTS] =
         array::from_fn(|part| keyset_part_pcd(user, rng, note, part));
     let keys: [PartKey; EK_PARTS] = array::from_fn(|part| parts_with_keys[part].1);
     let mut parts = parts_with_keys.into_iter().map(|(pcd, _keys)| pcd);
     let mut keyset = parts.next().expect("EK_PARTS >= 1");
     for part_pcd in parts {
         let (next, ()) = PROOF_SYSTEM
-            .fuse(rng, delegation::ExpandedKeyFuse, (), keyset, part_pcd)
-            .expect("ExpandedKeyFuse");
+            .fuse(rng, delegation::EmitterKeysetFuse, (), keyset, part_pcd)
+            .expect("EmitterKeysetFuse");
         keyset = next;
     }
     (keyset, keys)
@@ -1708,7 +1702,7 @@ fn assert_invalid(err: ragu::Error, expected: &str) {
 }
 
 /// The seam locations reject malformed assemblies: a part from a foreign note
-/// cannot be fused into a keyset (`ExpandedKeyFuse`'s reconciliation), two
+/// cannot be fused into a keyset (`EmitterKeysetFuse`'s reconciliation), two
 /// keysets covering the same part cannot be fused (disjointness), an
 /// incompletely covered keyset cannot feed the derivation, and a genuine
 /// keyset fed to the derivation with its parts reordered fails the slot
@@ -1722,13 +1716,13 @@ fn derivation_rejects_seam_violations() {
     let mk_a = user.master_key(&note_a);
 
     // Case 1 (fuse seam): a part from note B cannot be fused into note A's
-    // keyset; `ExpandedKeyFuse`'s mk/note reconciliation rejects it.
+    // keyset; `EmitterKeysetFuse`'s mk/note reconciliation rejects it.
     let (a_part0_pcd, _a_part0_keys) = keyset_part_pcd(&user, rng, note_a, 0);
     let (b_part1_pcd, _b_part1_keys) = keyset_part_pcd(&user, rng, note_b, 1);
     let cross_err = PROOF_SYSTEM
         .fuse(
             rng,
-            delegation::ExpandedKeyFuse,
+            delegation::EmitterKeysetFuse,
             (),
             a_part0_pcd,
             b_part1_pcd,
@@ -1737,7 +1731,7 @@ fn derivation_rejects_seam_violations() {
         .unwrap_or_else(|| panic!("expected rejection: cross-note fuse"));
     assert_invalid(
         cross_err,
-        "ExpandedKeyFuse: master key mismatch across parts",
+        "EmitterKeysetFuse: master key mismatch across parts",
     );
 
     // Case 2 (coverage disjointness): two keysets certifying the same part
@@ -1747,20 +1741,20 @@ fn derivation_rejects_seam_violations() {
     let overlap_err = PROOF_SYSTEM
         .fuse(
             rng,
-            delegation::ExpandedKeyFuse,
+            delegation::EmitterKeysetFuse,
             (),
             a_part0_first,
             a_part0_second,
         )
         .err()
         .unwrap_or_else(|| panic!("expected rejection: overlapping coverage"));
-    assert_invalid(overlap_err, "ExpandedKeyFuse: overlapping part coverage");
+    assert_invalid(overlap_err, "EmitterKeysetFuse: overlapping part coverage");
 
     // Case 3 (incomplete coverage): a keyset covering only part 0 cannot feed
     // the derivation; the full-coverage check rejects it.
     let (a_part0_only, _partial_keys) = keyset_part_pcd(&user, rng, note_a, 0);
     let (keyset_pcd, part_keys) = keyset_pcd(&user, rng, note_a);
-    let keyset = ExpandedKey::from_parts(&part_keys);
+    let keyset = EmitterKeySchedule::from_interleaved_parts(&part_keys);
     let polys = keyset.derivation_polys(&mk_a.query_salts());
     let (good_parts, good_polys, good_quotients) = witness::nullifier_derivation(
         (*keyset_pcd.data(), ()),
@@ -1814,7 +1808,7 @@ fn keyset_fuses_in_any_tree_shape() {
     let note = user.random_note(500);
     let mk = user.master_key(&note);
 
-    let parts_with_keys: [(Pcd<delegation::ExpandedKeyset>, PartKey); EK_PARTS] =
+    let parts_with_keys: [(Pcd<delegation::EmitterKeyset>, PartKey); EK_PARTS] =
         array::from_fn(|part| keyset_part_pcd(&user, rng, note, part));
     let part_keys: [PartKey; EK_PARTS] = array::from_fn(|part| parts_with_keys[part].1);
     let mut parts = parts_with_keys.into_iter().map(|(pcd, _keys)| pcd);
@@ -1830,22 +1824,22 @@ fn keyset_fuses_in_any_tree_shape() {
     for _ in 1..EK_PARTS / 2 {
         let part_pcd = parts.next().expect("low-half part");
         let (next, ()) = PROOF_SYSTEM
-            .fuse(rng, delegation::ExpandedKeyFuse, (), low_half, part_pcd)
+            .fuse(rng, delegation::EmitterKeysetFuse, (), low_half, part_pcd)
             .expect("low half");
         low_half = next;
     }
     let mut high_half = parts.next().expect("EK_PARTS >= 2");
     for part_pcd in parts {
         let (next, ()) = PROOF_SYSTEM
-            .fuse(rng, delegation::ExpandedKeyFuse, (), high_half, part_pcd)
+            .fuse(rng, delegation::EmitterKeysetFuse, (), high_half, part_pcd)
             .expect("high half");
         high_half = next;
     }
     let (keyset_pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, delegation::ExpandedKeyFuse, (), low_half, high_half)
+        .fuse(rng, delegation::EmitterKeysetFuse, (), low_half, high_half)
         .expect("balanced root");
 
-    let keyset = ExpandedKey::from_parts(&part_keys);
+    let keyset = EmitterKeySchedule::from_interleaved_parts(&part_keys);
     let polys = keyset.derivation_polys(&mk.query_salts());
     let witness = witness::nullifier_derivation(
         (*keyset_pcd.data(), ()),

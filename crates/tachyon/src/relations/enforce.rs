@@ -437,7 +437,7 @@ pub(crate) fn enforce_offset_nullifier_pair<const POLYS: usize>(
 /// Open `SPLITS` capacity-wide splits at `point`, binding each to its
 /// commitment, and recombine to the unsplit polynomial's value by Horner in
 /// `point^POLY_LEN_MAX`: `Σ_s splits[s](point)·point^{POLY_LEN_MAX·s}`. The
-/// lift polynomials (`w_j`, `A`) span the order-`S` coset and exceed capacity,
+/// arc polynomials (`w_j`, `A`) span the order-`S` coset and exceed capacity,
 /// so they are carried this way; `SPLITS` is `⌈S/POLY_LEN_MAX⌉`, derived from
 /// `S`.
 fn open_splits<const SPLITS: usize>(
@@ -459,7 +459,7 @@ fn open_splits<const SPLITS: usize>(
 
 /// Prove the committed geometric weight `w` advances by `ratio` along the
 /// order-`COSET_ORDER` query coset `c·⟨γ⟩` (so `w(c·γ^d) = ratio^d`), the
-/// lift's per-poly weight with `ratio = ρ_j·β`. As an identity at the
+/// arc's per-poly weight with `ratio = ρ_j·β`. As an identity at the
 /// Fiat-Shamir point `z` (`c` = `shift`, `S` = `COSET_ORDER`, single-wrap mask
 /// `z − c·γ^{S-1}`):
 ///
@@ -595,7 +595,7 @@ pub(crate) fn enforce_accumulator_recurrence<
     Ok(())
 }
 
-/// Discharge the lift's range match against the tested-value polynomial `q`.
+/// Discharge the arc match against the tested-value polynomial `q`.
 ///
 /// The exclusive-prefix accumulator gives the `β`-weighted nullifier sum over
 /// the offset arc `[start_offset, end_offset)` as the endpoint difference
@@ -622,7 +622,7 @@ pub(crate) fn enforce_accumulator_recurrence<
 /// - **Public structure.** `shift`, `coset_gen`, and the offsets are
 ///   statement-fixed, never witness-chosen.
 #[expect(clippy::too_many_arguments, reason = "todo")]
-pub(crate) fn enforce_lift_match<const SPLITS: usize>(
+pub(crate) fn enforce_arc_match<const SPLITS: usize>(
     ctx: &mut ragu::StepCtx<'_>,
     accumulator: &[Polynomial; SPLITS],
     range: &Polynomial,
@@ -642,7 +642,7 @@ pub(crate) fn enforce_lift_match<const SPLITS: usize>(
     ctx.enforce_poly_query(range_commit, beta, q_at_beta)?;
     if q_at_beta * beta.pow_vartime([start_offset]) != range_total {
         return Err(ragu::Error::InvalidWitness(
-            "lift range match fails at the challenge".into(),
+            "arc match fails at the challenge".into(),
         ));
     }
     Ok(())
