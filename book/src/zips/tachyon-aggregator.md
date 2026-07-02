@@ -285,7 +285,8 @@ These semantics underpin publication (Step 5), observation (Steps 2 and 6), and 
 **Identifiers.** A Tachyon transaction is identified by `wtxid = txid || auth_digest`
 ([ZIP 239](https://zips.z.cash/zip-0239), [ZIP 244](https://zips.z.cash/zip-0244)):
 
-- `txid` commits only to effecting data (`action_acc || value_balance`). It is stable across
+- Tachyon's contribution to `txid` commits only to effecting data
+  (`action_acc || value_balance`). It is stable across
   stamping, merging, stripping, and re-stamping, so a transaction's logical identity is
   invariant across the aggregation lifecycle.
 - `auth_digest` commits to action signatures, the binding signature, and the stamp trailer.
@@ -307,6 +308,13 @@ These semantics underpin publication (Step 5), observation (Steps 2 and 6), and 
 objects. `MSG_WTX` relay is mandatory: restamping changes a transaction's
 `wtxid` while leaving `txid` unchanged, so announcement by `txid` alone could
 not distinguish the stamped forms a node may be offered.
+
+**Aggregates do not conflict with covered transactions.** Distinct authorization forms of
+one `txid` are alternative inventory, not conflicts, and an aggregate does not conflict
+with the autonomes it covers. A node SHOULD retain covered autonomes after accepting a
+covering aggregate: a block including the aggregate must include the covered transactions
+as adjuncts, and the aggregate may never be mined. Further mempool retention and eviction
+policy is a local implementation concern.
 
 **Duplicate tachygrams are transaction-invalid.** Tachygram distinctness applies at the
 transaction level: a stamped bundle whose `vTachygrams` contains a duplicate tachygram is
@@ -356,12 +364,6 @@ computable from the action's public data, as specified by the
 $O(n)$ polynomial arithmetic plus one Pedersen commitment and attempts no proof
 verification. A match confirms the candidate set is exactly the cover; a mismatch is
 fail-fast.
-
-## Reference implementation
-
-A reference implementation of the Tachyon aggregator protocol (the bundle state machine,
-stamp merging, stripping, and the `cActionsTachyon` coverage check) is in the
-`zcash_tachyon` crate under [`crates/tachyon/src/`](../../crates/tachyon/src/).
 
 ## Rationale
 
@@ -464,6 +466,19 @@ anchor membership, and spendable-lineage rules owned by the
 here, so implementers and auditors should not assume the proof alone establishes these
 properties.
 
+## Deployment
+
+This ZIP is deployed with a Tachyon network upgrade. Activation parameters are specified
+by the corresponding deployment ZIP
+([Network Upgrade Deployment](network-upgrade-deployment.md)).
+
+## Reference implementation
+
+A reference implementation of the aggregator protocol (the bundle state machine, stamp
+merging, stripping, and the `cActionsTachyon` coverage check) is developed in the
+`zcash_tachyon` crate of the Tachyon repository:
+<https://github.com/tachyon-zcash/tachyon>.
+
 ## References
 
 - [Zcash Protocol Specification](https://zips.z.cash/protocol/protocol.pdf)
@@ -475,3 +490,4 @@ properties.
 - [Tachyon Shielded Protocol](tachyon-shielded-protocol.md)
 - [Tachyon Bundle / Aggregate Transaction Format](tachyon-bundle.md)
 - [Tachyon Accumulator / Hash Chain](tachyon-accumulator.md)
+- [Network Upgrade Deployment](network-upgrade-deployment.md)
