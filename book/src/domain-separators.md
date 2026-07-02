@@ -48,7 +48,6 @@ These are all Tachyon-specific digests, performed in-circuit.
 | Purpose | Value |
 | ------- | ----- |
 | Nullifier master key part | `Tachyon-NfMaster` |
-| Nullifier keyset fold | `Tachyon-NfKeyset` |
 | Nullifier query salts | `Tachyon-NfSalt__` |
 | Nullifier query weights | `Tachyon-NfWeight` |
 | Nullifier lift challenge | `Tachyon-NfLiftCh` |

@@ -4,13 +4,13 @@
 //! [`MasterSeed`] derives one `mk` part at the note's master secrets, pinning
 //! `nk` through the payment-key check. [`ExpandedKeyStep`] proves one part of a
 //! note's keyset expansion -- the `EK_PART_SIZE` keyed-cipher outputs of that
-//! part -- in a single trace-based step, committing them on the
-//! [`ExpandedKeyPart`] header; `EK_PARTS` invocations make the full interleaved
-//! schedule. [`ExpandedKeysetLift`] and [`ExpandedKeyFuse`] funnel the parts
-//! into one [`ExpandedKeyset`], folding each part commitment into a running
-//! scalar. The single-input [`NullifierDerivationStep`] then certifies the
-//! note's derivation polynomials against the funnelled parts, reconstructing
-//! the schedule inline and computing the deferred `cm`.
+//! part -- in a single trace-based step, emitting a one-slot
+//! [`ExpandedKeyset`]; `EK_PARTS` invocations make the full interleaved
+//! schedule. [`ExpandedKeyFuse`] merges disjoint keysets slot-wise, in any
+//! tree shape, until one keyset covers every part. The single-input
+//! [`NullifierDerivationStep`] then certifies the note's derivation
+//! polynomials against the covered slots, reconstructing the schedule inline
+//! and computing the deferred `cm`.
 
 #![allow(
     clippy::as_conversions,
@@ -27,12 +27,12 @@ use alloc::vec::Vec;
 use core::array;
 
 use ff::{Field as _, PrimeField as _};
-use group::{Curve as _, GroupEncoding as _};
-use pasta_curves::{
-    EqAffine, Fp,
-    arithmetic::{Coordinates, CurveAffine as _},
+use group::{Curve as _, Group as _, GroupEncoding as _};
+use pasta_curves::{Eq, Fp};
+use ragu::{
+    Header, Index, Polynomial, Step, Suffix,
+    constraint::{enforce_equal_point, enforce_zero},
 };
-use ragu::{Header, Index, Polynomial, Step, Suffix, constraint::enforce_zero};
 use zcash_mimc::spec::tachyon::TachyonP5R32;
 
 use crate::{
@@ -41,7 +41,6 @@ use crate::{
     constants::{
         EK_FULL_SIZE, EK_PART_SIZE, EK_PARTS, MK_PART_LEN, MK_PARTS, NF_EMITTERS, POLY_LEN_MAX,
     },
-    digest::poseidon,
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{Commitment as NoteCommitment, Note},
     primitives::PartKeySpectrumPoly,
@@ -138,10 +137,10 @@ impl Step for MasterSeed {
 ///
 /// The `EK_PART_SIZE` keyed-cipher outputs of this part, committed as
 /// the eval-form part-key polynomial `A_p` (`A_p(ζ^r) = E_mk(base + r)` over
-/// the order-`EK_PART_SIZE` subgroup `⟨ζ⟩`) on the [`ExpandedKeyPart`]
-/// header, tagged with `part ∈ 0..EK_PARTS`. `base = part · EK_PART_SIZE`
-/// selects the cipher-input window; the `EK_PARTS` parts interleave (over the
-/// cosets of `⟨ζ⟩`) into the full schedule, reconstructed at
+/// the order-`EK_PART_SIZE` subgroup `⟨ζ⟩`) into slot `part ∈ 0..EK_PARTS` of
+/// a one-slot [`ExpandedKeyset`]. `base = part · EK_PART_SIZE` selects the
+/// cipher-input window; the `EK_PARTS` parts interleave (over the cosets of
+/// `⟨ζ⟩`) into the full schedule, reconstructed at
 /// [`NullifierDerivationStep`].
 ///
 /// The witness is the prover-built trace `T`, the round quotient
@@ -160,7 +159,7 @@ pub struct ExpandedKeyStep;
 impl Step for ExpandedKeyStep {
     type Aux<'source> = ();
     type Left = MasterKeyPart;
-    type Output = ExpandedKeyPart;
+    type Output = ExpandedKeyset;
     type Right = MasterKeyPart;
     /// `(expansion_trace, quotients, key_poly, decimation_quotient, part)`.
     type Witness<'source> = (
@@ -295,71 +294,69 @@ impl Step for ExpandedKeyStep {
             whitening,
         )?;
 
-        Ok(((PartKeyCommit(key_poly.0.commit()), part, mk, note), ()))
+        // Emit a one-slot keyset: this part's commitment in its slot, the
+        // identity point elsewhere, with matching boolean coverage. `part` is
+        // range-checked above, so the slot selector places exactly one part at
+        // its schedule position.
+        let commit = PartKeyCommit(key_poly.0.commit());
+        let slots: [PartKeyCommit; EK_PARTS] = array::from_fn(|slot| {
+            if Fp::from(slot as u64) == part {
+                commit
+            } else {
+                PartKeyCommit(Eq::identity())
+            }
+        });
+        let coverage: [Fp; EK_PARTS] = array::from_fn(|slot| {
+            if Fp::from(slot as u64) == part {
+                Fp::ONE
+            } else {
+                Fp::ZERO
+            }
+        });
+        Ok(((slots, coverage, mk, note), ()))
     }
 }
 
-/// One `ExpandedKey` part: its key-poly commitment, window index, the full
-/// `mk`, and the originating note `(keyset_commit, part, mk, note)`.
-/// Wallet-only.
+/// The expansion keyset `(slots, coverage, mk, note)`: per-part commitment
+/// slots and coverage flags. Wallet-only.
 ///
-/// Carries the [`PartKeyCommit`] to the eval-form part-key polynomial (this
-/// window's `EK_PART_SIZE` keyed-cipher expansion outputs), proven by
-/// [`ExpandedKeyStep`], the `part` index `0..EK_PARTS` so the funnel pins one
-/// of each, the full `mk` (for the downstream query parameters), and the note
-/// (so the deferred `cm` binds at the funnel root). The header is private to
-/// the wallet's own proof tree and is never published.
-#[derive(Clone, Debug)]
-pub struct ExpandedKeyPart;
-
-impl Header for ExpandedKeyPart {
-    type Data = (PartKeyCommit, Fp, NoteMasterKey, Note);
-
-    const SUFFIX: Suffix = Suffix::new(12);
-
-    fn encode(data: &Self::Data) -> Vec<u8> {
-        let (keyset_commit, part, mk, note) = *data;
-        let mut out = Vec::with_capacity(32 + 32 + (NoteMasterKey::MK_LENGTH * 32) + (4 * 32));
-        let commit_bytes: [u8; 32] = keyset_commit.0.to_affine().to_bytes();
-        out.extend_from_slice(&commit_bytes);
-        out.extend_from_slice(&part.to_repr());
-        for key in mk.0 {
-            out.extend_from_slice(&key.to_repr());
-        }
-        out.extend_from_slice(&Fp::from(note.pk).to_repr());
-        out.extend_from_slice(&Fp::from(note.value).to_repr());
-        out.extend_from_slice(&Fp::from(note.psi).to_repr());
-        out.extend_from_slice(&Fp::from(note.rcm).to_repr());
-        out
-    }
-}
-
-/// The assembled expansion keyset `(keyset_fold, mk, note)`, the single funnel
-/// output the derivation consumes. Wallet-only.
-///
-/// `keyset_fold` is the running Poseidon fold of the `EK_PARTS`
-/// [`PartKeyCommit`]s, each folded at its schedule position by
-/// [`poseidon::keyset_fold`]: a single scalar that binds the full ordered set
-/// of part commitments. [`NullifierDerivationStep`] recomputes the fold from
-/// the witnessed part polynomials in canonical order and checks it, so the one
-/// scalar stands in for all `EK_PARTS` commitments without an array or
-/// per-slot placement. `mk` carries the master key for the query parameters and
-/// `note` the per-note fields for the deferred `cm`; both are reconciled across
-/// every part by the funnel. The header is private to the wallet's own proof
-/// tree and is never published.
+/// `slots[p]` holds `commit(A_p)`, the [`PartKeyCommit`] to part `p`'s
+/// eval-form part-key polynomial (that window's `EK_PART_SIZE` keyed-cipher
+/// expansion outputs, proven by [`ExpandedKeyStep`]), or the identity point
+/// while part `p` is uncovered; `coverage[p]` is the matching boolean flag.
+/// [`ExpandedKeyStep`] emits a one-slot keyset and [`ExpandedKeyFuse`] merges
+/// disjoint keysets, so any fuse order covers the schedule; slot position pins
+/// each part's schedule index without a fold or per-part ordering. `mk`
+/// carries the master key for the downstream query parameters and `note` the
+/// per-note fields for the deferred `cm`; both are reconciled across every
+/// merge. The header is private to the wallet's own proof tree and is never
+/// published.
 #[derive(Clone, Debug)]
 pub struct ExpandedKeyset;
 
 impl Header for ExpandedKeyset {
-    /// `(keyset_fold, mk, note)`.
-    type Data = (Fp, NoteMasterKey, Note);
+    /// `(slots, coverage, mk, note)`.
+    type Data = (
+        [PartKeyCommit; EK_PARTS],
+        [Fp; EK_PARTS],
+        NoteMasterKey,
+        Note,
+    );
 
-    const SUFFIX: Suffix = Suffix::new(14);
+    const SUFFIX: Suffix = Suffix::new(12);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let (keyset_fold, mk, note) = *data;
-        let mut out = Vec::with_capacity(32 + (NoteMasterKey::MK_LENGTH * 32) + (4 * 32));
-        out.extend_from_slice(&keyset_fold.to_repr());
+        let (slots, coverage, mk, note) = *data;
+        let mut out = Vec::with_capacity(
+            (EK_PARTS * 32) + (EK_PARTS * 32) + (NoteMasterKey::MK_LENGTH * 32) + (4 * 32),
+        );
+        for slot in slots {
+            let slot_bytes: [u8; 32] = slot.0.to_affine().to_bytes();
+            out.extend_from_slice(&slot_bytes);
+        }
+        for flag in coverage {
+            out.extend_from_slice(&flag.to_repr());
+        }
         for key in mk.0 {
             out.extend_from_slice(&key.to_repr());
         }
@@ -371,31 +368,24 @@ impl Header for ExpandedKeyset {
     }
 }
 
-/// Extract the affine coordinates of a part-key commitment for folding, failing
-/// on the identity point (a degenerate, zero-coefficient part-key poly).
-fn part_commit_coords(
-    commit: PartKeyCommit,
-    context: &'static str,
-) -> ragu::Result<Coordinates<EqAffine>> {
-    Option::from(commit.0.to_affine().coordinates())
-        .ok_or_else(|| ragu::Error::InvalidWitness(context.into()))
-}
-
-/// Begin the expansion funnel: lift the first [`ExpandedKeyPart`] into an
-/// [`ExpandedKeyset`] by folding its commitment at its schedule position.
+/// Merge two disjoint [`ExpandedKeyset`]s slot-wise.
 ///
-/// Establishes the running keyset fold from part 0 and forwards the part's `mk`
-/// and note for downstream reconciliation. The part's own index is folded in
-/// (not pinned here), so feeding any part but part 0 first shifts the fold and
-/// fails [`NullifierDerivationStep`]'s canonical recomputation.
+/// Reconciles the two keysets' `mk` and note (so every covered part belongs to
+/// one note), enforces disjoint coverage (no part certified twice), and emits
+/// the slot-wise point sum: a covered slot carries its part commitment
+/// unchanged (identity plus commitment), an uncovered slot stays the identity.
+/// `EK_PARTS - 1` invocations, in any tree shape, cover the whole schedule;
+/// changing `EK_PARTS` changes the invocation count, not the circuit.
+/// Completeness is enforced downstream: [`NullifierDerivationStep`] requires
+/// full coverage and matches every witnessed part against its slot.
 #[derive(Debug)]
-pub struct ExpandedKeysetLift;
+pub struct ExpandedKeyFuse;
 
-impl Step for ExpandedKeysetLift {
+impl Step for ExpandedKeyFuse {
     type Aux<'source> = ();
-    type Left = ExpandedKeyPart;
+    type Left = ExpandedKeyset;
     type Output = ExpandedKeyset;
-    type Right = ();
+    type Right = ExpandedKeyset;
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(18);
@@ -404,73 +394,49 @@ impl Step for ExpandedKeysetLift {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (commit, part, mk, note): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
+        (left_slots, left_coverage, left_mk, left_note): <Self::Left as Header>::Data,
+        (right_slots, right_coverage, right_mk, right_note): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let coords = part_commit_coords(commit, "ExpandedKeysetLift: identity part commitment")?;
-        let keyset_fold = poseidon::keyset_fold(Fp::ZERO, coords, part);
-        Ok(((keyset_fold, mk, note), ()))
-    }
-}
-
-/// Fold one more [`ExpandedKeyPart`] into the running [`ExpandedKeyset`].
-///
-/// Reconciles the part's `mk` and note against the accumulation (so every part
-/// belongs to one note), then folds the part's commitment at its schedule
-/// position into the running keyset fold and forwards it. `EK_PARTS - 1`
-/// invocations chain after [`ExpandedKeysetLift`] to fold the whole schedule;
-/// changing `EK_PARTS` changes the invocation count, not the circuit. No array,
-/// no per-slot placement, no count: ordering and completeness are enforced
-/// downstream by [`NullifierDerivationStep`]'s canonical recomputation of the
-/// fold over exactly `EK_PARTS` parts.
-#[derive(Debug)]
-pub struct ExpandedKeyFuse;
-
-impl Step for ExpandedKeyFuse {
-    type Aux<'source> = ();
-    type Left = ExpandedKeyset;
-    type Output = ExpandedKeyset;
-    type Right = ExpandedKeyPart;
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(19);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (keyset_fold, mk, note): <Self::Left as Header>::Data,
-        (commit, part, part_mk, part_note): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // Reconcile: every folded part belongs to the same note (shared mk and
+        // Reconcile: every covered part belongs to the same note (shared mk and
         // note fields), so the forwarded mk keys the genuine derivation and the
         // deferred cm pins the genuine value.
-        for (acc_key, part_key) in mk.0.iter().zip(part_mk.0.iter()) {
+        for (left_key, right_key) in left_mk.0.iter().zip(right_mk.0.iter()) {
             enforce_zero(
-                *acc_key - *part_key,
+                *left_key - *right_key,
                 "ExpandedKeyFuse: master key mismatch across parts",
             )?;
         }
         enforce_zero(
-            Fp::from(note.pk) - Fp::from(part_note.pk),
+            Fp::from(left_note.pk) - Fp::from(right_note.pk),
             "ExpandedKeyFuse: note pk mismatch across parts",
         )?;
         enforce_zero(
-            Fp::from(note.value) - Fp::from(part_note.value),
+            Fp::from(left_note.value) - Fp::from(right_note.value),
             "ExpandedKeyFuse: note value mismatch across parts",
         )?;
         enforce_zero(
-            Fp::from(note.psi) - Fp::from(part_note.psi),
+            Fp::from(left_note.psi) - Fp::from(right_note.psi),
             "ExpandedKeyFuse: note psi mismatch across parts",
         )?;
         enforce_zero(
-            Fp::from(note.rcm) - Fp::from(part_note.rcm),
+            Fp::from(left_note.rcm) - Fp::from(right_note.rcm),
             "ExpandedKeyFuse: note rcm mismatch across parts",
         )?;
 
-        let coords = part_commit_coords(commit, "ExpandedKeyFuse: identity part commitment")?;
-        let folded = poseidon::keyset_fold(keyset_fold, coords, part);
-        Ok(((folded, mk, note), ()))
+        // Disjoint coverage: flags are boolean by construction upstream, so a
+        // zero product per slot means no part is certified twice.
+        for slot in 0..EK_PARTS {
+            enforce_zero(
+                left_coverage[slot] * right_coverage[slot],
+                "ExpandedKeyFuse: overlapping part coverage",
+            )?;
+        }
+
+        let slots: [PartKeyCommit; EK_PARTS] =
+            array::from_fn(|slot| PartKeyCommit(left_slots[slot].0 + right_slots[slot].0));
+        let coverage: [Fp; EK_PARTS] =
+            array::from_fn(|slot| left_coverage[slot] + right_coverage[slot]);
+        Ok(((slots, coverage, left_mk, left_note), ()))
     }
 }
 
@@ -522,17 +488,16 @@ impl Header for NullifierDerivation {
 
 /// Certify the note's `N` derivation polynomials in one single-input step.
 ///
-/// Consumes the funnelled [`ExpandedKeyset`] and witnesses the note's
+/// Consumes the fused [`ExpandedKeyset`] and witnesses the note's
 /// `EK_PARTS` part-key polynomials `A_p`, the `N` polynomials `T_j`, and their
-/// round- and boundary-quotients. It recomputes
-/// the [`ExpandedKeyset`] fold from the witnessed `A_p` in canonical part order
-/// (each `A_p.commit()` folded at position `p` by [`poseidon::keyset_fold`])
-/// and checks it against the header, so one equality binds the full ordered set
-/// of part commitments to the certified expansion -- every key it reads is the
-/// proven interleaved schedule, no part substituted or reordered. The per-poly
-/// salts, weight bases `ρ_j`, and shift `c` are derived from the funnelled
-/// `mk`; the deferred `cm` is computed from the funnelled note here, pinning
-/// the note's value and `ψ`.
+/// round- and boundary-quotients. It requires full coverage (every slot
+/// certified) and matches each witnessed `A_p.commit()` against its slot, so
+/// per-slot equality binds the full ordered set of part commitments to the
+/// certified expansion -- every key it reads is the proven interleaved
+/// schedule, no part substituted or reordered. The per-poly salts, weight
+/// bases `ρ_j`, and shift `c` are derived from the fused `mk`; the deferred
+/// `cm` is computed from the fused note here, pinning the note's value and
+/// `ψ`.
 ///
 /// Per poly, two relations certify `T_j` is the genuine keyed-cipher
 /// interpolant: [`enforce_first_column_values`] pins
@@ -567,36 +532,34 @@ impl Step for NullifierDerivationStep {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (parts, polys, quotients): Self::Witness<'source>,
-        (keyset_fold, mk, note): <Self::Left as Header>::Data,
+        (slots, coverage, mk, note): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // Bind the witnessed parts to the certified expansion: recompute the
-        // keyset fold over the `A_p` commitments in canonical part order and
-        // match the funnelled scalar. This binds the whole ordered set of
-        // `EK_PARTS` part commitments at once -- a substituted, reordered, or
-        // missing part shifts the sequential fold and fails here. So every key
-        // the recurrence reads below is the proven interleaved schedule.
-        let mut recomputed = Fp::ZERO;
-        for (position, part) in parts.iter().enumerate() {
-            let coords = part_commit_coords(
-                PartKeyCommit(part.0.commit()),
-                "NullifierDerivationStep: identity part commitment",
+        // Bind the witnessed parts to the certified expansion: every slot must
+        // be covered, and each witnessed part-key poly must commit to its
+        // slot. A substituted, reordered, or missing part fails its slot
+        // equality, so every key the recurrence reads below is the proven
+        // interleaved schedule.
+        for flag in coverage {
+            enforce_zero(
+                flag - Fp::ONE,
+                "NullifierDerivationStep: incomplete part coverage",
             )?;
-            #[expect(clippy::as_conversions, reason = "part index is small")]
-            let position_fp = Fp::from(position as u64);
-            recomputed = poseidon::keyset_fold(recomputed, coords, position_fp);
         }
-        enforce_zero(
-            keyset_fold - recomputed,
-            "NullifierDerivationStep: parts do not match the certified keyset fold",
-        )?;
+        for (position, part) in parts.iter().enumerate() {
+            enforce_equal_point(
+                part.0.commit(),
+                slots[position].0,
+                "NullifierDerivationStep: part does not match its certified slot",
+            )?;
+        }
         let key_polys: [&Polynomial; EK_PARTS] = parts.each_ref().map(|part| &part.0);
 
-        // The deferred `cm`, computed from the funnelled note: pins the note's
+        // The deferred `cm`, computed from the fused note: pins the note's
         // value and `ψ` into the published derivation.
         let cm = note.commitment();
 
-        // Query parameters derived from the funnelled `mk`. `salts` fix the
+        // Query parameters derived from the fused `mk`. `salts` fix the
         // per-poly boundaries; `shift`/`ratios` are forwarded for the downstream
         // query and lift.
         let salts = mk.query_salts();

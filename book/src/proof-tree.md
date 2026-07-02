@@ -15,9 +15,9 @@ Multiple parties execute the proof tree.
 
 A wallet certifies its note's nullifier derivation once; every later consumer re-evaluates queries against the certified commitments[^nullifiers].
 `MasterSeed` witnesses the note, the proof-authorizing key `pak`, and a part index; it checks `note.pk == pak.derive_payment_key()` (which pins `nk`), derives that part of the master key `mk`, and emits a `MasterKeyPart` carrying the part's round keys, the part index, and the whole note (so the deferred `cm` can bind downstream). Two seeds cover the two `mk` parts.
-`ExpandedKeyStep` fuses the two `MasterKeyPart`s, concatenates them into the full `mk`, and proves one window of the key expansion as a committed cipher trace: the window's expansion outputs are committed as an eval-form part-key polynomial on the `ExpandedKeyPart` header, tagged with the window index. Four invocations produce the four parts that interleave into the full schedule.
-`ExpandedKeysetLift` and `ExpandedKeyFuse` funnel the parts into one `ExpandedKeyset`: each part's commitment is folded, at its schedule position, into a running Poseidon scalar, while `mk` and the note are reconciled across every part.
-`NullifierDerivationStep` consumes the single `ExpandedKeyset`, recomputes the fold from its witnessed part polynomials in canonical order (binding the whole ordered set of part commitments with one equality), computes the deferred `cm` from the funnelled note, and certifies the note's derivation polynomials against the schedule.
+`ExpandedKeyStep` fuses the two `MasterKeyPart`s, concatenates them into the full `mk`, and proves one window of the key expansion as a committed cipher trace: the window's expansion outputs are committed as an eval-form part-key polynomial into that window's slot of a one-slot `ExpandedKeyset`. Four invocations produce the four parts that interleave into the full schedule.
+`ExpandedKeyFuse` merges disjoint keysets slot-wise, in any tree shape, while `mk` and the note are reconciled across every merge; each covered slot carries its part commitment at its schedule position.
+`NullifierDerivationStep` consumes the single fully covered `ExpandedKeyset`, matches each witnessed part polynomial's commitment against its slot (binding the whole ordered set of part commitments), computes the deferred `cm` from the fused note, and certifies the note's derivation polynomials against the schedule.
 The result is a `NullifierDerivation` header carrying the derivation-polynomial commitments, a transcript digest over them, `cm`, and the query parameters, proving every future nullifier query reads the genuine derivation of the note identified by `cm`.
 The derivation carries no offset origin: it is epoch-independent, a function of the note alone. Each consumer that needs the origin witnesses it locally.
 
@@ -80,7 +80,7 @@ The aggregated stamp has the same shape as any other, so it is itself eligible f
 ## Roles
 
 The wallet runs every step that touches the note's commitment or master key.
-It seeds and certifies the private derivation (`MasterSeed`, `ExpandedKeyStep`, `ExpandedKeysetLift`, `ExpandedKeyFuse`, `NullifierDerivationStep`), derives spendable status from its own creation-epoch query (`SpendableInit`), binds and lifts over sync-built segments (`VerifyUnspent`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `OutputStamp`, `SpendStamp`).
+It seeds and certifies the private derivation (`MasterSeed`, `ExpandedKeyStep`, `ExpandedKeyFuse`, `NullifierDerivationStep`), derives spendable status from its own creation-epoch query (`SpendableInit`), binds and lifts over sync-built segments (`VerifyUnspent`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `OutputStamp`, `SpendStamp`).
 
 The sync service holds the per-epoch nullifier values the wallet shared and pool history.
 It produces the `Unspent` segments that carry the spendable forward (`UnspentSeed`, `EmptyBlockUnspentSeed`, `UnspentFuse`, `UnspentEpochFuse`) and hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
@@ -99,7 +99,6 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `E
 | UnspentEpochFuse | possible | yes | no |
 | MasterSeed | yes | no | no |
 | ExpandedKeyStep | yes | no | no |
-| ExpandedKeysetLift | yes | no | no |
 | ExpandedKeyFuse | yes | no | no |
 | NullifierDerivationStep | yes | no | no |
 | VerifyUnspent | yes | no | no |
@@ -138,10 +137,10 @@ The crossing epoch is the right half's `epoch_start`, which must be exactly one 
 ### Derivation chain
 
 `MasterSeed` is the chain's only seed. It binds the master key to the note: `note.pk == pak.derive_payment_key()` pins `nk`, and the note commitment digests `nk` (through `pk`) and `psi`, so each derived `mk` part is consistent with the note the seed threads forward. `nk` is witnessed and discarded, never carried on a header.
-`ExpandedKeyStep` pins its two inputs as `mk` parts zero and one of the same note, then proves the expansion window as a committed cipher trace: a boundary relation applies round zero outside the trace, a masked recurrence advances every remaining round, and a decimation relation binds the eval-form part-key polynomial to the trace's final column plus the whitening key. So each `ExpandedKeyPart` commitment is exactly that window's expansion outputs under the note's `mk`.
-`ExpandedKeysetLift` and `ExpandedKeyFuse` fold each part commitment, at its window index, into a running domain-separated Poseidon scalar, reconciling `mk` and the note across parts. The fold is order-, identity-, and completeness-binding by collision resistance.
-`NullifierDerivationStep` recomputes the fold from its witnessed part polynomials in canonical window order and matches the funnelled scalar, so every key the certify relations read is the proven interleaved schedule. Per derivation polynomial, a boundary relation pins round zero from the per-polynomial salt and a committed-offset recurrence pins the remaining rounds against the schedule reconstructed from the part polynomials.
-So a `NullifierDerivation` is a sound proof that the committed derivation polynomials are the genuine emitter traces of the note identified by `cm`, with `cm` computed in-step from the funnelled note.
+`ExpandedKeyStep` pins its two inputs as `mk` parts zero and one of the same note, then proves the expansion window as a committed cipher trace: a boundary relation applies round zero outside the trace, a masked recurrence advances every remaining round, and a decimation relation binds the eval-form part-key polynomial to the trace's final column plus the whitening key. So each covered slot's commitment is exactly that window's expansion outputs under the note's `mk`.
+`ExpandedKeyFuse` merges disjoint keysets slot-wise, reconciling `mk` and the note across every merge; the range-checked window index selects each part's slot, so slot position is identity- and order-binding, and the boolean coverage flags make double-certification impossible.
+`NullifierDerivationStep` requires full coverage and matches each witnessed part polynomial's commitment against its slot, so every key the certify relations read is the proven interleaved schedule. Per derivation polynomial, a boundary relation pins round zero from the per-polynomial salt and a committed-offset recurrence pins the remaining rounds against the schedule reconstructed from the part polynomials.
+So a `NullifierDerivation` is a sound proof that the committed derivation polynomials are the genuine emitter traces of the note identified by `cm`, with `cm` computed in-step from the fused note.
 
 ### Verifying unspent against derivation
 
@@ -212,7 +211,6 @@ flowchart TB
     w_seed[/note, pak, part/]
     s_seed[MasterSeed]
     s_expand[ExpandedKeyStep]
-    s_klift[ExpandedKeysetLift]
     s_kfuse[ExpandedKeyFuse]
     s_derive[NullifierDerivationStep]
     nf_derivation((NullifierDerivation))
@@ -244,9 +242,8 @@ flowchart TB
 
   w_seed --> s_seed
   s_seed -->|MasterKeyPart| s_expand
-  s_expand -->|ExpandedKeyPart| s_klift
-  s_klift -->|ExpandedKeyset| s_kfuse
-  s_expand -->|ExpandedKeyPart| s_kfuse
+  s_expand -->|ExpandedKeyset| s_kfuse
+  s_expand -->|ExpandedKeyset| s_kfuse
   s_kfuse -->|ExpandedKeyset| s_derive
   s_derive --> nf_derivation
 
@@ -326,8 +323,7 @@ flowchart LR
 | Unspent | (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), anchor_last) |
 | VerifiedUnspent | (cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end), anchor_last, creation_epoch) |
 | MasterKeyPart | (mk_part, part, note) |
-| ExpandedKeyPart | (part_commit, part, mk, note) |
-| ExpandedKeyset | (keyset_fold, mk, note) |
+| ExpandedKeyset | (slots, coverage, mk, note) |
 | NullifierDerivation | (commits, digest, cm, shift, ratios) |
 | SpendableHeader | (cm, (present_epoch, present_nf), anchor, creation_epoch) |
 | SpendHeader | (cm, (cv, rk), present_nf, anchor, offset) |
@@ -346,9 +342,8 @@ flowchart LR
 | UnspentEpochFuse | Unspent | Unspent | left_seq, combined_seq, right_seq | Unspent |
 | VerifyUnspent | Unspent | NullifierDerivation | elapsed, tip, range, polys, weights, accumulator, quotients, creation_epoch | VerifiedUnspent |
 | MasterSeed | — | — | note, pak, part | MasterKeyPart |
-| ExpandedKeyStep | MasterKeyPart | MasterKeyPart | trace, quotients, key_poly, decimation_quotient, part | ExpandedKeyPart |
-| ExpandedKeysetLift | ExpandedKeyPart | — | — | ExpandedKeyset |
-| ExpandedKeyFuse | ExpandedKeyset | ExpandedKeyPart | — | ExpandedKeyset |
+| ExpandedKeyStep | MasterKeyPart | MasterKeyPart | trace, quotients, key_poly, decimation_quotient, part | ExpandedKeyset |
+| ExpandedKeyFuse | ExpandedKeyset | ExpandedKeyset | — | ExpandedKeyset |
 | NullifierDerivationStep | ExpandedKeyset | — | parts, polys, quotients | NullifierDerivation |
 | SpendableInit | AnchorChain | NullifierDerivation | pre_epoch_anchor, pre_cm_anchor, creation_set, polys, creation_epoch | SpendableHeader |
 | SpendableLift | SpendableHeader | VerifiedUnspent | — | SpendableHeader |

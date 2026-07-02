@@ -959,9 +959,9 @@ impl WalletSim {
     /// The note's certified derivation PCD, built once per `cm` and memoized.
     /// Seeds the `MK_PARTS` master key parts, certifies each of the `EK_PARTS`
     /// expansion windows ([`ExpandedKeyStep`](delegation::ExpandedKeyStep))
-    /// against them, funnels the parts into one
-    /// [`ExpandedKeyset`](delegation::ExpandedKeyset) (`ExpandedKeysetLift` +
-    /// `ExpandedKeyFuse`), and certifies the `N` derivation polynomials in one
+    /// against them as one-slot keysets, fuses them into one fully covered
+    /// [`ExpandedKeyset`](delegation::ExpandedKeyset) (`ExpandedKeyFuse`), and
+    /// certifies the `N` derivation polynomials in one
     /// [`NullifierDerivationStep`](delegation::NullifierDerivationStep).
     ///
     /// The derivation carries no offset origin, so the resulting PCD is a
@@ -992,7 +992,7 @@ impl WalletSim {
                 // states and keys on demand (one part at a time, so the POLY_LEN_MAX
                 // state grid never all sits on the stack), spectrum it for the
                 // witness, and stash the keys for the derivation step below.
-                let mut part_pcds: Vec<Pcd<delegation::ExpandedKeyPart>> =
+                let mut part_pcds: Vec<Pcd<delegation::ExpandedKeyset>> =
                     Vec::with_capacity(EK_PARTS);
                 let mut part_keys: Vec<PartKey> = Vec::with_capacity(EK_PARTS);
                 for part in 0..EK_PARTS {
@@ -1017,19 +1017,10 @@ impl WalletSim {
                     part_keys.push(keys);
                 }
 
-                // Funnel the parts into one ExpandedKeyset: lift part 0, fold the rest.
-                // Single-input steps take a trivial () PCD on the empty side.
+                // Fuse the one-slot keysets into one fully covered
+                // ExpandedKeyset; any fuse order works, so chain left to right.
                 let mut parts = part_pcds.into_iter();
-                let first = parts.next().expect("EK_PARTS >= 1");
-                let (mut keyset_pcd, ()) = PROOF_SYSTEM
-                    .fuse(
-                        rng,
-                        delegation::ExpandedKeysetLift,
-                        (),
-                        first,
-                        Proof::trivial().carry::<()>(()),
-                    )
-                    .expect("ExpandedKeysetLift");
+                let mut keyset_pcd = parts.next().expect("EK_PARTS >= 1");
                 for part_pcd in parts {
                     let (next, ()) = PROOF_SYSTEM
                         .fuse(rng, delegation::ExpandedKeyFuse, (), keyset_pcd, part_pcd)
