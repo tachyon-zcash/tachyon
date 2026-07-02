@@ -21,7 +21,7 @@ use crate::{
     fixtures::{
         PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_stamp,
         build_unspent_pcd_between_blocks, build_unspent_seed_pcd, random_block, random_block_with,
-        spend_witness, spendable_init_inputs,
+        shared_sk, spend_witness, spendable_init_inputs,
     },
     note::{self, Nullifier},
     primitives::{Anchor, BlockHeight, EpochIndex, Tachygram, effect},
@@ -89,9 +89,9 @@ fn honest_spend_stamp(
 #[test]
 fn same_epoch_honest_spend_accepted() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     let cm_height = mine_cm_in_epoch_one(rng, &mut pool, note.commitment());
     let epoch = cm_height.epoch();
 
@@ -113,9 +113,9 @@ fn same_epoch_honest_spend_accepted() {
 #[test]
 fn same_epoch_wrong_index_rejected_against_honest_chain() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     let cm_height = mine_cm_in_epoch_one(rng, &mut pool, note.commitment());
     let wrong = EpochIndex(cm_height.epoch().0 + 2);
 
@@ -151,9 +151,9 @@ fn same_epoch_wrong_index_rejected_against_honest_chain() {
 #[test]
 fn spendable_init_accepts_forged_chain() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     let cm = note.commitment();
     let cm_height = mine_cm_in_epoch_one(rng, &mut pool, cm);
     let wrong = EpochIndex(cm_height.epoch().0 + 2);
@@ -212,13 +212,13 @@ fn spendable_init_accepts_forged_chain() {
 #[test]
 fn stamp_lift_within_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
 
     pool.advance(1, |_| random_block(rng, 1, 4));
     let stamp_anchor = pool.anchor_at(BlockHeight(1));
 
-    let note = user.random_note(rng, 200);
+    let note = user.random_note(200);
     let (stamp, plan) = build_output_stamp(rng, stamp_anchor, note);
 
     let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
@@ -245,8 +245,8 @@ fn stamp_lift_within_epoch() {
 #[test]
 fn spendable_init_rejects_tg_absent() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
-    let note = user.random_note(rng, 500);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
 
     let nf_header = user.derived_range(rng, &note, EpochIndex(0), 1);
     let present_nf = user.nf_at(&note, EpochIndex(0));
@@ -286,8 +286,8 @@ fn spendable_init_rejects_tg_absent() {
 #[test]
 fn unspent_seed_rejects_tg_present() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
-    let note = user.random_note(rng, 500);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
     let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
 
     let start = Anchor::default();
@@ -434,8 +434,8 @@ fn empty_block_unspent_lifts_spendable() {
     // Build a spendable, then lift it across an empty block via an
     // Unspent built solely from EmptyBlockUnspentSeed.
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
-    let note = user.random_note(rng, 100);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(100);
     let cm = note.commitment();
 
     let mut pool = PoolSim::genesis(rng);
@@ -464,9 +464,9 @@ fn empty_block_unspent_lifts_spendable() {
 #[test]
 fn spend_bind_honest() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spend_epoch = height.epoch();
@@ -483,7 +483,7 @@ fn spend_bind_rejects_invalid_inputs() {
     let user = WalletSim::random(rng);
     let other = WalletSim::random(rng);
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spend_epoch = height.epoch();
@@ -551,9 +551,9 @@ fn spend_bind_rejects_invalid_inputs() {
 #[test]
 fn spend_stamp_rejects_forged_next() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spend_epoch = height.epoch();
@@ -579,9 +579,9 @@ fn spend_stamp_rejects_forged_next() {
 #[test]
 fn spend_stamp_rejects_zero_next_nullifier() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spend_epoch = height.epoch();
@@ -607,9 +607,9 @@ fn spend_stamp_rejects_zero_next_nullifier() {
 #[test]
 fn spend_stamp_rejects_identity_cv() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spend_epoch = height.epoch();
@@ -643,7 +643,7 @@ fn spend_stamp_rejects_identity_cv() {
 #[test]
 fn step_rejects_zero_value_note() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
 
     let zero_note = Note {
         pk: user.pak.derive_payment_key(),
@@ -673,7 +673,7 @@ fn step_rejects_zero_value_note() {
 
     {
         let mut pool = PoolSim::genesis(rng);
-        let note = user.random_note(rng, 500);
+        let note = user.random_note(500);
         pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
         let height = pool.height();
         let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
@@ -708,9 +708,9 @@ fn step_rejects_zero_value_note() {
 #[test]
 fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     let cm_height = mine_cm_block(rng, &mut pool, note.commitment());
     let target_height = BlockHeight(EPOCH_SIZE);
     while pool.height() < target_height {
@@ -758,9 +758,9 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
 #[test]
 fn spend_stamp_assembles_tachygrams() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spend_epoch = height.epoch();
@@ -780,8 +780,8 @@ fn spend_stamp_assembles_tachygrams() {
 #[test]
 fn notes_with_shared_psi_share_nullifiers() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
-    let note_a = user.random_note(rng, 500);
+    let user = WalletSim::new(shared_sk());
+    let note_a = user.random_note(500);
     let note_b = Note {
         value: note::Value::try_from(700u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
@@ -934,9 +934,9 @@ fn unspent_epoch_fuse_composes_contiguous_ranges() {
 #[test]
 fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
 
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
@@ -979,9 +979,9 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
 #[test]
 fn sync_unspent_spans_two_crossings() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let start_anchor = spendable.data().2;
@@ -1014,9 +1014,9 @@ fn sync_unspent_spans_two_crossings() {
 #[test]
 fn unspent_lift_spans_partial_and_whole_epochs() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     // cm in a multi-stamp block mid-epoch 0: the spendable anchor sits mid-block,
     // so the lineage's first epoch is partial (the post-cm prefix).
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
@@ -1285,9 +1285,9 @@ fn unspent_epoch_fuse_rejects_epoch_skip() {
 #[test]
 fn verify_unspent_rejects_tip_mismatch() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let start_anchor = spendable.data().2;
@@ -1336,9 +1336,9 @@ fn verify_unspent_rejects_tip_mismatch() {
 #[test]
 fn verify_unspent_rejects_elapsed_mismatch() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     pool.advance(1, |_| random_block(rng, 1, 2));
 
@@ -1375,9 +1375,9 @@ fn verify_unspent_rejects_elapsed_mismatch() {
 #[test]
 fn verify_unspent_rejects_wrong_start_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     pool.advance(1, |_| random_block(rng, 1, 2));
 
@@ -1414,9 +1414,9 @@ fn verify_unspent_rejects_wrong_start_epoch() {
 #[test]
 fn spendable_lift_rejects_wrong_cm() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     let phantom = Note {
         value: note::Value::try_from(700u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
@@ -1459,9 +1459,9 @@ fn spendable_lift_rejects_wrong_cm() {
 #[test]
 fn spendable_lift_rejects_non_adjacent_unspent() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(rng, 500);
+    let note = user.random_note(500);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     pool.advance(1, |_| random_block(rng, 1, 2));
 
@@ -1490,8 +1490,8 @@ fn spendable_lift_rejects_non_adjacent_unspent() {
 #[test]
 fn nullifier_fuse_rejects_non_contiguous() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
-    let note = user.random_note(rng, 500);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
 
     let range_a = user.derived_range(rng, &note, EpochIndex(0), 1);
     let range_b = user.derived_range(rng, &note, EpochIndex(2), 1);
@@ -1514,9 +1514,9 @@ fn nullifier_fuse_rejects_non_contiguous() {
 #[test]
 fn nullifier_fuse_rejects_wrong_cm() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
-    let note_a = user.random_note(rng, 500);
-    let note_b = user.random_note(rng, 500);
+    let user = WalletSim::new(shared_sk());
+    let note_a = user.random_note(500);
+    let note_b = user.random_note(500);
 
     let range_a = user.derived_range(rng, &note_a, EpochIndex(0), 1);
     let range_b = user.derived_range(rng, &note_b, EpochIndex(1), 1);

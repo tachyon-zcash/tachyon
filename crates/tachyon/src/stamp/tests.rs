@@ -9,7 +9,8 @@ use crate::{
     action,
     constants::EPOCH_SIZE,
     fixtures::{
-        PoolSim, WalletSim, build_output_stamp, random_block, random_block_with, spend_witness,
+        PoolSim, WalletSim, build_output_stamp, random_block, random_block_with, shared_sk,
+        spend_witness,
     },
     primitives::BlockHeight,
 };
@@ -34,7 +35,7 @@ fn merge_stamp_iff_matching_anchors() {
             |_| random_block(rng, 1, 50),
         );
         let anchor_a = pool.anchor();
-        let note_a = user_a.random_note(rng, 200);
+        let note_a = user_a.random_note(200);
         let (stamp_a, plan_a) = build_output_stamp(rng, anchor_a, note_a);
 
         let n_between = anchor_height_b.0 - anchor_height_a.0;
@@ -42,7 +43,7 @@ fn merge_stamp_iff_matching_anchors() {
             random_block(rng, 1, 50)
         });
         let anchor_b = pool.anchor();
-        let note_b = user_b.random_note(rng, 300);
+        let note_b = user_b.random_note(300);
         let (stamp_b, plan_b) = build_output_stamp(rng, anchor_b, note_b);
 
         let result = Stamp::prove_merge(
@@ -61,11 +62,11 @@ fn merge_stamp_iff_matching_anchors() {
 #[test]
 fn plan_prove_rejects_invalid_inputs() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::random(rng);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
 
-    let note_a = user.random_note(rng, 500);
-    let note_b = user.random_note(rng, 700);
+    let note_a = user.random_note(500);
+    let note_b = user.random_note(700);
     pool.mine(random_block_with(
         rng,
         &[vec![note_a.commitment()], vec![note_b.commitment()]],
@@ -160,7 +161,7 @@ fn prove_output_populates_action_set() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let mut pool = PoolSim::genesis(rng);
-    let note = wallet.random_note(rng, 200);
+    let note = wallet.random_note(200);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 50));
     let anchor = pool.anchor();
 
@@ -179,8 +180,8 @@ fn prove_merge_populates_action_set() {
     let user_b = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let anchor = pool.anchor();
-    let note_a = user_a.random_note(rng, 200);
-    let note_b = user_b.random_note(rng, 300);
+    let note_a = user_a.random_note(200);
+    let note_b = user_b.random_note(300);
     let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note_a);
     let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note_b);
 
@@ -201,7 +202,7 @@ fn stamp_action_set_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
-    let note = wallet.random_note(rng, 200);
+    let note = wallet.random_note(200);
     let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
 
     let mut buf = Vec::new();

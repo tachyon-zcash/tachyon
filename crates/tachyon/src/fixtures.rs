@@ -9,13 +9,19 @@
 )]
 
 extern crate alloc;
+extern crate std;
 
-use alloc::{vec, vec::Vec};
-use core::{iter, ops::RangeInclusive};
+use alloc::{collections::BTreeMap, rc::Rc, vec, vec::Vec};
+use core::{
+    cell::{Cell, RefCell},
+    iter,
+    ops::RangeInclusive,
+};
 
-use ff::Field as _;
+use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
 use ragu::Pcd;
+use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
@@ -23,7 +29,7 @@ use crate::{
     bundle::{self, Bundle},
     constants::EPOCH_SIZE,
     entropy::{ActionEntropy, ActionRandomizer},
-    keys::{NoteMasterKey, ProofAuthorizingKey, private},
+    keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
         ActionDigest, Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit,
@@ -59,7 +65,7 @@ pub fn action_digests(actions: &[Action]) -> Vec<ActionDigest> {
 pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(rng, 400);
+    let note = wallet.random_note(400);
     let (_, _, plan) = build_output_plan(rng, note);
     let bundle_plan = bundle::Plan::new(alloc::vec![], alloc::vec![plan]);
     let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
@@ -114,8 +120,8 @@ pub fn build_autonome(
     spend_value: u64,
     output_value: u64,
 ) -> Bundle<Stamp> {
-    let spend_note = wallet.random_note(rng, spend_value);
-    let output_note = wallet.random_note(rng, output_value);
+    let spend_note = wallet.random_note(spend_value);
+    let output_note = wallet.random_note(output_value);
     let mut pool = PoolSim::genesis(rng);
     let stamps_cms = vec![vec![spend_note.commitment()]];
     pool.mine(random_block_with(rng, &stamps_cms, 50));
@@ -165,43 +171,74 @@ pub fn random_block_with(
     stamps
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct PoolSimBlock {
     prev: Anchor,
     stamps: Vec<Vec<Tachygram>>,
 }
 
+/// A block's memoized curve work: its per-stamp tachygram-set commitments and
+/// the post anchors those commitments fold to. Both require a polynomial commit
+/// (MSM) per stamp, so they are computed once per block and shared via [`Rc`].
+struct BlockDigest {
+    commits: Vec<TachygramSetCommit>,
+    anchors: Vec<Anchor>,
+}
+
 impl PoolSimBlock {
-    #[must_use]
-    pub fn anchors(&self) -> Vec<Anchor> {
-        if self.stamps.is_empty() {
-            return vec![self.prev.next_empty()];
-        }
-        let stamp_commits = self.commits();
-        stamp_commits.iter().fold(Vec::new(), |mut acc, commit| {
-            let last = acc.last().unwrap_or(&self.prev);
-            let next = last.next_stamp(commit);
-            acc.push(next);
-            acc
-        })
-    }
-
-    #[must_use]
-    pub fn anchor(&self) -> Anchor {
-        *self.anchors().last().unwrap()
-    }
-
-    #[must_use]
-    pub fn commits(&self) -> Vec<TachygramSetCommit> {
+    /// Per-stamp tachygram-set commitments, in stamp order.
+    fn commits(&self) -> Vec<TachygramSetCommit> {
         self.stamps
             .iter()
-            .map(|tgs| TachygramSetPoly::from_iter(tgs.clone()).commit())
+            .map(|tgs| tgs.iter().copied().collect::<TachygramSetPoly>().commit())
             .collect()
+    }
+
+    /// The block's commitments and post anchors in one pass: one anchor per
+    /// stamp (folding `next_stamp` from `prev`), or a single `next_empty` tick
+    /// for an empty block. The anchors reuse the commitments, so the MSMs run
+    /// once.
+    fn digest(&self) -> BlockDigest {
+        let commits = self.commits();
+        let anchors = if commits.is_empty() {
+            alloc::vec![self.prev.next_empty()]
+        } else {
+            commits.iter().fold(Vec::new(), |mut acc, commit| {
+                let last = acc.last().unwrap_or(&self.prev);
+                acc.push(last.next_stamp(commit));
+                acc
+            })
+        };
+        BlockDigest { commits, anchors }
     }
 }
 
 pub struct PoolSim {
     history: Vec<PoolSimBlock>,
+    /// Per-block digest memo, keyed by block height. The history is
+    /// append-only, so a cached digest never goes stale.
+    digests: RefCell<BTreeMap<usize, Rc<BlockDigest>>>,
+    /// Post-anchor -> (height, stamp position) index, populated alongside the
+    /// digests, so anchor lookup is a map hit rather than a full-history scan.
+    /// Keyed by the anchor's inner `Fp` (an ordering of `Anchor` itself would
+    /// mean by field value, not chain relationship, so it is not exposed).
+    anchor_locs: RefCell<BTreeMap<Fp, (BlockHeight, usize)>>,
+    /// Block-digest cache tallies (misses = one-time MSM work, hits = saved),
+    /// summarized once when the pool is dropped rather than per height.
+    digest_misses: Cell<usize>,
+    digest_hits: Cell<usize>,
+}
+
+impl Drop for PoolSim {
+    fn drop(&mut self) {
+        let (misses, hits) = (self.digest_misses.get(), self.digest_hits.get());
+        if misses + hits > 0 {
+            std::eprintln!(
+                "[poolsim] block: {misses} digested, {hits} reused ({} blocks)",
+                self.history.len(),
+            );
+        }
+    }
 }
 
 impl PoolSim {
@@ -216,6 +253,36 @@ impl PoolSim {
                 prev: Anchor::default(),
                 stamps
             }],
+            digests: RefCell::new(BTreeMap::new()),
+            anchor_locs: RefCell::new(BTreeMap::new()),
+            digest_misses: Cell::new(0),
+            digest_hits: Cell::new(0),
+        }
+    }
+
+    /// The block's memoized digest, computed (and its anchors indexed) once.
+    fn digest_at(&self, height: BlockHeight) -> Rc<BlockDigest> {
+        let idx = usize::try_from(height).expect("fits usize");
+        if let Some(digest) = self.digests.borrow().get(&idx) {
+            self.digest_hits.set(self.digest_hits.get() + 1);
+            return Rc::clone(digest);
+        }
+        self.digest_misses.set(self.digest_misses.get() + 1);
+        let digest = Rc::new(self.history[idx].digest());
+        let mut locs = self.anchor_locs.borrow_mut();
+        for (position, anchor) in digest.anchors.iter().enumerate() {
+            locs.insert(Fp::from(*anchor), (height, position));
+        }
+        drop(locs);
+        self.digests.borrow_mut().insert(idx, Rc::clone(&digest));
+        digest
+    }
+
+    /// Ensure every block's anchors are indexed, so [`anchor_locs`] is
+    /// authoritative for a lookup miss.
+    fn ensure_digests(&self) {
+        for idx in 0..self.history.len() {
+            drop(self.digest_at(BlockHeight::from(idx)));
         }
     }
 
@@ -240,10 +307,7 @@ impl PoolSim {
 
     #[must_use]
     pub fn stamp_commits_at(&self, height: BlockHeight) -> Vec<TachygramSetCommit> {
-        self.tachygrams_at(height)
-            .iter()
-            .map(|tgs| TachygramSetPoly::from_iter(tgs.clone()).commit())
-            .collect()
+        self.digest_at(height).commits.clone()
     }
 
     #[must_use]
@@ -256,7 +320,13 @@ impl PoolSim {
 
     #[must_use]
     pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
-        self.history[usize::try_from(height).expect("fits usize")].anchor()
+        // The block's terminal anchor is the last of its memoized post anchors
+        // (the single `next_empty` tick for an empty block).
+        *self
+            .digest_at(height)
+            .anchors
+            .last()
+            .expect("block digest has at least one anchor")
     }
 
     /// The pool blocks spanning the anchor range `(start, end]`, in forward
@@ -276,15 +346,13 @@ impl PoolSim {
         // genesis entry) is produced by no stamp: the span then starts at the
         // entered block's stamp 0, with the lift contributing a leading marker.
         let mut steps: Vec<Result<(BlockHeight, Vec<Vec<Tachygram>>), EpochIndex>> = Vec::new();
+        let stamp_len = |height: BlockHeight| -> usize {
+            self.history[usize::try_from(height).expect("fits usize")]
+                .stamps
+                .len()
+        };
         let (start_height, from) = match self.locate_anchor(start) {
-            Ok((height, block)) => {
-                let position = block
-                    .anchors()
-                    .iter()
-                    .position(|&post| post == start)
-                    .expect("located by its own anchors");
-                (height, (position + 1).min(block.stamps.len()))
-            },
+            Ok((height, position)) => (height, (position + 1).min(stamp_len(height))),
             Err((_pre_boundary, epoch)) => {
                 steps.push(Err(epoch));
                 (epoch_first_of(epoch), 0)
@@ -292,13 +360,8 @@ impl PoolSim {
         };
 
         // One past the last included stamp of the end block (whose post is `end`).
-        let (end_height, end_block) = self.locate_anchor(end).expect("end anchor must exist");
-        let to = end_block
-            .anchors()
-            .iter()
-            .position(|&post| post == end)
-            .map_or(0, |position| position + 1)
-            .min(end_block.stamps.len());
+        let (end_height, end_position) = self.locate_anchor(end).expect("end anchor must exist");
+        let to = (end_position + 1).min(stamp_len(end_height));
 
         // Forward walk. The first block is trimmed at its head (`from`), the last
         // at its tail (`to`); a `start`-terminal first block contributes no `Ok`
@@ -332,36 +395,32 @@ impl PoolSim {
         steps
     }
 
-    /// The block that produced `anchor`, matched by its post anchors. An
+    /// The block that produced `anchor` (matched by its post anchors). An
     /// epoch-boundary anchor `B_E = old_tip.next_epoch(E)` is no block's post
     /// anchor (it is `E`'s first block's entry), so it instead returns
-    /// `Err((pre_boundary_anchor, E))` with the lifted previous-epoch terminal.
+    /// `Err((pre_boundary_anchor, E))` with the lifted previous-epoch terminal;
     /// `Anchor::default()` is the epoch-0 boundary, resolved up front.
-    fn locate_anchor(
-        &self,
-        anchor: Anchor,
-    ) -> Result<(BlockHeight, PoolSimBlock), (Anchor, EpochIndex)> {
+    /// Returns `(height, position)` where `position` is the anchor's index
+    /// among its block's post anchors.
+    fn locate_anchor(&self, anchor: Anchor) -> Result<(BlockHeight, usize), (Anchor, EpochIndex)> {
         if anchor == Anchor::default() {
             return Err((self.pre_epoch_anchor(EpochIndex(0)), EpochIndex(0)));
         }
+        self.ensure_digests();
+        if let Some(&location) = self.anchor_locs.borrow().get(&Fp::from(anchor)) {
+            return Ok(location);
+        }
+        // Not a post anchor: an epoch boundary `B_E = old_tip.next_epoch(E)`, no
+        // block's post anchor but the epoch-first block's `prev` (a distinct
+        // domain from post anchors, so no post/boundary overlap is possible).
         for (height_idx, block) in self.history.iter().enumerate() {
             let height = BlockHeight::from(height_idx);
-            // A post anchor resolves to the block that produced it. Otherwise an
-            // epoch-first block's entry is a boundary lift: return the lifted
-            // previous-epoch terminal and the entered epoch.
-            if block.anchors().contains(&anchor) {
-                return Ok((height, block.clone()));
-            }
             if height.is_epoch_first() && block.prev == anchor {
                 let epoch = height.epoch();
                 return Err((self.pre_epoch_anchor(epoch), epoch));
             }
         }
-
-        #[expect(clippy::unreachable, reason = "don't write a test like this")]
-        {
-            unreachable!("anchor not found: {anchor:?}");
-        }
+        unreachable!("anchor not found: {anchor:?}");
     }
 
     /// The prior-epoch terminal anchor that folds into `epoch`'s boundary
@@ -705,9 +764,40 @@ pub(crate) fn build_unspent_pcd_between_anchors(
         .0
 }
 
+/// A fixed, deterministic spending key. Tests that don't need a distinct wallet
+/// build from this so their notes' `cm`s collide and shared per-note work is
+/// reused across tests instead of busted by fresh random key material.
+pub(crate) fn shared_sk() -> private::SpendingKey {
+    private::SpendingKey::random(&mut StdRng::seed_from_u64(0x7AC0_05EED))
+}
+
+/// A `StdRng` seed derived as `BLAKE2b(pk, value)`, so each `(pk, value)` pair
+/// gets a distinct, fully value-dependent note-material stream. Test-only.
+fn note_stream_seed(pk: PaymentKey, value: u64) -> [u8; 32] {
+    let digest = blake2b_simd::Params::new()
+        .hash_length(32)
+        .personal(b"Tachyon-NoteRnd")
+        .to_state()
+        .update(&pk.0.to_repr())
+        .update(&value.to_le_bytes())
+        .finalize();
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(digest.as_bytes());
+    seed
+}
+
 pub struct WalletSim {
     pub sk: private::SpendingKey,
     pub pak: ProofAuthorizingKey,
+    /// One note-material stream per requested value, each seeded
+    /// deterministically from `(sk, value)` (independent of any caller
+    /// RNG). `random_note(value)` draws the next note from that value's
+    /// stream, so the k-th note of a given value is identical across every
+    /// wallet built from the same `sk`, and its `cm` collides, reusing
+    /// shared per-note work. Keying by value keeps distinct asks independent:
+    /// different values draw from disjoint field sequences, and interleaved
+    /// draws of other values never shift a stream's position.
+    notes: RefCell<BTreeMap<u64, StdRng>>,
 }
 
 impl WalletSim {
@@ -715,6 +805,7 @@ impl WalletSim {
         Self {
             sk,
             pak: sk.derive_proof_private(),
+            notes: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -722,12 +813,22 @@ impl WalletSim {
         Self::new(private::SpendingKey::random(rng))
     }
 
-    pub fn random_note(&self, rng: &mut (impl RngCore + CryptoRng), value_amount: u64) -> Note {
+    /// The next note in this value's stream, at the given value. Each value has
+    /// its own stream seeded from `(pk, value)`, so the k-th note of a given
+    /// value is identical across wallets built from the same `sk` (its `cm`
+    /// collides, reusing shared per-note work), while distinct values draw
+    /// fully independent field sequences.
+    pub fn random_note(&self, value_amount: u64) -> Note {
+        let pk = self.sk.derive_payment_key();
+        let mut streams = self.notes.borrow_mut();
+        let notes = streams
+            .entry(value_amount)
+            .or_insert_with(|| StdRng::from_seed(note_stream_seed(pk, value_amount)));
         Note {
-            pk: self.sk.derive_payment_key(),
+            pk,
             value: note::Value::try_from(value_amount).expect("fixture value in range"),
-            psi: NullifierTrapdoor::random(rng),
-            rcm: note::CommitmentTrapdoor::random(rng),
+            psi: NullifierTrapdoor::random(notes),
+            rcm: note::CommitmentTrapdoor::random(notes),
         }
     }
 
