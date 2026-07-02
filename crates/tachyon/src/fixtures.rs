@@ -999,15 +999,14 @@ impl WalletSim {
         ),
         Pcd<delegation::NullifierDerivation>,
     ) {
-        let (derivation, polys, keyset) = self.derivation(rng, note);
+        let (derivation, polys, _keyset) = self.derivation(rng, note);
         let mk = self.master_key(note);
 
-        // Tested values q over [start, present]: query nullifiers at offsets E_0,
-        // reusing the expanded keyset for every offset (one FFT, N queries).
+        // Tested values q over [start, present]: query nullifiers at offsets from
+        // E_0. `query_nf` evaluates the memoized emitter polynomials, so the
+        // whole range reuses one build rather than re-expanding per offset.
         let nfs: Vec<Nullifier> = (start_epoch.0..=present_epoch.0)
-            .map(|epoch| {
-                keyset.derive_nullifier(&mk, EpochIndex(epoch).offset_from(creation_epoch))
-            })
+            .map(|epoch| self.query_nf(note, EpochIndex(epoch).offset_from(creation_epoch)))
             .collect();
 
         (
@@ -1122,11 +1121,10 @@ impl WalletSim {
             // that present-epoch nullifier and its successor at the same offset.
             let creation_epoch = spendable_pcd.data().3;
             let offset = spend_epoch.offset_from(creation_epoch);
-            let (derivation_pcd, polys, keyset) = self.derivation(rng, &note);
-            let mk = self.master_key(&note);
+            let (derivation_pcd, polys, _keyset) = self.derivation(rng, &note);
             let pair = [
-                keyset.derive_nullifier(&mk, offset),
-                keyset.derive_nullifier(&mk, offset.next()),
+                self.query_nf(&note, offset),
+                self.query_nf(&note, offset.next()),
             ];
             let rcv = value::CommitmentTrapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
