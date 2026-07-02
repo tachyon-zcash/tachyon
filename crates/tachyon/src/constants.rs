@@ -9,7 +9,7 @@
 use zcash_mimc::TachyonP5R32;
 
 /// Number of blocks per epoch.
-pub const EPOCH_SIZE: u32 = 1 << 12;
+pub const EPOCH_SIZE: u32 = if cfg!(test) { 1 << 6 } else { 1 << 12 };
 
 /// Maximum note value in zatoshis (§5.3 of the protocol spec)
 pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;

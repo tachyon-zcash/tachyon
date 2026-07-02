@@ -7,13 +7,21 @@
 #![allow(clippy::too_many_arguments, reason = "test code")]
 
 extern crate alloc;
+extern crate std;
 
-use alloc::{collections::BTreeMap, rc::Rc, vec, vec::Vec};
-use core::{array, cell::RefCell, iter, ops::RangeInclusive};
+use alloc::{collections::BTreeMap, rc::Rc, sync::Arc, vec, vec::Vec};
+use core::{
+    array,
+    cell::{Cell, RefCell},
+    iter,
+    ops::RangeInclusive,
+};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
-use ff::Field as _;
+use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
 use ragu::{Pcd, Polynomial, Proof};
+use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
@@ -22,7 +30,7 @@ use crate::{
     bundle::{self, Bundle},
     constants::{EK_PARTS, EPOCH_SIZE, NF_DOMAIN, NF_EMITTERS},
     entropy::{ActionEntropy, ActionRandomizer},
-    keys::{ExpandedKey, NoteMasterKey, PartKey, ProofAuthorizingKey, private},
+    keys::{ExpandedKey, NoteMasterKey, PartKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
         ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, PartKeyPoly, Tachygram,
@@ -65,7 +73,7 @@ pub fn action_digests(actions: &[Action]) -> Vec<ActionDigest> {
 pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(rng, 400);
+    let note = wallet.random_note(400);
     let (_, _, plan) = build_output_plan(rng, note);
     let bundle_plan = bundle::Plan::new(alloc::vec![], alloc::vec![plan]);
     let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
@@ -120,8 +128,8 @@ pub fn build_autonome(
     spend_value: u64,
     output_value: u64,
 ) -> Bundle<Stamp> {
-    let spend_note = wallet.random_note(rng, spend_value);
-    let output_note = wallet.random_note(rng, output_value);
+    let spend_note = wallet.random_note(spend_value);
+    let output_note = wallet.random_note(output_value);
     let mut pool = PoolSim::genesis(rng);
     let stamps_cms = vec![vec![spend_note.commitment()]];
     pool.mine(random_block_with(rng, &stamps_cms, 50));
@@ -223,6 +231,22 @@ pub struct PoolSim {
     /// Keyed by the anchor's inner `Fp` (an ordering of `Anchor` itself would
     /// mean by field value, not chain relationship, so it is not exposed).
     anchor_locs: RefCell<BTreeMap<Fp, (BlockHeight, usize)>>,
+    /// Block-digest cache tallies (misses = one-time MSM work, hits = saved),
+    /// summarized once when the pool is dropped rather than per height.
+    digest_misses: Cell<usize>,
+    digest_hits: Cell<usize>,
+}
+
+impl Drop for PoolSim {
+    fn drop(&mut self) {
+        let (misses, hits) = (self.digest_misses.get(), self.digest_hits.get());
+        if misses + hits > 0 {
+            std::eprintln!(
+                "[poolsim] block: {misses} digested, {hits} reused ({} blocks)",
+                self.history.len(),
+            );
+        }
+    }
 }
 
 impl PoolSim {
@@ -239,6 +263,8 @@ impl PoolSim {
             }],
             digests: RefCell::new(BTreeMap::new()),
             anchor_locs: RefCell::new(BTreeMap::new()),
+            digest_misses: Cell::new(0),
+            digest_hits: Cell::new(0),
         }
     }
 
@@ -246,8 +272,10 @@ impl PoolSim {
     fn digest_at(&self, height: BlockHeight) -> Rc<BlockDigest> {
         let idx = usize::try_from(height).expect("fits usize");
         if let Some(digest) = self.digests.borrow().get(&idx) {
+            self.digest_hits.set(self.digest_hits.get() + 1);
             return Rc::clone(digest);
         }
+        self.digest_misses.set(self.digest_misses.get() + 1);
         let digest = Rc::new(self.history[idx].digest());
         let mut locs = self.anchor_locs.borrow_mut();
         for (position, anchor) in digest.anchors.iter().enumerate() {
@@ -748,19 +776,90 @@ struct CachedDerivation {
     polys: [NfEmitterPoly; NF_EMITTERS],
 }
 
-/// The `cm` scalar, the memoization key. `Fp` is `Ord`, so it keys a no_std
-/// `BTreeMap` directly.
-type NoteKey = Fp;
+/// A note's derivation is a pure function of its `cm` (which pins `nk` through
+/// the payment key and absorbs `psi`), so it is identical across every
+/// `WalletSim` that holds the note. These module-level caches share it across
+/// all wallets and tests: the FFT-heavy expansion, emitter polynomials, and
+/// certify PCD are built once per distinct `cm` for the whole test run, not
+/// once per wallet.
+///
+/// Each entry is a per-`cm` [`OnceLock`], so the build is single-flight: the
+/// outer `Mutex` is held only to hand out the cell, then released, and
+/// [`OnceLock::get_or_init`] ensures exactly one thread builds a given `cm`
+/// while any others racing the same `cm` park until it lands. Distinct `cm`s
+/// build fully in parallel; the same `cm` is never built twice.
+type DerivationCell<T> = Arc<OnceLock<T>>;
 
-fn note_key(cm: note::Commitment) -> NoteKey {
-    Fp::from(cm)
+static DERIVATIONS: LazyLock<
+    Mutex<BTreeMap<note::Commitment, DerivationCell<Arc<CachedDerivation>>>>,
+> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+static DERIVATION_PCDS: LazyLock<
+    Mutex<BTreeMap<note::Commitment, DerivationCell<Pcd<delegation::NullifierDerivation>>>>,
+> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+/// Emit a one-line cache-access trace to stderr (visible under
+/// `cargo test -- --nocapture`). `built` is whether this call ran the build
+/// (miss) or found the cell already populated (hit).
+fn log_cache(cache: &str, cm: note::Commitment, built: bool) {
+    if built {
+        let repr = Fp::from(cm).to_repr();
+        std::eprintln!(
+            "[walletsim] {cache} cm={:02x}{:02x}{:02x}{:02x}",
+            repr[0],
+            repr[1],
+            repr[2],
+            repr[3],
+        );
+    }
+}
+
+/// The per-`cm` [`OnceLock`] for `map`, creating an empty one on first request.
+/// The outer lock is released before the caller initializes the cell.
+fn derivation_cell<T>(
+    map: &Mutex<BTreeMap<note::Commitment, DerivationCell<T>>>,
+    cm: note::Commitment,
+) -> DerivationCell<T> {
+    Arc::clone(
+        map.lock()
+            .expect("derivation cache")
+            .entry(cm)
+            .or_insert_with(|| Arc::new(OnceLock::new())),
+    )
+}
+
+/// A fixed, deterministic spending key. Tests that don't need a distinct wallet
+/// build from this so their notes' `cm`s collide and reuse the global
+/// derivation cache instead of busting it with fresh random key material.
+pub(crate) fn shared_sk() -> private::SpendingKey {
+    private::SpendingKey::random(&mut StdRng::seed_from_u64(0x7AC0_05EED))
+}
+
+/// A `StdRng` seed derived as `BLAKE2b(pk, value)`, so each `(pk, value)` pair
+/// gets a distinct, fully value-dependent note-material stream. Test-only.
+fn note_stream_seed(pk: PaymentKey, value: u64) -> [u8; 32] {
+    let digest = blake2b_simd::Params::new()
+        .hash_length(32)
+        .personal(b"Tachyon-NoteRnd")
+        .to_state()
+        .update(&Fp::from(pk).to_repr())
+        .update(&value.to_le_bytes())
+        .finalize();
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(digest.as_bytes());
+    seed
 }
 
 pub struct WalletSim {
     pub sk: private::SpendingKey,
     pub pak: ProofAuthorizingKey,
-    derivations: RefCell<BTreeMap<NoteKey, Rc<CachedDerivation>>>,
-    derivation_pcds: RefCell<BTreeMap<NoteKey, Pcd<delegation::NullifierDerivation>>>,
+    /// One note-material stream per requested value, each seeded deterministically
+    /// from `(sk, value)` (independent of any caller RNG). `random_note(value)`
+    /// draws the next note from that value's stream, so the k-th note of a given
+    /// value is identical across every wallet built from the same `sk`, and its
+    /// `cm` collides, reusing the derivation cache. Keying by value keeps distinct
+    /// asks independent: different values draw from disjoint field sequences, and
+    /// interleaved draws of other values never shift a stream's position.
+    notes: RefCell<BTreeMap<u64, StdRng>>,
 }
 
 impl WalletSim {
@@ -768,8 +867,7 @@ impl WalletSim {
         Self {
             sk,
             pak: sk.derive_proof_private(),
-            derivations: RefCell::new(BTreeMap::new()),
-            derivation_pcds: RefCell::new(BTreeMap::new()),
+            notes: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -777,12 +875,22 @@ impl WalletSim {
         Self::new(private::SpendingKey::random(rng))
     }
 
-    pub fn random_note(&self, rng: &mut (impl RngCore + CryptoRng), value_amount: u64) -> Note {
+    /// The next note in this value's stream, at the given value. Each value has
+    /// its own stream seeded from `(pk, value)`, so the k-th note of a given
+    /// value is identical across wallets built from the same `sk` (its `cm`
+    /// collides, reusing the derivation cache), while distinct values draw fully
+    /// independent field sequences.
+    pub fn random_note(&self, value_amount: u64) -> Note {
+        let pk = self.sk.derive_payment_key();
+        let mut streams = self.notes.borrow_mut();
+        let notes = streams
+            .entry(value_amount)
+            .or_insert_with(|| StdRng::from_seed(note_stream_seed(pk, value_amount)));
         Note {
-            pk: self.sk.derive_payment_key(),
+            pk,
             value: note::Value::try_from(value_amount).expect("fixture value in range"),
-            psi: NullifierTrapdoor::random(rng),
-            rcm: note::CommitmentTrapdoor::random(rng),
+            psi: NullifierTrapdoor::random(notes),
+            rcm: note::CommitmentTrapdoor::random(notes),
         }
     }
 
@@ -794,22 +902,24 @@ impl WalletSim {
         }))
     }
 
-    /// The note's memoized epoch-independent derivation values, built once per
-    /// `cm`.
-    fn cached_derivation(&self, note: &Note) -> Rc<CachedDerivation> {
-        let key = note_key(note.commitment());
-        if let Some(entry) = self.derivations.borrow().get(&key) {
-            return Rc::clone(entry);
-        }
-
-        let mk = self.master_key(note);
-        // The keys-only keyset (no state trace, no FFT); the emitter polys hang
-        // off it. The certify PCD recovers per-part states on demand.
-        let keyset = mk.derive_expanded();
-        let polys = keyset.derivation_polys(&mk.query_salts());
-        let entry = Rc::new(CachedDerivation { mk, keyset, polys });
-        self.derivations.borrow_mut().insert(key, Rc::clone(&entry));
-        entry
+    /// The note's epoch-independent derivation values, memoized per `cm` in the
+    /// module-level [`DERIVATIONS`] cache and thus shared across all wallets.
+    fn cached_derivation(&self, note: &Note) -> Arc<CachedDerivation> {
+        let cell = derivation_cell(&DERIVATIONS, note.commitment());
+        // Single-flight: exactly one thread runs the expensive expansion/FFT for
+        // this cm; any others racing the same cm park here until it lands.
+        let mut built = false;
+        let derivation = Arc::clone(cell.get_or_init(|| {
+            built = true;
+            let mk = self.master_key(note);
+            // The keys-only keyset (no state trace, no FFT); the emitter polys
+            // hang off it. The certify PCD recovers per-part states on demand.
+            let keyset = mk.derive_expanded();
+            let polys = keyset.derivation_polys(&mk.query_salts());
+            Arc::new(CachedDerivation { mk, keyset, polys })
+        }));
+        log_cache("derive\t", note.commitment(), built);
+        derivation
     }
 
     /// The new-scheme nullifier at epoch offset `d` from the note's creation:
@@ -860,96 +970,101 @@ impl WalletSim {
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
     ) -> Pcd<delegation::NullifierDerivation> {
-        let key = note_key(note.commitment());
-        if let Some(entry) = self.derivation_pcds.borrow().get(&key) {
-            return entry.clone();
-        }
-        let derivation = self.cached_derivation(&note);
+        let cell = derivation_cell(&DERIVATION_PCDS, note.commitment());
+        // Single-flight: one thread certifies this cm (the ~28-FFT PCD build);
+        // others racing the same cm park until it lands.
+        let mut built = false;
+        let pcd = cell
+            .get_or_init(|| {
+                built = true;
+                let derivation = self.cached_derivation(&note);
 
-        // The two mk parts, each pinned to the note by the payment-key check.
-        let mk_part0 = self.master_key_part(rng, note, 0);
-        let mk_part1 = self.master_key_part(rng, note, 1);
+                // The two mk parts, each pinned to the note by the payment-key check.
+                let mk_part0 = self.master_key_part(rng, note, 0);
+                let mk_part1 = self.master_key_part(rng, note, 1);
 
-        // Each of the EK_PARTS expansion windows is certified by one
-        // ExpandedKeyStep fusing the two mk parts. Recover each part's raw
-        // states and keys on demand (one part at a time, so the POLY_LEN_MAX
-        // state grid never all sits on the stack), spectrum it for the
-        // witness, and stash the keys for the derivation step below.
-        let mut part_pcds: Vec<Pcd<delegation::ExpandedKeyPart>> = Vec::with_capacity(EK_PARTS);
-        let mut part_keys: Vec<PartKey> = Vec::with_capacity(EK_PARTS);
-        for part in 0..EK_PARTS {
-            let (states, keys) = derivation.mk.derive_expanded_states(part);
-            let spectrum = states.spectrum();
-            let (pcd, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    delegation::ExpandedKeyStep,
-                    witness::nf_master_expand(
-                        (*mk_part0.data(), *mk_part1.data()),
-                        &derivation.mk,
-                        &spectrum,
-                        &keys,
-                        part,
+                // Each of the EK_PARTS expansion windows is certified by one
+                // ExpandedKeyStep fusing the two mk parts. Recover each part's raw
+                // states and keys on demand (one part at a time, so the POLY_LEN_MAX
+                // state grid never all sits on the stack), spectrum it for the
+                // witness, and stash the keys for the derivation step below.
+                let mut part_pcds: Vec<Pcd<delegation::ExpandedKeyPart>> =
+                    Vec::with_capacity(EK_PARTS);
+                let mut part_keys: Vec<PartKey> = Vec::with_capacity(EK_PARTS);
+                for part in 0..EK_PARTS {
+                    let (states, keys) = derivation.mk.derive_expanded_states(part);
+                    let spectrum = states.spectrum();
+                    let (pcd, ()) = PROOF_SYSTEM
+                        .fuse(
+                            rng,
+                            delegation::ExpandedKeyStep,
+                            witness::nf_master_expand(
+                                (*mk_part0.data(), *mk_part1.data()),
+                                &derivation.mk,
+                                &spectrum,
+                                &keys,
+                                part,
+                            ),
+                            mk_part0.clone(),
+                            mk_part1.clone(),
+                        )
+                        .expect("ExpandedKeyStep");
+                    part_pcds.push(pcd);
+                    part_keys.push(keys);
+                }
+
+                // Funnel the parts into one ExpandedKeyset: lift part 0, fold the rest.
+                // Single-input steps take a trivial () PCD on the empty side.
+                let mut parts = part_pcds.into_iter();
+                let first = parts.next().expect("EK_PARTS >= 1");
+                let (mut keyset_pcd, ()) = PROOF_SYSTEM
+                    .fuse(
+                        rng,
+                        delegation::ExpandedKeysetLift,
+                        (),
+                        first,
+                        Proof::trivial().carry::<()>(()),
+                    )
+                    .expect("ExpandedKeysetLift");
+                for part_pcd in parts {
+                    let (next, ()) = PROOF_SYSTEM
+                        .fuse(rng, delegation::ExpandedKeyFuse, (), keyset_pcd, part_pcd)
+                        .expect("ExpandedKeyFuse");
+                    keyset_pcd = next;
+                }
+
+                // The epoch-independent step witness: the part-key polys, the emitter
+                // polys, and the emitter certify quotients (all pure in the keyset and
+                // salts, no epoch).
+                let part_polys: [PartKeyPoly; EK_PARTS] =
+                    array::from_fn(|part| part_keys[part].key_poly());
+                let salts = derivation.mk.query_salts();
+                let first_key = derivation.keyset.round_key(0);
+                let quotients = array::from_fn(|poly| RoundBoundaryQuotients {
+                    round: nf_emitter_round_quotient(
+                        derivation.polys[poly].0.coefficients(),
+                        &derivation.keyset.0,
                     ),
-                    mk_part0.clone(),
-                    mk_part1.clone(),
-                )
-                .expect("ExpandedKeyStep");
-            part_pcds.push(pcd);
-            part_keys.push(keys);
-        }
+                    boundary: nf_emitter_boundary_quotient(
+                        derivation.polys[poly].0.coefficients(),
+                        salts.0[poly],
+                        first_key,
+                    ),
+                });
 
-        // Funnel the parts into one ExpandedKeyset: lift part 0, fold the rest.
-        // Single-input steps take a trivial () PCD on the empty side.
-        let mut parts = part_pcds.into_iter();
-        let first = parts.next().expect("EK_PARTS >= 1");
-        let (mut keyset_pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                delegation::ExpandedKeysetLift,
-                (),
-                first,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("ExpandedKeysetLift");
-        for part_pcd in parts {
-            let (next, ()) = PROOF_SYSTEM
-                .fuse(rng, delegation::ExpandedKeyFuse, (), keyset_pcd, part_pcd)
-                .expect("ExpandedKeyFuse");
-            keyset_pcd = next;
-        }
-
-        // The epoch-independent step witness: the part-key polys, the emitter
-        // polys, and the emitter certify quotients (all pure in the keyset and
-        // salts, no epoch).
-        let part_polys: [PartKeyPoly; EK_PARTS] =
-            array::from_fn(|part| part_keys[part].key_poly());
-        let salts = derivation.mk.query_salts();
-        let first_key = derivation.keyset.round_key(0);
-        let quotients = array::from_fn(|poly| {
-            RoundBoundaryQuotients {
-                round: nf_emitter_round_quotient(
-                    derivation.polys[poly].0.coefficients(),
-                    &derivation.keyset.0,
-                ),
-                boundary: nf_emitter_boundary_quotient(
-                    derivation.polys[poly].0.coefficients(),
-                    salts.0[poly],
-                    first_key,
-                ),
-            }
-        });
-
-        let (pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                delegation::NullifierDerivationStep,
-                (part_polys, derivation.polys.clone(), quotients),
-                keyset_pcd,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("NullifierDerivationStep");
-        self.derivation_pcds.borrow_mut().insert(key, pcd.clone());
+                let (pcd, ()) = PROOF_SYSTEM
+                    .fuse(
+                        rng,
+                        delegation::NullifierDerivationStep,
+                        (part_polys, derivation.polys.clone(), quotients),
+                        keyset_pcd,
+                        Proof::trivial().carry::<()>(()),
+                    )
+                    .expect("NullifierDerivationStep");
+                pcd
+            })
+            .clone();
+        log_cache("pcd\t", note.commitment(), built);
         pcd
     }
 

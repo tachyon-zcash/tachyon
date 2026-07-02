@@ -181,7 +181,7 @@ impl Note {
 /// the value that becomes a tachygram:
 /// - For **output** operations, `cm` IS the tachygram directly.
 /// - For **spend** operations, `cm` is a private witness.
-#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+#[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct Commitment(#[debug(skip)] Fp);
 
 impl From<Commitment> for Tachygram {
