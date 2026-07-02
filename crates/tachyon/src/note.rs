@@ -19,9 +19,9 @@
 //!
 //! ## Nullifier Derivation
 //!
-//! $mk = \text{KDF}(\psi, nk)$, then $nf = F_{mk}(\text{flavor})$ via a GGM
-//! tree PRF instantiated from Poseidon. The "flavor" is the epoch at which the
-//! nullifier is revealed, enabling range-restricted delegation.
+//! $mk = \text{KDF}(\psi, nk)$ (Poseidon), then $nf = E_{mk}(\text{epoch})$
+//! via MiMC in evaluation mode. The input is the epoch at which the
+//! nullifier is revealed.
 //!
 //! Evaluated natively by wallets; the sync service handles only opaque
 //! nullifier values. The Ragu circuit constrains that each consumed
@@ -39,18 +39,12 @@ use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
-use crate::{
-    constants::NOTE_VALUE_MAX,
-    digest::poseidon,
-    keys::{NullifierKey, PaymentKey},
-    primitives::{EpochIndex, Tachygram},
-};
+use crate::{constants::NOTE_VALUE_MAX, digest::poseidon, keys::PaymentKey, primitives::Tachygram};
 
 /// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
 ///
-/// Used to derive the master root key: $mk = \text{KDF}(\psi, nk)$.
-/// The GGM tree PRF then evaluates $nf = F_{mk}(\text{flavor})$.
-/// Prefix keys derived from $mk$ enable range-restricted delegation.
+/// Used to derive the per-note master key: $mk = \text{KDF}(\psi, nk)$.
+/// MiMC then evaluates $nf = E_{mk}(\text{epoch})$.
 #[derive(Clone, Copy, Debug, From, Into)]
 #[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
 pub struct NullifierTrapdoor(#[debug(skip)] pub(super) Fp);
@@ -104,7 +98,7 @@ pub struct Note {
 /// only raw field elements without the Rust-level newtype protection.
 ///
 /// Use [`Value::try_from`] or [`Value::new`] for fallible construction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Into)]
+#[derive(Clone, Copy, Debug, Eq, Into, PartialEq)]
 pub struct Value(u64);
 
 impl Value {
@@ -115,7 +109,7 @@ impl Value {
 
 /// Error returned when a note value is out of the valid range
 /// `1..=NOTE_VALUE_MAX`.
-#[derive(Clone, Copy, Debug, Display, Error, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Display, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum ValueError {
     /// The value was zero.
@@ -150,6 +144,12 @@ impl From<Value> for i64 {
     }
 }
 
+impl From<Value> for Fp {
+    fn from(value: Value) -> Self {
+        Self::from(value.0)
+    }
+}
+
 impl Note {
     /// Computes the note commitment `cm`.
     ///
@@ -173,19 +173,6 @@ impl Note {
             self.psi.0,
         ))
     }
-
-    /// Derives a nullifier for this note at the given flavor (epoch).
-    ///
-    /// GGM tree PRF:
-    /// 1. $mk = \text{Poseidon}(\psi, nk)$ — master root key (per-note)
-    /// 2. $nf = F_{mk}(\text{flavor})$ — tree walk with bits of flavor
-    ///
-    /// The same note at different flavors produces different nullifiers.
-    #[must_use]
-    pub fn nullifier(&self, nk: &NullifierKey, flavor: EpochIndex) -> Nullifier {
-        let mk = nk.derive_note_private(&self.psi);
-        mk.derive_nullifier(flavor)
-    }
 }
 
 /// A Tachyon note commitment (`cm`).
@@ -194,7 +181,7 @@ impl Note {
 /// the value that becomes a tachygram:
 /// - For **output** operations, `cm` IS the tachygram directly.
 /// - For **spend** operations, `cm` is a private witness.
-#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+#[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct Commitment(#[debug(skip)] Fp);
 
 impl From<Commitment> for Tachygram {
@@ -205,13 +192,13 @@ impl From<Commitment> for Tachygram {
 
 /// A Tachyon nullifier.
 ///
-/// Derived via GGM tree PRF: $mk = \text{KDF}(\psi, nk)$, then
-/// $nf = F_{mk}(\text{flavor})$. Published when a note is spent;
+/// Derived as $mk = \text{KDF}(\psi, nk)$, then
+/// $nf = E_{mk}(\text{epoch})$ (MiMC). Published when a note is spent;
 /// becomes a tachygram in the polynomial accumulator.
 ///
 /// Unlike Orchard, Tachyon nullifiers:
 /// - Don't need collision resistance (no faerie gold defense)
-/// - Have an epoch "flavor" component for sync delegation
+/// - Have an epoch component for sync delegation
 /// - Are prunable by validators after a window of blocks
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Nullifier(#[debug(skip)] Fp);
@@ -227,7 +214,7 @@ mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::{constants::NOTE_VALUE_MAX, keys::private::SpendingKey, primitives::EpochIndex};
+    use crate::constants::NOTE_VALUE_MAX;
 
     /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
     #[test]
@@ -271,25 +258,6 @@ mod tests {
         };
 
         assert_ne!(note1.commitment(), note2.commitment());
-    }
-
-    /// `Note::nullifier` delegates correctly to key derivation.
-    #[test]
-    fn note_nullifier_matches_key_derivation() {
-        let rng = &mut StdRng::seed_from_u64(0);
-
-        let sk = SpendingKey::random(rng);
-        let nk = sk.derive_nullifier_private();
-        let note = Note {
-            pk: sk.derive_payment_key(),
-            value: Value::try_from(100u64).unwrap(),
-            psi: NullifierTrapdoor::random(rng),
-            rcm: CommitmentTrapdoor::random(rng),
-        };
-        let flavor = EpochIndex(5u32);
-
-        let mk = nk.derive_note_private(&note.psi);
-        assert_eq!(note.nullifier(&nk, flavor), mk.derive_nullifier(flavor));
     }
 
     #[test]
