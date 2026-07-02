@@ -31,6 +31,8 @@ Aggregates may be further named:
 - *based* aggregate proving its own Tachyon actions.  
   For example, a miner's coin*base* transaction might be an aggregate, and also output miner rewards via Tachyon action.
 
+When stripped, an innocent contributes no actions but still names a covering transaction: its `tachyonAggregateId` is a nonzero reference to the aggregate that absorbed its stamp, never the all-zero `wtxid`.
+
 [^bundle-format]: See [Bundles](./bundle.md) to understand bundle format.
 
 ## Aggregation Process

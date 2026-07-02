@@ -170,6 +170,8 @@ When `tachyonBundleState == 0x02`, the bundle body is followed by a stripped tra
 
 | Name | Format | Description |
 | --- | --- | --- |
-| `tachyonAggregateId` | 64 bytes | `wtxid` of the covering aggregate |
+| `tachyonAggregateId` | 64 bytes | nonzero `wtxid` of the covering aggregate |
+
+Every stripped bundle names a covering aggregate, so `tachyonAggregateId` is always nonzero. This holds even for a stripped innocent (an aggregate with no Tachyon actions of its own): the all-zero `wtxid`, which refers to no aggregate, is rejected on read.
 
 The stripped trailer carries no `cActionsTachyon`: that field rides on the stamp, so it strips away when a bundle becomes an adjunct. Observers read the covering aggregate's `cActionsTachyon` from the stamped aggregate, not from the adjunct.

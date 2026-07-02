@@ -54,21 +54,41 @@ pub struct Stripped;
 ///
 /// This uses the aggregate's wtxid (not txid) so it unambiguously pins the
 /// covering aggregate's authorization state, including stamp.
+///
+/// An `AggregateId` is always nonzero: every stripped bundle, innocent or
+/// adjunct, names a covering transaction, so the all-zero wtxid (which refers
+/// to no aggregate) is rejected at every construction site.
 #[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
 pub struct AggregateId([u8; 64]);
 
 impl AggregateId {
-    /// This zero wtxid is only suitable for a bundle with no actions.
-    pub const ZERO: Self = Self([0u8; 64]);
-
     pub(super) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut wtxid = [0u8; 64];
         reader.read_exact(&mut wtxid)?;
-        Ok(Self(wtxid))
+        Self::try_from(wtxid).map_err(|_err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "aggregate id is zero and refers to no aggregate",
+            )
+        })
     }
 
     pub(super) fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        if self == &Self::default() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "aggregate id is zero and refers to no aggregate",
+            ));
+        }
+
         writer.write_all(&self.0)
+    }
+}
+
+impl Default for AggregateId {
+    /// This zero wtxid is invalid and refers to no aggregate.
+    fn default() -> Self {
+        Self([0u8; 64])
     }
 }
 
