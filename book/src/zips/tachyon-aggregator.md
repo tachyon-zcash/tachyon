@@ -226,8 +226,12 @@ the bundle's stamp and set the `tachyonAggregateId` field to the covering
 aggregate's `wtxid`.
 
 A stripped innocent (a former innocent aggregate) contributes no actions, but
-the stripped form still names a covering transaction: its `tachyonAggregateId`
-MUST refer to the aggregate that ultimately absorbed its stamp.
+the stripped form still names a covering transaction. Its `tachyonAggregateId`
+MUST identify a stamped transaction in the same block, and SHOULD refer to the
+aggregate that ultimately absorbed its stamp. The latter is unverifiable: a
+bundle with no actions contributes no action digests to any reconstruction, so
+a validator cannot distinguish the absorbing aggregate from any other stamped
+transaction (Step 8).
 
 ### Step 8: Block validation
 
@@ -255,7 +259,10 @@ governed by the duplicate-tachygram consensus rule of the
 2. **Adjunct association.** The `tachyonAggregateId` of every stripped bundle
 MUST identify a stamped transaction in the same block. If the referenced
 transaction is absent from the block, or bears no stamp, the validator MUST
-reject the block.
+reject the block. A stripped bundle with no actions satisfies this check
+against any stamped transaction in the block: it contributes no action digests
+to the reconstruction in item 3, so consensus attaches no further meaning to
+its reference.
 3. **Action set commitment per stamp.** The validator MUST confirm each stamp's
 `cActionsTachyon` by reconstruction: collect the action digests of the stamped
 bundle's own actions together with those of every stripped bundle that names it
@@ -409,7 +416,10 @@ mempool can identify covered autonomes by the `cActionsTachyon` check (see
 [Covered-transaction identification](#covered-transaction-identification)). This
 is inherent to the scheme: the aggregate must carry enough information for validators
 to reconstruct its header. The tachygram-set and action-digest-set commitments do not
-reveal the private contents of any covered note.
+reveal the private contents of any covered note. The `tachyonAggregateId` of a stripped
+innocent is not consensus-validated beyond naming a stamped transaction (Step 8, item 2),
+so an observer reconstructing aggregation relationships cannot rely on an actionless
+bundle's reference.
 
 **Circuit/consensus boundary.** Several security properties are enforced by consensus
 rather than fully proven inside the stamp. Double-spend prevention rests on the block-scoped
