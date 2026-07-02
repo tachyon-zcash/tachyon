@@ -219,7 +219,7 @@ impl Step for MergeStamp {
     type Left = StampHeader;
     type Output = StampHeader;
     type Right = StampHeader;
-    /// `(left, merged, right)`, each an `(action_set, tachygram_set)` pair
+    /// `(left, merged, right)`, each an `(action_set, tachygram_set)` pair.
     type Witness<'source> = (
         (ActionSetPoly, TachygramSetPoly),
         (ActionSetPoly, TachygramSetPoly),
@@ -257,7 +257,7 @@ impl Step for MergeStamp {
             Eq::from(right_action_commit),
             "MergeStamp: right action accumulator must commit to header commit",
         )?;
-        enforce_equal_point::<Eq>(
+        enforce_equal_point(
             Eq::from(left_tachygram_set.commit()),
             Eq::from(left_tachygram_commit),
             "MergeStamp: left tachygram accumulator must commit to header commit",
@@ -309,7 +309,6 @@ impl Step for StampLift {
     type Left = StampHeader;
     type Output = StampHeader;
     type Right = AnchorChain;
-    /// `()`.
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(18);

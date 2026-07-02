@@ -166,7 +166,6 @@ impl Step for NullifierStep {
     type Left = NfPrefixHeader;
     type Output = NullifierHeader;
     type Right = ();
-    /// `()`.
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(2);

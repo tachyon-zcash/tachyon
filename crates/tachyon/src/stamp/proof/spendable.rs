@@ -128,7 +128,6 @@ impl Step for SpendableLift {
     type Left = SpendableHeader;
     type Output = SpendableHeader;
     type Right = VerifiedUnspent;
-    /// `()`.
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(13);

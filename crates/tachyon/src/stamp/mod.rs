@@ -377,41 +377,45 @@ impl Stamp {
     ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let left_tachygram_set = left
-            .tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>();
-        let left_action_set = left_digests.iter().copied().collect::<ActionSetPoly>();
+        let (left_acts_poly, left_tg_poly) = (
+            left_digests.iter().copied().collect::<ActionSetPoly>(),
+            left.tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>(),
+        );
+
+        let (right_acts_poly, right_tg_poly) = (
+            right_digests.iter().copied().collect::<ActionSetPoly>(),
+            right
+                .tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>(),
+        );
+
         let left_pcd = left.proof.carry::<StampHeader>((
-            left_action_set.commit(),
-            left_tachygram_set.commit(),
+            left_acts_poly.commit(),
+            left_tg_poly.commit(),
             left.anchor,
         ));
-
-        let right_tachygram_set = right
-            .tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>();
-        let right_action_set = right_digests.iter().copied().collect::<ActionSetPoly>();
         let right_pcd = right.proof.carry::<StampHeader>((
-            right_action_set.commit(),
-            right_tachygram_set.commit(),
+            right_acts_poly.commit(),
+            right_tg_poly.commit(),
             right.anchor,
         ));
 
         let tachygrams = [left.tachygrams, right.tachygrams].concat();
-        let merged_tachygram_set = TachygramSetPoly::from_iter(tachygrams.clone());
-        let merged_action_set = ActionSetPoly::from_iter([left_digests, right_digests].concat());
+        let merged_tg_poly = TachygramSetPoly::from_iter(tachygrams.clone());
+        let merged_acts_poly = ActionSetPoly::from_iter([left_digests, right_digests].concat());
 
         let (pcd, ()) = app.fuse(
             rng,
             MergeStamp,
             (
-                (left_action_set, left_tachygram_set),
-                (merged_action_set, merged_tachygram_set),
-                (right_action_set, right_tachygram_set),
+                (left_acts_poly, left_tg_poly),
+                (merged_acts_poly, merged_tg_poly),
+                (right_acts_poly, right_tg_poly),
             ),
             left_pcd,
             right_pcd,

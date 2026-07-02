@@ -82,20 +82,19 @@ impl Header for AnchorChain {
 
 /// Multi-stamp / multi-epoch nf-exclusion proof
 ///
-/// An `elapsed` polynomial of one nullifier per crossed epoch boundary over
-/// `[epoch_start, epoch_end)`, the lineage's first nullifier `nf_start`,
-/// and the in-progress tip `nf_end`.
+/// An `elapsed` polynomial holds one nullifier per crossed epoch boundary over
+/// `[epoch_start, epoch_end)`.
+///
+/// `nf_start` is the range's first tested nullifier (the leaf at
+/// `epoch_start`); the in-progress `nf_end` corresponds to `epoch_end` and is
+/// folded into `elapsed` when its epoch completes. [`VerifyUnspent`] binds both
+/// endpoints to the note's genuine derivation nullifiers.
 #[derive(Clone, Debug)]
 pub struct Unspent;
 
 impl Header for Unspent {
-    /// `(anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end),
-    /// anchor_last)`. The anchors bracket the span: `anchor_prev` is the
-    /// exclusive predecessor frontier, `anchor_last` the inclusive last-covered
-    /// anchor. `(epoch_start, nf_start)` and `(epoch_end, nf_end)` are the
-    /// boundary epoch/nullifier pairs (each epoch is its nullifier's derivation
-    /// input; they coincide for a single-epoch lineage). `elapsed` holds one
-    /// nullifier per crossed epoch boundary.
+    /// `(anchor_prev, (epoch_start, nf_start), elapsed,
+    /// (epoch_end, nf_end), anchor_last)`.
     type Data = (
         Anchor,
         (EpochIndex, Nullifier),
@@ -107,21 +106,20 @@ impl Header for Unspent {
     const SUFFIX: Suffix = Suffix::new(6);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), anchor_last) =
-            *data;
         let mut out = Vec::with_capacity(32 + 4 + 32 + 32 + 4 + 32 + 32);
-        out.extend_from_slice(&Fp::from(anchor_prev).to_repr());
-        out.extend_from_slice(&epoch_start.0.to_le_bytes());
-        out.extend_from_slice(&Fp::from(nf_start).to_repr());
-        out.extend_from_slice(&Eq::from(elapsed).to_affine().to_bytes());
-        out.extend_from_slice(&epoch_end.0.to_le_bytes());
-        out.extend_from_slice(&Fp::from(nf_end).to_repr());
-        out.extend_from_slice(&Fp::from(anchor_last).to_repr());
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        out.extend_from_slice(&data.1.0.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.1.1).to_repr());
+        let elapsed_bytes: [u8; 32] = Eq::from(data.2).to_affine().to_bytes();
+        out.extend_from_slice(&elapsed_bytes);
+        out.extend_from_slice(&data.3.0.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.3.1).to_repr());
+        out.extend_from_slice(&Fp::from(data.4).to_repr());
         out
     }
 }
 
-/// An [`Unspent`] bound to a note's genuine `GGM(mk, ·)` leaves by
+/// An [`Unspent`] bound to a note's genuine derivation nullifiers by
 /// [`VerifyUnspent`], collapsed to boundary scalars.
 #[derive(Clone, Debug)]
 pub struct VerifiedUnspent;
@@ -141,15 +139,14 @@ impl Header for VerifiedUnspent {
     const SUFFIX: Suffix = Suffix::new(8);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let (cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end), anchor_last) = *data;
         let mut out = Vec::with_capacity(32 + 32 + 4 + 32 + 4 + 32 + 32);
-        out.extend_from_slice(&Fp::from(cm).to_repr());
-        out.extend_from_slice(&Fp::from(anchor_prev).to_repr());
-        out.extend_from_slice(&epoch_start.0.to_le_bytes());
-        out.extend_from_slice(&Fp::from(nf_start).to_repr());
-        out.extend_from_slice(&epoch_end.0.to_le_bytes());
-        out.extend_from_slice(&Fp::from(nf_end).to_repr());
-        out.extend_from_slice(&Fp::from(anchor_last).to_repr());
+        out.extend_from_slice(&Fp::from(data.0).to_repr());
+        out.extend_from_slice(&Fp::from(data.1).to_repr());
+        out.extend_from_slice(&data.2.0.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.2.1).to_repr());
+        out.extend_from_slice(&data.3.0.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.3.1).to_repr());
+        out.extend_from_slice(&Fp::from(data.4).to_repr());
         out
     }
 }
@@ -223,7 +220,6 @@ impl Step for AnchorFuse {
     type Left = AnchorChain;
     type Output = AnchorChain;
     type Right = AnchorChain;
-    /// `()`.
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(6);
@@ -243,8 +239,11 @@ impl Step for AnchorFuse {
     }
 }
 
-/// Per-stamp exclusion seed: verify `nf ∉ stamp_tg_set` and absorb the stamp's
-/// commit at `anchor_prev`, in absolute epoch `epoch` (crosses no boundary).
+/// Per-stamp exclusion seed.
+///
+/// Verify `nf ∉ stamp_tg_set` and use the stamp's commit to produce the
+/// appropriate anchor. The `elapsed` sequence is empty, since we have not
+/// progressed past any nullifiers yet.
 #[derive(Debug)]
 pub struct UnspentSeed;
 
@@ -323,11 +322,12 @@ impl Step for EmptyBlockUnspentSeed {
 
 /// Compose two [`Unspent`] lineages sharing a mid-epoch junction.
 ///
-/// Enforces that the halves meet inside one epoch (`right_epoch_start ==
-/// left_epoch_end`), at adjacent anchors (`left_anchor_last ==
-/// right_anchor_prev`), and agree on the junction nullifier (`left_nf_end ==
-/// right_nf_start`), then concatenates their histories (`combined =
-/// left_elapsed ++ right_elapsed`).
+/// The halves meet inside one epoch (`right.epoch_start == left.epoch_end`), at
+/// adjacent anchors (`left.anchor_last == right.anchor_prev`), and agree on the
+/// junction nullifier (`left.nf_end == right.nf_start`); their histories are
+/// concatenated (`combined = left_elapsed ++ right_elapsed`). No epoch boundary
+/// is crossed, so `elapsed` gains no entry (the junction nf is already
+/// `right_elapsed`'s head). A crossing is [`UnspentEpochFuse`]'s job.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -370,10 +370,6 @@ impl Step for UnspentFuse {
             Eq::from(right_elapsed),
             "UnspentFuse: right polynomial does not match header",
         )?;
-        // Anchor step: the junction is a within-epoch `next_stamp` continuation,
-        // and the shared epoch forbids an epoch boundary slipping through (a
-        // crossing would put `right_epoch_start` one past `left_epoch_end` and
-        // need a `next_epoch` fold instead).
         enforce_zero(
             Fp::from(left_anchor_last) - Fp::from(right_anchor_prev),
             "UnspentFuse: left.anchor_last must equal right.anchor_prev",
@@ -382,8 +378,8 @@ impl Step for UnspentFuse {
             Fp::from(right_epoch_start) - Fp::from(left_epoch_end),
             "UnspentFuse: forwards half must sit in left's tip epoch",
         )?;
-        // Seam bind: both halves tested the junction epoch against the same
-        // nullifier, so the merged history's view of it is unambiguous.
+        // Seam bind: both halves tested the junction epoch at the same nf, so the
+        // merged history's view of it is unambiguous.
         enforce_zero(
             Fp::from(left_nf_end) - Fp::from(right_nf_start),
             "UnspentFuse: halves disagree on the junction nullifier",
@@ -418,12 +414,12 @@ impl Step for UnspentFuse {
     }
 }
 
-/// Cross-epoch [`Unspent`] composition
+/// Cross-epoch [`Unspent`] composition. This is the only step that grows
+/// `elapsed`.
 ///
-/// At the boundary left's tip epoch completes
-/// (`left.anchor_last.next_epoch(new_epoch) == right.anchor_prev`) and splices
-/// in as `combined = left ++ [left.nf_end] ++ right`, with `new_epoch ==
-/// left.epoch_end + 1`. The only step that grows `elapsed`.
+/// At the boundary, left's tip epoch completes
+/// (`left.anchor_last.next_epoch(new_epoch) == right.anchor_prev`) and is
+/// folded into `elapsed`.
 #[derive(Debug)]
 pub struct UnspentEpochFuse;
 
