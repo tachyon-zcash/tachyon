@@ -36,16 +36,13 @@ For an output operation, $\mathsf{cm}$ is the published [tachygram](./tachygrams
 
 Complete derivation is covered in [Nullifiers](./nullifiers.md).
 
-The note nullifier changes per epoch. Briefly, a nullifier for epoch $e$ is derived:
+The note nullifier changes per epoch. Briefly, the nullifier at epoch offset $d$ from the note's creation is a weighted query over the note's derivation polynomials $T_j$, all derived from $(\psi, \mathsf{nk})$:
 
 $$
-\mathsf{nf} =
-    \mathsf{Poseidon}_\texttt{Tachyon-NfDerive}\!\left(
-        \mathsf{KDF}^{\mathsf{climb}}_\psi(e, D)
-    \right)
+\mathsf{nf}_d = \sum_{j} \rho_j^{\,d}\; T_j\!\left(c\,\gamma^{d}\right)
 $$
 
-For a spend operation, two nullifiers at present epoch $e$ and next epoch $e+1$ are published as [tachygrams](./tachygrams.md).
+For a spend operation, two nullifiers at the present offset $d$ and next offset $d+1$ are published as [tachygrams](./tachygrams.md).
 
 [^keys]: See [Keys](./keys.md) for $\mathsf{pk}$ derivation from $(\mathsf{ak}, \mathsf{nk})$.
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for how $\psi$ enters nullifier derivation.
