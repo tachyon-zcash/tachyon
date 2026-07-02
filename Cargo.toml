@@ -41,11 +41,9 @@ suspicious = { level = "deny", priority = -1 }
 cast_possible_truncation = "deny"
 as_conversions = "deny"
 
-panic = "warn"
-
 multiple_crate_versions = "allow"   # todo
 doc_markdown = "allow"              # https://github.com/rust-lang/rust-clippy/issues/7273
-default_numeric_fallback = "allow"  # just uselessly noisy
+default_numeric_fallback = "allow"  # would demand a literal suffix at every untyped literal
 unreachable = "allow"               # awkward to disable
 redundant_pub_crate = "allow"       # pub(crate) in private modules is fine
 little_endian_bytes = "allow"       # many specified conversions
@@ -87,8 +85,7 @@ multiple_unsafe_ops_per_block = "forbid" # one unsafe op per block for auditabil
 undocumented_unsafe_blocks = "forbid" # every unsafe block must be documented.
 default_union_representation = "forbid" # unions must have explicit repr.
 
-# -- forbid: no panicking indexing -------------------------------------------
-indexing_slicing = "deny" # use .get() or iterators. test/const exceptions via clippy.toml.
+# -- forbid: no panicking slicing --------------------------------------------
 string_slice = "forbid" # string slicing can panic on char boundaries.
 # &container[..] instead of &*container obscures intent.
 deref_by_slicing = "forbid"
@@ -200,14 +197,20 @@ use_debug = "deny"
 verbose_file_reads = "deny"
 
 # deny later
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
 arbitrary_source_item_ordering = "allow"
 arithmetic_side_effects = "allow"
 exhaustive_enums = "allow"
 exhaustive_structs = "allow"
+missing_errors_doc = "allow"
 missing_inline_in_public_items = "allow"
+missing_panics_doc = "allow"
 todo = "allow"
 unimplemented = "allow"
+
+# warn, deny later
 dbg_macro = "warn"
-integer_division_remainder_used = "warn"
+panic = "warn"
+
+# deny, forbid later
+indexing_slicing = "deny" # use .get() or iterators. test/const exceptions via clippy.toml.
+integer_division_remainder_used = "deny"
