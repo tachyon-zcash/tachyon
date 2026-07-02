@@ -1,7 +1,8 @@
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
-use pasta_curves::{Eq, Fp, arithmetic::CurveAffine as _, group::Curve as _};
+use group::Curve as _;
+use pasta_curves::{Eq, Fp, arithmetic::CurveAffine as _};
 
 use super::{EpochIndex, TachygramSetCommit};
 use crate::{digest::poseidon, serialization};
@@ -46,7 +47,7 @@ impl Anchor {
     /// initial state.
     #[must_use]
     pub fn next_epoch(self, new_epoch: EpochIndex) -> Self {
-        Self(poseidon::anchor_epoch_step(self.0, new_epoch.0))
+        Self(poseidon::anchor_epoch_step(self.0, new_epoch))
     }
 
     /// Read a 32-byte anchor.
