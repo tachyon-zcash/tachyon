@@ -62,7 +62,8 @@ pub struct Stripped;
 pub struct AggregateId([u8; 64]);
 
 impl AggregateId {
-    pub(super) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+    /// Read an aggregate id from the consensus wire format.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut wtxid = [0u8; 64];
         reader.read_exact(&mut wtxid)?;
         Self::try_from(wtxid).map_err(|_err| {
@@ -73,8 +74,9 @@ impl AggregateId {
         })
     }
 
-    pub(super) fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        if self == &Self::default() {
+    /// Write an aggregate id to the consensus wire format.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        if self.0 == [0u8; 64] {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "aggregate id is zero and refers to no aggregate",
@@ -82,13 +84,6 @@ impl AggregateId {
         }
 
         writer.write_all(&self.0)
-    }
-}
-
-impl Default for AggregateId {
-    /// This zero wtxid is invalid and refers to no aggregate.
-    fn default() -> Self {
-        Self([0u8; 64])
     }
 }
 
