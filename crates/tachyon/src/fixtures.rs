@@ -22,11 +22,11 @@ use crate::{
     bundle::{self, Bundle},
     constants::{EK_PARTS, EPOCH_SIZE, NF_DOMAIN, NF_EMITTERS},
     entropy::{ActionEntropy, ActionRandomizer},
-    keys::{ExpandedKey, NoteMasterKey, ProofAuthorizingKey, private},
+    keys::{ExpandedKey, NoteMasterKey, PartKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, PartKeyPoly, Tachygram,
-        TachygramSetCommit, TachygramSetPoly, effect,
+        ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, PartKeyPoly,
+        PartKeySpectrumPoly, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
     },
     relations::{
         quotient::{
@@ -733,12 +733,18 @@ pub(crate) fn build_unspent_pcd_between_anchors(
 }
 
 /// A note's epoch-independent derivation values, memoized per `cm` (tier 1,
-/// no proof system): the master key, the expanded schedule, and the `N`
-/// emitter polynomials. Pure functions of the note's `(psi, nk)`, so one build
-/// serves every epoch, every query offset, and every proof. `query_nf` reads
-/// these without touching the prover.
+/// no proof system): the master key, the `EK_PARTS` expansion traces, the
+/// interleaved schedule assembled from them, and the `N` emitter polynomials.
+/// Pure functions of the note's `(psi, nk)`, so one build serves every epoch,
+/// every query offset, and every proof. `query_nf` reads these without touching
+/// the prover; the certify PCD reuses `traces` rather than re-expanding.
+///
+/// The keyset is assembled from `traces` via [`ExpandedKey::from_parts`], so the
+/// 1024-key expansion runs once here (via [`NoteMasterKey::derive_expanded_trace`])
+/// instead of once for the keyset and again per part for the PCD witness.
 struct CachedDerivation {
     mk: NoteMasterKey,
+    traces: [(PartKeySpectrumPoly, PartKey); EK_PARTS],
     keyset: ExpandedKey,
     polys: [NfEmitterPoly; NF_EMITTERS],
 }
@@ -798,9 +804,20 @@ impl WalletSim {
         }
 
         let mk = self.master_key(note);
-        let keyset = mk.derive_expanded();
+        // Expand once: the traces carry both the per-part cipher states (the PCD
+        // witness) and the whitened keys, so the keyset assembles from them via
+        // `from_parts` rather than a second full expansion.
+        let traces: [(PartKeySpectrumPoly, PartKey); EK_PARTS] =
+            array::from_fn(|part| mk.derive_expanded_trace(part));
+        let part_keys: [PartKey; EK_PARTS] = array::from_fn(|part| traces[part].1);
+        let keyset = ExpandedKey::from_parts(&part_keys);
         let polys = keyset.derivation_polys(&mk.query_salts());
-        let entry = Rc::new(CachedDerivation { mk, keyset, polys });
+        let entry = Rc::new(CachedDerivation {
+            mk,
+            traces,
+            keyset,
+            polys,
+        });
         self.derivations.borrow_mut().insert(key, Rc::clone(&entry));
         entry
     }
@@ -864,11 +881,10 @@ impl WalletSim {
         let mk_part1 = self.master_key_part(rng, note, 1);
 
         // Each of the EK_PARTS expansion windows is certified by one
-        // ExpandedKeyStep fusing the two mk parts.
+        // ExpandedKeyStep fusing the two mk parts, reusing the memoized traces.
         let mut part_pcds: Vec<Pcd<delegation::ExpandedKeyPart>> = Vec::with_capacity(EK_PARTS);
-        let mut part_keys = Vec::with_capacity(EK_PARTS);
         for part in 0..EK_PARTS {
-            let (spectrum, keys) = derivation.mk.derive_expanded_trace(part);
+            let (spectrum, keys) = (&derivation.traces[part].0, &derivation.traces[part].1);
             let (pcd, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
@@ -876,8 +892,8 @@ impl WalletSim {
                     witness::nf_master_expand(
                         (*mk_part0.data(), *mk_part1.data()),
                         &derivation.mk,
-                        &spectrum,
-                        &keys,
+                        spectrum,
+                        keys,
                         part,
                     ),
                     mk_part0.clone(),
@@ -885,7 +901,6 @@ impl WalletSim {
                 )
                 .expect("ExpandedKeyStep");
             part_pcds.push(pcd);
-            part_keys.push(keys);
         }
 
         // Funnel the parts into one ExpandedKeyset: lift part 0, fold the rest.
@@ -911,7 +926,8 @@ impl WalletSim {
         // The epoch-independent step witness: the part-key polys, the emitter
         // polys, and the emitter certify quotients (all pure in the keyset and
         // salts, no epoch).
-        let part_polys: [PartKeyPoly; EK_PARTS] = array::from_fn(|part| part_keys[part].key_poly());
+        let part_polys: [PartKeyPoly; EK_PARTS] =
+            array::from_fn(|part| derivation.traces[part].1.key_poly());
         let salts = derivation.mk.query_salts();
         let first_key = derivation.keyset.round_key(0);
         let quotients = array::from_fn(|poly| RoundBoundaryQuotients {
