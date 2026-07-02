@@ -83,13 +83,13 @@ impl Step for SpendableInit {
     type Left = AnchorChain;
     type Output = SpendableHeader;
     type Right = NullifierDerivation;
-    /// `(pre_epoch_anchor, pre_cm_anchor, creation_set, polys, creation_epoch)`.
-    /// `pre_epoch_anchor` is the prior epoch's terminal anchor (folded into the
-    /// boundary); `pre_cm_anchor` the anchor immediately before the cm-stamp;
-    /// `polys` the `N` derivation polynomials, bound to the header commitments
-    /// (the present nullifier is computed in-circuit, not witnessed);
-    /// `creation_epoch` the offset origin `E_0`, witnessed here and bound to the
-    /// creation anchor.
+    /// `(pre_epoch_anchor, pre_cm_anchor, creation_set, polys,
+    /// creation_epoch)`. `pre_epoch_anchor` is the prior epoch's terminal
+    /// anchor (folded into the boundary); `pre_cm_anchor` the anchor
+    /// immediately before the cm-stamp; `polys` the `N` derivation
+    /// polynomials, bound to the header commitments (the present nullifier
+    /// is computed in-circuit, not witnessed); `creation_epoch` the offset
+    /// origin `E_0`, witnessed here and bound to the creation anchor.
     type Witness<'source> = (
         Anchor,
         Anchor,
@@ -178,8 +178,8 @@ impl Step for SpendableInit {
 /// load-bearing: the derivation carries no origin, so `VerifyUnspent` and
 /// `SpendableInit` each witness their own `E_0` freely; this check is what ties
 /// the pool branch's origin to the anchor-bound one, forbidding a segment
-/// tested at a shifted offset arc. The `start_epoch == present_epoch` check is an
-/// additive, injectivity-independent absolute-epoch continuity guard; the
+/// tested at a shifted offset arc. The `start_epoch == present_epoch` check is
+/// an additive, injectivity-independent absolute-epoch continuity guard; the
 /// anchor-exact `anchor_prev == spendable_anchor` check (chain identity) is
 /// never relaxed.
 #[derive(Debug)]

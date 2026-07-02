@@ -6,7 +6,6 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use core::{array, fmt};
-
 use derive_more::Debug;
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
@@ -130,18 +129,9 @@ impl NoteMasterKey {
         }))
     }
 
-    /// One expansion part's trace polynomial and its `EK_PART_SIZE` keys. The
-    /// `part` (`0..EK_PARTS`) selects the cipher-input window via `base = part
-    /// · EK_PART_SIZE`, so part `p` runs inputs
-    /// `p·EK_PART_SIZE..(p+1)·EK_PART_SIZE`. Runs `EK_PART_SIZE`
-    /// keyed-cipher expansions and interpolates their
-    /// row-major `EK_PART_SIZE × ROUNDS = POLY_LEN_MAX` cells over `⟨ω⟩` into
-    /// the trace `T` (so `T(ω^{ROUNDS·r + c})` is row `r`'s `c`-th cipher
-    /// state); the per-row whitened outputs are this part's keys. `T` is
-    /// only ever the interpolant, so the inverse FFT lives here with its
-    /// producer.
+    /// One expansion part's raw internal cipher states and its `EK_PART_SIZE` keys.
     #[must_use]
-    pub fn derive_expanded_trace(&self, part: usize) -> (PartKeySpectrumPoly, PartKey) {
+    pub fn derive_expanded_states(&self, part: usize) -> (PartKeyStates, PartKey) {
         let mut cells: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE * TachyonP5R32::ROUNDS);
         let mut keys: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE);
 
@@ -155,10 +145,9 @@ impl NoteMasterKey {
             keys.push(key);
         }
 
-        Domain::new(cells.len().ilog2()).ifft(&mut cells);
         #[expect(clippy::expect_used, reason = "constant size")]
         (
-            PartKeySpectrumPoly(Polynomial::from_coeffs(&cells)),
+            PartKeyStates(cells),
             PartKey(keys.try_into().expect("constant size")),
         )
     }
@@ -284,8 +273,8 @@ impl fmt::Debug for ExpandedKey {
 /// [`ExpandedKeyStep`](crate::stamp::proof::delegation::ExpandedKeyStep) step.
 ///
 /// Wallet-only secret material, like [`ExpandedKey`].
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub struct PartKey(pub [Fp; EK_PART_SIZE]);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PartKey(#[debug(skip)] pub [Fp; EK_PART_SIZE]);
 
 impl PartKey {
     /// The eval-form part-key polynomial over the order-`EK_PART_SIZE` subgroup
@@ -300,9 +289,26 @@ impl PartKey {
     }
 }
 
-impl fmt::Debug for PartKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PartKey").finish_non_exhaustive()
+/// One expansion part's raw internal cipher states.
+///
+/// Row-major `EK_PART_SIZE × ROUNDS = POLY_LEN_MAX` cells, row `r`'s columns
+/// being that row's per-round states (`c`'s cipher state at round `c`).
+/// Distinct from [`PartKey`] (the per-row whitened outputs only): this is the
+/// full state grid a spectrum interpolates over, not just its final column.
+///
+/// Wallet-only secret material, like [`PartKey`].
+#[derive(Clone, Debug)]
+pub struct PartKeyStates(#[debug(skip)] pub Vec<Fp>);
+
+impl PartKeyStates {
+    /// Interpolate this part's committed trace `T` over `⟨ω⟩`
+    /// (`T(ω^{ROUNDS·r + c})` is row `r`'s `c`-th cipher state). `T` is only
+    /// ever the interpolant, so the inverse FFT lives here with its producer.
+    #[must_use]
+    pub fn spectrum(&self) -> PartKeySpectrumPoly {
+        let mut coeffs = self.0.clone();
+        Domain::new(coeffs.len().ilog2()).ifft(&mut coeffs);
+        PartKeySpectrumPoly(Polynomial::from_coeffs(&coeffs))
     }
 }
 
@@ -427,29 +433,33 @@ mod tests {
         let rng = &mut StdRng::seed_from_u64(3);
         let nk = NullifierKey(Fp::random(&mut *rng));
         let psi = note::NullifierTrapdoor::random(rng);
-        let keys = master_key(&nk, &psi).derive_expanded().0;
+        let keys = master_key(&nk, &psi).derive_expanded();
 
-        assert_ne!(keys[0], keys[1], "distinct successive keys");
         assert_ne!(
-            keys[0],
-            keys[EK_FULL_SIZE - 1],
+            keys.round_key(0),
+            keys.round_key(1),
+            "distinct successive keys"
+        );
+        assert_ne!(
+            keys.round_key(0),
+            keys.round_key(EK_FULL_SIZE - 1),
             "distinct first and last keys"
         );
     }
 
     #[test]
     fn derive_expanded_matches_interleaved_parts() {
-        // The native full-schedule path (derive_expanded) and the proof path
-        // (EK_PARTS part traces assembled by from_parts) must produce the
-        // identical interleaved schedule, or the certified nullifier would
-        // diverge from the wallet's native one.
+        // The keys-only keyset path (derive_expanded) and the proof path
+        // (EK_PARTS part keys from derive_expanded_states, assembled by
+        // from_parts) must produce the identical interleaved schedule, or the
+        // certified nullifier would diverge from the wallet's native one.
         let rng = &mut StdRng::seed_from_u64(4);
         let nk = NullifierKey(Fp::random(&mut *rng));
         let psi = note::NullifierTrapdoor::random(rng);
         let mk = master_key(&nk, &psi);
 
         let full = mk.derive_expanded();
-        let parts: [PartKey; EK_PARTS] = array::from_fn(|part| mk.derive_expanded_trace(part).1);
+        let parts: [PartKey; EK_PARTS] = array::from_fn(|part| mk.derive_expanded_states(part).1);
 
         assert_eq!(
             full,

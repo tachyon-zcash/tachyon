@@ -1533,8 +1533,8 @@ fn nf_master_expand_rejects_forged_witnesses() {
     // Trace under a foreign keyset: round 0 (the first column) binds k_0, so the
     // boundary rejects it before the recurrence is reached.
     let mismatched = {
-        let (spectrum, part_keys) = other_mk.derive_expanded_trace(0);
-        assemble(&other_mk, &spectrum, &part_keys, 0)
+        let (states, part_keys) = other_mk.derive_expanded_states(0);
+        assemble(&other_mk, &states.spectrum(), &part_keys, 0)
     };
 
     // Hybrid keyset sharing the round-0 key but a different mk_1: round 0 matches
@@ -1542,17 +1542,17 @@ fn nf_master_expand_rejects_forged_witnesses() {
     let hybrid_rounds = {
         let mut hybrid = mk;
         hybrid.0[1] += Fp::ONE;
-        let (spectrum, part_keys) = hybrid.derive_expanded_trace(0);
-        assemble(&hybrid, &spectrum, &part_keys, 0)
+        let (states, part_keys) = hybrid.derive_expanded_states(0);
+        assemble(&hybrid, &states.spectrum(), &part_keys, 0)
     };
 
     // Honest trace and quotients but a tampered part-key poly: the decimation
     // identity binding `A_p` to the trace's final column fails. The one honest
     // trace is built once and shared between the witness and the tampering.
     let forged_key = {
-        let (spectrum, part0_keys) = mk.derive_expanded_trace(0);
+        let (part0_states, part0_keys) = mk.derive_expanded_states(0);
         let (trace, quotients, _honest_key, decimation_quotient, part) =
-            assemble(&mk, &spectrum, &part0_keys, 0);
+            assemble(&mk, &part0_states.spectrum(), &part0_keys, 0);
         let mut tampered = part0_keys;
         tampered.0[0] += Fp::ONE;
         let bad_key = tampered.key_poly();
@@ -1653,14 +1653,20 @@ fn keyset_part_pcd(
     part: usize,
 ) -> (Pcd<delegation::ExpandedKeyPart>, PartKey) {
     let mk = user.master_key(&note);
-    let (spectrum, keys) = mk.derive_expanded_trace(part);
+    let (states, keys) = mk.derive_expanded_states(part);
     let left = user.master_key_part(rng, note, 0);
     let right = user.master_key_part(rng, note, 1);
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::ExpandedKeyStep,
-            witness::nf_master_expand((*left.data(), *right.data()), &mk, &spectrum, &keys, part),
+            witness::nf_master_expand(
+                (*left.data(), *right.data()),
+                &mk,
+                &states.spectrum(),
+                &keys,
+                part,
+            ),
             left,
             right,
         )

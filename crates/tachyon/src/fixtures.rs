@@ -25,8 +25,8 @@ use crate::{
     keys::{ExpandedKey, NoteMasterKey, PartKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, PartKeyPoly,
-        PartKeySpectrumPoly, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
+        ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfSeqPoly, PartKeyPoly, Tachygram,
+        TachygramSetCommit, TachygramSetPoly, effect,
     },
     relations::{
         quotient::{
@@ -215,8 +215,8 @@ impl PoolSimBlock {
 
 pub struct PoolSim {
     history: Vec<PoolSimBlock>,
-    /// Per-block digest memo, keyed by block height. The history is append-only,
-    /// so a cached digest never goes stale.
+    /// Per-block digest memo, keyed by block height. The history is
+    /// append-only, so a cached digest never goes stale.
     digests: RefCell<BTreeMap<usize, Rc<BlockDigest>>>,
     /// Post-anchor -> (height, stamp position) index, populated alongside the
     /// digests, so anchor lookup is a map hit rather than a full-history scan.
@@ -326,12 +326,9 @@ impl PoolSim {
     /// anchor (it is `E`'s first block's entry), so it returns
     /// `Err((pre_boundary_anchor, E))`; `Anchor::default()` is the epoch-0
     /// boundary.
-    /// Returns `(height, position)` where `position` is the anchor's index among
-    /// its block's post anchors.
-    fn locate_anchor(
-        &self,
-        anchor: Anchor,
-    ) -> Result<(BlockHeight, usize), (Anchor, EpochIndex)> {
+    /// Returns `(height, position)` where `position` is the anchor's index
+    /// among its block's post anchors.
+    fn locate_anchor(&self, anchor: Anchor) -> Result<(BlockHeight, usize), (Anchor, EpochIndex)> {
         if anchor == Anchor::default() {
             return Err((self.pre_epoch_anchor(EpochIndex(0)), EpochIndex(0)));
         }
@@ -737,14 +734,16 @@ pub(crate) fn build_unspent_pcd_between_anchors(
 /// interleaved schedule assembled from them, and the `N` emitter polynomials.
 /// Pure functions of the note's `(psi, nk)`, so one build serves every epoch,
 /// every query offset, and every proof. `query_nf` reads these without touching
-/// the prover; the certify PCD reuses `traces` rather than re-expanding.
+/// the prover.
 ///
-/// The keyset is assembled from `traces` via [`ExpandedKey::from_parts`], so the
-/// 1024-key expansion runs once here (via [`NoteMasterKey::derive_expanded_trace`])
-/// instead of once for the keyset and again per part for the PCD witness.
+/// The keyset is the cheap keys-only expansion ([`NoteMasterKey::derive_expanded`],
+/// no per-round state trace and no FFT), so keyset-only callers like
+/// [`WalletSim::query_nf`] never pay for the cipher-state traces. The certify
+/// PCD (itself memoized) recovers the per-part raw states and keys on demand
+/// via [`NoteMasterKey::derive_expanded_states`], interpolating each
+/// [`PartKeyStates::spectrum`] only for the parts it proves.
 struct CachedDerivation {
     mk: NoteMasterKey,
-    traces: [(PartKeySpectrumPoly, PartKey); EK_PARTS],
     keyset: ExpandedKey,
     polys: [NfEmitterPoly; NF_EMITTERS],
 }
@@ -804,20 +803,11 @@ impl WalletSim {
         }
 
         let mk = self.master_key(note);
-        // Expand once: the traces carry both the per-part cipher states (the PCD
-        // witness) and the whitened keys, so the keyset assembles from them via
-        // `from_parts` rather than a second full expansion.
-        let traces: [(PartKeySpectrumPoly, PartKey); EK_PARTS] =
-            array::from_fn(|part| mk.derive_expanded_trace(part));
-        let part_keys: [PartKey; EK_PARTS] = array::from_fn(|part| traces[part].1);
-        let keyset = ExpandedKey::from_parts(&part_keys);
+        // The keys-only keyset (no state trace, no FFT); the emitter polys hang
+        // off it. The certify PCD recovers per-part states on demand.
+        let keyset = mk.derive_expanded();
         let polys = keyset.derivation_polys(&mk.query_salts());
-        let entry = Rc::new(CachedDerivation {
-            mk,
-            traces,
-            keyset,
-            polys,
-        });
+        let entry = Rc::new(CachedDerivation { mk, keyset, polys });
         self.derivations.borrow_mut().insert(key, Rc::clone(&entry));
         entry
     }
@@ -881,10 +871,15 @@ impl WalletSim {
         let mk_part1 = self.master_key_part(rng, note, 1);
 
         // Each of the EK_PARTS expansion windows is certified by one
-        // ExpandedKeyStep fusing the two mk parts, reusing the memoized traces.
+        // ExpandedKeyStep fusing the two mk parts. Recover each part's raw
+        // states and keys on demand (one part at a time, so the POLY_LEN_MAX
+        // state grid never all sits on the stack), spectrum it for the
+        // witness, and stash the keys for the derivation step below.
         let mut part_pcds: Vec<Pcd<delegation::ExpandedKeyPart>> = Vec::with_capacity(EK_PARTS);
+        let mut part_keys: Vec<PartKey> = Vec::with_capacity(EK_PARTS);
         for part in 0..EK_PARTS {
-            let (spectrum, keys) = (&derivation.traces[part].0, &derivation.traces[part].1);
+            let (states, keys) = derivation.mk.derive_expanded_states(part);
+            let spectrum = states.spectrum();
             let (pcd, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
@@ -892,8 +887,8 @@ impl WalletSim {
                     witness::nf_master_expand(
                         (*mk_part0.data(), *mk_part1.data()),
                         &derivation.mk,
-                        spectrum,
-                        keys,
+                        &spectrum,
+                        &keys,
                         part,
                     ),
                     mk_part0.clone(),
@@ -901,6 +896,7 @@ impl WalletSim {
                 )
                 .expect("ExpandedKeyStep");
             part_pcds.push(pcd);
+            part_keys.push(keys);
         }
 
         // Funnel the parts into one ExpandedKeyset: lift part 0, fold the rest.
@@ -927,19 +923,21 @@ impl WalletSim {
         // polys, and the emitter certify quotients (all pure in the keyset and
         // salts, no epoch).
         let part_polys: [PartKeyPoly; EK_PARTS] =
-            array::from_fn(|part| derivation.traces[part].1.key_poly());
+            array::from_fn(|part| part_keys[part].key_poly());
         let salts = derivation.mk.query_salts();
         let first_key = derivation.keyset.round_key(0);
-        let quotients = array::from_fn(|poly| RoundBoundaryQuotients {
-            round: nf_emitter_round_quotient(
-                derivation.polys[poly].0.coefficients(),
-                &derivation.keyset.0,
-            ),
-            boundary: nf_emitter_boundary_quotient(
-                derivation.polys[poly].0.coefficients(),
-                salts.0[poly],
-                first_key,
-            ),
+        let quotients = array::from_fn(|poly| {
+            RoundBoundaryQuotients {
+                round: nf_emitter_round_quotient(
+                    derivation.polys[poly].0.coefficients(),
+                    &derivation.keyset.0,
+                ),
+                boundary: nf_emitter_boundary_quotient(
+                    derivation.polys[poly].0.coefficients(),
+                    salts.0[poly],
+                    first_key,
+                ),
+            }
         });
 
         let (pcd, ()) = PROOF_SYSTEM
