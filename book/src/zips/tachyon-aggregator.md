@@ -33,6 +33,24 @@ Miners are likely to vertically integrate aggregation, but a protocol is establi
 
 [^network-roles]: See [Network Roles](../network_roles/overview.md) for the aggregator and miner roles.
 
+Open questions:
+
+- **Category.** The draft is Category 'Network', but its block-validation step defines
+  block-validity rules, which are consensus. Either this ZIP is recategorized (or
+  dual-categorized 'Consensus / Network'), or the validation rules relocate to the
+  consensus-category [bundle ZIP (#104)](https://github.com/tachyon-zcash/tachyon/issues/104)
+  and are cited from here.
+- **Duplicate-tachygram rule ownership.** The draft cites the epoch-window
+  duplicate-tachygram rule to the
+  [Shielded Protocol ZIP (#103)](https://github.com/tachyon-zcash/tachyon/issues/103);
+  confirm it is not owned by the
+  [Accumulator ZIP (#105)](https://github.com/tachyon-zcash/tachyon/issues/105).
+- **Transaction-digest amendment.** The `"ZTxAuthTachyHash"` personalization and the
+  Tachyon `txid`/`auth_digest` branches await an amendment to ZIP 244, which may be a
+  separate update ZIP or may fold into one of the general Tachyon ZIPs.
+- **Deployment.** The deployment ZIP and activation parameters are undefined; the draft's
+  Deployment section points at the placeholder.
+
 ## III. ZIP Draft
 
 --------------------------------------------------------------------------------
