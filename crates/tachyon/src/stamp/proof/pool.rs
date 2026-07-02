@@ -17,21 +17,31 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ff::PrimeField as _;
+use ff::{Field as _, PrimeField as _};
 use group::{Curve as _, GroupEncoding as _};
-use pasta_curves::{Eq, Fp};
+use pasta_curves::{Eq, Fp, arithmetic::CurveAffine as _};
 use ragu::{
     Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
     constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
-use super::delegation::NullifierHeader;
 use crate::{
+    NfEmitterPoly,
+    constants::{NF_DOMAIN, NF_EMITTERS},
+    digest::poseidon,
     note::{self, Nullifier},
     primitives::{
         Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, TachygramSetCommit, TachygramSetPoly,
     },
-    relations::enforce::{enforce_poly_concat, enforce_poly_splice},
+    relations::{
+        enforce::{
+            enforce_accumulator_recurrence, enforce_lift_match, enforce_poly_concat,
+            enforce_poly_splice, enforce_weight_recurrence,
+        },
+        quotient::LIFT_SPLITS,
+        subgroup_generator,
+    },
+    stamp::proof::delegation::NullifierDerivation,
 };
 
 /// Anchor segment between two endpoints. Composable via [`AnchorFuse`].
@@ -125,21 +135,28 @@ impl Header for Unspent {
 pub struct VerifiedUnspent;
 
 impl Header for VerifiedUnspent {
-    /// `(cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end),
-    /// anchor_last)`. `cm` leads; the rest mirrors the [`Unspent`] boundaries
-    /// collapsed to scalars (no `elapsed` poly).
+    /// `(cm, anchor_prev, (epoch_start, nf_start), (epoch_end, end_nf),
+    /// anchor_last, creation_epoch)`. `creation_epoch` is the offset origin
+    /// `E_0` witnessed at [`VerifyUnspent`];
+    /// [`super::spendable::SpendableLift`] reconciles it against the spendable
+    /// lineage's anchor-bound `E_0` so the lift's offset arc cannot be shifted.
+    /// `epoch_start` and `epoch_end` are the verified range's start and
+    /// tip absolute epochs (bound to `nf_start` / `end_nf` by the
+    /// lift-match); the lift checks `epoch_start` against the lineage and
+    /// advances to `epoch_end`.
     type Data = (
         note::Commitment,
         Anchor,
         (EpochIndex, Nullifier),
         (EpochIndex, Nullifier),
         Anchor,
+        EpochIndex,
     );
 
     const SUFFIX: Suffix = Suffix::new(8);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 4 + 32 + 4 + 32 + 32);
+        let mut out = Vec::with_capacity(32 + 32 + 4 + 32 + 4 + 32 + 32 + 4);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
         out.extend_from_slice(&Fp::from(data.1).to_repr());
         out.extend_from_slice(&data.2.0.0.to_le_bytes());
@@ -147,6 +164,7 @@ impl Header for VerifiedUnspent {
         out.extend_from_slice(&data.3.0.0.to_le_bytes());
         out.extend_from_slice(&Fp::from(data.3.1).to_repr());
         out.extend_from_slice(&Fp::from(data.4).to_repr());
+        out.extend_from_slice(&data.5.0.to_le_bytes());
         out
     }
 }
@@ -166,7 +184,7 @@ impl Step for AnchorSeed {
     /// `(start, stamp_commit)`.
     type Witness<'source> = (Anchor, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(4);
+    const INDEX: Index = Index::new(3);
 
     fn witness<'source>(
         &self,
@@ -197,7 +215,7 @@ impl Step for EmptyBlockSeed {
     /// `(start,)`.
     type Witness<'source> = (Anchor,);
 
-    const INDEX: Index = Index::new(5);
+    const INDEX: Index = Index::new(4);
 
     fn witness<'source>(
         &self,
@@ -222,7 +240,7 @@ impl Step for AnchorFuse {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(6);
+    const INDEX: Index = Index::new(5);
 
     fn witness<'source>(
         &self,
@@ -255,7 +273,7 @@ impl Step for UnspentSeed {
     /// `(anchor_prev, (epoch, nf), stamp_tg_set)`.
     type Witness<'source> = (Anchor, (EpochIndex, Nullifier), TachygramSetPoly);
 
-    const INDEX: Index = Index::new(7);
+    const INDEX: Index = Index::new(6);
 
     fn witness<'source>(
         &self,
@@ -297,7 +315,7 @@ impl Step for EmptyBlockUnspentSeed {
     /// `(anchor_prev, (epoch, nf))`.
     type Witness<'source> = (Anchor, (EpochIndex, Nullifier));
 
-    const INDEX: Index = Index::new(8);
+    const INDEX: Index = Index::new(7);
 
     fn witness<'source>(
         &self,
@@ -339,7 +357,7 @@ impl Step for UnspentFuse {
     /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(9);
+    const INDEX: Index = Index::new(8);
 
     fn witness<'source>(
         &self,
@@ -431,7 +449,7 @@ impl Step for UnspentEpochFuse {
     /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(10);
+    const INDEX: Index = Index::new(9);
 
     fn witness<'source>(
         &self,
@@ -501,11 +519,25 @@ impl Step for UnspentEpochFuse {
     }
 }
 
-/// Bind an [`Unspent`]'s free-witness nullifiers to a
-/// note's genuine nullifiers.
+/// Bind an [`Unspent`]'s free-witness nullifiers via the homomorphic range lift
 ///
-/// Proves `range == elapsed ++ [nf_end]` against the derived
-/// [`NullifierHeader`], emitting a [`VerifiedUnspent`] with the `cm`.
+/// Reconstructs the sync-tested polynomial `q = elapsed ++ [nf_end]` over
+/// `[epoch_start, epoch_end + 1)`, then proves every tested value is the
+/// note's genuine derivation nullifier with the running-sum argument: per poly
+/// the geometric weight `w_j(p_d) = (rho_j·β)^d`
+/// ([`enforce_weight_recurrence`]), the exclusive-prefix accumulator `A(p_d) =
+/// Σ_{k<d} β^k·nf_k` ([`enforce_accumulator_recurrence`]), and the
+/// offset-indexed match `q(β)·β^{start − E_0} == A(p_{end − E_0}) − A(p_{start
+/// − E_0})` ([`enforce_lift_match`]). The offset origin `E_0` is witnessed here
+/// (the derivation is epoch-independent); it is unconstrained at this step and
+/// gains meaning only when `SpendableLift` reconciles the emitted `E_0` against
+/// the lineage's anchor-bound creation epoch. Emits a [`VerifiedUnspent`]
+/// carrying the boundary nullifiers, the `cm`, and that witnessed origin `E_0`.
+///
+/// The lift challenge `β = Poseidon(derivation_digest, commit(q), start, end)`
+/// is derived after `q` is committed, so the prover builds `w_j`/`A` for this
+/// `β`; `derivation_digest` binds all `N` certified `commit(T_j)`, and the
+/// witnessed `T_j` are bound to those commitments here.
 #[derive(Debug)]
 pub struct VerifyUnspent;
 
@@ -513,16 +545,37 @@ impl Step for VerifyUnspent {
     type Aux<'source> = ();
     type Left = Unspent;
     type Output = VerifiedUnspent;
-    type Right = NullifierHeader;
-    /// `(elapsed_seq, nf_seq, tip_seq)`.
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
+    type Right = NullifierDerivation;
+    /// `(elapsed_poly, tip_poly, range_poly, polys, weights, accumulator,
+    /// weight_quotients, accumulator_quotient, creation_epoch)`.
+    type Witness<'source> = (
+        NfSeqPoly,
+        NfSeqPoly,
+        NfSeqPoly,
+        [NfEmitterPoly; NF_EMITTERS],
+        [[Polynomial; LIFT_SPLITS]; NF_EMITTERS],
+        [Polynomial; LIFT_SPLITS],
+        [Polynomial; NF_EMITTERS],
+        Polynomial,
+        EpochIndex,
+    );
 
-    const INDEX: Index = Index::new(11);
+    const INDEX: Index = Index::new(10);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (elapsed_seq, nf_seq, tip_seq): Self::Witness<'source>,
+        (
+            elapsed_poly,
+            tip_poly,
+            range_poly,
+            polys,
+            weights,
+            accumulator,
+            weight_quotients,
+            accumulator_quotient,
+            creation_epoch,
+        ): Self::Witness<'source>,
         (
             unspent_anchor_prev,
             (unspent_epoch_start, unspent_nf_start),
@@ -530,74 +583,119 @@ impl Step for VerifyUnspent {
             (unspent_epoch_end, unspent_nf_end),
             unspent_anchor_last,
         ): <Self::Left as Header>::Data,
-        (nf_cm, (nf_epoch_start, nf_start), nf_seq_commit, (nf_epoch_end, nf_end)): <Self::Right as Header>::Data,
+        (commits, digest, cm, shift, ratios): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
-
-        enforce_zero(
-            Fp::from(nf_epoch_start) - Fp::from(unspent_epoch_start),
-            "VerifyUnspent: derived range does not start at the unspent's start epoch",
-        )?;
-        enforce_zero(
-            Fp::from(nf_epoch_end) - Fp::from(unspent_epoch_end.next()),
-            "VerifyUnspent: derived range does not span the crossings plus the tip",
-        )?;
+        // Reconstruct the tested-value polynomial q = elapsed ++ [nf_end].
         enforce_equal_point(
-            Eq::from(elapsed_seq.commit()),
+            Eq::from(elapsed_poly.commit()),
             Eq::from(unspent_elapsed),
             "VerifyUnspent: elapsed polynomial does not match header",
         )?;
-
-        let end_commit = NfSeqCommit::from(g0 * Fp::from(unspent_nf_end));
+        let host_generators = Pasta::host_generators(Pasta::baked()).g();
+        let g0 = host_generators.first().ok_or(ragu::Error::InvalidWitness(
+            "VerifyUnspent: missing host generator".into(),
+        ))?;
+        let present_commit = NfSeqCommit::from(g0 * Fp::from(unspent_nf_end));
         enforce_equal_point(
-            Eq::from(tip_seq.commit()),
-            Eq::from(end_commit),
-            "VerifyUnspent: tip polynomial does not match the end nullifier",
+            Eq::from(tip_poly.commit()),
+            Eq::from(present_commit),
+            "VerifyUnspent: tip polynomial does not match present nullifier",
         )?;
-        enforce_equal_point(
-            Eq::from(nf_seq.commit()),
-            Eq::from(nf_seq_commit),
-            "VerifyUnspent: range polynomial does not match header",
-        )?;
+        let range_commit = range_poly.commit();
         let offset = usize::try_from(unspent_epoch_end.0 - unspent_epoch_start.0).map_err(
             |_too_many_epochs| {
                 ragu::Error::InvalidWitness("VerifyUnspent: crossing count exceeds usize".into())
             },
         )?;
+        let range = Polynomial::from(range_poly);
         enforce_poly_concat(
             ctx,
-            &Polynomial::from(elapsed_seq),
-            &Polynomial::from(tip_seq),
+            &Polynomial::from(elapsed_poly),
+            &Polynomial::from(tip_poly),
             offset,
-            &Polynomial::from(nf_seq),
+            &range,
         )
         .map_err(|_relation_err| {
             ragu::Error::InvalidWitness(
                 "VerifyUnspent: range is not elapsed followed by the tip".into(),
             )
         })?;
-        // Bind the unspent's free-witness boundary nullifiers to the range's
-        // genuine boundary leaves, which the derivation header proved by
-        // construction.
-        enforce_zero(
-            Fp::from(unspent_nf_start) - Fp::from(nf_start),
-            "VerifyUnspent: start nullifier does not match the derived range",
+
+        // Bind each witnessed T_j to its certified derivation commitment.
+        for (trace, commit) in polys.iter().zip(&commits) {
+            enforce_equal_point(
+                trace.0.commit(),
+                commit.0,
+                "VerifyUnspent: derivation polynomial does not match the certified commitment",
+            )?;
+        }
+
+        // Lift challenge β over the certified digest, the tested q, and the range.
+        let end_epoch = unspent_epoch_end.next();
+        let range_coords = Eq::from(range_commit)
+            .to_affine()
+            .coordinates()
+            .expect("range commitment is not identity");
+        let beta = poseidon::lift_challenge(digest.0, range_coords, unspent_epoch_start, end_epoch);
+        let coset_gen = subgroup_generator::<NF_DOMAIN>();
+
+        // Per-poly geometric weight w_j(p_d) = (ρ_j·β)^d.
+        for (weight, (ratio, quotient)) in
+            weights.iter().zip(ratios.0.iter().zip(&weight_quotients))
+        {
+            enforce_weight_recurrence::<NF_DOMAIN, LIFT_SPLITS>(
+                ctx,
+                weight,
+                quotient,
+                ratio * beta,
+                shift.0,
+            )?;
+        }
+
+        // Exclusive-prefix accumulator A(p_d) = Σ_{k<d} β^k·nf_k.
+        enforce_accumulator_recurrence::<NF_DOMAIN, LIFT_SPLITS, NF_EMITTERS>(
+            ctx,
+            &accumulator,
+            &accumulator_quotient,
+            &weights,
+            &polys.map(|poly| poly.0),
+            shift.0,
         )?;
-        enforce_zero(
-            Fp::from(unspent_nf_end) - Fp::from(nf_end),
-            "VerifyUnspent: end nullifier does not match the derived range",
+
+        // Offset-indexed range match against the witnessed origin E_0.
+        let start_offset = u64::from(unspent_epoch_start.0 - creation_epoch.0);
+        let end_offset = u64::from(end_epoch.0 - creation_epoch.0);
+        enforce_lift_match::<LIFT_SPLITS>(
+            ctx,
+            &accumulator,
+            &range,
+            range_commit.into(),
+            shift.0,
+            coset_gen,
+            beta,
+            start_offset,
+            end_offset,
         )?;
+
+        // nf_start is q's degree-0 coefficient (the tested value at epoch_start).
+        let nf_start_val = range.eval(Fp::ZERO);
+        ctx.enforce_poly_query(range_commit.into(), Fp::ZERO, nf_start_val)?;
+        // Bind the Unspent's carried nf_start to the genuine range-start leaf,
+        // mirroring the tip binding above (`nf_end`).
+        enforce_zero(
+            Fp::from(unspent_nf_start) - nf_start_val,
+            "VerifyUnspent: header nf_start does not match the verified range start",
+        )?;
+        let nf_start = Nullifier::from(nf_start_val);
+
         Ok((
             (
-                nf_cm,
+                cm,
                 unspent_anchor_prev,
-                (unspent_epoch_start, unspent_nf_start),
+                (unspent_epoch_start, nf_start),
                 (unspent_epoch_end, unspent_nf_end),
                 unspent_anchor_last,
+                creation_epoch,
             ),
             (),
         ))

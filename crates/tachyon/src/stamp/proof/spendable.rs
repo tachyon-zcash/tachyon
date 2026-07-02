@@ -1,9 +1,13 @@
 //! Spendable bootstrap and lift.
 //!
-//! The spendable carries `(present_nf, anchor, cm)`: the note's current
-//! nullifier `GGM(mk, e)`, its pool position, and the minted-note commitment
-//! binding the lineage (and its value) across lifts. [`SpendableInit`]
-//! bootstraps it from a minted note; [`SpendableLift`] advances it over
+//! The spendable carries `(cm, (present_epoch, present_nf), anchor,
+//! creation_epoch)`: the minted-note commitment binding the lineage (and its
+//! value), the note's current nullifier `E_mk(psi' + e)` at its active absolute
+//! epoch, its pool position, and the creation epoch `E_0` (the offset origin).
+//! The `(present_epoch, present_nf)` pair and `anchor` advance per lift; `cm`
+//! and `creation_epoch` thread unchanged. [`SpendableInit`] bootstraps it from
+//! a minted note;
+//! [`SpendableLift`] advances it over
 //! [`VerifiedUnspent`](super::pool::VerifiedUnspent) segments.
 
 extern crate alloc;
@@ -11,38 +15,51 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ff::{Field as _, PrimeField as _};
-use pasta_curves::Fp;
-use ragu::{Header, Index, Step, Suffix, constraint::enforce_zero};
-
-use super::{
-    delegation::NullifierHeader,
-    pool::{AnchorChain, VerifiedUnspent},
+use pasta_curves::{Eq, Fp};
+use ragu::{
+    Header, Index, Polynomial, Step, Suffix,
+    constraint::{enforce_nonzero, enforce_zero},
 };
+
 use crate::{
-    note::{self, Nullifier},
-    primitives::{Anchor, TachygramSetPoly},
+    NfEmitterPoly,
+    constants::NF_EMITTERS,
+    note::{Commitment as NoteCommitment, Nullifier},
+    primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    relations::enforce::enforce_nullifier_query,
+    stamp::proof::{
+        delegation::NullifierDerivation,
+        pool::{AnchorChain, VerifiedUnspent},
+    },
 };
 
-/// Wallet's spendable position `(present_nf, anchor, cm)`
+/// Wallet's spendable position
 ///
-/// The note's current-epoch nullifier and pool position (advanced per lift)
-/// plus the minted-note commitment, threaded unchanged so the spent value
-/// cannot drift to a different same-`mk` note.
+/// The note's current-epoch nullifier, pool position, and present epoch
+/// (advanced per lift) plus the minted-note commitment and creation epoch,
+/// threaded unchanged across lifts.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
 impl Header for SpendableHeader {
-    /// `(cm, present_nf, anchor)`. `cm` threads unchanged; `present_nf` and
-    /// `anchor` advance per lift.
-    type Data = (note::Commitment, Nullifier, Anchor);
+    /// `(cm, (present_epoch, present_nf), anchor, creation_epoch)`. The
+    /// `(present_epoch, present_nf)` pair and `anchor` advance per lift; `cm`
+    /// and `creation_epoch` (the offset origin `E_0`, bound at
+    /// [`SpendableInit`]) thread unchanged, so the lift's `E_0` can be
+    /// reconciled against it. `present_epoch` is the absolute epoch at
+    /// which `present_nf` is the active nullifier, so the spend offset is
+    /// `present_epoch − creation_epoch`.
+    type Data = (NoteCommitment, (EpochIndex, Nullifier), Anchor, EpochIndex);
 
     const SUFFIX: Suffix = Suffix::new(7);
 
     fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 32);
+        let mut out = Vec::with_capacity(32 + 4 + 32 + 32 + 4);
         out.extend_from_slice(&Fp::from(data.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.1).to_repr());
+        out.extend_from_slice(&data.1.0.0.to_le_bytes());
+        out.extend_from_slice(&Fp::from(data.1.1).to_repr());
         out.extend_from_slice(&Fp::from(data.2).to_repr());
+        out.extend_from_slice(&data.3.0.to_le_bytes());
         out
     }
 }
@@ -50,9 +67,14 @@ impl Header for SpendableHeader {
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
 /// Wallet-only. Fuses a boundary-rooted [`AnchorChain`] with the wallet's
-/// single-leaf [`NullifierHeader`](super::delegation::NullifierHeader): binds
+/// single-leaf [`NullifierHeader`]: binds
 /// `present_nf` to the proven leaf, checks `cm in creation_set`, roots the
 /// chain at the epoch boundary, and requires the cm-stamp to be its final link.
+///
+/// TODO: presently, a spendable can only be lifted by an unspent proof starting
+/// at its precise anchor. ideally, a user should request whole-epoch proofs
+/// from the sync service to maximize anonymity. so, we need some way to adjust
+/// an anchor when necessary.
 #[derive(Debug)]
 pub struct SpendableInit;
 
@@ -60,29 +82,43 @@ impl Step for SpendableInit {
     type Aux<'source> = ();
     type Left = AnchorChain;
     type Output = SpendableHeader;
-    type Right = NullifierHeader;
-    /// `((pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf)`.
-    type Witness<'source> = ((Anchor, Anchor), TachygramSetPoly, Nullifier);
+    type Right = NullifierDerivation;
+    /// `(pre_epoch_anchor, pre_cm_anchor, creation_set, polys,
+    /// creation_epoch)`.
+    type Witness<'source> = (
+        Anchor,
+        Anchor,
+        TachygramSetPoly,
+        [NfEmitterPoly; NF_EMITTERS],
+        EpochIndex,
+    );
 
-    const INDEX: Index = Index::new(12);
+    const INDEX: Index = Index::new(11);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        ((pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf): Self::Witness<'source>,
+        // TODO: this pre_epoch_anchor seems unbound from pre_cm_anchor
+        (pre_epoch_anchor, pre_cm_anchor, creation_set, polys, creation_epoch): Self::Witness<
+            'source,
+        >,
         (chain_start, chain_end): <Self::Left as Header>::Data,
-        (cm, (nf_epoch_start, nf_start), _nf_seq_commit, (nf_epoch_end, _nf_end)): <Self::Right as Header>::Data,
+        (commits, _digest, cm, shift, _ratios): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // Bind `present_nf` to the single derived starting leaf `GGM(mk, epoch)`.
-        enforce_zero(
-            Fp::from(nf_epoch_end) - (Fp::from(nf_epoch_start) + Fp::ONE),
-            "SpendableInit: starting range must span one epoch",
+        // The present nullifier is the creation-epoch query `nf_0 = Σ_j T_j(c)`
+        // (offset d = 0: unit weights, point = the secret shift c). The query
+        // binds the witnessed polys to the certified derivation commitments.
+        let commitments: [Eq; NF_EMITTERS] = commits.map(|commit| commit.0);
+        let trace_polys: [Polynomial; NF_EMITTERS] = polys.map(|poly| poly.0);
+        let present_fp = enforce_nullifier_query(
+            ctx,
+            &commitments,
+            &trace_polys,
+            shift.0,
+            &[Fp::ONE; NF_EMITTERS],
         )?;
-        enforce_zero(
-            Fp::from(present_nf) - Fp::from(nf_start),
-            "SpendableInit: present nullifier does not match the derived leaf",
-        )?;
-        let epoch = nf_epoch_start;
+        enforce_nonzero(present_fp, "SpendableInit: creation nullifier is zero")?;
+        let present_nf = Nullifier::from(present_fp);
 
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_point = Fp::from(cm);
@@ -91,15 +127,16 @@ impl Step for SpendableInit {
         enforce_zero(eval, "SpendableInit: commitment not in set")?;
         let creation_commit = creation_set.commit();
 
-        // Pin the lineage's starting epoch to consensus. Consensus anchor
-        // membership of the eventual spend anchor requires `chain_start` to be
-        // the real epoch boundary. `next_epoch` (`Tachyon-EpochStp`) is the sole
+        // Pin the lineage's starting epoch to consensus and bind the witnessed
+        // creation epoch E_0 to it. `next_epoch` (`Tachyon-EpochStp`) is the sole
         // epoch-folding domain and the chain is intra-epoch, so matching
-        // `pre_epoch_anchor.next_epoch(epoch)` against that boundary forces
-        // `epoch == E`, tying the GGM leaf index to the creation epoch.
+        // `pre_epoch_anchor.next_epoch(creation_epoch)` against that boundary
+        // forces `creation_epoch == E` — SpendableInit is the sole gatekeeper
+        // pinning E_0 to the real creation epoch. The derivation carries no
+        // origin, so this witnessed E_0 is where the lineage's origin is fixed.
         enforce_zero(
-            Fp::from(chain_start) - Fp::from(pre_epoch_anchor.next_epoch(epoch)),
-            "SpendableInit: chain not rooted at epoch boundary",
+            Fp::from(chain_start) - Fp::from(pre_epoch_anchor.next_epoch(creation_epoch)),
+            "SpendableInit: chain not rooted at the creation-epoch boundary",
         )?;
 
         // The cm-stamp is the chain's final link: `chain_end ==
@@ -112,14 +149,34 @@ impl Step for SpendableInit {
             "SpendableInit: cm-stamp is not the chain's final link",
         )?;
 
-        Ok(((cm, present_nf, post_cm_anchor), ()))
+        // The present nullifier is the creation-epoch query `nf_0` (offset 0),
+        // so the present epoch is the creation epoch itself.
+        Ok((
+            (
+                cm,
+                (creation_epoch, present_nf),
+                post_cm_anchor,
+                creation_epoch,
+            ),
+            (),
+        ))
     }
 }
 
 /// Advance the spendable over one [`VerifiedUnspent`] segment.
 ///
-/// Wallet-only, witness-free. Checks `cm`, `nf_start == present_nf`, and anchor
-/// adjacency, then advances to the tip `(nf_end, anchor_last)`.
+/// Wallet-only, witness-free. Checks `cm`, `nf_start == present_nf`, anchor
+/// adjacency, that the segment's witnessed offset origin `E_0` matches the
+/// lineage's anchor-bound `creation_epoch`, and that the segment's
+/// `start_epoch` matches the lineage's `present_epoch`, then advances to the
+/// tip `(nf_end, anchor_last)` at `present_epoch`. The `E_0` reconciliation is
+/// load-bearing: the derivation carries no origin, so `VerifyUnspent` and
+/// `SpendableInit` each witness their own `E_0` freely; this check is what ties
+/// the pool branch's origin to the anchor-bound one, forbidding a segment
+/// tested at a shifted offset arc. The `start_epoch == present_epoch` check is
+/// an additive, injectivity-independent absolute-epoch continuity guard; the
+/// anchor-exact `anchor_prev == spendable_anchor` check (chain identity) is
+/// never relaxed.
 #[derive(Debug)]
 pub struct SpendableLift;
 
@@ -130,27 +187,50 @@ impl Step for SpendableLift {
     type Right = VerifiedUnspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(13);
+    const INDEX: Index = Index::new(12);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (cm, present_nf, spendable_anchor): <Self::Left as Header>::Data,
-        (verified_cm, anchor_prev, (_epoch_start, nf_start), (_epoch_end, nf_end), anchor_last): <Self::Right as Header>::Data,
+        (cm, (present_epoch, present_nf), spendable_anchor, creation_epoch): <Self::Left as Header>::Data,
+        (
+            verified_cm,
+            anchor_prev,
+            (verified_epoch_start, nf_start),
+            (verified_epoch_end, nf_end),
+            anchor_last,
+            verified_e0,
+        ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(verified_cm) - Fp::from(cm),
             "SpendableLift: verified unspent cm does not match spendable",
         )?;
         enforce_zero(
+            Fp::from(verified_e0) - Fp::from(creation_epoch),
+            "SpendableLift: lift origin E_0 does not match the lineage creation epoch",
+        )?;
+        enforce_zero(
             Fp::from(nf_start) - Fp::from(present_nf),
             "SpendableLift: segment does not start at the lineage nullifier",
+        )?;
+        enforce_zero(
+            Fp::from(verified_epoch_start) - Fp::from(present_epoch),
+            "SpendableLift: segment does not start at the lineage epoch",
         )?;
         enforce_zero(
             Fp::from(anchor_prev) - Fp::from(spendable_anchor),
             "SpendableLift: unspent not adjacent to spendable",
         )?;
-        Ok(((cm, nf_end, anchor_last), ()))
+        Ok((
+            (
+                cm,
+                (verified_epoch_end, nf_end),
+                anchor_last,
+                creation_epoch,
+            ),
+            (),
+        ))
     }
 }

@@ -20,10 +20,9 @@ use ragu::{Application, ApplicationBuilder};
 
 fn make_app() -> Result<Application, ragu::Error> {
     ApplicationBuilder::new()
-        .register(delegation::NfMasterSeed)?
-        .register(delegation::NfPrefixStep)?
-        .register(delegation::NullifierStep)?
-        .register(delegation::NullifierFuse)?
+        .register(delegation::MasterSeed)?
+        .register(delegation::ExpandedKeyStep)?
+        .register(delegation::NullifierDerivationStep)?
         .register(pool::AnchorSeed)?
         .register(pool::EmptyBlockSeed)?
         .register(pool::AnchorFuse)?
@@ -39,6 +38,8 @@ fn make_app() -> Result<Application, ragu::Error> {
         .register(stamp::SpendStamp)?
         .register(stamp::MergeStamp)?
         .register(stamp::StampLift)?
+        .register(delegation::ExpandedKeysetLift)?
+        .register(delegation::ExpandedKeyFuse)?
         .finalize()
 }
 
