@@ -31,7 +31,7 @@ use crate::{
     primitives::{
         Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, TachygramSetCommit, TachygramSetPoly,
     },
-    relations::{enforce_poly_concat, enforce_poly_splice},
+    relations::enforce::{enforce_poly_concat, enforce_poly_splice},
 };
 
 /// Anchor segment between two endpoints. Composable via [`AnchorFuse`].

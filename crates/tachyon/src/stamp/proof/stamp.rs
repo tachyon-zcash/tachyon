@@ -19,7 +19,7 @@ use crate::{
     keys::private,
     note::{Note, Nullifier},
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
-    relations::enforce_poly_product,
+    relations::enforce::enforce_poly_product,
     value,
 };
 

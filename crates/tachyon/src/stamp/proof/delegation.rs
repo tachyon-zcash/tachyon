@@ -19,7 +19,7 @@ use crate::{
     keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, ProofAuthorizingKey},
     note::{self, Note, Nullifier},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
-    relations::enforce_poly_concat,
+    relations::enforce::enforce_poly_concat,
 };
 
 /// In-progress GGM walk position `(cm, node, depth, index)`: the note
