@@ -528,7 +528,7 @@ impl Bundle<Stamp> {
             .map(Action::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
 
-        let cover_set = ActionSetPoly::from(cover_digests.as_slice());
+        let cover_set = cover_digests.into_iter().collect::<ActionSetPoly>();
 
         Ok(cover_set.commit() == self.stamp.action_set)
     }

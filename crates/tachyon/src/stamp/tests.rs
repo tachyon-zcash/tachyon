@@ -166,7 +166,7 @@ fn prove_output_populates_action_set() {
 
     let (stamp, plan) = build_output_stamp(rng, anchor, note);
     let digest = plan.digest().expect("valid plan");
-    let expected = ActionSetPoly::from([digest].as_slice()).commit();
+    let expected = ActionSetPoly::from_iter([digest]).commit();
     assert_eq!(stamp.action_set, expected);
 }
 
@@ -188,7 +188,7 @@ fn prove_merge_populates_action_set() {
         plan_a.digest().expect("valid plan"),
         plan_b.digest().expect("valid plan"),
     ];
-    let expected = ActionSetPoly::from(digests.as_slice()).commit();
+    let expected = ActionSetPoly::from_iter(digests).commit();
 
     let merged =
         Stamp::prove_merge(rng, (stamp_a, &[digests[0]]), (stamp_b, &[digests[1]])).expect("merge");
