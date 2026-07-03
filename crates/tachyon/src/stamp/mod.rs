@@ -49,8 +49,12 @@ pub struct Unproven;
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Stripped;
 
-/// A 64-byte `wtxid` of the covering aggregate in the same block, assigned by
-/// the miner during block assembly.
+/// The 64-byte `wtxid` of the covering aggregate in the same block, assigned
+/// by the miner during block assembly.
+///
+/// A `wtxid` is `txid || auth_digest`: two 32-byte transaction digests as
+/// defined by ZIP 244, concatenated per ZIP 239 into the 64-byte identifier
+/// used for transaction relay.
 ///
 /// This uses the aggregate's wtxid (not txid) so it unambiguously pins the
 /// covering aggregate's authorization state, including stamp.

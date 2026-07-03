@@ -1,5 +1,21 @@
 # Domain Separators
 
+## BLAKE2b-256
+
+### Transaction identifiers
+
+Digests used to commit to Tachyon bundle contents for sighash and auth digest.
+
+<!-- see 
+    https://github.com/zcash/orchard/blob/main/src/bundle/commitments.rs 
+    https://zips.z.cash/zip-0244
+-->
+
+| Purpose | Value |
+| ------- | ----- |
+| Bundle commitment | `ZTxIdTachyonHash` |
+| Bundle auth digest | `ZTxAuthTachyHash` |
+
 ## BLAKE2b-512
 
 ### Action alpha
@@ -12,20 +28,6 @@ Deterministic action randomizer for Tachyon, privately handled by transaction au
 | ------- | ----- |
 | Spend alpha | `Tachyon-Spend` |
 | Output alpha | `Tachyon-Output` |
-
-### Transaction identifiers
-
-Digests used to commit to Tachyon bundle contents for sighash and and auth digest.
-
-<!-- see 
-    https://github.com/zcash/orchard/blob/main/src/bundle/commitments.rs 
-    https://zips.z.cash/zip-0244
--->
-
-| Purpose | Value |
-| ------- | ----- |
-| Bundle commitment | `ZTxIdTachyonHash` |
-| Bundle auth digest | `ZTxAuthTachyHash` |
 
 ### PRF expansion
 
