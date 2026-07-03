@@ -22,7 +22,9 @@
   - [Aggregator]()
   - [ZCash Miner]()
 - [Tachyon Testnet]()
-- [Alex's Corner](revisit.md)
+- [Alex's Corner]()
+  - [Deep Dive](revisit.md)
+  - [Nullifier Analysis](nf-analysis.md)
 
 ## Appendix
 

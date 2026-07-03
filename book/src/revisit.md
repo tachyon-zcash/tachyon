@@ -358,6 +358,8 @@ the delegated key material is variable-size.
   <img src="./assets/ggm.svg" alt="ggm" />
 </p>
 
+<a id="mixed-arity"></a>
+
 > **Optimization: mixed-arity trees.** We use a binary tree for clarity, but the
 > arity need not be uniform across levels. A nullifier's in-circuit cost is the
 > number of hashes along its root-to-leaf path, i.e. the tree height, so a *wider*
