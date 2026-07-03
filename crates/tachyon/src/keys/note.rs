@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use core::{array, fmt};
 
 use derive_more::Debug;
-use ff::{Field as _, PrimeField as _};
+use ff::PrimeField as _;
 use pasta_curves::Fp;
 use ragu::{Domain, Polynomial};
 use zcash_mimc::spec::tachyon::{TachyonP5R32, TachyonP5R8192};
@@ -60,6 +60,39 @@ impl NullifierKey {
     }
 }
 
+/// The key-expansion input parameters, squeezed from the note's `mk` prefix
+/// by the domain-separated `Tachyon-NfExpand` sponge: the secret input salt
+/// `s`, the input stride `δ`, and the whitening key `w`.
+///
+/// The expansion cipher runs on the affine inputs `s + δ·index`, so both the
+/// inputs and their pairwise differences are note secrets rather than public
+/// constants (a leaked schedule key yields no known plaintext/ciphertext
+/// pair), and its outputs are whitened by the dedicated `w` rather than a
+/// reused round key.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct ExpansionParams {
+    /// The secret input salt `s`.
+    pub salt: Fp,
+    /// The secret input stride `δ`.
+    pub stride: Fp,
+    /// The dedicated whitening key `w`.
+    pub whitening: Fp,
+}
+
+impl ExpansionParams {
+    /// The expansion-cipher input at schedule `index`: `s + δ·index`.
+    #[must_use]
+    pub fn input(&self, index: Fp) -> Fp {
+        self.salt + self.stride * index
+    }
+}
+
+impl fmt::Debug for ExpansionParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExpansionParams").finish_non_exhaustive()
+    }
+}
+
 /// Per-note master secret.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct NoteMasterKey(pub [Fp; Self::MK_LENGTH]);
@@ -93,6 +126,20 @@ impl NoteMasterKey {
         self.0[index % self.0.len()]
     }
 
+    /// The key-expansion input parameters `(s, δ, w)`: the expansion cipher's
+    /// secret input salt, input stride, and whitening key (see
+    /// [`ExpansionParams`]). Domain-separated from the query salts and
+    /// weights so the outputs are cryptographically independent.
+    #[must_use]
+    pub fn expansion_params(&self) -> ExpansionParams {
+        let (salt, stride, whitening) = poseidon::nf_expansion_params(&self.0);
+        ExpansionParams {
+            salt,
+            stride,
+            whitening,
+        }
+    }
+
     /// The per-emitter nullifier-query salts `mk_s^{(j)}`, each seeding one
     /// derivation poly's 8192-round cipher. Domain-separated from
     /// [`query_weights`](Self::query_weights) so the two cannot collide.
@@ -112,12 +159,14 @@ impl NoteMasterKey {
     }
 
     /// The note's full interleaved `EK_FULL_SIZE`-key schedule. Position
-    /// `p + EK_PARTS·r` holds part `p`'s key `E_mk(p·EK_PART_SIZE + r)`,
-    /// matching [`EmitterKeySchedule::from_interleaved_parts`] and the
-    /// in-circuit offset recurrence. The wallet's emitter cipher cycles this
-    /// same interleaved schedule.
+    /// `p + EK_PARTS·r` holds part `p`'s key
+    /// `E_mk(s + δ·(p·EK_PART_SIZE + r))`, matching
+    /// [`EmitterKeySchedule::from_interleaved_parts`] and the in-circuit
+    /// offset recurrence. The wallet's emitter cipher cycles this same
+    /// interleaved schedule.
     #[must_use]
     pub fn derive_emitter_schedule(&self) -> EmitterKeySchedule {
+        let params = self.expansion_params();
         EmitterKeySchedule(array::from_fn(|index| {
             #[expect(
                 clippy::as_conversions,
@@ -126,7 +175,11 @@ impl NoteMasterKey {
                 reason = "constant expansion size; index < EK_FULL_SIZE"
             )]
             let cipher_index = ((index % EK_PARTS) * EK_PART_SIZE + index / EK_PARTS) as u64;
-            mimc::schedule_key(Fp::ZERO, &self.0, Fp::from(cipher_index))
+            mimc::schedule_key(
+                &self.0,
+                params.input(Fp::from(cipher_index)),
+                params.whitening,
+            )
         }))
     }
 
@@ -134,15 +187,20 @@ impl NoteMasterKey {
     /// keys.
     #[must_use]
     pub fn derive_schedule_part(&self, part: usize) -> (PartKeyStates, PartKey) {
+        let params = self.expansion_params();
         let mut cells: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE * TachyonP5R32::ROUNDS);
         let mut keys: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE);
 
         #[expect(clippy::as_conversions, reason = "constant size")]
-        let base = Fp::from((part * EK_PART_SIZE) as u64);
+        let base = (part * EK_PART_SIZE) as u64;
         #[expect(clippy::as_conversions, reason = "constant size")]
-        for (states, key) in (0..(EK_PART_SIZE as u64))
-            .map(|row| mimc::schedule_key_trace(base, &self.0, Fp::from(row)))
-        {
+        for (states, key) in (0..(EK_PART_SIZE as u64)).map(|row| {
+            mimc::schedule_key_trace(
+                &self.0,
+                params.input(Fp::from(base + row)),
+                params.whitening,
+            )
+        }) {
             cells.extend_from_slice(&states);
             keys.push(key);
         }
@@ -379,6 +437,7 @@ impl fmt::Debug for NoteMasterKey {
 
 #[cfg(test)]
 mod tests {
+    use ff::Field as _;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;

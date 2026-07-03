@@ -55,6 +55,7 @@ pub fn key_expansion<'key>(
     let (round, boundary, decimation_quotient) = quotient::expansion_quotients(
         spectrum.0.coefficients(),
         mk,
+        &mk.expansion_params(),
         key_poly.0.coefficients(),
         base,
     );

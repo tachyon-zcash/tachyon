@@ -136,23 +136,48 @@ impl Step for MasterSeed {
 /// Prove one part of a note's keyset expansion in one trace-based step.
 ///
 /// The `EK_PART_SIZE` keyed-cipher outputs of this part, committed as
-/// the eval-form part-key polynomial `A_p` (`A_p(ζ^r) = E_mk(base + r)` over
-/// the order-`EK_PART_SIZE` subgroup `⟨ζ⟩`) into slot `part ∈ 0..EK_PARTS` of
-/// a one-slot [`EmitterKeyset`]. `base = part · EK_PART_SIZE` selects the
-/// cipher-input window; the `EK_PARTS` parts interleave (over the cosets of
-/// `⟨ζ⟩`) into the full schedule, reconstructed at
-/// [`NullifierDerivationStep`].
+/// the eval-form part-key polynomial `A_p`
+/// (`A_p(ζ^r) = E_mk(s + δ·(base + r))` over the order-`EK_PART_SIZE`
+/// subgroup `⟨ζ⟩`) into slot `part ∈ 0..EK_PARTS` of a one-slot
+/// [`EmitterKeyset`]. `base = part · EK_PART_SIZE` selects the cipher-input
+/// window; the `EK_PARTS` parts interleave (over the cosets of `⟨ζ⟩`) into
+/// the full schedule, reconstructed at [`NullifierDerivationStep`]. The
+/// expansion-input parameters `(s, δ, w)` are derived in-step from the
+/// reconciled `mk` ([`NoteMasterKey::expansion_params`]), so the cipher
+/// inputs are note secrets and the schedule stays a deterministic function of
+/// `mk`.
 ///
 /// The witness is the prover-built trace `T`, the round quotient
 /// ([`EXPANSION_ROUND_SPLITS`] splits), the boundary quotient, the part-key
 /// poly `A_p`, the decimation quotient `Q`, and `part`; the body is pure
 /// orchestration over three generic vanishing relations plus a range check.
 ///
-/// - `enforce_first_column_values` applies round 0 (the salt step) outside the
-///   trace, pinning each row-start cell to `(mk_s + row + k_0)^5`.
+/// - `enforce_first_column_values` applies round 0 (the input step) outside the
+///   trace, pinning each row-start cell to `(s + δ·(base + row) + k_0)^5`.
 /// - `enforce_row_recurrence` pins the remaining cipher rounds 1.. of `T`.
 /// - `enforce_strided_column` binds `K` to `T`'s final column plus the
-///   whitening key, so `commit(K)` is exactly the expansion outputs.
+///   whitening key `w`, so `commit(K)` is exactly the expansion outputs.
+///
+/// # Gate budget
+///
+/// Rule-of-thumb ledger against the 2048-gate step ceiling (constant
+/// multiplications and additions free, witnessed inverse ≈ 2, Poseidon
+/// permutation ≈ 1/7):
+///
+/// | item | gates |
+/// |---|---|
+/// | expansion-parameter sponge (one permutation) | ~293 |
+/// | boundary targets (`EK_PART_SIZE` rows × pow5) | ~768 |
+/// | `enforce_first_column_values` (`EK_PART_SIZE`-node interpolation) | ~795 |
+/// | `enforce_row_recurrence` (`ROUNDS`-node interpolation) | ~130 |
+/// | `enforce_strided_column`, range check, reconciliation, slots | ~30 |
+/// | total | ~2015 |
+///
+/// The parameter sponge must stay single-permutation: the domain tag plus the
+/// [`NF_EXPANSION_MK_PREFIX`]-element `mk` prefix absorbs exactly `RATE`
+/// elements and squeezes three; a second permutation does not fit.
+///
+/// [`NF_EXPANSION_MK_PREFIX`]: crate::constants::NF_EXPANSION_MK_PREFIX
 #[derive(Debug)]
 pub struct KeyExpansionStep;
 
@@ -228,18 +253,28 @@ impl Step for KeyExpansionStep {
             )
         };
 
-        // Round 0, the salt step. The expansion runs from index 0, so the
-        // cipher input for row `row` is `mk_s + row`. The input is not stored
-        // in the trace, so round 0 is applied here rather than by the
-        // recurrence: each row's first cell is pinned to round 0's output
-        // `(mk_s + row + k_0)^5` (with `c_0 = 0`). The targets are S-boxed here
-        // so the relation stays a generic first-column pinning; the prover's
-        // boundary quotient pins the same values.
+        // The expansion-input parameters `(s, δ, w)`: one domain-separated
+        // Poseidon permutation over the `mk` prefix, derived in-step so the
+        // schedule stays a deterministic function of `mk` (a freely witnessed
+        // salt would let one note carry many valid schedules, hence many
+        // nullifier sequences). Every part's step derives the same values
+        // from the reconciled `mk`.
+        let params = mk.expansion_params();
+
+        // Round 0, the input step. The cipher input for row `row` is the
+        // secret affine `s + δ·(base + row)`. The input is not stored in the
+        // trace, so round 0 is applied here rather than by the recurrence:
+        // each row's first cell is pinned to round 0's output
+        // `(s + δ·(base + row) + k_0)^5` (with `c_0 = 0`). The targets are
+        // S-boxed here so the relation stays a generic first-column pinning;
+        // the prover's boundary quotient pins the same values. Every operand
+        // is pinned: `base` from the range-checked `part`, `k_0` and the
+        // params from the reconciled `mk`.
         {
-            let first_key = mk.round_key(0);
+            let origin = params.input(base) + mk.round_key(0);
             let boundary: [Fp; EK_PART_SIZE] = array::from_fn(|row| {
                 #[expect(clippy::as_conversions, reason = "row index conversion")]
-                let cipher_in = base + Fp::from(row as u64) + first_key;
+                let cipher_in = origin + params.stride * Fp::from(row as u64);
                 cipher_in.square().square() * cipher_in
             });
             enforce_first_column_values(
@@ -278,20 +313,20 @@ impl Step for KeyExpansionStep {
 
         // Bind the eval-form part-key poly `A_p` to the trace's final column. On
         // the order-`EK_PART_SIZE` subgroup `⟨ζ⟩` (`ζ = ω^{TRACE_COLUMNS}`),
-        // `A_p(ζ^r) = (row-r final cell) + whitening = E_mk(base + r)`, so `A_p`
-        // commits this part's `EK_PART_SIZE` expansion outputs. `σ =
-        // ω^{TRACE_COLUMNS-1}` is the final-column stride within a row.
+        // `A_p(ζ^r) = (row-r final cell) + w = E_mk(s + δ·(base + r))`, so
+        // `A_p` commits this part's `EK_PART_SIZE` expansion outputs. `σ =
+        // ω^{TRACE_COLUMNS-1}` is the final-column stride within a row; the
+        // whitening key is the dedicated `w`, not a reused round key.
         #[expect(clippy::as_conversions, reason = "constant column index")]
         let stride =
             subgroup_generator::<POLY_LEN_MAX>().pow_vartime([(TachyonP5R32::ROUNDS - 1) as u64]);
-        let whitening = mk.round_key(TachyonP5R32::ROUNDS);
         enforce_strided_column::<{ EK_PART_SIZE }>(
             ctx,
             &expansion_trace.0,
             &key_poly.0,
             &decimation_quotient,
             stride,
-            whitening,
+            params.whitening,
         )?;
 
         // Emit a one-slot keyset: this part's commitment in its slot, the

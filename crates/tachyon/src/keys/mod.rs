@@ -90,7 +90,8 @@ mod proof;
 
 // Re-exports: public API surface.
 pub use note::{
-    EmitterKeySchedule, NoteMasterKey, NullifierKey, PartKey, PartKeyStates, PaymentKey,
+    EmitterKeySchedule, ExpansionParams, NoteMasterKey, NullifierKey, PartKey, PartKeyStates,
+    PaymentKey,
 };
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
