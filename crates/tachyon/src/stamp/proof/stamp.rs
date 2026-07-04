@@ -2,12 +2,11 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
-use group::{Curve as _, GroupEncoding as _};
-use pasta_curves::{Eq, Fp};
+use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
-    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
+    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
     constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
@@ -19,7 +18,7 @@ use crate::{
     keys::private,
     note::{Note, Nullifier},
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
-    relations::enforce_poly_product,
+    relations::enforce::enforce_poly_product,
     value,
 };
 
@@ -49,15 +48,13 @@ impl Header for StampHeader {
 
     const SUFFIX: Suffix = Suffix::new(11);
 
-    fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 32);
-        let action_bytes: [u8; 32] = Eq::from(data.0).to_affine().to_bytes();
-        let tachygram_bytes: [u8; 32] = Eq::from(data.1).to_affine().to_bytes();
-        let anchor_bytes: [u8; 32] = data.2.0.into();
-        out.extend_from_slice(&action_bytes);
-        out.extend_from_slice(&tachygram_bytes);
-        out.extend_from_slice(&anchor_bytes);
-        out
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        (
+            vec![Fp::from(data.2)],
+            Vec::new(),
+            Vec::new(),
+            vec![Eq::from(data.0), Eq::from(data.1)],
+        )
     }
 }
 
@@ -70,6 +67,7 @@ impl Step for OutputStamp {
     type Left = ();
     type Output = StampHeader;
     type Right = ();
+    /// `(rcv, alpha, note, anchor)`.
     type Witness<'source> = (
         value::CommitmentTrapdoor,
         ActionRandomizer<effect::Output>,
@@ -130,7 +128,7 @@ impl Step for OutputStamp {
 /// Witnesses `nf_next` and binds the published pair to the note's genuine
 /// `GGM(mk, ·)` leaves: consumes the two-leaf range (`range.end ==
 /// range.start + 2`, `range.cm == cm`) and checks
-/// `[present_nf]G_0 + [nf_next]G_1 == range_commit`.
+/// `[present_nf]G_0 + [nf_next]G_1 == nf_seq_commit`.
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -148,8 +146,8 @@ impl Step for SpendStamp {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (nf_next,): Self::Witness<'source>,
-        (cv, rk, present_nf, anchor, cm): <Self::Left as Header>::Data,
-        (range_commit, range_start, range_end, range_cm): <Self::Right as Header>::Data,
+        (cm, (cv, rk), present_nf, anchor): <Self::Left as Header>::Data,
+        (nf_cm, (nf_epoch_start, nf_start), _nf_seq_commit, (nf_epoch_end, nf_end)): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(clippy::expect_used, reason = "constant size")]
         let &[g0, g1, g2] = Pasta::host_generators(Pasta::baked())
@@ -159,20 +157,22 @@ impl Step for SpendStamp {
             .0;
 
         enforce_zero(
-            Fp::from(range_end) - (Fp::from(range_start) + Fp::from(2u64)),
+            Fp::from(nf_epoch_end) - (Fp::from(nf_epoch_start) + Fp::from(2u64)),
             "SpendStamp: live range must span two epochs",
         )?;
         enforce_zero(
-            Fp::from(range_cm) - Fp::from(cm),
+            Fp::from(nf_cm) - Fp::from(cm),
             "SpendStamp: derived range does not match note",
         )?;
 
-        // Bind the published pair to the genuine GGM leaf pair.
-        let nf_pair_ref: Eq = g0 * Fp::from(present_nf) + g1 * Fp::from(nf_next);
-        enforce_equal_point(
-            Eq::from(range_commit),
-            nf_pair_ref,
-            "SpendStamp: published scalars are not the derived leaf pair",
+        // Bind the published nullifiers to the range's genuine boundary leaves.
+        enforce_zero(
+            Fp::from(present_nf) - Fp::from(nf_start),
+            "SpendStamp: present nullifier is not the range's start leaf",
+        )?;
+        enforce_zero(
+            Fp::from(nf_next) - Fp::from(nf_end),
+            "SpendStamp: next nullifier is not the range's end leaf",
         )?;
 
         // A zero nullifier would collide with the note's own cm tachygram.
@@ -216,15 +216,11 @@ impl Step for MergeStamp {
     type Left = StampHeader;
     type Output = StampHeader;
     type Right = StampHeader;
-    /// `(left_action, right_action, left_tachygram, right_tachygram)`. The
-    /// merged sets are the polynomial products of the witnessed pairs;
-    /// [`enforce_poly_product`] pins each union to its
-    /// `multiplicand · multiplier`.
+    /// `(left, merged, right)`, each an `(action_set, tachygram_set)` pair.
     type Witness<'source> = (
-        ActionSetPoly,
-        ActionSetPoly,
-        TachygramSetPoly,
-        TachygramSetPoly,
+        (ActionSetPoly, TachygramSetPoly),
+        (ActionSetPoly, TachygramSetPoly),
+        (ActionSetPoly, TachygramSetPoly),
     );
 
     const INDEX: Index = Index::new(17);
@@ -232,7 +228,11 @@ impl Step for MergeStamp {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (left_action, right_action, left_tachygram, right_tachygram): Self::Witness<'source>,
+        (
+            (left_action_set, left_tachygram_set),
+            (merged_action_set, merged_tachygram_set),
+            (right_action_set, right_tachygram_set),
+        ): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
         (right_action_commit, right_tachygram_commit, right_anchor): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -242,50 +242,56 @@ impl Step for MergeStamp {
             "MergeStamp: anchors must match",
         )?;
 
-        // Bind the witnessed input sets to the public commitments on Data.
+        // Bind the witnessed left/right input sets to the public commitments on
+        // the headers.
         enforce_equal_point(
-            Eq::from(left_action.commit()),
+            Eq::from(left_action_set.commit()),
             Eq::from(left_action_commit),
             "MergeStamp: left action accumulator must commit to header commit",
         )?;
         enforce_equal_point(
-            Eq::from(right_action.commit()),
+            Eq::from(right_action_set.commit()),
             Eq::from(right_action_commit),
             "MergeStamp: right action accumulator must commit to header commit",
         )?;
         enforce_equal_point(
-            Eq::from(left_tachygram.commit()),
+            Eq::from(left_tachygram_set.commit()),
             Eq::from(left_tachygram_commit),
             "MergeStamp: left tachygram accumulator must commit to header commit",
         )?;
         enforce_equal_point(
-            Eq::from(right_tachygram.commit()),
+            Eq::from(right_tachygram_set.commit()),
             Eq::from(right_tachygram_commit),
             "MergeStamp: right tachygram accumulator must commit to header commit",
         )?;
 
-        let merged_action_poly = {
-            let left_poly = Polynomial::from(left_action);
-            let right_poly = Polynomial::from(right_action);
-            let merged_poly = left_poly.multiply(&right_poly);
-            enforce_poly_product(ctx, &left_poly, &right_poly, &merged_poly)?;
-            merged_poly
-        };
+        let merged_action_set_commit = merged_action_set.commit();
+        let merged_tachygram_set_commit = merged_tachygram_set.commit();
 
-        let merged_tachygram_poly = {
-            let left_poly = Polynomial::from(left_tachygram);
-            let right_poly = Polynomial::from(right_tachygram);
-            let merged_poly = left_poly.multiply(&right_poly);
-            enforce_poly_product(ctx, &left_poly, &right_poly, &merged_poly)?;
-            merged_poly
-        };
+        // The merged sets are witnessed; confirm each is the `left · right`
+        // union of its halves via the product-opening relation, never built
+        // in-step.
+        enforce_poly_product(
+            ctx,
+            &left_action_set.into(),
+            &right_action_set.into(),
+            &merged_action_set.into(),
+        )?;
+        enforce_poly_product(
+            ctx,
+            &left_tachygram_set.into(),
+            &right_tachygram_set.into(),
+            &merged_tachygram_set.into(),
+        )?;
 
-        let data = (
-            ActionSetCommit::from(merged_action_poly.commit()),
-            TachygramSetCommit::from(merged_tachygram_poly.commit()),
-            left_anchor,
-        );
-        Ok((data, ()))
+        Ok((
+            (
+                merged_action_set_commit,
+                merged_tachygram_set_commit,
+                left_anchor,
+            ),
+            (),
+        ))
     }
 }
 

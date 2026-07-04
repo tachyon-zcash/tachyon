@@ -81,9 +81,11 @@ A lift advances the current nullifier only to a genuine next leaf, and the next 
 
 ### Delegation
 
-The holder of $\mathsf{mk}$ can outsource the search for its nullifiers in the pool.[^delegation] It hands a delegate the next window of values $\Delta_{e..e+d}$, which should be the nullifiers $\mathsf{nf}_{e..e+d}$ but which the delegate treats as opaque. The delegate proves them absent from the pool across stamps and epochs, oblivious to $\mathsf{mk}$, $\psi$, $\mathsf{cm}$, and the note, and commits the sequence on the coefficient generators alone:
+The holder of $\mathsf{mk}$ can outsource the search for its nullifiers in the pool.[^delegation] It hands a delegate the next window of values $\Delta_{e..e+d}$, which should be the nullifiers $\mathsf{nf}_{e..e+d}$ but which the delegate treats as opaque. The delegate proves them absent from the pool across stamps and epochs, oblivious to $\mathsf{mk}$, $\psi$, $\mathsf{cm}$, and the note, and commits the sequence on the coefficient generators, terminated by a sentinel $1$ one position above the window:
 
-$$\delta = \sum_{i} [\Delta_{e+i}]\,\mathcal{G}_i$$
+$$\delta = \sum_{i} [\Delta_{e+i}]\,\mathcal{G}_i + \mathcal{G}_d$$
+
+The sentinel keeps every committed sequence nonzero (an empty window is the constant $1$), so $\delta$ is never the identity point, and it pins the window's exact length.
 
 At the lift the wallet binds $\delta$ to genuine leaves: it proves a contiguous GGM range commits to the same sequence, so each $\Delta_{e+i}$ is the real $\mathsf{nf}_{e+i}$. The window is measured in epoch-boundary crossings: $d$ is the crossing count and $\delta$ holds one nullifier per crossing, plus the nullifier of the epoch in progress at the span's tip, which is carried separately because that epoch is not yet complete. The wallet binds the tip too, so the lineage's new current nullifier is itself a genuine leaf rather than a free value.
 
