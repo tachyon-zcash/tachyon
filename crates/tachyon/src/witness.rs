@@ -1,25 +1,31 @@
 //! Utilities for preparing step witnesses.
 //!
-//! One function per [`Step`] with a non-empty witness: it assembles the step's
-//! [`Witness`](ragu::Step::Witness) tuple from raw inputs (interpolating
-//! nullifiers and tachygrams into the polynomials the step opens against),
-//! ready to seed or fuse through `PROOF_SYSTEM`. Functions are named after the
-//! step they serve. Steps with an empty `()` witness need no utility.
+//! One function per [`Step`](ragu::Step) with a non-empty witness; named after
+//! the step it serves. Key material is passed in, never derived here; the
+//! expensive expansion/FFT runs once on the wallet and is reused.
 
 use alloc::vec::Vec;
+use core::array;
 
-use ragu::{Header, Step};
+use pasta_curves::Fp;
+use ragu::{Header, Polynomial, Step};
 
 use crate::{
+    constants::{EK_PART_SIZE, EK_PARTS, NF_EMITTERS},
+    digest::poseidon,
+    keys::{EmitterKeySchedule, NoteMasterKey, PartKey},
     note::Nullifier,
     primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, Tachygram, TachygramSetPoly,
+        Anchor, EpochIndex, NfEmitterPoly, NfRangePoly, NfSeqPoly, PartKeyPoly,
+        PartKeySpectrumPoly, Tachygram, TachygramSetPoly,
+    },
+    relations::quotient::{
+        self, ARC_SPLITS, RoundBoundaryQuotients, accumulator_recurrence, weight_recurrence,
     },
     stamp::proof::{
-        delegation::NullifierFuse,
-        pool::{AnchorSeed, UnspentEpochFuse, UnspentFuse, UnspentSeed, VerifyUnspent},
+        delegation::{KeyExpansionStep, NullifierDerivationStep},
+        pool::{UnspentBind, UnspentEpochFuse, UnspentFuse, UnspentSeed},
         spendable::SpendableInit,
-        stamp::MergeStamp,
     },
 };
 
@@ -29,32 +35,179 @@ type StepRight<S> = <<S as Step>::Right as Header>::Data;
 
 type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 
-/// Prepare the witness for [`NullifierFuse`]: `(left, merged, leaf)`.
+/// Witness for [`KeyExpansionStep`] for one part.
+///
+/// `(trace, round_boundary_quotients, part_key_poly, decimation_quotient,
+/// part)`. `part ∈ 0..EK_PARTS` selects the cipher-input window `base = part ·
+/// EK_PART_SIZE`; the caller supplies that part's `EK_PART_SIZE` keys.
 #[must_use]
-pub fn nullifier_fuse(
-    (_left, _right): (StepLeft<NullifierFuse>, StepRight<NullifierFuse>),
-    left: &[Nullifier],
-    leaf: Nullifier,
-) -> StepWitness<'static, NullifierFuse> {
-    let mut merged: Vec<Nullifier> = left.to_vec();
-    merged.push(leaf);
+pub fn key_expansion<'key>(
+    headers: (StepLeft<KeyExpansionStep>, StepRight<KeyExpansionStep>),
+    mk: &'key NoteMasterKey,
+    spectrum: &'key PartKeySpectrumPoly,
+    part_keys: &'key PartKey,
+    part: usize,
+) -> StepWitness<'key, KeyExpansionStep> {
+    let (_left, _right) = headers;
+    let key_poly = part_keys.key_poly();
+    #[expect(clippy::as_conversions, reason = "constant size")]
+    let base = Fp::from((part * EK_PART_SIZE) as u64);
+    let (round, boundary, decimation_quotient) = quotient::expansion_quotients(
+        spectrum.0.coefficients(),
+        mk,
+        key_poly.0.coefficients(),
+        base,
+    );
+    #[expect(clippy::as_conversions, reason = "part < EK_PARTS")]
     (
-        left.iter().copied().collect::<NfSeqPoly>(),
-        merged.into_iter().collect::<NfSeqPoly>(),
-        NfSeqPoly::from_iter([leaf]),
+        spectrum.clone(),
+        RoundBoundaryQuotients { round, boundary },
+        key_poly,
+        decimation_quotient,
+        Fp::from(part as u64),
     )
 }
 
-/// Prepare the witness for [`UnspentSeed`]: `(anchor_prev, (epoch, nf),
-/// tg_set)`.
+/// Witness for [`NullifierDerivationStep`].
+///
+/// `(parts, derivation_polys, quotients)`. `parts` are the `EK_PARTS` part-key
+/// polys; `keyset` is the assembled interleaved schedule the round quotients
+/// are built against. The derivation is epoch-independent, so no origin enters.
+#[must_use]
+pub fn nullifier_derivation<'key>(
+    headers: (
+        StepLeft<NullifierDerivationStep>,
+        StepRight<NullifierDerivationStep>,
+    ),
+    keyset: &'key EmitterKeySchedule,
+    parts: [PartKeyPoly; EK_PARTS],
+    mk: &'key NoteMasterKey,
+    polys: &'key [NfEmitterPoly; NF_EMITTERS],
+) -> StepWitness<'key, NullifierDerivationStep> {
+    let (_keyset_left, _keyset_right) = headers;
+    let salts = mk.query_salts();
+    // k_0 = K(1) = A_0(1) = part 0's first key.
+    let first_key = keyset.round_key(0);
+
+    #[expect(clippy::indexing_slicing, reason = "todo")]
+    let quotients: [RoundBoundaryQuotients<_>; NF_EMITTERS] =
+        array::from_fn(|i| RoundBoundaryQuotients {
+            round: quotient::nf_emitter_round_quotient(polys[i].0.coefficients(), &keyset.0),
+            boundary: quotient::nf_emitter_boundary_quotient(
+                polys[i].0.coefficients(),
+                salts.0[i],
+                first_key,
+            ),
+        });
+    (parts, polys.clone(), quotients)
+}
+
+/// Witness for [`SpendableInit`].
+///
+/// `(pre_epoch_anchor, pre_cm_anchor, creation_set, derivation_polys,
+/// creation_epoch)`. `creation_epoch` is the offset origin `E_0`, witnessed
+/// here and bound to the creation anchor.
+#[must_use]
+pub fn spendable_init(
+    headers: (StepLeft<SpendableInit>, StepRight<SpendableInit>),
+    polys: &[NfEmitterPoly; NF_EMITTERS],
+    pre_epoch_anchor: Anchor,
+    pre_cm_anchor: Anchor,
+    creation_set: TachygramSetPoly,
+    creation_epoch: EpochIndex,
+) -> StepWitness<'_, SpendableInit> {
+    let (_anchor_chain, _derivation) = headers;
+    (
+        pre_epoch_anchor,
+        pre_cm_anchor,
+        creation_set,
+        polys.clone(),
+        creation_epoch,
+    )
+}
+
+/// Witness for [`UnspentBind`].
+///
+/// `(elapsed, tip, range, derivation_polys, weights, accumulator,
+/// weight_quotients, accumulator_quotient, creation_epoch)`. `creation_epoch`
+/// is the offset origin `E_0`, witnessed here to index the arc and reconciled
+/// downstream at `SpendableLift`.
+#[must_use]
+pub fn unspent_bind<'key>(
+    headers: (StepLeft<UnspentBind>, StepRight<UnspentBind>),
+    polys: &'key [NfEmitterPoly; NF_EMITTERS],
+    mk: &'key NoteMasterKey,
+    range_nfs: &'key [Nullifier],
+    start: EpochIndex,
+    present: EpochIndex,
+    creation_epoch: EpochIndex,
+) -> StepWitness<'key, UnspentBind> {
+    use group::Curve as _;
+    use pasta_curves::{Eq, arithmetic::CurveAffine as _};
+
+    // Certified transcript digest, read off the derivation header.
+    let (_unspent, derivation) = headers;
+    let (_, digest, ..) = derivation;
+
+    // The ratios and shift are re-derived from mk (they match the certified
+    // derivation header's by the derivation step's soundness).
+    let (ratios, shift) = mk.query_weights();
+
+    // Tested values q over [start, present]: query nullifiers at offsets. The
+    // sentinel `elapsed` is the crossings (all but the tip); the finalized
+    // `range` is the plain `q = elapsed ++ [nf_end]` the arc match consumes.
+    let split = range_nfs.len() - 1;
+    let (elapsed_nfs, _tip_nfs) = range_nfs.split_at(split);
+    let elapsed = elapsed_nfs.iter().copied().collect::<NfSeqPoly>();
+    let range_poly = range_nfs.iter().copied().collect::<NfRangePoly>();
+
+    // Lift challenge β over the certified digest, commit(q), and range.
+    let range_coords = Eq::from(range_poly.commit())
+        .to_affine()
+        .coordinates()
+        .expect("range commitment is not identity");
+    let beta = poseidon::arc_challenge(digest.0, range_coords, start, present.next());
+
+    // Per-poly geometric weights w_j (split) and quotients; the
+    // exclusive-prefix accumulator A (split) and its recurrence quotient.
+    let (weights, weight_quotients): (Vec<_>, Vec<_>) = ratios
+        .0
+        .map(|ratio| weight_recurrence(ratio * beta, shift.0))
+        .into_iter()
+        .unzip();
+    let weights_arr: [[Polynomial; ARC_SPLITS]; NF_EMITTERS] =
+        weights.try_into().unwrap_or_else(|extra: Vec<_>| {
+            unreachable!("NF_EMITTERS is {NF_EMITTERS}, got {}", extra.len())
+        });
+    let weight_quotients_arr: [Polynomial; NF_EMITTERS] =
+        weight_quotients.try_into().unwrap_or_else(|extra: Vec<_>| {
+            unreachable!("NF_EMITTERS is {NF_EMITTERS}, got {}", extra.len())
+        });
+    let (accumulator, accumulator_quotient) =
+        accumulator_recurrence(polys, &ratios.0, shift.0, beta);
+
+    (
+        elapsed,
+        range_poly,
+        polys.clone(),
+        weights_arr,
+        accumulator,
+        weight_quotients_arr,
+        accumulator_quotient,
+        creation_epoch,
+    )
+}
+
+/// Witness for [`UnspentSeed`]: `(anchor_prev, (epoch, nf), stamp_tg_set)`.
 #[must_use]
 pub fn unspent_seed(
-    (_left, _right): (StepLeft<UnspentSeed>, StepRight<UnspentSeed>),
+    headers: (StepLeft<UnspentSeed>, StepRight<UnspentSeed>),
     anchor_prev: Anchor,
     epoch: EpochIndex,
     tgs: &[Tachygram],
     nf: Nullifier,
 ) -> StepWitness<'static, UnspentSeed> {
+    let ((), ()) = headers;
     (
         anchor_prev,
         (epoch, nf),
@@ -62,14 +215,16 @@ pub fn unspent_seed(
     )
 }
 
-/// Prepare the witness for [`UnspentFuse`]:
-/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
+/// Witness for [`UnspentFuse`]:
+/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`. The junction
+/// epoch is shared, so no nullifier is inserted between the histories.
 #[must_use]
 pub fn unspent_fuse(
-    (_left, _right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
+    headers: (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
     left_elapsed: &[Nullifier],
     right_elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentFuse> {
+    let (_left, _right) = headers;
     let mut combined: Vec<Nullifier> = left_elapsed.to_vec();
     combined.extend_from_slice(right_elapsed);
     (
@@ -79,14 +234,17 @@ pub fn unspent_fuse(
     )
 }
 
-/// Prepare the witness for [`UnspentEpochFuse`]:
-/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
+/// Witness for [`UnspentEpochFuse`]:
+/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`. The crossed
+/// boundary splices the left tip `nf_end` (read off the left header) between
+/// the histories.
 #[must_use]
 pub fn unspent_epoch_fuse(
-    (left, _right): (StepLeft<UnspentEpochFuse>, StepRight<UnspentEpochFuse>),
+    headers: (StepLeft<UnspentEpochFuse>, StepRight<UnspentEpochFuse>),
     left_elapsed: &[Nullifier],
     right_elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentEpochFuse> {
+    let (left, _right) = headers;
     let (_, _, _, (_, nf_end), _) = left;
     let mut combined: Vec<Nullifier> = left_elapsed.to_vec();
     combined.push(nf_end);
@@ -95,87 +253,5 @@ pub fn unspent_epoch_fuse(
         left_elapsed.iter().copied().collect::<NfSeqPoly>(),
         combined.into_iter().collect::<NfSeqPoly>(),
         right_elapsed.iter().copied().collect::<NfSeqPoly>(),
-    )
-}
-
-/// Prepare the witness for [`VerifyUnspent`]: `(elapsed, nf_seq)`.
-///
-/// The range appends the tip `nf_end` from the left
-/// [`Unspent`](crate::stamp::proof::pool::Unspent) header:
-/// `nf_seq = elapsed ++ [nf_end]`.
-#[must_use]
-pub fn verify_unspent(
-    (left, _right): (StepLeft<VerifyUnspent>, StepRight<VerifyUnspent>),
-    elapsed: &[Nullifier],
-) -> StepWitness<'static, VerifyUnspent> {
-    let (_, _, _, (_, nf_end), _) = left;
-    let mut nf_seq: Vec<Nullifier> = elapsed.to_vec();
-    nf_seq.push(nf_end);
-    (
-        elapsed.iter().copied().collect::<NfSeqPoly>(),
-        nf_seq.into_iter().collect::<NfSeqPoly>(),
-    )
-}
-
-/// Prepare the witness for [`SpendableInit`]:
-/// `((pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf)`.
-#[must_use]
-pub fn spendable_init(
-    (_left, _right): (StepLeft<SpendableInit>, StepRight<SpendableInit>),
-    pre_epoch_anchor: Anchor,
-    pre_cm_anchor: Anchor,
-    creation_tgs: &[Tachygram],
-    present_nf: Nullifier,
-) -> StepWitness<'static, SpendableInit> {
-    (
-        (pre_epoch_anchor, pre_cm_anchor),
-        creation_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        present_nf,
-    )
-}
-
-/// Prepare the witness for [`AnchorSeed`]: `(start, stamp_commit)`.
-#[must_use]
-pub fn anchor_seed(
-    (_left, _right): (StepLeft<AnchorSeed>, StepRight<AnchorSeed>),
-    start: Anchor,
-    tgs: &[Tachygram],
-) -> StepWitness<'static, AnchorSeed> {
-    (
-        start,
-        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
-    )
-}
-
-/// Prepare the witness for [`MergeStamp`]: `((left_action_set, left_tg_set),
-/// (merged_action_set, merged_tg_set), (right_action_set, right_tg_set))`.
-#[must_use]
-pub fn merge_stamp(
-    (_left, _right): (StepLeft<MergeStamp>, StepRight<MergeStamp>),
-    left_actions: &[ActionDigest],
-    left_tgs: &[Tachygram],
-    right_actions: &[ActionDigest],
-    right_tgs: &[Tachygram],
-) -> StepWitness<'static, MergeStamp> {
-    let merged_action_set = left_actions
-        .iter()
-        .copied()
-        .chain(right_actions.iter().copied())
-        .collect::<ActionSetPoly>();
-    let merged_tg_set = left_tgs
-        .iter()
-        .copied()
-        .chain(right_tgs.iter().copied())
-        .collect::<TachygramSetPoly>();
-    (
-        (
-            left_actions.iter().copied().collect::<ActionSetPoly>(),
-            left_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        ),
-        (merged_action_set, merged_tg_set),
-        (
-            right_actions.iter().copied().collect::<ActionSetPoly>(),
-            right_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        ),
     )
 }

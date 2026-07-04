@@ -21,8 +21,9 @@ use ragu::{self, proof::PROOF_SIZE_COMPRESSED};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    ActionSetPoly, Note, TachygramSetPoly,
+    ActionSetPoly, NfEmitterPoly, Note, TachygramSetPoly,
     action::Action,
+    constants::NF_EMITTERS,
     effect,
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, public},
@@ -193,12 +194,24 @@ impl Plan {
     /// Stamps are recursively merged via [`MergeStamp`] into a single stamp.
     ///
     /// `spend_pcds` items must correspond to each planned spend, in order.
+    /// Each entry is a pre-built PCD stack the wallet assembles ahead of time
+    /// (the [`crate::witness`] functions build each step's witness):
+    ///
+    /// 1. `MasterSeed` x`MK_PARTS` -> `KeyExpansionStep` x`EK_PARTS` ->
+    ///    `EmitterKeysetFuse` x`EK_PARTS - 1` -> `NullifierDerivationStep`
+    ///    yields the `NullifierDerivation` PCD, once per note.
+    /// 2. The same build interpolates the note's `NfEmitterPoly` array and
+    ///    queries the nullifier pair `[nf_now, nf_next]` at the spend offset.
+    /// 3. `SpendableInit`, advanced by `UnspentBind` + `SpendableLift` over
+    ///    sync-built `Unspent` segments, yields the `SpendableHeader` PCD at
+    ///    the spend anchor.
     pub fn prove<RNG: RngCore + CryptoRng>(
         self,
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<delegation::NullifierHeader>,
+            ragu::Pcd<delegation::NullifierDerivation>,
+            [NfEmitterPoly; NF_EMITTERS],
             [Nullifier; 2],
             ragu::Pcd<spendable::SpendableHeader>,
         )>,
@@ -212,8 +225,10 @@ impl Plan {
             return Err(ProveError::SpendableMismatch);
         }
 
-        for (((cv, rk), (alpha, note, rcv)), (range_pcd, [nf_now, nf_next], spendable_pcd)) in
-            self.spends.into_iter().zip(spend_pcds)
+        for (
+            ((cv, rk), (alpha, note, rcv)),
+            (derivation_pcd, polys, [nf_now, nf_next], spendable_pcd),
+        ) in self.spends.into_iter().zip(spend_pcds)
         {
             let action_digest = ActionDigest::new(cv, rk).map_err(ProveError::ActionDigest)?;
 
@@ -229,9 +244,10 @@ impl Plan {
                 )
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: bind the live pair to the derived range and publish.
-            let tachygrams = vec![Tachygram::from(nf_now), Tachygram::from(nf_next)];
-            let stamp = Stamp::prove_spend(rng, bind_pcd, range_pcd, nf_next, tachygrams)
+            // SpendStamp: query the certified derivation for the rank-2 pair and
+            // publish both nullifiers as the spend's tachygrams.
+            let tachygrams = alloc::vec![Tachygram::from(nf_now), Tachygram::from(nf_next)];
+            let stamp = Stamp::prove_spend(rng, bind_pcd, derivation_pcd, polys, tachygrams)
                 .map_err(ProveError::ProofFailed)?;
 
             entries.push((stamp, vec![action_digest]));
@@ -334,23 +350,26 @@ impl Stamp {
         })
     }
 
-    /// Creates a stamp for a spend action from pre-built spend and
-    /// nullifier-range PCDs.
+    /// Creates a stamp for a spend action from a pre-built spend PCD and the
+    /// note's certified derivation.
     ///
-    /// The spend's `anchor` is taken as the stamp's anchor — chain
-    /// validation lives inside the spendable lineage, not here.
+    /// `polys` are the `N` derivation polynomials; [`SpendStamp`] computes the
+    /// rank-2 nullifier pair from them, reading the spend offset `d` threaded
+    /// on the [`SpendHeader`](spend::SpendHeader). The spend's `anchor` is
+    /// taken as the stamp's anchor — chain validation lives inside the
+    /// spendable lineage, not here.
     pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         spend_pcd: ragu::Pcd<spend::SpendHeader>,
-        range_pcd: ragu::Pcd<delegation::NullifierHeader>,
-        nf_next: Nullifier,
+        derivation_pcd: ragu::Pcd<delegation::NullifierDerivation>,
+        polys: [NfEmitterPoly; NF_EMITTERS],
         tachygrams: Vec<Tachygram>,
     ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
         let anchor = spend_pcd.data().3;
 
-        let (pcd, ()) = app.fuse(rng, SpendStamp, (nf_next,), spend_pcd, range_pcd)?;
+        let (pcd, ()) = app.fuse(rng, SpendStamp, (polys,), spend_pcd, derivation_pcd)?;
         let action_set = pcd.data().0;
         let rerand = app.rerandomize(pcd, rng)?;
 

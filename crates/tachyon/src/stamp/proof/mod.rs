@@ -2,6 +2,28 @@
 //!
 //! Registers all PCD step types and provides accumulator helpers for
 //! stamp construction and verification.
+//!
+//! Step names follow a role grammar:
+//!
+//! - `Seed`: a base case with no PCD inputs, establishing a header from
+//!   witnesses (`MasterSeed`, `AnchorSeed`, `UnspentSeed`, and their
+//!   empty-block variants).
+//! - `Init`: bootstrap a lineage from existing PCDs (`SpendableInit`).
+//! - `Fuse`: compose two headers of the same family (`AnchorFuse`,
+//!   `UnspentFuse`, `UnspentEpochFuse`, `EmitterKeysetFuse`).
+//! - `Lift`: advance a spendable or stamp forward through the anchor chain, and
+//!   nothing else (`SpendableLift`, `StampLift`).
+//! - `Bind`: attach a lineage to certified material (`SpendBind`,
+//!   `UnspentBind`).
+//! - `Stamp`: produce or merge a public stamp header (`OutputStamp`,
+//!   `SpendStamp`, `MergeStamp`).
+//! - `Step`: certify a committed cipher trace (`KeyExpansionStep`,
+//!   `NullifierDerivationStep`).
+//!
+//! The registration order below groups the derivation chain (indices 0..3),
+//! the pool segments (3..11), the spendable lineage (11..13), and the stamp
+//! producers (13..18), with `EmitterKeysetFuse` appended at 18; indices are
+//! stable identifiers, not a dependency order.
 
 extern crate alloc;
 
@@ -20,18 +42,17 @@ use ragu::{Application, ApplicationBuilder};
 
 fn make_app() -> Result<Application, ragu::Error> {
     ApplicationBuilder::new()
-        .register(delegation::NfMasterSeed)?
-        .register(delegation::NfPrefixStep)?
-        .register(delegation::NullifierStep)?
-        .register(delegation::NullifierFuse)?
+        .register(delegation::MasterSeed)?
+        .register(delegation::KeyExpansionStep)?
+        .register(delegation::NullifierDerivationStep)?
         .register(pool::AnchorSeed)?
-        .register(pool::EmptyBlockSeed)?
+        .register(pool::EmptyBlockAnchorSeed)?
         .register(pool::AnchorFuse)?
         .register(pool::UnspentSeed)?
         .register(pool::EmptyBlockUnspentSeed)?
         .register(pool::UnspentFuse)?
         .register(pool::UnspentEpochFuse)?
-        .register(pool::VerifyUnspent)?
+        .register(pool::UnspentBind)?
         .register(spendable::SpendableInit)?
         .register(spendable::SpendableLift)?
         .register(stamp::OutputStamp)?
@@ -39,6 +60,7 @@ fn make_app() -> Result<Application, ragu::Error> {
         .register(stamp::SpendStamp)?
         .register(stamp::MergeStamp)?
         .register(stamp::StampLift)?
+        .register(delegation::EmitterKeysetFuse)?
         .finalize()
 }
 

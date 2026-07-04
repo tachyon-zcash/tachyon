@@ -58,6 +58,50 @@ impl FromIterator<Nullifier> for NfSeqPoly {
     }
 }
 
+/// A finalized nullifier range: members as plain coefficients ordered by
+/// ascending degree, with **no** sentinel terminator.
+///
+/// Where [`NfSeqPoly`] is the in-flight sequence encoding (sentinel-terminated
+/// so its commitment is never the identity and its length is pinned), a range
+/// is the *finalized* form the arc machinery consumes: coefficient $d$ is the
+/// nullifier at offset $d$, with nothing above the top leaf, so a Horner
+/// evaluation $q(\beta) = \sum_d \mathit{nf}_d\,\beta^d$ carries no stray
+/// sentinel term. [`UnspentBind`](crate::stamp::proof::pool::UnspentBind)
+/// finalizes an `elapsed` [`NfSeqPoly`] into an `NfRangePoly` by overwriting
+/// the sentinel slot with the tip nullifier (a shifted combination with no
+/// re-terminating monomial, via
+/// [`enforce_shifted_combination`](crate::relations::enforce::enforce_shifted_combination)),
+/// and guards the top leaf nonzero so the commitment stays off the identity.
+#[derive(Clone, Debug)]
+pub struct NfRangePoly(Polynomial);
+
+impl NfRangePoly {
+    /// Deterministic (untrapdoored) commitment to the range polynomial.
+    #[must_use]
+    pub fn commit(&self) -> NfSeqCommit {
+        NfSeqCommit(self.0.commit())
+    }
+
+    /// Evaluate the range polynomial at a given point.
+    #[must_use]
+    pub fn eval(&self, x: Fp) -> Fp {
+        self.0.eval(x)
+    }
+}
+
+impl From<NfRangePoly> for Polynomial {
+    fn from(poly: NfRangePoly) -> Self {
+        poly.0
+    }
+}
+
+impl FromIterator<Nullifier> for NfRangePoly {
+    fn from_iter<I: IntoIterator<Item = Nullifier>>(iter: I) -> Self {
+        let coeffs: Vec<Fp> = iter.into_iter().map(Fp::from).collect();
+        Self(Polynomial::from_coeffs(&coeffs))
+    }
+}
+
 impl From<Eq> for NfSeqCommit {
     fn from(point: Eq) -> Self {
         Self(point)

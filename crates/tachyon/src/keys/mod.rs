@@ -56,32 +56,42 @@
 //!
 //! ## Nullifier Derivation
 //!
-//! Nullifiers are derived via a GGM tree PRF instantiated from Poseidon:
+//! Nullifiers are MiMC evaluations under a per-note Poseidon-derived key,
+//! at inputs blinded by its domain-separated sibling salt:
 //!
-//! $$\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk})$$
-//! $$\mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$$
+//! $$\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk}) \qquad
+//! \psi' = \text{KDF}'(\psi, \mathsf{nk})$$
+//! $$\mathsf{nf}_e = E_{\mathsf{mk}}(\psi' + e)$$
 //!
 //! where $\psi$ is the note's nullifier trapdoor, $\mathsf{nk}$ is the
-//! nullifier key, and flavor is the epoch-id.
+//! nullifier key, and $e$ is the epoch-id. The wallet is the sole prover
+//! of derivation; no key-material delegation exists (see
+//! [`NoteMasterKey`]).
 //!
-//! The master root key $\mathsf{mk}$ supports oblivious sync delegation:
-//! prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
-//! $e \leq t$, enabling range-restricted delegation without revealing
-//! spend capability.
+//! The wallet-side chain from note to nullifier, one method hop per stage:
+//!
+//! 1. [`NullifierKey::derive_note_part`] derives each of the `MK_PARTS` master
+//!    key parts from `(psi, nk)`; [`NoteMasterKey::from_parts`] concatenates
+//!    them into `mk`.
+//! 2. [`NoteMasterKey::derive_emitter_schedule`] expands `mk` (the 32-round
+//!    expansion cipher) into the [`EmitterKeySchedule`], the emitter cipher's
+//!    interleaved round keys.
+//! 3. [`EmitterKeySchedule::derivation_polys`] interpolates the `NF_EMITTERS`
+//!    emitter polynomials at the salts [`NoteMasterKey::query_salts`].
+//! 4. [`EmitterKeySchedule::derive_nullifier`] evaluates the weighted
+//!    off-domain query at an epoch offset from the creation epoch, yielding
+//!    that epoch's nullifier.
 
 pub mod private;
 pub mod public;
 
-mod ggm;
 mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use ggm::{
-    GGM_CHUNK_MASK, GGM_CHUNK_SIZE, GGM_MAX_INDEX, GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey,
-    NotePrefixedKey, cover_candidates,
+pub use note::{
+    EmitterKeySchedule, NoteMasterKey, NullifierKey, PartKey, PartKeyStates, PaymentKey,
 };
-pub use note::{NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]

@@ -1,45 +1,715 @@
-//! Each relation here is a convenience tool over the two framework hooks a step
-//! body reaches for -- [`StepCtx::enforce_poly_query`] and
-//! [`StepCtx::derive_challenge`]. They share one shape: the result is
-//! prover-supplied (built off-circuit) rather than computed by the relation,
-//! the relation computes each operand's commitment internally, derives a
-//! Fiat-Shamir challenge `z` from those commitments, checks the defining
-//! algebraic identity at `z`, and emits one opening claim per operand at
-//! `(commitment, z, eval(z))`. These functions only *record* the openings;
-//! actually verifying them is the proof system's job, not done here.
-//!
-//! Soundness rests on Schwartz-Zippel: every operand commitment is absorbed
-//! into `z`, so the operands are fixed *before* `z` exists and the identity at
-//! a random `z` pins the corresponding polynomial identity (error `~deg/|F|`).
-//! An input that is **not** a committed operand (a raw scalar, say) is not
-//! absorbed into `z` and is not pinned this way; a relation that takes such an
-//! input states its own precondition.
-//!
-//! # Caller obligation: binding
-//!
-//! These relations prove the identity among the polynomials passed; pinning
-//! *which* polynomials those are is the caller's job. Every operand the
-//! surrounding statement relies on must have its commitment grounded in a
-//! statement-fixed value -- a public input, a prior-step output, a
-//! transcript/header-absorbed value, or a consensus/output-checked commitment
-//! -- and the binding holds only once that chain actually terminates in such a
-//! value (a fresh witness, or a commitment merely threaded onward, is not
-//! itself enough). The binding target is the commitment *point*
-//! (`= operand.commit()`); trailing-zero coefficients collapse under
-//! [`Polynomial::commit`], so this is commitment-identity, not the literal
-//! coefficient vector.
-//!
-//! This principle is common to all of these relations; each states which
-//! operands it covers and any relation-specific nuance.
-//!
-//! Implementation invariant: the eval fed to each identity check is the same
-//! eval emitted in that operand's opening claim (one `operand.eval(z)` call per
-//! operand). A refactor that recomputed or separately witnessed the evals could
-//! let the checked value diverge from the opened one and break soundness.
+//! Generic committed-polynomial relations for step witnesses.
+
+#![allow(
+    clippy::as_conversions,
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
+    reason = "todo"
+)]
+
+extern crate alloc;
+
+use alloc::vec::Vec;
 
 use ff::Field as _;
-use pasta_curves::Fp;
-use ragu::{Error, Result, ctx::StepCtx, polynomial::Polynomial};
+use pasta_curves::{Eq, Fp};
+use ragu::Polynomial;
+
+use super::subgroup_generator;
+use crate::constants::POLY_LEN_MAX;
+
+/// Evaluate at `position` the unique polynomial of degree below `ORDER` that
+/// takes `values[i]` at node `i` and is zero at every other `ORDER`-th root of
+/// unity.
+///
+/// The nodes start at `node_start` and step by a primitive `VALUES`-th root
+/// (computed internally), the spacing that lands them on the `ORDER`-th roots.
+/// A *full* set (`VALUES = ORDER`, `node_start = 1`) covers every root; a
+/// *sparse* set covers a sub-coset and is zero elsewhere. `vanishing` is the
+/// `position^ORDER - 1` factor of the closed form, taken as an argument so a
+/// caller that already holds it (the relation's domain divisor) does not
+/// recompute it; callers must pass exactly `position^ORDER - 1`. Closed-form
+/// subgroup-Lagrange interpolation, one inversion per node, with `n` = `ORDER`,
+/// point `x` = `position`, nodes `a_i`, and values `v_i`:
+///
+/// $$
+///     \sum_i v_i \, \frac{a_i}{x - a_i} \cdot \frac{x^{\,n} - 1}{n}.
+/// $$
+fn subgroup_interpolate<const ORDER: usize, const VALUES: usize>(
+    values: &[Fp; VALUES],
+    node_start: Fp,
+    position: Fp,
+    vanishing: Fp,
+) -> Fp {
+    const {
+        assert!(ORDER != 0, "subgroup order must be nonzero");
+    }
+
+    let prefactor = vanishing
+        * Fp::from(ORDER as u64)
+            .invert()
+            .expect("subgroup order must be nonzero");
+
+    let node_step = subgroup_generator::<VALUES>();
+    let mut accumulator = Fp::ZERO;
+    let mut node = node_start;
+    for &value in values {
+        let denominator = (position - node)
+            .invert()
+            .expect("position should not coincide with a node");
+
+        accumulator += value * node * denominator;
+        node *= node_step;
+    }
+    accumulator * prefactor
+}
+
+/// Evaluate `position^ORDER - 1`, whose roots are exactly the `ORDER`-th roots
+/// of unity: zero on that subgroup, nonzero elsewhere.
+fn zeroizer<const ORDER: usize>(position: Fp) -> Fp {
+    position.pow_vartime([ORDER as u64]) - Fp::ONE
+}
+
+/// Prove that the committed `matrix` advances along each row by a fixed power
+/// map. Read its domain evaluations row-major as rows of `COLUMNS` cells, over
+/// the order-`POLY_LEN_MAX` domain generated by `g`, so the cell after the one
+/// at `z` sits at $gz$. Each cell is the previous one plus its `offsets` term,
+/// raised to the power `exponent`; the row's final cell is exempt, since its
+/// successor starts a fresh row. As an identity at the Fiat-Shamir point `z`
+/// (with `|D|` = `POLY_LEN_MAX`, `M` = `matrix`, `e` = `exponent`, mask $m$
+/// vanishing on the final column, and offset $o$ interpolating `offsets`):
+///
+/// $$
+///     m(z) \bigl( M(gz) - (M(z) + o(z))^{\,e} \bigr) = Q(z) \, (z^{|D|} - 1).
+/// $$
+///
+/// The mask and offset are public closed forms in `z`. The quotient `Q` is
+/// carried as `SPLITS` capacity-wide splits, about as many as the masked map's
+/// degree $\approx e \, |D|$ requires. The relation derives `z` from `matrix`
+/// and the splits, opens `matrix` at `z` and $gz$, recombines `Q(z)`, and
+/// checks the identity.
+///
+/// # Caller obligations (soundness)
+///
+/// - **Binding.** `matrix` and every split must be commitment-bound to a
+///   statement-fixed value (public input, prior-step output, or
+///   transcript-absorbed commitment, not a fresh witness); all feed `z`.
+/// - **Public structure.** `offsets` and `exponent` are not absorbed into `z`;
+///   they must be statement-fixed, never witness-chosen after `z`.
+pub(crate) fn enforce_row_recurrence<const COLUMNS: usize, const SPLITS: usize>(
+    ctx: &mut ragu::StepCtx<'_>,
+    matrix: &Polynomial,
+    quotient: &[Polynomial; SPLITS],
+    offsets: &[Fp; COLUMNS],
+    exponent: u64,
+) -> ragu::Result<()> {
+    let matrix_commit = matrix.commit();
+    let quotient_commits: [Eq; SPLITS] = quotient.each_ref().map(Polynomial::commit);
+
+    let z =
+        ctx.derive_challenge(&[[matrix_commit].as_slice(), quotient_commits.as_slice()].concat())?;
+    let vanishing = zeroizer::<POLY_LEN_MAX>(z);
+
+    let matrix_at_z = matrix.eval(z);
+    ctx.enforce_poly_query(matrix_commit, z, matrix_at_z)?;
+
+    let quotient_at_z = {
+        let stride = vanishing + Fp::ONE;
+        let mut quotient_at_z = Fp::ZERO;
+        let mut shift = Fp::ONE;
+        for qt_p in quotient {
+            let eval = qt_p.eval(z);
+            ctx.enforce_poly_query(qt_p.commit(), z, eval)?;
+            quotient_at_z += shift * eval;
+            shift *= stride;
+        }
+        quotient_at_z
+    };
+
+    let znext = subgroup_generator::<POLY_LEN_MAX>() * z;
+    let matrix_at_znext = matrix.eval(znext);
+    ctx.enforce_poly_query(matrix_commit, znext, matrix_at_znext)?;
+
+    let period_position = z.pow_vartime([(POLY_LEN_MAX / COLUMNS) as u64]);
+
+    // Mask end-of-row discontinuity at `g_sub^{COLUMNS-1} = g_sub^{-1}`
+    let mask = period_position
+        - subgroup_generator::<COLUMNS>()
+            .invert()
+            .expect("a root of unity is nonzero");
+
+    // The offset interpolation's `position^COLUMNS - 1` factor is
+    // `period_position^COLUMNS = z^|D|`, so its vanishing is the shared one.
+    let offset =
+        subgroup_interpolate::<COLUMNS, COLUMNS>(offsets, Fp::ONE, period_position, vanishing);
+
+    let residual = matrix_at_znext - (matrix_at_z + offset).pow_vartime([exponent]);
+
+    if mask * residual != quotient_at_z * vanishing {
+        return Err(ragu::Error::InvalidWitness(
+            "row recurrence identity fails at challenge".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Prove the flat keyed-cipher recurrence `T(ωz) = (T(z) + O(z))^e` over the
+/// whole order-`POLY_LEN_MAX` domain, with the per-step offset carried as a
+/// *committed* constant polynomial plus the `FULL`-wide cyclic key schedule
+/// reconstructed inline from `PARTS` *committed* part-key polynomials rather
+/// than `POLY_LEN_MAX` public offsets. The offset is `O(z) = C(z) +
+/// K(ζ·z^{|D|/κ})`, `κ = FULL`: `constants` is the committed `C` (the public
+/// constant schedule, opened at `z`), and the order-`κ` key interpolant `K` is
+/// the `P = PARTS` part schedules interleaved on the `P` cosets of `⟨ζ⟩`,
+///
+/// $$ K(x) = \sum_{p=0}^{P-1} s_p(x)\,A_p\!\left(x\,ζ^{-p}\right),\quad
+///    s_p(x) = \tfrac{1}{P}\sum_{j=0}^{P-1} ω_P^{-pj}\,\bigl(x^{κ/P}\bigr)^{j},
+/// $$
+///
+/// with `ω_P` a primitive `P`-th root and `A_p` the eval-form part-key poly
+/// over the order-`κ/P` subgroup (`A_p(ζ^{P·r}) = k_{P·r+p}`). The `s_p` are
+/// the inverse-DFT coset indicators (`s_p(ζ^m) = [m ≡ p mod P]`), so this is an
+/// exact degree-`<κ` polynomial identity: reconstructing `K(ζ·z^{|D|/κ})` needs
+/// one opening of each `A_p` (at `key_point·ζ^{-p}`) plus the public selectors
+/// — no merged key commitment and no quotient. As an identity at the
+/// Fiat-Shamir point `z` (`|D|` = `POLY_LEN_MAX`, single-wrap mask $m(z) = z -
+/// ω^{-1}$):
+///
+/// $$
+///     m(z) \bigl( T(gz) - (T(z) + O(z))^{\,e} \bigr) = Q(z) \, (z^{|D|} - 1).
+/// $$
+///
+/// The quotient `Q` is carried as `SPLITS` capacity-wide splits. The offset
+/// needs no per-node inversion and is independent of `κ`, so a full-length key
+/// schedule stays in budget. `PARTS` is the inferred length of `keys`; the
+/// per-part domain size `κ/P` is computed here, not threaded.
+///
+/// # Caller obligations (soundness)
+///
+/// - **Binding.** `matrix`, `constants`, every `keys[p]`, and every split must
+///   be commitment-bound to a statement-fixed value; all feed `z`. In
+///   particular `constants` must be pinned (by commit-equality) to the public
+///   constant schedule and each `keys[p]` to the certified part-keyset
+///   commitments, or the offset is a free witness and the relation is vacuous.
+/// - **Public structure.** `exponent` is fixed and not witness-chosen after
+///   `z`. Part `p`'s poly is opened at `key_point·ζ^{-p}` (the coset
+///   realignment); the `keys` order must match the part indices `0..P`, or the
+///   reconstruction is wrong.
+pub(crate) fn enforce_committed_offset_recurrence<
+    const SPLITS: usize,
+    const FULL: usize,
+    const PARTS: usize,
+>(
+    ctx: &mut ragu::StepCtx<'_>,
+    matrix: &Polynomial,
+    quotient: &[Polynomial; SPLITS],
+    constants: &Polynomial,
+    keys: &[&Polynomial; PARTS],
+    exponent: u64,
+) -> ragu::Result<()> {
+    let matrix_commit = matrix.commit();
+    let constants_commit = constants.commit();
+    let key_commits: [Eq; PARTS] = keys.each_ref().map(|key| key.commit());
+    let quotient_commits: [Eq; SPLITS] = quotient.each_ref().map(Polynomial::commit);
+
+    let z = ctx.derive_challenge(
+        &[
+            [matrix_commit, constants_commit].as_slice(),
+            key_commits.as_slice(),
+            quotient_commits.as_slice(),
+        ]
+        .concat(),
+    )?;
+    let vanishing = zeroizer::<POLY_LEN_MAX>(z);
+
+    let matrix_at_z = matrix.eval(z);
+    ctx.enforce_poly_query(matrix_commit, z, matrix_at_z)?;
+    let constants_at_z = constants.eval(z);
+    ctx.enforce_poly_query(constants_commit, z, constants_at_z)?;
+
+    let quotient_at_z = {
+        let stride = vanishing + Fp::ONE;
+        let mut quotient_at_z = Fp::ZERO;
+        let mut shift = Fp::ONE;
+        for qt_p in quotient {
+            let eval = qt_p.eval(z);
+            ctx.enforce_poly_query(qt_p.commit(), z, eval)?;
+            quotient_at_z += shift * eval;
+            shift *= stride;
+        }
+        quotient_at_z
+    };
+
+    let omega = subgroup_generator::<POLY_LEN_MAX>();
+    let znext = omega * z;
+    let matrix_at_znext = matrix.eval(znext);
+    ctx.enforce_poly_query(matrix_commit, znext, matrix_at_znext)?;
+
+    // O(z) = C(z) + K(ζ·z^{|D|/κ}): committed constant schedule plus the cyclic
+    // key value, reconstructed inline from the `PARTS` part-key polys by the
+    // interleaved-coset identity `K(x) = Σ_p s_p(x)·A_p(x·ζ^{-p})`. Each `A_p`
+    // interpolates part `p` over `⟨ζ^P⟩`; `s_p` is the inverse-DFT indicator of
+    // coset `p`. `y = (key_point)^{κ/P}` maps `⟨ζ⟩` onto the `P`-th roots, where
+    // `s_p(x) = (1/P)·Σ_j (ω_P^{-p}·y)^j`.
+    let zeta = subgroup_generator::<FULL>();
+    let key_point = zeta * z.pow_vartime([(POLY_LEN_MAX / FULL) as u64]);
+    let zeta_inv = zeta.invert().expect("a root of unity is nonzero");
+    let part_root = subgroup_generator::<PARTS>();
+    let part_root_inv = part_root.invert().expect("a root of unity is nonzero");
+    let parts_inv = Fp::from(PARTS as u64)
+        .invert()
+        .expect("PARTS is invertible in Fp");
+    let y = key_point.pow_vartime([(FULL / PARTS) as u64]);
+
+    // Open each part `p` at `key_point·ζ^{-p}`, weight by `s_p(key_point)`.
+    let mut key_at = Fp::ZERO;
+    let mut point = key_point; // key_point·ζ^{-p}
+    let mut root_negp = Fp::ONE; // ω_P^{-p}
+    for (key, key_commit) in keys.iter().zip(key_commits) {
+        let a_at = key.eval(point);
+        ctx.enforce_poly_query(key_commit, point, a_at)?;
+        let base = root_negp * y;
+        let mut selector = Fp::ZERO;
+        let mut term = Fp::ONE;
+        for _ in 0..PARTS {
+            selector += term;
+            term *= base;
+        }
+        key_at += selector * parts_inv * a_at;
+        point *= zeta_inv;
+        root_negp *= part_root_inv;
+    }
+    let offset = constants_at_z + key_at;
+
+    // Single-wrap mask z − ω^{-1} (= z − ω^{|D|-1}).
+    let mask = z - omega.invert().expect("a root of unity is nonzero");
+
+    let residual = matrix_at_znext - (matrix_at_z + offset).pow_vartime([exponent]);
+
+    if mask * residual != quotient_at_z * vanishing {
+        return Err(ragu::Error::InvalidWitness(
+            "committed-offset recurrence identity fails at challenge".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Bind a low-degree polynomial `column` to a strided column of the committed
+/// `matrix`. On the order-`SUB_ORDER` subgroup `⟨ζ⟩`
+/// (`ζ = subgroup_generator::<SUB_ORDER>()`) the relation pins
+/// `column(ζ^r) = matrix(stride·ζ^r) + offset`, i.e. `column` is the
+/// degree-`<SUB_ORDER` interpolant of the `matrix` cells on the coset
+/// `stride·⟨ζ⟩` (plus a constant `offset`). As an identity at the Fiat-Shamir
+/// point `z`:
+///
+/// $$ \mathit{column}(z) - \mathit{offset} - \mathit{matrix}(\sigma z)
+///    = Q(z)\,(z^{\mathrm{SUB\_ORDER}} - 1). $$
+///
+/// The numerator `column(X) − offset − matrix(σX)` vanishes on `⟨ζ⟩` exactly
+/// when the column equality holds, so a pass at random `z` forces it
+/// (Schwartz-Zippel). `column` and `matrix` are full polynomials; `Q` is a
+/// single committed quotient.
+///
+/// # Caller obligations (soundness)
+///
+/// - **Binding.** `matrix`, `column`, and `quotient` must be commitment-bound
+///   to statement-fixed values; all feed `z`.
+/// - **Public structure.** `stride` and `offset` are statement-fixed, never
+///   witness-chosen after `z`.
+pub(crate) fn enforce_strided_column<const SUB_ORDER: usize>(
+    ctx: &mut ragu::StepCtx<'_>,
+    matrix: &Polynomial,
+    column: &Polynomial,
+    quotient: &Polynomial,
+    stride: Fp,
+    offset: Fp,
+) -> ragu::Result<()> {
+    let matrix_commit = matrix.commit();
+    let column_commit = column.commit();
+    let quotient_commit = quotient.commit();
+
+    let z = ctx.derive_challenge(&[matrix_commit, column_commit, quotient_commit])?;
+
+    let column_at_z = column.eval(z);
+    ctx.enforce_poly_query(column_commit, z, column_at_z)?;
+    let strided = stride * z;
+    let matrix_at_strided = matrix.eval(strided);
+    ctx.enforce_poly_query(matrix_commit, strided, matrix_at_strided)?;
+    let quotient_at_z = quotient.eval(z);
+    ctx.enforce_poly_query(quotient_commit, z, quotient_at_z)?;
+
+    if column_at_z - offset - matrix_at_strided != quotient_at_z * zeroizer::<SUB_ORDER>(z) {
+        return Err(ragu::Error::InvalidWitness(
+            "strided column identity fails at challenge".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Compute the weighted opening `Σ_j weights[j]·polys[j](point)` in-circuit,
+/// binding each polynomial to its statement-fixed `commitment` and opening it
+/// at `point`. The shared core of any weighted multi-polynomial query at a
+/// common point: the caller supplies the query point and the per-poly weights.
+///
+/// # Caller obligations (soundness)
+///
+/// - **Binding.** `commits` must be statement-fixed (public inputs, prior-step
+///   outputs, or transcript-absorbed values); the witnessed `polys` are pinned
+///   to them by commit-equality before being opened.
+/// - **Public structure.** `point` and `weights` must be bound to
+///   statement-fixed values, never free witnesses, or the returned value is
+///   unconstrained.
+pub(crate) fn enforce_weighted_opening<const OPERANDS: usize>(
+    ctx: &mut ragu::StepCtx<'_>,
+    commits: &[Eq; OPERANDS],
+    polys: &[Polynomial; OPERANDS],
+    point: Fp,
+    weights: &[Fp; OPERANDS],
+) -> ragu::Result<Fp> {
+    let mut combination = Fp::ZERO;
+    for ((commitment, poly), weight) in commits.iter().zip(polys).zip(weights) {
+        if poly.commit() != *commitment {
+            return Err(ragu::Error::InvalidWitness(
+                "weighted opening: polynomial does not match its commitment".into(),
+            ));
+        }
+        let value = poly.eval(point);
+        ctx.enforce_poly_query(*commitment, point, value)?;
+        combination += *weight * value;
+    }
+    Ok(combination)
+}
+
+/// Compute the pair of weighted openings at consecutive positions `d` and
+/// `d+1` of a geometric query family: the query points are
+/// `p_d = shift·coset_gen^d` and `p_{d+1} = coset_gen·p_d`, the per-poly
+/// weights `ratios[j]^d` and `ratios[j]^{d+1}`, and each value is the
+/// weighted open `Σ_j ratios[j]^{·}·polys[j](p_·)` via
+/// [`enforce_weighted_opening`].
+///
+/// In a real circuit the offset is decomposed into `log₂(S)` bits and the
+/// powers `coset_gen^d`, `ratios[j]^d` are formed by square-and-multiply
+/// (which also enforces the bound `d < S`); the mock computes them by native
+/// exponentiation of the integer `offset`.
+///
+/// # Caller obligations (soundness)
+///
+/// - **Binding.** `commits` are statement-fixed; the witnessed `polys` are
+///   pinned to them inside [`enforce_weighted_opening`]. `shift`, `coset_gen`,
+///   and `ratios` must be statement-fixed, never witness-chosen.
+/// - **Offset.** `offset` is otherwise a free witness; the caller pins it by
+///   matching the first returned value against a statement-fixed reference.
+///   When the query family is injective in `d`, that match forces the genuine
+///   offset and so the second value to the true successor. The real circuit's
+///   bit decomposition additionally caps `d < S`.
+///
+/// TODO: remove shift-bits shortcut
+pub(crate) fn enforce_geometric_opening_pair<const OPERANDS: usize>(
+    ctx: &mut ragu::StepCtx<'_>,
+    commits: &[Eq; OPERANDS],
+    polys: &[Polynomial; OPERANDS],
+    shift: Fp,
+    coset_gen: Fp,
+    ratios: &[Fp; OPERANDS],
+    offset: u64,
+) -> ragu::Result<(Fp, Fp)> {
+    // p_d = c·γ^d and the per-poly weights ρ_j^d.
+    let point_d = shift * coset_gen.pow_vartime([offset]);
+    let mut weights_d = *ratios;
+    for weight in &mut weights_d {
+        *weight = weight.pow_vartime([offset]);
+    }
+    let value_d = enforce_weighted_opening(ctx, commits, polys, point_d, &weights_d)?;
+
+    // Advance one position: p_{d+1} = γ·p_d, ρ_j^{d+1} = ρ_j·ρ_j^d.
+    let point_next = coset_gen * point_d;
+    let mut weights_next = weights_d;
+    for (weight, ratio) in weights_next.iter_mut().zip(ratios) {
+        *weight *= *ratio;
+    }
+    let value_next = enforce_weighted_opening(ctx, commits, polys, point_next, &weights_next)?;
+
+    Ok((value_d, value_next))
+}
+
+/// Open `SPLITS` capacity-wide splits at `point`, binding each to its
+/// commitment, and recombine to the unsplit polynomial's value by Horner in
+/// `point^POLY_LEN_MAX`: `Σ_s splits[s](point)·point^{POLY_LEN_MAX·s}`. The
+/// arc polynomials (`w_j`, `A`) span the order-`S` coset and exceed capacity,
+/// so they are carried this way; `SPLITS` is `⌈S/POLY_LEN_MAX⌉`, derived from
+/// `S`.
+fn open_splits<const SPLITS: usize>(
+    ctx: &mut ragu::StepCtx<'_>,
+    splits: &[Polynomial; SPLITS],
+    point: Fp,
+) -> ragu::Result<Fp> {
+    let stride = point.pow_vartime([POLY_LEN_MAX as u64]);
+    let mut value = Fp::ZERO;
+    let mut shift = Fp::ONE;
+    for split in splits {
+        let eval = split.eval(point);
+        ctx.enforce_poly_query(split.commit(), point, eval)?;
+        value += shift * eval;
+        shift *= stride;
+    }
+    Ok(value)
+}
+
+/// Prove the committed geometric weight `w` advances by `ratio` along the
+/// order-`COSET_ORDER` query coset `c·⟨γ⟩` (so `w(c·γ^d) = ratio^d`), the
+/// arc's per-poly weight with `ratio = ρ_j·β`. As an identity at the
+/// Fiat-Shamir point `z` (`c` = `shift`, `S` = `COSET_ORDER`, single-wrap mask
+/// `z − c·γ^{S-1}`):
+///
+/// $$ (z - c\gamma^{S-1})\,(w(\gamma z) - \text{ratio}\cdot w(z)) =
+/// Q(z)\,(z^{S} - c^{S}), $$
+///
+/// plus the boundary open `w(c) = 1`. That boundary is load-bearing: the masked
+/// recurrence pins only the *ratio* between consecutive weights, leaving a free
+/// global scale `α`; without `w(c) = 1` an `α ≠ 1` lets a spent note's range be
+/// matched against `α·nf_k` (absent from the pool) instead of the genuine
+/// `nf_k`. `w` is carried as `SPLITS` splits.
+///
+/// # Caller obligations (soundness)
+///
+/// - **Binding.** the `w` splits and `quotient` are commitment-bound (all feed
+///   `z`).
+/// - **Public structure.** `ratio` (cm-bound `ρ_j` times the derived `β`) and
+///   `shift` are statement-fixed, never witness-chosen after `z`.
+pub(crate) fn enforce_weight_recurrence<const COSET_ORDER: usize, const SPLITS: usize>(
+    ctx: &mut ragu::StepCtx<'_>,
+    weight: &[Polynomial; SPLITS],
+    quotient: &Polynomial,
+    ratio: Fp,
+    shift: Fp,
+) -> ragu::Result<()> {
+    let weight_commits: [Eq; SPLITS] = weight.each_ref().map(Polynomial::commit);
+    let quotient_commit = quotient.commit();
+
+    let z =
+        ctx.derive_challenge(&[weight_commits.as_slice(), [quotient_commit].as_slice()].concat())?;
+    let gamma = subgroup_generator::<COSET_ORDER>();
+    let coset_vanishing =
+        z.pow_vartime([COSET_ORDER as u64]) - shift.pow_vartime([COSET_ORDER as u64]);
+
+    let weight_at_z = open_splits(ctx, weight, z)?;
+    let weight_at_znext = open_splits(ctx, weight, gamma * z)?;
+    let quotient_at_z = quotient.eval(z);
+    ctx.enforce_poly_query(quotient_commit, z, quotient_at_z)?;
+
+    let wrap = shift * gamma.pow_vartime([COSET_ORDER as u64 - 1]);
+    if (z - wrap) * (weight_at_znext - ratio * weight_at_z) != quotient_at_z * coset_vanishing {
+        return Err(ragu::Error::InvalidWitness(
+            "weight recurrence identity fails at challenge".into(),
+        ));
+    }
+
+    // Boundary: `w(c) = ratio^0 = 1`, pinning the geometric scale (see above).
+    if open_splits(ctx, weight, shift)? != Fp::ONE {
+        return Err(ragu::Error::InvalidWitness(
+            "weight boundary w(c) must be one".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Prove the committed running-sum accumulator `A` advances by the β-weighted
+/// nullifiers over the order-`COSET_ORDER` query coset, so (exclusive prefix)
+/// `A(c·γ^d) = Σ_{k<d} β^k·nf_k`. As an identity at the Fiat-Shamir point `z`
+/// (`c` = `shift`, weights `w_j`, derivation polys `T_j`, `S` = `COSET_ORDER`,
+/// single-wrap mask `z − c·γ^{S-1}`):
+///
+/// $$ (z - c\gamma^{S-1})\Bigl(A(\gamma z) - A(z) - \sum_j w_j(z)\,T_j(z)\Bigr)
+/// = Q(z)\,(z^S - c^S), $$
+///
+/// plus the boundary open `A(c) = 0`. The exclusive prefix lets a range
+/// starting at offset 0 read its left endpoint at the origin (`A(c) = 0`)
+/// rather than the wrap. The right-hand side is a scalar sum of challenge-point
+/// openings, so no product polynomial is committed. `A` and each `w_j` are
+/// carried as `SPLITS` splits; `T_j` are single capacity-wide polys.
+///
+/// # Caller obligations (soundness)
+///
+/// - **Binding.** `A`, `quotient`, the `weights`, and `trace_polys` are
+///   commitment-bound (all feed `z`). Each `w_j` must independently be proven
+///   geometric by [`enforce_weight_recurrence`], and each `T_j` bound to its
+///   certified derivation commitment, by the caller.
+/// - **Public structure.** `shift` is statement-fixed.
+pub(crate) fn enforce_accumulator_recurrence<
+    const COSET_ORDER: usize,
+    const SPLITS: usize,
+    const POLYS: usize,
+>(
+    ctx: &mut ragu::StepCtx<'_>,
+    accumulator: &[Polynomial; SPLITS],
+    quotient: &Polynomial,
+    weights: &[[Polynomial; SPLITS]; POLYS],
+    trace_polys: &[Polynomial; POLYS],
+    shift: Fp,
+) -> ragu::Result<()> {
+    let mut commits: Vec<Eq> = accumulator.each_ref().map(Polynomial::commit).into();
+    commits.push(quotient.commit());
+    for weight in weights {
+        commits.extend(weight.each_ref().map(Polynomial::commit));
+    }
+    commits.extend(trace_polys.each_ref().map(Polynomial::commit));
+    let z = ctx.derive_challenge(&commits)?;
+
+    let gamma = subgroup_generator::<COSET_ORDER>();
+    let znext = gamma * z;
+    let coset_vanishing =
+        z.pow_vartime([COSET_ORDER as u64]) - shift.pow_vartime([COSET_ORDER as u64]);
+
+    let accumulator_at_z = open_splits(ctx, accumulator, z)?;
+    let accumulator_at_znext = open_splits(ctx, accumulator, znext)?;
+    let quotient_at_z = quotient.eval(z);
+    ctx.enforce_poly_query(quotient.commit(), z, quotient_at_z)?;
+
+    // Σ_j w_j(z)·T_j(z): a scalar of challenge-point openings, no product poly.
+    // Exclusive recurrence — the RHS is the term at the old position, read at z.
+    let mut advance = Fp::ZERO;
+    for (weight, trace) in weights.iter().zip(trace_polys) {
+        let weight_at_z = open_splits(ctx, weight, z)?;
+        let trace_at_z = trace.eval(z);
+        ctx.enforce_poly_query(trace.commit(), z, trace_at_z)?;
+        advance += weight_at_z * trace_at_z;
+    }
+
+    let wrap = shift * gamma.pow_vartime([COSET_ORDER as u64 - 1]);
+    if (z - wrap) * (accumulator_at_znext - accumulator_at_z - advance)
+        != quotient_at_z * coset_vanishing
+    {
+        return Err(ragu::Error::InvalidWitness(
+            "accumulator recurrence identity fails at challenge".into(),
+        ));
+    }
+
+    // Boundary: `A(c) = 0` (the exclusive prefix's empty sum at the origin).
+    if open_splits(ctx, accumulator, shift)? != Fp::ZERO {
+        return Err(ragu::Error::InvalidWitness(
+            "accumulator boundary A(c) must be zero".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Discharge the arc match against the tested-value polynomial `q`.
+///
+/// The exclusive-prefix accumulator gives the `β`-weighted nullifier sum over
+/// the offset arc `[start_offset, end_offset)` as the endpoint difference
+/// `A(p_{end_offset}) − A(p_{start_offset})`, with `p_d = shift·coset_gen^d`.
+/// The sync-tested values `q` pack the same range's nullifiers from
+/// `start_offset`, so `q(β)·β^{start_offset}` must equal that difference: each
+/// tested value, weighted by its absolute `β^k`, lines up with the
+/// accumulator's `β^k·nf_k` term. A passing match plus Schwartz-Zippel forces
+/// every tested value to be the genuine `nf_k` at its offset.
+///
+/// `start_offset`/`end_offset` are `start_epoch − E_0` / `end_epoch − E_0`
+/// against the certified creation origin `E_0`; the caller reconciles `E_0`
+/// downstream so the arc cannot be shifted. The mock forms the offset point
+/// powers and `β` powers by native exponentiation; the real circuit
+/// bit-decomposes the offsets (which also caps them below `S`).
+///
+/// # Caller obligations (soundness)
+///
+/// - **Binding.** `accumulator` must be proven by
+///   [`enforce_accumulator_recurrence`] and `range`/`range_commit` bound to the
+///   consensus-tested values (the `Unspent` `elapsed ++ tip` reconstruction);
+///   `β` must be derived from `range_commit` and the certified derivation
+///   digest before this call.
+/// - **Public structure.** `shift`, `coset_gen`, and the offsets are
+///   statement-fixed, never witness-chosen.
+#[expect(clippy::too_many_arguments, reason = "todo")]
+pub(crate) fn enforce_arc_match<const SPLITS: usize>(
+    ctx: &mut ragu::StepCtx<'_>,
+    accumulator: &[Polynomial; SPLITS],
+    range: &Polynomial,
+    range_commit: Eq,
+    shift: Fp,
+    coset_gen: Fp,
+    beta: Fp,
+    start_offset: u64,
+    end_offset: u64,
+) -> ragu::Result<()> {
+    let point_start = shift * coset_gen.pow_vartime([start_offset]);
+    let point_end = shift * coset_gen.pow_vartime([end_offset]);
+    let range_total =
+        open_splits(ctx, accumulator, point_end)? - open_splits(ctx, accumulator, point_start)?;
+
+    let q_at_beta = range.eval(beta);
+    ctx.enforce_poly_query(range_commit, beta, q_at_beta)?;
+    if q_at_beta * beta.pow_vartime([start_offset]) != range_total {
+        return Err(ragu::Error::InvalidWitness(
+            "arc match fails at the challenge".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Pin the *first column* of the committed `matrix` to prescribed values. Read
+/// its domain evaluations as a matrix; the first column is the `ROWS`-th roots
+/// of unity (one cell per row), pinned to `base + values[row]`. As an identity
+/// at the Fiat-Shamir point `z` (with `|D|` = `POLY_LEN_MAX`, `R` = `ROWS`,
+/// `M` = `matrix`, `b` = `base`, selector $s$, and interpolant $v$ of
+/// `values`):
+///
+/// $$
+///     s(z) \bigl( M(z) - b - v(z) \bigr) = Q(z) \, (z^{|D|} - 1).
+/// $$
+///
+/// The constraint binds only the first column, so it does not fit the bare
+/// $Q \cdot Z_D$ form: the selector $s(z) = (z^{|D|} - 1) / (z^{R} - 1)$
+/// carries the $z^{|D|} - 1$ factor the check re-introduces, leaving the column
+/// vanisher $z^{R} - 1$ as the effective divisor. The `quotient` has degree
+/// below `POLY_LEN_MAX`, so it is one committed polynomial; the relation
+/// derives `z` from `matrix` and `quotient`, opens both at `z`, and checks the
+/// identity.
+///
+/// Callers needing a non-affine boundary (such as pinning each cell to an S-box
+/// of its row input) precompute the per-row target into `values`; the relation
+/// pins the column to whatever interpolant `values` describes.
+///
+/// # Caller obligations (soundness)
+///
+/// - **Binding.** `matrix` and `quotient` must be commitment-bound to a
+///   statement-fixed value (not a fresh or merely-threaded witness); both feed
+///   `z`.
+/// - **Public structure.** `base` and `values` are not absorbed into `z`; fix
+///   them to statement-fixed values, never witness-chosen after `z`.
+pub(crate) fn enforce_first_column_values<const ROWS: usize>(
+    ctx: &mut ragu::StepCtx<'_>,
+    matrix: &Polynomial,
+    quotient: &Polynomial,
+    base: Fp,
+    values: &[Fp; ROWS],
+) -> ragu::Result<()> {
+    let matrix_commit = matrix.commit();
+    let quotient_commit = quotient.commit();
+
+    let z = ctx.derive_challenge(&[matrix_commit, quotient_commit])?;
+
+    let matrix_at_z = matrix.eval(z);
+    ctx.enforce_poly_query(matrix_commit, z, matrix_at_z)?;
+    let quotient_at_z = quotient.eval(z);
+    ctx.enforce_poly_query(quotient_commit, z, quotient_at_z)?;
+
+    let domain_vanishing = zeroizer::<POLY_LEN_MAX>(z);
+    let rows_vanishing = zeroizer::<ROWS>(z);
+
+    let values_at_z = subgroup_interpolate::<ROWS, ROWS>(values, Fp::ONE, z, rows_vanishing);
+
+    let complement = domain_vanishing
+        * rows_vanishing
+            .invert()
+            .expect("random challenge should not be a first-column root of unity");
+
+    if complement * (matrix_at_z - base - values_at_z) != quotient_at_z * domain_vanishing {
+        return Err(ragu::Error::InvalidWitness(
+            "first column values identity fails at challenge".into(),
+        ));
+    }
+    Ok(())
+}
 
 /// Faithful polynomial product: confirm `product = multiplicand · multiplier`
 /// among three committed polynomials by opening all three at a Fiat-Shamir
@@ -58,18 +728,18 @@ use ragu::{Error, Result, ctx::StepCtx, polynomial::Polynomial};
 /// binding obligation -- here applying symmetrically to `multiplicand`,
 /// `multiplier`, and `product` -- is the only precondition.
 pub(crate) fn enforce_poly_product(
-    ctx: &mut StepCtx<'_>,
+    ctx: &mut ragu::StepCtx<'_>,
     multiplicand: &Polynomial,
     multiplier: &Polynomial,
     product: &Polynomial,
-) -> Result<()> {
+) -> ragu::Result<()> {
     let multiplicand_com = multiplicand.commit();
     let multiplier_com = multiplier.commit();
     let product_com = product.commit();
     let z = ctx.derive_challenge(&[multiplicand_com, multiplier_com, product_com])?;
 
     if product.eval(z) != multiplicand.eval(z) * multiplier.eval(z) {
-        return Err(Error::InvalidWitness(
+        return Err(ragu::Error::InvalidWitness(
             "poly product: product identity fails at challenge".into(),
         ));
     }
@@ -126,11 +796,11 @@ fn monomial_at(point: Fp, exponent: usize) -> Fp {
 /// first-class committed `X^k·p` (or a built-in shifted sum) would carry the
 /// shift itself and collapse this to a direct check.
 pub(crate) fn enforce_shifted_combination<const SHIFTED_POLYS: usize, const MONOMIALS: usize>(
-    ctx: &mut StepCtx<'_>,
+    ctx: &mut ragu::StepCtx<'_>,
     shifted_polys: [(&Polynomial, usize); SHIFTED_POLYS],
     monomials: [(Fp, usize); MONOMIALS],
     result: &Polynomial,
-) -> Result<()> {
+) -> ragu::Result<()> {
     let poly_coms = shifted_polys.map(|(poly, _)| poly.commit());
     let result_com = result.commit();
     let z = ctx.derive_challenge(&[poly_coms.as_slice(), [result_com].as_slice()].concat())?;
@@ -145,7 +815,7 @@ pub(crate) fn enforce_shifted_combination<const SHIFTED_POLYS: usize, const MONO
         )
         .sum::<Fp>();
     if result.eval(z) != combination {
-        return Err(Error::InvalidWitness(
+        return Err(ragu::Error::InvalidWitness(
             "shifted combination: identity fails at challenge".into(),
         ));
     }
@@ -160,20 +830,204 @@ pub(crate) fn enforce_shifted_combination<const SHIFTED_POLYS: usize, const MONO
 
 #[cfg(test)]
 mod tests {
-    //! Native checks of the shifted-combination identity on tiny cases.
-    //!
-    //! Pure algebra over explicit coefficient vectors: each case builds the
-    //! operands with [`Polynomial::from_coeffs`], the true combination by
-    //! coefficient arithmetic (an independent computation in the coefficient
-    //! basis), and confirms the relation's defining identity point-wise (an
-    //! exact polynomial identity holds at every point), plus one mismatch per
-    //! operand kind.
 
     extern crate alloc;
 
     use alloc::{vec, vec::Vec};
+    use core::{array, iter::repeat_with};
+
+    use ragu::Domain;
+    use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
+
+    /// The interleaved-coset key reconstruction the offset recurrence relies
+    /// on: `K(x) = Σ_p s_p(x)·A_p(x·ζ⁻ᵖ)` (the inverse-DFT coset selectors
+    /// `s_p`, `ζ` the order-`FULL` root) equals the direct order-`FULL`
+    /// interpolant of the interleaved schedule at any `x`. The reference
+    /// `K` is interpolated directly, so the check is not impl-frozen.
+    /// `PART_SIZE = FULL / PARTS` is computed, not threaded.
+    fn check_interleave_identity<const PARTS: usize, const FULL: usize>(
+        schedule: &[Fp; FULL],
+        point: Fp,
+    ) {
+        let part_size = FULL / PARTS;
+        let zeta = subgroup_generator::<FULL>();
+        let zeta_inv = zeta.invert().expect("a root of unity is nonzero");
+        let part_root = subgroup_generator::<PARTS>();
+        let part_root_inv = part_root.invert().expect("a root of unity is nonzero");
+        let parts_inv = Fp::from(PARTS as u64)
+            .invert()
+            .expect("PARTS is invertible");
+        let y = point.pow_vartime([part_size as u64]);
+
+        // Reconstruct via the P-point coset identity: part p = the schedule
+        // values at positions ≡ p (mod PARTS), interpolated over ⟨ζ^P⟩.
+        let mut recon = Fp::ZERO;
+        let mut coset_point = point;
+        let mut root_negp = Fp::ONE;
+        for part in 0..PARTS {
+            let mut coeffs: Vec<Fp> = (0..part_size)
+                .map(|row| schedule[part + PARTS * row])
+                .collect();
+            Domain::new(part_size.ilog2()).ifft(&mut coeffs);
+            let a_p = Polynomial::from_coeffs(&coeffs);
+            let base = root_negp * y;
+            let mut selector = Fp::ZERO;
+            let mut term = Fp::ONE;
+            for _ in 0..PARTS {
+                selector += term;
+                term *= base;
+            }
+            recon += selector * parts_inv * a_p.eval(coset_point);
+            coset_point *= zeta_inv;
+            root_negp *= part_root_inv;
+        }
+
+        // Independent reference: interpolate the full interleaved schedule directly.
+        let mut k_coeffs = schedule.to_vec();
+        Domain::new(FULL.ilog2()).ifft(&mut k_coeffs);
+        let k_direct = Polynomial::from_coeffs(&k_coeffs);
+
+        assert_eq!(
+            k_direct.eval(point),
+            recon,
+            "interleave identity must match the direct interpolant",
+        );
+    }
+
+    /// The offset recurrence reconstructs the full key schedule from the
+    /// committed parts by the interleaved-coset identity. Checked on the tiny
+    /// order-4 (`PARTS = 2`) case per the L=2 habit, a tiny order-8 `PARTS = 4`
+    /// case that exercises the P-point generalization beyond binary, and the
+    /// production order-256 (`PARTS = 2`), at random points.
+    #[test]
+    fn interleave_identity_reconstructs_the_full_schedule() {
+        let rng = &mut StdRng::seed_from_u64(7);
+        for _ in 0..8 {
+            let schedule: [Fp; 4] = array::from_fn(|_| Fp::random(&mut *rng));
+            check_interleave_identity::<2, 4>(&schedule, Fp::random(&mut *rng));
+        }
+        for _ in 0..8 {
+            let schedule: [Fp; 8] = array::from_fn(|_| Fp::random(&mut *rng));
+            check_interleave_identity::<4, 8>(&schedule, Fp::random(&mut *rng));
+        }
+        for _ in 0..8 {
+            let schedule: [Fp; 256] = array::from_fn(|_| Fp::random(&mut *rng));
+            check_interleave_identity::<2, 256>(&schedule, Fp::random(&mut *rng));
+        }
+    }
+
+    /// Constant-term lemma: over the domain `D`, any polynomial `g` of degree
+    /// below `|D|` has power sums that vanish except at exponent zero, so
+    ///
+    /// $$ \sum_{x \in D} g(x) = |D| \cdot g(0). $$
+    ///
+    /// The converter leans on it to collapse a domain sum to a single opening
+    /// of `g` at zero. Checked on a 16-element domain.
+    #[test]
+    fn constant_term_lemma_on_a_small_domain() {
+        const ORDER: usize = 16;
+        let rng = &mut StdRng::seed_from_u64(0);
+
+        let coeffs: Vec<Fp> = repeat_with(|| Fp::random(&mut *rng)).take(ORDER).collect();
+        let poly = Polynomial::from_coeffs(&coeffs);
+
+        let sum = {
+            let root = subgroup_generator::<ORDER>();
+            let mut sum = Fp::ZERO;
+            let mut pos = Fp::ONE;
+            for _ in 0..ORDER {
+                sum += poly.eval(pos);
+                pos *= root;
+            }
+            sum
+        };
+
+        {
+            assert_eq!(
+                sum,
+                Fp::from(ORDER as u64) * poly.coefficients()[0],
+                "sum over D of g must collapse to |D| * g(0)"
+            );
+        }
+    }
+
+    /// `subgroup_interpolate` (full set) reconstructs a polynomial from its
+    /// values on the `ORDER`-th roots of unity: sampling a `deg < ORDER`
+    /// polynomial on the roots and interpolating returns it at any off-node
+    /// position. Checked against direct evaluation, an independent reference.
+    #[test]
+    fn subgroup_interpolate_reconstructs_a_full_value_set() {
+        const ORDER: usize = 4;
+        let rng = &mut StdRng::seed_from_u64(0);
+
+        let coeffs: Vec<Fp> = repeat_with(|| Fp::random(&mut *rng)).take(ORDER).collect();
+        let poly = Polynomial::from_coeffs(&coeffs);
+
+        // Sample `poly` on the roots of unity.
+        let values = {
+            let mut values = [Fp::ZERO; ORDER];
+            let root = subgroup_generator::<ORDER>();
+            let mut node = Fp::ONE;
+            for value in &mut values {
+                *value = poly.eval(node);
+                node *= root;
+            }
+            values
+        };
+
+        // Interpolating the samples reproduces `poly` away from the nodes.
+        let challenge = Fp::random(rng);
+        assert_eq!(
+            subgroup_interpolate::<ORDER, ORDER>(
+                &values,
+                Fp::ONE,
+                challenge,
+                zeroizer::<ORDER>(challenge)
+            ),
+            poly.eval(challenge),
+            "full interpolation must reconstruct the sampled polynomial",
+        );
+    }
+
+    /// The recombination arithmetic `recombine_quotient` relies on: adjacent
+    /// splits at the `POLY_LEN_MAX` stride evaluate, via Horner in
+    /// `z^POLY_LEN_MAX`, to the unsplit polynomial's direct evaluation.
+    #[test]
+    fn quotient_splits_recombine_to_the_full_evaluation() {
+        let rng = &mut StdRng::seed_from_u64(0);
+        // Three capacities long, split adjacently.
+        let full: Vec<Fp> = repeat_with(|| Fp::random(&mut *rng))
+            .take(3 * POLY_LEN_MAX)
+            .collect();
+        let z = Fp::random(rng);
+
+        let stride = z.pow_vartime([POLY_LEN_MAX as u64]);
+        let mut combined = Fp::ZERO;
+        let mut shift = Fp::ONE;
+        for chunk in full.chunks(POLY_LEN_MAX) {
+            combined += shift * Polynomial::from_coeffs(chunk).eval(z);
+            shift *= stride;
+        }
+
+        let direct = full
+            .iter()
+            .rev()
+            .fold(Fp::ZERO, |acc, &coeff| acc * z + coeff);
+        assert_eq!(
+            combined, direct,
+            "adjacent splits must recombine to the full evaluation"
+        );
+    }
+
+    // Native checks of the shifted-combination identity on tiny cases: pure
+    // algebra over explicit coefficient vectors. Each case builds the operands
+    // with `Polynomial::from_coeffs`, the true combination by coefficient
+    // arithmetic (an independent computation in the coefficient basis), and
+    // confirms the relation's defining identity point-wise (an exact
+    // polynomial identity holds at every point), plus one mismatch per operand
+    // kind.
 
     /// Sample evaluation points (arbitrary, fixed).
     const POINTS: [u64; 3] = [0, 2, 927];

@@ -898,6 +898,7 @@ dependencies = [
  "rand",
  "rand_core",
  "reddsa",
+ "zcash_mimc",
 ]
 
 [[package]]
