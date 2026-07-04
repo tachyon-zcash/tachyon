@@ -708,41 +708,60 @@ pub(crate) fn build_unspent_pcd_between_anchors(
         }
     }
 
-    // Linear left-to-right fold. Each leaf is a single empty-elapsed segment;
-    // appending one within the accumulator's tip epoch is a bare [`UnspentFuse`],
-    // and across a boundary a [`UnspentEpochFuse`] splice that folds the tip nf
-    // into `elapsed` (one entry per crossed boundary, so `acc`'s elapsed is
-    // `nf[0..(acc_epoch - base)]`).
+    // Balanced bottom-up merge. Each item tracks the inclusive epoch range
+    // `[ep_lo..=ep_hi]` its chain covers, so its `elapsed` is `nf[ep_lo..ep_hi]`
+    // (one per crossed boundary). Merging adjacent chains is a mid-epoch concat
+    // when they share an epoch (`rlo == lhi`) and a boundary splice when
+    // consecutive (`rlo == lhi + 1`).
     let elapsed_slice = |lo: EpochIndex, hi: EpochIndex| -> &[Nullifier] {
         let from = usize::try_from(lo.0 - base.0).expect("epoch within span");
         let to = usize::try_from(hi.0 - base.0).expect("epoch within span");
         &nf[from..to]
     };
-    let mut leaf_iter = leaves.into_iter();
-    let (mut acc, mut acc_epoch) = leaf_iter
-        .next()
-        .expect("anchor span covers at least one leaf");
-    for (leaf, epoch) in leaf_iter {
-        acc = if epoch.0 == acc_epoch.0 {
-            let (fused, ()) = PROOF_SYSTEM
-                .fuse(rng, pool::UnspentFuse, (), acc, leaf)
-                .expect("UnspentFuse mid-epoch");
-            fused
-        } else {
-            debug_assert_eq!(epoch.0, acc_epoch.0 + 1, "leaves must be contiguous");
-            let witness = witness::unspent_epoch_fuse(
-                (*acc.data(), *leaf.data()),
-                elapsed_slice(base, acc_epoch),
-                &[],
-            );
-            let (fused, ()) = PROOF_SYSTEM
-                .fuse(rng, pool::UnspentEpochFuse, witness, acc, leaf)
-                .expect("UnspentEpochFuse boundary");
-            acc_epoch = epoch;
-            fused
-        };
+    let mut level: Vec<(Pcd<pool::Unspent>, EpochIndex, EpochIndex)> = leaves
+        .into_iter()
+        .map(|(pcd, epoch)| (pcd, epoch, epoch))
+        .collect();
+    assert!(!level.is_empty(), "anchor span covers at least one leaf");
+    while level.len() > 1 {
+        let mut next: Vec<(Pcd<pool::Unspent>, EpochIndex, EpochIndex)> = Vec::new();
+        let mut pairs = level.into_iter();
+        while let Some((left, llo, lhi)) = pairs.next() {
+            match pairs.next() {
+                None => next.push((left, llo, lhi)),
+                Some((right, rlo, rhi)) => {
+                    let left_el = elapsed_slice(llo, lhi);
+                    let right_el = elapsed_slice(rlo, rhi);
+                    let fused = if rlo.0 == lhi.0 {
+                        let witness =
+                            witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
+                        let (fused, ()) = PROOF_SYSTEM
+                            .fuse(rng, pool::UnspentFuse, witness, left, right)
+                            .expect("UnspentFuse mid-epoch");
+                        fused
+                    } else {
+                        debug_assert_eq!(rlo.0, lhi.0 + 1, "merged chains must be contiguous");
+                        let witness = witness::unspent_epoch_fuse(
+                            (*left.data(), *right.data()),
+                            left_el,
+                            right_el,
+                        );
+                        let (fused, ()) = PROOF_SYSTEM
+                            .fuse(rng, pool::UnspentEpochFuse, witness, left, right)
+                            .expect("UnspentEpochFuse boundary");
+                        fused
+                    };
+                    next.push((fused, llo, rhi));
+                },
+            }
+        }
+        level = next;
     }
-    acc
+    level
+        .into_iter()
+        .next()
+        .expect("non-empty level yields the merged chain")
+        .0
 }
 
 /// A fixed, deterministic spending key. Tests that don't need a distinct wallet

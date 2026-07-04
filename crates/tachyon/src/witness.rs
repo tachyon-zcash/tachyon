@@ -17,7 +17,7 @@ use crate::{
     },
     stamp::proof::{
         delegation::NullifierFuse,
-        pool::{AnchorSeed, UnspentEpochFuse, UnspentSeed, VerifyUnspent},
+        pool::{AnchorSeed, UnspentEpochFuse, UnspentFuse, UnspentSeed, VerifyUnspent},
         spendable::SpendableInit,
         stamp::MergeStamp,
     },
@@ -59,6 +59,23 @@ pub fn unspent_seed(
         anchor_prev,
         (epoch, nf),
         tgs.iter().copied().collect::<TachygramSetPoly>(),
+    )
+}
+
+/// Prepare the witness for [`UnspentFuse`]:
+/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
+#[must_use]
+pub fn unspent_fuse(
+    (_left, _right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
+    left_elapsed: &[Nullifier],
+    right_elapsed: &[Nullifier],
+) -> StepWitness<'static, UnspentFuse> {
+    let mut combined: Vec<Nullifier> = left_elapsed.to_vec();
+    combined.extend_from_slice(right_elapsed);
+    (
+        left_elapsed.iter().copied().collect::<NfSeqPoly>(),
+        combined.into_iter().collect::<NfSeqPoly>(),
+        right_elapsed.iter().copied().collect::<NfSeqPoly>(),
     )
 }
 
