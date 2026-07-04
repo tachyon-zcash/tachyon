@@ -8,7 +8,7 @@ use ragu::Sponge;
 
 use crate::{
     EpochIndex,
-    constants::{MK_PART_LEN, NF_EMITTERS, NF_QUERY_MK_PREFIX},
+    constants::{MK_PART_LEN, NF_EMITTERS, NF_EXPANSION_MK_PREFIX, NF_QUERY_MK_PREFIX},
     keys::NoteMasterKey,
 };
 
@@ -84,6 +84,36 @@ pub(crate) fn nf_master_part(psi: Fp, nk: Fp, part: u64) -> [Fp; MK_PART_LEN] {
     sponge.absorb(psi).expect("infallible");
     sponge.absorb(nk).expect("infallible");
     [Fp::ZERO; MK_PART_LEN].map(|_| sponge.squeeze().expect("infallible"))
+}
+
+const NF_EXPANSION_DOMAIN: &[u8; 16] = b"Tachyon-NfExpand";
+
+/// Derive the note's expansion-input parameters from its master key `mk`: the
+/// secret input salt `s`, the input stride `δ`, and the whitening key `w` of
+/// the key-expansion cipher. Domain-separated from the query-parameter
+/// derivations below so the outputs are cryptographically independent of the
+/// salts, weights, and shift.
+///
+/// The sponge absorbs the domain tag plus a [`NF_EXPANSION_MK_PREFIX`]-element
+/// `mk` prefix (exactly `RATE` elements) and squeezes three, so the whole
+/// derivation is one Poseidon permutation; `KeyExpansionStep` runs it in-step.
+#[expect(
+    clippy::expect_used,
+    reason = "mock sponge absorb/squeeze is infallible"
+)]
+#[must_use]
+pub(crate) fn nf_expansion_params(mk: &[Fp; NoteMasterKey::MK_LENGTH]) -> (Fp, Fp, Fp) {
+    let mut sponge = Sponge::new();
+    sponge
+        .absorb(Fp::from_u128(u128::from_le_bytes(*NF_EXPANSION_DOMAIN)))
+        .expect("infallible");
+    for &part in mk.iter().take(NF_EXPANSION_MK_PREFIX) {
+        sponge.absorb(part).expect("infallible");
+    }
+    let salt = sponge.squeeze().expect("infallible");
+    let stride = sponge.squeeze().expect("infallible");
+    let whitening = sponge.squeeze().expect("infallible");
+    (salt, stride, whitening)
 }
 
 const NF_QUERY_SALT_DOMAIN: &[u8; 16] = b"Tachyon-NfSalt__";

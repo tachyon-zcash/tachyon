@@ -38,7 +38,7 @@ use zcash_mimc::spec::tachyon::{TachyonP5R32, TachyonP5R8192};
 use super::subgroup_generator;
 use crate::{
     constants::{EK_PART_SIZE, NF_DOMAIN, NF_EMITTERS, POLY_LEN_MAX},
-    keys::NoteMasterKey,
+    keys::{ExpansionParams, NoteMasterKey},
     primitives::NfEmitterPoly,
 };
 
@@ -611,11 +611,12 @@ lazy_static! {
     /// Reduced-coset evaluations of the row-power interpolants, the cached basis
     /// that folds round 0 into the boundary without a per-call FFT.
     /// `ROW_POWER_EXT[j]` is the coset evaluation of the row-subgroup
-    /// interpolant of `row^j`. The round-0 target `(a + row)^POW` (with `a =
-    /// mk_s + start + k_0`) expands by the binomial theorem into `Σ_j C(POW, j)
-    /// · a^{POW−j} · row^j`; since ifft and coset_evaluations are linear, its
-    /// coset evaluation is this keyset-independent basis combined with per-call
-    /// scalars (see `expansion_boundary_quotient`). Built once.
+    /// interpolant of `row^j`. The round-0 target `(alpha + δ·row)^POW` (with
+    /// `alpha = s + δ·base + k_0`) expands by the binomial theorem into
+    /// `Σ_j C(POW, j) · alpha^{POW−j} · δ^j · row^j`; since ifft and
+    /// coset_evaluations are linear, its coset evaluation is this
+    /// keyset-independent basis combined with per-call scalars (see
+    /// `expansion_boundary_quotient`). Built once.
     static ref ROW_POWER_EXT: Vec<Vec<Fp>> = (0..=TachyonP5R32::POW)
         .map(|power| {
             let mut samples: Vec<Fp> = (0..EK_PART_SIZE as u64)
@@ -673,28 +674,30 @@ fn offset_basis_ext(values: &[Fp]) -> Vec<Fp> {
     coset_evaluations(&spread_by_stride(&coeffs), ROUND_COSET, COSET_SHIFT)
 }
 
-/// Prover-side bundle of the expansion step's three witness quotients, from the
-/// coefficient vectors of the trace poly `T` and the eval-form half-key poly
-/// `K`. `keyset` is the note's master key `mk` (the expansion cipher's
-/// round-key schedule); `base = half · EK_PART_SIZE` is this half's
-/// cipher-input window origin. Builds the shared quintic-coset trace evaluation
-/// once and returns `(round splits, boundary, decimation)`, matching what
-/// [`KeyExpansionStep`] opens: cipher input `base + row`, first key
-/// `mk.round_key(0)`, whitening `mk.round_key(TachyonP5R32::ROUNDS)`.
+/// Prover-side bundle of the expansion step's three witness quotients, from
+/// the coefficient vectors of the trace poly `T` and the eval-form part-key
+/// poly `K`. `keyset` is the note's master key `mk` (the expansion cipher's
+/// round-key schedule) and `params` its expansion-input parameters
+/// `(s, δ, w)`; `base = part · EK_PART_SIZE` is this part's cipher-input
+/// window origin. Builds the shared quintic-coset trace evaluation once and
+/// returns `(round splits, boundary, decimation)`, matching what
+/// [`KeyExpansionStep`] opens: cipher input `s + δ·(base + row)`, first key
+/// `mk.round_key(0)`, whitening `w`.
 pub(crate) fn expansion_quotients(
     trace_coeffs: &[Fp],
     keyset: &NoteMasterKey,
+    params: &ExpansionParams,
     key_coeffs: &[Fp],
     base: Fp,
 ) -> ([Polynomial; EXPANSION_ROUND_SPLITS], Polynomial, Polynomial) {
     let trace_ext = coset_evaluations(trace_coeffs, ROUND_COSET, COSET_SHIFT);
     let round = expansion_round_quotient(&trace_ext, keyset);
-    let boundary = expansion_boundary_quotient(&trace_ext, base, keyset.round_key(0));
-    let decimation = expansion_decimation_quotient(
-        trace_coeffs,
-        key_coeffs,
-        keyset.round_key(TachyonP5R32::ROUNDS),
+    let boundary = expansion_boundary_quotient(
+        &trace_ext,
+        params.input(base) + keyset.round_key(0),
+        params.stride,
     );
+    let decimation = expansion_decimation_quotient(trace_coeffs, key_coeffs, params.whitening);
     (round, boundary, decimation)
 }
 
@@ -748,18 +751,18 @@ pub(crate) fn expansion_round_quotient(
 
 /// The challenge-free boundary quotient `Q_boundary` (one split): builds
 /// `complement·(T − target)` on the reduced coset and divides by `Z_D`, where
-/// `target` interpolates each row's round-0 output. Round 0 is folded into the
-/// boundary here: `base = mk_s + start` makes the cipher input `base + row` for
-/// row-start cell `row`, and `first_key = k_0` (with `c_0 = 0`) maps that input
-/// through round 0's S-box, pinning each first-column cell to `(a + row)^POW`
-/// for `a = base + first_key`.
+/// `target` interpolates each row's round-0 output. Round 0 is folded into
+/// the boundary here: `alpha = s + δ·base + k_0` collects the row-independent
+/// input terms (with `c_0 = 0`), so round 0's S-box pins each first-column
+/// cell to `(alpha + δ·row)^POW`.
 ///
-/// The target's coset evaluation needs no per-call FFT: `(a + row)^POW` expands
-/// by the binomial theorem to `Σ_j C(POW, j) · a^{POW−j} · row^j`, so it is the
-/// cached row-power basis [`ROW_POWER_EXT`] combined with the per-call scalars
-/// `C(POW, j) · a^{POW−j}`. This matches the values the step pins via
-/// `enforce_first_column_values`.
-pub(crate) fn expansion_boundary_quotient(trace_ext: &[Fp], base: Fp, first_key: Fp) -> Polynomial {
+/// The target's coset evaluation needs no per-call FFT: `(alpha + δ·row)^POW`
+/// expands by the binomial theorem to
+/// `Σ_j C(POW, j) · alpha^{POW−j} · δ^j · row^j`, so it is the cached
+/// row-power basis [`ROW_POWER_EXT`] combined with the per-call scalars
+/// `C(POW, j) · alpha^{POW−j} · δ^j`. This matches the values the step pins
+/// via `enforce_first_column_values`.
+pub(crate) fn expansion_boundary_quotient(trace_ext: &[Fp], alpha: Fp, stride: Fp) -> Polynomial {
     // `C(5, j)` for `j = 0..=5`.
     const BINOMIAL: [u64; 6] = [1, 5, 10, 10, 5, 1];
     const {
@@ -774,13 +777,17 @@ pub(crate) fn expansion_boundary_quotient(trace_ext: &[Fp], base: Fp, first_key:
     let complement_ext: &[Fp] = &COMPLEMENT_EXT;
     let row_power_ext: &[Vec<Fp>] = &ROW_POWER_EXT;
 
-    // Per-call scalars `scale[j] = C(5, j) · a^{5−j}` for `a = base + k_0`.
-    let alpha = base + first_key;
+    // Per-call scalars `scale[j] = C(5, j) · alpha^{5−j} · δ^j`.
     let mut scale = [Fp::ZERO; BINOMIAL.len()];
     let mut alpha_power = Fp::ONE;
     for (degree, coefficient) in BINOMIAL.iter().enumerate().rev() {
         scale[degree] = Fp::from(*coefficient) * alpha_power;
         alpha_power *= alpha;
+    }
+    let mut stride_power = Fp::ONE;
+    for weight in &mut scale {
+        *weight *= stride_power;
+        stride_power *= stride;
     }
 
     let quotient = coset_quotient(BOUNDARY_COSET, |point| {
@@ -903,6 +910,7 @@ mod tests {
         let (round, boundary, decimation) = expansion_quotients(
             spectrum.0.coefficients(),
             &mk,
+            &mk.expansion_params(),
             key_poly.0.coefficients(),
             Fp::ZERO,
         );

@@ -98,3 +98,13 @@ pub const MK_LENGTH: usize = MK_PARTS * MK_PART_LEN;
 /// flat in `MK_LENGTH`; a Poseidon sponge seeded by a few `mk` elements already
 /// yields full-entropy outputs, and `mk` is sound by construction.
 pub const NF_QUERY_MK_PREFIX: usize = 4;
+
+/// The number of leading `mk` elements that seed the expansion-parameter
+/// sponge (`nf_expansion_params`).
+///
+/// Three, one fewer than [`NF_QUERY_MK_PREFIX`]: with the domain tag the
+/// sponge absorbs exactly `RATE = 4` elements and squeezes three, so the whole
+/// derivation is a single Poseidon permutation. `KeyExpansionStep` pays for
+/// this sponge in-step and its gate budget has no headroom for a second
+/// permutation; one full-width `mk` element is already full entropy.
+pub const NF_EXPANSION_MK_PREFIX: usize = 3;

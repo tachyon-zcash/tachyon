@@ -5,7 +5,7 @@
 
 extern crate alloc;
 
-use alloc::{string::ToString as _, vec};
+use alloc::{string::ToString as _, vec, vec::Vec};
 use core::array;
 
 use ff::Field as _;
@@ -13,23 +13,26 @@ use pasta_curves::Fp;
 use ragu::{Pcd, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
+use zcash_mimc::spec::tachyon::TachyonP5R32;
 
 use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly,
-    constants::{EK_PARTS, EPOCH_SIZE},
+    constants::{EK_PART_SIZE, EK_PARTS, EPOCH_SIZE},
+    digest::mimc,
     entropy::ActionEntropy,
     fixtures::{
         PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_stamp,
         build_unspent_pcd_between_blocks, build_unspent_seed_pcd, random_block, random_block_with,
         shared_sk, spend_witness, spendable_init_inputs,
     },
-    keys::{EmitterKeySchedule, NoteMasterKey, PartKey},
+    keys::{EmitterKeySchedule, ExpansionParams, NoteMasterKey, PartKey, PartKeyStates},
     note::{self, Nullifier},
     primitives::{
         Anchor, BlockHeight, EpochIndex, EpochOffset, NfRangePoly, NfSeqPoly, PartKeyPoly,
         PartKeySpectrumPoly, Tachygram, effect,
     },
+    relations::quotient::{self, RoundBoundaryQuotients},
     value, witness,
 };
 
@@ -1496,8 +1499,13 @@ fn spendable_lift_rejects_non_adjacent_unspent() {
 
 /// Forged key-expansion witnesses are each rejected by the gate they violate.
 /// A note's master and a foreign master are built once; each case forges a
-/// witness off the trace's keyed cipher.
+/// witness off the trace's keyed cipher or off the sponge-derived expansion
+/// params `(s, δ, w)`.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one case table exercises every forgery gate"
+)]
 fn key_expansion_rejects_forged_witnesses() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -1534,11 +1542,12 @@ fn key_expansion_rejects_forged_witnesses() {
         assemble(&other_mk, &states.spectrum(), &part_keys, 0)
     };
 
-    // Hybrid keyset sharing the round-0 key but a different mk_1: round 0 matches
+    // Hybrid keyset sharing the round-0 key and the expansion-param prefix
+    // `mk[0..NF_EXPANSION_MK_PREFIX]` but a different mk_4: round 0 matches
     // (the boundary passes), rounds 1.. diverge (the row recurrence rejects).
     let hybrid_rounds = {
         let mut hybrid = mk;
-        hybrid.0[1] += Fp::ONE;
+        hybrid.0[4] += Fp::ONE;
         let (states, part_keys) = hybrid.derive_schedule_part(0);
         assemble(&hybrid, &states.spectrum(), &part_keys, 0)
     };
@@ -1556,6 +1565,61 @@ fn key_expansion_rejects_forged_witnesses() {
         (trace, quotients, bad_key, decimation_quotient, part)
     };
 
+    // Build a part-0 witness under explicitly forged expansion params: trace,
+    // keys, and quotients are all internally consistent for the forged
+    // `(s, δ, w)`, so only the in-step sponge derivation from the threaded
+    // `mk` disagrees.
+    let assemble_params = |params: &ExpansionParams| {
+        let mut cells: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE * TachyonP5R32::ROUNDS);
+        let mut keys: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE);
+        for row in 0..(EK_PART_SIZE as u64) {
+            let (states, key) =
+                mimc::schedule_key_trace(&mk.0, params.input(Fp::from(row)), params.whitening);
+            cells.extend_from_slice(&states);
+            keys.push(key);
+        }
+        let spectrum = PartKeyStates(cells).spectrum();
+        let key_poly = PartKey(keys.try_into().expect("EK_PART_SIZE keys")).key_poly();
+        let (round, boundary, decimation_quotient) = quotient::expansion_quotients(
+            spectrum.0.coefficients(),
+            &mk,
+            params,
+            key_poly.0.coefficients(),
+            Fp::ZERO,
+        );
+        (
+            spectrum,
+            RoundBoundaryQuotients { round, boundary },
+            key_poly,
+            decimation_quotient,
+            Fp::ZERO,
+        )
+    };
+    let genuine_params = mk.expansion_params();
+
+    // Forged input salt / stride: the trace runs on shifted cipher inputs, so
+    // the round-0 targets the step derives from the genuine params reject the
+    // first column (the rounds themselves are a valid cipher trace and pass).
+    let forged_salt = {
+        let mut params = genuine_params;
+        params.salt += Fp::ONE;
+        assemble_params(&params)
+    };
+    let forged_stride = {
+        let mut params = genuine_params;
+        params.stride += Fp::ONE;
+        assemble_params(&params)
+    };
+
+    // Forged whitening key: the trace and boundary are honest, but every
+    // part key is offset by the wrong `w`, so the decimation identity against
+    // the genuine `w` rejects the key poly.
+    let forged_whitening = {
+        let mut params = genuine_params;
+        params.whitening += Fp::ONE;
+        assemble_params(&params)
+    };
+
     let cases = [
         (
             "mismatched keyset",
@@ -1563,13 +1627,28 @@ fn key_expansion_rejects_forged_witnesses() {
             "first column values identity fails at challenge",
         ),
         (
-            "hybrid keyset wrong mk_1",
+            "hybrid keyset wrong mk_4",
             hybrid_rounds,
             "row recurrence identity fails at challenge",
         ),
         (
             "forged key poly",
             forged_key,
+            "strided column identity fails at challenge",
+        ),
+        (
+            "forged expansion salt",
+            forged_salt,
+            "first column values identity fails at challenge",
+        ),
+        (
+            "forged expansion stride",
+            forged_stride,
+            "first column values identity fails at challenge",
+        ),
+        (
+            "forged whitening key",
+            forged_whitening,
             "strided column identity fails at challenge",
         ),
     ];

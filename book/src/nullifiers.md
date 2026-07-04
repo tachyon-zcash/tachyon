@@ -26,13 +26,15 @@ $\mathsf{mk}$ covers all epochs, and should be kept secret.
 
 ### Expansion
 
-A $32$-round MiMC cipher $E_{\mathsf{mk}}$ over the pow5 S-box, keyed cyclically by $\mathsf{mk}$, expands the master key into the derivation schedule: the $1024$ keys
+A $32$-round MiMC cipher $E_{\mathsf{mk}}$ over the pow5 S-box, keyed cyclically by $\mathsf{mk}$ and finished with a dedicated whitening key $w$, expands the master key into the derivation schedule: the $1024$ keys
 
 $$
-K_r = E_{\mathsf{mk}}(r) \qquad r \in [0, 1024).
+K_r = E_{\mathsf{mk}}\!\left(s + \delta\,r\right) \qquad r \in [0, 1024).
 $$
 
-The schedule is produced in four parts of $256$ (one proof step per part) that interleave into a single orbit. The expansion's symbolic degree ($5^{32} \approx 2^{74}$) is what makes the schedule's width real: the $1024$ keys resist compression back to the $32$-key $\mathsf{mk}$.
+The input salt $s$, the input stride $\delta$, and the whitening key $w$ are squeezed from a domain-separated Poseidon sponge over a fixed prefix of $\mathsf{mk}$ ($\texttt{Tachyon-NfExpand}$), so the cipher's inputs are secrets of the note, never public constants.
+
+The schedule is produced in four parts of $256$ (one proof step per part) that interleave into a single orbit. Input secrecy is what makes the schedule's width real: a schedule key alone yields no known plaintext/ciphertext pair, so recovering $\mathsf{mk}$ from leaked keys means eliminating the secret input across two outputs, a resultant of degree $5^{64} \approx 2^{148}$ rather than a univariate solve at the cipher's symbolic degree $5^{32} \approx 2^{74}$; the secret stride $\delta$ hides even the pairwise input differences such an elimination would otherwise use.
 
 ### Emitter polynomials
 
