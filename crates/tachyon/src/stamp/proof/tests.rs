@@ -320,8 +320,9 @@ fn unspent_fuse_rejects_invalid_compositions() {
         let nf_b = Nullifier::from(Fp::random(&mut *rng));
         let shard_a = build_unspent_seed_pcd(rng, start, EpochIndex(0), &stamps_left.clone(), nf_a);
         let shard_b = build_unspent_seed_pcd(rng, mid, EpochIndex(0), &stamps_right.clone(), nf_b);
+        let w = witness::unspent_fuse((*shard_a.data(), *shard_b.data()), &[], &[]);
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
+            .fuse(rng, pool::UnspentFuse, w, shard_a, shard_b)
             .err()
             .unwrap();
         let ragu::Error::InvalidWitness(inner) = err else {
@@ -339,8 +340,9 @@ fn unspent_fuse_rejects_invalid_compositions() {
         let nf = Nullifier::from(Fp::random(&mut *rng));
         let shard_a = build_unspent_seed_pcd(rng, start, EpochIndex(0), &stamps_left, nf);
         let shard_b = build_unspent_seed_pcd(rng, start, EpochIndex(0), &stamps_right, nf);
+        let w = witness::unspent_fuse((*shard_a.data(), *shard_b.data()), &[], &[]);
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, (), shard_a, shard_b)
+            .fuse(rng, pool::UnspentFuse, w, shard_a, shard_b)
             .err()
             .unwrap();
         let ragu::Error::InvalidWitness(inner) = err else {
@@ -1067,6 +1069,54 @@ fn unspent_lift_spans_partial_and_whole_epochs() {
 }
 
 #[test]
+fn unspent_fuse_composes_multi_epoch_right() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis(rng);
+    pool.advance(usize::try_from(EPOCH_SIZE + 1).expect("fits"), |_| {
+        random_block(rng, 1, 2)
+    });
+
+    let nf0 = Nullifier::from(Fp::random(&mut *rng));
+    let nf1 = Nullifier::from(Fp::random(&mut *rng));
+    // Left half: epoch 0's first block only (single-epoch).
+    let left =
+        build_unspent_pcd_between_blocks(rng, &pool, &[nf0], BlockHeight(0)..=BlockHeight(0));
+    // Right half: the rest of epoch 0 plus epoch 1's first block — multi-epoch,
+    // sharing the mid-epoch junction (still in epoch 0) with `left`.
+    let right = build_unspent_pcd_between_blocks(
+        rng,
+        &pool,
+        &[nf0, nf1],
+        BlockHeight(1)..=BlockHeight(EPOCH_SIZE),
+    );
+
+    let (fused, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::UnspentFuse,
+            witness::unspent_fuse((*left.data(), *right.data()), &[], &[nf0]),
+            left,
+            right,
+        )
+        .expect("UnspentFuse mid-epoch with multi-epoch right");
+
+    let (_anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), _anchor_last) =
+        *fused.data();
+    assert_eq!(
+        elapsed,
+        NfSeqPoly::from_iter([nf0]).commit(),
+        "junction epoch recorded once, not duplicated"
+    );
+    assert_eq!(nf_start, nf0);
+    assert_eq!(nf_end, nf1, "tip advances to the right half's present nf");
+    assert_eq!(epoch_start.0, 0);
+    assert_eq!(
+        epoch_end.0, 1,
+        "merged range spans the boundary the right half crossed"
+    );
+}
+
+#[test]
 fn unspent_fuse_rejects_epoch_boundary_crossing() {
     let rng = &mut StdRng::seed_from_u64(0);
     let mut pool = PoolSim::genesis(rng);
@@ -1091,7 +1141,13 @@ fn unspent_fuse_rejects_epoch_boundary_crossing() {
     let forged_right = build_unspent_seed_pcd(rng, left_end, EpochIndex(1), &stamp, nf1);
 
     let err = PROOF_SYSTEM
-        .fuse(rng, pool::UnspentFuse, (), left, forged_right)
+        .fuse(
+            rng,
+            pool::UnspentFuse,
+            witness::unspent_fuse((*left.data(), *forged_right.data()), &[], &[]),
+            left,
+            forged_right,
+        )
         .err()
         .unwrap();
     let ragu::Error::InvalidWitness(inner) = err else {
