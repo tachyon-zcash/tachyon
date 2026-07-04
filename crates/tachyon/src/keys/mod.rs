@@ -56,18 +56,24 @@
 //!
 //! ## Nullifier Derivation
 //!
-//! Nullifiers are derived via a GGM tree PRF instantiated from Poseidon:
+//! Nullifiers are derived via a GGM tree of key schedules expanded by a
+//! hardened 128-round MiMC cipher:
 //!
-//! $$\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk})$$
-//! $$\mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$$
+//! $$\mathsf{mk}_i = \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(i, \psi,
+//! \mathsf{nk})$$ $$\mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$$
 //!
 //! where $\psi$ is the note's nullifier trapdoor, $\mathsf{nk}$ is the
-//! nullifier key, and flavor is the epoch-id.
+//! nullifier key, and flavor is the epoch-id. Every tree node is a wide
+//! cyclic key schedule that squeezes its own secret input parameters
+//! $(s, \delta, w)$ under `Tachyon-NfExpand`; child $c$'s schedule is the
+//! whitened cipher outputs on the affine inputs $s + \delta(64c + r)$, and a
+//! depth-2 node's own expansion (under `Tachyon-NfLeaf__`) is its 64-epoch
+//! leaf.
 //!
-//! The master root key $\mathsf{mk}$ supports oblivious sync delegation:
-//! prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
-//! $e \leq t$, enabling range-restricted delegation without revealing
-//! spend capability.
+//! The master root schedule $\mathsf{mk}$ supports oblivious sync
+//! delegation: node schedules permit evaluating the PRF only within their
+//! leaf-aligned windows, enabling range-restricted delegation without
+//! revealing spend capability.
 
 pub mod private;
 pub mod public;
@@ -78,8 +84,8 @@ mod proof;
 
 // Re-exports: public API surface.
 pub use ggm::{
-    GGM_CHUNK_MASK, GGM_CHUNK_SIZE, GGM_MAX_INDEX, GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey,
-    NotePrefixedKey, cover_candidates,
+    ExpansionParams, GGM_CHUNK_MASK, GGM_CHUNK_SIZE, GGM_MAX_INDEX, GGM_TREE_ARITY, GGM_TREE_DEPTH,
+    NodeStates, NoteMasterKey, NotePrefixedKey, cover_candidates,
 };
 pub use note::{NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};

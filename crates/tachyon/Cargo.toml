@@ -29,6 +29,7 @@ std = [
     "ragu/std",
     "reddsa/std",
     "corez/std",
+    "zcash_mimc/std",
     "ragu/multicore",
 ]
 
@@ -56,6 +57,7 @@ ragu = { git = "https://github.com/turbocrime/ragu", rev = "98a15d32d2e5dd8b13fb
 
 rand_core = { version = "0.6", default-features = false }
 reddsa = { version = "0.5.1", default-features = false }
+zcash_mimc = { path = "../mimc", default-features = false }
 
 [dev-dependencies]
 rand = "0.8"

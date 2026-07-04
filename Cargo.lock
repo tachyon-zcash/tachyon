@@ -873,6 +873,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "zcash_mimc"
+version = "0.0.0"
+dependencies = [
+ "blake2b_simd",
+ "ff",
+ "lazy_static",
+ "pasta_curves",
+ "rand",
+]
+
+[[package]]
 name = "zcash_tachyon"
 version = "0.0.0"
 dependencies = [
@@ -887,6 +898,7 @@ dependencies = [
  "rand",
  "rand_core",
  "reddsa",
+ "zcash_mimc",
 ]
 
 [[package]]

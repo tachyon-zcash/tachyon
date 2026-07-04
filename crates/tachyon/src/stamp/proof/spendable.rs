@@ -12,15 +12,19 @@ use alloc::{vec, vec::Vec};
 
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
-use ragu::{Header, Index, Step, Suffix, constraint::enforce_zero};
+use ragu::{
+    Header, Index, Polynomial, Step, Suffix,
+    constraint::{enforce_equal_point, enforce_zero},
+};
 
 use super::{
-    delegation::NullifierHeader,
+    delegation::NullifierDerivation,
     pool::{AnchorChain, VerifiedUnspent},
 };
 use crate::{
     note::{self, Nullifier},
-    primitives::{Anchor, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, NfSeqPoly, TachygramSetPoly},
+    relations::enforce::enforce_shifted_combination,
 };
 
 /// Wallet's spendable position `(present_nf, anchor, cm)`
@@ -50,10 +54,11 @@ impl Header for SpendableHeader {
 
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
-/// Wallet-only. Fuses a boundary-rooted [`AnchorChain`] with the wallet's
-/// single-leaf [`NullifierHeader`](super::delegation::NullifierHeader): binds
-/// `present_nf` to the proven leaf, checks `cm in creation_set`, roots the
-/// chain at the epoch boundary, and requires the cm-stamp to be its final link.
+/// Wallet-only. Fuses a boundary-rooted [`AnchorChain`] with a wallet
+/// [`NullifierDerivation`] that *covers* the creation epoch: confirms
+/// `present_nf` is the derivation's nullifier at that epoch (a degree-0 opening
+/// of the covered tail), checks `cm in creation_set`, roots the chain at the
+/// epoch boundary, and requires the cm-stamp to be its final link.
 #[derive(Debug)]
 pub struct SpendableInit;
 
@@ -61,29 +66,76 @@ impl Step for SpendableInit {
     type Aux<'source> = ();
     type Left = AnchorChain;
     type Output = SpendableHeader;
-    type Right = NullifierHeader;
-    /// `((pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf)`.
-    type Witness<'source> = ((Anchor, Anchor), TachygramSetPoly, Nullifier);
+    type Right = NullifierDerivation;
+    /// `((pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf,
+    /// creation_epoch, deriv_seq, prefix_seq, tail_seq)`.
+    type Witness<'source> = (
+        (Anchor, Anchor),
+        TachygramSetPoly,
+        Nullifier,
+        EpochIndex,
+        NfSeqPoly,
+        NfSeqPoly,
+        NfSeqPoly,
+    );
 
-    const INDEX: Index = Index::new(12);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        ((pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf): Self::Witness<'source>,
+        (
+            (pre_epoch_anchor, pre_cm_anchor),
+            creation_set,
+            present_nf,
+            creation_epoch,
+            deriv_seq,
+            prefix_seq,
+            tail_seq,
+        ): Self::Witness<'source>,
         (chain_start, chain_end): <Self::Left as Header>::Data,
-        (cm, (nf_epoch_start, nf_start), _nf_seq_commit, (nf_epoch_end, _nf_end)): <Self::Right as Header>::Data,
+        (cm, deriv_start, deriv_end, deriv_seq_commit): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // Bind `present_nf` to the single derived starting leaf `GGM(mk, epoch)`.
-        enforce_zero(
-            Fp::from(nf_epoch_end) - (Fp::from(nf_epoch_start) + Fp::ONE),
-            "SpendableInit: starting range must span one epoch",
+        // Confirm `present_nf` is the derivation's nullifier at the creation
+        // epoch, by coverage: `q = prefix ++ tail` with `tail` starting at
+        // offset `k = creation_epoch - deriv_start`, so `present_nf =
+        // tail.eval(0)`. `q = prefix(X) + X^k·tail(X) - X^k` (the `-X^k`
+        // cancels prefix's sentinel; tail re-terminates). Offsets are
+        // header-fixed and the sentinels pin `prefix`'s length, so the
+        // decomposition is unique.
+        enforce_equal_point(
+            Eq::from(deriv_seq.commit()),
+            Eq::from(deriv_seq_commit),
+            "SpendableInit: derivation polynomial does not match header",
         )?;
-        enforce_zero(
-            Fp::from(present_nf) - Fp::from(nf_start),
-            "SpendableInit: present nullifier does not match the derived leaf",
-        )?;
-        let epoch = nf_epoch_start;
+        if deriv_end.0 <= creation_epoch.0 {
+            return Err(ragu::Error::InvalidWitness(
+                "SpendableInit: derivation does not cover the creation epoch".into(),
+            ));
+        }
+        let off =
+            usize::try_from(creation_epoch.0.checked_sub(deriv_start.0).ok_or_else(|| {
+                ragu::Error::InvalidWitness(
+                    "SpendableInit: derivation does not cover the creation epoch".into(),
+                )
+            })?)
+            .map_err(|_too_far| {
+                ragu::Error::InvalidWitness("SpendableInit: coverage offset exceeds usize".into())
+            })?;
+        let tail_poly = Polynomial::from(tail_seq);
+        enforce_shifted_combination(
+            ctx,
+            [(&Polynomial::from(prefix_seq), 0), (&tail_poly, off)],
+            [(-Fp::ONE, off)],
+            &Polynomial::from(deriv_seq),
+        )
+        .map_err(|_relation_err| {
+            ragu::Error::InvalidWitness(
+                "SpendableInit: creation leaf is not covered by the derivation".into(),
+            )
+        })?;
+        ctx.enforce_poly_query(tail_poly.commit(), Fp::ZERO, Fp::from(present_nf))?;
+        let epoch = creation_epoch;
 
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_point = Fp::from(cm);
@@ -131,7 +183,7 @@ impl Step for SpendableLift {
     type Right = VerifiedUnspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(13);
+    const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,

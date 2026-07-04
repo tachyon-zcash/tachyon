@@ -75,7 +75,7 @@ impl Step for OutputStamp {
         Anchor,
     );
 
-    const INDEX: Index = Index::new(14);
+    const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,
@@ -124,14 +124,14 @@ impl Step for OutputStamp {
     }
 }
 
-/// Proves a spend's action and stamps it, consuming a [`SpendHeader`] whose
-/// `present_nf`/`nf_next` are already bound by
-/// [`SpendBind`](super::spend::SpendBind).
+/// Proves a spend's action and publishes its stamp.
 ///
-/// Witnesses the `note` and `pak`, plus the action randomizers (`rcv`,
-/// `alpha`); checks `cm == note.commitment()` (so `cv` commits to the
-/// proven-minted value) and derives `(cv, rk)`. Publishes the action digest
-/// and `[present_nf]G_0·[nf_next]G_1` as the stamp's commitments.
+/// Focused like [`OutputStamp`] on the action: re-witnesses the spent note
+/// (bound to the [`SpendHeader`]'s `cm`), derives the value commitment `cv` and
+/// the randomized action key `rk`, and commits the one-action set plus the
+/// two-element tachygram set `{present_nf, nf_next}` (the pair
+/// [`SpendBind`](super::spend::SpendBind) already confirmed against the
+/// covering derivation).
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -148,7 +148,7 @@ impl Step for SpendStamp {
         ProofAuthorizingKey,
     );
 
-    const INDEX: Index = Index::new(16);
+    const INDEX: Index = Index::new(17);
 
     fn witness<'source>(
         &self,
@@ -184,7 +184,6 @@ impl Step for SpendStamp {
 
         let cv = rcv.commit(note.value);
         let rk = pak.ak.derive_action_public(&alpha);
-
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
             ragu::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
         })?;
@@ -223,7 +222,7 @@ impl Step for MergeStamp {
         (ActionSetPoly, TachygramSetPoly),
     );
 
-    const INDEX: Index = Index::new(17);
+    const INDEX: Index = Index::new(18);
 
     fn witness<'source>(
         &self,
@@ -308,7 +307,7 @@ impl Step for StampLift {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(18);
+    const INDEX: Index = Index::new(19);
 
     fn witness<'source>(
         &self,

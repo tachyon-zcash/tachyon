@@ -26,10 +26,11 @@ use crate::{
     effect,
     entropy::ActionRandomizer,
     keys::ProofAuthorizingKey,
-    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram},
+    note::Nullifier,
+    primitives::{ActionDigest, ActionDigestError, Anchor, EpochIndex, Tachygram},
     serialization,
     stamp::proof::{delegation, spend, spendable},
-    value,
+    value, witness,
 };
 
 /// Marker for a bundle that has not yet been proven.
@@ -304,15 +305,16 @@ impl Plan {
     ///
     /// Stamps are recursively merged via [`MergeStamp`] into a single stamp.
     ///
-    /// `spendbind_inputs` items must correspond to each planned spend, in
+    /// `spend_pcds` items must correspond to each planned spend, in
     /// order.
     pub fn prove<RNG: RngCore + CryptoRng>(
         self,
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
-        spendbind_inputs: Vec<(
+        spend_pcds: Vec<(
+            ragu::Pcd<delegation::NullifierDerivation>,
+            EpochIndex,
             ragu::Pcd<spendable::SpendableHeader>,
-            ragu::Pcd<delegation::NullifierHeader>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
         // Each entry pairs leaf stamp components with the descriptor and
@@ -322,19 +324,41 @@ impl Plan {
         // digest is computed once, on the final stamp.
         let mut entries = Vec::with_capacity(self.spends.len() + self.outputs.len());
 
-        if self.spends.len() != spendbind_inputs.len() {
+        if self.spends.len() != spend_pcds.len() {
             return Err(ProveError::SpendableMismatch);
         }
 
-        for ((desc, alpha, note, rcv), (sp_pcd, nf_pcd)) in
-            self.spends.into_iter().zip(spendbind_inputs)
+        for ((desc, alpha, note, rcv), (range_pcd, present_epoch, spendable_pcd)) in
+            self.spends.into_iter().zip(spend_pcds)
         {
             let app = &*PROOF_SYSTEM;
 
+            // SpendBind: confirm the epoch's nullifier pair against the covering
+            // derivation. Its coverage witness needs the derivation's covered
+            // nullifiers, recomputed natively from the note's master key (the
+            // succinct header carries only their commitment).
+            let mk = pak.nk.derive_note_private(&note.psi);
+            let (_, deriv_start, deriv_end, _) = *range_pcd.data();
+            let deriv_nfs: Vec<Nullifier> = (deriv_start.0..deriv_end.0)
+                .map(|epoch| mk.derive_nullifier(EpochIndex(epoch)))
+                .collect();
+            let bind_witness = witness::spend_bind(
+                (*spendable_pcd.data(), *range_pcd.data()),
+                present_epoch,
+                &deriv_nfs,
+            );
             let (bind_pcd, ()) = app
-                .fuse(rng, spend::SpendBind, (), sp_pcd, nf_pcd)
+                .fuse(
+                    rng,
+                    spend::SpendBind,
+                    bind_witness,
+                    spendable_pcd,
+                    range_pcd,
+                )
                 .map_err(ProveError::ProofFailed)?;
 
+            // SpendStamp: prove the action and publish. The tachygram pair is
+            // read straight off the bind header.
             let (tachygrams, anchor, proof) =
                 ProofStamp::prove_spend(rng, rcv, alpha, note, *pak, bind_pcd)
                     .map_err(ProveError::ProofFailed)?;
@@ -465,8 +489,11 @@ impl ProofStamp {
     /// Proves a single spend action from a pre-built [`spend::SpendBind`]
     /// PCD, returning the stamp components `(tachygrams, anchor, proof)`.
     ///
-    /// The spend's `anchor` is taken as the stamp's anchor — chain
-    /// validation lives inside the spendable lineage, not here.
+    /// The nullifier pair `{present_nf, nf_next}` published for data
+    /// availability is read straight off the bind header (already confirmed
+    /// against the derivation at [`SpendBind`](spend::SpendBind)); this step
+    /// only proves the action `(cv, rk)`. The spend's `anchor` is taken as the
+    /// stamp's anchor — chain validation lives inside the spendable lineage.
     pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         rcv: value::Trapdoor,

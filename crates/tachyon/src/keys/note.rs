@@ -1,11 +1,17 @@
 //! Note-related keys: NullifierKey, PaymentKey.
 
+use core::array;
+
 use derive_more::Debug;
 use ff::PrimeField as _;
 use pasta_curves::Fp;
 
 use super::{ggm::NoteMasterKey, proof::SpendValidatingKey};
-use crate::{digest::poseidon, note};
+use crate::{
+    constants::{MK_PART_LEN, MK_PARTS},
+    digest::poseidon,
+    note,
+};
 
 /// A Tachyon nullifier deriving key.
 ///
@@ -14,19 +20,21 @@ use crate::{digest::poseidon, note};
 ///
 /// $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
 ///
-/// where $F$ is a keyed PRF (Poseidon), $\Psi$ is the note's nullifier
-/// trapdoor, and flavor is the epoch-id. This replaces Orchard's more
-/// complex construction that defended against faerie gold attacks — which
-/// are moot under out-of-band payments.
+/// where $F$ is a keyed PRF (a GGM tree over a hardened 128-round MiMC
+/// child cipher), $\Psi$ is the note's nullifier trapdoor, and flavor is
+/// the epoch-id. This replaces Orchard's more complex construction that
+/// defended against faerie gold attacks — which are moot under out-of-band
+/// payments.
 ///
 /// ## Capabilities
 ///
 /// - **Nullifier derivation**: detecting when a note has been spent
 /// - **Oblivious sync delegation** (Nullifier Derivation Scheme doc): the
-///   master root key $\mathsf{mk} = \text{KDF}(\Psi, \mathsf{nk})$ seeds a GGM
-///   tree PRF; prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
-///   $e \leq t$, enabling range-restricted delegation without revealing spend
-///   capability
+///   master root key $\mathsf{mk} =
+///   \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(\Psi, \mathsf{nk})$ seeds the
+///   GGM tree PRF; prefix keys $\Psi_t$ permit evaluating the PRF only for
+///   epochs $e \leq t$, enabling range-restricted delegation without revealing
+///   spend capability
 ///
 /// `nk` alone does NOT confer spend authority — combined with `ak` it
 /// forms the proof authorizing key `pak`, enabling proof construction
@@ -35,10 +43,23 @@ use crate::{digest::poseidon, note};
 pub struct NullifierKey(#[debug(skip)] pub(super) Fp);
 
 impl NullifierKey {
-    /// Derive a note's GGM master root from its nullifier trapdoor `psi`.
+    /// Derive one `mk` part (`MK_PART_LEN` round keys) of a note's master key
+    /// from its nullifier trapdoor `psi` and the part index. One `NfMasterSeed`
+    /// step derives one part; the parts concatenate into the full schedule
+    /// via [`NoteMasterKey::from_parts`].
+    #[must_use]
+    pub fn derive_note_part(&self, psi: &note::NullifierTrapdoor, part: u64) -> [Fp; MK_PART_LEN] {
+        poseidon::nf_master_part(psi.0, self.0, part)
+    }
+
+    /// Derive a note's full GGM master root from its nullifier trapdoor
+    /// `psi`: all `MK_PARTS` parts, assembled.
     #[must_use]
     pub fn derive_note_private(&self, psi: &note::NullifierTrapdoor) -> NoteMasterKey {
-        NoteMasterKey(poseidon::nf_master(psi.0, self.0))
+        #[expect(clippy::as_conversions, reason = "part < MK_PARTS fits u64")]
+        let parts: [[Fp; MK_PART_LEN]; MK_PARTS] =
+            array::from_fn(|part| self.derive_note_part(psi, part as u64));
+        NoteMasterKey::from_parts(&parts)
     }
 }
 
@@ -140,7 +161,7 @@ mod tests {
         let psi = note::NullifierTrapdoor::random(rng);
         let mk = nk.derive_note_private(&psi);
 
-        for dk in &mk.derive_note_delegates(0..=99) {
+        for dk in &mk.derive_note_delegates(0..=127) {
             for epoch in dk.range() {
                 assert_eq!(
                     mk.derive_nullifier(EpochIndex(epoch)),

@@ -13,17 +13,19 @@ Multiple parties execute the proof tree.
 
 ### Deriving nullifiers
 
-A wallet proves a contiguous run of its note's nullifiers were correctly GGM-derived[^nullifiers].
-`NfMasterSeed` witnesses the note and the proof-authorizing key `pak`, checks `note.pk == pak.derive_payment_key()` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits an `NfPrefixHeader` carrying `cm`, the master node, depth zero, and leaf index zero.
-`NfPrefixStep` descends one tree level on a freely-witnessed chunk: it hashes the node with the chunk and accumulates the chunk into the leaf index, so the leaf a walk reaches is pinned into the index even though each step's chunk is free.
-`NullifierStep` turns a depth-complete node into a single-epoch `NullifierHeader`: `cm`, the boundary `(epoch, nf)` pairs (`nf_start` and `nf_end` coincide for a single leaf), and a single-leaf `nf_seq_commit` over the half-open epoch range `[index, index + 1)`.
-`NullifierFuse` concatenates two adjacent nullifier sequences into one, requiring the same `cm` and contiguity (`right.epoch_start == left.epoch_end`).
-The result is a `NullifierHeader` proving the range `[epoch_start, epoch_end)` commits to the genuine `GGM(mk, ·)` leaves of the note identified by `cm`, surfacing `nf_start` and `nf_end` as its boundary leaves.
+A wallet proves a contiguous run of its note's per-epoch nullifiers were correctly GGM-derived[^nullifiers].
+The derivation descends a 64-ary tree of key schedules: a node's schedule keys a child cipher whose 64 whitened outputs are its children's schedules, and a depth-2 node's outputs are the note's nullifiers for a block of 64 consecutive epochs.
+`NfMasterSeed` witnesses the note, the proof-authorizing key `pak`, and a part index; it checks `note.pk == pak.derive_payment_key()` (which pins `nk`, and through `nk` the commitment `cm`), derives one part of the master key `mk` from `psi` and `nk`, and emits an `NfMasterHeader` carrying that part, its index, and the note. The master key is split across two parts, each seeded on its own.
+`NfMasterStep` reconciles a note's two parts and assembles `mk`, then proves one child chunk's key schedule out of it in a single trace-based step, emitting a depth-1 `NfPrefixHeader`.
+`NfPrefixStep` descends one further level on a freely-witnessed chunk: it proves the chunk's child schedule out of the parent schedule and accumulates the chunk into the node index, so the leaf a walk reaches is pinned into the index even though each step's chunk is free.
+`NullifierDerivationStep` expands a depth-2 node into a `NullifierDerivation`: its 64 leaf outputs are the nullifiers for epochs `[64·index, 64·index + 64)`, published as one coefficient-form sequence commitment `seq_commit` over that half-open range, alongside `cm`.
+`NullifierFuse` shift-concatenates two adjacent derivations into one, requiring the same `cm` and contiguity (`right.epoch_start == left.epoch_end`).
+The result is a `NullifierDerivation` proving the range `[epoch_start, epoch_end)` commits to the genuine `GGM(mk, ·)` leaves of the note identified by `cm`. It carries no boundary nullifiers: a consumer reads whatever single leaf or sub-range it needs from the sequence by coverage.
 
 ### Bootstrapping a spendable
 
-A spendable starts when `SpendableInit` fuses a boundary-rooted `AnchorChain` with the wallet's single-leaf `NullifierHeader` for the starting epoch.
-It witnesses `((pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf)`: it binds `present_nf` to the proven leaf by equality (`present_nf == nf_start`, the range spanning the single epoch `[epoch_start, epoch_start + 1)`), takes `cm` from the range header, checks `cm` is among the creation stamp's tachygrams[^tachygrams], requires the chain to root at `pre_epoch_anchor.next_epoch(epoch)`, requires the cm-stamp to be the chain's final link, and emits a `SpendableHeader` carrying `(cm, present_nf, anchor)`.
+A spendable starts when `SpendableInit` fuses a boundary-rooted `AnchorChain` with a `NullifierDerivation` covering the creation epoch.
+It witnesses `((pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf, creation_epoch)` and the derivation-slice polynomials: it confirms `present_nf` is the derivation's leaf at `creation_epoch` by coverage (a degree-0 opening of the covered tail), takes `cm` from the derivation header, checks `cm` is among the creation stamp's tachygrams[^tachygrams], requires the chain to root at `pre_epoch_anchor.next_epoch(creation_epoch)`, requires the cm-stamp to be the chain's final link, and emits a `SpendableHeader` carrying `(cm, present_nf, anchor)`.
 Rooting the chain at `next_epoch(epoch)` pins the starting GGM leaf index to the consensus epoch: consensus anchor membership of the eventual spend anchor forces the boundary, and hence `epoch`, to be the real creation epoch. Without it a note spent in its creation epoch crosses no boundary, leaving the index a free witness.
 The anchor is set initially to the position immediately after the creation stamp and advanced by each lift.
 
@@ -37,8 +39,8 @@ The sync service produces `Unspent` segments without ever holding the note, its 
 `UnspentEpochFuse` crosses an epoch boundary: it advances the anchor across the boundary and splices the left range's completing tip `nf_end` into `elapsed`, so the crossing count grows by exactly one; either half may itself be a multi-epoch range.
 An `Unspent` records its span as two absolute epoch endpoints, `epoch_start` and `epoch_end`; the crossing count is their difference.
 
-`VerifyUnspent` binds a sync-built `Unspent` to genuine derivation. It is wallet-side: it consumes the `Unspent` and a wallet `NullifierHeader` range, and proves the range commits to exactly the `elapsed` crossings followed by the tip `nf_end`, with the range's epochs equal to the `Unspent`'s span. So every crossed nullifier and the tip are proven `GGM(mk, ·)` leaves.
-It emits a `VerifiedUnspent` carrying the span's boundary nullifiers and anchors, the end epoch, and the note's `cm`.
+`UnspentBind` binds a sync-built `Unspent` to genuine derivation. It is wallet-side: it consumes the `Unspent` and a `NullifierDerivation` that merely *covers* the unspent span, and proves the derivation's sequence contains exactly the `elapsed` crossings followed by the tip `nf_end` over the unspent's epochs. So every crossed nullifier and the tip are proven `GGM(mk, ·)` leaves.
+It emits a `VerifiedUnspent` carrying the span's boundary epochs and nullifiers, its anchors, and the note's `cm`.
 
 `SpendableLift` is wallet-side and witness-free: it consumes a `SpendableHeader` and a `VerifiedUnspent`.
 It checks the verified segment's `cm` equals the spendable's (so the absence-proven nullifiers are this note's, and the value cannot drift), the segment's `nf_start` equals the spendable's `present_nf` (continuity), and the segment's `anchor_prev` equals the spendable's anchor (adjacency).
@@ -48,15 +50,13 @@ A single lift can consume an arbitrarily long composed `Unspent`, including one 
 ### Spending
 
 To spend, the wallet runs `SpendBind`.
-It consumes the `SpendableHeader` and witnesses the note and the action fields.
-It derives `cm` from the note and requires `spendable.cm == cm`, so the witnessed note is the spendable lineage's note: the value commitment `cv` then commits to the minted value[^notes].
-The output `SpendHeader` carries `cm`, the value commitment and action verification key `(cv, rk)`, the lineage's current nullifier `present_nf`, and the threaded anchor.
-
-`SpendStamp` composes that `SpendHeader` with a length-2 `NullifierHeader` range (the live pair for the current and next epochs) and witnesses the next-epoch nullifier `nf_next`.
-It requires `range.epoch_end == range.epoch_start + 2` and `range.cm == cm`, then binds the published pair to the range's boundary leaves by equality: `present_nf == range.nf_start` and `nf_next == range.nf_end`.
-Because `present_nf` is threaded from the lineage, the `nf_start` equality forces the range to start at the lineage's current epoch, while `nf_next` is pinned to the genuine end leaf $N_{e+1}$.
+It consumes the `SpendableHeader` and a `NullifierDerivation` covering the present and next epochs, and witnesses the present epoch and the derivation-slice polynomials.
+It ties the derivation to the lineage by `deriv.cm == spendable.cm` (so no note witness is needed here), confirms the lineage's `present_nf` is the derivation's leaf at the present epoch by coverage (a degree-0 opening of the covered tail), and reads the following leaf `nf_next` as the next epoch's nullifier.
 Nonzero guards close the `nf == 0` degenerate.
-It derives the action digest from the value commitment and verification key, and emits a `StampHeader` whose tachygram set contains both nullifiers and whose anchor is threaded from the spend.
+The output `SpendHeader` carries `cm`, the confirmed pair `(present_nf, nf_next)`, and the threaded anchor.
+
+`SpendStamp` proves the spend's action, mirroring `OutputStamp`.
+It consumes the `SpendHeader`, witnesses the note and the action material `(rcv, alpha, pak)`, requires `note.commitment() == cm` and `note.pk == pak.derive_payment_key()`, derives the value commitment `cv` and the randomized action verification key `rk`[^notes], and emits a `StampHeader` whose action digest follows from `(cv, rk)`, whose tachygram set is the pair `{present_nf, nf_next}` read off the `SpendHeader`, and whose anchor is threaded from the spend.
 
 An output operation runs `OutputStamp` directly.
 The step witnesses the new note, value-randomness, action-randomness, and an anchor; the wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
@@ -78,7 +78,7 @@ The aggregated stamp has the same shape as any other, so it is itself eligible f
 ## Roles
 
 The wallet runs every step that touches the note's commitment or master key.
-It seeds and walks the private GGM tree (`NfMasterSeed`, `NfPrefixStep`, `NullifierStep`, `NullifierFuse`), derives spendable status from its own leaf (`SpendableInit`), binds and lifts over sync-built segments (`VerifyUnspent`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `OutputStamp`, `SpendStamp`).
+It seeds and walks the private GGM tree (`NfMasterSeed`, `NfMasterStep`, `NfPrefixStep`, `NullifierDerivationStep`, `NullifierFuse`), derives spendable status from its own derivation (`SpendableInit`), binds and lifts over sync-built segments (`UnspentBind`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `OutputStamp`, `SpendStamp`).
 
 The sync service holds the per-epoch nullifier values the wallet shared and pool history.
 It produces the `Unspent` segments that carry the spendable forward (`UnspentSeed`, `EmptyBlockUnspentSeed`, `UnspentFuse`, `UnspentEpochFuse`) and hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
@@ -96,10 +96,11 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `E
 | UnspentFuse | possible | yes | no |
 | UnspentEpochFuse | possible | yes | no |
 | NfMasterSeed | yes | no | no |
+| NfMasterStep | yes | no | no |
 | NfPrefixStep | yes | no | no |
-| NullifierStep | yes | no | no |
+| NullifierDerivationStep | yes | no | no |
 | NullifierFuse | yes | no | no |
-| VerifyUnspent | yes | no | no |
+| UnspentBind | yes | no | no |
 | SpendableInit | yes | no | no |
 | SpendableLift | yes | no | no |
 | SpendBind | yes | no | no |
@@ -110,7 +111,7 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `E
 
 ## Soundness
 
-The subsections below walk each subtree bottom-up: the chain segments that act as primitives, then the `Unspent` segments and the derivation chain that consume them, then the binding at `VerifyUnspent`, the spendable lineage, then spend binding and stamps.
+The subsections below walk each subtree bottom-up: the chain segments that act as primitives, then the `Unspent` segments and the derivation chain that consume them, then the binding at `UnspentBind`, the spendable lineage, then spend binding and stamps.
 
 ### Anchor segments
 
@@ -139,59 +140,62 @@ The crossing epoch is the right half's `epoch_start`, which must be exactly one 
 
 ### Derivation chain
 
-`NfMasterSeed` is the chain's only seed. It binds the master key to the note: `note.pk == pak.derive_payment_key()` pins `nk`, and the note commitment digests `nk` (through `pk`) and `psi`, so the derived `mk = Poseidon(psi, nk)` is consistent with the `cm` the seed threads forward.
-`NfPrefixStep` is a genuine `Poseidon` hash of the node with a free chunk, accumulating the chunk into the leaf index; the index pins which leaf a walk reaches even though chunks are free.
-`NullifierStep` builds its single-leaf range commitment homomorphically, $[\texttt{nf}]\,\mathcal{G}_0 + \mathcal{G}_1$ ($\mathcal{G}_1$ carries the sentinel), not from a fabricated polynomial.
-`NullifierFuse` witnesses the two nullifier sequences and their concatenation, binds each by commit-equality, and confirms the concat at the constant offset `left.epoch_end - left.epoch_start`, requiring the same `cm` and contiguity.
-So a `NullifierHeader` is a sound proof that a contiguous epoch range commits to the genuine leaves of the note identified by `cm`.
+`NfMasterSeed` is the chain's only seed and runs once per master-key part. It binds each part to the note: `note.pk == pak.derive_payment_key()` pins `nk`, and the note commitment digests `nk` (through `pk`) and `psi`, so a part derived from `psi` and `nk` is consistent with the `cm` the seed threads forward.
+`NfMasterStep` reconciles a note's two parts (pinned to part indices $0$ and $1$, same note across both) and assembles `mk`, then proves one child chunk's key schedule out of `mk` as a committed cipher trace, accumulating the chunk into the emitted node index.
+`NfPrefixStep` proves the next level's child schedule out of the parent schedule, which it binds to the parent's commitment before use, accumulating its free chunk into the node index; the index pins which leaf a walk reaches even though chunks are free.
+`NullifierDerivationStep` expands the depth-2 node under the leaf domain and certifies its 64 outputs in evaluation form as the leaf polynomial $B$ (with $B(\zeta^p) = \texttt{nf}_{64\,\texttt{index}+p}$), then binds them to the published coefficient-form sequence $q$ homomorphically. A running-sum accumulator $A$ carries the geometric total $A(1) = \sum_p B(\zeta^p)\,\beta^p$ at a challenge $\beta$ derived from both commitments, and discharging $q$'s sentinel,
 
-### Verifying unspent against derivation
+$$q(\beta) - \beta^{64} = A(1),$$
 
-`VerifyUnspent` consumes the sync's `Unspent` and the wallet's `NullifierHeader`.
-It witnesses the `elapsed` sequence and the range sequence, binds each by commit-equality (`elapsed` to the `Unspent` header, the range to the `NullifierHeader`), and appends the header's tip scalar `nf_end`, confirming
+forces every published coefficient of $q$ to the genuine leaf by Schwartz-Zippel.
+`NullifierFuse` witnesses the two sequences and their concatenation, binds each by commit-equality, and confirms the shift-concat at the constant offset `left.epoch_end - left.epoch_start`, requiring the same `cm` and contiguity.
+So a `NullifierDerivation` is a sound proof that a contiguous epoch range commits to the genuine leaves of the note identified by `cm`.
 
-$$R(X) = E(X) + X^{s}\,(\texttt{nf\_end} - 1) + X^{s+1}$$
+### Binding unspent to derivation
 
-for the range $R$, elapsed $E$, and crossing count $s$, at a Fiat-Shamir challenge: the appended tip overwrites `elapsed`'s sentinel and the trailing term re-terminates the range. The tip scalar is a left-header value, fixed by the recursive verification of the `Unspent` PCD before the challenge.
-With the range epochs pinned to the `Unspent`'s span (`range.epoch_start == epoch_start`, `range.epoch_end == epoch_end + 1`), this proves the crossings and the tip are exactly the derived `GGM(mk, ·)` leaves: the tip nullifier is a genuine leaf, not a free value.
-It binds the span's boundary nullifiers to the range's genuine boundary leaves by equality (`nf_start` and `nf_end`), and threads the range's `cm`.
+`UnspentBind` consumes the sync's `Unspent` and a `NullifierDerivation` that merely *covers* the unspent span (`deriv.start <= unspent.start`, `unspent.end < deriv.end`), not one aligned to it.
+It binds `elapsed` to the `Unspent` header and the derivation sequence $q$ to the `NullifierDerivation`, both by commit-equality. It first rebuilds the tested sub-sequence `nf_seq = elapsed ++ [nf_end]` (the crossings followed by the tip) as a shifted combination, its appended tip a left-header scalar fixed before the challenge. It then coverage-extracts `nf_seq` from $q$: writing `off = unspent.start - deriv.start` for the header-fixed coverage offset and `len` for `nf_seq`'s member count,
+
+$$q(X) = \texttt{prefix}(X) + X^{\texttt{off}}\,\texttt{nf\_seq}(X) + X^{\texttt{off}+\texttt{len}}\,\texttt{suffix}(X) - X^{\texttt{off}} - X^{\texttt{off}+\texttt{len}}$$
+
+at a Fiat-Shamir challenge: the two monomials cancel the `prefix` and `nf_seq` sentinels, and the sentinels pin each part's length, so with the header-fixed offsets the decomposition is unique.
+This proves the crossings and the tip are exactly the derived `GGM(mk, ·)` leaves over the unspent's epochs: the tip nullifier is a genuine leaf, not a free value.
+It reads the span's boundary nullifiers as degree-0 openings and threads the derivation's `cm`.
 
 ### Spendable lineage
 
 `SpendableInit` is the lineage's only seed and is wallet-only.
-It witnesses the note's fields, the creation stamp's tachygrams, the anchor running into the creation stamp, and the starting-epoch nullifier `present_nf`.
-It derives `cm` and binds the note to the pool (`cm` in `creation_set`), which pins the whole note to the real minted note.
+It consumes a covering `NullifierDerivation` and witnesses the creation stamp's tachygrams, the anchors running into the creation stamp, the creation epoch, and the starting nullifier `present_nf`.
+It takes `cm` from the derivation and binds the note to the pool (`cm` in `creation_set`), which pins the note to the real minted note; it confirms `present_nf` is the derivation's leaf at the creation epoch by coverage, so `present_nf` is a genuine leaf from the outset, tied to the consensus creation epoch by the boundary-rooted chain.
 It emits `SpendableHeader(cm, present_nf, anchor)`.
-`present_nf` is unconstrained here; the first lift requires it to equal a `VerifiedUnspent`'s `nf_start`, a genuine leaf, pinning it to the note's starting nullifier at the consensus-tied starting epoch.
 
 `SpendableLift` advances the lineage over a `VerifiedUnspent` and is witness-free.
 It threads `cm` by equality (`verified.cm == spendable.cm`), so every consumed segment belongs to the lineage's one note and the spent value cannot drift to a different same-`mk` note.
 Continuity holds through nullifier values: `verified.nf_start == spendable.present_nf`.
-Both are `GGM(mk, ·)` PRF outputs, so value-equality forces the same note and the same epoch; combined with the tip binding at `VerifyUnspent` (which makes each new `present_nf` itself a genuine leaf), a lineage cannot skip an epoch or splice in another note.
+Both are `GGM(mk, ·)` PRF outputs, so value-equality forces the same note and the same epoch; combined with the tip binding at `UnspentBind` (which makes each new `present_nf` itself a genuine leaf), a lineage cannot skip an epoch or splice in another note.
 The anchor adjacency check (`verified.anchor_prev == spendable.anchor`) welds the segment to the lineage's current position.
 
 ### Spend binding
 
 Spending a note publishes two nullifiers, one for the current epoch and one for the next, both pinned to the note's genuine leaves.
-`SpendBind` witnesses the note's fields and the action material and consumes the `SpendableHeader`.
-It derives `cm` from the note and requires `spendable.cm == cm`: the witnessed note is the lineage's note, so a phantom note reusing the same `psi` (and so the same nullifiers) but carrying a different value, and hence a different `cm`, is rejected.
-The value commitment binds to `value`, which `cm` digests, so the spent value is the minted value[^notes].
-The output `SpendHeader` threads the lineage's `present_nf`, anchor, and `cm`; `SpendBind` is an intermediate step, its `SpendHeader` consumed only by `SpendStamp`, so the note never propagates.
+`SpendBind` consumes the `SpendableHeader` and a `NullifierDerivation` covering the present and next epochs. It ties the derivation to the lineage by `deriv.cm == spendable.cm`, so the pair it confirms is this note's, and it needs no note witness of its own.
+It confirms the lineage's `present_nf` as the derivation's leaf at the present epoch by coverage (a degree-0 opening of the covered tail) and reads the following leaf `nf_next` as the next epoch's, so both published nullifiers are genuine `GGM(mk, ·)` leaves at adjacent epochs.
+Each must be nonzero, or it would collide with the note's own `cm` in the tachygram scan.
+The output `SpendHeader` carries `cm`, the pair `(present_nf, nf_next)`, and the anchor; `SpendBind` is an intermediate step, its `SpendHeader` consumed only by `SpendStamp`.
 
-`SpendStamp` completes the publication: it composes the `SpendHeader` with a length-2 `NullifierHeader` range, witnesses `nf_next`, and requires the range to span exactly two epochs with `range.cm == cm`.
-It binds the published pair to the range's boundary leaves by equality (`present_nf == range.nf_start`, `nf_next == range.nf_end`): `present_nf` is threaded from the lineage, so the `nf_start` equality forces the range to start at the lineage's current epoch, and `nf_next` is pinned to the genuine `nf_end` leaf.
-Each published nullifier must be nonzero, or it would collide with the note's own `cm` in the tachygram scan.
-Deferring the boundary-leaf binding and the action digest to `SpendStamp` keeps each step within its per-step gate budget.
+`SpendStamp` proves the action, mirroring `OutputStamp`, and completes publication.
+It witnesses the note and the action material, requires `note.commitment() == cm` and `note.pk == pak.derive_payment_key()`, and derives the value commitment `cv`, the randomized action verification key `rk`, and the action digest; it emits a `StampHeader` whose tachygram set is the pair `{present_nf, nf_next}` read off the `SpendHeader`.
+Splitting the pair-binding from the action keeps each step within its per-step gate budget and lets `SpendStamp` stay focused on the action, like `OutputStamp`.
 
-The two complementary `cm` checks pin value two independent ways. `cm == note.commitment()` ties `cm` to the note by `Poseidon` collision-resistance (the spender must know `rcm`, `pk`, `value`, `psi`). `spendable.cm == cm` ties it to the lineage, which the creation stamp proved minted. Together they bind the action's value commitment to the note actually being spent. Publishing both nullifiers lets consensus apply the spend across an epoch transition that may occur between proof construction and inclusion.
+Value is pinned two independent ways. `note.commitment() == cm` at `SpendStamp` ties `cm` to the note by `Poseidon` collision-resistance (the spender must know `rcm`, `pk`, `value`, `psi`), so the value commitment `cv` commits to the minted value[^notes]. `deriv.cm == spendable.cm` at `SpendBind` ties the published nullifiers to the lineage the creation stamp proved minted. Together they bind the action's value commitment to the note actually being spent. Publishing both nullifiers lets consensus apply the spend across an epoch transition that may occur between proof construction and inclusion.
 
-The note's age never becomes public. The lineage carries only a single current nullifier, not a polynomial with a consumed offset, and the published pair sits at the constant epochs of the live range, so no step reads a position that would leak how long the note has existed.
+The note's age never becomes public. The lineage carries only a single current nullifier, and `SpendBind` reads the pair by coverage from a derivation whose epoch range never reaches a published header, so no step surfaces a position that would leak how long the note has existed.
 
 ### Stamp construction
 
 A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
 `OutputStamp` derives a value commitment, action verification key, and action digest from a witnessed note, value-randomness, and action-randomness; constraints reject zero or over-range note values and require the note's payment key to match the witnessed key material[^keys].
-`SpendStamp` composes a `SpendHeader` (carrying value commitment, action verification key, `present_nf`, anchor, and `cm`) with the note's length-2 `NullifierHeader` range, binds the published pair to the range, derives the action digest, and emits a stamp whose action digest, two-nullifier tachygram set, and threaded anchor follow.
+`SpendStamp` consumes a `SpendHeader` (carrying `cm`, the pair `(present_nf, nf_next)`, and the anchor), witnesses the note and randomness, checks the note against `cm` and its payment key against the witnessed key material[^keys], derives the value commitment, action verification key, and action digest, and emits a stamp whose one-action digest set, two-nullifier tachygram set `{present_nf, nf_next}`, and threaded anchor follow.
 `MergeStamp` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 
 ### Stamp anchor
@@ -207,30 +211,32 @@ A transaction with one spend and one output, where the spendable was bootstrappe
 ```mermaid
 flowchart TB
   subgraph derive [nullifier derivation]
-    w_seed[/note, pak/]
-    s_seed[NfMasterSeed]
+    w_seed[/note, pak, part/]
+    s_seed0[NfMasterSeed]
+    s_seed1[NfMasterSeed]
+    s_master[NfMasterStep]
     s_walk[NfPrefixStep]
-    s_leaf[NullifierStep]
+    s_leaf[NullifierDerivationStep]
     s_dfuse[NullifierFuse]
-    nf_range((NullifierHeader))
+    nf_range((NullifierDerivation))
   end
 
   subgraph spendable [spendable advance]
-    w_init[/pre_epoch_anchor, pre_cm_anchor, creation_set, present_nf/]
+    w_init[/pre_epoch_anchor, pre_cm_anchor, creation_set, present_nf, creation_epoch/]
     anchor_init((AnchorChain))
     s_init[SpendableInit]
     unspent_in((Unspent))
-    s_verify[VerifyUnspent]
+    s_verify[UnspentBind]
     s_lift[SpendableLift]
   end
 
   subgraph spend_action [spend action]
-    w_bind[/note, rcv, alpha, pak/]
+    w_bind[/present_epoch/]
     s_bind[SpendBind]
   end
 
   subgraph merge [transaction assembly]
-    w_stamp[/nf_next/]
+    w_stamp[/note, rcv, alpha, pak/]
     s_spendstamp[SpendStamp]
     w_output[/rcv, alpha, note, anchor/]
     s_output[OutputStamp]
@@ -239,24 +245,27 @@ flowchart TB
 
   stamp_out((StampHeader))
 
-  w_seed --> s_seed
-  s_seed -->|NfPrefixHeader| s_walk
+  w_seed --> s_seed0
+  w_seed --> s_seed1
+  s_seed0 -->|NfMasterHeader| s_master
+  s_seed1 -->|NfMasterHeader| s_master
+  s_master -->|NfPrefixHeader| s_walk
   s_walk -->|NfPrefixHeader| s_leaf
-  s_leaf -->|NullifierHeader| s_dfuse
+  s_leaf -->|NullifierDerivation| s_dfuse
   s_dfuse --> nf_range
 
   anchor_init --> s_init
-  nf_range -->|NullifierHeader| s_init
+  nf_range -->|NullifierDerivation| s_init
   w_init --> s_init
-  nf_range --> s_verify
+  nf_range -->|NullifierDerivation| s_verify
   unspent_in --> s_verify
   s_init -->|SpendableHeader| s_lift
   s_verify -->|VerifiedUnspent| s_lift
   s_lift -->|SpendableHeader| s_bind
 
+  nf_range -->|NullifierDerivation| s_bind
   w_bind --> s_bind
   s_bind -->|SpendHeader| s_spendstamp
-  nf_range -->|NullifierHeader| s_spendstamp
   w_stamp --> s_spendstamp
 
   w_output --> s_output
@@ -320,10 +329,11 @@ flowchart LR
 | AnchorChain | (start, end) |
 | Unspent | (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), anchor_last) |
 | VerifiedUnspent | (cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end), anchor_last) |
-| NfPrefixHeader | (cm, node, depth, index) |
-| NullifierHeader | (cm, (epoch_start, nf_start), nf_seq_commit, (epoch_end, nf_end)) |
+| NfMasterHeader | (mk_part, part, note) |
+| NfPrefixHeader | (node_commit, depth, index, note) |
+| NullifierDerivation | (cm, epoch_start, epoch_end, seq_commit) |
 | SpendableHeader | (cm, present_nf, anchor) |
-| SpendHeader | (cm, (cv, rk), present_nf, anchor) |
+| SpendHeader | (cm, present_nf, nf_next, anchor) |
 | StampHeader | (action_commit, tachygram_commit, anchor) |
 
 ## Steps
@@ -337,16 +347,17 @@ flowchart LR
 | EmptyBlockUnspentSeed | — | — | anchor_prev, (epoch, nf) | Unspent |
 | UnspentFuse | Unspent | Unspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | Unspent |
 | UnspentEpochFuse | Unspent | Unspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | Unspent |
-| VerifyUnspent | Unspent | NullifierHeader | elapsed_seq, nf_seq | VerifiedUnspent |
-| NfMasterSeed | — | — | note, pak | NfPrefixHeader |
-| NfPrefixStep | NfPrefixHeader | — | chunk | NfPrefixHeader |
-| NullifierStep | NfPrefixHeader | — | — | NullifierHeader |
-| NullifierFuse | NullifierHeader | NullifierHeader | left_seq, merged_seq, right_seq | NullifierHeader |
-| SpendableInit | AnchorChain | NullifierHeader | (pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf | SpendableHeader |
+| UnspentBind | Unspent | NullifierDerivation | elapsed_seq, nf_seq, deriv_seq, prefix_seq, suffix_seq | VerifiedUnspent |
+| NfMasterSeed | — | — | note, pak, part | NfMasterHeader |
+| NfMasterStep | NfMasterHeader | NfMasterHeader | trace, quotients, child_poly, decimation_quotient, chunk | NfPrefixHeader |
+| NfPrefixStep | NfPrefixHeader | — | node_poly, trace, quotients, child_poly, decimation_quotient, chunk | NfPrefixHeader |
+| NullifierDerivationStep | NfPrefixHeader | — | node_poly, trace, quotients, decimation_quotient, leaf_poly, seq_poly, accumulator, evaluation_quotient | NullifierDerivation |
+| NullifierFuse | NullifierDerivation | NullifierDerivation | left_seq, merged_seq, right_seq | NullifierDerivation |
+| SpendableInit | AnchorChain | NullifierDerivation | (pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf, creation_epoch, deriv_seq, prefix_seq, tail_seq | SpendableHeader |
 | SpendableLift | SpendableHeader | VerifiedUnspent | — | SpendableHeader |
-| SpendBind | SpendableHeader | — | note, rcv, alpha, pak | SpendHeader |
+| SpendBind | SpendableHeader | NullifierDerivation | present_epoch, deriv_seq, prefix_seq, tail_seq, next_tail_seq | SpendHeader |
 | OutputStamp | — | — | rcv, alpha, note, anchor | StampHeader |
-| SpendStamp | SpendHeader | NullifierHeader | nf_next | StampHeader |
+| SpendStamp | SpendHeader | — | note, rcv, alpha, pak | StampHeader |
 | MergeStamp | StampHeader | StampHeader | (action_set, tachygram_set) × left, merged, right | StampHeader |
 | StampLift | StampHeader | AnchorChain | — | StampHeader |
 

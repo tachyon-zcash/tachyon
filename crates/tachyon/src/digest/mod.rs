@@ -5,4 +5,5 @@
 //! alongside the function that consumes them.
 
 pub(crate) mod blake2b;
+pub(crate) mod mimc;
 pub(crate) mod poseidon;
