@@ -1,13 +1,13 @@
-# fewer restrictions in test code
-allow-expect-in-tests = true # expect_used
-allow-unwrap-in-tests = true # unwrap_used
-allow-panic-in-tests = true # panic
+# test code
+allow-expect-in-tests = true           # expect_used
 allow-indexing-slicing-in-tests = true # indexing_slicing
+allow-panic-in-tests = true            # panic
+allow-unwrap-in-tests = true           # unwrap_used
 
-# const slices ok
-suppress-restriction-lint-in-const = true # indexing_slicing: suppress in const contexts where .get() is unavailable.
-allow-expect-in-consts = true # expect_used
-allow-unwrap-in-consts = true # unwrap_used
+# const code
+allow-expect-in-consts = true             # expect_used
+allow-unwrap-in-consts = true             # unwrap_used
+suppress-restriction-lint-in-const = true # indexing_slicing
 
-# other lints
+# naming
 allow-exact-repetitions = true # module_name_repetitions
