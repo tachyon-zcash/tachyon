@@ -309,7 +309,7 @@ impl Plan {
             .iter_actions(action::Plan::digest, action::Plan::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
 
-        let action_commit = ActionSetPoly::from(digests.as_slice()).commit();
+        let action_commit = ActionSetPoly::from_iter(digests).commit();
 
         Ok(blake2b::bundle_commitment(
             &Eq::from(action_commit).to_affine(),
@@ -527,7 +527,7 @@ impl Bundle<Stamp> {
             .map(Action::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
 
-        let cover_set = ActionSetPoly::from(cover_digests.as_slice());
+        let cover_set = cover_digests.into_iter().collect::<ActionSetPoly>();
 
         Ok(cover_set.commit() == self.stamp.action_set)
     }
@@ -736,7 +736,7 @@ impl<S: StampState> Bundle<S> {
             .iter()
             .map(Action::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
-        let action_acc = ActionSetPoly::from(action_digests.as_slice()).commit();
+        let action_acc = ActionSetPoly::from_iter(action_digests).commit();
         Ok(blake2b::bundle_commitment(
             &Eq::from(action_acc).to_affine(),
             self.value_balance,

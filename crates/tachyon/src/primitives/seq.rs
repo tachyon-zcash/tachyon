@@ -1,9 +1,10 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::iter;
 
 use derive_more::{Debug, Eq as TotalEq, PartialEq};
-use group::Group as _;
+use ff::Field as _;
 use pasta_curves::{Eq, Fp};
 use ragu::Polynomial;
 
@@ -13,18 +14,18 @@ use crate::note::Nullifier;
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct NfSeqCommit(Eq);
 
-/// Witness polynomial for a nullifier sequence $N$ (members encoded as
-/// coefficients, ordered by ascending degree).
+/// Witness polynomial for a nullifier sequence $N$: members encoded as
+/// coefficients ordered by ascending degree, terminated by a sentinel
+/// coefficient $1$ one degree above the members.
+///
+/// The sentinel makes the polynomial nonzero for every sequence (the empty
+/// sequence is the constant $1$), so the commitment is never the identity
+/// point, which the in-circuit point representation cannot hold. It also pins
+/// the sequence's exact length: commit-equality alone bounds rank only from
+/// above (trailing zeros are invisible), while the sentinel fixes the top
+/// coefficient at the statement's span.
 #[derive(Clone, Debug)]
 pub struct NfSeqPoly(Polynomial);
-
-impl NfSeqCommit {
-    /// The identity commitment: the commit of the empty nullifier sequence.
-    #[must_use]
-    pub fn identity() -> Self {
-        Self(Eq::identity())
-    }
-}
 
 impl NfSeqPoly {
     /// Deterministic (untrapdoored) commitment to the sequence polynomial.
@@ -46,16 +47,14 @@ impl From<NfSeqPoly> for Polynomial {
     }
 }
 
-impl From<&[Nullifier]> for NfSeqPoly {
-    fn from(nfs: &[Nullifier]) -> Self {
-        let coeffs: Vec<Fp> = nfs.iter().map(|&nf| Fp::from(nf)).collect();
+impl FromIterator<Nullifier> for NfSeqPoly {
+    fn from_iter<I: IntoIterator<Item = Nullifier>>(iter: I) -> Self {
+        let coeffs: Vec<Fp> = iter
+            .into_iter()
+            .map(Fp::from)
+            .chain(iter::once(Fp::ONE))
+            .collect();
         Self(Polynomial::from_coeffs(&coeffs))
-    }
-}
-
-impl From<&[Nullifier]> for NfSeqCommit {
-    fn from(nfs: &[Nullifier]) -> Self {
-        NfSeqPoly::from(nfs).commit()
     }
 }
 
@@ -68,5 +67,21 @@ impl From<Eq> for NfSeqCommit {
 impl From<NfSeqCommit> for Eq {
     fn from(commit: NfSeqCommit) -> Self {
         commit.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use group::Group as _;
+
+    use super::*;
+
+    /// The empty sequence commits to the sentinel constant $1$, never the
+    /// identity point.
+    #[test]
+    fn empty_sequence_commit_is_not_identity() {
+        let empty: NfSeqPoly = iter::empty().collect();
+        assert_eq!(empty.eval(Fp::ZERO), Fp::ONE);
+        assert_ne!(Eq::from(empty.commit()), Eq::identity());
     }
 }

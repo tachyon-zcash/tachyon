@@ -8,14 +8,11 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
-use ff::{Field as _, PrimeField as _};
-use pasta_curves::{Eq, Fp};
-use ragu::{
-    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
-    constraint::{enforce_equal_point, enforce_zero},
-};
+use ff::Field as _;
+use pasta_curves::{Ep, Eq, Fp, Fq};
+use ragu::{Header, Index, Step, Suffix, constraint::enforce_zero};
 
 use super::{
     delegation::NullifierHeader,
@@ -23,7 +20,7 @@ use super::{
 };
 use crate::{
     note::{self, Nullifier},
-    primitives::{Anchor, NfSeqCommit, TachygramSetPoly},
+    primitives::{Anchor, TachygramSetPoly},
 };
 
 /// Wallet's spendable position `(present_nf, anchor, cm)`
@@ -35,18 +32,19 @@ use crate::{
 pub struct SpendableHeader;
 
 impl Header for SpendableHeader {
-    /// `(present_nf, anchor, cm)`. `present_nf` and `anchor` advance per lift;
-    /// `cm` threads unchanged.
-    type Data = (Nullifier, Anchor, note::Commitment);
+    /// `(cm, present_nf, anchor)`. `cm` threads unchanged; `present_nf` and
+    /// `anchor` advance per lift.
+    type Data = (note::Commitment, Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(7);
 
-    fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 + 32 + 32);
-        out.extend_from_slice(&Fp::from(data.0).to_repr());
-        out.extend_from_slice(&Fp::from(data.1).to_repr());
-        out.extend_from_slice(&Fp::from(data.2).to_repr());
-        out
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        (
+            vec![Fp::from(data.0), Fp::from(data.1), Fp::from(data.2)],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
     }
 }
 
@@ -64,39 +62,28 @@ impl Step for SpendableInit {
     type Left = AnchorChain;
     type Output = SpendableHeader;
     type Right = NullifierHeader;
-    /// `(pre_epoch_anchor, pre_cm_anchor, creation_set, present_nf)`.
-    /// `pre_epoch_anchor` is the prior epoch's terminal anchor (folded into the
-    /// boundary); `pre_cm_anchor` the anchor immediately before the cm-stamp.
-    type Witness<'source> = (Anchor, Anchor, TachygramSetPoly, Nullifier);
+    /// `((pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf)`.
+    type Witness<'source> = ((Anchor, Anchor), TachygramSetPoly, Nullifier);
 
     const INDEX: Index = Index::new(12);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (pre_epoch_anchor, pre_cm_anchor, creation_set, present_nf): Self::Witness<'source>,
+        ((pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf): Self::Witness<'source>,
         (chain_start, chain_end): <Self::Left as Header>::Data,
-        (range_commit, range_start, range_end, cm): <Self::Right as Header>::Data,
+        (cm, (nf_epoch_start, nf_start), _nf_seq_commit, (nf_epoch_end, _nf_end)): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
-
         // Bind `present_nf` to the single derived starting leaf `GGM(mk, epoch)`.
         enforce_zero(
-            Fp::from(range_end) - (Fp::from(range_start) + Fp::ONE),
+            Fp::from(nf_epoch_end) - (Fp::from(nf_epoch_start) + Fp::ONE),
             "SpendableInit: starting range must span one epoch",
         )?;
-
-        let present_commit = NfSeqCommit::from(g0 * Fp::from(present_nf));
-        enforce_equal_point(
-            Eq::from(range_commit),
-            Eq::from(present_commit),
+        enforce_zero(
+            Fp::from(present_nf) - Fp::from(nf_start),
             "SpendableInit: present nullifier does not match the derived leaf",
         )?;
-        let epoch = range_start;
+        let epoch = nf_epoch_start;
 
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_point = Fp::from(cm);
@@ -126,14 +113,14 @@ impl Step for SpendableInit {
             "SpendableInit: cm-stamp is not the chain's final link",
         )?;
 
-        Ok(((present_nf, post_cm_anchor, cm), ()))
+        Ok(((cm, present_nf, post_cm_anchor), ()))
     }
 }
 
 /// Advance the spendable over one [`VerifiedUnspent`] segment.
 ///
-/// Wallet-only, witness-free. Checks `cm`, `start_nf == present_nf`, and anchor
-/// adjacency, then advances to the tip `(end_nf, end_anchor)`.
+/// Wallet-only, witness-free. Checks `cm`, `nf_start == present_nf`, and anchor
+/// adjacency, then advances to the tip `(nf_end, anchor_last)`.
 #[derive(Debug)]
 pub struct SpendableLift;
 
@@ -150,21 +137,21 @@ impl Step for SpendableLift {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (present_nf, spendable_anchor, cm): <Self::Left as Header>::Data,
-        (start_anchor, start_nf, end_anchor, end_nf, verified_cm, _epoch): <Self::Right as Header>::Data,
+        (cm, present_nf, spendable_anchor): <Self::Left as Header>::Data,
+        (verified_cm, anchor_prev, (_epoch_start, nf_start), (_epoch_end, nf_end), anchor_last): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(verified_cm) - Fp::from(cm),
             "SpendableLift: verified unspent cm does not match spendable",
         )?;
         enforce_zero(
-            Fp::from(start_nf) - Fp::from(present_nf),
+            Fp::from(nf_start) - Fp::from(present_nf),
             "SpendableLift: segment does not start at the lineage nullifier",
         )?;
         enforce_zero(
-            Fp::from(start_anchor) - Fp::from(spendable_anchor),
+            Fp::from(anchor_prev) - Fp::from(spendable_anchor),
             "SpendableLift: unspent not adjacent to spendable",
         )?;
-        Ok(((end_nf, end_anchor, cm), ()))
+        Ok(((cm, nf_end, anchor_last), ()))
     }
 }
