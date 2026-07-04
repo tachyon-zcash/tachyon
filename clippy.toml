@@ -11,3 +11,7 @@ suppress-restriction-lint-in-const = true # indexing_slicing
 
 # naming
 allow-exact-repetitions = true # module_name_repetitions
+disallowed-macros = [
+  { path = "core::cmp::Eq", reason = "please use `derive_more` instead" },
+]
+enforced-import-renames = [{ path = "derive_more::Eq", rename = "TotalEq" }]

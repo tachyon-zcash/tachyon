@@ -772,7 +772,7 @@ impl<S: StampState> Bundle<S> {
 /// wire-format `i64` fails if the final balance is out of range.
 ///
 /// Use `i64::try_from(sum)` to narrow to the wire-format `i64`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, TotalEq)]
 pub struct ValueBalance(i128);
 
 /// Error returned when a [`ValueBalance`] operation overflows the
