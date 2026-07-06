@@ -361,8 +361,9 @@ impl Step for EmptyBlockUnspentSeed {
 /// adjacent anchors (`left.anchor_last == right.anchor_prev`), and agree on the
 /// junction nullifier (`left.nf_end == right.nf_start`); their histories are
 /// concatenated (`combined = left_elapsed ++ right_elapsed`). No epoch boundary
-/// is crossed, so `elapsed` gains no entry (the junction nf is already
-/// `right_elapsed`'s head). A crossing is [`UnspentEpochFuse`]'s job.
+/// is crossed, so `elapsed` gains no entry (the junction nf is
+/// `right_elapsed`'s head if right later crossed a boundary; otherwise it stays
+/// the in-progress `nf_end`). A crossing is [`UnspentEpochFuse`]'s job.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
