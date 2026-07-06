@@ -9,7 +9,7 @@ lint:
     cargo +nightly clippy --workspace --all-targets --all-features
 
 test *ARGS:
-    cargo test --release --workspace --all-features {{ARGS}}
+    cargo test --workspace --all-features {{ARGS}}
 
 doc:
     cargo doc --workspace --no-deps

@@ -7,6 +7,12 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.90"
 
+# dependency opt level matters for fft performance in tests
+[profile.dev.package."*"]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }
 keyword_idents = { level = "forbid", priority = -1 }
