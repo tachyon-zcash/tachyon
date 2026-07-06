@@ -589,11 +589,11 @@ impl Bundle<Stamp> {
         let trailer = {
             let action_set: [u8; 32] = Eq::from(self.stamp.action_set).to_bytes();
             let anchor: [u8; 32] = self.stamp.anchor.0.into();
-            let tachygrams: Vec<Fp> = self
+            let tachygrams: Vec<[u8; 32]> = self
                 .stamp
                 .tachygrams
                 .iter()
-                .map(|&tg| Fp::from(tg))
+                .map(|&tg| Fp::from(tg).to_repr())
                 .collect();
             let proof = self.stamp.proof.serialize();
             (action_set, anchor, tachygrams, proof)
@@ -604,11 +604,7 @@ impl Bundle<Stamp> {
             &binding_sig,
             &trailer.0,
             &trailer.1,
-            &trailer
-                .2
-                .iter()
-                .map(|&tg| tg.to_repr())
-                .collect::<Vec<[u8; 32]>>(),
+            &trailer.2,
             trailer.3.as_ref(),
         )
     }
