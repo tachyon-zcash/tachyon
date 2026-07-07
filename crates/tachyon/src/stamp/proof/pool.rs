@@ -355,16 +355,15 @@ impl Step for EmptyBlockUnspentSeed {
     }
 }
 
-/// Extend an accumulated [`Unspent`] within its tip epoch by one empty segment.
+/// Compose two [`Unspent`] lineages sharing a mid-epoch junction.
 ///
-/// The forwards half (`right`) carries no crossings of its own (empty
-/// `elapsed`); both halves meet inside one epoch (`right.epoch_start ==
-/// left.epoch_end`), at adjacent anchors (`left.anchor_last ==
-/// right.anchor_prev`), and agree on the junction nullifier (`left.nf_end ==
-/// right.nf_start`). The output keeps `left`'s history and span, extending only
-/// the anchor and tip; no epoch boundary is crossed, so `elapsed` is unchanged.
-/// Composing two non-empty histories is the composable-fuse step's job; a
-/// crossing is [`UnspentEpochFuse`]'s.
+/// The halves meet inside one epoch (`right.epoch_start == left.epoch_end`), at
+/// adjacent anchors (`left.anchor_last == right.anchor_prev`), and agree on the
+/// junction nullifier (`left.nf_end == right.nf_start`); their histories are
+/// concatenated (`combined = left_elapsed ++ right_elapsed`). No epoch boundary
+/// is crossed, so `elapsed` gains no entry (the junction nf is
+/// `right_elapsed`'s head if right later crossed a boundary; otherwise it stays
+/// the in-progress `nf_end`). A crossing is [`UnspentEpochFuse`]'s job.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -373,14 +372,15 @@ impl Step for UnspentFuse {
     type Left = Unspent;
     type Output = Unspent;
     type Right = Unspent;
-    type Witness<'source> = ();
+    /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
+    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(9);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
+        ctx: &mut ragu::StepCtx<'_>,
+        (left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq): Self::Witness<'source>,
         (
             left_anchor_prev,
             (left_epoch_start, left_nf_start),
@@ -396,17 +396,15 @@ impl Step for UnspentFuse {
             right_anchor_last,
         ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
-        // The forwards half carries no crossings: its `elapsed` is the empty
-        // sentinel (the constant `1`, committing to `g0`).
         enforce_equal_point(
+            Eq::from(left_elapsed_seq.commit()),
+            Eq::from(left_elapsed),
+            "UnspentFuse: left polynomial does not match header",
+        )?;
+        enforce_equal_point(
+            Eq::from(right_elapsed_seq.commit()),
             Eq::from(right_elapsed),
-            Eq::from(NfSeqCommit::from(g0 * Fp::ONE)),
-            "UnspentFuse: forwards half must have empty elapsed",
+            "UnspentFuse: right polynomial does not match header",
         )?;
         enforce_zero(
             Fp::from(left_anchor_last) - Fp::from(right_anchor_prev),
@@ -416,21 +414,43 @@ impl Step for UnspentFuse {
             Fp::from(right_epoch_start) - Fp::from(left_epoch_end),
             "UnspentFuse: forwards half must sit in left's tip epoch",
         )?;
-        enforce_zero(
-            Fp::from(right_epoch_end) - Fp::from(right_epoch_start),
-            "UnspentFuse: forwards half must stay within one epoch",
-        )?;
         // Seam bind: both halves tested the junction epoch at the same nf, so the
         // merged history's view of it is unambiguous.
         enforce_zero(
             Fp::from(left_nf_end) - Fp::from(right_nf_start),
             "UnspentFuse: halves disagree on the junction nullifier",
         )?;
+        let combined_commit = combined_elapsed_seq.commit();
+        let offset =
+            usize::try_from(left_epoch_end.0 - left_epoch_start.0).map_err(|_too_many_epochs| {
+                ragu::Error::InvalidWitness("UnspentFuse: crossing count exceeds usize".into())
+            })?;
+        // Sentinel concat: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
+        // `combined = left ++ right` is the shifted combination
+        // `combined(X) = left(X) + X^offset·right(X) - X^offset`. The
+        // `-X^offset` monomial cancels left's sentinel, right's first crossing
+        // lands in the vacated slot, and right's own sentinel re-terminates
+        // `combined`. The monomial's constant coefficient is trivially
+        // challenge-independent, and `offset` is left's header-fixed span.
+        enforce_shifted_combination(
+            ctx,
+            [
+                (&Polynomial::from(left_elapsed_seq), 0),
+                (&Polynomial::from(right_elapsed_seq), offset),
+            ],
+            [(-Fp::ONE, offset)],
+            &Polynomial::from(combined_elapsed_seq),
+        )
+        .map_err(|_relation_err| {
+            ragu::Error::InvalidWitness(
+                "UnspentFuse: combined is not the concatenation of the halves".into(),
+            )
+        })?;
         Ok((
             (
                 left_anchor_prev,
                 (left_epoch_start, left_nf_start),
-                left_elapsed,
+                combined_commit,
                 (right_epoch_end, right_nf_end),
                 right_anchor_last,
             ),

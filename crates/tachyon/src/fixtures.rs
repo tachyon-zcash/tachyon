@@ -656,19 +656,20 @@ pub(crate) fn build_unspent_pcd_between_blocks(
 /// Build an [`Unspent`] for the anchor span `(start_anchor, end_anchor)`,
 /// covering every stamp / empty block that advances the anchor between them;
 /// either endpoint may sit mid-block. `nf` holds one nullifier per epoch
-/// spanned, `nf[0]` for `start_anchor`'s epoch. Seeds one leaf per stamp /
-/// empty block and merges them as a balanced tree: [`UnspentFuse`] within an
-/// epoch, [`UnspentEpochFuse`] across a boundary.
+/// spanned, `nf[0]` for `start_anchor`'s epoch. Seeds one leaf per anchor
+/// step and fuses them as a binary tree via [`fuse_unspent_tree`].
 pub(crate) fn build_unspent_pcd_between_anchors(
     rng: &mut (impl RngCore + CryptoRng),
     pool: &PoolSim,
     nf: &[Nullifier],
     (start_anchor, end_anchor): (Anchor, Anchor),
 ) -> Pcd<pool::Unspent> {
-    // The balanced-tree merge derives epoch and fuse kind from block heights, so
-    // the interleaved boundary markers are dropped; only `Ok` segments seed
-    // leaves. Anchors are folded here: the first block runs from `start_anchor`
-    // (possibly mid-block), every other from its recorded entry anchor.
+    // One leaf per anchor step: each stamp advances its block's running anchor,
+    // each empty block advances the block anchor once. The tree fold derives
+    // seams from headers, so the interleaved boundary markers are dropped; only
+    // `Ok` segments seed leaves. Anchors are folded here: the first block runs
+    // from `start_anchor` (possibly mid-block), every other from its recorded
+    // entry anchor.
     let steps: Vec<(BlockHeight, Vec<Vec<Tachygram>>)> = pool
         .anchor_steps(start_anchor, end_anchor)
         .into_iter()
@@ -682,7 +683,7 @@ pub(crate) fn build_unspent_pcd_between_anchors(
     let nf_at = |epoch: EpochIndex| -> Nullifier {
         nf[usize::try_from(epoch.0 - base.0).expect("epoch within span")]
     };
-    let mut leaves: Vec<(Pcd<pool::Unspent>, EpochIndex)> = Vec::with_capacity(steps.len());
+    let mut leaves: Vec<Pcd<pool::Unspent>> = Vec::with_capacity(steps.len());
     for (index, (height, block_stamps)) in steps.into_iter().enumerate() {
         let epoch = height.epoch();
         let leaf_nf = nf_at(epoch);
@@ -695,54 +696,71 @@ pub(crate) fn build_unspent_pcd_between_anchors(
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::EmptyBlockUnspentSeed, (entry, (epoch, leaf_nf)))
                 .expect("EmptyBlockUnspentSeed");
-            leaves.push((seed, epoch));
+            leaves.push(seed);
         } else {
             for tgs in block_stamps {
                 let commit = TachygramSetPoly::from_iter(tgs.clone()).commit();
-                leaves.push((
-                    build_unspent_seed_pcd(rng, entry, epoch, &tgs, leaf_nf),
-                    epoch,
-                ));
+                leaves.push(build_unspent_seed_pcd(rng, entry, epoch, &tgs, leaf_nf));
                 entry = entry.next_stamp(&commit);
             }
         }
     }
+    fuse_unspent_tree(rng, nf, base, leaves)
+}
 
-    // Linear left-to-right fold. Each leaf is a single empty-elapsed segment;
-    // appending one within the accumulator's tip epoch is a bare [`UnspentFuse`],
-    // and across a boundary a [`UnspentEpochFuse`] splice that folds the tip nf
-    // into `elapsed` (one entry per crossed boundary, so `acc`'s elapsed is
-    // `nf[0..(acc_epoch - base)]`).
+/// Fuse contiguous [`Unspent`] chains as a binary tree: split at the midpoint,
+/// fuse each half, then join the halves at whatever seam their headers meet:
+/// a shared epoch concatenates ([`UnspentFuse`]), consecutive epochs splice at
+/// the boundary ([`UnspentEpochFuse`]). Everything a seam needs is read off
+/// the halves' headers; a chain's elapsed slice is
+/// `nf[epoch_start - base..epoch_end - base]` (one nullifier per crossed
+/// boundary).
+fn fuse_unspent_tree(
+    rng: &mut (impl RngCore + CryptoRng),
+    nf: &[Nullifier],
+    base: EpochIndex,
+    mut chains: Vec<Pcd<pool::Unspent>>,
+) -> Pcd<pool::Unspent> {
+    assert!(!chains.is_empty(), "tree fuses at least one chain");
+    if chains.len() == 1 {
+        return chains.pop().expect("single chain");
+    }
+    #[expect(
+        clippy::integer_division,
+        clippy::integer_division_remainder_used,
+        reason = "midpoint split"
+    )]
+    let right_chains = chains.split_off(chains.len() / 2);
+    let left = fuse_unspent_tree(rng, nf, base, chains);
+    let right = fuse_unspent_tree(rng, nf, base, right_chains);
+
     let elapsed_slice = |lo: EpochIndex, hi: EpochIndex| -> &[Nullifier] {
         let from = usize::try_from(lo.0 - base.0).expect("epoch within span");
         let to = usize::try_from(hi.0 - base.0).expect("epoch within span");
         &nf[from..to]
     };
-    let mut leaf_iter = leaves.into_iter();
-    let (mut acc, mut acc_epoch) = leaf_iter
-        .next()
-        .expect("anchor span covers at least one leaf");
-    for (leaf, epoch) in leaf_iter {
-        acc = if epoch.0 == acc_epoch.0 {
-            let (fused, ()) = PROOF_SYSTEM
-                .fuse(rng, pool::UnspentFuse, (), acc, leaf)
-                .expect("UnspentFuse mid-epoch");
-            fused
-        } else {
-            debug_assert_eq!(epoch.0, acc_epoch.0 + 1, "leaves must be contiguous");
-            let witness = witness::unspent_epoch_fuse(
-                (*acc.data(), *leaf.data()),
-                elapsed_slice(base, acc_epoch),
-                &[],
-            );
-            let (fused, ()) = PROOF_SYSTEM
-                .fuse(rng, pool::UnspentEpochFuse, witness, acc, leaf)
-                .expect("UnspentEpochFuse boundary");
-            acc_epoch = epoch;
-            fused
-        };
+    let (_, (left_epoch_start, _), _, (left_epoch_end, _), _) = *left.data();
+    let (_, (right_epoch_start, _), _, (right_epoch_end, _), _) = *right.data();
+    let left_el = elapsed_slice(left_epoch_start, left_epoch_end);
+    let right_el = elapsed_slice(right_epoch_start, right_epoch_end);
+    if right_epoch_start.0 == left_epoch_end.0 {
+        let witness = witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
+        let (fused, ()) = PROOF_SYSTEM
+            .fuse(rng, pool::UnspentFuse, witness, left, right)
+            .expect("UnspentFuse mid-epoch");
+        fused
+    } else {
+        debug_assert_eq!(
+            right_epoch_start.0,
+            left_epoch_end.0 + 1,
+            "fused chains must be contiguous"
+        );
+        let witness = witness::unspent_epoch_fuse((*left.data(), *right.data()), left_el, right_el);
+        let (fused, ()) = PROOF_SYSTEM
+            .fuse(rng, pool::UnspentEpochFuse, witness, left, right)
+            .expect("UnspentEpochFuse boundary");
+        fused
     }
-    acc
 }
 
 /// A fixed, deterministic spending key. Tests that don't need a distinct wallet
