@@ -123,6 +123,21 @@ pub(crate) fn bundle_commitment(action_commit: &[u8; 32], value_balance: i64) ->
 /// field encodings: the action-set commitment, the anchor, each tachygram,
 /// and the proof. Vector counts are not part of the preimage, matching the
 /// ZIP 244 auth-digest leaves.
+///
+/// Injectivity of this flat, length-free encoding is not intrinsic: it rests on
+/// two invariants enforced by the paired effecting digest and the proof system,
+/// not by this preimage.
+///
+/// - The action count is pinned by `action_acc`'s degree: the monic
+///   `∏(X - action_digest_i)` committed in `bundle_commitment` fixes the
+///   number of actions, hence the action-signature block boundary. This is the
+///   role `nActionsOrchard` plays in ZIP 244.
+/// - The proof is a compile-time fixed size (`PROOF_SIZE_COMPRESSED`), which
+///   fixes the `tachygrams || proof` boundary. Nothing on the txid side commits
+///   to the tachygram count, so the fixed proof size is load-bearing for digest
+///   injectivity, not merely wire framing: a variable-size proof would make
+///   `tachygrams || proof` ambiguous and let two distinct bundles collide on a
+///   single `wtxid`.
 pub(crate) fn stamped_auth_digest(
     action_sigs: &[[u8; 64]],
     binding_sig: &[u8; 64],
