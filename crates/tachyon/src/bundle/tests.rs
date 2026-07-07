@@ -11,7 +11,7 @@ use crate::{
     digest::blake2b::COMMIT_NO_BUNDLE,
     fixtures::{
         PoolSim, WalletSim, action_digests, build_autonome, build_output_stamp, mock_sighash,
-        random_action, random_block, random_block_with,
+        random_action, random_block, random_block_with, shared_sk,
     },
     primitives::{ActionDigest, BlockHeight},
     stamp::VerificationError,
@@ -33,7 +33,7 @@ fn value_sum_checked_arithmetic() {
 #[test]
 fn wrong_value_balance_fails_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment().unwrap());
 
@@ -47,7 +47,7 @@ fn wrong_value_balance_fails_verification() {
 #[test]
 fn stripped_bundle_retains_signatures() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
     let bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment().unwrap());
 
@@ -58,9 +58,9 @@ fn stripped_bundle_retains_signatures() {
 #[test]
 fn plan_commitment_matches_bundle_commitment() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
     let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(rng, 200);
+    let note = wallet.random_note(200);
     let pool = PoolSim::genesis(rng);
     let (stamp, output_plan) = build_output_stamp(rng, pool.anchor(), note);
 
@@ -109,16 +109,16 @@ fn payment_bundle_verifies() {
     let rng = &mut StdRng::seed_from_u64(0);
     let sender = WalletSim::random(rng);
     let recipient = WalletSim::random(rng);
-    let input_note = sender.random_note(rng, 500);
-    let output_note = recipient.random_note(rng, 200);
-    let change_note = sender.random_note(rng, 300);
+    let input_note = sender.random_note(500);
+    let output_note = recipient.random_note(200);
+    let change_note = sender.random_note(300);
 
     let mut pool = PoolSim::genesis(rng);
     pool.mine(random_block_with(rng, &[vec![input_note.commitment()]], 50));
     let height = pool.height();
     let spend_epoch = height.epoch();
     let spendable_pcd = sender.fresh_spend(rng, &pool, height, &input_note);
-    let anchor = spendable_pcd.data().1;
+    let anchor = spendable_pcd.data().2;
     let stamped = sender.autonome(
         rng,
         anchor,
@@ -134,7 +134,7 @@ fn payment_bundle_verifies() {
 #[test]
 fn stamp_verify_action_multiset_invariants() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
     let stamped = build_autonome(rng, &wallet, 1000, 700);
 
     // Permutation accepts.
@@ -191,12 +191,12 @@ fn stamp_verify_action_multiset_invariants() {
 #[test]
 fn innocent_aggregate_from_two_autonomes() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
 
-    let spend_a = wallet.random_note(rng, 1000);
-    let output_a = wallet.random_note(rng, 700);
-    let spend_b = wallet.random_note(rng, 500);
-    let output_b = wallet.random_note(rng, 200);
+    let spend_a = wallet.random_note(1000);
+    let output_a = wallet.random_note(700);
+    let spend_b = wallet.random_note(500);
+    let output_b = wallet.random_note(200);
 
     let mut pool = PoolSim::genesis(rng);
     pool.mine(random_block_with(
@@ -213,8 +213,8 @@ fn innocent_aggregate_from_two_autonomes() {
     let sp_a = wallet.lift_over_creation_epoch(rng, &pool, &spend_a, cm_height, init_a);
     let init_b = wallet.spendable_init(rng, &spend_b, &pool, cm_height);
     let sp_b = wallet.lift_over_creation_epoch(rng, &pool, &spend_b, cm_height, init_b);
-    let anchor_a = sp_a.data().1;
-    let anchor_b = sp_b.data().1;
+    let anchor_a = sp_a.data().2;
+    let anchor_b = sp_b.data().2;
     assert_eq!(anchor_a, anchor_b, "lifts land on a common anchor");
 
     let spend_epoch = cm_height.epoch().next();
@@ -267,14 +267,14 @@ fn innocent_aggregate_from_two_autonomes() {
 #[test]
 fn based_aggregate_with_two_adjuncts() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
 
-    let based_spend = wallet.random_note(rng, 800);
-    let based_output = wallet.random_note(rng, 400);
-    let a_spend = wallet.random_note(rng, 1000);
-    let a_output = wallet.random_note(rng, 700);
-    let b_spend = wallet.random_note(rng, 500);
-    let b_output = wallet.random_note(rng, 200);
+    let based_spend = wallet.random_note(800);
+    let based_output = wallet.random_note(400);
+    let a_spend = wallet.random_note(1000);
+    let a_output = wallet.random_note(700);
+    let b_spend = wallet.random_note(500);
+    let b_output = wallet.random_note(200);
 
     let mut pool = PoolSim::genesis(rng);
     pool.mine(random_block_with(
@@ -297,9 +297,9 @@ fn based_aggregate_with_two_adjuncts() {
     let a_sp = wallet.lift_over_creation_epoch(rng, &pool, &a_spend, cm_height, a_init);
     let b_init = wallet.spendable_init(rng, &b_spend, &pool, cm_height);
     let b_sp = wallet.lift_over_creation_epoch(rng, &pool, &b_spend, cm_height, b_init);
-    let anchor = based_sp.data().1;
-    assert_eq!(anchor, a_sp.data().1, "lifts land on a common anchor");
-    assert_eq!(anchor, b_sp.data().1, "lifts land on a common anchor");
+    let anchor = based_sp.data().2;
+    assert_eq!(anchor, a_sp.data().2, "lifts land on a common anchor");
+    assert_eq!(anchor, b_sp.data().2, "lifts land on a common anchor");
 
     let spend_epoch = cm_height.epoch().next();
     let mut becomes_based = wallet.autonome(
@@ -364,7 +364,7 @@ fn based_aggregate_with_two_adjuncts() {
 #[test]
 fn invalid_action_sig_fails_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment().unwrap());
 
@@ -383,7 +383,7 @@ fn invalid_action_sig_fails_verification() {
 #[test]
 fn stamped_read_write_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
     let original = build_autonome(rng, &wallet, 1000, 700);
     let mut buf = Vec::new();
     original.write(&mut buf).expect("write");
@@ -403,7 +403,7 @@ fn stamped_read_write_round_trip() {
 #[test]
 fn stripped_read_write_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
     let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
     let stripped =
         unassigned.assign_wtxid(AggregateId::try_from([0x42u8; 64]).expect("nonzero id"));
@@ -424,7 +424,7 @@ fn tachyon_bundle_conversions() {
     // Stamped Ok: actions, value_balance, tachygrams, anchor preserved.
     {
         let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::random(rng);
+        let wallet = WalletSim::new(shared_sk());
         let original = build_autonome(rng, &wallet, 1000, 700);
         let erased: TachyonBundle = original.clone().into();
         let back = Bundle::<Stamp>::try_from(erased).expect("stamped variant");
@@ -438,7 +438,7 @@ fn tachyon_bundle_conversions() {
     // Stripped Ok: wtxid preserved.
     {
         let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::random(rng);
+        let wallet = WalletSim::new(shared_sk());
         let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
         let stripped =
             unassigned.assign_wtxid(AggregateId::try_from([0xABu8; 64]).expect("nonzero id"));
@@ -456,7 +456,7 @@ fn tachyon_bundle_conversions() {
     // Err: TryFrom rejects the wrong variant in both directions.
     {
         let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::random(rng);
+        let wallet = WalletSim::new(shared_sk());
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
         let adjunct =
@@ -473,7 +473,7 @@ fn tachyon_bundle_conversions() {
 #[test]
 fn tachyon_bundle_wire_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
 
     // Stamped variant (0x01).
     {
@@ -540,7 +540,7 @@ fn wire_state_byte_dispatch() {
     // Valid-but-mismatched state byte: each definite reader rejects the other's.
     {
         let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::random(rng);
+        let wallet = WalletSim::new(shared_sk());
 
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let mut stamped_buf = Vec::new();
@@ -574,7 +574,7 @@ fn wire_state_byte_dispatch() {
 #[test]
 fn read_rejects_zero_wtxid() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
+    let wallet = WalletSim::new(shared_sk());
 
     // Adjunct (non-empty actions) and innocent (empty actions) both reject.
     let adjunct = {
@@ -657,7 +657,7 @@ fn auth_digest_invariants() {
     // wtxid discriminate across aggregation forms.
     {
         let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::random(rng);
+        let wallet = WalletSim::new(shared_sk());
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let stamped_digest = stamped.auth_digest();
 
@@ -671,7 +671,7 @@ fn auth_digest_invariants() {
     // produce distinct digests.
     {
         let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::random(rng);
+        let wallet = WalletSim::new(shared_sk());
         let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
 
         let stripped_aa = unassigned
@@ -688,13 +688,13 @@ fn auth_digest_invariants() {
     // stamped and stripped.
     {
         let rng = &mut StdRng::seed_from_u64(0);
-        let wallet = WalletSim::random(rng);
+        let wallet = WalletSim::new(shared_sk());
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let stamped_direct = stamped.auth_digest();
         let erased: TachyonBundle = stamped.into();
         assert_eq!(erased.auth_digest(), stamped_direct);
 
-        let wallet2 = WalletSim::random(rng);
+        let wallet2 = WalletSim::new(shared_sk());
         let (unassigned, _stamp) = build_autonome(rng, &wallet2, 1000, 700).strip();
         let stripped =
             unassigned.assign_wtxid(AggregateId::try_from([0x33u8; 64]).expect("nonzero id"));
@@ -713,12 +713,12 @@ fn coverage_check_matches_stamped_action_set() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
 
-    let based_spend = wallet.random_note(rng, 800);
-    let based_output = wallet.random_note(rng, 400);
-    let a_spend = wallet.random_note(rng, 1000);
-    let a_output = wallet.random_note(rng, 700);
-    let b_spend = wallet.random_note(rng, 500);
-    let b_output = wallet.random_note(rng, 200);
+    let based_spend = wallet.random_note(800);
+    let based_output = wallet.random_note(400);
+    let a_spend = wallet.random_note(1000);
+    let a_output = wallet.random_note(700);
+    let b_spend = wallet.random_note(500);
+    let b_output = wallet.random_note(200);
 
     let mut pool = PoolSim::genesis(rng);
     pool.mine(random_block_with(
@@ -741,7 +741,7 @@ fn coverage_check_matches_stamped_action_set() {
     let a_sp = wallet.lift_over_creation_epoch(rng, &pool, &a_spend, cm_height, a_init);
     let b_init = wallet.spendable_init(rng, &b_spend, &pool, cm_height);
     let b_sp = wallet.lift_over_creation_epoch(rng, &pool, &b_spend, cm_height, b_init);
-    let anchor = based_sp.data().1;
+    let anchor = based_sp.data().2;
 
     let spend_epoch = cm_height.epoch().next();
     let mut becomes_based = wallet.autonome(

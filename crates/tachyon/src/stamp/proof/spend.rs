@@ -2,10 +2,9 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
-use ff::PrimeField as _;
-use pasta_curves::Fp;
+use pasta_curves::{Ep, EpAffine, Eq, Fp, Fq};
 use ragu::{
     Header, Index, Step, Suffix,
     constraint::{enforce_nonzero, enforce_zero},
@@ -15,8 +14,8 @@ use super::spendable::SpendableHeader;
 use crate::{
     constants::NOTE_VALUE_MAX,
     entropy::ActionRandomizer,
-    keys::{PaymentKey, ProofAuthorizingKey, public},
-    note::{self, CommitmentTrapdoor, Note, Nullifier, NullifierTrapdoor, Value},
+    keys::{ProofAuthorizingKey, public},
+    note::{self, Note, Nullifier},
     primitives::{Anchor, effect},
     value,
 };
@@ -30,39 +29,36 @@ use crate::{
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(cv, rk, present_nf, anchor, cm)`. `cv`/`rk` are derived at
-    /// [`SpendBind`]; `present_nf`, `anchor`, and `cm` thread from the
-    /// spendable lineage that [`SpendBind`] consumed.
+    /// `(cm, (cv, rk), present_nf, anchor)`. `cm` leads; `(cv, rk)` are the
+    /// spend's published action pair, derived together at [`SpendBind`];
+    /// `present_nf` and `anchor` thread from the spendable lineage that
+    /// [`SpendBind`] consumed.
     type Data = (
-        value::Commitment,
-        public::ActionVerificationKey,
+        note::Commitment,
+        (value::Commitment, public::ActionVerificationKey),
         Nullifier,
         Anchor,
-        note::Commitment,
     );
 
     const SUFFIX: Suffix = Suffix::new(10);
 
-    fn encode(data: &Self::Data) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32 * 5);
-        let cv_bytes: [u8; 32] = data.0.into();
-        let rk_bytes: [u8; 32] = data.1.into();
-        out.extend_from_slice(&cv_bytes);
-        out.extend_from_slice(&rk_bytes);
-        out.extend_from_slice(&Fp::from(data.2).to_repr());
-        out.extend_from_slice(&Fp::from(data.3).to_repr());
-        out.extend_from_slice(&Fp::from(data.4).to_repr());
-        out
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (cm, (cv, rk), present_nf, anchor) = *data;
+        (
+            vec![Fp::from(cm), Fp::from(present_nf), Fp::from(anchor)],
+            Vec::new(),
+            vec![Ep::from(cv.0), Ep::from(EpAffine::from(rk))],
+            Vec::new(),
+        )
     }
 }
 
 /// Binds an action to its spendable lineage's note.
 ///
-/// Witnesses the note preimage (`pk`, `value`, `rcm`, `psi`), `pak`, and the
-/// action fields (`rcv`, `alpha`); checks `cm == spendable.cm` (so `cv` commits
-/// to the proven-minted value) and threads `present_nf`, `anchor`, and `cm`
-/// onto the output. The live pair is completed at
-/// [`SpendStamp`](super::stamp::SpendStamp).
+/// Witnesses the `note` and `pak`, plus the action randomizers (`rcv`,
+/// `alpha`); checks `cm == spendable.cm` (so `cv` commits to the proven-minted
+/// value) and threads `present_nf`, `anchor`, and `cm` onto the output. The
+/// live pair is completed at [`SpendStamp`](super::stamp::SpendStamp).
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -71,8 +67,9 @@ impl Step for SpendBind {
     type Left = SpendableHeader;
     type Output = SpendHeader;
     type Right = ();
+    /// `(note, rcv, alpha, pak)`.
     type Witness<'source> = (
-        (PaymentKey, Value, CommitmentTrapdoor, NullifierTrapdoor),
+        Note,
         value::CommitmentTrapdoor,
         ActionRandomizer<effect::Spend>,
         ProofAuthorizingKey,
@@ -83,36 +80,33 @@ impl Step for SpendBind {
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        ((pk, value, rcm, psi), rcv, alpha, pak): Self::Witness<'source>,
-        (present_nf, anchor, spendable_cm): <Self::Left as Header>::Data,
+        (note, rcv, alpha, pak): Self::Witness<'source>,
+        (spendable_cm, present_nf, anchor): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_nonzero(Fp::from(u64::from(value)), "SpendBind: zero-value note")?;
-        if u64::from(value) > NOTE_VALUE_MAX {
+        enforce_nonzero(
+            Fp::from(u64::from(note.value)),
+            "SpendBind: zero-value note",
+        )?;
+        if u64::from(note.value) > NOTE_VALUE_MAX {
             return Err(ragu::Error::InvalidWitness(
                 "SpendBind: note value exceeds maximum".into(),
             ));
         }
         enforce_zero(
-            pk.0 - pak.derive_payment_key().0,
+            note.pk.0 - pak.derive_payment_key().0,
             "SpendBind: pak not related to note",
         )?;
-        let cm = Note {
-            pk,
-            value,
-            psi,
-            rcm,
-        }
-        .commitment();
+        let cm = note.commitment();
 
         enforce_zero(
             Fp::from(spendable_cm) - Fp::from(cm),
             "SpendBind: note does not match the spendable lineage",
         )?;
 
-        let cv = rcv.commit(i64::from(value));
+        let cv = rcv.commit(i64::from(note.value));
         let rk = pak.ak.derive_action_public(&alpha);
 
-        Ok(((cv, rk, present_nf, anchor, cm), ()))
+        Ok(((cm, (cv, rk), present_nf, anchor), ()))
     }
 }

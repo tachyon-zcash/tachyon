@@ -1,17 +1,27 @@
-#![allow(unreachable_pub, reason = "test code")]
-#![allow(clippy::type_complexity, reason = "test code")]
-#![allow(clippy::partial_pub_fields, reason = "test code")]
-#![allow(clippy::too_many_lines, reason = "test code")]
-#![allow(clippy::too_many_arguments, reason = "test code")]
+#![allow(
+    unreachable_pub,
+    clippy::type_complexity,
+    clippy::as_conversions,
+    clippy::partial_pub_fields,
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    reason = "test code"
+)]
 
 extern crate alloc;
+extern crate std;
 
-use alloc::{vec, vec::Vec};
-use core::{cmp, iter, ops::RangeInclusive};
+use alloc::{collections::BTreeMap, rc::Rc, vec, vec::Vec};
+use core::{
+    cell::{Cell, RefCell},
+    iter,
+    ops::RangeInclusive,
+};
 
-use ff::Field as _;
+use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
 use ragu::Pcd;
+use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
@@ -19,17 +29,17 @@ use crate::{
     bundle::{self, Bundle},
     constants::EPOCH_SIZE,
     entropy::{ActionEntropy, ActionRandomizer},
-    keys::{NoteMasterKey, ProofAuthorizingKey, private},
+    keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        ActionDigest, Anchor, BlockHeight, EpochIndex, NfSeqPoly, Tachygram, TachygramSetCommit,
+        ActionDigest, Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit,
         TachygramSetPoly, effect,
     },
     stamp::{
         Stamp,
         proof::{PROOF_SYSTEM, delegation, pool, spendable},
     },
-    value,
+    value, witness,
 };
 
 pub fn mock_sighash(bundle_digest: [u8; 64]) -> [u8; 32] {
@@ -55,7 +65,7 @@ pub fn action_digests(actions: &[Action]) -> Vec<ActionDigest> {
 pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(rng, 400);
+    let note = wallet.random_note(400);
     let (_, _, plan) = build_output_plan(rng, note);
     let bundle_plan = bundle::Plan::new(alloc::vec![], alloc::vec![plan]);
     let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
@@ -110,15 +120,15 @@ pub fn build_autonome(
     spend_value: u64,
     output_value: u64,
 ) -> Bundle<Stamp> {
-    let spend_note = wallet.random_note(rng, spend_value);
-    let output_note = wallet.random_note(rng, output_value);
+    let spend_note = wallet.random_note(spend_value);
+    let output_note = wallet.random_note(output_value);
     let mut pool = PoolSim::genesis(rng);
     let stamps_cms = vec![vec![spend_note.commitment()]];
     pool.mine(random_block_with(rng, &stamps_cms, 50));
     let height = pool.height();
     let spendable_pcd = wallet.fresh_spend(rng, &pool, height, &spend_note);
     let spend_epoch = height.epoch();
-    let anchor = spendable_pcd.data().1;
+    let anchor = spendable_pcd.data().2;
     wallet.autonome(
         rng,
         anchor,
@@ -167,8 +177,68 @@ struct PoolSimBlock {
     stamps: Vec<Vec<Tachygram>>,
 }
 
+/// A block's memoized curve work: its per-stamp tachygram-set commitments and
+/// the post anchors those commitments fold to. Both require a polynomial commit
+/// (MSM) per stamp, so they are computed once per block and shared via [`Rc`].
+struct BlockDigest {
+    commits: Vec<TachygramSetCommit>,
+    anchors: Vec<Anchor>,
+}
+
+impl PoolSimBlock {
+    /// Per-stamp tachygram-set commitments, in stamp order.
+    fn commits(&self) -> Vec<TachygramSetCommit> {
+        self.stamps
+            .iter()
+            .map(|tgs| tgs.iter().copied().collect::<TachygramSetPoly>().commit())
+            .collect()
+    }
+
+    /// The block's commitments and post anchors in one pass: one anchor per
+    /// stamp (folding `next_stamp` from `prev`), or a single `next_empty` tick
+    /// for an empty block. The anchors reuse the commitments, so the MSMs run
+    /// once.
+    fn digest(&self) -> BlockDigest {
+        let commits = self.commits();
+        let anchors = if commits.is_empty() {
+            alloc::vec![self.prev.next_empty()]
+        } else {
+            commits.iter().fold(Vec::new(), |mut acc, commit| {
+                let last = acc.last().unwrap_or(&self.prev);
+                acc.push(last.next_stamp(commit));
+                acc
+            })
+        };
+        BlockDigest { commits, anchors }
+    }
+}
+
 pub struct PoolSim {
     history: Vec<PoolSimBlock>,
+    /// Per-block digest memo, keyed by block height. The history is
+    /// append-only, so a cached digest never goes stale.
+    digests: RefCell<BTreeMap<usize, Rc<BlockDigest>>>,
+    /// Post-anchor -> (height, stamp position) index, populated alongside the
+    /// digests, so anchor lookup is a map hit rather than a full-history scan.
+    /// Keyed by the anchor's inner `Fp` (an ordering of `Anchor` itself would
+    /// mean by field value, not chain relationship, so it is not exposed).
+    anchor_locs: RefCell<BTreeMap<Fp, (BlockHeight, usize)>>,
+    /// Block-digest cache tallies (misses = one-time MSM work, hits = saved),
+    /// summarized once when the pool is dropped rather than per height.
+    digest_misses: Cell<usize>,
+    digest_hits: Cell<usize>,
+}
+
+impl Drop for PoolSim {
+    fn drop(&mut self) {
+        let (misses, hits) = (self.digest_misses.get(), self.digest_hits.get());
+        if misses + hits > 0 {
+            std::eprintln!(
+                "[poolsim] block: {misses} digested, {hits} reused ({} blocks)",
+                self.history.len(),
+            );
+        }
+    }
 }
 
 impl PoolSim {
@@ -183,6 +253,36 @@ impl PoolSim {
                 prev: Anchor::default(),
                 stamps
             }],
+            digests: RefCell::new(BTreeMap::new()),
+            anchor_locs: RefCell::new(BTreeMap::new()),
+            digest_misses: Cell::new(0),
+            digest_hits: Cell::new(0),
+        }
+    }
+
+    /// The block's memoized digest, computed (and its anchors indexed) once.
+    fn digest_at(&self, height: BlockHeight) -> Rc<BlockDigest> {
+        let idx = usize::try_from(height).expect("fits usize");
+        if let Some(digest) = self.digests.borrow().get(&idx) {
+            self.digest_hits.set(self.digest_hits.get() + 1);
+            return Rc::clone(digest);
+        }
+        self.digest_misses.set(self.digest_misses.get() + 1);
+        let digest = Rc::new(self.history[idx].digest());
+        let mut locs = self.anchor_locs.borrow_mut();
+        for (position, anchor) in digest.anchors.iter().enumerate() {
+            locs.insert(Fp::from(*anchor), (height, position));
+        }
+        drop(locs);
+        self.digests.borrow_mut().insert(idx, Rc::clone(&digest));
+        digest
+    }
+
+    /// Ensure every block's anchors are indexed, so [`anchor_locs`] is
+    /// authoritative for a lookup miss.
+    fn ensure_digests(&self) {
+        for idx in 0..self.history.len() {
+            drop(self.digest_at(BlockHeight::from(idx)));
         }
     }
 
@@ -207,10 +307,7 @@ impl PoolSim {
 
     #[must_use]
     pub fn stamp_commits_at(&self, height: BlockHeight) -> Vec<TachygramSetCommit> {
-        self.tachygrams_at(height)
-            .iter()
-            .map(|tgs| TachygramSetPoly::from(tgs.as_slice()).commit())
-            .collect()
+        self.digest_at(height).commits.clone()
     }
 
     #[must_use]
@@ -223,13 +320,107 @@ impl PoolSim {
 
     #[must_use]
     pub fn anchor_at(&self, height: BlockHeight) -> Anchor {
-        let prev = self.prev_anchor_at(height);
-        let commits = self.stamp_commits_at(height);
-        if commits.is_empty() {
-            prev.next_empty()
-        } else {
-            commits.iter().fold(prev, Anchor::next_stamp)
+        // The block's terminal anchor is the last of its memoized post anchors
+        // (the single `next_empty` tick for an empty block).
+        *self
+            .digest_at(height)
+            .anchors
+            .last()
+            .expect("block digest has at least one anchor")
+    }
+
+    /// The pool blocks spanning the anchor range `(start, end]`, in forward
+    /// order: each `Ok((height, stamps))` is a block's in-span tachygrams
+    /// (empty for an empty block), each `Err(epoch)` a `next_epoch` lift
+    /// into `epoch`. `start`/`end` may sit mid-block; the first and last
+    /// blocks are trimmed to the span. Anchors are not returned (the caller
+    /// folds them).
+    #[must_use]
+    pub fn anchor_steps(
+        &self,
+        start: Anchor,
+        end: Anchor,
+    ) -> Vec<Result<(BlockHeight, Vec<Vec<Tachygram>>), EpochIndex>> {
+        // `start` enters the first stamp. A post anchor sits mid-block, so the
+        // span starts at the next stamp. An epoch-boundary lift (including the
+        // genesis entry) is produced by no stamp: the span then starts at the
+        // entered block's stamp 0, with the lift contributing a leading marker.
+        let mut steps: Vec<Result<(BlockHeight, Vec<Vec<Tachygram>>), EpochIndex>> = Vec::new();
+        let stamp_len = |height: BlockHeight| -> usize {
+            self.history[usize::try_from(height).expect("fits usize")]
+                .stamps
+                .len()
+        };
+        let (start_height, from) = match self.locate_anchor(start) {
+            Ok((height, position)) => (height, (position + 1).min(stamp_len(height))),
+            Err((_pre_boundary, epoch)) => {
+                steps.push(Err(epoch));
+                (epoch_first_of(epoch), 0)
+            },
+        };
+
+        // One past the last included stamp of the end block (whose post is `end`).
+        let (end_height, end_position) = self.locate_anchor(end).expect("end anchor must exist");
+        let to = (end_position + 1).min(stamp_len(end_height));
+
+        // Forward walk. The first block is trimmed at its head (`from`), the last
+        // at its tail (`to`); a `start`-terminal first block contributes no `Ok`
+        // entry. A boundary marker precedes every epoch-first block after the
+        // start block.
+        for height_idx in start_height.0..=end_height.0 {
+            let height = BlockHeight(height_idx);
+            let block = &self.history[usize::try_from(height_idx).expect("fits usize")];
+            if height_idx != start_height.0 && height.is_epoch_first() {
+                steps.push(Err(height.epoch()));
+            }
+            let lo = if height_idx == start_height.0 {
+                from
+            } else {
+                0
+            };
+            let hi = if height_idx == end_height.0 {
+                to
+            } else {
+                block.stamps.len()
+            };
+            let stamps = block.stamps[lo..hi].to_vec();
+            // Skip a head-trimmed first block that the `start` terminal empties,
+            // but keep a genuinely empty block (it still advances the anchor).
+            if height_idx == start_height.0 && stamps.is_empty() && !block.stamps.is_empty() {
+                continue;
+            }
+            steps.push(Ok((height, stamps)));
         }
+
+        steps
+    }
+
+    /// The block that produced `anchor` (matched by its post anchors). An
+    /// epoch-boundary anchor `B_E = old_tip.next_epoch(E)` is no block's post
+    /// anchor (it is `E`'s first block's entry), so it instead returns
+    /// `Err((pre_boundary_anchor, E))` with the lifted previous-epoch terminal;
+    /// `Anchor::default()` is the epoch-0 boundary, resolved up front.
+    /// Returns `(height, position)` where `position` is the anchor's index
+    /// among its block's post anchors.
+    fn locate_anchor(&self, anchor: Anchor) -> Result<(BlockHeight, usize), (Anchor, EpochIndex)> {
+        if anchor == Anchor::default() {
+            return Err((self.pre_epoch_anchor(EpochIndex(0)), EpochIndex(0)));
+        }
+        self.ensure_digests();
+        if let Some(&location) = self.anchor_locs.borrow().get(&Fp::from(anchor)) {
+            return Ok(location);
+        }
+        // Not a post anchor: an epoch boundary `B_E = old_tip.next_epoch(E)`, no
+        // block's post anchor but the epoch-first block's `prev` (a distinct
+        // domain from post anchors, so no post/boundary overlap is possible).
+        for (height_idx, block) in self.history.iter().enumerate() {
+            let height = BlockHeight::from(height_idx);
+            if height.is_epoch_first() && block.prev == anchor {
+                let epoch = height.epoch();
+                return Err((self.pre_epoch_anchor(epoch), epoch));
+            }
+        }
+        unreachable!("anchor not found: {anchor:?}");
     }
 
     /// The prior-epoch terminal anchor that folds into `epoch`'s boundary
@@ -292,8 +483,8 @@ fn build_anchor_chain_inner(
     let mut chain: Option<Pcd<pool::AnchorChain>> = None;
     let mut height = start;
     loop {
-        let commits = pool.stamp_commits_at(height);
-        if commits.is_empty() {
+        let stamps = pool.tachygrams_at(height);
+        if stamps.is_empty() {
             let next_state = state.next_empty();
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::EmptyBlockSeed, (state,))
@@ -311,14 +502,15 @@ fn build_anchor_chain_inner(
         } else {
             // The final block may be truncated (cm-block prefix); others absorb all.
             let upto = if height == end {
-                last_block_upto.unwrap_or(commits.len())
+                last_block_upto.unwrap_or(stamps.len())
             } else {
-                commits.len()
+                stamps.len()
             };
-            for commit in &commits[..upto] {
-                let next_state = state.next_stamp(commit);
+            for tgs in &stamps[..upto] {
+                let witness = witness::anchor_seed(((), ()), state, tgs);
+                let next_state = state.next_stamp(&witness.1);
                 let (seed, ()) = PROOF_SYSTEM
-                    .seed(rng, pool::AnchorSeed, (state, *commit))
+                    .seed(rng, pool::AnchorSeed, witness)
                     .expect("AnchorSeed");
                 chain = Some(match chain.take() {
                     None => seed,
@@ -390,7 +582,7 @@ pub(crate) fn build_anchor_chain_prefix_pcd(
 
 /// The honest [`spendable::SpendableInit`] inputs for `cm` at `height`,
 /// reconstructed from pool state: the witness `(pre_epoch_anchor,
-/// pre_cm_anchor, stamp_tg_set)` plus the boundary-rooted
+/// pre_cm_anchor, creation_tgs)` plus the boundary-rooted
 /// [`AnchorChain`](pool::AnchorChain) for the left input. Shared by
 /// [`WalletSim::spendable_init`] (which `.expect`s the fuse) and tests that
 /// drive a raw fuse to capture the `Err`.
@@ -399,7 +591,7 @@ pub(crate) fn spendable_init_inputs(
     pool: &PoolSim,
     cm: note::Commitment,
     height: BlockHeight,
-) -> (Anchor, Anchor, TachygramSetPoly, Pcd<pool::AnchorChain>) {
+) -> (Anchor, Anchor, Vec<Tachygram>, Pcd<pool::AnchorChain>) {
     let stamps = pool.tachygrams_at(height);
     let stamp_commits = pool.stamp_commits_at(height);
     let cm_idx = stamps
@@ -418,9 +610,9 @@ pub(crate) fn spendable_init_inputs(
     let epoch = height.epoch();
     let pre_epoch_anchor = pool.pre_epoch_anchor(epoch);
     let chain = build_anchor_chain_prefix_pcd(rng, pool, epoch_first_of(epoch), height, cm_idx);
-    let stamp_tg_set = TachygramSetPoly::from(stamps[cm_idx].as_slice());
+    let creation_tgs = stamps[cm_idx].clone();
 
-    (pre_epoch_anchor, pre_cm_anchor, stamp_tg_set, chain)
+    (pre_epoch_anchor, pre_cm_anchor, creation_tgs, chain)
 }
 
 pub(crate) fn build_unspent_seed_pcd(
@@ -430,78 +622,163 @@ pub(crate) fn build_unspent_seed_pcd(
     tgs: &[Tachygram],
     nf: Nullifier,
 ) -> Pcd<pool::Unspent> {
-    let tg_set = TachygramSetPoly::from(tgs);
     let (pcd, ()) = PROOF_SYSTEM
-        .seed(rng, pool::UnspentSeed, (start, epoch, tg_set, nf))
+        .seed(
+            rng,
+            pool::UnspentSeed,
+            witness::unspent_seed(((), ()), start, epoch, tgs, nf),
+        )
         .expect("UnspentSeed");
     pcd
 }
 
-/// Build an [`Unspent`] for `nf` covering blocks `range`. Per non-empty
-/// block: one [`UnspentSeed`] per stamp. Per empty block: one
-/// [`EmptyBlockUnspentSeed`]. All segments fused linearly via
-/// [`UnspentFuse`].
-pub(crate) fn build_unspent_pcd(
+/// Block-range wrapper over [`build_unspent_pcd_between_anchors`]: spans the
+/// block-entry anchor of `range.start()` to the block anchor of `range.end()`.
+/// `nf` holds one nullifier per epoch the range spans (`nf[0]` for
+/// `range.start().epoch()`).
+pub(crate) fn build_unspent_pcd_between_blocks(
     rng: &mut (impl RngCore + CryptoRng),
     pool: &PoolSim,
-    nf: Nullifier,
+    nf: &[Nullifier],
     range: RangeInclusive<BlockHeight>,
 ) -> Pcd<pool::Unspent> {
-    let start = *range.start();
-    let end = *range.end();
-    assert_eq!(start.epoch(), end.epoch(), "Unspent single-epoch range");
-    assert!(start <= end);
-    let epoch = start.epoch();
+    build_unspent_pcd_between_anchors(
+        rng,
+        pool,
+        nf,
+        (
+            pool.prev_anchor_at(*range.start()),
+            pool.anchor_at(*range.end()),
+        ),
+    )
+}
 
-    let mut state = pool.prev_anchor_at(start);
-    let mut chain: Option<Pcd<pool::Unspent>> = None;
-    let mut height = start;
-    loop {
-        let stamps = pool.tachygrams_at(height);
-        let stamp_commits = pool.stamp_commits_at(height);
-        if stamps.is_empty() {
-            let next_state = state.next_empty();
-            let (seed, ()) = PROOF_SYSTEM
-                .seed(rng, pool::EmptyBlockUnspentSeed, (state, epoch, nf))
-                .expect("EmptyBlockUnspentSeed");
-            chain = Some(match chain.take() {
-                None => seed,
-                Some(left) => {
-                    let (fused, ()) = PROOF_SYSTEM
-                        .fuse(rng, pool::UnspentFuse, (), left, seed)
-                        .expect("UnspentFuse");
-                    fused
-                },
-            });
-            state = next_state;
+/// Build an [`Unspent`] for the anchor span `(start_anchor, end_anchor)`,
+/// covering every stamp / empty block that advances the anchor between them;
+/// either endpoint may sit mid-block. `nf` holds one nullifier per epoch
+/// spanned, `nf[0]` for `start_anchor`'s epoch. Seeds one leaf per stamp /
+/// empty block and merges them as a balanced tree: [`UnspentFuse`] within an
+/// epoch, [`UnspentEpochFuse`] across a boundary.
+pub(crate) fn build_unspent_pcd_between_anchors(
+    rng: &mut (impl RngCore + CryptoRng),
+    pool: &PoolSim,
+    nf: &[Nullifier],
+    (start_anchor, end_anchor): (Anchor, Anchor),
+) -> Pcd<pool::Unspent> {
+    // The balanced-tree merge derives epoch and fuse kind from block heights, so
+    // the interleaved boundary markers are dropped; only `Ok` segments seed
+    // leaves. Anchors are folded here: the first block runs from `start_anchor`
+    // (possibly mid-block), every other from its recorded entry anchor.
+    let steps: Vec<(BlockHeight, Vec<Vec<Tachygram>>)> = pool
+        .anchor_steps(start_anchor, end_anchor)
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect();
+    let base = steps
+        .first()
+        .expect("anchor span covers at least one block")
+        .0
+        .epoch();
+    let nf_at = |epoch: EpochIndex| -> Nullifier {
+        nf[usize::try_from(epoch.0 - base.0).expect("epoch within span")]
+    };
+    let mut leaves: Vec<(Pcd<pool::Unspent>, EpochIndex)> = Vec::with_capacity(steps.len());
+    for (index, (height, block_stamps)) in steps.into_iter().enumerate() {
+        let epoch = height.epoch();
+        let leaf_nf = nf_at(epoch);
+        let mut entry = if index == 0 {
+            start_anchor
         } else {
-            for (tgs, commit) in stamps.iter().zip(stamp_commits.iter()) {
-                let next_state = state.next_stamp(commit);
-                let seed = build_unspent_seed_pcd(rng, state, epoch, tgs, nf);
-                chain = Some(match chain.take() {
-                    None => seed,
-                    Some(left) => {
-                        let (fused, ()) = PROOF_SYSTEM
-                            .fuse(rng, pool::UnspentFuse, (), left, seed)
-                            .expect("UnspentFuse");
-                        fused
-                    },
-                });
-                state = next_state;
+            pool.prev_anchor_at(height)
+        };
+        if block_stamps.is_empty() {
+            let (seed, ()) = PROOF_SYSTEM
+                .seed(rng, pool::EmptyBlockUnspentSeed, (entry, (epoch, leaf_nf)))
+                .expect("EmptyBlockUnspentSeed");
+            leaves.push((seed, epoch));
+        } else {
+            for tgs in block_stamps {
+                let commit = TachygramSetPoly::from_iter(tgs.clone()).commit();
+                leaves.push((
+                    build_unspent_seed_pcd(rng, entry, epoch, &tgs, leaf_nf),
+                    epoch,
+                ));
+                entry = entry.next_stamp(&commit);
             }
         }
-        if height >= end {
-            break;
-        }
-        height = height.next().expect("height < max");
     }
 
-    chain.expect("Unspent range must cover at least one block")
+    // Linear left-to-right fold. Each leaf is a single empty-elapsed segment;
+    // appending one within the accumulator's tip epoch is a bare [`UnspentFuse`],
+    // and across a boundary a [`UnspentEpochFuse`] splice that folds the tip nf
+    // into `elapsed` (one entry per crossed boundary, so `acc`'s elapsed is
+    // `nf[0..(acc_epoch - base)]`).
+    let elapsed_slice = |lo: EpochIndex, hi: EpochIndex| -> &[Nullifier] {
+        let from = usize::try_from(lo.0 - base.0).expect("epoch within span");
+        let to = usize::try_from(hi.0 - base.0).expect("epoch within span");
+        &nf[from..to]
+    };
+    let mut leaf_iter = leaves.into_iter();
+    let (mut acc, mut acc_epoch) = leaf_iter
+        .next()
+        .expect("anchor span covers at least one leaf");
+    for (leaf, epoch) in leaf_iter {
+        acc = if epoch.0 == acc_epoch.0 {
+            let (fused, ()) = PROOF_SYSTEM
+                .fuse(rng, pool::UnspentFuse, (), acc, leaf)
+                .expect("UnspentFuse mid-epoch");
+            fused
+        } else {
+            debug_assert_eq!(epoch.0, acc_epoch.0 + 1, "leaves must be contiguous");
+            let witness = witness::unspent_epoch_fuse(
+                (*acc.data(), *leaf.data()),
+                elapsed_slice(base, acc_epoch),
+                &[],
+            );
+            let (fused, ()) = PROOF_SYSTEM
+                .fuse(rng, pool::UnspentEpochFuse, witness, acc, leaf)
+                .expect("UnspentEpochFuse boundary");
+            acc_epoch = epoch;
+            fused
+        };
+    }
+    acc
+}
+
+/// A fixed, deterministic spending key. Tests that don't need a distinct wallet
+/// build from this so their notes' `cm`s collide and shared per-note work is
+/// reused across tests instead of busted by fresh random key material.
+pub(crate) fn shared_sk() -> private::SpendingKey {
+    private::SpendingKey::random(&mut StdRng::seed_from_u64(0x7AC0_05EED))
+}
+
+/// A `StdRng` seed derived as `BLAKE2b(pk, value)`, so each `(pk, value)` pair
+/// gets a distinct, fully value-dependent note-material stream. Test-only.
+fn note_stream_seed(pk: PaymentKey, value: u64) -> [u8; 32] {
+    let digest = blake2b_simd::Params::new()
+        .hash_length(32)
+        .personal(b"Tachyon-NoteRnd")
+        .to_state()
+        .update(&pk.0.to_repr())
+        .update(&value.to_le_bytes())
+        .finalize();
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(digest.as_bytes());
+    seed
 }
 
 pub struct WalletSim {
     pub sk: private::SpendingKey,
     pub pak: ProofAuthorizingKey,
+    /// One note-material stream per requested value, each seeded
+    /// deterministically from `(sk, value)` (independent of any caller
+    /// RNG). `random_note(value)` draws the next note from that value's
+    /// stream, so the k-th note of a given value is identical across every
+    /// wallet built from the same `sk`, and its `cm` collides, reusing
+    /// shared per-note work. Keying by value keeps distinct asks independent:
+    /// different values draw from disjoint field sequences, and interleaved
+    /// draws of other values never shift a stream's position.
+    notes: RefCell<BTreeMap<u64, StdRng>>,
 }
 
 impl WalletSim {
@@ -509,6 +786,7 @@ impl WalletSim {
         Self {
             sk,
             pak: sk.derive_proof_private(),
+            notes: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -516,12 +794,22 @@ impl WalletSim {
         Self::new(private::SpendingKey::random(rng))
     }
 
-    pub fn random_note(&self, rng: &mut (impl RngCore + CryptoRng), value_amount: u64) -> Note {
+    /// The next note in this value's stream, at the given value. Each value has
+    /// its own stream seeded from `(pk, value)`, so the k-th note of a given
+    /// value is identical across wallets built from the same `sk` (its `cm`
+    /// collides, reusing shared per-note work), while distinct values draw
+    /// fully independent field sequences.
+    pub fn random_note(&self, value_amount: u64) -> Note {
+        let pk = self.sk.derive_payment_key();
+        let mut streams = self.notes.borrow_mut();
+        let notes = streams
+            .entry(value_amount)
+            .or_insert_with(|| StdRng::from_seed(note_stream_seed(pk, value_amount)));
         Note {
-            pk: self.sk.derive_payment_key(),
+            pk,
             value: note::Value::try_from(value_amount).expect("fixture value in range"),
-            psi: NullifierTrapdoor::random(rng),
-            rcm: note::CommitmentTrapdoor::random(rng),
+            psi: NullifierTrapdoor::random(notes),
+            rcm: note::CommitmentTrapdoor::random(notes),
         }
     }
 
@@ -560,11 +848,11 @@ impl WalletSim {
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: &Note,
-        start_epoch: EpochIndex,
+        epoch_start: EpochIndex,
         len: u32,
     ) -> Pcd<delegation::NullifierHeader> {
         let master = self.note_master(rng, *note);
-        ggm_tools::nullifier_range_from_master(rng, &master, start_epoch, len)
+        ggm_tools::nullifier_range_from_master(rng, &master, epoch_start, len)
     }
 
     pub fn spendable_init(
@@ -577,7 +865,7 @@ impl WalletSim {
         let cm = note.commitment();
         let epoch = init_height.epoch();
         let present_nf = self.nf_at(note, epoch);
-        let (pre_epoch_anchor, pre_cm_anchor, creation_set, chain) =
+        let (pre_epoch_anchor, pre_cm_anchor, creation_tgs, chain) =
             spendable_init_inputs(rng, pool, cm, init_height);
         let nf_header = self.nullifier_pcd(rng, *note, epoch);
 
@@ -585,7 +873,13 @@ impl WalletSim {
             .fuse(
                 rng,
                 spendable::SpendableInit,
-                (pre_epoch_anchor, pre_cm_anchor, creation_set, present_nf),
+                witness::spendable_init(
+                    (*chain.data(), *nf_header.data()),
+                    pre_epoch_anchor,
+                    pre_cm_anchor,
+                    &creation_tgs,
+                    present_nf,
+                ),
                 chain,
                 nf_header,
             )
@@ -608,27 +902,19 @@ impl WalletSim {
         rng: &mut (impl RngCore + CryptoRng),
         unspent: Pcd<pool::Unspent>,
         note: &Note,
-        start_epoch: EpochIndex,
+        epoch_start: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<pool::VerifiedUnspent> {
-        let len = present_epoch.0 - start_epoch.0 + 1;
-        let range = self.derived_range(rng, note, start_epoch, len);
-        let elapsed: Vec<Nullifier> = (start_epoch.0..present_epoch.0)
-            .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
-            .collect();
-        let tip = self.nf_at(note, present_epoch);
-        let range_nfs: Vec<Nullifier> = (start_epoch.0..=present_epoch.0)
+        let len = present_epoch.0 - epoch_start.0 + 1;
+        let range = self.derived_range(rng, note, epoch_start, len);
+        let elapsed: Vec<Nullifier> = (epoch_start.0..present_epoch.0)
             .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
             .collect();
         let (verified, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 pool::VerifyUnspent,
-                (
-                    NfSeqPoly::from(elapsed.as_slice()),
-                    NfSeqPoly::from([tip].as_slice()),
-                    NfSeqPoly::from(range_nfs.as_slice()),
-                ),
+                witness::verify_unspent((*unspent.data(), *range.data()), &elapsed),
                 unspent,
                 range,
             )
@@ -642,10 +928,10 @@ impl WalletSim {
         spendable: Pcd<spendable::SpendableHeader>,
         unspent: Pcd<pool::Unspent>,
         note: &Note,
-        start_epoch: EpochIndex,
+        epoch_start: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<spendable::SpendableHeader> {
-        let verified = self.verify_unspent(rng, unspent, note, start_epoch, present_epoch);
+        let verified = self.verify_unspent(rng, unspent, note, epoch_start, present_epoch);
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable, verified)
             .expect("SpendableLift");
@@ -660,25 +946,17 @@ impl WalletSim {
         cm_height: BlockHeight,
         spendable: Pcd<spendable::SpendableHeader>,
     ) -> Pcd<spendable::SpendableHeader> {
-        let cm_idx = pool
-            .tachygrams_at(cm_height)
-            .iter()
-            .position(|tgs| tgs.contains(&note.commitment().into()))
-            .expect("cm in creation block");
-        let start_anchor = spendable.data().1;
+        let start_anchor = spendable.data().2;
         let creation_epoch = cm_height.epoch();
         let end_height = BlockHeight(epoch_final_of(creation_epoch).0 + 1);
-        let unspent = build_partial_multi_epoch_unspent(
+        let unspent = build_unspent_pcd_between_anchors(
             rng,
             pool,
             &[
                 self.nf_at(note, creation_epoch),
                 self.nf_at(note, creation_epoch.next()),
             ],
-            cm_height,
-            cm_idx + 1,
-            start_anchor,
-            end_height,
+            (start_anchor, pool.anchor_at(end_height)),
         );
         self.lift(
             rng,
@@ -749,7 +1027,6 @@ struct SyncEntry {
     nfs: Vec<Nullifier>,
     consumed: u32,
     next_height: BlockHeight,
-    next_stamp_idx: usize,
     cursor_anchor: Anchor,
 }
 
@@ -766,7 +1043,6 @@ impl SyncSim {
         handle: usize,
         nfs: Vec<Nullifier>,
         cm_height: BlockHeight,
-        cm_idx: usize,
         start_anchor: Anchor,
     ) {
         let entry = SyncEntry {
@@ -774,7 +1050,6 @@ impl SyncSim {
             nfs,
             consumed: 0,
             next_height: cm_height,
-            next_stamp_idx: cm_idx + 1,
             cursor_anchor: start_anchor,
         };
         if let Some(slot) = self
@@ -810,19 +1085,15 @@ impl SyncSim {
             "target_height must be at least the next uncovered height"
         );
         let nfs_from = usize::try_from(entry.consumed).expect("fits usize");
-        let unspent = build_partial_multi_epoch_unspent(
+        let unspent = build_unspent_pcd_between_anchors(
             rng,
             pool,
             &entry.nfs[nfs_from..],
-            entry.next_height,
-            entry.next_stamp_idx,
-            entry.cursor_anchor,
-            target_height,
+            (entry.cursor_anchor, pool.anchor_at(target_height)),
         );
         let new_consumed = entry.consumed + (target_height.epoch().0 - entry.next_height.epoch().0);
         self.entries[idx].consumed = new_consumed;
         self.entries[idx].next_height = BlockHeight(target_height.0 + 1);
-        self.entries[idx].next_stamp_idx = 0;
         self.entries[idx].cursor_anchor = pool.anchor_at(target_height);
         unspent
     }
@@ -862,8 +1133,8 @@ pub mod ggm_tools {
         digest::poseidon,
         keys::{GGM_CHUNK_SIZE, GGM_TREE_DEPTH},
         note::Nullifier,
-        primitives::NfSeqPoly,
         stamp::proof::{PROOF_SYSTEM, delegation},
+        witness,
     };
 
     pub fn walk_master_to_depth(
@@ -878,8 +1149,8 @@ pub mod ggm_tools {
         );
 
         let mut pcd = master_pcd;
-        while pcd.data().1 < target_depth {
-            let next_step = pcd.data().1 + 1;
+        while pcd.data().2 < target_depth {
+            let next_step = pcd.data().2 + 1;
             let chunk = chunk_at(epoch.0, next_step);
             let (next_pcd, ()) = PROOF_SYSTEM
                 .fuse(
@@ -917,16 +1188,16 @@ pub mod ggm_tools {
     pub fn nullifier_range_from_master(
         rng: &mut (impl RngCore + CryptoRng),
         master_pcd: &Pcd<delegation::NfPrefixHeader>,
-        start_epoch: EpochIndex,
+        epoch_start: EpochIndex,
         len: u32,
     ) -> Pcd<delegation::NullifierHeader> {
         assert!(len >= 1, "range length must be at least 1");
         let mut nfs: Vec<Nullifier> = Vec::new();
         let mut acc: Option<Pcd<delegation::NullifierHeader>> = None;
         for offset in 0..len {
-            let epoch = EpochIndex(start_epoch.0 + offset);
+            let epoch = EpochIndex(epoch_start.0 + offset);
             let prefix_pcd = walk_master_to_depth(rng, master_pcd.clone(), epoch, GGM_TREE_DEPTH);
-            let nf = Nullifier::from(poseidon::nullifier(prefix_pcd.data().0));
+            let nf = Nullifier::from(poseidon::nullifier(prefix_pcd.data().1));
             let (leaf, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
@@ -942,18 +1213,11 @@ pub mod ggm_tools {
                     leaf
                 },
                 Some(left) => {
-                    let left_poly = NfSeqPoly::from(nfs.as_slice());
-                    let right_poly = NfSeqPoly::from([nf].as_slice());
+                    let fuse_witness =
+                        witness::nullifier_fuse((*left.data(), *leaf.data()), nfs.as_slice(), nf);
                     nfs.push(nf);
-                    let merged = NfSeqPoly::from(nfs.as_slice());
                     let (fused, ()) = PROOF_SYSTEM
-                        .fuse(
-                            rng,
-                            delegation::NullifierFuse,
-                            (left_poly, right_poly, merged),
-                            left,
-                            leaf,
-                        )
+                        .fuse(rng, delegation::NullifierFuse, fuse_witness, left, leaf)
                         .expect("NullifierFuse");
                     fused
                 },
@@ -968,100 +1232,4 @@ pub mod ggm_tools {
         let chunk_u32 = (epoch_bits >> shift) & chunk_mask;
         u8::try_from(chunk_u32).expect("chunk fits in u8")
     }
-}
-
-fn build_partial_multi_epoch_unspent(
-    rng: &mut (impl RngCore + CryptoRng),
-    pool: &PoolSim,
-    nfs: &[Nullifier],
-    first_height: BlockHeight,
-    first_stamp_idx: usize,
-    start_anchor: Anchor,
-    end_height: BlockHeight,
-) -> Pcd<pool::Unspent> {
-    let first_epoch = first_height.epoch();
-    let first_epoch_final = epoch_final_of(first_epoch);
-    let first_epoch_end = cmp::min(end_height, first_epoch_final);
-    let nf0 = nfs[0];
-
-    let stamps = pool.tachygrams_at(first_height);
-    let stamp_commits = pool.stamp_commits_at(first_height);
-    assert!(first_stamp_idx <= stamps.len(), "first_stamp_idx in range");
-    let mut state = start_anchor;
-    let mut first_segment: Option<Pcd<pool::Unspent>> = None;
-    for (tgs, commit) in stamps[first_stamp_idx..]
-        .iter()
-        .zip(stamp_commits[first_stamp_idx..].iter())
-    {
-        let seed = build_unspent_seed_pcd(rng, state, first_epoch, tgs, nf0);
-        state = state.next_stamp(commit);
-        first_segment = Some(match first_segment.take() {
-            None => seed,
-            Some(left) => {
-                let (fused, ()) = PROOF_SYSTEM
-                    .fuse(rng, pool::UnspentFuse, (), left, seed)
-                    .expect("UnspentFuse rest-of-block");
-                fused
-            },
-        });
-    }
-    let mut height = BlockHeight(first_height.0 + 1);
-    while height <= first_epoch_end {
-        let segment = build_unspent_pcd(rng, pool, nf0, height..=height);
-        first_segment = Some(match first_segment.take() {
-            None => segment,
-            Some(left) => {
-                let (fused, ()) = PROOF_SYSTEM
-                    .fuse(rng, pool::UnspentFuse, (), left, segment)
-                    .expect("UnspentFuse subsequent-block");
-                fused
-            },
-        });
-        height = BlockHeight(height.0 + 1);
-    }
-
-    let mut chain = first_segment.expect("first epoch covers at least one stamp");
-    let mut elapsed_nfs: Vec<Nullifier> = Vec::new();
-    let mut present_nf = nf0;
-
-    if first_epoch_end == end_height {
-        return chain;
-    }
-
-    let mut current_height = BlockHeight(first_epoch_end.0 + 1);
-    let mut current_epoch = EpochIndex(first_epoch.0 + 1);
-    let mut nfs_idx = 1usize;
-    loop {
-        let epoch_final = epoch_final_of(current_epoch);
-        let epoch_end_height = cmp::min(end_height, epoch_final);
-        let nf = nfs[nfs_idx];
-        let intra = build_unspent_pcd(rng, pool, nf, current_height..=epoch_end_height);
-
-        let left_poly = NfSeqPoly::from(elapsed_nfs.as_slice());
-        let right_poly = NfSeqPoly::from(Vec::<Nullifier>::new().as_slice());
-        let mut combined_nfs = elapsed_nfs.clone();
-        combined_nfs.push(present_nf);
-        let combined = NfSeqPoly::from(combined_nfs.as_slice());
-        let (fused, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                pool::UnspentEpochFuse,
-                (left_poly, right_poly, combined),
-                chain,
-                intra,
-            )
-            .expect("UnspentEpochFuse");
-        chain = fused;
-        elapsed_nfs.push(present_nf);
-        present_nf = nf;
-
-        if epoch_end_height == end_height {
-            break;
-        }
-        current_height = BlockHeight(epoch_end_height.0 + 1);
-        current_epoch = EpochIndex(current_epoch.0 + 1);
-        nfs_idx += 1;
-    }
-
-    chain
 }
