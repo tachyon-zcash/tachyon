@@ -37,11 +37,12 @@ type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 
 /// Witness for [`KeyExpansionStep`] for one part.
 ///
-/// `(trace, round_boundary_quotients, part_key_poly, decimation_quotient,
-/// part, mk_parts)`. `part ∈ 0..EK_PARTS` selects the cipher-input window
-/// `base = part · EK_PART_LENGTH`; the caller supplies that part's
-/// `EK_PART_LENGTH` keys. The `mk` part spectra are rebuilt here for the step to
-/// bind against the seeds' certified commitments.
+/// `(trace, round_quotients, input_column, input_quotient, link_quotient,
+/// part_key_poly, decimation_quotient, part, mk_parts)`. `part ∈ 0..EK_PARTS`
+/// selects the cipher-input window `base = part · EK_PART_LENGTH`; the caller
+/// supplies that part's `EK_PART_LENGTH` keys. The `mk` part spectra are
+/// rebuilt here for the step to bind against the seeds' certified
+/// commitments.
 #[must_use]
 pub fn key_expansion<'key>(
     headers: (StepLeft<KeyExpansionStep>, StepRight<KeyExpansionStep>),
@@ -54,17 +55,21 @@ pub fn key_expansion<'key>(
     let key_poly = part_keys.key_spectrum();
     #[expect(clippy::as_conversions, reason = "constant size")]
     let base = Fp::from((part * EK_PART_LENGTH) as u64);
-    let (round, boundary, decimation_quotient) = quotient::expansion_quotients(
-        spectrum.0.coefficients(),
-        mk,
-        &mk.expansion_params(),
-        key_poly.0.coefficients(),
-        base,
-    );
+    let (round_quotients, input_column, input_quotient, link_quotient, decimation_quotient) =
+        quotient::expansion_quotients(
+            spectrum.0.coefficients(),
+            mk,
+            &mk.expansion_params(),
+            key_poly.0.coefficients(),
+            base,
+        );
     #[expect(clippy::as_conversions, reason = "part < EK_PARTS")]
     (
         spectrum.clone(),
-        RoundBoundaryQuotients { round, boundary },
+        round_quotients,
+        input_column,
+        input_quotient,
+        link_quotient,
         key_poly,
         decimation_quotient,
         Fp::from(part as u64),

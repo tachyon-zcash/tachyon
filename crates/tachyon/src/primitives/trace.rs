@@ -41,6 +41,17 @@ pub struct NoteMasterKeyPartCommit(pub Eq);
 #[derive(Clone, Debug)]
 pub struct ExpandedKeyTraceSpectrum(pub Polynomial);
 
+/// The eval-form interpolant of one expansion part's round-0 cipher inputs.
+///
+/// The trace grid stores round outputs only, so this is its missing input
+/// column, materialized: over the order-`EK_PART_LENGTH` row subgroup,
+/// `I(ζ^r) = s + δ·(base + r) + k_0` (the round-0 key folded in). Pinned in
+/// `KeyExpansionStep` by the affine recurrence from `(origin, δ)` and read by
+/// the strided-column power link into the trace's first column; never rides a
+/// header.
+#[derive(Clone, Debug)]
+pub struct ExpansionInputSpectrum(pub Polynomial);
+
 /// Commitment slot of one certified expanded-key part (`commit(A_p)` plus any
 /// non-identity fillers accumulated by the keyset fuse).
 #[derive(Clone, Copy, Debug)]

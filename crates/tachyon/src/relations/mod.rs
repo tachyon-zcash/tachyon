@@ -14,12 +14,12 @@
 //! | --- | --- |
 //! | `enforce_committed_row_recurrence` | `expansion_round_quotient` |
 //! | `enforce_committed_offset_recurrence` | `nf_emitter_round_quotient` |
-//! | `enforce_first_column_values` | `expansion_boundary_quotient` / `nf_emitter_boundary_quotient` |
-//! | `enforce_strided_column` | `expansion_decimation_quotient` |
-//! | `enforce_weight_recurrence` | `weight_recurrence` |
+//! | `enforce_first_column_values` | `nf_emitter_boundary_quotient` |
+//! | `enforce_strided_column` (column raised to a fixed exponent) | `strided_column_quotient` |
+//! | `enforce_affine_recurrence` (geometric weights and affine progressions) | `weight_recurrence` / `affine_recurrence_inner` |
 //! | `enforce_accumulator_recurrence` | `accumulator_recurrence` |
-//! | `enforce_arc_match` | constraint-only (opens the accumulator splits) |
-//! | `enforce_weighted_opening`, `enforce_geometric_opening_pair` | constraint-only |
+//! | `enforce_arc_match` | constraint-only (opens the accumulator splits; offsets range-limited to the coset order) |
+//! | `enforce_weighted_opening`, `enforce_geometric_opening_pair` | constraint-only (the pair's offset range-limited) |
 //! | `enforce_poly_product`, `enforce_shifted_combination` | constraint-only |
 //! | `enforce_interpolant` | constraint-only (opens at a challenge against the Lagrange closed form) |
 //!

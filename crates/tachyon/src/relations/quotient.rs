@@ -8,9 +8,10 @@
 //!   weight/accumulator recurrences, plus the native off-domain nullifier
 //!   query.
 //! - the 32x256 **expansion** trace (`TachyonP5R32`, `ROUNDS` columns by
-//!   `EK_PART_LENGTH` rows): the masked-quintic round quotient, the boundary
-//!   quotient, and the decimation quotient binding the key polynomial to the
-//!   trace's final column.
+//!   `EK_PART_LENGTH` rows): the masked-quintic round quotient, the affine
+//!   input column with its recurrence quotient, and the strided-column
+//!   quotients binding the trace's first column to the S-boxed inputs and the
+//!   key polynomial to its final column.
 //!
 //! Both families share one generic coset-arithmetic layer (FFT evaluation,
 //! vanishing-polynomial division, capacity splitting) defined at the top of the
@@ -39,7 +40,7 @@ use super::subgroup_generator;
 use crate::{
     constants::{EK_PART_LENGTH, MK_LENGTH, NF_DOMAIN, NF_EMITTERS, POLY_LEN_MAX},
     keys::{ExpansionParams, NoteMasterKey},
-    primitives::NfEmitterSpectrum,
+    primitives::{ExpansionInputSpectrum, NfEmitterSpectrum},
 };
 
 /// Splits per full-length arc polynomial, `NF_DOMAIN / POLY_LEN_MAX`.
@@ -336,32 +337,46 @@ fn boundary_quotient(trace_coeffs: &[Fp], salt: Fp, first_key: Fp) -> Polynomial
     Polynomial::from_coeffs(&quotient)
 }
 
-/// Domain-generic masked weight-recurrence quotient on the query coset
-/// `shift·⟨gamma⟩` (order `N`), so the identity is testable on a tiny
-/// coset. The weight `w` interpolates `[ratio^d]_{d<N}` (production
-/// `ratio = rho_j·β`), and `mask(z)·(w(gammaz) − ratio·w(z)) = Q(z)·(z^S −
-/// shift^S)` holds with `mask(z) = z − shift·gamma^{S-1}` zeroing the single
-/// coset wrap (`gamma·shift·gamma^{S-1} = shift·gamma^S = shift` wraps to the
-/// origin, where the geometric recurrence `1 = ratio^S` would otherwise have to
-/// hold). Returns the weight coefficients and the quotient.
-fn weight_quotient_inner<const N: usize>(ratio: Fp, shift: Fp) -> (Vec<Fp>, Vec<Fp>) {
+/// Domain-generic masked affine-recurrence quotient on the coset
+/// `shift·⟨gamma⟩` (order `N`), so the identity is testable on a tiny coset.
+/// The sequence interpolates the affine orbit `v_{d+1} = scale·v_d + step`
+/// from `v_0 = boundary_value`, and `mask(z)·(seq(gammaz) − scale·seq(z) −
+/// step) = Q(z)·(z^S − shift^S)` holds with `mask(z) = z − shift·gamma^{S-1}`
+/// zeroing the single coset wrap (`gamma·shift·gamma^{S-1} = shift·gamma^S =
+/// shift` wraps to the origin, where the recurrence would otherwise have to
+/// close the orbit). The pure-geometric case (`step = 0`, `boundary_value =
+/// 1`) is the arc weight `w(shift·gamma^d) = scale^d`; the arithmetic case
+/// (`scale = 1`, `shift = 1`) is an affine progression over a subgroup.
+/// Returns the sequence coefficients and the quotient.
+fn affine_recurrence_inner<const N: usize>(
+    scale: Fp,
+    step: Fp,
+    shift: Fp,
+    boundary_value: Fp,
+) -> (Vec<Fp>, Vec<Fp>) {
     let gamma = subgroup_generator::<N>();
 
-    // w(shift·gamma^d) = ratio^d over the coset.
-    let values: Vec<Fp> = (0..N)
-        .map(|exponent| ratio.pow_vartime([exponent as u64]))
-        .collect();
-    let weight = coset_interpolate(values, shift);
+    // seq(shift·gamma^d) = v_d over the coset, by native orbit iteration.
+    let mut values = vec![Fp::ZERO; N];
+    let mut value = boundary_value;
+    for slot in &mut values {
+        *slot = value;
+        value = scale * value + step;
+    }
+    let sequence = coset_interpolate(values, shift);
 
-    // diff(z) = w(gammaz) − ratio·w(z): scaling coeff i of w by gamma^i gives
-    // w(gammaz).
-    let mut advanced = weight.clone();
+    // diff(z) = seq(gammaz) − scale·seq(z) − step: scaling coeff i of seq by
+    // gamma^i gives seq(gammaz); `step` lands on the constant term.
+    let mut advanced = sequence.clone();
     scale_by_powers(&mut advanced, gamma);
-    let diff: Vec<Fp> = advanced
+    let mut diff: Vec<Fp> = advanced
         .iter()
-        .zip(&weight)
-        .map(|(shifted, base)| *shifted - ratio * *base)
+        .zip(&sequence)
+        .map(|(shifted, base)| *shifted - scale * *base)
         .collect();
+    if let Some(constant) = diff.first_mut() {
+        *constant -= step;
+    }
 
     // numerator = (z − shift·gamma^{S-1})·diff, divisible by z^S − shift^S.
     let wrap_point = shift * gamma.pow_vartime([N as u64 - 1]);
@@ -370,9 +385,9 @@ fn weight_quotient_inner<const N: usize>(ratio: Fp, shift: Fp) -> (Vec<Fp>, Vec<
     let (quotient, remainder) = divide_by_coset_vanishing(&numerator, N, shift_pow);
     assert!(
         remainder.iter().all(|coeff| *coeff == Fp::ZERO),
-        "weight recurrence must vanish on the query coset"
+        "affine recurrence must vanish on the coset"
     );
-    (weight, quotient)
+    (sequence, quotient)
 }
 
 /// Domain-generic masked running-sum accumulator with its recurrence and
@@ -420,7 +435,7 @@ fn accumulator_quotient_inner<const N: usize, const POLYS: usize>(
     // from d to d+1 — not M(gammaz).
     let mut product = Vec::new();
     for (ratio, poly) in ratios.iter().zip(polys) {
-        let (weight, _) = weight_quotient_inner::<N>(*ratio * beta, shift);
+        let (weight, _) = affine_recurrence_inner::<N>(*ratio * beta, Fp::ZERO, shift, Fp::ONE);
         add_into(&mut product, &multiply(&weight, poly.0.coefficients()));
     }
 
@@ -495,6 +510,12 @@ pub(crate) fn nullifier_query(
     coset_generator: Fp,
     offset: u64,
 ) -> Fp {
+    // Past the coset order the query points wrap; a note has no safe
+    // nullifier there and deriving one is misuse, never silent.
+    assert!(
+        offset < NF_DOMAIN as u64,
+        "nullifier offset exceeds the query coset order"
+    );
     let point = shift.0 * coset_generator.pow_vartime([offset]);
     polys
         .iter()
@@ -512,13 +533,14 @@ pub(crate) fn nullifier_query(
 /// and `shift = c` (the secret query-coset shift). The weight `w_j`
 /// interpolates `[ratio^d]_{d<S}` over `c·⟨gamma⟩`, so `w_j(c·gamma^d) =
 /// (rho_j·β)^d`; the quotient witnesses the masked recurrence `w_j(gammaz) =
-/// ratio·w_j(z)`. The weight spans the order-`S` coset and so exceeds
-/// commitment capacity; it is returned as `ARC_SPLITS` splits the circuit
-/// recombines by Horner in `z^POLY_LEN_MAX`. The quotient has degree below
-/// `POLY_LEN_MAX`, so it is a single polynomial.
+/// ratio·w_j(z)` (the pure-geometric case of the affine recurrence). The
+/// weight spans the order-`S` coset and so exceeds commitment capacity; it is
+/// returned as `ARC_SPLITS` splits the circuit recombines by Horner in
+/// `z^POLY_LEN_MAX`. The quotient has degree below `POLY_LEN_MAX`, so it is a
+/// single polynomial.
 #[must_use]
 pub(crate) fn weight_recurrence(ratio: Fp, shift: Fp) -> ([Polynomial; ARC_SPLITS], Polynomial) {
-    let (weight, quotient) = weight_quotient_inner::<NF_DOMAIN>(ratio, shift);
+    let (weight, quotient) = affine_recurrence_inner::<NF_DOMAIN>(ratio, Fp::ZERO, shift, Fp::ONE);
     (
         split_coeffs::<ARC_SPLITS>(&weight, POLY_LEN_MAX),
         Polynomial::from_coeffs(&quotient),
@@ -574,22 +596,9 @@ pub(crate) const EXPANSION_ROUND_SPLITS: usize = {
 const ROUND_COSET: usize =
     (TachyonP5R32::POW as usize * (POLY_LEN_MAX - 1) + EK_PART_LENGTH + 1).next_power_of_two();
 
-/// Boundary-numerator eval coset. The boundary numerator is `complement ·
-/// (T − target)`: `complement` has degree `(ROUNDS-1)·EK_PART_LENGTH`, `T` degree
-/// `< POLY_LEN_MAX`, `target` degree `< EK_PART_LENGTH`, so the product has
-/// degree `(ROUNDS-1)·EK_PART_LENGTH + POLY_LEN_MAX − 1`; the coset covers its
-/// `degree + 1` coefficients. Was the hand-set `BOUNDARY_COSET`.
-const BOUNDARY_COSET: usize =
-    ((TachyonP5R32::ROUNDS - 1) * EK_PART_LENGTH + POLY_LEN_MAX).next_power_of_two();
-
 /// Row step: the round-coset-to-trace size ratio. `T(gX)` on the round coset is
 /// `trace_ext` rotated by this, since ω_trace = ω_round^ROW_STEP.
 const ROW_STEP: usize = ROUND_COSET / POLY_LEN_MAX;
-
-/// Decimation stride: the round-coset-to-boundary-coset size ratio. The
-/// boundary-coset evaluations are every REDUCE_STRIDE-th round-coset one, since
-/// ω_boundary = ω_round^REDUCE_STRIDE.
-const REDUCE_STRIDE: usize = ROUND_COSET / BOUNDARY_COSET;
 
 /// Length of a column-stride spread: coefficient `k` of a `TRACE_COLUMNS`-term
 /// polynomial lands at degree `k·EK_PART_LENGTH`.
@@ -605,33 +614,6 @@ lazy_static! {
         mask[EK_PART_LENGTH] = Fp::ONE;
         coset_evaluations(&mask, ROUND_COSET, COSET_SHIFT)
     };
-
-    /// Boundary complement `E(X) = Σ X^(ERA·m)` evaluated on the reduced coset.
-    /// Keyset-independent, so it is built once.
-    static ref COMPLEMENT_EXT: Vec<Fp> = coset_evaluations(
-        &spread_by_stride(&[Fp::ONE; TachyonP5R32::ROUNDS]),
-        BOUNDARY_COSET,
-        COSET_SHIFT,
-    );
-
-    /// Reduced-coset evaluations of the row-power interpolants, the cached basis
-    /// that folds round 0 into the boundary without a per-call FFT.
-    /// `ROW_POWER_EXT[j]` is the coset evaluation of the row-subgroup
-    /// interpolant of `row^j`. The round-0 target `(alpha + δ·row)^POW` (with
-    /// `alpha = s + δ·base + k_0`) expands by the binomial theorem into
-    /// `Σ_j C(POW, j) · alpha^{POW−j} · δ^j · row^j`; since ifft and
-    /// coset_evaluations are linear, its coset evaluation is this
-    /// keyset-independent basis combined with per-call scalars (see
-    /// `expansion_boundary_quotient`). Built once.
-    static ref ROW_POWER_EXT: Vec<Vec<Fp>> = (0..=TachyonP5R32::POW)
-        .map(|power| {
-            let mut samples: Vec<Fp> = (0..EK_PART_LENGTH as u64)
-                .map(|row| Fp::from(row).pow_vartime([power]))
-                .collect();
-            Domain::new(EK_PART_LENGTH.ilog2()).ifft(&mut samples);
-            coset_evaluations(&samples, BOUNDARY_COSET, COSET_SHIFT)
-        })
-        .collect();
 
     /// Quintic-coset evaluations of the round offset's constants part: the
     /// `CONSTANTS[col + 1]` contribution of `offset[col]` alone (the row-wrap
@@ -682,31 +664,54 @@ fn offset_basis_ext(values: &[Fp]) -> Vec<Fp> {
     coset_evaluations(&spread_by_stride(&coeffs), ROUND_COSET, COSET_SHIFT)
 }
 
-/// Prover-side bundle of the expansion step's three witness quotients, from
-/// the coefficient vectors of the trace poly `T` and the eval-form part-key
-/// poly `K`. `keyset` is the note's master key `mk` (the expansion cipher's
+/// Prover-side bundle of the expansion step's witness polynomials, from the
+/// coefficient vectors of the trace poly `T` and the eval-form part-key poly
+/// `K`. `keyset` is the note's master key `mk` (the expansion cipher's
 /// round-key schedule) and `params` its expansion-input parameters
 /// `(s, δ, w)`; `base = part · EK_PART_LENGTH` is this part's cipher-input
-/// window origin. Builds the shared quintic-coset trace evaluation once and
-/// returns `(round splits, boundary, decimation)`, matching what
-/// [`KeyExpansionStep`] opens: cipher input `s + δ·(base + row)`, first key
-/// `mk.round_key(0)`, whitening `w`.
+/// window origin. Returns `(round splits, input column, recurrence quotient,
+/// link quotient, decimation quotient)`, matching what [`KeyExpansionStep`]
+/// opens: the input column `I` interpolates the round-0 cipher inputs
+/// `s + δ·(base + row) + k_0` (built by the same affine-recurrence builder as
+/// the arc weights), the link quotient binds `T`'s first column to `I^POW`,
+/// and the decimation quotient binds `K` to `T`'s final column plus the
+/// whitening `w`.
 pub(crate) fn expansion_quotients(
     trace_coeffs: &[Fp],
     keyset: &NoteMasterKey,
     params: &ExpansionParams,
     key_coeffs: &[Fp],
     base: Fp,
-) -> ([Polynomial; EXPANSION_ROUND_SPLITS], Polynomial, Polynomial) {
+) -> (
+    [Polynomial; EXPANSION_ROUND_SPLITS],
+    ExpansionInputSpectrum,
+    Polynomial,
+    Polynomial,
+    Polynomial,
+) {
     let trace_ext = coset_evaluations(trace_coeffs, ROUND_COSET, COSET_SHIFT);
     let round = expansion_round_quotient(&trace_ext, keyset);
-    let boundary = expansion_boundary_quotient(
-        &trace_ext,
-        params.input(base) + keyset.round_key(0),
-        params.stride,
+    let origin = params.input(base) + keyset.round_key(0);
+    let (input_coeffs, recurrence_coeffs) =
+        affine_recurrence_inner::<EK_PART_LENGTH>(Fp::ONE, params.stride, Fp::ONE, origin);
+    let link = strided_column_quotient(
+        trace_coeffs,
+        &input_coeffs,
+        Fp::ONE,
+        Fp::ZERO,
+        TachyonP5R32::POW,
     );
-    let decimation = expansion_decimation_quotient(trace_coeffs, key_coeffs, params.whitening);
-    (round, boundary, decimation)
+    let final_column_stride =
+        subgroup_generator::<POLY_LEN_MAX>().pow_vartime([(TachyonP5R32::ROUNDS - 1) as u64]);
+    let decimation =
+        strided_column_quotient(trace_coeffs, key_coeffs, final_column_stride, params.whitening, 1);
+    (
+        round,
+        ExpansionInputSpectrum(Polynomial::from_coeffs(&input_coeffs)),
+        Polynomial::from_coeffs(&recurrence_coeffs),
+        link,
+        decimation,
+    )
 }
 
 /// The challenge-free masked-quintic transition quotient `Q_round`, as
@@ -759,97 +764,45 @@ pub(crate) fn expansion_round_quotient(
     split_coeffs::<EXPANSION_ROUND_SPLITS>(&quotient, POLY_LEN_MAX)
 }
 
-/// The challenge-free boundary quotient `Q_boundary` (one split): builds
-/// `complement·(T − target)` on the reduced coset and divides by `Z_D`, where
-/// `target` interpolates each row's round-0 output. Round 0 is folded into
-/// the boundary here: `alpha = s + δ·base + k_0` collects the row-independent
-/// input terms (with `c_0 = 0`), so round 0's S-box pins each first-column
-/// cell to `(alpha + δ·row)^POW`.
-///
-/// The target's coset evaluation needs no per-call FFT: `(alpha + δ·row)^POW`
-/// expands by the binomial theorem to
-/// `Σ_j C(POW, j) · alpha^{POW−j} · δ^j · row^j`, so it is the cached
-/// row-power basis [`ROW_POWER_EXT`] combined with the per-call scalars
-/// `C(POW, j) · alpha^{POW−j} · δ^j`. This matches the values the step pins
-/// via `enforce_first_column_values`.
-pub(crate) fn expansion_boundary_quotient(trace_ext: &[Fp], alpha: Fp, stride: Fp) -> Polynomial {
-    // `C(5, j)` for `j = 0..=5`.
-    const BINOMIAL: [u64; 6] = [1, 5, 10, 10, 5, 1];
-    const {
-        assert!(
-            TachyonP5R32::POW == 5,
-            "boundary binomial coefficients assume the x^5 S-box"
-        );
-    }
-
-    // The complement `E(X) = Σ X^(ERA·m)` and the row-power basis are both
-    // keyset-independent: built once (see COMPLEMENT_EXT, ROW_POWER_EXT).
-    let complement_ext: &[Fp] = &COMPLEMENT_EXT;
-    let row_power_ext: &[Vec<Fp>] = &ROW_POWER_EXT;
-
-    // Per-call scalars `scale[j] = C(5, j) · alpha^{5−j} · δ^j`.
-    let mut scale = [Fp::ZERO; BINOMIAL.len()];
-    let mut alpha_power = Fp::ONE;
-    for (degree, coefficient) in BINOMIAL.iter().enumerate().rev() {
-        scale[degree] = Fp::from(*coefficient) * alpha_power;
-        alpha_power *= alpha;
-    }
-    let mut stride_power = Fp::ONE;
-    for weight in &mut scale {
-        *weight *= stride_power;
-        stride_power *= stride;
-    }
-
-    let quotient = coset_quotient(BOUNDARY_COSET, |point| {
-        let target = scale
-            .iter()
-            .zip(row_power_ext.iter())
-            .fold(Fp::ZERO, |acc, (weight, basis)| {
-                acc + *weight * basis[point]
-            });
-        complement_ext[point] * (trace_ext[point * REDUCE_STRIDE] - target)
-    });
-    assert!(
-        quotient.len() <= POLY_LEN_MAX,
-        "boundary quotient exceeds one split"
-    );
-    Polynomial::from_coeffs(&quotient)
-}
-
-/// The decimation quotient `Q` binding the eval-form key poly `K` to the
-/// trace's final column: `Q = (K(X) − w − T(σX)) / (X^EK_PART_LENGTH −
-/// 1)`, with the final-column stride `σ = ω^{TRACE_COLUMNS-1}` (`ω` the
-/// order-`TRACE_SIZE` root) and the whitening key `w`. The numerator vanishes
-/// on the order-`EK_PART_LENGTH` subgroup `⟨ζ⟩` (`ζ =
-/// ω^{TRACE_COLUMNS}`) exactly when `K(ζ^r) = (row-r final cell) + w`, so exact
-/// division certifies the keys. `key_coeffs` is the eval-form interpolant's
-/// coefficient vector (degree `< EK_PART_LENGTH`).
-pub(crate) fn expansion_decimation_quotient(
+/// The strided-column quotient `Q = (C(X)^e − offset − M(σX)) /
+/// (X^EK_PART_LENGTH − 1)` binding a low-degree column poly `C` to a strided
+/// column of the trace `M` — the identity `enforce_strided_column` checks.
+/// The numerator vanishes on the order-`EK_PART_LENGTH` subgroup `⟨ζ⟩` exactly
+/// when `C(ζ^r)^e = M(σ·ζ^r) + offset`, so exact division certifies the
+/// column. Two callers: the decimation binding (`C = K`, `σ` the final-column
+/// stride, `offset = w`, `e = 1`) and the round-0 input link (`C = I`,
+/// `σ = 1`, `offset = 0`, `e = POW`).
+pub(crate) fn strided_column_quotient(
     trace_coeffs: &[Fp],
-    key_coeffs: &[Fp],
-    whitening: Fp,
+    column_coeffs: &[Fp],
+    stride: Fp,
+    offset: Fp,
+    exponent: u64,
 ) -> Polynomial {
-    let stride =
-        subgroup_generator::<POLY_LEN_MAX>().pow_vartime([(TachyonP5R32::ROUNDS - 1) as u64]);
+    // C(X)^e by repeated products (the exponent is a tiny S-box degree).
+    let mut powered = vec![Fp::ONE];
+    for _ in 0..exponent {
+        powered = multiply(&powered, column_coeffs);
+    }
 
-    // numerator(X) = K(X) − w − T(σX): coefficient `i` is `key_coeffs[i] −
-    // σ^i·trace_coeffs[i]`, with `w` removed from the constant term.
-    let mut numerator = vec![Fp::ZERO; trace_coeffs.len().max(key_coeffs.len())];
+    // numerator(X) = C(X)^e − offset − M(σX): coefficient `i` of `M(σX)` is
+    // `σ^i·trace_coeffs[i]`, with `offset` removed from the constant term.
+    let mut numerator = vec![Fp::ZERO; trace_coeffs.len().max(powered.len())];
     let mut stride_power = Fp::ONE;
     for (degree, slot) in numerator.iter_mut().enumerate() {
-        let key = key_coeffs.get(degree).copied().unwrap_or(Fp::ZERO);
+        let column = powered.get(degree).copied().unwrap_or(Fp::ZERO);
         let trace = trace_coeffs.get(degree).copied().unwrap_or(Fp::ZERO);
-        *slot = key - stride_power * trace;
+        *slot = column - stride_power * trace;
         stride_power *= stride;
     }
     if let Some(constant) = numerator.first_mut() {
-        *constant -= whitening;
+        *constant -= offset;
     }
 
     let (quotient, remainder) = divide_by_vanishing(&numerator, EK_PART_LENGTH);
     assert!(
         remainder.iter().all(|coeff| *coeff == Fp::ZERO),
-        "decimation numerator is not divisible by Z_<zeta>: key poly mismatches the trace column",
+        "strided-column numerator is not divisible by Z_<zeta>: column poly mismatches the trace",
     );
     Polynomial::from_coeffs(&quotient)
 }
@@ -905,36 +858,99 @@ mod tests {
 
     #[test]
     fn expansion_quotients_fit_the_pow_derived_cosets() {
-        // Guards the POW-derived ROUND_COSET / BOUNDARY_COSET sizing without
-        // proving: building the three expansion quotients on a real keyset runs
-        // their internal `divide_by_vanishing` divisibility asserts, which fire
-        // if a coset is too small for its numerator (coefficients alias). Also
-        // pins the derived sizes, so a cipher/POLY_LEN_MAX change that would
-        // under-size them is caught here rather than only in the slow prover.
+        // Guards the POW-derived ROUND_COSET sizing without proving: building
+        // the expansion witness polynomials on a real keyset runs their
+        // internal `divide_by_vanishing` divisibility asserts, which fire if a
+        // coset is too small for its numerator (coefficients alias). Also pins
+        // the derived size, so a cipher/POLY_LEN_MAX change that would
+        // under-size it is caught here rather than only in the slow prover.
         assert_eq!(ROUND_COSET, 1 << 16, "round-numerator coset");
-        assert_eq!(BOUNDARY_COSET, 1 << 14, "boundary-numerator coset");
-        assert_eq!(REDUCE_STRIDE, 4, "decimation stride");
 
         let mk = NoteMasterKey(array::from_fn(|index| Fp::from(index as u64 + 1)));
+        let params = mk.expansion_params();
         let (states, part_keys) = mk.derive_schedule_part(0);
         let spectrum = states.spectrum();
         let key_poly = part_keys.key_spectrum();
-        let (round, boundary, decimation) = expansion_quotients(
+        let (round, input_column, input_quotient, link, decimation) = expansion_quotients(
             spectrum.0.coefficients(),
             &mk,
-            &mk.expansion_params(),
+            &params,
             key_poly.0.coefficients(),
             Fp::ZERO,
         );
 
         assert_eq!(round.len(), EXPANSION_ROUND_SPLITS);
         assert!(
-            boundary.coefficients().len() <= POLY_LEN_MAX,
-            "boundary quotient fits one split"
+            input_column.0.coefficients().len() <= EK_PART_LENGTH,
+            "input column is a row-subgroup interpolant"
+        );
+        assert!(
+            link.coefficients().len() <= POLY_LEN_MAX,
+            "link quotient fits one split"
         );
         assert!(
             decimation.coefficients().len() <= POLY_LEN_MAX,
             "decimation quotient fits one split"
+        );
+
+        // The link identity at an off-domain challenge, production sizes:
+        // I(z)^5 − T(z) = Q(z)·(z^EK_PART_LENGTH − 1). This is the identity
+        // `enforce_strided_column` checks at the S-box exponent.
+        let z = Fp::from(4321u64);
+        let input_at_z = input_column.0.eval(z);
+        let powered = input_at_z.square().square() * input_at_z;
+        assert_eq!(
+            powered - spectrum.0.eval(z),
+            link.eval(z) * (z.pow_vartime([EK_PART_LENGTH as u64]) - Fp::ONE),
+            "link identity must hold at the challenge"
+        );
+
+        // The input column's affine-recurrence identity at the same challenge:
+        // (z − ζ^{-1})·(I(ζz) − I(z) − δ) = Q(z)·(z^EK_PART_LENGTH − 1), plus
+        // the boundary I(1) = s + k_0 (part 0: base = 0).
+        let zeta = subgroup_generator::<EK_PART_LENGTH>();
+        let wrap = zeta.invert().expect("a root of unity is nonzero");
+        assert_eq!(
+            (z - wrap) * (input_column.0.eval(zeta * z) - input_at_z - params.stride),
+            input_quotient.eval(z) * (z.pow_vartime([EK_PART_LENGTH as u64]) - Fp::ONE),
+            "input recurrence identity must hold at the challenge"
+        );
+        assert_eq!(
+            input_column.0.eval(Fp::ONE),
+            params.input(Fp::ZERO) + mk.round_key(0),
+            "input column origin must be s + k_0"
+        );
+    }
+
+    #[test]
+    fn affine_recurrence_interpolates_the_orbit_on_a_tiny_coset() {
+        // The generalized builder on the arithmetic orbit (scale 1, step δ,
+        // shift 1): seq(ζ^d) = origin + δ·d over the order-8 subgroup, and the
+        // masked identity holds at an off-domain challenge.
+        const SMALL_N: usize = 8;
+        let step = Fp::from(3u64);
+        let origin = Fp::from(11u64);
+        let (sequence_vec, quotient_vec) =
+            affine_recurrence_inner::<SMALL_N>(Fp::ONE, step, Fp::ONE, origin);
+
+        let zeta = Domain::new(SMALL_N.ilog2()).omega();
+        let sequence = Polynomial::from_coeffs(&sequence_vec);
+        let quotient = Polynomial::from_coeffs(&quotient_vec);
+
+        for index in 0..SMALL_N {
+            assert_eq!(
+                sequence.eval(zeta.pow_vartime([index as u64])),
+                origin + step * Fp::from(index as u64),
+                "seq must interpolate the affine orbit on the subgroup"
+            );
+        }
+
+        let wrap = zeta.pow_vartime([(SMALL_N - 1) as u64]);
+        let z = Fp::from(123u64);
+        assert_eq!(
+            (z - wrap) * (sequence.eval(zeta * z) - sequence.eval(z) - step),
+            quotient.eval(z) * (z.pow_vartime([SMALL_N as u64]) - Fp::ONE),
+            "masked affine recurrence must hold at the challenge"
         );
     }
 
@@ -1150,7 +1166,8 @@ mod tests {
         const SMALL_N: usize = 8;
         let ratio = Fp::from(6u64); // rho_j·β
         let shift = Fp::MULTIPLICATIVE_GENERATOR; // c ∉ ⟨gamma⟩
-        let (weight_vec, quotient_vec) = weight_quotient_inner::<SMALL_N>(ratio, shift);
+        let (weight_vec, quotient_vec) =
+            affine_recurrence_inner::<SMALL_N>(ratio, Fp::ZERO, shift, Fp::ONE);
 
         let gamma = Domain::new(SMALL_N.ilog2()).omega();
         let weight = Polynomial::from_coeffs(&weight_vec);
@@ -1203,7 +1220,8 @@ mod tests {
         let q_boundary = Polynomial::from_coeffs(&boundary);
         let two = [Polynomial::from_coeffs(&t0), Polynomial::from_coeffs(&t1)];
         let weights: [Polynomial; POLYS] = array::from_fn(|poly| {
-            let (weight, _) = weight_quotient_inner::<SMALL_N>(ratios[poly] * beta, shift);
+            let (weight, _) =
+                affine_recurrence_inner::<SMALL_N>(ratios[poly] * beta, Fp::ZERO, shift, Fp::ONE);
             Polynomial::from_coeffs(&weight)
         });
 

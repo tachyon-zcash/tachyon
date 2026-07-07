@@ -34,11 +34,10 @@ use crate::{
     },
     relations::{
         enforce::{
-            enforce_accumulator_recurrence, enforce_arc_match, enforce_shifted_combination,
-            enforce_weight_recurrence,
+            enforce_accumulator_recurrence, enforce_affine_recurrence, enforce_arc_match,
+            enforce_shifted_combination,
         },
         quotient::ARC_SPLITS,
-        subgroup_generator,
     },
     stamp::proof::delegation::NullifierDerivation,
 };
@@ -580,7 +579,7 @@ impl Step for UnspentEpochFuse {
 /// `[epoch_start, epoch_end + 1)`, then proves every tested value is the
 /// note's genuine derivation nullifier with the running-sum argument: per poly
 /// the geometric weight `w_j(p_d) = (rho_j·β)^d`
-/// ([`enforce_weight_recurrence`]), the exclusive-prefix accumulator `A(p_d) =
+/// ([`enforce_affine_recurrence`]), the exclusive-prefix accumulator `A(p_d) =
 /// Σ_{k<d} β^k·nf_k` ([`enforce_accumulator_recurrence`]), and the
 /// offset-indexed match `q(β)·β^{start − E_0} == A(p_{end − E_0}) − A(p_{start
 /// − E_0})` ([`enforce_arc_match`]). The offset origin `E_0` is witnessed here
@@ -697,18 +696,20 @@ impl Step for UnspentBind {
             .coordinates()
             .expect("range commitment is not identity");
         let beta = poseidon::arc_challenge(digest.0, range_coords, unspent_epoch_start, end_epoch);
-        let coset_gen = subgroup_generator::<NF_DOMAIN>();
 
-        // Per-poly geometric weight w_j(p_d) = (ρ_j·β)^d.
+        // Per-poly geometric weight w_j(p_d) = (ρ_j·β)^d: the pure-geometric
+        // case of the affine recurrence (step 0, boundary w_j(c) = 1).
         for (weight, (ratio, quotient)) in
             weights.iter().zip(ratios.0.iter().zip(&weight_quotients))
         {
-            enforce_weight_recurrence::<NF_DOMAIN, ARC_SPLITS>(
+            enforce_affine_recurrence::<NF_DOMAIN, ARC_SPLITS>(
                 ctx,
                 weight,
                 quotient,
                 ratio * beta,
+                Fp::ZERO,
                 shift.0,
+                Fp::ONE,
             )?;
         }
 
@@ -722,16 +723,16 @@ impl Step for UnspentBind {
             shift.0,
         )?;
 
-        // Offset-indexed range match against the witnessed origin E_0.
+        // Offset-indexed range match against the witnessed origin E_0; both
+        // offsets are range-limited to the query coset by the relation.
         let start_offset = u64::from(unspent_epoch_start.0 - creation_epoch.0);
         let end_offset = u64::from(end_epoch.0 - creation_epoch.0);
-        enforce_arc_match::<ARC_SPLITS>(
+        enforce_arc_match::<ARC_SPLITS, NF_DOMAIN>(
             ctx,
             &accumulator,
             &Polynomial::from(range.clone()),
             range_commit.into(),
             shift.0,
-            coset_gen,
             beta,
             start_offset,
             end_offset,

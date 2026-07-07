@@ -116,8 +116,9 @@ impl Step for SpendBind {
         let cv = rcv.commit(i64::from(note.value));
         let rk = pak.ak.derive_action_public(&alpha);
 
-        // The spend offset is the difference of the two pinned lineage epochs;
-        // SpendStamp consumes it and re-pins it via `nf_now == present_nf`.
+        // The spend offset is the difference of the two anchor-bound lineage
+        // epochs -- that threading is its pin. SpendStamp consumes it and adds
+        // the `nf_now == present_nf` consistency bind.
         let offset = present_epoch.offset_from(creation_epoch);
 
         Ok(((cm, (cv, rk), present_nf, anchor, offset), ()))

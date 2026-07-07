@@ -3,7 +3,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::{array, fmt};
+use core::array;
 
 use derive_more::{Debug, Eq as TotalEq, PartialEq};
 use ff::PrimeField as _;

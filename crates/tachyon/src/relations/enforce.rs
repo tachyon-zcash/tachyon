@@ -388,28 +388,31 @@ pub(crate) fn enforce_committed_row_recurrence<
     Ok(())
 }
 
-/// Bind a low-degree polynomial `column` to a strided column of the committed
-/// `matrix`. On the order-`SUB_ORDER` subgroup `⟨ζ⟩`
-/// (`ζ = subgroup_generator::<SUB_ORDER>()`) the relation pins
-/// `column(ζ^r) = matrix(stride·ζ^r) + offset`, i.e. `column` is the
+/// Bind a low-degree polynomial `column`, raised to a fixed `exponent`, to a
+/// strided column of the committed `matrix`. On the order-`SUB_ORDER` subgroup
+/// `⟨ζ⟩` (`ζ = subgroup_generator::<SUB_ORDER>()`) the relation pins
+/// `column(ζ^r)^e = matrix(stride·ζ^r) + offset`. At `e = 1`, `column` is the
 /// degree-`<SUB_ORDER` interpolant of the `matrix` cells on the coset
-/// `stride·⟨ζ⟩` (plus a constant `offset`). As an identity at the Fiat-Shamir
-/// point `z`:
+/// `stride·⟨ζ⟩` (plus a constant `offset`); at an S-box exponent it pins the
+/// `matrix` cells to the S-boxed `column` values. As an identity at the
+/// Fiat-Shamir point `z`:
 ///
-/// $$ \mathit{column}(z) - \mathit{offset} - \mathit{matrix}(\sigma z)
+/// $$ \mathit{column}(z)^{\,e} - \mathit{offset} - \mathit{matrix}(\sigma z)
 ///    = Q(z)\,(z^{\mathrm{SUB\_ORDER}} - 1). $$
 ///
-/// The numerator `column(X) − offset − matrix(σX)` vanishes on `⟨ζ⟩` exactly
+/// The numerator `column(X)^e − offset − matrix(σX)` vanishes on `⟨ζ⟩` exactly
 /// when the column equality holds, so a pass at random `z` forces it
-/// (Schwartz-Zippel). `column` and `matrix` are full polynomials; `Q` is a
-/// single committed quotient.
+/// (Schwartz-Zippel). Off-subgroup slack in `column` (any `Z(X)·R(X)` addend)
+/// contributes only vanisher-divisible terms to `column^e`, absorbed by `Q`,
+/// so the relation binds exactly the subgroup values. `column` and `matrix`
+/// are full polynomials; `Q` is a single committed quotient.
 ///
 /// # Caller obligations (soundness)
 ///
 /// - **Binding.** `matrix`, `column`, and `quotient` must be commitment-bound
 ///   to statement-fixed values; all feed `z`.
-/// - **Public structure.** `stride` and `offset` are statement-fixed, never
-///   witness-chosen after `z`.
+/// - **Public structure.** `stride`, `offset`, and `exponent` are
+///   statement-fixed, never witness-chosen after `z`.
 pub(crate) fn enforce_strided_column<const SUB_ORDER: usize>(
     ctx: &mut ragu::StepCtx<'_>,
     matrix: &Polynomial,
@@ -417,6 +420,7 @@ pub(crate) fn enforce_strided_column<const SUB_ORDER: usize>(
     quotient: &Polynomial,
     stride: Fp,
     offset: Fp,
+    exponent: u64,
 ) -> ragu::Result<()> {
     let matrix_commit = matrix.commit();
     let column_commit = column.commit();
@@ -432,7 +436,9 @@ pub(crate) fn enforce_strided_column<const SUB_ORDER: usize>(
     let quotient_at_z = quotient.eval(z);
     ctx.enforce_poly_query(quotient_commit, z, quotient_at_z)?;
 
-    if column_at_z - offset - matrix_at_strided != quotient_at_z * zeroizer::<SUB_ORDER>(z) {
+    if column_at_z.pow_vartime([exponent]) - offset - matrix_at_strided
+        != quotient_at_z * zeroizer::<SUB_ORDER>(z)
+    {
         return Err(ragu::Error::InvalidWitness(
             "strided column identity fails at challenge".into(),
         ));
@@ -475,38 +481,41 @@ pub(crate) fn enforce_weighted_opening<const OPERANDS: usize>(
 }
 
 /// Compute the pair of weighted openings at consecutive positions `d` and
-/// `d+1` of a geometric query family: the query points are
-/// `p_d = shift·coset_gen^d` and `p_{d+1} = coset_gen·p_d`, the per-poly
-/// weights `ratios[j]^d` and `ratios[j]^{d+1}`, and each value is the
-/// weighted open `Σ_j ratios[j]^{·}·polys[j](p_·)` via
+/// `d+1` of a geometric query family over the order-`COSET_ORDER` coset
+/// `shift·⟨γ⟩`: the query points are `p_d = shift·γ^d` and `p_{d+1} = γ·p_d`,
+/// the per-poly weights `ratios[j]^d` and `ratios[j]^{d+1}`, and each value is
+/// the weighted open `Σ_j ratios[j]^{·}·polys[j](p_·)` via
 /// [`enforce_weighted_opening`].
 ///
-/// In a real circuit the offset is decomposed into `log₂(S)` bits and the
-/// powers `coset_gen^d`, `ratios[j]^d` are formed by square-and-multiply
-/// (which also enforces the bound `d < S`); the mock computes them by native
-/// exponentiation of the integer `offset`.
+/// The offset is rejected at or past `COSET_ORDER` (beyond it the coset
+/// wraps); the real circuit decomposes the offset into `log₂(COSET_ORDER)`
+/// bits and forms the powers by square-and-multiply, which realizes the same
+/// bound structurally.
 ///
 /// # Caller obligations (soundness)
 ///
 /// - **Binding.** `commits` are statement-fixed; the witnessed `polys` are
-///   pinned to them inside [`enforce_weighted_opening`]. `shift`, `coset_gen`,
-///   and `ratios` must be statement-fixed, never witness-chosen.
-/// - **Offset.** `offset` is otherwise a free witness; the caller pins it by
-///   matching the first returned value against a statement-fixed reference.
-///   When the query family is injective in `d`, that match forces the genuine
-///   offset and so the second value to the true successor. The real circuit's
-///   bit decomposition additionally caps `d < S`.
-///
-/// TODO: remove shift-bits shortcut
-pub(crate) fn enforce_geometric_opening_pair<const OPERANDS: usize>(
+///   pinned to them inside [`enforce_weighted_opening`]. `shift` and `ratios`
+///   must be statement-fixed, never witness-chosen.
+/// - **Offset.** `offset` must be statement-fixed (the production caller
+///   threads it from bound header values); matching the first returned value
+///   against a statement-fixed reference is an additional consistency bind,
+///   not the pin.
+pub(crate) fn enforce_geometric_opening_pair<const OPERANDS: usize, const COSET_ORDER: usize>(
     ctx: &mut ragu::StepCtx<'_>,
     commits: &[Eq; OPERANDS],
     polys: &[Polynomial; OPERANDS],
     shift: Fp,
-    coset_gen: Fp,
     ratios: &[Fp; OPERANDS],
     offset: u64,
 ) -> ragu::Result<(Fp, Fp)> {
+    if offset >= COSET_ORDER as u64 {
+        return Err(ragu::Error::InvalidWitness(
+            "offset exceeds the query coset order".into(),
+        ));
+    }
+    let coset_gen = subgroup_generator::<COSET_ORDER>();
+
     // p_d = c·γ^d and the per-poly weights ρ_j^d.
     let point_d = shift * coset_gen.pow_vartime([offset]);
     let mut weights_d = *ratios;
@@ -549,59 +558,68 @@ fn open_splits<const SPLITS: usize>(
     Ok(value)
 }
 
-/// Prove the committed geometric weight `w` advances by `ratio` along the
-/// order-`COSET_ORDER` query coset `c·⟨γ⟩` (so `w(c·γ^d) = ratio^d`), the
-/// arc's per-poly weight with `ratio = ρ_j·β`. As an identity at the
-/// Fiat-Shamir point `z` (`c` = `shift`, `S` = `COSET_ORDER`, single-wrap mask
-/// `z − c·γ^{S-1}`):
+/// Prove the committed `sequence` advances by the affine map `v ↦ scale·v +
+/// step` along the order-`COSET_ORDER` coset `c·⟨γ⟩` (so `seq(c·γ^d) = v_d`
+/// with `v_{d+1} = scale·v_d + step` from `v_0 = boundary_value`). As an
+/// identity at the Fiat-Shamir point `z` (`c` = `shift`, `S` = `COSET_ORDER`,
+/// single-wrap mask `z − c·γ^{S-1}`):
 ///
-/// $$ (z - c\gamma^{S-1})\,(w(\gamma z) - \text{ratio}\cdot w(z)) =
+/// $$ (z - c\gamma^{S-1})\,\bigl(\mathit{seq}(\gamma z) -
+/// \text{scale}\cdot \mathit{seq}(z) - \text{step}\bigr) =
 /// Q(z)\,(z^{S} - c^{S}), $$
 ///
-/// plus the boundary open `w(c) = 1`. That boundary is load-bearing: the masked
-/// recurrence pins only the *ratio* between consecutive weights, leaving a free
-/// global scale `α`; without `w(c) = 1` an `α ≠ 1` lets a spent note's range be
-/// matched against `α·nf_k` (absent from the pool) instead of the genuine
-/// `nf_k`. `w` is carried as `SPLITS` splits.
+/// plus the boundary open `seq(c) = boundary_value`. That boundary is
+/// load-bearing: the masked recurrence pins only the relation between
+/// consecutive values, leaving the orbit's one remaining degree of freedom
+/// free (a global scale `α` on the homogeneous part); the boundary pins it.
+/// `sequence` is carried as `SPLITS` splits.
+///
+/// The pure-geometric case (`step = 0`, `boundary_value = 1`) is the arc's
+/// per-poly weight; the arithmetic case (`scale = 1`, `shift = 1`) pins an
+/// affine progression over a subgroup.
 ///
 /// # Caller obligations (soundness)
 ///
-/// - **Binding.** the `w` splits and `quotient` are commitment-bound (all feed
-///   `z`).
-/// - **Public structure.** `ratio` (cm-bound `ρ_j` times the derived `β`) and
-///   `shift` are statement-fixed, never witness-chosen after `z`.
-pub(crate) fn enforce_weight_recurrence<const COSET_ORDER: usize, const SPLITS: usize>(
+/// - **Binding.** the `sequence` splits and `quotient` are commitment-bound
+///   (all feed `z`).
+/// - **Public structure.** `scale`, `step`, `shift`, and `boundary_value` are
+///   statement-fixed, never witness-chosen after `z`.
+pub(crate) fn enforce_affine_recurrence<const COSET_ORDER: usize, const SPLITS: usize>(
     ctx: &mut ragu::StepCtx<'_>,
-    weight: &[Polynomial; SPLITS],
+    sequence: &[Polynomial; SPLITS],
     quotient: &Polynomial,
-    ratio: Fp,
+    scale: Fp,
+    step: Fp,
     shift: Fp,
+    boundary_value: Fp,
 ) -> ragu::Result<()> {
-    let weight_commits: [Eq; SPLITS] = weight.each_ref().map(Polynomial::commit);
+    let sequence_commits: [Eq; SPLITS] = sequence.each_ref().map(Polynomial::commit);
     let quotient_commit = quotient.commit();
 
-    let z =
-        ctx.derive_challenge(&[weight_commits.as_slice(), [quotient_commit].as_slice()].concat())?;
+    let z = ctx
+        .derive_challenge(&[sequence_commits.as_slice(), [quotient_commit].as_slice()].concat())?;
     let gamma = subgroup_generator::<COSET_ORDER>();
     let coset_vanishing =
         z.pow_vartime([COSET_ORDER as u64]) - shift.pow_vartime([COSET_ORDER as u64]);
 
-    let weight_at_z = open_splits(ctx, weight, z)?;
-    let weight_at_znext = open_splits(ctx, weight, gamma * z)?;
+    let sequence_at_z = open_splits(ctx, sequence, z)?;
+    let sequence_at_znext = open_splits(ctx, sequence, gamma * z)?;
     let quotient_at_z = quotient.eval(z);
     ctx.enforce_poly_query(quotient_commit, z, quotient_at_z)?;
 
     let wrap = shift * gamma.pow_vartime([COSET_ORDER as u64 - 1]);
-    if (z - wrap) * (weight_at_znext - ratio * weight_at_z) != quotient_at_z * coset_vanishing {
+    if (z - wrap) * (sequence_at_znext - scale * sequence_at_z - step)
+        != quotient_at_z * coset_vanishing
+    {
         return Err(ragu::Error::InvalidWitness(
-            "weight recurrence identity fails at challenge".into(),
+            "affine recurrence identity fails at challenge".into(),
         ));
     }
 
-    // Boundary: `w(c) = ratio^0 = 1`, pinning the geometric scale (see above).
-    if open_splits(ctx, weight, shift)? != Fp::ONE {
+    // Boundary: `seq(c) = v_0`, pinning the orbit's free scale (see above).
+    if open_splits(ctx, sequence, shift)? != boundary_value {
         return Err(ragu::Error::InvalidWitness(
-            "weight boundary w(c) must be one".into(),
+            "affine recurrence boundary does not match at the origin".into(),
         ));
     }
     Ok(())
@@ -626,7 +644,7 @@ pub(crate) fn enforce_weight_recurrence<const COSET_ORDER: usize, const SPLITS: 
 ///
 /// - **Binding.** `A`, `quotient`, the `weights`, and `trace_polys` are
 ///   commitment-bound (all feed `z`). Each `w_j` must independently be proven
-///   geometric by [`enforce_weight_recurrence`], and each `T_j` bound to its
+///   geometric by [`enforce_affine_recurrence`], and each `T_j` bound to its
 ///   certified derivation commitment, by the caller.
 /// - **Public structure.** `shift` is statement-fixed.
 pub(crate) fn enforce_accumulator_recurrence<
@@ -700,9 +718,10 @@ pub(crate) fn enforce_accumulator_recurrence<
 ///
 /// `start_offset`/`end_offset` are `start_epoch − E_0` / `end_epoch − E_0`
 /// against the certified creation origin `E_0`; the caller reconciles `E_0`
-/// downstream so the arc cannot be shifted. The mock forms the offset point
-/// powers and `β` powers by native exponentiation; the real circuit
-/// bit-decomposes the offsets (which also caps them below `S`).
+/// downstream so the arc cannot be shifted. Both offsets are rejected at or
+/// past `COSET_ORDER` (an endpoint at the order would wrap the exclusive
+/// prefix back to the origin); the real circuit decomposes the offsets into
+/// `log₂(COSET_ORDER)` bits, which realizes the same bound structurally.
 ///
 /// # Caller obligations (soundness)
 ///
@@ -711,20 +730,25 @@ pub(crate) fn enforce_accumulator_recurrence<
 ///   consensus-tested values (the `Unspent` `elapsed ++ tip` reconstruction);
 ///   `β` must be derived from `range_commit` and the certified derivation
 ///   digest before this call.
-/// - **Public structure.** `shift`, `coset_gen`, and the offsets are
-///   statement-fixed, never witness-chosen.
+/// - **Public structure.** `shift` and the offsets are statement-fixed, never
+///   witness-chosen.
 #[expect(clippy::too_many_arguments, reason = "todo")]
-pub(crate) fn enforce_arc_match<const SPLITS: usize>(
+pub(crate) fn enforce_arc_match<const SPLITS: usize, const COSET_ORDER: usize>(
     ctx: &mut ragu::StepCtx<'_>,
     accumulator: &[Polynomial; SPLITS],
     range: &Polynomial,
     range_commit: Eq,
     shift: Fp,
-    coset_gen: Fp,
     beta: Fp,
     start_offset: u64,
     end_offset: u64,
 ) -> ragu::Result<()> {
+    if start_offset >= COSET_ORDER as u64 || end_offset >= COSET_ORDER as u64 {
+        return Err(ragu::Error::InvalidWitness(
+            "offset exceeds the query coset order".into(),
+        ));
+    }
+    let coset_gen = subgroup_generator::<COSET_ORDER>();
     let point_start = shift * coset_gen.pow_vartime([start_offset]);
     let point_end = shift * coset_gen.pow_vartime([end_offset]);
     let range_total =

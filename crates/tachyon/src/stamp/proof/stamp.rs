@@ -17,10 +17,7 @@ use crate::{
     keys::private,
     note::Note,
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
-    relations::{
-        enforce::{enforce_geometric_opening_pair, enforce_poly_product},
-        subgroup_generator,
-    },
+    relations::enforce::{enforce_geometric_opening_pair, enforce_poly_product},
     stamp::proof::{delegation::NullifierDerivation, pool::AnchorChain, spend::SpendHeader},
     value,
 };
@@ -129,11 +126,13 @@ impl Step for OutputStamp {
 /// [`NullifierDerivation`] and stamps the spend.
 ///
 /// Witnesses the `N` derivation polynomials, reads the threaded spend offset
-/// `d = present_epoch − E_0` from the [`SpendHeader`] (derived and bound at
-/// [`SpendBind`](super::spend::SpendBind)), computes the nullifier pair
-/// `(nf_d, nf_{d+1})` off the certified derivation at consecutive coset points,
-/// binds `nf_d` to the lineage's `present_nf` (which re-pins `d` to the genuine
-/// epoch), and publishes both nullifiers as the spend's tachygrams.
+/// `d = present_epoch − E_0` from the [`SpendHeader`] (the difference of two
+/// anchor-bound lineage epochs, derived at
+/// [`SpendBind`](super::spend::SpendBind), range-limited to the query coset by
+/// the relation), computes the nullifier pair `(nf_d, nf_{d+1})` off the
+/// certified derivation at consecutive coset points, checks `nf_d` against the
+/// lineage's `present_nf` (an additional consistency bind on the threaded
+/// offset), and publishes both nullifiers as the spend's tachygrams.
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -142,7 +141,7 @@ impl Step for SpendStamp {
     type Left = SpendHeader;
     type Output = StampHeader;
     type Right = NullifierDerivation;
-    /// `(polys,)`.
+    /// `(emitters,)`.
     type Witness<'source> = ([NfEmitterSpectrum; NF_EMITTERS],);
 
     const INDEX: Index = Index::new(15);
@@ -162,20 +161,20 @@ impl Step for SpendStamp {
 
         // Offset query: the present-epoch nullifier `nf_d` and its successor
         // `nf_{d+1}`, read off the certified polys at consecutive coset points
-        // with the cm-bound shift and ratios.
-        let (nf_now, nf_next) = enforce_geometric_opening_pair(
+        // with the cm-bound shift and ratios. The offset is a threaded header
+        // value (lineage-bound at SpendBind) and range-limited to the query
+        // coset by the relation.
+        let (nf_now, nf_next) = enforce_geometric_opening_pair::<NF_EMITTERS, NF_DOMAIN>(
             ctx,
             &emitter_commits.map(|commit| commit.0),
             &emitters.map(|poly| poly.0),
             shift.0,
-            subgroup_generator::<NF_DOMAIN>(),
             &ratios.0,
             u64::from(offset),
         )?;
 
-        // Continuity: the present-epoch query must equal the lineage tip, which
-        // pins the witnessed offset to the genuine epoch (and so `nf_next` to
-        // the true successor).
+        // Continuity: the present-epoch query must equal the lineage tip, an
+        // additional consistency bind on the already-threaded offset.
         enforce_zero(
             nf_now - Fp::from(present_nf),
             "SpendStamp: query does not match the lineage nullifier",

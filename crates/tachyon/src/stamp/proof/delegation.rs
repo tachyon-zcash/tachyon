@@ -44,11 +44,12 @@ use crate::{
     digest::poseidon,
     keys::{ExpansionParams, NoteMasterKeyPart, ProofAuthorizingKey},
     note::{Commitment as NoteCommitment, Note},
-    primitives::ExpandedKeyTraceSpectrum,
+    primitives::{ExpandedKeyTraceSpectrum, ExpansionInputSpectrum},
     relations::{
         enforce::{
-            enforce_committed_offset_recurrence, enforce_committed_row_recurrence,
-            enforce_first_column_values, enforce_interpolant, enforce_strided_column,
+            enforce_affine_recurrence, enforce_committed_offset_recurrence,
+            enforce_committed_row_recurrence, enforce_first_column_values, enforce_interpolant,
+            enforce_strided_column,
         },
         quotient::{
             EMITTER_ROUND_SPLITS, EXPANSION_ROUND_SPLITS, QuerySalts, QueryShift,
@@ -172,19 +173,25 @@ impl Step for MasterSeed {
 /// and the schedule stays a deterministic function of `mk`.
 ///
 /// The witness is the prover-built trace `T`, the round quotient
-/// ([`EXPANSION_ROUND_SPLITS`] splits), the boundary quotient, the part-key
-/// poly `A_p`, the decimation quotient `Q`, `part`, and the re-witnessed `mk`
-/// part spectra (bound to the seeds' certified commitments); the body is pure
-/// orchestration over three generic vanishing relations plus a range check.
+/// ([`EXPANSION_ROUND_SPLITS`] splits), the round-0 input column `I` with its
+/// recurrence and link quotients, the part-key poly `A_p`, the decimation
+/// quotient, `part`, and the re-witnessed `mk` part spectra (bound to the
+/// seeds' certified commitments); the body is pure orchestration over generic
+/// vanishing relations plus a range check.
 ///
-/// - `enforce_first_column_values` applies round 0 (the input step) outside the
-///   trace, pinning each row-start cell to `(s + δ·(base + row) + k_0)^5`.
+/// - `enforce_affine_recurrence` pins the witnessed input column `I` to the
+///   round-0 cipher inputs (`I(ζ^r) = s + δ·(base + r) + k_0`): two scalars,
+///   the origin and the stride `δ`, fix all `EK_PART_LENGTH` nodes.
+/// - `enforce_strided_column` at the S-box exponent links `I` into the trace,
+///   pinning each row-start cell to `I(ζ^r)^5` (round 0, applied outside the
+///   trace).
 /// - `enforce_committed_row_recurrence` pins the remaining cipher rounds 1..
 ///   of `T` against the schedule reconstructed inline from the `MK_PARTS`
 ///   committed part spectra (the interleaved-coset key term) and the public
 ///   rotated round constants.
-/// - `enforce_strided_column` binds `K` to `T`'s final column plus the
-///   whitening key `w`, so `commit(K)` is exactly the expansion outputs.
+/// - `enforce_strided_column` (exponent 1) binds `K` to `T`'s final column
+///   plus the whitening key `w`, so `commit(K)` is exactly the expansion
+///   outputs.
 ///
 /// # Gate budget
 ///
@@ -195,11 +202,10 @@ impl Step for MasterSeed {
 /// | item | gates |
 /// |---|---|
 /// | expansion-parameter sponge (one permutation) | ~293 |
-/// | boundary targets (`EK_PART_LENGTH` rows × pow5) | ~768 |
-/// | `enforce_first_column_values` (`EK_PART_LENGTH`-node interpolation) | ~795 |
 /// | `enforce_committed_row_recurrence` (`ROUNDS`-node interpolation) | ~130 |
+/// | input column (affine recurrence + S-box link) | ~15 |
 /// | `enforce_strided_column`, range check, reconciliation, slots | ~30 |
-/// | total | ~2015 |
+/// | total | ~470 |
 ///
 /// The parameter sponge must stay single-permutation: the domain tag plus the
 /// `MK_PARTS`-element `mk` prefix absorbs at most `RATE` elements and squeezes
@@ -212,11 +218,14 @@ impl Step for KeyExpansionStep {
     type Left = MasterKeyDerivation;
     type Output = ExpandedKeyDerivation;
     type Right = MasterKeyDerivation;
-    /// `(expansion_trace, quotients, key_spec, decimation_quotient, part,
-    /// mk_parts)`.
+    /// `(expansion_trace, round_quotients, input_column, input_quotient,
+    /// link_quotient, key_spec, decimation_quotient, part, mk_parts)`.
     type Witness<'source> = (
         ExpandedKeyTraceSpectrum,
-        RoundBoundaryQuotients<EXPANSION_ROUND_SPLITS>,
+        [Polynomial; EXPANSION_ROUND_SPLITS], // masked round-quotient splits
+        ExpansionInputSpectrum,
+        Polynomial, // input-recurrence quotient pinning the affine input column
+        Polynomial, // link quotient binding T's first column to I^5
         ExpandedKeyPartSpectrum,
         Polynomial, // decimation quotient binding K to T's final column
         Fp,         // part ∈ 0..EK_PARTS
@@ -232,9 +241,17 @@ impl Step for KeyExpansionStep {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (expansion_trace, quotients, key_spec, decimation_quotient, part, mk_parts): Self::Witness<
-            'source,
-        >,
+        (
+            expansion_trace,
+            round_quotients,
+            input_column,
+            input_quotient,
+            link_quotient,
+            key_spec,
+            decimation_quotient,
+            part,
+            mk_parts,
+        ): Self::Witness<'source>,
         left: <Self::Left as Header>::Data,
         right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -312,27 +329,33 @@ impl Step for KeyExpansionStep {
         let params = ExpansionParams::from_prefix(&prefix);
 
         // Round 0, the input step. The cipher input for row `row` is the
-        // secret affine `s + δ·(base + row)`. The input is not stored in the
-        // trace, so round 0 is applied here rather than by the recurrence:
-        // each row's first cell is pinned to round 0's output
-        // `(s + δ·(base + row) + k_0)^5` (with `c_0 = 0`). The targets are
-        // S-boxed here so the relation stays a generic first-column pinning;
-        // the prover's boundary quotient pins the same values. Every operand
-        // is pinned: `base` from the range-checked `part`, `k_0 = mk[0] =
-        // prefix[0]` and the params from the certified prefix openings.
+        // secret affine `s + δ·(base + row)`, not stored in the trace, so it
+        // is witnessed as the committed input column `I` (round-0 key folded
+        // in: `I(ζ^r) = s + δ·(base + r) + k_0`, with `c_0 = 0`) and pinned by
+        // two scalars: the affine recurrence fixes every node from the origin
+        // and `δ`, and the S-box link pins each row-start cell of `T` to
+        // `I(ζ^r)^5` (round 0's output). Every operand is pinned: `base` from
+        // the range-checked `part`, `k_0 = mk[0] = prefix[0]` and the params
+        // from the certified prefix openings.
         {
             let origin = params.input(base) + prefix[0];
-            let boundary: [Fp; EK_PART_LENGTH] = array::from_fn(|row| {
-                #[expect(clippy::as_conversions, reason = "row index conversion")]
-                let cipher_in = origin + params.stride * Fp::from(row as u64);
-                cipher_in.square().square() * cipher_in
-            });
-            enforce_first_column_values(
+            enforce_affine_recurrence::<{ EK_PART_LENGTH }, 1>(
+                ctx,
+                array::from_ref(&input_column.0),
+                &input_quotient,
+                Fp::ONE,
+                params.stride,
+                Fp::ONE,
+                origin,
+            )?;
+            enforce_strided_column::<{ EK_PART_LENGTH }>(
                 ctx,
                 &expansion_trace.0,
-                &quotients.boundary,
+                &input_column.0,
+                &link_quotient,
+                Fp::ONE,
                 Fp::ZERO,
-                &boundary,
+                TachyonP5R32::POW,
             )?;
         }
 
@@ -366,7 +389,7 @@ impl Step for KeyExpansionStep {
             >(
                 ctx,
                 &expansion_trace.0,
-                &quotients.round,
+                &round_quotients,
                 &constants,
                 &mk_parts.each_ref().map(|mk_part| &mk_part.0),
                 TachyonP5R32::POW,
@@ -389,6 +412,7 @@ impl Step for KeyExpansionStep {
             &decimation_quotient,
             stride,
             params.whitening,
+            1,
         )?;
 
         // Emit a one-slot keyset: this part's commitment in its slot, the

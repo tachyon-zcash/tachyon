@@ -16,7 +16,7 @@ use zcash_mimc::spec::tachyon::TachyonP5R32;
 use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly,
-    constants::{EK_PART_LENGTH, EK_PARTS, EPOCH_SIZE, MK_PART_LEN},
+    constants::{EK_PART_LENGTH, EK_PARTS, EPOCH_SIZE, MK_PART_LEN, NF_DOMAIN},
     digest::mimc,
     entropy::ActionEntropy,
     fixtures::{
@@ -30,10 +30,10 @@ use crate::{
     note::{self, Nullifier},
     primitives::{
         Anchor, BlockHeight, EpochIndex, EpochOffset, ExpandedKeyPartSpectrum,
-        ExpandedKeyTraceSpectrum, NfRangePoly, NfSeqPoly, NoteMasterKeyPartSpectrum, Tachygram,
-        effect,
+        ExpandedKeyTraceSpectrum, ExpansionInputSpectrum, NfRangePoly, NfSeqPoly,
+        NoteMasterKeyPartSpectrum, Tachygram, effect,
     },
-    relations::quotient::{self, RoundBoundaryQuotients},
+    relations::quotient,
     value, witness,
 };
 
@@ -615,6 +615,39 @@ fn spend_stamp_rejects_wrong_offset() {
         inner.to_string(),
         "SpendStamp: query does not match the lineage nullifier"
     );
+}
+
+#[test]
+fn spend_stamp_rejects_offset_past_the_query_domain() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let mut pool = PoolSim::genesis(rng);
+    let note = user.random_note(500);
+    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
+    let height = pool.height();
+    let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
+
+    let spend_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
+    // Forge a header advertising an offset at the query coset order: past it
+    // the coset wraps and the note has no safe nullifier, so the query
+    // relation's range rejection fires before any opening.
+    let (cm, (cv, rk), present_nf, anchor, _offset) = *spend_pcd.data();
+    let forged = spend_pcd.proof().clone().carry::<spend::SpendHeader>((
+        cm,
+        (cv, rk),
+        present_nf,
+        anchor,
+        EpochOffset(u32::try_from(NF_DOMAIN).expect("NF_DOMAIN fits u32")),
+    ));
+    let (derivation, polys, _keyset) = user.derivation(rng, &note);
+    let err = PROOF_SYSTEM
+        .fuse(rng, stamp::SpendStamp, (polys,), forged, derivation)
+        .err()
+        .unwrap();
+    let ragu::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(inner.to_string(), "offset exceeds the query coset order");
 }
 
 #[test]
@@ -1345,6 +1378,78 @@ fn unspent_bind_rejects_nf_start_mismatch() {
 }
 
 #[test]
+fn unspent_bind_rejects_offset_past_the_query_domain() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let mut pool = PoolSim::genesis(rng);
+    let note = user.random_note(500);
+    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
+    let spendable = user.spendable_init(rng, &note, &pool, init_height);
+    let start_anchor = spendable.data().2;
+
+    let mut sync = SyncSim::new();
+    sync.accept_delegation(
+        0,
+        alloc::vec![
+            user.query_nf(&note, EpochOffset(0)),
+            user.query_nf(&note, EpochOffset(1))
+        ],
+        init_height,
+        start_anchor,
+    );
+    let target_height = BlockHeight(EPOCH_SIZE);
+    while pool.height() < target_height {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
+    let unspent = sync.build_next_unspent(rng, 0, &pool, target_height);
+
+    // Shift the segment's absolute epochs up to the query coset order while
+    // the witness stays internally consistent (same elapsed and tested values,
+    // β rebuilt for the forged epochs): the one violated constraint is the arc
+    // offsets' range rejection against the witnessed E_0 = 0.
+    let coset_order = u32::try_from(NF_DOMAIN).expect("NF_DOMAIN fits u32");
+    let (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), anchor_last) =
+        *unspent.data();
+    let forged_start = EpochIndex(epoch_start.0 + coset_order);
+    let forged_end = EpochIndex(epoch_end.0 + coset_order);
+    let forged_unspent = unspent.proof().clone().carry::<pool::Unspent>((
+        anchor_prev,
+        (forged_start, nf_start),
+        elapsed,
+        (forged_end, nf_end),
+        anchor_last,
+    ));
+
+    // The honest tested values at the real offsets; the fixture helper would
+    // query nullifiers at the forged offsets (tripping the native range
+    // assert), so the step witness is assembled directly.
+    let nfs = alloc::vec![
+        user.query_nf(&note, EpochOffset(0)),
+        user.query_nf(&note, EpochOffset(1)),
+    ];
+    let (derivation, polys, _keyset) = user.derivation(rng, &note);
+    let mk = user.master_key(&note);
+    let witness = witness::unspent_bind(
+        (*forged_unspent.data(), *derivation.data()),
+        &polys,
+        &mk,
+        &nfs,
+        forged_start,
+        forged_end,
+        EpochIndex(0),
+    );
+
+    let err = PROOF_SYSTEM
+        .fuse(rng, pool::UnspentBind, witness, forged_unspent, derivation)
+        .err()
+        .unwrap();
+    let ragu::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(inner.to_string(), "offset exceeds the query coset order");
+}
+
+#[test]
 fn spendable_lift_rejects_wrong_cm() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
@@ -1603,11 +1708,23 @@ fn key_expansion_rejects_forged_witnesses() {
         let mut hybrid = mk;
         hybrid.0[4] += Fp::ONE;
         let (states, part_keys) = hybrid.derive_schedule_part(0);
-        let (trace, quotients, key_poly, decimation_quotient, part, _hybrid_parts) =
-            assemble(&hybrid, &states.spectrum(), &part_keys, 0);
+        let (
+            trace,
+            round_quotients,
+            input_column,
+            input_quotient,
+            link_quotient,
+            key_poly,
+            decimation_quotient,
+            part,
+            _hybrid_parts,
+        ) = assemble(&hybrid, &states.spectrum(), &part_keys, 0);
         (
             trace,
-            quotients,
+            round_quotients,
+            input_column,
+            input_quotient,
+            link_quotient,
             key_poly,
             decimation_quotient,
             part,
@@ -1620,12 +1737,31 @@ fn key_expansion_rejects_forged_witnesses() {
     // trace is built once and shared between the witness and the tampering.
     let forged_key = {
         let (part0_states, part0_keys) = mk.derive_schedule_part(0);
-        let (trace, quotients, _honest_key, decimation_quotient, part, mk_parts) =
-            assemble(&mk, &part0_states.spectrum(), &part0_keys, 0);
+        let (
+            trace,
+            round_quotients,
+            input_column,
+            input_quotient,
+            link_quotient,
+            _honest_key,
+            decimation_quotient,
+            part,
+            mk_parts,
+        ) = assemble(&mk, &part0_states.spectrum(), &part0_keys, 0);
         let mut tampered = part0_keys;
         tampered.0[0] += Fp::ONE;
         let bad_key = tampered.key_spectrum();
-        (trace, quotients, bad_key, decimation_quotient, part, mk_parts)
+        (
+            trace,
+            round_quotients,
+            input_column,
+            input_quotient,
+            link_quotient,
+            bad_key,
+            decimation_quotient,
+            part,
+            mk_parts,
+        )
     };
 
     // Build a part-0 witness under explicitly forged expansion params: trace,
@@ -1644,16 +1780,20 @@ fn key_expansion_rejects_forged_witnesses() {
         }
         let spectrum = ExpandedKeyTrace(cells).spectrum();
         let key_poly = ExpandedKeyPart(keys.try_into().expect("EK_PART_LENGTH keys")).key_spectrum();
-        let (round, boundary, decimation_quotient) = quotient::expansion_quotients(
-            spectrum.0.coefficients(),
-            &mk,
-            params,
-            key_poly.0.coefficients(),
-            Fp::ZERO,
-        );
+        let (round_quotients, input_column, input_quotient, link_quotient, decimation_quotient) =
+            quotient::expansion_quotients(
+                spectrum.0.coefficients(),
+                &mk,
+                params,
+                key_poly.0.coefficients(),
+                Fp::ZERO,
+            );
         (
             spectrum,
-            RoundBoundaryQuotients { round, boundary },
+            round_quotients,
+            input_column,
+            input_quotient,
+            link_quotient,
             key_poly,
             decimation_quotient,
             Fp::ZERO,
@@ -1662,9 +1802,13 @@ fn key_expansion_rejects_forged_witnesses() {
     };
     let genuine_params = mk.expansion_params();
 
-    // Forged input salt / stride: the trace runs on shifted cipher inputs, so
-    // the round-0 targets the step derives from the genuine params reject the
-    // first column (the rounds themselves are a valid cipher trace and pass).
+    // Forged input salt / stride: the trace and input column run on shifted
+    // cipher inputs, so the affine recurrence the step keys from the genuine
+    // sponge params rejects the input column (the rounds themselves are a
+    // valid cipher trace and pass). A forged salt shifts the column's origin
+    // but keeps its stride, so the recurrence identity holds and the boundary
+    // open rejects; a forged stride (at part 0 the origin is stride-free)
+    // fails the recurrence identity itself.
     let forged_salt = {
         let mut params = genuine_params;
         params.salt += Fp::ONE;
@@ -1683,6 +1827,80 @@ fn key_expansion_rejects_forged_witnesses() {
         let mut params = genuine_params;
         params.whitening += Fp::ONE;
         assemble_params(&params)
+    };
+
+    // Tampered input column: a non-constant coefficient breaks the column's
+    // node-to-node stride, so the affine recurrence identity rejects it (a
+    // purely constant shift would instead fail the boundary open, as the
+    // forged-salt case shows).
+    let tampered_input = {
+        let (states, part_keys) = mk.derive_schedule_part(0);
+        let (
+            trace,
+            round_quotients,
+            input_column,
+            input_quotient,
+            link_quotient,
+            key_poly,
+            decimation_quotient,
+            part,
+            mk_parts,
+        ) = assemble(&mk, &states.spectrum(), &part_keys, 0);
+        let mut coeffs = input_column.0.coefficients().to_vec();
+        coeffs[1] += Fp::ONE;
+        (
+            trace,
+            round_quotients,
+            ExpansionInputSpectrum(Polynomial::from_coeffs(&coeffs)),
+            input_quotient,
+            link_quotient,
+            key_poly,
+            decimation_quotient,
+            part,
+            mk_parts,
+        )
+    };
+
+    // Genuine input column against a trace running on shifted cipher inputs:
+    // the affine recurrence passes (the column matches the genuine params), so
+    // the S-box link catches the first-column mismatch.
+    let mismatched_first_column = {
+        let mut params = genuine_params;
+        params.salt += Fp::ONE;
+        let (
+            trace,
+            round_quotients,
+            _forged_input,
+            _forged_input_quotient,
+            link_quotient,
+            key_poly,
+            decimation_quotient,
+            part,
+            mk_parts,
+        ) = assemble_params(&params);
+        let (states, part_keys) = mk.derive_schedule_part(0);
+        let (
+            _honest_trace,
+            _honest_rounds,
+            input_column,
+            input_quotient,
+            _honest_link,
+            _honest_key,
+            _honest_decimation,
+            _honest_part,
+            _honest_mk_parts,
+        ) = assemble(&mk, &states.spectrum(), &part_keys, 0);
+        (
+            trace,
+            round_quotients,
+            input_column,
+            input_quotient,
+            link_quotient,
+            key_poly,
+            decimation_quotient,
+            part,
+            mk_parts,
+        )
     };
 
     let cases = [
@@ -1704,16 +1922,26 @@ fn key_expansion_rejects_forged_witnesses() {
         (
             "forged expansion salt",
             forged_salt,
-            "first column values identity fails at challenge",
+            "affine recurrence boundary does not match at the origin",
         ),
         (
             "forged expansion stride",
             forged_stride,
-            "first column values identity fails at challenge",
+            "affine recurrence identity fails at challenge",
         ),
         (
             "forged whitening key",
             forged_whitening,
+            "strided column identity fails at challenge",
+        ),
+        (
+            "tampered input column",
+            tampered_input,
+            "affine recurrence identity fails at challenge",
+        ),
+        (
+            "first column mismatches the input link",
+            mismatched_first_column,
             "strided column identity fails at challenge",
         ),
     ];
