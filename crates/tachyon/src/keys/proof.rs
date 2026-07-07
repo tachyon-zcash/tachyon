@@ -23,8 +23,6 @@ use crate::{entropy::ActionRandomizer, primitives::effect, reddsa};
 /// Currently a data holder — no proof-construction methods yet. These will be
 /// added once the Ragu PCD circuit is integrated and proof delegation is
 /// specified.
-// TODO: add proof-construction methods (e.g., create_action_proof, create_merge_proof)
-// once the Ragu circuit API is available.
 #[derive(Clone, Copy, Debug)]
 pub struct ProofAuthorizingKey {
     /// The spend validating key `ak = [ask] G`.

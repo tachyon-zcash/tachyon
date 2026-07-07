@@ -70,13 +70,16 @@ impl NullifierKey {
 /// constants (a leaked schedule key yields no known plaintext/ciphertext
 /// pair), and its outputs are whitened by the dedicated `w` rather than a
 /// reused round key.
-#[derive(Clone, Copy, PartialEq, TotalEq)]
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct ExpansionParams {
     /// The secret input salt `s`.
+    #[debug(skip)]
     pub salt: Fp,
     /// The secret input stride `δ`.
+    #[debug(skip)]
     pub stride: Fp,
     /// The dedicated whitening key `w`.
+    #[debug(skip)]
     pub whitening: Fp,
 }
 
@@ -102,15 +105,9 @@ impl ExpansionParams {
     }
 }
 
-impl fmt::Debug for ExpansionParams {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ExpansionParams").finish_non_exhaustive()
-    }
-}
-
 /// Per-note master secret.
-#[derive(Clone, Copy, PartialEq, TotalEq)]
-pub struct NoteMasterKey(pub [Fp; MK_LENGTH]);
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct NoteMasterKey(#[debug(skip)] pub [Fp; MK_LENGTH]);
 
 impl NoteMasterKey {
     /// Assemble the full master key by interleaving its `MK_PARTS` parts:
@@ -257,8 +254,8 @@ impl NoteMasterKey {
 /// full schedule. Wallet-only secret material.
 ///
 /// [`MasterSeed`]: crate::stamp::proof::delegation::MasterSeed
-#[derive(Clone, Copy, PartialEq, TotalEq)]
-pub struct NoteMasterKeyPart(pub [Fp; MK_PART_LEN]);
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct NoteMasterKeyPart(#[debug(skip)] pub [Fp; MK_PART_LEN]);
 
 impl NoteMasterKeyPart {
     /// The eval-form part spectrum over the order-`MK_PART_LEN` subgroup
@@ -272,12 +269,6 @@ impl NoteMasterKeyPart {
         let mut coeffs = self.0.to_vec();
         Domain::new(MK_PART_LEN.ilog2()).ifft(&mut coeffs);
         NoteMasterKeyPartSpectrum(Polynomial::from_coeffs(&coeffs))
-    }
-}
-
-impl fmt::Debug for NoteMasterKeyPart {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NoteMasterKeyPart").finish_non_exhaustive()
     }
 }
 
@@ -298,8 +289,8 @@ impl fmt::Debug for NoteMasterKeyPart {
 /// Wallet-only secret material: the wallet is the sole prover of derivation,
 /// and delegation operates on value windows only (no key-material delegation
 /// API).
-#[derive(Clone, Copy, PartialEq, TotalEq)]
-pub struct ExpandedKeySchedule(pub [Fp; EK_LENGTH]);
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct ExpandedKeySchedule(#[debug(skip)] pub [Fp; EK_LENGTH]);
 
 impl ExpandedKeySchedule {
     /// Get the round key at the given index.
@@ -384,13 +375,6 @@ impl From<[Fp; EK_LENGTH]> for ExpandedKeySchedule {
 impl From<ExpandedKeySchedule> for [Fp; EK_LENGTH] {
     fn from(keyset: ExpandedKeySchedule) -> Self {
         keyset.0
-    }
-}
-
-impl fmt::Debug for ExpandedKeySchedule {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ExpandedKeySchedule")
-            .finish_non_exhaustive()
     }
 }
 
@@ -494,12 +478,6 @@ impl PaymentKey {
         let ak_bytes: [u8; 32] = ak.0.into();
         let ak_fp = Fp::from_repr(ak_bytes).expect("ak bytes should be a valid Fp");
         Self(poseidon::payment_key(ak_fp, nk.0))
-    }
-}
-
-impl fmt::Debug for NoteMasterKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NoteMasterKey").finish_non_exhaustive()
     }
 }
 
