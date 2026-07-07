@@ -6,6 +6,8 @@ use ff::PrimeField as _;
 use pasta_curves::{EpAffine, EqAffine, Fp, arithmetic::Coordinates};
 use ragu::Sponge;
 
+use crate::EpochIndex;
+
 #[expect(
     clippy::expect_used,
     reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
@@ -127,10 +129,10 @@ const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-EpochStp";
 
 /// Advances the terminal anchor of an epoch into a new epoch's initial state.
 #[must_use]
-pub(crate) fn anchor_epoch_step(anchor_prev: Fp, new_epoch: u32) -> Fp {
+pub(crate) fn anchor_epoch_step(anchor_prev: Fp, new_epoch: EpochIndex) -> Fp {
     hash::<3>([
         Fp::from_u128(u128::from_le_bytes(*ANCHOR_EPOCH_DOMAIN)),
         anchor_prev,
-        Fp::from(u64::from(new_epoch)),
+        Fp::from(new_epoch),
     ])
 }

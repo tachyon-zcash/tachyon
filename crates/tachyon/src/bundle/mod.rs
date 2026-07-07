@@ -74,11 +74,12 @@ use rand_core::{CryptoRng, RngCore};
 
 pub use crate::digest::blake2b::{AUTH_DIGEST_NO_BUNDLE, COMMIT_NO_BUNDLE};
 use crate::{
+    ActionSetPoly,
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
     note,
-    primitives::{ActionDigest, ActionDigestError, ActionSetPoly, Anchor, effect},
+    primitives::{ActionDigest, ActionDigestError, Anchor, effect},
     reddsa, serialization,
     stamp::{self, AggregateId, Stamp, Stripped, Unproven},
     value,
@@ -102,12 +103,10 @@ impl BundleState {
             0b0000_0000u8 => Ok(Self::NoBundle),
             0b0000_0001u8 => Ok(Self::Stamped),
             0b0000_0010u8 => Ok(Self::Stripped),
-            _other => {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid bundle state",
-                ))
-            },
+            _other => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid bundle state",
+            )),
         }
     }
 
@@ -773,7 +772,7 @@ impl<S: StampState> Bundle<S> {
 /// wire-format `i64` fails if the final balance is out of range.
 ///
 /// Use `i64::try_from(sum)` to narrow to the wire-format `i64`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, TotalEq)]
 pub struct ValueBalance(i128);
 
 /// Error returned when a [`ValueBalance`] operation overflows the

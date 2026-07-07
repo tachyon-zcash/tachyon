@@ -104,7 +104,7 @@ pub struct Note {
 /// only raw field elements without the Rust-level newtype protection.
 ///
 /// Use [`Value::try_from`] or [`Value::new`] for fallible construction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Into)]
+#[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
 pub struct Value(u64);
 
 impl Value {
@@ -115,7 +115,7 @@ impl Value {
 
 /// Error returned when a note value is out of the valid range
 /// `1..=NOTE_VALUE_MAX`.
-#[derive(Clone, Copy, Debug, Display, Error, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
 #[non_exhaustive]
 pub enum ValueError {
     /// The value was zero.
