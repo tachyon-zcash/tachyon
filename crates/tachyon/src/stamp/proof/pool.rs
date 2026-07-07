@@ -11,8 +11,6 @@
 //! alignment is a consensus convention (validators check that anchor
 //! endpoints belong to the published per-block anchor sequence).
 
-#![allow(clippy::module_name_repetitions, reason = "intentional names")]
-
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
@@ -26,7 +24,7 @@ use ragu::{
 };
 
 use crate::{
-    NfEmitterPoly,
+    NfEmitterSpectrum,
     constants::{NF_DOMAIN, NF_EMITTERS},
     digest::poseidon,
     note::{self, Nullifier},
@@ -603,15 +601,14 @@ impl Step for UnspentBind {
     type Left = Unspent;
     type Output = VerifiedUnspent;
     type Right = NullifierDerivation;
-    /// `(elapsed_poly, range_poly, polys, weights, accumulator,
-    /// weight_quotients, accumulator_quotient, creation_epoch)`. `elapsed_poly`
-    /// is the sentinel [`NfSeqPoly`] carried by the [`Unspent`]; `range_poly`
-    /// is the finalized plain [`NfRangePoly`] `q = elapsed ++ [nf_end]` the
-    /// arc match consumes.
+    /// `(elapsed, range, emitters, weights, accumulator, weight_quotients,
+    /// accumulator_quotient, creation_epoch)`. `elapsed` is the sentinel
+    /// [`NfSeqPoly`] carried by the [`Unspent`]; `range` is the finalized plain
+    /// [`NfRangePoly`] `q = elapsed ++ [nf_end]` the arc match consumes.
     type Witness<'source> = (
         NfSeqPoly,
         NfRangePoly,
-        [NfEmitterPoly; NF_EMITTERS],
+        [NfEmitterSpectrum; NF_EMITTERS],
         [[Polynomial; ARC_SPLITS]; NF_EMITTERS],
         [Polynomial; ARC_SPLITS],
         [Polynomial; NF_EMITTERS],
@@ -625,9 +622,9 @@ impl Step for UnspentBind {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (
-            elapsed_poly,
-            range_poly,
-            polys,
+            elapsed,
+            range,
+            emitters,
             weights,
             accumulator,
             weight_quotients,
@@ -648,7 +645,7 @@ impl Step for UnspentBind {
         // tip nullifier to produce a plain range (no re-termination), the form
         // the arc match consumes.
         enforce_equal_point(
-            Eq::from(elapsed_poly.commit()),
+            Eq::from(elapsed.commit()),
             Eq::from(unspent_elapsed),
             "UnspentBind: elapsed polynomial does not match header",
         )?;
@@ -658,13 +655,12 @@ impl Step for UnspentBind {
             Fp::from(unspent_nf_end),
             "UnspentBind: present nullifier is zero",
         )?;
-        let range_commit = range_poly.commit();
+        let range_commit = range.commit();
         let offset = usize::try_from(unspent_epoch_end.0 - unspent_epoch_start.0).map_err(
             |_too_many_epochs| {
                 ragu::Error::InvalidWitness("UnspentBind: crossing count exceeds usize".into())
             },
         )?;
-        let range = Polynomial::from(range_poly);
         // Sentinel finalize: `q = elapsed ++ [nf_end]` with NO re-termination
         // is the shifted combination `q(X) = elapsed(X) + (nf_end - 1)·X^offset`
         // (the monomial overwrites elapsed's sentinel with the tip and no
@@ -675,9 +671,9 @@ impl Step for UnspentBind {
         // header-fixed span.
         enforce_shifted_combination(
             ctx,
-            [(&Polynomial::from(elapsed_poly), 0)],
+            [(&Polynomial::from(elapsed), 0)],
             [(Fp::from(unspent_nf_end) - Fp::ONE, offset)],
-            &range,
+            &Polynomial::from(range.clone()),
         )
         .map_err(|_relation_err| {
             ragu::Error::InvalidWitness(
@@ -686,7 +682,7 @@ impl Step for UnspentBind {
         })?;
 
         // Bind each witnessed T_j to its certified derivation commitment.
-        for (trace, commit) in polys.iter().zip(&commits) {
+        for (trace, commit) in emitters.iter().zip(&commits) {
             enforce_equal_point(
                 trace.0.commit(),
                 commit.0,
@@ -722,7 +718,7 @@ impl Step for UnspentBind {
             &accumulator,
             &accumulator_quotient,
             &weights,
-            &polys.map(|poly| poly.0),
+            &emitters.map(|poly| poly.0),
             shift.0,
         )?;
 
@@ -732,7 +728,7 @@ impl Step for UnspentBind {
         enforce_arc_match::<ARC_SPLITS>(
             ctx,
             &accumulator,
-            &range,
+            &Polynomial::from(range.clone()),
             range_commit.into(),
             shift.0,
             coset_gen,

@@ -12,7 +12,7 @@
 //!
 //! | [`enforce`] relation | [`quotient`] builder |
 //! | --- | --- |
-//! | `enforce_row_recurrence` | `expansion_round_quotient` |
+//! | `enforce_committed_row_recurrence` | `expansion_round_quotient` |
 //! | `enforce_committed_offset_recurrence` | `nf_emitter_round_quotient` |
 //! | `enforce_first_column_values` | `expansion_boundary_quotient` / `nf_emitter_boundary_quotient` |
 //! | `enforce_strided_column` | `expansion_decimation_quotient` |
@@ -21,6 +21,7 @@
 //! | `enforce_arc_match` | constraint-only (opens the accumulator splits) |
 //! | `enforce_weighted_opening`, `enforce_geometric_opening_pair` | constraint-only |
 //! | `enforce_poly_product`, `enforce_shifted_combination` | constraint-only |
+//! | `enforce_interpolant` | constraint-only (opens at a challenge against the Lagrange closed form) |
 //!
 //! [`subgroup_generator`] is the evaluation-domain vocabulary both faces share.
 

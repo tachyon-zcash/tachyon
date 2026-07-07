@@ -71,14 +71,14 @@
 //! The wallet-side chain from note to nullifier, one method hop per stage:
 //!
 //! 1. [`NullifierKey::derive_note_part`] derives each of the `MK_PARTS` master
-//!    key parts from `(psi, nk)`; [`NoteMasterKey::from_parts`] concatenates
+//!    key parts from `(psi, nk)`; [`NoteMasterKey::from_parts`] interleaves
 //!    them into `mk`.
 //! 2. [`NoteMasterKey::derive_emitter_schedule`] expands `mk` (the 32-round
-//!    expansion cipher) into the [`EmitterKeySchedule`], the emitter cipher's
+//!    expansion cipher) into the [`ExpandedKeySchedule`], the emitter cipher's
 //!    interleaved round keys.
-//! 3. [`EmitterKeySchedule::derivation_polys`] interpolates the `NF_EMITTERS`
+//! 3. [`ExpandedKeySchedule::derivation_polys`] interpolates the `NF_EMITTERS`
 //!    emitter polynomials at the salts [`NoteMasterKey::query_salts`].
-//! 4. [`EmitterKeySchedule::derive_nullifier`] evaluates the weighted
+//! 4. [`ExpandedKeySchedule::derive_nullifier`] evaluates the weighted
 //!    off-domain query at an epoch offset from the creation epoch, yielding
 //!    that epoch's nullifier.
 
@@ -90,8 +90,8 @@ mod proof;
 
 // Re-exports: public API surface.
 pub use note::{
-    EmitterKeySchedule, ExpansionParams, NoteMasterKey, NullifierKey, PartKey, PartKeyStates,
-    PaymentKey,
+    ExpandedKeyPart, ExpandedKeySchedule, ExpandedKeyTrace, ExpansionParams, NoteMasterKey,
+    NoteMasterKeyPart, NullifierKey, PaymentKey,
 };
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 

@@ -9,7 +9,6 @@
 
 #![no_std]
 #![allow(clippy::pub_use, reason = "crate exports")]
-#![allow(clippy::indexing_slicing, reason = "simple indexing")]
 #![allow(clippy::integer_division_remainder_used, reason = "todo")]
 
 #[cfg(test)]
@@ -78,7 +77,9 @@ pub fn state_sequence<S: Spec<F, P, R>, F: PrimeField, const P: u64, const R: us
     let mut states = [input; R];
     let mut state = input;
     for ((i, &constant), slot) in S::CONSTANTS.iter().enumerate().zip(states.iter_mut()) {
-        state = round::<S, F, P, R>(state, keys[i % keys.len()], constant);
+        #[expect(clippy::expect_used, reason = "bounds checked")]
+        let &round_key = keys.get(i % keys.len()).expect("index modulo bounds");
+        state = round::<S, F, P, R>(state, round_key, constant);
         *slot = state;
     }
     states
@@ -102,9 +103,13 @@ pub fn encrypt_with<S: Spec<F, P, R>, F: PrimeField, const P: u64, const R: usiz
         .iter()
         .enumerate()
         .fold(input, |state, (i, &constant)| {
-            round::<S, F, P, R>(state, keys[i % keys.len()], constant)
+            #[expect(clippy::expect_used, reason = "bounds checked")]
+            let &round_key = keys.get(i % keys.len()).expect("index modulo bounds");
+            round::<S, F, P, R>(state, round_key, constant)
         });
 
     // After `R` rounds the cyclic schedule's next key is the whitening key.
-    after_rounds + keys[R % keys.len()]
+    #[expect(clippy::expect_used, reason = "bounds checked")]
+    let &whitening_key = keys.get(R % keys.len()).expect("index modulo bounds");
+    after_rounds + whitening_key
 }

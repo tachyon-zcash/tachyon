@@ -8,7 +8,7 @@
 //!   weight/accumulator recurrences, plus the native off-domain nullifier
 //!   query.
 //! - the 32x256 **expansion** trace (`TachyonP5R32`, `ROUNDS` columns by
-//!   `EK_PART_SIZE` rows): the masked-quintic round quotient, the boundary
+//!   `EK_PART_LENGTH` rows): the masked-quintic round quotient, the boundary
 //!   quotient, and the decimation quotient binding the key polynomial to the
 //!   trace's final column.
 //!
@@ -37,9 +37,9 @@ use zcash_mimc::spec::tachyon::{TachyonP5R32, TachyonP5R8192};
 
 use super::subgroup_generator;
 use crate::{
-    constants::{EK_PART_SIZE, NF_DOMAIN, NF_EMITTERS, POLY_LEN_MAX},
+    constants::{EK_PART_LENGTH, MK_LENGTH, NF_DOMAIN, NF_EMITTERS, POLY_LEN_MAX},
     keys::{ExpansionParams, NoteMasterKey},
-    primitives::NfEmitterPoly,
+    primitives::NfEmitterSpectrum,
 };
 
 /// Splits per full-length arc polynomial, `NF_DOMAIN / POLY_LEN_MAX`.
@@ -71,6 +71,12 @@ pub struct WeightRatios(pub [Fp; NF_EMITTERS]);
 /// (mk_s^{(j)} + k_0)^5`.
 #[derive(Clone, Copy, Debug)]
 pub struct QuerySalts(pub [Fp; NF_EMITTERS]);
+impl QuerySalts {
+    pub const fn get(&self, idx: usize) -> Fp {
+        assert!(idx < NF_EMITTERS, "index out of bounds");
+        self.0[idx]
+    }
+}
 
 /// Round and boundary quotients for one cipher trace: the masked round quotient
 /// (as `N` capacity-wide splits) and the boundary quotient `(T − B)/(z − 1)`.
@@ -227,7 +233,7 @@ fn multiply_by_linear(coeffs: &[Fp], root: Fp) -> Vec<Fp> {
 /// numerator `mask·(T(omega z) − (T + O)^POW)` has degree `POW·(DOMAIN-1) + 1`
 /// (degree-1 row-wrap mask), so over the degree-`DOMAIN` vanisher the quotient
 /// spans this many capacity-wide splits. Derived from `POW`; differs from
-/// [`EXPANSION_ROUND_SPLITS`] only by the mask degree (1 vs `EK_PART_SIZE`).
+/// [`EXPANSION_ROUND_SPLITS`] only by the mask degree (1 vs `EK_PART_LENGTH`).
 pub(crate) const EMITTER_ROUND_SPLITS: usize = {
     #[expect(clippy::cast_possible_truncation, reason = "constant size")]
     let numerator_len = TachyonP5R8192::POW as usize * (POLY_LEN_MAX - 1) + 1 + 1;
@@ -382,7 +388,7 @@ fn weight_quotient_inner<const N: usize>(ratio: Fp, shift: Fp) -> (Vec<Fp>, Vec<
 /// `A(shift) = 0` is witnessed against `z − shift`. Returns `(A, Q_recurrence,
 /// Q_boundary)`.
 fn accumulator_quotient_inner<const N: usize, const POLYS: usize>(
-    polys: &[NfEmitterPoly; POLYS],
+    polys: &[NfEmitterSpectrum; POLYS],
     ratios: &[Fp; POLYS],
     shift: Fp,
     beta: Fp,
@@ -458,7 +464,7 @@ fn accumulator_quotient_inner<const N: usize, const POLYS: usize>(
 /// splits. Satisfies `mask·(T(omegaz) − (T + O)^5) = Q·(z^|D| − 1)` with offset
 /// `O(omega^j) = c_{j+1} + round_keys[(j+1) mod κ]` and `mask(z) = z −
 /// omega^{|D|-1}` (zeroing the row-wrap) — the identity
-/// `enforce_row_recurrence` checks.
+/// `enforce_committed_offset_recurrence` checks.
 #[must_use]
 pub(crate) fn nf_emitter_round_quotient(
     coeffs: &[Fp],
@@ -483,7 +489,7 @@ pub(crate) fn nf_emitter_boundary_quotient(coeffs: &[Fp], salt: Fp, first_key: F
 /// wallet's native nullifier; the in-circuit query relation mirrors it.
 #[must_use]
 pub(crate) fn nullifier_query(
-    polys: &[NfEmitterPoly; NF_EMITTERS],
+    polys: &[NfEmitterSpectrum; NF_EMITTERS],
     shift: QueryShift,
     ratios: WeightRatios,
     coset_generator: Fp,
@@ -532,7 +538,7 @@ pub(crate) fn weight_recurrence(ratio: Fp, shift: Fp) -> ([Polynomial; ARC_SPLIT
 /// circuit open (no boundary quotient). Returns `(A splits, Q_recurrence)`.
 #[must_use]
 pub(crate) fn accumulator_recurrence(
-    polys: &[NfEmitterPoly; NF_EMITTERS],
+    polys: &[NfEmitterSpectrum; NF_EMITTERS],
     ratios: &[Fp; NF_EMITTERS],
     shift: Fp,
     beta: Fp,
@@ -550,31 +556,31 @@ pub(crate) fn accumulator_recurrence(
 // ---------------------------------------------------------------------------
 
 /// Committed splits of the expansion trace's masked round quotient. The
-/// numerator has degree `POW·(DOMAIN-1) + EK_PART_SIZE` (the
-/// degree-`EK_PART_SIZE` output-cell mask), so over the degree-`DOMAIN`
+/// numerator has degree `POW·(DOMAIN-1) + EK_PART_LENGTH` (the
+/// degree-`EK_PART_LENGTH` output-cell mask), so over the degree-`DOMAIN`
 /// vanisher the quotient spans this many capacity-wide splits. Derived from
-/// `POW`; the larger mask degree (`EK_PART_SIZE` vs the derivation poly's 1) is
+/// `POW`; the larger mask degree (`EK_PART_LENGTH` vs the derivation poly's 1) is
 /// what pushes it one split past [`EMITTER_ROUND_SPLITS`].
 pub(crate) const EXPANSION_ROUND_SPLITS: usize = {
     #[expect(clippy::cast_possible_truncation, reason = "constant size")]
-    let numerator_len = TachyonP5R32::POW as usize * (POLY_LEN_MAX - 1) + EK_PART_SIZE + 1;
+    let numerator_len = TachyonP5R32::POW as usize * (POLY_LEN_MAX - 1) + EK_PART_LENGTH + 1;
     (numerator_len - POLY_LEN_MAX).div_ceil(POLY_LEN_MAX)
 };
 
 /// Round-numerator eval coset (expansion). Sized from `POW` to cover the
-/// degree-`POW·(DOMAIN-1) + EK_PART_SIZE` numerator (the degree-`EK_PART_SIZE`
+/// degree-`POW·(DOMAIN-1) + EK_PART_LENGTH` numerator (the degree-`EK_PART_LENGTH`
 /// output-cell mask) exactly. Was the hand-set `ROUND_COSET`.
 #[expect(clippy::cast_possible_truncation, reason = "constant size")]
 const ROUND_COSET: usize =
-    (TachyonP5R32::POW as usize * (POLY_LEN_MAX - 1) + EK_PART_SIZE + 1).next_power_of_two();
+    (TachyonP5R32::POW as usize * (POLY_LEN_MAX - 1) + EK_PART_LENGTH + 1).next_power_of_two();
 
 /// Boundary-numerator eval coset. The boundary numerator is `complement ·
-/// (T − target)`: `complement` has degree `(ROUNDS-1)·EK_PART_SIZE`, `T` degree
-/// `< POLY_LEN_MAX`, `target` degree `< EK_PART_SIZE`, so the product has
-/// degree `(ROUNDS-1)·EK_PART_SIZE + POLY_LEN_MAX − 1`; the coset covers its
+/// (T − target)`: `complement` has degree `(ROUNDS-1)·EK_PART_LENGTH`, `T` degree
+/// `< POLY_LEN_MAX`, `target` degree `< EK_PART_LENGTH`, so the product has
+/// degree `(ROUNDS-1)·EK_PART_LENGTH + POLY_LEN_MAX − 1`; the coset covers its
 /// `degree + 1` coefficients. Was the hand-set `BOUNDARY_COSET`.
 const BOUNDARY_COSET: usize =
-    ((TachyonP5R32::ROUNDS - 1) * EK_PART_SIZE + POLY_LEN_MAX).next_power_of_two();
+    ((TachyonP5R32::ROUNDS - 1) * EK_PART_LENGTH + POLY_LEN_MAX).next_power_of_two();
 
 /// Row step: the round-coset-to-trace size ratio. `T(gX)` on the round coset is
 /// `trace_ext` rotated by this, since ω_trace = ω_round^ROW_STEP.
@@ -586,17 +592,17 @@ const ROW_STEP: usize = ROUND_COSET / POLY_LEN_MAX;
 const REDUCE_STRIDE: usize = ROUND_COSET / BOUNDARY_COSET;
 
 /// Length of a column-stride spread: coefficient `k` of a `TRACE_COLUMNS`-term
-/// polynomial lands at degree `k·EK_PART_SIZE`.
-const SPREAD_LEN: usize = (TachyonP5R32::ROUNDS - 1) * EK_PART_SIZE + 1;
+/// polynomial lands at degree `k·EK_PART_LENGTH`.
+const SPREAD_LEN: usize = (TachyonP5R32::ROUNDS - 1) * EK_PART_LENGTH + 1;
 
 lazy_static! {
     /// Output-cell mask `M(X) = X^ERA − column_root^OUTPUT_CELL` evaluated on
     /// the quintic coset. Keyset-independent, so it is built once.
     static ref MASK_EXT: Vec<Fp> = {
         let column_root = subgroup_generator::<{ TachyonP5R32::ROUNDS }>();
-        let mut mask = vec![Fp::ZERO; EK_PART_SIZE + 1];
+        let mut mask = vec![Fp::ZERO; EK_PART_LENGTH + 1];
         mask[0] = -column_root.pow_vartime([(TachyonP5R32::ROUNDS - 1) as u64]);
-        mask[EK_PART_SIZE] = Fp::ONE;
+        mask[EK_PART_LENGTH] = Fp::ONE;
         coset_evaluations(&mask, ROUND_COSET, COSET_SHIFT)
     };
 
@@ -619,10 +625,10 @@ lazy_static! {
     /// `expansion_boundary_quotient`). Built once.
     static ref ROW_POWER_EXT: Vec<Vec<Fp>> = (0..=TachyonP5R32::POW)
         .map(|power| {
-            let mut samples: Vec<Fp> = (0..EK_PART_SIZE as u64)
+            let mut samples: Vec<Fp> = (0..EK_PART_LENGTH as u64)
                 .map(|row| Fp::from(row).pow_vartime([power]))
                 .collect();
-            Domain::new(EK_PART_SIZE.ilog2()).ifft(&mut samples);
+            Domain::new(EK_PART_LENGTH.ilog2()).ifft(&mut samples);
             coset_evaluations(&samples, BOUNDARY_COSET, COSET_SHIFT)
         })
         .collect();
@@ -643,16 +649,18 @@ lazy_static! {
     /// Quintic-coset evaluations of the round offset's per-key selector bases,
     /// one per round-key residue class. `OFFSET_KEY_EXT[r]` is `1` at every
     /// column whose offset adds `round_key(r)` (i.e. `(col + 1) % ROUND_KEYS ==
-    /// r`, the row-wrap column excepted) and `0` elsewhere -- pure structure, no
-    /// key material. The per-call combine scales each by `round_key(r)` (see
+    /// r`) and `0` elsewhere -- pure structure, no key material. The row-wrap
+    /// column is masked out of the recurrence, so its value is free; the
+    /// periodic convention (`k_0` at the wrap, matching the in-circuit
+    /// committed reconstruction `K(ζ·z^{|D|/κ})`) keeps this quotient
+    /// consistent with what `enforce_committed_row_recurrence` checks. The
+    /// per-call combine scales each by `round_key(r)` (see
     /// `expansion_round_quotient`). Built once.
-    static ref OFFSET_KEY_EXT: Vec<Vec<Fp>> = (0..NoteMasterKey::MK_LENGTH)
+    static ref OFFSET_KEY_EXT: Vec<Vec<Fp>> = (0..MK_LENGTH)
         .map(|residue| {
             let selector: Vec<Fp> = (0..TachyonP5R32::ROUNDS)
                 .map(|col| {
-                    if col + 1 < TachyonP5R32::ROUNDS
-                        && (col + 1) % NoteMasterKey::MK_LENGTH == residue
-                    {
+                    if (col + 1) % MK_LENGTH == residue {
                         Fp::ONE
                     } else {
                         Fp::ZERO
@@ -678,7 +686,7 @@ fn offset_basis_ext(values: &[Fp]) -> Vec<Fp> {
 /// the coefficient vectors of the trace poly `T` and the eval-form part-key
 /// poly `K`. `keyset` is the note's master key `mk` (the expansion cipher's
 /// round-key schedule) and `params` its expansion-input parameters
-/// `(s, δ, w)`; `base = part · EK_PART_SIZE` is this part's cipher-input
+/// `(s, δ, w)`; `base = part · EK_PART_LENGTH` is this part's cipher-input
 /// window origin. Builds the shared quintic-coset trace evaluation once and
 /// returns `(round splits, boundary, decimation)`, matching what
 /// [`KeyExpansionStep`] opens: cipher input `s + δ·(base + row)`, first key
@@ -708,11 +716,13 @@ pub(crate) fn expansion_round_quotient(
     trace_ext: &[Fp],
     keyset: &NoteMasterKey,
 ) -> [Polynomial; EXPANSION_ROUND_SPLITS] {
-    // Per-column offset `round_key(col + 1) + CONSTANTS[col + 1]`, evaluated on
-    // the quintic coset. The transition out of column `col` produces round `col
-    // + 1` (cell `col` is round `col`'s output, with the salted input held
-    // outside the trace and pinned by the boundary), so column `col` carries
-    // round `col + 1`'s offset; the row-wrap column is zeroed.
+    // Per-column offset `round_key(col + 1) + CONSTANTS[(col + 1) % ROUNDS]`,
+    // evaluated on the quintic coset. The transition out of column `col`
+    // produces round `col + 1` (cell `col` is round `col`'s output, with the
+    // salted input held outside the trace and pinned by the boundary), so
+    // column `col` carries round `col + 1`'s offset; the masked row-wrap
+    // column carries the periodic `k_0` (`c_0 = 0`), matching the committed
+    // reconstruction.
     //
     // The offset is affine in the round keys and ifft/spread/coset_evaluations
     // are linear, so its coset evaluation needs no per-call FFT: it is the
@@ -807,13 +817,13 @@ pub(crate) fn expansion_boundary_quotient(trace_ext: &[Fp], alpha: Fp, stride: F
 }
 
 /// The decimation quotient `Q` binding the eval-form key poly `K` to the
-/// trace's final column: `Q = (K(X) − w − T(σX)) / (X^EK_PART_SIZE −
+/// trace's final column: `Q = (K(X) − w − T(σX)) / (X^EK_PART_LENGTH −
 /// 1)`, with the final-column stride `σ = ω^{TRACE_COLUMNS-1}` (`ω` the
 /// order-`TRACE_SIZE` root) and the whitening key `w`. The numerator vanishes
-/// on the order-`EK_PART_SIZE` subgroup `⟨ζ⟩` (`ζ =
+/// on the order-`EK_PART_LENGTH` subgroup `⟨ζ⟩` (`ζ =
 /// ω^{TRACE_COLUMNS}`) exactly when `K(ζ^r) = (row-r final cell) + w`, so exact
 /// division certifies the keys. `key_coeffs` is the eval-form interpolant's
-/// coefficient vector (degree `< EK_PART_SIZE`).
+/// coefficient vector (degree `< EK_PART_LENGTH`).
 pub(crate) fn expansion_decimation_quotient(
     trace_coeffs: &[Fp],
     key_coeffs: &[Fp],
@@ -836,7 +846,7 @@ pub(crate) fn expansion_decimation_quotient(
         *constant -= whitening;
     }
 
-    let (quotient, remainder) = divide_by_vanishing(&numerator, EK_PART_SIZE);
+    let (quotient, remainder) = divide_by_vanishing(&numerator, EK_PART_LENGTH);
     assert!(
         remainder.iter().all(|coeff| *coeff == Fp::ZERO),
         "decimation numerator is not divisible by Z_<zeta>: key poly mismatches the trace column",
@@ -845,12 +855,12 @@ pub(crate) fn expansion_decimation_quotient(
 }
 
 /// Spread `coeffs` by the column stride: place coefficient `k` at degree
-/// `k·EK_PART_SIZE`, zero elsewhere. `coeffs.len()` must not exceed
+/// `k·EK_PART_LENGTH`, zero elsewhere. `coeffs.len()` must not exceed
 /// `TRACE_COLUMNS`.
 fn spread_by_stride(coeffs: &[Fp]) -> Vec<Fp> {
     let mut spread = vec![Fp::ZERO; SPREAD_LEN];
     for (column, &coeff) in coeffs.iter().enumerate() {
-        spread[column * EK_PART_SIZE] = coeff;
+        spread[column * EK_PART_LENGTH] = coeff;
     }
     spread
 }
@@ -889,7 +899,9 @@ mod tests {
     use zcash_mimc::spec::tachyon::TachyonP5R8192;
 
     use super::*;
-    use crate::{keys::NoteMasterKey, primitives::NfEmitterPoly, relations::subgroup_generator};
+    use crate::{
+        keys::NoteMasterKey, primitives::NfEmitterSpectrum, relations::subgroup_generator,
+    };
 
     #[test]
     fn expansion_quotients_fit_the_pow_derived_cosets() {
@@ -906,7 +918,7 @@ mod tests {
         let mk = NoteMasterKey(array::from_fn(|index| Fp::from(index as u64 + 1)));
         let (states, part_keys) = mk.derive_schedule_part(0);
         let spectrum = states.spectrum();
-        let key_poly = part_keys.key_poly();
+        let key_poly = part_keys.key_spectrum();
         let (round, boundary, decimation) = expansion_quotients(
             spectrum.0.coefficients(),
             &mk,
@@ -1066,7 +1078,7 @@ mod tests {
         // the query against a reference that advances the point by gamma and
         // the weights by rho_j through repeated multiplication (independent of
         // the fn's pow).
-        let polys: [NfEmitterPoly; NF_EMITTERS] = array::from_fn(|poly| {
+        let polys: [NfEmitterSpectrum; NF_EMITTERS] = array::from_fn(|poly| {
             let base = poly as u64;
             let keys = [
                 Fp::from(base + 1),
@@ -1074,7 +1086,7 @@ mod tests {
                 Fp::from(base + 3),
                 Fp::from(base + 4),
             ];
-            NfEmitterPoly(Polynomial::from_coeffs(&zcash_mimc::state_sequence::<
+            NfEmitterSpectrum(Polynomial::from_coeffs(&zcash_mimc::state_sequence::<
                 TachyonP5R8192,
                 Fp,
                 5,
@@ -1177,7 +1189,7 @@ mod tests {
         let t0 = [Fp::from(2u64), Fp::from(3u64), Fp::from(5u64)];
         let t1 = [Fp::from(7u64), Fp::from(11u64)];
         let tc: [&[Fp]; POLYS] = [&t0, &t1];
-        let t_coeffs = tc.map(|coeffs| NfEmitterPoly(Polynomial::from_coeffs(coeffs)));
+        let t_coeffs = tc.map(|coeffs| NfEmitterSpectrum(Polynomial::from_coeffs(coeffs)));
         let ratios = [Fp::from(4u64), Fp::from(6u64)];
         let shift = Fp::MULTIPLICATIVE_GENERATOR;
         let beta = Fp::from(9u64);

@@ -1,8 +1,6 @@
 //! Proof-step tests: `StampLift`, `SpendBind` / `SpendStamp`, the MiMC
 //! derivation chain, `Unspent` composition, and the `Spendable*` lineage.
 
-#![allow(clippy::panic, clippy::as_conversions, reason = "test code")]
-
 extern crate alloc;
 
 use alloc::{string::ToString as _, vec, vec::Vec};
@@ -10,7 +8,7 @@ use core::array;
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::{Pcd, Proof};
+use ragu::{Pcd, Polynomial, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
 use zcash_mimc::spec::tachyon::TachyonP5R32;
@@ -18,7 +16,7 @@ use zcash_mimc::spec::tachyon::TachyonP5R32;
 use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly,
-    constants::{EK_PART_SIZE, EK_PARTS, EPOCH_SIZE},
+    constants::{EK_PART_LENGTH, EK_PARTS, EPOCH_SIZE, MK_PART_LEN},
     digest::mimc,
     entropy::ActionEntropy,
     fixtures::{
@@ -26,11 +24,14 @@ use crate::{
         build_unspent_pcd_between_blocks, build_unspent_seed_pcd, random_block, random_block_with,
         shared_sk, spend_witness, spendable_init_inputs,
     },
-    keys::{EmitterKeySchedule, ExpansionParams, NoteMasterKey, PartKey, PartKeyStates},
+    keys::{
+        ExpandedKeyPart, ExpandedKeySchedule, ExpandedKeyTrace, ExpansionParams, NoteMasterKey,
+    },
     note::{self, Nullifier},
     primitives::{
-        Anchor, BlockHeight, EpochIndex, EpochOffset, NfRangePoly, NfSeqPoly, PartKeyPoly,
-        PartKeySpectrumPoly, Tachygram, effect,
+        Anchor, BlockHeight, EpochIndex, EpochOffset, ExpandedKeyPartSpectrum,
+        ExpandedKeyTraceSpectrum, NfRangePoly, NfSeqPoly, NoteMasterKeyPartSpectrum, Tachygram,
+        effect,
     },
     relations::quotient::{self, RoundBoundaryQuotients},
     value, witness,
@@ -1497,6 +1498,51 @@ fn spendable_lift_rejects_non_adjacent_unspent() {
     );
 }
 
+/// A witnessed `mk` part spectrum that is not the interpolant of the derived
+/// keys is rejected by the seed's interpolant identity: both a tampered node
+/// value and a vanishing-multiple impostor (correct at every node, wrong
+/// degree) fail at the challenge.
+#[test]
+fn master_seed_rejects_forged_spectrum() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let mk = user.master_key(&note);
+
+    // Tampered node value: differs from the derivation on the subgroup.
+    let tampered = {
+        let mut part = mk.part(0);
+        part.0[0] += Fp::ONE;
+        part.spectrum()
+    };
+
+    // Vanishing-multiple impostor: the genuine spectrum plus `Z(X) = X^16 - 1`,
+    // matching the derivation at every subgroup node but of higher degree.
+    let impostor = {
+        let genuine = mk.part(0).spectrum();
+        let mut coeffs = genuine.0.coefficients().to_vec();
+        coeffs.resize(MK_PART_LEN + 1, Fp::ZERO);
+        coeffs[0] -= Fp::ONE;
+        coeffs[MK_PART_LEN] += Fp::ONE;
+        NoteMasterKeyPartSpectrum(Polynomial::from_coeffs(&coeffs))
+    };
+
+    for (label, spectrum) in [("tampered node", tampered), ("vanishing multiple", impostor)] {
+        let err = PROOF_SYSTEM
+            .seed(rng, delegation::MasterSeed, (note, user.pak, 0, spectrum))
+            .err()
+            .unwrap_or_else(|| panic!("{label}: expected rejection"));
+        let ragu::Error::InvalidWitness(inner) = err else {
+            panic!("expected InvalidWitness, got {err:?}");
+        };
+        assert_eq!(
+            inner.to_string(),
+            "interpolant identity fails at challenge",
+            "{label}"
+        );
+    }
+}
+
 /// Forged key-expansion witnesses are each rejected by the gate they violate.
 /// A note's master and a foreign master are built once; each case forges a
 /// witness off the trace's keyed cipher or off the sponge-derived expansion
@@ -1523,8 +1569,8 @@ fn key_expansion_rejects_forged_witnesses() {
     // honest for `builder_mk` (so the witness is well-formed; only the threaded
     // note `mk` disagrees in the mismatched/hybrid cases).
     let assemble = |builder_mk: &NoteMasterKey,
-                    spectrum: &PartKeySpectrumPoly,
-                    part_keys: &PartKey,
+                    spectrum: &ExpandedKeyTraceSpectrum,
+                    part_keys: &ExpandedKeyPart,
                     part: usize| {
         witness::key_expansion(
             (*left.data(), *right.data()),
@@ -1535,21 +1581,38 @@ fn key_expansion_rejects_forged_witnesses() {
         )
     };
 
-    // Trace under a foreign keyset: round 0 (the first column) binds k_0, so the
-    // boundary rejects it before the recurrence is reached.
+    // The genuine mk part spectra, matching the seeds' certified commitments;
+    // cases that forge elsewhere carry these so the binding passes and the
+    // targeted relation does the rejecting.
+    let genuine_mk_parts = || array::from_fn(|part| mk.part(part).spectrum());
+
+    // Witness built wholly under a foreign master key: its part spectra do not
+    // match the seeds' certified commitments, so the commit-equality binding
+    // rejects it before any cipher relation runs.
     let mismatched = {
         let (states, part_keys) = other_mk.derive_schedule_part(0);
         assemble(&other_mk, &states.spectrum(), &part_keys, 0)
     };
 
     // Hybrid keyset sharing the round-0 key and the expansion-param prefix
-    // `mk[0..NF_EXPANSION_MK_PREFIX]` but a different mk_4: round 0 matches
-    // (the boundary passes), rounds 1.. diverge (the row recurrence rejects).
+    // `mk[0..MK_PARTS]` but a different mk_4, carried with the GENUINE
+    // certified spectra: the binding and round 0 pass (the prefix is shared),
+    // rounds 1.. diverge from the schedule the recurrence reconstructs from
+    // the certified spectra, so the committed-key row recurrence rejects.
     let hybrid_rounds = {
         let mut hybrid = mk;
         hybrid.0[4] += Fp::ONE;
         let (states, part_keys) = hybrid.derive_schedule_part(0);
-        assemble(&hybrid, &states.spectrum(), &part_keys, 0)
+        let (trace, quotients, key_poly, decimation_quotient, part, _hybrid_parts) =
+            assemble(&hybrid, &states.spectrum(), &part_keys, 0);
+        (
+            trace,
+            quotients,
+            key_poly,
+            decimation_quotient,
+            part,
+            genuine_mk_parts(),
+        )
     };
 
     // Honest trace and quotients but a tampered part-key poly: the decimation
@@ -1557,12 +1620,12 @@ fn key_expansion_rejects_forged_witnesses() {
     // trace is built once and shared between the witness and the tampering.
     let forged_key = {
         let (part0_states, part0_keys) = mk.derive_schedule_part(0);
-        let (trace, quotients, _honest_key, decimation_quotient, part) =
+        let (trace, quotients, _honest_key, decimation_quotient, part, mk_parts) =
             assemble(&mk, &part0_states.spectrum(), &part0_keys, 0);
         let mut tampered = part0_keys;
         tampered.0[0] += Fp::ONE;
-        let bad_key = tampered.key_poly();
-        (trace, quotients, bad_key, decimation_quotient, part)
+        let bad_key = tampered.key_spectrum();
+        (trace, quotients, bad_key, decimation_quotient, part, mk_parts)
     };
 
     // Build a part-0 witness under explicitly forged expansion params: trace,
@@ -1570,16 +1633,17 @@ fn key_expansion_rejects_forged_witnesses() {
     // `(s, δ, w)`, so only the in-step sponge derivation from the threaded
     // `mk` disagrees.
     let assemble_params = |params: &ExpansionParams| {
-        let mut cells: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE * TachyonP5R32::ROUNDS);
-        let mut keys: Vec<Fp> = Vec::with_capacity(EK_PART_SIZE);
-        for row in 0..(EK_PART_SIZE as u64) {
+        let mut cells: Vec<Fp> = Vec::with_capacity(EK_PART_LENGTH * TachyonP5R32::ROUNDS);
+        let mut keys: Vec<Fp> = Vec::with_capacity(EK_PART_LENGTH);
+        #[expect(clippy::as_conversions, reason = "constant size")]
+        for row in 0..(EK_PART_LENGTH as u64) {
             let (states, key) =
                 mimc::schedule_key_trace(&mk.0, params.input(Fp::from(row)), params.whitening);
             cells.extend_from_slice(&states);
             keys.push(key);
         }
-        let spectrum = PartKeyStates(cells).spectrum();
-        let key_poly = PartKey(keys.try_into().expect("EK_PART_SIZE keys")).key_poly();
+        let spectrum = ExpandedKeyTrace(cells).spectrum();
+        let key_poly = ExpandedKeyPart(keys.try_into().expect("EK_PART_LENGTH keys")).key_spectrum();
         let (round, boundary, decimation_quotient) = quotient::expansion_quotients(
             spectrum.0.coefficients(),
             &mk,
@@ -1593,6 +1657,7 @@ fn key_expansion_rejects_forged_witnesses() {
             key_poly,
             decimation_quotient,
             Fp::ZERO,
+            genuine_mk_parts(),
         )
     };
     let genuine_params = mk.expansion_params();
@@ -1624,12 +1689,12 @@ fn key_expansion_rejects_forged_witnesses() {
         (
             "mismatched keyset",
             mismatched,
-            "first column values identity fails at challenge",
+            "KeyExpansionStep: mk part does not match its certified commitment",
         ),
         (
             "hybrid keyset wrong mk_4",
             hybrid_rounds,
-            "row recurrence identity fails at challenge",
+            "committed-key row recurrence identity fails at challenge",
         ),
         (
             "forged key poly",
@@ -1686,26 +1751,27 @@ fn derivation_rejects_mismatched_key_poly() {
     // rejects it.
     let (keyset_pcd, part_keys) = keyset_pcd(&user, rng, note);
 
-    let keyset = EmitterKeySchedule::from_interleaved_parts(&part_keys);
+    let keyset = ExpandedKeySchedule::from_parts(&part_keys);
     let salts = mk.query_salts();
     let polys = keyset.derivation_polys(&salts);
-    let (_good_parts, good_polys, good_quotients) = witness::nullifier_derivation(
+    let (_good_parts, good_polys, good_quotients, good_prefix) = witness::nullifier_derivation(
         (*keyset_pcd.data(), ()),
         &keyset,
-        array::from_fn(|part| part_keys[part].key_poly()),
+        array::from_fn(|part| part_keys[part].key_spectrum()),
         &mk,
         &polys,
     );
     let mut tampered = part_keys[0];
     tampered.0[0] += Fp::ONE;
-    let mut bad_parts: [PartKeyPoly; EK_PARTS] = array::from_fn(|part| part_keys[part].key_poly());
-    bad_parts[0] = tampered.key_poly();
+    let mut bad_parts: [ExpandedKeyPartSpectrum; EK_PARTS] =
+        array::from_fn(|part| part_keys[part].key_spectrum());
+    bad_parts[0] = tampered.key_spectrum();
 
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NullifierDerivationStep,
-            (bad_parts, good_polys, good_quotients),
+            (bad_parts, good_polys, good_quotients, good_prefix),
             keyset_pcd,
             Proof::trivial().carry::<()>(()),
         )
@@ -1720,14 +1786,15 @@ fn derivation_rejects_mismatched_key_poly() {
     );
 }
 
-/// Certify one expansion part (a one-slot `EmitterKeyset` PCD) for a note,
+/// Certify one expansion part (a one-slot `ExpandedKeyDerivation` PCD) for a
+/// note,
 /// returning it with that part's keys.
 fn keyset_part_pcd(
     user: &WalletSim,
     rng: &mut StdRng,
     note: Note,
     part: usize,
-) -> (Pcd<delegation::EmitterKeyset>, PartKey) {
+) -> (Pcd<delegation::ExpandedKeyDerivation>, ExpandedKeyPart) {
     let mk = user.master_key(&note);
     let (states, keys) = mk.derive_schedule_part(part);
     let left = user.master_key_part(rng, note, 0);
@@ -1751,25 +1818,29 @@ fn keyset_part_pcd(
 }
 
 /// Fuse a note's `EK_PARTS` certified one-slot keysets into one fully covered
-/// [`EmitterKeyset`](delegation::EmitterKeyset) PCD (the chain the
+/// [`ExpandedKeyDerivation`](delegation::ExpandedKeyDerivation) PCD (the chain
+/// the
 /// single-input derivation consumes), returning the keyset PCD and the
 /// parts' native keys in order.
 fn keyset_pcd(
     user: &WalletSim,
     rng: &mut StdRng,
     note: Note,
-) -> (Pcd<delegation::EmitterKeyset>, [PartKey; EK_PARTS]) {
+) -> (
+    Pcd<delegation::ExpandedKeyDerivation>,
+    [ExpandedKeyPart; EK_PARTS],
+) {
     // Eagerly certify the parts (releasing `rng` before the fuse chain borrows
     // it); each certification also yields that part's native keys.
-    let parts_with_keys: [(Pcd<delegation::EmitterKeyset>, PartKey); EK_PARTS] =
+    let parts_with_keys: [(Pcd<delegation::ExpandedKeyDerivation>, ExpandedKeyPart); EK_PARTS] =
         array::from_fn(|part| keyset_part_pcd(user, rng, note, part));
-    let keys: [PartKey; EK_PARTS] = array::from_fn(|part| parts_with_keys[part].1);
+    let keys: [ExpandedKeyPart; EK_PARTS] = array::from_fn(|part| parts_with_keys[part].1);
     let mut parts = parts_with_keys.into_iter().map(|(pcd, _keys)| pcd);
     let mut keyset = parts.next().expect("EK_PARTS >= 1");
     for part_pcd in parts {
         let (next, ()) = PROOF_SYSTEM
-            .fuse(rng, delegation::EmitterKeysetFuse, (), keyset, part_pcd)
-            .expect("EmitterKeysetFuse");
+            .fuse(rng, delegation::ExpandedKeyFuse, (), keyset, part_pcd)
+            .expect("ExpandedKeyFuse");
         keyset = next;
     }
     (keyset, keys)
@@ -1783,7 +1854,7 @@ fn assert_invalid(err: ragu::Error, expected: &str) {
 }
 
 /// The seam locations reject malformed assemblies: a part from a foreign note
-/// cannot be fused into a keyset (`EmitterKeysetFuse`'s reconciliation), two
+/// cannot be fused into a keyset (`ExpandedKeyFuse`'s reconciliation), two
 /// keysets covering the same part cannot be fused (disjointness), an
 /// incompletely covered keyset cannot feed the derivation, and a genuine
 /// keyset fed to the derivation with its parts reordered fails the slot
@@ -1797,13 +1868,13 @@ fn derivation_rejects_seam_violations() {
     let mk_a = user.master_key(&note_a);
 
     // Case 1 (fuse seam): a part from note B cannot be fused into note A's
-    // keyset; `EmitterKeysetFuse`'s mk/note reconciliation rejects it.
+    // keyset; `ExpandedKeyFuse`'s mk/note reconciliation rejects it.
     let (a_part0_pcd, _a_part0_keys) = keyset_part_pcd(&user, rng, note_a, 0);
     let (b_part1_pcd, _b_part1_keys) = keyset_part_pcd(&user, rng, note_b, 1);
     let cross_err = PROOF_SYSTEM
         .fuse(
             rng,
-            delegation::EmitterKeysetFuse,
+            delegation::ExpandedKeyFuse,
             (),
             a_part0_pcd,
             b_part1_pcd,
@@ -1812,7 +1883,7 @@ fn derivation_rejects_seam_violations() {
         .unwrap_or_else(|| panic!("expected rejection: cross-note fuse"));
     assert_invalid(
         cross_err,
-        "EmitterKeysetFuse: master key mismatch across parts",
+        "ExpandedKeyFuse: master key mismatch across parts",
     );
 
     // Case 2 (coverage disjointness): two keysets certifying the same part
@@ -1822,25 +1893,25 @@ fn derivation_rejects_seam_violations() {
     let overlap_err = PROOF_SYSTEM
         .fuse(
             rng,
-            delegation::EmitterKeysetFuse,
+            delegation::ExpandedKeyFuse,
             (),
             a_part0_first,
             a_part0_second,
         )
         .err()
         .unwrap_or_else(|| panic!("expected rejection: overlapping coverage"));
-    assert_invalid(overlap_err, "EmitterKeysetFuse: overlapping part coverage");
+    assert_invalid(overlap_err, "ExpandedKeyFuse: overlapping part coverage");
 
     // Case 3 (incomplete coverage): a keyset covering only part 0 cannot feed
     // the derivation; the full-coverage check rejects it.
     let (a_part0_only, _partial_keys) = keyset_part_pcd(&user, rng, note_a, 0);
     let (keyset_pcd, part_keys) = keyset_pcd(&user, rng, note_a);
-    let keyset = EmitterKeySchedule::from_interleaved_parts(&part_keys);
+    let keyset = ExpandedKeySchedule::from_parts(&part_keys);
     let polys = keyset.derivation_polys(&mk_a.query_salts());
-    let (good_parts, good_polys, good_quotients) = witness::nullifier_derivation(
+    let (good_parts, good_polys, good_quotients, good_prefix) = witness::nullifier_derivation(
         (*keyset_pcd.data(), ()),
         &keyset,
-        array::from_fn(|part| part_keys[part].key_poly()),
+        array::from_fn(|part| part_keys[part].key_spectrum()),
         &mk_a,
         &polys,
     );
@@ -1848,7 +1919,12 @@ fn derivation_rejects_seam_violations() {
         .fuse(
             rng,
             delegation::NullifierDerivationStep,
-            (good_parts, good_polys.clone(), good_quotients.clone()),
+            (
+                good_parts,
+                good_polys.clone(),
+                good_quotients.clone(),
+                good_prefix,
+            ),
             a_part0_only,
             Proof::trivial().carry::<()>(()),
         )
@@ -1861,13 +1937,14 @@ fn derivation_rejects_seam_violations() {
 
     // Case 4 (slot equality): the genuine keyset, but the derivation is fed
     // its parts in the wrong order; each swapped part misses its slot.
-    let mut swapped: [PartKeyPoly; EK_PARTS] = array::from_fn(|part| part_keys[part].key_poly());
+    let mut swapped: [ExpandedKeyPartSpectrum; EK_PARTS] =
+        array::from_fn(|part| part_keys[part].key_spectrum());
     swapped.swap(0, 1);
     let reorder_err = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NullifierDerivationStep,
-            (swapped, good_polys, good_quotients),
+            (swapped, good_polys, good_quotients, good_prefix),
             keyset_pcd,
             Proof::trivial().carry::<()>(()),
         )
@@ -1889,9 +1966,9 @@ fn keyset_fuses_in_any_tree_shape() {
     let note = user.random_note(500);
     let mk = user.master_key(&note);
 
-    let parts_with_keys: [(Pcd<delegation::EmitterKeyset>, PartKey); EK_PARTS] =
+    let parts_with_keys: [(Pcd<delegation::ExpandedKeyDerivation>, ExpandedKeyPart); EK_PARTS] =
         array::from_fn(|part| keyset_part_pcd(&user, rng, note, part));
-    let part_keys: [PartKey; EK_PARTS] = array::from_fn(|part| parts_with_keys[part].1);
+    let part_keys: [ExpandedKeyPart; EK_PARTS] = array::from_fn(|part| parts_with_keys[part].1);
     let mut parts = parts_with_keys.into_iter().map(|(pcd, _keys)| pcd);
 
     // Fold the low half and the high half separately, then join at the root:
@@ -1905,27 +1982,27 @@ fn keyset_fuses_in_any_tree_shape() {
     for _ in 1..EK_PARTS / 2 {
         let part_pcd = parts.next().expect("low-half part");
         let (next, ()) = PROOF_SYSTEM
-            .fuse(rng, delegation::EmitterKeysetFuse, (), low_half, part_pcd)
+            .fuse(rng, delegation::ExpandedKeyFuse, (), low_half, part_pcd)
             .expect("low half");
         low_half = next;
     }
     let mut high_half = parts.next().expect("EK_PARTS >= 2");
     for part_pcd in parts {
         let (next, ()) = PROOF_SYSTEM
-            .fuse(rng, delegation::EmitterKeysetFuse, (), high_half, part_pcd)
+            .fuse(rng, delegation::ExpandedKeyFuse, (), high_half, part_pcd)
             .expect("high half");
         high_half = next;
     }
     let (keyset_pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, delegation::EmitterKeysetFuse, (), low_half, high_half)
+        .fuse(rng, delegation::ExpandedKeyFuse, (), low_half, high_half)
         .expect("balanced root");
 
-    let keyset = EmitterKeySchedule::from_interleaved_parts(&part_keys);
+    let keyset = ExpandedKeySchedule::from_parts(&part_keys);
     let polys = keyset.derivation_polys(&mk.query_salts());
     let witness = witness::nullifier_derivation(
         (*keyset_pcd.data(), ()),
         &keyset,
-        array::from_fn(|part| part_keys[part].key_poly()),
+        array::from_fn(|part| part_keys[part].key_spectrum()),
         &mk,
         &polys,
     );

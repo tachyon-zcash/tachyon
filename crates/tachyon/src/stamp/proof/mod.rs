@@ -10,7 +10,7 @@
 //!   empty-block variants).
 //! - `Init`: bootstrap a lineage from existing PCDs (`SpendableInit`).
 //! - `Fuse`: compose two headers of the same family (`AnchorFuse`,
-//!   `UnspentFuse`, `UnspentEpochFuse`, `EmitterKeysetFuse`).
+//!   `UnspentFuse`, `UnspentEpochFuse`, `ExpandedKeyFuse`).
 //! - `Lift`: advance a spendable or stamp forward through the anchor chain, and
 //!   nothing else (`SpendableLift`, `StampLift`).
 //! - `Bind`: attach a lineage to certified material (`SpendBind`,
@@ -22,7 +22,7 @@
 //!
 //! The registration order below groups the derivation chain (indices 0..3),
 //! the pool segments (3..11), the spendable lineage (11..13), and the stamp
-//! producers (13..18), with `EmitterKeysetFuse` appended at 18; indices are
+//! producers (13..18), with `ExpandedKeyFuse` appended at 18; indices are
 //! stable identifiers, not a dependency order.
 
 extern crate alloc;
@@ -60,7 +60,7 @@ fn make_app() -> Result<Application, ragu::Error> {
         .register(stamp::SpendStamp)?
         .register(stamp::MergeStamp)?
         .register(stamp::StampLift)?
-        .register(delegation::EmitterKeysetFuse)?
+        .register(delegation::ExpandedKeyFuse)?
         .finalize()
 }
 

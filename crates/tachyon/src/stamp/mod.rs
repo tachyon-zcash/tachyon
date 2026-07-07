@@ -21,7 +21,7 @@ use ragu::{self, proof::PROOF_SIZE_COMPRESSED};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    ActionSetPoly, NfEmitterPoly, Note, TachygramSetPoly,
+    ActionSetPoly, NfEmitterSpectrum, Note, TachygramSetPoly,
     action::Action,
     constants::NF_EMITTERS,
     effect,
@@ -186,8 +186,9 @@ impl Plan {
 
     /// Prove a single [`Stamp`] for this plan.
     ///
-    /// For each **spend**, uses [`SpendBind`] to prepare PCD inputs, then runs
-    /// [`SpendStamp`] to attach the live nullifier pair.
+    /// For each **spend**, uses [`SpendBind`](proof::spend::SpendBind) to
+    /// prepare PCD inputs, then runs [`SpendStamp`] to attach the live
+    /// nullifier pair.
     ///
     /// For each **output**, runs [`OutputStamp`] with no PCD inputs.
     ///
@@ -198,7 +199,7 @@ impl Plan {
     /// (the [`crate::witness`] functions build each step's witness):
     ///
     /// 1. `MasterSeed` x`MK_PARTS` -> `KeyExpansionStep` x`EK_PARTS` ->
-    ///    `EmitterKeysetFuse` x`EK_PARTS - 1` -> `NullifierDerivationStep`
+    ///    `ExpandedKeyFuse` x`EK_PARTS - 1` -> `NullifierDerivationStep`
     ///    yields the `NullifierDerivation` PCD, once per note.
     /// 2. The same build interpolates the note's `NfEmitterPoly` array and
     ///    queries the nullifier pair `[nf_now, nf_next]` at the spend offset.
@@ -211,7 +212,7 @@ impl Plan {
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
             ragu::Pcd<delegation::NullifierDerivation>,
-            [NfEmitterPoly; NF_EMITTERS],
+            [NfEmitterSpectrum; NF_EMITTERS],
             [Nullifier; 2],
             ragu::Pcd<spendable::SpendableHeader>,
         )>,
@@ -362,7 +363,7 @@ impl Stamp {
         rng: &mut RNG,
         spend_pcd: ragu::Pcd<spend::SpendHeader>,
         derivation_pcd: ragu::Pcd<delegation::NullifierDerivation>,
-        polys: [NfEmitterPoly; NF_EMITTERS],
+        polys: [NfEmitterSpectrum; NF_EMITTERS],
         tachygrams: Vec<Tachygram>,
     ) -> Result<Self, ragu::Error> {
         let app = &*PROOF_SYSTEM;

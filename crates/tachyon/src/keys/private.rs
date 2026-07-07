@@ -34,7 +34,7 @@ use crate::{
 ///   [`NullifierKey`] (`nk`)
 /// - [`derive_payment_key`](Self::derive_payment_key) → [`PaymentKey`] (`pk`)
 /// - [`derive_proof_private`](Self::derive_proof_private) →
-///   [`ProofAuthorizingKey`] (`ak` + `nk`)
+///   [`ProofAuthorizingKey`](crate::keys::ProofAuthorizingKey) (`ak` + `nk`)
 #[derive(Clone, Copy, Debug, From)]
 pub struct SpendingKey(#[debug(skip)] [u8; 32]);
 

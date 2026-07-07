@@ -33,11 +33,14 @@ use crate::{
     bundle::{self, Bundle},
     constants::{EK_PARTS, EPOCH_SIZE, NF_DOMAIN, NF_EMITTERS},
     entropy::{ActionEntropy, ActionRandomizer},
-    keys::{EmitterKeySchedule, NoteMasterKey, PartKey, PaymentKey, ProofAuthorizingKey, private},
+    keys::{
+        ExpandedKeyPart, ExpandedKeySchedule, NoteMasterKey, NoteMasterKeyPart, PaymentKey,
+        ProofAuthorizingKey, private,
+    },
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        ActionDigest, Anchor, BlockHeight, NfEmitterPoly, NfRangePoly, NfSeqPoly, PartKeyPoly,
-        Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
+        ActionDigest, Anchor, BlockHeight, ExpandedKeyPartSpectrum, NfEmitterSpectrum, NfRangePoly,
+        NfSeqPoly, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
     },
     relations::{
         quotient::{
@@ -775,8 +778,8 @@ pub(crate) fn build_unspent_pcd_between_anchors(
 /// interpolating each [`PartKeyStates::spectrum`] only for the parts it proves.
 struct CachedDerivation {
     mk: NoteMasterKey,
-    keyset: EmitterKeySchedule,
-    polys: [NfEmitterPoly; NF_EMITTERS],
+    keyset: ExpandedKeySchedule,
+    polys: [NfEmitterSpectrum; NF_EMITTERS],
 }
 
 /// A note's derivation is a pure function of its `cm` (which pins `nk` through
@@ -902,7 +905,7 @@ impl WalletSim {
     #[must_use]
     pub fn master_key(&self, note: &Note) -> NoteMasterKey {
         NoteMasterKey::from_parts(&array::from_fn(|part| {
-            self.pak.nk.derive_note_part(&note.psi, part as u64)
+            NoteMasterKeyPart(self.pak.nk.derive_note_part(&note.psi, part as u64))
         }))
     }
 
@@ -943,15 +946,20 @@ impl WalletSim {
     }
 
     /// Seed one `mk` part (part index `part`), proving it is the note's master
-    /// secret via the payment-key check.
+    /// secret via the payment-key check and certifying its spectrum.
     pub fn master_key_part(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
         part: u64,
-    ) -> Pcd<delegation::MasterKeyPart> {
+    ) -> Pcd<delegation::MasterKeyDerivation> {
+        let mk_part = NoteMasterKeyPart(self.pak.nk.derive_note_part(&note.psi, part));
         let (pcd, ()) = PROOF_SYSTEM
-            .seed(rng, delegation::MasterSeed, (note, self.pak, part))
+            .seed(
+                rng,
+                delegation::MasterSeed,
+                (note, self.pak, part, mk_part.spectrum()),
+            )
             .expect("master key part seed");
         pcd
     }
@@ -960,7 +968,8 @@ impl WalletSim {
     /// Seeds the `MK_PARTS` master key parts, certifies each of the `EK_PARTS`
     /// expansion windows ([`KeyExpansionStep`](delegation::KeyExpansionStep))
     /// against them as one-slot keysets, fuses them into one fully covered
-    /// [`EmitterKeyset`](delegation::EmitterKeyset) (`EmitterKeysetFuse`), and
+    /// [`ExpandedKeyDerivation`](delegation::ExpandedKeyDerivation)
+    /// (`ExpandedKeyFuse`), and
     /// certifies the `N` derivation polynomials in one
     /// [`NullifierDerivationStep`](delegation::NullifierDerivationStep).
     ///
@@ -992,9 +1001,9 @@ impl WalletSim {
                 // states and keys on demand (one part at a time, so the POLY_LEN_MAX
                 // state grid never all sits on the stack), spectrum it for the
                 // witness, and stash the keys for the derivation step below.
-                let mut part_pcds: Vec<Pcd<delegation::EmitterKeyset>> =
+                let mut part_pcds: Vec<Pcd<delegation::ExpandedKeyDerivation>> =
                     Vec::with_capacity(EK_PARTS);
-                let mut part_keys: Vec<PartKey> = Vec::with_capacity(EK_PARTS);
+                let mut part_keys: Vec<ExpandedKeyPart> = Vec::with_capacity(EK_PARTS);
                 for part in 0..EK_PARTS {
                     let (states, keys) = derivation.mk.derive_schedule_part(part);
                     let spectrum = states.spectrum();
@@ -1018,21 +1027,22 @@ impl WalletSim {
                 }
 
                 // Fuse the one-slot keysets into one fully covered
-                // EmitterKeyset; any fuse order works, so chain left to right.
+                // ExpandedKeyDerivation; any fuse order works, so chain left
+                // to right.
                 let mut parts = part_pcds.into_iter();
                 let mut keyset_pcd = parts.next().expect("EK_PARTS >= 1");
                 for part_pcd in parts {
                     let (next, ()) = PROOF_SYSTEM
-                        .fuse(rng, delegation::EmitterKeysetFuse, (), keyset_pcd, part_pcd)
-                        .expect("EmitterKeysetFuse");
+                        .fuse(rng, delegation::ExpandedKeyFuse, (), keyset_pcd, part_pcd)
+                        .expect("ExpandedKeyFuse");
                     keyset_pcd = next;
                 }
 
                 // The epoch-independent step witness: the part-key polys, the emitter
                 // polys, and the emitter certify quotients (all pure in the keyset and
                 // salts, no epoch).
-                let part_polys: [PartKeyPoly; EK_PARTS] =
-                    array::from_fn(|part| part_keys[part].key_poly());
+                let part_polys: [ExpandedKeyPartSpectrum; EK_PARTS] =
+                    array::from_fn(|part| part_keys[part].key_spectrum());
                 let salts = derivation.mk.query_salts();
                 let first_key = derivation.keyset.round_key(0);
                 let quotients = array::from_fn(|poly| RoundBoundaryQuotients {
@@ -1051,7 +1061,12 @@ impl WalletSim {
                     .fuse(
                         rng,
                         delegation::NullifierDerivationStep,
-                        (part_polys, derivation.polys.clone(), quotients),
+                        (
+                            part_polys,
+                            derivation.polys.clone(),
+                            quotients,
+                            derivation.mk.prefix(),
+                        ),
                         keyset_pcd,
                         Proof::trivial().carry::<()>(()),
                     )
@@ -1081,8 +1096,8 @@ impl WalletSim {
         note: &Note,
     ) -> (
         Pcd<delegation::NullifierDerivation>,
-        [NfEmitterPoly; NF_EMITTERS],
-        EmitterKeySchedule,
+        [NfEmitterSpectrum; NF_EMITTERS],
+        ExpandedKeySchedule,
     ) {
         let derivation = self.cached_derivation(note);
         let pcd = self.cached_derivation_pcd(rng, *note);
@@ -1156,7 +1171,7 @@ impl WalletSim {
         (
             NfSeqPoly,
             NfRangePoly,
-            [NfEmitterPoly; NF_EMITTERS],
+            [NfEmitterSpectrum; NF_EMITTERS],
             [[Polynomial; ARC_SPLITS]; NF_EMITTERS],
             [Polynomial; ARC_SPLITS],
             [Polynomial; NF_EMITTERS],

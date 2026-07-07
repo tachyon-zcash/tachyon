@@ -35,7 +35,7 @@ lazy_static! {
 /// Pedersen commitment.
 ///
 /// Each action gets a fresh trapdoor:
-/// $\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$.
+/// $\mathsf{cv} = \[v\]\,\mathcal{V} + \[\mathsf{rcv}\]\,\mathcal{R}$.
 ///
 /// The binding signing key is the scalar sum of trapdoors:
 /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i$
@@ -57,7 +57,7 @@ impl CommitmentTrapdoor {
 
     /// Commit to a value with this trapdoor.
     ///
-    /// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
+    /// $$\mathsf{cv} = \[v\]\,\mathcal{V} + \[\mathsf{rcv}\]\,\mathcal{R}$$
     ///
     /// Positive $v$ for spends (balance contributed), negative for
     /// outputs (balance exhausted).
@@ -88,7 +88,7 @@ impl CommitmentTrapdoor {
 /// revealing it. This is a Pedersen commitment (curve point) used in
 /// value balance verification.
 ///
-/// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
+/// $$\mathsf{cv} = \[v\]\,\mathcal{V} + \[\mathsf{rcv}\]\,\mathcal{R}$$
 ///
 /// where $v$ is the value, $\mathsf{rcv}$ is the randomness
 /// ([`CommitmentTrapdoor`]), and $\mathcal{V}$, $\mathcal{R}$ are
@@ -105,8 +105,8 @@ impl Commitment {
     /// Create the value balance commitment
     /// $\text{ValueCommit}_0(\mathsf{v\_{balance}})$.
     ///
-    /// $$\text{ValueCommit}_0(v) = [v]\,\mathcal{V} + [0]\,\mathcal{R}
-    ///   = [v]\,\mathcal{V}$$
+    /// $$\text{ValueCommit}_0(v) = \[v\]\,\mathcal{V} + \[0\]\,\mathcal{R}
+    ///   = \[v\]\,\mathcal{V}$$
     ///
     /// This is a **deterministic** commitment with zero randomness.
     /// Used by validators to derive the binding verification key:

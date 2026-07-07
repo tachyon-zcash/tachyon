@@ -6,12 +6,12 @@ use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
-    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
+    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
     constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
 use crate::{
-    ActionSetPoly, NfEmitterPoly, TachygramSetPoly,
+    ActionSetPoly, NfEmitterSpectrum, TachygramSetPoly,
     constants::{NF_DOMAIN, NF_EMITTERS, NOTE_VALUE_MAX},
     entropy::ActionRandomizer,
     keys::private,
@@ -143,16 +143,16 @@ impl Step for SpendStamp {
     type Output = StampHeader;
     type Right = NullifierDerivation;
     /// `(polys,)`.
-    type Witness<'source> = ([NfEmitterPoly; NF_EMITTERS],);
+    type Witness<'source> = ([NfEmitterSpectrum; NF_EMITTERS],);
 
     const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (polys,): Self::Witness<'source>,
+        (emitters,): Self::Witness<'source>,
         (cm, (cv, rk), present_nf, anchor, offset): <Self::Left as Header>::Data,
-        (commits, _digest, derivation_cm, shift, ratios): <Self::Right as Header>::Data,
+        (emitter_commits, _digest, derivation_cm, shift, ratios): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // The certified derivation must be this note's.
         enforce_zero(
@@ -163,12 +163,10 @@ impl Step for SpendStamp {
         // Offset query: the present-epoch nullifier `nf_d` and its successor
         // `nf_{d+1}`, read off the certified polys at consecutive coset points
         // with the cm-bound shift and ratios.
-        let commitments: [Eq; NF_EMITTERS] = commits.map(|commit| commit.0);
-        let trace_polys: [Polynomial; NF_EMITTERS] = polys.map(|poly| poly.0);
         let (nf_now, nf_next) = enforce_geometric_opening_pair(
             ctx,
-            &commitments,
-            &trace_polys,
+            &emitter_commits.map(|commit| commit.0),
+            &emitters.map(|poly| poly.0),
             shift.0,
             subgroup_generator::<NF_DOMAIN>(),
             &ratios.0,

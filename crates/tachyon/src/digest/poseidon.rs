@@ -8,8 +8,7 @@ use ragu::Sponge;
 
 use crate::{
     EpochIndex,
-    constants::{MK_PART_LEN, NF_EMITTERS, NF_EXPANSION_MK_PREFIX, NF_QUERY_MK_PREFIX},
-    keys::NoteMasterKey,
+    constants::{MK_PART_LEN, MK_PARTS, NF_EMITTERS},
 };
 
 #[expect(
@@ -68,8 +67,8 @@ const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 /// Derive one `mk` part: `MK_PART_LEN` round keys from the note trapdoor `psi`,
 /// the nullifier key `nk`, and the part index. One sponge absorbs
 /// `(domain, part, psi, nk)` and squeezes `MK_PART_LEN` elements; the squeeze
-/// position is the key index within the part. The two parts concatenate into
-/// the full master key.
+/// position is the key index within the part. The parts interleave into the
+/// full master key (`NoteMasterKey::from_parts`).
 #[expect(
     clippy::expect_used,
     reason = "mock sponge absorb/squeeze is infallible"
@@ -88,27 +87,29 @@ pub(crate) fn nf_master_part(psi: Fp, nk: Fp, part: u64) -> [Fp; MK_PART_LEN] {
 
 const NF_EXPANSION_DOMAIN: &[u8; 16] = b"Tachyon-NfExpand";
 
-/// Derive the note's expansion-input parameters from its master key `mk`: the
-/// secret input salt `s`, the input stride `δ`, and the whitening key `w` of
-/// the key-expansion cipher. Domain-separated from the query-parameter
-/// derivations below so the outputs are cryptographically independent of the
-/// salts, weights, and shift.
+/// Derive the note's expansion-input parameters from its `mk` prefix (one
+/// element of every interleaved part, `prefix[p] = mk[p]`): the secret input
+/// salt `s`, the input stride `δ`, and the whitening key `w` of the
+/// key-expansion cipher. Domain-separated from the query-parameter derivations
+/// below so the outputs are cryptographically independent of the salts,
+/// weights, and shift.
 ///
-/// The sponge absorbs the domain tag plus a [`NF_EXPANSION_MK_PREFIX`]-element
-/// `mk` prefix (exactly `RATE` elements) and squeezes three, so the whole
-/// derivation is one Poseidon permutation; `KeyExpansionStep` runs it in-step.
+/// The sponge absorbs the domain tag plus the `MK_PARTS` prefix elements and
+/// squeezes three; that stays within `RATE`, so the whole derivation is one
+/// Poseidon permutation. `KeyExpansionStep` runs it in-step over prefix
+/// elements pinned to the certified part spectra.
 #[expect(
     clippy::expect_used,
     reason = "mock sponge absorb/squeeze is infallible"
 )]
 #[must_use]
-pub(crate) fn nf_expansion_params(mk: &[Fp; NoteMasterKey::MK_LENGTH]) -> (Fp, Fp, Fp) {
+pub(crate) fn nf_expansion_params(prefix: &[Fp; MK_PARTS]) -> (Fp, Fp, Fp) {
     let mut sponge = Sponge::new();
     sponge
         .absorb(Fp::from_u128(u128::from_le_bytes(*NF_EXPANSION_DOMAIN)))
         .expect("infallible");
-    for &part in mk.iter().take(NF_EXPANSION_MK_PREFIX) {
-        sponge.absorb(part).expect("infallible");
+    for &element in prefix {
+        sponge.absorb(element).expect("infallible");
     }
     let salt = sponge.squeeze().expect("infallible");
     let stride = sponge.squeeze().expect("infallible");
@@ -119,41 +120,42 @@ pub(crate) fn nf_expansion_params(mk: &[Fp; NoteMasterKey::MK_LENGTH]) -> (Fp, F
 const NF_QUERY_SALT_DOMAIN: &[u8; 16] = b"Tachyon-NfSalt__";
 const NF_QUERY_WEIGHT_DOMAIN: &[u8; 16] = b"Tachyon-NfWeight";
 
-/// Derive the note's per-emitter nullifier-query salts from its master key
-/// `mk`. Each salt seeds one derivation poly's 8192-round cipher. Domain-
-/// separated from the weight/shift derivation below so the two outputs are
-/// cryptographically independent.
+/// Derive the note's per-emitter nullifier-query salts from its `mk` prefix
+/// (one element of every interleaved part). Each salt seeds one derivation
+/// poly's 8192-round cipher. Domain-separated from the weight/shift derivation
+/// below so the two outputs are cryptographically independent.
 #[expect(
     clippy::expect_used,
     reason = "mock sponge absorb/squeeze is infallible"
 )]
 #[must_use]
-pub(crate) fn nf_query_salts(mk: &[Fp; NoteMasterKey::MK_LENGTH]) -> [Fp; NF_EMITTERS] {
+pub(crate) fn nf_query_salts(prefix: &[Fp; MK_PARTS]) -> [Fp; NF_EMITTERS] {
     let mut sponge = Sponge::new();
     sponge
         .absorb(Fp::from_u128(u128::from_le_bytes(*NF_QUERY_SALT_DOMAIN)))
         .expect("infallible");
-    for &part in mk.iter().take(NF_QUERY_MK_PREFIX) {
-        sponge.absorb(part).expect("infallible");
+    for &element in prefix {
+        sponge.absorb(element).expect("infallible");
     }
     [Fp::ZERO; NF_EMITTERS].map(|_| sponge.squeeze().expect("infallible"))
 }
 
-/// Derive the note's nullifier-query weight parameters from its master key
-/// `mk`: the per-poly geometric weight bases `ρ_j` and the secret query-coset
-/// origin `c` (the `shift`). Domain-separated from the salt derivation above.
+/// Derive the note's nullifier-query weight parameters from its `mk` prefix
+/// (one element of every interleaved part): the per-poly geometric weight
+/// bases `ρ_j` and the secret query-coset origin `c` (the `shift`).
+/// Domain-separated from the salt derivation above.
 #[expect(
     clippy::expect_used,
     reason = "mock sponge absorb/squeeze is infallible"
 )]
 #[must_use]
-pub(crate) fn nf_query_weights(mk: &[Fp; NoteMasterKey::MK_LENGTH]) -> ([Fp; NF_EMITTERS], Fp) {
+pub(crate) fn nf_query_weights(prefix: &[Fp; MK_PARTS]) -> ([Fp; NF_EMITTERS], Fp) {
     let mut sponge = Sponge::new();
     sponge
         .absorb(Fp::from_u128(u128::from_le_bytes(*NF_QUERY_WEIGHT_DOMAIN)))
         .expect("infallible");
-    for &part in mk.iter().take(NF_QUERY_MK_PREFIX) {
-        sponge.absorb(part).expect("infallible");
+    for &element in prefix {
+        sponge.absorb(element).expect("infallible");
     }
     let ratios = [Fp::ZERO; NF_EMITTERS].map(|_| sponge.squeeze().expect("infallible"));
     let shift = sponge.squeeze().expect("infallible");

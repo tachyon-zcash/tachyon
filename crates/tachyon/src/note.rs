@@ -97,7 +97,7 @@ pub struct Note {
 /// invariant from inside the circuit, and a compiled proof system sees
 /// only raw field elements without the Rust-level newtype protection.
 ///
-/// Use [`Value::try_from`] or [`Value::new`] for fallible construction.
+/// Use [`Value::try_from`] for fallible construction.
 #[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
 pub struct Value(u64);
 

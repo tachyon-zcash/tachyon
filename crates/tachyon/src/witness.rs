@@ -1,6 +1,6 @@
 //! Utilities for preparing step witnesses.
 //!
-//! One function per [`Step`](ragu::Step) with a non-empty witness; named after
+//! One function per [`Step`] with a non-empty witness; named after
 //! the step it serves. Key material is passed in, never derived here; the
 //! expensive expansion/FFT runs once on the wallet and is reused.
 
@@ -11,13 +11,13 @@ use pasta_curves::Fp;
 use ragu::{Header, Polynomial, Step};
 
 use crate::{
-    constants::{EK_PART_SIZE, EK_PARTS, NF_EMITTERS},
+    constants::{EK_PART_LENGTH, EK_PARTS, NF_EMITTERS},
     digest::poseidon,
-    keys::{EmitterKeySchedule, NoteMasterKey, PartKey},
+    keys::{ExpandedKeySchedule, NoteMasterKey, ExpandedKeyPart},
     note::Nullifier,
     primitives::{
-        Anchor, EpochIndex, NfEmitterPoly, NfRangePoly, NfSeqPoly, PartKeyPoly,
-        PartKeySpectrumPoly, Tachygram, TachygramSetPoly,
+        Anchor, EpochIndex, NfEmitterSpectrum, NfRangePoly, NfSeqPoly, ExpandedKeyPartSpectrum,
+        ExpandedKeyTraceSpectrum, Tachygram, TachygramSetPoly,
     },
     relations::quotient::{
         self, ARC_SPLITS, RoundBoundaryQuotients, accumulator_recurrence, weight_recurrence,
@@ -38,20 +38,22 @@ type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 /// Witness for [`KeyExpansionStep`] for one part.
 ///
 /// `(trace, round_boundary_quotients, part_key_poly, decimation_quotient,
-/// part)`. `part ∈ 0..EK_PARTS` selects the cipher-input window `base = part ·
-/// EK_PART_SIZE`; the caller supplies that part's `EK_PART_SIZE` keys.
+/// part, mk_parts)`. `part ∈ 0..EK_PARTS` selects the cipher-input window
+/// `base = part · EK_PART_LENGTH`; the caller supplies that part's
+/// `EK_PART_LENGTH` keys. The `mk` part spectra are rebuilt here for the step to
+/// bind against the seeds' certified commitments.
 #[must_use]
 pub fn key_expansion<'key>(
     headers: (StepLeft<KeyExpansionStep>, StepRight<KeyExpansionStep>),
     mk: &'key NoteMasterKey,
-    spectrum: &'key PartKeySpectrumPoly,
-    part_keys: &'key PartKey,
+    spectrum: &'key ExpandedKeyTraceSpectrum,
+    part_keys: &'key ExpandedKeyPart,
     part: usize,
 ) -> StepWitness<'key, KeyExpansionStep> {
     let (_left, _right) = headers;
-    let key_poly = part_keys.key_poly();
+    let key_poly = part_keys.key_spectrum();
     #[expect(clippy::as_conversions, reason = "constant size")]
-    let base = Fp::from((part * EK_PART_SIZE) as u64);
+    let base = Fp::from((part * EK_PART_LENGTH) as u64);
     let (round, boundary, decimation_quotient) = quotient::expansion_quotients(
         spectrum.0.coefficients(),
         mk,
@@ -66,24 +68,27 @@ pub fn key_expansion<'key>(
         key_poly,
         decimation_quotient,
         Fp::from(part as u64),
+        array::from_fn(|mk_part| mk.part(mk_part).spectrum()),
     )
 }
 
 /// Witness for [`NullifierDerivationStep`].
 ///
-/// `(parts, derivation_polys, quotients)`. `parts` are the `EK_PARTS` part-key
-/// polys; `keyset` is the assembled interleaved schedule the round quotients
-/// are built against. The derivation is epoch-independent, so no origin enters.
+/// `(parts, derivation_polys, quotients, mk_prefix)`. `parts` are the
+/// `EK_PARTS` part-key polys; `keyset` is the assembled interleaved schedule
+/// the round quotients are built against; the `mk` prefix is witnessed for
+/// the step to pin against the fused part commitments. The derivation is
+/// epoch-independent, so no origin enters.
 #[must_use]
 pub fn nullifier_derivation<'key>(
     headers: (
         StepLeft<NullifierDerivationStep>,
         StepRight<NullifierDerivationStep>,
     ),
-    keyset: &'key EmitterKeySchedule,
-    parts: [PartKeyPoly; EK_PARTS],
+    keyset: &'key ExpandedKeySchedule,
+    parts: [ExpandedKeyPartSpectrum; EK_PARTS],
     mk: &'key NoteMasterKey,
-    polys: &'key [NfEmitterPoly; NF_EMITTERS],
+    polys: &'key [NfEmitterSpectrum; NF_EMITTERS],
 ) -> StepWitness<'key, NullifierDerivationStep> {
     let (_keyset_left, _keyset_right) = headers;
     let salts = mk.query_salts();
@@ -100,7 +105,7 @@ pub fn nullifier_derivation<'key>(
                 first_key,
             ),
         });
-    (parts, polys.clone(), quotients)
+    (parts, polys.clone(), quotients, mk.prefix())
 }
 
 /// Witness for [`SpendableInit`].
@@ -111,7 +116,7 @@ pub fn nullifier_derivation<'key>(
 #[must_use]
 pub fn spendable_init(
     headers: (StepLeft<SpendableInit>, StepRight<SpendableInit>),
-    polys: &[NfEmitterPoly; NF_EMITTERS],
+    polys: &[NfEmitterSpectrum; NF_EMITTERS],
     pre_epoch_anchor: Anchor,
     pre_cm_anchor: Anchor,
     creation_set: TachygramSetPoly,
@@ -136,7 +141,7 @@ pub fn spendable_init(
 #[must_use]
 pub fn unspent_bind<'key>(
     headers: (StepLeft<UnspentBind>, StepRight<UnspentBind>),
-    polys: &'key [NfEmitterPoly; NF_EMITTERS],
+    polys: &'key [NfEmitterSpectrum; NF_EMITTERS],
     mk: &'key NoteMasterKey,
     range_nfs: &'key [Nullifier],
     start: EpochIndex,

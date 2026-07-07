@@ -8,7 +8,7 @@
 //! and `creation_epoch` thread unchanged. [`SpendableInit`] bootstraps it from
 //! a minted note;
 //! [`SpendableLift`] advances it over
-//! [`VerifiedUnspent`](super::pool::VerifiedUnspent) segments.
+//! [`VerifiedUnspent`] segments.
 
 extern crate alloc;
 
@@ -17,12 +17,12 @@ use alloc::{vec, vec::Vec};
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
-    Header, Index, Polynomial, Step, Suffix,
+    Header, Index, Step, Suffix,
     constraint::{enforce_nonzero, enforce_zero},
 };
 
 use crate::{
-    NfEmitterPoly,
+    NfEmitterSpectrum,
     constants::NF_EMITTERS,
     note::{Commitment as NoteCommitment, Nullifier},
     primitives::{Anchor, EpochIndex, TachygramSetPoly},
@@ -72,10 +72,11 @@ impl Header for SpendableHeader {
 
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
-/// Wallet-only. Fuses a boundary-rooted [`AnchorChain`] with the wallet's
-/// single-leaf [`NullifierHeader`]: binds
-/// `present_nf` to the proven leaf, checks `cm in creation_set`, roots the
-/// chain at the epoch boundary, and requires the cm-stamp to be its final link.
+/// Wallet-only. Fuses a boundary-rooted [`AnchorChain`] with the note's
+/// certified [`NullifierDerivation`]: computes `present_nf` in-step as the
+/// offset-zero query over the certified derivation polynomials, checks
+/// `cm in creation_set`, roots the chain at the epoch boundary, and requires
+/// the cm-stamp to be its final link.
 ///
 /// TODO: presently, a spendable can only be lifted by an unspent proof starting
 /// at its precise anchor. ideally, a user should request whole-epoch proofs
@@ -95,7 +96,7 @@ impl Step for SpendableInit {
         Anchor,
         Anchor,
         TachygramSetPoly,
-        [NfEmitterPoly; NF_EMITTERS],
+        [NfEmitterSpectrum; NF_EMITTERS],
         EpochIndex,
     );
 
@@ -105,21 +106,19 @@ impl Step for SpendableInit {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         // TODO: this pre_epoch_anchor seems unbound from pre_cm_anchor
-        (pre_epoch_anchor, pre_cm_anchor, creation_set, polys, creation_epoch): Self::Witness<
+        (pre_epoch_anchor, pre_cm_anchor, creation_set, emitters, creation_epoch): Self::Witness<
             'source,
         >,
         (chain_start, chain_end): <Self::Left as Header>::Data,
-        (commits, _digest, cm, shift, _ratios): <Self::Right as Header>::Data,
+        (emitter_commits, _digest, cm, shift, _ratios): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // The present nullifier is the creation-epoch query `nf_0 = Σ_j T_j(c)`
         // (offset d = 0: unit weights, point = the secret shift c). The query
         // binds the witnessed polys to the certified derivation commitments.
-        let commitments: [Eq; NF_EMITTERS] = commits.map(|commit| commit.0);
-        let trace_polys: [Polynomial; NF_EMITTERS] = polys.map(|poly| poly.0);
         let present_fp = enforce_weighted_opening(
             ctx,
-            &commitments,
-            &trace_polys,
+            &emitter_commits.map(|commit| commit.0),
+            &emitters.map(|poly| poly.0),
             shift.0,
             &[Fp::ONE; NF_EMITTERS],
         )?;

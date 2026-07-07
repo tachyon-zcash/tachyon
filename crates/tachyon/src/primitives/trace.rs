@@ -1,5 +1,3 @@
-#![allow(missing_docs, reason = "todo")]
-
 extern crate alloc;
 
 use alloc::vec::Vec;
@@ -21,23 +19,54 @@ lazy_static! {
         Domain::new(TachyonP5R8192::ROUNDS.ilog2()).ifft(&mut constants);
         Polynomial::from_coeffs(&constants)
     };
+    /// The commitment to [`CONSTANT_SCHEDULE`], computed once.
     pub static ref CONSTANT_SCHEDULE_COMMIT: Eq = CONSTANT_SCHEDULE.commit();
 }
 
+/// The eval-form interpolant of one `mk` part over the order-`MK_PART_LEN`
+/// subgroup (`M_p(ζ^r) = part_p[r]`), certified by `MasterSeed` and opened by
+/// the committed-key row recurrence.
 #[derive(Clone, Debug)]
-pub struct PartKeySpectrumPoly(pub Polynomial);
+pub struct NoteMasterKeyPartSpectrum(pub Polynomial);
 
+/// Commitment to a [`NoteMasterKeyPartSpectrum`]; the certified transport of
+/// one `mk` part across headers.
+#[derive(Clone, Copy, Debug)]
+pub struct NoteMasterKeyPartCommit(pub Eq);
+
+/// The interpolant of one expansion part's full cipher-state grid.
+///
+/// Over the order-`POLY_LEN_MAX` domain, `T(ω^{ROUNDS·r + c})` is row `r`'s
+/// round-`c` state; certified by `KeyExpansionStep`'s trace relations.
+#[derive(Clone, Debug)]
+pub struct ExpandedKeyTraceSpectrum(pub Polynomial);
+
+/// Commitment slot of one certified expanded-key part (`commit(A_p)` plus any
+/// non-identity fillers accumulated by the keyset fuse).
 #[derive(Clone, Copy, Debug)]
 pub struct PartKeyCommit(pub Eq);
 
+/// The eval-form interpolant of one expansion part's `EK_PART_LENGTH` keys.
+///
+/// Over the order-`EK_PART_LENGTH` subgroup, `A_p(ζ^r) = part_p[r]`; bound to
+/// the trace's final column and opened by the emitter's committed-offset
+/// recurrence.
 #[derive(Clone, Debug)]
-pub struct PartKeyPoly(pub Polynomial);
+pub struct ExpandedKeyPartSpectrum(pub Polynomial);
 
+/// The interpolant of one derivation polynomial's 8192-round emitter trace
+/// over the order-`POLY_LEN_MAX` domain (`T_j(ω^i)` is cipher state `i`),
+/// read off-domain by the nullifier query.
 #[derive(Clone, Debug)]
-pub struct NfEmitterPoly(pub Polynomial);
+pub struct NfEmitterSpectrum(pub Polynomial);
+
+/// Commitment to an [`NfEmitterSpectrum`]; the certified transport of one
+/// derivation polynomial across headers.
 #[derive(Clone, Copy, Debug)]
 pub struct NfEmitterCommit(pub Eq);
 
+/// One transcript challenge over all `N` emitter commitments, so downstream
+/// consumers absorb a single element for the set.
 #[derive(Clone, Copy, Debug)]
 pub struct NfEmittersDigest(pub Fp);
 
@@ -54,7 +83,7 @@ mod tests {
     use zcash_mimc::spec::tachyon::TachyonP5R8192;
 
     use crate::{
-        primitives::trace::{CONSTANT_SCHEDULE, NfEmitterPoly},
+        primitives::trace::{CONSTANT_SCHEDULE, NfEmitterSpectrum},
         relations::subgroup_generator,
     };
 
@@ -76,7 +105,7 @@ mod tests {
             [0, 1, 4096, TachyonP5R8192::ROUNDS - 1].map(|index| (index, states[index]));
 
         Domain::new(TachyonP5R8192::ROUNDS.ilog2()).ifft(states);
-        let poly = NfEmitterPoly(Polynomial::from_coeffs(states));
+        let poly = NfEmitterSpectrum(Polynomial::from_coeffs(states));
         let omega = subgroup_generator::<{ TachyonP5R8192::ROUNDS }>();
 
         for (index, eval) in expect_evaluations {

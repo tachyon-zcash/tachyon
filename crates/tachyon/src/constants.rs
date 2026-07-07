@@ -60,26 +60,28 @@ pub const NF_DOMAIN: usize = {
 
 /// One expansion part fits as many `TachyonP5R32::ROUNDS` rows into a
 /// polynomial as possible.
-pub const EK_PART_SIZE: usize = POLY_LEN_MAX / TachyonP5R32::ROUNDS;
+pub const EK_PART_LENGTH: usize = POLY_LEN_MAX / TachyonP5R32::ROUNDS;
 
-/// The number of expansion parts which make up a full `EmitterKeySchedule`.
+/// The number of expansion parts which make up a full `ExpandedKeySchedule`.
 ///
 /// Width lever: with the expansion held at a credible depth (`TachyonP5R32`),
-/// `P = EK_PARTS` parts interleave into one `EK_FULL_SIZE`-key orbit, so the
-/// schedule width is `P · EK_PART_SIZE` independent of the round count.
+/// `P = EK_PARTS` parts interleave into one `EK_LENGTH`-key orbit, so the
+/// schedule width is `P · EK_PART_LENGTH` independent of the round count.
 pub const EK_PARTS: usize = 4;
 
 /// The full cyclic round-key schedule width (one orbit).
 ///
 /// The emitter's 8192-round cipher cycles this many distinct keys
-/// (`POLY_LEN_MAX / EK_FULL_SIZE` cycles; 8x at the default width).
-pub const EK_FULL_SIZE: usize = EK_PARTS * EK_PART_SIZE;
+/// (`POLY_LEN_MAX / EK_LENGTH` cycles; 8x at the default width).
+pub const EK_LENGTH: usize = EK_PARTS * EK_PART_LENGTH;
 
 /// The number of `mk` parts, one derived per `MasterSeed` step.
 ///
 /// Splitting the master key across `MK_PARTS` seeds keeps each seed's Poseidon
 /// squeeze under the per-step gate ceiling (a single `MK_LENGTH` squeeze busts
-/// it). The parts concatenate into the full `mk`.
+/// it). The parts interleave into the full `mk` (part `p` occupies the
+/// positions `≡ p (mod MK_PARTS)`), so any `MK_PARTS`-element `mk` prefix
+/// carries one element of every part.
 pub const MK_PARTS: usize = 2;
 
 /// The number of round keys per `mk` part.
@@ -89,22 +91,3 @@ pub const MK_PART_LEN: usize = 16;
 /// `TachyonP5R32` expansion cipher (`round_key(0..=ROUNDS)`; the whitening key
 /// at index `ROUNDS` wraps to key `0`).
 pub const MK_LENGTH: usize = MK_PARTS * MK_PART_LEN;
-
-/// The number of leading `mk` elements that seed the nullifier-query parameter
-/// sponges.
-///
-/// `nf_query_salts` and `nf_query_weights` absorb this many `mk` elements.
-/// Rooting the salts and weights in a fixed-length prefix keeps those sponges
-/// flat in `MK_LENGTH`; a Poseidon sponge seeded by a few `mk` elements already
-/// yields full-entropy outputs, and `mk` is sound by construction.
-pub const NF_QUERY_MK_PREFIX: usize = 4;
-
-/// The number of leading `mk` elements that seed the expansion-parameter
-/// sponge (`nf_expansion_params`).
-///
-/// Three, one fewer than [`NF_QUERY_MK_PREFIX`]: with the domain tag the
-/// sponge absorbs exactly `RATE = 4` elements and squeezes three, so the whole
-/// derivation is a single Poseidon permutation. `KeyExpansionStep` pays for
-/// this sponge in-step and its gate budget has no headroom for a second
-/// permutation; one full-width `mk` element is already full entropy.
-pub const NF_EXPANSION_MK_PREFIX: usize = 3;

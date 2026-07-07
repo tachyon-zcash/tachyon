@@ -15,7 +15,7 @@ use crate::{entropy::ActionRandomizer, primitives::effect, reddsa};
 /// sign actions.
 ///
 /// Derived from
-/// [`reddsa::ActionAuthorizingKey`](super::reddsa::ActionAuthorizingKey) $\to$
+/// [`SpendAuthorizingKey`](super::private::SpendAuthorizingKey) $\to$
 /// [`SpendValidatingKey`] and [`NullifierKey`].
 ///
 /// ## Status
@@ -47,7 +47,7 @@ impl ProofAuthorizingKey {
 
 /// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\,\mathcal{G}$ —
 /// the long-lived counterpart of
-/// [`reddsa::ActionAuthorizingKey`](super::reddsa::ActionAuthorizingKey).
+/// [`SpendAuthorizingKey`](super::private::SpendAuthorizingKey).
 ///
 /// Corresponds to the "spend validating key" in Orchard (§4.2.3).
 /// Constrains per-action `rk` in the proof, tying accumulator activity
