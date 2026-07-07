@@ -41,7 +41,7 @@ The payment key $\mathsf{pk}$ is then derived from both $\mathsf{ak}$ and $\math
 | Incoming | $\mathsf{dk}, \mathsf{ivk}, \mathsf{ovk}$ | **Removed** | Out-of-band |
 | Address | Diversifier $d$, transmission key $\mathsf{pk_d}$ | $\mathsf{pk} = \text{Poseidon}(\mathsf{ak}_x, \mathsf{nk})$ | No diversification; binds to pak |
 | Proof authorization | Not separated | $\mathsf{pak} = (\mathsf{ak}, \mathsf{nk})$ | Authorize proofs for all notes |
-| Per-note delegation | Not separated | $(\mathsf{ak}, \mathsf{mk})$ | Delegate proofs for one note |
+| Per-note delegation | Not separated | Opaque value windows | Delegate absence proofs, never key material |
 
 The key insight is that removing in-band secret distribution (on-chain ciphertexts) eliminates the need for viewing keys, diversified addresses, and the entire key tree that supports them.
 
@@ -110,9 +110,6 @@ $$\mathsf{pak} = (\mathsf{ak}, \mathsf{nk})$$
 
 Allows constructing proofs without spend authority. The prover uses $\mathsf{ak}$ to constrain $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$ and $\mathsf{nk}$ to constrain nullifier correctness in the circuit.
 
-$\mathsf{pak}$ covers **all notes** because $\mathsf{nk}$ is wallet-wide. For narrower delegation, per-note key bundles restrict scope:
+$\mathsf{pak}$ covers **all notes** because $\mathsf{nk}$ is wallet-wide. No narrower key bundle exists: per-note key material ($\mathsf{mk}$ and everything derived from it) is wallet-only, and outsourcing is done by handing a delegate opaque value windows to prove absent, never keys.[^delegation]
 
-| Bundle | Keys | Holder | Scope |
-| ------ | ---- | ------ | ----- |
-| $\mathsf{pak}$ | $(\mathsf{ak}, \mathsf{nk})$ | Prover | All notes, all epochs |
-| per-note | $(\mathsf{ak}, \mathsf{mk})$ | Per-note prover | One note, all epochs |
+[^delegation]: See [Nullifiers](./nullifiers.md) for value-window delegation.

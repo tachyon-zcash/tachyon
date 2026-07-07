@@ -12,17 +12,17 @@ Derivation stretches a small per-note master key into committed polynomials, so 
 
 ### Master key
 
-The note's master key $\mathsf{mk}$ is a schedule of $32$ round keys derived from the note's trapdoor $\psi$ and the wallet's nullifier key $\mathsf{nk}$, in two parts of $16$. One Poseidon sponge per part absorbs the domain, the part index, $\psi$, and $\mathsf{nk}$, then squeezes that part's keys:
+The note's master key $\mathsf{mk}$ is a schedule of $32$ round keys derived from the note's trapdoor $\psi$ and the wallet's nullifier key $\mathsf{nk}$, in two parts of $16$. One Poseidon sponge per part absorbs the domain, the part index, $\psi$, and $\mathsf{nk}$, then squeezes that part's keys. The parts interleave into the schedule, part $i$ occupying the positions $\equiv i \pmod 2$:
 
 $$
-\mathsf{mk}[16i + s] =
+\mathsf{mk}[i + 2s] =
     \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}\!\left(
         i, \psi, \mathsf{nk}
     \right)\!\big[s\big]
     \qquad i \in \{0, 1\},\ s \in [0, 16)
 $$
 
-$\mathsf{mk}$ covers all epochs, and should be kept secret.
+so the two-element prefix $\mathsf{mk}[0..2]$ carries one key of each part. $\mathsf{mk}$ covers all epochs, and should be kept secret.
 
 ### Expansion
 
@@ -32,7 +32,7 @@ $$
 K_r = E_{\mathsf{mk}}\!\left(s + \delta\,r\right) \qquad r \in [0, 1024).
 $$
 
-The input salt $s$, the input stride $\delta$, and the whitening key $w$ are squeezed from a domain-separated Poseidon sponge over a fixed prefix of $\mathsf{mk}$ ($\texttt{Tachyon-NfExpand}$), so the cipher's inputs are secrets of the note, never public constants.
+The input salt $s$, the input stride $\delta$, and the whitening key $w$ are squeezed from a domain-separated Poseidon sponge over the two-element $\mathsf{mk}$ prefix, one key of each interleaved part ($\texttt{Tachyon-NfExpand}$), so the cipher's inputs are secrets of the note, never public constants.
 
 The schedule is produced in four parts of $256$ (one proof step per part) that interleave into a single orbit. Input secrecy is what makes the schedule's width real: a schedule key alone yields no known plaintext/ciphertext pair, so recovering $\mathsf{mk}$ from leaked keys means eliminating the secret input across two outputs, a resultant of degree $5^{64} \approx 2^{148}$ rather than a univariate solve at the cipher's symbolic degree $5^{32} \approx 2^{74}$; the secret stride $\delta$ hides even the pairwise input differences such an elimination would otherwise use.
 
@@ -45,7 +45,7 @@ T_j(\omega^r) = s_{j,r}
     \qquad s_{j,\,r} \text{ the } r\text{-th round state of } E^{8192}_{K}\!\left(\mathsf{mk}_s^{(j)}\right)
 $$
 
-over the order-$8192$ domain $\langle\omega\rangle$. The salts $\mathsf{mk}_s^{(j)}$, the per-polynomial weight bases $\rho_j$, and the secret query shift $c$ are all squeezed from domain-separated Poseidon sponges over a fixed prefix of $\mathsf{mk}$ ($\texttt{Tachyon-NfSalt\_\_}$ and $\texttt{Tachyon-NfWeight}$).
+over the order-$8192$ domain $\langle\omega\rangle$. The salts $\mathsf{mk}_s^{(j)}$, the per-polynomial weight bases $\rho_j$, and the secret query shift $c$ are all squeezed from domain-separated Poseidon sponges over the same two-element $\mathsf{mk}$ prefix ($\texttt{Tachyon-NfSalt\_\_}$ and $\texttt{Tachyon-NfWeight}$).
 
 ### Query
 
