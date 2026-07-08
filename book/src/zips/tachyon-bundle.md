@@ -7,23 +7,23 @@
 ## I. Dependencies
 
 - [Tachyon Shielded Protocol (#103)](https://github.com/tachyon-zcash/tachyon/issues/103)
-  defines the Tachyon pool, action semantics, tachygrams, keys, the statement the
-  stamp proof attests to, and the epoch-level tachygram rules.
+  defines the Tachyon pool, action semantics, tachygrams, keys, and the statement the
+  stamp proof attests to.
 - [Tachyon Accumulator / Hash Chain (#105)](https://github.com/tachyon-zcash/tachyon/issues/105)
-  defines the anchor (Poseidon hash-chain state) that `anchorTachyon` references, and the
-  consensus anchor-membership rule.
-- [Tachyon Aggregator Protocol (#106)](https://github.com/tachyon-zcash/tachyon/issues/106)
-  defines the aggregation lifecycle, mempool and relay policy, and block validation. It
-  cites this ZIP for the wire encodings; this ZIP cites it for lifecycle and block rules.
+  defines the anchor (Poseidon hash-chain state) that `anchorTachyon` references, the
+  consensus anchor-membership rule, and the epoch window with its duplicate-tachygram
+  rule.
 - [ZIP 225](https://zips.z.cash/zip-0225) is the v5 transaction-format precedent this
   format follows; the withdrawn [ZIP 230](https://zips.z.cash/zip-0230) is the v6
   precedent.
 - [ZIP 239](https://zips.z.cash/zip-0239) defines `wtxid = txid || auth_digest`, the
   identifier format carried by `tachyonAggregateId`.
 - [ZIP 244](https://zips.z.cash/zip-0244) defines the `txid_digest` and `auth_digest`
-  trees. A Tachyon amendment to ZIP 244 (tracked separately) specifies the normative
-  placement of this bundle's digest contributions; this ZIP specifies only their inputs,
-  as ZIP 225 defers its digest algorithms to ZIP 244.
+  trees. ZIP 244 as extended for Tachyon
+  ([Transaction digest contributions](zip-244.md#transaction-digest-contributions))
+  specifies the leaf algorithms and personalizations for this bundle's digest
+  contributions; this ZIP specifies only their inputs, as ZIP 225 defers its digest
+  algorithms to ZIP 244.
 
 ## II. Design Considerations
 
@@ -39,6 +39,11 @@ manner of ZIP 225's shielded fields. It does not build on the extensible
 transaction-format proposal
 ([ZIP-248](https://github.com/zcash/zips/pull/1156)); see the open questions.
 
+The [Tachyon Aggregator Protocol (#106)](https://github.com/tachyon-zcash/tachyon/issues/106)
+builds on this ZIP: it defines the aggregation lifecycle, the mempool and relay policy,
+and the autonome, aggregate, and adjunct transaction roles. The draft body below speaks
+of the covering transaction without naming those roles.
+
 [^bundle]: See [Bundle](../bundle.md) for the bundle lifecycle and state machine.
 
 [^txid]: See [Transaction Identifiers](../transaction-identifiers.md) for how the split
@@ -53,33 +58,50 @@ Open questions:
   [tachyon-zcash/zips#4](https://github.com/tachyon-zcash/zips/pull/4)). Under TLV
   framing, absence of the entry encodes "no bundle", making the `0x00` state byte
   redundant there.
-- **Transaction-digest amendment.** The `"ZTxIdTachyonHash"` and `"ZTxAuthTachyHash"`
-  personalizations and the placement of the Tachyon branches in the ZIP 244 digest trees
-  await an amendment to ZIP 244, which may be a separate update ZIP or may fold into one
-  of the general Tachyon ZIPs.
-- **Proof-size constant.** `proofTachyon` is a fixed-size field whose length is a
-  constant of the Ragu proof system. The constant is not yet numerically frozen, so this
-  draft names it symbolically as `PROOF_SIZE`.
-- **Zero-action bundles.** Stamped bundles with no actions (innocent aggregates) and
-  stripped bundles with no actions (stripped innocents) are wire-valid. With no
-  actions, producing a valid binding signature for a nonzero `valueBalanceTachyon` is
-  computationally infeasible, but no rule requires the zero balance directly.
-- **Duplicate-tachygram rule ownership.** This draft owns the per-transaction rule that
-  a stamped bundle's tachygrams are distinct, with the
-  [Aggregator Protocol ZIP (#106)](https://github.com/tachyon-zcash/tachyon/issues/106)
-  citing it (matching that draft's open question on rule ownership). The rule is stated
-  here but not yet enforced in the reference implementation's parse or verify paths.
-- **Block-validation ownership.** This draft cites proof verification and block-level
-  validity to the
-  [Aggregator Protocol ZIP (#106)](https://github.com/tachyon-zcash/tachyon/issues/106),
-  their current home. That draft's own open questions contemplate relocating its
-  consensus rules (possibly here) or splitting into network and consensus ZIPs; the
-  citations follow wherever those rules land.
-- **Value-balance range.** No `MAX_MONEY` bound on `valueBalanceTachyon` is specified or
-  implemented. ZIP 225 bounds `valueBalanceOrchard`; an analogous rule needs an owner,
-  here or at the transaction layer.
+- **Proof-size constant.** A fixed-size `proofTachyon` is the working assumption: its
+  length is a constant of the Ragu proof system, not yet numerically frozen, so this
+  draft names it symbolically as `PROOF_SIZE`. A variable-size final compression
+  (bulletproof-style) would replace the constant-length field with a dynamic one; whether
+  the proof system settles on a fixed size is unresolved.
+- **Stamp trailer contents.** Whether the stamp should additionally carry a
+  tachygram-accumulator value and an epoch index, and whether the anchor granularity
+  interacts with them, is undecided; anchor semantics are the
+  [Accumulator ZIP](tachyon-accumulator.md#anchor-semantics)'s. The related question of
+  whether a per-action tachygram arity holds is subsumed here: an aggregate's stamp
+  carries covered transactions' tachygrams, so a stamp's `nTachygrams` bears no fixed
+  relation to its own `nActionsTachyon`.
+- **Stripped zero-action coverage confirmation.** Block validity confirms a stripped
+  bundle's reference through its action digests, so a stripped bundle with no actions
+  names a covering aggregate that consensus does not confirm. Two candidate rules:
+  
+  1. Validators holding mempool data locate a stamped form matching the stripped
+  bundle's `txid`, identify its tachygram set, and confirm that set folded into
+  the referenced aggregate. Multiple stamped candidates may exist. Requires no
+  changes to bundle format. Significantly, this check depends on ephemeral
+  mempool state.
+  2. A field is added to the bundle identifying the bundle's tachygram set at
+  creation. The field contributes to `txid` and the sighash. A validator must
+  confirm that a stripped bundle's tachygram set MUST be a complete subset of
+  the referenced aggregate's stamp. The body field survives stripping and does
+  not depend on mempool state. Significantly, this extends the definition of
+  effecting data beyond actions and balance.
+
+- **Action-accumulator commitment scheme.** Whether the action-set commitment remains a
+  polynomial Pedersen commitment or becomes a hash-based accumulator (for example a hash
+  chain) is undecided; the choice affects validator recomputation cost.
+- **In-band data digest.** Whether to add a digest contribution for in-band memo data
+  (`da_digest`) is undecided.
 - **Count caps.** Only the compactSize maximum `0x02000000` bounds `nActionsTachyon` and
   `nTachygrams`. Whether a tighter per-field cap is wanted is undecided.
+- **Reference-implementation enforcement.** The per-transaction tachygram-distinctness
+  rule is owned here as a bundle-validity rule (below). Several stated consensus rules are
+  not yet enforced in the reference implementation's parse or verify paths: per-stamp
+  tachygram distinctness, the `valueBalanceTachyon` range bound, and the zero-action
+  zero-balance rule.
+
+The digest leaf algorithms and personalizations live in
+[ZIP 244 as extended for Tachyon](zip-244.md#transaction-digest-contributions); see that
+page for their normative form.
 
 ## III. ZIP Draft
 
@@ -122,18 +144,15 @@ non-normatively:
   representing either a note nullifier or a note commitment. Consensus treats
   nullifiers and commitments identically.
   ([Tachyon Shielded Protocol](tachyon-shielded-protocol.md))
-- **Anchor.** A Poseidon hash-chain state referencing the Tachyon pool at a
-  specific block.
-  ([Tachyon Accumulator / Hash Chain](tachyon-accumulator.md))
-- **Autonome / aggregate / adjunct.** A stand-alone stamped transaction; a stamped
-  transaction whose merged stamp covers other transactions; a transaction whose stamp
-  has been stripped in favor of a reference to a covering aggregate.
-  ([Tachyon Aggregator Protocol](tachyon-aggregator.md))
-
+- **Anchor.** A Poseidon hash-chain state referencing a snapshot of the Tachyon
+  pool; its granularity is specified by the Accumulator ZIP.
+  ([Tachyon Accumulator / Hash Chain](tachyon-accumulator.md#anchor-semantics))
 The remaining terms are defined by this ZIP:
 
 - **Bundle.** The Tachyon section of a transaction: actions, a value balance, action
   signatures, a binding signature, and a state-dependent trailer.
+- **Covering transaction.** The stamped transaction whose stamp covers a stripped
+  bundle's actions, named by the stripped bundle's `tachyonAggregateId`.
 - **Bundle state.** The three-valued wire discriminator `tachyonBundleState`
   selecting no bundle, a stamped bundle, or a stripped bundle.
 - **Action.** The triple $(\mathsf{cv}, \mathsf{rk}, \mathsf{sig})$: a value
@@ -148,34 +167,34 @@ The remaining terms are defined by this ZIP:
   covered actions, an anchor, a tachygram list, and a Ragu proof. The proof attests
   that every covered action satisfies the Tachyon action rules.
 - **Stripped bundle.** A bundle whose stamp is replaced by `tachyonAggregateId`, the
-  `wtxid` of a covering aggregate.
+  `wtxid` of a covering transaction.
 
 ## Abstract
 
 This ZIP specifies the consensus wire format of the Tachyon bundle: a three-state
 discriminator byte, a bundle body carrying actions, a value balance, and signatures,
 and a trailer carrying either a stamp (the proof and the public data needed to verify
-it) or a reference to a covering aggregate. It defines the canonical field
+it) or a reference to a covering transaction. It defines the canonical field
 encodings, the action digest and set commitments cited by the other Tachyon ZIPs,
-the bundle's transaction-digest inputs, and the consensus rules scoped to a single
-bundle. It plays the role for the Tachyon pool that
+the bundle's transaction-digest inputs, the consensus rules scoped to a single
+bundle, and the block-scoped rules that validate stamped and stripped bundles
+together. It plays the role for the Tachyon pool that
 [ZIP 225](https://zips.z.cash/zip-0225) plays for the v5 transaction.
 
 ## Motivation
 
 Tachyon proofs aggregate: the stamps of many transactions merge into one covering
-stamp, and covered transactions appear in a block without their own (see the
-[Tachyon Aggregator Protocol](tachyon-aggregator.md) ZIP). The transaction format must
-therefore allow a stamp to be removed without changing the transaction's identity and
-without invalidating any signature. This forces the effecting/authorizing split down
-into the wire layout: the bundle's contribution to the signed data is confined to the
-body and is identical across bundle states, while the strippable part is isolated in
-the trailer.
+stamp, and covered transactions appear in a block without their own. The transaction
+format must therefore allow a stamp to be removed without changing the transaction's
+identity and without invalidating any signature. This forces the effecting/authorizing
+split down into the wire layout: the bundle's contribution to the signed data is
+confined to the body and is identical across bundle states, while the strippable part
+is isolated in the trailer.
 
-A single format serves all three transaction roles. An autonome and an aggregate are
-the same stamped form; an adjunct is the same body under a stripped trailer. Every
-consensus check on a stripped bundle operates on data the stripped form still
-carries.
+A single format serves every transaction role: one stamped form whether the stamp
+covers only the bundle's own actions or other transactions' as well, and a covered
+transaction is the same body under a stripped trailer. Every consensus check on a
+stripped bundle operates on data the stripped form still carries.
 
 ## Requirements
 
@@ -187,21 +206,22 @@ carries.
   both states.
 - Encodings are canonical: each parsed bundle has exactly one serialization.
 - The proof field has a fixed size, so parsing requires no untrusted length.
-- Bundles with no actions are representable (innocent aggregates and their stripped
-  forms).
+- Bundles with no actions are representable, in both the stamped and stripped
+  forms.
 
 ## Non-requirements
 
 This ZIP does not specify:
 
-- proof verification or block-level validity, which are specified by the
-  [Tachyon Aggregator Protocol](tachyon-aggregator.md) ZIP;
-- anchor semantics or the anchor-membership rule, which are specified by the
+- the proof statement, which is specified by the
+  [Tachyon Shielded Protocol](tachyon-shielded-protocol.md#proof-verification) ZIP;
+- anchor semantics or the anchor-membership rule, and the epoch window with its
+  duplicate-tachygram rule, which are specified by the
   [Tachyon Accumulator / Hash Chain](tachyon-accumulator.md) ZIP;
-- the proof statement or the epoch-level tachygram rules, which are specified by the
-  [Tachyon Shielded Protocol](tachyon-shielded-protocol.md) ZIP;
-- the transaction digest trees or the sighash algorithm, which are specified by
-  [ZIP 244](https://zips.z.cash/zip-0244) as amended for Tachyon;
+- the transaction digest trees, the digest leaf algorithms, or the sighash algorithm,
+  which are specified by [ZIP 244](https://zips.z.cash/zip-0244) as extended for Tachyon
+  ([Transaction digest contributions](zip-244.md#transaction-digest-contributions));
+- the aggregation lifecycle, mempool, and relay policy;
 - the position of the bundle section within the transaction encoding, which is
   specified by the transaction format of the activating network upgrade.
 
@@ -210,7 +230,8 @@ This ZIP does not specify:
 The specification proceeds from the wire layout of the bundle body to the rules over
 its fields, the digest and commitment constructions those rules use, the two
 trailers, the canonical encodings of every field, the bundle's transaction-digest
-inputs, and a consolidated summary of the bundle-scoped consensus rules.
+inputs, a consolidated summary of the bundle-scoped consensus rules, and the
+block-scoped rules that validate a block's bundles together.
 
 ### Placement and bundle states
 
@@ -221,8 +242,8 @@ selects the bundle state:
 | value         | state       | bundle contents                       |
 | ------------- | ----------- | ------------------------------------- |
 | `0b0000_0000` | non-tachyon | no bundle                             |
-| `0b0000_0001` | stamped     | bundle with anchor, tachygrams, proof |
-| `0b0000_0010` | stripped    | bundle with aggregate's wtxid         |
+| `0b0000_0001` | stamped     | bundle with action-set commitment, anchor, tachygrams, proof |
+| `0b0000_0010` | stripped    | bundle with covering transaction's wtxid |
 | `...`         | *reserved*  | *n/a*                                 |
 
 A parser MUST reject any other value of `tachyonBundleState`.
@@ -234,9 +255,9 @@ When `tachyonBundleState` is `0x00`, the section contains no further fields:
 | 1     | `tachyonBundleState` | `uint8`   | `0x00`      |
 
 The bundle lifecycle also passes through states with no wire representation: a bundle
-awaiting its proof, and a stripped bundle whose covering aggregate is not yet
-assigned. Only the stamped and stripped states serialize; the lifecycle itself is
-specified by the [Tachyon Aggregator Protocol](tachyon-aggregator.md) ZIP.
+awaiting its proof, and a stripped bundle whose covering transaction is not yet
+assigned. Only the stamped and stripped states serialize; the lifecycle itself is not
+specified by this ZIP.
 
 ### Bundle body
 
@@ -273,7 +294,10 @@ transaction-layer rule, not specified here.
 Value commitments and balance enforcement are Orchard's constructions, unchanged.
 Each action's $\mathsf{cv}$ is a homomorphic Pedersen commitment (§5.4.8.3) to the
 action's value, $+v$ for a spend and $-v$ for an output, using Orchard's
-value-commitment generators (the `z.cash:Orchard-cv` hash-to-curve domain). The
+value-commitment generators (the `z.cash:Orchard-cv` hash-to-curve domain). This is
+the net-value sign convention of §5.4.8.3: each $\mathsf{cv}$ commits to $+v$ for a
+spend and $-v$ for an output, so their homomorphic sum commits to spends minus
+outputs, which is exactly `valueBalanceTachyon`. The
 binding validating key $\mathsf{bvk}$ is derived from the actions' $\mathsf{cv}$
 values and `valueBalanceTachyon` exactly as in §4.14, and is not encoded in the
 transaction. `bindingSigTachyon` MUST be a valid binding signature over the
@@ -286,8 +310,9 @@ Each action signature in `vActionSigsTachyon` MUST be a valid spend authorizatio
 signature (§4.15; RedPallas with the SpendAuth basepoint of §5.4.7.1, for spends and
 outputs alike) over the transaction sighash under the corresponding action's
 $\mathsf{rk}$. The sighash is a transaction-level digest, computed as specified by
-[ZIP 244](https://zips.z.cash/zip-0244) as amended for Tachyon; all of a bundle's
-signatures sign the same sighash.
+[ZIP 244](https://zips.z.cash/zip-0244) as extended for Tachyon
+([Transaction digest contributions](zip-244.md#transaction-digest-contributions));
+all of a bundle's signatures sign the same sighash.
 
 ### Action digests
 
@@ -300,7 +325,9 @@ $$ d = \mathrm{Poseidon}\bigl(\mathsf{dom},\ \mathsf{cv}_x,\ \mathsf{cv}_y,\
 \mathsf{rk}_x,\ \mathsf{rk}_y\bigr) $$
 
 where $\mathsf{dom}$ is the Pallas base field element whose integer value is the
-little-endian interpretation of the 16-byte ASCII string `Tachyon-ActionDg`.
+little-endian interpretation of the 16-byte ASCII string `Tachyon-ActionDg`. The
+Poseidon instance (width, rounds, round constants, and mode) is the instance fixed
+by the Ragu proof system.
 
 If an action's $\mathsf{cv}$ or $\mathsf{rk}$ is the identity point, it has no
 affine coordinates, the digest is undefined, and the transaction is invalid.
@@ -312,11 +339,13 @@ For action digests $d_i$ and tachygrams $t_j$:
 
 $$ A(X) = \prod_i \bigl(X - d_i\bigr) \qquad T(X) = \prod_j \bigl(X - t_j\bigr) $$
 
-The commitment to a set polynomial is the deterministic, untrapdoored Pedersen
-commitment to its coefficient vector over the Vesta group, using the
-polynomial-commitment generators fixed by the Ragu proof system. A polynomial is
-invariant under permutation of its roots, so the commitment depends only on the
-multiset, not on any ordering.
+The commitment to a set polynomial of degree $n$ is the deterministic, untrapdoored
+Pedersen commitment to its $n+1$ coefficients over the Vesta group, using the
+polynomial-commitment generators fixed by the Ragu proof system. The coefficients are
+ordered by ascending degree: the constant term pairs with the first generator, the
+degree-$k$ coefficient with the $k$-th. A polynomial is invariant under permutation of
+its roots, so the commitment depends only on the multiset, not on any ordering. The
+empty multiset commits to the constant polynomial $1$.
 
 The action-set commitment over a set of actions is the commitment of $A$ formed from
 their digests; the tachygram-set commitment of $T$ is formed likewise. Both are
@@ -338,8 +367,8 @@ When `tachyonBundleState` is `0x01`, the stamp trailer follows the body:
 `cActionsTachyon` is the action-set commitment
 ([Set commitments](#set-commitments)) over every action the stamp covers: the
 bundle's own actions together with the actions of every covered transaction. How a
-block's actions are checked against it is specified by the
-[Tachyon Aggregator Protocol](tachyon-aggregator.md) ZIP.
+block's actions are checked against it is specified in
+[Block validity](#block-validity).
 
 `anchorTachyon` references the pool state the proof is valid against; its semantics
 and the anchor-membership rule are specified by the
@@ -348,17 +377,18 @@ and the anchor-membership rule are specified by the
 `vTachygrams` publishes the stamp's tachygram multiset for data availability. Which
 tachygrams an action contributes is specified by the
 [Tachyon Shielded Protocol](tachyon-shielded-protocol.md) ZIP; this ZIP imposes no
-relation between `nTachygrams` and `nActionsTachyon`, and an aggregate's stamp
-carries tachygrams for actions that are not its own. The tachygrams within one
+relation between `nTachygrams` and `nActionsTachyon`, and a stamp covering actions
+that are not the bundle's own carries their tachygrams too. The tachygrams within one
 stamped bundle MUST be distinct; a transaction violating this rule is invalid.
-Block-level and epoch-level distinctness rules are specified by the
-[Tachyon Aggregator Protocol](tachyon-aggregator.md) and
-[Tachyon Shielded Protocol](tachyon-shielded-protocol.md) ZIPs respectively.
+Block-level distinctness is a block-validity rule of this ZIP
+([Block validity](#block-validity)); epoch-window distinctness is specified by the
+[Tachyon Accumulator / Hash Chain](tachyon-accumulator.md#epoch-window) ZIP.
 
-`proofTachyon` is the Ragu proof. The statement it attests to is specified by the
-[Tachyon Shielded Protocol](tachyon-shielded-protocol.md) ZIP; when and how it is
-verified is specified by the [Tachyon Aggregator Protocol](tachyon-aggregator.md)
-ZIP.
+`proofTachyon` is the Ragu proof. The statement it attests to, and the base rule that
+a stamp proof MUST verify against the Tachyon statement, are specified by the
+[Tachyon Shielded Protocol](tachyon-shielded-protocol.md#proof-verification) ZIP; how
+that rule is applied to a block's stamps is specified in
+[Block validity](#block-validity).
 
 ### Stripped trailer
 
@@ -366,12 +396,12 @@ When `tachyonBundleState` is `0x02`, the stripped trailer follows the body:
 
 | Bytes | Name                 | Data Type  | Description                     |
 | ----- | -------------------- | ---------- | ------------------------------- |
-| 64    | `tachyonAggregateId` | `byte[64]` | wtxid of a covering aggregate |
+| 64    | `tachyonAggregateId` | `byte[64]` | wtxid of a covering transaction |
 
 `tachyonAggregateId` is the `wtxid` ([ZIP 239](https://zips.z.cash/zip-0239)) of a
-covering aggregate. It MUST NOT be all zero; the rule applies to every stripped
+covering transaction. It MUST NOT be all zero; the rule applies to every stripped
 bundle, with or without actions. Which transaction it must identify within a block
-is specified by the [Tachyon Aggregator Protocol](tachyon-aggregator.md) ZIP.
+is specified in [Block validity](#block-validity).
 
 ### Canonical encodings
 
@@ -396,47 +426,25 @@ is specified by the [Tachyon Aggregator Protocol](tachyon-aggregator.md) ZIP.
 ### Transaction digest contributions
 
 The bundle contributes one leaf to each of the transaction's two digest trees
-([ZIP 244](https://zips.z.cash/zip-0244)). Both leaves are BLAKE2b-256 hashes with
-16-byte personalizations.
+([ZIP 244](https://zips.z.cash/zip-0244)). This section states what the bundle
+supplies to each; the leaf algorithms and personalizations are specified by ZIP 244
+as extended for Tachyon
+([Transaction digest contributions](zip-244.md#transaction-digest-contributions)).
 
-The effecting contribution (to `txid` and the sighash) commits to the bundle's own
-actions and balance:
+The effecting contribution (to `txid` and the sighash) commits to the action-set
+commitment ([Set commitments](#set-commitments)) over the bundle's own actions and to
+`valueBalanceTachyon`. This is distinct from `cActionsTachyon`, which may cover more
+actions than the bundle's own. The stamp is excluded, so the contribution is
+invariant across stamping, merging, stripping, and re-stamping.
 
-$$ \text{BLAKE2b-256}_{\text{"ZTxIdTachyonHash"}}\bigl(
-\mathsf{encoding}(\mathsf{action\_acc}) \,\|\, \mathsf{le64}(\mathsf{valueBalanceTachyon})
-\bigr) $$
+The authorizing contribution (to `auth_digest`) commits to the action and binding
+signatures and to the trailer's field encodings: the stamp fields when stamped, the
+`tachyonAggregateId` when stripped.
 
-where $\mathsf{action\_acc}$ is the action-set commitment
-([Set commitments](#set-commitments)) over the bundle's own actions, digested as its
-32-byte point encoding. This is distinct from `cActionsTachyon`, which for an
-aggregate covers more actions than its own. The stamp is excluded, so the
-contribution is invariant across stamping, merging, stripping, and re-stamping.
-
-The authorizing contribution (to `auth_digest`) commits to the signatures and the
-trailer's field encodings:
-
-$$ \text{BLAKE2b-256}_{\text{"ZTxAuthTachyHash"}}\bigl(
-\mathsf{vActionSigsTachyon} \,\|\, \mathsf{bindingSigTachyon} \,\|\,
-\begin{cases}
-\mathsf{cActionsTachyon} \,\|\, \mathsf{anchorTachyon} \,\|\, \mathsf{vTachygrams}
-\,\|\, \mathsf{proofTachyon} & \text{if stamped}\\[2pt]
-\mathsf{tachyonAggregateId} & \text{if stripped}
-\end{cases}
-\bigr) $$
-
-Vector counts are not part of either preimage, matching the ZIP 244 auth-digest
-leaves.
-
-A transaction with no Tachyon bundle contributes the hash of the empty string under
-each personalization. No bundle produces the empty preimage: a stripped bundle's
-preimage contains at least its binding signature and trailer, and a bundle with no
-actions and zero balance contributes its encoded empty-set commitment and balance.
-
-The normative specification of the transaction digest trees, including these
-leaves, belongs to the Tachyon amendment to ZIP 244 (with ZIP 239 defining
-`wtxid`); this section records the inputs the bundle supplies. The
-`"ZTxIdTachyonHash"` and `"ZTxAuthTachyHash"` personalizations are placeholders
-pending that amendment.
+A transaction with no Tachyon bundle contributes distinctly from a bundle with no
+actions: no bundle produces the empty preimage, since a stripped bundle's preimage
+contains at least its binding signature and trailer, and a zero-action, zero-balance
+bundle contributes its encoded empty-set commitment and balance.
 
 ### Bundle validity
 
@@ -451,20 +459,60 @@ The rules owned by this ZIP, applying to a single transaction's bundle:
    action's $\mathsf{rk}$.
 6. `bindingSigTachyon` MUST verify over the transaction sighash under the derived
    $\mathsf{bvk}$.
-7. A stamped bundle's `proofTachyon` MUST be exactly `PROOF_SIZE` bytes and a valid
+7. `valueBalanceTachyon` MUST be in the range $-\mathrm{MAX\_MONEY}$ to
+   $\mathrm{MAX\_MONEY}$ inclusive.
+8. A bundle with no actions MUST have `valueBalanceTachyon` equal to $0$.
+9. A stamped bundle's `proofTachyon` MUST be exactly `PROOF_SIZE` bytes and a valid
    proof encoding, and its tachygrams MUST be distinct.
-8. A stripped bundle's `tachyonAggregateId` MUST NOT be all zero.
+10. A stripped bundle's `tachyonAggregateId` MUST NOT be all zero.
 
 Rules outside the scope of this ZIP are enumerated in
 [Non-requirements](#non-requirements).
+
+### Block validity
+
+The rules owned by this ZIP that constrain a block's Tachyon bundles together:
+
+- All tachygrams in a block MUST be distinct.
+- Every stripped Tachyon transaction MUST bear a `tachyonAggregateId` referring to
+  the stamped transaction in the same block covering its actions.
+- Every stamped Tachyon transaction MUST bear a `cActionsTachyon` opening to the
+  complete set of actions of its covered transactions in the same block.
+- All proofs in a block MUST verify.
+
+A validator enforces these fail-fast, in this order:
+
+1. **Tachygram uniqueness.** The block's tachygrams are the multiset union of the
+   `vTachygrams` of every stamp. A single scan enforces this rule and the per-bundle
+   distinctness of [Bundle validity](#bundle-validity) rule 9 together; reject on any
+   duplicate. Reuse within the wider epoch window
+   is governed by the epoch-window rule
+   ([Tachyon Accumulator / Hash Chain](tachyon-accumulator.md#epoch-window)).
+2. **Adjunct association.** The `tachyonAggregateId` of every stripped bundle MUST
+   identify a stamped transaction in the same block; reject if absent or unstamped. A
+   stripped bundle with no actions satisfies this check against any stamped
+   transaction in the block: it contributes no action digests to step 3, so consensus
+   attaches no further meaning to its reference.
+3. **Action set commitment per stamp.** For each stamped bundle, reconstruct
+   `cActionsTachyon` from the bundle's own actions together with the actions of every
+   stripped bundle naming it, form the root polynomial $\prod_i (X - d_i)$ over their
+   action digests, and take its single Pedersen commitment
+   ([Set commitments](#set-commitments)); reject on mismatch.
+4. **Stamp proof verification.** Every stamped bundle's proof MUST verify. The
+   validator reassembles the stamp PCD from the stamp proof, `anchorTachyon`, a
+   Pedersen commitment to `vTachygrams`, and the confirmed `cActionsTachyon`; reject
+   if any proof fails. The base requirement that a proof verifies the Tachyon
+   statement is the shielded-protocol rule
+   ([Tachyon Shielded Protocol](tachyon-shielded-protocol.md#proof-verification));
+   these items apply it per stamp within a block.
 
 ## Rationale
 
 **The stamp is excluded from the txid contribution.** The effecting contribution
 commits only to actions and balance, so stamping, merging, stripping, and
 re-stamping preserve a transaction's logical identity. This is the property the
-aggregation lifecycle rests on: an adjunct in a block is the same transaction its
-author signed.
+aggregation lifecycle rests on: a stripped bundle in a block is the same transaction
+its author signed.
 
 **Two vectors, one count.** Descriptors (effecting) are separated from signatures
 (authorizing), matching the digest split and ZIP 225's layout, while the shared
@@ -479,6 +527,14 @@ specification does not state it explicitly.
 **Plaintext `valueBalanceTachyon`.** The net pool flow is public, as with
 `valueBalanceSapling` and `valueBalanceOrchard`, supporting pool turnstile
 accounting at the consensus layer.
+
+**`MAX_MONEY` bound on the balance.** The Orchard-era bound on `valueBalanceOrchard`
+is a protocol-spec consensus rule (§7.1 transaction encoding and consensus); this ZIP
+is that rule's analogous home for `valueBalanceTachyon`.
+
+**Zero-action balance.** The v5 analogue defines an absent `valueBalanceOrchard` as
+zero when the action count is zero; this format keeps the field present in every
+state, so the equivalent semantics are stated as a rule.
 
 **Identity points are invalid.** The action digest hashes affine coordinates, which
 the identity point lacks. Excluding it also rejects a degenerate verification key
@@ -499,20 +555,12 @@ action or a block's worth. A constant-size field needs no untrusted length prefi
 and a stamp size independent of coverage underlies aggregation's space savings.
 
 **`wtxid`, not `txid`, in `tachyonAggregateId`.** A `txid` is ambiguous across the
-authorization forms that share it; the `wtxid` pins the physical covering aggregate,
-stamp included. The [Tachyon Aggregator Protocol](tachyon-aggregator.md) ZIP gives
-the full rationale.
+authorization forms that share it; the `wtxid` pins the physical covering
+transaction, stamp included, which is what the stripped bundle needs to reference.
 
 **Nonzero `tachyonAggregateId`.** Every stripped bundle names a covering
 transaction, and the unassigned stripped state has no wire form, so no sentinel
 value is needed and the all-zero `wtxid` (which names no transaction) is invalid.
-
-**Flat digest preimages.** The digest contributions hash field encodings directly,
-in the style of the ZIP 244 leaves, rather than hashing a length-delimited
-serialization. Omitting the counts does not make the authorizing preimage
-ambiguous: the signature count equals `nActionsTachyon`, to which the effecting
-contribution commits, and every other section of the preimage has a fixed size
-except the tachygram list, which occupies the remainder.
 
 ## Security and Privacy Implications
 
@@ -520,8 +568,7 @@ except the tachygram list, which occupies the remainder.
 and each bundle has exactly one accepted serialization, so a bundle cannot be
 re-encoded into a second accepted serialization. Authorization-form changes
 (re-stamping, stripping) produce distinct bundles by design and are reflected in
-`auth_digest` and `wtxid` ([ZIP 239](https://zips.z.cash/zip-0239); see the
-[Tachyon Aggregator Protocol](tachyon-aggregator.md) ZIP).
+`auth_digest` and `wtxid` ([ZIP 239](https://zips.z.cash/zip-0239)).
 
 **Balance consistency is enforced by the binding property.** A valid binding
 signature establishes that `valueBalanceTachyon` equals the net value committed by
@@ -542,7 +589,9 @@ data requires a new signature over that transaction's sighash.
 **Absent bundles are distinct from empty bundles.** A transaction with no Tachyon
 section and a transaction with a zero-action, zero-balance bundle produce distinct
 digest preimages, so their identifier contributions differ (see
-[Transaction digest contributions](#transaction-digest-contributions)).
+[Transaction digest contributions](#transaction-digest-contributions), whose leaf
+algorithms are specified by
+[ZIP 244 as extended for Tachyon](zip-244.md#transaction-digest-contributions)).
 
 **Public data.** $\mathsf{cv}$ is a hiding commitment to the action's value. The
 unlinkability properties of $\mathsf{rk}$, and of tachygrams (which do not
@@ -578,7 +627,7 @@ is developed in the `zcash_tachyon` crate of the Tachyon repository:
 - [ZIP 239: Relay of Version 5 Transactions](https://zips.z.cash/zip-0239)
 - [ZIP 244: Transaction Identifier Non-Malleability](https://zips.z.cash/zip-0244)
 - [ZIP 248: Extensible Transaction Format (proposal)](https://github.com/zcash/zips/pull/1156)
+- [ZIP 244 as extended for Tachyon](zip-244.md)
 - [Tachyon Shielded Protocol](tachyon-shielded-protocol.md)
 - [Tachyon Accumulator / Hash Chain](tachyon-accumulator.md)
-- [Tachyon Aggregator Protocol](tachyon-aggregator.md)
 - [Network Upgrade Deployment](network-upgrade-deployment.md)
