@@ -10,8 +10,7 @@ use crate::{action, action::Action, bundle, reddsa, value};
 /// The randomized action verification key `rk` — per-action, public.
 ///
 /// This is the only key type that **can verify** action signatures.
-/// Goes into [`Action`](crate::Action). Terminal type — no further
-/// derivation.
+/// Goes into [`Action`]. Terminal type — no further derivation.
 ///
 /// Both spend and output actions produce an `rk`
 /// ("Tachyaction at a Distance", Bowe 2025):

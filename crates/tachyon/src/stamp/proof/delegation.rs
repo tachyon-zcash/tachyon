@@ -53,9 +53,9 @@ impl Header for NfPrefixHeader {
 /// lets every consumer bind the range to the real note; `nf_seq_commit` (the
 /// nullifier sequence) sits between its boundary `(epoch, nullifier)` pairs and
 /// commits to the half-open range `[nf_start, .., nf_end]` (`N_e = GGM(mk, e)`)
-/// at degree 0, sentinel-terminated (see
-/// [`NfSeqPoly`](crate::primitives::NfSeqPoly)) so the commitment is never the
-/// identity point. `nf_start`/`nf_end` are the genuine boundary leaves, so a
+/// at degree 0, sentinel-terminated (see [`NfSeqPoly`]) so the commitment is
+/// never the identity point. `nf_start`/`nf_end` are the genuine boundary
+/// leaves, so a
 /// consumer can bind them without opening the sequence.
 #[derive(Clone, Debug)]
 pub struct NullifierHeader;

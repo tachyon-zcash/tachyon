@@ -1,8 +1,10 @@
 default:
     @just --list
 
+_nightly := "nightly-2026-04-11"
+
 fmt:
-    cargo +nightly fmt --all
+    cargo +{{_nightly}} fmt --all
 
 lint:
     cargo +nightly clippy --workspace --lib --no-default-features # no_std
@@ -27,3 +29,12 @@ _book_setup: _install_binstall
 # locally [build | serve | watch] the Tachyon book
 book COMMAND *ARGS: _book_setup
     mdbook {{COMMAND}} ./book {{ARGS}}
+
+# run CI checks locally (formatting, clippy, tests, docs, book)
+ci_local: _book_setup
+    cargo +{{_nightly}} fmt --all -- --check
+    cargo clippy --workspace --lib --no-default-features --locked -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+    cargo test --release --all --locked --all-features
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all --locked --document-private-items
+    mdbook build ./book

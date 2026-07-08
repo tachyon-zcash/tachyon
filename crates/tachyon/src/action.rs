@@ -93,8 +93,8 @@ impl<E: Effect> Plan<E> {
 /// - `sig`: Signature (by single-use `rsk`) over transaction sighash
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Action {
-    /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
-    /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
+    /// Value commitment $\mathsf{cv} = \[v\]\,\mathcal{V}
+    /// + \[\mathsf{rcv}\]\,\mathcal{R}$ (EpAffine).
     pub cv: value::Commitment,
 
     /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
