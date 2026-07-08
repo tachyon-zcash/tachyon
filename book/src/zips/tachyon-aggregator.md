@@ -49,6 +49,14 @@ Open questions:
   aggregators index mempool data and do not attempt merges they cannot satisfy from data
   they hold. Alternatives: a relay message requesting transactions by tachygram, or
   aggregates carrying a list of contributing transactions. Undecided.
+- **Cross-epoch lifting.** A stamp lift never crosses an epoch boundary, because
+  a spend's published nullifiers are fixed relative to its anchor's epoch.
+  Supporting them may be possible, but would change fundamental parts of the
+  specification.
+- **Unequal-anchor merge.** Merging is defined only over identical anchors.
+  Candidate relaxations: the aggregator commits to an anchor sequence covering
+  the contributors, or to a multiset of contributing anchors later verifiable as
+  members of a continuous valid sequence. Either is a significant refactor.
 - **Stripped zero-action coverage.** A stripped bundle with no actions names a covering
   aggregate that consensus does not confirm; candidate confirmation rules are an open
   question of the
@@ -198,6 +206,12 @@ Merging is defined only over stamps bearing identical anchors. If the selected
 transactions bear unequal anchors, the aggregator first aligns them by lifting
 the older anchor to the newer with a lift PCD that proves the anchor sequence
 between them.
+
+Lifting is confined to the anchor's epoch. A stamp's proof fixes each spend's
+published nullifiers relative to the epoch of its anchor (see the
+[Tachyon statement](tachyon-shielded-protocol.md#tachyon-statement)), so a
+lift never crosses an epoch boundary, and stamps bearing anchors of different
+epochs cannot be aligned for merging.
 
 If both selected transactions are autonomes, all necessary witness data is
 directly available on the transactions themselves.
