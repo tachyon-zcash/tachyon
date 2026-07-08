@@ -43,6 +43,12 @@ Open questions:
 - **Coverage-query relay message.** A reviewer proposes a `getxref`-style relay message
   that returns the bundles whose stamp references a given `wtxid`, with nodes maintaining
   a coverage graph to answer it. Whether to add such a message is undecided.
+- **Merge-input acquisition.** An aggregator selecting an existing aggregate must recover
+  the contributing actions, but contributors cannot be requested by `wtxid` because the
+  aggregate does not carry their identities. The draft's present position is that
+  aggregators index mempool data and do not attempt merges they cannot satisfy from data
+  they hold. Alternatives: a relay message requesting transactions by tachygram, or
+  aggregates carrying a list of contributing transactions. Undecided.
 - **Stripped zero-action coverage.** A stripped bundle with no actions names a covering
   aggregate that consensus does not confirm; candidate confirmation rules are an open
   question of the
@@ -184,8 +190,9 @@ so this guidance needs no enforcement (see the [Rationale](#rationale)).
 ### Step 3: Witness and PCD preparation
 
 The aggregator reconstructs each selected transaction's stamp PCD from the
-proof and data carried on that transaction itself, obtained in a single
-`MSG_WTX` getdata. Reconstruction requires no multi-stage witness fetching.
+proof and data carried on that transaction itself, which the aggregator
+already holds from mempool observation (Step 2). Reconstruction requires no
+multi-stage witness fetching.
 
 Merging is defined only over stamps bearing identical anchors. If the selected
 transactions bear unequal anchors, the aggregator first aligns them by lifting
@@ -196,16 +203,17 @@ If both selected transactions are autonomes, all necessary witness data is
 directly available on the transactions themselves.
 
 A selected transaction that is already an aggregate additionally requires the
-action digests of every transaction contributing to it. Recovering those
-contributors is
+action digests of every transaction contributing to it. The contributors
+cannot be requested from the network by `wtxid`, because the aggregate does
+not carry their identities. Recovering them from transactions the aggregator
+holds is
 [covered-transaction identification](#covered-transaction-identification): a correct and
 complete collection of action digests reproduces the action set commitment on the
 selected stamp.
 
-Aggregators typically maintain recent consensus data, cached anchor lift
-proofs, and an index of recent mempool transactions to support alignment and
-witness preparation. These are implementation concerns; this ZIP does not
-constrain them.
+Aggregators therefore maintain an index of recent mempool transactions, along
+with recent consensus data and cached anchor lift proofs, and do not attempt
+merges whose contributors they cannot recover from data they hold.
 
 ### Step 4: Aggregate construction
 
