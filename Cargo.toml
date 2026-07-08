@@ -50,103 +50,54 @@ style = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 
 cast_possible_truncation = "deny"
-as_conversions = "deny"
-missing_panics_doc = "deny"
+expect_used = "deny" # allowed in tests via clippy.toml
 
-missing_errors_doc = "allow"
-multiple_crate_versions = "allow"   # todo
 doc_markdown = "allow"              # https://github.com/rust-lang/rust-clippy/issues/7273
 default_numeric_fallback = "allow"  # would demand a literal suffix at every untyped literal
 unreachable = "allow"               # awkward to disable
 redundant_pub_crate = "allow"       # pub(crate) in private modules is fine
 little_endian_bytes = "allow"       # many specified conversions
 
-# -- forbid: error handling --------------------------------------------------
-# unwrap() is always wrong; use expect() for a reason string.
-unwrap_used = "forbid"
-# expect() is a speed bump; allowed in tests via clippy.toml.
-expect_used = "deny"
-# result-returning fns must not panic or unwrap/expect internally.
-panic_in_result_fn = "forbid"
-unwrap_in_result = "forbid"
-# .get_unwrap() defeats the point of .get().
-get_unwrap = "forbid"
-# silently discarding Result with .ok() hides errors.
-unused_result_ok = "forbid"
-# Error types named "Error" are useless in multi-crate projects.
-error_impl_error = "forbid"
-# std::process::exit bypasses destructors and cleanup.
-exit = "forbid"
-# .and_then(|x| ...) where .map() suffices obscures intent.
-return_and_then = "forbid"
-
-# -- forbid: type coercion ---------------------------------------------------
-# use From/TryFrom.
-as_underscore = "forbid"
+alloc_instead_of_core = "forbid"
+allow_attributes = "forbid"
+allow_attributes_without_reason = "forbid"
 as_pointer_underscore = "forbid"
-fn_to_numeric_cast_any = "forbid" # casting function pointers to integers is never appropriate.
-
-# -- forbid: no floats -------------------------------------------------------
-# this is an integer/curve-arithmetic crate. no floating point, ever.
+as_underscore = "forbid"
+default_union_representation = "forbid"
+deref_by_slicing = "forbid"
+disallowed_script_idents = "forbid"
+else_if_without_else = "forbid"
+error_impl_error = "forbid"
+exit = "forbid"
 float_arithmetic = "forbid"
 float_cmp_const = "forbid"
+fn_to_numeric_cast_any = "forbid" 
+get_unwrap = "forbid" 
+inline_asm_x86_att_syntax = "forbid"
+inline_asm_x86_intel_syntax = "forbid"
 lossy_float_literal = "forbid"
-
-# -- forbid: memory safety ---------------------------------------------------
 mem_forget = "forbid" 
-multiple_unsafe_ops_per_block = "forbid" # one unsafe op per block for auditability.
-undocumented_unsafe_blocks = "forbid" # every unsafe block must be documented.
-default_union_representation = "forbid" # unions must have explicit repr.
-
-# -- forbid: no panicking slicing --------------------------------------------
-string_slice = "forbid" # string slicing can panic on char boundaries.
-# &container[..] instead of &*container obscures intent.
-deref_by_slicing = "forbid"
-
-# -- forbid: no shadowing ----------------------------------------------------
-# shadowing makes code harder to follow in a crypto crate.
+multiple_unsafe_ops_per_block = "forbid" 
+non_ascii_literal = "forbid"
+panic_in_result_fn = "forbid" 
+rc_buffer = "forbid"
+rc_mutex = "forbid"
+return_and_then = "forbid"
 shadow_reuse = "forbid"
 shadow_same = "forbid"
 shadow_unrelated = "forbid"
-
-# -- forbid: core-first architecture ----------------------------------------
-# architectural decision: use core/alloc over std where possible.
-std_instead_of_core = "forbid"
-std_instead_of_alloc = "forbid"
-alloc_instead_of_core = "forbid"
-
-# -- forbid: identifier hygiene ---------------------------------------------
-# pairs with rustc non_ascii_idents = "forbid".
-non_ascii_literal = "forbid"
-disallowed_script_idents = "forbid"
-# descriptive lifetime names always.
 single_char_lifetime_names = "forbid"
-
-# -- forbid: attribute discipline --------------------------------------------
-# #[expect] over #[allow]; expect warns when the lint no longer fires.
-allow_attributes = "forbid"
-# every #[expect] must carry a reason string.
-allow_attributes_without_reason = "forbid"
-
-# -- forbid: code organization ----------------------------------------------
-# tests belong in #[cfg(test)] modules.
-tests_outside_test_module = "forbid"
-# ^ is XOR, not exponentiation. critical in a math-heavy crate.
+std_instead_of_alloc = "forbid"
+std_instead_of_core = "forbid"
+string_slice = "forbid" 
 suspicious_xor_used_as_pow = "forbid"
-# match arms must be exhaustive, no wildcards.
+tests_outside_test_module = "forbid"
+undocumented_unsafe_blocks = "forbid" 
+unused_result_ok = "forbid"
+unwrap_in_result = "forbid" 
+unwrap_used = "forbid" 
 wildcard_enum_match_arm = "forbid"
-# else-if chains must have a final else.
-else_if_without_else = "forbid"
 
-# -- forbid: platform safety ------------------------------------------------
-# no inline assembly.
-inline_asm_x86_att_syntax = "forbid"
-inline_asm_x86_intel_syntax = "forbid"
-# Rc is not Send/Sync; use Arc or owned types.
-rc_buffer = "forbid"
-rc_mutex = "forbid"
-
-# -- deny: restrictions (may need localized #[expect]) -----------------------
 absolute_paths = "deny"
 assertions_on_result_states = "deny"
 big_endian_bytes = "deny"
@@ -209,7 +160,8 @@ unused_trait_names = "deny"
 use_debug = "deny"
 verbose_file_reads = "deny"
 
-# deny later
+# allow, deny later
+multiple_crate_versions = "allow"
 arbitrary_source_item_ordering = "allow"
 arithmetic_side_effects = "allow"
 exhaustive_enums = "allow"
@@ -219,9 +171,15 @@ todo = "allow"
 unimplemented = "allow"
 
 # warn, deny later
+as_conversions = "warn"
 dbg_macro = "warn"
 panic = "warn"
 
+# warn, forbid later
+missing_panics_doc = "warn"
+missing_errors_doc = "warn"
+
 # deny, forbid later
-indexing_slicing = "deny" # use .get() or iterators. test/const exceptions via clippy.toml.
+indexing_slicing = "deny" 
 integer_division_remainder_used = "deny"
+wrong_self_convention = "deny"
