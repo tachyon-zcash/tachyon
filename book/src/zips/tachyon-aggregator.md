@@ -36,19 +36,16 @@ Miners are likely to vertically integrate aggregation, but a protocol is establi
 
 Open questions:
 
-- **Transaction-digest amendment.** The `"ZTxAuthTachyHash"` personalization and the
-  Tachyon `txid`/`auth_digest` branches are specified by the
-  [ZIP 244 update](zip-244.md), conditional on the ZIP 248 registration of the extensible
-  transaction format.
-- **Coverage-query relay message.** A reviewer proposes a `getxref`-style relay message
-  that returns the bundles whose stamp references a given `wtxid`, with nodes maintaining
-  a coverage graph to answer it. Whether to add such a message is undecided.
-- **Merge-input acquisition.** An aggregator selecting an existing aggregate must recover
-  the contributing actions, but contributors cannot be requested by `wtxid` because the
-  aggregate does not carry their identities. The draft's present position is that
-  aggregators index mempool data and do not attempt merges they cannot satisfy from data
-  they hold. Alternatives: a relay message requesting transactions by tachygram, or
-  aggregates carrying a list of contributing transactions. Undecided.
+- **Relay-protocol additions.** Relayed bundles carry no cross-references: an aggregate
+  does not identify its contributing transactions, and no mempool form names another by
+  `wtxid`, so aggregation relationships are discoverable only by tachygram matching over
+  held mempool data. An aggregator therefore cannot request an aggregate's contributors
+  from the network, and a node cannot ask which aggregates cover a transaction it holds;
+  presently, aggregators index mempool data and do not attempt merges they cannot
+  satisfy from data they hold. A candidate mechanism serving both queries is a relay
+  message requesting bundles by tachygram, with nodes maintaining a coverage graph to
+  answer it; a list of contributing transactions carried on aggregates would serve only
+  the merge-input case, at the cost of a large additional vector.
 - **`cActionsTachyon` commitment scheme.** The covered-transaction identification check
   reconstructs the carried `cActionsTachyon` field. Whether that field, which serves
   only external coordination, uses a different commitment scheme than the in-circuit
