@@ -62,6 +62,11 @@ pub struct NoteMasterKey(#[debug(skip)] pub(crate) Fp);
 
 impl NoteMasterKey {
     /// Descend one level from the root of the GGM tree.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, panics if `chunk` is not less than
+    /// `GGM_TREE_ARITY`.
     #[must_use]
     pub fn step(&self, chunk: u8) -> NotePrefixedKey {
         debug_assert!(chunk < GGM_TREE_ARITY, "chunk must be less than arity");
@@ -87,6 +92,11 @@ impl NoteMasterKey {
     ///
     /// Recursively descends the tree, emitting fully-covered nodes and
     /// only hashing children that overlap the range.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range extends beyond the epoch space
+    /// (`GGM_MAX_INDEX`).
     #[must_use]
     pub fn derive_note_delegates(&self, range: RangeInclusive<u32>) -> Vec<NotePrefixedKey> {
         assert!(

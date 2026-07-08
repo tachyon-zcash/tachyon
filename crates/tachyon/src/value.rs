@@ -61,6 +61,11 @@ impl CommitmentTrapdoor {
     ///
     /// Positive $v$ for spends (balance contributed), negative for
     /// outputs (balance exhausted).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the trapdoor scalar is zero: a zero trapdoor makes the
+    /// commitment deterministic and leaks the value.
     #[must_use]
     pub fn commit(self, raw_value: i64) -> Commitment {
         assert_ne!(self.0, Fq::ZERO, "commitment trapdoor should not be zero");

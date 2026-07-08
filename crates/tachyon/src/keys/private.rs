@@ -71,6 +71,12 @@ impl SpendingKey {
     /// reddsa's `private::Sealed` trait, so we must construct a
     /// `SigningKey` (which internally computes $[\mathsf{ask}]\mathcal{G}$)
     /// to obtain $\mathsf{ak}$ and inspect its encoding.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the PRF-derived or sign-normalized scalar is not a
+    /// valid RedPallas signing key. Every $\mathbb{F}_q$ element is a
+    /// valid signing key, so this is unreachable.
     #[must_use]
     #[expect(
         clippy::expect_used,
@@ -216,6 +222,12 @@ impl<E: Effect> ActionSigningKey<E> {
 
 impl ActionSigningKey<effect::Output> {
     /// Create a new output action signing key from an output randomizer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the randomizer scalar is not a valid RedPallas signing
+    /// key. Every $\mathbb{F}_q$ element is a valid signing key, so this
+    /// is unreachable.
     #[must_use]
     pub fn new(alpha: &ActionRandomizer<effect::Output>) -> Self {
         #[expect(clippy::expect_used, reason = "specified behavior")]
