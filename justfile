@@ -13,8 +13,8 @@ lint:
 test *ARGS:
     cargo test --workspace --all-features {{ARGS}}
 
-doc:
-    cargo doc --workspace --no-deps
+doc *ARGS:
+    RUSTDOCFLAGS="--html-in-header {{justfile_directory()}}/katex-header.html" cargo doc --workspace --no-deps {{ARGS}}
 
 check:
     cargo check --workspace --lib --no-default-features # no_std
@@ -36,5 +36,5 @@ ci_local: _book_setup
     cargo clippy --workspace --lib --no-default-features --locked -- -D warnings
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
     cargo test --release --all --locked --all-features
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all --locked --document-private-items
+    RUSTDOCFLAGS="-D warnings --html-in-header {{justfile_directory()}}/katex-header.html" cargo doc --no-deps --all --locked --document-private-items
     mdbook build ./book

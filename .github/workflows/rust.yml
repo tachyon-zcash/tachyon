@@ -140,7 +140,7 @@ jobs:
       - name: Check intra-doc links
         run: cargo doc --no-deps --all --locked --document-private-items
         env:
-          RUSTDOCFLAGS: "-D warnings"
+          RUSTDOCFLAGS: "-D warnings --html-in-header katex-header.html"
 
   book:
     name: tachyon book

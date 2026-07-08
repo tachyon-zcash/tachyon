@@ -274,8 +274,8 @@ impl Plan {
 
     /// Derive value_balance from note values.
     ///
-    /// $\mathsf{v\_balance} = \sum_i v_{\text{spend},i} - \sum_j
-    /// v_{\text{output},j}$
+    /// $\mathsf{v{\textunderscore}balance} = \sum_i v_{\text{spend},i} -
+    /// \sum_j v_{\text{output},j}$
     ///
     /// Returns `Err` if the intermediate sum overflows or the result
     /// does not fit in `i64`.
@@ -294,14 +294,18 @@ impl Plan {
     ///
     /// This contributes to the transaction sighash.
     ///
-    /// $$ \mathsf{bundle\_commitment} = \text{BLAKE2b-512}(
-    /// \text{"ZTxIdTachyonHash"},\; \mathsf{action\_acc}_x \|
-    /// \mathsf{action\_acc}_y \| \mathsf{value\_balance}) $$
+    /// $$
+    ///   \mathsf{bundle{\textunderscore}commitment} = \text{BLAKE2b-512}(
+    ///     \text{"ZTxIdTachyonHash"}, \mathsf{action{\textunderscore}acc}_x
+    ///     \Vert \mathsf{action{\textunderscore}acc}_y \Vert
+    ///     \mathsf{value{\textunderscore}balance}
+    ///   )
+    /// $$
     ///
-    /// where $\mathsf{action\_acc}$ is the polynomial commitment to the
-    /// action digest multiset `∏(X - action_digest_i)` — order-independent
-    /// by construction since the polynomial is invariant under root
-    /// permutation.
+    /// where $\mathsf{action{\textunderscore}acc}$ is the polynomial commitment
+    /// to the action digest multiset `∏(X - action_digest_i)` —
+    /// order-independent by construction since the polynomial is invariant
+    /// under root permutation.
     ///
     /// The stamp is excluded because it is stripped during aggregation.
     pub fn commitment(&self) -> Result<[u8; 64], CommitError> {

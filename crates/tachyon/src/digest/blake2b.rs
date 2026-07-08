@@ -20,7 +20,7 @@ const SPEND_ALPHA_PERSONALIZATION: &[u8; 13] = b"Tachyon-Spend";
 const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
 
 /// Spend-side $\alpha$ pre-image: $\text{BLAKE2b-512}(\text{"Tachyon-Spend"},
-/// \theta \| cm)$.
+/// \theta \Vert cm)$.
 ///
 /// Caller reduces to scalar via `Fq::from_uniform_bytes`.
 pub(crate) fn alpha_spend(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
@@ -32,7 +32,7 @@ pub(crate) fn alpha_spend(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
 }
 
 /// Output-side $\alpha$ pre-image: $\text{BLAKE2b-512}(\text{"Tachyon-Output"},
-/// \theta \| cm)$.
+/// \theta \Vert cm)$.
 pub(crate) fn alpha_output(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
     *hasher(OUTPUT_ALPHA_PERSONALIZATION)
         .update(theta)
@@ -48,8 +48,11 @@ const PRF_EXPAND_DOMAIN_NK: u8 = 0x22;
 
 /// PRF-expand to derive `ask` from a spending key. Performs no normalization.
 ///
-/// $\text{BLAKE2b-512}(\text{"Zcash\_ExpandSeed"}, sk \|
-/// \texttt{ASK_DOMAIN_BYTE})$. Mirrors Zcash §5.4.2.
+/// $$
+///   \text{BLAKE2b-512}\(\text{"Zcash{\textunderscore}ExpandSeed"}, sk \Vert
+/// \texttt{ASK{\textunderscore}DOMAIN{\textunderscore}BYTE}\) $$
+///
+/// Mirrors Zcash §5.4.2.
 ///
 /// TODO: return normalized Fq?
 pub(crate) fn prf_expand_ask(sk: &[u8; 32]) -> [u8; 64] {
@@ -62,8 +65,8 @@ pub(crate) fn prf_expand_ask(sk: &[u8; 32]) -> [u8; 64] {
 
 /// PRF-expand to derive `nk` from a spending key. Performs no normalization.
 ///
-/// $\text{BLAKE2b-512}(\text{"Zcash\_ExpandSeed"}, sk \|
-/// \texttt{NK_DOMAIN_BYTE})$.
+/// $\text{BLAKE2b-512}(\text{"Zcash{\textunderscore}ExpandSeed"}, sk \Vert
+/// \texttt{NK{\textunderscore}DOMAIN{\textunderscore}BYTE})$.
 ///
 /// TODO: return normalized Fq?
 pub(crate) fn prf_expand_nk(sk: &[u8; 32]) -> [u8; 64] {
