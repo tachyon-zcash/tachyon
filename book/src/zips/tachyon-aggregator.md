@@ -49,6 +49,11 @@ Open questions:
   aggregators index mempool data and do not attempt merges they cannot satisfy from data
   they hold. Alternatives: a relay message requesting transactions by tachygram, or
   aggregates carrying a list of contributing transactions. Undecided.
+- **`cActionsTachyon` commitment scheme.** The covered-transaction identification check
+  reconstructs the carried `cActionsTachyon` field. Whether that field, which serves
+  only external coordination, uses a different commitment scheme than the in-circuit
+  action-set commitment is an open question of the
+  [bundle ZIP (#104)](https://github.com/tachyon-zcash/tachyon/issues/104).
 - **Cross-epoch lifting.** A stamp lift never crosses an epoch boundary, because
   a spend's published nullifiers are fixed relative to its anchor's epoch.
   Supporting them may be possible, but would change fundamental parts of the
