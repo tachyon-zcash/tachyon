@@ -63,13 +63,6 @@ Open questions:
   draft names it symbolically as `PROOF_SIZE`. A variable-size final compression
   (bulletproof-style) would replace the constant-length field with a dynamic one; whether
   the proof system settles on a fixed size is unresolved.
-- **Stamp trailer contents.** Whether the stamp should additionally carry a
-  tachygram-accumulator value and an epoch index, and whether the anchor granularity
-  interacts with them, is undecided; anchor semantics are the
-  [Accumulator ZIP](tachyon-accumulator.md#anchor-semantics)'s. The related question of
-  whether a per-action tachygram arity holds is subsumed here: an aggregate's stamp
-  carries covered transactions' tachygrams, so a stamp's `nTachygrams` bears no fixed
-  relation to its own `nActionsTachyon`.
 - **Stripped zero-action coverage confirmation.** Block validity confirms a stripped
   bundle's reference through its action digests, so a stripped bundle with no actions
   names a covering aggregate that consensus does not confirm. Two candidate rules:
@@ -90,11 +83,11 @@ Open questions:
   coordination: fail-fast confirmation that consensus has correctly collected a stamp's
   covered actions. It plays no role in the proof statement, so it could use a different
   commitment scheme than the in-circuit action-set commitment, with the PCD header's
-  commitment still reconstructed from the confirmed action set. Undecided.
-- **In-band data digest.** Whether to add a digest contribution for in-band memo data
-  (`da_digest`) is undecided.
+  commitment still reconstructed from the confirmed action set.
+- **In-band data digest.** A digest contribution for in-band memo data (`da_digest`)
+  may be added.
 - **Count caps.** Only the compactSize maximum `0x02000000` bounds `nActionsTachyon` and
-  `nTachygrams`. Whether a tighter per-field cap is wanted is undecided.
+  `nTachygrams`. A tighter per-field cap may be wanted.
 - **Reference-implementation enforcement.** The per-transaction tachygram-distinctness
   rule is owned here as a bundle-validity rule (below). Several stated consensus rules are
   not yet enforced in the reference implementation's parse or verify paths: per-stamp
