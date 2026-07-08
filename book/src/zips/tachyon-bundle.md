@@ -86,9 +86,11 @@ Open questions:
   not depend on mempool state. Significantly, this extends the definition of
   effecting data beyond actions and balance.
 
-- **Action-accumulator commitment scheme.** Whether the action-set commitment remains a
-  polynomial Pedersen commitment or becomes a hash-based accumulator (for example a hash
-  chain) is undecided; the choice affects validator recomputation cost.
+- **`cActionsTachyon` commitment scheme.** The carried field exists for external
+  coordination: fail-fast confirmation that consensus has correctly collected a stamp's
+  covered actions. It plays no role in the proof statement, so it could use a different
+  commitment scheme than the in-circuit action-set commitment, with the PCD header's
+  commitment still reconstructed from the confirmed action set. Undecided.
 - **In-band data digest.** Whether to add a digest contribution for in-band memo data
   (`da_digest`) is undecided.
 - **Count caps.** Only the compactSize maximum `0x02000000` bounds `nActionsTachyon` and
