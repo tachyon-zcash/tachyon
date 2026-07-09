@@ -83,9 +83,17 @@ Open questions:
   coordination: fail-fast confirmation that consensus has correctly collected a stamp's
   covered actions. It plays no role in the proof statement, so it could use a different
   commitment scheme than the in-circuit action-set commitment, with the PCD header's
-  commitment still reconstructed from the confirmed action set.
-- **In-band data digest.** A digest contribution for in-band memo data (`da_digest`)
-  may be added.
+  commitment still reconstructed from the confirmed action set. Structured digests
+  that could serve this are tracked in
+  [#162](https://github.com/tachyon-zcash/tachyon/issues/162).
+- **Tachygram arity.** A spend emits two tachygrams and an output emits one, so a
+  stamp's tachygram count bears no fixed relation to the actions it covers. Fixing the
+  arity at two per action, and consequently removing `cActionsTachyon` in favor of
+  total reconstruction, is deferred to
+  [#164](https://github.com/tachyon-zcash/tachyon/issues/164).
+- **In-band memo data.** An optional in-band path for memo data, committed by a
+  `da_digest` contribution to the transaction digests, is deferred to
+  [#163](https://github.com/tachyon-zcash/tachyon/issues/163).
 - **Count caps.** Only the compactSize maximum `0x02000000` bounds `nActionsTachyon` and
   `nTachygrams`. A tighter per-field cap may be wanted.
 - **Reference-implementation enforcement.** The per-transaction tachygram-distinctness
@@ -128,9 +136,11 @@ character § is used when referring to sections of the Zcash Protocol Specificat
 [ZIP 244](https://zips.z.cash/zip-0244); `wtxid = txid || auth_digest`, the 64-byte
 identifier used for transaction announcement and relay, by
 [ZIP 239](https://zips.z.cash/zip-0239). Value commitments, spend authorization
-signatures, and binding signatures are existing constructions (§5.4.8.3, §4.15, and
-§4.14 respectively, in their Orchard instantiations); this ZIP applies them to
-Tachyon as specified below rather than redefining them.
+signatures, and binding signatures are existing constructions (§5.4.8.3
+‘Homomorphic Pedersen commitments (Sapling and Orchard)’, §4.15 ‘Spend
+Authorization Signature (Sapling and Orchard)’, and §4.14 ‘Balance and Binding
+Signature (Orchard)’, respectively, in their Orchard instantiations); this ZIP
+applies them to Tachyon as specified below rather than redefining them.
 
 The following terms are defined by other Tachyon ZIPs and summarized here
 non-normatively:
@@ -139,9 +149,10 @@ non-normatively:
   representing either a note nullifier or a note commitment. Consensus treats
   nullifiers and commitments identically.
   ([Tachyon Shielded Protocol](tachyon-shielded-protocol.md))
-- **Anchor.** A Poseidon hash-chain state referencing a snapshot of the Tachyon
-  pool; its granularity is specified by the Accumulator ZIP.
-  ([Tachyon Accumulator / Hash Chain](tachyon-accumulator.md#anchor-semantics))
+- **Anchor.** A Poseidon hash-chain state referencing the Tachyon
+  pool at a specific block. Sub-block states may be valid but should not be
+  acknowledged. ([Tachyon Accumulator / Hash Chain](tachyon-accumulator.md#anchor-semantics))
+
 The remaining terms are defined by this ZIP:
 
 - **Bundle.** The Tachyon section of a transaction: actions, a value balance, action
@@ -287,12 +298,14 @@ absorb newly created value. Value accounting across a whole transaction is a
 transaction-layer rule, not specified here.
 
 Value commitments and balance enforcement are Orchard's constructions, unchanged.
-Each action's $\mathsf{cv}$ is a homomorphic Pedersen commitment (§5.4.8.3) to the
-action's value, $+v$ for a spend and $-v$ for an output, using Orchard's
-value-commitment generators (the `z.cash:Orchard-cv` hash-to-curve domain). This is
-the net-value sign convention of §5.4.8.3: each $\mathsf{cv}$ commits to $+v$ for a
-spend and $-v$ for an output, so their homomorphic sum commits to spends minus
-outputs, which is exactly `valueBalanceTachyon`. The
+Each action's $\mathsf{cv}$ is a homomorphic Pedersen commitment (§5.4.8.3
+‘Homomorphic Pedersen commitments (Sapling and Orchard)’) to the
+action's value, using Orchard's value-commitment generators (the `z.cash:Orchard-cv`
+hash-to-curve domain) and the net-value sign convention of §4.14 ‘Balance and
+Binding Signature (Orchard)’: each
+$\mathsf{cv}$ commits to $+v$ for a spend and $-v$ for an output, so their
+homomorphic sum commits to spends minus outputs, which is exactly
+`valueBalanceTachyon`. The
 binding validating key $\mathsf{bvk}$ is derived from the actions' $\mathsf{cv}$
 values and `valueBalanceTachyon` exactly as in §4.14, and is not encoded in the
 transaction. `bindingSigTachyon` MUST be a valid binding signature over the
@@ -302,7 +315,8 @@ consistency between the asserted balance and the hidden action values.
 ### Action signatures
 
 Each action signature in `vActionSigsTachyon` MUST be a valid spend authorization
-signature (§4.15; RedPallas with the SpendAuth basepoint of §5.4.7.1, for spends and
+signature (§4.15 ‘Spend Authorization Signature (Sapling and Orchard)’; RedPallas
+with the SpendAuth basepoint of §5.4.7.1, for spends and
 outputs alike) over the transaction sighash under the corresponding action's
 $\mathsf{rk}$. The sighash is a transaction-level digest, computed as specified by
 [ZIP 244](https://zips.z.cash/zip-0244) as extended for Tachyon
@@ -400,12 +414,14 @@ is specified in [Block validity](#block-validity).
 
 ### Canonical encodings
 
-- Every compactSize field MUST use the minimal encoding for its value (§7.1) and
+- Every compactSize field MUST use the minimal encoding for its value (§7.1
+  ‘Transaction Encoding and Consensus’) and
   MUST NOT encode a value exceeding `0x02000000`. A parser MUST reject any other
   encoding.
 - `cv` and `rk` are 32-byte compressed encodings of Pallas points. A parser MUST
   reject an encoding that does not decode to a point. `rk` MUST decode as a
-  RedPallas validating key (§5.4.7). The identity point decodes successfully; it is
+  RedPallas validating key (§5.4.7 ‘RedDSA, RedJubjub, and RedPallas’). The
+  identity point decodes successfully; it is
   excluded by the rule in [Action digests](#action-digests), not by the parser.
 - `anchorTachyon` and each tachygram are canonical little-endian encodings of Pallas
   base field elements; a parser MUST reject an encoding whose value is not less than
@@ -524,7 +540,7 @@ specification does not state it explicitly.
 accounting at the consensus layer.
 
 **`MAX_MONEY` bound on the balance.** The Orchard-era bound on `valueBalanceOrchard`
-is a protocol-spec consensus rule (§7.1 transaction encoding and consensus); this ZIP
+is a protocol-spec consensus rule (§7.1 ‘Transaction Encoding and Consensus’); this ZIP
 is that rule's analogous home for `valueBalanceTachyon`.
 
 **Zero-action balance.** The v5 analogue defines an absent `valueBalanceOrchard` as
