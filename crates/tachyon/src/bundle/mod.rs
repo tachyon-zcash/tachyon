@@ -70,7 +70,7 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
 use ff::PrimeField as _;
 use group::GroupEncoding as _;
-use pasta_curves::{Eq, Fp};
+use pasta_curves::{Ep, EpAffine, Eq, Fp};
 use rand_core::{CryptoRng, RngCore};
 
 pub use crate::digest::blake2b::{AUTH_DIGEST_NO_BUNDLE, COMMIT_NO_BUNDLE};
@@ -130,8 +130,50 @@ mod sealed {
 }
 
 /// Sealed trait constraining stamp state types.
-pub trait StampState: sealed::Sealed {}
-impl<T: sealed::Sealed> StampState for T {}
+pub trait StampState: sealed::Sealed {
+    fn stamp_digest(&self) -> [u8; 64];
+}
+
+impl StampState for Unproven {
+    fn stamp_digest(&self) -> [u8; 64] {
+        unimplemented!("unproven stamp has no digest");
+    }
+}
+
+impl StampState for Stripped {
+    fn stamp_digest(&self) -> [u8; 64] {
+        unimplemented!("stripped stamp has no digest");
+    }
+}
+
+impl StampState for PointerStamp {
+    fn stamp_digest(&self) -> [u8; 64] {
+        <[u8; 64]>::from(*self)
+    }
+}
+
+impl StampState for ProofStamp {
+    fn stamp_digest(&self) -> [u8; 64] {
+        let stamp_actions: [u8; 32] = Eq::from(self.action_set).to_bytes();
+
+        let stamp_data_digest: [u8; 32] = {
+            let proof = self.proof.serialize();
+            let anchor: [u8; 32] = self.anchor.0.into();
+            let tachygrams: Vec<[u8; 32]> = self
+                .tachygrams
+                .iter()
+                .map(|&tg| Fp::from(tg).to_repr())
+                .collect();
+
+            blake2b::stamp_data_digest(blake2b::stamp_proof_digest(proof), anchor, tachygrams)
+        };
+
+        let mut stamp_digest = [0u8; 64];
+        stamp_digest[..32].copy_from_slice(&stamp_actions);
+        stamp_digest[32..].copy_from_slice(&stamp_data_digest);
+        stamp_digest
+    }
+}
 
 /// A Tachyon transaction bundle parameterized by stamp state `S`.
 #[derive(Clone, Debug, PartialEq, TotalEq)]
