@@ -35,7 +35,7 @@ lazy_static! {
 /// Pedersen commitment.
 ///
 /// Each action gets a fresh trapdoor:
-/// $\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$.
+/// $\mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
 ///
 /// The binding signing key is the scalar sum of trapdoors:
 /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i$
@@ -45,7 +45,7 @@ lazy_static! {
 ///
 /// An $\mathbb{F}_q$ element (Pallas scalar field, 32 bytes). Lives
 /// in the scalar field because $\mathsf{rcv}$ is used as a scalar in
-/// point multiplication $[\mathsf{rcv}]\,\mathcal{R}$.
+/// point multiplication $[\mathsf{rcv}]\mathcal{R}$.
 #[derive(Clone, Copy, Debug, Into)]
 pub struct CommitmentTrapdoor(#[debug(skip)] Fq);
 
@@ -57,10 +57,15 @@ impl CommitmentTrapdoor {
 
     /// Commit to a value with this trapdoor.
     ///
-    /// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
+    /// $$\mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$$
     ///
     /// Positive $v$ for spends (balance contributed), negative for
     /// outputs (balance exhausted).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the trapdoor scalar is zero: a zero trapdoor makes the
+    /// commitment deterministic and leaks the value.
     #[must_use]
     pub fn commit(self, raw_value: i64) -> Commitment {
         assert_ne!(self.0, Fq::ZERO, "commitment trapdoor should not be zero");
@@ -88,7 +93,7 @@ impl CommitmentTrapdoor {
 /// revealing it. This is a Pedersen commitment (curve point) used in
 /// value balance verification.
 ///
-/// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
+/// $$\mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$$
 ///
 /// where $v$ is the value, $\mathsf{rcv}$ is the randomness
 /// ([`CommitmentTrapdoor`]), and $\mathcal{V}$, $\mathcal{R}$ are
@@ -103,16 +108,16 @@ pub struct Commitment(#[debug(skip)] pub(super) EpAffine);
 
 impl Commitment {
     /// Create the value balance commitment
-    /// $\text{ValueCommit}_0(\mathsf{v\_{balance}})$.
+    /// $\text{ValueCommit}_0(\mathsf{v{\textunderscore}balance})$.
     ///
-    /// $$\text{ValueCommit}_0(v) = [v]\,\mathcal{V} + [0]\,\mathcal{R}
-    ///   = [v]\,\mathcal{V}$$
+    /// $$\text{ValueCommit}_0(v) = \[v\]\mathcal{V} + \[0\]\mathcal{R}
+    ///   = \[v\]\mathcal{V}$$
     ///
     /// This is a **deterministic** commitment with zero randomness.
     /// Used by validators to derive the binding verification key:
     ///
     /// $$\mathsf{bvk} = \left(\bigoplus_i \mathsf{cv}_i\right)
-    ///   \ominus \text{ValueCommit}_0(\mathsf{v\_{balance}})$$
+    ///   \ominus \text{ValueCommit}_0(\mathsf{v{\textunderscore}balance})$$
     #[must_use]
     pub fn balance(value: i64) -> Self {
         let value_abs: Fq = Fq::from(value.unsigned_abs());

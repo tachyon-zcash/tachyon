@@ -1,0 +1,189 @@
+name: Rust CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-progress runs when a new commit is pushed to the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  # Detect which files changed to conditionally run jobs
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      book: ${{ steps.filter.outputs.book }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'rustfmt.toml'
+              - 'clippy.toml'
+              - '.github/workflows/rust.yml'
+              - '.github/actions/**'
+            book:
+              - 'book/**'
+
+  fmt:
+    name: rustfmt (nightly)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned nightly rustfmt
+        id: nightly
+        uses: ./.github/actions/rust-nightly-setup
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          components: clippy
+      - name: Run clippy (no_std)
+        run: cargo clippy --workspace --lib --no-default-features --locked -- -D warnings
+      - name: Run clippy (all features)
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: release
+      - name: Run tests
+        run: cargo test --release --all --locked --all-features
+
+  test-32-bit:
+    name: test (i686-unknown-linux-gnu)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          targets: i686-unknown-linux-gnu
+          apt-packages: gcc-multilib
+          cache-suffix: release
+      - name: Run 32-bit tests
+        run: cargo test --release --all --locked --all-features --target i686-unknown-linux-gnu
+
+  docs:
+    name: docs
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: docs
+      - name: Check intra-doc links
+        run: cargo doc --no-deps --all --locked --document-private-items
+        env:
+          RUSTDOCFLAGS: "-D warnings --html-in-header katex-header.html"
+
+  book:
+    name: tachyon book
+    needs: changes
+    if: needs.changes.outputs.book == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Install mdbook and plugins
+        uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2.79.5
+        with:
+          tool: mdbook@0.4.52,mdbook-katex@0.9.4,mdbook-mermaid@0.16.2
+      - name: Build book
+        run: mdbook build book/
+
+  # Aggregate gate: a single, stable required status check. It always runs —
+  # even on non-Rust PRs where every job below is skipped — and fails only if a
+  # needed job actually failed or was cancelled (skipped counts as success).
+  # Require THIS in the ruleset instead of the individual job names: a skipped
+  # matrix job (`test`) reports the un-expanded name `test (${{ matrix.os }})`,
+  # so `test (ubuntu-latest)` etc. never report and block book-/docs-only PRs.
+  ci-required:
+    name: ci-required
+    if: always()
+    needs:
+      - changes
+      - fmt
+      - clippy
+      - test
+      - test-32-bit
+      - docs
+      - book
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        # Pass the expansion through `env` rather than interpolating `${{ }}`
+        # directly into `run:`, which zizmor's template-injection audit flags.
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "A required job failed or was cancelled:"
+          echo "$NEEDS_JSON"
+          exit 1

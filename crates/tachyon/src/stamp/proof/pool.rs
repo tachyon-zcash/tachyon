@@ -560,7 +560,7 @@ impl Step for UnspentEpochFuse {
 ///
 /// Proves `range == elapsed ++ [nf_end]` against the derived
 /// [`NullifierHeader`], emitting a [`VerifiedUnspent`] with the `cm`. The tip
-/// enters as a monomial coefficient of [`enforce_shifted_combination`]:
+/// enters as a monomial coefficient of `enforce_shifted_combination`:
 /// `unspent_nf_end` is a left-header value, fixed by the recursive
 /// verification of the [`Unspent`] PCD before the challenge.
 #[derive(Debug)]

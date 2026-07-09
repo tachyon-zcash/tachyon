@@ -30,7 +30,7 @@ pub struct Plan<E: Effect> {
 impl Plan<effect::Spend> {
     /// Assemble a spend action plan.
     ///
-    /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$
+    /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$
     #[must_use]
     pub fn spend(
         note: Note,
@@ -54,7 +54,7 @@ impl Plan<effect::Spend> {
 impl Plan<effect::Output> {
     /// Assemble an output action plan.
     ///
-    /// $\mathsf{rk} = [\alpha]\,\mathcal{G}$.
+    /// $\mathsf{rk} = [\alpha]\mathcal{G}$.
     #[must_use]
     pub fn output(note: Note, theta: ActionEntropy, rcv: value::CommitmentTrapdoor) -> Self {
         let cm = note.commitment();
@@ -74,7 +74,7 @@ impl Plan<effect::Output> {
 impl<E: Effect> Plan<E> {
     /// Derive the value commitment of this action plan.
     ///
-    /// $$\mathsf{cv} = [\pm v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
+    /// $$\mathsf{cv} = [\pm v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$$
     #[must_use]
     pub fn cv(&self) -> value::Commitment {
         E::commit_value(self.rcv, self.note.value)
@@ -93,11 +93,11 @@ impl<E: Effect> Plan<E> {
 /// - `sig`: Signature (by single-use `rsk`) over transaction sighash
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Action {
-    /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
-    /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
+    /// Value commitment $\mathsf{cv} = \[v\]\mathcal{V} +
+    /// \[\mathsf{rcv}\]\mathcal{R}$
     pub cv: value::Commitment,
 
-    /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
+    /// Randomized action verification key
     pub rk: public::ActionVerificationKey,
 
     /// RedPallas spend auth signature over the transaction sighash.

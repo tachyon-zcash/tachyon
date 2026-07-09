@@ -12,7 +12,7 @@ use crate::{digest::poseidon, note};
 /// Tachyon simplifies Orchard's nullifier construction
 /// ("Tachyaction at a Distance", Bowe 2025):
 ///
-/// $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
+/// $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \Vert \text{flavor})$$
 ///
 /// where $F$ is a keyed PRF (Poseidon), $\Psi$ is the note's nullifier
 /// trapdoor, and flavor is the epoch-id. This replaces Orchard's more
@@ -56,8 +56,8 @@ impl NullifierKey {
 ///
 /// Derived from the proof authorizing key components:
 ///
-/// $$\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
-/// \mathsf{nk})$$
+/// $$\mathsf{pk} = \text{Poseidon}(\text{PK{\textunderscore}DOMAIN},
+/// \mathsf{ak}_x, \mathsf{nk})$$
 ///
 /// where $\mathsf{ak}_x$ is the x-coordinate of the spend validating key.
 /// This binds `pk` to both `ak` and `nk`, so the note commitment `cm`
@@ -81,8 +81,8 @@ pub struct PaymentKey(#[debug(skip)] pub(crate) Fp);
 
 impl PaymentKey {
     /// Derive the payment key from `ak` and `nk`:
-    /// $\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
-    /// \mathsf{nk})$.
+    /// $\mathsf{pk} = \text{Poseidon}(\text{PK{\textunderscore}DOMAIN},
+    /// \mathsf{ak}_x, \mathsf{nk})$.
     #[must_use]
     pub fn derive(ak: &SpendValidatingKey, nk: &NullifierKey) -> Self {
         let ak_bytes: [u8; 32] = ak.0.into();

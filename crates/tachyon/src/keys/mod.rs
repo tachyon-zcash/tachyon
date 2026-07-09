@@ -43,13 +43,13 @@
 //! - `rk = ak + [alpha]G`: Per-action verification key (can verify, public)
 //! - `bvk`: Binding verification key (derived from value commitments)
 //!
-//! ### Note keys ([`note`])
+//! ### Note keys (`note`)
 //!
 //! - `nk`: Observes when funds are spent (nullifier derivation)
 //! - `pk = Poseidon(domain, ak_x, nk)`: Derived from `pak`, binds spending
 //!   authority and nullifier key to the note commitment
 //!
-//! ### Proof keys ([`proof`])
+//! ### Proof keys (`proof`)
 //!
 //! - `pak`: `ak` + `nk` (proof authorizing key): Authorizes proof construction
 //!   without spend authority

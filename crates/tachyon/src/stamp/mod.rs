@@ -185,8 +185,9 @@ impl Plan {
 
     /// Prove a single [`Stamp`] for this plan.
     ///
-    /// For each **spend**, uses [`SpendBind`] to prepare PCD inputs, then runs
-    /// [`SpendStamp`] to attach the live nullifier pair.
+    /// For each **spend**, uses [`SpendBind`](proof::spend::SpendBind) to
+    /// prepare PCD inputs, then runs [`SpendStamp`] to attach the live
+    /// nullifier pair.
     ///
     /// For each **output**, runs [`OutputStamp`] with no PCD inputs.
     ///

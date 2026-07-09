@@ -10,15 +10,14 @@ use crate::{action, action::Action, bundle, reddsa, value};
 /// The randomized action verification key `rk` — per-action, public.
 ///
 /// This is the only key type that **can verify** action signatures.
-/// Goes into [`Action`](crate::Action). Terminal type — no further
-/// derivation.
+/// Goes into [`Action`]. Terminal type — no further derivation.
 ///
 /// Both spend and output actions produce an `rk`
 /// ("Tachyaction at a Distance", Bowe 2025):
 ///
-/// - **Spend**: $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$ — requires
+/// - **Spend**: $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$ — requires
 ///   knowledge of $\mathsf{ask}$
-/// - **Output**: $\mathsf{rk} = [\alpha]\,\mathcal{G}$ — no spending authority
+/// - **Output**: $\mathsf{rk} = [\alpha]\mathcal{G}$ — no spending authority
 ///   needed
 ///
 /// This unification lets consensus treat all actions identically while
@@ -61,9 +60,9 @@ impl From<ActionVerificationKey> for EpAffine {
 /// Derive the binding verification key from public bundle data.
 ///
 /// $$\mathsf{bvk} = \left(\bigoplus_i \mathsf{cv}_i\right) \ominus
-///   \text{ValueCommit}_0\!\left(\mathsf{v\_{balance}}\right)$$
+///   \text{ValueCommit}_0\left(\mathsf{v{\textunderscore}balance}\right)$$
 ///
-/// The result should equal $[\mathsf{bsk}]\,\mathcal{R}$ if the signer
+/// The result should equal $[\mathsf{bsk}]\mathcal{R}$ if the signer
 /// constructed the bundle correctly, similar to Orchard's binding key
 /// derivation (Protocol §4.14)
 #[must_use]
@@ -80,7 +79,7 @@ pub fn derive_bvk(
 /// commitments.
 ///
 /// $$\mathsf{bvk} := \left(\bigoplus_i \mathsf{cv}_i\right) \ominus
-///   \text{ValueCommit}_0\!\left(\mathsf{v\_{balance}}\right)$$
+///   \text{ValueCommit}_0\left(\mathsf{v{\textunderscore}balance}\right)$$
 ///
 /// That is: sum all action value commitments (Pallas curve points),
 /// then subtract the deterministic commitment to the value balance
@@ -88,11 +87,11 @@ pub fn derive_bvk(
 /// transaction** — validators recompute it from public data (§4.14).
 ///
 /// When the transaction is correctly constructed,
-/// $\mathsf{bvk} = [\mathsf{bsk}]\,\mathcal{R}$ because the
+/// $\mathsf{bvk} = [\mathsf{bsk}]\mathcal{R}$ because the
 /// $\mathcal{V}$-component cancels
-/// ($\sum_i v_i = \mathsf{v\_{balance}}$), leaving only the
+/// ($\sum_i v_i = \mathsf{v{\textunderscore}balance}$), leaving only the
 /// $\mathcal{R}$-component
-/// $[\sum_i \mathsf{rcv}_i]\,\mathcal{R} = [\mathsf{bsk}]\,\mathcal{R}$.
+/// $[\sum_i \mathsf{rcv}_i]\mathcal{R} = [\mathsf{bsk}]\mathcal{R}$.
 ///
 /// A validator checks balance by verifying:
 /// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\mathsf{sighash},
@@ -112,10 +111,10 @@ impl BindingVerificationKey {
     /// Derive the binding verification key from public action data.
     ///
     /// $$\mathsf{bvk} = \left(\bigoplus_i \mathsf{cv}_i\right) \ominus
-    ///   \text{ValueCommit}_0\!\left(\mathsf{v\_{balance}}\right)$$
+    ///   \text{ValueCommit}_0\left(\mathsf{v{\textunderscore}balance}\right)$$
     ///
     /// This is the validator-side derivation similar to Orchard. (§4.14). The
-    /// result should equal $[\mathsf{bsk}]\,\mathcal{R}$ when the signer
+    /// result should equal $[\mathsf{bsk}]\mathcal{R}$ when the signer
     /// constructed the bundle correctly.
     #[must_use]
     pub fn derive(actions: &[Action], value_balance: i64) -> Self {

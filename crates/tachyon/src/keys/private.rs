@@ -34,7 +34,7 @@ use crate::{
 ///   [`NullifierKey`] (`nk`)
 /// - [`derive_payment_key`](Self::derive_payment_key) → [`PaymentKey`] (`pk`)
 /// - [`derive_proof_private`](Self::derive_proof_private) →
-///   [`ProofAuthorizingKey`] (`ak` + `nk`)
+///   [`ProofAuthorizingKey`](super::ProofAuthorizingKey) (`ak` + `nk`)
 #[derive(Clone, Copy, Debug, From)]
 pub struct SpendingKey(#[debug(skip)] [u8; 32]);
 
@@ -54,23 +54,29 @@ impl SpendingKey {
     /// $$\mathsf{ask} = \text{ToScalar}\bigl(\text{PRF}^{\text{expand}}_
     /// {\mathsf{sk}}([0\text{x}21])\bigr)$$
     ///
-    /// BLAKE2b-512 of $(\mathsf{sk} \| \texttt{0x21})$, reduced to
+    /// BLAKE2b-512 of $(\mathsf{sk} \Vert \texttt{0x21})$, reduced to
     /// $\mathbb{F}_q$ via `from_uniform_bytes`.
     ///
     /// # Sign normalization (§5.4.7.1)
     ///
-    /// RedPallas requires $\mathsf{ak} = [\mathsf{ask}]\,\mathcal{G}$ to
+    /// RedPallas requires $\mathsf{ak} = [\mathsf{ask}]\mathcal{G}$ to
     /// have $\tilde{y} = 0$.  Pallas point compression (§5.4.9.7) encodes
     /// $\tilde{y}$ in bit 255 (byte 31, bit 7) of the 32-byte
     /// representation.  If $\tilde{y}(\mathsf{ak}) = 1$, we negate
-    /// $\mathsf{ask}$: $[-\mathsf{ask}]\,\mathcal{G} =
-    /// -[\mathsf{ask}]\,\mathcal{G}$ flips the y-coordinate sign.
+    /// $\mathsf{ask}$: $[-\mathsf{ask}]\mathcal{G} =
+    /// -[\mathsf{ask}]\mathcal{G}$ flips the y-coordinate sign.
     ///
     /// The reddsa::ActionAuth basepoint $\mathcal{G}$ is hash-derived
     /// (`hash_to_curve("z.cash:Orchard")(b"G")`) and sealed inside
     /// reddsa's `private::Sealed` trait, so we must construct a
-    /// `SigningKey` (which internally computes $[\mathsf{ask}]\,\mathcal{G}$)
+    /// `SigningKey` (which internally computes $[\mathsf{ask}]\mathcal{G}$)
     /// to obtain $\mathsf{ak}$ and inspect its encoding.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the PRF-derived or sign-normalized scalar is not a
+    /// valid RedPallas signing key. Every $\mathbb{F}_q$ element is a
+    /// valid signing key, so this is unreachable.
     #[must_use]
     #[expect(
         clippy::expect_used,
@@ -109,8 +115,8 @@ impl SpendingKey {
 
     /// Derive the payment key $\mathsf{pk}$ from $\mathsf{sk}$.
     ///
-    /// $$\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
-    /// \mathsf{nk})$$
+    /// $$\mathsf{pk} = \text{Poseidon}(\text{PK{\textunderscore}DOMAIN},
+    /// \mathsf{ak}_x, \mathsf{nk})$$
     ///
     /// Derives `ak` and `nk` from `sk`, then computes `pk` via Poseidon.
     /// This binds `pk` to both spending authority and nullifier derivation,
@@ -216,6 +222,12 @@ impl<E: Effect> ActionSigningKey<E> {
 
 impl ActionSigningKey<effect::Output> {
     /// Create a new output action signing key from an output randomizer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the randomizer scalar is not a valid RedPallas signing
+    /// key. Every $\mathbb{F}_q$ element is a valid signing key, so this
+    /// is unreachable.
     #[must_use]
     pub fn new(alpha: &ActionRandomizer<effect::Output>) -> Self {
         #[expect(clippy::expect_used, reason = "specified behavior")]
@@ -269,7 +281,7 @@ impl BindingSigningKey {
     }
 
     /// Derive the binding verification (public) key:
-    /// $\mathsf{bvk} = [\mathsf{bsk}]\,\mathcal{R}$.
+    /// $\mathsf{bvk} = [\mathsf{bsk}]\mathcal{R}$.
     #[must_use]
     pub fn derive_binding_public(&self) -> public::BindingVerificationKey {
         public::BindingVerificationKey(reddsa::VerificationKey::from(&self.0))

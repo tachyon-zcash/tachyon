@@ -63,9 +63,10 @@ mod sealed {
 
 /// Per-action randomizer $\alpha$, parameterized by effect state.
 ///
-/// - [`ActionRandomizer<Spend>`]: $\mathsf{rsk} = \mathsf{ask} + \alpha$,
-///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
-/// - [`ActionRandomizer<Output>`]: $\mathsf{rsk} = \alpha$.
+/// - [`ActionRandomizer<Spend>`]: Used to randomize $\mathsf{rsk} =
+///   \mathsf{ask} + \alpha$ or equivalent $\mathsf{rk} = \mathsf{ak} +
+///   [\alpha]\mathcal{G}$.
+/// - [`ActionRandomizer<Output>`]: Used directly as $\mathsf{rsk} = \alpha$.
 #[derive(Clone, Copy, Debug)]
 #[debug("ActionRandomizer<{}>", type_name::<S>())]
 pub struct ActionRandomizer<S: sealed::RandomizerState>(pub(crate) Fq, pub(crate) PhantomData<S>);
