@@ -66,4 +66,4 @@ pub use action::{Action, Plan as ActionPlan};
 pub use bundle::{Bundle, Plan as BundlePlan, TachyonBundle};
 pub use note::Note;
 pub use primitives::*;
-pub use stamp::{AggregateId, Stamp, Stripped, Unproven};
+pub use stamp::{PointerStamp, ProofStamp, Stripped, Unproven};

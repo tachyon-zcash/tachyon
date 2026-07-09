@@ -82,7 +82,7 @@ use crate::{
     note,
     primitives::{ActionDigest, ActionDigestError, Anchor, effect},
     reddsa, serialization,
-    stamp::{self, AggregateId, Stamp, Stripped, Unproven},
+    stamp::{self, PointerStamp, ProofStamp, Stripped, Unproven},
     value,
 };
 
@@ -90,20 +90,20 @@ use crate::{
 /// documentation for its role.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 #[repr(u8)]
-enum BundleState {
+enum BundleStateFlags {
     NoBundle = 0b0000_0000u8,
-    Stamped = 0b0000_0001u8,
-    Stripped = 0b0000_0010u8,
+    ProofStamped = 0b0000_0001u8,
+    PointerStamped = 0b0000_0010u8,
 }
 
-impl BundleState {
+impl BundleStateFlags {
     pub(super) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut byte = [0u8; 1];
         reader.read_exact(&mut byte)?;
         match u8::from_le_bytes(byte) {
             0b0000_0000u8 => Ok(Self::NoBundle),
-            0b0000_0001u8 => Ok(Self::Stamped),
-            0b0000_0010u8 => Ok(Self::Stripped),
+            0b0000_0001u8 => Ok(Self::ProofStamped),
+            0b0000_0010u8 => Ok(Self::PointerStamped),
             _other => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid bundle state",
@@ -114,8 +114,8 @@ impl BundleState {
     pub(super) fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
         let byte = u8::to_le_bytes(match self {
             Self::NoBundle => 0b0000_0000u8,
-            Self::Stamped => 0b0000_0001u8,
-            Self::Stripped => 0b0000_0010u8,
+            Self::ProofStamped => 0b0000_0001u8,
+            Self::PointerStamped => 0b0000_0010u8,
         });
         writer.write_all(&byte)
     }
@@ -124,9 +124,9 @@ impl BundleState {
 mod sealed {
     pub trait Sealed {}
     impl Sealed for super::Unproven {}
-    impl Sealed for super::Stamp {}
-    impl Sealed for super::AggregateId {}
+    impl Sealed for super::ProofStamp {}
     impl Sealed for super::Stripped {}
+    impl Sealed for super::PointerStamp {}
 }
 
 /// Sealed trait constraining stamp state types.
@@ -158,14 +158,14 @@ pub struct Bundle<S: StampState> {
 #[derive(Clone, Debug, From)]
 pub enum TachyonBundle {
     /// A bundle with its own stamp (autonome or aggregate).
-    Stamped(Bundle<Stamp>),
+    Stamped(Bundle<ProofStamp>),
     /// A bundle whose stamp has been stripped; carries a reference to the
     /// covering aggregate via its [`AggregateId`].
-    Adjunct(Bundle<AggregateId>),
+    Adjunct(Bundle<PointerStamp>),
 }
 
-impl TryFrom<TachyonBundle> for Bundle<Stamp> {
-    type Error = Bundle<AggregateId>;
+impl TryFrom<TachyonBundle> for Bundle<ProofStamp> {
+    type Error = Bundle<PointerStamp>;
 
     fn try_from(bundle: TachyonBundle) -> Result<Self, Self::Error> {
         match bundle {
@@ -175,8 +175,8 @@ impl TryFrom<TachyonBundle> for Bundle<Stamp> {
     }
 }
 
-impl TryFrom<TachyonBundle> for Bundle<AggregateId> {
-    type Error = Bundle<Stamp>;
+impl TryFrom<TachyonBundle> for Bundle<PointerStamp> {
+    type Error = Bundle<ProofStamp>;
 
     fn try_from(bundle: TachyonBundle) -> Result<Self, Self::Error> {
         match bundle {
@@ -463,7 +463,7 @@ impl Plan {
 impl Bundle<Unproven> {
     /// Attach a stamp, producing a `Bundle<Stamp>`.
     #[must_use]
-    pub fn stamp(self, stamp: Stamp) -> Bundle<Stamp> {
+    pub fn stamp(self, stamp: ProofStamp) -> Bundle<ProofStamp> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
@@ -482,7 +482,7 @@ impl Bundle<Stripped> {
     /// `wtxid` is an already-validated nonzero [`AggregateId`], so every
     /// stripped bundle (innocent or adjunct) names a covering aggregate.
     #[must_use]
-    pub fn assign_wtxid(self, wtxid: AggregateId) -> Bundle<AggregateId> {
+    pub fn assign_wtxid(self, wtxid: PointerStamp) -> Bundle<PointerStamp> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
@@ -492,7 +492,7 @@ impl Bundle<Stripped> {
     }
 }
 
-impl Bundle<Stamp> {
+impl Bundle<ProofStamp> {
     /// Strips the stamp, producing an unassigned bundle and the extracted
     /// stamp.
     ///
@@ -501,7 +501,7 @@ impl Bundle<Stamp> {
     /// before it can be serialized. The stamp should be merged into an
     /// aggregate.
     #[must_use]
-    pub fn strip(self) -> (Bundle<Stripped>, Stamp) {
+    pub fn strip(self) -> (Bundle<Stripped>, ProofStamp) {
         (
             Bundle {
                 actions: self.actions,
@@ -539,9 +539,9 @@ impl Bundle<Stamp> {
     /// Expects `tachyonBundleState == 0x01`. See the module-level wire format
     /// documentation.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let head = BundleState::read(&mut reader)?;
+        let head = BundleStateFlags::read(&mut reader)?;
 
-        if head != BundleState::Stamped {
+        if head != BundleStateFlags::ProofStamped {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "stamped bundle requires tachyonBundleState 0x01",
@@ -551,7 +551,7 @@ impl Bundle<Stamp> {
         let (actions, value_balance, binding_sig): (Vec<Action>, i64, Signature) =
             read_bundle_body(&mut reader)?;
 
-        let stamp = Stamp::read(&mut reader)?;
+        let stamp = ProofStamp::read(&mut reader)?;
 
         Ok(Self {
             actions,
@@ -563,7 +563,7 @@ impl Bundle<Stamp> {
 
     /// Write a stamped bundle in the consensus wire format.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        BundleState::Stamped.write(&mut writer)?;
+        BundleStateFlags::ProofStamped.write(&mut writer)?;
 
         write_bundle_body(
             &mut writer,
@@ -610,16 +610,16 @@ impl Bundle<Stamp> {
     }
 }
 
-impl Bundle<AggregateId> {
+impl Bundle<PointerStamp> {
     /// Read a stripped bundle from the consensus wire format.
     ///
     /// Expects `tachyonBundleState` 0x02. Always reads a nonzero 64-byte
     /// `stampWtxid` trailer; [`AggregateId::read`] rejects the all-zero
     /// encoding. See the module-level wire format documentation.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let head = BundleState::read(&mut reader)?;
+        let head = BundleStateFlags::read(&mut reader)?;
 
-        if head != BundleState::Stripped {
+        if head != BundleStateFlags::PointerStamped {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "stripped bundle requires tachyonBundleState 0x02",
@@ -628,7 +628,7 @@ impl Bundle<AggregateId> {
 
         let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
 
-        let stamp = AggregateId::read(&mut reader)?;
+        let stamp = PointerStamp::read(&mut reader)?;
 
         Ok(Self {
             actions,
@@ -648,7 +648,7 @@ impl Bundle<AggregateId> {
     /// locating it via tachygram matching against the original autonome
     /// broadcast.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        BundleState::Stripped.write(&mut writer)?;
+        BundleStateFlags::PointerStamped.write(&mut writer)?;
 
         write_bundle_body(
             &mut writer,
@@ -681,22 +681,22 @@ impl TachyonBundle {
     /// layer) and any other byte.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Option<Self>> {
         // TODO: just peek at state, then delegate to the appropriate read method
-        let state = BundleState::read(&mut reader)?;
+        let state = BundleStateFlags::read(&mut reader)?;
 
         Ok(match state {
-            BundleState::NoBundle => None,
-            BundleState::Stamped => {
+            BundleStateFlags::NoBundle => None,
+            BundleStateFlags::ProofStamped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
                 Some(Self::Stamped(Bundle {
                     actions,
                     value_balance,
                     binding_sig,
-                    stamp: Stamp::read(&mut reader)?,
+                    stamp: ProofStamp::read(&mut reader)?,
                 }))
             },
-            BundleState::Stripped => {
+            BundleStateFlags::PointerStamped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
-                let stamp = AggregateId::read(&mut reader)?;
+                let stamp = PointerStamp::read(&mut reader)?;
 
                 Some(Self::Adjunct(Bundle {
                     actions,

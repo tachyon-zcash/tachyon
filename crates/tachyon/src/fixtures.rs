@@ -36,7 +36,7 @@ use crate::{
         TachygramSetPoly, effect,
     },
     stamp::{
-        Stamp,
+        ProofStamp,
         proof::{PROOF_SYSTEM, delegation, pool, spendable},
     },
     value, witness,
@@ -108,9 +108,9 @@ pub fn build_output_stamp(
     rng: &mut (impl RngCore + CryptoRng),
     anchor: Anchor,
     note: Note,
-) -> (Stamp, action::Plan<effect::Output>) {
+) -> (ProofStamp, action::Plan<effect::Output>) {
     let (rcv, alpha, plan) = build_output_plan(rng, note);
-    let stamp = Stamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
+    let stamp = ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
     (stamp, plan)
 }
 
@@ -119,7 +119,7 @@ pub fn build_autonome(
     wallet: &WalletSim,
     spend_value: u64,
     output_value: u64,
-) -> Bundle<Stamp> {
+) -> Bundle<ProofStamp> {
     let spend_note = wallet.random_note(spend_value);
     let output_note = wallet.random_note(output_value);
     let mut pool = PoolSim::genesis(rng);
@@ -992,7 +992,7 @@ impl WalletSim {
         anchor: Anchor,
         spends: Vec<(Note, Pcd<spendable::SpendableHeader>, EpochIndex)>,
         output_notes: Vec<Note>,
-    ) -> Bundle<Stamp> {
+    ) -> Bundle<ProofStamp> {
         let ask = self.sk.derive_auth_private();
 
         let mut spend_plans = Vec::with_capacity(spends.len());

@@ -63,9 +63,9 @@ pub struct Stripped;
 /// adjunct, names a covering transaction, so the all-zero wtxid (which refers
 /// to no aggregate) is rejected at every construction site.
 #[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
-pub struct AggregateId([u8; 64]);
+pub struct PointerStamp([u8; 64]);
 
-impl AggregateId {
+impl PointerStamp {
     /// Read an aggregate id from the consensus wire format.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut wtxid = [0u8; 64];
@@ -99,7 +99,7 @@ pub enum AggregateIdError {
     Zero,
 }
 
-impl TryFrom<[u8; 64]> for AggregateId {
+impl TryFrom<[u8; 64]> for PointerStamp {
     type Error = AggregateIdError;
 
     fn try_from(wtxid: [u8; 64]) -> Result<Self, Self::Error> {
@@ -206,11 +206,11 @@ impl Plan {
             [Nullifier; 2],
             ragu::Pcd<spendable::SpendableHeader>,
         )>,
-    ) -> Result<Stamp, ProveError> {
+    ) -> Result<ProofStamp, ProveError> {
         // Each entry is (stamp, action_digests). The digest list is ephemeral —
         // needed to reconstruct the PCD header's action multiset during merge,
         // never stored.
-        let mut entries: Vec<(Stamp, Vec<ActionDigest>)> = Vec::new();
+        let mut entries: Vec<(ProofStamp, Vec<ActionDigest>)> = Vec::new();
 
         if self.spends.len() != spend_pcds.len() {
             return Err(ProveError::SpendableMismatch);
@@ -235,7 +235,7 @@ impl Plan {
 
             // SpendStamp: bind the live pair to the derived range and publish.
             let tachygrams = vec![Tachygram::from(nf_now), Tachygram::from(nf_next)];
-            let stamp = Stamp::prove_spend(rng, bind_pcd, range_pcd, nf_next, tachygrams)
+            let stamp = ProofStamp::prove_spend(rng, bind_pcd, range_pcd, nf_next, tachygrams)
                 .map_err(ProveError::ProofFailed)?;
 
             entries.push((stamp, vec![action_digest]));
@@ -244,7 +244,7 @@ impl Plan {
         for ((cv, rk), (alpha, note, rcv)) in self.outputs {
             let action_digest = ActionDigest::new(cv, rk).map_err(ProveError::ActionDigest)?;
 
-            let stamp = Stamp::prove_output(rng, rcv, alpha, note, self.anchor)
+            let stamp = ProofStamp::prove_output(rng, rcv, alpha, note, self.anchor)
                 .map_err(ProveError::ProofFailed)?;
 
             entries.push((stamp, vec![action_digest]));
@@ -257,7 +257,7 @@ impl Plan {
                 let (left, left_digests) = acc?;
                 let (right, right_digests) = next?;
                 let merged =
-                    Stamp::prove_merge(rng, (left, &left_digests), (right, &right_digests))
+                    ProofStamp::prove_merge(rng, (left, &left_digests), (right, &right_digests))
                         .map_err(ProveError::MergeFailed)?;
                 let mut merged_digests = left_digests;
                 merged_digests.extend_from_slice(&right_digests);
@@ -296,7 +296,7 @@ pub enum ProveError {
 /// here.  The action set is present only as reference. A verifier must
 /// reconstruct the header from public data.
 #[derive(Clone, Debug)]
-pub struct Stamp {
+pub struct ProofStamp {
     /// Merged action-digest set commitment for this proof.
     pub action_set: ActionSetCommit,
 
@@ -311,7 +311,7 @@ pub struct Stamp {
     pub proof: Box<ragu::Proof>,
 }
 
-impl Stamp {
+impl ProofStamp {
     /// Creates a stamp for a single output action.
     ///
     /// The output tachygram (note commitment) is derived inside the circuit

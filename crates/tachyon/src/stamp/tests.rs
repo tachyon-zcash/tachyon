@@ -46,7 +46,7 @@ fn merge_stamp_iff_matching_anchors() {
         let note_b = user_b.random_note(300);
         let (stamp_b, plan_b) = build_output_stamp(rng, anchor_b, note_b);
 
-        let result = Stamp::prove_merge(
+        let result = ProofStamp::prove_merge(
             rng,
             (stamp_a, &[plan_a.digest().expect("valid plan")]),
             (stamp_b, &[plan_b.digest().expect("valid plan")]),
@@ -191,8 +191,8 @@ fn prove_merge_populates_action_set() {
     ];
     let expected = ActionSetPoly::from_iter(digests).commit();
 
-    let merged =
-        Stamp::prove_merge(rng, (stamp_a, &[digests[0]]), (stamp_b, &[digests[1]])).expect("merge");
+    let merged = ProofStamp::prove_merge(rng, (stamp_a, &[digests[0]]), (stamp_b, &[digests[1]]))
+        .expect("merge");
     assert_eq!(merged.action_set, expected);
 }
 
@@ -207,7 +207,7 @@ fn stamp_action_set_round_trip() {
 
     let mut buf = Vec::new();
     stamp.write(&mut buf).expect("write");
-    let decoded = Stamp::read(&*buf).expect("read");
+    let decoded = ProofStamp::read(&*buf).expect("read");
 
     assert_eq!(decoded.action_set, stamp.action_set);
     assert_eq!(decoded.anchor, stamp.anchor);
