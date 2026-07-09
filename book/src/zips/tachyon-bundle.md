@@ -31,8 +31,8 @@ This ZIP is the Tachyon analogue of [ZIP 225](https://zips.z.cash/zip-0225): the
 format of the bundle that goes on-chain.[^bundle] Its organizing principle is the
 effecting/authorizing split, carried down to the wire layout: the bundle body holds the
 bundle's contribution to the transaction's logical identity (actions and value balance)
-together with the signatures over it, and a state-dependent trailer holds the part that
-aggregation replaces (the stamp, or the reference to a covering aggregate).[^txid]
+together with the signatures over it, and a state-dependent stamp holds the part that
+aggregation replaces (a proof, or a pointer to a covering aggregate).[^txid]
 
 This draft adds the bundle to the existing transaction format as a new section, in the
 manner of ZIP 225's shielded fields. It does not build on the extensible
@@ -41,8 +41,9 @@ transaction-format proposal
 
 The [Tachyon Aggregator Protocol (#106)](https://github.com/tachyon-zcash/tachyon/issues/106)
 builds on this ZIP: it defines the aggregation lifecycle, the mempool and relay policy,
-and the autonome, aggregate, and adjunct transaction roles. The draft body below speaks
-of the covering transaction without naming those roles.
+and the autonome, aggregate, and adjunct transaction roles. This ZIP defines the
+proof and pointer stamp forms and the adjunct bundle those roles build on; the draft
+body below otherwise speaks of the covering transaction without naming the roles.
 
 [^bundle]: See [Bundle](../bundle.md) for the bundle lifecycle and state machine.
 
@@ -63,18 +64,18 @@ Open questions:
   draft names it symbolically as `PROOF_SIZE`. A variable-size final compression
   (bulletproof-style) would replace the constant-length field with a dynamic one; whether
   the proof system settles on a fixed size is unresolved.
-- **Stripped zero-action coverage confirmation.** Block validity confirms a stripped
-  bundle's reference through its action digests, so a stripped bundle with no actions
+- **Zero-action coverage confirmation.** Block validity confirms an adjunct
+  bundle's reference through its action digests, so an adjunct bundle with no actions
   names a covering aggregate that consensus does not confirm. Two candidate rules:
   
-  1. Validators holding mempool data locate a stamped form matching the stripped
+  1. Validators holding mempool data locate a proof-stamped form matching the adjunct
   bundle's `txid`, identify its tachygram set, and confirm that set folded into
-  the referenced aggregate. Multiple stamped candidates may exist. Requires no
+  the referenced aggregate. Multiple proof-stamped candidates may exist. Requires no
   changes to bundle format. Significantly, this check depends on ephemeral
   mempool state.
   2. A field is added to the bundle identifying the bundle's tachygram set at
   creation. The field contributes to `txid` and the sighash. A validator must
-  confirm that a stripped bundle's tachygram set MUST be a complete subset of
+  confirm that an adjunct bundle's tachygram set MUST be a complete subset of
   the referenced aggregate's stamp. The body field survives stripping and does
   not depend on mempool state. Significantly, this extends the definition of
   effecting data beyond actions and balance.
@@ -156,11 +157,12 @@ non-normatively:
 The remaining terms are defined by this ZIP:
 
 - **Bundle.** The Tachyon section of a transaction: actions, a value balance, action
-  signatures, a binding signature, and a state-dependent trailer.
-- **Covering transaction.** The stamped transaction whose stamp covers a stripped
-  bundle's actions, named by the stripped bundle's `tachyonAggregateId`.
+  signatures, a binding signature, and a state-dependent stamp.
+- **Covering transaction.** The proof-stamped transaction whose stamp covers a
+  pointer-stamped transaction's actions, named by the pointer-stamped bundle's
+  `tachyonAggregateId`.
 - **Bundle state.** The three-valued wire discriminator `tachyonBundleState`
-  selecting no bundle, a stamped bundle, or a stripped bundle.
+  selecting no bundle, a proof stamp, or a pointer stamp.
 - **Action.** The triple $(\mathsf{cv}, \mathsf{rk}, \mathsf{sig})$: a value
   commitment, a randomized verification key, and a signature over the transaction
   sighash. An action effects a spend or an output; both forms share this encoding,
@@ -169,22 +171,24 @@ The remaining terms are defined by this ZIP:
   pair.
 - **Action-set commitment.** The deterministic polynomial commitment to a multiset of
   action digests.
-- **Stamp.** The trailer of a stamped bundle: an action-set commitment over the
-  covered actions, an anchor, a tachygram list, and a Ragu proof. The proof attests
-  that every covered action satisfies the Tachyon action rules.
-- **Stripped bundle.** A bundle whose stamp is replaced by `tachyonAggregateId`, the
-  `wtxid` of a covering transaction.
+- **Stamp.** The final section of a bundle, following the body: either a proof stamp
+  or a pointer stamp.
+- **Proof stamp.** A stamp carrying a Ragu proof and supporting verification
+  data: a commitment to the covered actions, an anchor, and the stamp's
+  tachygrams. The proof attests that every covered action satisfies the Tachyon
+  action rules.
+- **Pointer stamp.** A stamp carrying `tachyonAggregateId`, the `wtxid` of a covering
+  transaction, in place of a proof.
 
 ## Abstract
 
 This ZIP specifies the consensus wire format of the Tachyon bundle: a three-state
 discriminator byte, a bundle body carrying actions, a value balance, and signatures,
-and a trailer carrying either a stamp (the proof and the public data needed to verify
-it) or a reference to a covering transaction. It defines the canonical field
+and a stamp carrying either a proof (with the public data needed to verify it) or a
+pointer to a covering transaction. It defines the canonical field
 encodings, the action digest and set commitments cited by the other Tachyon ZIPs,
 the bundle's transaction-digest inputs, the consensus rules scoped to a single
-bundle, and the block-scoped rules that validate stamped and stripped bundles
-together. It plays the role for the Tachyon pool that
+bundle, and the block-scoped rules that validate a block's bundles together. It plays the role for the Tachyon pool that
 [ZIP 225](https://zips.z.cash/zip-0225) plays for the v5 transaction.
 
 ## Motivation
@@ -195,25 +199,25 @@ format must therefore allow a stamp to be removed without changing the transacti
 identity and without invalidating any signature. This forces the effecting/authorizing
 split down into the wire layout: the bundle's contribution to the signed data is
 confined to the body and is identical across bundle states, while the strippable part
-is isolated in the trailer.
+is isolated in the stamp.
 
-A single format serves every transaction role: one stamped form whether the stamp
-covers only the bundle's own actions or other transactions' as well, and a covered
-transaction is the same body under a stripped trailer. Every consensus check on a
-stripped bundle operates on data the stripped form still carries.
+A single format serves every transaction role: one proof-stamped form whether
+the proof covers only the bundle's own actions or other transactions' as well,
+and a covered transaction is the same body under a pointer stamp. Every
+consensus check on a pointer-stamped transaction operates on data it still
+carries.
 
 ## Requirements
 
 - A transaction's `txid` contribution is invariant across stamping, merging,
   stripping, and re-stamping.
-- Stamped and stripped forms carry identical effecting data; only the trailer
-  differs.
+- Proof-stamped and pointer-stamped forms carry identical effecting data; only the
+  stamp differs.
 - Every field a validator needs for signature and balance verification is present in
   both states.
 - Encodings are canonical: each parsed bundle has exactly one serialization.
 - The proof field has a fixed size, so parsing requires no untrusted length.
-- Bundles with no actions are representable, in both the stamped and stripped
-  forms.
+- Bundles with no actions are representable, under both stamp forms.
 
 ## Non-requirements
 
@@ -235,7 +239,7 @@ This ZIP does not specify:
 
 The specification proceeds from the wire layout of the bundle body to the rules over
 its fields, the digest and commitment constructions those rules use, the two
-trailers, the canonical encodings of every field, the bundle's transaction-digest
+stamp forms, the canonical encodings of every field, the bundle's transaction-digest
 inputs, a consolidated summary of the bundle-scoped consensus rules, and the
 block-scoped rules that validate a block's bundles together.
 
@@ -248,8 +252,8 @@ selects the bundle state:
 | value         | state       | bundle contents                       |
 | ------------- | ----------- | ------------------------------------- |
 | `0b0000_0000` | non-tachyon | no bundle                             |
-| `0b0000_0001` | stamped     | bundle with action-set commitment, anchor, tachygrams, proof |
-| `0b0000_0010` | stripped    | bundle with covering transaction's wtxid |
+| `0b0000_0001` | proof stamp | bundle with action-set commitment, anchor, tachygrams, proof |
+| `0b0000_0010` | pointer stamp | bundle with covering transaction's wtxid |
 | `...`         | *reserved*  | *n/a*                                 |
 
 A parser MUST reject any other value of `tachyonBundleState`.
@@ -260,10 +264,10 @@ When `tachyonBundleState` is `0x00`, the section contains no further fields:
 | ----- | -------------------- | --------- | ----------- |
 | 1     | `tachyonBundleState` | `uint8`   | `0x00`      |
 
-The bundle lifecycle also passes through states with no wire representation: a bundle
-awaiting its proof, and a stripped bundle whose covering transaction is not yet
-assigned. Only the stamped and stripped states serialize; the lifecycle itself is not
-specified by this ZIP.
+The bundle lifecycle also passes through states with no wire representation: a
+bundle awaiting its proof, and a pointer-stamped transaction whose covering
+transaction is not yet assigned. Only the proof-stamp and pointer-stamp states
+serialize; the lifecycle itself is not specified by this ZIP.
 
 ### Bundle body
 
@@ -271,7 +275,7 @@ When `tachyonBundleState` is not `0x00`, the body follows immediately:
 
 | Bytes                | Name                  | Data Type                        | Description                             |
 | -------------------- | --------------------- | -------------------------------- | --------------------------------------- |
-| 1                    | `tachyonBundleState`  | `uint8`                          | `0x01` (stamped) or `0x02` (stripped)   |
+| 1                    | `tachyonBundleState`  | `uint8`                          | `0x01` (proof stamp) or `0x02` (pointer stamp) |
 | 8                    | `valueBalanceTachyon` | `int64`                          | The net value of Tachyon spends minus outputs |
 | varies               | `nActionsTachyon`     | `compactSize`                    | The number of Tachyon actions           |
 | 64 * nActionsTachyon | `vActionsTachyon`     | `TachyonAction[nActionsTachyon]` | A sequence of action descriptors, each (`cv`: 32 bytes, `rk`: 32 bytes) |
@@ -354,16 +358,16 @@ polynomial-commitment generators fixed by the Ragu proof system. The coefficient
 ordered by ascending degree: the constant term pairs with the first generator, the
 degree-$k$ coefficient with the $k$-th. A polynomial is invariant under permutation of
 its roots, so the commitment depends only on the multiset, not on any ordering. The
-empty multiset commits to the constant polynomial $1$.
+empty multiset has no commitment.
 
 The action-set commitment over a set of actions is the commitment of $A$ formed from
 their digests; the tachygram-set commitment of $T$ is formed likewise. Both are
 deterministic functions of the public actions and tachygrams they commit to, and
 carry no information beyond them.
 
-### Stamp trailer
+### Proof stamp
 
-When `tachyonBundleState` is `0x01`, the stamp trailer follows the body:
+When `tachyonBundleState` is `0x01`, the proof stamp follows the body:
 
 | Bytes            | Name              | Data Type               | Description                                    |
 | ---------------- | ----------------- | ----------------------- | ---------------------------------------------- |
@@ -388,7 +392,7 @@ tachygrams an action contributes is specified by the
 [Tachyon Shielded Protocol](tachyon-shielded-protocol.md) ZIP; this ZIP imposes no
 relation between `nTachygrams` and `nActionsTachyon`, and a stamp covering actions
 that are not the bundle's own carries their tachygrams too. The tachygrams within one
-stamped bundle MUST be distinct; a transaction violating this rule is invalid.
+proof stamp MUST be distinct; a transaction violating this rule is invalid.
 Block-level distinctness is a block-validity rule of this ZIP
 ([Block validity](#block-validity)); epoch-window distinctness is specified by the
 [Tachyon Accumulator / Hash Chain](tachyon-accumulator.md#epoch-window) ZIP.
@@ -399,18 +403,18 @@ a stamp proof MUST verify against the Tachyon statement, are specified by the
 that rule is applied to a block's stamps is specified in
 [Block validity](#block-validity).
 
-### Stripped trailer
+### Pointer stamp
 
-When `tachyonBundleState` is `0x02`, the stripped trailer follows the body:
+When `tachyonBundleState` is `0x02`, the pointer stamp follows the body:
 
 | Bytes | Name                 | Data Type  | Description                     |
 | ----- | -------------------- | ---------- | ------------------------------- |
 | 64    | `tachyonAggregateId` | `byte[64]` | wtxid of a covering transaction |
 
-`tachyonAggregateId` is the `wtxid` ([ZIP 239](https://zips.z.cash/zip-0239)) of a
-covering transaction. It MUST NOT be all zero; the rule applies to every stripped
-bundle, with or without actions. Which transaction it must identify within a block
-is specified in [Block validity](#block-validity).
+`tachyonAggregateId` is the `wtxid` ([ZIP 239](https://zips.z.cash/zip-0239)) of
+a covering transaction. It MUST NOT be all zero; the rule applies to every
+pointer-stamped transaction, with or without actions. Which transaction it must
+identify within a block is specified in [Block validity](#block-validity).
 
 ### Canonical encodings
 
@@ -449,13 +453,13 @@ actions than the bundle's own. The stamp is excluded, so the contribution is
 invariant across stamping, merging, stripping, and re-stamping.
 
 The authorizing contribution (to `auth_digest`) commits to the action and binding
-signatures and to the trailer's field encodings: the stamp fields when stamped, the
-`tachyonAggregateId` when stripped.
+signatures and to the stamp's field encodings: the proof stamp's fields, or the
+pointer stamp's `tachyonAggregateId`.
 
-A transaction with no Tachyon bundle contributes distinctly from a bundle with no
-actions: no bundle produces the empty preimage, since a stripped bundle's preimage
-contains at least its binding signature and trailer, and a zero-action, zero-balance
-bundle contributes its encoded empty-set commitment and balance.
+A transaction with no Tachyon bundle contributes distinctly from a bundle with
+no actions: no bundle produces the empty preimage, since a pointer-stamped
+bundle's preimage contains at least its binding signature and pointer stamp, and
+every bundle's effecting contribution contains its encoded balance.
 
 ### Bundle validity
 
@@ -473,9 +477,9 @@ The rules owned by this ZIP, applying to a single transaction's bundle:
 7. `valueBalanceTachyon` MUST be in the range $-\mathrm{MAX\_MONEY}$ to
    $\mathrm{MAX\_MONEY}$ inclusive.
 8. A bundle with no actions MUST have `valueBalanceTachyon` equal to $0$.
-9. A stamped bundle's `proofTachyon` MUST be exactly `PROOF_SIZE` bytes and a valid
+9. A proof stamp's `proofTachyon` MUST be exactly `PROOF_SIZE` bytes and a valid
    proof encoding, and its tachygrams MUST be distinct.
-10. A stripped bundle's `tachyonAggregateId` MUST NOT be all zero.
+10. An pointer stamp's `tachyonAggregateId` MUST NOT be all zero.
 
 Rules outside the scope of this ZIP are enumerated in
 [Non-requirements](#non-requirements).
@@ -485,32 +489,33 @@ Rules outside the scope of this ZIP are enumerated in
 The rules owned by this ZIP that constrain a block's Tachyon bundles together:
 
 - All tachygrams in a block MUST be distinct.
-- Every stripped Tachyon transaction MUST bear a `tachyonAggregateId` referring to
-  the stamped transaction in the same block covering its actions.
-- Every stamped Tachyon transaction MUST bear a `cActionsTachyon` opening to the
+- Every pointer-stamped transaction MUST bear a `tachyonAggregateId` referring
+  to the proof-stamped transaction in the same block covering its actions.
+- Every proof-stamped Tachyon transaction MUST bear a `cActionsTachyon` opening to the
   complete set of actions of its covered transactions in the same block.
 - All proofs in a block MUST verify.
 
 A validator enforces these fail-fast, in this order:
 
 1. **Tachygram uniqueness.** The block's tachygrams are the multiset union of the
-   `vTachygrams` of every stamp. A single scan enforces this rule and the per-bundle
+   `vTachygrams` of every proof stamp. A single scan enforces this rule and the per-bundle
    distinctness of [Bundle validity](#bundle-validity) rule 9 together; reject on any
    duplicate. Reuse within the wider epoch window
    is governed by the epoch-window rule
    ([Tachyon Accumulator / Hash Chain](tachyon-accumulator.md#epoch-window)).
-2. **Adjunct association.** The `tachyonAggregateId` of every stripped bundle MUST
-   identify a stamped transaction in the same block; reject if absent or unstamped. A
-   stripped bundle with no actions satisfies this check against any stamped
-   transaction in the block: it contributes no action digests to step 3, so consensus
-   attaches no further meaning to its reference.
-3. **Action set commitment per stamp.** For each stamped bundle, reconstruct
+2. **Proof coverage.** The `tachyonAggregateId` of every pointer-stamped
+   transaction MUST identify a proof-stamped transaction in the same block; reject
+   if absent or not proof-stamped. A pointer-stamped transaction with no actions
+   satisfies this check against any proof-stamped transaction in the block: it
+   contributes no action digests to step 3, so consensus attaches no further
+   meaning to its reference.
+3. **Action set commitment per stamp.** For each proof stamp, reconstruct
    `cActionsTachyon` from the bundle's own actions together with the actions of every
-   stripped bundle naming it, form the root polynomial $\prod_i (X - d_i)$ over their
+   pointer-stamped transaction naming it, form the root polynomial $\prod_i (X - d_i)$ over their
    action digests, and take its single Pedersen commitment
    ([Set commitments](#set-commitments)); reject on mismatch.
-4. **Stamp proof verification.** Every stamped bundle's proof MUST verify. The
-   validator reassembles the stamp PCD from the stamp proof, `anchorTachyon`, a
+4. **Proof verification.** Every proof stamp MUST verify. The
+   validator reassembles the stamp PCD from `proofTachyon`, `anchorTachyon`, a
    Pedersen commitment to `vTachygrams`, and the confirmed `cActionsTachyon`; reject
    if any proof fails. The base requirement that a proof verifies the Tachyon
    statement is the shielded-protocol rule
@@ -522,8 +527,8 @@ A validator enforces these fail-fast, in this order:
 **The stamp is excluded from the txid contribution.** The effecting contribution
 commits only to actions and balance, so stamping, merging, stripping, and
 re-stamping preserve a transaction's logical identity. This is the property the
-aggregation lifecycle rests on: a stripped bundle in a block is the same transaction
-its author signed.
+aggregation lifecycle rests on: a pointer-stamped transaction in a block is the
+same transaction its author signed.
 
 **Two vectors, one count.** Descriptors (effecting) are separated from signatures
 (authorizing), matching the digest split and ZIP 225's layout, while the shared
@@ -565,13 +570,14 @@ a commitment from the data it covers.
 action or a block's worth. A constant-size field needs no untrusted length prefix,
 and a stamp size independent of coverage underlies aggregation's space savings.
 
-**`wtxid`, not `txid`, in `tachyonAggregateId`.** A `txid` is ambiguous across the
-authorization forms that share it; the `wtxid` pins the physical covering
-transaction, stamp included, which is what the stripped bundle needs to reference.
+**`wtxid`, not `txid`, in `tachyonAggregateId`.** A `txid` is ambiguous across
+the authorization forms that share it; the `wtxid` pins the physical covering
+transaction, stamp included, which is what the pointer-stamped transaction needs
+to reference.
 
-**Nonzero `tachyonAggregateId`.** Every stripped bundle names a covering
-transaction, and the unassigned stripped state has no wire form, so no sentinel
-value is needed and the all-zero `wtxid` (which names no transaction) is invalid.
+**Nonzero `tachyonAggregateId`.** Every pointer-stamped bundle names a covering
+transaction, and the unassigned pointer state has no valid wire form. An
+all-zero `wtxid` (which names no transaction) is invalid.
 
 ## Security and Privacy Implications
 
@@ -592,10 +598,11 @@ transaction-layer rule.
 inconsistent with the public data.
 
 **Signatures survive stripping.** All signatures cover the transaction sighash,
-which incorporates only effecting data. A miner stripping a stamp changes no signed
-data, so aggregation does not invalidate signatures. A signature authorizes only
-the sighash it signs; using an action in a transaction with different effecting
-data requires a new signature over that transaction's sighash.
+which incorporates only effecting data. A miner stripping a proof stamp changes
+no signed data, so aggregation does not invalidate signatures. A signature
+authorizes only the sighash it signs; using an action in a transaction with
+different effecting data requires a new signature over that transaction's
+sighash.
 
 **Absent bundles are distinct from empty bundles.** A transaction with no Tachyon
 section and a transaction with a zero-action, zero-balance bundle produce distinct
@@ -606,10 +613,10 @@ algorithms are specified by
 
 **Public data.** $\mathsf{cv}$ is a hiding commitment to the action's value. The
 unlinkability properties of $\mathsf{rk}$, and of tachygrams (which do not
-distinguish nullifiers from note commitments), are established by the
-[Tachyon Shielded Protocol](tachyon-shielded-protocol.md) ZIP, not by this format.
-The action count, the value balance, and, on a stamped bundle, the tachygram count
-are public, as is anything derivable from them.
+distinguish nullifiers from note commitments), are established by the [Tachyon
+Shielded Protocol](tachyon-shielded-protocol.md) ZIP, not by this format.  The
+action count, the value balance, and, on a proof-stamped bundle, the tachygram
+count are public, as is anything derivable from them.
 
 **Parse validity is not spend validity.** A bundle that parses and whose signatures
 verify is not thereby valid to spend; the rules enumerated in
