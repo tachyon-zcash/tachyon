@@ -63,7 +63,7 @@ mod serialization;
 pub(crate) mod fixtures;
 
 pub use action::{Action, Plan as ActionPlan};
-pub use bundle::{Bundle, Plan as BundlePlan, TachyonBundle};
+pub use bundle::{Bundle, Plan as BundlePlan, StampedBundle};
 pub use note::Note;
 pub use primitives::*;
 pub use stamp::{PointerStamp, ProofStamp, Unproven};

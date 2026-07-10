@@ -147,6 +147,12 @@ pub trait StampState: BundleState {
     /// `hActionsTachyon || stamp_data_digest`, or a pointer stamp's
     /// `wtxid = txid || auth_digest`.
     fn stamp_digest(&self) -> [u8; 64];
+
+    // fn state_flags(&self) -> BundleStateFlags;
+
+    // fn read<R: Read>(mut reader: R) -> io::Result<Self>;
+
+    // fn write<W: Write>(&self, mut writer: W) -> io::Result<()>;
 }
 
 impl StampState for PointerStamp {
@@ -203,7 +209,7 @@ pub struct Bundle<S: BundleState + ?Sized> {
 /// enum because it has no wire representation.
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
 #[derive(Clone, Debug, From)]
-pub enum TachyonBundle {
+pub enum StampedBundle {
     /// A bundle with its own stamp (autonome or aggregate).
     Stamped(Bundle<ProofStamp>),
     /// A bundle whose stamp has been stripped; carries a reference to the
@@ -211,24 +217,24 @@ pub enum TachyonBundle {
     Adjunct(Bundle<PointerStamp>),
 }
 
-impl TryFrom<TachyonBundle> for Bundle<ProofStamp> {
+impl TryFrom<StampedBundle> for Bundle<ProofStamp> {
     type Error = Bundle<PointerStamp>;
 
-    fn try_from(bundle: TachyonBundle) -> Result<Self, Self::Error> {
+    fn try_from(bundle: StampedBundle) -> Result<Self, Self::Error> {
         match bundle {
-            TachyonBundle::Adjunct(stripped) => Err(stripped),
-            TachyonBundle::Stamped(stamped) => Ok(stamped),
+            StampedBundle::Adjunct(stripped) => Err(stripped),
+            StampedBundle::Stamped(stamped) => Ok(stamped),
         }
     }
 }
 
-impl TryFrom<TachyonBundle> for Bundle<PointerStamp> {
+impl TryFrom<StampedBundle> for Bundle<PointerStamp> {
     type Error = Bundle<ProofStamp>;
 
-    fn try_from(bundle: TachyonBundle) -> Result<Self, Self::Error> {
+    fn try_from(bundle: StampedBundle) -> Result<Self, Self::Error> {
         match bundle {
-            TachyonBundle::Adjunct(stripped) => Ok(stripped),
-            TachyonBundle::Stamped(stamped) => Err(stamped),
+            StampedBundle::Adjunct(stripped) => Ok(stripped),
+            StampedBundle::Stamped(stamped) => Err(stamped),
         }
     }
 }
@@ -671,7 +677,7 @@ impl Bundle<PointerStamp> {
     }
 }
 
-impl TachyonBundle {
+impl StampedBundle {
     /// Read any Tachyon bundle from the consensus wire format, dispatching
     /// on the `tachyonBundleState` byte.
     ///
