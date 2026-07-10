@@ -275,7 +275,7 @@ mod tests {
     /// `stamp_actions_digest` requires pre-sorted descriptors.
     #[cfg(debug_assertions)]
     #[test]
-    #[should_panic(expected = "descriptors must be pre-sorted")]
+    #[should_panic(expected = "descriptors should be pre-sorted")]
     fn stamp_actions_digest_rejects_unsorted() {
         let (desc_a, desc_b) = ([0xAAu8; 64], [0xBBu8; 64]);
         action_descriptor_digest(&[desc_b, desc_a]);
@@ -284,7 +284,7 @@ mod tests {
     /// `stamp_data_digest` requires pre-sorted tachygrams.
     #[cfg(debug_assertions)]
     #[test]
-    #[should_panic(expected = "tachygrams must be pre-sorted")]
+    #[should_panic(expected = "tachygrams should be pre-sorted")]
     fn stamp_data_digest_rejects_unsorted() {
         let (tg_a, tg_b) = ([0xCCu8; 32], [0xDDu8; 32]);
         stamp_data_digest(stamp_proof_digest(&[]), [0u8; 32], &[tg_b, tg_a]);
