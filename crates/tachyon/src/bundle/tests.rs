@@ -2,6 +2,7 @@
 
 use alloc::{string::ToString as _, vec, vec::Vec};
 
+use pasta_curves::Fp;
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
@@ -447,7 +448,7 @@ fn tachyon_bundle_conversions() {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::new(shared_sk());
         let original = build_autonome(rng, &wallet, 1000, 700);
-        let erased: StampedBundle = original.clone().into();
+        let erased: TachyonBundle = original.clone().into();
         let back = Bundle::<ProofStamp>::try_from(erased).expect("stamped variant");
 
         assert_eq!(original.actions, back.actions);
@@ -464,7 +465,7 @@ fn tachyon_bundle_conversions() {
         let wtxid = mock_wtxid(&covering);
         let stripped = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
 
-        let erased: StampedBundle = stripped.clone().into();
+        let erased: TachyonBundle = stripped.clone().into();
         let back = Bundle::<PointerStamp>::try_from(erased).expect("stripped variant");
 
         assert_eq!(stripped, back);
@@ -478,10 +479,10 @@ fn tachyon_bundle_conversions() {
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
 
-        let stamped_erased: StampedBundle = stamped.into();
+        let stamped_erased: TachyonBundle = stamped.into();
         Bundle::<PointerStamp>::try_from(stamped_erased).expect_err("stamped is not an adjunct");
 
-        let adjunct_erased: StampedBundle = adjunct.into();
+        let adjunct_erased: TachyonBundle = adjunct.into();
         Bundle::<ProofStamp>::try_from(adjunct_erased).expect_err("adjunct is not stamped");
     }
 }
@@ -494,12 +495,10 @@ fn tachyon_bundle_wire_round_trip() {
     // Stamped variant (0x01).
     {
         let stamped = build_autonome(rng, &wallet, 1000, 700);
-        let erased: StampedBundle = stamped.clone().into();
+        let erased: TachyonBundle = stamped.clone().into();
         let mut buf = Vec::new();
         erased.write(&mut buf).expect("write");
-        let decoded = StampedBundle::read(&*buf)
-            .expect("read")
-            .expect("some bundle");
+        let decoded = TachyonBundle::read(&*buf).expect("read");
         let back = Bundle::<ProofStamp>::try_from(decoded).expect("stamped variant");
 
         // Stamp carries a proof and is not PartialEq, so compare fields.
@@ -513,12 +512,10 @@ fn tachyon_bundle_wire_round_trip() {
     {
         let covering = build_autonome(rng, &wallet, 500, 300);
         let stripped = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&covering));
-        let erased: StampedBundle = stripped.clone().into();
+        let erased: TachyonBundle = stripped.clone().into();
         let mut buf = Vec::new();
         erased.write(&mut buf).expect("write");
-        let decoded = StampedBundle::read(&*buf)
-            .expect("read")
-            .expect("some bundle");
+        let decoded = TachyonBundle::read(&*buf).expect("read");
         let back = Bundle::<PointerStamp>::try_from(decoded).expect("stripped variant");
 
         assert_eq!(stripped, back);
@@ -538,18 +535,18 @@ fn wire_state_byte_dispatch() {
         for err in [
             Bundle::<ProofStamp>::read(buf).expect_err("invalid state byte must be rejected"),
             Bundle::<PointerStamp>::read(buf).expect_err("invalid state byte must be rejected"),
-            StampedBundle::read(buf).expect_err("invalid state byte must be rejected"),
+            TachyonBundle::read(buf).expect_err("invalid state byte must be rejected"),
         ] {
             assert_eq!(err.kind(), io::ErrorKind::InvalidData);
             assert_eq!(err.to_string(), "invalid bundle state");
         }
     }
 
-    // No-bundle (0x00): the enum reader decodes to None, not an error.
+    // No-bundle (0x00): the enum reader decodes to NoBundle, not an error.
     {
         let buf: &[u8] = &[0x00];
-        let decoded = StampedBundle::read(buf).expect("read");
-        assert!(decoded.is_none(), "0x00 must decode to None");
+        let decoded = TachyonBundle::read(buf).expect("read");
+        assert!(decoded.is_no_bundle(), "0x00 must decode to NoBundle");
     }
 
     // Valid-but-mismatched state byte: each definite reader rejects the other's.
@@ -569,13 +566,13 @@ fn wire_state_byte_dispatch() {
             .expect_err("Adjunct::read must reject a stamped (0x01) buffer");
         assert_eq!(
             adjunct_on_stamped.to_string(),
-            "stripped bundle requires tachyonBundleState 0x02"
+            "unexpected tachyonBundleState"
         );
         let stamped_on_adjunct = Bundle::<ProofStamp>::read(&*adjunct_buf)
             .expect_err("Stamped::read must reject a stripped (0x02) buffer");
         assert_eq!(
             stamped_on_adjunct.to_string(),
-            "stamped bundle requires tachyonBundleState 0x01"
+            "unexpected tachyonBundleState"
         );
     }
 }
@@ -630,7 +627,7 @@ fn read_rejects_zero_wtxid() {
         );
 
         let enum_err =
-            StampedBundle::read(&*buf).expect_err("TachyonBundle::read must reject zero wtxid");
+            TachyonBundle::read(&*buf).expect_err("TachyonBundle::read must reject zero wtxid");
         assert_eq!(enum_err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(
             enum_err.to_string(),
@@ -663,9 +660,7 @@ fn innocent_round_trips_with_nonzero_wtxid() {
     let via_adjunct = Bundle::<PointerStamp>::read(&*buf).expect("Adjunct::read innocent");
     assert_eq!(innocent, via_adjunct);
 
-    let decoded = StampedBundle::read(&*buf)
-        .expect("TachyonBundle::read")
-        .expect("some bundle");
+    let decoded = TachyonBundle::read(&*buf).expect("TachyonBundle::read");
     let via_enum = Bundle::<PointerStamp>::try_from(decoded).expect("adjunct variant");
     assert_eq!(innocent, via_enum);
 }
@@ -711,13 +706,13 @@ fn auth_digest_invariants() {
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let stamped_direct = stamped.auth_digest();
         let covering_wtxid = mock_wtxid(&stamped);
-        let erased: StampedBundle = stamped.into();
+        let erased: TachyonBundle = stamped.into();
         assert_eq!(erased.auth_digest(), stamped_direct);
 
         let wallet2 = WalletSim::new(shared_sk());
         let stripped = build_autonome(rng, &wallet2, 1000, 700).strip(covering_wtxid);
         let stripped_direct = stripped.auth_digest();
-        let erased_stripped: StampedBundle = stripped.into();
+        let erased_stripped: TachyonBundle = stripped.into();
         assert_eq!(erased_stripped.auth_digest(), stripped_direct);
     }
 

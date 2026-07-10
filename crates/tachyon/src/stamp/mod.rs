@@ -11,6 +11,7 @@ use alloc::{boxed::Box, vec, vec::Vec};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
+use ff::PrimeField as _;
 use pasta_curves::Fp;
 use proof::{
     PROOF_SYSTEM,
@@ -21,6 +22,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
+    bundle::{BundleState, StateByte},
     digest::blake2b,
     effect,
     entropy::ActionRandomizer,
@@ -55,32 +57,6 @@ pub struct Unproven;
 #[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
 pub struct PointerStamp([u8; 64]);
 
-impl PointerStamp {
-    /// Read an aggregate id from the consensus wire format.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let mut wtxid = [0u8; 64];
-        reader.read_exact(&mut wtxid)?;
-        Self::try_from(wtxid).map_err(|_err| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "aggregate id is zero and refers to no aggregate",
-            )
-        })
-    }
-
-    /// Write an aggregate id to the consensus wire format.
-    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        if self.0 == [0u8; 64] {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "aggregate id is zero and refers to no aggregate",
-            ));
-        }
-
-        writer.write_all(&self.0)
-    }
-}
-
 #[derive(Clone, Copy, Debug, Display, Error)]
 /// Errors that can occur when handling an aggregate id.
 pub enum AggregateIdError {
@@ -97,6 +73,138 @@ impl TryFrom<[u8; 64]> for PointerStamp {
             return Err(AggregateIdError::Zero);
         }
         Ok(Self(wtxid))
+    }
+}
+
+/// Bundle states that carry a stamp: [`ProofStamp`] or [`PointerStamp`].
+/// The intermediate [`Unproven`] state has no stamp.
+pub trait StampState: BundleState {
+    /// The stamp's 64-byte wtxid-shaped digest: a proof stamp's
+    /// `hActionsTachyon || stamp_data_digest`, or a pointer stamp's
+    /// `wtxid = txid || auth_digest`.
+    fn stamp_digest(&self) -> [u8; 64];
+
+    /// The `tachyonBundleState` wire byte for this state.
+    fn state_byte() -> StateByte
+    where
+        Self: Sized;
+
+    /// Read the stamp trailer from the consensus wire format.
+    fn read<R: Read>(reader: R) -> io::Result<Self>
+    where
+        Self: Sized;
+
+    /// Write the stamp trailer in the consensus wire format.
+    fn write<W: Write>(&self, writer: W) -> io::Result<()>
+    where
+        Self: Sized;
+}
+
+impl StampState for PointerStamp {
+    fn stamp_digest(&self) -> [u8; 64] {
+        <[u8; 64]>::from(*self)
+    }
+
+    fn state_byte() -> StateByte {
+        StateByte::PointerStamped
+    }
+
+    /// Read an aggregate id from the consensus wire format.
+    fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let mut wtxid = [0u8; 64];
+        reader.read_exact(&mut wtxid)?;
+        Self::try_from(wtxid).map_err(|_err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "aggregate id is zero and refers to no aggregate",
+            )
+        })
+    }
+
+    /// Write an aggregate id to the consensus wire format.
+    fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        if self.0 == [0u8; 64] {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "aggregate id is zero and refers to no aggregate",
+            ));
+        }
+        writer.write_all(&self.0)
+    }
+}
+
+impl StampState for ProofStamp {
+    fn stamp_digest(&self) -> [u8; 64] {
+        let stamp_data_digest: [u8; 32] = {
+            let proof = self.proof.serialize();
+            let anchor: [u8; 32] = self.anchor.0.into();
+            let tachygrams: Vec<[u8; 32]> = self
+                .tachygrams
+                .iter()
+                .map(|&tg| Fp::from(tg).to_repr())
+                .collect();
+
+            blake2b::stamp_data_digest(
+                blake2b::stamp_proof_digest(proof.as_ref()),
+                anchor,
+                &tachygrams,
+            )
+        };
+
+        let mut stamp_digest = [0u8; 64];
+        stamp_digest[..32].copy_from_slice(&self.covered_actions);
+        stamp_digest[32..].copy_from_slice(&stamp_data_digest);
+        stamp_digest
+    }
+
+    fn state_byte() -> StateByte {
+        StateByte::ProofStamped
+    }
+
+    /// Read a stamp from the consensus wire format. The proof blob has a
+    /// known constant size.
+    fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let mut covered_actions = [0u8; 32];
+        reader.read_exact(&mut covered_actions)?;
+
+        let anchor = Anchor::read(&mut reader)?;
+
+        let tachygrams = serialization::read_fp_list(&mut reader)?
+            .into_iter()
+            .map(Tachygram::from)
+            .collect();
+
+        let mut bytes = vec![0u8; PROOF_SIZE_COMPRESSED];
+        reader.read_exact(&mut bytes)?;
+        let arr: Box<[u8; PROOF_SIZE_COMPRESSED]> =
+            bytes.into_boxed_slice().try_into().map_err(|_err| {
+                io::Error::new(io::ErrorKind::InvalidData, "proof buffer wrong size")
+            })?;
+        let proof = ragu::Proof::try_from(arr.as_ref())
+            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding"))?;
+
+        Ok(Self {
+            covered_actions,
+            tachygrams,
+            anchor,
+            proof: Box::new(proof),
+        })
+    }
+
+    /// Write a stamp to the consensus wire format. The proof blob has a
+    /// known constant size.
+    fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_all(&self.covered_actions)?;
+        self.anchor.write(&mut writer)?;
+        serialization::write_fp_list(
+            &mut writer,
+            &self
+                .tachygrams
+                .iter()
+                .map(|&tg| Fp::from(tg))
+                .collect::<Vec<Fp>>(),
+        )?;
+        writer.write_all(self.proof.serialize().as_ref())
     }
 }
 
@@ -565,61 +673,6 @@ impl ProofStamp {
             Err(VerificationError::Disproved)
         }
     }
-
-    /// Read a stamp from the consensus wire format.
-    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let mut covered_actions = [0u8; 32];
-        reader.read_exact(&mut covered_actions)?;
-
-        let anchor = Anchor::read(&mut reader)?;
-
-        let tachygrams = serialization::read_fp_list(&mut reader)?
-            .into_iter()
-            .map(Tachygram::from)
-            .collect();
-
-        let proof = Box::new(read_proof(&mut reader)?);
-
-        Ok(Self {
-            covered_actions,
-            tachygrams,
-            anchor,
-            proof,
-        })
-    }
-
-    /// Write a stamp to the consensus wire format.
-    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        writer.write_all(&self.covered_actions)?;
-        self.anchor.write(&mut writer)?;
-        serialization::write_fp_list(
-            &mut writer,
-            &self
-                .tachygrams
-                .iter()
-                .map(|&tg| Fp::from(tg))
-                .collect::<Vec<Fp>>(),
-        )?;
-        write_proof(&mut writer, &self.proof)
-    }
-}
-
-/// Read a proof of known constant size.
-pub(crate) fn read_proof<R: Read>(mut reader: R) -> io::Result<ragu::Proof> {
-    let mut bytes = vec![0u8; PROOF_SIZE_COMPRESSED];
-    reader.read_exact(&mut bytes)?;
-    let arr: Box<[u8; PROOF_SIZE_COMPRESSED]> = bytes
-        .into_boxed_slice()
-        .try_into()
-        .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "proof buffer wrong size"))?;
-    ragu::Proof::try_from(arr.as_ref())
-        .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding"))
-}
-
-/// Write a proof of known constant size.
-pub(crate) fn write_proof<W: Write>(mut writer: W, proof: &ragu::Proof) -> io::Result<()> {
-    let bytes = proof.serialize();
-    writer.write_all(bytes.as_ref())
 }
 
 #[cfg(test)]
