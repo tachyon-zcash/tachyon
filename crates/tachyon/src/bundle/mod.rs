@@ -87,7 +87,7 @@ use crate::{
     note,
     primitives::{ActionDigest, ActionDigestError, Anchor, effect},
     reddsa, serialization,
-    stamp::{self, PointerStamp, ProofStamp, Stripped, Unproven},
+    stamp::{self, PointerStamp, ProofStamp, Unproven},
 };
 
 /// The `tachyonBundleState` wire byte. See the module-level wire format
@@ -129,7 +129,6 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for super::Unproven {}
     impl Sealed for super::ProofStamp {}
-    impl Sealed for super::Stripped {}
     impl Sealed for super::PointerStamp {}
 }
 
@@ -141,20 +140,14 @@ pub trait StampState: sealed::Sealed {
     ///
     /// # Panics
     ///
-    /// The intermediate `Unproven` and `Stripped` states have no stamp;
-    /// calling this on them panics.
+    /// The intermediate `Unproven` state has no stamp;
+    /// calling this on it panics.
     fn stamp_digest(&self) -> [u8; 64];
 }
 
 impl StampState for Unproven {
     fn stamp_digest(&self) -> [u8; 64] {
         unimplemented!("unproven stamp has no digest");
-    }
-}
-
-impl StampState for Stripped {
-    fn stamp_digest(&self) -> [u8; 64] {
-        unimplemented!("stripped stamp has no digest");
     }
 }
 
@@ -201,15 +194,15 @@ pub struct Bundle<S: StampState> {
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
 
-    /// Stamp state: `Unproven`, `Stamp`, `Stripped`, or `AggregateId`.
+    /// Stamp state: `Unproven`, `ProofStamp`, or `PointerStamp`.
     pub stamp: S,
 }
 
 /// A Tachyon bundle in one of its two on-wire states: stamped or stripped.
 ///
 /// Used where code accepts either form — reading from the wire, dispatching
-/// `auth_digest`, etc. The `Unproven` and `Stripped` intermediate states are
-/// outside this enum because they have no wire representation.
+/// `auth_digest`, etc. The `Unproven` intermediate state is outside this
+/// enum because it has no wire representation.
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
 #[derive(Clone, Debug, From)]
 pub enum TachyonBundle {
@@ -529,44 +522,16 @@ impl Bundle<Unproven> {
     }
 }
 
-impl Bundle<Stripped> {
-    /// Assign the covering aggregate's `wtxid`, producing a serializable
-    /// `Bundle<AggregateId>`.
-    ///
-    /// This is the only path from [`strip()`](Bundle::strip) to a wire-ready
-    /// stripped bundle — `Bundle<Stripped>` has no `write()` method. The
-    /// `wtxid` is an already-validated nonzero [`AggregateId`], so every
-    /// stripped bundle (innocent or adjunct) names a covering aggregate.
+impl Bundle<ProofStamp> {
+    /// Produce an adjunct bundle with a pointer to a covering aggregate.
     #[must_use]
-    pub fn assign_wtxid(self, wtxid: PointerStamp) -> Bundle<PointerStamp> {
+    pub fn strip(self, wtxid: PointerStamp) -> Bundle<PointerStamp> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
             binding_sig: self.binding_sig,
             stamp: wtxid,
         }
-    }
-}
-
-impl Bundle<ProofStamp> {
-    /// Strips the stamp, producing an unassigned bundle and the extracted
-    /// stamp.
-    ///
-    /// The returned `Bundle<Stripped>` must be assigned a covering
-    /// aggregate's `wtxid` via [`assign_wtxid`](Bundle::assign_wtxid)
-    /// before it can be serialized. The stamp should be merged into an
-    /// aggregate.
-    #[must_use]
-    pub fn strip(self) -> (Bundle<Stripped>, ProofStamp) {
-        (
-            Bundle {
-                actions: self.actions,
-                value_balance: self.value_balance,
-                binding_sig: self.binding_sig,
-                stamp: Stripped,
-            },
-            self.stamp,
-        )
     }
 
     /// Confirm published coverage without verifying the proof: reconstruct

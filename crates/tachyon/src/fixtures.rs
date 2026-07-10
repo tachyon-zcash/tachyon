@@ -36,7 +36,7 @@ use crate::{
         Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
     },
     stamp::{
-        ProofStamp,
+        PointerStamp, ProofStamp,
         proof::{PROOF_SYSTEM, delegation, pool, spendable},
     },
     value, witness,
@@ -53,6 +53,22 @@ pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(hash.as_bytes());
     out
+}
+
+/// A stand-in for the covering aggregate's `wtxid = txid || auth_digest`:
+/// a mock txid over the bundle commitment, beside the real `auth_digest`.
+pub fn mock_wtxid(bundle: &Bundle<ProofStamp>) -> PointerStamp {
+    let txid = blake2b_simd::Params::new()
+        .hash_length(32)
+        .personal(b"pretend txid")
+        .to_state()
+        .update(&bundle.commitment().expect("fixture commitment"))
+        .finalize();
+
+    let mut wtxid = [0u8; 64];
+    wtxid[..32].copy_from_slice(txid.as_bytes());
+    wtxid[32..].copy_from_slice(&bundle.auth_digest());
+    PointerStamp::try_from(wtxid).expect("nonzero wtxid")
 }
 
 pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {

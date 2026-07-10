@@ -35,18 +35,9 @@ use crate::{
 /// Marker for a bundle that has not yet been proven.
 ///
 /// This is the initial state for a newly constructed bundle.
-/// Proving produces a [`Stamp`]; stripping produces a `Bundle<Stripped>`.
+/// Proving produces a [`ProofStamp`].
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Unproven;
-
-/// Marker for a stripped bundle whose covering-aggregate `wtxid` has not
-/// yet been assigned.
-///
-/// Produced by [`strip()`](crate::Bundle::strip). Must transition to a
-/// `Bundle<AggregateId>` via [`assign_wtxid`](crate::Bundle::assign_wtxid)
-/// before serialization.
-#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
-pub struct Stripped;
 
 /// The 64-byte `wtxid` of the covering aggregate in the same block, assigned
 /// by the miner during block assembly.
