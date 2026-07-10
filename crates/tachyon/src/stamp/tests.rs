@@ -101,8 +101,8 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let two_spends = || {
         alloc::vec![
-            (plan_a.descriptor(), (alpha_a, note_a, rcv_a)),
-            (plan_b.descriptor(), (alpha_b, note_b, rcv_b)),
+            (plan_a.descriptor(), alpha_a, note_a, rcv_a),
+            (plan_b.descriptor(), alpha_b, note_b, rcv_b),
         ]
     };
 

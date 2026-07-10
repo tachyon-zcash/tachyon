@@ -320,7 +320,7 @@ impl Plan {
             .iter()
             .map(|plan| {
                 let alpha = plan.theta.randomizer(plan.note.commitment());
-                (plan.descriptor(), (alpha, plan.note, plan.rcv))
+                (plan.descriptor(), alpha, plan.note, plan.rcv)
             })
             .collect();
 
@@ -329,7 +329,7 @@ impl Plan {
             .iter()
             .map(|plan| {
                 let alpha = plan.theta.randomizer(plan.note.commitment());
-                (plan.descriptor(), (alpha, plan.note, plan.rcv))
+                (plan.descriptor(), alpha, plan.note, plan.rcv)
             })
             .collect();
 
