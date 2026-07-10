@@ -154,6 +154,8 @@ impl StampState for ProofStamp {
         let stamp_data_digest: [u8; 32] = {
             let proof = self.proof.serialize();
             let anchor: [u8; 32] = self.anchor.0.into();
+
+            // Do NOT sort here: a constructed stamp should already be canonical.
             let tachygrams: Vec<[u8; 32]> = self
                 .tachygrams
                 .iter()

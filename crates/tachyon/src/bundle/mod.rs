@@ -152,6 +152,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     /// Collect the descriptors of all actions in the bundle.
     #[must_use]
     pub fn descriptors(&self) -> Vec<action::Descriptor> {
+        // Do NOT sort here: a constructed bundle should already be canonical.
         self.actions.iter().map(Action::descriptor).collect()
     }
 
