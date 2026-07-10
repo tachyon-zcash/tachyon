@@ -126,14 +126,14 @@ impl BundleStateFlags {
 }
 
 mod sealed {
-    pub trait Sealed {}
-    impl Sealed for super::Unproven {}
-    impl Sealed for super::ProofStamp {}
-    impl Sealed for super::PointerStamp {}
+    pub trait BundleState {}
+    impl BundleState for super::Unproven {}
+    impl BundleState for super::ProofStamp {}
+    impl BundleState for super::PointerStamp {}
 }
 
 /// Sealed trait constraining stamp state types.
-pub trait StampState: sealed::Sealed {
+pub trait StampState: sealed::BundleState {
     /// The stamp's 64-byte wtxid-shaped digest: a proof stamp's
     /// `hActionsTachyon || stamp_data_digest`, or a pointer stamp's
     /// `wtxid = txid || auth_digest`.
@@ -539,7 +539,7 @@ impl Bundle<ProofStamp> {
     /// adjunct's and check it against the carried `hActionsTachyon`.
     /// Assistive, not soundness.
     #[must_use]
-    pub fn covers(&self, adjuncts: &[Bundle<PointerStamp>]) -> bool {
+    pub fn covers<T: StampState>(&self, adjuncts: &[Bundle<T>]) -> bool {
         let own_descs = self.actions.iter().map(Action::descriptor);
         let other_descs = adjuncts
             .iter()
