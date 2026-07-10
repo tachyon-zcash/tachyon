@@ -180,10 +180,10 @@ fn merge_populates_covered_actions() {
     .expect("merge");
     // `merge` sorts the concatenated descriptors into canonical order, so the
     // covered-actions digest is independent of the order they were passed in.
-    assert_eq!(merged.covered_actions, expected);
+    assert_eq!(merged.actions, expected);
 }
 
-/// `hActionsTachyon` survives a `write`/`read` round-trip.
+/// `hStampActionsTachyon` survives a `write`/`read` round-trip.
 #[test]
 fn covered_actions_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -196,7 +196,7 @@ fn covered_actions_round_trip() {
     stamp.write(&mut buf).expect("write");
     let decoded = ProofStamp::read(&*buf).expect("read");
 
-    assert_eq!(decoded.covered_actions, stamp.covered_actions);
+    assert_eq!(decoded.actions, stamp.actions);
     assert_eq!(decoded.anchor, stamp.anchor);
     assert_eq!(decoded.tachygrams, stamp.tachygrams);
 }

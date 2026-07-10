@@ -722,7 +722,7 @@ fn auth_digest_invariants() {
         let baseline = stamped.auth_digest();
 
         let mut altered_actions = stamped.clone();
-        altered_actions.stamp.covered_actions[0] ^= 0x01;
+        altered_actions.stamp.actions[0] ^= 0x01;
         assert_ne!(baseline, altered_actions.auth_digest());
 
         let mut extra_tachygram = stamped;
@@ -739,7 +739,7 @@ fn auth_digest_invariants() {
 /// Coverage-check protocol: an observer reconstructs the covered-actions
 /// digest from a based aggregate's own actions plus all covered adjuncts'
 /// visible actions, and checks it against the stamped aggregate's
-/// serialized `hActionsTachyon`.
+/// serialized `hStampActionsTachyon`.
 #[test]
 fn coverage_check_matches_stamp_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -827,7 +827,7 @@ fn coverage_check_matches_stamp_actions() {
     // its own actions plus both covered adjuncts'.
     assert!(
         becomes_based.covers(&[&adjunct_a, &adjunct_b]),
-        "full covered set matches hActionsTachyon"
+        "full covered set matches hStampActionsTachyon"
     );
 
     // Missing an adjunct: fewer descriptors, no match.

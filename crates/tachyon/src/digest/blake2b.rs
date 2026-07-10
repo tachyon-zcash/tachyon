@@ -104,10 +104,11 @@ const ACTION_DESCRIPTOR_PERSONALIZATION: &[u8; 15] = b"Tachyon-Actions";
 
 /// Digest of action descriptors.
 ///
-/// This may be the stamp's `hActionsTachyon` or it may contribute to the
-/// bundle's effecting data commitment.
+/// Over the bundle's owned actions this is `hActionsTachyon`, committed on the
+/// txid side by [`bundle_commitment`]; over a stamp's covered actions it is the
+/// stamp's `hStampActionsTachyon`.
 ///
-/// $$ \mathsf{hActionsTachyon} = \text{BLAKE2b-256}(
+/// $$ \text{BLAKE2b-256}(
 /// \text{"Tachyon-Actions"},\;
 /// \mathsf{cv}_i \| \mathsf{rk}_i) $$
 ///
@@ -171,6 +172,8 @@ pub(crate) fn stamp_data_digest(
     hasher_256(STAMP_DATA_PERSONALIZATION, |state| {
         state.update(&stamp_proof_digest);
         state.update(&anchor);
+
+        // only variable-length component
         for tg in tachygrams {
             state.update(tg);
         }
@@ -180,37 +183,30 @@ pub(crate) fn stamp_data_digest(
 /// A bundle's contribution to the transaction auth_digest.
 ///
 /// $$ \text{BLAKE2b-256}(\text{"ZTxAuthTachyHash"},\;
-/// \mathsf{hActions} \| \mathsf{vActionSigs} \| \mathsf{bindingSig} \|
-/// \mathsf{stamp}) $$
+/// \mathsf{vActionSigs} \| \mathsf{bindingSig} \| \mathsf{stamp}) $$
 ///
-/// `action_digest` is the [`action_descriptor_digest`] over the bundle's own
-/// canonically sorted action descriptors, binding the authorized action set
-/// into the auth digest alongside the signatures.
+/// The action set enters this digest only through `stamp`, whose proof-stamp
+/// form concatenates the covered actions' descriptor digest with
+/// [`stamp_data_digest`]. The bundle's own action descriptors are committed on
+/// the txid side by [`bundle_commitment`], not here.
 ///
-/// `stamp` is the 64-byte wtxid-shaped stamp digest:
+/// `stamp_contrib` is the 64-byte stamp digest OR wtxid:
 ///
-/// - proof stamp: `hActionsTachyon || stamp_data_digest`, see
+/// - proof stamp: `hStampActionsTachyon || stamp_data_digest`, see
 ///   [`action_descriptor_digest`] and [`stamp_data_digest`];
 /// - pointer stamp: the covering aggregate's `wtxid = txid || auth_digest`.
-///
-/// Each variable-length component reaches this preimage through its own
-/// personalized sub-digest, except the action signatures: their count is
-/// recovered by length arithmetic (64-byte elements before a fixed
-/// 128-byte suffix) and pinned on the txid side by `action_acc`'s monic
-/// degree — the role `nActionsOrchard` plays in ZIP 244.
 pub(crate) fn bundle_auth_digest(
-    action_digest: &[u8; 32],
     action_sigs: &[[u8; 64]],
     binding_sig: &[u8; 64],
-    stamp: &[u8; 64],
+    stamp_contrib: &[u8; 64],
 ) -> [u8; 32] {
     hasher_256(AUTH_DIGEST_PERSONALIZATION, |state| {
-        state.update(action_digest);
+        // only variable-length component
         for sig in action_sigs {
             state.update(sig);
         }
         state.update(binding_sig);
-        state.update(stamp);
+        state.update(stamp_contrib);
     })
 }
 
@@ -309,12 +305,7 @@ mod tests {
     /// The no-bundle value differs from a zero-action bundle's contribution.
     #[test]
     fn no_bundle_differs_from_zero_action_bundle() {
-        let contribution = bundle_auth_digest(
-            &action_descriptor_digest(&[]),
-            &[],
-            &[0u8; 64],
-            &[0x42u8; 64],
-        );
+        let contribution = bundle_auth_digest(&[], &[0u8; 64], &[0x42u8; 64]);
         assert_ne!(*AUTH_DIGEST_NO_BUNDLE, contribution);
     }
 }

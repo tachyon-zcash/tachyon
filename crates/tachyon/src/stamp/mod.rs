@@ -96,8 +96,8 @@ impl TryFrom<[u8; 64]> for PointerStamp {
 /// The intermediate [`Unproven`] state has no stamp.
 pub trait StampState: BundleState {
     /// The stamp's 64-byte wtxid-shaped digest: a proof stamp's
-    /// `hActionsTachyon || stamp_data_digest`, or a pointer stamp's
-    /// `wtxid = txid || auth_digest`.
+    /// `hStampActionsTachyon || stamp_data_digest`, or a pointer stamp's
+    /// `wtxid = txid || auth_digest` from another transaction.
     fn stamp_digest(&self) -> [u8; 64];
 
     /// The `tachyonBundleState` wire byte for this state.
@@ -170,7 +170,7 @@ impl StampState for ProofStamp {
         };
 
         let mut stamp_digest = [0u8; 64];
-        stamp_digest[..32].copy_from_slice(&self.covered_actions);
+        stamp_digest[..32].copy_from_slice(&self.actions);
         stamp_digest[32..].copy_from_slice(&stamp_data_digest);
         stamp_digest
     }
@@ -208,7 +208,7 @@ impl StampState for ProofStamp {
             .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding"))?;
 
         Ok(Self {
-            covered_actions,
+            actions: covered_actions,
             tachygrams,
             anchor,
             proof: Box::new(proof),
@@ -218,7 +218,7 @@ impl StampState for ProofStamp {
     /// Write a stamp to the consensus wire format. The proof blob has a
     /// known constant size.
     fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        writer.write_all(&self.covered_actions)?;
+        writer.write_all(&self.actions)?;
         self.anchor.write(&mut writer)?;
         serialization::write_fp_list(
             &mut writer,
@@ -244,7 +244,7 @@ pub enum VerificationError {
     /// The proof did not verify against the reconstructed header.
     #[display("proof did not verify")]
     Disproved,
-    /// The carried `hActionsTachyon` indicator does not match the actions.
+    /// The carried `hStampActionsTachyon` indicator does not match the actions.
     #[display("covered actions indicator mismatch")]
     ActionsMismatch,
 }
@@ -401,7 +401,7 @@ impl Plan {
         tachygrams.sort_unstable();
 
         Ok(ProofStamp {
-            covered_actions: blake2b::action_descriptor_digest(&descriptor_bytes),
+            actions: blake2b::action_descriptor_digest(&descriptor_bytes),
             tachygrams,
             anchor,
             proof,
@@ -438,11 +438,11 @@ pub enum ProveError {
 /// reconstruct the header from public data.
 #[derive(Clone, Debug)]
 pub struct ProofStamp {
-    /// `hActionsTachyon`: digest of the covered action descriptors,
+    /// `hStampActionsTachyon`: digest of the covered action descriptors,
     /// indicating which actions this stamp's proof covers. Computed by
     /// `blake2b::stamp_actions_digest` over the canonically sorted
     /// descriptors.
-    pub covered_actions: [u8; 32],
+    pub actions: [u8; 32],
 
     /// Tachygrams (nullifiers and note commitments) for data availability.
     pub tachygrams: Vec<Tachygram>,
@@ -627,7 +627,7 @@ impl ProofStamp {
         covered_actions.sort_unstable();
 
         Ok(Self {
-            covered_actions: blake2b::action_descriptor_digest(&covered_actions),
+            actions: blake2b::action_descriptor_digest(&covered_actions),
             tachygrams,
             anchor,
             proof,
@@ -641,14 +641,14 @@ impl ProofStamp {
     pub fn covers(&self, descs: &[action::Descriptor]) -> bool {
         let mut desc_bytes: Vec<[u8; 64]> = descs.iter().copied().map(<[u8; 64]>::from).collect();
         desc_bytes.sort_unstable();
-        blake2b::action_descriptor_digest(&desc_bytes) == self.covered_actions
+        blake2b::action_descriptor_digest(&desc_bytes) == self.actions
     }
 
     /// Verifies this stamp's proof by reconstructing the PCD header from
     /// public data.
     ///
     /// The verifier recomputes the covered-actions digest, fails early if
-    /// it disagrees with the carried `hActionsTachyon`, then reconstructs
+    /// it disagrees with the carried `hStampActionsTachyon`, then reconstructs
     /// the action and tachygram accumulators and calls Ragu `verify()`.
     pub fn verify<RNG: RngCore + CryptoRng>(
         &self,

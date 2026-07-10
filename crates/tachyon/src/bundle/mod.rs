@@ -50,7 +50,7 @@
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `hActionsTachyon`     | 32 bytes             | BLAKE2b digest of the covered actions    |
+//! | `hStampActionsTachyon`     | 32 bytes             | BLAKE2b digest of the covered actions    |
 //! | `anchorTachyon`       | 32 bytes             | pool state reference                     |
 //! | `nTachygrams`         | compactsize          | number of tachygrams                     |
 //! | `vTachygrams`         | 32 * nTachygrams     | tachygrams for this proof                |
@@ -66,7 +66,7 @@
 //!
 //! The transaction `auth_digest` contribution commits either stamp as a
 //! 64-byte wtxid-shaped value: the pointer stamp's `wtxid` directly, or
-//! `hActionsTachyon || stamp_data_digest` for a proof stamp.
+//! `hStampActionsTachyon || stamp_data_digest` for a proof stamp.
 
 use alloc::vec::Vec;
 use core::ops;
@@ -504,7 +504,7 @@ impl Bundle<ProofStamp> {
 
     /// Confirm published coverage without verifying the proof: reconstruct
     /// the covered-actions digest from this bundle's actions plus every
-    /// adjunct's and check it against the carried `hActionsTachyon`.
+    /// adjunct's and check it against the carried `hStampActionsTachyon`.
     /// Adjuncts may be in any stamp state, mixed freely. Assistive, not
     /// soundness.
     #[must_use]
@@ -523,7 +523,7 @@ impl Bundle<ProofStamp> {
     }
 
     /// Check if this bundle is an aggregate, by computing the digest of its
-    /// owned actions and comparing to its stamp's `hActionsTachyon`.
+    /// owned actions and comparing to its stamp's `hStampActionsTachyon`.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
         let desc_bytes: Vec<[u8; 64]> = self
@@ -531,7 +531,7 @@ impl Bundle<ProofStamp> {
             .into_iter()
             .map(<[u8; 64]>::from)
             .collect();
-        blake2b::action_descriptor_digest(&desc_bytes) == self.stamp.covered_actions
+        blake2b::action_descriptor_digest(&desc_bytes) == self.stamp.actions
     }
 }
 
@@ -637,33 +637,14 @@ impl<S: StampState> Bundle<S> {
 
     /// Tachyon's contribution to the transaction `auth_digest`.
     ///
-    /// Commits the action descriptor digest, the action signatures, the
-    /// binding signature, and the stamp's digest. See
-    /// [`blake2b::bundle_auth_digest`].
+    /// Commits the action signatures, the binding signature, and the stamp's
+    /// digest. See [`blake2b::bundle_auth_digest`].
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 32] {
-        let descriptors: Vec<[u8; 64]> = self
-            .descriptors()
-            .into_iter()
-            .map(<[u8; 64]>::from)
-            .collect();
-
-        // The bundle's actions should already be sorted by construction.
-        debug_assert!(
-            descriptors.is_sorted(),
-            "bundle actions must be canonically sorted"
-        );
-        let action_digest = blake2b::action_descriptor_digest(&descriptors);
-
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
         let binding_sig: [u8; 64] = self.binding_sig.into();
 
-        blake2b::bundle_auth_digest(
-            &action_digest,
-            &action_sigs,
-            &binding_sig,
-            &self.stamp.stamp_digest(),
-        )
+        blake2b::bundle_auth_digest(&action_sigs, &binding_sig, &self.stamp.stamp_digest())
     }
 }
 
@@ -741,7 +722,7 @@ impl TachyonBundle {
     }
 
     /// Check if this bundle is an aggregate, by computing the digest of its
-    /// owned actions and comparing to its stamp's `hActionsTachyon` if present.
+    /// owned actions and comparing to its stamp's `hStampActionsTachyon` if present.
     #[must_use]
     #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn is_aggregate(&self) -> bool {
