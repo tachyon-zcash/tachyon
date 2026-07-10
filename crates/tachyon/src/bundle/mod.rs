@@ -3,22 +3,23 @@
 //! A bundle is parameterized by stamp state `S: StampState`.
 //! Actions are constant through state transitions; only the stamp changes.
 //!
-//! - `Bundle<Stamp>` — self-contained bundle with a stamp
-//! - `Bundle<AggregateId>` — stamp removed, references the covering aggregate
-//! - [`TachyonBundle`] — enum of stamped-or-stripped for mixed contexts
+//! - `Bundle<ProofStamp>` — self-contained bundle with a proof stamp
+//! - `Bundle<PointerStamp>` — proof stamp replaced by a pointer stamp naming
+//!   the covering aggregate
+//! - [`TachyonBundle`] — enum of the two on-wire forms for mixed contexts
 //!
 //! # Consensus wire format
 //!
 //! The first byte `tachyonBundleState` selects one of three bundle states:
 //!
-//! | value         | state       | bundle contents                       |
-//! | ------------- | ----------- | ------------------------------------- |
-//! | `0b0000_0000` | non-tachyon | no bundle                             |
-//! | `0b0000_0001` | stamped     | bundle with anchor, tachygrams, proof |
-//! | `0b0000_0010` | stripped    | bundle with aggregate's wtxid         |
-//! | `...`         | *reserved*  | *n/a*                                 |
+//! | value         | state         | bundle contents                       |
+//! | ------------- | ------------- | ------------------------------------- |
+//! | `0b0000_0000` | non-tachyon   | no bundle                             |
+//! | `0b0000_0001` | proof stamp   | bundle with anchor, tachygrams, proof |
+//! | `0b0000_0010` | pointer stamp | bundle with aggregate's wtxid         |
+//! | `...`         | *reserved*    | *n/a*                                 |
 //!
-//! Any other byte is invalid. Stripped innocents and stripped adjuncts share
+//! Any other byte is invalid. Pointer-stamped innocents and adjuncts share
 //! the same wire layout (both write `0x02` + body + a nonzero 64-byte `wtxid`
 //! naming the covering aggregate).
 //!
@@ -43,25 +44,29 @@
 //! | `vActionSigsTachyon`  | 64 * nActionsTachyon | authorization per action over tx sighash |
 //! | `bindingSigTachyon`   | 64 bytes             | binding over tx sighash                  |
 //!
-//! ### Stamp trailer
+//! ### Proof stamp
 //!
-//! When `tachyonBundleState == 1`, there is a stamp trailer.
+//! When `tachyonBundleState == 1`, the bundle carries a proof stamp.
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `cActionsTachyon`     | 32 bytes             | action set for this proof                |
+//! | `hActionsTachyon`     | 32 bytes             | BLAKE2b digest of the covered actions    |
 //! | `anchorTachyon`       | 32 bytes             | pool state reference                     |
 //! | `nTachygrams`         | compactsize          | number of tachygrams                     |
 //! | `vTachygrams`         | 32 * nTachygrams     | tachygrams for this proof                |
 //! | `proofTachyon`        | PROOF_SIZE blob      | serialized proof of fixed size           |
 //!
-//! ## Stripped trailer
+//! ## Pointer stamp
 //!
-//! When `tachyonBundleState == 2`, there is a stripped trailer.
+//! When `tachyonBundleState == 2`, the bundle carries a pointer stamp.
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
 //! | `tachyonAggregateId`  | 64 bytes             | wtxid of the relevant aggregate          |
+//!
+//! The transaction `auth_digest` contribution commits either stamp as a
+//! 64-byte wtxid-shaped value: the pointer stamp's `wtxid` directly, or
+//! `hActionsTachyon || stamp_data_digest` for a proof stamp.
 
 use alloc::vec::Vec;
 use core::ops;
@@ -70,7 +75,7 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
 use ff::PrimeField as _;
 use group::GroupEncoding as _;
-use pasta_curves::{Ep, EpAffine, Eq, Fp};
+use pasta_curves::{Eq, Fp};
 use rand_core::{CryptoRng, RngCore};
 
 pub use crate::digest::blake2b::{AUTH_DIGEST_NO_BUNDLE, COMMIT_NO_BUNDLE};
@@ -83,7 +88,6 @@ use crate::{
     primitives::{ActionDigest, ActionDigestError, Anchor, effect},
     reddsa, serialization,
     stamp::{self, PointerStamp, ProofStamp, Stripped, Unproven},
-    value,
 };
 
 /// The `tachyonBundleState` wire byte. See the module-level wire format
@@ -131,6 +135,14 @@ mod sealed {
 
 /// Sealed trait constraining stamp state types.
 pub trait StampState: sealed::Sealed {
+    /// The stamp's 64-byte wtxid-shaped digest: a proof stamp's
+    /// `hActionsTachyon || stamp_data_digest`, or a pointer stamp's
+    /// `wtxid = txid || auth_digest`.
+    ///
+    /// # Panics
+    ///
+    /// The intermediate `Unproven` and `Stripped` states have no stamp;
+    /// calling this on them panics.
     fn stamp_digest(&self) -> [u8; 64];
 }
 
@@ -154,8 +166,6 @@ impl StampState for PointerStamp {
 
 impl StampState for ProofStamp {
     fn stamp_digest(&self) -> [u8; 64] {
-        let stamp_actions: [u8; 32] = Eq::from(self.action_set).to_bytes();
-
         let stamp_data_digest: [u8; 32] = {
             let proof = self.proof.serialize();
             let anchor: [u8; 32] = self.anchor.0.into();
@@ -165,11 +175,15 @@ impl StampState for ProofStamp {
                 .map(|&tg| Fp::from(tg).to_repr())
                 .collect();
 
-            blake2b::stamp_data_digest(blake2b::stamp_proof_digest(proof), anchor, tachygrams)
+            blake2b::stamp_data_digest(
+                blake2b::stamp_proof_digest(proof.as_ref()),
+                anchor,
+                &tachygrams,
+            )
         };
 
         let mut stamp_digest = [0u8; 64];
-        stamp_digest[..32].copy_from_slice(&stamp_actions);
+        stamp_digest[..32].copy_from_slice(&self.covered_actions);
         stamp_digest[32..].copy_from_slice(&stamp_data_digest);
         stamp_digest
     }
@@ -373,7 +387,7 @@ impl Plan {
             .iter()
             .map(|plan| {
                 let alpha = plan.theta.randomizer(plan.note.commitment());
-                ((plan.cv(), plan.rk), (alpha, plan.note, plan.rcv))
+                (plan.descriptor(), (alpha, plan.note, plan.rcv))
             })
             .collect();
 
@@ -382,7 +396,7 @@ impl Plan {
             .iter()
             .map(|plan| {
                 let alpha = plan.theta.randomizer(plan.note.commitment());
-                ((plan.cv(), plan.rk), (alpha, plan.note, plan.rcv))
+                (plan.descriptor(), (alpha, plan.note, plan.rcv))
             })
             .collect();
 
@@ -478,14 +492,14 @@ impl Plan {
         let mut authorized = Vec::with_capacity(n_actions);
 
         let all_descriptors = self
-            .iter_actions(|plan| (plan.cv(), plan.rk), |plan| (plan.cv(), plan.rk))
+            .iter_actions(action::Plan::descriptor, action::Plan::descriptor)
             .zip(sigs);
 
-        for ((cv, rk), sig) in all_descriptors {
-            if rk.verify(sighash, &sig).is_err() {
+        for (desc, sig) in all_descriptors {
+            if desc.rk.verify(sighash, &sig).is_err() {
                 return Err(SignError::InvalidActionSignature(sig));
             }
-            authorized.push(Action { cv, rk, sig });
+            authorized.push(Action::from_parts(desc, sig));
         }
 
         let bsk = self.derive_bsk_private();
@@ -555,25 +569,23 @@ impl Bundle<ProofStamp> {
         )
     }
 
-    /// Confirm published coverage without verifying the proof: reconstruct the
-    /// action-set commitment from this bundle's actions plus every adjunct's
-    /// and check it against the carried `cActionsTachyon`. Assistive, not
-    /// soundness.
-    pub fn covers<T: StampState>(
-        &self,
-        associates: &[Bundle<T>],
-    ) -> Result<bool, ActionDigestError> {
-        let associate_actions = associates.iter().flat_map(|adjunct| adjunct.actions.iter());
+    /// Confirm published coverage without verifying the proof: reconstruct
+    /// the covered-actions digest from this bundle's actions plus every
+    /// adjunct's and check it against the carried `hActionsTachyon`.
+    /// Assistive, not soundness.
+    #[must_use]
+    pub fn covers(&self, adjuncts: &[Bundle<PointerStamp>]) -> bool {
+        let own_descs = self.actions.iter().map(Action::descriptor);
+        let other_descs = adjuncts
+            .iter()
+            .flat_map(|adjunct| adjunct.actions.iter())
+            .map(Action::descriptor);
 
-        let cover_actions = self.actions.iter().chain(associate_actions);
-
-        let cover_digests = cover_actions
-            .map(Action::digest)
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
-
-        let cover_set = cover_digests.into_iter().collect::<ActionSetPoly>();
-
-        Ok(cover_set.commit() == self.stamp.action_set)
+        self.stamp.covers(
+            &own_descs
+                .chain(other_descs)
+                .collect::<Vec<action::Descriptor>>(),
+        )
     }
 
     /// Read a stamped bundle from the consensus wire format.
@@ -621,34 +633,14 @@ impl Bundle<ProofStamp> {
 
     /// Tachyon's contribution to the transaction `auth_digest`.
     ///
-    /// Hashes action signatures, the binding signature, and the stamp
-    /// trailer's field encodings.
+    /// Commits the action signatures, the binding signature, and the proof
+    /// stamp's digest. See [`blake2b::auth_digest`].
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 32] {
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
         let binding_sig: [u8; 64] = self.binding_sig.into();
 
-        let trailer = {
-            let action_set: [u8; 32] = Eq::from(self.stamp.action_set).to_bytes();
-            let anchor: [u8; 32] = self.stamp.anchor.0.into();
-            let tachygrams: Vec<[u8; 32]> = self
-                .stamp
-                .tachygrams
-                .iter()
-                .map(|&tg| Fp::from(tg).to_repr())
-                .collect();
-            let proof = self.stamp.proof.serialize();
-            (action_set, anchor, tachygrams, proof)
-        };
-
-        blake2b::stamped_auth_digest(
-            &action_sigs,
-            &binding_sig,
-            &trailer.0,
-            &trailer.1,
-            &trailer.2,
-            trailer.3.as_ref(),
-        )
+        blake2b::auth_digest(&action_sigs, &binding_sig, &self.stamp.stamp_digest())
     }
 }
 
@@ -704,13 +696,14 @@ impl Bundle<PointerStamp> {
 
     /// Tachyon's contribution to the transaction `auth_digest`.
     ///
-    /// Hashes action signatures, the binding signature, and the stripped
-    /// trailer: the 64-byte `wtxid` of the covering aggregate.
+    /// Commits the action signatures, the binding signature, and the
+    /// pointer stamp's digest. See [`blake2b::auth_digest`].
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 32] {
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
         let binding_sig: [u8; 64] = self.binding_sig.into();
-        blake2b::stripped_auth_digest(&action_sigs, &binding_sig, &self.stamp.into())
+
+        blake2b::auth_digest(&action_sigs, &binding_sig, &self.stamp.stamp_digest())
     }
 }
 
@@ -878,6 +871,20 @@ impl ops::Sub<note::Value> for ValueBalance {
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Signature(pub(crate) reddsa::Signature<reddsa::BindingAuth>);
 
+impl Signature {
+    /// Read a binding signature from the consensus wire format.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let sig = serialization::read_binding_sig(&mut reader)?;
+        Ok(Self(sig))
+    }
+
+    /// Write a binding signature to the consensus wire format.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        serialization::write_binding_sig(&mut writer, &self.0)?;
+        Ok(())
+    }
+}
+
 impl From<[u8; 64]> for Signature {
     fn from(bytes: [u8; 64]) -> Self {
         Self(bytes.into())
@@ -905,26 +912,23 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Sig
             )
         })?;
 
-    let mut descriptors = Vec::with_capacity(n_actions);
+    let mut descriptors: Vec<action::Descriptor> = Vec::with_capacity(n_actions);
     for _ in 0..n_actions {
-        let cv = value::Commitment(serialization::read_ep_affine(&mut reader)?);
-        let rk = public::ActionVerificationKey(serialization::read_action_vk(&mut reader)?);
-        descriptors.push((cv, rk));
+        descriptors.push(action::Descriptor::read(&mut reader)?);
     }
 
     let mut signatures = Vec::with_capacity(n_actions);
     for _ in 0..n_actions {
-        let sig = action::Signature(serialization::read_action_sig(&mut reader)?);
-        signatures.push(sig);
+        signatures.push(action::Signature::read(&mut reader)?);
     }
 
     let actions = descriptors
         .iter()
         .zip(signatures.iter())
-        .map(|(&(cv, rk), &sig)| Action { cv, rk, sig })
+        .map(|(&desc, &sig)| Action::from_parts(desc, sig))
         .collect();
 
-    let binding_sig = Signature(serialization::read_binding_sig(&mut reader)?);
+    let binding_sig = Signature::read(&mut reader)?;
 
     Ok((actions, value_balance, binding_sig))
 }
@@ -949,8 +953,7 @@ fn write_bundle_body<W: Write>(
         })?,
     )?;
     for action in actions {
-        serialization::write_ep_affine(&mut writer, &action.cv.0)?;
-        serialization::write_action_vk(&mut writer, &action.rk.0)?;
+        action.descriptor().write(&mut writer)?;
     }
     for action in actions {
         serialization::write_action_sig(&mut writer, &action.sig.0)?;

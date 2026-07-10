@@ -10,10 +10,10 @@ use crate::{
     constants::EPOCH_SIZE,
     digest::blake2b::COMMIT_NO_BUNDLE,
     fixtures::{
-        PoolSim, WalletSim, action_digests, build_autonome, build_output_stamp, mock_sighash,
-        random_action, random_block, random_block_with, shared_sk,
+        PoolSim, WalletSim, build_autonome, build_output_stamp, mock_sighash, random_action,
+        random_block, random_block_with, shared_sk,
     },
-    primitives::{ActionDigest, BlockHeight},
+    primitives::{BlockHeight, Tachygram},
     stamp::VerificationError,
 };
 
@@ -152,8 +152,8 @@ fn stamp_verify_action_multiset_invariants() {
         let mut actions = stamped.actions.clone();
         actions.pop();
         let err = stamped.stamp.verify(rng, &actions).unwrap_err();
-        let VerificationError::ActionSetMismatch = err else {
-            panic!("drop: expected ActionSetMismatch, got {err:?}");
+        let VerificationError::ActionsMismatch = err else {
+            panic!("drop: expected ActionsMismatch, got {err:?}");
         };
     }
 
@@ -162,8 +162,8 @@ fn stamp_verify_action_multiset_invariants() {
         let mut actions = stamped.actions.clone();
         actions.push(actions[0]);
         let err = stamped.stamp.verify(rng, &actions).unwrap_err();
-        let VerificationError::ActionSetMismatch = err else {
-            panic!("duplicate: expected ActionSetMismatch, got {err:?}");
+        let VerificationError::ActionsMismatch = err else {
+            panic!("duplicate: expected ActionsMismatch, got {err:?}");
         };
     }
 
@@ -172,8 +172,8 @@ fn stamp_verify_action_multiset_invariants() {
         let mut actions = stamped.actions.clone();
         actions.push(random_action(rng));
         let err = stamped.stamp.verify(rng, &actions).unwrap_err();
-        let VerificationError::ActionSetMismatch = err else {
-            panic!("extra: expected ActionSetMismatch, got {err:?}");
+        let VerificationError::ActionsMismatch = err else {
+            panic!("extra: expected ActionsMismatch, got {err:?}");
         };
     }
 
@@ -182,8 +182,8 @@ fn stamp_verify_action_multiset_invariants() {
         let mut actions = stamped.actions.clone();
         actions[0] = random_action(rng);
         let err = stamped.stamp.verify(rng, &actions).unwrap_err();
-        let VerificationError::ActionSetMismatch = err else {
-            panic!("replaced: expected ActionSetMismatch, got {err:?}");
+        let VerificationError::ActionsMismatch = err else {
+            panic!("replaced: expected ActionsMismatch, got {err:?}");
         };
     }
 }
@@ -231,8 +231,10 @@ fn innocent_aggregate_from_two_autonomes() {
         alloc::vec![output_b],
     );
 
-    let digests_a = action_digests(&autonome_a.actions);
-    let digests_b = action_digests(&autonome_b.actions);
+    let descriptors_a: Vec<action::Descriptor> =
+        autonome_a.actions.iter().map(Action::descriptor).collect();
+    let descriptors_b: Vec<action::Descriptor> =
+        autonome_b.actions.iter().map(Action::descriptor).collect();
     let (adjunct_a, stamp_a) = autonome_a.strip();
     let (adjunct_b, stamp_b) = autonome_b.strip();
 
@@ -240,8 +242,8 @@ fn innocent_aggregate_from_two_autonomes() {
         let innocent_plan = Plan::new(alloc::vec![], alloc::vec![]);
         let innocent_sighash = mock_sighash(innocent_plan.commitment().unwrap());
 
-        let stamp = ProofStamp::prove_merge(rng, (stamp_a, &digests_a), (stamp_b, &digests_b))
-            .expect("prove_merge");
+        let stamp = ProofStamp::merge(rng, (stamp_a, descriptors_a), (stamp_b, descriptors_b))
+            .expect("merge");
 
         Bundle {
             actions: alloc::vec![],
@@ -323,22 +325,27 @@ fn based_aggregate_with_two_adjuncts() {
 
     let sighash = mock_sighash(becomes_based.commitment().unwrap());
 
-    let based_digests = action_digests(&becomes_based.actions);
-    let digests_a = action_digests(&autonome_a.actions);
-    let digests_b = action_digests(&autonome_b.actions);
+    let based_descriptors: Vec<action::Descriptor> = becomes_based
+        .actions
+        .iter()
+        .map(Action::descriptor)
+        .collect();
+    let descriptors_a: Vec<action::Descriptor> =
+        autonome_a.actions.iter().map(Action::descriptor).collect();
+    let descriptors_b: Vec<action::Descriptor> =
+        autonome_b.actions.iter().map(Action::descriptor).collect();
 
     let (adjunct_a, stamp_a) = autonome_a.strip();
     let (adjunct_b, stamp_b) = autonome_b.strip();
 
-    let mut innocent_digests = digests_a.clone();
-    innocent_digests.extend_from_slice(&digests_b);
-    let innocent_stamp = ProofStamp::prove_merge(rng, (stamp_a, &digests_a), (stamp_b, &digests_b))
+    let innocent_descriptors = [descriptors_a.as_slice(), descriptors_b.as_slice()].concat();
+    let innocent_stamp = ProofStamp::merge(rng, (stamp_a, descriptors_a), (stamp_b, descriptors_b))
         .expect("innocent merge");
 
-    let based_stamp = ProofStamp::prove_merge(
+    let based_stamp = ProofStamp::merge(
         rng,
-        (becomes_based.stamp, &based_digests),
-        (innocent_stamp, &innocent_digests),
+        (becomes_based.stamp, based_descriptors),
+        (innocent_stamp, innocent_descriptors),
     )
     .expect("based merge");
 
@@ -702,14 +709,34 @@ fn auth_digest_invariants() {
         let erased_stripped: TachyonBundle = stripped.into();
         assert_eq!(erased_stripped.auth_digest(), stripped_direct);
     }
+
+    // The proof stamp's digest commits its contents: perturbing the carried
+    // covered-actions digest or the tachygram set changes the auth_digest.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let wallet = WalletSim::new(shared_sk());
+        let stamped = build_autonome(rng, &wallet, 1000, 700);
+        let baseline = stamped.auth_digest();
+
+        let mut altered_actions = stamped.clone();
+        altered_actions.stamp.covered_actions[0] ^= 0x01;
+        assert_ne!(baseline, altered_actions.auth_digest());
+
+        let mut extra_tachygram = stamped;
+        extra_tachygram
+            .stamp
+            .tachygrams
+            .push(Tachygram::from(Fp::from(7u64)));
+        assert_ne!(baseline, extra_tachygram.auth_digest());
+    }
 }
 
-/// Coverage-check protocol: an observer reconstructs the merged action-digest
-/// set commitment from a based aggregate's own actions plus all covered
-/// adjuncts' visible actions, and checks it against the stamped aggregate's
-/// serialized `cActionsTachyon`.
+/// Coverage-check protocol: an observer reconstructs the covered-actions
+/// digest from a based aggregate's own actions plus all covered adjuncts'
+/// visible actions, and checks it against the stamped aggregate's
+/// serialized `hActionsTachyon`.
 #[test]
-fn coverage_check_matches_stamped_action_set() {
+fn coverage_check_matches_stamp_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
 
@@ -763,48 +790,47 @@ fn coverage_check_matches_stamped_action_set() {
         alloc::vec![b_output],
     );
 
-    let based_digests = action_digests(&becomes_based.actions);
-    let digests_a = action_digests(&autonome_a.actions);
-    let digests_b = action_digests(&autonome_b.actions);
+    let based_descriptors: Vec<action::Descriptor> = becomes_based
+        .actions
+        .iter()
+        .map(Action::descriptor)
+        .collect();
+    let descriptors_a: Vec<action::Descriptor> =
+        autonome_a.actions.iter().map(Action::descriptor).collect();
+    let descriptors_b: Vec<action::Descriptor> =
+        autonome_b.actions.iter().map(Action::descriptor).collect();
 
     let (adjunct_a, stamp_a) = autonome_a.strip();
     let (adjunct_b, stamp_b) = autonome_b.strip();
 
-    let innocent_digests: Vec<ActionDigest> =
-        digests_a.iter().chain(digests_b.iter()).copied().collect();
-    let innocent_stamp = ProofStamp::prove_merge(rng, (stamp_a, &digests_a), (stamp_b, &digests_b))
+    let innocent_descriptors = [descriptors_a.as_slice(), descriptors_b.as_slice()].concat();
+    let innocent_stamp = ProofStamp::merge(rng, (stamp_a, descriptors_a), (stamp_b, descriptors_b))
         .expect("innocent merge");
 
-    let based_stamp = ProofStamp::prove_merge(
+    let based_stamp = ProofStamp::merge(
         rng,
-        (becomes_based.stamp, &based_digests),
-        (innocent_stamp, &innocent_digests),
+        (becomes_based.stamp, based_descriptors),
+        (innocent_stamp, innocent_descriptors),
     )
     .expect("based merge");
     becomes_based.stamp = based_stamp;
 
-    // Coverage confirmation: the based aggregate's carried commitment matches
+    // Coverage confirmation: the based aggregate's carried digest matches
     // its own actions plus both covered adjuncts'.
     assert!(
-        becomes_based
-            .covers(&[adjunct_a.clone(), adjunct_b.clone()])
-            .expect("valid digests"),
-        "full covered set matches cActionsTachyon"
+        becomes_based.covers(&[adjunct_a.clone(), adjunct_b.clone()]),
+        "full covered set matches hActionsTachyon"
     );
 
-    // Missing an adjunct: fewer roots, no match.
+    // Missing an adjunct: fewer descriptors, no match.
     assert!(
-        !becomes_based
-            .covers(from_ref(&adjunct_a))
-            .expect("valid digests"),
+        !becomes_based.covers(from_ref(&adjunct_a)),
         "missing adjunct must mismatch"
     );
 
-    // Extra (duplicated) adjunct: more roots, no match.
+    // Extra (duplicated) adjunct: more descriptors, no match.
     assert!(
-        !becomes_based
-            .covers(&[adjunct_a.clone(), adjunct_b, adjunct_a])
-            .expect("valid digests"),
+        !becomes_based.covers(&[adjunct_a.clone(), adjunct_b, adjunct_a]),
         "extra adjunct must mismatch"
     );
 }

@@ -12,9 +12,10 @@ use ragu::{
 
 use super::spendable::SpendableHeader;
 use crate::{
+    action,
     constants::NOTE_VALUE_MAX,
     entropy::ActionRandomizer,
-    keys::{ProofAuthorizingKey, public},
+    keys::ProofAuthorizingKey,
     note::{self, Note, Nullifier},
     primitives::{Anchor, effect},
     value,
@@ -33,21 +34,16 @@ impl Header for SpendHeader {
     /// spend's published action pair, derived together at [`SpendBind`];
     /// `present_nf` and `anchor` thread from the spendable lineage that
     /// [`SpendBind`] consumed.
-    type Data = (
-        note::Commitment,
-        (value::Commitment, public::ActionVerificationKey),
-        Nullifier,
-        Anchor,
-    );
+    type Data = (note::Commitment, action::Descriptor, Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(10);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, (cv, rk), present_nf, anchor) = *data;
+        let (cm, act, present_nf, anchor) = *data;
         (
             vec![Fp::from(cm), Fp::from(present_nf), Fp::from(anchor)],
             Vec::new(),
-            vec![Ep::from(cv.0), Ep::from(EpAffine::from(rk))],
+            vec![Ep::from(act.cv.0), Ep::from(EpAffine::from(act.rk))],
             Vec::new(),
         )
     }
@@ -107,6 +103,6 @@ impl Step for SpendBind {
         let cv = rcv.commit(i64::from(note.value));
         let rk = pak.ak.derive_action_public(&alpha);
 
-        Ok(((cm, (cv, rk), present_nf, anchor), ()))
+        Ok(((cm, action::Descriptor { cv, rk }, present_nf, anchor), ()))
     }
 }

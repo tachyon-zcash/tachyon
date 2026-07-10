@@ -28,12 +28,12 @@ use crate::{
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EPOCH_SIZE,
+    digest::blake2b,
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        ActionDigest, Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit,
-        TachygramSetPoly, effect,
+        Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
     },
     stamp::{
         ProofStamp,
@@ -53,13 +53,6 @@ pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(hash.as_bytes());
     out
-}
-
-pub fn action_digests(actions: &[Action]) -> Vec<ActionDigest> {
-    actions
-        .iter()
-        .map(|action| action.digest().expect("valid action"))
-        .collect()
 }
 
 pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {
@@ -110,7 +103,14 @@ pub fn build_output_stamp(
     note: Note,
 ) -> (ProofStamp, action::Plan<effect::Output>) {
     let (rcv, alpha, plan) = build_output_plan(rng, note);
-    let stamp = ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
+    let (tachygrams, stamp_anchor, proof) =
+        ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
+    let stamp = ProofStamp {
+        covered_actions: blake2b::stamp_actions_digest(&[plan.descriptor().into()]),
+        tachygrams,
+        anchor: stamp_anchor,
+        proof,
+    };
     (stamp, plan)
 }
 
