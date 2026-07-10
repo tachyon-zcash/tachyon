@@ -1,7 +1,6 @@
 #![allow(clippy::panic, reason = "test code")]
 
 use alloc::{string::ToString as _, vec, vec::Vec};
-use core::slice::from_ref;
 
 use rand::{SeedableRng as _, rngs::StdRng};
 
@@ -833,19 +832,19 @@ fn coverage_check_matches_stamp_actions() {
     // Coverage confirmation: the based aggregate's carried digest matches
     // its own actions plus both covered adjuncts'.
     assert!(
-        becomes_based.covers(&[adjunct_a.clone(), adjunct_b.clone()]),
+        becomes_based.covers(&[&adjunct_a, &adjunct_b]),
         "full covered set matches hActionsTachyon"
     );
 
     // Missing an adjunct: fewer descriptors, no match.
     assert!(
-        !becomes_based.covers(from_ref(&adjunct_a)),
+        !becomes_based.covers(&[&adjunct_a]),
         "missing adjunct must mismatch"
     );
 
     // Extra (duplicated) adjunct: more descriptors, no match.
     assert!(
-        !becomes_based.covers(&[adjunct_a.clone(), adjunct_b, adjunct_a]),
+        !becomes_based.covers(&[&adjunct_a, &adjunct_b, &adjunct_a]),
         "extra adjunct must mismatch"
     );
 }

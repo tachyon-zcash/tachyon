@@ -1,6 +1,6 @@
 //! Tachyon transaction bundles.
 //!
-//! A bundle is parameterized by stamp state `S: StampState`.
+//! A bundle is parameterized by bundle state `S: BundleState`.
 //! Actions are constant through state transitions; only the stamp changes.
 //!
 //! - `Bundle<ProofStamp>` — self-contained bundle with a proof stamp
@@ -126,29 +126,27 @@ impl BundleStateFlags {
 }
 
 mod sealed {
-    pub trait BundleState {}
-    impl BundleState for super::Unproven {}
-    impl BundleState for super::ProofStamp {}
-    impl BundleState for super::PointerStamp {}
+    pub trait Sealed {}
+    impl Sealed for super::Unproven {}
+    impl Sealed for super::ProofStamp {}
+    impl Sealed for super::PointerStamp {}
 }
 
-/// Sealed trait constraining stamp state types.
-pub trait StampState: sealed::BundleState {
+/// Sealed trait constraining bundle state types.
+#[expect(clippy::module_name_repetitions, reason = "intentional name")]
+pub trait BundleState: sealed::Sealed {}
+
+impl BundleState for Unproven {}
+impl BundleState for ProofStamp {}
+impl BundleState for PointerStamp {}
+
+/// Bundle states that carry a stamp: [`ProofStamp`] or [`PointerStamp`].
+/// The intermediate [`Unproven`] state has no stamp.
+pub trait StampState: BundleState {
     /// The stamp's 64-byte wtxid-shaped digest: a proof stamp's
     /// `hActionsTachyon || stamp_data_digest`, or a pointer stamp's
     /// `wtxid = txid || auth_digest`.
-    ///
-    /// # Panics
-    ///
-    /// The intermediate `Unproven` state has no stamp;
-    /// calling this on it panics.
     fn stamp_digest(&self) -> [u8; 64];
-}
-
-impl StampState for Unproven {
-    fn stamp_digest(&self) -> [u8; 64] {
-        unimplemented!("unproven stamp has no digest");
-    }
 }
 
 impl StampState for PointerStamp {
@@ -182,9 +180,9 @@ impl StampState for ProofStamp {
     }
 }
 
-/// A Tachyon transaction bundle parameterized by stamp state `S`.
+/// A Tachyon transaction bundle parameterized by bundle state `S`.
 #[derive(Clone, Debug, PartialEq, TotalEq)]
-pub struct Bundle<S: StampState> {
+pub struct Bundle<S: BundleState + ?Sized> {
     /// Actions (cv, rk, sig).
     pub actions: Vec<Action>,
 
@@ -194,7 +192,7 @@ pub struct Bundle<S: StampState> {
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
 
-    /// Stamp state: `Unproven`, `ProofStamp`, or `PointerStamp`.
+    /// Bundle state: `Unproven`, `ProofStamp`, or `PointerStamp`.
     pub stamp: S,
 }
 
@@ -537,9 +535,10 @@ impl Bundle<ProofStamp> {
     /// Confirm published coverage without verifying the proof: reconstruct
     /// the covered-actions digest from this bundle's actions plus every
     /// adjunct's and check it against the carried `hActionsTachyon`.
-    /// Assistive, not soundness.
+    /// Adjuncts may be in any stamp state, mixed freely. Assistive, not
+    /// soundness.
     #[must_use]
-    pub fn covers<T: StampState>(&self, adjuncts: &[Bundle<T>]) -> bool {
+    pub fn covers(&self, adjuncts: &[&Bundle<dyn StampState>]) -> bool {
         let own_descs = self.actions.iter().map(Action::descriptor);
         let other_descs = adjuncts
             .iter()
@@ -731,7 +730,7 @@ impl TachyonBundle {
     }
 }
 
-impl<S: StampState> Bundle<S> {
+impl<S: BundleState + ?Sized> Bundle<S> {
     /// See [`Plan::commitment`].
     pub fn commitment(&self) -> Result<[u8; 32], ActionDigestError> {
         let action_digests = self

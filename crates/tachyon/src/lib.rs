@@ -12,7 +12,7 @@
 //!
 //! ## Bundle States
 //!
-//! [`Bundle<S>`](Bundle) is parameterized by stamp state `S: StampState`:
+//! [`Bundle<S>`](Bundle) is parameterized by bundle state `S: BundleState`:
 //!
 //! - `Bundle<Unproven>` — actions signed but no proof yet
 //! - `Bundle<ProofStamp>` — aggregate or self-contained, carries a
