@@ -72,7 +72,7 @@ use alloc::vec::Vec;
 use core::ops;
 
 use corez::io::{self, Read, Write};
-use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
+use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
 use ff::PrimeField as _;
 use group::GroupEncoding as _;
 use pasta_curves::{Eq, Fp};
@@ -208,35 +208,13 @@ pub struct Bundle<S: BundleState + ?Sized> {
 /// `auth_digest`, etc. The `Unproven` intermediate state is outside this
 /// enum because it has no wire representation.
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
-#[derive(Clone, Debug, From)]
+#[derive(Clone, Debug, From, IsVariant, TryInto)]
 pub enum StampedBundle {
     /// A bundle with its own stamp (autonome or aggregate).
-    Stamped(Bundle<ProofStamp>),
+    Proven(Bundle<ProofStamp>),
     /// A bundle whose stamp has been stripped; carries a reference to the
     /// covering aggregate via its [`AggregateId`].
     Adjunct(Bundle<PointerStamp>),
-}
-
-impl TryFrom<StampedBundle> for Bundle<ProofStamp> {
-    type Error = Bundle<PointerStamp>;
-
-    fn try_from(bundle: StampedBundle) -> Result<Self, Self::Error> {
-        match bundle {
-            StampedBundle::Adjunct(stripped) => Err(stripped),
-            StampedBundle::Stamped(stamped) => Ok(stamped),
-        }
-    }
-}
-
-impl TryFrom<StampedBundle> for Bundle<PointerStamp> {
-    type Error = Bundle<ProofStamp>;
-
-    fn try_from(bundle: StampedBundle) -> Result<Self, Self::Error> {
-        match bundle {
-            StampedBundle::Adjunct(stripped) => Ok(stripped),
-            StampedBundle::Stamped(stamped) => Err(stamped),
-        }
-    }
 }
 
 /// Errors during bundle construction.
@@ -692,7 +670,7 @@ impl StampedBundle {
             BundleStateFlags::NoBundle => None,
             BundleStateFlags::ProofStamped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
-                Some(Self::Stamped(Bundle {
+                Some(Self::Proven(Bundle {
                     actions,
                     value_balance,
                     binding_sig,
@@ -701,13 +679,12 @@ impl StampedBundle {
             },
             BundleStateFlags::PointerStamped => {
                 let (actions, value_balance, binding_sig) = read_bundle_body(&mut reader)?;
-                let stamp = PointerStamp::read(&mut reader)?;
 
                 Some(Self::Adjunct(Bundle {
                     actions,
                     value_balance,
                     binding_sig,
-                    stamp,
+                    stamp: PointerStamp::read(&mut reader)?,
                 }))
             },
         })
@@ -718,7 +695,7 @@ impl StampedBundle {
     #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn write<W: Write>(&self, writer: W) -> io::Result<()> {
         match *self {
-            Self::Stamped(ref stamped) => stamped.write(writer),
+            Self::Proven(ref stamped) => stamped.write(writer),
             Self::Adjunct(ref stripped) => stripped.write(writer),
         }
     }
@@ -730,7 +707,7 @@ impl StampedBundle {
     #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn auth_digest(&self) -> [u8; 32] {
         match *self {
-            Self::Stamped(ref stamped) => stamped.auth_digest(),
+            Self::Proven(ref stamped) => stamped.auth_digest(),
             Self::Adjunct(ref stripped) => stripped.auth_digest(),
         }
     }
