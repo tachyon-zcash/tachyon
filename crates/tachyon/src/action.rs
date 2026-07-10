@@ -200,10 +200,9 @@ impl PartialOrd for Action {
 
 impl Ord for Action {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        <[u8; 32]>::from(self.cv)
-            .cmp(&<[u8; 32]>::from(other.cv))
-            .then(<[u8; 32]>::from(self.rk).cmp(&<[u8; 32]>::from(other.rk)))
-            .then(<[u8; 64]>::from(self.sig).cmp(&<[u8; 64]>::from(other.sig)))
+        self.descriptor()
+            .cmp(&other.descriptor())
+            .then_with(|| <[u8; 64]>::from(self.sig).cmp(&<[u8; 64]>::from(other.sig)))
     }
 }
 

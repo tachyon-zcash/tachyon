@@ -73,17 +73,14 @@ use core::ops;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
-use group::GroupEncoding as _;
-use pasta_curves::Eq;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    ActionSetPoly,
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
     note,
-    primitives::{ActionDigest, ActionDigestError, Anchor, effect},
+    primitives::{ActionDigestError, Anchor, effect},
     reddsa, serialization,
     stamp::{self, PointerStamp, ProofStamp, StampState, Unproven},
 };
@@ -117,12 +114,8 @@ impl StateByte {
     }
 
     pub(super) fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
-        let byte = match self {
-            Self::NoBundle => 0b0000_0000u8,
-            Self::ProofStamped => 0b0000_0001u8,
-            Self::PointerStamped => 0b0000_0010u8,
-        };
-        writer.write_all(&byte.to_le_bytes())
+        #[expect(clippy::as_conversions, reason = "repr u8")]
+        writer.write_all(&(self as u8).to_le_bytes())
     }
 }
 
@@ -137,9 +130,7 @@ mod sealed {
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
 pub trait BundleState: sealed::Sealed {}
 
-impl BundleState for Unproven {}
-impl BundleState for ProofStamp {}
-impl BundleState for PointerStamp {}
+impl<T: sealed::Sealed> BundleState for T {}
 
 /// A Tachyon transaction bundle parameterized by bundle state `S`.
 #[derive(Clone, Debug, PartialEq, TotalEq)]
@@ -157,22 +148,57 @@ pub struct Bundle<S: BundleState + ?Sized> {
     pub stamp: S,
 }
 
-/// A Tachyon bundle in any of its on-wire states: absent, stamped, or
-/// stripped.
-///
-/// Used where code accepts any form — reading from the wire, dispatching
-/// `auth_digest`, etc. The `Unproven` intermediate state is outside this
-/// enum because it has no wire representation.
-#[expect(clippy::module_name_repetitions, reason = "intentional name")]
-#[derive(Clone, Debug, From, IsVariant, TryInto)]
-pub enum TachyonBundle {
-    /// No bundle.
-    NoBundle,
-    /// A bundle with its own stamp (autonome or aggregate).
-    Proven(Bundle<ProofStamp>),
-    /// A bundle whose stamp has been stripped; carries a reference to the
-    /// covering aggregate via its [`PointerStamp`].
-    Adjunct(Bundle<PointerStamp>),
+impl<S: BundleState + ?Sized> Bundle<S> {
+    /// Collect the descriptors of all actions in the bundle.
+    #[must_use]
+    pub fn descriptors(&self) -> Vec<action::Descriptor> {
+        self.actions.iter().map(Action::descriptor).collect()
+    }
+
+    /// Digest the bundle's effecting data.
+    ///
+    /// This contributes to the transaction sighash. The stamp is excluded
+    /// because it is considered authorizing data, and is malleable during
+    /// aggregation.
+    #[must_use]
+    pub fn commitment(&self) -> [u8; 32] {
+        let descriptors: Vec<[u8; 64]> = self
+            .descriptors()
+            .into_iter()
+            .map(<[u8; 64]>::from)
+            .collect();
+
+        // The bundle's actions should already be sorted by construction.
+        debug_assert!(
+            descriptors.is_sorted(),
+            "bundle actions must be canonically sorted"
+        );
+
+        blake2b::bundle_commitment(
+            &blake2b::action_descriptor_digest(&descriptors),
+            self.value_balance,
+        )
+    }
+
+    /// Verify the bundle's binding signature and all action signatures.
+    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
+        // 1. Derive bvk from public data (validator-side, §4.14)
+        let bvk = public::BindingVerificationKey::derive(&self.actions, self.value_balance);
+
+        // 2. Verify binding signature
+        bvk.verify(sighash, &self.binding_sig)
+            .map_err(|_err| SignatureError::Binding(self.binding_sig))?;
+
+        // 3. Verify each action signature against the SAME sighash
+        for action in &self.actions {
+            action
+                .rk
+                .verify(sighash, &action.sig)
+                .map_err(|_err| SignatureError::Action(action.sig))?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Errors during bundle construction.
@@ -262,6 +288,16 @@ impl Plan {
         spend_transform.chain(output_transform)
     }
 
+    /// Collect and sort the descriptors of all actions in the plan.
+    #[must_use]
+    pub fn descriptors(&self) -> Vec<action::Descriptor> {
+        let mut desc = self
+            .iter_actions(action::Plan::descriptor, action::Plan::descriptor)
+            .collect::<Vec<action::Descriptor>>();
+        desc.sort_unstable();
+        desc
+    }
+
     /// Derive value_balance from note values.
     ///
     /// $\mathsf{v\_balance} = \sum_i v_{\text{spend},i} - \sum_j
@@ -281,29 +317,16 @@ impl Plan {
     }
 
     /// Compute a digest of all the bundle's effecting data.
-    ///
-    /// This contributes to the transaction sighash.
-    ///
-    /// $$ \mathsf{bundle\_commitment} = \text{BLAKE2b-256}(
-    /// \text{"ZTxIdTachyonHash"},\;
-    /// \mathsf{encoding}(\mathsf{action\_acc}) \|
-    /// \mathsf{value\_balance}) $$
-    ///
-    /// where $\mathsf{action\_acc}$ is the polynomial commitment to the
-    /// action digest multiset `∏(X - action_digest_i)` — order-independent
-    /// by construction since the polynomial is invariant under root
-    /// permutation — digested as its 32-byte point encoding.
-    ///
-    /// The stamp is excluded because it is stripped during aggregation.
+    /// See [`Bundle::commitment`].
     pub fn commitment(&self) -> Result<[u8; 32], CommitError> {
-        let digests: Vec<ActionDigest> = self
-            .iter_actions(action::Plan::digest, action::Plan::digest)
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
-
-        let action_commit = ActionSetPoly::from_iter(digests).commit();
+        let desc_bytes: Vec<[u8; 64]> = self
+            .descriptors()
+            .into_iter()
+            .map(<[u8; 64]>::from)
+            .collect();
 
         Ok(blake2b::bundle_commitment(
-            &Eq::from(action_commit).to_bytes(),
+            &blake2b::action_descriptor_digest(&desc_bytes),
             self.value_balance()?,
         ))
     }
@@ -353,7 +376,8 @@ impl Plan {
     /// For each action, independently derives alpha from theta + note
     /// commitment, verifies the derived rk matches, and signs. Also
     /// derives the binding signing key from rcvs and signs the binding
-    /// signature.
+    /// signature. The resulting actions are canonically sorted so that the
+    /// bundle matches its commitment's descriptor order.
     ///
     /// The result is a `Bundle<Unproven>` — combine with a [`ProofStamp`]
     /// via [`Bundle::stamp`] to produce a `Bundle<ProofStamp>`.
@@ -394,6 +418,8 @@ impl Plan {
             });
         }
 
+        authorized.sort_unstable();
+
         let bsk = self.derive_bsk_private();
         let binding_sig = bsk.sign(rng, sighash);
 
@@ -407,33 +433,34 @@ impl Plan {
         })
     }
 
-    /// Apply externally-produced signatures (e.g. from FROST).
+    /// Apply externally-produced signatures.
     ///
     /// Validates each signature against the action's rk and the sighash.
-    /// Derives cv from each plan and produces the binding signature.
+    /// Derives cv from each plan and produces the binding signature. The
+    /// resulting actions are canonically sorted; each signature stays paired
+    /// with its descriptor, so sorting preserves the pairing.
     pub fn apply_signatures<RNG: RngCore + CryptoRng>(
         &self,
+        rng: &mut RNG,
         sighash: &[u8; 32],
         sigs: Vec<action::Signature>,
-        rng: &mut RNG,
     ) -> Result<Bundle<Unproven>, SignError> {
         let n_actions = self.spends.len() + self.outputs.len();
         if sigs.len() != n_actions {
             return Err(SignError::SigCountMismatch(n_actions));
         }
 
-        let mut authorized = Vec::with_capacity(n_actions);
-
-        let all_descriptors = self
-            .iter_actions(action::Plan::descriptor, action::Plan::descriptor)
-            .zip(sigs);
-
-        for (desc, sig) in all_descriptors {
-            if desc.rk.verify(sighash, &sig).is_err() {
-                return Err(SignError::InvalidActionSignature(sig));
-            }
-            authorized.push(Action::from_parts(desc, sig));
-        }
+        let authorized = self
+            .descriptors()
+            .into_iter()
+            .zip(sigs)
+            .map(|(desc, sig)| {
+                desc.rk
+                    .verify(sighash, &sig)
+                    .map_err(|_err| SignError::InvalidActionSignature(sig))?;
+                Ok(Action::from_parts(desc, sig))
+            })
+            .collect::<Result<Vec<Action>, SignError>>()?;
 
         let bsk = self.derive_bsk_private();
         let binding_sig = bsk.sign(rng, sighash);
@@ -463,7 +490,7 @@ impl Bundle<Unproven> {
 }
 
 impl Bundle<ProofStamp> {
-    /// Produce an adjunct bundle with a pointer to a covering aggregate.
+    /// Replace the stamp with a wtixd pointer to a covering aggregate.
     #[must_use]
     pub fn strip(self, wtxid: PointerStamp) -> Bundle<PointerStamp> {
         Bundle {
@@ -493,13 +520,24 @@ impl Bundle<ProofStamp> {
                 .collect::<Vec<action::Descriptor>>(),
         )
     }
+
+    /// Check if this bundle is an aggregate, by computing the digest of its
+    /// owned actions and comparing to its stamp's `hActionsTachyon`.
+    #[must_use]
+    pub fn is_aggregate(&self) -> bool {
+        let desc_bytes: Vec<[u8; 64]> = self
+            .descriptors()
+            .into_iter()
+            .map(<[u8; 64]>::from)
+            .collect();
+        blake2b::action_descriptor_digest(&desc_bytes) == self.stamp.covered_actions
+    }
 }
 
 impl<S: StampState> Bundle<S> {
-    /// Read a bundle in state `S` from the consensus wire format.
+    /// Read a stamped bundle in state `S` from the consensus wire format.
     ///
-    /// Expects the `tachyonBundleState` byte for `S`. See the module-level
-    /// wire format documentation.
+    /// See the module-level wire format documentation.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let head = StateByte::read(&mut reader)?;
 
@@ -522,6 +560,10 @@ impl<S: StampState> Bundle<S> {
             vb_bytes
         });
 
+        // `n_actions` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
+        // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
+        // invalid data or EOF before significant problems occur.
+        // TODO: assert a reasonable maximum, to allow pre-allocation?
         let n_actions =
             usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
                 io::Error::new(
@@ -530,20 +572,27 @@ impl<S: StampState> Bundle<S> {
                 )
             })?;
 
-        let mut descriptors: Vec<action::Descriptor> = Vec::with_capacity(n_actions);
+        let mut descriptors: Vec<action::Descriptor> = Vec::new();
         for _ in 0..n_actions {
             descriptors.push(action::Descriptor::read(&mut reader)?);
         }
 
-        let mut signatures = Vec::with_capacity(n_actions);
+        if !descriptors.is_sorted() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "actions are not canonically sorted",
+            ));
+        }
+
+        let mut signatures: Vec<action::Signature> = Vec::new();
         for _ in 0..n_actions {
             signatures.push(action::Signature::read(&mut reader)?);
         }
 
-        let actions = descriptors
-            .iter()
-            .zip(signatures.iter())
-            .map(|(&desc, &sig)| Action::from_parts(desc, sig))
+        let actions: Vec<Action> = descriptors
+            .into_iter()
+            .zip(signatures)
+            .map(|(desc, sig)| Action::from_parts(desc, sig))
             .collect();
 
         let binding_sig = Signature::read(&mut reader)?;
@@ -587,15 +636,51 @@ impl<S: StampState> Bundle<S> {
 
     /// Tachyon's contribution to the transaction `auth_digest`.
     ///
-    /// Commits the action signatures, the binding signature, and the
-    /// stamp's digest. See [`blake2b::auth_digest`].
+    /// Commits the action descriptor digest, the action signatures, the
+    /// binding signature, and the stamp's digest. See
+    /// [`blake2b::bundle_auth_digest`].
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 32] {
+        let descriptors: Vec<[u8; 64]> = self
+            .descriptors()
+            .into_iter()
+            .map(<[u8; 64]>::from)
+            .collect();
+
+        // The bundle's actions should already be sorted by construction.
+        debug_assert!(
+            descriptors.is_sorted(),
+            "bundle actions must be canonically sorted"
+        );
+        let action_digest = blake2b::action_descriptor_digest(&descriptors);
+
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
         let binding_sig: [u8; 64] = self.binding_sig.into();
 
-        blake2b::auth_digest(&action_sigs, &binding_sig, &self.stamp.stamp_digest())
+        blake2b::bundle_auth_digest(
+            &action_digest,
+            &action_sigs,
+            &binding_sig,
+            &self.stamp.stamp_digest(),
+        )
     }
+}
+
+/// A Tachyon bundle in any of its on-wire states: absent, stamped, or stripped.
+/// Provided for consumers to switch over any form.
+///
+/// The `Unproven` intermediate state is outside this enum because it has no
+/// wire representation.
+#[expect(clippy::module_name_repetitions, reason = "intentional name")]
+#[derive(Clone, Debug, From, IsVariant, TryInto)]
+pub enum TachyonBundle {
+    /// No bundle.
+    NoBundle,
+    /// A bundle with its own stamp (autonome or aggregate).
+    Proven(Bundle<ProofStamp>),
+    /// A bundle whose stamp has been stripped; carries a reference to the
+    /// covering aggregate via its [`PointerStamp`].
+    Adjunct(Bundle<PointerStamp>),
 }
 
 impl TachyonBundle {
@@ -638,53 +723,32 @@ impl TachyonBundle {
         }
     }
 
-    /// Tachyon's contribution to the transaction `commitment`.
+    /// Tachyon's contribution to the transaction sighash (txid side).
     ///
-    /// Commits the action signatures, the binding signature, and the
-    /// stamp's digest. See [`blake2b::bundle_commitment`].
+    /// Dispatches on the variant to [`Bundle::commitment`], which commits the
+    /// owned actions' descriptors and the value balance; a `NoBundle`
+    /// contributes the fixed `COMMIT_NO_BUNDLE` sentinel. The stamp and the
+    /// signatures are excluded (they belong to the `auth_digest`).
+    #[must_use]
     #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
-    pub fn commitment(&self) -> Result<[u8; 32], ActionDigestError> {
+    pub fn commitment(&self) -> [u8; 32] {
         match *self {
-            Self::NoBundle => Ok(*blake2b::COMMIT_NO_BUNDLE),
+            Self::NoBundle => *blake2b::COMMIT_NO_BUNDLE,
             Self::Proven(ref stamped) => stamped.commitment(),
             Self::Adjunct(ref stripped) => stripped.commitment(),
         }
     }
-}
 
-impl<S: BundleState + ?Sized> Bundle<S> {
-    /// See [`Plan::commitment`].
-    pub fn commitment(&self) -> Result<[u8; 32], ActionDigestError> {
-        let action_digests = self
-            .actions
-            .iter()
-            .map(Action::digest)
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
-        let action_acc = ActionSetPoly::from_iter(action_digests).commit();
-        Ok(blake2b::bundle_commitment(
-            &Eq::from(action_acc).to_bytes(),
-            self.value_balance,
-        ))
-    }
-
-    /// Verify the bundle's binding signature and all action signatures.
-    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
-        // 1. Derive bvk from public data (validator-side, §4.14)
-        let bvk = public::BindingVerificationKey::derive(&self.actions, self.value_balance);
-
-        // 2. Verify binding signature
-        bvk.verify(sighash, &self.binding_sig)
-            .map_err(|_err| SignatureError::Binding(self.binding_sig))?;
-
-        // 3. Verify each action signature against the SAME sighash
-        for action in &self.actions {
-            action
-                .rk
-                .verify(sighash, &action.sig)
-                .map_err(|_err| SignatureError::Action(action.sig))?;
+    /// Check if this bundle is an aggregate, by computing the digest of its
+    /// owned actions and comparing to its stamp's `hActionsTachyon` if present.
+    #[must_use]
+    #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
+    pub fn is_aggregate(&self) -> bool {
+        match *self {
+            Self::NoBundle => false,
+            Self::Proven(ref stamped) => stamped.is_aggregate(),
+            Self::Adjunct(ref _stripped) => false,
         }
-
-        Ok(())
     }
 }
 

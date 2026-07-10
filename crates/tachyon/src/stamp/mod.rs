@@ -185,10 +185,16 @@ impl StampState for ProofStamp {
 
         let anchor = Anchor::read(&mut reader)?;
 
-        let tachygrams = serialization::read_fp_list(&mut reader)?
+        let tachygrams: Vec<Tachygram> = serialization::read_fp_list(&mut reader)?
             .into_iter()
             .map(Tachygram::from)
             .collect();
+        if !tachygrams.is_sorted() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "tachygrams are not canonically sorted",
+            ));
+        }
 
         let mut bytes = vec![0u8; PROOF_SIZE_COMPRESSED];
         reader.read_exact(&mut bytes)?;
@@ -241,7 +247,7 @@ pub enum VerificationError {
     ActionsMismatch,
 }
 
-/// Everything needed to produce a [`Stamp`].
+/// Everything needed to produce a [`ProofStamp`].
 ///
 /// Each action is described by a public descriptor `(cv, rk)` and a
 /// private witness `(alpha, note, rcv)`. The `prove` method generates
@@ -293,16 +299,17 @@ impl Plan {
         }
     }
 
-    /// Prove a single [`Stamp`] for this plan.
+    /// Prove a single [`ProofStamp`] for this plan.
     ///
-    /// For each **spend**, uses [`SpendBind`] to prepare PCD inputs, then runs
-    /// [`SpendStamp`] to attach the live nullifier pair.
+    /// For each **spend**, uses [`spend::SpendBind`] to prepare PCD inputs,
+    /// then runs [`SpendStamp`] to attach the live nullifier pair.
     ///
     /// For each **output**, runs [`OutputStamp`] with no PCD inputs.
     ///
     /// Stamps are recursively merged via [`MergeStamp`] into a single stamp.
     ///
-    /// `spend_pcds` items must correspond to each planned spend, in order.
+    /// `spendbind_inputs` items must correspond to each planned spend, in
+    /// order.
     pub fn prove<RNG: RngCore + CryptoRng>(
         self,
         rng: &mut RNG,
@@ -313,9 +320,11 @@ impl Plan {
             ragu::Pcd<spendable::SpendableHeader>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
-        // Each entry pairs leaf stamp components with the descriptor of its
-        // covered action; merges concatenate the descriptor lists. The
-        // covered-actions digest is computed once, on the final stamp.
+        // Each entry pairs leaf stamp components with the descriptor and
+        // action digest of its covered action; merges concatenate both
+        // lists. Digests are computed once per leaf and carried through the
+        // fold rather than re-derived at each merge step. The covered-actions
+        // digest is computed once, on the final stamp.
         let mut entries = Vec::with_capacity(self.spends.len() + self.outputs.len());
 
         if self.spends.len() != spendbind_inputs.len() {
@@ -325,6 +334,9 @@ impl Plan {
         for ((desc, alpha, note, rcv), (range_pcd, [_nf_now, nf_next], spendable_pcd)) in
             self.spends.into_iter().zip(spendbind_inputs)
         {
+            // TODO: the present nullifier is carried on the SpendBind output
+            // PCD (`nf_present`); incoming branches thread it differently, so
+            // the caller pair's `_nf_now` is intentionally unused here.
             let app = &*PROOF_SYSTEM;
 
             let (bind_pcd, ()) = app
@@ -338,58 +350,56 @@ impl Plan {
                 .map_err(ProveError::ProofFailed)?;
 
             // SpendStamp: bind the live pair to the derived range and publish.
-            let components = ProofStamp::prove_spend(rng, bind_pcd, range_pcd, nf_next)
-                .map_err(ProveError::ProofFailed)?;
+            let (tachygrams, anchor, proof) =
+                ProofStamp::prove_spend(rng, bind_pcd, range_pcd, nf_next)
+                    .map_err(ProveError::ProofFailed)?;
 
-            entries.push((vec![desc], components.0, components.1, components.2));
+            let digest = desc.digest().map_err(ProveError::ActionDigest)?;
+            entries.push((vec![desc], vec![digest], tachygrams, anchor, proof));
         }
 
         for (desc, alpha, note, rcv) in self.outputs {
-            let components = ProofStamp::prove_output(rng, rcv, alpha, note, self.anchor)
-                .map_err(ProveError::ProofFailed)?;
+            let (tachygrams, anchor, proof) =
+                ProofStamp::prove_output(rng, rcv, alpha, note, self.anchor)
+                    .map_err(ProveError::ProofFailed)?;
 
-            entries.push((vec![desc], components.0, components.1, components.2));
+            let digest = desc.digest().map_err(ProveError::ActionDigest)?;
+            entries.push((vec![desc], vec![digest], tachygrams, anchor, proof));
         }
 
-        let (descriptors, tachygrams, anchor, proof) = entries
+        let (descriptors, _digests, mut tachygrams, anchor, proof) = entries
             .into_iter()
             .map(Ok::<_, ProveError>)
             .reduce(|acc, next| {
-                let (left_desc, left_tachygrams, left_anchor, left_proof) = acc?;
-                let (right_desc, right_tachygrams, right_anchor, right_proof) = next?;
+                let (left_desc, left_digests, left_tachygrams, left_anchor, left_proof) = acc?;
+                let (right_desc, right_digests, right_tachygrams, right_anchor, right_proof) =
+                    next?;
 
-                let left_digests: Vec<ActionDigest> = left_desc
-                    .iter()
-                    .map(action::Descriptor::digest)
-                    .collect::<Result<_, _>>()
-                    .map_err(ProveError::ActionDigest)?;
-                let right_digests: Vec<ActionDigest> = right_desc
-                    .iter()
-                    .map(action::Descriptor::digest)
-                    .collect::<Result<_, _>>()
-                    .map_err(ProveError::ActionDigest)?;
-
-                let merged = ProofStamp::prove_merge(
-                    rng,
-                    (left_digests, left_tachygrams, left_anchor, left_proof),
-                    (right_digests, right_tachygrams, right_anchor, right_proof),
-                )
-                .map_err(ProveError::MergeFailed)?;
+                let (merged_digests, merged_tachygrams, merged_anchor, merged_proof) =
+                    ProofStamp::prove_merge(
+                        rng,
+                        (left_digests, left_tachygrams, left_anchor, left_proof),
+                        (right_digests, right_tachygrams, right_anchor, right_proof),
+                    )
+                    .map_err(ProveError::MergeFailed)?;
 
                 Ok((
                     [left_desc, right_desc].concat(),
-                    merged.0,
-                    merged.1,
-                    merged.2,
+                    merged_digests,
+                    merged_tachygrams,
+                    merged_anchor,
+                    merged_proof,
                 ))
             })
             .ok_or(ProveError::NoActions)??;
 
-        let descriptor_bytes: Vec<[u8; 64]> =
+        let mut descriptor_bytes: Vec<[u8; 64]> =
             descriptors.into_iter().map(<[u8; 64]>::from).collect();
+        descriptor_bytes.sort_unstable();
+        tachygrams.sort_unstable();
 
         Ok(ProofStamp {
-            covered_actions: blake2b::stamp_actions_digest(&descriptor_bytes),
+            covered_actions: blake2b::action_descriptor_digest(&descriptor_bytes),
             tachygrams,
             anchor,
             proof,
@@ -427,8 +437,9 @@ pub enum ProveError {
 #[derive(Clone, Debug)]
 pub struct ProofStamp {
     /// `hActionsTachyon`: digest of the covered action descriptors,
-    /// indicating which actions this stamp's proof covers. See
-    /// [`blake2b::stamp_actions_digest`].
+    /// indicating which actions this stamp's proof covers. Computed by
+    /// `blake2b::stamp_actions_digest` over the canonically sorted
+    /// descriptors.
     pub covered_actions: [u8; 32],
 
     /// Tachygrams (nullifiers and note commitments) for data availability.
@@ -441,6 +452,10 @@ pub struct ProofStamp {
     #[debug(skip)]
     pub proof: Box<ragu::Proof>,
 }
+
+/// Stamp components threaded through the merge fold: the covered actions'
+/// digests, the tachygrams, the shared anchor, and the proof.
+type StampComponents = (Vec<ActionDigest>, Vec<Tachygram>, Anchor, Box<ragu::Proof>);
 
 impl ProofStamp {
     /// Proves a single output action, returning the stamp components
@@ -490,29 +505,21 @@ impl ProofStamp {
     }
 
     /// Proves the merge of two stamps, returning the merged stamp
-    /// components `(tachygrams, anchor, proof)`.
+    /// components `(digests, tachygrams, anchor, proof)`.
     ///
     /// Both stamps must share the same anchor (use StampLift to align first).
     ///
-    /// Each side is `(proof, (digests, tachygrams, anchor))` — the digest
-    /// list reconstructs the `ActionCommit` multiset that `MergeStamp`
-    /// verifies via Schwartz-Zippel. Digests are derived from public action
-    /// data by the caller and are never stored on the stamp.
+    /// Each side is `(digests, tachygrams, anchor, proof)` — the digest list
+    /// reconstructs the `ActionCommit` multiset that `MergeStamp` verifies via
+    /// Schwartz-Zippel. Digests are derived from public action data by the
+    /// caller and are never stored on the stamp; the merged (concatenated)
+    /// digest list is returned so a fold can carry it forward without
+    /// re-deriving.
     pub fn prove_merge<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
-        (left_digests, left_tachygrams, left_anchor, left_proof): (
-            Vec<ActionDigest>,
-            Vec<Tachygram>,
-            Anchor,
-            Box<ragu::Proof>,
-        ),
-        (right_digests, right_tachygrams, right_anchor, right_proof): (
-            Vec<ActionDigest>,
-            Vec<Tachygram>,
-            Anchor,
-            Box<ragu::Proof>,
-        ),
-    ) -> Result<(Vec<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
+        (left_digests, left_tachygrams, left_anchor, left_proof): StampComponents,
+        (right_digests, right_tachygrams, right_anchor, right_proof): StampComponents,
+    ) -> Result<StampComponents, ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
         let (left_acts_poly, left_tg_poly) = (
@@ -542,9 +549,10 @@ impl ProofStamp {
             right_anchor,
         ));
 
+        let merged_digests = [left_digests, right_digests].concat();
         let tachygrams = [left_tachygrams, right_tachygrams].concat();
         let merged_tg_poly = TachygramSetPoly::from_iter(tachygrams.clone());
-        let merged_acts_poly = ActionSetPoly::from_iter([left_digests, right_digests].concat());
+        let merged_acts_poly = ActionSetPoly::from_iter(merged_digests.iter().copied());
 
         let (pcd, ()) = app.fuse(
             rng,
@@ -560,7 +568,12 @@ impl ProofStamp {
         let anchor = pcd.data().2;
         let rerand = app.rerandomize(pcd, rng)?;
 
-        Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))
+        Ok((
+            merged_digests,
+            tachygrams,
+            anchor,
+            Box::new(rerand.proof().clone()),
+        ))
     }
 
     /// Merges two stamps into one covering stamp.
@@ -577,16 +590,16 @@ impl ProofStamp {
     ) -> Result<Self, ProveError> {
         let left_actions_digest = left_desc
             .iter()
-            .map(|desc| ActionDigest::new(desc.cv, desc.rk))
+            .map(action::Descriptor::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
         let right_actions_digest = right_desc
             .iter()
-            .map(|desc| ActionDigest::new(desc.cv, desc.rk))
+            .map(action::Descriptor::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
 
-        let (tachygrams, anchor, proof) = Self::prove_merge(
+        let (_merged_digests, mut tachygrams, anchor, proof) = Self::prove_merge(
             rng,
             (
                 left_actions_digest,
@@ -602,29 +615,31 @@ impl ProofStamp {
             ),
         )
         .map_err(ProveError::MergeFailed)?;
+        tachygrams.sort_unstable();
 
-        let covered_actions: Vec<[u8; 64]> = [left_desc, right_desc]
+        let mut covered_actions: Vec<[u8; 64]> = [left_desc, right_desc]
             .concat()
             .into_iter()
             .map(<[u8; 64]>::from)
             .collect();
+        covered_actions.sort_unstable();
 
         Ok(Self {
-            covered_actions: blake2b::stamp_actions_digest(&covered_actions),
+            covered_actions: blake2b::action_descriptor_digest(&covered_actions),
             tachygrams,
             anchor,
             proof,
         })
     }
 
-    /// Checks if this stamp covers the given action descriptors.
+    /// Checks if this stamp covers the given action descriptors. The
+    /// descriptors are sorted into canonical order before hashing, so the
+    /// check is independent of the order the caller presents them in.
     #[must_use]
     pub fn covers(&self, descs: &[action::Descriptor]) -> bool {
-        let desc_bytes: Vec<[u8; 64]> = descs
-            .iter()
-            .map(|&desc| <[u8; 64]>::from(desc))
-            .collect::<Vec<[u8; 64]>>();
-        blake2b::stamp_actions_digest(&desc_bytes) == self.covered_actions
+        let mut desc_bytes: Vec<[u8; 64]> = descs.iter().copied().map(<[u8; 64]>::from).collect();
+        desc_bytes.sort_unstable();
+        blake2b::action_descriptor_digest(&desc_bytes) == self.covered_actions
     }
 
     /// Verifies this stamp's proof by reconstructing the PCD header from
@@ -640,10 +655,7 @@ impl ProofStamp {
     ) -> Result<(), VerificationError> {
         let app = &*PROOF_SYSTEM;
 
-        let descriptor_bytes: Vec<[u8; 64]> =
-            actions.iter().copied().map(<[u8; 64]>::from).collect();
-
-        if blake2b::stamp_actions_digest(&descriptor_bytes) != self.covered_actions {
+        if !self.covers(actions) {
             return Err(VerificationError::ActionsMismatch);
         }
 

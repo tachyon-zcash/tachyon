@@ -62,7 +62,7 @@ pub fn mock_wtxid(bundle: &Bundle<ProofStamp>) -> PointerStamp {
         .hash_length(32)
         .personal(b"pretend txid")
         .to_state()
-        .update(&bundle.commitment().expect("fixture commitment"))
+        .update(&bundle.commitment())
         .finalize();
 
     let mut wtxid = [0u8; 64];
@@ -122,7 +122,7 @@ pub fn build_output_stamp(
     let (tachygrams, stamp_anchor, proof) =
         ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
     let stamp = ProofStamp {
-        covered_actions: blake2b::stamp_actions_digest(&[plan.descriptor().into()]),
+        covered_actions: blake2b::action_descriptor_digest(&[plan.descriptor().into()]),
         tachygrams,
         anchor: stamp_anchor,
         proof,

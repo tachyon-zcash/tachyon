@@ -168,13 +168,9 @@ fn merge_populates_covered_actions() {
     let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note_a);
     let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note_b);
 
-    let descriptors: [[u8; 64]; 2] = [plan_a.descriptor().into(), plan_b.descriptor().into()];
-    let expected = blake2b::stamp_actions_digest(&descriptors);
-    // The digest sorts internally, so descriptor order is irrelevant.
-    assert_eq!(
-        expected,
-        blake2b::stamp_actions_digest(&[descriptors[1], descriptors[0]])
-    );
+    let mut descriptors: [[u8; 64]; 2] = [plan_a.descriptor().into(), plan_b.descriptor().into()];
+    descriptors.sort_unstable();
+    let expected = blake2b::action_descriptor_digest(&descriptors);
 
     let merged = ProofStamp::merge(
         rng,
@@ -182,6 +178,8 @@ fn merge_populates_covered_actions() {
         (stamp_b, vec![plan_b.descriptor()]),
     )
     .expect("merge");
+    // `merge` sorts the concatenated descriptors into canonical order, so the
+    // covered-actions digest is independent of the order they were passed in.
     assert_eq!(merged.covered_actions, expected);
 }
 

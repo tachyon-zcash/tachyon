@@ -7,8 +7,6 @@
 //! Personalizations are 13–16 bytes; `blake2b_simd::Params::personal`
 //! accepts any length ≤ 16.
 
-use alloc::vec::Vec;
-
 use blake2b_simd::Params;
 use lazy_static::lazy_static;
 
@@ -102,14 +100,37 @@ pub(crate) fn prf_expand_nk(sk: &[u8; 32]) -> [u8; 64] {
     })
 }
 
+const ACTION_DESCRIPTOR_PERSONALIZATION: &[u8; 15] = b"Tachyon-Actions";
+
+/// Digest of action descriptors.
+///
+/// This may be the stamp's `hActionsTachyon` or it may contribute to the
+/// bundle's effecting data commitment.
+///
+/// $$ \mathsf{hActionsTachyon} = \text{BLAKE2b-256}(
+/// \text{"Tachyon-Actions"},\;
+/// \mathsf{cv}_i \| \mathsf{rk}_i) $$
+///
+/// Each entry is a 64-byte concatenation of `cv || rk` field encodings. Entries
+/// are hashed in the order given, so the digest commits to that order; callers
+/// pass a canonically (byte-lexicographically) sorted slice.
+pub(crate) fn action_descriptor_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
+    debug_assert!(descriptors.is_sorted(), "descriptors should be pre-sorted");
+    hasher_256(ACTION_DESCRIPTOR_PERSONALIZATION, |state| {
+        for descriptor in descriptors {
+            state.update(descriptor);
+        }
+    })
+}
+
 // See https://github.com/zcash/orchard/blob/main/src/bundle/commitments.rs
 const BUNDLE_COMMITMENT_PERSONALIZATION: &[u8; 16] = b"ZTxIdTachyonHash";
 const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 
 /// A bundle's contribution to the transaction sighash.
 ///
-/// Hashes the bundle's effecting data: the encoding of the action-set
-/// commitment and the value balance. The stamp is excluded because it is
+/// Hashes the bundle's effecting data: the [`action_descriptor_digest`] of its
+/// own actions and the value balance. The stamp is excluded because it is
 /// stripped during aggregation.
 #[must_use]
 pub(crate) fn bundle_commitment(action_commit: &[u8; 32], value_balance: i64) -> [u8; 32] {
@@ -119,28 +140,8 @@ pub(crate) fn bundle_commitment(action_commit: &[u8; 32], value_balance: i64) ->
     })
 }
 
-const STAMP_ACTIONS_PERSONALIZATION: &[u8; 16] = b"Tachyon-StampAct";
 const STAMP_DATA_PERSONALIZATION: &[u8; 13] = b"Tachyon-Stamp";
 const STAMP_PROOF_PERSONALIZATION: &[u8; 13] = b"Tachyon-Proof";
-
-/// Digest of a stamp's covered action descriptors (`hActionsTachyon`).
-///
-/// $$ \mathsf{hActionsTachyon} = \text{BLAKE2b-256}(
-/// \text{"Tachyon-StampAct"},\;
-/// \mathsf{sorted}(\mathsf{cv}_i \| \mathsf{rk}_i)) $$
-///
-/// Each entry is a 64-byte `cv || rk` field encoding. Entries are sorted
-/// byte-lexicographically before hashing: the digest commits to the
-/// covered-action multiset.
-pub(crate) fn stamp_actions_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
-    let mut sorted: Vec<&[u8; 64]> = descriptors.iter().collect();
-    sorted.sort_unstable();
-    hasher_256(STAMP_ACTIONS_PERSONALIZATION, |state| {
-        for descriptor in sorted {
-            state.update(descriptor);
-        }
-    })
-}
 
 /// Digest of a stamp's proof.
 ///
@@ -157,21 +158,20 @@ pub(crate) fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
 /// $$ \mathsf{stamp\_data\_digest} = \text{BLAKE2b-256}(
 /// \text{"Tachyon-Stamp"},\;
 /// \mathsf{stamp\_proof\_digest} \| \mathsf{anchor} \|
-/// \mathsf{sorted}(\mathsf{vTachygrams})) $$
+/// \mathsf{vTachygrams}) $$
 ///
-/// Tachygrams are sorted byte-lexicographically before hashing: the digest
-/// commits to the tachygram multiset.
+/// Tachygrams are hashed in the order given, so the digest commits to that
+/// order; callers pass a canonically (byte-lexicographically) sorted slice.
 pub(crate) fn stamp_data_digest(
     stamp_proof_digest: [u8; 32],
     anchor: [u8; 32],
     tachygrams: &[[u8; 32]],
 ) -> [u8; 32] {
-    let mut sorted: Vec<&[u8; 32]> = tachygrams.iter().collect();
-    sorted.sort_unstable();
+    debug_assert!(tachygrams.is_sorted(), "tachygrams should be pre-sorted");
     hasher_256(STAMP_DATA_PERSONALIZATION, |state| {
         state.update(&stamp_proof_digest);
         state.update(&anchor);
-        for tg in sorted {
+        for tg in tachygrams {
             state.update(tg);
         }
     })
@@ -180,12 +180,17 @@ pub(crate) fn stamp_data_digest(
 /// A bundle's contribution to the transaction auth_digest.
 ///
 /// $$ \text{BLAKE2b-256}(\text{"ZTxAuthTachyHash"},\;
-/// \mathsf{vActionSigs} \| \mathsf{bindingSig} \| \mathsf{stamp}) $$
+/// \mathsf{hActions} \| \mathsf{vActionSigs} \| \mathsf{bindingSig} \|
+/// \mathsf{stamp}) $$
+///
+/// `action_digest` is the [`action_descriptor_digest`] over the bundle's own
+/// canonically sorted action descriptors, binding the authorized action set
+/// into the auth digest alongside the signatures.
 ///
 /// `stamp` is the 64-byte wtxid-shaped stamp digest:
 ///
 /// - proof stamp: `hActionsTachyon || stamp_data_digest`, see
-///   [`stamp_actions_digest`] and [`stamp_data_digest`];
+///   [`action_descriptor_digest`] and [`stamp_data_digest`];
 /// - pointer stamp: the covering aggregate's `wtxid = txid || auth_digest`.
 ///
 /// Each variable-length component reaches this preimage through its own
@@ -193,12 +198,14 @@ pub(crate) fn stamp_data_digest(
 /// recovered by length arithmetic (64-byte elements before a fixed
 /// 128-byte suffix) and pinned on the txid side by `action_acc`'s monic
 /// degree — the role `nActionsOrchard` plays in ZIP 244.
-pub(crate) fn auth_digest(
+pub(crate) fn bundle_auth_digest(
+    action_digest: &[u8; 32],
     action_sigs: &[[u8; 64]],
     binding_sig: &[u8; 64],
     stamp: &[u8; 64],
 ) -> [u8; 32] {
     hasher_256(AUTH_DIGEST_PERSONALIZATION, |state| {
+        state.update(action_digest);
         for sig in action_sigs {
             state.update(sig);
         }
@@ -227,6 +234,8 @@ lazy_static! {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     use super::*;
 
     /// Moving 32 bytes across the tachygram/proof boundary changes
@@ -246,29 +255,39 @@ mod tests {
         assert_ne!(split, joined);
     }
 
-    /// Sorted digests are permutation-invariant and element-sensitive.
+    /// Digests are element-sensitive over pre-sorted input.
     #[test]
-    fn sorted_multiset_digests() {
+    fn element_sensitive_digests() {
         let (desc_a, desc_b) = ([0xAAu8; 64], [0xBBu8; 64]);
-        assert_eq!(
-            stamp_actions_digest(&[desc_a, desc_b]),
-            stamp_actions_digest(&[desc_b, desc_a])
-        );
         assert_ne!(
-            stamp_actions_digest(&[desc_a, desc_b]),
-            stamp_actions_digest(&[desc_a, desc_a])
+            action_descriptor_digest(&[desc_a, desc_b]),
+            action_descriptor_digest(&[desc_a, desc_a])
         );
 
         let (tg_a, tg_b) = ([0xCCu8; 32], [0xDDu8; 32]);
         let (proof, anchor) = (stamp_proof_digest(&[]), [0u8; 32]);
-        assert_eq!(
-            stamp_data_digest(proof, anchor, &[tg_a, tg_b]),
-            stamp_data_digest(proof, anchor, &[tg_b, tg_a])
-        );
         assert_ne!(
             stamp_data_digest(proof, anchor, &[tg_a, tg_b]),
             stamp_data_digest(proof, anchor, &[tg_a, tg_a])
         );
+    }
+
+    /// `stamp_actions_digest` requires pre-sorted descriptors.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "descriptors must be pre-sorted")]
+    fn stamp_actions_digest_rejects_unsorted() {
+        let (desc_a, desc_b) = ([0xAAu8; 64], [0xBBu8; 64]);
+        action_descriptor_digest(&[desc_b, desc_a]);
+    }
+
+    /// `stamp_data_digest` requires pre-sorted tachygrams.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "tachygrams must be pre-sorted")]
+    fn stamp_data_digest_rejects_unsorted() {
+        let (tg_a, tg_b) = ([0xCCu8; 32], [0xDDu8; 32]);
+        stamp_data_digest(stamp_proof_digest(&[]), [0u8; 32], &[tg_b, tg_a]);
     }
 
     /// Personalization separates the empty digests of every node.
@@ -277,7 +296,7 @@ mod tests {
         let empties = [
             *COMMIT_NO_BUNDLE,
             *AUTH_DIGEST_NO_BUNDLE,
-            stamp_actions_digest(&[]),
+            action_descriptor_digest(&[]),
             stamp_proof_digest(&[]),
         ];
         for (i, x) in empties.iter().enumerate() {
@@ -290,7 +309,12 @@ mod tests {
     /// The no-bundle value differs from a zero-action bundle's contribution.
     #[test]
     fn no_bundle_differs_from_zero_action_bundle() {
-        let contribution = auth_digest(&[], &[0u8; 64], &[0x42u8; 64]);
+        let contribution = bundle_auth_digest(
+            &action_descriptor_digest(&[]),
+            &[],
+            &[0u8; 64],
+            &[0x42u8; 64],
+        );
         assert_ne!(*AUTH_DIGEST_NO_BUNDLE, contribution);
     }
 }

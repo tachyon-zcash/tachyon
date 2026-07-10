@@ -35,7 +35,7 @@ fn wrong_value_balance_fails_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-    let sighash = mock_sighash(bundle.commitment().unwrap());
+    let sighash = mock_sighash(bundle.commitment());
 
     bundle.value_balance = 999;
     let err = bundle.verify_signatures(&sighash).unwrap_err();
@@ -49,7 +49,7 @@ fn stripped_bundle_retains_signatures() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let bundle = build_autonome(rng, &wallet, 1000, 700);
-    let sighash = mock_sighash(bundle.commitment().unwrap());
+    let sighash = mock_sighash(bundle.commitment());
 
     let covering = build_autonome(rng, &wallet, 500, 300);
     let adjunct = bundle.strip(mock_wtxid(&covering));
@@ -73,10 +73,7 @@ fn plan_commitment_matches_bundle_commitment() {
         .expect("sign output bundle")
         .stamp(stamp);
 
-    assert_eq!(
-        bundle_plan.commitment().unwrap(),
-        bundle.commitment().unwrap()
-    );
+    assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
 }
 
 #[test]
@@ -129,7 +126,7 @@ fn payment_bundle_verifies() {
         alloc::vec![(input_note, spendable_pcd, spend_epoch)],
         alloc::vec![output_note, change_note],
     );
-    let sighash = mock_sighash(stamped.commitment().unwrap());
+    let sighash = mock_sighash(stamped.commitment());
     stamped
         .verify_signatures(&sighash)
         .expect("payment bundle must verify");
@@ -264,7 +261,7 @@ fn innocent_aggregate_from_two_autonomes() {
     let adjunct_b = autonome_b.strip(mock_wtxid(&innocent));
 
     innocent
-        .verify_signatures(&mock_sighash(innocent.commitment().unwrap()))
+        .verify_signatures(&mock_sighash(innocent.commitment()))
         .expect("innocent binding sig should verify");
 
     let adjunct_descriptors: Vec<action::Descriptor> = [adjunct_a.actions, adjunct_b.actions]
@@ -335,7 +332,7 @@ fn based_aggregate_with_two_adjuncts() {
         alloc::vec![b_output],
     );
 
-    let sighash = mock_sighash(becomes_based.commitment().unwrap());
+    let sighash = mock_sighash(becomes_based.commitment());
 
     let based_descriptors: Vec<action::Descriptor> = becomes_based
         .actions
@@ -391,7 +388,7 @@ fn invalid_action_sig_fails_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-    let sighash = mock_sighash(bundle.commitment().unwrap());
+    let sighash = mock_sighash(bundle.commitment());
 
     let mut sig_bytes: [u8; 64] = bundle.actions[0].sig.into();
     sig_bytes[0] ^= 0xFF;
@@ -419,7 +416,7 @@ fn stamped_read_write_round_trip() {
     assert_eq!(original.stamp.tachygrams, deserialized.stamp.tachygrams);
     assert_eq!(original.stamp.anchor, deserialized.stamp.anchor);
 
-    let sighash = mock_sighash(deserialized.commitment().unwrap());
+    let sighash = mock_sighash(deserialized.commitment());
     deserialized
         .verify_signatures(&sighash)
         .expect("deserialized bundle must verify");
@@ -733,6 +730,8 @@ fn auth_digest_invariants() {
             .stamp
             .tachygrams
             .push(Tachygram::from(Fp::from(7u64)));
+        // Tachygrams must stay canonically sorted for the stamp digest.
+        extra_tachygram.stamp.tachygrams.sort_unstable();
         assert_ne!(baseline, extra_tachygram.auth_digest());
     }
 }
@@ -842,4 +841,57 @@ fn coverage_check_matches_stamp_actions() {
         !becomes_based.covers(&[&adjunct_a, &adjunct_b, &adjunct_a]),
         "extra adjunct must mismatch"
     );
+}
+
+/// A bundle whose actions are not in canonical order is rejected on read: the
+/// order-committing sighash plus this check close action reordering as a
+/// malleability vector.
+#[test]
+fn read_rejects_noncanonical_actions() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let bundle = build_autonome(rng, &wallet, 1000, 700);
+    assert!(
+        bundle.actions.len() >= 2,
+        "need at least two actions to permute"
+    );
+    assert_ne!(bundle.actions[0], bundle.actions[1]);
+
+    // A canonical (signed) bundle round-trips.
+    let mut buf = Vec::new();
+    bundle.write(&mut buf).expect("write");
+    Bundle::<ProofStamp>::read(&*buf).expect("canonical bundle reads");
+
+    // Permuting the stored actions and re-serializing produces a non-canonical
+    // encoding, which read must reject.
+    let mut permuted = bundle;
+    permuted.actions.swap(0, 1);
+    let mut permuted_buf = Vec::new();
+    permuted.write(&mut permuted_buf).expect("write permuted");
+
+    let err = Bundle::<ProofStamp>::read(&*permuted_buf)
+        .expect_err("non-canonical actions must be rejected");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(err.to_string(), "actions are not canonically sorted");
+}
+
+/// A stamp whose tachygrams are not in canonical order is rejected on read,
+/// matching the order the stamp digest commits to.
+#[test]
+fn read_rejects_noncanonical_tachygrams() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let bundle = build_autonome(rng, &wallet, 1000, 700);
+    let n = bundle.stamp.tachygrams.len();
+    assert!(n >= 2, "need at least two tachygrams to permute");
+
+    let mut permuted = bundle;
+    permuted.stamp.tachygrams.swap(0, n - 1);
+    let mut buf = Vec::new();
+    permuted.write(&mut buf).expect("write");
+
+    let err =
+        Bundle::<ProofStamp>::read(&*buf).expect_err("non-canonical tachygrams must be rejected");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(err.to_string(), "tachygrams are not canonically sorted");
 }
