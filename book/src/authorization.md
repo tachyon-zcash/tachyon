@@ -75,7 +75,7 @@ The bundle commitment is a digest of the bundle's effect.
 
 $$ d_i = \text{Poseidon}_\text{Tachyon-ActionDg}(\mathsf{cv}_i \| \mathsf{rk}_i) $$
 $$ \mathsf{action\_acc} = \text{Commit}\Bigl(\prod_i \bigl(X - d_i\bigr)\Bigr) $$
-$$ \text{BLAKE2b-512}_\text{ZTxIdTachyonHash}( \mathsf{action\_acc} \| \mathsf{value\_balance}) $$
+$$ \text{BLAKE2b-256}_\text{ZTxIdTachyonHash}( \mathsf{action\_acc} \| \mathsf{value\_balance}) $$
 
 The bundle commitment hashes accumulated action digests with the value balance.
 

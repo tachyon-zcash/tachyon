@@ -68,8 +68,9 @@ use core::ops;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
+use ff::PrimeField as _;
 use group::GroupEncoding as _;
-use pasta_curves::{Eq, Fp, group::Curve as _};
+use pasta_curves::{Eq, Fp};
 use rand_core::{CryptoRng, RngCore};
 
 pub use crate::digest::blake2b::{AUTH_DIGEST_NO_BUNDLE, COMMIT_NO_BUNDLE};
@@ -294,17 +295,18 @@ impl Plan {
     ///
     /// This contributes to the transaction sighash.
     ///
-    /// $$ \mathsf{bundle\_commitment} = \text{BLAKE2b-512}(
-    /// \text{"ZTxIdTachyonHash"},\; \mathsf{action\_acc}_x \|
-    /// \mathsf{action\_acc}_y \| \mathsf{value\_balance}) $$
+    /// $$ \mathsf{bundle\_commitment} = \text{BLAKE2b-256}(
+    /// \text{"ZTxIdTachyonHash"},\;
+    /// \mathsf{encoding}(\mathsf{action\_acc}) \|
+    /// \mathsf{value\_balance}) $$
     ///
     /// where $\mathsf{action\_acc}$ is the polynomial commitment to the
     /// action digest multiset `∏(X - action_digest_i)` — order-independent
     /// by construction since the polynomial is invariant under root
-    /// permutation.
+    /// permutation — digested as its 32-byte point encoding.
     ///
     /// The stamp is excluded because it is stripped during aggregation.
-    pub fn commitment(&self) -> Result<[u8; 64], CommitError> {
+    pub fn commitment(&self) -> Result<[u8; 32], CommitError> {
         let digests: Vec<ActionDigest> = self
             .iter_actions(action::Plan::digest, action::Plan::digest)
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
@@ -312,7 +314,7 @@ impl Plan {
         let action_commit = ActionSetPoly::from_iter(digests).commit();
 
         Ok(blake2b::bundle_commitment(
-            &Eq::from(action_commit).to_affine(),
+            &Eq::from(action_commit).to_bytes(),
             self.value_balance()?,
         ))
     }
@@ -577,20 +579,21 @@ impl Bundle<Stamp> {
 
     /// Tachyon's contribution to the transaction `auth_digest`.
     ///
-    /// Hashes action signatures, the binding signature, and the trailer.
+    /// Hashes action signatures, the binding signature, and the stamp
+    /// trailer's field encodings.
     #[must_use]
-    pub fn auth_digest(&self) -> [u8; 64] {
+    pub fn auth_digest(&self) -> [u8; 32] {
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
         let binding_sig: [u8; 64] = self.binding_sig.into();
 
         let trailer = {
             let action_set: [u8; 32] = Eq::from(self.stamp.action_set).to_bytes();
             let anchor: [u8; 32] = self.stamp.anchor.0.into();
-            let tachygrams: Vec<Fp> = self
+            let tachygrams: Vec<[u8; 32]> = self
                 .stamp
                 .tachygrams
                 .iter()
-                .map(|&tg| Fp::from(tg))
+                .map(|&tg| Fp::from(tg).to_repr())
                 .collect();
             let proof = self.stamp.proof.serialize();
             (action_set, anchor, tachygrams, proof)
@@ -659,10 +662,10 @@ impl Bundle<AggregateId> {
 
     /// Tachyon's contribution to the transaction `auth_digest`.
     ///
-    /// Hashes action signatures, the binding signature, and the 64-byte
-    /// `wtxid` of the covering aggregate.
+    /// Hashes action signatures, the binding signature, and the stripped
+    /// trailer: the 64-byte `wtxid` of the covering aggregate.
     #[must_use]
-    pub fn auth_digest(&self) -> [u8; 64] {
+    pub fn auth_digest(&self) -> [u8; 32] {
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
         let binding_sig: [u8; 64] = self.binding_sig.into();
         blake2b::stripped_auth_digest(&action_sigs, &binding_sig, &self.stamp.into())
@@ -720,7 +723,7 @@ impl TachyonBundle {
     /// `Bundle<AggregateId>`.
     #[must_use]
     #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
-    pub fn auth_digest(&self) -> [u8; 64] {
+    pub fn auth_digest(&self) -> [u8; 32] {
         match *self {
             Self::Stamped(ref stamped) => stamped.auth_digest(),
             Self::Adjunct(ref stripped) => stripped.auth_digest(),
@@ -730,7 +733,7 @@ impl TachyonBundle {
 
 impl<S: StampState> Bundle<S> {
     /// See [`Plan::commitment`].
-    pub fn commitment(&self) -> Result<[u8; 64], ActionDigestError> {
+    pub fn commitment(&self) -> Result<[u8; 32], ActionDigestError> {
         let action_digests = self
             .actions
             .iter()
@@ -738,7 +741,7 @@ impl<S: StampState> Bundle<S> {
             .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()?;
         let action_acc = ActionSetPoly::from_iter(action_digests).commit();
         Ok(blake2b::bundle_commitment(
-            &Eq::from(action_acc).to_affine(),
+            &Eq::from(action_acc).to_bytes(),
             self.value_balance,
         ))
     }

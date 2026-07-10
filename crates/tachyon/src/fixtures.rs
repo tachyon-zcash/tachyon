@@ -42,7 +42,7 @@ use crate::{
     value, witness,
 };
 
-pub fn mock_sighash(bundle_digest: [u8; 64]) -> [u8; 32] {
+pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     let hash = blake2b_simd::Params::new()
         .hash_length(32)
         .personal(b"pretend sighash")
