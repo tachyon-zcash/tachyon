@@ -16,7 +16,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
-    ActionSetPoly, NfSeqPoly, Note, TachygramSetPoly,
+    ActionSetPoly, NfSeqPoly, Note, TachygramSetPoly, action,
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
     fixtures::{
@@ -475,7 +475,7 @@ fn spend_bind_honest() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let (_cm, (_cv, _rk), present_nf, _anchor) = *spend_pcd.data();
+    let (_cm, _desc, present_nf, _anchor) = *spend_pcd.data();
     assert_eq!(present_nf, user.nf_at(&note, spend_epoch));
 }
 
@@ -618,11 +618,14 @@ fn spend_stamp_rejects_identity_cv() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let real_spend = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let (cm, (_real_cv, real_rk), present_nf, anchor) = *real_spend.data();
+    let (cm, real_desc, present_nf, anchor) = *real_spend.data();
     let identity_cv = value::Commitment::balance(0);
     let forged_spend = real_spend.proof().clone().carry::<spend::SpendHeader>((
         cm,
-        (identity_cv, real_rk),
+        action::Descriptor {
+            cv: identity_cv,
+            rk: real_desc.rk,
+        },
         present_nf,
         anchor,
     ));
@@ -737,7 +740,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let lifted = user.lift(rng, spendable, unspent, &note, EpochIndex(0), EpochIndex(1));
 
     let spend_pcd = honest_spend_bind(rng, &user, &note, lifted);
-    let (_cm, (_cv, _rk), present_nf, _anchor) = *spend_pcd.data();
+    let (_cm, _desc, present_nf, _anchor) = *spend_pcd.data();
     assert_eq!(
         present_nf,
         user.nf_at(&note, EpochIndex(1)),

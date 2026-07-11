@@ -1,8 +1,8 @@
 #![allow(clippy::panic, reason = "test code")]
 
 use alloc::{string::ToString as _, vec, vec::Vec};
-use core::slice::from_ref;
 
+use pasta_curves::Fp;
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
@@ -11,11 +11,12 @@ use crate::{
     digest::blake2b::COMMIT_NO_BUNDLE,
     entropy::ActionEntropy,
     fixtures::{
-        PoolSim, WalletSim, action_digests, build_autonome, build_output_plan, build_output_stamp,
-        mock_sighash, random_action, random_block, random_block_with, shared_sk, spend_witness,
+        PoolSim, WalletSim, build_autonome, build_output_plan, build_output_stamp, mock_sighash,
+        mock_wtxid, random_action, random_block, random_block_with, shared_sk, spend_witness,
     },
-    primitives::{ActionDigest, BlockHeight},
+    primitives::{BlockHeight, Tachygram},
     stamp::VerificationError,
+    value,
 };
 
 #[test]
@@ -39,7 +40,7 @@ fn wrong_value_balance_fails_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-    let sighash = mock_sighash(bundle.commitment().unwrap());
+    let sighash = mock_sighash(bundle.commitment());
 
     bundle.value_balance = ValueBalance::try_from(999).unwrap();
     let err = bundle.verify_signatures(&sighash).unwrap_err();
@@ -53,10 +54,11 @@ fn stripped_bundle_retains_signatures() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let bundle = build_autonome(rng, &wallet, 1000, 700);
-    let sighash = mock_sighash(bundle.commitment().unwrap());
+    let sighash = mock_sighash(bundle.commitment());
 
-    let (unassigned, _stamp) = bundle.strip();
-    unassigned.verify_signatures(&sighash).unwrap();
+    let covering = build_autonome(rng, &wallet, 500, 300);
+    let adjunct = bundle.strip(mock_wtxid(&covering));
+    adjunct.verify_signatures(&sighash).unwrap();
 }
 
 #[test]
@@ -76,10 +78,7 @@ fn plan_commitment_matches_bundle_commitment() {
         .expect("sign output bundle")
         .stamp(stamp);
 
-    assert_eq!(
-        bundle_plan.commitment().unwrap(),
-        bundle.commitment().unwrap()
-    );
+    assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
 }
 
 #[test]
@@ -137,6 +136,9 @@ fn no_bundle_commitment_differs_from_empty_bundle() {
 #[test]
 fn zero_action_bundle_is_valid() {
     let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let covering = build_autonome(rng, &wallet, 1000, 700);
+
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
     let sighash = mock_sighash(plan.commitment().unwrap());
 
@@ -144,7 +146,7 @@ fn zero_action_bundle_is_valid() {
         actions: alloc::vec![],
         value_balance: ValueBalance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-        stamp: AggregateId::try_from([1u8; 64]).expect("nonzero id"),
+        stamp: mock_wtxid(&covering),
     };
 
     bundle.verify_signatures(&sighash).unwrap();
@@ -171,7 +173,7 @@ fn payment_bundle_verifies() {
         alloc::vec![(input_note, spendable_pcd, spend_epoch)],
         alloc::vec![output_note, change_note],
     );
-    let sighash = mock_sighash(stamped.commitment().unwrap());
+    let sighash = mock_sighash(stamped.commitment());
     stamped
         .verify_signatures(&sighash)
         .expect("payment bundle must verify");
@@ -183,53 +185,54 @@ fn stamp_verify_action_multiset_invariants() {
     let wallet = WalletSim::new(shared_sk());
     let stamped = build_autonome(rng, &wallet, 1000, 700);
 
+    let descriptors: Vec<action::Descriptor> =
+        stamped.actions.iter().map(Action::descriptor).collect();
+
     // Permutation accepts.
     {
-        let action_a = stamped.actions[0];
-        let action_b = stamped.actions[1];
         stamped
             .stamp
-            .verify(rng, &[action_b, action_a])
+            .verify(rng, &[descriptors[1], descriptors[0]])
             .expect("permuted actions must verify");
     }
 
     // Drop rejects.
     {
-        let mut actions = stamped.actions.clone();
-        actions.pop();
-        let err = stamped.stamp.verify(rng, &actions).unwrap_err();
-        let VerificationError::ActionSetMismatch = err else {
-            panic!("drop: expected ActionSetMismatch, got {err:?}");
+        let mut dropped = descriptors.clone();
+        dropped.pop();
+        let err = stamped.stamp.verify(rng, &dropped).unwrap_err();
+        let VerificationError::ActionsMismatch = err else {
+            panic!("drop: expected ActionsMismatch, got {err:?}");
         };
     }
 
     // Duplicate rejects.
     {
-        let mut actions = stamped.actions.clone();
-        actions.push(actions[0]);
-        let err = stamped.stamp.verify(rng, &actions).unwrap_err();
-        let VerificationError::ActionSetMismatch = err else {
-            panic!("duplicate: expected ActionSetMismatch, got {err:?}");
+        let mut duplicated = descriptors.clone();
+        duplicated.push(duplicated[0]);
+        let err = stamped.stamp.verify(rng, &duplicated).unwrap_err();
+        let VerificationError::ActionsMismatch = err else {
+            panic!("duplicate: expected ActionsMismatch, got {err:?}");
         };
     }
 
     // Foreign-extra rejects.
     {
-        let mut actions = stamped.actions.clone();
-        actions.push(random_action(rng));
-        let err = stamped.stamp.verify(rng, &actions).unwrap_err();
-        let VerificationError::ActionSetMismatch = err else {
-            panic!("extra: expected ActionSetMismatch, got {err:?}");
+        let mut extended = descriptors.clone();
+        extended.push(random_action(rng).descriptor());
+        let err = stamped.stamp.verify(rng, &extended).unwrap_err();
+        let VerificationError::ActionsMismatch = err else {
+            panic!("extra: expected ActionsMismatch, got {err:?}");
         };
     }
 
     // Replace-with-foreign rejects.
     {
-        let mut actions = stamped.actions.clone();
-        actions[0] = random_action(rng);
-        let err = stamped.stamp.verify(rng, &actions).unwrap_err();
-        let VerificationError::ActionSetMismatch = err else {
-            panic!("replaced: expected ActionSetMismatch, got {err:?}");
+        let mut replaced = descriptors;
+        replaced[0] = random_action(rng).descriptor();
+        let err = stamped.stamp.verify(rng, &replaced).unwrap_err();
+        let VerificationError::ActionsMismatch = err else {
+            panic!("replaced: expected ActionsMismatch, got {err:?}");
         };
     }
 }
@@ -277,17 +280,19 @@ fn innocent_aggregate_from_two_autonomes() {
         alloc::vec![output_b],
     );
 
-    let digests_a = action_digests(&autonome_a.actions);
-    let digests_b = action_digests(&autonome_b.actions);
-    let (adjunct_a, stamp_a) = autonome_a.strip();
-    let (adjunct_b, stamp_b) = autonome_b.strip();
+    let descriptors_a: Vec<action::Descriptor> =
+        autonome_a.actions.iter().map(Action::descriptor).collect();
+    let descriptors_b: Vec<action::Descriptor> =
+        autonome_b.actions.iter().map(Action::descriptor).collect();
+    let stamp_a = autonome_a.stamp.clone();
+    let stamp_b = autonome_b.stamp.clone();
 
     let innocent = {
         let innocent_plan = Plan::new(alloc::vec![], alloc::vec![]);
         let innocent_sighash = mock_sighash(innocent_plan.commitment().unwrap());
 
-        let stamp = Stamp::prove_merge(rng, (stamp_a, &digests_a), (stamp_b, &digests_b))
-            .expect("prove_merge");
+        let stamp = ProofStamp::merge(rng, (stamp_a, descriptors_a), (stamp_b, descriptors_b))
+            .expect("merge");
 
         Bundle {
             actions: alloc::vec![],
@@ -299,14 +304,21 @@ fn innocent_aggregate_from_two_autonomes() {
         }
     };
 
+    let adjunct_a = autonome_a.strip(mock_wtxid(&innocent));
+    let adjunct_b = autonome_b.strip(mock_wtxid(&innocent));
+
     innocent
-        .verify_signatures(&mock_sighash(innocent.commitment().unwrap()))
+        .verify_signatures(&mock_sighash(innocent.commitment()))
         .expect("innocent binding sig should verify");
 
-    let adjunct_actions: Vec<Action> = [adjunct_a.actions, adjunct_b.actions].concat();
+    let adjunct_descriptors: Vec<action::Descriptor> = [adjunct_a.actions, adjunct_b.actions]
+        .concat()
+        .iter()
+        .map(Action::descriptor)
+        .collect();
     innocent
         .stamp
-        .verify(rng, &adjunct_actions)
+        .verify(rng, &adjunct_descriptors)
         .expect("innocent stamp should verify against adjunct actions");
 }
 
@@ -367,43 +379,54 @@ fn based_aggregate_with_two_adjuncts() {
         alloc::vec![b_output],
     );
 
-    let sighash = mock_sighash(becomes_based.commitment().unwrap());
+    let sighash = mock_sighash(becomes_based.commitment());
 
-    let based_digests = action_digests(&becomes_based.actions);
-    let digests_a = action_digests(&autonome_a.actions);
-    let digests_b = action_digests(&autonome_b.actions);
+    let based_descriptors: Vec<action::Descriptor> = becomes_based
+        .actions
+        .iter()
+        .map(Action::descriptor)
+        .collect();
+    let descriptors_a: Vec<action::Descriptor> =
+        autonome_a.actions.iter().map(Action::descriptor).collect();
+    let descriptors_b: Vec<action::Descriptor> =
+        autonome_b.actions.iter().map(Action::descriptor).collect();
 
-    let (adjunct_a, stamp_a) = autonome_a.strip();
-    let (adjunct_b, stamp_b) = autonome_b.strip();
+    let stamp_a = autonome_a.stamp.clone();
+    let stamp_b = autonome_b.stamp.clone();
 
-    let mut innocent_digests = digests_a.clone();
-    innocent_digests.extend_from_slice(&digests_b);
-    let innocent_stamp = Stamp::prove_merge(rng, (stamp_a, &digests_a), (stamp_b, &digests_b))
+    let innocent_descriptors = [descriptors_a.as_slice(), descriptors_b.as_slice()].concat();
+    let innocent_stamp = ProofStamp::merge(rng, (stamp_a, descriptors_a), (stamp_b, descriptors_b))
         .expect("innocent merge");
 
-    let based_stamp = Stamp::prove_merge(
+    let based_stamp = ProofStamp::merge(
         rng,
-        (becomes_based.stamp, &based_digests),
-        (innocent_stamp, &innocent_digests),
+        (becomes_based.stamp, based_descriptors),
+        (innocent_stamp, innocent_descriptors),
     )
     .expect("based merge");
 
     becomes_based.stamp = based_stamp;
 
+    let adjunct_a = autonome_a.strip(mock_wtxid(&becomes_based));
+    let adjunct_b = autonome_b.strip(mock_wtxid(&becomes_based));
+
     becomes_based
         .verify_signatures(&sighash)
         .expect("based aggregate binding sig should verify");
 
-    let all_actions: Vec<Action> = [
+    let all_descriptors: Vec<action::Descriptor> = [
         becomes_based.actions.clone(),
         adjunct_a.actions,
         adjunct_b.actions,
     ]
-    .concat();
+    .concat()
+    .iter()
+    .map(Action::descriptor)
+    .collect();
 
     becomes_based
         .stamp
-        .verify(rng, &all_actions)
+        .verify(rng, &all_descriptors)
         .expect("based aggregate stamp should verify against all actions");
 }
 
@@ -412,7 +435,7 @@ fn invalid_action_sig_fails_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-    let sighash = mock_sighash(bundle.commitment().unwrap());
+    let sighash = mock_sighash(bundle.commitment());
 
     let mut sig_bytes: [u8; 64] = bundle.actions[0].sig.into();
     sig_bytes[0] ^= 0xFF;
@@ -433,14 +456,14 @@ fn stamped_read_write_round_trip() {
     let original = build_autonome(rng, &wallet, 1000, 700);
     let mut buf = Vec::new();
     original.write(&mut buf).expect("write");
-    let deserialized = Bundle::<Stamp>::read(&*buf).expect("read");
+    let deserialized = Bundle::<ProofStamp>::read(&*buf).expect("read");
 
     assert_eq!(original.actions, deserialized.actions);
     assert_eq!(original.value_balance, deserialized.value_balance);
     assert_eq!(original.stamp.tachygrams, deserialized.stamp.tachygrams);
     assert_eq!(original.stamp.anchor, deserialized.stamp.anchor);
 
-    let sighash = mock_sighash(deserialized.commitment().unwrap());
+    let sighash = mock_sighash(deserialized.commitment());
     deserialized
         .verify_signatures(&sighash)
         .expect("deserialized bundle must verify");
@@ -450,19 +473,16 @@ fn stamped_read_write_round_trip() {
 fn stripped_read_write_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-    let stripped =
-        unassigned.assign_wtxid(AggregateId::try_from([0x42u8; 64]).expect("nonzero id"));
+    let covering = build_autonome(rng, &wallet, 500, 300);
+    let wtxid = mock_wtxid(&covering);
+    let stripped = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
 
     let mut buf = Vec::new();
     stripped.write(&mut buf).expect("write");
-    let deserialized = Bundle::<AggregateId>::read(&*buf).expect("read");
+    let deserialized = Bundle::<PointerStamp>::read(&*buf).expect("read");
 
     assert_eq!(stripped, deserialized);
-    assert_eq!(
-        deserialized.stamp,
-        AggregateId::try_from([0x42u8; 64]).expect("nonzero id")
-    );
+    assert_eq!(deserialized.stamp, wtxid);
 }
 
 #[test]
@@ -473,7 +493,7 @@ fn tachyon_bundle_conversions() {
         let wallet = WalletSim::new(shared_sk());
         let original = build_autonome(rng, &wallet, 1000, 700);
         let erased: TachyonBundle = original.clone().into();
-        let back = Bundle::<Stamp>::try_from(erased).expect("stamped variant");
+        let back = Bundle::<ProofStamp>::try_from(erased).expect("stamped variant");
 
         assert_eq!(original.actions, back.actions);
         assert_eq!(original.value_balance, back.value_balance);
@@ -485,18 +505,15 @@ fn tachyon_bundle_conversions() {
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::new(shared_sk());
-        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        let stripped =
-            unassigned.assign_wtxid(AggregateId::try_from([0xABu8; 64]).expect("nonzero id"));
+        let covering = build_autonome(rng, &wallet, 500, 300);
+        let wtxid = mock_wtxid(&covering);
+        let stripped = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
 
         let erased: TachyonBundle = stripped.clone().into();
-        let back = Bundle::<AggregateId>::try_from(erased).expect("stripped variant");
+        let back = Bundle::<PointerStamp>::try_from(erased).expect("stripped variant");
 
         assert_eq!(stripped, back);
-        assert_eq!(
-            back.stamp,
-            AggregateId::try_from([0xABu8; 64]).expect("nonzero id")
-        );
+        assert_eq!(back.stamp, wtxid);
     }
 
     // Err: TryFrom rejects the wrong variant in both directions.
@@ -504,15 +521,13 @@ fn tachyon_bundle_conversions() {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::new(shared_sk());
         let stamped = build_autonome(rng, &wallet, 1000, 700);
-        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        let adjunct =
-            unassigned.assign_wtxid(AggregateId::try_from([0x55u8; 64]).expect("nonzero id"));
+        let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
 
         let stamped_erased: TachyonBundle = stamped.into();
-        Bundle::<AggregateId>::try_from(stamped_erased).expect_err("stamped is not an adjunct");
+        Bundle::<PointerStamp>::try_from(stamped_erased).expect_err("stamped is not an adjunct");
 
         let adjunct_erased: TachyonBundle = adjunct.into();
-        Bundle::<Stamp>::try_from(adjunct_erased).expect_err("adjunct is not stamped");
+        Bundle::<ProofStamp>::try_from(adjunct_erased).expect_err("adjunct is not stamped");
     }
 }
 
@@ -527,10 +542,8 @@ fn tachyon_bundle_wire_round_trip() {
         let erased: TachyonBundle = stamped.clone().into();
         let mut buf = Vec::new();
         erased.write(&mut buf).expect("write");
-        let decoded = TachyonBundle::read(&*buf)
-            .expect("read")
-            .expect("some bundle");
-        let back = Bundle::<Stamp>::try_from(decoded).expect("stamped variant");
+        let decoded = TachyonBundle::read(&*buf).expect("read");
+        let back = Bundle::<ProofStamp>::try_from(decoded).expect("stamped variant");
 
         // Stamp carries a proof and is not PartialEq, so compare fields.
         assert_eq!(stamped.actions, back.actions);
@@ -541,16 +554,13 @@ fn tachyon_bundle_wire_round_trip() {
 
     // Stripped variant (0x02).
     {
-        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        let stripped =
-            unassigned.assign_wtxid(AggregateId::try_from([0xCDu8; 64]).expect("nonzero id"));
+        let covering = build_autonome(rng, &wallet, 500, 300);
+        let stripped = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&covering));
         let erased: TachyonBundle = stripped.clone().into();
         let mut buf = Vec::new();
         erased.write(&mut buf).expect("write");
-        let decoded = TachyonBundle::read(&*buf)
-            .expect("read")
-            .expect("some bundle");
-        let back = Bundle::<AggregateId>::try_from(decoded).expect("stripped variant");
+        let decoded = TachyonBundle::read(&*buf).expect("read");
+        let back = Bundle::<PointerStamp>::try_from(decoded).expect("stripped variant");
 
         assert_eq!(stripped, back);
     }
@@ -558,7 +568,7 @@ fn tachyon_bundle_wire_round_trip() {
 
 #[test]
 fn aggregate_id_try_from_rejects_zero() {
-    AggregateId::try_from([0u8; 64]).unwrap_err();
+    PointerStamp::try_from([0u8; 64]).unwrap_err();
 }
 
 #[test]
@@ -567,8 +577,8 @@ fn wire_state_byte_dispatch() {
     {
         let buf: &[u8] = &[0x03];
         for err in [
-            Bundle::<Stamp>::read(buf).expect_err("invalid state byte must be rejected"),
-            Bundle::<AggregateId>::read(buf).expect_err("invalid state byte must be rejected"),
+            Bundle::<ProofStamp>::read(buf).expect_err("invalid state byte must be rejected"),
+            Bundle::<PointerStamp>::read(buf).expect_err("invalid state byte must be rejected"),
             TachyonBundle::read(buf).expect_err("invalid state byte must be rejected"),
         ] {
             assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -576,11 +586,11 @@ fn wire_state_byte_dispatch() {
         }
     }
 
-    // No-bundle (0x00): the enum reader decodes to None, not an error.
+    // No-bundle (0x00): the enum reader decodes to NoBundle, not an error.
     {
         let buf: &[u8] = &[0x00];
         let decoded = TachyonBundle::read(buf).expect("read");
-        assert!(decoded.is_none(), "0x00 must decode to None");
+        assert!(decoded.is_no_bundle(), "0x00 must decode to NoBundle");
     }
 
     // Valid-but-mismatched state byte: each definite reader rejects the other's.
@@ -592,23 +602,21 @@ fn wire_state_byte_dispatch() {
         let mut stamped_buf = Vec::new();
         stamped.write(&mut stamped_buf).expect("write stamped");
 
-        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        let adjunct =
-            unassigned.assign_wtxid(AggregateId::try_from([0x66u8; 64]).expect("nonzero id"));
+        let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
         let mut adjunct_buf = Vec::new();
         adjunct.write(&mut adjunct_buf).expect("write adjunct");
 
-        let adjunct_on_stamped = Bundle::<AggregateId>::read(&*stamped_buf)
+        let adjunct_on_stamped = Bundle::<PointerStamp>::read(&*stamped_buf)
             .expect_err("Adjunct::read must reject a stamped (0x01) buffer");
         assert_eq!(
             adjunct_on_stamped.to_string(),
-            "stripped bundle requires tachyonBundleState 0x02"
+            "unexpected tachyonBundleState"
         );
-        let stamped_on_adjunct = Bundle::<Stamp>::read(&*adjunct_buf)
+        let stamped_on_adjunct = Bundle::<ProofStamp>::read(&*adjunct_buf)
             .expect_err("Stamped::read must reject a stripped (0x02) buffer");
         assert_eq!(
             stamped_on_adjunct.to_string(),
-            "stamped bundle requires tachyonBundleState 0x01"
+            "unexpected tachyonBundleState"
         );
     }
 }
@@ -622,11 +630,14 @@ fn read_rejects_zero_wtxid() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
 
+    let covering = build_autonome(rng, &wallet, 500, 300);
+    let wtxid = mock_wtxid(&covering);
+
     // Adjunct (non-empty actions) and innocent (empty actions) both reject.
     let adjunct = {
-        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
-        assert!(!unassigned.actions.is_empty());
-        unassigned.assign_wtxid(AggregateId::try_from([0x42u8; 64]).expect("nonzero id"))
+        let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
+        assert!(!adjunct.actions.is_empty());
+        adjunct
     };
 
     let innocent = {
@@ -636,7 +647,7 @@ fn read_rejects_zero_wtxid() {
             actions: alloc::vec![],
             value_balance: ValueBalance::ZERO,
             binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-            stamp: AggregateId::try_from([0x42u8; 64]).expect("nonzero id"),
+            stamp: wtxid,
         };
         assert!(bundle.actions.is_empty());
         bundle
@@ -652,7 +663,7 @@ fn read_rejects_zero_wtxid() {
         }
 
         let adjunct_err =
-            Bundle::<AggregateId>::read(&*buf).expect_err("Adjunct::read must reject zero wtxid");
+            Bundle::<PointerStamp>::read(&*buf).expect_err("Adjunct::read must reject zero wtxid");
         assert_eq!(adjunct_err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(
             adjunct_err.to_string(),
@@ -674,6 +685,9 @@ fn read_rejects_zero_wtxid() {
 #[test]
 fn innocent_round_trips_with_nonzero_wtxid() {
     let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let covering = build_autonome(rng, &wallet, 1000, 700);
+
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
     let sighash = mock_sighash(plan.commitment().unwrap());
 
@@ -681,19 +695,17 @@ fn innocent_round_trips_with_nonzero_wtxid() {
         actions: alloc::vec![],
         value_balance: ValueBalance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-        stamp: AggregateId::try_from([0x42u8; 64]).expect("nonzero id"),
+        stamp: mock_wtxid(&covering),
     };
 
     let mut buf = Vec::new();
     innocent.write(&mut buf).expect("write innocent");
 
-    let via_adjunct = Bundle::<AggregateId>::read(&*buf).expect("Adjunct::read innocent");
+    let via_adjunct = Bundle::<PointerStamp>::read(&*buf).expect("Adjunct::read innocent");
     assert_eq!(innocent, via_adjunct);
 
-    let decoded = TachyonBundle::read(&*buf)
-        .expect("TachyonBundle::read")
-        .expect("some bundle");
-    let via_enum = Bundle::<AggregateId>::try_from(decoded).expect("adjunct variant");
+    let decoded = TachyonBundle::read(&*buf).expect("TachyonBundle::read");
+    let via_enum = Bundle::<PointerStamp>::try_from(decoded).expect("adjunct variant");
     assert_eq!(innocent, via_enum);
 }
 
@@ -707,9 +719,8 @@ fn auth_digest_invariants() {
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let stamped_digest = stamped.auth_digest();
 
-        let (unassigned, _stamp) = stamped.strip();
-        let stripped =
-            unassigned.assign_wtxid(AggregateId::try_from([0x11u8; 64]).expect("nonzero id"));
+        let covering = build_autonome(rng, &wallet, 500, 300);
+        let stripped = stamped.strip(mock_wtxid(&covering));
         assert_ne!(stamped_digest, stripped.auth_digest());
     }
 
@@ -718,14 +729,15 @@ fn auth_digest_invariants() {
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::new(shared_sk());
-        let (unassigned, _stamp) = build_autonome(rng, &wallet, 1000, 700).strip();
+        let autonome = build_autonome(rng, &wallet, 1000, 700);
 
-        let stripped_aa = unassigned
-            .clone()
-            .assign_wtxid(AggregateId::try_from([0xAAu8; 64]).expect("nonzero id"));
+        let covering_a = build_autonome(rng, &wallet, 500, 300);
+        let covering_b = build_autonome(rng, &wallet, 800, 600);
+        assert_ne!(mock_wtxid(&covering_a), mock_wtxid(&covering_b));
+
+        let stripped_aa = autonome.clone().strip(mock_wtxid(&covering_a));
         let digest_aa = stripped_aa.auth_digest();
-        let stripped_bb =
-            unassigned.assign_wtxid(AggregateId::try_from([0xBBu8; 64]).expect("nonzero id"));
+        let stripped_bb = autonome.strip(mock_wtxid(&covering_b));
         let digest_bb = stripped_bb.auth_digest();
         assert_ne!(digest_aa, digest_bb);
     }
@@ -737,25 +749,46 @@ fn auth_digest_invariants() {
         let wallet = WalletSim::new(shared_sk());
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let stamped_direct = stamped.auth_digest();
+        let covering_wtxid = mock_wtxid(&stamped);
         let erased: TachyonBundle = stamped.into();
         assert_eq!(erased.auth_digest(), stamped_direct);
 
         let wallet2 = WalletSim::new(shared_sk());
-        let (unassigned, _stamp) = build_autonome(rng, &wallet2, 1000, 700).strip();
-        let stripped =
-            unassigned.assign_wtxid(AggregateId::try_from([0x33u8; 64]).expect("nonzero id"));
+        let stripped = build_autonome(rng, &wallet2, 1000, 700).strip(covering_wtxid);
         let stripped_direct = stripped.auth_digest();
         let erased_stripped: TachyonBundle = stripped.into();
         assert_eq!(erased_stripped.auth_digest(), stripped_direct);
     }
+
+    // The proof stamp's digest commits its contents: perturbing the carried
+    // covered-actions digest or the tachygram set changes the auth_digest.
+    {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let wallet = WalletSim::new(shared_sk());
+        let stamped = build_autonome(rng, &wallet, 1000, 700);
+        let baseline = stamped.auth_digest();
+
+        let mut altered_actions = stamped.clone();
+        altered_actions.stamp.actions[0] ^= 0x01;
+        assert_ne!(baseline, altered_actions.auth_digest());
+
+        let mut extra_tachygram = stamped;
+        extra_tachygram
+            .stamp
+            .tachygrams
+            .push(Tachygram::from(Fp::from(7u64)));
+        // Tachygrams must stay canonically sorted for the stamp digest.
+        extra_tachygram.stamp.tachygrams.sort_unstable();
+        assert_ne!(baseline, extra_tachygram.auth_digest());
+    }
 }
 
-/// Coverage-check protocol: an observer reconstructs the merged action-digest
-/// set commitment from a based aggregate's own actions plus all covered
-/// adjuncts' visible actions, and checks it against the stamped aggregate's
-/// serialized `cActionsTachyon`.
+/// Coverage-check protocol: an observer reconstructs the covered-actions
+/// digest from a based aggregate's own actions plus all covered adjuncts'
+/// visible actions, and checks it against the stamped aggregate's
+/// serialized `hStampActionsTachyon`.
 #[test]
-fn coverage_check_matches_stamped_action_set() {
+fn coverage_check_matches_stamp_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
 
@@ -809,48 +842,50 @@ fn coverage_check_matches_stamped_action_set() {
         alloc::vec![b_output],
     );
 
-    let based_digests = action_digests(&becomes_based.actions);
-    let digests_a = action_digests(&autonome_a.actions);
-    let digests_b = action_digests(&autonome_b.actions);
+    let based_descriptors: Vec<action::Descriptor> = becomes_based
+        .actions
+        .iter()
+        .map(Action::descriptor)
+        .collect();
+    let descriptors_a: Vec<action::Descriptor> =
+        autonome_a.actions.iter().map(Action::descriptor).collect();
+    let descriptors_b: Vec<action::Descriptor> =
+        autonome_b.actions.iter().map(Action::descriptor).collect();
 
-    let (adjunct_a, stamp_a) = autonome_a.strip();
-    let (adjunct_b, stamp_b) = autonome_b.strip();
+    let stamp_a = autonome_a.stamp.clone();
+    let stamp_b = autonome_b.stamp.clone();
 
-    let innocent_digests: Vec<ActionDigest> =
-        digests_a.iter().chain(digests_b.iter()).copied().collect();
-    let innocent_stamp = Stamp::prove_merge(rng, (stamp_a, &digests_a), (stamp_b, &digests_b))
+    let innocent_descriptors = [descriptors_a.as_slice(), descriptors_b.as_slice()].concat();
+    let innocent_stamp = ProofStamp::merge(rng, (stamp_a, descriptors_a), (stamp_b, descriptors_b))
         .expect("innocent merge");
 
-    let based_stamp = Stamp::prove_merge(
+    let based_stamp = ProofStamp::merge(
         rng,
-        (becomes_based.stamp, &based_digests),
-        (innocent_stamp, &innocent_digests),
+        (becomes_based.stamp, based_descriptors),
+        (innocent_stamp, innocent_descriptors),
     )
     .expect("based merge");
     becomes_based.stamp = based_stamp;
 
-    // Coverage confirmation: the based aggregate's carried commitment matches
+    let adjunct_a = autonome_a.strip(mock_wtxid(&becomes_based));
+    let adjunct_b = autonome_b.strip(mock_wtxid(&becomes_based));
+
+    // Coverage confirmation: the based aggregate's carried digest matches
     // its own actions plus both covered adjuncts'.
     assert!(
-        becomes_based
-            .covers(&[adjunct_a.clone(), adjunct_b.clone()])
-            .expect("valid digests"),
-        "full covered set matches cActionsTachyon"
+        becomes_based.covers(&[&adjunct_a, &adjunct_b]),
+        "full covered set matches hStampActionsTachyon"
     );
 
-    // Missing an adjunct: fewer roots, no match.
+    // Missing an adjunct: fewer descriptors, no match.
     assert!(
-        !becomes_based
-            .covers(from_ref(&adjunct_a))
-            .expect("valid digests"),
+        !becomes_based.covers(&[&adjunct_a]),
         "missing adjunct must mismatch"
     );
 
-    // Extra (duplicated) adjunct: more roots, no match.
+    // Extra (duplicated) adjunct: more descriptors, no match.
     assert!(
-        !becomes_based
-            .covers(&[adjunct_a.clone(), adjunct_b, adjunct_a])
-            .expect("valid digests"),
+        !becomes_based.covers(&[&adjunct_a, &adjunct_b, &adjunct_a]),
         "extra adjunct must mismatch"
     );
 }
@@ -956,7 +991,7 @@ fn read_accepts_value_balance_at_max_money_boundaries() {
 
         let mut buf = Vec::new();
         bundle.write(&mut buf).expect("write");
-        let decoded = Bundle::<Stamp>::read(&*buf).expect("read must accept boundary balance");
+        let decoded = Bundle::<ProofStamp>::read(&*buf).expect("read must accept boundary balance");
         assert_eq!(decoded.value_balance, vb);
     }
 }
@@ -980,8 +1015,8 @@ fn read_rejects_value_balance_out_of_range() {
         bundle.write(&mut buf).expect("write");
         buf[1..9].copy_from_slice(&value_balance.to_le_bytes());
 
-        let stamp_err = Bundle::<Stamp>::read(&*buf)
-            .expect_err("Bundle::<Stamp>::read must reject out-of-range value balance");
+        let stamp_err = Bundle::<ProofStamp>::read(&*buf)
+            .expect_err("Bundle::<ProofStamp>::read must reject out-of-range value balance");
         assert_eq!(stamp_err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(stamp_err.to_string(), "value balance out of range");
 
@@ -1002,13 +1037,13 @@ fn read_rejects_zero_actions_with_nonzero_balance() {
         actions: alloc::vec![],
         value_balance: ValueBalance::try_from(1).unwrap(),
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-        stamp: AggregateId::try_from([0x42u8; 64]).expect("nonzero id"),
+        stamp: PointerStamp::try_from([0x42u8; 64]).expect("nonzero id"),
     };
 
     let mut buf = Vec::new();
     bundle.write(&mut buf).expect("write");
 
-    let adjunct_err = Bundle::<AggregateId>::read(&*buf)
+    let adjunct_err = Bundle::<PointerStamp>::read(&*buf)
         .expect_err("Adjunct::read must reject zero actions with nonzero balance");
     assert_eq!(adjunct_err.kind(), io::ErrorKind::InvalidData);
     assert_eq!(
@@ -1041,10 +1076,63 @@ fn zero_action_bundle_rejects_nonzero_balance() {
         actions: alloc::vec![],
         value_balance: ValueBalance::try_from(1).unwrap(),
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
-        stamp: AggregateId::try_from([1u8; 64]).expect("nonzero id"),
+        stamp: PointerStamp::try_from([1u8; 64]).expect("nonzero id"),
     };
 
     bundle
         .verify_signatures(&sighash)
         .expect("signature checks are unreachable: the assert panics first");
+}
+
+/// A bundle whose actions are not in canonical order is rejected on read: the
+/// order-committing sighash plus this check close action reordering as a
+/// malleability vector.
+#[test]
+fn read_rejects_noncanonical_actions() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let bundle = build_autonome(rng, &wallet, 1000, 700);
+    assert!(
+        bundle.actions.len() >= 2,
+        "need at least two actions to permute"
+    );
+    assert_ne!(bundle.actions[0], bundle.actions[1]);
+
+    // A canonical (signed) bundle round-trips.
+    let mut buf = Vec::new();
+    bundle.write(&mut buf).expect("write");
+    Bundle::<ProofStamp>::read(&*buf).expect("canonical bundle reads");
+
+    // Permuting the stored actions and re-serializing produces a non-canonical
+    // encoding, which read must reject.
+    let mut permuted = bundle;
+    permuted.actions.swap(0, 1);
+    let mut permuted_buf = Vec::new();
+    permuted.write(&mut permuted_buf).expect("write permuted");
+
+    let err = Bundle::<ProofStamp>::read(&*permuted_buf)
+        .expect_err("non-canonical actions must be rejected");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(err.to_string(), "actions are not canonically sorted");
+}
+
+/// A stamp whose tachygrams are not in canonical order is rejected on read,
+/// matching the order the stamp digest commits to.
+#[test]
+fn read_rejects_noncanonical_tachygrams() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let bundle = build_autonome(rng, &wallet, 1000, 700);
+    let n = bundle.stamp.tachygrams.len();
+    assert!(n >= 2, "need at least two tachygrams to permute");
+
+    let mut permuted = bundle;
+    permuted.stamp.tachygrams.swap(0, n - 1);
+    let mut buf = Vec::new();
+    permuted.write(&mut buf).expect("write");
+
+    let err =
+        Bundle::<ProofStamp>::read(&*buf).expect_err("non-canonical tachygrams must be rejected");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(err.to_string(), "tachygrams are not canonically sorted");
 }
