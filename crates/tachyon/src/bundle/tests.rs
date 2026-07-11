@@ -48,6 +48,26 @@ fn wrong_value_balance_fails_verification() {
     };
 }
 
+/// No separate range assertion is needed in `verify_signatures`: even a
+/// `ValueBalance` built directly with a magnitude far outside
+/// `-MAX_MONEY..=MAX_MONEY` (bypassing `TryFrom`'s range check entirely, the
+/// same way `read_rejects_value_balance_out_of_range` forges an otherwise
+/// unconstructible wire encoding) is caught by the binding signature check
+/// alone, same as any other mismatched value.
+#[test]
+fn verify_signatures_rejects_out_of_range_value_balance_mutation() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
+    let sighash = mock_sighash(bundle.commitment().unwrap());
+
+    bundle.value_balance = ValueBalance(i64::MAX);
+    let err = bundle.verify_signatures(&sighash).unwrap_err();
+    let SignatureError::Binding(_) = err else {
+        panic!("expected SignatureError::Binding, got {err:?}");
+    };
+}
+
 #[test]
 fn stripped_bundle_retains_signatures() {
     let rng = &mut StdRng::seed_from_u64(0);
