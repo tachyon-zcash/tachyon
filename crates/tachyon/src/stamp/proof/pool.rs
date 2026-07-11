@@ -151,9 +151,11 @@ impl Header for VerifiedUnspent {
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end), anchor_last) = *data;
+        let (cm0, cm1): (Fp, Fp) = cm.into();
         (
             vec![
-                Fp::from(cm),
+                cm0,
+                cm1,
                 Fp::from(anchor_prev),
                 Fp::from(u64::from(epoch_start.0)),
                 Fp::from(nf_start),

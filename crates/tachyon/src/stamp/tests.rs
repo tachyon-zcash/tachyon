@@ -200,3 +200,24 @@ fn covered_actions_round_trip() {
     assert_eq!(decoded.anchor, stamp.anchor);
     assert_eq!(decoded.tachygrams, stamp.tachygrams);
 }
+
+/// An output publishes exactly two tachygrams `(cm0, cm1)`, matching a
+/// spend's present/next-epoch nullifier pair — the fixed arity issue #164
+/// establishes.
+#[test]
+fn output_publishes_two_tachygrams() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let note = wallet.random_note(200);
+    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+
+    assert_eq!(stamp.tachygrams.len(), 2);
+
+    let (tg0, tg1): (Tachygram, Tachygram) = note.commitment().into();
+    let mut expected = vec![tg0, tg1];
+    expected.sort_unstable();
+    let mut actual = stamp.tachygrams;
+    actual.sort_unstable();
+    assert_eq!(actual, expected);
+}

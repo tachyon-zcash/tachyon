@@ -40,8 +40,9 @@ impl Header for SpendHeader {
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, act, present_nf, anchor) = *data;
+        let (cm0, cm1): (Fp, Fp) = cm.into();
         (
-            vec![Fp::from(cm), Fp::from(present_nf), Fp::from(anchor)],
+            vec![cm0, cm1, Fp::from(present_nf), Fp::from(anchor)],
             Vec::new(),
             vec![Ep::from(act.cv.0), Ep::from(EpAffine::from(act.rk))],
             Vec::new(),
@@ -95,9 +96,15 @@ impl Step for SpendBind {
         )?;
         let cm = note.commitment();
 
+        let (spendable_cm0, spendable_cm1): (Fp, Fp) = spendable_cm.into();
+        let (cm0, cm1): (Fp, Fp) = cm.into();
         enforce_zero(
-            Fp::from(spendable_cm) - Fp::from(cm),
+            spendable_cm0 - cm0,
             "SpendBind: note does not match the spendable lineage",
+        )?;
+        enforce_zero(
+            spendable_cm1 - cm1,
+            "SpendBind: note's second element does not match the spendable lineage",
         )?;
 
         let cv = rcv.commit(i64::from(note.value));

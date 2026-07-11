@@ -85,10 +85,10 @@ impl Step for OutputStamp {
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(clippy::expect_used, reason = "constant size")]
-        let &[g0, g1] = Pasta::host_generators(Pasta::baked())
+        let &[g0, g1, g2] = Pasta::host_generators(Pasta::baked())
             .g()
-            .split_first_chunk::<2>()
-            .expect("at least two generators")
+            .split_first_chunk::<3>()
+            .expect("at least three generators")
             .0;
 
         enforce_nonzero(
@@ -112,12 +112,15 @@ impl Step for OutputStamp {
             ActionSetCommit::from(g0 * (-a0) + g1)
         };
 
-        let note_commit = note.commitment();
+        let (cm0, cm1): (Fp, Fp) = note.commitment().into();
+        enforce_nonzero(cm1, "OutputStamp: second commitment component is zero")?;
 
-        // Set commitment to one note commitment.
+        // Set commitment to the note's two components (cm0, cm1).
         let tachygram_commit = {
-            let t0 = Fp::from(note_commit);
-            TachygramSetCommit::from(g0 * (-t0) + g1)
+            let t0 = cm0;
+            let t1 = cm1;
+
+            TachygramSetCommit::from(g0 * (t0 * t1) + g1 * (-(t0 + t1)) + g2)
         };
 
         Ok(((action_commit, tachygram_commit, anchor), ()))
@@ -162,9 +165,15 @@ impl Step for SpendStamp {
             Fp::from(nf_epoch_end) - (Fp::from(nf_epoch_start) + Fp::from(2u64)),
             "SpendStamp: live range must span two epochs",
         )?;
+        let (nf_cm0, nf_cm1): (Fp, Fp) = nf_cm.into();
+        let (cm0, cm1): (Fp, Fp) = cm.into();
         enforce_zero(
-            Fp::from(nf_cm) - Fp::from(cm),
+            nf_cm0 - cm0,
             "SpendStamp: derived range does not match note",
+        )?;
+        enforce_zero(
+            nf_cm1 - cm1,
+            "SpendStamp: derived range's second element does not match note",
         )?;
 
         // Bind the published nullifiers to the range's genuine boundary leaves.

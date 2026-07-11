@@ -50,22 +50,24 @@ const SPEND_ALPHA_PERSONALIZATION: &[u8; 13] = b"Tachyon-Spend";
 const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
 
 /// Spend-side $\alpha$ pre-image: $\text{BLAKE2b-512}(\text{"Tachyon-Spend"},
-/// \theta \| cm)$.
+/// \theta \| cm_0 \| cm_1)$.
 ///
 /// Caller reduces to scalar via `Fq::from_uniform_bytes`.
-pub(crate) fn alpha_spend(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
+pub(crate) fn alpha_spend(theta: &[u8; 32], cm0: &[u8; 32], cm1: &[u8; 32]) -> [u8; 64] {
     hasher_512(SPEND_ALPHA_PERSONALIZATION, |state| {
         state.update(theta);
-        state.update(cm);
+        state.update(cm0);
+        state.update(cm1);
     })
 }
 
 /// Output-side $\alpha$ pre-image: $\text{BLAKE2b-512}(\text{"Tachyon-Output"},
-/// \theta \| cm)$.
-pub(crate) fn alpha_output(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
+/// \theta \| cm_0 \| cm_1)$.
+pub(crate) fn alpha_output(theta: &[u8; 32], cm0: &[u8; 32], cm1: &[u8; 32]) -> [u8; 64] {
     hasher_512(OUTPUT_ALPHA_PERSONALIZATION, |state| {
         state.update(theta);
-        state.update(cm);
+        state.update(cm0);
+        state.update(cm1);
     })
 }
 

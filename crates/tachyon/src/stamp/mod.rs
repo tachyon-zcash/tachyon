@@ -463,7 +463,7 @@ impl ProofStamp {
     /// Proves a single output action, returning the stamp components
     /// `(tachygrams, anchor, proof)`.
     ///
-    /// The output tachygram (note commitment) is derived inside the circuit
+    /// The output tachygrams (note commitment) are derived inside the circuit
     /// and placed on the stamp for data availability.
     pub fn prove_output<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
@@ -475,7 +475,8 @@ impl ProofStamp {
         let app = &*PROOF_SYSTEM;
 
         let (pcd, ()) = app.seed(rng, OutputStamp, (rcv, alpha, note, anchor))?;
-        let tachygrams = vec![Tachygram::from(note.commitment())];
+        let (tg0, tg1): (Tachygram, Tachygram) = note.commitment().into();
+        let tachygrams = vec![tg0, tg1];
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))
@@ -554,7 +555,7 @@ impl ProofStamp {
         let merged_digests = [left_digests, right_digests].concat();
         let tachygrams = [left_tachygrams, right_tachygrams].concat();
         let merged_tg_poly = TachygramSetPoly::from_iter(tachygrams.clone());
-        let merged_acts_poly = ActionSetPoly::from_iter(merged_digests.iter().copied());
+        let merged_acts_poly = ActionSetPoly::from_iter(merged_digests.clone());
 
         let (pcd, ()) = app.fuse(
             rng,

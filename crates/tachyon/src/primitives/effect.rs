@@ -40,7 +40,12 @@ pub struct Output;
 
 impl Effect for Spend {
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        Fq::from_uniform_bytes(&blake2b::alpha_spend(&theta.0, &Fp::from(cm).to_repr()))
+        let (cm0, cm1): (Fp, Fp) = cm.into();
+        Fq::from_uniform_bytes(&blake2b::alpha_spend(
+            &theta.0,
+            &cm0.to_repr(),
+            &cm1.to_repr(),
+        ))
     }
 
     fn commit_value(rcv: value::CommitmentTrapdoor, value: note::Value) -> value::Commitment {
@@ -51,7 +56,12 @@ impl Effect for Spend {
 
 impl Effect for Output {
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        Fq::from_uniform_bytes(&blake2b::alpha_output(&theta.0, &Fp::from(cm).to_repr()))
+        let (cm0, cm1): (Fp, Fp) = cm.into();
+        Fq::from_uniform_bytes(&blake2b::alpha_output(
+            &theta.0,
+            &cm0.to_repr(),
+            &cm1.to_repr(),
+        ))
     }
 
     fn commit_value(rcv: value::CommitmentTrapdoor, value: note::Value) -> value::Commitment {

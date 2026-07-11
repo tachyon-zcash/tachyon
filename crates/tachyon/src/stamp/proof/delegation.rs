@@ -33,9 +33,11 @@ impl Header for NfPrefixHeader {
     const SUFFIX: Suffix = Suffix::new(1);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (cm0, cm1): (Fp, Fp) = data.0.into();
         (
             vec![
-                Fp::from(data.0),
+                cm0,
+                cm1,
                 data.1,
                 Fp::from(u64::from(data.2)),
                 Fp::from(u64::from(data.3.0)),
@@ -72,9 +74,11 @@ impl Header for NullifierHeader {
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, (epoch_start, nf_start), nf_seq_commit, (epoch_end, nf_end)) = *data;
+        let (cm0, cm1): (Fp, Fp) = cm.into();
         (
             vec![
-                Fp::from(cm),
+                cm0,
+                cm1,
                 Fp::from(u64::from(epoch_start.0)),
                 Fp::from(nf_start),
                 Fp::from(u64::from(epoch_end.0)),
@@ -241,9 +245,15 @@ impl Step for NullifierFuse {
             (right_epoch_end, right_nf_end),
         ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        let (left_cm0, left_cm1): (Fp, Fp) = left_cm.into();
+        let (right_cm0, right_cm1): (Fp, Fp) = right_cm.into();
         enforce_zero(
-            Fp::from(left_cm) - Fp::from(right_cm),
+            left_cm0 - right_cm0,
             "NullifierFuse: note commitments differ",
+        )?;
+        enforce_zero(
+            left_cm1 - right_cm1,
+            "NullifierFuse: note commitments' second element differs",
         )?;
         enforce_zero(
             Fp::from(right_epoch_start) - Fp::from(left_epoch_end),

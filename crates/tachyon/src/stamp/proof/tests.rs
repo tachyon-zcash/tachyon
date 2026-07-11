@@ -165,9 +165,10 @@ fn spendable_init_accepts_forged_chain() {
     // cm-stamp, and `pre_cm_anchor = forged_start` so `chain_end ==
     // pre_cm_anchor.next_stamp(cm_commit)`. All SpendableInit checks then pass.
     let stamps = pool.tachygrams_at(cm_height);
+    let (tg0, tg1): (Tachygram, Tachygram) = cm.into();
     let cm_idx = stamps
         .iter()
-        .position(|tgs| tgs.contains(&cm.into()))
+        .position(|tgs| tgs.contains(&tg0) && tgs.contains(&tg1))
         .expect("cm present in cm-block");
     let x = Anchor::from(Fp::random(&mut *rng));
     let forged_start = x.next_epoch(wrong);
@@ -282,7 +283,7 @@ fn spendable_init_rejects_tg_absent() {
     let ragu::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
-    assert_eq!(inner.to_string(), "SpendableInit: commitment not in set");
+    assert_eq!(inner.to_string(), "SpendableInit: cm0 not in set");
 }
 
 #[test]
@@ -441,7 +442,8 @@ fn empty_block_unspent_lifts_spendable() {
     let cm = note.commitment();
 
     let mut pool = PoolSim::genesis(rng);
-    pool.mine(vec![vec![cm.into()]]);
+    let (tg0, tg1): (Tachygram, Tachygram) = cm.into();
+    pool.mine(vec![vec![tg0, tg1]]);
     let cm_height = pool.height();
     let epoch = cm_height.epoch();
 
@@ -1698,7 +1700,7 @@ fn spendable_lift_rejects_wrong_cm() {
     };
     assert_eq!(
         inner.to_string(),
-        "SpendableLift: verified unspent cm does not match spendable"
+        "SpendableLift: verified unspent cm0 does not match spendable"
     );
 }
 

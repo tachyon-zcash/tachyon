@@ -178,7 +178,15 @@ pub fn random_block_with(
     );
     let mut stamps: Vec<Vec<Tachygram>> = stamps_cms
         .iter()
-        .map(|cms| cms.iter().map(|&cm| Tachygram::from(cm)).collect())
+        .map(|cms| {
+            cms.iter()
+                .flat_map(|&cm| {
+                    let pair: (Tachygram, Tachygram) = cm.into();
+                    let tgs: [Tachygram; 2] = pair.into();
+                    tgs
+                })
+                .collect()
+        })
         .collect();
     stamps.extend(
         iter::repeat_with(|| alloc::vec![Tachygram::from(Fp::random(&mut *rng))])
@@ -610,9 +618,10 @@ pub(crate) fn spendable_init_inputs(
 ) -> (Anchor, Anchor, Vec<Tachygram>, Pcd<pool::AnchorChain>) {
     let stamps = pool.tachygrams_at(height);
     let stamp_commits = pool.stamp_commits_at(height);
+    let (tg0, tg1): (Tachygram, Tachygram) = cm.into();
     let cm_idx = stamps
         .iter()
-        .position(|tgs| tgs.contains(&cm.into()))
+        .position(|tgs| tgs.contains(&tg0) && tgs.contains(&tg1))
         .expect("cm not found in any stamp at the cm-block");
 
     // Anchor immediately before the cm-stamp (the cm-block prefix fold).
