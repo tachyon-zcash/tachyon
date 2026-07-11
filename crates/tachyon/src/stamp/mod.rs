@@ -118,7 +118,7 @@ pub trait StampState: BundleState {
 
 impl StampState for PointerStamp {
     fn stamp_digest(&self) -> [u8; 64] {
-        <[u8; 64]>::from(*self)
+        self.0
     }
 
     fn state_byte() -> StateByte {
