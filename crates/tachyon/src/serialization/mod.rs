@@ -50,7 +50,10 @@ pub(crate) fn read_fp_list<R: Read>(mut reader: R) -> io::Result<Vec<Fp>> {
     let n = usize::try_from(read_compactsize(&mut reader)?).map_err(|_err| {
         io::Error::new(io::ErrorKind::InvalidData, "vector length exceeds usize")
     })?;
-    let mut fp_list = Vec::with_capacity(n);
+    // TODO: `n` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so do
+    // not pre-allocate from it; growth on push hits EOF and errors before any
+    // dangerous allocation.
+    let mut fp_list = Vec::new();
     for _ in 0..n {
         let fp = read_fp(&mut reader)?;
         fp_list.push(fp);

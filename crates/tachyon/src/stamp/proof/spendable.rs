@@ -39,8 +39,9 @@ impl Header for SpendableHeader {
     const SUFFIX: Suffix = Suffix::new(7);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (cm0, cm1): (Fp, Fp) = data.0.into();
         (
-            vec![Fp::from(data.0), Fp::from(data.1), Fp::from(data.2)],
+            vec![cm0, cm1, Fp::from(data.1), Fp::from(data.2)],
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -85,11 +86,15 @@ impl Step for SpendableInit {
         )?;
         let epoch = nf_epoch_start;
 
-        // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
-        let cm_point = Fp::from(cm);
-        let eval = creation_set.eval(cm_point);
-        ctx.enforce_poly_query(creation_set.commit().into(), cm_point, eval)?;
-        enforce_zero(eval, "SpendableInit: commitment not in set")?;
+        // Inclusion: both (cm0, cm1) ∈ set ⇔ the set polynomial vanishes at
+        // each — an honest output publishes both, so both must be present.
+        let (cm0, cm1): (Fp, Fp) = cm.into();
+        let eval0 = creation_set.eval(cm0);
+        ctx.enforce_poly_query(creation_set.commit().into(), cm0, eval0)?;
+        enforce_zero(eval0, "SpendableInit: cm0 not in set")?;
+        let eval1 = creation_set.eval(cm1);
+        ctx.enforce_poly_query(creation_set.commit().into(), cm1, eval1)?;
+        enforce_zero(eval1, "SpendableInit: cm1 not in set")?;
         let creation_commit = creation_set.commit();
 
         // Pin the lineage's starting epoch to consensus. Consensus anchor
@@ -140,9 +145,15 @@ impl Step for SpendableLift {
         (cm, present_nf, spendable_anchor): <Self::Left as Header>::Data,
         (verified_cm, anchor_prev, (_epoch_start, nf_start), (_epoch_end, nf_end), anchor_last): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        let (verified_cm0, verified_cm1): (Fp, Fp) = verified_cm.into();
+        let (cm0, cm1): (Fp, Fp) = cm.into();
         enforce_zero(
-            Fp::from(verified_cm) - Fp::from(cm),
-            "SpendableLift: verified unspent cm does not match spendable",
+            verified_cm0 - cm0,
+            "SpendableLift: verified unspent cm0 does not match spendable",
+        )?;
+        enforce_zero(
+            verified_cm1 - cm1,
+            "SpendableLift: verified unspent cm1 does not match spendable",
         )?;
         enforce_zero(
             Fp::from(nf_start) - Fp::from(present_nf),

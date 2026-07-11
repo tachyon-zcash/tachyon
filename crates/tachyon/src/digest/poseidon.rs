@@ -47,16 +47,29 @@ pub(crate) fn payment_key(ak: Fp, nk: Fp) -> Fp {
 
 const NOTE_COMMITMENT_DOMAIN: &[u8; 16] = b"Tachyon-CmDerive";
 
-/// Derives a note commitment from note fields.
+/// Derives the note-commitment pair `(cm0, cm1)` from note fields: two
+/// squeezes of the same sponge (`ragu`'s Poseidon sponge has rate 4, so both
+/// come from a single permutation — no extra secret material, no extra
+/// domain, no extra permutation).
+#[expect(
+    clippy::expect_used,
+    reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
+)]
 #[must_use]
-pub(crate) fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
-    hash::<5>([
+pub(crate) fn note_commitment_pair(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> (Fp, Fp) {
+    let mut sponge = Sponge::new();
+    for input in [
         Fp::from_u128(u128::from_le_bytes(*NOTE_COMMITMENT_DOMAIN)),
         rcm,
         pk,
         Fp::from(value),
         psi,
-    ])
+    ] {
+        sponge.absorb(input).expect("infallible");
+    }
+    let cm0 = sponge.squeeze().expect("infallible");
+    let cm1 = sponge.squeeze().expect("infallible");
+    (cm0, cm1)
 }
 
 const NULLIFIER_PREFIX_DOMAIN: &[u8; 16] = b"Tachyon-NfPrefix";

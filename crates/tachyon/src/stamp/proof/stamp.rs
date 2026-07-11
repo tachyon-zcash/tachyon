@@ -13,7 +13,7 @@ use ragu::{
 use super::{delegation::NullifierHeader, pool::AnchorChain, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
-    constants::NOTE_VALUE_MAX,
+    constants::MAX_MONEY,
     entropy::ActionRandomizer,
     keys::private,
     note::{Note, Nullifier},
@@ -85,17 +85,17 @@ impl Step for OutputStamp {
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(clippy::expect_used, reason = "constant size")]
-        let &[g0, g1] = Pasta::host_generators(Pasta::baked())
+        let &[g0, g1, g2] = Pasta::host_generators(Pasta::baked())
             .g()
-            .split_first_chunk::<2>()
-            .expect("at least two generators")
+            .split_first_chunk::<3>()
+            .expect("at least three generators")
             .0;
 
         enforce_nonzero(
             Fp::from(u64::from(note.value)),
             "OutputStamp: zero-value note",
         )?;
-        if u64::from(note.value) > NOTE_VALUE_MAX {
+        if u64::from(note.value) > MAX_MONEY {
             return Err(ragu::Error::InvalidWitness(
                 "OutputStamp: note value exceeds maximum".into(),
             ));
@@ -112,10 +112,15 @@ impl Step for OutputStamp {
             ActionSetCommit::from(g0 * (-a0) + g1)
         };
 
-        // Set commitment to one note commitment.
+        let (cm0, cm1): (Fp, Fp) = note.commitment().into();
+        enforce_nonzero(cm1, "OutputStamp: second commitment component is zero")?;
+
+        // Set commitment to the note's two components (cm0, cm1).
         let tachygram_commit = {
-            let t0 = Fp::from(note.commitment());
-            TachygramSetCommit::from(g0 * (-t0) + g1)
+            let t0 = cm0;
+            let t1 = cm1;
+
+            TachygramSetCommit::from(g0 * (t0 * t1) + g1 * (-(t0 + t1)) + g2)
         };
 
         Ok(((action_commit, tachygram_commit, anchor), ()))
@@ -146,7 +151,7 @@ impl Step for SpendStamp {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (nf_next,): Self::Witness<'source>,
-        (cm, (cv, rk), present_nf, anchor): <Self::Left as Header>::Data,
+        (cm, desc, present_nf, anchor): <Self::Left as Header>::Data,
         (nf_cm, (nf_epoch_start, nf_start), _nf_seq_commit, (nf_epoch_end, nf_end)): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(clippy::expect_used, reason = "constant size")]
@@ -160,9 +165,15 @@ impl Step for SpendStamp {
             Fp::from(nf_epoch_end) - (Fp::from(nf_epoch_start) + Fp::from(2u64)),
             "SpendStamp: live range must span two epochs",
         )?;
+        let (nf_cm0, nf_cm1): (Fp, Fp) = nf_cm.into();
+        let (cm0, cm1): (Fp, Fp) = cm.into();
         enforce_zero(
-            Fp::from(nf_cm) - Fp::from(cm),
+            nf_cm0 - cm0,
             "SpendStamp: derived range does not match note",
+        )?;
+        enforce_zero(
+            nf_cm1 - cm1,
+            "SpendStamp: derived range's second element does not match note",
         )?;
 
         // Bind the published nullifiers to the range's genuine boundary leaves.
@@ -185,7 +196,7 @@ impl Step for SpendStamp {
             "SpendStamp: next-epoch nullifier is zero",
         )?;
 
-        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
+        let action_digest = desc.digest().map_err(|_err| {
             ragu::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
         })?;
 

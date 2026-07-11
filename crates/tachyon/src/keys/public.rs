@@ -5,7 +5,11 @@ use core::cmp::Eq as CoreTotalEq;
 use derive_more::{Debug, Display, PartialEq};
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 
-use crate::{action, action::Action, bundle, reddsa, value};
+use crate::{
+    action::{self, Action},
+    bundle::{self, ValueBalance},
+    reddsa, value,
+};
 
 /// The randomized action verification key `rk` — per-action, public.
 ///
@@ -118,9 +122,9 @@ impl BindingVerificationKey {
     /// result should equal $[\mathsf{bsk}]\,\mathcal{R}$ when the signer
     /// constructed the bundle correctly.
     #[must_use]
-    pub fn derive(actions: &[Action], value_balance: i64) -> Self {
+    pub fn derive(actions: &[Action], value_balance: ValueBalance) -> Self {
         let cvs = actions.iter().map(|action| action.cv);
-        Self::from(derive_bvk(cvs, value_balance))
+        Self::from(derive_bvk(cvs, value_balance.into()))
     }
 
     /// Verify a binding signature against a transaction sighash.

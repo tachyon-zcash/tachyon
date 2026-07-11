@@ -16,7 +16,7 @@ use rand_core::{CryptoRng, RngCore};
 
 use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
-    ActionSetPoly, NfSeqPoly, Note, TachygramSetPoly,
+    ActionSetPoly, NfSeqPoly, Note, TachygramSetPoly, action,
     constants::EPOCH_SIZE,
     entropy::ActionEntropy,
     fixtures::{
@@ -165,9 +165,10 @@ fn spendable_init_accepts_forged_chain() {
     // cm-stamp, and `pre_cm_anchor = forged_start` so `chain_end ==
     // pre_cm_anchor.next_stamp(cm_commit)`. All SpendableInit checks then pass.
     let stamps = pool.tachygrams_at(cm_height);
+    let (tg0, tg1): (Tachygram, Tachygram) = cm.into();
     let cm_idx = stamps
         .iter()
-        .position(|tgs| tgs.contains(&cm.into()))
+        .position(|tgs| tgs.contains(&tg0) && tgs.contains(&tg1))
         .expect("cm present in cm-block");
     let x = Anchor::from(Fp::random(&mut *rng));
     let forged_start = x.next_epoch(wrong);
@@ -282,7 +283,7 @@ fn spendable_init_rejects_tg_absent() {
     let ragu::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
-    assert_eq!(inner.to_string(), "SpendableInit: commitment not in set");
+    assert_eq!(inner.to_string(), "SpendableInit: cm0 not in set");
 }
 
 #[test]
@@ -441,7 +442,8 @@ fn empty_block_unspent_lifts_spendable() {
     let cm = note.commitment();
 
     let mut pool = PoolSim::genesis(rng);
-    pool.mine(vec![vec![cm.into()]]);
+    let (tg0, tg1): (Tachygram, Tachygram) = cm.into();
+    pool.mine(vec![vec![tg0, tg1]]);
     let cm_height = pool.height();
     let epoch = cm_height.epoch();
 
@@ -475,7 +477,7 @@ fn spend_bind_honest() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let spend_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let (_cm, (_cv, _rk), present_nf, _anchor) = *spend_pcd.data();
+    let (_cm, _desc, present_nf, _anchor) = *spend_pcd.data();
     assert_eq!(present_nf, user.nf_at(&note, spend_epoch));
 }
 
@@ -618,11 +620,14 @@ fn spend_stamp_rejects_identity_cv() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let real_spend = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let (cm, (_real_cv, real_rk), present_nf, anchor) = *real_spend.data();
+    let (cm, real_desc, present_nf, anchor) = *real_spend.data();
     let identity_cv = value::Commitment::balance(0);
     let forged_spend = real_spend.proof().clone().carry::<spend::SpendHeader>((
         cm,
-        (identity_cv, real_rk),
+        action::Descriptor {
+            cv: identity_cv,
+            rk: real_desc.rk,
+        },
         present_nf,
         anchor,
     ));
@@ -737,7 +742,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let lifted = user.lift(rng, spendable, unspent, &note, EpochIndex(0), EpochIndex(1));
 
     let spend_pcd = honest_spend_bind(rng, &user, &note, lifted);
-    let (_cm, (_cv, _rk), present_nf, _anchor) = *spend_pcd.data();
+    let (_cm, _desc, present_nf, _anchor) = *spend_pcd.data();
     assert_eq!(
         present_nf,
         user.nf_at(&note, EpochIndex(1)),
@@ -1695,7 +1700,7 @@ fn spendable_lift_rejects_wrong_cm() {
     };
     assert_eq!(
         inner.to_string(),
-        "SpendableLift: verified unspent cm does not match spendable"
+        "SpendableLift: verified unspent cm0 does not match spendable"
     );
 }
 

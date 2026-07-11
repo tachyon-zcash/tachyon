@@ -12,14 +12,14 @@
 //!
 //! ## Bundle States
 //!
-//! [`Bundle<S>`](Bundle) is parameterized by stamp state `S: StampState`:
+//! [`Bundle<S>`](Bundle) is parameterized by bundle state `S: BundleState`:
 //!
 //! - `Bundle<Unproven>` — actions signed but no proof yet
-//! - `Bundle<Stamp>` — aggregate or self-contained, carries a [`Stamp`]
-//! - `Bundle<Stripped>` — stamp stripped, covering wtxid not yet assigned
-//! - `Bundle<AggregateId>` — stamp stripped, carries the covering
-//!   [`AggregateId`]
-//! - [`TachyonBundle`] — enum of stamped-or-stripped for mixed contexts
+//! - `Bundle<ProofStamp>` — aggregate or self-contained, carries a
+//!   [`ProofStamp`]
+//! - `Bundle<PointerStamp>` — proof stamp replaced by the covering aggregate's
+//!   [`PointerStamp`]
+//! - [`TachyonBundle`] — enum of either wire form for mixed contexts
 //!
 //! ## Block Structure
 //!
@@ -66,4 +66,4 @@ pub use action::{Action, Plan as ActionPlan};
 pub use bundle::{Bundle, Plan as BundlePlan, TachyonBundle};
 pub use note::Note;
 pub use primitives::*;
-pub use stamp::{AggregateId, Stamp, Stripped, Unproven};
+pub use stamp::{PointerStamp, ProofStamp, Unproven};

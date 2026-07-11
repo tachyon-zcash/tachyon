@@ -29,10 +29,9 @@
 //!
 //! ## Note Commitment
 //!
-//! A commitment over the note fields, producing a `cm` tachygram that
-//! enters the polynomial accumulator. The concrete commitment scheme
-//! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
-//! Ragu circuits and is TBD.
+//! A commitment over the note fields, producing two components `cm0` and
+//! `cm1` (the sponge's first two squeezes) that together become the two
+//! tachygrams an output publishes into the polynomial accumulator.
 
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use ff::Field as _;
@@ -40,7 +39,7 @@ use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    constants::NOTE_VALUE_MAX,
+    constants::MAX_MONEY,
     digest::poseidon,
     keys::{NullifierKey, PaymentKey},
     primitives::{EpochIndex, Tachygram},
@@ -104,17 +103,35 @@ pub struct Note {
 /// only raw field elements without the Rust-level newtype protection.
 ///
 /// Use [`Value::try_from`] or [`Value::new`] for fallible construction.
-#[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
+#[derive(Clone, Copy, Debug, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct Value(u64);
 
 impl Value {
+    pub(crate) const MAX: Self = Self(MAX_MONEY);
     /// The forbidden zero value.
     #[cfg(test)]
     pub(crate) const ZERO: Self = Self(0);
 }
 
+impl From<Value> for i64 {
+    fn from(value: Value) -> Self {
+        assert!(value <= Value::MAX, "impossible note value");
+
+        #[expect(clippy::expect_used, reason = "MAX_MONEY < i64::MAX")]
+        value.0.try_into().expect("must fit")
+    }
+}
+
+impl From<Value> for u64 {
+    fn from(value: Value) -> Self {
+        assert!(value <= Value::MAX, "impossible note value");
+
+        value.0
+    }
+}
+
 /// Error returned when a note value is out of the valid range
-/// `1..=NOTE_VALUE_MAX`.
+/// `1..=MAX_MONEY`.
 #[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
 #[non_exhaustive]
 pub enum ValueError {
@@ -133,27 +150,18 @@ impl TryFrom<u64> for Value {
         if value == 0 {
             return Err(ValueError::Zero);
         }
-        if value > NOTE_VALUE_MAX {
+        if value > MAX_MONEY {
             return Err(ValueError::Overflow);
         }
         Ok(Self(value))
     }
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "Value construction enforces NOTE_VALUE_MAX < i64::MAX"
-)]
-impl From<Value> for i64 {
-    fn from(value: Value) -> Self {
-        Self::try_from(value.0).expect("Value invariant guarantees it fits in i64")
-    }
-}
-
 impl Note {
-    /// Computes the note commitment `cm`.
+    /// Computes the note commitment `(cm0, cm1)`.
     ///
-    /// Commits to $(pk, v, \psi)$ with randomness $rcm$
+    /// Commits to $(pk, v, \psi)$ with randomness $rcm$. `cm1` is the
+    /// sponge's second squeeze — see [`poseidon::note_commitment_pair`].
     ///
     /// # Panics
     ///
@@ -166,12 +174,9 @@ impl Note {
             "note commitment trapdoor should not be zero"
         );
 
-        Commitment::from(poseidon::note_commitment(
-            self.rcm.0,
-            self.pk.0,
-            self.value.0,
-            self.psi.0,
-        ))
+        let (cm0, cm1) =
+            poseidon::note_commitment_pair(self.rcm.0, self.pk.0, self.value.0, self.psi.0);
+        Commitment(cm0, cm1)
     }
 
     /// Derives a nullifier for this note at the given flavor (epoch).
@@ -188,18 +193,46 @@ impl Note {
     }
 }
 
-/// A Tachyon note commitment (`cm`).
+/// A Tachyon note commitment.
 ///
-/// A field element produced by committing to the note fields. This is
-/// the value that becomes a tachygram:
-/// - For **output** operations, `cm` IS the tachygram directly.
-/// - For **spend** operations, `cm` is a private witness.
-#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct Commitment(#[debug(skip)] Fp);
+/// Two field elements produced by committing to the note fields
+/// ([`Note::commitment`]) — the sponge's first two squeezes. `(cm0, cm1)`
+/// become an output's two tachygrams directly; a spend's binding checks and
+/// header threading use both components too — a commitment is never
+/// collapsed to one of them.
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct Commitment(#[debug(skip)] Fp, #[debug(skip)] Fp);
 
-impl From<Commitment> for Tachygram {
+impl Commitment {
+    #[cfg(test)]
+    pub(crate) fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
+        Self(Fp::random(&mut *rng), Fp::random(&mut *rng))
+    }
+}
+
+impl From<(Fp, Fp)> for Commitment {
+    /// Builds a commitment from both components. There is deliberately no
+    /// `From<Fp> for Commitment` either — a commitment is never built from
+    /// a single scalar, even a synthetic one.
+    fn from((cm0, cm1): (Fp, Fp)) -> Self {
+        Self(cm0, cm1)
+    }
+}
+
+impl From<Commitment> for (Fp, Fp) {
+    /// Both components `(cm0, cm1)`. There is deliberately no
+    /// `From<Commitment> for Fp`: a commitment is never collapsed to a
+    /// single scalar. Every consumer — inclusion checks, lineage-matching
+    /// equality, header encodings, alpha derivation — binds both components.
     fn from(commitment: Commitment) -> Self {
-        Self::from(commitment.0)
+        (commitment.0, commitment.1)
+    }
+}
+
+impl From<Commitment> for (Tachygram, Tachygram) {
+    /// Both elements as the output's two tachygrams.
+    fn from(commitment: Commitment) -> Self {
+        (Tachygram::from(commitment.0), Tachygram::from(commitment.1))
     }
 }
 
@@ -227,21 +260,18 @@ mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::{constants::NOTE_VALUE_MAX, keys::private::SpendingKey, primitives::EpochIndex};
+    use crate::{constants::MAX_MONEY, keys::private::SpendingKey, primitives::EpochIndex};
 
-    /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
+    /// MAX_MONEY must be accepted (boundary is inclusive).
     #[test]
     fn value_accepts_max() {
-        Value::try_from(NOTE_VALUE_MAX).unwrap();
+        Value::try_from(MAX_MONEY).unwrap();
     }
 
-    /// Anything above NOTE_VALUE_MAX must be rejected.
+    /// Anything above MAX_MONEY must be rejected.
     #[test]
     fn value_rejects_overflow() {
-        assert_eq!(
-            Value::try_from(NOTE_VALUE_MAX + 1),
-            Err(ValueError::Overflow)
-        );
+        assert_eq!(Value::try_from(MAX_MONEY + 1), Err(ValueError::Overflow));
     }
 
     /// Zero must be rejected — notes carry economic value.
@@ -303,10 +333,11 @@ mod tests {
 
     #[test]
     fn debug_note_commitment_redacts_value() {
-        let cm = Commitment::from(Fp::from(42u64));
+        let cm = Commitment::from((Fp::from(42u64), Fp::from(43u64)));
         let dbg = alloc::format!("{cm:?}");
         assert!(dbg.contains("Commitment"), "must name the type");
         assert!(!dbg.contains("42"), "must not leak field element");
+        assert!(!dbg.contains("43"), "must not leak field element");
     }
 
     #[test]
