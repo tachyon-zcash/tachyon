@@ -30,9 +30,7 @@
 //! ## Note Commitment
 //!
 //! A commitment over the note fields, producing a `cm` tachygram that
-//! enters the polynomial accumulator. The concrete commitment scheme
-//! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
-//! Ragu circuits and is TBD.
+//! enters the polynomial accumulator.
 
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use ff::Field as _;
