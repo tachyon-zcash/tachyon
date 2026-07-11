@@ -128,10 +128,10 @@ pub(crate) fn bundle_commitment(action_commit: &[u8; 32], value_balance: i64) ->
 /// two invariants enforced by the paired effecting digest and the proof system,
 /// not by this preimage.
 ///
-/// - The action count is pinned by `action_acc`'s degree: the monic
-///   `∏(X - action_digest_i)` committed in `bundle_commitment` fixes the
-///   number of actions, hence the action-signature block boundary. This is the
-///   role `nActionsOrchard` plays in ZIP 244.
+/// - The action count is pinned by `action_acc`'s degree: the monic `∏(X -
+///   action_digest_i)` committed in `bundle_commitment` fixes the number of
+///   actions, hence the action-signature block boundary. This is the role
+///   `nActionsOrchard` plays in ZIP 244.
 /// - The proof is a compile-time fixed size (`PROOF_SIZE_COMPRESSED`), which
 ///   fixes the `tachygrams || proof` boundary. Nothing on the txid side commits
 ///   to the tachygram count, so the fixed proof size is load-bearing for digest
