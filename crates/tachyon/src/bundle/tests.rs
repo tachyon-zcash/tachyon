@@ -909,15 +909,19 @@ fn plan_value_balance_rejects_overflow_above_max_money() {
     let bundle_plan = Plan::new(alloc::vec![spend_a, spend_b], alloc::vec![]);
 
     assert_eq!(bundle_plan.value_balance(), Err(ValueBalanceOverflow));
-    assert!(matches!(
-        bundle_plan.commitment(),
-        Err(CommitError::BalanceOverflow(_))
-    ));
+    {
+        let err = bundle_plan.commitment().unwrap_err();
+        let CommitError::BalanceOverflow(_) = err else {
+            panic!("expected CommitError::BalanceOverflow, got {err:?}");
+        };
+    }
     let sighash = [0u8; 32];
-    assert!(matches!(
-        bundle_plan.sign(&sighash, &ask, rng),
-        Err(SignError::BalanceOverflow)
-    ));
+    {
+        let err = bundle_plan.sign(&sighash, &ask, rng).unwrap_err();
+        let SignError::BalanceOverflow = err else {
+            panic!("expected SignError::BalanceOverflow, got {err:?}");
+        };
+    }
 }
 
 #[test]
@@ -932,15 +936,19 @@ fn plan_value_balance_rejects_overflow_below_negative_max_money() {
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_a, output_b]);
 
     assert_eq!(bundle_plan.value_balance(), Err(ValueBalanceOverflow));
-    assert!(matches!(
-        bundle_plan.commitment(),
-        Err(CommitError::BalanceOverflow(_))
-    ));
+    {
+        let err = bundle_plan.commitment().unwrap_err();
+        let CommitError::BalanceOverflow(_) = err else {
+            panic!("expected CommitError::BalanceOverflow, got {err:?}");
+        };
+    }
     let sighash = [0u8; 32];
-    assert!(matches!(
-        bundle_plan.sign(&sighash, &ask, rng),
-        Err(SignError::BalanceOverflow)
-    ));
+    {
+        let err = bundle_plan.sign(&sighash, &ask, rng).unwrap_err();
+        let SignError::BalanceOverflow = err else {
+            panic!("expected SignError::BalanceOverflow, got {err:?}");
+        };
+    }
 }
 
 #[test]
@@ -1027,11 +1035,11 @@ fn read_rejects_zero_actions_with_nonzero_balance() {
 
 /// Every construction path guarantees "no actions implies zero value
 /// balance", so a violation here can only come from a hand-constructed
-/// `Bundle` that bypasses `Plan`/`read`. `verify_signatures` treats that as
-/// an internal invariant violation (`unreachable!`), not a reachable
-/// `Result::Err`.
+/// `Bundle` that bypasses `Plan`/`read`. `verify_signatures` has no special
+/// case for it: the binding signature was produced for the real (zero)
+/// balance, so it simply fails to validate against the `bvk` recomputed from
+/// the forged nonzero balance.
 #[test]
-#[should_panic(expected = "bundle with no actions cannot have nonzero value balance")]
 fn zero_action_bundle_rejects_nonzero_balance() {
     let rng = &mut StdRng::seed_from_u64(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
@@ -1044,7 +1052,8 @@ fn zero_action_bundle_rejects_nonzero_balance() {
         stamp: AggregateId::try_from([1u8; 64]).expect("nonzero id"),
     };
 
-    bundle
-        .verify_signatures(&sighash)
-        .expect("signature checks are unreachable: the assert panics first");
+    let err = bundle.verify_signatures(&sighash).unwrap_err();
+    let SignatureError::Binding(_) = err else {
+        panic!("expected SignatureError::Binding, got {err:?}");
+    };
 }

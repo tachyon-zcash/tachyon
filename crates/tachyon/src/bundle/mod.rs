@@ -764,16 +764,7 @@ impl<S: StampState> Bundle<S> {
     }
 
     /// Verify the bundle's binding signature and all action signatures.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the bundle has no actions but a nonzero value balance.
     pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
-        if self.actions.is_empty() && self.value_balance != ValueBalance::ZERO {
-            // Every construction path already guarantees this.
-            unreachable!("bundle with no actions cannot have nonzero value balance");
-        }
-
         // 1. Derive bvk from public data (validator-side, §4.14)
         let bvk = public::BindingVerificationKey::derive(&self.actions, self.value_balance);
 
@@ -820,10 +811,6 @@ impl ValueBalance {
 
 impl From<ValueBalance> for i64 {
     fn from(balance: ValueBalance) -> Self {
-        assert!(
-            balance.0.unsigned_abs() <= MAX_MONEY,
-            "impossible value balance"
-        );
         balance.0
     }
 }

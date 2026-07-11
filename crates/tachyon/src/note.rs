@@ -108,25 +108,22 @@ pub struct Note {
 pub struct Value(u64);
 
 impl Value {
-    pub(crate) const MAX: Self = Self(MAX_MONEY);
+    /// The maximum note value (2.1e15 zatoshis).
+    pub const MAX: Self = Self(MAX_MONEY);
     /// The forbidden zero value.
     #[cfg(test)]
-    pub(crate) const ZERO: Self = Self(0);
+    pub const ZERO: Self = Self(0);
 }
 
 impl From<Value> for i64 {
     fn from(value: Value) -> Self {
-        assert!(value <= Value::MAX, "impossible note value");
-
         #[expect(clippy::expect_used, reason = "MAX_MONEY < i64::MAX")]
-        value.0.try_into().expect("must fit")
+        Self::try_from(value.0).expect("note value cannot exceed i64::MAX")
     }
 }
 
 impl From<Value> for u64 {
     fn from(value: Value) -> Self {
-        assert!(value <= Value::MAX, "impossible note value");
-
         value.0
     }
 }
