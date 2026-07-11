@@ -95,7 +95,7 @@ impl TryFrom<[u8; 64]> for PointerStamp {
 /// Bundle states that carry a stamp: [`ProofStamp`] or [`PointerStamp`].
 /// The intermediate [`Unproven`] state has no stamp.
 pub trait StampState: BundleState {
-    /// The stamp's 64-byte wtxid-shaped digest: a proof stamp's
+    /// The stamp's 64-byte digest: a proof stamp's
     /// `hStampActionsTachyon || stamp_data_digest`, or a pointer stamp's
     /// `wtxid = txid || auth_digest` from another transaction.
     fn stamp_digest(&self) -> [u8; 64];

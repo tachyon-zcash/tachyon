@@ -65,7 +65,7 @@
 //! | `tachyonAggregateId`  | 64 bytes             | wtxid of the relevant aggregate          |
 //!
 //! The transaction `auth_digest` contribution commits either stamp as a
-//! 64-byte wtxid-shaped value: the pointer stamp's `wtxid` directly, or
+//! 64-byte value: the pointer stamp's `wtxid` directly, or
 //! `hStampActionsTachyon || stamp_data_digest` for a proof stamp.
 
 use alloc::vec::Vec;
