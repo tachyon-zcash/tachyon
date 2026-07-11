@@ -112,12 +112,12 @@ fn sign_reports_global_action_index_on_rk_mismatch() {
     let sighash = mock_sighash(plan.commitment().unwrap());
 
     let err = plan.sign(&sighash, &ask, rng).unwrap_err();
-    let SignError::RkMismatch { index, rk } = err else {
+    let SignError::RkMismatch { idx, rk } = err else {
         panic!("expected RkMismatch, got {err:?}");
     };
     // Global index = spends.len() (1) + output index (0): the offset is retained,
     // and the error carries the offending rk alongside it.
-    assert_eq!(index, 1);
+    assert_eq!(idx, 1);
     assert_eq!(rk, wrong_rk.0.into());
 }
 

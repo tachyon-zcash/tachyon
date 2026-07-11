@@ -227,12 +227,12 @@ pub enum SignatureError {
 #[non_exhaustive]
 pub enum SignError {
     /// The derived rk does not match the stored rk.
-    #[display("plan rk {rk:?} does not match at action {index}")]
+    #[display("plan rk {rk:?} does not match at action {idx}")]
     RkMismatch {
         /// Index of the offending action in the bundle (spends first, then
         /// outputs).
         #[error(not(source))]
-        index: usize,
+        idx: usize,
         /// The stored rk that did not match the derived one.
         #[error(not(source))]
         rk: reddsa::VerificationKeyBytes<reddsa::ActionAuth>,
@@ -385,13 +385,13 @@ impl Plan {
         let n_actions = self.spends.len() + self.outputs.len();
         let mut authorized = Vec::with_capacity(n_actions);
 
-        for (index, plan) in self.spends.iter().enumerate() {
+        for (idx, plan) in self.spends.iter().enumerate() {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Spend>(cm);
             let rsk = ask.derive_action_private(&alpha);
             if rsk.derive_action_public() != plan.rk {
                 return Err(SignError::RkMismatch {
-                    index,
+                    idx,
                     rk: plan.rk.0.into(),
                 });
             }
@@ -408,7 +408,7 @@ impl Plan {
             let rsk = private::ActionSigningKey::new(&alpha);
             if rsk.derive_action_public() != plan.rk {
                 return Err(SignError::RkMismatch {
-                    index: self.spends.len() + idx,
+                    idx: self.spends.len() + idx,
                     rk: plan.rk.0.into(),
                 });
             }
