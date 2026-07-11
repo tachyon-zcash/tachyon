@@ -7,28 +7,31 @@ use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
 use crate::{
-    constants::EPOCH_SIZE,
+    constants::{EPOCH_SIZE, MAX_MONEY},
     digest::blake2b::COMMIT_NO_BUNDLE,
     entropy::ActionEntropy,
     fixtures::{
-        PoolSim, WalletSim, action_digests, build_autonome, build_output_stamp, mock_sighash,
-        random_action, random_block, random_block_with, shared_sk,
+        PoolSim, WalletSim, action_digests, build_autonome, build_output_plan, build_output_stamp,
+        mock_sighash, random_action, random_block, random_block_with, shared_sk, spend_witness,
     },
     primitives::{ActionDigest, BlockHeight},
     stamp::VerificationError,
 };
 
 #[test]
-fn value_sum_checked_arithmetic() {
-    let va = note::Value::try_from(100u64).unwrap();
-    let vb = note::Value::try_from(200u64).unwrap();
+fn plan_value_balance_sums_spends_and_outputs() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let spend = spend_plan_at(rng, &wallet, &ask, 300);
+    let note = wallet.random_note(200);
+    let (_rcv, _alpha, output) = build_output_plan(rng, note);
+    let bundle_plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
 
-    let sum = (ValueBalance::ZERO + va).unwrap();
-    let total = (sum + vb).unwrap();
-    assert_eq!(i64::try_from(total).unwrap(), 300);
-
-    let diff = (ValueBalance::ZERO - va).unwrap();
-    assert_eq!(i64::try_from(diff).unwrap(), -100);
+    assert_eq!(
+        bundle_plan.value_balance(),
+        Ok(ValueBalance::try_from(100).unwrap())
+    );
 }
 
 #[test]
@@ -38,7 +41,7 @@ fn wrong_value_balance_fails_verification() {
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment().unwrap());
 
-    bundle.value_balance = 999;
+    bundle.value_balance = ValueBalance::try_from(999).unwrap();
     let err = bundle.verify_signatures(&sighash).unwrap_err();
     let SignatureError::Binding(_) = err else {
         panic!("expected SignatureError::Binding, got {err:?}");
@@ -88,7 +91,7 @@ fn sign_reports_global_action_index_on_rk_mismatch() {
     // A valid spend at global index 0 — derive its rk exactly as `sign` does,
     // so it passes the spend check and signing reaches the outputs.
     let spend = action::Plan::spend(
-        wallet.random_note(rng, 200),
+        wallet.random_note(200),
         ActionEntropy::random(rng),
         value::CommitmentTrapdoor::random(rng),
         |alpha| ask.derive_action_private(&alpha).derive_action_public(),
@@ -96,12 +99,12 @@ fn sign_reports_global_action_index_on_rk_mismatch() {
 
     // An output at global index 1 whose rk is corrupted to a foreign key.
     let mut output = action::Plan::output(
-        wallet.random_note(rng, 100),
+        wallet.random_note(100),
         ActionEntropy::random(rng),
         value::CommitmentTrapdoor::random(rng),
     );
     let wrong_rk = action::Plan::output(
-        wallet.random_note(rng, 50),
+        wallet.random_note(50),
         ActionEntropy::random(rng),
         value::CommitmentTrapdoor::random(rng),
     )
@@ -139,7 +142,7 @@ fn zero_action_bundle_is_valid() {
 
     let bundle = Bundle {
         actions: alloc::vec![],
-        value_balance: 0,
+        value_balance: ValueBalance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         stamp: AggregateId::try_from([1u8; 64]).expect("nonzero id"),
     };
@@ -288,7 +291,7 @@ fn innocent_aggregate_from_two_autonomes() {
 
         Bundle {
             actions: alloc::vec![],
-            value_balance: 0,
+            value_balance: ValueBalance::ZERO,
             binding_sig: innocent_plan
                 .derive_bsk_private()
                 .sign(rng, &innocent_sighash),
@@ -631,7 +634,7 @@ fn read_rejects_zero_wtxid() {
         let sighash = mock_sighash(plan.commitment().unwrap());
         let bundle = Bundle {
             actions: alloc::vec![],
-            value_balance: 0,
+            value_balance: ValueBalance::ZERO,
             binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
             stamp: AggregateId::try_from([0x42u8; 64]).expect("nonzero id"),
         };
@@ -676,7 +679,7 @@ fn innocent_round_trips_with_nonzero_wtxid() {
 
     let innocent = Bundle {
         actions: alloc::vec![],
-        value_balance: 0,
+        value_balance: ValueBalance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         stamp: AggregateId::try_from([0x42u8; 64]).expect("nonzero id"),
     };
@@ -850,4 +853,198 @@ fn coverage_check_matches_stamped_action_set() {
             .expect("valid digests"),
         "extra adjunct must mismatch"
     );
+}
+
+/// Build a spend action plan without a pool/anchor: `Plan::spend`'s
+/// `derive_rk` closure recomputes alpha internally, so only `ask` is needed
+/// to derive a matching `rk`.
+fn spend_plan_at(
+    rng: &mut StdRng,
+    wallet: &WalletSim,
+    ask: &private::SpendAuthorizingKey,
+    value: u64,
+) -> action::Plan<effect::Spend> {
+    let note = wallet.random_note(value);
+    let (rcv, theta, _alpha) = spend_witness(rng, &note);
+    action::Plan::spend(note, theta, rcv, |alpha| {
+        ask.derive_action_private(&alpha).derive_action_public()
+    })
+}
+
+#[test]
+fn plan_value_balance_accepts_boundary_max_money() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let spend = spend_plan_at(rng, &wallet, &ask, MAX_MONEY);
+    let bundle_plan = Plan::new(alloc::vec![spend], alloc::vec![]);
+
+    assert_eq!(
+        bundle_plan.value_balance(),
+        Ok(ValueBalance::try_from(i64::try_from(MAX_MONEY).unwrap()).unwrap())
+    );
+}
+
+#[test]
+fn plan_value_balance_accepts_boundary_negative_max_money() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let note = wallet.random_note(MAX_MONEY);
+    let (_rcv, _alpha, output) = build_output_plan(rng, note);
+    let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output]);
+
+    assert_eq!(
+        bundle_plan.value_balance(),
+        Ok(ValueBalance::try_from(-i64::try_from(MAX_MONEY).unwrap()).unwrap())
+    );
+}
+
+#[test]
+fn plan_value_balance_rejects_overflow_above_max_money() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let spend_a = spend_plan_at(rng, &wallet, &ask, MAX_MONEY);
+    let spend_b = spend_plan_at(rng, &wallet, &ask, MAX_MONEY);
+    let bundle_plan = Plan::new(alloc::vec![spend_a, spend_b], alloc::vec![]);
+
+    assert_eq!(bundle_plan.value_balance(), Err(ValueBalanceOverflow));
+    assert!(matches!(
+        bundle_plan.commitment(),
+        Err(CommitError::BalanceOverflow(_))
+    ));
+    let sighash = [0u8; 32];
+    assert!(matches!(
+        bundle_plan.sign(&sighash, &ask, rng),
+        Err(SignError::BalanceOverflow)
+    ));
+}
+
+#[test]
+fn plan_value_balance_rejects_overflow_below_negative_max_money() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let note_a = wallet.random_note(MAX_MONEY);
+    let note_b = wallet.random_note(MAX_MONEY);
+    let (_, _, output_a) = build_output_plan(rng, note_a);
+    let (_, _, output_b) = build_output_plan(rng, note_b);
+    let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_a, output_b]);
+
+    assert_eq!(bundle_plan.value_balance(), Err(ValueBalanceOverflow));
+    assert!(matches!(
+        bundle_plan.commitment(),
+        Err(CommitError::BalanceOverflow(_))
+    ));
+    let sighash = [0u8; 32];
+    assert!(matches!(
+        bundle_plan.sign(&sighash, &ask, rng),
+        Err(SignError::BalanceOverflow)
+    ));
+}
+
+#[test]
+fn read_accepts_value_balance_at_max_money_boundaries() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let max_money = i64::try_from(MAX_MONEY).unwrap();
+
+    for value_balance in [max_money, -max_money] {
+        let vb = ValueBalance::try_from(value_balance).unwrap();
+        let mut bundle = build_autonome(rng, &wallet, 1000, 700);
+        bundle.value_balance = vb;
+
+        let mut buf = Vec::new();
+        bundle.write(&mut buf).expect("write");
+        let decoded = Bundle::<Stamp>::read(&*buf).expect("read must accept boundary balance");
+        assert_eq!(decoded.value_balance, vb);
+    }
+}
+
+/// `ValueBalance::try_from` cannot construct an out-of-range value at all, so
+/// this forges the invalid shape directly on the wire: `valueBalanceTachyon`
+/// is the 8 bytes right after the 1-byte state tag (see the module-level wire
+/// format documentation), mirroring `read_rejects_zero_wtxid`'s approach of
+/// overwriting valid-encoding bytes to build an otherwise-unconstructible
+/// input.
+#[test]
+fn read_rejects_value_balance_out_of_range() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let max_money = i64::try_from(MAX_MONEY).unwrap();
+
+    for value_balance in [max_money + 1, -max_money - 1] {
+        let bundle = build_autonome(rng, &wallet, 1000, 700);
+
+        let mut buf = Vec::new();
+        bundle.write(&mut buf).expect("write");
+        buf[1..9].copy_from_slice(&value_balance.to_le_bytes());
+
+        let stamp_err = Bundle::<Stamp>::read(&*buf)
+            .expect_err("Bundle::<Stamp>::read must reject out-of-range value balance");
+        assert_eq!(stamp_err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(stamp_err.to_string(), "value balance out of range");
+
+        let enum_err = TachyonBundle::read(&*buf)
+            .expect_err("TachyonBundle::read must reject out-of-range value balance");
+        assert_eq!(enum_err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(enum_err.to_string(), "value balance out of range");
+    }
+}
+
+#[test]
+fn read_rejects_zero_actions_with_nonzero_balance() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let plan = Plan::new(alloc::vec![], alloc::vec![]);
+    let sighash = mock_sighash(plan.commitment().unwrap());
+
+    let bundle = Bundle {
+        actions: alloc::vec![],
+        value_balance: ValueBalance::try_from(1).unwrap(),
+        binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+        stamp: AggregateId::try_from([0x42u8; 64]).expect("nonzero id"),
+    };
+
+    let mut buf = Vec::new();
+    bundle.write(&mut buf).expect("write");
+
+    let adjunct_err = Bundle::<AggregateId>::read(&*buf)
+        .expect_err("Adjunct::read must reject zero actions with nonzero balance");
+    assert_eq!(adjunct_err.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(
+        adjunct_err.to_string(),
+        "bundle with no actions must have zero value balance"
+    );
+
+    let enum_err = TachyonBundle::read(&*buf)
+        .expect_err("TachyonBundle::read must reject zero actions with nonzero balance");
+    assert_eq!(enum_err.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(
+        enum_err.to_string(),
+        "bundle with no actions must have zero value balance"
+    );
+}
+
+/// Every construction path guarantees "no actions implies zero value
+/// balance", so a violation here can only come from a hand-constructed
+/// `Bundle` that bypasses `Plan`/`read`. `verify_signatures` treats that as
+/// an internal invariant violation (`unreachable!`), not a reachable
+/// `Result::Err`.
+#[test]
+#[should_panic(expected = "bundle with no actions cannot have nonzero value balance")]
+fn zero_action_bundle_rejects_nonzero_balance() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let plan = Plan::new(alloc::vec![], alloc::vec![]);
+    let sighash = mock_sighash(plan.commitment().unwrap());
+
+    let bundle = Bundle {
+        actions: alloc::vec![],
+        value_balance: ValueBalance::try_from(1).unwrap(),
+        binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+        stamp: AggregateId::try_from([1u8; 64]).expect("nonzero id"),
+    };
+
+    bundle
+        .verify_signatures(&sighash)
+        .expect("signature checks are unreachable: the assert panics first");
 }

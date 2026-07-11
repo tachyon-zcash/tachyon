@@ -44,8 +44,7 @@ impl Effect for Spend {
     }
 
     fn commit_value(rcv: value::CommitmentTrapdoor, value: note::Value) -> value::Commitment {
-        let raw: i64 = value.into();
-        rcv.commit(raw)
+        rcv.commit(i64::from(value))
     }
 }
 
@@ -55,7 +54,6 @@ impl Effect for Output {
     }
 
     fn commit_value(rcv: value::CommitmentTrapdoor, value: note::Value) -> value::Commitment {
-        let raw: i64 = value.into();
-        rcv.commit(-raw)
+        rcv.commit(-i64::from(value))
     }
 }

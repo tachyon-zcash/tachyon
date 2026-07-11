@@ -1,7 +1,7 @@
 //! Protocol-wide non-hash constants.
 
-/// Maximum note value in zatoshis (§5.3 of the protocol spec)
-pub const NOTE_VALUE_MAX: u64 = 2_100_000_000_000_000;
+/// Maximum representable value in zatoshis (§5.3 of the protocol spec).
+pub const MAX_MONEY: u64 = 2_100_000_000_000_000;
 
 const EPOCH_SHIFT: u32 = if cfg!(test) { 4 } else { 12 };
 

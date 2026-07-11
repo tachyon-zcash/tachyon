@@ -12,7 +12,7 @@ use ragu::{
 
 use super::spendable::SpendableHeader;
 use crate::{
-    constants::NOTE_VALUE_MAX,
+    constants::MAX_MONEY,
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, public},
     note::{self, Note, Nullifier},
@@ -88,7 +88,7 @@ impl Step for SpendBind {
             Fp::from(u64::from(note.value)),
             "SpendBind: zero-value note",
         )?;
-        if u64::from(note.value) > NOTE_VALUE_MAX {
+        if u64::from(note.value) > MAX_MONEY {
             return Err(ragu::Error::InvalidWitness(
                 "SpendBind: note value exceeds maximum".into(),
             ));

@@ -40,7 +40,7 @@ use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    constants::NOTE_VALUE_MAX,
+    constants::MAX_MONEY,
     digest::poseidon,
     keys::{NullifierKey, PaymentKey},
     primitives::{EpochIndex, Tachygram},
@@ -104,17 +104,39 @@ pub struct Note {
 /// only raw field elements without the Rust-level newtype protection.
 ///
 /// Use [`Value::try_from`] or [`Value::new`] for fallible construction.
-#[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
+#[derive(Clone, Copy, Debug, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct Value(u64);
 
 impl Value {
-    /// The forbidden zero value.
+    pub(crate) const MAX: Self = Self(MAX_MONEY);
+
+    /// A zero-value note, unconstructible via [`Value::try_from`].
+    ///
+    /// Lets proof-system tests witness an illegal zero-value note to confirm
+    /// the circuit's own `enforce_nonzero` check independently rejects it.
     #[cfg(test)]
     pub(crate) const ZERO: Self = Self(0);
 }
 
+impl From<Value> for i64 {
+    fn from(value: Value) -> Self {
+        assert!(value <= Value::MAX, "impossible note value");
+
+        #[expect(clippy::expect_used, reason = "MAX_MONEY < i64::MAX")]
+        value.0.try_into().expect("must fit")
+    }
+}
+
+impl From<Value> for u64 {
+    fn from(value: Value) -> Self {
+        assert!(value <= Value::MAX, "impossible note value");
+
+        value.0
+    }
+}
+
 /// Error returned when a note value is out of the valid range
-/// `1..=NOTE_VALUE_MAX`.
+/// `1..=MAX_MONEY`.
 #[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
 #[non_exhaustive]
 pub enum ValueError {
@@ -133,20 +155,10 @@ impl TryFrom<u64> for Value {
         if value == 0 {
             return Err(ValueError::Zero);
         }
-        if value > NOTE_VALUE_MAX {
+        if value > MAX_MONEY {
             return Err(ValueError::Overflow);
         }
         Ok(Self(value))
-    }
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "Value construction enforces NOTE_VALUE_MAX < i64::MAX"
-)]
-impl From<Value> for i64 {
-    fn from(value: Value) -> Self {
-        Self::try_from(value.0).expect("Value invariant guarantees it fits in i64")
     }
 }
 
@@ -227,21 +239,18 @@ mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::{constants::NOTE_VALUE_MAX, keys::private::SpendingKey, primitives::EpochIndex};
+    use crate::{constants::MAX_MONEY, keys::private::SpendingKey, primitives::EpochIndex};
 
-    /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
+    /// MAX_MONEY must be accepted (boundary is inclusive).
     #[test]
     fn value_accepts_max() {
-        Value::try_from(NOTE_VALUE_MAX).unwrap();
+        Value::try_from(MAX_MONEY).unwrap();
     }
 
-    /// Anything above NOTE_VALUE_MAX must be rejected.
+    /// Anything above MAX_MONEY must be rejected.
     #[test]
     fn value_rejects_overflow() {
-        assert_eq!(
-            Value::try_from(NOTE_VALUE_MAX + 1),
-            Err(ValueError::Overflow)
-        );
+        assert_eq!(Value::try_from(MAX_MONEY + 1), Err(ValueError::Overflow));
     }
 
     /// Zero must be rejected — notes carry economic value.

@@ -13,7 +13,7 @@ use ragu::{
 use super::{delegation::NullifierHeader, pool::AnchorChain, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
-    constants::NOTE_VALUE_MAX,
+    constants::MAX_MONEY,
     entropy::ActionRandomizer,
     keys::private,
     note::{Note, Nullifier},
@@ -95,7 +95,7 @@ impl Step for OutputStamp {
             Fp::from(u64::from(note.value)),
             "OutputStamp: zero-value note",
         )?;
-        if u64::from(note.value) > NOTE_VALUE_MAX {
+        if u64::from(note.value) > MAX_MONEY {
             return Err(ragu::Error::InvalidWitness(
                 "OutputStamp: note value exceeds maximum".into(),
             ));
