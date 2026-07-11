@@ -9,6 +9,7 @@ use super::*;
 use crate::{
     constants::EPOCH_SIZE,
     digest::blake2b::COMMIT_NO_BUNDLE,
+    entropy::ActionEntropy,
     fixtures::{
         PoolSim, WalletSim, action_digests, build_autonome, build_output_stamp, mock_sighash,
         random_action, random_block, random_block_with, shared_sk,
@@ -76,6 +77,48 @@ fn plan_commitment_matches_bundle_commitment() {
         bundle_plan.commitment().unwrap(),
         bundle.commitment().unwrap()
     );
+}
+
+#[test]
+fn sign_reports_global_action_index_on_rk_mismatch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+
+    // A valid spend at global index 0 — derive its rk exactly as `sign` does,
+    // so it passes the spend check and signing reaches the outputs.
+    let spend = action::Plan::spend(
+        wallet.random_note(rng, 200),
+        ActionEntropy::random(rng),
+        value::CommitmentTrapdoor::random(rng),
+        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
+    );
+
+    // An output at global index 1 whose rk is corrupted to a foreign key.
+    let mut output = action::Plan::output(
+        wallet.random_note(rng, 100),
+        ActionEntropy::random(rng),
+        value::CommitmentTrapdoor::random(rng),
+    );
+    let wrong_rk = action::Plan::output(
+        wallet.random_note(rng, 50),
+        ActionEntropy::random(rng),
+        value::CommitmentTrapdoor::random(rng),
+    )
+    .rk;
+    output.rk = wrong_rk;
+
+    let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
+    let sighash = mock_sighash(plan.commitment().unwrap());
+
+    let err = plan.sign(&sighash, &ask, rng).unwrap_err();
+    let SignError::RkMismatch { idx, rk } = err else {
+        panic!("expected RkMismatch, got {err:?}");
+    };
+    // Global index = spends.len() (1) + output index (0): the offset is retained,
+    // and the error carries the offending rk alongside it.
+    assert_eq!(idx, 1);
+    assert_eq!(rk, wrong_rk.0.into());
 }
 
 #[test]
