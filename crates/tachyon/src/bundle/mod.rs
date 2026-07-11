@@ -722,7 +722,8 @@ impl TachyonBundle {
     }
 
     /// Check if this bundle is an aggregate, by computing the digest of its
-    /// owned actions and comparing to its stamp's `hStampActionsTachyon` if present.
+    /// owned actions and comparing to its stamp's `hStampActionsTachyon` if
+    /// present.
     #[must_use]
     #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn is_aggregate(&self) -> bool {
