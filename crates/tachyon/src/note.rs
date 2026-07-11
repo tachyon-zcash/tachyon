@@ -109,11 +109,7 @@ pub struct Value(u64);
 
 impl Value {
     pub(crate) const MAX: Self = Self(MAX_MONEY);
-
-    /// A zero-value note, unconstructible via [`Value::try_from`].
-    ///
-    /// Lets proof-system tests witness an illegal zero-value note to confirm
-    /// the circuit's own `enforce_nonzero` check independently rejects it.
+    /// The forbidden zero value.
     #[cfg(test)]
     pub(crate) const ZERO: Self = Self(0);
 }

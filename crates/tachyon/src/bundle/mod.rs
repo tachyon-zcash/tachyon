@@ -285,7 +285,6 @@ impl Plan {
     /// $\mathsf{v\_balance} = \sum_i v_{\text{spend},i} - \sum_j
     /// v_{\text{output},j}$
     ///
-    ///
     /// # Errors
     ///
     /// Fails if the final balance falls outside `-MAX_MONEY..=MAX_MONEY`.
@@ -293,10 +292,10 @@ impl Plan {
     pub fn value_balance(&self) -> Result<ValueBalance, ValueBalanceOverflow> {
         let mut sum = 0i128;
         for plan in &self.spends {
-            sum += i128::from(i64::from(plan.note.value));
+            sum += i128::from(u64::from(plan.note.value));
         }
         for plan in &self.outputs {
-            sum -= i128::from(i64::from(plan.note.value));
+            sum -= i128::from(u64::from(plan.note.value));
         }
         i64::try_from(sum)
             .map_err(|_err| ValueBalanceOverflow)
@@ -808,9 +807,6 @@ pub struct ValueBalance(i64);
 pub struct ValueBalanceOverflow;
 
 impl ValueBalance {
-    /// The zero sum.
-    pub const ZERO: Self = Self(0);
-
     /// The maximum representable value.
     #[expect(
         clippy::as_conversions,
@@ -818,6 +814,8 @@ impl ValueBalance {
         reason = "constant"
     )]
     pub const MAX: Self = Self(MAX_MONEY as i64);
+    /// The zero sum.
+    pub const ZERO: Self = Self(0);
 }
 
 impl From<ValueBalance> for i64 {
@@ -832,6 +830,7 @@ impl From<ValueBalance> for i64 {
 
 impl TryFrom<i64> for ValueBalance {
     type Error = ValueBalanceOverflow;
+
     fn try_from(balance: i64) -> Result<Self, Self::Error> {
         if balance.unsigned_abs() > MAX_MONEY {
             return Err(ValueBalanceOverflow);
@@ -903,7 +902,7 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, ValueBal
         .map(|(&(cv, rk), &sig)| Action { cv, rk, sig })
         .collect();
 
-    if actions.is_empty() && i64::from(value_balance) != 0 {
+    if actions.is_empty() && value_balance != ValueBalance::ZERO {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "bundle with no actions must have zero value balance",
