@@ -594,13 +594,6 @@ impl<S: StampState> Bundle<S> {
             descriptors.push(action::Descriptor::read(&mut reader)?);
         }
 
-        if !descriptors.is_sorted() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "actions are not canonically sorted",
-            ));
-        }
-
         let mut signatures: Vec<action::Signature> = Vec::new();
         for _ in 0..n_actions {
             signatures.push(action::Signature::read(&mut reader)?);
@@ -611,6 +604,13 @@ impl<S: StampState> Bundle<S> {
             .zip(signatures)
             .map(|(desc, sig)| Action::from_parts(desc, sig))
             .collect();
+
+        if !actions.is_sorted() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "actions are not canonically sorted",
+            ));
+        }
 
         if actions.is_empty() && value_balance != value::Balance::ZERO {
             return Err(io::Error::new(
