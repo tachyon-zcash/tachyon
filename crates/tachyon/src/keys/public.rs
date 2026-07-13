@@ -5,7 +5,10 @@ use core::cmp::Eq as CoreTotalEq;
 use derive_more::{Debug, Display, PartialEq};
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 
-use crate::{action, action::Action, bundle, reddsa, value};
+use crate::{
+    action::{self, Action},
+    bundle, reddsa, value,
+};
 
 /// The randomized action verification key `rk` — per-action, public.
 ///
@@ -58,24 +61,6 @@ impl From<ActionVerificationKey> for EpAffine {
     }
 }
 
-/// Derive the binding verification key from public bundle data.
-///
-/// $$\mathsf{bvk} = \left(\bigoplus_i \mathsf{cv}_i\right) \ominus
-///   \text{ValueCommit}_0\!\left(\mathsf{v\_{balance}}\right)$$
-///
-/// The result should equal $[\mathsf{bsk}]\,\mathcal{R}$ if the signer
-/// constructed the bundle correctly, similar to Orchard's binding key
-/// derivation (Protocol §4.14)
-#[must_use]
-pub fn derive_bvk(
-    action_cvs: impl Iterator<Item = value::Commitment>,
-    value_balance: i64,
-) -> EpAffine {
-    let cv_sum: value::Commitment = action_cvs.sum();
-    let cb0 = value::Commitment::balance(value_balance);
-    EpAffine::from(cv_sum - cb0)
-}
-
 /// Binding verification key $\mathsf{bvk}$ — derived from value
 /// commitments.
 ///
@@ -118,9 +103,10 @@ impl BindingVerificationKey {
     /// result should equal $[\mathsf{bsk}]\,\mathcal{R}$ when the signer
     /// constructed the bundle correctly.
     #[must_use]
-    pub fn derive(actions: &[Action], value_balance: i64) -> Self {
-        let cvs = actions.iter().map(|action| action.cv);
-        Self::from(derive_bvk(cvs, value_balance))
+    pub fn derive(actions: &[Action], value_balance: value::Balance) -> Self {
+        let cv_sum: value::Commitment = actions.iter().map(|action| action.cv).sum();
+        let cvb = value::Trapdoor::ZERO.commit(value_balance);
+        Self::from(EpAffine::from(cv_sum - cvb))
     }
 
     /// Verify a binding signature against a transaction sighash.

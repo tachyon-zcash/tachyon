@@ -64,7 +64,7 @@
 //! | `tachyonAggregateId`  | 64 bytes             | wtxid of the relevant aggregate          |
 
 use alloc::vec::Vec;
-use core::ops;
+use core::ops::Neg as _;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
@@ -79,7 +79,6 @@ use crate::{
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
-    note,
     primitives::{ActionDigest, ActionDigestError, Anchor, effect},
     reddsa, serialization,
     stamp::{self, AggregateId, Stamp, Stripped, Unproven},
@@ -140,7 +139,7 @@ pub struct Bundle<S: StampState> {
     pub actions: Vec<Action>,
 
     /// Net value of spends minus outputs (plaintext integer).
-    pub value_balance: i64,
+    pub value_balance: value::Balance,
 
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
@@ -207,7 +206,7 @@ pub enum CommitError {
     ActionDigest(#[error(not(source))] ActionDigestError),
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
-    BalanceOverflow(#[error(not(source))] BalanceError),
+    BalanceOverflow(#[error(not(source))] value::OutOfRange),
 }
 
 /// Errors from bundle signature verification.
@@ -286,17 +285,18 @@ impl Plan {
     /// $\mathsf{v\_balance} = \sum_i v_{\text{spend},i} - \sum_j
     /// v_{\text{output},j}$
     ///
-    /// Returns `Err` if the intermediate sum overflows or the result
-    /// does not fit in `i64`.
-    pub fn value_balance(&self) -> Result<i64, BalanceError> {
-        let mut sum = ValueBalance::ZERO;
-        for plan in &self.spends {
-            sum = (sum + plan.note.value)?;
-        }
-        for plan in &self.outputs {
-            sum = (sum - plan.note.value)?;
-        }
-        i64::try_from(sum)
+    /// # Errors
+    ///
+    /// Fails if the final balance falls outside `-MAX_MONEY..=MAX_MONEY`.
+    /// Intermediate accumulating states are not constrained.
+    pub fn value_balance(&self) -> Result<value::Balance, value::OutOfRange> {
+        value::Balance::try_from(
+            self.iter_actions(
+                |plan| i128::from(plan.note.value),
+                |plan| i128::from(plan.note.value).neg(),
+            )
+            .sum::<i128>(),
+        )
     }
 
     /// Compute a digest of all the bundle's effecting data.
@@ -323,7 +323,7 @@ impl Plan {
 
         Ok(blake2b::bundle_commitment(
             &Eq::from(action_commit).to_bytes(),
-            self.value_balance()?,
+            self.value_balance()?.into(),
         ))
     }
 
@@ -562,7 +562,7 @@ impl Bundle<Stamp> {
             ));
         }
 
-        let (actions, value_balance, binding_sig): (Vec<Action>, i64, Signature) =
+        let (actions, value_balance, binding_sig): (Vec<Action>, value::Balance, Signature) =
             read_bundle_body(&mut reader)?;
 
         let stamp = Stamp::read(&mut reader)?;
@@ -756,7 +756,7 @@ impl<S: StampState> Bundle<S> {
         let action_acc = ActionSetPoly::from_iter(action_digests).commit();
         Ok(blake2b::bundle_commitment(
             &Eq::from(action_acc).to_bytes(),
-            self.value_balance,
+            self.value_balance.into(),
         ))
     }
 
@@ -778,59 +778,6 @@ impl<S: StampState> Bundle<S> {
         }
 
         Ok(())
-    }
-}
-
-/// Signed sum of note values across actions.
-///
-/// Spends contribute positive values, outputs contribute negative.
-/// Uses `i128` internally to provide additional headroom while accumulating
-/// values. Checked arithmetic still reports overflow, and conversion to the
-/// wire-format `i64` fails if the final balance is out of range.
-///
-/// Use `i64::try_from(sum)` to narrow to the wire-format `i64`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, TotalEq)]
-pub struct ValueBalance(i128);
-
-/// Error returned when a [`ValueBalance`] operation overflows the
-/// representable range.
-#[derive(Clone, Copy, Debug, Display, Error)]
-#[display("value balance overflow")]
-pub struct BalanceError;
-
-impl ValueBalance {
-    /// The zero sum (identity for addition).
-    pub const ZERO: Self = Self(0);
-}
-
-impl TryFrom<ValueBalance> for i64 {
-    type Error = BalanceError;
-
-    // This doesn't need to check against NOTE_VALUE_MAX
-    fn try_from(sum: ValueBalance) -> Result<Self, Self::Error> {
-        Self::try_from(sum.0).map_err(|_err| BalanceError)
-    }
-}
-
-impl ops::Add<note::Value> for ValueBalance {
-    type Output = Result<Self, BalanceError>;
-
-    fn add(self, rhs: note::Value) -> Self::Output {
-        self.0
-            .checked_add(u64::from(rhs).into())
-            .map(Self)
-            .ok_or(BalanceError)
-    }
-}
-
-impl ops::Sub<note::Value> for ValueBalance {
-    type Output = Result<Self, BalanceError>;
-
-    fn sub(self, rhs: note::Value) -> Self::Output {
-        self.0
-            .checked_sub(u64::from(rhs).into())
-            .map(Self)
-            .ok_or(BalanceError)
     }
 }
 
@@ -864,10 +811,13 @@ impl From<Signature> for [u8; 64] {
 
 /// Read bundle fields: value balance, action descriptors, action sigs,
 /// and binding sig.
-fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Signature)> {
+fn read_bundle_body<R: Read>(
+    mut reader: R,
+) -> io::Result<(Vec<Action>, value::Balance, Signature)> {
     let mut vb_bytes = [0u8; 8];
     reader.read_exact(&mut vb_bytes)?;
-    let value_balance = i64::from_le_bytes(vb_bytes);
+    let value_balance = value::Balance::try_from(i64::from_le_bytes(vb_bytes))
+        .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "value balance out of range"))?;
 
     let n_actions =
         usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
@@ -879,7 +829,7 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Sig
 
     let mut descriptors = Vec::with_capacity(n_actions);
     for _ in 0..n_actions {
-        let cv = value::Commitment(serialization::read_ep_affine(&mut reader)?);
+        let cv = value::Commitment::from(serialization::read_ep_affine(&mut reader)?);
         let rk = public::ActionVerificationKey(serialization::read_action_vk(&mut reader)?);
         descriptors.push((cv, rk));
     }
@@ -890,11 +840,18 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Sig
         signatures.push(sig);
     }
 
-    let actions = descriptors
+    let actions: Vec<Action> = descriptors
         .iter()
         .zip(signatures.iter())
         .map(|(&(cv, rk), &sig)| Action { cv, rk, sig })
         .collect();
+
+    if actions.is_empty() && value_balance != value::Balance::ZERO {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "bundle with no actions must have zero value balance",
+        ));
+    }
 
     let binding_sig = Signature(serialization::read_binding_sig(&mut reader)?);
 
@@ -906,10 +863,10 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, i64, Sig
 fn write_bundle_body<W: Write>(
     mut writer: W,
     actions: &[Action],
-    value_balance: i64,
+    value_balance: value::Balance,
     binding_sig: &Signature,
 ) -> io::Result<()> {
-    writer.write_all(&value_balance.to_le_bytes())?;
+    writer.write_all(&i64::from(value_balance).to_le_bytes())?;
 
     serialization::write_compactsize(
         &mut writer,
@@ -921,7 +878,7 @@ fn write_bundle_body<W: Write>(
         })?,
     )?;
     for action in actions {
-        serialization::write_ep_affine(&mut writer, &action.cv.0)?;
+        serialization::write_ep_affine(&mut writer, &action.cv.into())?;
         serialization::write_action_vk(&mut writer, &action.rk.0)?;
     }
     for action in actions {

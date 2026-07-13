@@ -276,13 +276,13 @@ impl BindingSigningKey {
     }
 }
 
-impl From<&[value::CommitmentTrapdoor]> for BindingSigningKey {
+impl From<&[value::Trapdoor]> for BindingSigningKey {
     /// BindingAuth signing key is the scalar sum of all value commitment
     /// trapdoors.
     ///
     /// Every Pallas scalar field element, including zero, is a valid binding
     /// signing key. See Zcash protocol §4.14.
-    fn from(trapdoors: &[value::CommitmentTrapdoor]) -> Self {
+    fn from(trapdoors: &[value::Trapdoor]) -> Self {
         let sum: Fq = trapdoors
             .iter()
             .fold(Fq::ZERO, |acc, rcv| acc + Into::<Fq>::into(*rcv));

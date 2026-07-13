@@ -22,7 +22,7 @@ pub struct Plan<E: Effect> {
     /// Per-action entropy for alpha derivation.
     pub theta: ActionEntropy,
     /// Value commitment trapdoor.
-    pub rcv: value::CommitmentTrapdoor,
+    pub rcv: value::Trapdoor,
     /// Effect marker (zero-sized).
     pub _effect: PhantomData<E>,
 }
@@ -35,7 +35,7 @@ impl Plan<effect::Spend> {
     pub fn spend(
         note: Note,
         theta: ActionEntropy,
-        rcv: value::CommitmentTrapdoor,
+        rcv: value::Trapdoor,
         derive_rk: impl FnOnce(ActionRandomizer<effect::Spend>) -> public::ActionVerificationKey,
     ) -> Self {
         let cm = note.commitment();
@@ -56,7 +56,7 @@ impl Plan<effect::Output> {
     ///
     /// $\mathsf{rk} = [\alpha]\,\mathcal{G}$.
     #[must_use]
-    pub fn output(note: Note, theta: ActionEntropy, rcv: value::CommitmentTrapdoor) -> Self {
+    pub fn output(note: Note, theta: ActionEntropy, rcv: value::Trapdoor) -> Self {
         let cm = note.commitment();
         let alpha = theta.randomizer::<effect::Output>(cm);
         let rsk = private::ActionSigningKey::new(&alpha);
@@ -93,11 +93,12 @@ impl<E: Effect> Plan<E> {
 /// - `sig`: Signature (by single-use `rsk`) over transaction sighash
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Action {
-    /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
-    /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
+    /// Value commitment.
+    ///
+    /// $$ \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R} $$
     pub cv: value::Commitment,
 
-    /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
+    /// Randomized action verification key $\mathsf{rk}$.
     pub rk: public::ActionVerificationKey,
 
     /// RedPallas spend auth signature over the transaction sighash.

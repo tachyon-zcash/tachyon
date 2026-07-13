@@ -141,19 +141,11 @@ pub enum VerificationError {
 pub struct Plan {
     spends: Vec<(
         (value::Commitment, public::ActionVerificationKey),
-        (
-            ActionRandomizer<effect::Spend>,
-            Note,
-            value::CommitmentTrapdoor,
-        ),
+        (ActionRandomizer<effect::Spend>, Note, value::Trapdoor),
     )>,
     outputs: Vec<(
         (value::Commitment, public::ActionVerificationKey),
-        (
-            ActionRandomizer<effect::Output>,
-            Note,
-            value::CommitmentTrapdoor,
-        ),
+        (ActionRandomizer<effect::Output>, Note, value::Trapdoor),
     )>,
     anchor: Anchor,
 }
@@ -164,19 +156,11 @@ impl Plan {
     pub const fn new(
         spends: Vec<(
             (value::Commitment, public::ActionVerificationKey),
-            (
-                ActionRandomizer<effect::Spend>,
-                Note,
-                value::CommitmentTrapdoor,
-            ),
+            (ActionRandomizer<effect::Spend>, Note, value::Trapdoor),
         )>,
         outputs: Vec<(
             (value::Commitment, public::ActionVerificationKey),
-            (
-                ActionRandomizer<effect::Output>,
-                Note,
-                value::CommitmentTrapdoor,
-            ),
+            (ActionRandomizer<effect::Output>, Note, value::Trapdoor),
         )>,
         anchor: Anchor,
     ) -> Self {
@@ -318,7 +302,7 @@ impl Stamp {
     /// and placed on the stamp for data availability.
     pub fn prove_output<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
-        rcv: value::CommitmentTrapdoor,
+        rcv: value::Trapdoor,
         alpha: ActionRandomizer<effect::Output>,
         note: Note,
         anchor: Anchor,
