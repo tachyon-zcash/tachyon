@@ -554,7 +554,7 @@ impl ProofStamp {
         let merged_digests = [left_digests, right_digests].concat();
         let tachygrams = [left_tachygrams, right_tachygrams].concat();
         let merged_tg_poly = TachygramSetPoly::from_iter(tachygrams.clone());
-        let merged_acts_poly = ActionSetPoly::from_iter(merged_digests.iter().copied());
+        let merged_acts_poly = ActionSetPoly::from_iter(merged_digests.clone());
 
         let (pcd, ()) = app.fuse(
             rng,
