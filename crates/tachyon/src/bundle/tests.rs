@@ -16,6 +16,7 @@ use crate::{
     },
     primitives::{ActionDigest, BlockHeight},
     stamp::VerificationError,
+    value,
 };
 
 #[test]
@@ -30,7 +31,7 @@ fn plan_value_balance_sums_spends_and_outputs() {
 
     assert_eq!(
         bundle_plan.value_balance(),
-        Ok(ValueBalance::try_from(100).unwrap())
+        Ok(value::Balance::try_from(100).unwrap())
     );
 }
 
@@ -41,7 +42,7 @@ fn wrong_value_balance_fails_verification() {
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment().unwrap());
 
-    bundle.value_balance = ValueBalance::try_from(999).unwrap();
+    bundle.value_balance = value::Balance::try_from(999).unwrap();
     let err = bundle.verify_signatures(&sighash).unwrap_err();
     let SignatureError::Binding(_) = err else {
         panic!("expected SignatureError::Binding, got {err:?}");
@@ -49,7 +50,7 @@ fn wrong_value_balance_fails_verification() {
 }
 
 /// No separate range assertion is needed in `verify_signatures`: even a
-/// `ValueBalance` built directly with a magnitude far outside
+/// `value::Balance` built directly with a magnitude far outside
 /// `-MAX_MONEY..=MAX_MONEY` (bypassing `TryFrom`'s range check entirely, the
 /// same way `read_rejects_value_balance_out_of_range` forges an otherwise
 /// unconstructible wire encoding) is caught by the binding signature check
@@ -61,7 +62,7 @@ fn verify_signatures_rejects_out_of_range_value_balance_mutation() {
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment().unwrap());
 
-    bundle.value_balance = ValueBalance(i64::MAX);
+    bundle.value_balance = value::Balance::new_unchecked(i64::MAX);
     let err = bundle.verify_signatures(&sighash).unwrap_err();
     let SignatureError::Binding(_) = err else {
         panic!("expected SignatureError::Binding, got {err:?}");
@@ -113,7 +114,7 @@ fn sign_reports_global_action_index_on_rk_mismatch() {
     let spend = action::Plan::spend(
         wallet.random_note(200),
         ActionEntropy::random(rng),
-        value::CommitmentTrapdoor::random(rng),
+        value::Trapdoor::random(rng),
         |alpha| ask.derive_action_private(&alpha).derive_action_public(),
     );
 
@@ -121,12 +122,12 @@ fn sign_reports_global_action_index_on_rk_mismatch() {
     let mut output = action::Plan::output(
         wallet.random_note(100),
         ActionEntropy::random(rng),
-        value::CommitmentTrapdoor::random(rng),
+        value::Trapdoor::random(rng),
     );
     let wrong_rk = action::Plan::output(
         wallet.random_note(50),
         ActionEntropy::random(rng),
-        value::CommitmentTrapdoor::random(rng),
+        value::Trapdoor::random(rng),
     )
     .rk;
     output.rk = wrong_rk;
@@ -162,7 +163,7 @@ fn zero_action_bundle_is_valid() {
 
     let bundle = Bundle {
         actions: alloc::vec![],
-        value_balance: ValueBalance::ZERO,
+        value_balance: value::Balance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         stamp: AggregateId::try_from([1u8; 64]).expect("nonzero id"),
     };
@@ -311,7 +312,7 @@ fn innocent_aggregate_from_two_autonomes() {
 
         Bundle {
             actions: alloc::vec![],
-            value_balance: ValueBalance::ZERO,
+            value_balance: value::Balance::ZERO,
             binding_sig: innocent_plan
                 .derive_bsk_private()
                 .sign(rng, &innocent_sighash),
@@ -654,7 +655,7 @@ fn read_rejects_zero_wtxid() {
         let sighash = mock_sighash(plan.commitment().unwrap());
         let bundle = Bundle {
             actions: alloc::vec![],
-            value_balance: ValueBalance::ZERO,
+            value_balance: value::Balance::ZERO,
             binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
             stamp: AggregateId::try_from([0x42u8; 64]).expect("nonzero id"),
         };
@@ -699,7 +700,7 @@ fn innocent_round_trips_with_nonzero_wtxid() {
 
     let innocent = Bundle {
         actions: alloc::vec![],
-        value_balance: ValueBalance::ZERO,
+        value_balance: value::Balance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         stamp: AggregateId::try_from([0x42u8; 64]).expect("nonzero id"),
     };
@@ -901,7 +902,7 @@ fn plan_value_balance_accepts_boundary_max_money() {
 
     assert_eq!(
         bundle_plan.value_balance(),
-        Ok(ValueBalance::try_from(i64::try_from(MAX_MONEY).unwrap()).unwrap())
+        Ok(value::Balance::try_from(i64::try_from(MAX_MONEY).unwrap()).unwrap())
     );
 }
 
@@ -915,7 +916,7 @@ fn plan_value_balance_accepts_boundary_negative_max_money() {
 
     assert_eq!(
         bundle_plan.value_balance(),
-        Ok(ValueBalance::try_from(-i64::try_from(MAX_MONEY).unwrap()).unwrap())
+        Ok(value::Balance::try_from(-i64::try_from(MAX_MONEY).unwrap()).unwrap())
     );
 }
 
@@ -928,7 +929,7 @@ fn plan_value_balance_rejects_overflow_above_max_money() {
     let spend_b = spend_plan_at(rng, &wallet, &ask, MAX_MONEY);
     let bundle_plan = Plan::new(alloc::vec![spend_a, spend_b], alloc::vec![]);
 
-    assert_eq!(bundle_plan.value_balance(), Err(ValueBalanceOverflow));
+    assert_eq!(bundle_plan.value_balance(), Err(value::OutOfRange));
     {
         let err = bundle_plan.commitment().unwrap_err();
         let CommitError::BalanceOverflow(_) = err else {
@@ -955,7 +956,7 @@ fn plan_value_balance_rejects_overflow_below_negative_max_money() {
     let (_, _, output_b) = build_output_plan(rng, note_b);
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_a, output_b]);
 
-    assert_eq!(bundle_plan.value_balance(), Err(ValueBalanceOverflow));
+    assert_eq!(bundle_plan.value_balance(), Err(value::OutOfRange));
     {
         let err = bundle_plan.commitment().unwrap_err();
         let CommitError::BalanceOverflow(_) = err else {
@@ -978,7 +979,7 @@ fn read_accepts_value_balance_at_max_money_boundaries() {
     let max_money = i64::try_from(MAX_MONEY).unwrap();
 
     for value_balance in [max_money, -max_money] {
-        let vb = ValueBalance::try_from(value_balance).unwrap();
+        let vb = value::Balance::try_from(value_balance).unwrap();
         let mut bundle = build_autonome(rng, &wallet, 1000, 700);
         bundle.value_balance = vb;
 
@@ -989,9 +990,9 @@ fn read_accepts_value_balance_at_max_money_boundaries() {
     }
 }
 
-/// `ValueBalance::try_from` cannot construct an out-of-range value at all, so
-/// this forges the invalid shape directly on the wire: `valueBalanceTachyon`
-/// is the 8 bytes right after the 1-byte state tag (see the module-level wire
+/// `value::Balance::try_from` cannot construct an out-of-range value at all, so
+/// this forges the invalid shape directly on the wire: `valueBalanceTachyon` is
+/// the 8 bytes right after the 1-byte state tag (see the module-level wire
 /// format documentation), mirroring `read_rejects_zero_wtxid`'s approach of
 /// overwriting valid-encoding bytes to build an otherwise-unconstructible
 /// input.
@@ -1028,7 +1029,7 @@ fn read_rejects_zero_actions_with_nonzero_balance() {
 
     let bundle = Bundle {
         actions: alloc::vec![],
-        value_balance: ValueBalance::try_from(1).unwrap(),
+        value_balance: value::Balance::try_from(1).unwrap(),
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         stamp: AggregateId::try_from([0x42u8; 64]).expect("nonzero id"),
     };
@@ -1067,7 +1068,7 @@ fn zero_action_bundle_rejects_nonzero_balance() {
 
     let bundle = Bundle {
         actions: alloc::vec![],
-        value_balance: ValueBalance::try_from(1).unwrap(),
+        value_balance: value::Balance::try_from(1).unwrap(),
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         stamp: AggregateId::try_from([1u8; 64]).expect("nonzero id"),
     };

@@ -47,7 +47,7 @@ impl Header for SpendHeader {
         (
             vec![Fp::from(cm), Fp::from(present_nf), Fp::from(anchor)],
             Vec::new(),
-            vec![Ep::from(cv.0), Ep::from(EpAffine::from(rk))],
+            vec![Ep::from(cv), EpAffine::from(rk).into()],
             Vec::new(),
         )
     }
@@ -70,7 +70,7 @@ impl Step for SpendBind {
     /// `(note, rcv, alpha, pak)`.
     type Witness<'source> = (
         Note,
-        value::CommitmentTrapdoor,
+        value::Trapdoor,
         ActionRandomizer<effect::Spend>,
         ProofAuthorizingKey,
     );
@@ -104,7 +104,7 @@ impl Step for SpendBind {
             "SpendBind: note does not match the spendable lineage",
         )?;
 
-        let cv = rcv.commit(i64::from(note.value));
+        let cv = rcv.commit(note.value);
         let rk = pak.ak.derive_action_public(&alpha);
 
         Ok(((cm, (cv, rk), present_nf, anchor), ()))

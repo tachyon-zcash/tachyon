@@ -64,6 +64,7 @@
 //! | `tachyonAggregateId`  | 64 bytes             | wtxid of the relevant aggregate          |
 
 use alloc::vec::Vec;
+use core::ops::Neg as _;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
@@ -76,7 +77,6 @@ pub use crate::digest::blake2b::{AUTH_DIGEST_NO_BUNDLE, COMMIT_NO_BUNDLE};
 use crate::{
     ActionSetPoly,
     action::{self, Action},
-    constants::MAX_MONEY,
     digest::blake2b,
     keys::{private, public},
     primitives::{ActionDigest, ActionDigestError, Anchor, effect},
@@ -139,7 +139,7 @@ pub struct Bundle<S: StampState> {
     pub actions: Vec<Action>,
 
     /// Net value of spends minus outputs (plaintext integer).
-    pub value_balance: ValueBalance,
+    pub value_balance: value::Balance,
 
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
@@ -206,7 +206,7 @@ pub enum CommitError {
     ActionDigest(#[error(not(source))] ActionDigestError),
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
-    BalanceOverflow(#[error(not(source))] ValueBalanceOverflow),
+    BalanceOverflow(#[error(not(source))] value::OutOfRange),
 }
 
 /// Errors from bundle signature verification.
@@ -289,17 +289,14 @@ impl Plan {
     ///
     /// Fails if the final balance falls outside `-MAX_MONEY..=MAX_MONEY`.
     /// Intermediate accumulating states are not constrained.
-    pub fn value_balance(&self) -> Result<ValueBalance, ValueBalanceOverflow> {
-        let mut sum = 0i128;
-        for plan in &self.spends {
-            sum += i128::from(u64::from(plan.note.value));
-        }
-        for plan in &self.outputs {
-            sum -= i128::from(u64::from(plan.note.value));
-        }
-        i64::try_from(sum)
-            .map_err(|_err| ValueBalanceOverflow)
-            .and_then(ValueBalance::try_from)
+    pub fn value_balance(&self) -> Result<value::Balance, value::OutOfRange> {
+        value::Balance::try_from(
+            self.iter_actions(
+                |plan| i128::from(plan.note.value),
+                |plan| i128::from(plan.note.value).neg(),
+            )
+            .sum::<i128>(),
+        )
     }
 
     /// Compute a digest of all the bundle's effecting data.
@@ -565,7 +562,7 @@ impl Bundle<Stamp> {
             ));
         }
 
-        let (actions, value_balance, binding_sig): (Vec<Action>, ValueBalance, Signature) =
+        let (actions, value_balance, binding_sig): (Vec<Action>, value::Balance, Signature) =
             read_bundle_body(&mut reader)?;
 
         let stamp = Stamp::read(&mut reader)?;
@@ -784,48 +781,6 @@ impl<S: StampState> Bundle<S> {
     }
 }
 
-/// Signed sum of note values across actions, bounded to
-/// `-MAX_MONEY..=MAX_MONEY`.
-///
-/// Spends contribute positive values, outputs contribute negative.
-#[derive(Clone, Copy, Debug, Default, Ord, PartialEq, PartialOrd, TotalEq)]
-pub struct ValueBalance(i64);
-
-/// Error returned when a [`ValueBalance`] operation overflows the
-/// representable range.
-#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
-#[display("value balance overflow")]
-pub struct ValueBalanceOverflow;
-
-impl ValueBalance {
-    /// The maximum representable value.
-    #[expect(
-        clippy::as_conversions,
-        clippy::cast_possible_wrap,
-        reason = "constant"
-    )]
-    pub const MAX: Self = Self(MAX_MONEY as i64);
-    /// The zero sum.
-    pub const ZERO: Self = Self(0);
-}
-
-impl From<ValueBalance> for i64 {
-    fn from(balance: ValueBalance) -> Self {
-        balance.0
-    }
-}
-
-impl TryFrom<i64> for ValueBalance {
-    type Error = ValueBalanceOverflow;
-
-    fn try_from(balance: i64) -> Result<Self, Self::Error> {
-        if balance.unsigned_abs() > MAX_MONEY {
-            return Err(ValueBalanceOverflow);
-        }
-        Ok(Self(balance))
-    }
-}
-
 /// A binding signature (RedPallas over the Binding group).
 ///
 /// Proves the signer knew the opening $\mathsf{bsk}$ of the Pedersen
@@ -856,10 +811,12 @@ impl From<Signature> for [u8; 64] {
 
 /// Read bundle fields: value balance, action descriptors, action sigs,
 /// and binding sig.
-fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, ValueBalance, Signature)> {
+fn read_bundle_body<R: Read>(
+    mut reader: R,
+) -> io::Result<(Vec<Action>, value::Balance, Signature)> {
     let mut vb_bytes = [0u8; 8];
     reader.read_exact(&mut vb_bytes)?;
-    let value_balance = ValueBalance::try_from(i64::from_le_bytes(vb_bytes))
+    let value_balance = value::Balance::try_from(i64::from_le_bytes(vb_bytes))
         .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "value balance out of range"))?;
 
     let n_actions =
@@ -872,7 +829,7 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, ValueBal
 
     let mut descriptors = Vec::with_capacity(n_actions);
     for _ in 0..n_actions {
-        let cv = value::Commitment(serialization::read_ep_affine(&mut reader)?);
+        let cv = value::Commitment::from(serialization::read_ep_affine(&mut reader)?);
         let rk = public::ActionVerificationKey(serialization::read_action_vk(&mut reader)?);
         descriptors.push((cv, rk));
     }
@@ -889,7 +846,7 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, ValueBal
         .map(|(&(cv, rk), &sig)| Action { cv, rk, sig })
         .collect();
 
-    if actions.is_empty() && value_balance != ValueBalance::ZERO {
+    if actions.is_empty() && value_balance != value::Balance::ZERO {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "bundle with no actions must have zero value balance",
@@ -906,7 +863,7 @@ fn read_bundle_body<R: Read>(mut reader: R) -> io::Result<(Vec<Action>, ValueBal
 fn write_bundle_body<W: Write>(
     mut writer: W,
     actions: &[Action],
-    value_balance: ValueBalance,
+    value_balance: value::Balance,
     binding_sig: &Signature,
 ) -> io::Result<()> {
     writer.write_all(&i64::from(value_balance).to_le_bytes())?;
@@ -921,7 +878,7 @@ fn write_bundle_body<W: Write>(
         })?,
     )?;
     for action in actions {
-        serialization::write_ep_affine(&mut writer, &action.cv.0)?;
+        serialization::write_ep_affine(&mut writer, &action.cv.into())?;
         serialization::write_action_vk(&mut writer, &action.rk.0)?;
     }
     for action in actions {
