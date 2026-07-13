@@ -10,7 +10,7 @@
 //! | Field | Type | Description |
 //! | ----- | ---- | ----------- |
 //! | `pk`  | [`PaymentKey`] | Recipient's payment key |
-//! | `value`   | [`Value`] | Note value |
+//! | `value`   | [`value::Value`] | Note value |
 //! | `psi` | [`NullifierTrapdoor`] | Nullifier trapdoor ($\psi$) |
 //! | `rcm` | [`CommitmentTrapdoor`] | Note commitment randomness |
 //!
@@ -34,16 +34,16 @@
 //! (e.g. Sinsemilla, Poseidon) depends on what is efficient inside
 //! Ragu circuits and is TBD.
 
-use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
+use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    constants::NOTE_VALUE_MAX,
     digest::poseidon,
     keys::{NullifierKey, PaymentKey},
     primitives::{EpochIndex, Tachygram},
+    value,
 };
 
 /// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
@@ -86,68 +86,13 @@ pub struct Note {
     pub pk: PaymentKey,
 
     /// The note value in zatoshis, less than 2.1e15
-    pub value: Value,
+    pub value: value::Positive,
 
     /// The nullifier trapdoor ($\psi$).
     pub psi: NullifierTrapdoor,
 
     /// Note commitment trapdoor ($rcm$).
     pub rcm: CommitmentTrapdoor,
-}
-
-/// A note value in zatoshis. Non-zero and no greater than 2.1e15.
-///
-/// Zero-valued notes are forbidden by construction: a zero-value action
-/// carries no economic meaning. Each PCD step that witnesses a `Note`
-/// *independently* rechecks `value != 0` — the compiler cannot prove the
-/// invariant from inside the circuit, and a compiled proof system sees
-/// only raw field elements without the Rust-level newtype protection.
-///
-/// Use [`Value::try_from`] or [`Value::new`] for fallible construction.
-#[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
-pub struct Value(u64);
-
-impl Value {
-    /// The forbidden zero value.
-    #[cfg(test)]
-    pub(crate) const ZERO: Self = Self(0);
-}
-
-/// Error returned when a note value is out of the valid range
-/// `1..=NOTE_VALUE_MAX`.
-#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
-#[non_exhaustive]
-pub enum ValueError {
-    /// The value was zero.
-    #[display("note value must be non-zero")]
-    Zero,
-    /// The value exceeds the maximum note value (2.1e15 zatoshis).
-    #[display("note value must not exceed maximum")]
-    Overflow,
-}
-
-impl TryFrom<u64> for Value {
-    type Error = ValueError;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        if value == 0 {
-            return Err(ValueError::Zero);
-        }
-        if value > NOTE_VALUE_MAX {
-            return Err(ValueError::Overflow);
-        }
-        Ok(Self(value))
-    }
-}
-
-#[expect(
-    clippy::expect_used,
-    reason = "Value construction enforces NOTE_VALUE_MAX < i64::MAX"
-)]
-impl From<Value> for i64 {
-    fn from(value: Value) -> Self {
-        Self::try_from(value.0).expect("Value invariant guarantees it fits in i64")
-    }
 }
 
 impl Note {
@@ -169,7 +114,7 @@ impl Note {
         Commitment::from(poseidon::note_commitment(
             self.rcm.0,
             self.pk.0,
-            self.value.0,
+            u64::from(self.value),
             self.psi.0,
         ))
     }
@@ -227,27 +172,27 @@ mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::{constants::NOTE_VALUE_MAX, keys::private::SpendingKey, primitives::EpochIndex};
+    use crate::{constants::MAX_MONEY, keys::private::SpendingKey, primitives::EpochIndex, value};
 
-    /// NOTE_VALUE_MAX must be accepted (boundary is inclusive).
+    /// MAX_MONEY must be accepted (boundary is inclusive).
     #[test]
     fn value_accepts_max() {
-        Value::try_from(NOTE_VALUE_MAX).unwrap();
+        value::Positive::try_from(MAX_MONEY).unwrap();
     }
 
-    /// Anything above NOTE_VALUE_MAX must be rejected.
+    /// Anything above MAX_MONEY must be rejected.
     #[test]
     fn value_rejects_overflow() {
         assert_eq!(
-            Value::try_from(NOTE_VALUE_MAX + 1),
-            Err(ValueError::Overflow)
+            value::Positive::try_from(MAX_MONEY + 1),
+            Err(value::OutOfRange)
         );
     }
 
-    /// Zero must be rejected — notes carry economic value.
+    /// Notes must have nonzero value.
     #[test]
     fn value_rejects_zero() {
-        assert_eq!(Value::try_from(0u64), Err(ValueError::Zero));
+        assert_eq!(value::Positive::try_from(0u64), Err(value::OutOfRange));
     }
 
     /// Different trapdoors produce different commitments.
@@ -259,13 +204,13 @@ mod tests {
 
         let note1 = Note {
             pk,
-            value: Value::try_from(100u64).unwrap(),
+            value: value::Positive::try_from(100u64).unwrap(),
             psi,
             rcm: CommitmentTrapdoor::random(rng),
         };
         let note2 = Note {
             pk,
-            value: Value::try_from(100u64).unwrap(),
+            value: value::Positive::try_from(100u64).unwrap(),
             psi,
             rcm: CommitmentTrapdoor::random(rng),
         };
@@ -282,7 +227,7 @@ mod tests {
         let nk = sk.derive_nullifier_private();
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: Value::try_from(100u64).unwrap(),
+            value: value::Positive::try_from(100u64).unwrap(),
             psi: NullifierTrapdoor::random(rng),
             rcm: CommitmentTrapdoor::random(rng),
         };

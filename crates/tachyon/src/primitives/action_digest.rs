@@ -67,12 +67,12 @@ mod tests {
         let sk = private::SpendingKey::random(rng);
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: note::Value::try_from(val).unwrap(),
+            value: value::Positive::try_from(val).unwrap(),
             psi: note::NullifierTrapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };
-        let rcv = value::CommitmentTrapdoor::random(rng);
-        let cv = rcv.commit(i64::from(note.value));
+        let rcv = value::Trapdoor::random(rng);
+        let cv = rcv.commit(note.value);
         let theta = ActionEntropy::random(rng);
         let alpha = theta.randomizer::<effect::Output>(note.commitment());
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
@@ -95,11 +95,9 @@ mod tests {
     /// Identity cv is rejected.
     #[test]
     fn digest_rejects_identity_cv() {
-        use pasta_curves::group::prime::PrimeCurveAffine as _;
-
         let rng = &mut StdRng::seed_from_u64(0);
         let (_, rk) = make_action_parts(rng, 500);
-        let cv = value::Commitment::from(EpAffine::identity());
+        let cv = value::Commitment::default();
         assert!(matches!(
             ActionDigest::new(cv, rk),
             Err(ActionDigestError::IdentityCv)

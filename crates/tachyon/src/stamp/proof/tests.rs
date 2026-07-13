@@ -491,7 +491,7 @@ fn spend_bind_rejects_invalid_inputs() {
     let spend_epoch = height.epoch();
 
     let phantom = Note {
-        value: note::Value::try_from(999_999u64).expect("test value in range"),
+        value: value::Positive::try_from(999_999u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };
@@ -503,7 +503,7 @@ fn spend_bind_rejects_invalid_inputs() {
         "shared psi yields shared nullifiers"
     );
 
-    let wrong_value = note::Value::try_from(999_999u64).expect("test value in range");
+    let wrong_value = value::Positive::try_from(999_999u64).expect("test value in range");
     assert_ne!(u64::from(wrong_value), u64::from(note.value));
 
     let cases = [
@@ -619,7 +619,7 @@ fn spend_stamp_rejects_identity_cv() {
 
     let real_spend = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let (cm, real_desc, present_nf, anchor) = *real_spend.data();
-    let identity_cv = value::Commitment::balance(0);
+    let identity_cv = value::Commitment::default();
     let forged_spend = real_spend.proof().clone().carry::<spend::SpendHeader>((
         cm,
         action::Descriptor {
@@ -653,13 +653,13 @@ fn step_rejects_zero_value_note() {
 
     let zero_note = Note {
         pk: user.pak.derive_payment_key(),
-        value: note::Value::ZERO,
+        value: value::Positive::new_unchecked(0),
         psi: note::NullifierTrapdoor::random(rng),
         rcm: note::CommitmentTrapdoor::random(rng),
     };
 
     {
-        let out_rcv = value::CommitmentTrapdoor::random(rng);
+        let out_rcv = value::Trapdoor::random(rng);
         let out_theta = ActionEntropy::random(rng);
         let out_alpha = out_theta.randomizer::<effect::Output>(zero_note.commitment());
         let out_anchor = PoolSim::genesis(rng).anchor();
@@ -692,7 +692,7 @@ fn step_rejects_zero_value_note() {
                 spend::SpendBind,
                 (
                     Note {
-                        value: note::Value::ZERO,
+                        value: value::Positive::new_unchecked(0),
                         ..note
                     },
                     rcv,
@@ -789,7 +789,7 @@ fn notes_with_shared_psi_share_nullifiers() {
     let user = WalletSim::new(shared_sk());
     let note_a = user.random_note(500);
     let note_b = Note {
-        value: note::Value::try_from(700u64).expect("test value in range"),
+        value: value::Positive::try_from(700u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note_a
     };
@@ -1664,7 +1664,7 @@ fn spendable_lift_rejects_wrong_cm() {
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
     let phantom = Note {
-        value: note::Value::try_from(700u64).expect("test value in range"),
+        value: value::Positive::try_from(700u64).expect("test value in range"),
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };

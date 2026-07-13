@@ -13,7 +13,7 @@ use ragu::{
 use super::{delegation::NullifierHeader, pool::AnchorChain, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
-    constants::NOTE_VALUE_MAX,
+    constants::MAX_MONEY,
     entropy::ActionRandomizer,
     keys::private,
     note::{Note, Nullifier},
@@ -69,7 +69,7 @@ impl Step for OutputStamp {
     type Right = ();
     /// `(rcv, alpha, note, anchor)`.
     type Witness<'source> = (
-        value::CommitmentTrapdoor,
+        value::Trapdoor,
         ActionRandomizer<effect::Output>,
         Note,
         Anchor,
@@ -95,12 +95,12 @@ impl Step for OutputStamp {
             Fp::from(u64::from(note.value)),
             "OutputStamp: zero-value note",
         )?;
-        if u64::from(note.value) > NOTE_VALUE_MAX {
+        if u64::from(note.value) > MAX_MONEY {
             return Err(ragu::Error::InvalidWitness(
                 "OutputStamp: note value exceeds maximum".into(),
             ));
         }
-        let cv = rcv.commit(-i64::from(note.value));
+        let cv = rcv.commit(-note.value);
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
             ragu::Error::InvalidWitness("OutputStamp: action digest construction failed".into())

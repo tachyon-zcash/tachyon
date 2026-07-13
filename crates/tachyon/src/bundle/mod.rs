@@ -69,7 +69,7 @@
 //! `hStampActionsTachyon || stamp_data_digest` for a proof stamp.
 
 use alloc::vec::Vec;
-use core::ops;
+use core::ops::Neg as _;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
@@ -79,10 +79,10 @@ use crate::{
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
-    note,
     primitives::{ActionDigestError, Anchor, effect},
     reddsa, serialization,
     stamp::{self, PointerStamp, ProofStamp, StampState, Unproven},
+    value,
 };
 
 /// The `tachyonBundleState` wire byte. See the module-level wire format
@@ -139,7 +139,7 @@ pub struct Bundle<S: BundleState + ?Sized> {
     pub actions: Vec<Action>,
 
     /// Net value of spends minus outputs (plaintext integer).
-    pub value_balance: i64,
+    pub value_balance: value::Balance,
 
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
@@ -177,7 +177,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
 
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
-            self.value_balance,
+            self.value_balance.into(),
         )
     }
 
@@ -223,7 +223,7 @@ pub enum CommitError {
     ActionDigest(#[error(not(source))] ActionDigestError),
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
-    BalanceOverflow(#[error(not(source))] BalanceError),
+    BalanceOverflow(#[error(not(source))] value::OutOfRange),
 }
 
 /// Errors from bundle signature verification.
@@ -243,8 +243,16 @@ pub enum SignatureError {
 #[non_exhaustive]
 pub enum SignError {
     /// The derived rk does not match the stored rk.
-    #[display("plan rk {_0:?} does not match")]
-    RkMismatch(#[error(not(source))] reddsa::VerificationKeyBytes<reddsa::ActionAuth>),
+    #[display("plan rk {rk:?} does not match at action {idx}")]
+    RkMismatch {
+        /// Index of the offending action in the bundle (spends first, then
+        /// outputs).
+        #[error(not(source))]
+        idx: usize,
+        /// The stored rk that did not match the derived one.
+        #[error(not(source))]
+        rk: reddsa::VerificationKeyBytes<reddsa::ActionAuth>,
+    },
     /// The number of signatures does not match the number of actions.
     #[display("expected {_0} signatures")]
     SigCountMismatch(#[error(not(source))] usize),
@@ -304,17 +312,18 @@ impl Plan {
     /// $\mathsf{v\_balance} = \sum_i v_{\text{spend},i} - \sum_j
     /// v_{\text{output},j}$
     ///
-    /// Returns `Err` if the intermediate sum overflows or the result
-    /// does not fit in `i64`.
-    pub fn value_balance(&self) -> Result<i64, BalanceError> {
-        let mut sum = ValueBalance::ZERO;
-        for plan in &self.spends {
-            sum = (sum + plan.note.value)?;
-        }
-        for plan in &self.outputs {
-            sum = (sum - plan.note.value)?;
-        }
-        i64::try_from(sum)
+    /// # Errors
+    ///
+    /// Fails if the final balance falls outside `-MAX_MONEY..=MAX_MONEY`.
+    /// Intermediate accumulating states are not constrained.
+    pub fn value_balance(&self) -> Result<value::Balance, value::OutOfRange> {
+        value::Balance::try_from(
+            self.iter_actions(
+                |plan| i128::from(plan.note.value),
+                |plan| i128::from(plan.note.value).neg(),
+            )
+            .sum::<i128>(),
+        )
     }
 
     /// Compute a digest of all the bundle's effecting data.
@@ -328,7 +337,7 @@ impl Plan {
 
         Ok(blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&desc_bytes),
-            self.value_balance()?,
+            self.value_balance()?.into(),
         ))
     }
 
@@ -391,12 +400,15 @@ impl Plan {
         let n_actions = self.spends.len() + self.outputs.len();
         let mut authorized = Vec::with_capacity(n_actions);
 
-        for plan in &self.spends {
+        for (idx, plan) in self.spends.iter().enumerate() {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Spend>(cm);
             let rsk = ask.derive_action_private(&alpha);
             if rsk.derive_action_public() != plan.rk {
-                return Err(SignError::RkMismatch(plan.rk.0.into()));
+                return Err(SignError::RkMismatch {
+                    idx,
+                    rk: plan.rk.0.into(),
+                });
             }
             authorized.push(Action {
                 cv: plan.cv(),
@@ -405,12 +417,15 @@ impl Plan {
             });
         }
 
-        for plan in &self.outputs {
+        for (idx, plan) in self.outputs.iter().enumerate() {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Output>(cm);
             let rsk = private::ActionSigningKey::new(&alpha);
             if rsk.derive_action_public() != plan.rk {
-                return Err(SignError::RkMismatch(plan.rk.0.into()));
+                return Err(SignError::RkMismatch {
+                    idx: self.spends.len() + idx,
+                    rk: plan.rk.0.into(),
+                });
             }
             authorized.push(Action {
                 cv: plan.cv(),
@@ -555,11 +570,12 @@ impl<S: StampState> Bundle<S> {
     /// Read everything after the `tachyonBundleState` byte: value balance,
     /// action descriptors, action sigs, binding sig, and the stamp trailer.
     fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
-        let value_balance = i64::from_le_bytes({
-            let mut vb_bytes = [0u8; 8];
-            reader.read_exact(&mut vb_bytes)?;
-            vb_bytes
-        });
+        let mut vb_bytes = [0u8; 8];
+        reader.read_exact(&mut vb_bytes)?;
+        let value_balance =
+            value::Balance::try_from(i64::from_le_bytes(vb_bytes)).map_err(|_err| {
+                io::Error::new(io::ErrorKind::InvalidData, "value balance out of range")
+            })?;
 
         // `n_actions` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
         // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
@@ -596,6 +612,13 @@ impl<S: StampState> Bundle<S> {
             .map(|(desc, sig)| Action::from_parts(desc, sig))
             .collect();
 
+        if actions.is_empty() && value_balance != value::Balance::ZERO {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bundle with no actions must have zero value balance",
+            ));
+        }
+
         let binding_sig = Signature::read(&mut reader)?;
 
         let stamp = S::read(&mut reader)?;
@@ -613,7 +636,7 @@ impl<S: StampState> Bundle<S> {
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         S::state_byte().write(&mut writer)?;
 
-        writer.write_all(&self.value_balance.to_le_bytes())?;
+        writer.write_all(&i64::from(self.value_balance).to_le_bytes())?;
 
         let n_actions = u64::try_from(self.actions.len()).map_err(|_err| {
             io::Error::new(
@@ -732,59 +755,6 @@ impl TachyonBundle {
             Self::Proven(ref stamped) => stamped.is_aggregate(),
             Self::Adjunct(ref _stripped) => false,
         }
-    }
-}
-
-/// Signed sum of note values across actions.
-///
-/// Spends contribute positive values, outputs contribute negative.
-/// Uses `i128` internally to provide additional headroom while accumulating
-/// values. Checked arithmetic still reports overflow, and conversion to the
-/// wire-format `i64` fails if the final balance is out of range.
-///
-/// Use `i64::try_from(sum)` to narrow to the wire-format `i64`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, TotalEq)]
-pub struct ValueBalance(i128);
-
-/// Error returned when a [`ValueBalance`] operation overflows the
-/// representable range.
-#[derive(Clone, Copy, Debug, Display, Error)]
-#[display("value balance overflow")]
-pub struct BalanceError;
-
-impl ValueBalance {
-    /// The zero sum (identity for addition).
-    pub const ZERO: Self = Self(0);
-}
-
-impl TryFrom<ValueBalance> for i64 {
-    type Error = BalanceError;
-
-    // This doesn't need to check against NOTE_VALUE_MAX
-    fn try_from(sum: ValueBalance) -> Result<Self, Self::Error> {
-        Self::try_from(sum.0).map_err(|_err| BalanceError)
-    }
-}
-
-impl ops::Add<note::Value> for ValueBalance {
-    type Output = Result<Self, BalanceError>;
-
-    fn add(self, rhs: note::Value) -> Self::Output {
-        self.0
-            .checked_add(u64::from(rhs).into())
-            .map(Self)
-            .ok_or(BalanceError)
-    }
-}
-
-impl ops::Sub<note::Value> for ValueBalance {
-    type Output = Result<Self, BalanceError>;
-
-    fn sub(self, rhs: note::Value) -> Self::Output {
-        self.0
-            .checked_sub(u64::from(rhs).into())
-            .map(Self)
-            .ok_or(BalanceError)
     }
 }
 

@@ -1,157 +1,253 @@
-//! Value commitments and related types.
-//!
-//! A value commitment hides the value transferred in an action:
-//! `cv = [v]V + [rcv]R` where `rcv` is the [`CommitmentTrapdoor`].
+//! Value commitments and bounded value types.
 
-use core::{iter, ops, ops::Neg as _};
-
-use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::Field as _;
-use lazy_static::lazy_static;
-use pasta_curves::{
-    Ep, EpAffine, Fq,
-    arithmetic::CurveExt as _,
-    group::{GroupEncoding as _, prime::PrimeCurveAffine as _},
-    pallas,
+use core::{
+    cmp,
+    ops::{self, Neg as _},
 };
+
+use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
+use ff::Field as _;
+use group::Curve as _;
+use lazy_static::lazy_static;
+use pasta_curves::{Ep, EpAffine, Fq, arithmetic::CurveExt as _};
 use rand_core::{CryptoRng, RngCore};
 
-/// Hash-to-curve domain for value commitment generators $\mathcal{V}$ and
-/// $\mathcal{R}$. Shared with Orchard to reuse `reddsa::orchard::Binding` —
-/// same generators, same basepoint, same binding signature verification.
+use crate::constants::MAX_MONEY;
+
+/// Alias for [`ValueTrapdoor`].
+pub type Trapdoor = ValueTrapdoor;
+
+/// Alias for [`ValueCommitment`].
+pub type Commitment = ValueCommitment;
+
+/// An integer bounded to `-MAX_MONEY..=MAX_MONEY`.
+pub type Balance = Value<{ -MAX_MONEY.cast_signed() }, { MAX_MONEY.cast_signed() }>;
+
+/// A nonzero positive integer not greater than `MAX_MONEY`.
+pub type Positive = Value<1, { MAX_MONEY.cast_signed() }>;
+
+/// A nonzero negative integer not less than `-MAX_MONEY`.
+pub type Negative = Value<{ -MAX_MONEY.cast_signed() }, -1>;
+
+/// Shared with Orchard (§5.4.8.3).
 const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
 
 lazy_static! {
     /// Generator $\mathcal{V}$ for value commitments.
-    static ref VALUE_COMMIT_V: pallas::Point =
-        pallas::Point::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"v");
+    static ref VALUE_COMMIT_V: Ep = Ep::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"v");
 
     /// Generator $\mathcal{R}$ for value commitments and binding signatures.
-    static ref VALUE_COMMIT_R: pallas::Point =
-        pallas::Point::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"r");
+    static ref VALUE_COMMIT_R: Ep = Ep::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"r");
 }
 
-/// Value commitment trapdoor $\mathsf{rcv}$ — the randomness in a
-/// Pedersen commitment.
+/// Entropy for a value commitment.
 ///
-/// Each action gets a fresh trapdoor:
-/// $\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$.
+/// Each action gets a fresh trapdoor, to commit its value secretly.
+/// $\mathsf{cv} = \[v\]\,\mathcal{V} + \[\mathsf{rcv}\]\,\mathcal{R}$.
 ///
-/// The binding signing key is the scalar sum of trapdoors:
+/// The bundle's binding signing key is the scalar sum of trapdoors:
 /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i$
 /// ($\mathbb{F}_q$, Pallas scalar field).
-///
-/// ## Type representation
-///
-/// An $\mathbb{F}_q$ element (Pallas scalar field, 32 bytes). Lives
-/// in the scalar field because $\mathsf{rcv}$ is used as a scalar in
-/// point multiplication $[\mathsf{rcv}]\,\mathcal{R}$.
-#[derive(Clone, Copy, Debug, Into)]
-pub struct CommitmentTrapdoor(#[debug(skip)] Fq);
+#[derive(Clone, Copy, Debug, Default, Into)]
+#[expect(clippy::module_name_repetitions, reason = "deliberate name")]
+pub struct ValueTrapdoor(#[debug(skip)] Fq);
 
-impl CommitmentTrapdoor {
-    /// Generate a fresh random trapdoor.
+impl Trapdoor {
+    /// The zero trapdoor.
+    pub const ZERO: Self = Self(Fq::ZERO);
+
+    /// Generate a random trapdoor.
     pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fq::random(rng))
     }
 
-    /// Commit to a value with this trapdoor.
+    /// Commit to a given value with this trapdoor.
     ///
-    /// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
+    /// $$\mathsf{cv} = \[v\]\,\mathcal{V} + \[\mathsf{rcv}\]\,\mathcal{R}$$
     ///
-    /// Positive $v$ for spends (balance contributed), negative for
-    /// outputs (balance exhausted).
+    /// where $\mathcal{V}$, $\mathcal{R}$ are generator points shared with
+    /// Orchard (§5.4.8.3).
     #[must_use]
-    pub fn commit(self, raw_value: i64) -> Commitment {
-        assert_ne!(self.0, Fq::ZERO, "commitment trapdoor should not be zero");
-
-        let value_abs: Fq = Fq::from(raw_value.unsigned_abs());
-        let value_fq = if raw_value >= 0 {
-            value_abs
-        } else {
-            value_abs.neg()
-        };
-
-        let committed: EpAffine = {
-            let commit_value: Ep = *VALUE_COMMIT_V * value_fq;
-            let commit_trapdoor: Ep = *VALUE_COMMIT_R * self.0;
-            (commit_value + commit_trapdoor).into()
-        };
-
-        Commitment(committed)
+    pub fn commit<const MIN: i64, const MAX: i64>(self, value: Value<MIN, MAX>) -> Commitment {
+        let commit_value = *VALUE_COMMIT_V * Fq::from(value);
+        let commit_trapdoor = *VALUE_COMMIT_R * self.0;
+        ValueCommitment(commit_value + commit_trapdoor)
     }
 }
 
-/// A value commitment for a Tachyon action.
+/// A value commitment for Tachyon.
 ///
-/// Commits to the value being transferred in an action without
-/// revealing it. This is a Pedersen commitment (curve point) used in
-/// value balance verification.
+/// $$\mathsf{cv} = \[v\]\,\mathcal{V} + \[\mathsf{rcv}\]\,\mathcal{R}$$
 ///
-/// $$\mathsf{cv} = [v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
-///
-/// where $v$ is the value, $\mathsf{rcv}$ is the randomness
-/// ([`CommitmentTrapdoor`]), and $\mathcal{V}$, $\mathcal{R}$ are
-/// generator points hashed-to-curve under the Orchard `cv` domain
-/// (§5.4.8.3).
-///
-/// ## Type representation
-///
-/// An EpAffine (Pallas affine curve point, 32 compressed bytes).
-#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct Commitment(#[debug(skip)] pub(super) EpAffine);
+/// where $\mathcal{V}$, $\mathcal{R}$ are generator points
+/// shared with Orchard (§5.4.8.3).
+#[derive(Add, Clone, Copy, Debug, Default, From, Into, PartialEq, Sub, Sum, TotalEq)]
+#[expect(clippy::module_name_repetitions, reason = "deliberate name")]
+pub struct ValueCommitment(#[debug(skip)] Ep);
 
-impl Commitment {
-    /// Create the value balance commitment
-    /// $\text{ValueCommit}_0(\mathsf{v\_{balance}})$.
+impl From<EpAffine> for Commitment {
+    fn from(value: EpAffine) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<Commitment> for EpAffine {
+    fn from(value: Commitment) -> Self {
+        value.0.to_affine()
+    }
+}
+
+/// A value bounded to `MIN..=MAX` (inclusive), backed by `i64`.
+///
+/// This could be replaced with `ranged_integers` if it was stable.
+#[derive(Clone, Copy, Debug, Into, Ord, PartialEq, PartialOrd, TotalEq)]
+pub struct Value<const MIN: i64, const MAX: i64>(i64);
+
+impl From<Negative> for Balance {
+    fn from(value: Negative) -> Self {
+        Self(value.0)
+    }
+}
+
+impl From<Positive> for Balance {
+    fn from(value: Positive) -> Self {
+        Self(value.0)
+    }
+}
+
+/// Error returned when a value falls outside its type's bound.
+#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
+#[display("value not in range")]
+pub struct OutOfRange;
+
+impl<const MIN: i64, const MAX: i64> Default for Value<MIN, MAX> {
+    // Do not derive. This manual impl will hit the const assert.
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+impl<const MIN: i64, const MAX: i64> Value<MIN, MAX> {
+    /// The largest representable value within range.
+    pub const MAX: Self = Self(MAX);
+    /// The smallest representable value within range.
+    pub const MIN: Self = Self(MIN);
+    /// The zero value, if it is valid. Checked at compile time.
     ///
-    /// $$\text{ValueCommit}_0(v) = [v]\,\mathcal{V} + [0]\,\mathcal{R}
-    ///   = [v]\,\mathcal{V}$$
+    /// ```compile_fail
+    /// # use zcash_tachyon::value::Value;
+    /// let _ = Value::<1, 2>::ZERO; // does not compile
+    /// ```
+    pub const ZERO: Self = {
+        assert!(
+            MIN <= 0 && 0 <= MAX,
+            "Value::<MIN, MAX>::ZERO requires MIN <= 0 <= MAX"
+        );
+        Self(0)
+    };
+
+    /// Negate the value into the negative range.
     ///
-    /// This is a **deterministic** commitment with zero randomness.
-    /// Used by validators to derive the binding verification key:
-    ///
-    /// $$\mathsf{bvk} = \left(\bigoplus_i \mathsf{cv}_i\right)
-    ///   \ominus \text{ValueCommit}_0(\mathsf{v\_{balance}})$$
+    /// This isn't a `Neg` impl because const generic expressions are unstable.
     #[must_use]
-    pub fn balance(value: i64) -> Self {
-        let value_abs: Fq = Fq::from(value.unsigned_abs());
-        let value_fq = if value >= 0 {
-            value_abs
+    pub const fn negate<const NEG_MAX: i64, const NEG_MIN: i64>(self) -> Value<NEG_MAX, NEG_MIN> {
+        const {
+            assert!(
+                NEG_MAX == -MAX && NEG_MIN == -MIN,
+                "NEG_MAX must be -MAX and NEG_MIN must be -MIN"
+            );
+        }
+        Value(-self.0)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn new_unchecked(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl<const MIN: i64, const MAX: i64> TryFrom<i64> for Value<MIN, MAX> {
+    type Error = OutOfRange;
+
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
+        if MIN <= value && value <= MAX {
+            Ok(Self(value))
         } else {
-            value_abs.neg()
-        };
-        Self((*VALUE_COMMIT_V * value_fq).into())
+            Err(OutOfRange)
+        }
     }
 }
 
-impl From<Commitment> for [u8; 32] {
-    fn from(cv: Commitment) -> Self {
-        cv.0.to_bytes()
+impl<const MIN: i64, const MAX: i64> TryFrom<u64> for Value<MIN, MAX> {
+    type Error = OutOfRange;
+
+    fn try_from(u_value: u64) -> Result<Self, Self::Error> {
+        Self::try_from(i64::try_from(u_value).map_err(|_err| OutOfRange)?)
     }
 }
 
-impl ops::Add for Commitment {
+// Some literals are i32 unless explicitly named as i64, so this helps.
+impl<const MIN: i64, const MAX: i64> TryFrom<i32> for Value<MIN, MAX> {
+    type Error = OutOfRange;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        Self::try_from(i64::from(value))
+    }
+}
+
+impl<const MIN: i64, const MAX: i64> TryFrom<i128> for Value<MIN, MAX> {
+    type Error = OutOfRange;
+
+    fn try_from(value: i128) -> Result<Self, Self::Error> {
+        Self::try_from(i64::try_from(value).map_err(|_err| OutOfRange)?)
+    }
+}
+
+impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for i128 {
+    fn from(value: Value<MIN, MAX>) -> Self {
+        Self::from(value.0)
+    }
+}
+
+impl<const MAX: i64> From<Value<1, MAX>> for u64 {
+    fn from(value: Value<1, MAX>) -> Self {
+        value.0.unsigned_abs()
+    }
+}
+
+impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for Fq {
+    /// Signed value as a Pallas scalar, for use as the `V`-component
+    /// exponent in a value commitment.
+    fn from(value: Value<MIN, MAX>) -> Self {
+        match value.0.cmp(&0) {
+            cmp::Ordering::Equal => Self::ZERO,
+            cmp::Ordering::Greater => Self::from(value.0.unsigned_abs()),
+            cmp::Ordering::Less => Self::from(value.0.unsigned_abs()).neg(),
+        }
+    }
+}
+
+impl ops::Neg for Balance {
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self::Output {
-        Self((self.0 + rhs.0).into())
+    fn neg(self) -> Self {
+        self.negate()
     }
 }
 
-impl ops::Sub for Commitment {
-    type Output = Self;
+impl ops::Neg for Negative {
+    type Output = Positive;
 
-    fn sub(self, rhs: Self) -> Self::Output {
-        Self((self.0 - rhs.0).into())
+    fn neg(self) -> Self::Output {
+        self.negate()
     }
 }
 
-impl iter::Sum for Commitment {
-    /// $\bigoplus_i \mathsf{cv}_i$ — point addition over all value
-    /// commitments. Identity element is the point at infinity.
-    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        iter.fold(Self(EpAffine::identity()), |acc, cv| acc + cv)
+impl ops::Neg for Positive {
+    type Output = Negative;
+
+    fn neg(self) -> Self::Output {
+        self.negate()
     }
 }
 
@@ -161,11 +257,9 @@ mod tests {
 
     use super::*;
 
-    /// balance(0) must be the identity point — the V-component cancels
-    /// and the R-component has zero scalar.
     #[test]
     fn balance_zero_is_identity() {
-        assert_eq!(Commitment::balance(0), Commitment(EpAffine::identity()));
+        assert_eq!(Trapdoor::ZERO.commit(Balance::ZERO), Commitment::default());
     }
 
     /// The binding property: `cv_a + cv_b - balance(a+b) = [rcv_a + rcv_b]R`.
@@ -173,32 +267,27 @@ mod tests {
     #[test]
     fn commit_homomorphic_binding_property() {
         let rng = &mut StdRng::seed_from_u64(0);
-        let rcv_a = CommitmentTrapdoor::random(rng);
-        let cv_a = rcv_a.commit(100);
-        let rcv_b = CommitmentTrapdoor::random(rng);
-        let cv_b = rcv_b.commit(200);
+        let rcv_a = Trapdoor::random(rng);
+        let cv_a = rcv_a.commit(Balance::try_from(100).unwrap());
+        let rcv_b = Trapdoor::random(rng);
+        let cv_b = rcv_b.commit(Balance::try_from(200).unwrap());
 
-        let remainder = cv_a + cv_b - Commitment::balance(300);
+        let remainder = cv_a + cv_b - Trapdoor::ZERO.commit(Balance::try_from(300).unwrap());
 
         let rcv_sum: Fq = Into::<Fq>::into(rcv_a) + Into::<Fq>::into(rcv_b);
-        let expected: EpAffine = (*VALUE_COMMIT_R * rcv_sum).into();
 
-        assert_eq!(remainder, Commitment(expected));
+        assert_eq!(remainder, ValueCommitment(*VALUE_COMMIT_R * rcv_sum));
     }
 
     #[test]
     fn debug_value_trapdoor_redacts_scalar() {
-        let rcv = CommitmentTrapdoor(Fq::from(0xFACEu64));
-        let dbg = alloc::format!("{rcv:?}");
-        assert!(dbg.contains("CommitmentTrapdoor"), "must name the type");
-        assert!(!dbg.contains("FACE"), "must not leak scalar");
-        assert!(!dbg.contains("64206"), "must not leak decimal value");
+        let rcv = ValueTrapdoor(Fq::from(0xFACEu64));
+        assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)");
     }
 
     #[test]
     fn debug_value_commitment_redacts_point() {
-        let cv = Commitment::balance(100);
-        let dbg = alloc::format!("{cv:?}");
-        assert!(dbg.contains("Commitment"), "must name the type");
+        let cv = Trapdoor::ZERO.commit(Balance::try_from(100).unwrap());
+        assert_eq!(alloc::format!("{cv:?}"), "ValueCommitment(..)");
     }
 }

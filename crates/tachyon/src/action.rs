@@ -4,6 +4,7 @@ use core::{cmp, marker::PhantomData};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
+use pasta_curves::{EpAffine, group::GroupEncoding as _};
 
 use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
@@ -32,14 +33,14 @@ impl Descriptor {
 
     /// Read an action descriptor from the consensus wire format.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let cv = value::Commitment(serialization::read_ep_affine(&mut reader)?);
+        let cv = value::Commitment::from(serialization::read_ep_affine(&mut reader)?);
         let rk = public::ActionVerificationKey(serialization::read_action_vk(&mut reader)?);
         Ok(Self { cv, rk })
     }
 
     /// Write an action descriptor in the consensus wire format.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        serialization::write_ep_affine(&mut writer, &self.cv.0)?;
+        serialization::write_ep_affine(&mut writer, &EpAffine::from(self.cv))?;
         serialization::write_action_vk(&mut writer, &self.rk.0)?;
         Ok(())
     }
@@ -48,7 +49,7 @@ impl Descriptor {
 impl From<Descriptor> for [u8; 64] {
     fn from(desc: Descriptor) -> Self {
         let mut bytes = [0u8; 64];
-        bytes[..32].copy_from_slice(&<[u8; 32]>::from(desc.cv));
+        bytes[..32].copy_from_slice(&EpAffine::from(desc.cv).to_bytes());
         bytes[32..].copy_from_slice(&<[u8; 32]>::from(desc.rk));
         bytes
     }
@@ -62,8 +63,9 @@ impl PartialOrd for Descriptor {
 
 impl Ord for Descriptor {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        <[u8; 32]>::from(self.cv)
-            .cmp(&<[u8; 32]>::from(other.cv))
+        EpAffine::from(self.cv)
+            .to_bytes()
+            .cmp(&EpAffine::from(other.cv).to_bytes())
             .then(<[u8; 32]>::from(self.rk).cmp(&<[u8; 32]>::from(other.rk)))
     }
 }
@@ -78,7 +80,7 @@ pub struct Plan<E: Effect> {
     /// Per-action entropy for alpha derivation.
     pub theta: ActionEntropy,
     /// Value commitment trapdoor.
-    pub rcv: value::CommitmentTrapdoor,
+    pub rcv: value::Trapdoor,
     /// Effect marker (zero-sized).
     pub _effect: PhantomData<E>,
 }
@@ -91,7 +93,7 @@ impl Plan<effect::Spend> {
     pub fn spend(
         note: Note,
         theta: ActionEntropy,
-        rcv: value::CommitmentTrapdoor,
+        rcv: value::Trapdoor,
         derive_rk: impl FnOnce(ActionRandomizer<effect::Spend>) -> public::ActionVerificationKey,
     ) -> Self {
         let cm = note.commitment();
@@ -112,7 +114,7 @@ impl Plan<effect::Output> {
     ///
     /// $\mathsf{rk} = [\alpha]\,\mathcal{G}$.
     #[must_use]
-    pub fn output(note: Note, theta: ActionEntropy, rcv: value::CommitmentTrapdoor) -> Self {
+    pub fn output(note: Note, theta: ActionEntropy, rcv: value::Trapdoor) -> Self {
         let cm = note.commitment();
         let alpha = theta.randomizer::<effect::Output>(cm);
         let rsk = private::ActionSigningKey::new(&alpha);
@@ -158,11 +160,12 @@ impl<E: Effect> Plan<E> {
 /// - `sig`: Signature (by single-use `rsk`) over transaction sighash
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Action {
-    /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
-    /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
+    /// Value commitment.
+    ///
+    /// $$ \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R} $$
     pub cv: value::Commitment,
 
-    /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
+    /// Randomized action verification key $\mathsf{rk}$.
     pub rk: public::ActionVerificationKey,
 
     /// RedPallas spend auth signature over the transaction sighash.

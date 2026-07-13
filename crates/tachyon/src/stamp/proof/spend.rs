@@ -13,7 +13,7 @@ use ragu::{
 use super::spendable::SpendableHeader;
 use crate::{
     action,
-    constants::NOTE_VALUE_MAX,
+    constants::MAX_MONEY,
     entropy::ActionRandomizer,
     keys::ProofAuthorizingKey,
     note::{self, Note, Nullifier},
@@ -43,7 +43,7 @@ impl Header for SpendHeader {
         (
             vec![Fp::from(cm), Fp::from(present_nf), Fp::from(anchor)],
             Vec::new(),
-            vec![Ep::from(act.cv.0), Ep::from(EpAffine::from(act.rk))],
+            vec![Ep::from(act.cv), EpAffine::from(act.rk).into()],
             Vec::new(),
         )
     }
@@ -66,7 +66,7 @@ impl Step for SpendBind {
     /// `(note, rcv, alpha, pak)`.
     type Witness<'source> = (
         Note,
-        value::CommitmentTrapdoor,
+        value::Trapdoor,
         ActionRandomizer<effect::Spend>,
         ProofAuthorizingKey,
     );
@@ -84,7 +84,7 @@ impl Step for SpendBind {
             Fp::from(u64::from(note.value)),
             "SpendBind: zero-value note",
         )?;
-        if u64::from(note.value) > NOTE_VALUE_MAX {
+        if u64::from(note.value) > MAX_MONEY {
             return Err(ragu::Error::InvalidWitness(
                 "SpendBind: note value exceeds maximum".into(),
             ));
@@ -100,7 +100,7 @@ impl Step for SpendBind {
             "SpendBind: note does not match the spendable lineage",
         )?;
 
-        let cv = rcv.commit(i64::from(note.value));
+        let cv = rcv.commit(note.value);
         let rk = pak.ak.derive_action_public(&alpha);
 
         Ok(((cm, action::Descriptor { cv, rk }, present_nf, anchor), ()))

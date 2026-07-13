@@ -95,6 +95,7 @@ mod tests {
         keys::{NullifierKey, PaymentKey, private},
         note::{self, Note},
         primitives::effect,
+        value,
     };
 
     /// ask, nk, pk derived from the same sk must all be different.
@@ -141,7 +142,7 @@ mod tests {
         let ak = ask.derive_auth_public();
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: note::Value::try_from(1000u64).unwrap(),
+            value: value::Positive::try_from(1000u64).unwrap(),
             psi: note::NullifierTrapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };

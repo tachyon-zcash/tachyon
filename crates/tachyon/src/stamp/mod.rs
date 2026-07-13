@@ -265,13 +265,13 @@ pub struct Plan {
         action::Descriptor,
         ActionRandomizer<effect::Spend>,
         Note,
-        value::CommitmentTrapdoor,
+        value::Trapdoor,
     )>,
     outputs: Vec<(
         action::Descriptor,
         ActionRandomizer<effect::Output>,
         Note,
-        value::CommitmentTrapdoor,
+        value::Trapdoor,
     )>,
     anchor: Anchor,
 }
@@ -284,13 +284,13 @@ impl Plan {
             action::Descriptor,
             ActionRandomizer<effect::Spend>,
             Note,
-            value::CommitmentTrapdoor,
+            value::Trapdoor,
         )>,
         outputs: Vec<(
             action::Descriptor,
             ActionRandomizer<effect::Output>,
             Note,
-            value::CommitmentTrapdoor,
+            value::Trapdoor,
         )>,
         anchor: Anchor,
     ) -> Self {
@@ -467,7 +467,7 @@ impl ProofStamp {
     /// and placed on the stamp for data availability.
     pub fn prove_output<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
-        rcv: value::CommitmentTrapdoor,
+        rcv: value::Trapdoor,
         alpha: ActionRandomizer<effect::Output>,
         note: Note,
         anchor: Anchor,

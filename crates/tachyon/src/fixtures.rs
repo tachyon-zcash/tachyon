@@ -88,11 +88,11 @@ pub fn spend_witness(
     rng: &mut (impl RngCore + CryptoRng),
     note: &Note,
 ) -> (
-    value::CommitmentTrapdoor,
+    value::Trapdoor,
     ActionEntropy,
     ActionRandomizer<effect::Spend>,
 ) {
-    let rcv = value::CommitmentTrapdoor::random(rng);
+    let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
     let alpha = theta.randomizer::<effect::Spend>(note.commitment());
     (rcv, theta, alpha)
@@ -102,11 +102,11 @@ pub fn build_output_plan(
     rng: &mut (impl RngCore + CryptoRng),
     note: Note,
 ) -> (
-    value::CommitmentTrapdoor,
+    value::Trapdoor,
     ActionRandomizer<effect::Output>,
     action::Plan<effect::Output>,
 ) {
-    let rcv = value::CommitmentTrapdoor::random(rng);
+    let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
     let plan = action::Plan::output(note, theta, rcv);
     let alpha = theta.randomizer::<effect::Output>(note.commitment());
@@ -841,7 +841,7 @@ impl WalletSim {
             .or_insert_with(|| StdRng::from_seed(note_stream_seed(pk, value_amount)));
         Note {
             pk,
-            value: note::Value::try_from(value_amount).expect("fixture value in range"),
+            value: value::Positive::try_from(value_amount).expect("fixture value in range"),
             psi: NullifierTrapdoor::random(notes),
             rcm: note::CommitmentTrapdoor::random(notes),
         }
@@ -1019,7 +1019,7 @@ impl WalletSim {
                 self.nf_at(&note, spend_epoch),
                 self.nf_at(&note, spend_epoch.next()),
             ];
-            let rcv = value::CommitmentTrapdoor::random(rng);
+            let rcv = value::Trapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
                 self.pak.ak.derive_action_public(&alpha)
@@ -1031,7 +1031,7 @@ impl WalletSim {
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
             .into_iter()
             .map(|note| {
-                let rcv = value::CommitmentTrapdoor::random(rng);
+                let rcv = value::Trapdoor::random(rng);
                 let theta = ActionEntropy::random(rng);
                 action::Plan::output(note, theta, rcv)
             })
