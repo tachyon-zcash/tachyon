@@ -89,7 +89,7 @@ assumptions/setup:
 - malicious users try to double-spend by publishing $\nf_e' \neq \nf_e$ for the
   same note in any epoch $e$ that both pass the derivation integrity check.
 
-## Attempt 1: Statistically Indistinguishable
+## Attempt 1: Statistically Indistinguishable {#attempt1}
 
 ### Attempt 1.1: User-sampled
 
@@ -171,7 +171,7 @@ $\mathsf{XOF}$ with Poseidon-based sponge construction for variable-length
 output, to witness the full $f(X)$ in-circuit requires $\frac{d}{\mathsf{Rate}}$ Poseidon
 permutation. Both burden a higher cost than the original GGM construction.
 
-## Attempt 2: Product of Sparse Polynomials
+## Attempt 2: Product of Sparse Polynomials {#attempt2}
 
 > To eliminate recipient interaction during note creations, we avoid user-sampling
 of coefficients. Instead, we explore a structured $f_k(X)$ where the $f_k(\cdot)$
@@ -320,6 +320,203 @@ $\nf_e = f_k(e)$ without recovering the key $k$ per-se. $\blacksquare$
 The exponential decay in security with only linear benefit in circuit efficiency
 rules out this attempt 2b.
 
-## Attempt 3: ZK-friendly Hash
+## Attempt 3: ZK-friendly Hash {#attempt3}
 
-## Attempt 4: AOC with Reduced Rounds
+The [previous attempt](#attempt2) explores the "product-of-sparse-polynomial"
+approach and explains how it failed to meet our efficiency/security requirement.
+Now, we shift gears to the second approach: "composition-of-round-functions",
+a.k.a. **arithmetization-oriented cipher** (AOC) in the literature. Most
+ZK-friendly hash functions (e.g. MiMC, Rescue, Poseidon) are built on top of AOC.
+Inspired by the classical Substitution-Permutation Network (SPN) in the popular
+symmetry primitives like AES, these AOCs are block ciphers that applies
+alternating rounds of confusion and diffusion. Particularly, AOC switch out
+bitwise ops in AES (e.g. XOR, rotation, s-box) for algebraic counterparts that
+involves only field ops (e.g. field addition for keyed confusion, $x^\alpha$
+for s-box).
+
+On a high-level, define some low-degree (e.g. degree 3 or 5) *non-linear keyed
+round function* $F_k(\cdot)$, the AOC applies the round function $r$-times to
+produce the ciphertext:
+
+$$
+f_k(X) = F_k^{(r-1)} \circ F_k^{(r-2)} \circ \ldots F_k^{(1)} \circ F_k^{(0)}(x)
+$$
+
+With $\deg(F_k) = \alpha$, the overall degree of $\deg(f_k) = \alpha^r$.
+This exponential increase in degrees and sufficient density gives exponential
+growth in its safety margin against algebraic attacks, resulting in logarithmic
+number of rounds.
+
+In this attempt, we pick an off-the-shelf ZK-friendly hash function and use it
+as a black box. In the [next attempt](#attempt4), we open the black box, and
+tweak parameters and design axis in pursuit of a more circuit-efficient AOC.
+We pick battle-tested Poseidon with some domain separation string $\mathsf{ds}$:
+
+$$
+f_k(X) = \mathsf{Poseidon}(\mathsf{ds}, k, x)
+$$
+
+To reiterate the overall flow:
+
+- Sender prepares the Output note with arbitrary $\psi$ (random if honest).
+- User proves nullifier derivation in-circuit as:
+  $$
+  \nf_e = \mathsf{Poseidon}(\mathsf{ds}, \nk, \psi, e)
+  $$
+- OSS directly receives a single PCD proof attesting $\{\nf_i\}_{i\in R}$ for the
+  delegated range.
+  
+Our [7 Poseidon per PCD step](#ggm-cost) capacity directly translates to $7$
+nullifier derivations per step. The indistinguishability is computational but
+its the one-wayness and collision resistance has fairly high confidence given
+the years of cryptoanalysis against Poseidon.
+The reliance on user to generate proofs of correct nullifiers (i.e. assisted
+proving) seems inevitable as we argued at the end of [attempt 1.1](#attempt1).
+
+This is the first attempts that satisfy all our security and efficiency
+requirements. On the positive side, it requires no new/in-house cryptoanalysis,
+no additional assumptions or trusted primitives. However, the efficiency
+improvements over the GGM-based nullifiers is a moderate $7\times$.
+
+## Attempt 4: AOC with Reduced Rounds {#attempt4}
+
+Now, we open the AOC black-box, and systematically analyze the possible
+optimization axis and their effects on the security level.
+We target the [MiMC](https://ia.cr/2016/492) block cipher for its minimal
+algebraic description. Our analysis might be transferable or at least serves as
+a starting point when extending to the [HADES](https://ia.cr/2019/1107) family
+like Poseidon with wider states and partial rounds.
+
+To recap, the MiMC permutation works as follows:
+
+<P align="center">
+  <img src="./assets/mimc.svg" alt="mimc" />
+</p>
+
+Each round involves *a linear confusion* via addition of the key $k$ and a round
+constant $c_i\in\F_p$; and a *non-linear confusion* via s-box permutation
+$P(x) := x^\alpha$ for some small $\alpha\geq 3$ that satisfies
+$\gcd(\alpha, p-1) = 1$. For Pasta curves' scalar field $\F_p$, since
+$p\equiv 1 \pmod 3$, we pick $\alpha = 5$.
+Round constants $c_i$ are generated and fixed at system setup.
+
+The overall keyed function composes of $r$ rounds:
+
+$$
+\begin{aligned}
+f_k(X) &= \left( F_k^{(r-1)} \circ F_k^{(r-2)} \circ \ldots F_k^{(1)}
+\circ F_k^{(0)} \right) (x) \oplus k \\
+\text{where}\quad F_k^{(i)}(x) &= P(k \oplus c_i \oplus x)
+\end{aligned}
+$$
+
+A variant with higher-dimension key $k = (k_1, k_2, \ldots)\in\F_p^\kappa$ has
+a round function with a rotating addition key:
+
+$$
+F_k^{(i)}(x) = P(k_{\underline{i\bmod \kappa}} \oplus c_i \oplus x)
+$$
+
+**Goal.**
+Our goal is to achieve $\lambda=128$-bit security but fewer than the $r=57$
+rounds as recommended in the original paper.[^rec-rounds]
+This might be possible (and even worth considering at all) because
+our security requirement is *less stringent* than a full PRF or a block cipher.
+We only require a weaker form of IND-CPA security:
+
+- the input space is the epoch domain rather than the whole field $|E| \ll \F_p$
+- the number of output/ciphertexts the attacker/distinguisher obtains is $< |E|$
+
+[^rec-rounds]: The MiMC paper concludes that $\alpha^r \geq 2^\lambda$ provides
+    sufficient protection against known statistical and algebraic attacks. The
+    original paper uses $\alpha=3$ pervasively, and with (somewhat-arbitrary)
+    $1$ more buffer round, gives the $\lfloor \log_3(2^{128}) \rfloor + 1 = 82$
+    recommendation in Table 1. By the same logic, for $\alpha=5$, the suggested
+    round is $r \geq \lfloor \log_5(2^{128}) \rfloor + 1 = 57$.
+
+<a id="eli">**Elimination Criteria.**</a>
+To prune the design space, we can identify some criteria for quick elimination.
+
+1. RO/PRG/PRF usage: If we invoke a random oracle, or a PRF, or a PRG internally
+   as a subroutine, the cost already exceeds that of [attempt 3](#attempt3);
+   because we instantiate a RO/PRF/PRG using Poseidon in practice which requires
+   at least 1 Poseidon permutation.
+
+**Optimization Axis.**
+Here are some possible axis for optimization:
+
+- Strong PRF v.s. Weak PRF: relax $f_k(X)$ to a weak PRF
+- Different choice of s-box: higher $\alpha$, larger stride each round
+- Fewer rounds: under the same key size, pick a more aggressive $r$
+- Larger keys: higher key dimension $\kappa \geq 1$ to reduce rounds
+
+### Axis 1: Weak PRF
+
+While a strong PRF is indistinguishable from a random function that maps to a
+random value for any attacker-controlled input, a weak PRF severely restrict the
+attacker to only query the function at *random points* in the domain.
+We wonder if a weak PRF is sufficient in our setting, which opens the door for
+(possibly) simpler AOC-based PRFs thanks to the strictly weaker requirement?
+
+However, the input values are epoch numbers $e\in E = \{0, 1, \ldots \}$ which
+are predictable, distinguisher-chosen, and anything but random. Even if we have
+a highly efficient weakly secure PRF, we must map the input to a random value
+first: $e \mapsto H(e) \in_R \F_p$. This RO invocation is enough to rule out
+this axis as per our [elimination criteria](#eli).
+
+### Axis 2: Larger $\alpha$
+
+Observing the derivation of the recommended round (see footnote[^rec-rounds])
+$\alpha^r \geq 2^\lambda$: larger the per-round stride, faster it reaches a high
+enough degree to be resilient to algebraic attacks. On the surface, it seems
+sensible to increase the $\alpha$ to reduce rounds.
+
+There are at least two issues with this intuition.
+One, with larger $\alpha$ and smaller $r$, the resulting polynomial is becoming
+dangerously sparse, lending itself to [linearization attack](#lin), [interpolation
+attack](#interpolate), and [Gröbner attack](#grobner) simultaneously.
+Two, larger $\alpha$ means a higher per-round exponentiation cost, resulting in
+no reduction in overall number of multiplication constraints. Section 5.3 of MiMC
+paper analyzes this specifically; it concludes that in
+a constraint system where squaring is as expensive as a multiplication, changing
+$\alpha$ does NOT reduce the constraint count or offer any benefit.[^alpha]
+For these reasons, we rule out this axis.
+
+[^alpha]: Quoting Section 5.3 of [MiMC](https://ia.cr/2016/492):
+
+    "To conclude, if the cost of a square operation is negligible with respect to
+    the cost of a multiplication (that is, if the square operation is linear),
+    then it is possible to minimize the total number of multiplications choosing
+    an exponent of the form $2^t-1$ different from $3$. Instead, when the number
+    of square operations cannot be ignored (as in the case of SNARK settings or
+    in the $\F_p$ case), the choice of an exponent of the form $2^t-1$ different
+    from $3$ does not offer any advantage due to the fact that the number $m+s$
+    is almost constant."
+
+### Axis 3: Same Key, Fewer Rounds
+
+#### Interpolation Attack {#interpolate}
+
+### Axis 4: Higher Key Dimension $\kappa$
+
+As seen in the MiMC recap, we can use a rotating key in the round function given
+a higher-dimension key $k\in\F_p^\kappa$ with $\kappa > 1$. The question is
+whether the cost of attacks scale super-linearly with key size such that a
+reduced-rounds parameter can maintain the same security level. We need to
+enumerate through all major algebraic attacks.
+
+Before the analysis, astute reader might question: if $k=\mathsf{KDF}(\nk,\psi)$,
+then larger keys require *entropy expansion* which involves RO/PRF invocation;
+doesn't this already rule out this axis as per our [elimination criteria](#eli)?
+The answer is two folds. Firstly, to squeeze a single $k\sample\F_p$, we already
+need to invoke Poseidon permutation once, which gives us $\mathsf{Rate}=4$
+pseudorandom outputs at once. Practically, we can expand to $\kappa=4$ without
+any extra cost. Secondly, the cost of entropy expansion might be *amortized*
+if it drastically reduce the rounds, thus lower per-input evaluation cost. There
+remains the possibility that a high fixed-cost key expansion accompanied by low
+variable-cost nullifier computation enables deriving multiple $\nf_e$ in a
+single PCD step.
+
+#### Gröbner Basis Attack {#grobner}
+
+Gröbner basis attack is an algorithm to solve a system of multivariate equation.
