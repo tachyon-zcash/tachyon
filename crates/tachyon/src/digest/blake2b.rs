@@ -116,9 +116,6 @@ const ACTION_DESCRIPTOR_PERSONALIZATION: &[u8; 15] = b"Tachyon-Actions";
 /// are hashed in the order given, so the digest commits to that order; callers
 /// pass a canonically (byte-lexicographically) sorted slice.
 pub(crate) fn action_descriptor_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
-    // TODO: enforce sort at callers
-    // debug_assert!(descriptors.is_sorted(), "descriptors should be pre-sorted");
-
     hasher_256(ACTION_DESCRIPTOR_PERSONALIZATION, |state| {
         for descriptor in descriptors {
             state.update(descriptor);
@@ -170,9 +167,6 @@ pub(crate) fn stamp_data_digest(
     anchor: [u8; 32],
     tachygrams: &[[u8; 32]],
 ) -> [u8; 32] {
-    // TODO: enforce sort at callers
-    // debug_assert!(tachygrams.is_sorted(), "tachygrams should be pre-sorted");
-
     hasher_256(STAMP_DATA_PERSONALIZATION, |state| {
         state.update(&stamp_proof_digest);
         state.update(&anchor);

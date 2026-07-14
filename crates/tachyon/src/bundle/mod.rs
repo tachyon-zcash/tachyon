@@ -171,9 +171,6 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
         let descriptors: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
-
-        // debug_assert!(descriptors.is_sorted(), "descriptors should be pre-sorted");
-
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
             self.value_balance.into(),
