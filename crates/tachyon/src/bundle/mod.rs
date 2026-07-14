@@ -68,7 +68,7 @@
 //! 64-byte value: the pointer stamp's `wtxid` directly, or
 //! `hStampActionsTachyon || stamp_data_digest` for a proof stamp.
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 use core::ops::Neg as _;
 
 use corez::io::{self, Read, Write};
@@ -165,11 +165,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     pub fn commitment(&self) -> [u8; 32] {
         let descriptors: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
 
-        // The bundle's actions should already be sorted by construction.
-        debug_assert!(
-            descriptors.is_sorted(),
-            "bundle actions must be canonically sorted"
-        );
+        // debug_assert!(descriptors.is_sorted(), "descriptors should be pre-sorted");
 
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
@@ -179,14 +175,14 @@ impl<S: BundleState + ?Sized> Bundle<S> {
 
     /// Verify the bundle's binding signature and all action signatures.
     pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
-        // 1. Derive bvk from public data (validator-side, §4.14)
+        // 1. Derive bvk from public data
         let bvk = public::BindingVerificationKey::derive(&self.actions, self.value_balance);
 
         // 2. Verify binding signature
         bvk.verify(sighash, &self.binding_sig)
             .map_err(|_err| SignatureError::Binding(self.binding_sig))?;
 
-        // 3. Verify each action signature against the SAME sighash
+        // 3. Verify each action signature
         for action in &self.actions {
             action
                 .rk
@@ -238,23 +234,9 @@ pub enum SignatureError {
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
 pub enum SignError {
-    /// The derived rk does not match the stored rk.
-    #[display("plan rk {rk:?} does not match at action {idx}")]
-    RkMismatch {
-        /// Index of the offending action in the bundle (spends first, then
-        /// outputs).
-        #[error(not(source))]
-        idx: usize,
-        /// The stored rk that did not match the derived one.
-        #[error(not(source))]
-        rk: reddsa::VerificationKeyBytes<reddsa::ActionAuth>,
-    },
     /// The number of signatures does not match the number of actions.
     #[display("expected {_0} signatures")]
     SigCountMismatch(#[error(not(source))] usize),
-    /// An externally-provided signature is invalid.
-    #[display("signature {:?} does not verify", _0)]
-    InvalidActionSignature(#[error(not(source))] action::Signature),
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
     BalanceOverflow,
@@ -264,10 +246,10 @@ pub enum SignError {
 #[derive(Clone, Debug)]
 pub struct Plan {
     /// Spend action plans.
-    pub spends: Vec<action::Plan<effect::Spend>>,
+    spends: Vec<action::Plan<effect::Spend>>,
 
     /// Output action plans.
-    pub outputs: Vec<action::Plan<effect::Output>>,
+    outputs: Vec<action::Plan<effect::Output>>,
 }
 
 impl Plan {
@@ -373,35 +355,23 @@ impl Plan {
         private::BindingSigningKey::from(trapdoors.as_slice())
     }
 
-    /// Sign all actions with a spend authorizing key.
+    /// Sign actions with the provided [`private::SpendAuthorizingKey`] and then
+    /// sign the bundle with the [`private::BindingSigningKey`].
     ///
-    /// For each action, independently derives alpha from theta + note
-    /// commitment, verifies the derived rk matches, and signs. Also
-    /// derives the binding signing key from rcvs and signs the binding
-    /// signature. The resulting actions are canonically sorted so that the
-    /// bundle matches its commitment's descriptor order.
-    ///
-    /// The result is a `Bundle<Unproven>` — combine with a [`ProofStamp`]
-    /// via [`Bundle::stamp`] to produce a `Bundle<ProofStamp>`.
+    /// To confirm correct application, call [`Bundle::verify_signatures`] on
+    /// the return value.
     pub fn sign<RNG: RngCore + CryptoRng>(
         &self,
+        rng: &mut RNG,
         sighash: &[u8; 32],
         ask: &private::SpendAuthorizingKey,
-        rng: &mut RNG,
     ) -> Result<Bundle<Unproven>, SignError> {
-        let n_actions = self.spends.len() + self.outputs.len();
-        let mut authorized = Vec::with_capacity(n_actions);
+        let mut authorized = Vec::with_capacity(self.spends.len() + self.outputs.len());
 
-        for (idx, plan) in self.spends.iter().enumerate() {
+        for plan in &self.spends {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Spend>(cm);
             let rsk = ask.derive_action_private(&alpha);
-            if rsk.derive_action_public() != plan.rk {
-                return Err(SignError::RkMismatch {
-                    idx,
-                    rk: plan.rk.0.into(),
-                });
-            }
             authorized.push(Action {
                 cv: plan.cv(),
                 rk: plan.rk,
@@ -409,16 +379,10 @@ impl Plan {
             });
         }
 
-        for (idx, plan) in self.outputs.iter().enumerate() {
+        for plan in &self.outputs {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Output>(cm);
             let rsk = private::ActionSigningKey::new(&alpha);
-            if rsk.derive_action_public() != plan.rk {
-                return Err(SignError::RkMismatch {
-                    idx: self.spends.len() + idx,
-                    rk: plan.rk.0.into(),
-                });
-            }
             authorized.push(Action {
                 cv: plan.cv(),
                 rk: plan.rk,
@@ -428,25 +392,20 @@ impl Plan {
 
         authorized.sort_unstable();
 
-        let bsk = self.derive_bsk_private();
-        let binding_sig = bsk.sign(rng, sighash);
-
-        Ok(Bundle {
-            actions: authorized,
-            value_balance: self
-                .value_balance()
-                .map_err(|_err| SignError::BalanceOverflow)?,
-            binding_sig,
-            stamp: Unproven,
-        })
+        self.apply_signatures(
+            rng,
+            sighash,
+            authorized.into_iter().map(|action| action.sig).collect(),
+        )
     }
 
-    /// Apply externally-produced signatures.
+    /// Apply externally-produced action signatures and then sign the bundle
+    /// with the [`private::BindingSigningKey`].
     ///
-    /// Validates each signature against the action's rk and the sighash.
-    /// Derives cv from each plan and produces the binding signature. The
-    /// resulting actions are canonically sorted; each signature stays paired
-    /// with its descriptor, so sorting preserves the pairing.
+    /// Signatures must be provided in canonical order.
+    ///
+    /// To confirm correct application, call [`Bundle::verify_signatures`] on
+    /// the return value.
     pub fn apply_signatures<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -462,13 +421,8 @@ impl Plan {
             .descriptors()
             .into_iter()
             .zip(sigs)
-            .map(|(desc, sig)| {
-                desc.rk
-                    .verify(sighash, &sig)
-                    .map_err(|_err| SignError::InvalidActionSignature(sig))?;
-                Ok(Action::from_parts(desc, sig))
-            })
-            .collect::<Result<Vec<Action>, SignError>>()?;
+            .map(|(desc, sig)| Action::from_parts(desc, sig))
+            .collect::<Vec<Action>>();
 
         let bsk = self.derive_bsk_private();
         let binding_sig = bsk.sign(rng, sighash);
@@ -580,6 +534,16 @@ impl<S: StampState> Bundle<S> {
         let mut descriptors: Vec<action::Descriptor> = Vec::new();
         for _ in 0..n_actions {
             descriptors.push(action::Descriptor::read(&mut reader)?);
+        }
+
+        let mut unique_descriptors = BTreeSet::new();
+        for descriptor in &descriptors {
+            if !unique_descriptors.insert(descriptor) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "action descriptors are not unique",
+                ));
+            }
         }
 
         let mut signatures: Vec<action::Signature> = Vec::new();

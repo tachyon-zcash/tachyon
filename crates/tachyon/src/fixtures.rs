@@ -79,7 +79,7 @@ pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {
     let bundle_plan = bundle::Plan::new(alloc::vec![], alloc::vec![plan]);
     let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
     let unproven = bundle_plan
-        .sign(&sighash, &ask, rng)
+        .sign(rng, &sighash, &ask)
         .expect("sign foreign output");
     unproven.actions[0]
 }
@@ -1042,7 +1042,7 @@ impl WalletSim {
         let bundle_plan = bundle::Plan::new(spend_plans, output_plans);
         let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
         let unproven = bundle_plan
-            .sign(&sighash, &ask, rng)
+            .sign(rng, &sighash, &ask)
             .expect("sign autonome");
 
         let stamp_plan = bundle_plan.stamp_plan(anchor);

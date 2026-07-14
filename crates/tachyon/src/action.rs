@@ -1,8 +1,8 @@
 //! Tachyon Action descriptions.
 
+use alloc::vec::Vec;
 use core::{cmp, marker::PhantomData};
 
-use alloc::vec::Vec;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
 use pasta_curves::{EpAffine, group::GroupEncoding as _};

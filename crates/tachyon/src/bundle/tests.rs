@@ -94,53 +94,375 @@ fn plan_commitment_matches_bundle_commitment() {
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
 
     let bundle = bundle_plan
-        .sign(&sighash, &ask, rng)
+        .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
         .stamp(stamp);
 
     assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
 }
 
+/// The output's `rk` is corrupted to an unrelated (but known) key after
+/// construction. `sign` signs with the output's own alpha-derived key
+/// regardless, producing a real signature under the wrong key — not the
+/// signature that would actually match the corrupted key.
 #[test]
-fn sign_reports_global_action_index_on_rk_mismatch() {
+fn actions_signed_despite_wrong_rk_fail_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
 
-    // A valid spend at global index 0 — derive its rk exactly as `sign` does,
-    // so it passes the spend check and signing reaches the outputs.
-    let spend = action::Plan::spend(
-        wallet.random_note(200),
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
-    );
+    let spend = spend_plan_at(rng, &wallet, &ask, 200);
 
-    // An output at global index 1 whose rk is corrupted to a foreign key.
     let mut output = action::Plan::output(
         wallet.random_note(100),
         ActionEntropy::random(rng),
         value::Trapdoor::random(rng),
     );
-    let wrong_rk = action::Plan::output(
+    let unrelated = action::Plan::output(
         wallet.random_note(50),
         ActionEntropy::random(rng),
         value::Trapdoor::random(rng),
-    )
-    .rk;
-    output.rk = wrong_rk;
+    );
+    output.rk = unrelated.rk;
 
     let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
-    let sighash = mock_sighash(plan.commitment().unwrap());
 
-    let err = plan.sign(&sighash, &ask, rng).unwrap_err();
-    let SignError::RkMismatch { idx, rk } = err else {
-        panic!("expected RkMismatch, got {err:?}");
+    let bundle = plan
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .expect("signing works");
+
+    // We've applied a signature from the unrelated key
+    let unrelated_alpha = unrelated
+        .theta
+        .randomizer::<effect::Output>(unrelated.note.commitment());
+    assert!(!bundle.actions.iter().any(|action| {
+        action.sig
+            == private::ActionSigningKey::new(&unrelated_alpha)
+                .sign(rng, &mock_sighash(plan.commitment().unwrap()))
+    }));
+
+    // so it fails verification
+    let err = bundle
+        .verify_signatures(&mock_sighash(bundle.commitment()))
+        .unwrap_err();
+    let SignatureError::Action(_) = err else {
+        panic!("expected SignatureError::Action, got {err:?}");
     };
-    // Global index = spends.len() (1) + output index (0): the offset is retained,
-    // and the error carries the offending rk alongside it.
-    assert_eq!(idx, 1);
-    assert_eq!(rk, wrong_rk.0.into());
+}
+
+/// The spend's `rk` matches `ask`, but `sign` is called with a different
+/// signing key. It signs with whatever key it's given, producing a real
+/// signature from the wrong signer, not the one `ask` itself would have
+/// produced.
+#[test]
+fn actions_signed_by_wrong_rsk_fail_verification() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let wrong_ask = WalletSim::random(rng).sk.derive_auth_private();
+
+    let spend = spend_plan_at(rng, &wallet, &ask, 200);
+    let note = wallet.random_note(100);
+    let (_rcv, _alpha, output) = build_output_plan(rng, note);
+
+    let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
+
+    let bundle = plan
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &wrong_ask)
+        .expect("signing works");
+
+    // The signature the spend's matching key would have produced.
+    let alpha = spend
+        .theta
+        .randomizer::<effect::Spend>(spend.note.commitment());
+    let correct_sig = ask
+        .derive_action_private(&alpha)
+        .sign(rng, &mock_sighash(bundle.commitment()));
+    assert!(
+        !bundle
+            .actions
+            .iter()
+            .any(|action| action.sig == correct_sig)
+    );
+
+    let err = bundle
+        .verify_signatures(&mock_sighash(bundle.commitment()))
+        .unwrap_err();
+    let SignatureError::Action(_) = err else {
+        panic!("expected SignatureError::Action, got {err:?}");
+    };
+}
+
+#[test]
+fn apply_signatures_rejects_wrong_sig_count() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let ask = wallet.sk.derive_auth_private();
+    let spend_a = spend_plan_at(rng, &wallet, &ask, 200);
+    let spend_b = spend_plan_at(rng, &wallet, &ask, 100);
+    let plan = Plan::new(alloc::vec![spend_a, spend_b], alloc::vec![]);
+
+    let alpha = spend_a
+        .theta
+        .randomizer::<effect::Spend>(spend_a.note.commitment());
+    let sig = ask
+        .derive_action_private(&alpha)
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()));
+
+    let too_few = plan
+        .apply_signatures(
+            rng,
+            &mock_sighash(plan.commitment().unwrap()),
+            alloc::vec![sig],
+        )
+        .unwrap_err();
+    let SignError::SigCountMismatch(expected_for_too_few) = too_few else {
+        panic!("expected SigCountMismatch, got {too_few:?}");
+    };
+    assert_eq!(expected_for_too_few, 2);
+
+    let too_many = plan
+        .apply_signatures(
+            rng,
+            &mock_sighash(plan.commitment().unwrap()),
+            alloc::vec![sig, sig, sig],
+        )
+        .unwrap_err();
+    let SignError::SigCountMismatch(expected_for_too_many) = too_many else {
+        panic!("expected SigCountMismatch, got {too_many:?}");
+    };
+    assert_eq!(expected_for_too_many, 2);
+}
+
+#[test]
+fn apply_signatures_with_shuffled_sigs_fails_verification() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+
+    let spend_a = spend_plan_at(rng, &wallet, &ask, 200);
+    let spend_b = spend_plan_at(rng, &wallet, &ask, 100);
+    let plan = Plan::new(alloc::vec![spend_a, spend_b], alloc::vec![]);
+
+    // `sign` produces genuinely valid signatures, already in
+    // `self.descriptors()`'s canonical order.
+    let mut sigs: Vec<action::Signature> = plan
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .expect("signing works")
+        .actions
+        .into_iter()
+        .map(|action| action.sig)
+        .collect();
+
+    // shuffled assembly still succeeds
+    sigs.reverse();
+    let bundle = plan
+        .apply_signatures(rng, &mock_sighash(plan.commitment().unwrap()), sigs)
+        .expect("assembly succeeds regardless of sig order");
+
+    // but the mismatched pairing fails verification.
+    let err = bundle
+        .verify_signatures(&mock_sighash(bundle.commitment()))
+        .unwrap_err();
+    let SignatureError::Action(_) = err else {
+        panic!("expected SignatureError::Action, got {err:?}");
+    };
+}
+
+/// Permuting a bundle's actions changes its commitment, so a sighash
+/// naturally recomputed for the permuted state doesn't validate.
+/// The permuted bundle can't be serialized and read back.
+#[test]
+fn permuted_actions_change_commitment() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+
+    let original = build_autonome(rng, &wallet, 1000, 700);
+
+    // it's a good bundle
+    original
+        .verify_signatures(&mock_sighash(original.commitment()))
+        .unwrap();
+
+    let mut permuted = original.clone();
+    permuted.actions.swap(0, 1);
+
+    // the commitment changes.
+    assert_ne!(
+        mock_sighash(original.commitment()),
+        mock_sighash(permuted.commitment())
+    );
+
+    // and its signatures no longer verify.
+    let sig_err = permuted
+        .verify_signatures(&mock_sighash(permuted.commitment()))
+        .unwrap_err();
+    let SignatureError::Binding(_) = sig_err else {
+        panic!("expected SignatureError::Binding, got {sig_err:?}");
+    };
+
+    // the original sighash can still verify.
+    // always use a sighash corresponding to the bundle's actual state.
+    permuted
+        .verify_signatures(&mock_sighash(original.commitment()))
+        .unwrap();
+
+    // the invalid bundle is detected at deserialization.
+    let mut buf = Vec::new();
+    permuted.write(&mut buf).expect("write");
+    let read_err = Bundle::<ProofStamp>::read(&*buf).unwrap_err();
+    assert_eq!(read_err.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(read_err.to_string(), "actions are not canonically sorted");
+}
+
+/// Mutating a bundle's `value_balance` breaks verification.
+#[test]
+fn tampered_value_balance_fails_verification() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+
+    let original = build_autonome(rng, &wallet, 1000, 700);
+
+    // it's a good bundle
+    original
+        .verify_signatures(&mock_sighash(original.commitment()))
+        .unwrap();
+
+    let mut tampered = original.clone();
+    tampered.value_balance = value::Balance::try_from(999).unwrap();
+
+    // it fails verification against the new commitment.
+    let bind_err = tampered
+        .verify_signatures(&mock_sighash(tampered.commitment()))
+        .unwrap_err();
+    let SignatureError::Binding(_) = bind_err else {
+        panic!("expected SignatureError::Binding, got {bind_err:?}");
+    };
+
+    // and it no longer verifies against the original sighash.
+    let also_err = tampered
+        .verify_signatures(&mock_sighash(original.commitment()))
+        .unwrap_err();
+    let SignatureError::Binding(_) = also_err else {
+        panic!("expected SignatureError::Binding, got {also_err:?}");
+    };
+}
+
+/// Duplicate actions are detected at deserialization.
+#[test]
+fn double_spend_obvious() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let spend = spend_plan_at(rng, &wallet, &ask, 200);
+
+    let plan = Plan::new(alloc::vec![spend, spend], alloc::vec![]);
+    let bundle = plan
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .expect("signing works");
+
+    bundle
+        .verify_signatures(&mock_sighash(bundle.commitment()))
+        .expect("duplicate spend of the same note still verifies at the bundle level");
+
+    let mut buf = Vec::new();
+    Bundle::<PointerStamp> {
+        actions: bundle.actions,
+        value_balance: bundle.value_balance,
+        binding_sig: bundle.binding_sig,
+        stamp: PointerStamp::try_from([1u8; 64]).expect("not checked"),
+    }
+    .write(&mut buf)
+    .unwrap();
+    let read_err = Bundle::<PointerStamp>::read(&*buf).unwrap_err();
+    assert_eq!(read_err.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(read_err.to_string(), "action descriptors are not unique");
+}
+
+/// This double spend is more obfuscated, so we can't detect it. True double
+/// spend prevention is a nullifier/pool-level concern.
+#[test]
+fn double_spend_secret() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let note = wallet.random_note(200);
+
+    let spend_a = action::Plan::spend(
+        note,
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
+    );
+    let spend_b = action::Plan::spend(
+        note,
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
+    );
+    assert_ne!(
+        spend_a.cv(),
+        spend_b.cv(),
+        "independent rcv gives distinct cv"
+    );
+    assert_ne!(
+        spend_a.rk, spend_b.rk,
+        "independent theta gives distinct rk"
+    );
+
+    let plan = Plan::new(alloc::vec![spend_a, spend_b], alloc::vec![]);
+    let bundle = plan
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .expect("signing works");
+
+    bundle
+        .verify_signatures(&mock_sighash(bundle.commitment()))
+        .expect("two independently-randomized spends of the same note still verify");
+}
+
+/// `sign` and `apply_signatures` go through the real API (not a hand-built
+/// `Bundle`) for the boundary shapes of the `iter_actions`/sort/zip
+/// machinery: spends-only, outputs-only, and no actions at all.
+#[test]
+fn sign_and_apply_signatures_handle_one_sided_and_empty_plans() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let ask = wallet.sk.derive_auth_private();
+
+    let spend_plan = Plan::new(
+        alloc::vec![spend_plan_at(rng, &wallet, &ask, 200)],
+        alloc::vec![],
+    );
+    spend_plan
+        .sign(rng, &mock_sighash(spend_plan.commitment().unwrap()), &ask)
+        .expect("spends-only plan signs")
+        .verify_signatures(&mock_sighash(spend_plan.commitment().unwrap()))
+        .expect("spends-only bundle verifies");
+
+    let note = wallet.random_note(200);
+    let (_rcv, _alpha, output) = build_output_plan(rng, note);
+    let output_plan = Plan::new(alloc::vec![], alloc::vec![output]);
+    output_plan
+        .sign(rng, &mock_sighash(output_plan.commitment().unwrap()), &ask)
+        .expect("outputs-only plan signs")
+        .verify_signatures(&mock_sighash(output_plan.commitment().unwrap()))
+        .expect("outputs-only bundle verifies");
+
+    let empty_plan = Plan::new(alloc::vec![], alloc::vec![]);
+    empty_plan
+        .sign(rng, &mock_sighash(empty_plan.commitment().unwrap()), &ask)
+        .expect("empty plan signs")
+        .verify_signatures(&mock_sighash(empty_plan.commitment().unwrap()))
+        .expect("empty bundle via sign verifies");
+    empty_plan
+        .apply_signatures(
+            rng,
+            &mock_sighash(empty_plan.commitment().unwrap()),
+            alloc::vec![],
+        )
+        .expect("apply_signatures accepts zero sigs for an empty plan")
+        .verify_signatures(&mock_sighash(empty_plan.commitment().unwrap()))
+        .expect("empty bundle via apply_signatures verifies");
 }
 
 #[test]
@@ -1025,7 +1347,7 @@ fn plan_value_balance_rejects_overflow_above_max_money() {
     }
     let sighash = [0u8; 32];
     {
-        let err = bundle_plan.sign(&sighash, &ask, rng).unwrap_err();
+        let err = bundle_plan.sign(rng, &sighash, &ask).unwrap_err();
         let SignError::BalanceOverflow = err else {
             panic!("expected SignError::BalanceOverflow, got {err:?}");
         };
@@ -1052,7 +1374,7 @@ fn plan_value_balance_rejects_overflow_below_negative_max_money() {
     }
     let sighash = [0u8; 32];
     {
-        let err = bundle_plan.sign(&sighash, &ask, rng).unwrap_err();
+        let err = bundle_plan.sign(rng, &sighash, &ask).unwrap_err();
         let SignError::BalanceOverflow = err else {
             panic!("expected SignError::BalanceOverflow, got {err:?}");
         };
