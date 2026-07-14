@@ -143,15 +143,15 @@ const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 
 /// A bundle's contribution to the transaction sighash.
 ///
+/// Only digests effecting data.
+///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxIdTachyonHash}(
 ///     \mathsf{hActionsTachyon} \| \mathsf{vBalanceTachyon}
 ///   )
 /// $$
 ///
-/// Hashes the bundle's effecting data: the [`action_descriptor_digest`] of its
-/// own actions and the value balance. The stamp is excluded because it is
-/// stripped during aggregation.
+/// The stamp is excluded because it is mutable auth data.
 #[must_use]
 pub(crate) fn bundle_commitment(action_commit: &[u8; 32], value_balance: i64) -> [u8; 32] {
     hasher_256(BUNDLE_COMMITMENT_PERSONALIZATION, |state| {
@@ -183,7 +183,7 @@ pub(crate) fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Stamp}(
-///     \mathsf{hStampDataTachyon} \|
+///     \mathsf{hStampProofTachyon} \|
 ///     \mathsf{stampAnchorTachyon} \|
 ///     \mathsf{vTachygrams}
 ///   )
@@ -242,8 +242,6 @@ lazy_static! {
     /// $$
     ///   \text{BLAKE2b-256}_\texttt{ZTxIdTachyonHash}()
     /// $$
-    ///
-    /// **This is NOT the same as a stripped bundle.**
     ///
     /// **This is NOT the same as a bundle with no actions and zero balance.**
     pub static ref COMMIT_NO_BUNDLE: [u8; 32] = {

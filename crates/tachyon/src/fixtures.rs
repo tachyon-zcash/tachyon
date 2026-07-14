@@ -1017,17 +1017,13 @@ impl WalletSim {
         let mut spend_pcds = Vec::with_capacity(spends.len());
         for (note, spendable_pcd, spend_epoch) in spends {
             let range_pcd = self.derived_range(rng, &note, spend_epoch, 2);
-            let pair = [
-                self.nf_at(&note, spend_epoch),
-                self.nf_at(&note, spend_epoch.next()),
-            ];
             let rcv = value::Trapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((range_pcd, pair, spendable_pcd));
+            spend_pcds.push((range_pcd, spendable_pcd));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes

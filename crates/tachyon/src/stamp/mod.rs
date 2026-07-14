@@ -26,7 +26,6 @@ use crate::{
     effect,
     entropy::ActionRandomizer,
     keys::ProofAuthorizingKey,
-    note::Nullifier,
     primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram},
     serialization,
     stamp::proof::{delegation, spend, spendable},
@@ -57,19 +56,12 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Unproven;
 
-/// The 64-byte `wtxid` of the covering aggregate in the same block, assigned
-/// by the miner during block assembly.
+/// The 64-byte `wtxid` of the covering aggregate in the same block, assigned by
+/// the miner during block assembly.
 ///
-/// A `wtxid` is `txid || auth_digest`: two 32-byte transaction digests as
-/// defined by ZIP 244, concatenated per ZIP 239 into the 64-byte identifier
-/// used for transaction relay.
+/// Use of the wtxid unambiguously pins the aggregate's specific auth state.
 ///
-/// This uses the aggregate's wtxid (not txid) so it unambiguously pins the
-/// covering aggregate's authorization state, including stamp.
-///
-/// An `AggregateId` is always nonzero: every stripped bundle, innocent or
-/// adjunct, names a covering transaction, so the all-zero wtxid (which refers
-/// to no aggregate) is rejected at every construction site.
+/// The all-zero wtxid (which refers to no aggregate) is rejected.
 #[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
 pub struct PointerStamp([u8; 64]);
 
@@ -95,9 +87,10 @@ impl TryFrom<[u8; 64]> for PointerStamp {
 /// Bundle states that carry a stamp: [`ProofStamp`] or [`PointerStamp`].
 /// The intermediate [`Unproven`] state has no stamp.
 pub trait StampState: BundleState {
-    /// The stamp's 64-byte digest: a proof stamp's
-    /// `hStampActionsTachyon || stamp_data_digest`, or a pointer stamp's
-    /// `wtxid = txid || auth_digest` from another transaction.
+    /// A stamp's 64-byte `tachyonStampState`.
+    ///
+    /// For a [`ProofStamp`], this is a digest of the stamp data.
+    /// For a [`PointerStamp`], this is the wtxid directly.
     fn stamp_digest(&self) -> [u8; 64];
 
     /// The `tachyonBundleState` wire byte for this state.
@@ -312,13 +305,14 @@ impl Plan {
     ///
     /// `spendbind_inputs` items must correspond to each planned spend, in
     /// order.
+    ///
+    /// TODO: nf_next parameter may need to come back
     pub fn prove<RNG: RngCore + CryptoRng>(
         self,
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spendbind_inputs: Vec<(
             ragu::Pcd<delegation::NullifierHeader>,
-            [Nullifier; 2],
             ragu::Pcd<spendable::SpendableHeader>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
@@ -333,12 +327,9 @@ impl Plan {
             return Err(ProveError::SpendableMismatch);
         }
 
-        for ((desc, alpha, note, rcv), (range_pcd, [_nf_now, nf_next], spendable_pcd)) in
+        for ((desc, alpha, note, rcv), (nf_pcd, spendable_pcd)) in
             self.spends.into_iter().zip(spendbind_inputs)
         {
-            // TODO: the present nullifier is carried on the SpendBind output
-            // PCD (`nf_present`); incoming branches thread it differently, so
-            // the caller pair's `_nf_now` is intentionally unused here.
             let app = &*PROOF_SYSTEM;
 
             let (bind_pcd, ()) = app
@@ -353,8 +344,7 @@ impl Plan {
 
             // SpendStamp: bind the live pair to the derived range and publish.
             let (tachygrams, anchor, proof) =
-                ProofStamp::prove_spend(rng, bind_pcd, range_pcd, nf_next)
-                    .map_err(ProveError::ProofFailed)?;
+                ProofStamp::prove_spend(rng, bind_pcd, nf_pcd).map_err(ProveError::ProofFailed)?;
 
             let digest = desc.digest().map_err(ProveError::ActionDigest)?;
             entries.push((vec![desc], vec![digest], tachygrams, anchor, proof));
@@ -436,10 +426,10 @@ pub enum ProveError {
 /// reconstruct the header from public data.
 #[derive(Clone, Debug)]
 pub struct ProofStamp {
-    /// `hStampActionsTachyon`: digest of the covered action descriptors,
-    /// indicating which actions this stamp's proof covers. Computed by
-    /// `blake2b::stamp_actions_digest` over the canonically sorted
-    /// descriptors.
+    /// The digest $\mathsf{hStampActionsTachyon}$ of the proof's covered action
+    /// descriptors from this stamp's bundle and all covered bundles.
+    ///
+    /// See [`blake2b::action_descriptor_digest`]
     pub actions: [u8; 32],
 
     /// Tachygrams (nullifiers and note commitments) for data availability.
@@ -489,13 +479,13 @@ impl ProofStamp {
         rng: &mut RNG,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
         nf_pcd: ragu::Pcd<delegation::NullifierHeader>,
-        nf_next: Nullifier,
     ) -> Result<(Vec<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
         let (_, _, nf_present, anchor) = *bind_pcd.data();
+        let (_, _, _, (_, nf_next)) = *nf_pcd.data();
 
-        let tachygrams = vec![Tachygram::from(nf_next), Tachygram::from(nf_present)];
+        let tachygrams = vec![Tachygram::from(nf_present), Tachygram::from(nf_next)];
 
         let (pcd, ()) = app.fuse(rng, SpendStamp, (nf_next,), bind_pcd, nf_pcd)?;
 
@@ -582,7 +572,8 @@ impl ProofStamp {
     /// The action digests for the merge proof and the merged
     /// `covered_actions` are both derived from the descriptor lists.
     ///
-    /// TODO: confirm desc list against stamp?
+    /// TODO: confirm desc list against stamp? it's forbidden by the proof
+    /// system, but we might want to fail early.
     pub fn merge<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         (left_stamp, left_desc): (Self, Vec<action::Descriptor>),

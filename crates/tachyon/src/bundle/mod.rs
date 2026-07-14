@@ -456,7 +456,7 @@ impl Bundle<Unproven> {
 }
 
 impl Bundle<ProofStamp> {
-    /// Replace the stamp with a wtixd pointer to a covering aggregate.
+    /// Replace the stamp with a wtxid pointer to a covering aggregate.
     #[must_use]
     pub fn strip(self, wtxid: PointerStamp) -> Bundle<PointerStamp> {
         Bundle {
@@ -632,8 +632,7 @@ impl<S: StampState> Bundle<S> {
     }
 }
 
-/// A Tachyon bundle in any of its on-wire states: absent, stamped, or stripped.
-/// Provided for consumers to switch over any form.
+/// A Tachyon bundle in one of its valid wire states.
 ///
 /// The `Unproven` intermediate state is outside this enum because it has no
 /// wire representation.
@@ -642,10 +641,9 @@ impl<S: StampState> Bundle<S> {
 pub enum TachyonBundle {
     /// No bundle.
     NoBundle,
-    /// A bundle with its own stamp (autonome or aggregate).
+    /// A bundle with its own proof (autonome or aggregate).
     Proven(Bundle<ProofStamp>),
-    /// A bundle whose stamp has been stripped; carries a reference to the
-    /// covering aggregate via its [`PointerStamp`].
+    /// A bundle with no internal proof (adjunct).
     Adjunct(Bundle<PointerStamp>),
 }
 
@@ -668,53 +666,47 @@ impl TachyonBundle {
 
     /// Write any Tachyon bundle in the consensus wire format, dispatching on
     /// the variant.
-    #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn write<W: Write>(&self, writer: W) -> io::Result<()> {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => StateByte::NoBundle.write(writer),
             Self::Proven(ref stamped) => stamped.write(writer),
-            Self::Adjunct(ref stripped) => stripped.write(writer),
+            Self::Adjunct(ref stamped) => stamped.write(writer),
         }
     }
 
     /// Tachyon's contribution to the transaction `auth_digest`, dispatching
-    /// on the variant. See [`Bundle::auth_digest`].
+    /// on the variant.
     #[must_use]
-    #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn auth_digest(&self) -> [u8; 32] {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => *blake2b::AUTH_DIGEST_NO_BUNDLE,
             Self::Proven(ref stamped) => stamped.auth_digest(),
-            Self::Adjunct(ref stripped) => stripped.auth_digest(),
+            Self::Adjunct(ref stamped) => stamped.auth_digest(),
         }
     }
 
-    /// Tachyon's contribution to the transaction sighash (txid side).
-    ///
-    /// Dispatches on the variant to [`Bundle::commitment`], which commits the
-    /// owned actions' descriptors and the value balance; a `NoBundle`
-    /// contributes the fixed `COMMIT_NO_BUNDLE` sentinel. The stamp and the
-    /// signatures are excluded (they belong to the `auth_digest`).
+    /// Tachyon's contribution to the transaction sighash, dispatching on the
+    /// variant.
     #[must_use]
-    #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn commitment(&self) -> [u8; 32] {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => *blake2b::COMMIT_NO_BUNDLE,
             Self::Proven(ref stamped) => stamped.commitment(),
-            Self::Adjunct(ref stripped) => stripped.commitment(),
+            Self::Adjunct(ref stamped) => stamped.commitment(),
         }
     }
 
-    /// Check if this bundle is an aggregate, by computing the digest of its
-    /// owned actions and comparing to its stamp's `hStampActionsTachyon` if
-    /// present.
+    /// Check if this bundle is an aggregate.
     #[must_use]
-    #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
     pub fn is_aggregate(&self) -> bool {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => false,
             Self::Proven(ref stamped) => stamped.is_aggregate(),
-            Self::Adjunct(ref _stripped) => false,
+            Self::Adjunct(ref _stamped) => false,
         }
     }
 }

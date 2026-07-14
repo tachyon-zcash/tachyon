@@ -79,15 +79,7 @@ fn plan_prove_rejects_invalid_inputs() {
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
     let range_a = user.derived_range(rng, &note_a, spend_epoch, 2);
-    let pair_a = [
-        user.nf_at(&note_a, spend_epoch),
-        user.nf_at(&note_a, spend_epoch.next()),
-    ];
     let range_b = user.derived_range(rng, &note_b, spend_epoch, 2);
-    let pair_b = [
-        user.nf_at(&note_b, spend_epoch),
-        user.nf_at(&note_b, spend_epoch.next()),
-    ];
 
     let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
@@ -113,8 +105,8 @@ fn plan_prove_rejects_invalid_inputs() {
         assert!(matches!(err, ProveError::NoActions), "expected NoActions");
     }
 
-    let bundle_a = || (range_a.clone(), pair_a, sp_a.clone());
-    let bundle_b = || (range_b.clone(), pair_b, sp_b.clone());
+    let bundle_a = || (range_a.clone(), sp_a.clone());
+    let bundle_b = || (range_b.clone(), sp_b.clone());
 
     // Too few PCDs: 2 spends, 1 PCD.
     {
