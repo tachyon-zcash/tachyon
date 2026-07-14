@@ -1,11 +1,5 @@
-//! Tachyon Blake2b digests.
 //!
-//! Each named function matches one protocol-defined hash. Key and entropy
-//! derivation preimages use BLAKE2b-512 (64-byte output, reduced to scalars
-//! by the caller); transaction digest contributions use BLAKE2b-256
-//! (32-byte output), matching the ZIP 244 digest-tree convention.
-//! Personalizations are 13–16 bytes; `blake2b_simd::Params::personal`
-//! accepts any length ≤ 16.
+//! Each named function provides one protocol-defined hash.
 
 use blake2b_simd::Params;
 use lazy_static::lazy_static;
@@ -49,8 +43,13 @@ fn hasher_512(personalization: &[u8], updater: impl FnOnce(&mut blake2b_simd::St
 const SPEND_ALPHA_PERSONALIZATION: &[u8; 13] = b"Tachyon-Spend";
 const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
 
-/// Spend-side $\alpha$ pre-image: $\text{BLAKE2b-512}(\text{"Tachyon-Spend"},
-/// \theta \| cm)$.
+/// Spend-side $\alpha$ pre-image.
+///
+/// $$
+///   \text{BLAKE2b-512}( \text{"Tachyon-Spend"},\;
+///     \theta \| cm
+///   )
+/// $$
 ///
 /// Caller reduces to scalar via `Fq::from_uniform_bytes`.
 pub(crate) fn alpha_spend(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
@@ -60,8 +59,13 @@ pub(crate) fn alpha_spend(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
     })
 }
 
-/// Output-side $\alpha$ pre-image: $\text{BLAKE2b-512}(\text{"Tachyon-Output"},
-/// \theta \| cm)$.
+/// Output-side $\alpha$ pre-image.
+///
+/// $$
+///   \text{BLAKE2b-512}( \text{"Tachyon-Output"},\;
+///     \theta \| cm
+///   )
+/// $$
 pub(crate) fn alpha_output(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
     hasher_512(OUTPUT_ALPHA_PERSONALIZATION, |state| {
         state.update(theta);
@@ -76,8 +80,13 @@ const PRF_EXPAND_DOMAIN_NK: u8 = 0x22;
 
 /// PRF-expand to derive `ask` from a spending key. Performs no normalization.
 ///
-/// $\text{BLAKE2b-512}(\text{"Zcash\_ExpandSeed"}, sk \|
-/// \texttt{ASK_DOMAIN_BYTE})$. Mirrors Zcash §5.4.2.
+/// $$
+///   \text{BLAKE2b-512}( \text{"Zcash\_ExpandSeed"},
+///     sk \| \texttt{ASK_DOMAIN_BYTE}
+///   )
+/// $$
+///
+/// Mirrors Zcash §5.4.2.
 ///
 /// TODO: return normalized Fq?
 pub(crate) fn prf_expand_ask(sk: &[u8; 32]) -> [u8; 64] {
@@ -89,8 +98,11 @@ pub(crate) fn prf_expand_ask(sk: &[u8; 32]) -> [u8; 64] {
 
 /// PRF-expand to derive `nk` from a spending key. Performs no normalization.
 ///
-/// $\text{BLAKE2b-512}(\text{"Zcash\_ExpandSeed"}, sk \|
-/// \texttt{NK_DOMAIN_BYTE})$.
+/// $$
+///   \text{BLAKE2b-512}( \text{"Zcash\_ExpandSeed"},
+///     sk \| \texttt{NK_DOMAIN_BYTE}
+///   )
+/// $$
 ///
 /// TODO: return normalized Fq?
 pub(crate) fn prf_expand_nk(sk: &[u8; 32]) -> [u8; 64] {
@@ -104,17 +116,18 @@ const ACTION_DESCRIPTOR_PERSONALIZATION: &[u8; 15] = b"Tachyon-Actions";
 
 /// Digest of action descriptors.
 ///
-/// Over the bundle's owned actions this is `hActionsTachyon`, committed on the
-/// txid side by [`bundle_commitment`]; over a stamp's covered actions it is the
-/// stamp's `hStampActionsTachyon`.
+/// Action descriptors are hashed in the order given, so the digest commits to
+/// that order.
 ///
-/// $$ \text{BLAKE2b-256}(
-/// \text{"Tachyon-Actions"},\;
-/// \mathsf{cv}_i \| \mathsf{rk}_i) $$
+/// $$
+///   \text{BLAKE2b-256}( \text{"Tachyon-Actions"},\;
+///     \mathsf{cv}_i \| \mathsf{rk}_i
+///   )
+/// $$
 ///
-/// Each entry is a 64-byte concatenation of `cv || rk` field encodings. Entries
-/// are hashed in the order given, so the digest commits to that order; callers
-/// pass a canonically (byte-lexicographically) sorted slice.
+/// Over a bundle's actions this is `hActionsTachyon`.
+///
+/// Over a stamp's covered actions this is `hStampActionsTachyon`.
 pub(crate) fn action_descriptor_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
     hasher_256(ACTION_DESCRIPTOR_PERSONALIZATION, |state| {
         for descriptor in descriptors {
@@ -145,8 +158,11 @@ const STAMP_PROOF_PERSONALIZATION: &[u8; 13] = b"Tachyon-Proof";
 
 /// Digest of a stamp's proof.
 ///
-/// $$ \mathsf{stamp\_proof\_digest} = \text{BLAKE2b-256}(
-/// \text{"Tachyon-Proof"},\; \mathsf{proofTachyon}) $$
+/// $$
+///   \text{BLAKE2b-256}( \text{"Tachyon-Proof"},\;
+///     \mathsf{proofTachyon}
+///   )
+/// $$
 pub(crate) fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
     hasher_256(STAMP_PROOF_PERSONALIZATION, |state| {
         state.update(proof);
@@ -155,13 +171,14 @@ pub(crate) fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
 
 /// Digest of a proof stamp's proof, anchor, and tachygrams.
 ///
-/// $$ \mathsf{stamp\_data\_digest} = \text{BLAKE2b-256}(
-/// \text{"Tachyon-Stamp"},\;
-/// \mathsf{stamp\_proof\_digest} \| \mathsf{anchor} \|
-/// \mathsf{vTachygrams}) $$
-///
 /// Tachygrams are hashed in the order given, so the digest commits to that
-/// order; callers pass a canonically (byte-lexicographically) sorted slice.
+/// order.
+///
+/// $$
+///   \text{BLAKE2b-256}( \text{"Tachyon-Stamp"},\;
+///     \mathsf{stamp\_proof\_digest} \| \mathsf{anchor} \| \mathsf{vTachygrams}
+///   )
+/// $$
 pub(crate) fn stamp_data_digest(
     stamp_proof_digest: [u8; 32],
     anchor: [u8; 32],
@@ -180,9 +197,12 @@ pub(crate) fn stamp_data_digest(
 
 /// A bundle's contribution to the transaction auth_digest.
 ///
-/// $$ \text{BLAKE2b-256}(\text{"ZTxAuthTachyHash"},\;
-/// \mathsf{tachyonBundleState} \| \mathsf{vActionSigs} \| \mathsf{bindingSig}
-/// \| \mathsf{stamp}) $$
+/// $$
+///   \text{BLAKE2b-256}( \text{"ZTxAuthTachyHash"},\;
+///     \mathsf{tachyonBundleState} \| \mathsf{vActionSigs} \|
+///     \mathsf{bindingSig} \| \mathsf{stamp}
+///   )
+/// $$
 ///
 /// The action set enters this digest only through `stamp`, whose proof-stamp
 /// form concatenates the covered actions' descriptor digest with
