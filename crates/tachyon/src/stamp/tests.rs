@@ -168,7 +168,7 @@ fn merge_populates_covered_actions() {
     let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note_a);
     let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note_b);
 
-    let mut descriptors: [[u8; 64]; 2] = [plan_a.descriptor().into(), plan_b.descriptor().into()];
+    let mut descriptors = Vec::<[u8; 64]>::from_iter([plan_a.descriptor(), plan_b.descriptor()]);
     descriptors.sort_unstable();
     let expected = blake2b::action_descriptor_digest(&descriptors);
 

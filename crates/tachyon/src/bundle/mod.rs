@@ -163,11 +163,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     /// aggregation.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
-        let descriptors: Vec<[u8; 64]> = self
-            .descriptors()
-            .into_iter()
-            .map(<[u8; 64]>::from)
-            .collect();
+        let descriptors: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
 
         // The bundle's actions should already be sorted by construction.
         debug_assert!(
@@ -329,11 +325,7 @@ impl Plan {
     /// Compute a digest of all the bundle's effecting data.
     /// See [`Bundle::commitment`].
     pub fn commitment(&self) -> Result<[u8; 32], CommitError> {
-        let desc_bytes: Vec<[u8; 64]> = self
-            .descriptors()
-            .into_iter()
-            .map(<[u8; 64]>::from)
-            .collect();
+        let desc_bytes: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
 
         Ok(blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&desc_bytes),
@@ -541,11 +533,7 @@ impl Bundle<ProofStamp> {
     /// owned actions and comparing to its stamp's `hStampActionsTachyon`.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
-        let desc_bytes: Vec<[u8; 64]> = self
-            .descriptors()
-            .into_iter()
-            .map(<[u8; 64]>::from)
-            .collect();
+        let desc_bytes = self.descriptors().into_iter().collect::<Vec<[u8; 64]>>();
         blake2b::action_descriptor_digest(&desc_bytes) == self.stamp.actions
     }
 }
@@ -664,8 +652,8 @@ impl<S: StampState> Bundle<S> {
     /// digest. See [`blake2b::bundle_auth_digest`].
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 32] {
-        let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig.into()).collect();
-        let binding_sig: [u8; 64] = self.binding_sig.into();
+        let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig).collect();
+        let binding_sig: [u8; 64] = self.binding_sig.0.into();
 
         blake2b::bundle_auth_digest(&action_sigs, &binding_sig, &self.stamp.stamp_digest())
     }
@@ -785,18 +773,6 @@ impl Signature {
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_binding_sig(&mut writer, &self.0)?;
         Ok(())
-    }
-}
-
-impl From<[u8; 64]> for Signature {
-    fn from(bytes: [u8; 64]) -> Self {
-        Self(bytes.into())
-    }
-}
-
-impl From<Signature> for [u8; 64] {
-    fn from(sig: Signature) -> Self {
-        sig.0.into()
     }
 }
 

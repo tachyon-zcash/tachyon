@@ -2,6 +2,7 @@
 
 use core::{cmp, marker::PhantomData};
 
+use alloc::vec::Vec;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
@@ -40,18 +41,9 @@ impl Descriptor {
 
     /// Write an action descriptor in the consensus wire format.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        serialization::write_ep_affine(&mut writer, &EpAffine::from(self.cv))?;
+        serialization::write_ep_affine(&mut writer, &self.cv.into())?;
         serialization::write_action_vk(&mut writer, &self.rk.0)?;
         Ok(())
-    }
-}
-
-impl From<Descriptor> for [u8; 64] {
-    fn from(desc: Descriptor) -> Self {
-        let mut bytes = [0u8; 64];
-        bytes[..32].copy_from_slice(&EpAffine::from(desc.cv).to_bytes());
-        bytes[32..].copy_from_slice(&<[u8; 32]>::from(desc.rk));
-        bytes
     }
 }
 
@@ -66,7 +58,11 @@ impl Ord for Descriptor {
         EpAffine::from(self.cv)
             .to_bytes()
             .cmp(&EpAffine::from(other.cv).to_bytes())
-            .then(<[u8; 32]>::from(self.rk).cmp(&<[u8; 32]>::from(other.rk)))
+            .then(
+                EpAffine::from(self.rk)
+                    .to_bytes()
+                    .cmp(&EpAffine::from(other.rk).to_bytes()),
+            )
     }
 }
 
@@ -205,7 +201,7 @@ impl Ord for Action {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.descriptor()
             .cmp(&other.descriptor())
-            .then_with(|| <[u8; 64]>::from(self.sig).cmp(&<[u8; 64]>::from(other.sig)))
+            .then_with(|| <[u8; 64]>::from(self.sig.0).cmp(&<[u8; 64]>::from(other.sig.0)))
     }
 }
 
@@ -237,14 +233,23 @@ impl Signature {
     }
 }
 
-impl From<[u8; 64]> for Signature {
-    fn from(bytes: [u8; 64]) -> Self {
-        Self(reddsa::Signature::<reddsa::ActionAuth>::from(bytes))
+impl FromIterator<Descriptor> for Vec<[u8; 64]> {
+    fn from_iter<I: IntoIterator<Item = Descriptor>>(iter: I) -> Self {
+        iter.into_iter()
+            .map(|desc| {
+                let mut desc_bytes = [0u8; 64];
+                desc_bytes[0..32].copy_from_slice(&EpAffine::from(desc.cv).to_bytes());
+                desc_bytes[32..64].copy_from_slice(&EpAffine::from(desc.rk).to_bytes());
+                desc_bytes
+            })
+            .collect()
     }
 }
 
-impl From<Signature> for [u8; 64] {
-    fn from(sig: Signature) -> [u8; 64] {
-        <[u8; 64]>::from(sig.0)
+impl FromIterator<Signature> for Vec<[u8; 64]> {
+    fn from_iter<I: IntoIterator<Item = Signature>>(iter: I) -> Self {
+        iter.into_iter()
+            .map(|sig| <[u8; 64]>::from(sig.0))
+            .collect()
     }
 }

@@ -457,9 +457,9 @@ fn invalid_action_sig_fails_verification() {
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment());
 
-    let mut sig_bytes: [u8; 64] = bundle.actions[0].sig.into();
+    let mut sig_bytes: [u8; 64] = bundle.actions[0].sig.0.into();
     sig_bytes[0] ^= 0xFF;
-    let bad_sig = action::Signature::from(sig_bytes);
+    let bad_sig = action::Signature(sig_bytes.into());
     bundle.actions[0].sig = bad_sig;
 
     let err = bundle.verify_signatures(&sighash).unwrap_err();

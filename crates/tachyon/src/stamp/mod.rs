@@ -369,7 +369,7 @@ impl Plan {
             entries.push((vec![desc], vec![digest], tachygrams, anchor, proof));
         }
 
-        let (descriptors, _digests, mut tachygrams, anchor, proof) = entries
+        let (mut descriptors, _digests, mut tachygrams, anchor, proof) = entries
             .into_iter()
             .map(Ok::<_, ProveError>)
             .reduce(|acc, next| {
@@ -395,13 +395,11 @@ impl Plan {
             })
             .ok_or(ProveError::NoActions)??;
 
-        let mut descriptor_bytes: Vec<[u8; 64]> =
-            descriptors.into_iter().map(<[u8; 64]>::from).collect();
-        descriptor_bytes.sort_unstable();
+        descriptors.sort_unstable();
         tachygrams.sort_unstable();
 
         Ok(ProofStamp {
-            actions: blake2b::action_descriptor_digest(&descriptor_bytes),
+            actions: blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
             tachygrams,
             anchor,
             proof,
@@ -619,11 +617,7 @@ impl ProofStamp {
         .map_err(ProveError::MergeFailed)?;
         tachygrams.sort_unstable();
 
-        let mut covered_actions: Vec<[u8; 64]> = [left_desc, right_desc]
-            .concat()
-            .into_iter()
-            .map(<[u8; 64]>::from)
-            .collect();
+        let mut covered_actions = Vec::<[u8; 64]>::from_iter([left_desc, right_desc].concat());
         covered_actions.sort_unstable();
 
         Ok(Self {
@@ -639,7 +633,7 @@ impl ProofStamp {
     /// check is independent of the order the caller presents them in.
     #[must_use]
     pub fn covers(&self, descs: &[action::Descriptor]) -> bool {
-        let mut desc_bytes: Vec<[u8; 64]> = descs.iter().copied().map(<[u8; 64]>::from).collect();
+        let mut desc_bytes = descs.iter().copied().collect::<Vec<[u8; 64]>>();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes) == self.actions
     }

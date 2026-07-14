@@ -39,21 +39,15 @@ impl ActionVerificationKey {
     }
 }
 
-impl From<ActionVerificationKey> for [u8; 32] {
-    fn from(avk: ActionVerificationKey) -> Self {
-        avk.0.into()
-    }
-}
-
-impl TryFrom<[u8; 32]> for ActionVerificationKey {
+impl TryFrom<EpAffine> for ActionVerificationKey {
     type Error = reddsa::Error;
 
-    fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
+    fn try_from(point: EpAffine) -> Result<Self, Self::Error> {
+        let bytes = point.to_bytes();
         reddsa::VerificationKey::<reddsa::ActionAuth>::try_from(bytes).map(Self)
     }
 }
 
-/// Decompress the verification key to an affine curve point.
 impl From<ActionVerificationKey> for EpAffine {
     fn from(key: ActionVerificationKey) -> Self {
         let bytes: [u8; 32] = key.0.into();

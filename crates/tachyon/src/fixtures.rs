@@ -122,7 +122,9 @@ pub fn build_output_stamp(
     let (tachygrams, stamp_anchor, proof) =
         ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
     let stamp = ProofStamp {
-        actions: blake2b::action_descriptor_digest(&[plan.descriptor().into()]),
+        actions: blake2b::action_descriptor_digest(
+            &iter::once(plan.descriptor()).collect::<Vec<[u8; 64]>>(),
+        ),
         tachygrams,
         anchor: stamp_anchor,
         proof,
