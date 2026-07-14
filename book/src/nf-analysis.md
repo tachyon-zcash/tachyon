@@ -239,7 +239,7 @@ $$
 This family of polynomial is attractive because it only requires $\log d$
 coefficients in description while the expanded expression is **dense** (i.e.,
 monomials of all degrees are present). Heuristically, sparse polynomials are
-usually more vulnerable to distinguishers due to [linearization attack](#lin1).
+usually more vulnerable to distinguishers due to [linearization attack](#lin).
 
 Another attractive profile is its $O(\log d)$ evaluation cost. By keeping two
 running values: `x_pow` and `result`, each steps only requires `x_pow = x_pow^2`
@@ -287,7 +287,7 @@ circuit cost thanks to fewer coefficients to derive and bind to; but the
 resulting $f_k(X)$ also becomes more sparse, thus more vulnerable to a class
 of statistical and algebraic attacks. We discuss one such attack below.
 
-<a id="lin1">**Linearization Attack.**</a>
+<a id="lin">**Linearization Attack.**</a>
 The linearization attack is an algebraic attack that *linearize* a set of
 non-linear equations before applying Gaussian elimination.
 Take a concrete example of $\log d = 4$, $S = \{1, 3\}$, namely
@@ -315,7 +315,12 @@ $$
 
 With all $c_j$ solved, the attacker obtain the full description of
 $g(Y_0,\ldots,Y_6) = f_k(X)$ which can be used to compute any nullifier value
-$\nf_e = f_k(e)$ without recovering the key $k$ per-se. $\blacksquare$
+$\nf_e = f_k(e)$ without recovering the key $k$ per-se.
+
+Let $t$ be the number of unique monomials, $q$ the number of equations. With
+$t\leq q$, the time complexity for linearized Gaussian elimination is
+$O(t^\omega)$ where $\omega$ is the frontier matrix multiplication complexity
+whose state-of-the-art is $\omega \approx 2.371$. $\blacksquare$
 
 The exponential decay in security with only linear benefit in circuit efficiency
 rules out this attempt 2b.
@@ -418,7 +423,7 @@ F_k^{(i)}(x) = P(k_{\underline{i\bmod \kappa}} \oplus c_i \oplus x)
 $$
 
 **Goal.**
-Our goal is to achieve $\lambda=128$-bit security but fewer than the $r=57$
+Our goal is to achieve $\lambda=128$-bit security but fewer than the $r=56$
 rounds as recommended in the original paper.[^rec-rounds]
 This might be possible (and even worth considering at all) because
 our security requirement is *less stringent* than a full PRF or a block cipher.
@@ -427,12 +432,12 @@ We only require a weaker form of IND-CPA security:
 - the input space is the epoch domain rather than the whole field $|E| \ll \F_p$
 - the number of output/ciphertexts the attacker/distinguisher obtains is $< |E|$
 
-[^rec-rounds]: The MiMC paper concludes that $\alpha^r \geq 2^\lambda$ provides
-    sufficient protection against known statistical and algebraic attacks. The
-    original paper uses $\alpha=3$ pervasively, and with (somewhat-arbitrary)
-    $1$ more buffer round, gives the $\lfloor \log_3(2^{128}) \rfloor + 1 = 82$
-    recommendation in Table 1. By the same logic, for $\alpha=5$, the suggested
-    round is $r \geq \lfloor \log_5(2^{128}) \rfloor + 1 = 57$.
+[^rec-rounds]: The MiMC paper concludes that $\alpha^r \geq 2^\lambda$
+    provides sufficient protection against known statistical and algebraic
+    attacks. The original paper uses $\alpha=3$ pervasively; it gives the
+    $\lfloor \log_3(2^{129}) \rfloor = 82$ recommendation in Table 1.
+    By the same logic, for $\alpha=5$, the suggested round is
+    $r \geq \lfloor \log_5(2^{129}) \rfloor = 56$.
 
 <a id="eli">**Elimination Criteria.**</a>
 To prune the design space, we can identify some criteria for quick elimination.
@@ -464,7 +469,7 @@ a highly efficient weakly secure PRF, we must map the input to a random value
 first: $e \mapsto H(e) \in_R \F_p$. This RO invocation is enough to rule out
 this axis as per our [elimination criteria](#eli).
 
-### Axis 2: Larger $\alpha$
+### Axis 2: Larger $\alpha$ {#axis2}
 
 Observing the derivation of the recommended round (see footnote[^rec-rounds])
 $\alpha^r \geq 2^\lambda$: larger the per-round stride, faster it reaches a high
@@ -472,15 +477,14 @@ enough degree to be resilient to algebraic attacks. On the surface, it seems
 sensible to increase the $\alpha$ to reduce rounds.
 
 There are at least two issues with this intuition.
-One, with larger $\alpha$ and smaller $r$, the resulting polynomial is becoming
-dangerously sparse, lending itself to [linearization attack](#lin), [interpolation
-attack](#interpolate), and [Gröbner attack](#grobner) simultaneously.
-Two, larger $\alpha$ means a higher per-round exponentiation cost, resulting in
-no reduction in overall number of multiplication constraints. Section 5.3 of MiMC
-paper analyzes this specifically; it concludes that in
-a constraint system where squaring is as expensive as a multiplication, changing
-$\alpha$ does NOT reduce the constraint count or offer any benefit.[^alpha]
-For these reasons, we rule out this axis.
+One, fewer rounds (i.e. smaller $r$) is more vulnerable to the [Gröbner
+attack](#grobner) as we explain in greater detail in the [next axis](#axis3).
+Two, and most importantly, larger $\alpha$ means a higher per-round
+exponentiation cost, resulting in no reduction in overall number of
+multiplication constraints. Section 5.3 of MiMC paper analyzes this specifically;
+it concludes that in a constraint system where squaring is as expensive as a
+multiplication, changing $\alpha$ does NOT reduce the constraint count or offer
+any benefit.[^alpha] For these reasons, we rule out this axis.
 
 [^alpha]: Quoting Section 5.3 of [MiMC](https://ia.cr/2016/492):
 
@@ -493,9 +497,164 @@ For these reasons, we rule out this axis.
     from $3$ does not offer any advantage due to the fact that the number $m+s$
     is almost constant."
 
-### Axis 3: Same Key, Fewer Rounds
+### Axis 3: Single Key, Fewer Rounds {#axis3}
+
+Before analyzing the lower limit on the number of bounds required, we need to
+introduce another two primary algebraic attacks.
 
 #### Interpolation Attack {#interpolate}
+
+Interpolation attacks allow reconstruction of $f_k(X)$ from *enough*
+$\{(x_i, f_k(x_i))\}$ pairs using polynomial interpolation without key recovery.
+Obviously, with $\geq d+1$ pairs, we can run Lagrange interpolation in $O(d^2)$
+time. Since our input domain $E$ is not a FFT domain, we cannot achieve
+$O(d\log d)$ complexity. However, in our setting, the maximum number of pairs
+exposed to the attacker is $|E|\ll d+1$, thus classic interpolations don't apply.
+
+Meanwhile, interpolation for sparse polynomials is still relevant.
+In parameter regimes of aggressively fewer rounds $r$, $f_k(X)$ *may* become
+sparse. The expected number of unique monomials scales with $\alpha^r$.
+In the extreme case, consider $r=2$, the resulting $f_k(X) = 
+((X+k)^\alpha + k + c_1)^\alpha$ has $\alpha^2 + 1$ distinct monomials. Here,
+$f(X)$ is only dense if we simultaneously scale up $\alpha$ to keep
+$\alpha^r \approx 2^\lambda$ to compensate (as we did [previously](#axis2)).
+
+If we only reduce $r$ while keeping other parameters unchanged, the $f(X)$ would
+be sparse and subject to [Ben-Or-Tiwari's](https://dl.acm.org/doi/10.1145/62212.62241)
+interpolation. Given a sparse polynomial of $t$ monomials, $2t$ evaluations,
+the interpolation cost is $O(t^2)$ or $O(\alpha^{2r})$ field ops in the
+general case. Again, attackers cannot use FFT due to domain restriction on the
+revealed evaluations (namely the epoch domain $E$ is not a FFT domain).
+
+An inconsequential note: technically, for sparse polynomial of $t$ terms, and
+only $t+1$ evaluations, we can apply the [linearization attack](#lin) on the
+fully determined system of equations. However, even though attackers know the
+exact $f_k(X)$ expression, the fully expanded form with $t = \alpha^r$
+coefficients *per-equation* implies at least $O(t^2)$ total memory.
+In contrast, the preceding BOT interpolation algorithm is oblivious to the exact
+non-zero positions/monomials and requires $O(t)$ working memory.
+Moreover, the time complexity of linearization attack is $O(t^{\omega\approx
+2.371})$ which is worse than interpolation. $\blacksquare$
+
+#### Gröbner Basis Attack {#grobner}
+
+Gröbner basis attack translates $f_k(X)$ into a multivariate system and uses
+Gröbner basis reduction and univariate roots finding to solve the system of
+equations. We present a greybox understanding of the algebraic procedure with
+a focus on complexity of each sub-step. Our presentation here is heavily based on
+[Zellic's blog](https://www.zellic.io/blog/algebraic-attacks-on-zk-hash-functions/#gr%C3%B6bner-basis-attack)
+and the [SoK on Gröbner algorithm](https://eprint.iacr.org/2021/870.pdf).
+
+Define intermediate outputs of s-box as $I_1, I_2, I_3$ for a $4$-round MiMC.
+Given an evaluation pair $(x, y)$, we can convert the (high-degree) univariate
+$f_k(X)$ into a system of *lower-degree* multivariate equations about variables
+$K, I_1, I_2, I_3$. Solving the system, especially for variable $K$, constitutes
+a successful key recovering.
+Observe that there's no singular way to map to a multivariate system. We can
+define fewer intermediate indeterminates at the cost of higher per-equation
+degree as we shown on the right.
+
+$$
+\begin{cases}
+(x + K)^5 - I_1 &= 0 \\
+(I_1 + K + c_1)^5 - I_2 &= 0 \\
+(I_2 + K + c_2)^5 - I_3 &= 0 \\
+(I_3 + K + c_3)^5 - K - y &= 0
+\end{cases}
+\quad\text{or}\quad
+\begin{cases}
+\left((x + K)^5 + K + c_1 \right)^5 - I_1 &= 0 \\
+\left((I_1 + K + c_2)^5 + K + c_3 \right)^5 - K - y &= 0 \\
+\end{cases}
+$$
+
+<P align="center">
+  <img src="./assets/grobner.svg" alt="grobner" />
+</p>
+
+Solving the multivariate system takes 3 steps:
+
+1. Compute the Gröbner Bases in *devrevlex* order
+2. Term order change to get *lex* order bases, as a result, one of the bases is
+   a univariate equation
+3. Apply roots-finding algorithm on the univariate polynomial, substitute the
+   solution into the reduced system and repeat roots-finding for the next
+   indeterminate.
+
+We avoid formally define Gröbner basis and their properties, and only offer a
+high-level intuition for these step via a concrete example below. Starting with
+a system of multivariate equations $f_0, f_1, f_2$ about three variables $X, Y, Z$.
+Within the reduction process, we iteratively find another multivariate system
+that has the same solutions by calculating $f' = \sum_{i=0}^2 m_i\cdot f_i$
+where $m_i$ are monomials. It's obvious that the solution of original system is
+also the solution of $f'$. By the end of the process, the reduced Gröbner bases
+*share the same solution* while being properly sorted such that the last one is
+a univariate equation. Then we run univariate roots-finding algorithms to solve
+the univariate basis and plug its solution (for $Z$) back into
+preceding equations ($g_1$) and repeat the roots-finding.
+
+$$
+\begin{cases}
+f_0: X - Y = 0 \\
+f_1: XYZ = 0 \\
+f_2: X^2 + Y^2 + Z^2 - 1 = 0
+\end{cases}
+\overset{\text{Gröbner Reduce}}{\Longrightarrow}
+\begin{cases}
+g_0 = X - Y \\
+g_1 = Y^2 - 0.5Z^2 - 0.5 \\
+g_2 = Z^3 - Z \quad\text{(univariate basis)}
+\end{cases}
+$$
+
+**Cost.** Denote $n_v$ the number of variables, $s$ the number of equations,
+$d_i$ the degree of each equation, reminded that $d$ is the total degree of
+$f_k(X)$ thus also the product of $d_i$.
+
+- Step 1: Estimated $O({n_v + d_{reg} \choose n_v}^\omega)$ where $d_{reg}$ is
+  the degree of regularity or the highest total degree of polynomial appearing
+  during the basis reduction. A tight upper bound is
+  $d_{reg}\leq \sum_{i=0}^{s-1} d_i$. And $\omega \approx 2.371$.
+- Step 2: The popular FGLM algorithm takes $O(n_v D^3)$ where $D$ is the volume
+  of the basis staircase and bounded by $D \leq \prod_{i=0}^{s-1} d_i = O(d)$.
+- Step 3: State-of-the-art univariate roots-finding from
+  [[Kedlaya-Umans]](https://dl.acm.org/doi/10.1109/FOCS.2008.13)
+  takes $O(D^{1.5} + D\log q)$ where $D$ is also the degree of univariate basis.
+  
+We consider the case of $n_v = r$, corresponding to the
+one-intermediate-variable-per-round choice. The cost in step 2 dominates that of
+step 3. Conveniently, the MiMC-specific multivariate system *already is* a
+Gröbner basis in the devrevlex order (see Section 4 of the
+[SoK paper](https://eprint.iacr.org/2021/870.pdf)), thus step 1 is skipped.
+Thus, the simplified overall cost is $O(r\cdot d^3) = O(r\cdot \alpha^{3r})$.
+
+This attack looks ridiculously expensive, more so than all other algebraic
+attacks, so why do we even care to mention it? Because we only have the upper
+bound, but no lower bound on the term-order change step. In practice, there
+might be significantly cheaper-than-FGLM approach that brings down the attacker
+cost, as demonstrated in [FreeLunch (Crypto24)](https://eprint.iacr.org/2024/347)
+against an AOC used in Griffin, Anemoi, and ArionHash designs.
+In the absence of proven lower bound, the conservative assumption is that
+AOC attackers manage to get Gröbner reduced basis almost for free (i.e. skipping
+step 1 and 2), leaving $O(d^{1.5} + d\log q)$ as a practical lower bound.
+$\blacksquare$
+
+We enumerate all attacks the and explore an aggressively fewer rounds right at
+the security boundary. We take $\omega$'s lower bound $\omega\geq 1$, the round
+exponent $\alpha = 5$, and $256$-bit prime field size.
+
+- [GCD attack](#gcd) requires $d \geq 2^{118}$, which implies
+  $r \geq \lfloor\log_5(2^{118})\rfloor = 51$.
+- [interpolation attack](#interpolate) requires $O(t^2)$ where $t$ is the unique
+  number of monomials in the expanded $f_k(X)$ which scales with $\alpha^r$.
+  This implies $r \geq \lfloor 0.5\cdot\log_5(2^{128}) \rfloor = 28$.
+- [Linearization attack](#lin) requires $O(t^\omega)$ which implies
+  $r \geq \lfloor \omega^{-1}\cdot\log_5(2^{128}) \rfloor \approx 28$.
+- [Gröbner basis attack](#grobner) requires $O(d^{1.5} + d\log q)$ which implies
+  $r \geq \lfloor \frac{128 \ln 2}{1.5 \ln 5} \rfloor = 37$.
+
+In sum, our non-exhaustive list of algebraic attacks suggest a **minimum number
+of rounds $r_{\mathsf{min}} = 51$ to maintain a $128$-bit security level**.
 
 ### Axis 4: Higher Key Dimension $\kappa$
 
@@ -517,6 +676,10 @@ remains the possibility that a high fixed-cost key expansion accompanied by low
 variable-cost nullifier computation enables deriving multiple $\nf_e$ in a
 single PCD step.
 
-#### Gröbner Basis Attack {#grobner}
+Unfortunately, we need to revisit all four algebraic attacks and their cost
+analysis for a $\kappa>1$ key because the $f_k(X)$ expression changes.
 
-Gröbner basis attack is an algorithm to solve a system of multivariate equation.
+- [GCD attack](#gcd):
+- [interpolation attack](#interpolate):
+- [Linearization attack](#lin):
+- [Gröbner basis attack](#grobner):
