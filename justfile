@@ -11,6 +11,11 @@ lint:
 test *ARGS:
     cargo test --workspace --all-features {{ARGS}}
 
+# fuzz a wire-format parser target (requires nightly + cargo-fuzz)
+# targets: bundle_read | stamped_bundle_read | stripped_bundle_read
+fuzz TARGET *ARGS:
+    cargo +nightly fuzz run {{TARGET}} --fuzz-dir crates/tachyon/fuzz {{ARGS}}
+
 doc:
     cargo doc --workspace --no-deps
 
