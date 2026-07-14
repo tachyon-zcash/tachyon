@@ -1,3 +1,4 @@
+//! Tachyon Blake2b digests.
 //!
 //! Each named function provides one protocol-defined hash.
 
@@ -46,7 +47,7 @@ const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
 /// Spend-side $\alpha$ pre-image.
 ///
 /// $$
-///   \text{BLAKE2b-512}( \text{"Tachyon-Spend"},\;
+///   \text{BLAKE2b-512}_\texttt{Tachyon-Spend}(
 ///     \theta \| cm
 ///   )
 /// $$
@@ -62,7 +63,7 @@ pub(crate) fn alpha_spend(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
 /// Output-side $\alpha$ pre-image.
 ///
 /// $$
-///   \text{BLAKE2b-512}( \text{"Tachyon-Output"},\;
+///   \text{BLAKE2b-512}_\texttt{Tachyon-Output}(
 ///     \theta \| cm
 ///   )
 /// $$
@@ -81,8 +82,8 @@ const PRF_EXPAND_DOMAIN_NK: u8 = 0x22;
 /// PRF-expand to derive `ask` from a spending key. Performs no normalization.
 ///
 /// $$
-///   \text{BLAKE2b-512}( \text{"Zcash\_ExpandSeed"},
-///     sk \| \texttt{ASK_DOMAIN_BYTE}
+///   \text{BLAKE2b-512}_\texttt{Zcash\_ExpandSeed}(
+///     sk \| \text{ASK_DOMAIN_BYTE}
 ///   )
 /// $$
 ///
@@ -99,8 +100,8 @@ pub(crate) fn prf_expand_ask(sk: &[u8; 32]) -> [u8; 64] {
 /// PRF-expand to derive `nk` from a spending key. Performs no normalization.
 ///
 /// $$
-///   \text{BLAKE2b-512}( \text{"Zcash\_ExpandSeed"},
-///     sk \| \texttt{NK_DOMAIN_BYTE}
+///   \text{BLAKE2b-512}_\texttt{Zcash\_ExpandSeed}(
+///     sk \| \text{NK_DOMAIN_BYTE}
 ///   )
 /// $$
 ///
@@ -120,7 +121,7 @@ const ACTION_DESCRIPTOR_PERSONALIZATION: &[u8; 15] = b"Tachyon-Actions";
 /// that order.
 ///
 /// $$
-///   \text{BLAKE2b-256}( \text{"Tachyon-Actions"},\;
+///   \text{BLAKE2b-256}_\texttt{Tachyon-Actions}(
 ///     \mathsf{cv}_i \| \mathsf{rk}_i
 ///   )
 /// $$
@@ -142,6 +143,12 @@ const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 
 /// A bundle's contribution to the transaction sighash.
 ///
+/// $$
+///   \text{BLAKE2b-256}_\texttt{ZTxIdTachyonHash}(
+///     \mathsf{hActionsTachyon} \| \mathsf{vBalanceTachyon}
+///   )
+/// $$
+///
 /// Hashes the bundle's effecting data: the [`action_descriptor_digest`] of its
 /// own actions and the value balance. The stamp is excluded because it is
 /// stripped during aggregation.
@@ -159,7 +166,7 @@ const STAMP_PROOF_PERSONALIZATION: &[u8; 13] = b"Tachyon-Proof";
 /// Digest of a stamp's proof.
 ///
 /// $$
-///   \text{BLAKE2b-256}( \text{"Tachyon-Proof"},\;
+///   \text{BLAKE2b-256}_\texttt{Tachyon-Proof}(
 ///     \mathsf{proofTachyon}
 ///   )
 /// $$
@@ -175,8 +182,10 @@ pub(crate) fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
 /// order.
 ///
 /// $$
-///   \text{BLAKE2b-256}( \text{"Tachyon-Stamp"},\;
-///     \mathsf{stamp\_proof\_digest} \| \mathsf{anchor} \| \mathsf{vTachygrams}
+///   \text{BLAKE2b-256}_\texttt{Tachyon-Stamp}(
+///     \mathsf{hStampDataTachyon} \|
+///     \mathsf{stampAnchorTachyon} \|
+///     \mathsf{vTachygrams}
 ///   )
 /// $$
 pub(crate) fn stamp_data_digest(
@@ -198,21 +207,18 @@ pub(crate) fn stamp_data_digest(
 /// A bundle's contribution to the transaction auth_digest.
 ///
 /// $$
-///   \text{BLAKE2b-256}( \text{"ZTxAuthTachyHash"},\;
+///   \text{BLAKE2b-256}_\texttt{ZTxAuthTachyHash}(
 ///     \mathsf{tachyonBundleState} \| \mathsf{vActionSigs} \|
-///     \mathsf{bindingSig} \| \mathsf{stamp}
+///     \mathsf{bindingSigTachyon} \| \mathsf{tachyonStampState}
 ///   )
 /// $$
 ///
-/// The action set enters this digest only through `stamp`, whose proof-stamp
-/// form concatenates the covered actions' descriptor digest with
-/// [`stamp_data_digest`]. The bundle's own action descriptors are committed on
-/// the txid side by [`bundle_commitment`], not here.
+/// $\mathsf{tachyonBundleState}$ is one byte indicating format of $\mathsf{tachyonStampState}$
 ///
-/// `state_header` is `tachyonBundleState` 0x01 or 0x02, indicating the content
-/// of the stamp contribution which is either:
-/// - 0x01: proof stamp, digests `hStampActionsTachyon || stamp_data_digest`
-/// - 0x02: pointer stamp, aggregate's wtxid `txid || auth_digest`
+/// | $\mathsf{tachyonBundleState}$ | Impl | $\mathsf{tachyonStampState}$ |
+/// | ----------------------------- | ---- | ---------------------------- |
+/// | `0x01` | [`ProofStamp`](`crate::stamp::ProofStamp`) | $ \mathsf{hStampActionsTachyon} \| \mathsf{hStampDataTachyon} $ |
+/// | `0x02` | [`PointerStamp`](`crate::stamp::PointerStamp`) | aggregate's `wtxid` |
 pub(crate) fn bundle_auth_digest(
     state_header: u8,
     action_sigs: &[[u8; 64]],
@@ -233,6 +239,10 @@ pub(crate) fn bundle_auth_digest(
 lazy_static! {
     /// A non-Tachyon transaction's contribution to the transaction sighash.
     ///
+    /// $$
+    ///   \text{BLAKE2b-256}_\texttt{ZTxIdTachyonHash}()
+    /// $$
+    ///
     /// **This is NOT the same as a stripped bundle.**
     ///
     /// **This is NOT the same as a bundle with no actions and zero balance.**
@@ -241,6 +251,10 @@ lazy_static! {
     };
 
     /// A non-Tachyon transaction's contribution to the transaction auth_digest.
+    ///
+    /// $$
+    ///   \text{BLAKE2b-256}_\texttt{ZTxAuthTachyHash}()
+    /// $$
     ///
     /// **This is NOT the same as a bundle with no actions and zero balance.**
     pub static ref AUTH_DIGEST_NO_BUNDLE: [u8; 32] = {
