@@ -639,6 +639,8 @@ AOC attackers manage to get Gröbner reduced basis almost for free (i.e. skippin
 step 1 and 2), leaving $O(d^{1.5} + d\log q)$ as a practical lower bound.
 $\blacksquare$
 
+<a id="axis3-bound"></a>
+
 We enumerate all attacks the and explore an aggressively fewer rounds right at
 the security boundary. We take $\omega$'s lower bound $\omega\geq 1$, the round
 exponent $\alpha = 5$, and $256$-bit prime field size.
@@ -656,7 +658,7 @@ exponent $\alpha = 5$, and $256$-bit prime field size.
 In sum, our non-exhaustive list of algebraic attacks suggest a **minimum number
 of rounds $r_{\mathsf{min}} = 51$ to maintain a $128$-bit security level**.
 
-### Axis 4: Higher Key Dimension $\kappa$
+### Axis 4: Higher Key Dimension $\kappa$ {#axis4}
 
 As seen in the MiMC recap, we can use a rotating key in the round function given
 a higher-dimension key $k\in\F_p^\kappa$ with $\kappa > 1$. The question is
@@ -679,7 +681,22 @@ single PCD step.
 Unfortunately, we need to revisit all four algebraic attacks and their cost
 analysis for a $\kappa>1$ key because the $f_k(X)$ expression changes.
 
-- [GCD attack](#gcd):
-- [interpolation attack](#interpolate):
-- [Linearization attack](#lin):
-- [Gröbner basis attack](#grobner):
+- [GCD attack](#gcd): no longer applies because $f_k(X)$ becomes a multivariate
+  $g(K_1, K_2, \ldots, K_\kappa, X)$ polynomial beyond the bivariate. The common
+  factor $\prod_{i=1}^\kappa (K_i - k_i)$ doesn't leak any of $k_i$.
+- [interpolation attack](#interpolate): since all keys are treated as realized
+  constants, the polynomial degree and density w.r.t. $X$ is unaffected.
+  Unchanged from the [previous analysis](#axis3-bound) $r \geq 28$.
+- [Linearization attack](#lin): Similar to interpolation attack, linearized
+  variables are all $X$-monomials where $k$ are computed in their coefficients.
+  Unchanged from [before](#axis3-bound) $r \geq 28$.
+- [Gröbner basis attack](#grobner): thanks to the conservative security buffer
+  that drops the first two steps of Gröbner attack whose asymptotic scales in
+  very complicated expression in $\kappa$. The practical lower bound (on
+  attacker cost) we use only involves $d, \log q$. Therefore, the bound
+  remains unchanged from [before](#axis3-bound) $r \geq 37$.
+
+In sum, due to the further absence of GCD attack, the **minimum number of rounds
+is further reduced to $r_{\mathsf{min}} = 37$ with $\kappa$-dimensional key**
+with $1 < \kappa < \mathsf{Rate}=4$ (for a free key expansion) to maintain a
+$128$-bit security MiMC function.
