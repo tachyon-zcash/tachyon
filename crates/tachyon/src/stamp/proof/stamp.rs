@@ -148,7 +148,7 @@ impl Step for SpendStamp {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (nf_next,): Self::Witness<'source>,
-        (cm, desc, present_nf, anchor): <Self::Left as Header>::Data,
+        (cm, act, present_nf, anchor): <Self::Left as Header>::Data,
         (nf_cm, (nf_epoch_start, nf_start), _nf_seq_commit, (nf_epoch_end, nf_end)): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(clippy::expect_used, reason = "constant size")]
@@ -187,7 +187,7 @@ impl Step for SpendStamp {
             "SpendStamp: next-epoch nullifier is zero",
         )?;
 
-        let action_digest = desc.digest().map_err(|_err| {
+        let action_digest = act.digest().map_err(|_err| {
             ragu::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
         })?;
 
