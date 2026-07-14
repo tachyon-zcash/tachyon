@@ -28,15 +28,15 @@ use crate::{
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EPOCH_SIZE,
+    digest::blake2b,
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        ActionDigest, Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit,
-        TachygramSetPoly, effect,
+        Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
     },
     stamp::{
-        Stamp,
+        PointerStamp, ProofStamp,
         proof::{PROOF_SYSTEM, delegation, pool, spendable},
     },
     value, witness,
@@ -55,11 +55,20 @@ pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     out
 }
 
-pub fn action_digests(actions: &[Action]) -> Vec<ActionDigest> {
-    actions
-        .iter()
-        .map(|action| action.digest().expect("valid action"))
-        .collect()
+/// A stand-in for the covering aggregate's `wtxid = txid || auth_digest`:
+/// a mock txid over the bundle commitment, beside the real `auth_digest`.
+pub fn mock_wtxid(bundle: &Bundle<ProofStamp>) -> PointerStamp {
+    let txid = blake2b_simd::Params::new()
+        .hash_length(32)
+        .personal(b"pretend txid")
+        .to_state()
+        .update(&bundle.commitment())
+        .finalize();
+
+    let mut wtxid = [0u8; 64];
+    wtxid[..32].copy_from_slice(txid.as_bytes());
+    wtxid[32..].copy_from_slice(&bundle.auth_digest());
+    PointerStamp::try_from(wtxid).expect("nonzero wtxid")
 }
 
 pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {
@@ -70,7 +79,7 @@ pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {
     let bundle_plan = bundle::Plan::new(alloc::vec![], alloc::vec![plan]);
     let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
     let unproven = bundle_plan
-        .sign(&sighash, &ask, rng)
+        .sign(rng, &sighash, &ask)
         .expect("sign foreign output");
     unproven.actions[0]
 }
@@ -108,9 +117,18 @@ pub fn build_output_stamp(
     rng: &mut (impl RngCore + CryptoRng),
     anchor: Anchor,
     note: Note,
-) -> (Stamp, action::Plan<effect::Output>) {
+) -> (ProofStamp, action::Plan<effect::Output>) {
     let (rcv, alpha, plan) = build_output_plan(rng, note);
-    let stamp = Stamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
+    let (tachygrams, stamp_anchor, proof) =
+        ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
+    let stamp = ProofStamp {
+        actions: blake2b::action_descriptor_digest(
+            &iter::once(plan.descriptor()).collect::<Vec<[u8; 64]>>(),
+        ),
+        tachygrams,
+        anchor: stamp_anchor,
+        proof,
+    };
     (stamp, plan)
 }
 
@@ -119,7 +137,7 @@ pub fn build_autonome(
     wallet: &WalletSim,
     spend_value: u64,
     output_value: u64,
-) -> Bundle<Stamp> {
+) -> Bundle<ProofStamp> {
     let spend_note = wallet.random_note(spend_value);
     let output_note = wallet.random_note(output_value);
     let mut pool = PoolSim::genesis(rng);
@@ -992,24 +1010,20 @@ impl WalletSim {
         anchor: Anchor,
         spends: Vec<(Note, Pcd<spendable::SpendableHeader>, EpochIndex)>,
         output_notes: Vec<Note>,
-    ) -> Bundle<Stamp> {
+    ) -> Bundle<ProofStamp> {
         let ask = self.sk.derive_auth_private();
 
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
         for (note, spendable_pcd, spend_epoch) in spends {
             let range_pcd = self.derived_range(rng, &note, spend_epoch, 2);
-            let pair = [
-                self.nf_at(&note, spend_epoch),
-                self.nf_at(&note, spend_epoch.next()),
-            ];
             let rcv = value::Trapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((range_pcd, pair, spendable_pcd));
+            spend_pcds.push((range_pcd, spendable_pcd));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
@@ -1024,7 +1038,7 @@ impl WalletSim {
         let bundle_plan = bundle::Plan::new(spend_plans, output_plans);
         let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
         let unproven = bundle_plan
-            .sign(&sighash, &ask, rng)
+            .sign(rng, &sighash, &ask)
             .expect("sign autonome");
 
         let stamp_plan = bundle_plan.stamp_plan(anchor);

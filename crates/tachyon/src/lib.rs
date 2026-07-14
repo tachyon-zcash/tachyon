@@ -1,38 +1,6 @@
 //! # tachyon
 //!
 //! The Tachyon shielded transaction protocol.
-//!
-//! Tachyon is a scaling solution for Zcash that enables:
-//! - **Proof Aggregation**: Multiple Halo proofs aggregated into a single Ragu
-//!   proof per block
-//! - **Delegated Synchronization**: Wallets can outsource sync to untrusted
-//!   services
-//! - **Polynomial Accumulators**: Unified tracking of commitments and
-//!   nullifiers via tachygrams
-//!
-//! ## Bundle States
-//!
-//! [`Bundle<S>`](Bundle) is parameterized by stamp state `S: StampState`:
-//!
-//! - `Bundle<Unproven>` — actions signed but no proof yet
-//! - `Bundle<Stamp>` — aggregate or self-contained, carries a [`Stamp`]
-//! - `Bundle<Stripped>` — stamp stripped, covering wtxid not yet assigned
-//! - `Bundle<AggregateId>` — stamp stripped, carries the covering
-//!   [`AggregateId`]
-//! - [`TachyonBundle`] — enum of stamped-or-stripped for mixed contexts
-//!
-//! ## Block Structure
-//!
-//! A block may contain stamped and stripped bundles. A stamped bundle's stamp
-//! covers its own actions and those of associated stripped bundles.
-//!
-//! TODO: Block layout is not yet finalized, but provisionally: all adjuncts
-//! should immediately follow the aggregate.
-//!
-//! ## Nomenclature
-//!
-//! All types in the `tachyon` crate, unless otherwise specified, are
-//! Tachyon-specific types.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -66,4 +34,4 @@ pub use action::{Action, Plan as ActionPlan};
 pub use bundle::{Bundle, Plan as BundlePlan, TachyonBundle};
 pub use note::Note;
 pub use primitives::*;
-pub use stamp::{AggregateId, Stamp, Stripped, Unproven};
+pub use stamp::{PointerStamp, ProofStamp, Unproven};

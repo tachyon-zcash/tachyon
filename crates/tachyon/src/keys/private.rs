@@ -227,26 +227,10 @@ impl ActionSigningKey<effect::Output> {
     }
 }
 
-/// BindingAuth signing key $\mathsf{bsk}$ — the scalar sum of all value
-/// commitment trapdoors in a bundle.
+/// A [`reddsa::BindingAuth`] signing key $\mathsf{bsk}$, the scalar sum of each
+/// action's [`value::Trapdoor`] $\mathsf{rcv}_i$ used in the bundle.
 ///
-/// $$\mathsf{bsk} := \boxplus_i \mathsf{rcv}_i$$
-///
-/// (sum in $\mathbb{F}_q$, the Pallas scalar field)
-///
-/// The binding signature proves knowledge of $\mathsf{bsk}$, which is
-/// an opening of the Pedersen commitment $\mathsf{bvk}$ to value 0.
-/// By the **binding property** of the commitment scheme, it is
-/// infeasible to find another opening to a different value — so value
-/// balance is enforced.
-///
-/// ## Sighash
-///
-/// Both action signatures and the binding signature sign the same
-/// transaction-level sighash. The sighash incorporates the bundle
-/// commitment (and commitments from other pools). The stamp is
-/// excluded from the bundle commitment because it is stripped during
-/// aggregation.
+/// $$ \mathsf{bsk} := \boxplus_i \mathsf{rcv}_i $$
 #[derive(Clone, Copy, Debug)]
 pub struct BindingSigningKey(#[debug(skip)] reddsa::SigningKey<reddsa::BindingAuth>);
 

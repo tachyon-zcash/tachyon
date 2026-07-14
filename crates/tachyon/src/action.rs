@@ -1,16 +1,70 @@
 //! Tachyon Action descriptions.
 
-use core::marker::PhantomData;
+use alloc::vec::Vec;
+use core::{cmp, marker::PhantomData};
 
+use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
+use pasta_curves::{EpAffine, group::GroupEncoding as _};
 
 use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{private, public},
     note::Note,
     primitives::{ActionDigest, ActionDigestError, Effect, effect},
-    reddsa, value,
+    reddsa, serialization, value,
 };
+
+/// The simple fields of an action, without the signature.
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct Descriptor {
+    /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
+    /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
+    pub cv: value::Commitment,
+
+    /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
+    pub rk: public::ActionVerificationKey,
+}
+
+impl Descriptor {
+    /// Derive the action digest.
+    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
+        ActionDigest::new(self.cv, self.rk)
+    }
+
+    /// Read an action descriptor from the consensus wire format.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let cv = value::Commitment::from(serialization::read_ep_affine(&mut reader)?);
+        let rk = public::ActionVerificationKey(serialization::read_action_vk(&mut reader)?);
+        Ok(Self { cv, rk })
+    }
+
+    /// Write an action descriptor in the consensus wire format.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        serialization::write_ep_affine(&mut writer, &self.cv.into())?;
+        serialization::write_action_vk(&mut writer, &self.rk.0)?;
+        Ok(())
+    }
+}
+
+impl PartialOrd for Descriptor {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Descriptor {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        EpAffine::from(self.cv)
+            .to_bytes()
+            .cmp(&EpAffine::from(other.cv).to_bytes())
+            .then(
+                EpAffine::from(self.rk)
+                    .to_bytes()
+                    .cmp(&EpAffine::from(other.rk).to_bytes()),
+            )
+    }
+}
 
 /// A planned Tachyon action, not yet authorized.
 #[derive(Clone, Copy, Debug)]
@@ -84,6 +138,15 @@ impl<E: Effect> Plan<E> {
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
         ActionDigest::new(self.cv(), self.rk)
     }
+
+    /// Obtain a descriptor for this planned action.
+    #[must_use]
+    pub fn descriptor(&self) -> Descriptor {
+        Descriptor {
+            cv: self.cv(),
+            rk: self.rk,
+        }
+    }
 }
 
 /// An authorized Tachyon action.
@@ -106,9 +169,48 @@ pub struct Action {
 }
 
 impl Action {
+    /// Construct an action from a descriptor and signature.
+    #[must_use]
+    pub const fn from_parts(desc: Descriptor, sig: Signature) -> Self {
+        Self {
+            cv: desc.cv,
+            rk: desc.rk,
+            sig,
+        }
+    }
+
     /// Derive the action digest.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
         ActionDigest::new(self.cv, self.rk)
+    }
+
+    /// Obtain a descriptor for this action.
+    #[must_use]
+    pub fn descriptor(&self) -> Descriptor {
+        Descriptor::from(*self)
+    }
+}
+
+impl PartialOrd for Action {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Action {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.descriptor()
+            .cmp(&other.descriptor())
+            .then_with(|| <[u8; 64]>::from(self.sig.0).cmp(&<[u8; 64]>::from(other.sig.0)))
+    }
+}
+
+impl From<Action> for Descriptor {
+    fn from(action: Action) -> Self {
+        Self {
+            cv: action.cv,
+            rk: action.rk,
+        }
     }
 }
 
@@ -117,14 +219,37 @@ impl Action {
 #[display("Signature({:?})", self.0)]
 pub struct Signature(pub(crate) reddsa::Signature<reddsa::ActionAuth>);
 
-impl From<[u8; 64]> for Signature {
-    fn from(bytes: [u8; 64]) -> Self {
-        Self(reddsa::Signature::<reddsa::ActionAuth>::from(bytes))
+impl Signature {
+    /// Read an action signature from the consensus wire format.
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let sig = serialization::read_action_sig(&mut reader)?;
+        Ok(Self(sig))
+    }
+
+    /// Write an action signature in the consensus wire format.
+    pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        serialization::write_action_sig(&mut writer, &self.0)?;
+        Ok(())
     }
 }
 
-impl From<Signature> for [u8; 64] {
-    fn from(sig: Signature) -> [u8; 64] {
-        <[u8; 64]>::from(sig.0)
+impl FromIterator<Descriptor> for Vec<[u8; 64]> {
+    fn from_iter<I: IntoIterator<Item = Descriptor>>(iter: I) -> Self {
+        iter.into_iter()
+            .map(|desc| {
+                let mut desc_bytes = [0u8; 64];
+                desc_bytes[0..32].copy_from_slice(&EpAffine::from(desc.cv).to_bytes());
+                desc_bytes[32..64].copy_from_slice(&EpAffine::from(desc.rk).to_bytes());
+                desc_bytes
+            })
+            .collect()
+    }
+}
+
+impl FromIterator<Signature> for Vec<[u8; 64]> {
+    fn from_iter<I: IntoIterator<Item = Signature>>(iter: I) -> Self {
+        iter.into_iter()
+            .map(|sig| <[u8; 64]>::from(sig.0))
+            .collect()
     }
 }

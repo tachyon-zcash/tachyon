@@ -46,10 +46,10 @@ fn merge_stamp_iff_matching_anchors() {
         let note_b = user_b.random_note(300);
         let (stamp_b, plan_b) = build_output_stamp(rng, anchor_b, note_b);
 
-        let result = Stamp::prove_merge(
+        let result = ProofStamp::merge(
             rng,
-            (stamp_a, &[plan_a.digest().expect("valid plan")]),
-            (stamp_b, &[plan_b.digest().expect("valid plan")]),
+            (stamp_a, vec![plan_a.descriptor()]),
+            (stamp_b, vec![plan_b.descriptor()]),
         );
         assert_eq!(
             result.is_ok(),
@@ -79,15 +79,7 @@ fn plan_prove_rejects_invalid_inputs() {
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
     let range_a = user.derived_range(rng, &note_a, spend_epoch, 2);
-    let pair_a = [
-        user.nf_at(&note_a, spend_epoch),
-        user.nf_at(&note_a, spend_epoch.next()),
-    ];
     let range_b = user.derived_range(rng, &note_b, spend_epoch, 2);
-    let pair_b = [
-        user.nf_at(&note_b, spend_epoch),
-        user.nf_at(&note_b, spend_epoch.next()),
-    ];
 
     let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
@@ -101,8 +93,8 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let two_spends = || {
         alloc::vec![
-            ((plan_a.cv(), plan_a.rk), (alpha_a, note_a, rcv_a)),
-            ((plan_b.cv(), plan_b.rk), (alpha_b, note_b, rcv_b)),
+            (plan_a.descriptor(), alpha_a, note_a, rcv_a),
+            (plan_b.descriptor(), alpha_b, note_b, rcv_b),
         ]
     };
 
@@ -113,8 +105,8 @@ fn plan_prove_rejects_invalid_inputs() {
         assert!(matches!(err, ProveError::NoActions), "expected NoActions");
     }
 
-    let bundle_a = || (range_a.clone(), pair_a, sp_a.clone());
-    let bundle_b = || (range_b.clone(), pair_b, sp_b.clone());
+    let bundle_a = || (range_a.clone(), sp_a.clone());
+    let bundle_b = || (range_b.clone(), sp_b.clone());
 
     // Too few PCDs: 2 spends, 1 PCD.
     {
@@ -154,27 +146,10 @@ fn plan_prove_rejects_invalid_inputs() {
     }
 }
 
-/// `prove_output` populates `action_set` with the commit of the single
-/// action's digest, reconstructed independently.
+/// `merge` populates `covered_actions` with the covered-actions digest of
+/// the merged descriptor list, order-independently.
 #[test]
-fn prove_output_populates_action_set() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let mut pool = PoolSim::genesis(rng);
-    let note = wallet.random_note(200);
-    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 50));
-    let anchor = pool.anchor();
-
-    let (stamp, plan) = build_output_stamp(rng, anchor, note);
-    let digest = plan.digest().expect("valid plan");
-    let expected = ActionSetPoly::from_iter([digest]).commit();
-    assert_eq!(stamp.action_set, expected);
-}
-
-/// `prove_merge` populates `action_set` with the commit of the merged
-/// (concatenated) digest list.
-#[test]
-fn prove_merge_populates_action_set() {
+fn merge_populates_covered_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user_a = WalletSim::random(rng);
     let user_b = WalletSim::random(rng);
@@ -185,20 +160,24 @@ fn prove_merge_populates_action_set() {
     let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note_a);
     let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note_b);
 
-    let digests = [
-        plan_a.digest().expect("valid plan"),
-        plan_b.digest().expect("valid plan"),
-    ];
-    let expected = ActionSetPoly::from_iter(digests).commit();
+    let mut descriptors = Vec::<[u8; 64]>::from_iter([plan_a.descriptor(), plan_b.descriptor()]);
+    descriptors.sort_unstable();
+    let expected = blake2b::action_descriptor_digest(&descriptors);
 
-    let merged =
-        Stamp::prove_merge(rng, (stamp_a, &[digests[0]]), (stamp_b, &[digests[1]])).expect("merge");
-    assert_eq!(merged.action_set, expected);
+    let merged = ProofStamp::merge(
+        rng,
+        (stamp_a, vec![plan_a.descriptor()]),
+        (stamp_b, vec![plan_b.descriptor()]),
+    )
+    .expect("merge");
+    // `merge` sorts the concatenated descriptors into canonical order, so the
+    // covered-actions digest is independent of the order they were passed in.
+    assert_eq!(merged.actions, expected);
 }
 
-/// `cActionsTachyon` survives a `write`/`read` round-trip.
+/// `hStampActionsTachyon` survives a `write`/`read` round-trip.
 #[test]
-fn stamp_action_set_round_trip() {
+fn covered_actions_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
@@ -207,9 +186,9 @@ fn stamp_action_set_round_trip() {
 
     let mut buf = Vec::new();
     stamp.write(&mut buf).expect("write");
-    let decoded = Stamp::read(&*buf).expect("read");
+    let decoded = ProofStamp::read(&*buf).expect("read");
 
-    assert_eq!(decoded.action_set, stamp.action_set);
+    assert_eq!(decoded.actions, stamp.actions);
     assert_eq!(decoded.anchor, stamp.anchor);
     assert_eq!(decoded.tachygrams, stamp.tachygrams);
 }

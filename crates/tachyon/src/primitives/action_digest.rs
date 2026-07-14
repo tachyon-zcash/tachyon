@@ -1,5 +1,4 @@
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
-use ff::PrimeField as _;
 use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
 
 use crate::{digest::poseidon, keys::public, value};
@@ -38,12 +37,6 @@ impl ActionDigest {
             .into_option()
             .ok_or(ActionDigestError::IdentityRk)?;
         Ok(Self(poseidon::action_digest(cv_coords, rk_coords)))
-    }
-}
-
-impl From<ActionDigest> for [u8; 32] {
-    fn from(digest: ActionDigest) -> Self {
-        digest.0.to_repr()
     }
 }
 
