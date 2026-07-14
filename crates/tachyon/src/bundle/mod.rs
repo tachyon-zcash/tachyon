@@ -98,6 +98,13 @@ pub enum StateByte {
     PointerStamped = 0b0000_0010u8,
 }
 
+impl From<StateByte> for u8 {
+    #[expect(clippy::as_conversions, reason = "repr u8")]
+    fn from(val: StateByte) -> Self {
+        val as Self
+    }
+}
+
 impl StateByte {
     pub(super) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut byte = [0u8; 1];
@@ -619,7 +626,12 @@ impl<S: StampState> Bundle<S> {
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig).collect();
         let binding_sig: [u8; 64] = self.binding_sig.0.into();
 
-        blake2b::bundle_auth_digest(&action_sigs, &binding_sig, &self.stamp.stamp_digest())
+        blake2b::bundle_auth_digest(
+            S::state_byte().into(),
+            &action_sigs,
+            &binding_sig,
+            &self.stamp.stamp_digest(),
+        )
     }
 }
 
