@@ -107,9 +107,9 @@ Pros:
 
 - The circuit cost is minimum: load the note opening $\mathsf{Note}$ and $\cm_f$
   as secret witness, enforce $\psi = \mathsf{Extract}(\cm_f)$ in circuit, then
-  append a PCS eval claim of form $(\cm_f, e, \nf_e)$ to the PolyQuery oracle.
+  append a PCS eval claim of form $(\cm_f, e, \nf_e)$ to the polynomial oracle.
 - Proving multiple $\nf_e$ is practically free since querying multiple points on
-  an already committed polynomial in our PolyQuery oracle incurs negligible cost.
+  an already committed polynomial in our polynomial oracle incurs negligible cost.
   - Note that we don't need to witness the actual $f(X)$ or evaluate it in
     circuit thanks to the oracle, thus no special structure required for $f(X)$.
 - Statistical indistinguishable due to random sampling and the $|E|\leq d$
@@ -141,6 +141,11 @@ directly prove the full derivation of delegated nullifiers or prove the partial
 evaluation of $f_k(e)$, refered as the delegation key, and OSS completes the
 rest of the evaluation.[^ggm-partial] In the latter case, those partial
 evaluations should reveal nothing about the full $f_k(X)$.
+
+Alternatively, OSS can blindly trust the list of nullifiers supplied by the user
+without any proof. The synced spendability proof will carry a header that collect
+claimed nullifier values which will be proven once forwarded back to the user.
+Spiritually, this is just another form of assisted proving, only reordered.
 
 [^ggm-partial]: In the original GGM-based nullifier, the [`DelegateCert`
     step](./revisit.md#steps) proves integrity of the internal node whose value
@@ -392,6 +397,9 @@ algebraic description. Our analysis might be transferable or at least serves as
 a starting point when extending to the [HADES](https://ia.cr/2019/1107) family
 like Poseidon with wider states and partial rounds.
 
+> Jump to our [negative conclusion](#attempt4-conclusion) if you don't care about
+the cryptoanalysis details. 
+
 To recap, the MiMC permutation works as follows:
 
 <P align="center">
@@ -642,7 +650,7 @@ $\blacksquare$
 <a id="axis3-bound"></a>
 
 We enumerate all attacks the and explore an aggressively fewer rounds right at
-the security boundary. We take $\omega$'s lower bound $\omega\geq 1$, the round
+the security boundary. We take $\omega$'s lower bound $\omega\geq 2$, the round
 exponent $\alpha = 5$, and $256$-bit prime field size.
 
 - [GCD attack](#gcd) requires $d \geq 2^{118}$, which implies
@@ -700,3 +708,169 @@ In sum, due to the further absence of GCD attack, the **minimum number of rounds
 is further reduced to $r_{\mathsf{min}} = 37$ with $\kappa$-dimensional key**
 with $1 < \kappa < \mathsf{Rate}=4$ (for a free key expansion) to maintain a
 $128$-bit security MiMC function.
+
+<a id="attempt4-conclusion">**Conclusion for Attempt 4.**</a>
+To clarify, the analysis does *NOT* recommend a reduced MiMC. The main point
+of the exercise is to situate major algebraic attacks and explore the design
+space/parameterization of AOC. Aggressively-chosen parameters only reduce the
+circuit constraints to $\frac{r_{\mathsf{min}}}{r}\approx 0.67$ of a full MiMC.
+Such moderate saving is *not* worthy of pursuing given our analysis is yet
+peer-reviewed, non-exhaustive, and under simplified assumption.
+
+## Attempt 5: Proof of AOC Trace {#attempt5}
+
+Observe that the MiMC function is a highly *structured computation* with a
+uniform round function. This structure gives rises to an Interactive Oracle
+Proof (IOP) for the correct execution trace. In contrast to the previous
+attempts ([#3](#attempt3) and [#4](#attempt4)), we can **efficiently prove correct
+MiMC traces** (loaded as non-deterministic advice/witness) by piggybacking on the
+IOP proof system, **rather than re-compute them in-circuit** and pay the extra
+overhead of arithmetizating circuit gates into polynomial identities in the IOP.
+Luckily, the Ragu proof system indeed exposes API (a.k.a. hooks) to support
+*online* Fiat-Shamir challenges and polynomial oracles. "Online" here means
+custom, application-level IOPs whose prover-verifier messages got *fused* with
+that of Ragu's [native Polynomial
+IOP](https://tachyon.z.cash/ragu/protocol/core/nark#polynomial-iop).
+
+Denote $H\subseteq \F_p$ a multiplicative subgroup of order $(r+1)$ with
+generator $\omega$. Without loss of generality, we assume $(r+1)$ is a
+power-of-two such that the domain $H$ can be a FFT domain if $\F_p$ is
+highly 2-adic.
+
+Recap the MiMC construction again below for the ease of reference.
+
+<P align="center">
+  <img src="./assets/mimc.svg" alt="mimc" />
+</p>
+
+
+For an MiMC instance $f_k(x) = y$, interpolate an MiMC trace polynomial
+$T(X)$, a key polynomial $K(X)$, and a round constant polynomial $C(X)$ over
+the group $H = \{1, \omega^1, \ldots \omega^r\}$ as follows:
+
+$$
+\begin{aligned}
+K(\omega^i) &= k \quad \forall i \in \{ 0,\ldots, r \} \\
+C(\omega^i) &= c_i \quad \forall i \in \{ 0,\ldots, r-1 \} \\
+C(\omega^r) &= 0 \quad \text{(unconstrained, can be arbitrary value)}\\
+T(\omega^0) &= x \\
+T(\omega^{i+1}) &= \left(T(\omega^i) + K(\omega^i) + C(\omega^i) \right)^5
+\quad \forall i \in \{ 0,\ldots, r-1 \}
+\end{aligned}
+$$
+
+Intuitively, we interpolate an
+[AIR trace](https://lambdaclass.github.io/lambdaworks/starks/recap.html)
+with a uniform transition function between two consecutive rows.
+The execution trace is correct if and only if the following two polynomials
+$g_1, g_2$ *vanishes* over $H \setminus \{r\}$. Equivalently, they perfectly
+divides the vanishing polynomial $Z_H(X)$ defined below.
+
+$$
+\begin{cases}
+g_1(X) &= K(\omega\cdot X) - K(X) \\
+g_2(X) &= T(\omega\cdot X) - \big(T(X) + K(X) + C(X) \big)^5
+\end{cases}
+\quad\text{vanishes over } H \setminus \{r\} \\
+\Updownarrow\\
+g_1(X) \,|\, Z_H(X) \,\land\, g_2(X) \,|\, Z_H(X)
+\quad\text{where } Z_H(X) = \prod_{i=0}^{r-1} (X - \omega^i)
+= \frac{X^{d+1} - 1}{X - \omega^r}
+$$
+
+### IOP of MiMC Trace {#mimc-iop}
+
+Now, we describe a simple IOP that enforce the correct trace $T(X)$. Note that
+verifier can independently obtain $C(X)$ since round constants are public system
+parameters; and also $Z_H(X)$. Meanwhile, both input $x$ and output $y$ in the
+MiMC evaluation instance $f_k(x) = y$ are public inputs/instances.
+
+- Prover interpolates $K(X), T(X)$ and commits them, sends commitments $\cm_K,
+  \cm_T$ to the verifier.
+- Verifier samples a challenge $\beta\sample\F_p$.
+- Prover computes the quotient polynomial and sends its commitment $\cm_Q$ over.
+  $$
+  Q(X) = \frac{g_1(X) + \beta\cdot g_2(X)}{Z_H(X)}
+  $$
+- Verifier samples a challenge $\gamma\sample\F_p$ and query $Q(\gamma), K(\gamma),
+  K(\omega\gamma), T(\gamma), T(\omega\gamma), T(1), T(\omega^r), C(\gamma),
+  Z_H(\gamma)$
+  against their commitments using "polynomial oracles". Then checks the
+  following relations:
+  $$
+  \begin{cases}
+  Q(\gamma)\cdot Z_H(\gamma) &\iseq g_1(\gamma) + \beta \cdot g_2(\gamma) \\
+  T(1) &\iseq x \\
+  T(\omega^r) + K(\gamma) &\iseq y
+  \end{cases}
+  $$
+
+There is one minor issue with this IOP: if $\gamma\in H$ accidentally, then
+the verifier needs the secret $K(\gamma) = k$ to complete the verification.
+This event happens with only negligible probability $\frac{|H|}{|\F_p|} =
+\frac{r+1}{p}$ assuming challenges squeezed from a random oracle.
+Therefore, we can safely ignore it. As an (unnecessary) defense-in-depth,
+verifier can reject and re-sample $\gamma'$ until $\gamma'\notin H$.
+Since Fiat-Shamir is deterministic given the same transcript, there is no
+ambiguity of the eventual challenge used.
+
+Our IOP is easily extensible to **batch-verify $\ell$ MiMC traces**.
+Let $g_1^{(i)}(X), g_2^{(i)}(X)$ be the polynomials that vanish on $Z_H(X)$
+for the $i$-th MiMC instance $(x_i, y_i)$. Then we can batch them into the
+quotient polynomial:
+
+$$
+Q(X) = \frac{\sum_{i=0}^{\ell-1} 
+\big(\beta^{2i}\cdot g_1^{(i)}(X) + \beta^{2i+1}\cdot g_2^{(i)}(X) \big)}{Z_H(X)}
+$$
+
+**Cost.**
+Assuming Pedersen vector commitment for the PCS with a quasilinear commit cost.
+We take recommended *full* round $r=56$ from the MiMC paper.[^rec-rounds]
+
+For the single trace, the prover run a MSM of size $r$ to commit any of $K(X),
+T(X), Q(X)$, and use FFT to compute the quotient polynomial.
+The circuit cost is dominated by invoking Ragu's polynomial oracles whose
+cost is further dominated by the number of queries on *distinct* polynomials;
+extra queries on committed polynomials are almost free.
+
+|    | Prover | Circuit |
+| -- | -- | -- |
+| 1 trace | $3\cdot\mathsf{MSM}(r) + \mathsf{FFT}(r)$ | query $9$ points on $5$ polys + $7$ `mul`|
+| $\ell$ traces | $(2\ell+1) \cdot\mathsf{MSM}(r) + \mathsf{FFT}(r)$| $(6\ell + 3)$ points on $(2\ell + 3)$ polys + $6\ell^2$ `mul` |
+
+Thanks to the online FS challenges and polynomial oracles capabilities exposed
+by the Ragu proof system, the actual circuit cost is a mere $\approx 7$
+multiplications in-circuit constraint per nullifier. This number is an
+oversimplification because we didn't count the gates used to witness commitments
+and oracle-replied evaluations.
+
+**Optimization Axis.**
+The two parameters to tune are per-round exponent $\alpha$ and key dimension
+$\kappa := \dim(k)$.
+
+Larger $\alpha$ leads to fewer rounds to reach sufficient highest degree against
+algebraic attack. A safe heuristic demands $\alpha^r \geq 2^{129}$ for $128$-bit
+security. Surprisingly, a larger $\alpha$ will leads to more multiplication gates
+to compute
+$g_2(\gamma) = T(\omega\gamma) - \big( T(\gamma) + K(\gamma) + C(\gamma)\big)^\alpha$
+in-circuit, thus *higher* circuit cost.
+
+Higher $\kappa > 1$ also offers no benefit: prover cost and circuit cost
+unaffected. The only difference is that when prover interpolate $K(X)$, it needs
+to ensure $K(\omega^i) = k_{i \bmod \kappa}$ for $\forall i$.
+
+## Conclusion
+
+Use full MiMC with rounds $r=56, \alpha=5$.
+Concretely, the nullifier polynomial $f_k(X)$ is:
+
+$$
+\begin{aligned}
+f_k(X) &= \left( F_k^{(r-1)} \circ F_k^{(r-2)} \circ \ldots F_k^{(1)}
+\circ F_k^{(0)} \right) (x) \oplus k \\
+\text{where}\quad F_k^{(i)}(x) &= (k \oplus c_i \oplus x)^5
+\end{aligned}
+$$
+
+and follow [Attempt 5](#attempt5) to prove its execution trace cheaply in Ragu.
