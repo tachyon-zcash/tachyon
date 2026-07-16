@@ -93,7 +93,7 @@ impl Header for AnchorChain {
 ///
 /// `nf_start` is the range's first tested nullifier (the leaf at
 /// `epoch_start`); the in-progress `nf_end` corresponds to `epoch_end` and is
-/// folded into `elapsed` when its epoch completes. [`VerifyUnspent`] binds both
+/// folded into `elapsed` when its epoch completes. [`UnspentBind`] binds both
 /// endpoints to the note's genuine derivation nullifiers.
 #[derive(Clone, Debug)]
 pub struct Unspent;
@@ -131,7 +131,7 @@ impl Header for Unspent {
 }
 
 /// An [`Unspent`] bound to a note's genuine derivation nullifiers by
-/// [`VerifyUnspent`], collapsed to boundary scalars.
+/// [`UnspentBind`], collapsed to boundary scalars.
 #[derive(Clone, Debug)]
 pub struct VerifiedUnspent;
 
@@ -564,9 +564,9 @@ impl Step for UnspentEpochFuse {
 /// `unspent_nf_end` is a left-header value, fixed by the recursive
 /// verification of the [`Unspent`] PCD before the challenge.
 #[derive(Debug)]
-pub struct VerifyUnspent;
+pub struct UnspentBind;
 
-impl Step for VerifyUnspent {
+impl Step for UnspentBind {
     type Aux<'source> = ();
     type Left = Unspent;
     type Output = VerifiedUnspent;
@@ -591,25 +591,25 @@ impl Step for VerifyUnspent {
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(nf_epoch_start) - Fp::from(unspent_epoch_start),
-            "VerifyUnspent: derived range does not start at the unspent's start epoch",
+            "UnspentBind: derived range does not start at the unspent's start epoch",
         )?;
         enforce_zero(
             Fp::from(nf_epoch_end) - Fp::from(unspent_epoch_end.next()),
-            "VerifyUnspent: derived range does not span the crossings plus the tip",
+            "UnspentBind: derived range does not span the crossings plus the tip",
         )?;
         enforce_equal_point(
             Eq::from(elapsed_seq.commit()),
             Eq::from(unspent_elapsed),
-            "VerifyUnspent: elapsed polynomial does not match header",
+            "UnspentBind: elapsed polynomial does not match header",
         )?;
         enforce_equal_point(
             Eq::from(nf_seq.commit()),
             Eq::from(nf_seq_commit),
-            "VerifyUnspent: range polynomial does not match header",
+            "UnspentBind: range polynomial does not match header",
         )?;
         let offset = usize::try_from(unspent_epoch_end.0 - unspent_epoch_start.0).map_err(
             |_too_many_epochs| {
-                ragu::Error::InvalidWitness("VerifyUnspent: crossing count exceeds usize".into())
+                ragu::Error::InvalidWitness("UnspentBind: crossing count exceeds usize".into())
             },
         )?;
         // Sentinel append: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
@@ -631,7 +631,7 @@ impl Step for VerifyUnspent {
         )
         .map_err(|_relation_err| {
             ragu::Error::InvalidWitness(
-                "VerifyUnspent: range is not elapsed followed by the tip".into(),
+                "UnspentBind: range is not elapsed followed by the tip".into(),
             )
         })?;
         // Bind the unspent's free-witness boundary nullifiers to the range's
@@ -639,11 +639,11 @@ impl Step for VerifyUnspent {
         // construction.
         enforce_zero(
             Fp::from(unspent_nf_start) - Fp::from(nf_start),
-            "VerifyUnspent: start nullifier does not match the derived range",
+            "UnspentBind: start nullifier does not match the derived range",
         )?;
         enforce_zero(
             Fp::from(unspent_nf_end) - Fp::from(nf_end),
-            "VerifyUnspent: end nullifier does not match the derived range",
+            "UnspentBind: end nullifier does not match the derived range",
         )?;
         Ok((
             (

@@ -1,60 +1,62 @@
-//! Spend action-binding header and step.
+//! Spend nullifier-binding header and step.
 
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use pasta_curves::{Ep, EpAffine, Eq, Fp, Fq};
+use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
     Header, Index, Step, Suffix,
     constraint::{enforce_nonzero, enforce_zero},
 };
 
-use super::spendable::SpendableHeader;
+use super::{delegation::NullifierHeader, spendable::SpendableHeader};
 use crate::{
-    action,
-    constants::MAX_MONEY,
-    entropy::ActionRandomizer,
-    keys::ProofAuthorizingKey,
-    note::{self, Note, Nullifier},
-    primitives::{Anchor, effect},
-    value,
+    note::{self, Nullifier},
+    primitives::Anchor,
 };
 
-/// Header binding an action to its spendable lineage.
+/// Header binding a spend to its lineage note and epoch nullifier pair.
 ///
-/// Carries `cv`, `rk`, the lineage's `present_nf`, the pool `anchor`, and the
-/// note commitment `cm`; the nullifier pair is completed and published at
+/// Carries the note commitment `cm`, the present and next nullifiers
+/// `(present_nf, nf_next)` confirmed against the covering derivation, and the
+/// pool `anchor`. The action pair `(cv, rk)` is produced downstream at
 /// [`SpendStamp`](super::stamp::SpendStamp).
 #[derive(Debug)]
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(cm, (cv, rk), present_nf, anchor)`. `cm` leads; `(cv, rk)` are the
-    /// spend's published action pair, derived together at [`SpendBind`];
-    /// `present_nf` and `anchor` thread from the spendable lineage that
-    /// [`SpendBind`] consumed.
-    type Data = (note::Commitment, action::Descriptor, Nullifier, Anchor);
+    /// `(cm, present_nf, nf_next, anchor)`. `cm` binds the spent note;
+    /// `present_nf`/`nf_next` are the epoch pair [`SpendBind`] confirmed
+    /// against the genuine derived range; `anchor` threads the spendable
+    /// lineage's pool position.
+    type Data = (note::Commitment, Nullifier, Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(10);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, act, present_nf, anchor) = *data;
+        let (cm, present_nf, nf_next, anchor) = *data;
         (
-            vec![Fp::from(cm), Fp::from(present_nf), Fp::from(anchor)],
+            vec![
+                Fp::from(cm),
+                Fp::from(present_nf),
+                Fp::from(nf_next),
+                Fp::from(anchor),
+            ],
             Vec::new(),
-            vec![Ep::from(act.cv), EpAffine::from(act.rk).into()],
+            Vec::new(),
             Vec::new(),
         )
     }
 }
 
-/// Binds an action to its spendable lineage's note.
+/// Confirms a spend's epoch nullifier pair against a live two-leaf
+/// [`NullifierHeader`] range and binds it to the spendable lineage.
 ///
-/// Witnesses the `note` and `pak`, plus the action randomizers (`rcv`,
-/// `alpha`); checks `cm == spendable.cm` (so `cv` commits to the proven-minted
-/// value) and threads `present_nf`, `anchor`, and `cm` onto the output. The
-/// live pair is completed at [`SpendStamp`](super::stamp::SpendStamp).
+/// Witnesses `nf_next` and checks the lineage's genuine `present_nf` and the
+/// witnessed `nf_next` are the derived range's boundary leaves (`range.end ==
+/// range.start + 2`, `range.cm == cm`). The action pair is produced
+/// downstream at [`SpendStamp`](super::stamp::SpendStamp).
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -62,47 +64,40 @@ impl Step for SpendBind {
     type Aux<'source> = ();
     type Left = SpendableHeader;
     type Output = SpendHeader;
-    type Right = ();
-    /// `(note, rcv, alpha, pak)`.
-    type Witness<'source> = (
-        Note,
-        value::Trapdoor,
-        ActionRandomizer<effect::Spend>,
-        ProofAuthorizingKey,
-    );
+    type Right = NullifierHeader;
+    type Witness<'source> = ();
 
     const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (note, rcv, alpha, pak): Self::Witness<'source>,
+        (): Self::Witness<'source>,
         (spendable_cm, present_nf, anchor): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
+        (nf_cm, (nf_epoch_start, nf_start), _nf_seq_commit, (nf_epoch_end, nf_end)): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(nf_epoch_end) - (Fp::from(nf_epoch_start) + Fp::from(2u64)),
+            "SpendBind: live range must span two epochs",
+        )?;
+        enforce_zero(
+            Fp::from(nf_cm) - Fp::from(spendable_cm),
+            "SpendBind: derived range does not match note",
+        )?;
+
+        // Bind the published nullifiers to the range's genuine boundary leaves.
+        enforce_zero(
+            Fp::from(present_nf) - Fp::from(nf_start),
+            "SpendBind: present nullifier is not the range's start leaf",
+        )?;
+
+        // A zero nullifier would collide with the note's own cm tachygram.
         enforce_nonzero(
-            Fp::from(u64::from(note.value)),
-            "SpendBind: zero-value note",
+            Fp::from(present_nf),
+            "SpendBind: present-epoch nullifier is zero",
         )?;
-        if u64::from(note.value) > MAX_MONEY {
-            return Err(ragu::Error::InvalidWitness(
-                "SpendBind: note value exceeds maximum".into(),
-            ));
-        }
-        enforce_zero(
-            note.pk.0 - pak.derive_payment_key().0,
-            "SpendBind: pak not related to note",
-        )?;
-        let cm = note.commitment();
+        enforce_nonzero(Fp::from(nf_end), "SpendBind: next-epoch nullifier is zero")?;
 
-        enforce_zero(
-            Fp::from(spendable_cm) - Fp::from(cm),
-            "SpendBind: note does not match the spendable lineage",
-        )?;
-
-        let cv = rcv.commit(note.value);
-        let rk = pak.ak.derive_action_public(&alpha);
-
-        Ok(((cm, action::Descriptor { cv, rk }, present_nf, anchor), ()))
+        Ok(((spendable_cm, present_nf, nf_end, anchor), ()))
     }
 }

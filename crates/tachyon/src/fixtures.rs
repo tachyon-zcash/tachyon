@@ -933,7 +933,7 @@ impl WalletSim {
         self.spendable_init(rng, spend_note, pool, height)
     }
 
-    pub fn verify_unspent(
+    pub fn unspent_bind(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         unspent: Pcd<pool::Unspent>,
@@ -949,12 +949,12 @@ impl WalletSim {
         let (verified, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                pool::VerifyUnspent,
-                witness::verify_unspent((*unspent.data(), *range.data()), &elapsed),
+                pool::UnspentBind,
+                witness::unspent_bind((*unspent.data(), *range.data()), &elapsed),
                 unspent,
                 range,
             )
-            .expect("VerifyUnspent");
+            .expect("UnspentBind");
         verified
     }
 
@@ -967,7 +967,7 @@ impl WalletSim {
         epoch_start: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<spendable::SpendableHeader> {
-        let verified = self.verify_unspent(rng, unspent, note, epoch_start, present_epoch);
+        let verified = self.unspent_bind(rng, unspent, note, epoch_start, present_epoch);
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable, verified)
             .expect("SpendableLift");
@@ -1016,14 +1016,14 @@ impl WalletSim {
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
         for (note, spendable_pcd, spend_epoch) in spends {
-            let range_pcd = self.derived_range(rng, &note, spend_epoch, 2);
+            let nf_pcd = self.derived_range(rng, &note, spend_epoch, 2);
             let rcv = value::Trapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((range_pcd, spendable_pcd));
+            spend_pcds.push((spendable_pcd, nf_pcd));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes

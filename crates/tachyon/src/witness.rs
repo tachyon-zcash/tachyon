@@ -17,7 +17,7 @@ use crate::{
     },
     stamp::proof::{
         delegation::NullifierFuse,
-        pool::{AnchorSeed, UnspentEpochFuse, UnspentFuse, UnspentSeed, VerifyUnspent},
+        pool::{AnchorSeed, UnspentBind, UnspentEpochFuse, UnspentFuse, UnspentSeed},
         spendable::SpendableInit,
         stamp::MergeStamp,
     },
@@ -98,16 +98,16 @@ pub fn unspent_epoch_fuse(
     )
 }
 
-/// Prepare the witness for [`VerifyUnspent`]: `(elapsed, nf_seq)`.
+/// Prepare the witness for [`UnspentBind`]: `(elapsed, nf_seq)`.
 ///
 /// The range appends the tip `nf_end` from the left
 /// [`Unspent`](crate::stamp::proof::pool::Unspent) header:
 /// `nf_seq = elapsed ++ [nf_end]`.
 #[must_use]
-pub fn verify_unspent(
-    (left, _right): (StepLeft<VerifyUnspent>, StepRight<VerifyUnspent>),
+pub fn unspent_bind(
+    (left, _right): (StepLeft<UnspentBind>, StepRight<UnspentBind>),
     elapsed: &[Nullifier],
-) -> StepWitness<'static, VerifyUnspent> {
+) -> StepWitness<'static, UnspentBind> {
     let (_, _, _, (_, nf_end), _) = left;
     let mut nf_seq: Vec<Nullifier> = elapsed.to_vec();
     nf_seq.push(nf_end);

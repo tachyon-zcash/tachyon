@@ -296,8 +296,9 @@ impl Plan {
 
     /// Prove a single [`ProofStamp`] for this plan.
     ///
-    /// For each **spend**, uses [`spend::SpendBind`] to prepare PCD inputs,
-    /// then runs [`SpendStamp`] to attach the live nullifier pair.
+    /// For each **spend**, uses [`spend::SpendBind`] to bind the live
+    /// nullifier pair against the derived range, then runs [`SpendStamp`] to
+    /// prove the action and publish the stamp.
     ///
     /// For each **output**, runs [`OutputStamp`] with no PCD inputs.
     ///
@@ -305,15 +306,13 @@ impl Plan {
     ///
     /// `spendbind_inputs` items must correspond to each planned spend, in
     /// order.
-    ///
-    /// TODO: nf_next parameter may need to come back
     pub fn prove<RNG: RngCore + CryptoRng>(
         self,
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spendbind_inputs: Vec<(
-            ragu::Pcd<delegation::NullifierHeader>,
             ragu::Pcd<spendable::SpendableHeader>,
+            ragu::Pcd<delegation::NullifierHeader>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
         // Each entry pairs leaf stamp components with the descriptor and
@@ -327,24 +326,18 @@ impl Plan {
             return Err(ProveError::SpendableMismatch);
         }
 
-        for ((desc, alpha, note, rcv), (nf_pcd, spendable_pcd)) in
+        for ((desc, alpha, note, rcv), (sp_pcd, nf_pcd)) in
             self.spends.into_iter().zip(spendbind_inputs)
         {
             let app = &*PROOF_SYSTEM;
 
             let (bind_pcd, ()) = app
-                .fuse(
-                    rng,
-                    spend::SpendBind,
-                    (note, rcv, alpha, *pak),
-                    spendable_pcd,
-                    ragu::Proof::trivial().carry::<()>(()),
-                )
+                .fuse(rng, spend::SpendBind, (), sp_pcd, nf_pcd)
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: bind the live pair to the derived range and publish.
             let (tachygrams, anchor, proof) =
-                ProofStamp::prove_spend(rng, bind_pcd, nf_pcd).map_err(ProveError::ProofFailed)?;
+                ProofStamp::prove_spend(rng, rcv, alpha, note, *pak, bind_pcd)
+                    .map_err(ProveError::ProofFailed)?;
 
             let digest = desc.digest().map_err(ProveError::ActionDigest)?;
             entries.push((vec![desc], vec![digest], tachygrams, anchor, proof));
@@ -469,25 +462,31 @@ impl ProofStamp {
         Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))
     }
 
-    /// Proves a single spend action from pre-built spend and
-    /// nullifier-range PCDs, returning the stamp components
-    /// `(tachygrams, anchor, proof)`.
+    /// Proves a single spend action from a pre-built [`spend::SpendBind`]
+    /// PCD, returning the stamp components `(tachygrams, anchor, proof)`.
     ///
     /// The spend's `anchor` is taken as the stamp's anchor — chain
     /// validation lives inside the spendable lineage, not here.
     pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
+        rcv: value::Trapdoor,
+        alpha: ActionRandomizer<effect::Spend>,
+        note: Note,
+        pak: ProofAuthorizingKey,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
-        nf_pcd: ragu::Pcd<delegation::NullifierHeader>,
     ) -> Result<(Vec<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let (_, _, nf_present, anchor) = *bind_pcd.data();
-        let (_, _, _, (_, nf_next)) = *nf_pcd.data();
+        let (_, present_nf, nf_next, anchor) = *bind_pcd.data();
+        let tachygrams = vec![Tachygram::from(present_nf), Tachygram::from(nf_next)];
 
-        let tachygrams = vec![Tachygram::from(nf_present), Tachygram::from(nf_next)];
-
-        let (pcd, ()) = app.fuse(rng, SpendStamp, (nf_next,), bind_pcd, nf_pcd)?;
+        let (pcd, ()) = app.fuse(
+            rng,
+            SpendStamp,
+            (note, rcv, alpha, pak),
+            bind_pcd,
+            ragu::Proof::trivial().carry::<()>(()),
+        )?;
 
         let rerand = app.rerandomize(pcd, rng)?;
 

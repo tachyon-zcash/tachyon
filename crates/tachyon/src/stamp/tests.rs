@@ -78,8 +78,8 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
-    let range_a = user.derived_range(rng, &note_a, spend_epoch, 2);
-    let range_b = user.derived_range(rng, &note_b, spend_epoch, 2);
+    let nf_a = user.derived_range(rng, &note_a, spend_epoch, 2);
+    let nf_b = user.derived_range(rng, &note_b, spend_epoch, 2);
 
     let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
@@ -105,8 +105,8 @@ fn plan_prove_rejects_invalid_inputs() {
         assert!(matches!(err, ProveError::NoActions), "expected NoActions");
     }
 
-    let bundle_a = || (range_a.clone(), sp_a.clone());
-    let bundle_b = || (range_b.clone(), sp_b.clone());
+    let bundle_a = || (sp_a.clone(), nf_a.clone());
+    let bundle_b = || (sp_b.clone(), nf_b.clone());
 
     // Too few PCDs: 2 spends, 1 PCD.
     {
@@ -130,8 +130,10 @@ fn plan_prove_rejects_invalid_inputs() {
         );
     }
 
-    // Correspondence swap: lengths match, pairing is wrong. SpendBind's
-    // `spendable.cm == note.commitment()` check rejects the mismatched lineage.
+    // Correspondence swap: lengths match, pairing is wrong. The swapped
+    // (range, spendable) pair is internally consistent, so SpendBind
+    // succeeds; SpendStamp's `cm == note.commitment()` check rejects the
+    // wrong note one step later.
     {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
@@ -141,7 +143,7 @@ fn plan_prove_rejects_invalid_inputs() {
         };
         assert_eq!(
             inner.to_string(),
-            "SpendBind: note does not match the spendable lineage"
+            "SpendStamp: note does not match the spend"
         );
     }
 }
