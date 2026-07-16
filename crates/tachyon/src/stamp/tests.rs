@@ -2,6 +2,7 @@
 
 use alloc::{string::ToString as _, vec, vec::Vec};
 
+use ff::Field as _;
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
@@ -173,6 +174,38 @@ fn merge_populates_covered_actions() {
     // `merge` sorts the concatenated descriptors into canonical order, so the
     // covered-actions digest is independent of the order they were passed in.
     assert_eq!(merged.actions, expected);
+}
+
+/// Bundle-validity rule 9 requires a proof stamp's tachygrams to be
+/// distinct, not merely sorted; `read` must reject an adjacent duplicate
+/// even though the sequence is non-decreasing.
+#[test]
+fn read_rejects_duplicate_tachygrams() {
+    let tg = Tachygram::from(Fp::ONE);
+
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&[0u8; 32]); // covered actions digest
+    Anchor(Fp::ZERO).write(&mut buf).expect("write anchor");
+    serialization::write_fp_list(&mut buf, &[Fp::from(tg), Fp::from(tg)])
+        .expect("write tachygrams");
+
+    let err = ProofStamp::read(&*buf).expect_err("duplicate tachygrams must be rejected");
+    assert_eq!(err.to_string(), "tachygrams are not unique");
+}
+
+/// A strictly increasing tachygram sequence is unaffected by the
+/// distinctness check.
+#[test]
+fn read_accepts_distinct_sorted_tachygrams() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let note = wallet.random_note(200);
+    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+
+    let mut buf = Vec::new();
+    stamp.write(&mut buf).expect("write");
+    ProofStamp::read(&*buf).expect("distinct sorted tachygrams must be accepted");
 }
 
 /// `hStampActionsTachyon` survives a `write`/`read` round-trip.

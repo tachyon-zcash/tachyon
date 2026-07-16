@@ -68,7 +68,8 @@
 //! 64-byte value: the pointer stamp's `wtxid` directly, or
 //! `hStampActionsTachyon || stamp_data_digest` for a proof stamp.
 
-use alloc::{collections::BTreeSet, vec::Vec};
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::vec::Vec;
 use core::ops::Neg as _;
 
 use corez::io::{self, Read, Write};
@@ -143,6 +144,10 @@ impl<T: sealed::Sealed> BundleState for T {}
 #[derive(Clone, Debug, PartialEq, TotalEq)]
 pub struct Bundle<S: BundleState + ?Sized> {
     /// Actions (cv, rk, sig).
+    ///
+    /// The bundle commitment is sensitive to the order of actions. The [`Plan`]
+    /// utility in this crate sorts actions by descriptor, but other
+    /// implementations may create any arbitrary ordering.
     pub actions: Vec<Action>,
 
     /// Net value of spends minus outputs (plaintext integer).
@@ -155,11 +160,17 @@ pub struct Bundle<S: BundleState + ?Sized> {
     pub stamp: S,
 }
 
+impl PartialEq for Bundle<dyn BundleState> {
+    fn eq(&self, other: &Self) -> bool {
+        self.commitment() == other.commitment()
+    }
+}
+
 impl<S: BundleState + ?Sized> Bundle<S> {
     /// Collect the descriptors of all actions in the bundle.
     #[must_use]
     pub fn descriptors(&self) -> Vec<action::Descriptor> {
-        // Do NOT sort here: a constructed bundle should already be canonical.
+        // Do NOT sort here: maintain order as constructed.
         self.actions.iter().map(Action::descriptor).collect()
     }
 
@@ -170,6 +181,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     /// aggregation.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
+        // Do NOT sort here: maintain order as constructed.
         let descriptors: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
@@ -237,10 +249,10 @@ pub enum SignatureError {
 /// Errors that can occur while signing a bundle plan.
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
-pub enum SignError {
-    /// The number of signatures does not match the number of actions.
-    #[display("expected {_0} signatures")]
-    SigCountMismatch(#[error(not(source))] usize),
+pub enum FinalizePlanError {
+    /// The signatures do not match the planned actions.
+    #[display("planned actions do not match signed actions")]
+    ActionsMismatch,
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
     BalanceOverflow,
@@ -281,12 +293,9 @@ impl Plan {
 
     /// Collect and sort the descriptors of all actions in the plan.
     #[must_use]
-    pub fn descriptors(&self) -> Vec<action::Descriptor> {
-        let mut desc = self
-            .iter_actions(action::Plan::descriptor, action::Plan::descriptor)
-            .collect::<Vec<action::Descriptor>>();
-        desc.sort_unstable();
-        desc
+    pub fn descriptors(&self) -> BTreeSet<action::Descriptor> {
+        self.iter_actions(action::Plan::descriptor, action::Plan::descriptor)
+            .collect()
     }
 
     /// Derive value_balance from note values.
@@ -309,7 +318,9 @@ impl Plan {
     }
 
     /// Compute a digest of all the bundle's effecting data.
-    /// See [`Bundle::commitment`].
+    ///
+    /// Bundle digest is sensitive to the order of actions. Actions in this
+    /// planner are sorted by descriptor.
     pub fn commitment(&self) -> Result<[u8; 32], CommitError> {
         let desc_bytes: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
 
@@ -353,10 +364,7 @@ impl Plan {
     /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i$.
     #[must_use]
     pub fn derive_bsk_private(&self) -> private::BindingSigningKey {
-        let trapdoors: Vec<_> = self
-            .iter_actions(|plan| plan.rcv, |plan| plan.rcv)
-            .collect();
-        private::BindingSigningKey::from(trapdoors.as_slice())
+        private::BindingSigningKey::from(self.iter_actions(|plan| plan.rcv, |plan| plan.rcv))
     }
 
     /// Sign actions with the provided [`private::SpendAuthorizingKey`] and then
@@ -369,44 +377,31 @@ impl Plan {
         rng: &mut RNG,
         sighash: &[u8; 32],
         ask: &private::SpendAuthorizingKey,
-    ) -> Result<Bundle<Unproven>, SignError> {
-        let mut authorized = Vec::with_capacity(self.spends.len() + self.outputs.len());
+    ) -> Result<Bundle<Unproven>, FinalizePlanError> {
+        let mut authorized: BTreeMap<action::Descriptor, action::Signature> = BTreeMap::new();
 
         for plan in &self.spends {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Spend>(cm);
             let rsk = ask.derive_action_private(&alpha);
-            authorized.push(Action {
-                cv: plan.cv(),
-                rk: plan.rk,
-                sig: rsk.sign(rng, sighash),
-            });
+            authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
         }
 
         for plan in &self.outputs {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Output>(cm);
             let rsk = private::ActionSigningKey::new(&alpha);
-            authorized.push(Action {
-                cv: plan.cv(),
-                rk: plan.rk,
-                sig: rsk.sign(rng, sighash),
-            });
+            authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
         }
 
-        authorized.sort_unstable();
-
-        self.apply_signatures(
-            rng,
-            sighash,
-            authorized.into_iter().map(|action| action.sig).collect(),
-        )
+        self.apply_signatures(rng, sighash, authorized)
     }
 
     /// Apply externally-produced action signatures and then sign the bundle
     /// with the [`private::BindingSigningKey`].
     ///
-    /// Signatures must be provided in canonical order.
+    /// Bundle digest is sensitive to the order of actions. Actions in this
+    /// planner are sorted by descriptor.
     ///
     /// To confirm correct application, call [`Bundle::verify_signatures`] on
     /// the return value.
@@ -414,28 +409,22 @@ impl Plan {
         &self,
         rng: &mut RNG,
         sighash: &[u8; 32],
-        sigs: Vec<action::Signature>,
-    ) -> Result<Bundle<Unproven>, SignError> {
-        let n_actions = self.spends.len() + self.outputs.len();
-        if sigs.len() != n_actions {
-            return Err(SignError::SigCountMismatch(n_actions));
+        authorized: BTreeMap<action::Descriptor, action::Signature>,
+    ) -> Result<Bundle<Unproven>, FinalizePlanError> {
+        let value_balance = self
+            .value_balance()
+            .map_err(|_err| FinalizePlanError::BalanceOverflow)?;
+
+        if self.descriptors() != authorized.keys().copied().collect() {
+            return Err(FinalizePlanError::ActionsMismatch);
         }
+        let actions = authorized.into_iter().map(Action::from).collect();
 
-        let authorized = self
-            .descriptors()
-            .into_iter()
-            .zip(sigs)
-            .map(|(desc, sig)| Action::from_parts(desc, sig))
-            .collect::<Vec<Action>>();
-
-        let bsk = self.derive_bsk_private();
-        let binding_sig = bsk.sign(rng, sighash);
+        let binding_sig = self.derive_bsk_private().sign(rng, sighash);
 
         Ok(Bundle {
-            actions: authorized,
-            value_balance: self
-                .value_balance()
-                .map_err(|_err| SignError::BalanceOverflow)?,
+            actions,
+            value_balance,
             binding_sig,
             stamp: Unproven,
         })
@@ -516,12 +505,13 @@ impl<S: StampState> Bundle<S> {
     /// Read everything after the `tachyonBundleState` byte: value balance,
     /// action descriptors, action sigs, binding sig, and the stamp trailer.
     fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
-        let mut vb_bytes = [0u8; 8];
-        reader.read_exact(&mut vb_bytes)?;
-        let value_balance =
-            value::Balance::try_from(i64::from_le_bytes(vb_bytes)).map_err(|_err| {
+        let value_balance = {
+            let mut bytes = [0u8; size_of::<i64>()];
+            reader.read_exact(&mut bytes)?;
+            value::Balance::try_from(i64::from_le_bytes(bytes)).map_err(|_err| {
                 io::Error::new(io::ErrorKind::InvalidData, "value balance out of range")
-            })?;
+            })
+        }?;
 
         // `n_actions` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
         // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
@@ -535,19 +525,16 @@ impl<S: StampState> Bundle<S> {
                 )
             })?;
 
+        if n_actions == 0 && value_balance != value::Balance::ZERO {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bundle with no actions must have zero value balance",
+            ));
+        }
+
         let mut descriptors: Vec<action::Descriptor> = Vec::new();
         for _ in 0..n_actions {
             descriptors.push(action::Descriptor::read(&mut reader)?);
-        }
-
-        let mut unique_descriptors = BTreeSet::new();
-        for descriptor in &descriptors {
-            if !unique_descriptors.insert(descriptor) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "action descriptors are not unique",
-                ));
-            }
         }
 
         let mut signatures: Vec<action::Signature> = Vec::new();
@@ -558,22 +545,8 @@ impl<S: StampState> Bundle<S> {
         let actions: Vec<Action> = descriptors
             .into_iter()
             .zip(signatures)
-            .map(|(desc, sig)| Action::from_parts(desc, sig))
+            .map(Action::from)
             .collect();
-
-        if !actions.is_sorted() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "actions are not canonically sorted",
-            ));
-        }
-
-        if actions.is_empty() && value_balance != value::Balance::ZERO {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "bundle with no actions must have zero value balance",
-            ));
-        }
 
         let binding_sig = Signature::read(&mut reader)?;
 
@@ -600,11 +573,12 @@ impl<S: StampState> Bundle<S> {
                 "actions vector length exceeds u64",
             )
         })?;
-        serialization::write_compactsize(&mut writer, n_actions)?;
 
+        serialization::write_compactsize(&mut writer, n_actions)?;
         for action in &self.actions {
             action.descriptor().write(&mut writer)?;
         }
+
         for action in &self.actions {
             action.sig.write(&mut writer)?;
         }

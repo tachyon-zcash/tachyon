@@ -1,7 +1,7 @@
 //! Tachyon Action descriptions.
 
 use alloc::vec::Vec;
-use core::{cmp, marker::PhantomData};
+use core::{cmp, cmp::Ord, marker::PhantomData};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
@@ -26,6 +26,27 @@ pub struct Descriptor {
     pub rk: public::ActionVerificationKey,
 }
 
+impl PartialOrd for Descriptor {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Descriptor {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        {
+            EpAffine::from(self.cv)
+                .to_bytes()
+                .cmp(&EpAffine::from(other.cv).to_bytes())
+        }
+        .then({
+            EpAffine::from(self.rk)
+                .to_bytes()
+                .cmp(&EpAffine::from(other.rk).to_bytes())
+        })
+    }
+}
+
 impl Descriptor {
     /// Derive the action digest.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
@@ -47,25 +68,6 @@ impl Descriptor {
     }
 }
 
-impl PartialOrd for Descriptor {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Descriptor {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        EpAffine::from(self.cv)
-            .to_bytes()
-            .cmp(&EpAffine::from(other.cv).to_bytes())
-            .then(
-                EpAffine::from(self.rk)
-                    .to_bytes()
-                    .cmp(&EpAffine::from(other.rk).to_bytes()),
-            )
-    }
-}
-
 /// A planned Tachyon action, not yet authorized.
 #[derive(Clone, Copy, Debug)]
 pub struct Plan<E: Effect> {
@@ -79,6 +81,18 @@ pub struct Plan<E: Effect> {
     pub rcv: value::Trapdoor,
     /// Effect marker (zero-sized).
     pub _effect: PhantomData<E>,
+}
+
+impl<E: Effect> PartialEq for Plan<E> {
+    fn eq(&self, other: &Self) -> bool {
+        self.descriptor() == other.descriptor()
+    }
+}
+
+impl<E: Effect> PartialOrd for Plan<E> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        self.descriptor().partial_cmp(&other.descriptor())
+    }
 }
 
 impl Plan<effect::Spend> {
@@ -168,29 +182,6 @@ pub struct Action {
     pub sig: Signature,
 }
 
-impl Action {
-    /// Construct an action from a descriptor and signature.
-    #[must_use]
-    pub const fn from_parts(desc: Descriptor, sig: Signature) -> Self {
-        Self {
-            cv: desc.cv,
-            rk: desc.rk,
-            sig,
-        }
-    }
-
-    /// Derive the action digest.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv, self.rk)
-    }
-
-    /// Obtain a descriptor for this action.
-    #[must_use]
-    pub fn descriptor(&self) -> Descriptor {
-        Descriptor::from(*self)
-    }
-}
-
 impl PartialOrd for Action {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
@@ -201,7 +192,30 @@ impl Ord for Action {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.descriptor()
             .cmp(&other.descriptor())
-            .then_with(|| <[u8; 64]>::from(self.sig.0).cmp(&<[u8; 64]>::from(other.sig.0)))
+            .then(self.sig.cmp(&other.sig))
+    }
+}
+
+impl From<(Descriptor, Signature)> for Action {
+    fn from((desc, sig): (Descriptor, Signature)) -> Self {
+        Self {
+            cv: desc.cv,
+            rk: desc.rk,
+            sig,
+        }
+    }
+}
+
+impl Action {
+    /// Derive the action digest.
+    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
+        ActionDigest::new(self.cv, self.rk)
+    }
+
+    /// Obtain a descriptor for this action.
+    #[must_use]
+    pub fn descriptor(&self) -> Descriptor {
+        Descriptor::from(*self)
     }
 }
 
@@ -218,6 +232,20 @@ impl From<Action> for Descriptor {
 #[derive(Clone, Copy, Debug, Display, PartialEq, TotalEq)]
 #[display("Signature({:?})", self.0)]
 pub struct Signature(pub(crate) reddsa::Signature<reddsa::ActionAuth>);
+
+impl PartialOrd for Signature {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Signature {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        let bytes: [u8; 64] = self.0.into();
+        let other_bytes: [u8; 64] = other.0.into();
+        bytes.cmp(&other_bytes)
+    }
+}
 
 impl Signature {
     /// Read an action signature from the consensus wire format.

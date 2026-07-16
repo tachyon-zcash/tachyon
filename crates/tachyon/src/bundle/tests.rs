@@ -200,38 +200,58 @@ fn apply_signatures_rejects_wrong_sig_count() {
     let ask = wallet.sk.derive_auth_private();
     let spend_a = spend_plan_at(rng, &wallet, &ask, 200);
     let spend_b = spend_plan_at(rng, &wallet, &ask, 100);
+    let spend_c = spend_plan_at(rng, &wallet, &ask, 300);
     let plan = Plan::new(alloc::vec![spend_a, spend_b], alloc::vec![]);
 
-    let alpha = spend_a
-        .theta
-        .randomizer::<effect::Spend>(spend_a.note.commitment());
-    let sig = ask
-        .derive_action_private(&alpha)
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()));
+    let sig_a = {
+        let alpha = spend_a
+            .theta
+            .randomizer::<effect::Spend>(spend_a.note.commitment());
+        ask.derive_action_private(&alpha)
+            .sign(rng, &mock_sighash(plan.commitment().unwrap()))
+    };
+
+    let sig_b = {
+        let alpha = spend_b
+            .theta
+            .randomizer::<effect::Spend>(spend_b.note.commitment());
+        ask.derive_action_private(&alpha)
+            .sign(rng, &mock_sighash(plan.commitment().unwrap()))
+    };
+
+    let sig_c = {
+        let alpha = spend_c
+            .theta
+            .randomizer::<effect::Spend>(spend_c.note.commitment());
+        ask.derive_action_private(&alpha)
+            .sign(rng, &mock_sighash(plan.commitment().unwrap()))
+    };
 
     let too_few = plan
         .apply_signatures(
             rng,
             &mock_sighash(plan.commitment().unwrap()),
-            alloc::vec![sig],
+            BTreeMap::from([(spend_a.descriptor(), sig_a)]),
         )
         .unwrap_err();
-    let SignError::SigCountMismatch(expected_for_too_few) = too_few else {
-        panic!("expected SigCountMismatch, got {too_few:?}");
+    let FinalizePlanError::ActionsMismatch = too_few else {
+        panic!("expected ActionsMismatch, got {too_few:?}");
     };
-    assert_eq!(expected_for_too_few, 2);
 
     let too_many = plan
         .apply_signatures(
             rng,
             &mock_sighash(plan.commitment().unwrap()),
-            alloc::vec![sig, sig, sig],
+            BTreeMap::from([
+                (spend_a.descriptor(), sig_a),
+                (spend_b.descriptor(), sig_b),
+                (spend_c.descriptor(), sig_c),
+            ]),
         )
         .unwrap_err();
-    let SignError::SigCountMismatch(expected_for_too_many) = too_many else {
-        panic!("expected SigCountMismatch, got {too_many:?}");
+    let FinalizePlanError::ActionsMismatch = too_many else {
+        panic!("expected ActionsMismatch, got {too_many:?}");
     };
-    assert_eq!(expected_for_too_many, 2);
 }
 
 #[test]
@@ -256,8 +276,10 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
 
     // shuffled assembly still succeeds
     sigs.reverse();
+    let authorized = plan.descriptors().into_iter().zip(sigs).collect();
+
     let bundle = plan
-        .apply_signatures(rng, &mock_sighash(plan.commitment().unwrap()), sigs)
+        .apply_signatures(rng, &mock_sighash(plan.commitment().unwrap()), authorized)
         .expect("assembly succeeds regardless of sig order");
 
     // but the mismatched pairing fails verification.
@@ -300,19 +322,6 @@ fn permuted_actions_change_commitment() {
     let SignatureError::Binding(_) = sig_err else {
         panic!("expected SignatureError::Binding, got {sig_err:?}");
     };
-
-    // the original sighash can still verify.
-    // always use a sighash corresponding to the bundle's actual state.
-    permuted
-        .verify_signatures(&mock_sighash(original.commitment()))
-        .unwrap();
-
-    // the invalid bundle is detected at deserialization.
-    let mut buf = Vec::new();
-    permuted.write(&mut buf).expect("write");
-    let read_err = Bundle::<ProofStamp>::read(&*buf).unwrap_err();
-    assert_eq!(read_err.kind(), io::ErrorKind::InvalidData);
-    assert_eq!(read_err.to_string(), "actions are not canonically sorted");
 }
 
 /// Mutating a bundle's `value_balance` breaks verification.
@@ -346,78 +355,6 @@ fn tampered_value_balance_fails_verification() {
     let SignatureError::Binding(_) = also_err else {
         panic!("expected SignatureError::Binding, got {also_err:?}");
     };
-}
-
-/// Duplicate actions are detected at deserialization.
-#[test]
-fn double_spend_obvious() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let spend = spend_plan_at(rng, &wallet, &ask, 200);
-
-    let plan = Plan::new(alloc::vec![spend, spend], alloc::vec![]);
-    let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .expect("signing works");
-
-    bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
-        .expect("duplicate spend of the same note still verifies at the bundle level");
-
-    let mut buf = Vec::new();
-    Bundle::<PointerStamp> {
-        actions: bundle.actions,
-        value_balance: bundle.value_balance,
-        binding_sig: bundle.binding_sig,
-        stamp: PointerStamp::try_from([1u8; 64]).expect("not checked"),
-    }
-    .write(&mut buf)
-    .unwrap();
-    let read_err = Bundle::<PointerStamp>::read(&*buf).unwrap_err();
-    assert_eq!(read_err.kind(), io::ErrorKind::InvalidData);
-    assert_eq!(read_err.to_string(), "action descriptors are not unique");
-}
-
-/// This double spend is more obfuscated, so we can't detect it. True double
-/// spend prevention is a nullifier/pool-level concern.
-#[test]
-fn double_spend_secret() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(200);
-
-    let spend_a = action::Plan::spend(
-        note,
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
-    );
-    let spend_b = action::Plan::spend(
-        note,
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
-    );
-    assert_ne!(
-        spend_a.cv(),
-        spend_b.cv(),
-        "independent rcv gives distinct cv"
-    );
-    assert_ne!(
-        spend_a.rk, spend_b.rk,
-        "independent theta gives distinct rk"
-    );
-
-    let plan = Plan::new(alloc::vec![spend_a, spend_b], alloc::vec![]);
-    let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .expect("signing works");
-
-    bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
-        .expect("two independently-randomized spends of the same note still verify");
 }
 
 /// `sign` and `apply_signatures` go through the real API (not a hand-built
@@ -458,7 +395,7 @@ fn sign_and_apply_signatures_handle_one_sided_and_empty_plans() {
         .apply_signatures(
             rng,
             &mock_sighash(empty_plan.commitment().unwrap()),
-            alloc::vec![],
+            BTreeMap::new(),
         )
         .expect("apply_signatures accepts zero sigs for an empty plan")
         .verify_signatures(&mock_sighash(empty_plan.commitment().unwrap()))
@@ -1232,38 +1169,6 @@ fn coverage_check_matches_stamp_actions() {
     );
 }
 
-/// A bundle whose actions are not in canonical order is rejected on read: the
-/// order-committing sighash plus this check close action reordering as a
-/// malleability vector.
-#[test]
-fn read_rejects_noncanonical_actions() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let bundle = build_autonome(rng, &wallet, 1000, 700);
-    assert!(
-        bundle.actions.len() >= 2,
-        "need at least two actions to permute"
-    );
-    assert_ne!(bundle.actions[0], bundle.actions[1]);
-
-    // A canonical (signed) bundle round-trips.
-    let mut buf = Vec::new();
-    bundle.write(&mut buf).expect("write");
-    Bundle::<ProofStamp>::read(&*buf).expect("canonical bundle reads");
-
-    // Permuting the stored actions and re-serializing produces a non-canonical
-    // encoding, which read must reject.
-    let mut permuted = bundle;
-    permuted.actions.swap(0, 1);
-    let mut permuted_buf = Vec::new();
-    permuted.write(&mut permuted_buf).expect("write permuted");
-
-    let err = Bundle::<ProofStamp>::read(&*permuted_buf)
-        .expect_err("non-canonical actions must be rejected");
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert_eq!(err.to_string(), "actions are not canonically sorted");
-}
-
 /// A stamp whose tachygrams are not in canonical order is rejected on read,
 /// matching the order the stamp digest commits to.
 #[test]
@@ -1348,7 +1253,7 @@ fn plan_value_balance_rejects_overflow_above_max_money() {
     let sighash = [0u8; 32];
     {
         let err = bundle_plan.sign(rng, &sighash, &ask).unwrap_err();
-        let SignError::BalanceOverflow = err else {
+        let FinalizePlanError::BalanceOverflow = err else {
             panic!("expected SignError::BalanceOverflow, got {err:?}");
         };
     }
@@ -1375,7 +1280,7 @@ fn plan_value_balance_rejects_overflow_below_negative_max_money() {
     let sighash = [0u8; 32];
     {
         let err = bundle_plan.sign(rng, &sighash, &ask).unwrap_err();
-        let SignError::BalanceOverflow = err else {
+        let FinalizePlanError::BalanceOverflow = err else {
             panic!("expected SignError::BalanceOverflow, got {err:?}");
         };
     }

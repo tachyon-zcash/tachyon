@@ -7,6 +7,7 @@ extern crate alloc;
 pub mod proof;
 
 use alloc::{boxed::Box, vec, vec::Vec};
+use core::cmp::Ordering;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
@@ -180,25 +181,47 @@ impl StampState for ProofStamp {
 
         let anchor = Anchor::read(&mut reader)?;
 
-        let tachygrams: Vec<Tachygram> = serialization::read_fp_list(&mut reader)?
-            .into_iter()
-            .map(Tachygram::from)
-            .collect();
-        if !tachygrams.is_sorted() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "tachygrams are not canonically sorted",
-            ));
+        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
+        // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
+        // invalid data or EOF before significant problems occur.
+        // TODO: assert a reasonable maximum, to allow pre-allocation?
+        let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+        let mut tachygrams: Vec<Tachygram> = Vec::new();
+        for _ in 0..n_tachygrams {
+            let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
+
+            match tachygrams.last().map(|last| last.cmp(&tg)) {
+                None | Some(Ordering::Less) => tachygrams.push(tg),
+                Some(Ordering::Greater) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "tachygrams are not canonically sorted",
+                    ));
+                },
+                Some(Ordering::Equal) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "tachygrams are not unique",
+                    ));
+                },
+            }
         }
 
-        let mut bytes = vec![0u8; PROOF_SIZE_COMPRESSED];
-        reader.read_exact(&mut bytes)?;
-        let arr: Box<[u8; PROOF_SIZE_COMPRESSED]> =
-            bytes.into_boxed_slice().try_into().map_err(|_err| {
-                io::Error::new(io::ErrorKind::InvalidData, "proof buffer wrong size")
-            })?;
-        let proof = ragu::Proof::try_from(arr.as_ref())
-            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding"))?;
+        let proof = {
+            let mut bytes = vec![0u8; PROOF_SIZE_COMPRESSED];
+            reader.read_exact(&mut bytes)?;
+
+            let proof_bytes: &[u8; PROOF_SIZE_COMPRESSED] =
+                bytes.as_slice().try_into().map_err(|_err| {
+                    io::Error::new(io::ErrorKind::InvalidData, "failed to read proof")
+                })?;
+
+            ragu::Proof::try_from(proof_bytes).map_err(|_err| {
+                io::Error::new(io::ErrorKind::InvalidData, "invalid proof encoding")
+            })?
+        };
 
         Ok(Self {
             actions: covered_actions,
