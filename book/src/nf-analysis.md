@@ -745,16 +745,15 @@ Recap the MiMC construction again below for the ease of reference.
 
 
 For an MiMC instance $f_k(x) = y$, interpolate an MiMC trace polynomial
-$T(X)$, a key polynomial $K(X)$, and a round constant polynomial $C(X)$ over
-the group $H = \{1, \omega^1, \ldots \omega^r\}$ as follows:
+$T(X)$, and a round constant polynomial $C(X)$ over the group
+$H = \{1, \omega^1, \ldots \omega^r\}$ as follows:
 
 $$
 \begin{aligned}
-K(\omega^i) &= k \quad \forall i \in \{ 0,\ldots, r \} \\
 C(\omega^i) &= c_i \quad \forall i \in \{ 0,\ldots, r-1 \} \\
 C(\omega^r) &= 0 \quad \text{(unconstrained, can be arbitrary value)}\\
 T(\omega^0) &= x \\
-T(\omega^{i+1}) &= \left(T(\omega^i) + K(\omega^i) + C(\omega^i) \right)^5
+T(\omega^{i+1}) &= \left(T(\omega^i) + k + C(\omega^i) \right)^5
 \quad \forall i \in \{ 0,\ldots, r-1 \}
 \end{aligned}
 $$
@@ -762,18 +761,15 @@ $$
 Intuitively, we interpolate an
 [AIR trace](https://lambdaclass.github.io/lambdaworks/starks/recap.html)
 with a uniform transition function between two consecutive rows.
-The execution trace is correct if and only if the following two polynomials
-$g_1, g_2$ *vanishes* over $H \setminus \{r\}$. Equivalently, they perfectly
-divides the vanishing polynomial $Z_H(X)$ defined below.
+The execution trace is correct if and only if the following polynomial
+$g(X)$ *vanishes* over $H \setminus \{\omega^r\}$. Equivalently, they
+perfectly divides the vanishing polynomial $Z_H(X)$ defined below.
 
 $$
-\begin{cases}
-g_1(X) &= K(\omega\cdot X) - K(X) \\
-g_2(X) &= T(\omega\cdot X) - \big(T(X) + K(X) + C(X) \big)^5
-\end{cases}
-\quad\text{vanishes over } H \setminus \{r\} \\
+g(X) = T(\omega\cdot X) - \big(T(X) + k + C(X) \big)^5
+\quad\text{vanishes over } H \setminus \{\omega^r\} \\
 \Updownarrow\\
-g_1(X) \,|\, Z_H(X) \,\land\, g_2(X) \,|\, Z_H(X)
+g(X) \,|\, Z_H(X)
 \quad\text{where } Z_H(X) = \prod_{i=0}^{r-1} (X - \omega^i)
 = \frac{X^{d+1} - 1}{X - \omega^r}
 $$
@@ -782,66 +778,73 @@ $$
 
 Now, we describe a simple IOP that enforce the correct trace $T(X)$. Note that
 verifier can independently obtain $C(X)$ since round constants are public system
-parameters; and also $Z_H(X)$. Meanwhile, both input $x$ and output $y$ in the
-MiMC evaluation instance $f_k(x) = y$ are public inputs/instances.
+parameters; and also $Z_H(X)$. The commitment $\cm_C$ to $C(X)$ is also
+witnessed as a polynomial oracle. Meanwhile, both input $x$ and output $y$ in the
+MiMC evaluation instance $f_k(x) = y$ are public inputs/instances. The
+derivation of $k=\mathsf{PRF}_\nk(\psi)$ is assumed to be enforced in-circuit
+already and shared by all future MiMC trace polynomials.
 
-- Prover interpolates $K(X), T(X)$ and commits them, sends commitments $\cm_K,
-  \cm_T$ to the verifier.
-- Verifier samples a challenge $\beta\sample\F_p$.
-- Prover computes the quotient polynomial and sends its commitment $\cm_Q$ over.
-  $$
-  Q(X) = \frac{g_1(X) + \beta\cdot g_2(X)}{Z_H(X)}
-  $$
-- Verifier samples a challenge $\gamma\sample\F_p$ and query $Q(\gamma), K(\gamma),
-  K(\omega\gamma), T(\gamma), T(\omega\gamma), T(1), T(\omega^r), C(\gamma),
-  Z_H(\gamma)$
+- Prover interpolates $T(X)$, computes the quotient polynomial
+  $Q(X)= \frac{g(X)}{Z_H(X)}$, commits them,
+  and sends commitments $\cm_T, \cm_Q$ to the verifier.
+- Verifier samples a challenge $\gamma\sample\F_p$, computes $Z_H(\gamma)$, and
+  query $Q(\gamma), T(\gamma), T(\omega\gamma), T(1), T(\omega^r), C(\gamma)$
   against their commitments using "polynomial oracles". Then checks the
   following relations:
   $$
   \begin{cases}
-  Q(\gamma)\cdot Z_H(\gamma) &\iseq g_1(\gamma) + \beta \cdot g_2(\gamma) \\
+  Q(\gamma)\cdot Z_H(\gamma) &\iseq g(\gamma) \\
   T(1) &\iseq x \\
-  T(\omega^r) + K(\gamma) &\iseq y
+  T(\omega^r) + k &\iseq y
   \end{cases}
   $$
 
-There is one minor issue with this IOP: if $\gamma\in H$ accidentally, then
-the verifier needs the secret $K(\gamma) = k$ to complete the verification.
-This event happens with only negligible probability $\frac{|H|}{|\F_p|} =
-\frac{r+1}{p}$ assuming challenges squeezed from a random oracle.
-Therefore, we can safely ignore it. As an (unnecessary) defense-in-depth,
-verifier can reject and re-sample $\gamma'$ until $\gamma'\notin H$.
-Since Fiat-Shamir is deterministic given the same transcript, there is no
-ambiguity of the eventual challenge used.
-
 Our IOP is easily extensible to **batch-verify $\ell$ MiMC traces**.
-Let $g_1^{(i)}(X), g_2^{(i)}(X)$ be the polynomials that vanish on $Z_H(X)$
-for the $i$-th MiMC instance $(x_i, y_i)$. Then we can batch them into the
-quotient polynomial:
+Let $g_i(X)$ be the polynomials that vanish on $Z_H(X)$ for the $i$-th MiMC
+instance $(x_i, y_i)$. Then we can batch them into the quotient polynomial:
 
+- Prover interpolates $T_i(X)$ for $\forall i\in[\ell]$, commits them, and sends
+  commitments $\{\cm_{T_i}\}$ to the verifier.
+- Verifier samples a challenge $\beta\sample\F_p$.
+- Prover computes the quotient polynomial (reusing the same $k$ and $C(X)$),
+  commits it, and send $\cm_Q$.
 $$
-Q(X) = \frac{\sum_{i=0}^{\ell-1} 
-\big(\beta^{2i}\cdot g_1^{(i)}(X) + \beta^{2i+1}\cdot g_2^{(i)}(X) \big)}{Z_H(X)}
+Q(X) = \frac{\sum_{i=0}^{\ell-1} \beta^i\cdot g_i(X)}{Z_H(X)}
 $$
+- Verifier samples a challenge $\gamma\sample\F_p$, computes $Z_H(\gamma)$, and
+  query $Q(\gamma), T_i(\gamma), T_i(\omega\gamma), T_i(1), T_i(\omega^r), C(\gamma)$
+  against their commitments. Then checks the relations:
+  $$
+  \begin{cases}
+  Q(\gamma)\cdot Z_H(\gamma) &\iseq \sum_{i=0}^{\ell-1} \beta^i\cdot g_i(\gamma) \\
+  T_i(1) &\iseq x_i \quad\forall i\in \{ 0,\ldots, \ell-1 \} \\
+  T_i(\omega^r) + k &\iseq y_i \quad\forall i\in \{ 0,\ldots, \ell-1 \} 
+  \end{cases}
+  $$
 
 <a id="prove-cost">**Cost.**</a>
 Assuming Pedersen vector commitment for the PCS with a quasilinear commit cost.
 We take recommended *full* round $r=56$ from the MiMC paper [^rec-rounds] and
 round $(r+1)$ to the nearest power-of-two which gives us $r=63$.
 
-For the single trace, the prover run a MSM of size $r$ to commit any of $K(X),
-T(X), Q(X)$, and use FFT to compute the quotient polynomial.
+For the single trace, the prover run a MSM of size $r$ to commit any of $T(X),
+Q(X)$, and use FFT to compute the quotient polynomial.
 The circuit cost is dominated by invoking Ragu's polynomial oracles whose
 cost is further dominated by the number of queries on *distinct* polynomials;
 extra queries on committed polynomials are almost free.
+Note that we always need to invoke PRF once to enforce the derivation of $k$.
+Its cost is amortized among all MiMC traces proven in the same step.
+Furthermore, enforcing $Z_H(\gamma)$ takes $\lfloor \log_2(d+1) + 1 \rfloor = 7$
+multiplications using repeated squaring for the numerator and a non-deterministic
+advice for the division.
 
-|    | Prover | Circuit |
+|    | Prover | Circuit Cost |
 | -- | -- | -- |
-| 1 trace | $3\cdot\mathsf{MSM}(r) + \mathsf{FFT}(r)$ | query $9$ points on $5$ polys + $7$ `mul`|
-| $\ell$ traces | $(2\ell+1) \cdot\mathsf{MSM}(r) + \mathsf{FFT}(r)$| $(6\ell + 3)$ points on $(2\ell + 3)$ polys + $6\ell^2$ `mul` |
+| 1 trace | $2\cdot\mathsf{MSM}(r) + \mathsf{FFT}(r)$ | $1$ PRF + query $6$ points on $3$ polys + $13$ `mul`|
+| $\ell$ traces | $(\ell+1) \cdot\mathsf{MSM}(r) + \mathsf{FFT}(r)$| $1$ PRF + $(4\ell + 2)$ points on $(\ell + 2)$ polys + $(8\ell+7)$ `mul` |
 
 Thanks to the online FS challenges and polynomial oracles capabilities exposed
-by the Ragu proof system, the actual circuit cost is a mere $\approx 7$
+by the Ragu proof system, the actual circuit cost is a mere $\approx 6$
 multiplications in-circuit constraint per nullifier. This number is an
 oversimplification because we didn't count the gates used to witness commitments
 and oracle-replied evaluations.
@@ -861,23 +864,14 @@ Larger $\alpha$ leads to fewer rounds to reach sufficient highest degree against
 algebraic attack. A safe heuristic demands $\alpha^r \geq 2^{129}$ for $128$-bit
 security. Surprisingly, a larger $\alpha$ will leads to more multiplication gates
 to compute
-$g_2(\gamma) = T(\omega\gamma) - \big( T(\gamma) + K(\gamma) + C(\gamma)\big)^\alpha$
+$g(\gamma) = T(\omega\gamma) - \big( T(\gamma) + k + C(\gamma)\big)^\alpha$
 in-circuit, thus *higher* circuit cost.
 
 Higher $\kappa > 1$ also offers no benefit: prover cost and circuit cost
-unaffected. The only difference is that when prover interpolate $K(X)$, it needs
-to ensure $K(\omega^i) = k_{i \bmod \kappa}$ for $\forall i$.
-
-Besides these two axis, we bring attention to a subtlety in the cost counting of
-the batched verification of $\ell$ traces. If the multiplication counts for a
-single trace is roughly $7$, then why does the batched version cost $6\ell^2$ and
-seems more expensive than the naive non-batched cost $7\ell$? The culprit is the
-RLC scalar $\beta^i$ in front of $g_1(\gamma)$ or $g_2(\gamma)$ whom only incur
-a fixed exponentiation of $5$. Thus, when $\ell>5$, the `mul` count of computing
-the randomizer already exceeds that of $g_2(\gamma)$. Nonetheless, this doesn't
-imply that we should choose proving instance in parallel and forgo batching soon
-as $\ell\geq 6$, because the overall cost profiles is dominated by the polynomial
-oracle queries whose amortization savings might still justify batching.
+unaffected. The only difference is that when prover interpolate $T(X)$, it needs
+to ensure $T(\omega^{i+1}) = \big(T(\omega^i) + k_{i \bmod \kappa} + C(\omega^i)\big)^5$.
+If $\kappa > \mathsf{Rate}$, then we need to squeeze Poseidon multiple times to
+expand the full key, which incurs higher circuit cost.
 
 ## Conclusion
 
