@@ -824,9 +824,10 @@ Q(X) = \frac{\sum_{i=0}^{\ell-1}
 \big(\beta^{2i}\cdot g_1^{(i)}(X) + \beta^{2i+1}\cdot g_2^{(i)}(X) \big)}{Z_H(X)}
 $$
 
-**Cost.**
+<a id="prove-cost">**Cost.**</a>
 Assuming Pedersen vector commitment for the PCS with a quasilinear commit cost.
-We take recommended *full* round $r=56$ from the MiMC paper.[^rec-rounds]
+We take recommended *full* round $r=56$ from the MiMC paper [^rec-rounds] and
+round $(r+1)$ to the nearest power-of-two which gives us $r=63$.
 
 For the single trace, the prover run a MSM of size $r$ to commit any of $K(X),
 T(X), Q(X)$, and use FFT to compute the quotient polynomial.
@@ -845,6 +846,13 @@ multiplications in-circuit constraint per nullifier. This number is an
 oversimplification because we didn't count the gates used to witness commitments
 and oracle-replied evaluations.
 
+> ⚠️ The main uncertainty is the capacity for polynomial oracles per-PCD-step
+supported by Ragu. The assumption we have so far is that these queries are
+*almost free* in circuit cost, which is only true for extra queries on already
+committed polynomials. Any additional, distinct online polynomials introduce
+one extra endoscaling to Ragu. Yet our capacity for endoscaling is only 4
+per-step.
+
 **Optimization Axis.**
 The two parameters to tune are per-round exponent $\alpha$ and key dimension
 $\kappa := \dim(k)$.
@@ -860,9 +868,20 @@ Higher $\kappa > 1$ also offers no benefit: prover cost and circuit cost
 unaffected. The only difference is that when prover interpolate $K(X)$, it needs
 to ensure $K(\omega^i) = k_{i \bmod \kappa}$ for $\forall i$.
 
+Besides these two axis, we bring attention to a subtlety in the cost counting of
+the batched verification of $\ell$ traces. If the multiplication counts for a
+single trace is roughly $7$, then why does the batched version cost $6\ell^2$ and
+seems more expensive than the naive non-batched cost $7\ell$? The culprit is the
+RLC scalar $\beta^i$ in front of $g_1(\gamma)$ or $g_2(\gamma)$ whom only incur
+a fixed exponentiation of $5$. Thus, when $\ell>5$, the `mul` count of computing
+the randomizer already exceeds that of $g_2(\gamma)$. Nonetheless, this doesn't
+imply that we should choose proving instance in parallel and forgo batching soon
+as $\ell\geq 6$, because the overall cost profiles is dominated by the polynomial
+oracle queries whose amortization savings might still justify batching.
+
 ## Conclusion
 
-Use full MiMC with rounds $r=56, \alpha=5$.
+Use MiMC with rounds $r=63, \alpha=5$ over $254$-bit scalar field.[^final-r]
 Concretely, the nullifier polynomial $f_k(X)$ is:
 
 $$
@@ -873,4 +892,29 @@ f_k(X) &= \left( F_k^{(r-1)} \circ F_k^{(r-2)} \circ \ldots F_k^{(1)}
 \end{aligned}
 $$
 
-and follow [Attempt 5](#attempt5) to prove its execution trace cheaply in Ragu.
+Follow [Attempt 5](#mimc-iop) to prove its execution trace cheaply in Ragu.
+
+The circuit cost is shown [here](#prove-cost), which can be radically lower than
+the GGM approach ($\approx 200\times$ improvement) *only if* online polynomial
+oracles and FS challenges are truly zero-cost; otherwise we need to re-evaluate.
+In the case of non-negligible circuit cost for these Ragu proof system hooks, we
+recommend [Attempt 3](#attempt3) which offers a $7\times$ improvement on circuit
+efficiency for nullifier derivations.
+
+[^final-r]: Three more clarifications on the final recommended rounds $r$.
+
+    1. Different from MiMC paper Section 5 which carries the implicit assumption
+    that `MiMC-p/p` for large prime field $\F_p$ requires a $\log p$-bit security.
+    In our case, we use a $254$-bit field, but only requiring $\lambda=128$-bit
+    security, thus attacker's work/cost should be bounded by $2^\lambda$ rather
+    than the full field. Our recommended rounds $r$ is derived from $\lambda$
+    which is sufficient to thwart all aforementioned attacks.
+
+    2. Later [cryptoanalysis work](https://eprint.iacr.org/2020/182.pdf) presents
+    high-order differential key recovery against MiMC. They recommends an **extra
+    5 rounds** to thwart their attacks (see end of Section 5 in their paper).
+    This buffer is already counted for when we round up our recommended $r$ to
+    the next power-of-two.
+    
+    3. A block-size of $\lambda + 1 = 129 \approx \frac{\log p}{2}$ is already
+    sufficient for the generic birthday bound.
