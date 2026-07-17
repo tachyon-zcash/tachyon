@@ -120,13 +120,8 @@ Cons:
 
 1. UX nightmare: every new note requires user involvement (freshly samples then
    sends OOB).
-2. Assisted proving required: OSS who tries to prove $f(e) = \nf_e$ in the
-   [PCS evaluation protocol](https://tachyon.z.cash/ragu/protocol/core/accumulation/pcs)
-   without access to the full $f(X)$ requires user's assistance to compute the
-   evaluation of its quotient polynomial $q(u)$ at FS-challenge point $u$.
-   Circumventing this impossible inconvenience leaves us with the solution where
-   the user generate a PCD proof for *all* nullifier values of the delegated
-   range as an input to the OSS's proof tree.
+2. Fully proven by the user: proving the derivations of all nullifiers is the
+   responsibility of the user.
    
 Among the two disadvantages, the interactive UX is the hairy one. Naturally, a
 user can preload a sequence of future $\{\cm_f\}$ to the sender out-of-band.
@@ -134,47 +129,50 @@ However, this would increase the state management overhead since the wallet
 needs to track all previously issued but yet unused $\cm_f$ to reject incoming
 notes of unknown/repeated $\psi=\cm_f$.
 
-Meanwhile, assisted proving is arguably inevitable (for all our attempts here).
+Meanwhile, user-proved derivation is arguably inevitable (for all our attempts).
 The OSS cannot learn the full $f(X)$ since otherwise all future nullifiers are
-computable and spend unlinkability is violated. To assist OSS, the user either
-directly prove the full derivation of delegated nullifiers or prove the partial
-evaluation of $f_k(e)$, refered as the delegation key, and OSS completes the
-rest of the evaluation.[^ggm-partial] In the latter case, those partial
-evaluations should reveal nothing about the full $f_k(X)$.
+computable and spend unlinkability is violated. Unlike GGM, the user cannot prove
+a partial derivation and defer to OSS to complete the rest. [^ggm-partial]
+Instead, the user has to prove the full derivation because we cannot come up with
+scheme that enables OSS to finish a partial evaluation without leaking the
+$f_k(X)$ description.
 
-Alternatively, OSS can blindly trust the list of nullifiers supplied by the user
-without any proof. The synced spendability proof will carry a header that collect
-claimed nullifier values which will be proven once forwarded back to the user.
-Spiritually, this is just another form of assisted proving, only reordered.
+In practice, proving nullifiers of the delegated range can happen before or after
+the OSS work. The concrete design is outside the scope of this analysis.
+Regardless, the OSS blindly trust the list of nullifiers supplied by the user and
+accumulate them as he syncs spendability proofs. These accumulated nullifiers
+would be proven correct when OSS hands back the spendability proof to the user
+who can fuse it with proof of nullifier derivations.
 
 [^ggm-partial]: In the original GGM-based nullifier, the [`DelegateCert`
     step](./revisit.md#steps) proves integrity of the internal node whose value
     is the delegation key.
 
-### Attempt 1b: Sender-sampled
+### Attempt 1b: Constrained Sampling
 
-A natural modification to avoid the user/recipient interaction is to switch to
-sender-sampled random polynomials. However, the challenge is to cryptographically
-bind to $\cm$. We have two ways:
+An attempting reaction to avoid the user/recipient interaction is to switch to
+sender-sampled random polynomials. However, there's a conflict between privacy
+and $\cm$-binding. If the full $f(X)$ if sampled by the sender, we lose
+spend unlinkability since the sender can derive all nullifiers. If the sender
+only contributes a partial polynomial and leaves some degree of freedom to the
+recipient, then we cannot bind via $\psi = \cm$ at note creation time.
 
-1. Sender randomly sample $f(X)$ of degree $d=2^{14}$, using whatever entropy
-   source, set $\psi = \mathsf{Commit}(f(X))$, thus binds to $\cm$.
-2. Sender deterministically derives coefficients:
+To circumvent this issue, we can let sender pick arbitrary $\psi$, but binds it
+at the user/recipient side who must enforce coefficient sampling in-circuit:
+
 $$
 \begin{aligned}
-k &= H(\nk) \quad\text{(recipient-provided)}\\
-a_0,\ldots,a_d &\leftarrow \mathsf{XOF}(k, \psi, d+1)\\
+a_0,\ldots,a_d &\leftarrow \mathsf{XOF}(\nk, \psi, d+1)\\
 f(X) &= \sum_{i=0}^d a_i \, X^i
 \end{aligned}
 $$
-   since coefficients binds to $(\nk, \psi)$, it transitively binds to $\cm$.
 
-The problem with both approaches are their circuit costs. The first approach
-requires enforcing $\mathsf{Commit}$ of a degree-$d$ polynomial in-circuit. The
-second approach requires deriving all coefficients in-circuit: when instantiating
+Since coefficients binds to $(\nk, \psi)$, it transitively binds to $\cm$.
+The problem with this approach is its high circuit cost: when instantiating
 $\mathsf{XOF}$ with Poseidon-based sponge construction for variable-length
-output, to witness the full $f(X)$ in-circuit requires $\frac{d}{\mathsf{Rate}}$ Poseidon
-permutation. Both burden a higher cost than the original GGM construction.
+output, to witness the full $f(X)$ in-circuit requires $\frac{d}{\mathsf{Rate}}
+= \frac{2^{14}}{4} = 4096$ Poseidon permutation, a higher cost than the
+original GGM construction.
 
 ## Attempt 2: Product of Sparse Polynomials {#attempt2}
 
@@ -380,8 +378,8 @@ Our [7 Poseidon per PCD step](#ggm-cost) capacity directly translates to $7$
 nullifier derivations per step. The indistinguishability is computational but
 its the one-wayness and collision resistance has fairly high confidence given
 the years of cryptoanalysis against Poseidon.
-The reliance on user to generate proofs of correct nullifiers (i.e. assisted
-proving) seems inevitable as we argued at the end of [attempt 1.1](#attempt1).
+The reliance on user to generate proofs of correct nullifiers seems inevitable
+as we argued at the end of [attempt 1.1](#attempt1).
 
 This is the first attempts that satisfy all our security and efficiency
 requirements. On the positive side, it requires no new/in-house cryptoanalysis,
@@ -690,8 +688,9 @@ Unfortunately, we need to revisit all four algebraic attacks and their cost
 analysis for a $\kappa>1$ key because the $f_k(X)$ expression changes.
 
 - [GCD attack](#gcd): no longer applies because $f_k(X)$ becomes a multivariate
-  $g(K_1, K_2, \ldots, K_\kappa, X)$ polynomial beyond the bivariate. The common
-  factor $\prod_{i=1}^\kappa (K_i - k_i)$ doesn't leak any of $k_i$.
+  $g(K_1, K_2, \ldots, K_\kappa, X)$ polynomial beyond the bivariate. In a
+  multivariate ring, a common root is not a common factor, thus generically
+  $\mathsf{GCD}(h_1, h_2) = 1$.
 - [interpolation attack](#interpolate): since all keys are treated as realized
   constants, the polynomial degree and density w.r.t. $X$ is unaffected.
   Unchanged from the [previous analysis](#axis3-bound) $r \geq 28$.
@@ -771,7 +770,7 @@ g(X) = T(\omega\cdot X) - \big(T(X) + k + C(X) \big)^5
 \Updownarrow\\
 g(X) \,|\, Z_H(X)
 \quad\text{where } Z_H(X) = \prod_{i=0}^{r-1} (X - \omega^i)
-= \frac{X^{d+1} - 1}{X - \omega^r}
+= \frac{X^{r+1} - 1}{X - \omega^r}
 $$
 
 ### IOP of MiMC Trace {#mimc-iop}
@@ -799,7 +798,11 @@ already and shared by all future MiMC trace polynomials.
   \end{cases}
   $$
 
-Our IOP is easily extensible to **batch-verify $\ell$ MiMC traces**.
+There are two ways to **batch-verify $\ell$ MiMC traces**. One is more prover
+efficient; the other is more circuit efficient which is what we prefer.
+
+#### Prover-efficient Batching
+
 Let $g_i(X)$ be the polynomials that vanish on $Z_H(X)$ for the $i$-th MiMC
 instance $(x_i, y_i)$. Then we can batch them into the quotient polynomial:
 
@@ -822,11 +825,7 @@ $$
   \end{cases}
   $$
 
-<a id="prove-cost">**Cost.**</a>
-Assuming Pedersen vector commitment for the PCS with a quasilinear commit cost.
-We take recommended *full* round $r=56$ from the MiMC paper [^rec-rounds] and
-round $(r+1)$ to the nearest power-of-two which gives us $r=63$.
-
+**Cost.**
 For the single trace, the prover run a MSM of size $r$ to commit any of $T(X),
 Q(X)$, and use FFT to compute the quotient polynomial.
 The circuit cost is dominated by invoking Ragu's polynomial oracles whose
@@ -840,21 +839,106 @@ advice for the division.
 
 |    | Prover | Circuit Cost |
 | -- | -- | -- |
-| 1 trace | $2\cdot\mathsf{MSM}(r) + \mathsf{FFT}(r)$ | $1$ PRF + query $6$ points on $3$ polys + $13$ `mul`|
-| $\ell$ traces | $(\ell+1) \cdot\mathsf{MSM}(r) + \mathsf{FFT}(r)$| $1$ PRF + $(4\ell + 2)$ points on $(\ell + 2)$ polys + $(8\ell+7)$ `mul` |
+| 1 trace | $2\cdot\mathsf{MSM}(r) + 3\cdot\mathsf{FFT}(r)$ | $1$ PRF + query $6$ points on $3$ polys + $13$ `mul`|
+| $\ell$ traces | $(\ell+1) \cdot\mathsf{MSM}(r) + (\ell+2)\cdot\mathsf{FFT}(r)$| $1$ PRF + $(4\ell + 2)$ points on $(\ell + 2)$ polys + $(8\ell+7)$ `mul` |
 
-Thanks to the online FS challenges and polynomial oracles capabilities exposed
-by the Ragu proof system, the actual circuit cost is a mere $\approx 6$
-multiplications in-circuit constraint per nullifier. This number is an
-oversimplification because we didn't count the gates used to witness commitments
-and oracle-replied evaluations.
+#### Circuit-efficient Batching (Preferred) {#mimc-batch}
 
-> ⚠️ The main uncertainty is the capacity for polynomial oracles per-PCD-step
-supported by Ragu. The assumption we have so far is that these queries are
-*almost free* in circuit cost, which is only true for extra queries on already
-committed polynomials. Any additional, distinct online polynomials introduce
-one extra endoscaling to Ragu. Yet our capacity for endoscaling is only 4
-per-step.
+The problem with the foregoing batching is that the number of queried polynomials
+grow linearly with $\ell$. Given that a PCD step can only support a fixed (and
+small, currently $4$) number of online polynomial oracle, we cannot even
+support $\ell \geq 2$ MiMC traces per step, which is unacceptable.
+
+An alternative batching **flatten $\ell$ traces** and interpolate them into a
+single trace polynomial $M(X)$ over a larger FFT domain of size $N = (r+1)
+\cdot\ell$. Without loss of generality, assume $\ell$ is also a power-of-two.
+
+<P align="center">
+  <img src="./assets/mimc_batching.svg" alt="mimc_batching" />
+</p>
+
+Define the $S = \{\omega^{j\cdot(r+1) + r}\}_{j\in\{0,\ldots, \ell-1 \}}$
+containing the "transition function exceptions", or the domain elements that
+corresponds to the last value in each execution trace.
+For $\ell$ MiMC instances $f_k(x_i) = y_i$, interpolate a grand trace polynomial
+$M(X)$ and round constant polynomial $C(X)$ over the group: $H =\{1, \omega^1,
+\ldots, \omega^{N-1}\}$ as follows:
+
+$$
+\begin{aligned}
+C(\omega^i) &= c_{i \bmod r+1} & \forall i \in \{ 0,\ldots, N - 1 \}, c_r = 0\\
+M(\omega^{j\cdot (r+1)}) &= x_j & \forall j \in \{0, \ldots, \ell - 1 \} \\
+M(\omega^{j\cdot (r+1) + i+1}) &= \left(T(\omega^{j\cdot (r+1) + i}) + k + C(\omega^{j\cdot (r+1) + i}) \right)^5
+& \forall i \in \{ 0,\ldots, r-1 \}, \forall j \in \{0, \ldots, \ell - 1 \}
+\end{aligned}
+$$
+
+The flatten execution trace is correct if
+and only if the following polynomial $g(X)$ vanishes over $H \setminus S$. Equivalently, they
+perfectly divides the vanishing polynomial $Z_H(X)$ defined below:
+
+$$
+g(X) = M(\omega\cdot X) - \big(M(X) + k + C(X) \big)^5
+\quad\text{vanishes over } H \setminus S \\
+\Updownarrow\\
+g(X) \,|\, Z_H(X)
+\quad\text{where } Z_H(X) = = \frac{X^{(r+1)\ell} - 1}{X^\ell - \omega^{r\ell}}
+$$
+
+Now the batched IOP works as follows:
+
+- Prover interpolates $M(X)$, computes the quotient polynomial
+  $Q(X)= \frac{g(X)}{Z_H(X)}$, commits them,
+  and sends commitments $\cm_T, \cm_Q$ to the verifier.
+- Verifier samples a challenge $\gamma\sample\F_p$, computes $Z_H(\gamma)$, and
+  query $Q(\gamma), M(\gamma), M(\omega\gamma), \{ M(\omega^{j\cdot(r+1)}) \},
+  \{ M(\omega^{j\cdot(r+1) + r}) \}, C(\gamma)$
+  for $j\in [0, \ell-1]$
+  against their commitments using "polynomial oracles". Then checks the
+  following relations:
+  $$
+  \begin{cases}
+  Q(\gamma)\cdot Z_H(\gamma) &\iseq g(\gamma) \\
+  M(\omega^{j\cdot(r+1)}) &\iseq x_i \quad\forall j \in [0, \ell-1] \\
+  M(\omega^{j\cdot(r+1) + r}) + k &\iseq y_i \quad\forall j \in [0, \ell-1]
+  \end{cases}
+  $$
+
+<a id="prove-cost">**Batched Cost.**</a>
+Assuming Pedersen vector commitment for the PCS with a quasilinear commit cost.
+We take recommended *full* round $r=56$ from the MiMC paper [^rec-rounds] and
+round $(r+1)$ to the nearest power-of-two which gives us $r=63$.
+
+| Prover | Circuit Cost |
+| -- | -- |
+| $3\cdot\mathsf{MSM}(N) + 3\cdot \mathsf{FFT}(N)$| $1$ PRF & $(2\ell + 4)$ points on $3$ polys & $(\log N + 6)$ `mul` |
+
+The prover first need to interpolate $M(X), C(X)$ using $2\cdot\mathsf{FFT}(N)$;
+then compute commitments $\cm_M, \cm_C, \cm_Q$ using $3\cdot\mathsf{MSM}(N)$;
+finally computes quotient polynomial using $\mathsf{FFT}(N)$.
+
+The circuit cost includes enforcing the $k = \mathsf{PRF}_\nk(\psi)$ which takes
+a PRF ($\approx 288$ `mul`); constant number (only $3$) of polynomial oracles;
+and multiplication constraints for $Z_H(\gamma)$ and the quotient relation
+check by the verifier. The numerator of $Z_H(\gamma)$ takes $\log(N)$ `mul` via
+repeated squaring; the denominator is free because $\gamma^\ell$ is already an
+intermediate result during the squaring; finally the division takes another
+multiplication where the reciprocal of the denominator is provided as an advice.
+In total, computing $Z_H(\gamma)$ takes $(\log(N)+1)$ `mul` gates. Lastly,
+$g(\gamma)$ takes $5$ `mul` only.
+
+Now a first-order estimation of largest permissible $\ell$ for a single PCD step.
+Assuming $512$-`mul`-cost per polynomial oracle and a $2^{11}$ circuit size.
+
+$$
+\ell \leq \frac{2^{11} - 288 - 3 \cdot 512}{\log 64 + \log \ell + 6}
+\Rightarrow \ell \leq 14
+$$
+
+**If we decide to double our step circuit size to $2^{12}$, then $\ell\leq 120$**.
+This is due to the relatively large fix-cost from PRF and polynomial oracles,
+and the super low variable-cost for individual MiMC trace boundary conditions
+(i.e. public inputs enforcement on $\{(x_i, y_i)\}$).
 
 **Optimization Axis.**
 The two parameters to tune are per-round exponent $\alpha$ and key dimension
@@ -888,12 +972,14 @@ $$
 
 Follow [Attempt 5](#mimc-iop) to prove its execution trace cheaply in Ragu.
 
-The circuit cost is shown [here](#prove-cost), which can be radically lower than
-the GGM approach ($\approx 200\times$ improvement) *only if* online polynomial
-oracles and FS challenges are truly zero-cost; otherwise we need to re-evaluate.
-In the case of non-negligible circuit cost for these Ragu proof system hooks, we
-recommend [Attempt 3](#attempt3) which offers a $7\times$ improvement on circuit
-efficiency for nullifier derivations.
+The circuit cost is shown [here](#prove-cost), for the current PCD step circuit
+size of $2^{11}$, we estimate $14$ nullifier derivation. But, if we are open to
+doubling the size limit to $2^{12}$, then we can support up to $120$ nullifiers
+per PCD step ($120\times$ improvement over the GGM approach).
+
+If we want the sweet spot of minimum engineering effort while meeting the security
+requirement, then we recommend [Attempt 3](#attempt3) which offers a $7\times$
+improvement on circuit efficiency for nullifier derivations.
 
 [^final-r]: Three more clarifications on the final recommended rounds $r$.
 
