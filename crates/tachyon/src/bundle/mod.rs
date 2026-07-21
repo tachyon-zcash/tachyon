@@ -141,7 +141,7 @@ pub trait BundleState: sealed::Sealed {}
 impl<T: sealed::Sealed> BundleState for T {}
 
 /// A Tachyon transaction bundle parameterized by bundle state `S`.
-#[derive(Clone, Debug, PartialEq, TotalEq)]
+#[derive(Clone, Debug)]
 pub struct Bundle<S: BundleState + ?Sized> {
     /// Net value of spends minus outputs (plaintext integer).
     pub value_balance: value::Balance,
@@ -158,12 +158,6 @@ pub struct Bundle<S: BundleState + ?Sized> {
 
     /// Bundle state: `Unproven`, `ProofStamp`, or `PointerStamp`.
     pub stamp: S,
-}
-
-impl PartialEq for Bundle<dyn BundleState> {
-    fn eq(&self, other: &Self) -> bool {
-        self.commitment() == other.commitment()
-    }
 }
 
 impl<S: BundleState + ?Sized> Bundle<S> {

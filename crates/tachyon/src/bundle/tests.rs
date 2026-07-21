@@ -760,7 +760,8 @@ fn stripped_read_write_round_trip() {
     stripped.write(&mut buf).expect("write");
     let deserialized = Bundle::<PointerStamp>::read(&*buf).expect("read");
 
-    assert_eq!(stripped, deserialized);
+    assert_eq!(stripped.commitment(), deserialized.commitment());
+    assert_eq!(stripped.auth_digest(), deserialized.auth_digest());
     assert_eq!(deserialized.stamp, wtxid);
 }
 
@@ -791,7 +792,8 @@ fn tachyon_bundle_conversions() {
         let erased: TachyonBundle = stripped.clone().into();
         let back = Bundle::<PointerStamp>::try_from(erased).expect("stripped variant");
 
-        assert_eq!(stripped, back);
+        assert_eq!(stripped.commitment(), back.commitment());
+        assert_eq!(stripped.auth_digest(), back.auth_digest());
         assert_eq!(back.stamp, wtxid);
     }
 
@@ -841,7 +843,8 @@ fn tachyon_bundle_wire_round_trip() {
         let decoded = TachyonBundle::read(&*buf).expect("read");
         let back = Bundle::<PointerStamp>::try_from(decoded).expect("stripped variant");
 
-        assert_eq!(stripped, back);
+        assert_eq!(stripped.commitment(), back.commitment());
+        assert_eq!(stripped.auth_digest(), back.auth_digest());
     }
 }
 
@@ -981,11 +984,13 @@ fn innocent_round_trips_with_nonzero_wtxid() {
     innocent.write(&mut buf).expect("write innocent");
 
     let via_adjunct = Bundle::<PointerStamp>::read(&*buf).expect("Adjunct::read innocent");
-    assert_eq!(innocent, via_adjunct);
+    assert_eq!(innocent.commitment(), via_adjunct.commitment());
+    assert_eq!(innocent.auth_digest(), via_adjunct.auth_digest());
 
     let decoded = TachyonBundle::read(&*buf).expect("TachyonBundle::read");
     let via_enum = Bundle::<PointerStamp>::try_from(decoded).expect("adjunct variant");
-    assert_eq!(innocent, via_enum);
+    assert_eq!(innocent.commitment(), via_enum.commitment());
+    assert_eq!(innocent.auth_digest(), via_enum.auth_digest());
 }
 
 #[test]
@@ -996,11 +1001,12 @@ fn auth_digest_invariants() {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::new(shared_sk());
         let stamped = build_autonome(rng, &wallet, 1000, 700);
-        let stamped_digest = stamped.auth_digest();
 
         let covering = build_autonome(rng, &wallet, 500, 300);
-        let stripped = stamped.strip(mock_wtxid(&covering));
-        assert_ne!(stamped_digest, stripped.auth_digest());
+        let stripped = stamped.clone().strip(mock_wtxid(&covering));
+
+        assert_eq!(stamped.commitment(), stripped.commitment());
+        assert_ne!(stamped.auth_digest(), stripped.auth_digest());
     }
 
     // wtxid binds: distinct wtxids on otherwise-identical stripped bundles
@@ -1046,9 +1052,12 @@ fn auth_digest_invariants() {
         let wallet = WalletSim::new(shared_sk());
         let stamped = build_autonome(rng, &wallet, 1000, 700);
         let baseline = stamped.auth_digest();
+        let baseline_commitment = stamped.commitment();
 
         let mut altered_actions = stamped.clone();
         altered_actions.stamp.coverage[0] ^= 0x01;
+        // the commitment does not reach into the stamp: only auth_digest moves.
+        assert_eq!(baseline_commitment, altered_actions.commitment());
         assert_ne!(baseline, altered_actions.auth_digest());
 
         let mut extra_tachygram = stamped;
@@ -1058,6 +1067,7 @@ fn auth_digest_invariants() {
             .push(Tachygram::from(Fp::from(7u64)));
         // Tachygrams must stay canonically sorted for the stamp digest.
         extra_tachygram.stamp.tachygrams.sort_unstable();
+        assert_eq!(baseline_commitment, extra_tachygram.commitment());
         assert_ne!(baseline, extra_tachygram.auth_digest());
     }
 }
