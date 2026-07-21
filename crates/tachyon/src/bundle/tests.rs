@@ -1048,7 +1048,7 @@ fn auth_digest_invariants() {
         let baseline = stamped.auth_digest();
 
         let mut altered_actions = stamped.clone();
-        altered_actions.stamp.actions[0] ^= 0x01;
+        altered_actions.stamp.coverage[0] ^= 0x01;
         assert_ne!(baseline, altered_actions.auth_digest());
 
         let mut extra_tachygram = stamped;

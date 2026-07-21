@@ -164,7 +164,7 @@ impl StampState for ProofStamp {
         };
 
         let mut stamp_digest = [0u8; 64];
-        stamp_digest[..32].copy_from_slice(&self.actions);
+        stamp_digest[..32].copy_from_slice(&self.coverage);
         stamp_digest[32..].copy_from_slice(&stamp_data_digest);
         stamp_digest
     }
@@ -224,9 +224,9 @@ impl StampState for ProofStamp {
         };
 
         Ok(Self {
-            actions: covered_actions,
-            tachygrams,
+            coverage: covered_actions,
             anchor,
+            tachygrams,
             proof: Box::new(proof),
         })
     }
@@ -234,7 +234,7 @@ impl StampState for ProofStamp {
     /// Write a stamp to the consensus wire format. The proof blob has a
     /// known constant size.
     fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        writer.write_all(&self.actions)?;
+        writer.write_all(&self.coverage)?;
         self.anchor.write(&mut writer)?;
         serialization::write_fp_list(
             &mut writer,
@@ -411,10 +411,12 @@ impl Plan {
         descriptors.sort_unstable();
         tachygrams.sort_unstable();
 
+        let coverage = blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors));
+
         Ok(ProofStamp {
-            actions: blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
-            tachygrams,
+            coverage,
             anchor,
+            tachygrams,
             proof,
         })
     }
@@ -453,13 +455,13 @@ pub struct ProofStamp {
     /// descriptors from this stamp's bundle and all covered bundles.
     ///
     /// See [`blake2b::action_descriptor_digest`]
-    pub actions: [u8; 32],
-
-    /// Tachygrams (nullifiers and note commitments) for data availability.
-    pub tachygrams: Vec<Tachygram>,
+    pub coverage: [u8; 32],
 
     /// Pool state at the anchor block.
     pub anchor: Anchor,
+
+    /// Tachygrams (nullifiers and note commitments) for data availability.
+    pub tachygrams: Vec<Tachygram>,
 
     /// The Ragu proof bytes.
     #[debug(skip)]
@@ -631,13 +633,16 @@ impl ProofStamp {
         .map_err(ProveError::MergeFailed)?;
         tachygrams.sort_unstable();
 
-        let mut covered_actions = Vec::<[u8; 64]>::from_iter([left_desc, right_desc].concat());
-        covered_actions.sort_unstable();
+        let coverage = {
+            let mut desc_bytes = Vec::<[u8; 64]>::from_iter([left_desc, right_desc].concat());
+            desc_bytes.sort_unstable();
+            blake2b::action_descriptor_digest(&desc_bytes)
+        };
 
         Ok(Self {
-            actions: blake2b::action_descriptor_digest(&covered_actions),
-            tachygrams,
+            coverage,
             anchor,
+            tachygrams,
             proof,
         })
     }
@@ -649,7 +654,7 @@ impl ProofStamp {
     pub fn covers(&self, descs: &[action::Descriptor]) -> bool {
         let mut desc_bytes = descs.iter().copied().collect::<Vec<[u8; 64]>>();
         desc_bytes.sort_unstable();
-        blake2b::action_descriptor_digest(&desc_bytes) == self.actions
+        blake2b::action_descriptor_digest(&desc_bytes) == self.coverage
     }
 
     /// Verifies this stamp's proof by reconstructing the PCD header from

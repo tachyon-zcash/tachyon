@@ -143,15 +143,15 @@ impl<T: sealed::Sealed> BundleState for T {}
 /// A Tachyon transaction bundle parameterized by bundle state `S`.
 #[derive(Clone, Debug, PartialEq, TotalEq)]
 pub struct Bundle<S: BundleState + ?Sized> {
+    /// Net value of spends minus outputs (plaintext integer).
+    pub value_balance: value::Balance,
+
     /// Actions (cv, rk, sig).
     ///
     /// The bundle commitment is sensitive to the order of actions. The [`Plan`]
     /// utility in this crate sorts actions by descriptor, but other
     /// implementations may create any arbitrary ordering.
     pub actions: Vec<Action>,
-
-    /// Net value of spends minus outputs (plaintext integer).
-    pub value_balance: value::Balance,
 
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
@@ -481,7 +481,7 @@ impl Bundle<ProofStamp> {
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
         let desc_bytes = self.descriptors().into_iter().collect::<Vec<[u8; 64]>>();
-        blake2b::action_descriptor_digest(&desc_bytes) == self.stamp.actions
+        blake2b::action_descriptor_digest(&desc_bytes) == self.stamp.coverage
     }
 }
 
@@ -553,8 +553,8 @@ impl<S: StampState> Bundle<S> {
         let stamp = S::read(&mut reader)?;
 
         Ok(Self {
-            actions,
             value_balance,
+            actions,
             binding_sig,
             stamp,
         })

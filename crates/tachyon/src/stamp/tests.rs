@@ -173,7 +173,7 @@ fn merge_populates_covered_actions() {
     .expect("merge");
     // `merge` sorts the concatenated descriptors into canonical order, so the
     // covered-actions digest is independent of the order they were passed in.
-    assert_eq!(merged.actions, expected);
+    assert_eq!(merged.coverage, expected);
 }
 
 /// Bundle-validity rule 9 requires a proof stamp's tachygrams to be
@@ -221,7 +221,7 @@ fn covered_actions_round_trip() {
     stamp.write(&mut buf).expect("write");
     let decoded = ProofStamp::read(&*buf).expect("read");
 
-    assert_eq!(decoded.actions, stamp.actions);
+    assert_eq!(decoded.coverage, stamp.coverage);
     assert_eq!(decoded.anchor, stamp.anchor);
     assert_eq!(decoded.tachygrams, stamp.tachygrams);
 }
