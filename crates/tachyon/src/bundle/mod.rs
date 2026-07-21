@@ -480,8 +480,7 @@ impl Bundle<ProofStamp> {
     /// owned actions and comparing to its stamp's `hStampActionsTachyon`.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
-        let desc_bytes = self.descriptors().into_iter().collect::<Vec<[u8; 64]>>();
-        blake2b::action_descriptor_digest(&desc_bytes) == self.stamp.coverage
+        self.stamp.covers(&self.descriptors())
     }
 }
 
