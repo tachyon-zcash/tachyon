@@ -509,7 +509,18 @@ impl<S: StampState> Bundle<S> {
 
         let mut descriptors: Vec<action::Descriptor> = Vec::new();
         for _ in 0..n_actions {
-            descriptors.push(action::Descriptor::read(&mut reader)?);
+            let descriptor = action::Descriptor::read(&mut reader)?;
+
+            // TODO: do we care about deduplication here?
+            // we could improve or delete this check.
+            if descriptors.contains(&descriptor) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "action descriptors are not unique",
+                ));
+            }
+
+            descriptors.push(descriptor);
         }
 
         let mut signatures: Vec<action::Signature> = Vec::new();

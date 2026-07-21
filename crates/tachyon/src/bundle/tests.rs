@@ -541,6 +541,74 @@ fn is_aggregate_independent_of_action_order() {
     );
 }
 
+/// An obvious double spend, two actions carrying identical descriptors, is
+/// rejected at deserialization by the parser's uniqueness check. The `Plan`
+/// API cannot express this shape (it keys actions by descriptor), so the
+/// duplicate is forced by hand.
+#[test]
+fn double_spend_obvious() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
+    assert!(
+        bundle.actions.len() >= 2,
+        "need at least two actions to duplicate"
+    );
+
+    bundle.actions[1] = bundle.actions[0];
+
+    let mut buf = Vec::new();
+    bundle.write(&mut buf).expect("write");
+
+    let err =
+        Bundle::<ProofStamp>::read(&*buf).expect_err("duplicate descriptors must be rejected");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(err.to_string(), "action descriptors are not unique");
+}
+
+/// A more obfuscated double spend, the same note spent under two independent
+/// randomizations, produces distinct descriptors and is not caught at the
+/// bundle level. True double-spend prevention is a nullifier/pool-level
+/// concern.
+#[test]
+fn double_spend_secret() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let note = wallet.random_note(200);
+
+    let spend_a = action::Plan::spend(
+        note,
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
+    );
+    let spend_b = action::Plan::spend(
+        note,
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
+    );
+    assert_ne!(
+        spend_a.cv(),
+        spend_b.cv(),
+        "independent rcv gives distinct cv"
+    );
+    assert_ne!(
+        spend_a.rk, spend_b.rk,
+        "independent theta gives distinct rk"
+    );
+
+    let plan = Plan::new(alloc::vec![spend_a, spend_b], alloc::vec![]);
+    let bundle = plan
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .expect("signing works");
+
+    bundle
+        .verify_signatures(&mock_sighash(bundle.commitment()))
+        .expect("two independently-randomized spends of the same note still verify");
+}
+
 #[test]
 fn innocent_aggregate_from_two_autonomes() {
     let rng = &mut StdRng::seed_from_u64(0);
