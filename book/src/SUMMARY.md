@@ -22,6 +22,7 @@
   - [Aggregator]()
   - [ZCash Miner]()
 - [Tachyon Testnet]()
+- [Alex's Corner](revisit.md)
 
 ## Appendix
 
