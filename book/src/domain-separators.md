@@ -43,14 +43,23 @@ Domain string and personalization bytes for `sk` expansion.
 | `ask` derivation | `0x21` byte |
 | `nk` derivation | `0x22` byte |
 
+### MiMC round constants
+
+Personalization for deriving the nullifier cipher's pinned round-constant table ($c_0 = 0$).
+
+| Purpose | Value |
+| ------- | ----- |
+| Round constants | `Tachyon-MiMC0064` |
+
 ## Poseidon
 
 These are all Tachyon-specific digests, performed in-circuit.
 
 | Purpose | Value |
 | ------- | ----- |
-| Nullifier prefix key | `Tachyon-NfPrefix` |
-| Nullifier derivation | `Tachyon-NfDerive` |
+| Nullifier master key | `Tachyon-NfMaster` |
+| Derivation combination challenge | `Tachyon-NfLeafSq` |
+| Nullifier fold challenge | `Tachyon-NfLeafFd` |
 | Note commitment | `Tachyon-CmDerive` |
 | Action digest | `Tachyon-ActionDg` |
 | Payment key derivation | `Tachyon-PkDerive` |

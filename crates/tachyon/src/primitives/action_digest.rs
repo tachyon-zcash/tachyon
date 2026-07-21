@@ -49,6 +49,7 @@ mod tests {
         entropy::ActionEntropy,
         keys::private,
         note::{self, Note},
+        nullifier,
         primitives::effect,
         value,
     };
@@ -61,7 +62,7 @@ mod tests {
         let note = Note {
             pk: sk.derive_payment_key(),
             value: value::Positive::try_from(val).unwrap(),
-            psi: note::NullifierTrapdoor::random(rng),
+            psi: nullifier::Trapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };
         let rcv = value::Trapdoor::random(rng);

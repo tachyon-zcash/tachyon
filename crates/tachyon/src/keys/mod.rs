@@ -56,32 +56,23 @@
 //!
 //! ## Nullifier Derivation
 //!
-//! Nullifiers are derived via a GGM tree PRF instantiated from Poseidon:
+//! Nullifiers are derived from a per-note master key $\mathsf{mk} = [k, w]$:
 //!
-//! $$\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk})$$
-//! $$\mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$$
+//! $$[k, w] = \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(\psi, \mathsf{nk})$$
+//! $$\mathsf{nf}_e = E_k(e) + w$$
 //!
 //! where $\psi$ is the note's nullifier trapdoor, $\mathsf{nk}$ is the
-//! nullifier key, and flavor is the epoch-id.
-//!
-//! The master root key $\mathsf{mk}$ supports oblivious sync delegation:
-//! prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
-//! $e \leq t$, enabling range-restricted delegation without revealing
-//! spend capability.
+//! nullifier key, and the cipher input $e$ is the epoch index itself. Every
+//! epoch window's nullifiers are the cipher outputs.
 
 pub mod private;
 pub mod public;
 
-mod ggm;
 mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use ggm::{
-    GGM_CHUNK_MASK, GGM_CHUNK_SIZE, GGM_MAX_INDEX, GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey,
-    NotePrefixedKey, cover_candidates,
-};
-pub use note::{NullifierKey, PaymentKey};
+pub use note::{NoteMasterKey, NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]
@@ -94,6 +85,7 @@ mod tests {
         entropy::ActionEntropy,
         keys::{NullifierKey, PaymentKey, private},
         note::{self, Note},
+        nullifier,
         primitives::effect,
         value,
     };
@@ -143,7 +135,7 @@ mod tests {
         let note = Note {
             pk: sk.derive_payment_key(),
             value: value::Positive::try_from(1000u64).unwrap(),
-            psi: note::NullifierTrapdoor::random(rng),
+            psi: nullifier::Trapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };
         let theta = ActionEntropy::random(rng);

@@ -1,6 +1,4 @@
-//! GGM nullifier-derivation chain: prove a contiguous range of a note's
-//! per-epoch nullifiers `GGM(mk, ·)`. Wallet-only; every range header carries
-//! `cm` for its consumers.
+//! Prove a trace of nullifier derivations.
 
 extern crate alloc;
 
@@ -12,302 +10,388 @@ use ragu::{
     Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
     constraint::{enforce_equal_point, enforce_zero},
 };
+use zcash_mimc::specs::tachyon::TachyonP5R64;
 
 use crate::{
+    constants::{EPOCH_MAX, NF_DERIVATION_WIDTH},
     digest::poseidon,
-    keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, ProofAuthorizingKey},
-    note::{self, Note, Nullifier},
-    primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
-    relations::enforce::enforce_shifted_combination,
+    keys::{NoteMasterKey, ProofAuthorizingKey},
+    note::{self, Note},
+    nullifier::{
+        NfGridSpectrum, NfGridSpectrumCommit, NfWhitenedSpectrumCommit, SboxQuarticSpectrum,
+        SboxQuarticSpectrumCommit, SboxQuotientSpectrum, SboxSquareSpectrum, WrapQuotientSpectrum,
+        WrapSpectrum,
+        derivation::{
+            DOMAIN_GENERATOR, EPOCH_OFFSET_SPECTRUM, NF_COSET_ID, ROUND_SCHEDULE_SPECTRUM,
+        },
+    },
+    primitives::EpochIndex,
 };
 
-/// In-progress GGM walk position `(cm, node, depth, index)`: the note
-/// commitment `cm` carried for the final binding, the current tree `node`,
-/// levels descended `depth`, and leaf `index`. Wallet-only.
+/// A certified S-box/boundary slice of a window's trace (wallet-only).
+///
+/// Carries the trace, whitened, and quartic commitments, the master key `mk`
+/// (a free witness at the seed; a bare cert is sound only once [`WrapStep`]
+/// pins it), and the window `base`. Attests $\mathsf{square} = (T +
+/// \mathsf{off})^2$ and $\mathsf{quartic} = \mathsf{square}^2$ (off the wrap
+/// column), the arithmetic-progression boundary for this `base`, and the
+/// homomorphic whitening $\mathsf{nf\_commit} = \mathsf{trace\_commit} +
+/// [w]\,\mathcal{G}_0$.
 #[derive(Clone, Debug)]
-pub struct NfPrefixHeader;
+pub struct Sbox;
 
-impl Header for NfPrefixHeader {
-    type Data = (note::Commitment, Fp, u8, EpochIndex);
+impl Header for Sbox {
+    /// `(trace_commit, nf_commit, quartic_commit, mk, base)`.
+    type Data = (
+        NfGridSpectrumCommit,
+        NfWhitenedSpectrumCommit,
+        SboxQuarticSpectrumCommit,
+        NoteMasterKey,
+        EpochIndex,
+    );
 
-    const SUFFIX: Suffix = Suffix::new(1);
+    const SUFFIX: Suffix = Suffix::new(12);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (trace_commit, nf_commit, quartic_commit, mk, base) = *data;
         (
+            vec![mk.0, mk.1, Fp::from(base)],
+            Vec::new(),
+            Vec::new(),
             vec![
-                Fp::from(data.0),
-                data.1,
-                Fp::from(u64::from(data.2)),
-                Fp::from(u64::from(data.3.0)),
+                Eq::from(trace_commit),
+                Eq::from(nf_commit),
+                Eq::from(quartic_commit),
             ],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
         )
     }
 }
 
-/// A proven contiguous range of derived nullifiers (wallet-only).
+/// A certified, point-queryable window of derived nullifiers (wallet-only).
 ///
-/// `(cm, (epoch_start, nf_start), nf_seq_commit, (epoch_end, nf_end))`: `cm`
-/// lets every consumer bind the range to the real note; `nf_seq_commit` (the
-/// nullifier sequence) sits between its boundary `(epoch, nullifier)` pairs and
-/// commits to the half-open range `[nf_start, .., nf_end]` (`N_e = GGM(mk, e)`)
-/// at degree 0, sentinel-terminated (see
-/// [`NfSeqPoly`](crate::primitives::NfSeqPoly)) so the commitment is never the
-/// identity point. `nf_start`/`nf_end` are the genuine boundary leaves, so a
-/// consumer can bind them without opening the sequence.
+/// `(cm, epoch_start, epoch_end, nf_commit)`: covers epochs `[epoch_start,
+/// epoch_end)`, always one `NF_DERIVATION_WIDTH`-wide window; `nf_commit`
+/// commits the whitened trace $W = T + w$, whose last-column cells are the
+/// genuine nullifiers, $\mathsf{nf}_{\mathsf{epoch\_start}+j} = W(\sigma
+/// \zeta^j)$ ($\sigma$ the column stride, $\zeta$ the row-subgroup
+/// generator). `cm` binds the window to the real note.
+/// Consumers re-witness `W`, bind it by commit-equality, and read covered
+/// nullifiers as single openings at pinned points. No key material rides the
+/// header.
 #[derive(Clone, Debug)]
-pub struct NullifierHeader;
+pub struct NullifierDerivation;
 
-impl Header for NullifierHeader {
+impl Header for NullifierDerivation {
+    /// `(cm, epoch_start, epoch_end, nf_commit)`.
     type Data = (
         note::Commitment,
-        (EpochIndex, Nullifier),
-        NfSeqCommit,
-        (EpochIndex, Nullifier),
+        EpochIndex,
+        EpochIndex,
+        NfWhitenedSpectrumCommit,
     );
 
-    const SUFFIX: Suffix = Suffix::new(2);
+    const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, (epoch_start, nf_start), nf_seq_commit, (epoch_end, nf_end)) = *data;
+        let (cm, epoch_start, epoch_end, nf_commit) = *data;
         (
             vec![
                 Fp::from(cm),
                 Fp::from(u64::from(epoch_start.0)),
-                Fp::from(nf_start),
                 Fp::from(u64::from(epoch_end.0)),
-                Fp::from(nf_end),
             ],
             Vec::new(),
             Vec::new(),
-            vec![Eq::from(nf_seq_commit)],
+            vec![Eq::from(nf_commit)],
         )
     }
 }
 
-/// Seed the GGM walk at the master root.
+/// Certify the S-box decomposition and the boundary of a window's trace, and
+/// whiten its commitment.
 ///
-/// Witnesses the note and `pak`, proves `mk` is the note's master key
-/// (`note.pk == pak.derive_payment_key()`), and emits the depth-0 node carrying
-/// the note's `cm`.
+/// Seed step. Witnesses the trace $T$, the S-box intermediates
+/// `square`/`quartic`, the combined quotient $Q_A$, the master key `mk` (free
+/// here; [`WrapStep`] pins it to the note's real one), and the window `base`.
+/// Derives $\chi_A$ over $(T, \mathsf{square}, \mathsf{quartic})$ and
+/// proves, combined at a free $z_A$, the S-box decomposition
+///
+/// $$
+/// \mathsf{square} = (T + \mathsf{off})^2, \qquad
+/// \mathsf{quartic} = \mathsf{square}^2
+/// $$
+///
+/// (with $\mathsf{off}$ the public schedule plus round key $k$), and the
+/// boundary $(T - (\mathsf{base} + k + N_{\mathsf{row}})^5) \, Z_{H \setminus
+/// C_0}$ pinning each row's first cell to round $0$ of its
+/// arithmetic-progression input $\mathsf{base} + r$. Range-checks `base` and
+/// computes $\mathsf{nf\_commit} = \mathsf{trace\_commit} +
+/// [w]\,\mathcal{G}_0$, the commitment of the whitened trace $W = T + w$,
+/// in-circuit, so a valid export's `nf_commit` is a pinned function of the
+/// certified trace and the pinned `mk`.
+///
+/// # Soundness
+///
+/// $\chi_A$ binds only the three column commitments; the scalar identity
+/// operands $k$ and $\mathsf{base}$ ride the header unabsorbed (absorbing
+/// them would cost a third sponge permutation). The combination argument
+/// alone therefore does not force $I_1$/$I_2$/$I_4$ individually against a
+/// prover choosing $k$/$\mathsf{base}$ after $\chi_A$: a bare cert attests
+/// the identities for *some* $(k, \mathsf{base})$ only. [`WrapStep`], the
+/// cert's sole consumer, pins `mk` to the note's Poseidon-derived key, so
+/// choosing $k$ as a function of $\chi_A$ requires inverting that
+/// derivation; with $k$ pinned, $\mathsf{base}$ is one scalar against the
+/// boundary column's full set of equations. Any new consumer of [`Sbox`]
+/// certs must preserve the `mk` pin before trusting the identities.
+///
+/// # Gate budget
+///
+/// | item | gates |
+/// |---|---|
+/// | $\chi_A$ sponge (absorb 7, squeeze 1: two permutations) | ~590 |
+/// | $N_{\mathsf{row}}(z)$ Horner + schedule Horner | ~190 |
+/// | power chains, inverse, identity | ~30 |
+/// | base range check | ~10 |
+/// | whitening scalar multiplication | ~512 |
+/// | total | ~1332 |
 #[derive(Debug)]
-pub struct NfMasterSeed;
+pub struct SboxStep;
 
-impl Step for NfMasterSeed {
+impl Step for SboxStep {
     type Aux<'source> = ();
     type Left = ();
-    type Output = NfPrefixHeader;
+    type Output = Sbox;
     type Right = ();
-    /// `(note, pak)`.
-    type Witness<'source> = (Note, ProofAuthorizingKey);
+    /// `(trace, square, quartic, quotient, mk, base)`.
+    type Witness<'source> = (
+        NfGridSpectrum,
+        SboxSquareSpectrum,
+        SboxQuarticSpectrum,
+        SboxQuotientSpectrum,
+        NoteMasterKey,
+        EpochIndex, // base in 0..=(EPOCH_MAX - (NF_DERIVATION_WIDTH - 1))
+    );
 
-    const INDEX: Index = Index::new(0);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (note, pak): Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            note.pk.0 - pak.derive_payment_key().0,
-            "NfMasterSeed: pak not related to note",
-        )?;
-        let mk = pak.nk.derive_note_private(&note.psi);
-        let cm = note.commitment();
-        Ok(((cm, mk.0, 0, EpochIndex(0)), ()))
-    }
-}
-
-/// Descend one level of the GGM tree.
-///
-/// Witnesses a free `chunk`; `node' = nf_prefix(node, chunk)`, `index' =
-/// index*ARITY + chunk`, `depth' = depth + 1`.
-#[derive(Debug)]
-pub struct NfPrefixStep;
-
-impl Step for NfPrefixStep {
-    type Aux<'source> = ();
-    type Left = NfPrefixHeader;
-    type Output = NfPrefixHeader;
-    type Right = ();
-    /// `(chunk,)`.
-    type Witness<'source> = (u8,);
-
-    const INDEX: Index = Index::new(1);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (chunk,): Self::Witness<'source>,
-        (cm, node, depth, index): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if depth >= GGM_TREE_DEPTH {
-            return Err(ragu::Error::InvalidWitness(
-                "NfPrefixStep: already at maximum depth".into(),
-            ));
-        }
-        if chunk >= GGM_TREE_ARITY {
-            return Err(ragu::Error::InvalidWitness(
-                "NfPrefixStep: chunk exceeds GGM arity".into(),
-            ));
-        }
-        let child = poseidon::nf_prefix(node, chunk);
-        let child_index = EpochIndex(index.0 * u32::from(GGM_TREE_ARITY) + u32::from(chunk));
-        Ok(((cm, child, depth + 1, child_index), ()))
-    }
-}
-
-/// Turn a leaf node into a single-leaf [`NullifierHeader`].
-///
-/// Requires the walk to be at a leaf (`depth == GGM_TREE_DEPTH`); the nullifier
-/// is `Poseidon(node)` and the range commits to it alone at degree 0 (sentinel
-/// above), spanning the single epoch `[index, index + 1)`.
-#[derive(Debug)]
-pub struct NullifierStep;
-
-impl Step for NullifierStep {
-    type Aux<'source> = ();
-    type Left = NfPrefixHeader;
-    type Output = NullifierHeader;
-    type Right = ();
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(2);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (cm, node, depth, index): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &[g0, g1] = Pasta::host_generators(Pasta::baked())
-            .g()
-            .split_first_chunk::<2>()
-            .expect("at least two generators")
-            .0;
-
-        enforce_zero(
-            Fp::from(u64::from(depth)) - Fp::from(u64::from(GGM_TREE_DEPTH)),
-            "NullifierStep: not at maximum depth",
-        )?;
-        let nf = Nullifier::from(poseidon::nullifier(node));
-
-        // Single-leaf sentinel sequence `nf + X`: `g1` carries the sentinel.
-        let nf_seq_commit = NfSeqCommit::from(g0 * Fp::from(nf) + g1);
-        Ok(((cm, (index, nf), nf_seq_commit, (index.next(), nf)), ()))
-    }
-}
-
-/// Merge two adjacent derived ranges into one (`left ++ right`).
-///
-/// Requires the same `cm` and contiguity (`right.start == left.end`). Witnesses
-/// the two range polynomials and their concatenation, binds each by
-/// commit-equality, and proves the concat at `offset = left.end - left.start`
-/// via the faithful opening relation.
-#[derive(Debug)]
-pub struct NullifierFuse;
-
-impl Step for NullifierFuse {
-    type Aux<'source> = ();
-    type Left = NullifierHeader;
-    type Output = NullifierHeader;
-    type Right = NullifierHeader;
-    /// `(left_seq, merged_seq, right_seq)`.
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
-
-    const INDEX: Index = Index::new(3);
+    const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (left_seq, merged_seq, right_seq): Self::Witness<'source>,
-        (
-            left_cm,
-            (left_epoch_start, left_nf_start),
-            left_nf_seq_commit,
-            (left_epoch_end, _left_nf_end),
-        ): <Self::Left as Header>::Data,
-        (
-            right_cm,
-            (right_epoch_start, right_nf_start),
-            right_nf_seq_commit,
-            (right_epoch_end, right_nf_end),
-        ): <Self::Right as Header>::Data,
+        (trace, square, quartic, quotient, mk, base): Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(left_cm) - Fp::from(right_cm),
-            "NullifierFuse: note commitments differ",
-        )?;
-        enforce_zero(
-            Fp::from(right_epoch_start) - Fp::from(left_epoch_end),
-            "NullifierFuse: ranges not contiguous",
+        // Native mock stand-in for the base range check: in real ragu this is
+        // a bit decomposition against the epoch space's width.
+        if base.0 > (EPOCH_MAX - (NF_DERIVATION_WIDTH - 1)) {
+            return Err(ragu::Error::InvalidWitness(
+                "Sbox: base exceeds epoch space".into(),
+            ));
+        }
+
+        let NoteMasterKey(key, whitening) = mk;
+
+        // $\chi_A$: the Poseidon combination challenge over the three column
+        // commitments; $k$ and `base` are deliberately unabsorbed (see the
+        // step's soundness section).
+        let chi = poseidon::derivation_challenge(
+            trace.commit().into(),
+            square.commit().into(),
+            quartic.commit().into(),
+        );
+
+        // $z_A$: a fresh transcript challenge over all four commitments.
+        let z = ctx.derive_challenge(&[
+            trace.commit().into(),
+            square.commit().into(),
+            quartic.commit().into(),
+            quotient.commit().into(),
+        ])?;
+
+        let trace_at_z = trace.as_ref().eval(z);
+        ctx.enforce_poly_query(trace.commit().into(), z, trace_at_z)?;
+        let square_at_z = square.as_ref().eval(z);
+        ctx.enforce_poly_query(square.commit().into(), z, square_at_z)?;
+        let quartic_at_z = quartic.as_ref().eval(z);
+        ctx.enforce_poly_query(quartic.commit().into(), z, quartic_at_z)?;
+        let quotient_at_z = quotient.as_ref().eval(z);
+        ctx.enforce_poly_query(quotient.commit().into(), z, quotient_at_z)?;
+
+        let z_width = z.pow_vartime([u64::from(NF_DERIVATION_WIDTH)]);
+        let vanishing = z.pow_vartime([1 << Polynomial::R]) - Fp::ONE;
+        let round_schedule_at_z = ROUND_SCHEDULE_SPECTRUM
+            .iter()
+            .rev()
+            .fold(Fp::ZERO, |acc, &coeff| acc * z_width + coeff);
+        let epoch_offset_at_z = EPOCH_OFFSET_SPECTRUM
+            .iter()
+            .rev()
+            .fold(Fp::ZERO, |acc, &coeff| acc * z + coeff);
+        let first_complement = vanishing
+            * (z_width - Fp::ONE)
+                .invert()
+                .expect("random challenge does not land on the first column");
+
+        // Combined identity: $I_1 + \chi_A I_2 + \chi_A^2 I_4 = Q_A Z_D$
+        // at $z$.
+        let input = trace_at_z + round_schedule_at_z + key;
+        let bound = (Fp::from(base) + key + epoch_offset_at_z).pow_vartime([TachyonP5R64::POW]);
+        let i1 = square_at_z - input.square();
+        let i2 = quartic_at_z - square_at_z.square();
+        let i4 = (trace_at_z - bound) * first_complement;
+        if i1 + chi * (i2 + chi * i4) != quotient_at_z * vanishing {
+            return Err(ragu::Error::InvalidWitness(
+                "Sbox: sbox/boundary identity fails at challenge".into(),
+            ));
+        }
+
+        // Whitening: $\mathsf{nf\_commit} = \mathsf{trace\_commit} +
+        // [w]\,\mathcal{G}_0$ is the commitment of $W = T + w$ (the
+        // whitening lands on the constant coefficient's generator), computed
+        // in-circuit so `nf_commit` is pinned by the trace commitment and
+        // `mk`.
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &g0 = Pasta::host_generators(Pasta::baked())
+            .g()
+            .first()
+            .expect("at least one generator");
+        let nf_commit = NfWhitenedSpectrumCommit::from(Eq::from(trace.commit()) + g0 * whitening);
+
+        Ok(((trace.commit(), nf_commit, quartic.commit(), mk, base), ()))
+    }
+}
+
+/// Certify the round transition, pin the master key, and export the window as
+/// a certified [`NullifierDerivation`].
+///
+/// `Left = Sbox`. Witnesses the trace $T$, the `quartic` intermediate, the
+/// wrap correction `wrap`, the round quotient $Q_B$, and the note with its
+/// proof authorizing key `pak`. Binds $T$ and `quartic` by commit-equality
+/// to the cert's header, proving the single round-transition identity
+///
+/// $$
+/// T(\omega X) = \mathsf{quartic} \cdot (T + \mathsf{off})
+///     + Z_{H \setminus C} \, \mathsf{wrap}
+/// $$
+///
+/// at a free $z_B$ against the same trace the cert constrained. Derives the
+/// note's real master key (`note.pk == pak.derive_payment_key()` pins `nk`;
+/// `mk = derive_note_private(psi, nk)`) and pins the cert's free-witness
+/// `mk` to it, computing `cm` here where the note is witnessed; `nk` never
+/// leaves the step. The pin fixes the scalar operands of the cert's $\chi_A$
+/// combination, completing the seed's soundness argument. The cert's
+/// `nf_commit`, now a pinned function of certified trace and real `mk`, is
+/// published.
+///
+/// # Gate budget
+///
+/// | item | gates |
+/// |---|---|
+/// | payment-key sponge (one permutation) | ~293 |
+/// | master-key sponge (absorb 3, squeeze 2: one permutation) | ~293 |
+/// | note-commitment sponge (two permutations) | ~586 |
+/// | schedule Horner | ~63 |
+/// | power chains, inverse, identity | ~30 |
+/// | commit-equality binds (two point equalities) | ~4 |
+/// | total | ~1269 |
+#[derive(Debug)]
+pub struct WrapStep;
+
+impl Step for WrapStep {
+    type Aux<'source> = ();
+    type Left = Sbox;
+    type Output = NullifierDerivation;
+    type Right = ();
+    /// `(trace, quartic, wrap, quotient, note, pak)`.
+    type Witness<'source> = (
+        NfGridSpectrum,
+        SboxQuarticSpectrum,
+        WrapSpectrum,
+        WrapQuotientSpectrum,
+        Note,
+        ProofAuthorizingKey,
+    );
+
+    const INDEX: Index = Index::new(16);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (trace, quartic, wrap, quotient, note, pak): Self::Witness<'source>,
+        (left_trace, left_nf_commit, left_quartic, left_mk, base): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        // Stitch: this step's identity runs against the same trace and
+        // `quartic` the cert constrained.
+        enforce_equal_point(
+            Eq::from(trace.commit()),
+            Eq::from(left_trace),
+            "Wrap: trace does not match the cert",
         )?;
         enforce_equal_point(
-            Eq::from(left_seq.commit()),
-            Eq::from(left_nf_seq_commit),
-            "NullifierFuse: left polynomial does not match header",
+            Eq::from(quartic.commit()),
+            Eq::from(left_quartic),
+            "Wrap: quartic does not match the cert",
         )?;
-        enforce_equal_point(
-            Eq::from(right_seq.commit()),
-            Eq::from(right_nf_seq_commit),
-            "NullifierFuse: right polynomial does not match header",
+
+        // Master: derive the note's real `mk` at its master secrets and pin
+        // the cert's free witness to it. `nk` never leaves the step (only the
+        // payment key `pk` does, and it preimage-hides `nk`).
+        enforce_zero(
+            note.pk.0 - pak.derive_payment_key().0,
+            "Wrap: pak not related to note",
         )?;
-        let merged_nf_seq_commit = merged_seq.commit();
-        let offset =
-            usize::try_from(left_epoch_end.0 - left_epoch_start.0).map_err(|_too_long| {
-                ragu::Error::InvalidWitness("NullifierFuse: range length exceeds usize".into())
-            })?;
-        // Sentinel concat: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
-        // `merged = left ++ right` is the shifted combination
-        // `merged(X) = left(X) + X^offset·right(X) - X^offset`. The `-X^offset`
-        // monomial cancels left's sentinel, right's first member lands in the
-        // vacated slot, and right's own sentinel re-terminates `merged`. The
-        // monomial's constant coefficient is trivially challenge-independent,
-        // and `offset` is left's header-fixed span.
-        enforce_shifted_combination(
-            ctx,
-            [
-                (&Polynomial::from(left_seq), 0),
-                (&Polynomial::from(right_seq), offset),
-            ],
-            [(-Fp::ONE, offset)],
-            &Polynomial::from(merged_seq),
-        )
-        .map_err(|_relation_err| {
-            ragu::Error::InvalidWitness(
-                "NullifierFuse: merged is not the concat of the halves".into(),
-            )
-        })?;
-        // Pin the boundary nullifiers that sit at a queryable degree-0 position:
-        // the merged sequence opens to `left_nf_start` (its first leaf), and the
-        // right half opens to `right_nf_start`. Each ties a witnessed sequence to
-        // the header value its seed proved by construction. (`left_nf_end` is the
-        // left half's top coefficient, not extractable by a single opening.)
-        ctx.enforce_poly_query(
-            merged_nf_seq_commit.into(),
-            Fp::ZERO,
-            Fp::from(left_nf_start),
+        let mk = pak.nk.derive_note_private(note.psi);
+        enforce_zero(mk.0 - left_mk.0, "Wrap: round key does not match the note")?;
+        enforce_zero(
+            mk.1 - left_mk.1,
+            "Wrap: whitening key does not match the note",
         )?;
-        ctx.enforce_poly_query(
-            right_nf_seq_commit.into(),
-            Fp::ZERO,
-            Fp::from(right_nf_start),
-        )?;
-        Ok((
-            (
-                left_cm,
-                (left_epoch_start, left_nf_start),
-                merged_nf_seq_commit,
-                (right_epoch_end, right_nf_end),
-            ),
-            (),
-        ))
+        let cm = note.commitment();
+
+        let NoteMasterKey(key, _whitening) = mk;
+
+        // $z_B$: a fresh transcript challenge over the four commitments. No
+        // combination challenge: a single identity is its own quotient.
+        let z = ctx.derive_challenge(&[
+            trace.commit().into(),
+            quartic.commit().into(),
+            wrap.commit().into(),
+            quotient.commit().into(),
+        ])?;
+
+        let trace_at_z = trace.as_ref().eval(z);
+        ctx.enforce_poly_query(trace.commit().into(), z, trace_at_z)?;
+        let trace_advanced = trace.as_ref().eval(*DOMAIN_GENERATOR * z);
+        ctx.enforce_poly_query(trace.commit().into(), *DOMAIN_GENERATOR * z, trace_advanced)?;
+        let quartic_at_z = quartic.as_ref().eval(z);
+        ctx.enforce_poly_query(quartic.commit().into(), z, quartic_at_z)?;
+        let wrap_at_z = wrap.as_ref().eval(z);
+        ctx.enforce_poly_query(wrap.commit().into(), z, wrap_at_z)?;
+        let quotient_at_z = quotient.as_ref().eval(z);
+        ctx.enforce_poly_query(quotient.commit().into(), z, quotient_at_z)?;
+
+        let z_width = z.pow_vartime([u64::from(NF_DERIVATION_WIDTH)]);
+        let vanishing = z.pow_vartime([1 << Polynomial::R]) - Fp::ONE;
+        let round_schedule_at_z = ROUND_SCHEDULE_SPECTRUM
+            .iter()
+            .rev()
+            .fold(Fp::ZERO, |acc, &coeff| acc * z_width + coeff);
+        let last_complement = vanishing
+            * (z_width - *NF_COSET_ID)
+                .invert()
+                .expect("random challenge does not land on the last column");
+
+        // Round identity $I_3 = Q_B Z_D$ at $z$.
+        let input = trace_at_z + round_schedule_at_z + key;
+        let i3 = trace_advanced - quartic_at_z * input - last_complement * wrap_at_z;
+        if i3 != quotient_at_z * vanishing {
+            return Err(ragu::Error::InvalidWitness(
+                "Wrap: round identity fails at challenge".into(),
+            ));
+        }
+
+        let end = EpochIndex(base.0 + NF_DERIVATION_WIDTH);
+        Ok(((cm, base, end, left_nf_commit), ()))
     }
 }

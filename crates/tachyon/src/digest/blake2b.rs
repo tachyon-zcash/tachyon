@@ -213,7 +213,8 @@ pub(crate) fn stamp_data_digest(
 ///   )
 /// $$
 ///
-/// $\mathsf{tachyonBundleState}$ is one byte indicating format of $\mathsf{tachyonStampState}$
+/// $\mathsf{tachyonBundleState}$ is one byte indicating format of
+/// $\mathsf{tachyonStampState}$
 ///
 /// | $\mathsf{tachyonBundleState}$ | Impl | $\mathsf{tachyonStampState}$ |
 /// | ----------------------------- | ---- | ---------------------------- |

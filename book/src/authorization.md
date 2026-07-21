@@ -308,8 +308,8 @@ and Proving
                 alt effect == spend
                     User --> User: rk == ak + [alpha]G
                     note over User: mk = Poseidon(psi, nk)
-                    note over User: nf_e0 = GGM(mk, e)
-                    note over User: nf_e1 = GGM(mk, e+1)
+                    note over User: nf_e0 = PRF^nfTachyon(mk, e)
+                    note over User: nf_e1 = PRF^nfTachyon(mk, e+1)
                     note over User: tg_roots = nf_e0, nf_e1
                 else effect == output
                     User --> User: rk == [alpha]G

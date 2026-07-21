@@ -2,7 +2,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
+use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use pasta_curves::{Eq, Fp};
 use ragu::{Polynomial, poly_with_roots};
 
@@ -17,12 +17,12 @@ pub struct TachygramSetCommit(Eq);
 pub struct ActionSetCommit(Eq);
 
 /// Witness polynomial for a stamp's tachygram set (members encoded as roots).
-#[derive(Clone, Debug, Into)]
+#[derive(AsRef, Clone, Debug, Into)]
 pub struct TachygramSetPoly(Polynomial);
 
 /// Witness polynomial for a stamp's action-digest set (members encoded as
 /// roots).
-#[derive(Clone, Debug, Into)]
+#[derive(AsRef, Clone, Debug, Into)]
 pub struct ActionSetPoly(Polynomial);
 
 impl TachygramSetPoly {

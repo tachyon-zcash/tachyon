@@ -8,64 +8,54 @@ Pool state is likely to advance between proof creation and mining, so consensus 
 
 ## Derivation
 
-Derivation involves a Goldreich-Goldwasser-Micali tree so that a note's nullifier-absence proofs may be trustlessly delegated. Any given node in the tree may only climb towards the leaves, and never back towards the root.
+A note's nullifier for epoch $e$ is the epoch index encrypted under the note's master key, so a window of consecutive epochs' nullifiers can be proven in bulk as one committed polynomial, and the search for them in the pool trustlessly delegated.
 
-The tree has depth $D$ and arity $A$, covering leaf epochs $e \in [0,\ A^D - 1]$.
+### Master key
 
-A node at depth $d$ in the tree covers a contiguous range of $A^{D-d}$ consecutive epochs.
-
-### Root
-
-The note's master key $\mathsf{mk}$ is derived from the note's trapdoor $\psi$ and the wallet's nullifier key $\mathsf{nk}$. This is the tree's root.
+The note's master key $\mathsf{mk}$ is derived from the note's trapdoor $\psi$ and the wallet's nullifier key $\mathsf{nk}$:
 
 $$
-\mathsf{mk} = \mathsf{KDF}^{\mathsf{root}}_\psi(\mathsf{nk}) =
-    \mathsf{Poseidon}_\texttt{Tachyon-NfPrefix}\!(
+\mathsf{mk} = [\,k,\ w\,] =
+    \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}\!(
         \psi, \mathsf{nk}
     )
 $$
 
-The root covers all epochs, and should be kept secret.
+One sponge, two squeezes: the cipher's round key $k$ and a dedicated whitening key $w$. The master key is fixed per note and must be kept secret; its holder can derive every epoch's nullifier.
 
-### Climb
+### Cipher
 
-To climb towards the leaf at some epoch $e$, decompose into $d \in [0 \ldots D]$ base-$A$ direction chunks (most significant bits first) and climb one step per chunk.
-
-$$
-\mathsf{KDF}^{\mathsf{climb}}_\psi(e, 0) =
-    \mathsf{KDF}^{\mathsf{root}}_\psi(\mathsf{nk})
-$$
+The nullifier PRF is a whitened cipher keyed by $\mathsf{mk}$:
 
 $$
-\mathsf{KDF}^{\mathsf{climb}}_\psi(e, d) =
-    \mathsf{Poseidon}_\texttt{Tachyon-NfPrefix}\!\left(
-        \mathsf{KDF}^{\mathsf{climb}}_\psi(e, d-1),\ \left\lfloor
-            e / A^{D-d}
-        \right\rfloor
-        \bmod A
-    \right)
+\mathsf{nf}_e = \mathsf{PRF}^{\mathsf{nfTachyon}}_{\mathsf{mk}}(e) = \textsf{Tachyon-MiMC}_k(e) + w
 $$
 
-The value at $\mathsf{KDF}^{\mathsf{climb}}_\psi(e, D)$ is the leaf key for epoch $e$.
-
-### Leaf
-
-The leaf key is hashed once more under a separate domain to derive the nullifier.
+Tachyon-MiMC is MiMC over $\F_p$: 64 rounds of the degree-5 S-box under the single round key $k$, added every round,
 
 $$
-\mathsf{nf} =
-    \mathsf{Poseidon}_\texttt{Tachyon-NfDerive}\!\left(
-        \mathsf{KDF}^{\mathsf{climb}}_\psi(e, D)
-    \right)
+x_0 = e, \qquad x_{i+1} = (x_i + k + c_i)^5, \qquad \textsf{Tachyon-MiMC}_k(e) = x_{64}
 $$
 
-Because $\mathsf{nf}$ is a pseudo-random function of $\mathsf{mk}$ and the epoch $e$, distinct epochs yield unrelated nullifiers, and an author cannot steer a nullifier toward a chosen value.
+with the round constants $c_i$ fixed by BLAKE2b under the personalization $\texttt{Tachyon-MiMC0064}$ and $c_0 = 0$, and the whitening key $w$ added once after the final round.
+
+Because $\mathsf{nf}_e$ is a pseudo-random function of $\mathsf{mk}$ and the epoch $e$, distinct epochs yield unrelated nullifiers, and an author cannot steer a nullifier toward a chosen value.
+
+### Windows
+
+One derivation proof covers a window of 128 consecutive epochs starting at some epoch $b$. The window's 128 cipher evaluations, 64 round states each, interpolate row-major as a trace polynomial $T$ over an order-8192 multiplicative domain $\langle\omega\rangle$. The whitened trace takes the window's nullifiers as its values on the last-column coset, one nullifier point per epoch:
+
+$$
+W = T + w, \qquad \mathsf{nf}_{b+j} = W(\sigma\zeta^{j})
+$$
+
+with $\zeta = \omega^{64}$ generating the row subgroup and $\sigma = \omega^{63}$ shifting it onto the nullifier coset. The whitened commitment follows homomorphically from the trace commitment, and a consumer reads any covered nullifier as a single opening. The trace identities that certify a window are enforced in the [proof tree](./proof-tree.md).
 
 ## Binding
 
 $\psi$ is carried in the note and digested into the note commitment $\mathsf{cm}$, alongside the payment key $\mathsf{pk}$, which itself pins $\mathsf{nk}$[^pk]. So $\mathsf{cm}$ fixes both $\psi$ and $\mathsf{nk}$, hence $\mathsf{mk}$, hence the entire nullifier sequence. A note has exactly one nullifier sequence, frozen when its commitment enters the pool as a tachygram.
 
-The proof tree never trusts a freely witnessed nullifier. Wherever a nullifier is consumed, a derivation chain proves in-circuit that it descends from the note's $\mathsf{mk}$ to a genuine leaf, and binds that derivation to the note by $\mathsf{cm}$.[^derive]
+The proof tree never trusts a freely witnessed nullifier. Wherever a nullifier is consumed, a derivation proof shows in-circuit that it is the encryption of its epoch under the note's master key, and binds that derivation to the note by $\mathsf{cm}$.[^derive]
 
 $\psi$ must be unique per note. Two notes that reuse the same $\psi$ share $\mathsf{mk}$ and therefore the same nullifier sequence, so spending one publishes the other's nullifiers.
 
@@ -77,7 +67,7 @@ $$(\,\mathsf{nf}_e,\;\; \mathsf{anchor},\;\; \mathsf{cm}\,)$$
 
 $\mathsf{nf}_e$ is the nullifier the wallet would publish to spend now, at the lineage's current epoch $e$. Advancing the spendable (a lift) proves every nullifier from epoch $e$ up to the new epoch absent from the pool, then moves $\mathsf{nf}_e$ and the anchor forward together. $\mathsf{cm}$ rides along unchanged, binding the whole lineage to one note, and so to one value: the spend commits to the value inside $\mathsf{cm}$, which the creation stamp proved minted.
 
-A lift advances the current nullifier only to a genuine next leaf, and the next lift's starting nullifier must equal the current one. Because both are PRF outputs, that equality forces the same note and the same epoch, so a lineage cannot skip an epoch or splice in another note.
+A lift advances the current nullifier only to the genuine next nullifier, and the next lift's starting nullifier must equal the current one. Because both are PRF outputs, that equality forces the same note and the same epoch, so a lineage cannot skip an epoch or splice in another note.
 
 ### Delegation
 
@@ -87,9 +77,16 @@ $$\delta = \sum_{i} [\Delta_{e+i}]\,\mathcal{G}_i + \mathcal{G}_d$$
 
 The sentinel keeps every committed sequence nonzero (an empty window is the constant $1$), so $\delta$ is never the identity point, and it pins the window's exact length.
 
-At the lift the wallet binds $\delta$ to genuine leaves: it proves a contiguous GGM range commits to the same sequence, so each $\Delta_{e+i}$ is the real $\mathsf{nf}_{e+i}$. The window is measured in epoch-boundary crossings: $d$ is the crossing count and $\delta$ holds one nullifier per crossing, plus the nullifier of the epoch in progress at the span's tip, which is carried separately because that epoch is not yet complete. The wallet binds the tip too, so the lineage's new current nullifier is itself a genuine leaf rather than a free value.
+At the bind the wallet proves each $\Delta$ genuine: it re-witnesses the whitened window trace $W$ against the derivation's commitment, reads the covered run of nullifier points off $W$, and folds at a challenge $\chi$ bound to both commitments,
 
-Re-basing is what lets a window be arbitrary. Any run of nullifiers shifts down to a degree-zero polynomial that stands as a witness on its own, so the wallet can delegate any window from any epoch, and only the wallet, holding the note, can fold the proven absence into the lineage.[^lift]
+$$
+\Delta(\chi) + (\mathsf{nf}_{\mathrm{tip}} - 1)\,\chi^{d}
+    = \sum_{i=0}^{d} \chi^{i}\, \mathsf{nf}_{e+i}
+$$
+
+so each committed value is forced to the real $\mathsf{nf}_{e+i}$. The span is measured in epoch-boundary crossings: $d$ is the crossing count and $\delta$ holds one nullifier per crossing, plus the nullifier of the epoch in progress at the span's tip, which is carried separately because that epoch is not yet complete. The swap of the sentinel for the tip binds the tip too, so the lineage's new current nullifier is itself a genuine nullifier rather than a free value.
+
+Coverage is what lets a span be arbitrary. The derivation need only cover the delegated span, and the fold telescopes over any run of nullifier points inside the window, so the wallet can delegate any span within one 128-epoch window, longer delegations composing across successive binds and lifts; only the wallet, holding the note, can fold the proven absence into the lineage.[^lift]
 
 [^anchor]: [Anchor](./anchor.md) describes the pool state commitment.
 [^tachygrams]: See [Tachygrams](./tachygrams.md) for the unified consensus rule covering all published tachygrams.
