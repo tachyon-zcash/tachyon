@@ -12,7 +12,8 @@ pub struct TachyonP5R64;
 
 impl TachyonP5R64 {
     /// The round-constant values.
-    pub const CONSTANTS: &'static [Fp; 64] = &pallas_bytes(include_bytes!("Tachyon-MiMC0064.bin"));
+    pub const CONSTANTS: &'static [Fp; 64] =
+        &read_pallas_bytes(include_bytes!("Tachyon-MiMC0064.bin"));
     /// The S-box exponent.
     pub const POW: u64 = 5;
     /// The number of rounds.
@@ -28,7 +29,7 @@ impl Spec<64> for TachyonP5R64 {
 }
 
 /// Convert a raw byte array into a static array of field elements.
-const fn pallas_bytes<const B: usize, const R: usize>(bytes: &'static [u8; B]) -> [Fp; R] {
+const fn read_pallas_bytes<const B: usize, const R: usize>(bytes: &'static [u8; B]) -> [Fp; R] {
     use ff::Field as _;
     use ff::PrimeField;
 
@@ -40,15 +41,15 @@ const fn pallas_bytes<const B: usize, const R: usize>(bytes: &'static [u8; B]) -
     let mut elements = [Fp::ZERO; R];
     let mut index = 0;
     while index < R {
-        let (parts, extra_parts) = reprs[index].as_chunks::<8>();
-        assert!(parts.len() == 4, "constant size");
+        let (limbs, extra_parts) = reprs[index].as_chunks::<8>();
         assert!(extra_parts.is_empty(), "constant size");
+        assert!(limbs.len() == 4, "constant size");
 
         elements[index] = Fp::from_raw([
-            u64::from_le_bytes(parts[0]),
-            u64::from_le_bytes(parts[1]),
-            u64::from_le_bytes(parts[2]),
-            u64::from_le_bytes(parts[3]),
+            u64::from_le_bytes(limbs[0]),
+            u64::from_le_bytes(limbs[1]),
+            u64::from_le_bytes(limbs[2]),
+            u64::from_le_bytes(limbs[3]),
         ]);
 
         index += 1;
