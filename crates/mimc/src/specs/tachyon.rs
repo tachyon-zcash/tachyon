@@ -30,10 +30,11 @@ impl Spec<64> for TachyonP5R64 {
 /// Convert a raw byte array into a static array of field elements.
 const fn pallas_bytes<const B: usize, const R: usize>(bytes: &'static [u8; B]) -> [Fp; R] {
     use ff::Field as _;
+    use ff::PrimeField;
 
     assert!(B.is_multiple_of(R), "valid input dimensions");
 
-    let (reprs, _extra_input) = bytes.as_chunks::<{ size_of::<Fp>() }>();
+    let (reprs, _extra_input) = bytes.as_chunks::<{ size_of::<<Fp as PrimeField>::Repr>() }>();
     assert!(reprs.len() >= R, "enough input material");
 
     let mut elements = [Fp::ZERO; R];
