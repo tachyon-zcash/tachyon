@@ -26,27 +26,6 @@ pub struct Descriptor {
     pub rk: public::ActionVerificationKey,
 }
 
-impl PartialOrd for Descriptor {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Descriptor {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        {
-            EpAffine::from(self.cv)
-                .to_bytes()
-                .cmp(&EpAffine::from(other.cv).to_bytes())
-        }
-        .then({
-            EpAffine::from(self.rk)
-                .to_bytes()
-                .cmp(&EpAffine::from(other.rk).to_bytes())
-        })
-    }
-}
-
 impl Descriptor {
     /// Derive the action digest.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
@@ -65,6 +44,27 @@ impl Descriptor {
         serialization::write_ep_affine(&mut writer, &self.cv.into())?;
         serialization::write_action_vk(&mut writer, &self.rk.0)?;
         Ok(())
+    }
+}
+
+impl PartialOrd for Descriptor {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Descriptor {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        {
+            EpAffine::from(self.cv)
+                .to_bytes()
+                .cmp(&EpAffine::from(other.cv).to_bytes())
+        }
+        .then({
+            EpAffine::from(self.rk)
+                .to_bytes()
+                .cmp(&EpAffine::from(other.rk).to_bytes())
+        })
     }
 }
 
@@ -182,20 +182,6 @@ pub struct Action {
     pub sig: Signature,
 }
 
-impl PartialOrd for Action {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Action {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.descriptor()
-            .cmp(&other.descriptor())
-            .then(self.sig.cmp(&other.sig))
-    }
-}
-
 impl From<(Descriptor, Signature)> for Action {
     fn from((desc, sig): (Descriptor, Signature)) -> Self {
         Self {
@@ -216,6 +202,20 @@ impl Action {
     #[must_use]
     pub fn descriptor(&self) -> Descriptor {
         Descriptor::from(*self)
+    }
+}
+
+impl PartialOrd for Action {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Action {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.descriptor()
+            .cmp(&other.descriptor())
+            .then(self.sig.cmp(&other.sig))
     }
 }
 

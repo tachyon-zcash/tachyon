@@ -68,8 +68,10 @@
 //! 64-byte value: the pointer stamp's `wtxid` directly, or
 //! `hStampActionsTachyon || stamp_data_digest` for a proof stamp.
 
-use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::vec::Vec;
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec::Vec,
+};
 use core::ops::Neg as _;
 
 use corez::io::{self, Read, Write};
