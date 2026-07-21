@@ -7,26 +7,6 @@ use pasta_curves::Fp;
 
 use crate::Spec;
 
-/// The Tachyon MiMC instantiation over the Pallas base field with 32 rounds.
-pub struct TachyonP5R32;
-
-impl TachyonP5R32 {
-    /// The round-constant values.
-    pub const CONSTANTS: &'static [Fp; 32] = &pallas_bytes(include_bytes!("Tachyon-MiMC0032.bin"));
-    /// The S-box exponent.
-    pub const POW: u64 = 5;
-    /// The number of rounds.
-    pub const ROUNDS: u64 = 32;
-}
-
-impl Spec<32> for TachyonP5R32 {
-    type Field = Fp;
-
-    const CONSTANTS: &'static [Fp; 32] = Self::CONSTANTS;
-    const POW: u64 = Self::POW;
-    const ROUNDS: u64 = Self::ROUNDS;
-}
-
 /// The Tachyon MiMC instantiation over the Pallas base field with 64 rounds.
 pub struct TachyonP5R64;
 
@@ -43,47 +23,6 @@ impl Spec<64> for TachyonP5R64 {
     type Field = Fp;
 
     const CONSTANTS: &'static [Fp; 64] = Self::CONSTANTS;
-    const POW: u64 = Self::POW;
-    const ROUNDS: u64 = Self::ROUNDS;
-}
-
-/// The Tachyon MiMC instantiation over the Pallas base field with 128 rounds.
-pub struct TachyonP5R128;
-
-impl TachyonP5R128 {
-    /// The round-constant values.
-    pub const CONSTANTS: &'static [Fp; 128] = &pallas_bytes(include_bytes!("Tachyon-MiMC0128.bin"));
-    /// The S-box exponent.
-    pub const POW: u64 = 5;
-    /// The number of rounds.
-    pub const ROUNDS: u64 = 128;
-}
-
-impl Spec<128> for TachyonP5R128 {
-    type Field = Fp;
-
-    const CONSTANTS: &'static [Fp; 128] = Self::CONSTANTS;
-    const POW: u64 = Self::POW;
-    const ROUNDS: u64 = Self::ROUNDS;
-}
-
-/// The Tachyon MiMC instantiation over the Pallas base field with 8192 rounds.
-pub struct TachyonP5R8192;
-
-impl TachyonP5R8192 {
-    /// The round-constant values.
-    pub const CONSTANTS: &'static [Fp; 8192] =
-        &pallas_bytes(include_bytes!("Tachyon-MiMC8192.bin"));
-    /// The S-box exponent.
-    pub const POW: u64 = 5;
-    /// The number of rounds.
-    pub const ROUNDS: u64 = 8192;
-}
-
-impl Spec<8192> for TachyonP5R8192 {
-    type Field = Fp;
-
-    const CONSTANTS: &'static [Fp; 8192] = Self::CONSTANTS;
     const POW: u64 = Self::POW;
     const ROUNDS: u64 = Self::ROUNDS;
 }
