@@ -171,7 +171,8 @@ mod tests {
 
     extern crate alloc;
 
-    use alloc::{vec, vec::Vec};
+    use alloc::vec;
+    use core::iter;
 
     use super::*;
 
@@ -179,7 +180,7 @@ mod tests {
     const POINTS: [u64; 3] = [0, 2, 927];
 
     fn poly(coeffs: &[u64]) -> Polynomial {
-        Polynomial::from_coeffs(&coeffs.iter().copied().map(Fp::from).collect::<Vec<_>>())
+        Polynomial::from_coeffs(coeffs.iter().copied().map(Fp::from).collect())
     }
 
     /// `x^exponent` by repeated multiplication (exponents here are tiny).
@@ -189,22 +190,21 @@ mod tests {
 
     /// The true combination, built in the coefficient basis.
     fn combine(shifted_polys: &[(&Polynomial, usize)], monomials: &[(Fp, usize)]) -> Polynomial {
-        let len = shifted_polys
-            .iter()
-            .map(|&(poly, shift)| shift + poly.coefficients().len())
-            .chain(monomials.iter().map(|&(_, degree)| degree + 1))
-            .max()
-            .unwrap_or(0);
-        let mut coeffs = vec![Fp::ZERO; len];
+        let mut result = Polynomial::new();
         for &(poly, shift) in shifted_polys {
-            for (position, coeff) in poly.coefficients().iter().enumerate() {
-                coeffs[shift + position] += coeff;
-            }
+            result += &Polynomial::from_coeffs(
+                iter::repeat_n(Fp::ZERO, shift)
+                    .chain(poly.iter_coeffs())
+                    .take(1usize << Polynomial::R)
+                    .collect(),
+            );
         }
         for &(coeff, degree) in monomials {
-            coeffs[degree] += coeff;
+            let mut monomial = vec![Fp::ZERO; degree + 1];
+            monomial[degree] = coeff;
+            result += &Polynomial::from_coeffs(monomial);
         }
-        Polynomial::from_coeffs(&coeffs)
+        result
     }
 
     /// The relation's point-wise check, at every sample point.
@@ -232,7 +232,7 @@ mod tests {
     fn identity_on_single_unshifted_polynomial() {
         let operand = poly(&[3, 5, 7]);
         let result = combine(&[(&operand, 0)], &[]);
-        assert_eq!(result.coefficients(), operand.coefficients());
+        assert!(result.iter_coeffs().eq(operand.iter_coeffs()));
         assert!(identity_holds(&[(&operand, 0)], &[], &result));
     }
 
@@ -242,7 +242,7 @@ mod tests {
         let high = poly(&[11, 13]);
         let terms = [(&low, 0), (&high, 1)];
         let result = combine(&terms, &[]);
-        assert_eq!(result.coefficients(), poly(&[3, 16, 20]).coefficients());
+        assert!(result.iter_coeffs().eq(poly(&[3, 16, 20]).iter_coeffs()));
         assert!(identity_holds(&terms, &[], &result));
     }
 
@@ -250,7 +250,7 @@ mod tests {
     fn identity_on_monomials_alone() {
         let monomials = [(Fp::from(5), 0), (Fp::from(9), 3)];
         let result = combine(&[], &monomials);
-        assert_eq!(result.coefficients(), poly(&[5, 0, 0, 9]).coefficients());
+        assert!(result.iter_coeffs().eq(poly(&[5, 0, 0, 9]).iter_coeffs()));
         assert!(identity_holds(&[], &monomials, &result));
     }
 
@@ -263,7 +263,7 @@ mod tests {
         let terms = [(&low, 0), (&high, 2)];
         let monomials = [(-Fp::ONE, 2)];
         let result = combine(&terms, &monomials);
-        assert_eq!(result.coefficients(), poly(&[3, 5, 7, 11]).coefficients());
+        assert!(result.iter_coeffs().eq(poly(&[3, 5, 7, 11]).iter_coeffs()));
         assert!(identity_holds(&terms, &monomials, &result));
     }
 

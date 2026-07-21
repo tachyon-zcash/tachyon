@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use pasta_curves::{Eq, Fp};
-use ragu::Polynomial;
+use ragu::{Polynomial, poly_with_roots};
 
 use super::{ActionDigest, Tachygram};
 
@@ -56,13 +56,13 @@ impl ActionSetPoly {
 impl FromIterator<ActionDigest> for ActionSetPoly {
     fn from_iter<I: IntoIterator<Item = ActionDigest>>(iter: I) -> Self {
         let roots: Vec<Fp> = iter.into_iter().map(Fp::from).collect();
-        Self(Polynomial::from_roots(&roots))
+        Self(Polynomial::from_coeffs(poly_with_roots(&roots)))
     }
 }
 
 impl FromIterator<Tachygram> for TachygramSetPoly {
     fn from_iter<I: IntoIterator<Item = Tachygram>>(iter: I) -> Self {
         let roots: Vec<Fp> = iter.into_iter().map(Fp::from).collect();
-        Self(Polynomial::from_roots(&roots))
+        Self(Polynomial::from_coeffs(poly_with_roots(&roots)))
     }
 }
