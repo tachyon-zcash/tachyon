@@ -2,25 +2,22 @@
 
 #![cfg(test)]
 
-use ff::PrimeField;
 use zcash_mimc::{Spec, encrypt_with};
 
 mod tachyon;
 
-fn check_constants<S, F: PrimeField, const P: u64, const R: usize>(cases: &[(usize, F)])
+fn check_constants<S, const R: usize>(cases: &[(usize, S::Field)])
 where
-    S: Spec<F, P, R>,
+    S: Spec<R>,
 {
     for &(index, expected) in cases {
         assert_eq!(S::CONSTANTS[index], expected, "constant c_{index} mismatch");
     }
 }
 
-fn check_encryptions<S, F: PrimeField, const P: u64, const R: usize>(
-    inputs: &[(&[F], F)],
-    expected: &[F],
-) where
-    S: Spec<F, P, R>,
+fn check_encryptions<S, const R: usize>(inputs: &[(&[S::Field], S::Field)], expected: &[S::Field])
+where
+    S: Spec<R>,
 {
     assert_eq!(
         inputs.len(),
@@ -29,7 +26,7 @@ fn check_encryptions<S, F: PrimeField, const P: u64, const R: usize>(
     );
     for (&(keys, input), &output) in inputs.iter().zip(expected) {
         assert_eq!(
-            encrypt_with::<S, F, P, R>(keys, input),
+            encrypt_with::<S, R>(keys, input, None),
             output,
             "encryption output mismatch"
         );

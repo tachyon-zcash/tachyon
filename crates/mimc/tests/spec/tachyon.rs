@@ -102,13 +102,13 @@ const CIPHER_INPUTS: &[(&[Fp], Fp)] = &[
 ];
 
 mod tachyon_32 {
-    use zcash_mimc::spec::tachyon::TachyonP5R32;
+    use zcash_mimc::specs::tachyon::TachyonP5R32;
 
     use super::*;
 
     #[test]
     fn pinned_round_constants() {
-        check_constants::<TachyonP5R32, Fp, 5, 32>(&[
+        check_constants::<TachyonP5R32, 32>(&[
             (
                 1,
                 Fp::from_raw([
@@ -141,7 +141,7 @@ mod tachyon_32 {
 
     #[test]
     fn pinned_encryption_outputs() {
-        check_encryptions::<TachyonP5R32, Fp, 5, 32>(
+        check_encryptions::<TachyonP5R32, 32>(
             CIPHER_INPUTS,
             &[
                 Fp::from_raw([
@@ -180,13 +180,13 @@ mod tachyon_32 {
 }
 
 mod tachyon_64 {
-    use zcash_mimc::spec::tachyon::TachyonP5R64;
+    use zcash_mimc::specs::tachyon::TachyonP5R64;
 
     use super::*;
 
     #[test]
     fn pinned_round_constants() {
-        check_constants::<TachyonP5R64, Fp, 5, 64>(&[
+        check_constants::<TachyonP5R64, 64>(&[
             (
                 1,
                 Fp::from_raw([
@@ -219,7 +219,7 @@ mod tachyon_64 {
 
     #[test]
     fn pinned_encryption_outputs() {
-        check_encryptions::<TachyonP5R64, Fp, 5, 64>(
+        check_encryptions::<TachyonP5R64, 64>(
             CIPHER_INPUTS,
             &[
                 Fp::from_raw([
@@ -257,14 +257,92 @@ mod tachyon_64 {
     }
 }
 
-mod tachyon_8192 {
-    use zcash_mimc::spec::tachyon::TachyonP5R8192;
+mod tachyon_128 {
+    use zcash_mimc::specs::tachyon::TachyonP5R128;
 
     use super::*;
 
     #[test]
     fn pinned_round_constants() {
-        check_constants::<TachyonP5R8192, Fp, 5, 8192>(&[
+        check_constants::<TachyonP5R128, 128>(&[
+            (
+                1,
+                Fp::from_raw([
+                    0x8798_1234_076e_01c7,
+                    0x8514_cae3_caba_1445,
+                    0x2b8f_7679_6940_ca85,
+                    0x0872_8eea_48a4_bd3a,
+                ]),
+            ),
+            (
+                5,
+                Fp::from_raw([
+                    0x4733_7c7c_509e_1fcb,
+                    0x7c91_59c2_95ee_196d,
+                    0x03ba_0ec6_90f7_2858,
+                    0x06a6_4ffb_b510_2b36,
+                ]),
+            ),
+            (
+                127,
+                Fp::from_raw([
+                    0x34d9_7ef3_e2c5_61b8,
+                    0x3e01_32e5_6679_2b24,
+                    0xeaa6_f165_dc50_5350,
+                    0x21d6_0e47_d7fc_d232,
+                ]),
+            ),
+        ]);
+    }
+
+    #[test]
+    fn pinned_encryption_outputs() {
+        check_encryptions::<TachyonP5R128, 128>(
+            CIPHER_INPUTS,
+            &[
+                Fp::from_raw([
+                    0x168a_8869_a64a_3f56,
+                    0x9abb_a153_0323_48a5,
+                    0x8a81_5b88_ae84_682b,
+                    0x19ea_0cd6_3752_1336,
+                ]),
+                Fp::from_raw([
+                    0x8826_3ebe_1621_b65c,
+                    0xc3be_22d0_b8cc_711b,
+                    0x6841_4d6b_340e_3a37,
+                    0x1a77_946f_fa00_7c9f,
+                ]),
+                Fp::from_raw([
+                    0x5690_d773_3915_08fc,
+                    0x3604_03a2_4343_ee26,
+                    0x446a_a521_aaa4_5e6b,
+                    0x205f_8451_7a1b_23ad,
+                ]),
+                Fp::from_raw([
+                    0x74a6_30c6_0077_b420,
+                    0x3552_a55f_e517_99cb,
+                    0xf0b8_c957_d7e7_9ee5,
+                    0x0755_5729_a410_a2e8,
+                ]),
+                Fp::from_raw([
+                    0x2a6e_32df_db86_2445,
+                    0x5fa2_031d_e6b1_6e8a,
+                    0xfba0_cec3_3276_2174,
+                    0x0e5d_38f1_5f25_0823,
+                ]),
+            ],
+        );
+    }
+}
+
+mod tachyon_8192 {
+    use zcash_mimc::specs::tachyon::TachyonP5R8192;
+
+    use super::*;
+
+    #[test]
+    fn pinned_round_constants() {
+        check_constants::<TachyonP5R8192, 8192>(&[
             (
                 1,
                 Fp::from_raw([
@@ -306,7 +384,7 @@ mod tachyon_8192 {
 
     #[test]
     fn pinned_encryption_outputs() {
-        check_encryptions::<TachyonP5R8192, Fp, 5, 8192>(
+        check_encryptions::<TachyonP5R8192, 8192>(
             CIPHER_INPUTS,
             &[
                 Fp::from_raw([
