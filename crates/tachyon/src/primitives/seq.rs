@@ -54,7 +54,7 @@ impl FromIterator<Nullifier> for NfSeqPoly {
             .map(Fp::from)
             .chain(iter::once(Fp::ONE))
             .collect();
-        Self(Polynomial::from_coeffs(&coeffs))
+        Self(Polynomial::from_coeffs(coeffs))
     }
 }
 
