@@ -516,6 +516,35 @@ fn stamp_verify_action_multiset_invariants() {
     }
 }
 
+/// `is_aggregate` digests the bundle's own action descriptors and compares
+/// against the stamp's covered-actions digest, which is built from canonically
+/// sorted descriptors. It must therefore sort its own descriptors too: a
+/// validly-signed bundle whose actions are in non-canonical order is still its
+/// own aggregate.
+#[test]
+fn is_aggregate_independent_of_action_order() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let stamped = build_autonome(rng, &wallet, 1000, 700);
+    assert!(
+        stamped.actions.len() >= 2,
+        "need at least two actions to permute"
+    );
+    assert_ne!(stamped.actions[0], stamped.actions[1]);
+
+    assert!(
+        stamped.is_aggregate(),
+        "a self-covering bundle is its own aggregate"
+    );
+
+    let mut permuted = stamped;
+    permuted.actions.swap(0, 1);
+    assert!(
+        permuted.is_aggregate(),
+        "is_aggregate must hold regardless of action order"
+    );
+}
+
 #[test]
 fn innocent_aggregate_from_two_autonomes() {
     let rng = &mut StdRng::seed_from_u64(0);
