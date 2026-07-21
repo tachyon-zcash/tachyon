@@ -234,9 +234,7 @@ fn apply_signatures_rejects_wrong_sig_count() {
             BTreeMap::from([(spend_a.descriptor(), sig_a)]),
         )
         .unwrap_err();
-    let FinalizePlanError::ActionsMismatch = too_few else {
-        panic!("expected ActionsMismatch, got {too_few:?}");
-    };
+    assert_eq!(too_few, PlanError::ActionSigMismatch);
 
     let too_many = plan
         .apply_signatures(
@@ -249,9 +247,7 @@ fn apply_signatures_rejects_wrong_sig_count() {
             ]),
         )
         .unwrap_err();
-    let FinalizePlanError::ActionsMismatch = too_many else {
-        panic!("expected ActionsMismatch, got {too_many:?}");
-    };
+    assert_eq!(too_many, PlanError::ActionSigMismatch);
 }
 
 #[test]
@@ -1285,16 +1281,12 @@ fn plan_value_balance_rejects_overflow_above_max_money() {
     assert_eq!(bundle_plan.value_balance(), Err(value::OutOfRange));
     {
         let err = bundle_plan.commitment().unwrap_err();
-        let CommitError::BalanceOverflow(_) = err else {
-            panic!("expected CommitError::BalanceOverflow, got {err:?}");
-        };
+        assert_eq!(err, value::OutOfRange);
     }
     let sighash = [0u8; 32];
     {
         let err = bundle_plan.sign(rng, &sighash, &ask).unwrap_err();
-        let FinalizePlanError::BalanceOverflow = err else {
-            panic!("expected SignError::BalanceOverflow, got {err:?}");
-        };
+        assert_eq!(err, PlanError::BalanceOverflow);
     }
 }
 
@@ -1312,16 +1304,12 @@ fn plan_value_balance_rejects_overflow_below_negative_max_money() {
     assert_eq!(bundle_plan.value_balance(), Err(value::OutOfRange));
     {
         let err = bundle_plan.commitment().unwrap_err();
-        let CommitError::BalanceOverflow(_) = err else {
-            panic!("expected CommitError::BalanceOverflow, got {err:?}");
-        };
+        assert_eq!(err, value::OutOfRange);
     }
     let sighash = [0u8; 32];
     {
         let err = bundle_plan.sign(rng, &sighash, &ask).unwrap_err();
-        let FinalizePlanError::BalanceOverflow = err else {
-            panic!("expected SignError::BalanceOverflow, got {err:?}");
-        };
+        assert_eq!(err, PlanError::BalanceOverflow);
     }
 }
 

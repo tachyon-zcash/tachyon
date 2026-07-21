@@ -82,7 +82,7 @@ use crate::{
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
-    primitives::{ActionDigestError, Anchor, effect},
+    primitives::{Anchor, effect},
     reddsa, serialization,
     stamp::{self, PointerStamp, ProofStamp, StampState, Unproven},
     value,
@@ -206,30 +206,6 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     }
 }
 
-/// Errors during bundle construction.
-#[derive(Clone, Copy, Debug, Display, Error)]
-pub enum BuildError {
-    /// Ragu proof verification failed.
-    #[display("proof verification failed")]
-    ProofInvalid,
-
-    /// BSK/BVK mismatch (see Protocol §4.14).
-    #[display("binding signing key does not match verification key")]
-    BalanceKeyMismatch,
-}
-
-/// Errors that can occur when computing a bundle plan commitment.
-#[derive(Debug, Display, Error, From)]
-#[non_exhaustive]
-pub enum CommitError {
-    /// An action digest could not be constructed.
-    #[display("action digest: {_0}")]
-    ActionDigest(#[error(not(source))] ActionDigestError),
-    /// The value balance overflows the representable range.
-    #[display("value balance overflow")]
-    BalanceOverflow(#[error(not(source))] value::OutOfRange),
-}
-
 /// Errors from bundle signature verification.
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
@@ -243,12 +219,12 @@ pub enum SignatureError {
 }
 
 /// Errors that can occur while signing a bundle plan.
-#[derive(Clone, Copy, Debug, Display, Error)]
+#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
 #[non_exhaustive]
-pub enum FinalizePlanError {
+pub enum PlanError {
     /// The signatures do not match the planned actions.
     #[display("planned actions do not match signed actions")]
-    ActionsMismatch,
+    ActionSigMismatch,
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
     BalanceOverflow,
@@ -317,7 +293,11 @@ impl Plan {
     ///
     /// Bundle digest is sensitive to the order of actions. Actions in this
     /// planner are sorted by descriptor.
-    pub fn commitment(&self) -> Result<[u8; 32], CommitError> {
+    ///
+    /// # Errors
+    ///
+    /// Fails if the value balance overflows the representable range.
+    pub fn commitment(&self) -> Result<[u8; 32], value::OutOfRange> {
         let desc_bytes: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
 
         Ok(blake2b::bundle_commitment(
@@ -373,7 +353,7 @@ impl Plan {
         rng: &mut RNG,
         sighash: &[u8; 32],
         ask: &private::SpendAuthorizingKey,
-    ) -> Result<Bundle<Unproven>, FinalizePlanError> {
+    ) -> Result<Bundle<Unproven>, PlanError> {
         let mut authorized: BTreeMap<action::Descriptor, action::Signature> = BTreeMap::new();
 
         for plan in &self.spends {
@@ -406,13 +386,13 @@ impl Plan {
         rng: &mut RNG,
         sighash: &[u8; 32],
         authorized: BTreeMap<action::Descriptor, action::Signature>,
-    ) -> Result<Bundle<Unproven>, FinalizePlanError> {
+    ) -> Result<Bundle<Unproven>, PlanError> {
         let value_balance = self
             .value_balance()
-            .map_err(|_err| FinalizePlanError::BalanceOverflow)?;
+            .map_err(|_err| PlanError::BalanceOverflow)?;
 
         if self.descriptors() != authorized.keys().copied().collect() {
-            return Err(FinalizePlanError::ActionsMismatch);
+            return Err(PlanError::ActionSigMismatch);
         }
         let actions = authorized.into_iter().map(Action::from).collect();
 
