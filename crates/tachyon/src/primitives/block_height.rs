@@ -41,7 +41,7 @@ impl BlockHeight {
     /// Epoch index for this block height.
     #[must_use]
     pub const fn epoch(self) -> EpochIndex {
-        EpochIndex(self.0 >> EPOCH_SIZE.trailing_zeros())
+        EpochIndex(self.0 >> EPOCH_SIZE.ilog2())
     }
 
     /// Whether this is the last block of its epoch.

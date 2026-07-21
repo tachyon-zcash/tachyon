@@ -10,13 +10,13 @@ use ragu::{
     constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
-use super::{delegation::NullifierHeader, pool::AnchorChain, spend::SpendHeader};
+use super::{pool::AnchorChain, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
     constants::MAX_MONEY,
     entropy::ActionRandomizer,
-    keys::private,
-    note::{Note, Nullifier},
+    keys::{ProofAuthorizingKey, private},
+    note::Note,
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
     relations::enforce::enforce_poly_product,
     value,
@@ -75,7 +75,7 @@ impl Step for OutputStamp {
         Anchor,
     );
 
-    const INDEX: Index = Index::new(14);
+    const INDEX: Index = Index::new(10);
 
     fn witness<'source>(
         &self,
@@ -124,13 +124,14 @@ impl Step for OutputStamp {
     }
 }
 
-/// Composes a [`SpendHeader`] with the live two-leaf [`NullifierHeader`] range
-/// and stamps the spend.
+/// Proves a spend's action and publishes its stamp.
 ///
-/// Witnesses `nf_next` and binds the published pair to the note's genuine
-/// `GGM(mk, ·)` leaves: consumes the two-leaf range (`range.end ==
-/// range.start + 2`, `range.cm == cm`) and checks
-/// `[present_nf]G_0 + [nf_next]G_1 == nf_seq_commit`.
+/// Focused like [`OutputStamp`] on the action: re-witnesses the spent note
+/// (bound to the [`SpendHeader`]'s `cm`), derives the value commitment `cv` and
+/// the randomized action key `rk`, and commits the one-action set plus the
+/// two-element tachygram set `{present_nf, nf_next}` (the pair
+/// [`SpendBind`](super::spend::SpendBind) already confirmed against the
+/// covering derivation).
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -138,18 +139,23 @@ impl Step for SpendStamp {
     type Aux<'source> = ();
     type Left = SpendHeader;
     type Output = StampHeader;
-    type Right = NullifierHeader;
-    /// `(nf_next,)`.
-    type Witness<'source> = (Nullifier,);
+    type Right = ();
+    /// `(note, rcv, alpha, pak)`.
+    type Witness<'source> = (
+        Note,
+        value::Trapdoor,
+        ActionRandomizer<effect::Spend>,
+        ProofAuthorizingKey,
+    );
 
-    const INDEX: Index = Index::new(16);
+    const INDEX: Index = Index::new(12);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (nf_next,): Self::Witness<'source>,
-        (cm, act, present_nf, anchor): <Self::Left as Header>::Data,
-        (nf_cm, (nf_epoch_start, nf_start), _nf_seq_commit, (nf_epoch_end, nf_end)): <Self::Right as Header>::Data,
+        (note, rcv, alpha, pak): Self::Witness<'source>,
+        (cm, present_nf, nf_next, anchor): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(clippy::expect_used, reason = "constant size")]
         let &[g0, g1, g2] = Pasta::host_generators(Pasta::baked())
@@ -158,36 +164,27 @@ impl Step for SpendStamp {
             .expect("at least three generators")
             .0;
 
-        enforce_zero(
-            Fp::from(nf_epoch_end) - (Fp::from(nf_epoch_start) + Fp::from(2u64)),
-            "SpendStamp: live range must span two epochs",
-        )?;
-        enforce_zero(
-            Fp::from(nf_cm) - Fp::from(cm),
-            "SpendStamp: derived range does not match note",
-        )?;
-
-        // Bind the published nullifiers to the range's genuine boundary leaves.
-        enforce_zero(
-            Fp::from(present_nf) - Fp::from(nf_start),
-            "SpendStamp: present nullifier is not the range's start leaf",
-        )?;
-        enforce_zero(
-            Fp::from(nf_next) - Fp::from(nf_end),
-            "SpendStamp: next nullifier is not the range's end leaf",
-        )?;
-
-        // A zero nullifier would collide with the note's own cm tachygram.
         enforce_nonzero(
-            Fp::from(present_nf),
-            "SpendStamp: present-epoch nullifier is zero",
+            Fp::from(u64::from(note.value)),
+            "SpendStamp: zero-value note",
         )?;
-        enforce_nonzero(
-            Fp::from(nf_next),
-            "SpendStamp: next-epoch nullifier is zero",
+        if u64::from(note.value) > MAX_MONEY {
+            return Err(ragu::Error::InvalidWitness(
+                "SpendStamp: note value exceeds maximum".into(),
+            ));
+        }
+        enforce_zero(
+            note.pk.0 - pak.derive_payment_key().0,
+            "SpendStamp: pak not related to note",
+        )?;
+        enforce_zero(
+            Fp::from(note.commitment()) - Fp::from(cm),
+            "SpendStamp: note does not match the spend",
         )?;
 
-        let action_digest = act.digest().map_err(|_err| {
+        let cv = rcv.commit(note.value);
+        let rk = pak.ak.derive_action_public(&alpha);
+        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
             ragu::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
         })?;
 
@@ -209,7 +206,7 @@ impl Step for SpendStamp {
     }
 }
 
-/// Universal merge — transaction assembly and aggregation.
+/// Transaction assembly and aggregation.
 #[derive(Debug)]
 pub struct MergeStamp;
 
@@ -225,7 +222,7 @@ impl Step for MergeStamp {
         (ActionSetPoly, TachygramSetPoly),
     );
 
-    const INDEX: Index = Index::new(17);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
@@ -267,29 +264,24 @@ impl Step for MergeStamp {
             "MergeStamp: right tachygram accumulator must commit to header commit",
         )?;
 
-        let merged_action_set_commit = merged_action_set.commit();
-        let merged_tachygram_set_commit = merged_tachygram_set.commit();
-
-        // The merged sets are witnessed; confirm each is the `left · right`
-        // union of its halves via the product-opening relation, never built
-        // in-step.
+        // Confirm union via product-opening relation.
         enforce_poly_product(
             ctx,
-            &left_action_set.into(),
-            &right_action_set.into(),
-            &merged_action_set.into(),
+            left_action_set.as_ref(),
+            right_action_set.as_ref(),
+            merged_action_set.as_ref(),
         )?;
         enforce_poly_product(
             ctx,
-            &left_tachygram_set.into(),
-            &right_tachygram_set.into(),
-            &merged_tachygram_set.into(),
+            left_tachygram_set.as_ref(),
+            right_tachygram_set.as_ref(),
+            merged_tachygram_set.as_ref(),
         )?;
 
         Ok((
             (
-                merged_action_set_commit,
-                merged_tachygram_set_commit,
+                merged_action_set.commit(),
+                merged_tachygram_set.commit(),
                 left_anchor,
             ),
             (),
@@ -310,7 +302,7 @@ impl Step for StampLift {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(18);
+    const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,

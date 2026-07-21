@@ -81,12 +81,6 @@ pub(crate) fn enforce_poly_product(
     Ok(())
 }
 
-/// `X^exponent` evaluated at `point`.
-#[expect(clippy::as_conversions, reason = "must be in range")]
-fn monomial_at(point: Fp, exponent: usize) -> Fp {
-    point.pow_vartime([exponent as u64])
-}
-
 /// Shifted linear combination of committed polynomials and monomials: confirm
 /// `result(X) = Σ_i X^{k_i}·p_i(X) + Σ_j c_j·X^{m_j}` by opening each `p_i`
 /// and `result` at a Fiat-Shamir challenge.
@@ -127,8 +121,8 @@ fn monomial_at(point: Fp, exponent: usize) -> Fp {
 /// shift itself and collapse this to a direct check.
 pub(crate) fn enforce_shifted_combination<const SHIFTED_POLYS: usize, const MONOMIALS: usize>(
     ctx: &mut StepCtx<'_>,
-    shifted_polys: [(&Polynomial, usize); SHIFTED_POLYS],
-    monomials: [(Fp, usize); MONOMIALS],
+    shifted_polys: [(&Polynomial, u64); SHIFTED_POLYS],
+    monomials: [(Fp, u64); MONOMIALS],
     result: &Polynomial,
 ) -> Result<()> {
     let poly_coms = shifted_polys.map(|(poly, _)| poly.commit());
@@ -137,11 +131,11 @@ pub(crate) fn enforce_shifted_combination<const SHIFTED_POLYS: usize, const MONO
 
     let combination = shifted_polys
         .iter()
-        .map(|&(poly, shift)| monomial_at(z, shift) * poly.eval(z))
+        .map(|&(poly, shift)| z.pow_vartime([shift]) * poly.eval(z))
         .chain(
             monomials
                 .iter()
-                .map(|&(coeff, degree)| coeff * monomial_at(z, degree)),
+                .map(|&(coeff, degree)| coeff * z.pow_vartime([degree])),
         )
         .sum::<Fp>();
     if result.eval(z) != combination {

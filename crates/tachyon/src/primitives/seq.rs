@@ -3,15 +3,15 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::iter;
 
-use derive_more::{Debug, Eq as TotalEq, PartialEq};
+use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::{Eq, Fp};
 use ragu::Polynomial;
 
-use crate::note::Nullifier;
+use crate::nullifier::Nullifier;
 
 /// Pedersen commitment to a nullifier sequence $N$.
-#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct NfSeqCommit(Eq);
 
 /// Witness polynomial for a nullifier sequence $N$: members encoded as
@@ -24,7 +24,7 @@ pub struct NfSeqCommit(Eq);
 /// the sequence's exact length: commit-equality alone bounds rank only from
 /// above (trailing zeros are invisible), while the sentinel fixes the top
 /// coefficient at the statement's span.
-#[derive(Clone, Debug)]
+#[derive(AsRef, Clone, Debug, From, Into)]
 pub struct NfSeqPoly(Polynomial);
 
 impl NfSeqPoly {
@@ -41,12 +41,6 @@ impl NfSeqPoly {
     }
 }
 
-impl From<NfSeqPoly> for Polynomial {
-    fn from(poly: NfSeqPoly) -> Self {
-        poly.0
-    }
-}
-
 impl FromIterator<Nullifier> for NfSeqPoly {
     fn from_iter<I: IntoIterator<Item = Nullifier>>(iter: I) -> Self {
         let coeffs: Vec<Fp> = iter
@@ -55,18 +49,6 @@ impl FromIterator<Nullifier> for NfSeqPoly {
             .chain(iter::once(Fp::ONE))
             .collect();
         Self(Polynomial::from_coeffs(coeffs))
-    }
-}
-
-impl From<Eq> for NfSeqCommit {
-    fn from(point: Eq) -> Self {
-        Self(point)
-    }
-}
-
-impl From<NfSeqCommit> for Eq {
-    fn from(commit: NfSeqCommit) -> Self {
-        commit.0
     }
 }
 

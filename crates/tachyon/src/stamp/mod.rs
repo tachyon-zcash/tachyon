@@ -26,10 +26,10 @@ use crate::{
     effect,
     entropy::ActionRandomizer,
     keys::ProofAuthorizingKey,
-    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram},
+    primitives::{ActionDigest, ActionDigestError, Anchor, EpochIndex, Tachygram},
     serialization,
     stamp::proof::{delegation, spend, spendable},
-    value,
+    value, witness,
 };
 
 /// Marker for a bundle that has not yet been proven.
@@ -303,16 +303,15 @@ impl Plan {
     ///
     /// Stamps are recursively merged via [`MergeStamp`] into a single stamp.
     ///
-    /// `spendbind_inputs` items must correspond to each planned spend, in
+    /// `spend_pcds` items must correspond to each planned spend, in
     /// order.
-    ///
-    /// TODO: nf_next parameter may need to come back
     pub fn prove<RNG: RngCore + CryptoRng>(
         self,
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
-        spendbind_inputs: Vec<(
-            ragu::Pcd<delegation::NullifierHeader>,
+        spend_pcds: Vec<(
+            ragu::Pcd<delegation::NullifierDerivation>,
+            EpochIndex,
             ragu::Pcd<spendable::SpendableHeader>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
@@ -323,28 +322,40 @@ impl Plan {
         // digest is computed once, on the final stamp.
         let mut entries = Vec::with_capacity(self.spends.len() + self.outputs.len());
 
-        if self.spends.len() != spendbind_inputs.len() {
+        if self.spends.len() != spend_pcds.len() {
             return Err(ProveError::SpendableMismatch);
         }
 
-        for ((desc, alpha, note, rcv), (nf_pcd, spendable_pcd)) in
-            self.spends.into_iter().zip(spendbind_inputs)
+        for ((desc, alpha, note, rcv), (range_pcd, present_epoch, spendable_pcd)) in
+            self.spends.into_iter().zip(spend_pcds)
         {
             let app = &*PROOF_SYSTEM;
 
+            // SpendBind: confirm the epoch's nullifier pair against the covering
+            // derivation. Its witness re-derives the window's whitened trace
+            // natively from the note's master key (the succinct header carries
+            // only its commitment).
+            let mk = pak.nk.derive_note_private(note.psi);
+            let bind_witness = witness::spend_bind(
+                (*spendable_pcd.data(), *range_pcd.data()),
+                present_epoch,
+                &mk,
+            );
             let (bind_pcd, ()) = app
                 .fuse(
                     rng,
                     spend::SpendBind,
-                    (note, rcv, alpha, *pak),
+                    bind_witness,
                     spendable_pcd,
-                    ragu::Proof::trivial().carry::<()>(()),
+                    range_pcd,
                 )
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: bind the live pair to the derived range and publish.
+            // SpendStamp: prove the action and publish. The tachygram pair is
+            // read straight off the bind header.
             let (tachygrams, anchor, proof) =
-                ProofStamp::prove_spend(rng, bind_pcd, nf_pcd).map_err(ProveError::ProofFailed)?;
+                ProofStamp::prove_spend(rng, bind_pcd, note, rcv, alpha, *pak)
+                    .map_err(ProveError::ProofFailed)?;
 
             let digest = desc.digest().map_err(ProveError::ActionDigest)?;
             entries.push((vec![desc], vec![digest], tachygrams, anchor, proof));
@@ -469,26 +480,33 @@ impl ProofStamp {
         Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))
     }
 
-    /// Proves a single spend action from pre-built spend and
-    /// nullifier-range PCDs, returning the stamp components
-    /// `(tachygrams, anchor, proof)`.
+    /// Creates a stamp for a spend action from a bound [`SpendHeader`] PCD.
     ///
-    /// The spend's `anchor` is taken as the stamp's anchor — chain
-    /// validation lives inside the spendable lineage, not here.
+    /// The nullifier pair `{present_nf, nf_next}` published for data
+    /// availability is read straight off the bind header (already confirmed
+    /// against the derivation at [`SpendBind`](spend::SpendBind)); this step
+    /// only proves the action `(cv, rk)`. The spend's `anchor` is taken as the
+    /// stamp's anchor; chain validation lives inside the spendable lineage.
     pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
-        nf_pcd: ragu::Pcd<delegation::NullifierHeader>,
+        note: Note,
+        rcv: value::Trapdoor,
+        alpha: ActionRandomizer<effect::Spend>,
+        pak: ProofAuthorizingKey,
     ) -> Result<(Vec<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
-        let (_, _, nf_present, anchor) = *bind_pcd.data();
-        let (_, _, _, (_, nf_next)) = *nf_pcd.data();
+        let (_cm, present_nf, nf_next, anchor) = *bind_pcd.data();
+        let tachygrams = vec![Tachygram::from(present_nf), Tachygram::from(nf_next)];
 
-        let tachygrams = vec![Tachygram::from(nf_present), Tachygram::from(nf_next)];
-
-        let (pcd, ()) = app.fuse(rng, SpendStamp, (nf_next,), bind_pcd, nf_pcd)?;
-
+        let (pcd, ()) = app.fuse(
+            rng,
+            SpendStamp,
+            (note, rcv, alpha, pak),
+            bind_pcd,
+            ragu::Proof::trivial().carry::<()>(()),
+        )?;
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))

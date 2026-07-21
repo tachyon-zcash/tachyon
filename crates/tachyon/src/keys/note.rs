@@ -1,32 +1,21 @@
 //! Note-related keys: NullifierKey, PaymentKey.
 
-use derive_more::Debug;
+use derive_more::{Debug, Eq as TotalEq, PartialEq};
 use ff::PrimeField as _;
 use pasta_curves::Fp;
 
-use super::{ggm::NoteMasterKey, proof::SpendValidatingKey};
-use crate::{digest::poseidon, note};
+use super::proof::SpendValidatingKey;
+use crate::{
+    EpochIndex,
+    digest::poseidon,
+    nullifier::{self, Nullifier, NullifierTrace},
+};
 
-/// A Tachyon nullifier deriving key.
-///
-/// Tachyon simplifies Orchard's nullifier construction
-/// ("Tachyaction at a Distance", Bowe 2025):
-///
-/// $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| \text{flavor})$$
-///
-/// where $F$ is a keyed PRF (Poseidon), $\Psi$ is the note's nullifier
-/// trapdoor, and flavor is the epoch-id. This replaces Orchard's more
-/// complex construction that defended against faerie gold attacks — which
-/// are moot under out-of-band payments.
+/// A Tachyon nullifier deriving key, which seeds the per-note master key.
 ///
 /// ## Capabilities
 ///
 /// - **Nullifier derivation**: detecting when a note has been spent
-/// - **Oblivious sync delegation** (Nullifier Derivation Scheme doc): the
-///   master root key $\mathsf{mk} = \text{KDF}(\Psi, \mathsf{nk})$ seeds a GGM
-///   tree PRF; prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
-///   $e \leq t$, enabling range-restricted delegation without revealing spend
-///   capability
 ///
 /// `nk` alone does NOT confer spend authority — combined with `ak` it
 /// forms the proof authorizing key `pak`, enabling proof construction
@@ -35,10 +24,11 @@ use crate::{digest::poseidon, note};
 pub struct NullifierKey(#[debug(skip)] pub(super) Fp);
 
 impl NullifierKey {
-    /// Derive a note's GGM master root from its nullifier trapdoor `psi`.
+    /// Derive a note's master key from its nullifier trapdoor.
     #[must_use]
-    pub fn derive_note_private(&self, psi: &note::NullifierTrapdoor) -> NoteMasterKey {
-        NoteMasterKey(poseidon::nf_master(psi.0, self.0))
+    pub fn derive_note_private(&self, psi: nullifier::Trapdoor) -> NoteMasterKey {
+        let (mk_r, mk_w) = poseidon::nf_master_key(psi.into(), self.0);
+        NoteMasterKey(mk_r, mk_w)
     }
 }
 
@@ -91,6 +81,25 @@ impl PaymentKey {
     }
 }
 
+/// Per-note master key $\mathsf{mk} = \[k, w\]$ representing a round key and
+/// whitening key.
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct NoteMasterKey(#[debug(skip)] pub(crate) Fp, #[debug(skip)] pub(crate) Fp);
+
+impl NoteMasterKey {
+    /// Derive a nullifier for the given epoch.
+    #[must_use]
+    pub fn derive_nullifier(&self, epoch: EpochIndex) -> Nullifier {
+        Nullifier::derive(self, epoch)
+    }
+
+    /// Derive the nullifier trace for the given epoch.
+    #[must_use]
+    pub fn derive_nullifier_trace(&self, epoch: EpochIndex) -> (NullifierTrace, Nullifier) {
+        Nullifier::derive_trace(self, epoch)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
@@ -103,9 +112,9 @@ mod tests {
     fn derive_note_private_deterministic() {
         let rng = &mut StdRng::seed_from_u64(0);
         let nk = NullifierKey(Fp::random(&mut *rng));
-        let psi = note::NullifierTrapdoor::random(rng);
-        let mk1 = nk.derive_note_private(&psi);
-        let mk2 = nk.derive_note_private(&psi);
+        let psi = nullifier::Trapdoor::random(rng);
+        let mk1 = nk.derive_note_private(psi);
+        let mk2 = nk.derive_note_private(psi);
         assert_eq!(mk1, mk2);
     }
 
@@ -113,10 +122,10 @@ mod tests {
     fn different_psi_different_mk() {
         let rng = &mut StdRng::seed_from_u64(0);
         let nk = NullifierKey(Fp::random(&mut *rng));
-        let psi1 = note::NullifierTrapdoor::random(rng);
-        let psi2 = note::NullifierTrapdoor::random(rng);
-        let mk1 = nk.derive_note_private(&psi1);
-        let mk2 = nk.derive_note_private(&psi2);
+        let psi1 = nullifier::Trapdoor::random(rng);
+        let psi2 = nullifier::Trapdoor::random(rng);
+        let mk1 = nk.derive_note_private(psi1);
+        let mk2 = nk.derive_note_private(psi2);
         assert_ne!(mk1, mk2);
     }
 
@@ -124,45 +133,11 @@ mod tests {
     fn different_epochs_different_nullifiers() {
         let rng = &mut StdRng::seed_from_u64(0);
         let nk = NullifierKey(Fp::random(&mut *rng));
-        let psi = note::NullifierTrapdoor::random(rng);
-        let mk = nk.derive_note_private(&psi);
+        let psi = nullifier::Trapdoor::random(rng);
+        let mk = nk.derive_note_private(psi);
         assert_ne!(
             mk.derive_nullifier(EpochIndex(0u32)),
             mk.derive_nullifier(EpochIndex(1u32)),
         );
-    }
-
-    /// Delegate key produces same nullifiers as master for epochs in range.
-    #[test]
-    fn delegate_matches_master() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let nk = NullifierKey(Fp::random(&mut *rng));
-        let psi = note::NullifierTrapdoor::random(rng);
-        let mk = nk.derive_note_private(&psi);
-
-        for dk in &mk.derive_note_delegates(0..=99) {
-            for epoch in dk.range() {
-                assert_eq!(
-                    mk.derive_nullifier(EpochIndex(epoch)),
-                    dk.derive_nullifier(EpochIndex(epoch)),
-                    "mismatch at epoch {epoch} with delegate {dk:?}"
-                );
-            }
-        }
-    }
-
-    /// A delegate key panics for epochs outside its authorized range.
-    #[test]
-    #[should_panic(expected = "epoch out of range")]
-    fn delegate_rejects_outside_range() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let nk = NullifierKey(Fp::random(&mut *rng));
-        let psi = note::NullifierTrapdoor::random(rng);
-        let mk = nk.derive_note_private(&psi);
-
-        // Delegate covering [0..=63]
-        let dk = &mk.derive_note_delegates(0..=63)[0];
-        // epoch 64 is outside the authorized range
-        let _compute = dk.derive_nullifier(EpochIndex(64u32));
     }
 }

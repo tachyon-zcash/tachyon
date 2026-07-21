@@ -39,11 +39,10 @@ Complete derivation is covered in [Nullifiers](./nullifiers.md).
 The note nullifier changes per epoch. Briefly, a nullifier for epoch $e$ is derived:
 
 $$
-\mathsf{nf} =
-    \mathsf{Poseidon}_\texttt{Tachyon-NfDerive}\!\left(
-        \mathsf{KDF}^{\mathsf{climb}}_\psi(e, D)
-    \right)
+\mathsf{nf}_e = \mathsf{PRF}^{\mathsf{nfTachyon}}_{\mathsf{mk}}(e)
 $$
+
+where $\mathsf{mk}$ is the note's master key.
 
 For a spend operation, two nullifiers at present epoch $e$ and next epoch $e+1$ are published as [tachygrams](./tachygrams.md).
 

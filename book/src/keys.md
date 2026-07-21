@@ -87,7 +87,7 @@ The spend authorization keys follow a three-tier scheme mapping to **private sca
 
 $$\mathsf{nk} = \text{ToBase}\bigl(\text{PRF}^{\text{expand}}_{\mathsf{sk}}([\texttt{0x22}])\bigr)$$
 
-An $\mathbb{F}_p$ element used in nullifier derivation.[^nullifiers] With the note's trapdoor $\psi$ it forms the GGM master key, from which each epoch's nullifier descends.
+An $\mathbb{F}_p$ element used in nullifier derivation.[^nullifiers] With the note's trapdoor $\psi$ it derives the master key $\mathsf{mk}$, which keys every epoch's nullifier derivation.
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the full derivation.
 

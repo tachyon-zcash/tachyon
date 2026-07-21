@@ -20,7 +20,7 @@ use core::{
 
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
-use ragu::Pcd;
+use ragu::{Pcd, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
 
@@ -31,7 +31,8 @@ use crate::{
     digest::blake2b,
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
-    note::{self, Note, Nullifier, NullifierTrapdoor},
+    note::{self, Note},
+    nullifier::{self, Nullifier},
     primitives::{
         Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
     },
@@ -815,6 +816,11 @@ pub struct WalletSim {
     /// different values draw from disjoint field sequences, and interleaved
     /// draws of other values never shift a stream's position.
     notes: RefCell<BTreeMap<u64, StdRng>>,
+    /// Per-(note, window) derivation PCDs, keyed by `(cm, base)`: one
+    /// certified window covers all `NF_DERIVATION_WIDTH` of its epochs, so
+    /// repeated derivations at the same `base` share the proof.
+    derivations:
+        RefCell<BTreeMap<(note::Commitment, EpochIndex), Pcd<delegation::NullifierDerivation>>>,
 }
 
 impl WalletSim {
@@ -823,6 +829,7 @@ impl WalletSim {
             sk,
             pak: sk.derive_proof_private(),
             notes: RefCell::new(BTreeMap::new()),
+            derivations: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -844,14 +851,14 @@ impl WalletSim {
         Note {
             pk,
             value: value::Positive::try_from(value_amount).expect("fixture value in range"),
-            psi: NullifierTrapdoor::random(notes),
+            psi: nullifier::Trapdoor::random(notes),
             rcm: note::CommitmentTrapdoor::random(notes),
         }
     }
 
     #[must_use]
     pub fn mk(&self, note: &Note) -> NoteMasterKey {
-        self.pak.nk.derive_note_private(&note.psi)
+        self.pak.nk.derive_note_private(note.psi)
     }
 
     #[must_use]
@@ -859,36 +866,44 @@ impl WalletSim {
         self.mk(note).derive_nullifier(epoch)
     }
 
-    pub fn note_master(
+    /// The certified derivation PCD for this note's window starting at
+    /// `base`, cached by `(cm, base)`: the `SboxStep`/`WrapStep` pipeline
+    /// runs once per
+    /// `(note, base)`. The derivation covers epochs
+    /// `[base, base + NF_DERIVATION_WIDTH)`; windows are arbitrary-base, so
+    /// callers pick `base` at the epoch they need covered.
+    pub fn derivation_pcd(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         note: Note,
-    ) -> Pcd<delegation::NfPrefixHeader> {
+        base: EpochIndex,
+    ) -> Pcd<delegation::NullifierDerivation> {
+        if let Some(pcd) = self.derivations.borrow().get(&(note.commitment(), base)) {
+            return pcd.clone();
+        }
+        let mk = self.mk(&note);
+
+        let (sbox, ()) = PROOF_SYSTEM
+            .seed(
+                rng,
+                delegation::SboxStep,
+                witness::sbox_boundary(((), ()), &mk, base),
+            )
+            .expect("SboxStep");
         let (pcd, ()) = PROOF_SYSTEM
-            .seed(rng, delegation::NfMasterSeed, (note, self.pak))
-            .expect("note seed");
+            .fuse(
+                rng,
+                delegation::WrapStep,
+                witness::recurrence((*sbox.data(), ()), note, self.pak),
+                sbox,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("WrapStep");
+
+        self.derivations
+            .borrow_mut()
+            .insert((note.commitment(), base), pcd.clone());
         pcd
-    }
-
-    pub fn nullifier_pcd(
-        &self,
-        rng: &mut (impl RngCore + CryptoRng),
-        note: Note,
-        target_epoch: EpochIndex,
-    ) -> Pcd<delegation::NullifierHeader> {
-        let master = self.note_master(rng, note);
-        ggm_tools::nullifier_from_master(rng, master, target_epoch)
-    }
-
-    pub fn derived_range(
-        &self,
-        rng: &mut (impl RngCore + CryptoRng),
-        note: &Note,
-        epoch_start: EpochIndex,
-        len: u32,
-    ) -> Pcd<delegation::NullifierHeader> {
-        let master = self.note_master(rng, *note);
-        ggm_tools::nullifier_range_from_master(rng, &master, epoch_start, len)
     }
 
     pub fn spendable_init(
@@ -900,24 +915,25 @@ impl WalletSim {
     ) -> Pcd<spendable::SpendableHeader> {
         let cm = note.commitment();
         let epoch = init_height.epoch();
-        let present_nf = self.nf_at(note, epoch);
         let (pre_epoch_anchor, pre_cm_anchor, creation_tgs, chain) =
             spendable_init_inputs(rng, pool, cm, init_height);
-        let nf_header = self.nullifier_pcd(rng, *note, epoch);
+        let deriv = self.derivation_pcd(rng, *note, epoch);
+        let mk = self.mk(note);
 
         let (spendable, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 spendable::SpendableInit,
                 witness::spendable_init(
-                    (*chain.data(), *nf_header.data()),
+                    (*chain.data(), *deriv.data()),
                     pre_epoch_anchor,
                     pre_cm_anchor,
                     &creation_tgs,
-                    present_nf,
+                    epoch,
+                    &mk,
                 ),
                 chain,
-                nf_header,
+                deriv,
             )
             .expect("SpendableInit");
         spendable
@@ -933,7 +949,11 @@ impl WalletSim {
         self.spendable_init(rng, spend_note, pool, height)
     }
 
-    pub fn verify_unspent(
+    /// Bind an unspent segment to the note's genuine nullifiers. The covered
+    /// span must fit one derivation window (`present_epoch - epoch_start <
+    /// NF_DERIVATION_WIDTH`); longer spans chunk through repeated bind+lift
+    /// rounds (see [`lift`](Self::lift)).
+    pub fn unspent_bind(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
         unspent: Pcd<pool::Unspent>,
@@ -941,20 +961,20 @@ impl WalletSim {
         epoch_start: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<pool::VerifiedUnspent> {
-        let len = present_epoch.0 - epoch_start.0 + 1;
-        let range = self.derived_range(rng, note, epoch_start, len);
+        let range = self.derivation_pcd(rng, *note, epoch_start);
+        let mk = self.mk(note);
         let elapsed: Vec<Nullifier> = (epoch_start.0..present_epoch.0)
             .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
             .collect();
         let (verified, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                pool::VerifyUnspent,
-                witness::verify_unspent((*unspent.data(), *range.data()), &elapsed),
+                pool::UnspentBind,
+                witness::unspent_bind((*unspent.data(), *range.data()), &mk, &elapsed),
                 unspent,
                 range,
             )
-            .expect("VerifyUnspent");
+            .expect("UnspentBind");
         verified
     }
 
@@ -967,7 +987,7 @@ impl WalletSim {
         epoch_start: EpochIndex,
         present_epoch: EpochIndex,
     ) -> Pcd<spendable::SpendableHeader> {
-        let verified = self.verify_unspent(rng, unspent, note, epoch_start, present_epoch);
+        let verified = self.unspent_bind(rng, unspent, note, epoch_start, present_epoch);
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable, verified)
             .expect("SpendableLift");
@@ -1016,14 +1036,14 @@ impl WalletSim {
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
         for (note, spendable_pcd, spend_epoch) in spends {
-            let range_pcd = self.derived_range(rng, &note, spend_epoch, 2);
+            let range_pcd = self.derivation_pcd(rng, note, spend_epoch);
             let rcv = value::Trapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((range_pcd, spendable_pcd));
+            spend_pcds.push((range_pcd, spend_epoch, spendable_pcd));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
@@ -1151,117 +1171,4 @@ fn epoch_first_of(epoch: EpochIndex) -> BlockHeight {
 fn epoch_final_of(epoch: EpochIndex) -> BlockHeight {
     let next_first = (epoch.0 + 1) * EPOCH_SIZE;
     BlockHeight(next_first - 1)
-}
-
-pub mod ggm_tools {
-    extern crate alloc;
-    use alloc::vec::Vec;
-
-    use ragu::{Pcd, Proof};
-    use rand_core::{CryptoRng, RngCore};
-
-    use crate::{
-        EpochIndex,
-        digest::poseidon,
-        keys::{GGM_CHUNK_SIZE, GGM_TREE_DEPTH},
-        note::Nullifier,
-        stamp::proof::{PROOF_SYSTEM, delegation},
-        witness,
-    };
-
-    pub fn walk_master_to_depth(
-        rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<delegation::NfPrefixHeader>,
-        epoch: EpochIndex,
-        target_depth: u8,
-    ) -> Pcd<delegation::NfPrefixHeader> {
-        assert!(
-            (1..=GGM_TREE_DEPTH).contains(&target_depth),
-            "target_depth must be in 1..=GGM_DEPTH",
-        );
-
-        let mut pcd = master_pcd;
-        while pcd.data().2 < target_depth {
-            let next_step = pcd.data().2 + 1;
-            let chunk = chunk_at(epoch.0, next_step);
-            let (next_pcd, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    delegation::NfPrefixStep,
-                    (chunk,),
-                    pcd,
-                    Proof::trivial().carry::<()>(()),
-                )
-                .expect("note step");
-            pcd = next_pcd;
-        }
-
-        pcd
-    }
-
-    pub fn nullifier_from_master(
-        rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: Pcd<delegation::NfPrefixHeader>,
-        target_epoch: EpochIndex,
-    ) -> Pcd<delegation::NullifierHeader> {
-        let prefix_pcd = walk_master_to_depth(rng, master_pcd, target_epoch, GGM_TREE_DEPTH);
-        let (pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                delegation::NullifierStep,
-                (),
-                prefix_pcd,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("nullifier step");
-        pcd
-    }
-
-    pub fn nullifier_range_from_master(
-        rng: &mut (impl RngCore + CryptoRng),
-        master_pcd: &Pcd<delegation::NfPrefixHeader>,
-        epoch_start: EpochIndex,
-        len: u32,
-    ) -> Pcd<delegation::NullifierHeader> {
-        assert!(len >= 1, "range length must be at least 1");
-        let mut nfs: Vec<Nullifier> = Vec::new();
-        let mut acc: Option<Pcd<delegation::NullifierHeader>> = None;
-        for offset in 0..len {
-            let epoch = EpochIndex(epoch_start.0 + offset);
-            let prefix_pcd = walk_master_to_depth(rng, master_pcd.clone(), epoch, GGM_TREE_DEPTH);
-            let nf = Nullifier::from(poseidon::nullifier(prefix_pcd.data().1));
-            let (leaf, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    delegation::NullifierStep,
-                    (),
-                    prefix_pcd,
-                    Proof::trivial().carry::<()>(()),
-                )
-                .expect("nullifier step");
-            acc = Some(match acc {
-                None => {
-                    nfs.push(nf);
-                    leaf
-                },
-                Some(left) => {
-                    let fuse_witness =
-                        witness::nullifier_fuse((*left.data(), *leaf.data()), nfs.as_slice(), nf);
-                    nfs.push(nf);
-                    let (fused, ()) = PROOF_SYSTEM
-                        .fuse(rng, delegation::NullifierFuse, fuse_witness, left, leaf)
-                        .expect("NullifierFuse");
-                    fused
-                },
-            });
-        }
-        acc.expect("len >= 1 produced a range")
-    }
-
-    fn chunk_at(epoch_bits: u32, level: u8) -> u8 {
-        let shift = (GGM_TREE_DEPTH * GGM_CHUNK_SIZE) - level * GGM_CHUNK_SIZE;
-        let chunk_mask = (1u32 << GGM_CHUNK_SIZE) - 1u32;
-        let chunk_u32 = (epoch_bits >> shift) & chunk_mask;
-        u8::try_from(chunk_u32).expect("chunk fits in u8")
-    }
 }
