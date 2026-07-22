@@ -8,7 +8,7 @@ use crate::{digest::poseidon, keys::public, value};
 /// Each action produces one digest, which serves as a root in the
 /// accumulator polynomial. Multiple actions are accumulated via
 /// polynomial commitment, not on this type.
-#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+#[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct ActionDigest(Fp);
 
 /// Errors from action digest computation.

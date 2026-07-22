@@ -6,8 +6,7 @@ extern crate alloc;
 
 pub mod proof;
 
-use alloc::{boxed::Box, vec, vec::Vec};
-use core::cmp::Ordering;
+use alloc::{boxed::Box, collections::BTreeSet, vec, vec::Vec};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
@@ -188,24 +187,22 @@ impl StampState for ProofStamp {
         let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
-        let mut tachygrams: Vec<Tachygram> = Vec::new();
+        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
         for _ in 0..n_tachygrams {
             let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
 
-            match tachygrams.last().map(|last| last.cmp(&tg)) {
-                None | Some(Ordering::Less) => tachygrams.push(tg),
-                Some(Ordering::Greater) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "tachygrams are not canonically sorted",
-                    ));
-                },
-                Some(Ordering::Equal) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "tachygrams are not unique",
-                    ));
-                },
+            if !tachygrams.insert(tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not unique",
+                ));
+            }
+
+            if tachygrams.last().is_none_or(|&last| last != tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not canonically sorted",
+                ));
             }
         }
 
@@ -353,9 +350,7 @@ impl Plan {
         for ((desc, alpha, note, rcv), (nf_pcd, spendable_pcd)) in
             self.spends.into_iter().zip(spendbind_inputs)
         {
-            let app = &*PROOF_SYSTEM;
-
-            let (bind_pcd, ()) = app
+            let (bind_pcd, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
                     spend::SpendBind,
@@ -370,7 +365,13 @@ impl Plan {
                 ProofStamp::prove_spend(rng, bind_pcd, nf_pcd).map_err(ProveError::ProofFailed)?;
 
             let digest = desc.digest().map_err(ProveError::ActionDigest)?;
-            entries.push((vec![desc], vec![digest], tachygrams, anchor, proof));
+            entries.push((
+                BTreeSet::from_iter([desc]),
+                BTreeSet::from_iter([digest]),
+                tachygrams,
+                anchor,
+                proof,
+            ));
         }
 
         for (desc, alpha, note, rcv) in self.outputs {
@@ -379,10 +380,16 @@ impl Plan {
                     .map_err(ProveError::ProofFailed)?;
 
             let digest = desc.digest().map_err(ProveError::ActionDigest)?;
-            entries.push((vec![desc], vec![digest], tachygrams, anchor, proof));
+            entries.push((
+                BTreeSet::from_iter([desc]),
+                BTreeSet::from_iter([digest]),
+                tachygrams,
+                anchor,
+                proof,
+            ));
         }
 
-        let (mut descriptors, _digests, mut tachygrams, anchor, proof) = entries
+        let (descriptors, _digests, tachygrams, anchor, proof) = entries
             .into_iter()
             .map(Ok::<_, ProveError>)
             .reduce(|acc, next| {
@@ -398,8 +405,10 @@ impl Plan {
                     )
                     .map_err(ProveError::MergeFailed)?;
 
+                let merged_descs = left_desc.union(&right_desc).copied().collect();
+
                 Ok((
-                    [left_desc, right_desc].concat(),
+                    merged_descs,
                     merged_digests,
                     merged_tachygrams,
                     merged_anchor,
@@ -407,9 +416,6 @@ impl Plan {
                 ))
             })
             .ok_or(ProveError::NoActions)??;
-
-        descriptors.sort_unstable();
-        tachygrams.sort_unstable();
 
         let coverage = blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors));
 
@@ -461,7 +467,7 @@ pub struct ProofStamp {
     pub anchor: Anchor,
 
     /// Tachygrams (nullifiers and note commitments) for data availability.
-    pub tachygrams: Vec<Tachygram>,
+    pub tachygrams: BTreeSet<Tachygram>,
 
     /// The Ragu proof bytes.
     #[debug(skip)]
@@ -470,7 +476,12 @@ pub struct ProofStamp {
 
 /// Stamp components threaded through the merge fold: the covered actions'
 /// digests, the tachygrams, the shared anchor, and the proof.
-type StampComponents = (Vec<ActionDigest>, Vec<Tachygram>, Anchor, Box<ragu::Proof>);
+type StampComponents = (
+    BTreeSet<ActionDigest>,
+    BTreeSet<Tachygram>,
+    Anchor,
+    Box<ragu::Proof>,
+);
 
 impl ProofStamp {
     /// Proves a single output action, returning the stamp components
@@ -484,11 +495,11 @@ impl ProofStamp {
         alpha: ActionRandomizer<effect::Output>,
         note: Note,
         anchor: Anchor,
-    ) -> Result<(Vec<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
+    ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
         let app = &*PROOF_SYSTEM;
 
         let (pcd, ()) = app.seed(rng, OutputStamp, (rcv, alpha, note, anchor))?;
-        let tachygrams = vec![Tachygram::from(note.commitment())];
+        let tachygrams = BTreeSet::from_iter([Tachygram::from(note.commitment())]);
         let rerand = app.rerandomize(pcd, rng)?;
 
         Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))
@@ -504,17 +515,16 @@ impl ProofStamp {
         rng: &mut RNG,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
         nf_pcd: ragu::Pcd<delegation::NullifierHeader>,
-    ) -> Result<(Vec<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
-        let app = &*PROOF_SYSTEM;
-
+    ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
         let (_, _, nf_present, anchor) = *bind_pcd.data();
         let (_, _, _, (_, nf_next)) = *nf_pcd.data();
 
-        let tachygrams = vec![Tachygram::from(nf_present), Tachygram::from(nf_next)];
+        let tachygrams =
+            BTreeSet::from_iter([Tachygram::from(nf_present), Tachygram::from(nf_next)]);
 
-        let (pcd, ()) = app.fuse(rng, SpendStamp, (nf_next,), bind_pcd, nf_pcd)?;
+        let (pcd, ()) = PROOF_SYSTEM.fuse(rng, SpendStamp, (nf_next,), bind_pcd, nf_pcd)?;
 
-        let rerand = app.rerandomize(pcd, rng)?;
+        let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
 
         Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))
     }
@@ -564,17 +574,20 @@ impl ProofStamp {
             right_anchor,
         ));
 
-        let merged_digests = [left_digests, right_digests].concat();
-        let tachygrams = [left_tachygrams, right_tachygrams].concat();
-        let merged_tg_poly = TachygramSetPoly::from_iter(tachygrams.clone());
-        let merged_acts_poly = ActionSetPoly::from_iter(merged_digests.clone());
+        let merged_digests: BTreeSet<ActionDigest> =
+            left_digests.union(&right_digests).copied().collect();
+        let tachygrams: BTreeSet<Tachygram> =
+            left_tachygrams.union(&right_tachygrams).copied().collect();
 
         let (pcd, ()) = app.fuse(
             rng,
             MergeStamp,
             (
                 (left_acts_poly, left_tg_poly),
-                (merged_acts_poly, merged_tg_poly),
+                (
+                    ActionSetPoly::from_iter(merged_digests.clone()),
+                    TachygramSetPoly::from_iter(tachygrams.clone()),
+                ),
                 (right_acts_poly, right_tg_poly),
             ),
             left_pcd,
@@ -607,15 +620,15 @@ impl ProofStamp {
         let left_actions_digest = left_desc
             .iter()
             .map(action::Descriptor::digest)
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
+            .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
         let right_actions_digest = right_desc
             .iter()
             .map(action::Descriptor::digest)
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
+            .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
 
-        let (_merged_digests, mut tachygrams, anchor, proof) = Self::prove_merge(
+        let (_merged_digests, tachygrams, anchor, proof) = Self::prove_merge(
             rng,
             (
                 left_actions_digest,
@@ -631,7 +644,6 @@ impl ProofStamp {
             ),
         )
         .map_err(ProveError::MergeFailed)?;
-        tachygrams.sort_unstable();
 
         let coverage = {
             let mut desc_bytes = Vec::<[u8; 64]>::from_iter([left_desc, right_desc].concat());

@@ -3,6 +3,7 @@
 use alloc::{string::ToString as _, vec, vec::Vec};
 
 use pasta_curves::Fp;
+use ragu::proof::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::*;
@@ -1157,9 +1158,8 @@ fn auth_digest_invariants() {
         extra_tachygram
             .stamp
             .tachygrams
-            .push(Tachygram::from(Fp::from(7u64)));
+            .insert(Tachygram::from(Fp::from(7u64)));
         // Tachygrams must stay canonically sorted for the stamp digest.
-        extra_tachygram.stamp.tachygrams.sort_unstable();
         assert_eq!(baseline_commitment, extra_tachygram.commitment());
         assert_ne!(baseline, extra_tachygram.auth_digest());
     }
@@ -1282,10 +1282,18 @@ fn read_rejects_noncanonical_tachygrams() {
     let n = bundle.stamp.tachygrams.len();
     assert!(n >= 2, "need at least two tachygrams to permute");
 
-    let mut permuted = bundle;
-    permuted.stamp.tachygrams.swap(0, n - 1);
     let mut buf = Vec::new();
-    permuted.write(&mut buf).expect("write");
+    bundle.write(&mut buf).expect("write");
+
+    // The stamp's proof is the constant-size trailer; the n 32-byte tachygrams
+    // sit immediately before it. A BTreeSet always serializes canonically, so
+    // forge a non-canonical encoding by swapping the first and last tachygram
+    // blocks directly in the buffer.
+    let end = buf.len() - PROOF_SIZE_COMPRESSED;
+    let first = end - n * 32;
+    let last = end - 32;
+    let (head, tail) = buf.split_at_mut(last);
+    head[first..first + 32].swap_with_slice(&mut tail[..32]);
 
     let err =
         Bundle::<ProofStamp>::read(&*buf).expect_err("non-canonical tachygrams must be rejected");
