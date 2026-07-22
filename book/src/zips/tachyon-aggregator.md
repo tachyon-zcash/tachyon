@@ -515,21 +515,6 @@ alone is insufficient: the covered effecting data is present in the block as *ad
 and the [block-validity rules](tachyon-bundle.md#block-validity) reject any block where it
 is not.
 
-### `hStampActionsTachyon` is confirmed, not trusted
-
-The action set is bound by the
-proof, which verifies only against the action-set commitment reconstructed from the
-actions themselves; the carried digest plays no role in that binding. Block validation
-(see [block validity](tachyon-bundle.md#block-validity)) confirms the carried digest
-against the actions actually present in the block and rejects on any mismatch, so the
-proof is tied to the *adjuncts* the block carries, not to a value the prover supplies,
-and a wrong `hStampActionsTachyon` cannot pass and only harms its author. The carried
-value lets observers identify coverage cheaply (see
-[Covered-transaction identification](#covered-transaction-identification)); it is
-recomputable from visible actions, so it reveals nothing the actions do not, and for
-an *aggregate* carrying its own actions it does not expose which of them are the
-aggregator's own.
-
 ### Circuit/consensus boundary
 
 Several security properties are enforced by consensus
