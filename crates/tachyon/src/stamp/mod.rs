@@ -397,6 +397,17 @@ impl Plan {
     }
 }
 
+/// Which input of a [`ProofStamp::merge`] an error refers to.
+#[derive(Clone, Copy, Debug, Display)]
+pub enum MergeSide {
+    /// The left input.
+    #[display("left")]
+    Left,
+    /// The right input.
+    #[display("right")]
+    Right,
+}
+
 /// Errors that can occur while proving a stamp.
 #[derive(Debug, Display, Error)]
 #[non_exhaustive]
@@ -412,8 +423,10 @@ pub enum ProveError {
     #[display("action proof failed: {_0}")]
     ProofFailed(ragu::Error),
     /// A descriptor list does not match its stamp's covered-actions digest.
-    #[display("descriptor list does not match stamp coverage")]
+    #[display("{side} descriptor list does not match stamp coverage")]
     CoverageMismatch {
+        /// Which merge input the mismatched pair was.
+        side: MergeSide,
         /// The covered-actions digest the stamp carries.
         stamp: [u8; 32],
         /// The digest of the provided descriptor list, in canonical order.
@@ -592,6 +605,7 @@ impl ProofStamp {
         let left_coverage = Self::coverage_digest(&left_desc);
         if left_coverage != left_stamp.actions {
             return Err(ProveError::CoverageMismatch {
+                side: MergeSide::Left,
                 stamp: left_stamp.actions,
                 descriptors: left_coverage,
             });
@@ -599,6 +613,7 @@ impl ProofStamp {
         let right_coverage = Self::coverage_digest(&right_desc);
         if right_coverage != right_stamp.actions {
             return Err(ProveError::CoverageMismatch {
+                side: MergeSide::Right,
                 stamp: right_stamp.actions,
                 descriptors: right_coverage,
             });

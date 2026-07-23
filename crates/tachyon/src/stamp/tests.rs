@@ -198,8 +198,13 @@ fn merge_rejects_left_coverage_mismatch() {
         (stamp_b, vec![plan_b.descriptor()]),
     )
     .unwrap_err();
-    let ProveError::CoverageMismatch { stamp, descriptors } = err else {
-        panic!("expected CoverageMismatch, got {err:?}")
+    let ProveError::CoverageMismatch {
+        side: MergeSide::Left,
+        stamp,
+        descriptors,
+    } = err
+    else {
+        panic!("expected left CoverageMismatch, got {err:?}")
     };
     assert_eq!(stamp, carried);
     assert_eq!(descriptors, provided);
@@ -228,8 +233,13 @@ fn merge_rejects_right_coverage_mismatch() {
         (stamp_b, vec![plan_a.descriptor()]),
     )
     .unwrap_err();
-    let ProveError::CoverageMismatch { stamp, descriptors } = err else {
-        panic!("expected CoverageMismatch, got {err:?}")
+    let ProveError::CoverageMismatch {
+        side: MergeSide::Right,
+        stamp,
+        descriptors,
+    } = err
+    else {
+        panic!("expected right CoverageMismatch, got {err:?}")
     };
     assert_eq!(stamp, carried);
     assert_eq!(descriptors, provided);
