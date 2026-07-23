@@ -542,10 +542,10 @@ fn is_aggregate_independent_of_action_order() {
     );
 }
 
-/// An obvious double spend, two actions carrying identical descriptors, is
-/// rejected at deserialization by the parser's uniqueness check. The `Plan`
-/// API cannot express this shape (it keys actions by descriptor), so the
-/// duplicate is forced by hand.
+/// Even an obvious double spend, two actions carrying identical descriptors, is
+/// not rejected by the parser, but no verifier will accept a proof for such a
+/// bundle. The `Plan` API cannot express this shape (it keys actions by
+/// descriptor), so the duplicate is forced by hand.
 #[test]
 fn double_spend_obvious() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -561,10 +561,17 @@ fn double_spend_obvious() {
     let mut buf = Vec::new();
     bundle.write(&mut buf).expect("write");
 
-    let err =
-        Bundle::<ProofStamp>::read(&*buf).expect_err("duplicate descriptors must be rejected");
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert_eq!(err.to_string(), "action descriptors are not unique");
+    // The parser accepts the duplicate: the double spend is wire-valid.
+    let decoded = Bundle::<ProofStamp>::read(&*buf).expect("duplicate descriptors are wire-valid");
+
+    // But the proof does not verify against the duplicated action set.
+    let err = decoded
+        .stamp
+        .verify(rng, &decoded.descriptors())
+        .expect_err("duplicated actions must not verify");
+    let VerificationError::Disproved = err else {
+        panic!("expected Disproved, got {err:?}");
+    };
 }
 
 /// A more obfuscated double spend, the same note spent under two independent

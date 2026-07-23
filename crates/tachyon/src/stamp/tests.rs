@@ -345,8 +345,9 @@ fn read_rejects_duplicate_tachygrams() {
     let mut buf = Vec::new();
     buf.extend_from_slice(&[0u8; 32]); // covered actions digest
     Anchor(Fp::ZERO).write(&mut buf).expect("write anchor");
-    serialization::write_fp_list(&mut buf, &[Fp::from(tg), Fp::from(tg)])
-        .expect("write tachygrams");
+    serialization::write_compactsize(&mut buf, 2).expect("write tachygram count");
+    serialization::write_fp(&mut buf, &Fp::from(tg)).expect("write tachygram");
+    serialization::write_fp(&mut buf, &Fp::from(tg)).expect("write tachygram");
 
     let err = ProofStamp::read(&*buf).expect_err("duplicate tachygrams must be rejected");
     assert_eq!(err.to_string(), "tachygrams are not unique");

@@ -233,14 +233,18 @@ impl StampState for ProofStamp {
     fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         writer.write_all(&self.coverage)?;
         self.anchor.write(&mut writer)?;
-        serialization::write_fp_list(
+        serialization::write_compactsize(
             &mut writer,
-            &self
-                .tachygrams
-                .iter()
-                .map(|&tg| Fp::from(tg))
-                .collect::<Vec<Fp>>(),
+            u64::try_from(self.tachygrams.len()).map_err(|_err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygram vector length exceeds u64",
+                )
+            })?,
         )?;
+        for &tg in &self.tachygrams {
+            serialization::write_fp(&mut writer, &Fp::from(tg))?;
+        }
         writer.write_all(self.proof.serialize().as_ref())
     }
 }
