@@ -10,8 +10,8 @@ use crate::{
     action,
     constants::EPOCH_SIZE,
     fixtures::{
-        PoolSim, WalletSim, build_output_stamp, forge_overlapping_merge, random_block,
-        random_block_with, shared_sk, spend_witness,
+        PoolSim, WalletSim, build_autonome, build_output_stamp, forge_overlapping_merge,
+        random_action, random_block, random_block_with, shared_sk, spend_witness,
     },
     primitives::BlockHeight,
 };
@@ -500,6 +500,92 @@ fn verify_cannot_distinguish_a_deduplicated_duplicate() {
             .expect("proof system verification"),
         "the doubled action must not verify"
     );
+}
+
+/// `verify_proof` reconstructs the action polynomial from the action digests it
+/// is given, as a multiset: the exact covered actions verify (in any order),
+/// and any deviation — a dropped, duplicated, extra, or substituted action —
+/// reconstructs a different polynomial and does not verify.
+#[test]
+fn verify_proof_action_multiset_invariants() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let stamped = build_autonome(rng, &wallet, 1000, 700);
+
+    let digests: Vec<ActionDigest> = stamped
+        .actions
+        .iter()
+        .map(|action| action.descriptor().digest().expect("action digest"))
+        .collect();
+
+    // Permutation accepts.
+    assert!(
+        stamped
+            .stamp
+            .verify_proof(rng, &[digests[1], digests[0]])
+            .expect("proof system verification"),
+        "permuted actions must verify"
+    );
+
+    // Drop rejects.
+    {
+        let mut dropped = digests.clone();
+        dropped.pop();
+        assert!(
+            !stamped
+                .stamp
+                .verify_proof(rng, &dropped)
+                .expect("proof system verification"),
+            "dropped action must not verify"
+        );
+    }
+
+    // Duplicate rejects.
+    {
+        let mut duplicated = digests.clone();
+        duplicated.push(digests[0]);
+        assert!(
+            !stamped
+                .stamp
+                .verify_proof(rng, &duplicated)
+                .expect("proof system verification"),
+            "duplicated action must not verify"
+        );
+    }
+
+    // Foreign-extra rejects.
+    {
+        let mut extended = digests.clone();
+        extended.push(
+            random_action(rng)
+                .descriptor()
+                .digest()
+                .expect("action digest"),
+        );
+        assert!(
+            !stamped
+                .stamp
+                .verify_proof(rng, &extended)
+                .expect("proof system verification"),
+            "extra action must not verify"
+        );
+    }
+
+    // Replace-with-foreign rejects.
+    {
+        let mut replaced = digests;
+        replaced[0] = random_action(rng)
+            .descriptor()
+            .digest()
+            .expect("action digest");
+        assert!(
+            !stamped
+                .stamp
+                .verify_proof(rng, &replaced)
+                .expect("proof system verification"),
+            "replaced action must not verify"
+        );
+    }
 }
 
 /// Bundle-validity rule 9 requires a proof stamp's tachygrams to be

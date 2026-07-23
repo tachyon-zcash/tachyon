@@ -1,6 +1,7 @@
-#![allow(clippy::panic, reason = "test code")]
+#![allow(clippy::panic, clippy::too_many_lines, reason = "test code")]
 
 use alloc::{boxed::Box, string::ToString as _, vec, vec::Vec};
+use core::cmp::Reverse;
 
 use pasta_curves::Fp;
 use ragu::proof::PROOF_SIZE_COMPRESSED;
@@ -13,8 +14,8 @@ use crate::{
     entropy::ActionEntropy,
     fixtures::{
         PoolSim, WalletSim, build_autonome, build_output_plan, build_output_stamp,
-        forge_overlapping_merge, mock_sighash, mock_wtxid, random_action, random_block,
-        random_block_with, shared_sk, spend_witness,
+        forge_overlapping_merge, mock_sighash, mock_wtxid, random_block, random_block_with,
+        shared_sk, spend_witness,
     },
     primitives::{BlockHeight, Tachygram},
     value,
@@ -455,92 +456,6 @@ fn payment_bundle_verifies() {
         .expect("payment bundle must verify");
 }
 
-/// `verify_proof` reconstructs the action polynomial from the action digests it
-/// is given, as a multiset: the exact covered actions verify (in any order),
-/// and any deviation — a dropped, duplicated, extra, or substituted action —
-/// reconstructs a different polynomial and does not verify.
-#[test]
-fn stamp_verify_action_multiset_invariants() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let stamped = build_autonome(rng, &wallet, 1000, 700);
-
-    let digests: Vec<ActionDigest> = stamped
-        .actions
-        .iter()
-        .map(|action| action.descriptor().digest().expect("action digest"))
-        .collect();
-
-    // Permutation accepts.
-    assert!(
-        stamped
-            .stamp
-            .verify_proof(rng, &[digests[1], digests[0]])
-            .expect("proof system verification"),
-        "permuted actions must verify"
-    );
-
-    // Drop rejects.
-    {
-        let mut dropped = digests.clone();
-        dropped.pop();
-        assert!(
-            !stamped
-                .stamp
-                .verify_proof(rng, &dropped)
-                .expect("proof system verification"),
-            "dropped action must not verify"
-        );
-    }
-
-    // Duplicate rejects.
-    {
-        let mut duplicated = digests.clone();
-        duplicated.push(digests[0]);
-        assert!(
-            !stamped
-                .stamp
-                .verify_proof(rng, &duplicated)
-                .expect("proof system verification"),
-            "duplicated action must not verify"
-        );
-    }
-
-    // Foreign-extra rejects.
-    {
-        let mut extended = digests.clone();
-        extended.push(
-            random_action(rng)
-                .descriptor()
-                .digest()
-                .expect("action digest"),
-        );
-        assert!(
-            !stamped
-                .stamp
-                .verify_proof(rng, &extended)
-                .expect("proof system verification"),
-            "extra action must not verify"
-        );
-    }
-
-    // Replace-with-foreign rejects.
-    {
-        let mut replaced = digests;
-        replaced[0] = random_action(rng)
-            .descriptor()
-            .digest()
-            .expect("action digest");
-        assert!(
-            !stamped
-                .stamp
-                .verify_proof(rng, &replaced)
-                .expect("proof system verification"),
-            "replaced action must not verify"
-        );
-    }
-}
-
 /// An obvious double spend, two actions with identical descriptors, clears
 /// every cheap validator check yet fails proof verification.
 #[test]
@@ -787,12 +702,73 @@ fn duplicated_spend_cannot_inflate() {
             .expect("proof system verification"),
         "the doubled action must not verify against the single-spend proof"
     );
+
+    // The same failure surfaces through the composed `verify` (autonome, no
+    // adjuncts): the pointer is unchecked, coverage matches the forged digest,
+    // signatures verify (over the same `sighash`), and the duplicate is caught at
+    // the proof step.
+    let err = decoded
+        .verify(rng, &sighash, mock_wtxid(&decoded), &[])
+        .expect_err("the duplicated spend must fail full verification");
+    let VerificationError::Proof(VerifyProofError::DuplicateActions) = err else {
+        panic!("expected Proof(DuplicateActions), got {err:?}");
+    };
 }
 
-/// A more obfuscated double spend, the same note spent under two independent
-/// randomizations, produces distinct descriptors and is not caught at the
-/// bundle level. True double-spend prevention is a nullifier/pool-level
-/// concern.
+/// `verify_proof` deduplicates across the self+adjunct boundary, not just
+/// within one bundle: an aggregate and one of its adjuncts claiming the same
+/// action is the cross-bundle double-cover, and the count check rejects it
+/// before the proof. Every other duplicate test passes `&[]`, exercising only
+/// the self-only path; this drives the chained adjunct descriptors.
+#[test]
+fn verify_proof_rejects_action_shared_with_adjunct() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let bundle = build_autonome(rng, &wallet, 1000, 700);
+
+    // An adjunct carrying the same actions as the bundle: the combined multiset
+    // repeats every descriptor. The pointer is irrelevant to `verify_proof`.
+    let adjunct = bundle.clone().strip(mock_wtxid(&bundle));
+
+    let err = bundle
+        .verify_proof(rng, &[adjunct.as_dyn()])
+        .expect_err("an action shared across self and adjunct must be rejected");
+    let VerifyProofError::DuplicateActions = err else {
+        panic!("expected DuplicateActions, got {err:?}");
+    };
+}
+
+/// A unique but uncovered adjunct action clears the duplicate check yet fails
+/// the proof: `verify_proof` reconstructs the action polynomial over the
+/// combined set, which the bundle's stamp — proving only its own actions — does
+/// not commit to. This is the bundle-level route to `Disproved`, distinct from
+/// the `DuplicateActions` path (here the combined set stays a set).
+#[test]
+fn verify_proof_disproves_uncovered_adjunct() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let bundle = build_autonome(rng, &wallet, 1000, 700);
+
+    // A foreign autonome with disjoint actions, stripped to an adjunct the bundle
+    // does not cover.
+    let foreign = build_autonome(rng, &wallet, 500, 300);
+    let adjunct = foreign.strip(mock_wtxid(&bundle));
+
+    let err = bundle
+        .verify_proof(rng, &[adjunct.as_dyn()])
+        .expect_err("a unique but uncovered adjunct action must not verify");
+    let VerifyProofError::Disproved = err else {
+        panic!("expected Disproved, got {err:?}");
+    };
+}
+
+/// A more obfuscated double spend: the same note spent under two independent
+/// randomizations yields distinct descriptors, so the cheap bundle checks
+/// (descriptor-uniqueness and signatures) pass. It is still caught elsewhere —
+/// the proof refuses to aggregate the shared nullifiers (the stamp-level
+/// `double_spend_cannot_aggregate`) and the pool nullifier set rejects reuse
+/// across transactions — this test covers only that the cheap checks alone do
+/// not catch it.
 #[test]
 fn double_spend_secret() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -997,8 +973,9 @@ fn based_aggregate_with_two_adjuncts() {
 
     becomes_based.stamp = based_stamp;
 
-    let adjunct_a = autonome_a.strip(mock_wtxid(&becomes_based));
-    let adjunct_b = autonome_b.strip(mock_wtxid(&becomes_based));
+    let wtxid = mock_wtxid(&becomes_based);
+    let adjunct_a = autonome_a.strip(wtxid);
+    let adjunct_b = autonome_b.strip(wtxid);
 
     becomes_based
         .verify_signatures(&sighash)
@@ -1007,21 +984,67 @@ fn based_aggregate_with_two_adjuncts() {
     becomes_based
         .verify_proof(rng, &[adjunct_a.as_dyn(), adjunct_b.as_dyn()])
         .expect("based aggregate proof verifies against its adjuncts");
+
+    // Outer `verify` composes the pointer, coverage, signature, and proof checks
+    // against the covering wtxid the adjuncts were stripped with.
+    assert!(
+        becomes_based.is_aggregate(),
+        "a based aggregate does not cover its own actions alone"
+    );
+    becomes_based
+        .verify(rng, &sighash, wtxid, &[&adjunct_a, &adjunct_b])
+        .expect("based aggregate fully verifies against its adjuncts");
+
+    // A wtxid the adjuncts were not stripped with: the pointer check fails first.
+    {
+        let foreign = PointerStamp::try_from([0x5au8; 64]).expect("nonzero");
+        let err = becomes_based
+            .verify(rng, &sighash, foreign, &[&adjunct_a, &adjunct_b])
+            .expect_err("adjuncts pointing to another aggregate must be rejected");
+        let VerificationError::PointerStampMismatch = err else {
+            panic!("expected PointerStampMismatch, got {err:?}");
+        };
+    }
+
+    // Pointers match but an adjunct is missing: coverage no longer reconstructs.
+    {
+        let err = becomes_based
+            .verify(rng, &sighash, wtxid, &[&adjunct_a])
+            .expect_err("a missing adjunct must mismatch coverage");
+        let VerificationError::StampActionsMismatch = err else {
+            panic!("expected StampActionsMismatch, got {err:?}");
+        };
+    }
+
+    // A corrupted action signature surfaces through the composed check.
+    {
+        let mut tampered = becomes_based.clone();
+        let mut sig_bytes: [u8; 64] = tampered.actions[0].sig.0.into();
+        sig_bytes[0] ^= 0xFF;
+        tampered.actions[0].sig = action::Signature(sig_bytes.into());
+        let err = tampered
+            .verify(rng, &sighash, wtxid, &[&adjunct_a, &adjunct_b])
+            .expect_err("a corrupted action signature must fail verification");
+        let VerificationError::Signatures(VerifySignaturesError::Action(_)) = err else {
+            panic!("expected Signatures(Action), got {err:?}");
+        };
+    }
 }
 
 /// The outer `verify` composes coverage, signatures, and proof for an autonome
 /// bundle with no adjuncts: the honest bundle passes, and a corrupted binding
-/// signature surfaces as `VerificationError::Signatures`.
+/// signature surfaces as `VerificationError::Signatures`. With no adjuncts the
+/// `wtxid` is never compared, so any nonzero value serves.
 #[test]
 fn autonome_verify_composes_all_checks() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment());
-    let auth_digest = bundle.auth_digest();
+    let wtxid = mock_wtxid(&bundle);
 
     bundle
-        .verify(rng, &sighash, &auth_digest, &[])
+        .verify(rng, &sighash, wtxid, &[])
         .expect("honest autonome bundle verifies");
 
     let mut tampered = bundle.clone();
@@ -1030,7 +1053,7 @@ fn autonome_verify_composes_all_checks() {
     tampered.binding_sig = Signature(sig_bytes.into());
 
     let err = tampered
-        .verify(rng, &sighash, &auth_digest, &[])
+        .verify(rng, &sighash, wtxid, &[])
         .expect_err("a corrupted binding signature must fail verification");
     let VerificationError::Signatures(VerifySignaturesError::Binding(_)) = err else {
         panic!("expected Signatures(Binding), got {err:?}");
@@ -1074,6 +1097,74 @@ fn stamped_read_write_round_trip() {
     deserialized
         .verify_signatures(&sighash)
         .expect("deserialized bundle must verify");
+}
+
+/// Actions are an ordered multiset: their wire order is significant and `read`
+/// reproduces it exactly, without reordering. There is no canonical order to
+/// enforce (the planner happens to emit sorted, but that is not a consensus
+/// rule), and an arbitrary order is fully valid: assembled in descending
+/// descriptor order with signatures over that order's commitment, the bundle
+/// round-trips unchanged and its signatures verify. Order still binds:
+/// [`permuted_actions_change_commitment`] shows a different order is a
+/// different commitment, so reordering after signing would break the
+/// signatures.
+#[test]
+fn read_preserves_action_order() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+
+    // Two outputs, assembled in descending descriptor order — the opposite of
+    // what the planner emits — so a canonicalizing read would be caught.
+    let (rcv_a, alpha_a, plan_a) = build_output_plan(rng, wallet.random_note(200));
+    let (rcv_b, alpha_b, plan_b) = build_output_plan(rng, wallet.random_note(300));
+    let mut items = [
+        (plan_a.descriptor(), alpha_a, rcv_a),
+        (plan_b.descriptor(), alpha_b, rcv_b),
+    ];
+    items.sort_by_key(|item| Reverse(item.0));
+    assert!(
+        items[0].0 > items[1].0,
+        "assembled in non-canonical (descending) order"
+    );
+
+    // Sign for this exact order: the commitment, and hence the sighash, depends
+    // on it.
+    let value_balance = value::Balance::try_from(-500i64).expect("in range");
+    let descriptors: Vec<[u8; 64]> = items.iter().map(|item| item.0).collect();
+    let sighash = mock_sighash(bundle_commitment(
+        &action_descriptor_digest(&descriptors),
+        value_balance.into(),
+    ));
+    let actions: Vec<Action> = items
+        .iter()
+        .map(|item| {
+            Action::from((
+                item.0,
+                private::ActionSigningKey::new(&item.1).sign(rng, &sighash),
+            ))
+        })
+        .collect();
+    let binding_sig =
+        private::BindingSigningKey::from(items.iter().map(|item| item.2)).sign(rng, &sighash);
+
+    let bundle = Bundle {
+        actions,
+        value_balance,
+        binding_sig,
+        stamp: PointerStamp::try_from([0x11u8; 64]).expect("nonzero wtxid"),
+    };
+
+    let mut buf = Vec::new();
+    bundle.write(&mut buf).expect("write");
+    let decoded = Bundle::<PointerStamp>::read(&*buf).expect("any action order is wire-valid");
+
+    assert_eq!(
+        bundle.actions, decoded.actions,
+        "read reproduces the wire order, it does not reorder"
+    );
+    decoded
+        .verify_signatures(&sighash)
+        .expect("signatures are valid for the constructed order");
 }
 
 #[test]

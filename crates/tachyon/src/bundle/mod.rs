@@ -94,7 +94,7 @@ use crate::{
     keys::{private, public},
     primitives::{Anchor, effect},
     reddsa, serialization,
-    stamp::{self, AggregateIdError, PointerStamp, ProofStamp, StampState, Unproven},
+    stamp::{self, PointerStamp, ProofStamp, StampState, Unproven},
     value,
 };
 
@@ -260,9 +260,6 @@ pub enum VerifyProofError {
 /// Errors during bundle verification.
 #[derive(Debug, Display, Error)]
 pub enum VerificationError {
-    /// The provided wtxid for this bundle seems invalid.
-    #[display("provided aggregate id is invalid: {_0}")]
-    AggregateId(AggregateIdError),
     /// The pointer of an adjunct is not the expected aggregate id.
     #[display("stamp on an adjunct does not match the expected aggregate id")]
     PointerStampMismatch,
@@ -575,16 +572,10 @@ impl Bundle<ProofStamp> {
         &self,
         rng: &mut RNG,
         sighash: &[u8; 32],
-        auth_digest: &[u8; 32],
+        wtxid: PointerStamp,
         adjuncts: &[&Bundle<PointerStamp>],
     ) -> Result<(), VerificationError> {
-        let expect_pointers: PointerStamp = PointerStamp::try_from((sighash, auth_digest))
-            .map_err(VerificationError::AggregateId)?;
-
-        if adjuncts
-            .iter()
-            .any(|&adjunct| adjunct.stamp != expect_pointers)
-        {
+        if adjuncts.iter().any(|&adjunct| adjunct.stamp != wtxid) {
             return Err(VerificationError::PointerStampMismatch);
         }
 
