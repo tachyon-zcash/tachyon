@@ -411,6 +411,14 @@ pub enum ProveError {
     /// step-level error.
     #[display("action proof failed: {_0}")]
     ProofFailed(ragu::Error),
+    /// A descriptor list does not match its stamp's covered-actions digest.
+    #[display("descriptor list does not match stamp coverage")]
+    CoverageMismatch {
+        /// The covered-actions digest the stamp carries.
+        stamp: [u8; 32],
+        /// The digest of the provided descriptor list, in canonical order.
+        descriptors: [u8; 32],
+    },
     /// Stamp merge failed; carries the underlying step-level error.
     #[display("stamp merge failed: {_0}")]
     MergeFailed(ragu::Error),
@@ -572,13 +580,30 @@ impl ProofStamp {
     /// The action digests for the merge proof and the merged
     /// `covered_actions` are both derived from the descriptor lists.
     ///
-    /// TODO: confirm desc list against stamp? it's forbidden by the proof
-    /// system, but we might want to fail early.
+    /// Fails fast with [`ProveError::CoverageMismatch`] if either descriptor
+    /// list disagrees with its stamp's covered-actions digest: the proof
+    /// system rejects such a merge anyway, but only after the merge proving
+    /// work has been spent, while the digest comparison is cheap.
     pub fn merge<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         (left_stamp, left_desc): (Self, Vec<action::Descriptor>),
         (right_stamp, right_desc): (Self, Vec<action::Descriptor>),
     ) -> Result<Self, ProveError> {
+        let left_coverage = Self::coverage_digest(&left_desc);
+        if left_coverage != left_stamp.actions {
+            return Err(ProveError::CoverageMismatch {
+                stamp: left_stamp.actions,
+                descriptors: left_coverage,
+            });
+        }
+        let right_coverage = Self::coverage_digest(&right_desc);
+        if right_coverage != right_stamp.actions {
+            return Err(ProveError::CoverageMismatch {
+                stamp: right_stamp.actions,
+                descriptors: right_coverage,
+            });
+        }
+
         let left_actions_digest = left_desc
             .iter()
             .map(action::Descriptor::digest)
@@ -619,14 +644,20 @@ impl ProofStamp {
         })
     }
 
+    /// Digest of the descriptors in canonical (sorted) order — the form
+    /// `hStampActionsTachyon` commits to.
+    fn coverage_digest(descs: &[action::Descriptor]) -> [u8; 32] {
+        let mut desc_bytes = descs.iter().copied().collect::<Vec<[u8; 64]>>();
+        desc_bytes.sort_unstable();
+        blake2b::action_descriptor_digest(&desc_bytes)
+    }
+
     /// Checks if this stamp covers the given action descriptors. The
     /// descriptors are sorted into canonical order before hashing, so the
     /// check is independent of the order the caller presents them in.
     #[must_use]
     pub fn covers(&self, descs: &[action::Descriptor]) -> bool {
-        let mut desc_bytes = descs.iter().copied().collect::<Vec<[u8; 64]>>();
-        desc_bytes.sort_unstable();
-        blake2b::action_descriptor_digest(&desc_bytes) == self.actions
+        Self::coverage_digest(descs) == self.actions
     }
 
     /// Verifies this stamp's proof by reconstructing the PCD header from
