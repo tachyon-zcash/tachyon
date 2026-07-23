@@ -176,43 +176,30 @@ fn merge_populates_covered_actions() {
     assert_eq!(merged.coverage, expected);
 }
 
-/// The honest merge workflow refuses to combine two stamps whose tachygram
-/// sets intersect. `MergeStamp` encodes the merged set as the polynomial
-/// product of its inputs (a multiset union), but `prove_merge` witnesses the
-/// deduplicated set union; the two coincide only for disjoint inputs. An
-/// overlap makes `merged == left · right` unsatisfiable, so the product
-/// relation fails and no proof is produced.
-#[test]
-fn merge_rejects_overlapping_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let pool = PoolSim::genesis(rng);
-    let anchor = pool.anchor();
-
-    // Two output stamps for the same note share their sole tachygram (the note
-    // commitment) but carry distinct descriptors (independent trapdoors), so
-    // the action sets stay disjoint and the failure isolates to the tachygram
-    // product relation.
-    let note = wallet.random_note(200);
-    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note);
-    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note);
-    assert_eq!(
-        stamp_a.tachygrams, stamp_b.tachygrams,
-        "tachygram sets must overlap"
-    );
-    assert_ne!(
-        plan_a.descriptor(),
-        plan_b.descriptor(),
-        "action sets must stay disjoint"
-    );
-
+/// Force-fuse a `MergeStamp` over two stamps that share a set element,
+/// returning the stamp a malicious prover would publish.
+///
+/// First confirms the honest merge refuses the overlap: `MergeStamp` binds each
+/// merged accumulator as the polynomial product of its inputs (a multiset
+/// union), but `prove_merge` witnesses the deduplicated set union, so any
+/// shared element makes `merged == left · right` unsatisfiable. The forgery
+/// instead witnesses the multiset union of both accumulators directly, so both
+/// product relations hold and a proof is produced. The published stamp bears
+/// canonical deduplicated sets, so it is wire-valid — but those sets no longer
+/// reconstruct the multiset accumulators the proof commits to. Applies whether
+/// the shared element is a tachygram (a reused note) or an action digest (a
+/// duplicated contributor).
+fn forge_overlapping_merge(
+    rng: &mut StdRng,
+    (stamp_a, descriptors_a): (&ProofStamp, &BTreeSet<action::Descriptor>),
+    (stamp_b, descriptors_b): (&ProofStamp, &BTreeSet<action::Descriptor>),
+) -> ProofStamp {
     let err = ProofStamp::merge(
         rng,
-        (stamp_a, BTreeSet::from_iter([plan_a.descriptor()])),
-        (stamp_b, BTreeSet::from_iter([plan_b.descriptor()])),
+        (stamp_a.clone(), descriptors_a.clone()),
+        (stamp_b.clone(), descriptors_b.clone()),
     )
     .expect_err("overlapping tachygram sets must not merge");
-
     let ProveError::MergeFailed(ragu::Error::InvalidWitness(inner)) = err else {
         panic!("expected MergeFailed(InvalidWitness), got {err:?}");
     };
@@ -220,32 +207,17 @@ fn merge_rejects_overlapping_tachygrams() {
         inner.to_string(),
         "poly product: product identity fails at challenge"
     );
-}
-
-/// A malicious prover could execute `MergeStamp` to prove a merge of
-/// intersecting sets, but no verifier will accept such a proof.
-#[test]
-fn verify_rejects_maliciously_merged_overlapping_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let pool = PoolSim::genesis(rng);
-    let anchor = pool.anchor();
-
-    let note = wallet.random_note(200);
-    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note);
-    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note);
-    assert_eq!(
-        stamp_a.tachygrams, stamp_b.tachygrams,
-        "tachygram sets must overlap"
-    );
 
     let app = &*PROOF_SYSTEM;
 
-    let digest_a = plan_a.descriptor().digest().expect("action digest");
-    let digest_b = plan_b.descriptor().digest().expect("action digest");
-
-    let left_acts = ActionSetPoly::from_iter([digest_a]);
-    let right_acts = ActionSetPoly::from_iter([digest_b]);
+    let left_acts = descriptors_a
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect::<ActionSetPoly>();
+    let right_acts = descriptors_b
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect::<ActionSetPoly>();
     let left_tg = stamp_a
         .tachygrams
         .iter()
@@ -257,56 +229,58 @@ fn verify_rejects_maliciously_merged_overlapping_tachygrams() {
         .copied()
         .collect::<TachygramSetPoly>();
 
-    let left_pcd =
-        stamp_a
-            .proof
-            .carry::<StampHeader>((left_acts.commit(), left_tg.commit(), stamp_a.anchor));
-    let right_pcd = stamp_b.proof.carry::<StampHeader>((
+    let left_pcd = stamp_a.proof.clone().carry::<StampHeader>((
+        left_acts.commit(),
+        left_tg.commit(),
+        stamp_a.anchor,
+    ));
+    let right_pcd = stamp_b.proof.clone().carry::<StampHeader>((
         right_acts.commit(),
         right_tg.commit(),
         stamp_b.anchor,
     ));
 
-    // The malicious witness: the shared tachygram appears twice, so the merged
-    // set polynomial equals `left · right` and the product relation holds. The
-    // action sets are disjoint, so their set and multiset unions coincide.
-    let merged_acts = ActionSetPoly::from_iter([digest_a, digest_b]);
-    let malicious_merged_tg = stamp_a
+    let merged_acts = descriptors_a
+        .iter()
+        .chain(descriptors_b.iter())
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect::<ActionSetPoly>();
+    let merged_tg = stamp_a
         .tachygrams
         .iter()
         .chain(stamp_b.tachygrams.iter())
         .copied()
         .collect::<TachygramSetPoly>();
 
-    let proof = {
-        let (pcd, ()) = app
-            .fuse(
-                rng,
-                MergeStamp,
-                (
-                    (left_acts, left_tg),
-                    (merged_acts, malicious_merged_tg),
-                    (right_acts, right_tg),
-                ),
-                left_pcd,
-                right_pcd,
-            )
-            .expect("multiset merge must prove");
-        Box::new(
-            app.rerandomize(pcd, rng)
-                .expect("rerandomize")
-                .proof()
-                .clone(),
+    let (pcd, ()) = app
+        .fuse(
+            rng,
+            MergeStamp,
+            (
+                (left_acts, left_tg),
+                (merged_acts, merged_tg),
+                (right_acts, right_tg),
+            ),
+            left_pcd,
+            right_pcd,
         )
-    };
+        .expect("multiset merge must prove");
+    let merged_anchor = pcd.data().2;
+    let proof = Box::new(
+        app.rerandomize(pcd, rng)
+            .expect("rerandomize")
+            .proof()
+            .clone(),
+    );
 
-    // The published stamp must bear a canonical deduplicated tachygram vector,
-    // or it will be rejected at deserialization.
     let malicious_stamp = ProofStamp {
-        coverage: blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(
-            BTreeSet::from_iter([plan_a.descriptor(), plan_b.descriptor()]),
-        )),
-        anchor,
+        coverage: blake2b::action_descriptor_digest(
+            &descriptors_a
+                .union(descriptors_b)
+                .copied()
+                .collect::<Vec<[u8; 64]>>(),
+        ),
+        anchor: merged_anchor,
         tachygrams: stamp_a
             .tachygrams
             .union(&stamp_b.tachygrams)
@@ -315,21 +289,169 @@ fn verify_rejects_maliciously_merged_overlapping_tachygrams() {
         proof,
     };
 
-    let read_malicious_stamp = {
-        let mut buf = Vec::new();
-        malicious_stamp
-            .write(&mut buf)
-            .expect("write malicious stamp");
-        ProofStamp::read(&*buf).expect("malicious stamp is wire-valid")
-    };
-    assert_eq!(read_malicious_stamp.tachygrams, malicious_stamp.tachygrams);
+    // The deduplicated set is canonical, so the forgery survives deserialization
+    // untouched; only verification catches the mismatch.
+    let mut buf = Vec::new();
+    malicious_stamp
+        .write(&mut buf)
+        .expect("write malicious stamp");
+    ProofStamp::read(&*buf).expect("malicious stamp is wire-valid")
+}
 
-    // The malicious stamp will be rejected at verification, since the canonical
-    // tachygram vector does not represent the multiset union necessary to
-    // verify the malicious proof.
-    let err = read_malicious_stamp
-        .verify(rng, &[plan_a.descriptor(), plan_b.descriptor()])
+/// Reusing a note as an output collides on the note commitment: each
+/// `OutputStamp`'s sole tachygram is that commitment. The nullifier-side analog
+/// is [`double_spend_cannot_aggregate`] — both reuse modes are caught the same
+/// way once the collision lands in the tachygram set.
+#[test]
+fn output_reuse_cannot_aggregate() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let anchor = pool.anchor();
+
+    // Two output stamps for the same note carry the same commitment tachygram
+    // but distinct descriptors (independent trapdoors), so the action sets stay
+    // disjoint and the collision isolates to the tachygrams.
+    let note = wallet.random_note(200);
+    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note);
+    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note);
+    assert_eq!(
+        stamp_a.tachygrams, stamp_b.tachygrams,
+        "reused output commitment must collide"
+    );
+    assert_ne!(
+        plan_a.descriptor(),
+        plan_b.descriptor(),
+        "action descriptors stay distinct"
+    );
+
+    let descriptors_a = BTreeSet::from_iter([plan_a.descriptor()]);
+    let descriptors_b = BTreeSet::from_iter([plan_b.descriptor()]);
+    let malicious_stamp =
+        forge_overlapping_merge(rng, (&stamp_a, &descriptors_a), (&stamp_b, &descriptors_b));
+
+    let all_descriptors: Vec<action::Descriptor> =
+        descriptors_a.union(&descriptors_b).copied().collect();
+    let err = malicious_stamp
+        .verify(rng, &all_descriptors)
         .expect_err("multiset-backed proof must not verify against the deduplicated set");
+    let VerificationError::Disproved = err else {
+        panic!("expected Disproved, got {err:?}");
+    };
+}
+
+/// Reusing a note as a spend collides on the nullifiers: nullifiers are
+/// independent of the spend randomization, so two autonome bundles spending one
+/// note carry distinct action descriptors yet identical spend nullifiers. The
+/// nullifier-side analog of [`output_reuse_cannot_aggregate`]: the collision is
+/// caught by the tachygram set, not by action-descriptor uniqueness.
+#[test]
+fn double_spend_cannot_aggregate() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+
+    let spend = wallet.random_note(1000);
+    let output_a = wallet.random_note(700);
+    let output_b = wallet.random_note(600);
+
+    let mut pool = PoolSim::genesis(rng);
+    pool.mine(random_block_with(rng, &[vec![spend.commitment()]], 50));
+    let cm_height = pool.height();
+    while pool.height() < BlockHeight(EPOCH_SIZE) {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
+
+    // Two spendable lineages for the SAME note produce identical nullifiers.
+    let init_a = wallet.spendable_init(rng, &spend, &pool, cm_height);
+    let sp_a = wallet.lift_over_creation_epoch(rng, &pool, &spend, cm_height, init_a);
+    let init_b = wallet.spendable_init(rng, &spend, &pool, cm_height);
+    let sp_b = wallet.lift_over_creation_epoch(rng, &pool, &spend, cm_height, init_b);
+    let anchor = sp_a.data().2;
+    assert_eq!(anchor, sp_b.data().2, "same-note lifts share an anchor");
+
+    let spend_epoch = cm_height.epoch().next();
+    let autonome_a = wallet.autonome(
+        rng,
+        anchor,
+        vec![(spend, sp_a, spend_epoch)],
+        vec![output_a],
+    );
+    let autonome_b = wallet.autonome(
+        rng,
+        anchor,
+        vec![(spend, sp_b, spend_epoch)],
+        vec![output_b],
+    );
+
+    let stamp_a = autonome_a.stamp.clone();
+    let stamp_b = autonome_b.stamp.clone();
+
+    let descriptors_a: BTreeSet<action::Descriptor> = autonome_a
+        .actions
+        .iter()
+        .map(action::Action::descriptor)
+        .collect();
+    let descriptors_b: BTreeSet<action::Descriptor> = autonome_b
+        .actions
+        .iter()
+        .map(action::Action::descriptor)
+        .collect();
+    assert!(
+        descriptors_a.is_disjoint(&descriptors_b),
+        "independent randomization gives distinct descriptors"
+    );
+    assert!(
+        !stamp_a.tachygrams.is_disjoint(&stamp_b.tachygrams),
+        "same-note spends share their nullifiers"
+    );
+
+    let malicious_stamp =
+        forge_overlapping_merge(rng, (&stamp_a, &descriptors_a), (&stamp_b, &descriptors_b));
+
+    // The published stamp bears the canonical deduplicated nullifier set, so it
+    // cannot reconstruct the doubled multiset the proof commits to: Disproved.
+    let all_descriptors: Vec<action::Descriptor> =
+        descriptors_a.union(&descriptors_b).copied().collect();
+    let err = malicious_stamp
+        .verify(rng, &all_descriptors)
+        .expect_err("doubled-nullifier proof must not verify");
+    let VerificationError::Disproved = err else {
+        panic!("expected Disproved, got {err:?}");
+    };
+}
+
+/// A stamp cannot cover the same action twice, and the duplicate-tachygram
+/// constraint is what forbids it. Every action carries a tachygram (a spend's
+/// nullifiers, an output's commitment), so covering an action twice doubles its
+/// tachygram. A forged multiset merge commits to the doubled tachygram, but the
+/// published stamp can only bear the canonical deduplicated set.
+///
+/// The forgery is verified here against the *doubled* action descriptors, so
+/// the (also doubled) action accumulator reconstructs to match the proof —
+/// isolating the failure to the tachygram accumulator, which the deduplicated
+/// set cannot reconstruct. A prover who instead published the duplicate on the
+/// wire is caught earlier by [`read_rejects_duplicate_tachygrams`]. This is the
+/// shape of merging two aggregates that share a covered contributor.
+#[test]
+fn cannot_forge_stamp_covering_duplicated_action() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let anchor = pool.anchor();
+
+    let note = wallet.random_note(200);
+    let (stamp, plan) = build_output_stamp(rng, anchor, note);
+    let descriptors = BTreeSet::from_iter([plan.descriptor()]);
+
+    // Two contributors covering the same action: the stamp counted twice.
+    let forged = forge_overlapping_merge(rng, (&stamp, &descriptors), (&stamp, &descriptors));
+
+    // Present the duplicated action honestly, so the action accumulator matches;
+    // only the deduplicated tachygram set fails to reconstruct the doubled
+    // tachygram the proof commits to.
+    let err = forged
+        .verify(rng, &[plan.descriptor(), plan.descriptor()])
+        .expect_err("a stamp covering a duplicated action must not verify");
     let VerificationError::Disproved = err else {
         panic!("expected Disproved, got {err:?}");
     };
