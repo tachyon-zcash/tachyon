@@ -460,22 +460,6 @@ impl Bundle<ProofStamp> {
     pub fn is_aggregate(&self) -> bool {
         self.stamp.covers(&self.descriptors())
     }
-
-    /// Verify this bundle's proof by reconstructing the PCD header with actions
-    /// from other bundles.
-    pub fn verify_stamp<RNG: RngCore + CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        others: &[&Bundle<dyn StampState>],
-    ) -> Result<(), stamp::VerificationError> {
-        let all_descs = self
-            .descriptors()
-            .into_iter()
-            .chain(others.iter().flat_map(|&other| other.descriptors()))
-            .collect::<Vec<action::Descriptor>>();
-
-        self.stamp.verify(rng, &all_descs)
-    }
 }
 
 impl<S: StampState> Bundle<S> {
