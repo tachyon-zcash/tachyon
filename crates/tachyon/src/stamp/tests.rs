@@ -10,8 +10,8 @@ use crate::{
     action,
     constants::EPOCH_SIZE,
     fixtures::{
-        PoolSim, WalletSim, build_output_stamp, random_block, random_block_with, shared_sk,
-        spend_witness,
+        PoolSim, WalletSim, build_output_stamp, forge_overlapping_merge, random_block,
+        random_block_with, shared_sk, spend_witness,
     },
     primitives::BlockHeight,
 };
@@ -176,128 +176,6 @@ fn merge_populates_covered_actions() {
     assert_eq!(merged.coverage, expected);
 }
 
-/// Force-fuse a `MergeStamp` over two stamps that share a set element,
-/// returning the stamp a malicious prover would publish.
-///
-/// First confirms the honest merge refuses the overlap: `MergeStamp` binds each
-/// merged accumulator as the polynomial product of its inputs (a multiset
-/// union), but `prove_merge` witnesses the deduplicated set union, so any
-/// shared element makes `merged == left · right` unsatisfiable. The forgery
-/// instead witnesses the multiset union of both accumulators directly, so both
-/// product relations hold and a proof is produced. The published stamp bears
-/// canonical deduplicated sets, so it is wire-valid — but those sets no longer
-/// reconstruct the multiset accumulators the proof commits to. Applies whether
-/// the shared element is a tachygram (a reused note) or an action digest (a
-/// duplicated contributor).
-fn forge_overlapping_merge(
-    rng: &mut StdRng,
-    (stamp_a, descriptors_a): (&ProofStamp, &BTreeSet<action::Descriptor>),
-    (stamp_b, descriptors_b): (&ProofStamp, &BTreeSet<action::Descriptor>),
-) -> ProofStamp {
-    let err = ProofStamp::merge(
-        rng,
-        (stamp_a.clone(), descriptors_a.clone()),
-        (stamp_b.clone(), descriptors_b.clone()),
-    )
-    .expect_err("overlapping tachygram sets must not merge");
-    let ProveError::MergeFailed(ragu::Error::InvalidWitness(inner)) = err else {
-        panic!("expected MergeFailed(InvalidWitness), got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "poly product: product identity fails at challenge"
-    );
-
-    let app = &*PROOF_SYSTEM;
-
-    let left_acts = descriptors_a
-        .iter()
-        .map(|desc| desc.digest().expect("action digest"))
-        .collect::<ActionSetPoly>();
-    let right_acts = descriptors_b
-        .iter()
-        .map(|desc| desc.digest().expect("action digest"))
-        .collect::<ActionSetPoly>();
-    let left_tg = stamp_a
-        .tachygrams
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>();
-    let right_tg = stamp_b
-        .tachygrams
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>();
-
-    let left_pcd = stamp_a.proof.clone().carry::<StampHeader>((
-        left_acts.commit(),
-        left_tg.commit(),
-        stamp_a.anchor,
-    ));
-    let right_pcd = stamp_b.proof.clone().carry::<StampHeader>((
-        right_acts.commit(),
-        right_tg.commit(),
-        stamp_b.anchor,
-    ));
-
-    let merged_acts = descriptors_a
-        .iter()
-        .chain(descriptors_b.iter())
-        .map(|desc| desc.digest().expect("action digest"))
-        .collect::<ActionSetPoly>();
-    let merged_tg = stamp_a
-        .tachygrams
-        .iter()
-        .chain(stamp_b.tachygrams.iter())
-        .copied()
-        .collect::<TachygramSetPoly>();
-
-    let (pcd, ()) = app
-        .fuse(
-            rng,
-            MergeStamp,
-            (
-                (left_acts, left_tg),
-                (merged_acts, merged_tg),
-                (right_acts, right_tg),
-            ),
-            left_pcd,
-            right_pcd,
-        )
-        .expect("multiset merge must prove");
-    let merged_anchor = pcd.data().2;
-    let proof = Box::new(
-        app.rerandomize(pcd, rng)
-            .expect("rerandomize")
-            .proof()
-            .clone(),
-    );
-
-    let malicious_stamp = ProofStamp {
-        coverage: blake2b::action_descriptor_digest(
-            &descriptors_a
-                .union(descriptors_b)
-                .copied()
-                .collect::<Vec<[u8; 64]>>(),
-        ),
-        anchor: merged_anchor,
-        tachygrams: stamp_a
-            .tachygrams
-            .union(&stamp_b.tachygrams)
-            .copied()
-            .collect(),
-        proof,
-    };
-
-    // The deduplicated set is canonical, so the forgery survives deserialization
-    // untouched; only verification catches the mismatch.
-    let mut buf = Vec::new();
-    malicious_stamp
-        .write(&mut buf)
-        .expect("write malicious stamp");
-    ProofStamp::read(&*buf).expect("malicious stamp is wire-valid")
-}
-
 /// Reusing a note as an output collides on the note commitment: each
 /// `OutputStamp`'s sole tachygram is that commitment. The nullifier-side analog
 /// is [`double_spend_cannot_aggregate`] — both reuse modes are caught the same
@@ -327,12 +205,52 @@ fn output_reuse_cannot_aggregate() {
 
     let descriptors_a = BTreeSet::from_iter([plan_a.descriptor()]);
     let descriptors_b = BTreeSet::from_iter([plan_b.descriptor()]);
-    let malicious_stamp =
-        forge_overlapping_merge(rng, (&stamp_a, &descriptors_a), (&stamp_b, &descriptors_b));
+
+    // The honest merge refuses the overlap on the tachygram-set product relation.
+    {
+        let merge_err = ProofStamp::merge(
+            rng,
+            (stamp_a.clone(), descriptors_a.clone()),
+            (stamp_b.clone(), descriptors_b.clone()),
+        )
+        .expect_err("overlapping tachygrams must not merge");
+        let ProveError::MergeFailed(ragu::Error::InvalidWitness(inner)) = merge_err else {
+            panic!("expected MergeFailed(InvalidWitness), got {merge_err:?}");
+        };
+        assert_eq!(
+            inner.to_string(),
+            "MergeStamp: merged tachygram set must be the product of left and right tachygram sets"
+        );
+    }
+
+    let evil_pcd = forge_overlapping_merge(
+        rng,
+        (&stamp_a, &Vec::from_iter(descriptors_a.clone())),
+        (&stamp_b, &Vec::from_iter(descriptors_b.clone())),
+    );
 
     let all_descriptors: Vec<action::Descriptor> =
         descriptors_a.union(&descriptors_b).copied().collect();
-    let err = malicious_stamp
+
+    // Publish the forgery as a coherent stamp: canonical deduplicated tachygrams
+    // and the covered-actions digest over the merged descriptors, so `covers`
+    // accepts it and only proof verification rejects it.
+    let coverage = {
+        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
+        desc_bytes.sort_unstable();
+        blake2b::action_descriptor_digest(&desc_bytes)
+    };
+    let stamp = ProofStamp {
+        coverage,
+        anchor: evil_pcd.data().2,
+        tachygrams: stamp_a
+            .tachygrams
+            .union(&stamp_b.tachygrams)
+            .copied()
+            .collect(),
+        proof: Box::new(evil_pcd.proof().clone()),
+    };
+    let err = stamp
         .verify(rng, &all_descriptors)
         .expect_err("multiset-backed proof must not verify against the deduplicated set");
     let VerificationError::Disproved = err else {
@@ -405,14 +323,52 @@ fn double_spend_cannot_aggregate() {
         "same-note spends share their nullifiers"
     );
 
-    let malicious_stamp =
-        forge_overlapping_merge(rng, (&stamp_a, &descriptors_a), (&stamp_b, &descriptors_b));
+    // The honest merge refuses the overlap on the tachygram-set product relation.
+    {
+        let merge_err = ProofStamp::merge(
+            rng,
+            (stamp_a.clone(), descriptors_a.clone()),
+            (stamp_b.clone(), descriptors_b.clone()),
+        )
+        .expect_err("shared nullifiers must not merge");
+        let ProveError::MergeFailed(ragu::Error::InvalidWitness(inner)) = merge_err else {
+            panic!("expected MergeFailed(InvalidWitness), got {merge_err:?}");
+        };
+        assert_eq!(
+            inner.to_string(),
+            "MergeStamp: merged tachygram set must be the product of left and right tachygram sets"
+        );
+    }
 
-    // The published stamp bears the canonical deduplicated nullifier set, so it
-    // cannot reconstruct the doubled multiset the proof commits to: Disproved.
+    let evil_pcd = forge_overlapping_merge(
+        rng,
+        (&stamp_a, &Vec::from_iter(descriptors_a.clone())),
+        (&stamp_b, &Vec::from_iter(descriptors_b.clone())),
+    );
+
     let all_descriptors: Vec<action::Descriptor> =
         descriptors_a.union(&descriptors_b).copied().collect();
-    let err = malicious_stamp
+
+    // Publish the forgery as a coherent stamp: the covered-actions digest over
+    // the merged descriptors, and the canonical deduplicated nullifier set that
+    // cannot reconstruct the doubled multiset the proof commits to.
+    let coverage = {
+        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
+        desc_bytes.sort_unstable();
+        blake2b::action_descriptor_digest(&desc_bytes)
+    };
+    let stamp = ProofStamp {
+        coverage,
+        anchor: evil_pcd.data().2,
+        tachygrams: stamp_a
+            .tachygrams
+            .union(&stamp_b.tachygrams)
+            .copied()
+            .collect(),
+        proof: Box::new(evil_pcd.proof().clone()),
+    };
+
+    let err = stamp
         .verify(rng, &all_descriptors)
         .expect_err("doubled-nullifier proof must not verify");
     let VerificationError::Disproved = err else {
@@ -420,17 +376,16 @@ fn double_spend_cannot_aggregate() {
     };
 }
 
-/// A stamp cannot cover the same action twice, and the duplicate-tachygram
-/// constraint is what forbids it. Every action carries a tachygram (a spend's
-/// nullifiers, an output's commitment), so covering an action twice doubles its
-/// tachygram. A forged multiset merge commits to the doubled tachygram, but the
-/// published stamp can only bear the canonical deduplicated set.
-///
-/// The forgery is verified here against the *doubled* action descriptors, so
-/// the (also doubled) action accumulator reconstructs to match the proof —
-/// isolating the failure to the tachygram accumulator, which the deduplicated
-/// set cannot reconstruct. A prover who instead published the duplicate on the
-/// wire is caught earlier by [`read_rejects_duplicate_tachygrams`]. This is the
+/// A stamp cannot cover the same action twice. The honest merge refuses it on
+/// the action-set product relation (asserted below), since the two contributors
+/// share the action's descriptor. A malicious prover who force-fuses the
+/// multiset union bypasses that — but every action carries a tachygram (a
+/// spend's nullifiers, an output's commitment), so the doubled action doubles
+/// its tachygram, and the published stamp's canonical deduplicated set cannot
+/// reconstruct it. Verifying against the *doubled* action descriptors makes the
+/// action accumulator match, leaving the tachygram accumulator as the mismatch,
+/// so the forgery is `Disproved`. Publishing the duplicate tachygram on the
+/// wire is instead caught by [`read_rejects_duplicate_tachygrams`]. This is the
 /// shape of merging two aggregates that share a covered contributor.
 #[test]
 fn cannot_forge_stamp_covering_duplicated_action() {
@@ -439,18 +394,61 @@ fn cannot_forge_stamp_covering_duplicated_action() {
     let pool = PoolSim::genesis(rng);
     let anchor = pool.anchor();
 
+    // One output stamp counted twice: both contributors share the descriptor.
     let note = wallet.random_note(200);
-    let (stamp, plan) = build_output_stamp(rng, anchor, note);
+    let (output_stamp, plan) = build_output_stamp(rng, anchor, note);
     let descriptors = BTreeSet::from_iter([plan.descriptor()]);
 
-    // Two contributors covering the same action: the stamp counted twice.
-    let forged = forge_overlapping_merge(rng, (&stamp, &descriptors), (&stamp, &descriptors));
+    // The honest merge refuses the shared action on the action-set product
+    // relation (checked before the tachygram product).
+    {
+        let merge_err = ProofStamp::merge(
+            rng,
+            (output_stamp.clone(), descriptors.clone()),
+            (output_stamp.clone(), descriptors.clone()),
+        )
+        .expect_err("a duplicated action must not merge");
+        let ProveError::MergeFailed(ragu::Error::InvalidWitness(inner)) = merge_err else {
+            panic!("expected MergeFailed(InvalidWitness), got {merge_err:?}");
+        };
+        assert_eq!(
+            inner.to_string(),
+            "MergeStamp: merged action set must be the product of left and right action sets"
+        );
+    }
 
-    // Present the duplicated action honestly, so the action accumulator matches;
-    // only the deduplicated tachygram set fails to reconstruct the doubled
-    // tachygram the proof commits to.
-    let err = forged
-        .verify(rng, &[plan.descriptor(), plan.descriptor()])
+    let evil_pcd = forge_overlapping_merge(
+        rng,
+        (&output_stamp, &Vec::from_iter(descriptors.clone())),
+        (&output_stamp, &Vec::from_iter(descriptors.clone())),
+    );
+
+    let all_descriptors: Vec<action::Descriptor> = descriptors
+        .iter()
+        .chain(descriptors.iter())
+        .copied()
+        .collect();
+
+    // Publish the forgery as a coherent stamp: the covered-actions digest over
+    // the duplicated action, and the canonical deduplicated tachygram set that
+    // cannot reconstruct the doubled multiset the proof commits to.
+    let coverage = {
+        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
+        desc_bytes.sort_unstable();
+        blake2b::action_descriptor_digest(&desc_bytes)
+    };
+    let stamp = ProofStamp {
+        coverage,
+        anchor: evil_pcd.data().2,
+        tachygrams: output_stamp.tachygrams.iter().copied().collect(),
+        proof: Box::new(evil_pcd.proof().clone()),
+    };
+
+    // Verifying against the doubled descriptors makes the action accumulator
+    // match; only the deduplicated tachygram set fails to reconstruct the
+    // doubled tachygram the proof commits to.
+    let err = stamp
+        .verify(rng, &all_descriptors)
         .expect_err("a stamp covering a duplicated action must not verify");
     let VerificationError::Disproved = err else {
         panic!("expected Disproved, got {err:?}");

@@ -33,11 +33,15 @@ use crate::{
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
+        ActionSetPoly, Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit,
+        TachygramSetPoly, effect,
     },
     stamp::{
         PointerStamp, ProofStamp,
-        proof::{PROOF_SYSTEM, delegation, pool, spendable},
+        proof::{
+            PROOF_SYSTEM, delegation, pool, spendable,
+            stamp::{MergeStamp, StampHeader},
+        },
     },
     value, witness,
 };
@@ -153,6 +157,78 @@ pub fn build_autonome(
         alloc::vec![(spend_note, spendable_pcd, spend_epoch)],
         alloc::vec![output_note],
     )
+}
+
+/// An honest prover will not merge intersecting stamps.
+///
+/// However, `MergeStamp` actually handles a commitment scheme that represents a
+/// multiset, and proves a relationship equivalent to a multiset union. So, a
+/// dishonest prover can feasibly prove a merge violates consensus rules.
+///
+/// Normal tools in this crate don't allow you to carry out such operations, so
+/// this utility will fuse a `MergeStamp` without checking for intersection.
+pub fn forge_overlapping_merge(
+    rng: &mut (impl RngCore + CryptoRng),
+    (stamp_a, descriptors_a): (&ProofStamp, &Vec<action::Descriptor>),
+    (stamp_b, descriptors_b): (&ProofStamp, &Vec<action::Descriptor>),
+) -> Pcd<StampHeader> {
+    let left_acts = descriptors_a
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect::<ActionSetPoly>();
+    let right_acts = descriptors_b
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect::<ActionSetPoly>();
+    let left_tg = stamp_a
+        .tachygrams
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>();
+    let right_tg = stamp_b
+        .tachygrams
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>();
+
+    let left_pcd = stamp_a.proof.clone().carry::<StampHeader>((
+        left_acts.commit(),
+        left_tg.commit(),
+        stamp_a.anchor,
+    ));
+    let right_pcd = stamp_b.proof.clone().carry::<StampHeader>((
+        right_acts.commit(),
+        right_tg.commit(),
+        stamp_b.anchor,
+    ));
+
+    let merged_acts = descriptors_a
+        .iter()
+        .chain(descriptors_b.iter())
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect::<ActionSetPoly>();
+    let merged_tg = stamp_a
+        .tachygrams
+        .iter()
+        .chain(stamp_b.tachygrams.iter())
+        .copied()
+        .collect::<TachygramSetPoly>();
+
+    let (pcd, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            MergeStamp,
+            (
+                (left_acts, left_tg),
+                (merged_acts, merged_tg),
+                (right_acts, right_tg),
+            ),
+            left_pcd,
+            right_pcd,
+        )
+        .expect("multiset merge must prove");
+
+    pcd
 }
 
 pub fn random_block(

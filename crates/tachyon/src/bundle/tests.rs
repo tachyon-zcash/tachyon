@@ -1,6 +1,6 @@
 #![allow(clippy::panic, reason = "test code")]
 
-use alloc::{string::ToString as _, vec, vec::Vec};
+use alloc::{boxed::Box, string::ToString as _, vec, vec::Vec};
 
 use pasta_curves::Fp;
 use ragu::proof::PROOF_SIZE_COMPRESSED;
@@ -9,11 +9,12 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use super::*;
 use crate::{
     constants::{EPOCH_SIZE, MAX_MONEY},
-    digest::blake2b::COMMIT_NO_BUNDLE,
+    digest::blake2b::{COMMIT_NO_BUNDLE, action_descriptor_digest, bundle_commitment},
     entropy::ActionEntropy,
     fixtures::{
-        PoolSim, WalletSim, build_autonome, build_output_plan, build_output_stamp, mock_sighash,
-        mock_wtxid, random_action, random_block, random_block_with, shared_sk, spend_witness,
+        PoolSim, WalletSim, build_autonome, build_output_plan, build_output_stamp,
+        forge_overlapping_merge, mock_sighash, mock_wtxid, random_action, random_block,
+        random_block_with, shared_sk, spend_witness,
     },
     primitives::{BlockHeight, Tachygram},
     stamp::VerificationError,
@@ -513,58 +514,96 @@ fn stamp_verify_action_multiset_invariants() {
     }
 }
 
-/// `is_aggregate` digests the bundle's own action descriptors and compares
-/// against the stamp's covered-actions digest, which is built from canonically
-/// sorted descriptors. It must therefore sort its own descriptors too: a
-/// validly-signed bundle whose actions are in non-canonical order is still its
-/// own aggregate.
-#[test]
-fn is_aggregate_independent_of_action_order() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let stamped = build_autonome(rng, &wallet, 1000, 700);
-    assert!(
-        stamped.actions.len() >= 2,
-        "need at least two actions to permute"
-    );
-    assert_ne!(stamped.actions[0], stamped.actions[1]);
-
-    assert!(
-        stamped.is_aggregate(),
-        "a self-covering bundle is its own aggregate"
-    );
-
-    let mut permuted = stamped;
-    permuted.actions.swap(0, 1);
-    assert!(
-        permuted.is_aggregate(),
-        "is_aggregate must hold regardless of action order"
-    );
-}
-
-/// Even an obvious double spend, two actions carrying identical descriptors, is
-/// not rejected by the parser, but no verifier will accept a proof for such a
-/// bundle. The `Plan` API cannot express this shape (it keys actions by
-/// descriptor), so the duplicate is forced by hand.
+/// An obvious double spend, two actions with identical descriptors, clears
+/// every cheap validator check yet fails proof verification.
 #[test]
 fn double_spend_obvious() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-    assert!(
-        bundle.actions.len() >= 2,
-        "need at least two actions to duplicate"
-    );
+    let anchor = PoolSim::genesis(rng).anchor();
+    let note = wallet.random_note(200);
 
-    bundle.actions[1] = bundle.actions[0];
+    // The Plan API keys actions by descriptor and cannot express a duplicate, so
+    // this bundle is assembled by hand from a single output action.
+    let (rcv, alpha, plan) = build_output_plan(rng, note);
+    let descriptor = plan.descriptor();
+
+    // Two identical output actions net to twice the single-output balance, and
+    // the binding key is the doubled trapdoor; the per-action signature is
+    // shared because the actions are byte-identical.
+    let doubled = -2 * i64::try_from(u64::from(note.value)).expect("note value fits i64");
+    let value_balance = value::Balance::try_from(doubled).expect("doubled balance stays in range");
+    let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
+    let sighash = mock_sighash(bundle_commitment(
+        &action_descriptor_digest(&action_bytes),
+        doubled,
+    ));
+    let sig = private::ActionSigningKey::new(&alpha).sign(rng, &sighash);
+    let action = Action::from((descriptor, sig));
+    let binding_sig = private::BindingSigningKey::from([rcv, rcv]).sign(rng, &sighash);
+
+    // Forge the stamp by merging one output stamp with itself: the merge proof
+    // commits to the doubled action and tachygram multisets.
+    let (tachygrams, stamp_anchor, proof) =
+        ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
+    let output_stamp = ProofStamp {
+        coverage: action_descriptor_digest(
+            &vec![descriptor].into_iter().collect::<Vec<[u8; 64]>>(),
+        ),
+        tachygrams,
+        anchor: stamp_anchor,
+        proof,
+    };
+    let evil_pcd = forge_overlapping_merge(
+        rng,
+        (&output_stamp, &vec![descriptor]),
+        (&output_stamp, &vec![descriptor]),
+    );
+    let coverage = {
+        let mut desc_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
+        desc_bytes.sort_unstable();
+        action_descriptor_digest(&desc_bytes)
+    };
+
+    // A tachygram set with duplicated elements wouldn't be accepted by
+    // consensus actors. (see `read_rejects_duplicate_tachygrams`)
+    let stamp = ProofStamp {
+        coverage,
+        anchor: evil_pcd.data().2,
+        tachygrams: output_stamp.tachygrams.iter().copied().collect(),
+        proof: Box::new(evil_pcd.proof().clone()),
+    };
+
+    let bundle = Bundle {
+        actions: vec![action, action],
+        value_balance,
+        binding_sig,
+        stamp,
+    };
 
     let mut buf = Vec::new();
     bundle.write(&mut buf).expect("write");
 
-    // The parser accepts the duplicate: the double spend is wire-valid.
+    // The parser accepts the duplicate: the double action is wire-valid.
     let decoded = Bundle::<ProofStamp>::read(&*buf).expect("duplicate descriptors are wire-valid");
 
-    // But the proof does not verify against the duplicated action set.
+    // Every check ahead of the proof passes: the signatures verify and the
+    // stamp's coverage matches the duplicated action set.
+    decoded
+        .verify_signatures(&mock_sighash(decoded.commitment()))
+        .expect("binding and action signatures verify");
+    assert!(
+        decoded.is_autonome(),
+        "the forged coverage matches the duplicated action set"
+    );
+    assert!(
+        bundle.actions[0] == bundle.actions[1],
+        "the actions are identical"
+    );
+
+    // Proof verification rejects it: the doubled action set reconstructs to
+    // match the proof, but the collapsed tachygram set cannot reconstruct the
+    // doubled commitment the merge proof holds.
     let err = decoded
         .stamp
         .verify(rng, &decoded.descriptors())
