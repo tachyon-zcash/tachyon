@@ -457,8 +457,14 @@ impl Bundle<ProofStamp> {
 
     /// Confirm `hStampActionsTachyon` represents this bundle's actions.
     #[must_use]
+    pub fn is_autonome(&self) -> bool {
+        self.covers(&[])
+    }
+
+    /// Confirm `hStampActionsTachyon` does not represent this bundle's actions.
+    #[must_use]
     pub fn is_aggregate(&self) -> bool {
-        self.stamp.covers(&self.descriptors())
+        !self.covers(&[])
     }
 }
 
@@ -690,13 +696,26 @@ impl TachyonBundle {
         }
     }
 
-    /// Confirm `hStampActionsTachyon` represents this bundle's actions.
+    /// Confirm this bundle has a proof stamp, but its `hStampActionsTachyon`
+    /// does not represent this bundle's actions.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => false,
             Self::Proven(ref stamped) => stamped.is_aggregate(),
+            Self::Adjunct(ref _stamped) => false,
+        }
+    }
+
+    /// Confirm this bundle has a proof stamp, and its `hStampActionsTachyon`
+    /// represents this bundle's actions.
+    #[must_use]
+    pub fn is_autonome(&self) -> bool {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
+        match *self {
+            Self::NoBundle => false,
+            Self::Proven(ref stamped) => stamped.is_autonome(),
             Self::Adjunct(ref _stamped) => false,
         }
     }
