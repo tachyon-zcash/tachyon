@@ -250,12 +250,16 @@ fn double_output_cannot_aggregate() {
             .collect(),
         proof: Box::new(evil_pcd.proof().clone()),
     };
-    let err = stamp
-        .verify(rng, &all_descriptors)
-        .expect_err("multiset-backed proof must not verify against the deduplicated set");
-    let VerificationError::Disproved = err else {
-        panic!("expected Disproved, got {err:?}");
-    };
+    let digests: Vec<ActionDigest> = all_descriptors
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect();
+    assert!(
+        !stamp
+            .verify_proof(rng, &digests)
+            .expect("proof system verification"),
+        "multiset-backed proof must not verify against the deduplicated set"
+    );
 }
 
 /// Reusing a note as a spend collides on the nullifiers: nullifiers are
@@ -368,12 +372,16 @@ fn double_spend_cannot_aggregate() {
         proof: Box::new(evil_pcd.proof().clone()),
     };
 
-    let err = stamp
-        .verify(rng, &all_descriptors)
-        .expect_err("doubled-nullifier proof must not verify");
-    let VerificationError::Disproved = err else {
-        panic!("expected Disproved, got {err:?}");
-    };
+    let digests: Vec<ActionDigest> = all_descriptors
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect();
+    assert!(
+        !stamp
+            .verify_proof(rng, &digests)
+            .expect("proof system verification"),
+        "doubled-nullifier proof must not verify"
+    );
 }
 
 /// A stamp cannot cover the same action twice. The honest merge refuses it on
@@ -446,12 +454,16 @@ fn cannot_forge_stamp_covering_duplicated_action() {
     // Verifying against the doubled descriptors makes the action accumulator
     // match; only the deduplicated tachygram set fails to reconstruct the
     // doubled tachygram the proof commits to.
-    let err = stamp
-        .verify(rng, &all_descriptors)
-        .expect_err("a stamp covering a duplicated action must not verify");
-    let VerificationError::Disproved = err else {
-        panic!("expected Disproved, got {err:?}");
-    };
+    let digests: Vec<ActionDigest> = all_descriptors
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect();
+    assert!(
+        !stamp
+            .verify_proof(rng, &digests)
+            .expect("proof system verification"),
+        "a stamp covering a duplicated action must not verify"
+    );
 }
 
 /// `verify` characterization: it checks the proof against exactly the
@@ -473,17 +485,21 @@ fn verify_cannot_distinguish_a_deduplicated_duplicate() {
     let descriptor = plan.descriptor();
 
     // Deduplicated to one action, it matches the single-action proof.
-    stamp
-        .verify(rng, &[descriptor])
-        .expect("the single covered action verifies");
+    let single = descriptor.digest().expect("action digest");
+    assert!(
+        stamp
+            .verify_proof(rng, &[single])
+            .expect("proof system verification"),
+        "the single covered action verifies"
+    );
 
     // The true multiset is a different action polynomial: (x−d)² ≠ (x−d).
-    let err = stamp
-        .verify(rng, &[descriptor, descriptor])
-        .expect_err("the doubled action must not verify");
-    let VerificationError::Disproved = err else {
-        panic!("expected Disproved, got {err:?}");
-    };
+    assert!(
+        !stamp
+            .verify_proof(rng, &[single, single])
+            .expect("proof system verification"),
+        "the doubled action must not verify"
+    );
 }
 
 /// Bundle-validity rule 9 requires a proof stamp's tachygrams to be

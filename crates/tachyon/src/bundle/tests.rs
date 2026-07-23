@@ -17,7 +17,6 @@ use crate::{
         random_block_with, shared_sk, spend_witness,
     },
     primitives::{BlockHeight, Tachygram},
-    stamp::VerificationError,
     value,
 };
 
@@ -46,7 +45,7 @@ fn wrong_value_balance_fails_verification() {
 
     bundle.value_balance = value::Balance::try_from(999).unwrap();
     let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Binding(_) = err else {
+    let VerifySignaturesError::Binding(_) = err else {
         panic!("expected SignatureError::Binding, got {err:?}");
     };
 }
@@ -66,7 +65,7 @@ fn verify_signatures_rejects_out_of_range_value_balance_mutation() {
 
     bundle.value_balance = value::Balance::new_unchecked(i64::MAX);
     let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Binding(_) = err else {
+    let VerifySignaturesError::Binding(_) = err else {
         panic!("expected SignatureError::Binding, got {err:?}");
     };
 }
@@ -147,7 +146,7 @@ fn actions_signed_despite_wrong_rk_fail_verification() {
     let err = bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap_err();
-    let SignatureError::Action(_) = err else {
+    let VerifySignaturesError::Action(_) = err else {
         panic!("expected SignatureError::Action, got {err:?}");
     };
 }
@@ -190,7 +189,7 @@ fn actions_signed_by_wrong_rsk_fail_verification() {
     let err = bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap_err();
-    let SignatureError::Action(_) = err else {
+    let VerifySignaturesError::Action(_) = err else {
         panic!("expected SignatureError::Action, got {err:?}");
     };
 }
@@ -284,7 +283,7 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
     let err = bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap_err();
-    let SignatureError::Action(_) = err else {
+    let VerifySignaturesError::Action(_) = err else {
         panic!("expected SignatureError::Action, got {err:?}");
     };
 }
@@ -317,7 +316,7 @@ fn permuted_actions_change_commitment() {
     let sig_err = permuted
         .verify_signatures(&mock_sighash(permuted.commitment()))
         .unwrap_err();
-    let SignatureError::Binding(_) = sig_err else {
+    let VerifySignaturesError::Binding(_) = sig_err else {
         panic!("expected SignatureError::Binding, got {sig_err:?}");
     };
 }
@@ -342,7 +341,7 @@ fn tampered_value_balance_fails_verification() {
     let bind_err = tampered
         .verify_signatures(&mock_sighash(tampered.commitment()))
         .unwrap_err();
-    let SignatureError::Binding(_) = bind_err else {
+    let VerifySignaturesError::Binding(_) = bind_err else {
         panic!("expected SignatureError::Binding, got {bind_err:?}");
     };
 
@@ -350,7 +349,7 @@ fn tampered_value_balance_fails_verification() {
     let also_err = tampered
         .verify_signatures(&mock_sighash(original.commitment()))
         .unwrap_err();
-    let SignatureError::Binding(_) = also_err else {
+    let VerifySignaturesError::Binding(_) = also_err else {
         panic!("expected SignatureError::Binding, got {also_err:?}");
     };
 }
@@ -456,65 +455,89 @@ fn payment_bundle_verifies() {
         .expect("payment bundle must verify");
 }
 
-/// `verify` reconstructs the action polynomial from the descriptors it is
-/// given, as a multiset: the exact covered actions verify (in any order), and
-/// any deviation — a dropped, duplicated, extra, or substituted action —
-/// reconstructs a different polynomial and is `Disproved`.
+/// `verify_proof` reconstructs the action polynomial from the action digests it
+/// is given, as a multiset: the exact covered actions verify (in any order),
+/// and any deviation — a dropped, duplicated, extra, or substituted action —
+/// reconstructs a different polynomial and does not verify.
 #[test]
 fn stamp_verify_action_multiset_invariants() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let stamped = build_autonome(rng, &wallet, 1000, 700);
 
-    let descriptors: Vec<action::Descriptor> =
-        stamped.actions.iter().map(Action::descriptor).collect();
+    let digests: Vec<ActionDigest> = stamped
+        .actions
+        .iter()
+        .map(|action| action.descriptor().digest().expect("action digest"))
+        .collect();
 
     // Permutation accepts.
-    {
+    assert!(
         stamped
             .stamp
-            .verify(rng, &[descriptors[1], descriptors[0]])
-            .expect("permuted actions must verify");
-    }
+            .verify_proof(rng, &[digests[1], digests[0]])
+            .expect("proof system verification"),
+        "permuted actions must verify"
+    );
 
     // Drop rejects.
     {
-        let mut dropped = descriptors.clone();
+        let mut dropped = digests.clone();
         dropped.pop();
-        let err = stamped.stamp.verify(rng, &dropped).unwrap_err();
-        let VerificationError::Disproved = err else {
-            panic!("drop: expected Disproved, got {err:?}");
-        };
+        assert!(
+            !stamped
+                .stamp
+                .verify_proof(rng, &dropped)
+                .expect("proof system verification"),
+            "dropped action must not verify"
+        );
     }
 
     // Duplicate rejects.
     {
-        let mut duplicated = descriptors.clone();
-        duplicated.push(duplicated[0]);
-        let err = stamped.stamp.verify(rng, &duplicated).unwrap_err();
-        let VerificationError::Disproved = err else {
-            panic!("duplicate: expected Disproved, got {err:?}");
-        };
+        let mut duplicated = digests.clone();
+        duplicated.push(digests[0]);
+        assert!(
+            !stamped
+                .stamp
+                .verify_proof(rng, &duplicated)
+                .expect("proof system verification"),
+            "duplicated action must not verify"
+        );
     }
 
     // Foreign-extra rejects.
     {
-        let mut extended = descriptors.clone();
-        extended.push(random_action(rng).descriptor());
-        let err = stamped.stamp.verify(rng, &extended).unwrap_err();
-        let VerificationError::Disproved = err else {
-            panic!("extra: expected Disproved, got {err:?}");
-        };
+        let mut extended = digests.clone();
+        extended.push(
+            random_action(rng)
+                .descriptor()
+                .digest()
+                .expect("action digest"),
+        );
+        assert!(
+            !stamped
+                .stamp
+                .verify_proof(rng, &extended)
+                .expect("proof system verification"),
+            "extra action must not verify"
+        );
     }
 
     // Replace-with-foreign rejects.
     {
-        let mut replaced = descriptors;
-        replaced[0] = random_action(rng).descriptor();
-        let err = stamped.stamp.verify(rng, &replaced).unwrap_err();
-        let VerificationError::Disproved = err else {
-            panic!("replaced: expected Disproved, got {err:?}");
-        };
+        let mut replaced = digests;
+        replaced[0] = random_action(rng)
+            .descriptor()
+            .digest()
+            .expect("action digest");
+        assert!(
+            !stamped
+                .stamp
+                .verify_proof(rng, &replaced)
+                .expect("proof system verification"),
+            "replaced action must not verify"
+        );
     }
 }
 
@@ -605,15 +628,33 @@ fn double_spend_obvious() {
         "the actions are identical"
     );
 
-    // Proof verification rejects it: the doubled action set reconstructs to a
-    // polynomial the forged merge proof does not commit to.
-    let err = decoded
-        .stamp
-        .verify(rng, &decoded.descriptors())
-        .expect_err("duplicated actions must not verify");
-    let VerificationError::Disproved = err else {
-        panic!("expected Disproved, got {err:?}");
+    // Bundle-level proof verification rejects the duplicate outright: the action
+    // set digests into a `BTreeSet`, collapsing the repeat, so the count shrinks.
+    let dup_err = decoded
+        .verify_proof(rng, &[])
+        .expect_err("duplicated actions must be rejected");
+    let VerifyProofError::DuplicateActions = dup_err else {
+        panic!("expected DuplicateActions, got {dup_err:?}");
     };
+
+    // The proof independently rejects it, but on the tachygram accumulator, not
+    // the action one: the forged merge commits to the doubled action multiset
+    // (x-d)^2 AND the doubled tachygram (x-cm)^2, so reconstructing the action
+    // set from [d, d] matches. A wire-valid stamp must carry a canonical
+    // deduplicated tachygram set (see `read_rejects_duplicate_tachygrams`),
+    // whose (x-cm) cannot reconstruct the doubled tachygram the proof commits to.
+    let digests: Vec<ActionDigest> = decoded
+        .descriptors()
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect();
+    assert!(
+        !decoded
+            .stamp
+            .verify_proof(rng, &digests)
+            .expect("proof system verification"),
+        "the deduplicated tachygram set cannot reconstruct the doubled proof"
+    );
 }
 
 /// A duplicated *spend* would mint value, and `verify` catches it by
@@ -722,15 +763,30 @@ fn duplicated_spend_cannot_inflate() {
     let backed = i64::try_from(u64::from(note.value)).expect("note value fits i64");
     assert_eq!(withdrawn, 2 * backed, "the bundle balances two spends");
 
-    // The proof rejects it: reconstructing the [d, d] multiset yields an action
-    // polynomial the honest single-spend proof does not commit to.
-    let err = decoded
-        .stamp
-        .verify(rng, &decoded.descriptors())
-        .expect_err("the doubled action must not verify against the single-spend proof");
-    let VerificationError::Disproved = err else {
-        panic!("expected Disproved, got {err:?}");
+    // Bundle-level proof verification rejects the duplicate outright: the action
+    // set digests into a `BTreeSet`, collapsing the repeat, so the count shrinks.
+    let dup_err = decoded
+        .verify_proof(rng, &[])
+        .expect_err("the duplicated spend must be rejected");
+    let VerifyProofError::DuplicateActions = dup_err else {
+        panic!("expected DuplicateActions, got {dup_err:?}");
     };
+
+    // The proof independently rejects it: reconstructing the [d, d] multiset
+    // yields an action polynomial the honest single-spend proof does not commit
+    // to.
+    let digests: Vec<ActionDigest> = decoded
+        .descriptors()
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect();
+    assert!(
+        !decoded
+            .stamp
+            .verify_proof(rng, &digests)
+            .expect("proof system verification"),
+        "the doubled action must not verify against the single-spend proof"
+    );
 }
 
 /// A more obfuscated double spend, the same note spent under two independent
@@ -850,15 +906,9 @@ fn innocent_aggregate_from_two_autonomes() {
         .verify_signatures(&mock_sighash(innocent.commitment()))
         .expect("innocent binding sig should verify");
 
-    let adjunct_descriptors: Vec<action::Descriptor> = [adjunct_a.actions, adjunct_b.actions]
-        .concat()
-        .iter()
-        .map(Action::descriptor)
-        .collect();
     innocent
-        .stamp
-        .verify(rng, &adjunct_descriptors)
-        .expect("innocent stamp should verify against adjunct actions");
+        .verify_proof(rng, &[adjunct_a.as_dyn(), adjunct_b.as_dyn()])
+        .expect("innocent aggregate proof verifies against its adjuncts");
 }
 
 #[test]
@@ -954,20 +1004,37 @@ fn based_aggregate_with_two_adjuncts() {
         .verify_signatures(&sighash)
         .expect("based aggregate binding sig should verify");
 
-    let all_descriptors: Vec<action::Descriptor> = [
-        becomes_based.actions.clone(),
-        adjunct_a.actions,
-        adjunct_b.actions,
-    ]
-    .concat()
-    .iter()
-    .map(Action::descriptor)
-    .collect();
-
     becomes_based
-        .stamp
-        .verify(rng, &all_descriptors)
-        .expect("based aggregate stamp should verify against all actions");
+        .verify_proof(rng, &[adjunct_a.as_dyn(), adjunct_b.as_dyn()])
+        .expect("based aggregate proof verifies against its adjuncts");
+}
+
+/// The outer `verify` composes coverage, signatures, and proof for an autonome
+/// bundle with no adjuncts: the honest bundle passes, and a corrupted binding
+/// signature surfaces as `VerificationError::Signatures`.
+#[test]
+fn autonome_verify_composes_all_checks() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let bundle = build_autonome(rng, &wallet, 1000, 700);
+    let sighash = mock_sighash(bundle.commitment());
+    let auth_digest = bundle.auth_digest();
+
+    bundle
+        .verify(rng, &sighash, &auth_digest, &[])
+        .expect("honest autonome bundle verifies");
+
+    let mut tampered = bundle.clone();
+    let mut sig_bytes: [u8; 64] = tampered.binding_sig.0.into();
+    sig_bytes[0] ^= 0xFF;
+    tampered.binding_sig = Signature(sig_bytes.into());
+
+    let err = tampered
+        .verify(rng, &sighash, &auth_digest, &[])
+        .expect_err("a corrupted binding signature must fail verification");
+    let VerificationError::Signatures(VerifySignaturesError::Binding(_)) = err else {
+        panic!("expected Signatures(Binding), got {err:?}");
+    };
 }
 
 #[test]
@@ -983,7 +1050,7 @@ fn invalid_action_sig_fails_verification() {
     bundle.actions[0].sig = bad_sig;
 
     let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Action(sig) = err else {
+    let VerifySignaturesError::Action(sig) = err else {
         panic!("expected SignatureError::Action, got {err:?}");
     };
     assert_eq!(sig, bad_sig);
@@ -1659,7 +1726,7 @@ fn zero_action_bundle_rejects_nonzero_balance() {
     };
 
     let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Binding(_) = err else {
+    let VerifySignaturesError::Binding(_) = err else {
         panic!("expected SignatureError::Binding, got {err:?}");
     };
 }

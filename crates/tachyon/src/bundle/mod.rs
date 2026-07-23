@@ -564,12 +564,13 @@ impl Bundle<ProofStamp> {
 
     /// Fully verify the bundle: stamp coverage, signatures, then the proof.
     ///
-    /// The coverage and proof checks span the combined action set of this bundle
-    /// and its `adjuncts` (empty for an autonome bundle). The value balance is
-    /// confirmed by the binding signature, which signs under a verification key
-    /// derived from the action value commitments and the plaintext balance, so a
-    /// balance error surfaces as a binding-signature failure. Action uniqueness
-    /// is enforced by [`Bundle::verify_proof`].
+    /// The coverage and proof checks span the combined action set of this
+    /// bundle and its `adjuncts` (empty for an autonome bundle). The value
+    /// balance is confirmed by the binding signature, which signs under a
+    /// verification key derived from the action value commitments and the
+    /// plaintext balance, so a balance error surfaces as a
+    /// binding-signature failure. Action uniqueness is enforced by
+    /// [`Bundle::verify_proof`].
     pub fn verify<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
