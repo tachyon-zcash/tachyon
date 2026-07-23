@@ -175,6 +175,76 @@ fn merge_populates_covered_actions() {
     assert_eq!(merged.actions, expected);
 }
 
+/// `merge` fails fast when the left descriptor list does not match the left
+/// stamp's covered-actions digest, before any proving work.
+#[test]
+fn merge_rejects_left_coverage_mismatch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user_a = WalletSim::random(rng);
+    let user_b = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let anchor = pool.anchor();
+    let (stamp_a, _plan_a) = build_output_stamp(rng, anchor, user_a.random_note(200));
+    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, user_b.random_note(300));
+
+    let carried = stamp_a.actions;
+    let mut wrong_descriptors = Vec::<[u8; 64]>::from_iter([plan_b.descriptor()]);
+    wrong_descriptors.sort_unstable();
+    let provided = blake2b::action_descriptor_digest(&wrong_descriptors);
+
+    let err = ProofStamp::merge(
+        rng,
+        (stamp_a, vec![plan_b.descriptor()]),
+        (stamp_b, vec![plan_b.descriptor()]),
+    )
+    .unwrap_err();
+    let ProveError::CoverageMismatch {
+        side: MergeSide::Left,
+        stamp,
+        descriptors,
+    } = err
+    else {
+        panic!("expected left CoverageMismatch, got {err:?}")
+    };
+    assert_eq!(stamp, carried);
+    assert_eq!(descriptors, provided);
+}
+
+/// `merge` fails fast when the right descriptor list does not match the right
+/// stamp's covered-actions digest, before any proving work.
+#[test]
+fn merge_rejects_right_coverage_mismatch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user_a = WalletSim::random(rng);
+    let user_b = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let anchor = pool.anchor();
+    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, user_a.random_note(200));
+    let (stamp_b, _plan_b) = build_output_stamp(rng, anchor, user_b.random_note(300));
+
+    let carried = stamp_b.actions;
+    let mut wrong_descriptors = Vec::<[u8; 64]>::from_iter([plan_a.descriptor()]);
+    wrong_descriptors.sort_unstable();
+    let provided = blake2b::action_descriptor_digest(&wrong_descriptors);
+
+    let err = ProofStamp::merge(
+        rng,
+        (stamp_a, vec![plan_a.descriptor()]),
+        (stamp_b, vec![plan_a.descriptor()]),
+    )
+    .unwrap_err();
+    let ProveError::CoverageMismatch {
+        side: MergeSide::Right,
+        stamp,
+        descriptors,
+    } = err
+    else {
+        panic!("expected right CoverageMismatch, got {err:?}")
+    };
+    assert_eq!(stamp, carried);
+    assert_eq!(descriptors, provided);
+}
+
 /// `hStampActionsTachyon` survives a `write`/`read` round-trip.
 #[test]
 fn covered_actions_round_trip() {
