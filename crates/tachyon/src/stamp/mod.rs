@@ -497,11 +497,10 @@ impl ProofStamp {
         note: Note,
         anchor: Anchor,
     ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
-        let app = &*PROOF_SYSTEM;
-
-        let (pcd, ()) = app.seed(rng, OutputStamp, (rcv, alpha, note, anchor))?;
+        let (pcd, ()) = PROOF_SYSTEM.seed(rng, OutputStamp, (rcv, alpha, note, anchor))?;
         let tachygrams = BTreeSet::from_iter([Tachygram::from(note.commitment())]);
-        let rerand = app.rerandomize(pcd, rng)?;
+
+        let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
 
         Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))
     }
@@ -546,8 +545,6 @@ impl ProofStamp {
         (left_digests, left_tachygrams, left_anchor, left_proof): StampComponents,
         (right_digests, right_tachygrams, right_anchor, right_proof): StampComponents,
     ) -> Result<StampComponents, ragu::Error> {
-        let app = &*PROOF_SYSTEM;
-
         let (left_acts_poly, left_tg_poly) = (
             left_digests.iter().copied().collect::<ActionSetPoly>(),
             left_tachygrams
@@ -580,7 +577,7 @@ impl ProofStamp {
         let tachygrams: BTreeSet<Tachygram> =
             left_tachygrams.union(&right_tachygrams).copied().collect();
 
-        let (pcd, ()) = app.fuse(
+        let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             MergeStamp,
             (
@@ -595,7 +592,7 @@ impl ProofStamp {
             right_pcd,
         )?;
         let anchor = pcd.data().2;
-        let rerand = app.rerandomize(pcd, rng)?;
+        let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
 
         Ok((
             merged_digests,
@@ -647,11 +644,10 @@ impl ProofStamp {
         .map_err(ProveError::MergeFailed)?;
 
         let coverage = blake2b::action_descriptor_digest(
-            left_desc
+            &left_desc
                 .union(&right_desc)
                 .copied()
-                .collect::<Vec<[u8; 64]>>()
-                .as_slice(),
+                .collect::<Vec<[u8; 64]>>(),
         );
 
         Ok(Self {
@@ -683,8 +679,6 @@ impl ProofStamp {
         rng: &mut RNG,
         actions: &[action::Descriptor],
     ) -> Result<(), VerificationError> {
-        let app = &*PROOF_SYSTEM;
-
         let action_set = actions
             .iter()
             .map(action::Descriptor::digest)
@@ -703,7 +697,7 @@ impl ProofStamp {
             self.anchor,
         ));
 
-        let valid = app
+        let valid = PROOF_SYSTEM
             .verify(&pcd, rng)
             .map_err(VerificationError::ProofSystem)?;
 
