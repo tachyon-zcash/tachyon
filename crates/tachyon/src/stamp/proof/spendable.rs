@@ -107,7 +107,9 @@ impl Step for SpendableInit {
         // pre_cm_anchor.next_stamp(cm_commit)`. This ties the cm-inclusion to a
         // real, consensus-pinned stamp and yields `post_cm_anchor` as the chain
         // end; a note created first-in-epoch produces a single-link chain.
-        let post_cm_anchor = pre_cm_anchor.next_stamp(&creation_commit);
+        let post_cm_anchor = pre_cm_anchor.next_stamp(&creation_commit).map_err(|_err| {
+            ragu::Error::InvalidWitness("SpendableInit: identity stamp commitment".into())
+        })?;
         enforce_zero(
             Fp::from(chain_end) - Fp::from(post_cm_anchor),
             "SpendableInit: cm-stamp is not the chain's final link",

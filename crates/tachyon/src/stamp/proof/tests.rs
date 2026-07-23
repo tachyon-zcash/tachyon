@@ -202,7 +202,12 @@ fn spendable_init_accepts_forged_chain() {
     // The circuit accepted, but the produced anchor is off the published sequence,
     // so consensus anchor membership is what rejects the eventual spend.
     let forged_anchor = forged_spendable.data().2;
-    assert_eq!(forged_anchor, forged_start.next_stamp(&cm_commit));
+    assert_eq!(
+        forged_anchor,
+        forged_start
+            .next_stamp(&cm_commit)
+            .expect("non-identity commitment")
+    );
     let forged_off_sequence =
         (0..=cm_height.0).all(|height| pool.anchor_at(BlockHeight(height)) != forged_anchor);
     assert!(
@@ -314,7 +319,9 @@ fn unspent_fuse_rejects_invalid_compositions() {
     let stamps_left = vec![tg(rng)];
     let stamps_right = vec![tg(rng)];
     let start = Anchor::default();
-    let mid = start.next_stamp(&TachygramSetPoly::from_iter(stamps_left.clone()).commit());
+    let mid = start
+        .next_stamp(&TachygramSetPoly::from_iter(stamps_left.clone()).commit())
+        .expect("non-identity commitment");
 
     // nf mismatch: contiguous states but different nfs.
     {
@@ -945,13 +952,16 @@ fn multi_epoch_fuse_setup(
     let end_height = BlockHeight(3 * EPOCH_SIZE + 2);
     let start = pool
         .prev_anchor_at(start_height)
-        .next_stamp(&pool.stamp_commits_at(start_height)[0]);
+        .next_stamp(&pool.stamp_commits_at(start_height)[0])
+        .expect("non-identity commitment");
     let junction = pool
         .prev_anchor_at(junction_height)
-        .next_stamp(&pool.stamp_commits_at(junction_height)[0]);
+        .next_stamp(&pool.stamp_commits_at(junction_height)[0])
+        .expect("non-identity commitment");
     let end = pool
         .prev_anchor_at(end_height)
-        .next_stamp(&pool.stamp_commits_at(end_height)[0]);
+        .next_stamp(&pool.stamp_commits_at(end_height)[0])
+        .expect("non-identity commitment");
     let left = build_unspent_pcd_between_anchors(rng, &pool, &[nf0, nf1, nf2], (start, junction));
     let right = build_unspent_pcd_between_anchors(rng, &pool, &[nf2, nf3], (junction, end));
     assert_eq!(left.data().0, start, "left rooted at the sub-block start");
@@ -1137,10 +1147,12 @@ fn epoch_fuse_setup(rng: &mut StdRng) -> ([Nullifier; 5], Pcd<pool::Unspent>, Pc
     let end_height = BlockHeight(4 * EPOCH_SIZE + 2);
     let start = pool
         .prev_anchor_at(start_height)
-        .next_stamp(&pool.stamp_commits_at(start_height)[0]);
+        .next_stamp(&pool.stamp_commits_at(start_height)[0])
+        .expect("non-identity commitment");
     let end = pool
         .prev_anchor_at(end_height)
-        .next_stamp(&pool.stamp_commits_at(end_height)[0]);
+        .next_stamp(&pool.stamp_commits_at(end_height)[0])
+        .expect("non-identity commitment");
     let left = build_unspent_pcd_between_anchors(
         rng,
         &pool,

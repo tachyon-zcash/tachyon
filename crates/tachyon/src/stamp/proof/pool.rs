@@ -192,7 +192,9 @@ impl Step for AnchorSeed {
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let end = start.next_stamp(&stamp_commit);
+        let end = start.next_stamp(&stamp_commit).map_err(|_err| {
+            ragu::Error::InvalidWitness("AnchorSeed: identity stamp commitment".into())
+        })?;
         Ok(((start, end), ()))
     }
 }
@@ -293,7 +295,9 @@ impl Step for UnspentSeed {
         ctx.enforce_poly_query(stamp_tg_set.commit().into(), nf_point, eval)?;
         enforce_nonzero(eval, "UnspentSeed: found nullifier in set")?;
         let stamp_commit = stamp_tg_set.commit();
-        let tested_anchor = anchor_prev.next_stamp(&stamp_commit);
+        let tested_anchor = anchor_prev.next_stamp(&stamp_commit).map_err(|_err| {
+            ragu::Error::InvalidWitness("UnspentSeed: identity stamp commitment".into())
+        })?;
         // Empty elapsed: the sentinel constant `1` commits to `g0`, never the
         // identity point.
         let elapsed_commit = NfSeqCommit::from(g0 * Fp::ONE);

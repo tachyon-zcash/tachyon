@@ -223,7 +223,7 @@ impl PoolSimBlock {
         } else {
             commits.iter().fold(Vec::new(), |mut acc, commit| {
                 let last = acc.last().unwrap_or(&self.prev);
-                acc.push(last.next_stamp(commit));
+                acc.push(last.next_stamp(commit).expect("non-identity commitment"));
                 acc
             })
         };
@@ -526,7 +526,9 @@ fn build_anchor_chain_inner(
             };
             for tgs in &stamps[..upto] {
                 let witness = witness::anchor_seed(((), ()), state, tgs);
-                let next_state = state.next_stamp(&witness.1);
+                let next_state = state
+                    .next_stamp(&witness.1)
+                    .expect("non-identity commitment");
                 let (seed, ()) = PROOF_SYSTEM
                     .seed(rng, pool::AnchorSeed, witness)
                     .expect("AnchorSeed");
@@ -620,7 +622,9 @@ pub(crate) fn spendable_init_inputs(
     // Anchor immediately before the cm-stamp (the cm-block prefix fold).
     let pre_cm_anchor = stamp_commits[..cm_idx]
         .iter()
-        .fold(pool.prev_anchor_at(height), Anchor::next_stamp);
+        .fold(pool.prev_anchor_at(height), |anchor, commit| {
+            anchor.next_stamp(commit).expect("non-identity commitment")
+        });
 
     // Root the lineage at the epoch boundary `B_E = pre_epoch_anchor.next_epoch(E)
     // == prev_anchor_at(epoch_first)`; the boundary->cm chain ends at
@@ -719,7 +723,7 @@ pub(crate) fn build_unspent_pcd_between_anchors(
             for tgs in block_stamps {
                 let commit = TachygramSetPoly::from_iter(tgs.clone()).commit();
                 leaves.push(build_unspent_seed_pcd(rng, entry, epoch, &tgs, leaf_nf));
-                entry = entry.next_stamp(&commit);
+                entry = entry.next_stamp(&commit).expect("non-identity commitment");
             }
         }
     }
