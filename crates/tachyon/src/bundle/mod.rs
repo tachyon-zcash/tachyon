@@ -44,6 +44,11 @@
 //! | `vActionSigsTachyon`  | 64 * nActionsTachyon | authorization per action over tx sighash |
 //! | `bindingSigTachyon`   | 64 bytes             | binding over tx sighash                  |
 //!
+//! `vActionsTachyon` is a multiset: descriptors may repeat and multiplicity is
+//! significant, so it is neither sorted nor deduplicated on read. The proof
+//! validates the action set, reconstructing it as a product of roots, so a
+//! repeated descriptor is rejected there rather than at read.
+//!
 //! ### Proof stamp
 //!
 //! When `tachyonBundleState == 1`, the bundle carries a proof stamp.
@@ -55,6 +60,10 @@
 //! | `nTachygrams`         | compactsize          | number of tachygrams                     |
 //! | `vTachygrams`         | 32 * nTachygrams     | tachygrams for this proof                |
 //! | `proofTachyon`        | PROOF_SIZE blob      | serialized proof of fixed size           |
+//!
+//! Unlike `vActionsTachyon`, `vTachygrams` is a set: entries must be distinct
+//! and canonically ordered, and read rejects a duplicate or out-of-order
+//! tachygram.
 //!
 //! ## Pointer stamp
 //!
@@ -169,7 +178,13 @@ impl<S: StampState> PartialEq for Bundle<S> {
 }
 
 impl<S: BundleState + ?Sized> Bundle<S> {
-    /// Collect the descriptors of all actions in the bundle.
+    /// Collect the descriptors of all actions in the bundle, in order.
+    ///
+    /// Original construction or wire order is preserved and duplicates are
+    /// kept. Multiplicity is evident in both the bundle commitment and the set
+    /// commitment used for proof verification, so callers must not deduplicate
+    /// before before passing these to [`ProofStamp::verify`] or
+    /// [`ProofStamp::covers`].
     #[must_use]
     pub fn descriptors(&self) -> Vec<action::Descriptor> {
         // Do NOT sort here: maintain order as constructed.
@@ -269,7 +284,11 @@ impl Plan {
         spend_transform.chain(output_transform)
     }
 
-    /// Collect and sort the descriptors of all actions in the plan.
+    /// Collect the descriptors of all actions in the plan, sorted and
+    /// deduplicated.
+    ///
+    /// This is the prover-side set. Contrast [`Bundle::descriptors`], the wire
+    /// multiset that preserves order and duplicates.
     #[must_use]
     pub fn descriptors(&self) -> BTreeSet<action::Descriptor> {
         self.iter_actions(action::Plan::descriptor, action::Plan::descriptor)

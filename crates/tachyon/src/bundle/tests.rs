@@ -456,6 +456,10 @@ fn payment_bundle_verifies() {
         .expect("payment bundle must verify");
 }
 
+/// `verify` reconstructs the action polynomial from the descriptors it is
+/// given, as a multiset: the exact covered actions verify (in any order), and
+/// any deviation — a dropped, duplicated, extra, or substituted action —
+/// reconstructs a different polynomial and is `Disproved`.
 #[test]
 fn stamp_verify_action_multiset_invariants() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -601,13 +605,129 @@ fn double_spend_obvious() {
         "the actions are identical"
     );
 
-    // Proof verification rejects it: the doubled action set reconstructs to
-    // match the proof, but the collapsed tachygram set cannot reconstruct the
-    // doubled commitment the merge proof holds.
+    // Proof verification rejects it: the doubled action set reconstructs to a
+    // polynomial the forged merge proof does not commit to.
     let err = decoded
         .stamp
         .verify(rng, &decoded.descriptors())
         .expect_err("duplicated actions must not verify");
+    let VerificationError::Disproved = err else {
+        panic!("expected Disproved, got {err:?}");
+    };
+}
+
+/// A duplicated *spend* would mint value, and `verify` catches it by
+/// reconstructing the action multiset from the wire.
+///
+/// The attacker holds one real spendable note worth `v` and its honest
+/// single-spend stamp (covering `{d}`, one nullifier pair). By hand they build
+/// an autonome whose action list is `[d, d]` — the same spend twice — with
+/// `value_balance = 2v` (a valid binding signature over the doubled `cv` and
+/// `bsk = 2·rcv`) and `coverage` forged to `digest([d, d])`. Signatures verify
+/// and `is_autonome` accepts the forged coverage; the stamp evidences one spent
+/// note against a balance that withdraws `2v`, so accepting it would mint `v`.
+///
+/// It dies at the proof: `verify` reconstructs `(x−d)²` from the wire's
+/// `[d, d]`, which the honest single-spend `(x−d)` proof does not commit to →
+/// `Disproved`. This defense relies on `verify` seeing the full multiset. A
+/// `verify` that deduplicated its input would collapse `[d, d]` to `{d}`, which
+/// the honest proof satisfies, and the distinctness check would have to be
+/// hoisted to the caller.
+#[test]
+fn duplicated_spend_cannot_inflate() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let note = wallet.random_note(200);
+
+    let mut pool = PoolSim::genesis(rng);
+    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 50));
+    let cm_height = pool.height();
+    while pool.height() < BlockHeight(EPOCH_SIZE) {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
+    let init = wallet.spendable_init(rng, &note, &pool, cm_height);
+    let spendable = wallet.lift_over_creation_epoch(rng, &pool, &note, cm_height, init);
+    let anchor = spendable.data().2;
+    let spend_epoch = cm_height.epoch().next();
+
+    // Build one honest spend with a trapdoor and randomizer we control, so the
+    // duplicated bundle's binding and action signatures can be reproduced.
+    let range = wallet.derived_range(rng, &note, spend_epoch, 2);
+    let rcv = value::Trapdoor::random(rng);
+    let theta = ActionEntropy::random(rng);
+    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
+        wallet.pak.ak.derive_action_public(&alpha)
+    });
+    let descriptor = plan.descriptor();
+    let honest_stamp = Plan::new(alloc::vec![plan], alloc::vec![])
+        .stamp_plan(anchor)
+        .prove(rng, &wallet.pak, alloc::vec![(range, spendable)])
+        .expect("prove the honest single spend");
+
+    // Assemble the duplicated-spend bundle by hand: two identical spend actions,
+    // a value balance and binding key doubled to match, and coverage forged over
+    // the doubled action set.
+    let doubled = 2 * i64::try_from(u64::from(note.value)).expect("note value fits i64");
+    let value_balance = value::Balance::try_from(doubled).expect("doubled balance in range");
+    let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
+    let sighash = mock_sighash(bundle_commitment(
+        &action_descriptor_digest(&action_bytes),
+        doubled,
+    ));
+    let alpha = theta.randomizer::<effect::Spend>(note.commitment());
+    let sig = wallet
+        .sk
+        .derive_auth_private()
+        .derive_action_private(&alpha)
+        .sign(rng, &sighash);
+    let action = Action::from((descriptor, sig));
+    let binding_sig = private::BindingSigningKey::from([rcv, rcv]).sign(rng, &sighash);
+    let coverage = {
+        let mut desc_bytes = Vec::<[u8; 64]>::from_iter([descriptor, descriptor]);
+        desc_bytes.sort_unstable();
+        action_descriptor_digest(&desc_bytes)
+    };
+    let bundle = Bundle {
+        actions: vec![action, action],
+        value_balance,
+        binding_sig,
+        stamp: ProofStamp {
+            coverage,
+            anchor: honest_stamp.anchor,
+            tachygrams: honest_stamp.tachygrams,
+            proof: honest_stamp.proof,
+        },
+    };
+
+    let mut buf = Vec::new();
+    bundle.write(&mut buf).expect("write");
+    let decoded = Bundle::<ProofStamp>::read(&*buf).expect("duplicated spend is wire-valid");
+
+    // The cheap checks pass, and the balance would mint: one spent note (one
+    // present/next nullifier pair) against a balance that withdraws twice its
+    // value.
+    decoded
+        .verify_signatures(&mock_sighash(decoded.commitment()))
+        .expect("binding and action signatures verify");
+    assert!(
+        decoded.is_autonome(),
+        "the forged coverage matches the duplicated action set"
+    );
+    assert_eq!(
+        decoded.stamp.tachygrams.len(),
+        2,
+        "a single spend contributes exactly one present/next nullifier pair"
+    );
+    let withdrawn: i64 = decoded.value_balance.into();
+    let backed = i64::try_from(u64::from(note.value)).expect("note value fits i64");
+    assert_eq!(withdrawn, 2 * backed, "the bundle balances two spends");
+
+    // The proof rejects it: reconstructing the [d, d] multiset yields an action
+    // polynomial the honest single-spend proof does not commit to.
+    let err = decoded
+        .stamp
+        .verify(rng, &decoded.descriptors())
+        .expect_err("the doubled action must not verify against the single-spend proof");
     let VerificationError::Disproved = err else {
         panic!("expected Disproved, got {err:?}");
     };

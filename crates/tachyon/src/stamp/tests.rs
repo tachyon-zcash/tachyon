@@ -181,7 +181,7 @@ fn merge_populates_covered_actions() {
 /// is [`double_spend_cannot_aggregate`] — both reuse modes are caught the same
 /// way once the collision lands in the tachygram set.
 #[test]
-fn output_reuse_cannot_aggregate() {
+fn double_output_cannot_aggregate() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
@@ -261,8 +261,8 @@ fn output_reuse_cannot_aggregate() {
 /// Reusing a note as a spend collides on the nullifiers: nullifiers are
 /// independent of the spend randomization, so two autonome bundles spending one
 /// note carry distinct action descriptors yet identical spend nullifiers. The
-/// nullifier-side analog of [`output_reuse_cannot_aggregate`]: the collision is
-/// caught by the tachygram set, not by action-descriptor uniqueness.
+/// nullifier-side analog of [`double_output_cannot_aggregate`]: the collision
+/// is caught by the tachygram set, not by action-descriptor uniqueness.
 #[test]
 fn double_spend_cannot_aggregate() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -385,8 +385,7 @@ fn double_spend_cannot_aggregate() {
 /// reconstruct it. Verifying against the *doubled* action descriptors makes the
 /// action accumulator match, leaving the tachygram accumulator as the mismatch,
 /// so the forgery is `Disproved`. Publishing the duplicate tachygram on the
-/// wire is instead caught by [`read_rejects_duplicate_tachygrams`]. This is the
-/// shape of merging two aggregates that share a covered contributor.
+/// wire is instead caught by [`read_rejects_duplicate_tachygrams`].
 #[test]
 fn cannot_forge_stamp_covering_duplicated_action() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -450,6 +449,38 @@ fn cannot_forge_stamp_covering_duplicated_action() {
     let err = stamp
         .verify(rng, &all_descriptors)
         .expect_err("a stamp covering a duplicated action must not verify");
+    let VerificationError::Disproved = err else {
+        panic!("expected Disproved, got {err:?}");
+    };
+}
+
+/// `verify` characterization: it checks the proof against exactly the
+/// descriptor multiset it is handed, and nothing more. A duplicated action that
+/// a caller deduplicated to `{d}` verifies against the single-action proof; the
+/// true multiset `[d, d]` reconstructs `(x−d)²` and does not. So `verify`
+/// cannot distinguish a deduplicated duplicate from a genuine single action —
+/// detecting the duplicate is the caller's responsibility, which is why it must
+/// pass the full multiset.
+#[test]
+fn verify_cannot_distinguish_a_deduplicated_duplicate() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let anchor = pool.anchor();
+
+    let note = wallet.random_note(200);
+    let (stamp, plan) = build_output_stamp(rng, anchor, note);
+    let descriptor = plan.descriptor();
+
+    // Deduplicated to one action, it matches the single-action proof.
+    stamp
+        .verify(rng, &[descriptor])
+        .expect("the single covered action verifies");
+
+    // The true multiset is a different action polynomial: (x−d)² ≠ (x−d).
+    let err = stamp
+        .verify(rng, &[descriptor, descriptor])
+        .expect_err("the doubled action must not verify");
     let VerificationError::Disproved = err else {
         panic!("expected Disproved, got {err:?}");
     };

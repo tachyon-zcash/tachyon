@@ -672,8 +672,25 @@ impl ProofStamp {
     /// Verifies this stamp's proof by reconstructing the PCD header from
     /// public data.
     ///
+    /// This is a multiset. The commitment is reconstructed as a product of
+    /// roots, so order does not matter but multiplicity does. A deduplicated or
+    /// otherwise altered set reconstructs a different polynomial.
+    ///
     /// You might want to call [`ProofStamp::covers`] first, to check if the
     /// verification may be expected to fail.
+    ///
+    /// # TODO
+    ///
+    /// Presently, this method *requires that action descriptors must not be
+    /// deduplicated by the caller*. Instead of requiring a difficult-to-enforce
+    /// precondition, it should either
+    ///
+    /// 1. become pub(crate) so callers may be controlled, and a verification
+    ///    method should be added to Bundle<ProofStamp>, or
+    /// 2. a case should be added to VerificationError about action duplication,
+    ///    and a duplication check should be performed.
+    ///
+    /// I prefer (1) but I'm calling it out of scope for the present changeset.
     pub fn verify<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
