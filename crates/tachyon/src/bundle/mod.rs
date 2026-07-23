@@ -88,12 +88,13 @@ use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, Partial
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
+    ActionDigest, ActionDigestError,
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
     primitives::{Anchor, effect},
     reddsa, serialization,
-    stamp::{self, PointerStamp, ProofStamp, StampState, Unproven},
+    stamp::{self, AggregateIdError, PointerStamp, ProofStamp, StampState, Unproven},
     value,
 };
 
@@ -171,7 +172,7 @@ pub struct Bundle<S: BundleState + ?Sized> {
     pub stamp: S,
 }
 
-impl<S: StampState> PartialEq for Bundle<S> {
+impl<S: StampState + 'static> PartialEq for Bundle<S> {
     fn eq(&self, other: &Self) -> bool {
         self.commitment() == other.commitment() && self.auth_digest() == other.auth_digest()
     }
@@ -207,20 +208,20 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     }
 
     /// Verify the bundle's binding signature and all action signatures.
-    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
+    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), VerifySignaturesError> {
         // 1. Derive bvk from public data
         let bvk = public::BindingVerificationKey::derive(&self.actions, self.value_balance);
 
         // 2. Verify binding signature
         bvk.verify(sighash, &self.binding_sig)
-            .map_err(|_err| SignatureError::Binding(self.binding_sig))?;
+            .map_err(|_err| VerifySignaturesError::Binding(self.binding_sig))?;
 
         // 3. Verify each action signature
         for action in &self.actions {
             action
                 .rk
                 .verify(sighash, &action.sig)
-                .map_err(|_err| SignatureError::Action(action.sig))?;
+                .map_err(|_err| VerifySignaturesError::Action(action.sig))?;
         }
 
         Ok(())
@@ -230,13 +231,50 @@ impl<S: BundleState + ?Sized> Bundle<S> {
 /// Errors from bundle signature verification.
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
-pub enum SignatureError {
+pub enum VerifySignaturesError {
     /// The binding signature is invalid.
     #[display("invalid binding signature {_0:?}")]
     Binding(#[error(not(source))] Signature),
     /// An action signature is invalid.
     #[display("invalid action signature {_0:?}")]
     Action(#[error(not(source))] action::Signature),
+}
+
+/// Error during proof verification.
+#[derive(Debug, Display, Error)]
+pub enum VerifyProofError {
+    /// The actions are not unique.
+    #[display("actions are not unique")]
+    DuplicateActions,
+    /// An action's cv or rk is the identity point.
+    #[display("action digest error: {_0}")]
+    ActionDigest(ActionDigestError),
+    /// The proof system returned an error.
+    #[display("proof system error: {_0}")]
+    ProofSystem(ragu::Error),
+    /// The proof did not verify.
+    #[display("proof did not verify")]
+    Disproved,
+}
+
+/// Errors during bundle verification.
+#[derive(Debug, Display, Error)]
+pub enum VerificationError {
+    /// The provided wtxid for this bundle seems invalid.
+    #[display("provided aggregate id is invalid: {_0}")]
+    AggregateId(AggregateIdError),
+    /// The pointer of an adjunct is not the expected aggregate id.
+    #[display("stamp on an adjunct does not match the expected aggregate id")]
+    PointerStampMismatch,
+    /// The stamp on this bundle does not claim to cover these actions.
+    #[display("stamp on this bundle does not claim to cover these actions")]
+    StampActionsMismatch,
+    /// The signatures did not verify.
+    #[display("signatures did not verify: {_0}")]
+    Signatures(VerifySignaturesError),
+    /// The proof did not verify.
+    #[display("proof did not verify: {_0}")]
+    Proof(VerifyProofError),
 }
 
 /// Errors that can occur while signing a bundle plan.
@@ -485,9 +523,101 @@ impl Bundle<ProofStamp> {
     pub fn is_aggregate(&self) -> bool {
         !self.stamp.covers(&self.descriptors())
     }
+
+    /// Verify the proof against the combined actions of this bundle and the
+    /// provided bundles.
+    pub fn verify_proof<RNG: RngCore + CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        adjuncts: &[&Bundle<dyn StampState>],
+    ) -> Result<(), VerifyProofError> {
+        let action_descriptors = self
+            .descriptors()
+            .into_iter()
+            .chain(adjuncts.iter().flat_map(|&adj| adj.descriptors()))
+            .collect::<Vec<action::Descriptor>>();
+
+        let action_digests = action_descriptors
+            .iter()
+            .map(action::Descriptor::digest)
+            .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
+            .map_err(VerifyProofError::ActionDigest)?;
+
+        if action_digests.len() != action_descriptors.len() {
+            return Err(VerifyProofError::DuplicateActions);
+        }
+
+        let proof_verified = self
+            .stamp
+            .verify_proof(
+                rng,
+                &action_digests.into_iter().collect::<Vec<ActionDigest>>(),
+            )
+            .map_err(VerifyProofError::ProofSystem)?;
+
+        if !proof_verified {
+            return Err(VerifyProofError::Disproved);
+        }
+
+        Ok(())
+    }
+
+    /// Fully verify the bundle: stamp coverage, signatures, then the proof.
+    ///
+    /// The coverage and proof checks span the combined action set of this bundle
+    /// and its `adjuncts` (empty for an autonome bundle). The value balance is
+    /// confirmed by the binding signature, which signs under a verification key
+    /// derived from the action value commitments and the plaintext balance, so a
+    /// balance error surfaces as a binding-signature failure. Action uniqueness
+    /// is enforced by [`Bundle::verify_proof`].
+    pub fn verify<RNG: RngCore + CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        sighash: &[u8; 32],
+        auth_digest: &[u8; 32],
+        adjuncts: &[&Bundle<PointerStamp>],
+    ) -> Result<(), VerificationError> {
+        let expect_pointers: PointerStamp = PointerStamp::try_from((sighash, auth_digest))
+            .map_err(VerificationError::AggregateId)?;
+
+        if adjuncts
+            .iter()
+            .any(|&adjunct| adjunct.stamp != expect_pointers)
+        {
+            return Err(VerificationError::PointerStampMismatch);
+        }
+
+        let descriptors: Vec<action::Descriptor> = self
+            .descriptors()
+            .into_iter()
+            .chain(adjuncts.iter().flat_map(|&input| input.descriptors()))
+            .collect();
+
+        if !self.stamp.covers(&descriptors) {
+            return Err(VerificationError::StampActionsMismatch);
+        }
+
+        self.verify_signatures(sighash)
+            .map_err(VerificationError::Signatures)?;
+
+        self.verify_proof(
+            rng,
+            &adjuncts
+                .iter()
+                .map(|&adj| adj.as_dyn())
+                .collect::<Vec<&Bundle<dyn StampState>>>(),
+        )
+        .map_err(VerificationError::Proof)
+    }
 }
 
-impl<S: StampState> Bundle<S> {
+impl<S: StampState + 'static> Bundle<S> {
+    /// Borrow this bundle as a trait object.
+    #[must_use]
+    pub fn as_dyn(&self) -> &Bundle<dyn StampState> {
+        self
+    }
+
     /// Read a stamped bundle in state `S` from the consensus wire format.
     ///
     /// See the module-level wire format documentation.

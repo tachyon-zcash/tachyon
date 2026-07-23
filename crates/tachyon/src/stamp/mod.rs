@@ -73,6 +73,17 @@ pub enum AggregateIdError {
     Zero,
 }
 
+impl TryFrom<(&[u8; 32], &[u8; 32])> for PointerStamp {
+    type Error = AggregateIdError;
+
+    fn try_from((sighash, auth_digest): (&[u8; 32], &[u8; 32])) -> Result<Self, Self::Error> {
+        let mut wtxid = [0u8; 64];
+        wtxid[..32].copy_from_slice(sighash);
+        wtxid[32..].copy_from_slice(auth_digest);
+        Self::try_from(wtxid)
+    }
+}
+
 impl TryFrom<[u8; 64]> for PointerStamp {
     type Error = AggregateIdError;
 
@@ -249,20 +260,6 @@ impl StampState for ProofStamp {
     }
 }
 
-/// Error during stamp verification.
-#[derive(Debug, Display, Error)]
-pub enum VerificationError {
-    /// An action's cv or rk is the identity point.
-    #[display("action digest error: {_0}")]
-    ActionDigest(ActionDigestError),
-    /// The proof system returned an error.
-    #[display("proof system error")]
-    ProofSystem(ragu::Error),
-    /// The proof did not verify against the reconstructed header.
-    #[display("proof did not verify")]
-    Disproved,
-}
-
 /// Everything needed to produce a [`ProofStamp`].
 ///
 /// Each action is described by a public descriptor `(cv, rk)` and a
@@ -328,6 +325,7 @@ impl Plan {
     /// order.
     ///
     /// TODO: nf_next parameter may need to come back
+    /// TODO: provide a way to lift spend stamps when necessary to merge
     pub fn prove<RNG: RngCore + CryptoRng>(
         self,
         rng: &mut RNG,
@@ -660,11 +658,14 @@ impl ProofStamp {
 
     /// Confirm `hStampActionsTachyon` represents the given action descriptors.
     ///
-    /// Action descriptors will be sorted but not deduplicated, so that a caller
-    /// checking a collection which contains duplicates can detect the mismatch.
+    /// # Soundness
+    ///
+    /// The input parameter represents a multiset. Order does not matter, but
+    /// multiplicity does. A set containing duplicate members is not the same as
+    /// a similar set without duplicates.
     #[must_use]
-    pub fn covers(&self, descs: &[action::Descriptor]) -> bool {
-        let mut desc_bytes = descs.iter().copied().collect::<Vec<[u8; 64]>>();
+    pub fn covers(&self, action_descs: &[action::Descriptor]) -> bool {
+        let mut desc_bytes = action_descs.iter().copied().collect::<Vec<[u8; 64]>>();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes) == self.coverage
     }
@@ -672,35 +673,20 @@ impl ProofStamp {
     /// Verifies this stamp's proof by reconstructing the PCD header from
     /// public data.
     ///
-    /// This is a multiset. The commitment is reconstructed as a product of
-    /// roots, so order does not matter but multiplicity does. A deduplicated or
-    /// otherwise altered set reconstructs a different polynomial.
-    ///
     /// You might want to call [`ProofStamp::covers`] first, to check if the
     /// verification may be expected to fail.
     ///
-    /// # TODO
+    /// # Soundness
     ///
-    /// Presently, this method *requires that action descriptors must not be
-    /// deduplicated by the caller*. Instead of requiring a difficult-to-enforce
-    /// precondition, it should either
-    ///
-    /// 1. become pub(crate) so callers may be controlled, and a verification
-    ///    method should be added to Bundle<ProofStamp>, or
-    /// 2. a case should be added to VerificationError about action duplication,
-    ///    and a duplication check should be performed.
-    ///
-    /// I prefer (1) but I'm calling it out of scope for the present changeset.
-    pub fn verify<RNG: RngCore + CryptoRng>(
+    /// The input parameter represents a multiset. Order does not matter, but
+    /// multiplicity does. A set containing duplicate members is not the same as
+    /// a similar set without duplicates.
+    pub fn verify_proof<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
-        actions: &[action::Descriptor],
-    ) -> Result<(), VerificationError> {
-        let action_set = actions
-            .iter()
-            .map(action::Descriptor::digest)
-            .collect::<Result<ActionSetPoly, ActionDigestError>>()
-            .map_err(VerificationError::ActionDigest)?;
+        action_digests: &[ActionDigest],
+    ) -> Result<bool, ragu::Error> {
+        let action_set = action_digests.iter().copied().collect::<ActionSetPoly>();
 
         let tachygram_set = self
             .tachygrams
@@ -714,15 +700,7 @@ impl ProofStamp {
             self.anchor,
         ));
 
-        let valid = PROOF_SYSTEM
-            .verify(&pcd, rng)
-            .map_err(VerificationError::ProofSystem)?;
-
-        if valid {
-            Ok(())
-        } else {
-            Err(VerificationError::Disproved)
-        }
+        PROOF_SYSTEM.verify(&pcd, rng)
     }
 }
 
