@@ -444,9 +444,9 @@ impl Bundle<ProofStamp> {
     /// Action descriptors will be sorted but not deduplicated, so that a caller
     /// checking a collection which contains duplicates can detect the mismatch.
     #[must_use]
-    pub fn covers(&self, adjuncts: &[&Bundle<dyn StampState>]) -> bool {
+    pub fn covers(&self, others: &[&Bundle<dyn StampState>]) -> bool {
         let own_descs = self.descriptors().into_iter();
-        let other_descs = adjuncts.iter().flat_map(|&adjunct| adjunct.descriptors());
+        let other_descs = others.iter().flat_map(|&adjunct| adjunct.descriptors());
 
         self.stamp.covers(
             &own_descs
@@ -459,6 +459,22 @@ impl Bundle<ProofStamp> {
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
         self.stamp.covers(&self.descriptors())
+    }
+
+    /// Verify this bundle's proof by reconstructing the PCD header with actions
+    /// from other bundles.
+    pub fn verify_stamp<RNG: RngCore + CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        others: &[&Bundle<dyn StampState>],
+    ) -> Result<(), stamp::VerificationError> {
+        let all_descs = self
+            .descriptors()
+            .into_iter()
+            .chain(others.iter().flat_map(|&other| other.descriptors()))
+            .collect::<Vec<action::Descriptor>>();
+
+        self.stamp.verify(rng, &all_descs)
     }
 }
 
