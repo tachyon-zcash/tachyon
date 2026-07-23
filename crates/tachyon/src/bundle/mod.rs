@@ -458,13 +458,13 @@ impl Bundle<ProofStamp> {
     /// Confirm `hStampActionsTachyon` represents this bundle's actions.
     #[must_use]
     pub fn is_autonome(&self) -> bool {
-        self.covers(&[])
+        self.stamp.covers(&self.descriptors())
     }
 
     /// Confirm `hStampActionsTachyon` does not represent this bundle's actions.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
-        !self.covers(&[])
+        !self.stamp.covers(&self.descriptors())
     }
 }
 
