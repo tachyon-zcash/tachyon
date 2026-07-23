@@ -72,7 +72,7 @@ use alloc::{
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
-use core::ops::Neg as _;
+use core::{cmp::Ordering, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
@@ -160,6 +160,12 @@ pub struct Bundle<S: BundleState + ?Sized> {
 
     /// Bundle state: `Unproven`, `ProofStamp`, or `PointerStamp`.
     pub stamp: S,
+}
+
+impl<S: StampState> PartialEq for Bundle<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.commitment() == other.commitment() && self.auth_digest() == other.auth_digest()
+    }
 }
 
 impl<S: BundleState + ?Sized> Bundle<S> {
@@ -432,18 +438,15 @@ impl Bundle<ProofStamp> {
         }
     }
 
-    /// Confirm published coverage without verifying the proof: reconstruct
-    /// the covered-actions digest from this bundle's actions plus every
-    /// adjunct's and check it against the carried `hStampActionsTachyon`.
-    /// Adjuncts may be in any stamp state, mixed freely. Assistive, not
-    /// soundness.
+    /// Confirm `hStampActionsTachyon` represents the combined actions of this
+    /// bundle and the given bundles.
+    ///
+    /// Action descriptors will be sorted but not deduplicated, so that a caller
+    /// checking a collection which contains duplicates can detect the mismatch.
     #[must_use]
     pub fn covers(&self, adjuncts: &[&Bundle<dyn StampState>]) -> bool {
-        let own_descs = self.actions.iter().map(Action::descriptor);
-        let other_descs = adjuncts
-            .iter()
-            .flat_map(|adjunct| adjunct.actions.iter())
-            .map(Action::descriptor);
+        let own_descs = self.descriptors().into_iter();
+        let other_descs = adjuncts.iter().flat_map(|&adjunct| adjunct.descriptors());
 
         self.stamp.covers(
             &own_descs
@@ -452,8 +455,7 @@ impl Bundle<ProofStamp> {
         )
     }
 
-    /// Check if this bundle is an aggregate, by computing the digest of its
-    /// owned actions and comparing to its stamp's `hStampActionsTachyon`.
+    /// Confirm `hStampActionsTachyon` represents this bundle's actions.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
         self.stamp.covers(&self.descriptors())
@@ -607,7 +609,47 @@ pub enum TachyonBundle {
     Adjunct(Bundle<PointerStamp>),
 }
 
+impl PartialEq for TachyonBundle {
+    fn eq(&self, other: &Self) -> bool {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
+        match *self {
+            Self::NoBundle => other.is_no_bundle(),
+            Self::Proven(ref bundle) => {
+                other.is_proven()
+                    && bundle.commitment() == other.commitment()
+                    && bundle.auth_digest() == other.auth_digest()
+            },
+            Self::Adjunct(ref bundle) => {
+                other.is_adjunct()
+                    && bundle.commitment() == other.commitment()
+                    && bundle.auth_digest() == other.auth_digest()
+            },
+        }
+    }
+}
+
+impl PartialOrd for TachyonBundle {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(
+            self.commitment()
+                .cmp(&other.commitment())
+                .then(self.auth_digest().cmp(&other.auth_digest())),
+        )
+    }
+}
+
 impl TachyonBundle {
+    /// Borrow the inner bundle as a trait object, if it exists.
+    #[must_use]
+    pub fn as_dyn(&self) -> Option<&Bundle<dyn StampState>> {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
+        match *self {
+            Self::NoBundle => None,
+            Self::Proven(ref bundle) => Some(bundle),
+            Self::Adjunct(ref bundle) => Some(bundle),
+        }
+    }
+
     /// Read any Tachyon bundle from the consensus wire format, dispatching
     /// on the `tachyonBundleState` byte.
     ///
@@ -659,13 +701,32 @@ impl TachyonBundle {
         }
     }
 
-    /// Check if this bundle is an aggregate.
+    /// Confirm `hStampActionsTachyon` represents this bundle's actions.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => false,
             Self::Proven(ref stamped) => stamped.is_aggregate(),
+            Self::Adjunct(ref _stamped) => false,
+        }
+    }
+
+    /// Confirm `hStampActionsTachyon` represents the combined actions of this
+    /// bundle and the given bundles.
+    ///
+    /// Action descriptors will be sorted but not deduplicated, so that a caller
+    /// checking a collection which contains duplicates can detect the mismatch.
+    #[must_use]
+    pub fn covers(&self, adjuncts: &[Self]) -> bool {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
+        match *self {
+            Self::NoBundle => false,
+            Self::Proven(ref stamped) => adjuncts
+                .iter()
+                .map(|adj| adj.as_dyn())
+                .collect::<Option<Vec<&Bundle<dyn StampState>>>>()
+                .is_some_and(|dyn_adjuncts| stamped.covers(&dyn_adjuncts)),
             Self::Adjunct(ref _stamped) => false,
         }
     }

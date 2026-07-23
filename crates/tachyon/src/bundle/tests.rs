@@ -477,8 +477,8 @@ fn stamp_verify_action_multiset_invariants() {
         let mut dropped = descriptors.clone();
         dropped.pop();
         let err = stamped.stamp.verify(rng, &dropped).unwrap_err();
-        let VerificationError::ActionsMismatch = err else {
-            panic!("drop: expected ActionsMismatch, got {err:?}");
+        let VerificationError::Disproved = err else {
+            panic!("drop: expected Disproved, got {err:?}");
         };
     }
 
@@ -487,8 +487,8 @@ fn stamp_verify_action_multiset_invariants() {
         let mut duplicated = descriptors.clone();
         duplicated.push(duplicated[0]);
         let err = stamped.stamp.verify(rng, &duplicated).unwrap_err();
-        let VerificationError::ActionsMismatch = err else {
-            panic!("duplicate: expected ActionsMismatch, got {err:?}");
+        let VerificationError::Disproved = err else {
+            panic!("duplicate: expected Disproved, got {err:?}");
         };
     }
 
@@ -497,8 +497,8 @@ fn stamp_verify_action_multiset_invariants() {
         let mut extended = descriptors.clone();
         extended.push(random_action(rng).descriptor());
         let err = stamped.stamp.verify(rng, &extended).unwrap_err();
-        let VerificationError::ActionsMismatch = err else {
-            panic!("extra: expected ActionsMismatch, got {err:?}");
+        let VerificationError::Disproved = err else {
+            panic!("extra: expected Disproved, got {err:?}");
         };
     }
 
@@ -507,8 +507,8 @@ fn stamp_verify_action_multiset_invariants() {
         let mut replaced = descriptors;
         replaced[0] = random_action(rng).descriptor();
         let err = stamped.stamp.verify(rng, &replaced).unwrap_err();
-        let VerificationError::ActionsMismatch = err else {
-            panic!("replaced: expected ActionsMismatch, got {err:?}");
+        let VerificationError::Disproved = err else {
+            panic!("replaced: expected Disproved, got {err:?}");
         };
     }
 }
@@ -653,9 +653,9 @@ fn innocent_aggregate_from_two_autonomes() {
         alloc::vec![output_b],
     );
 
-    let descriptors_a: Vec<action::Descriptor> =
+    let descriptors_a: BTreeSet<action::Descriptor> =
         autonome_a.actions.iter().map(Action::descriptor).collect();
-    let descriptors_b: Vec<action::Descriptor> =
+    let descriptors_b: BTreeSet<action::Descriptor> =
         autonome_b.actions.iter().map(Action::descriptor).collect();
     let stamp_a = autonome_a.stamp.clone();
     let stamp_b = autonome_b.stamp.clone();
@@ -754,20 +754,21 @@ fn based_aggregate_with_two_adjuncts() {
 
     let sighash = mock_sighash(becomes_based.commitment());
 
-    let based_descriptors: Vec<action::Descriptor> = becomes_based
+    let based_descriptors: BTreeSet<action::Descriptor> = becomes_based
         .actions
         .iter()
         .map(Action::descriptor)
         .collect();
-    let descriptors_a: Vec<action::Descriptor> =
+    let descriptors_a: BTreeSet<action::Descriptor> =
         autonome_a.actions.iter().map(Action::descriptor).collect();
-    let descriptors_b: Vec<action::Descriptor> =
+    let descriptors_b: BTreeSet<action::Descriptor> =
         autonome_b.actions.iter().map(Action::descriptor).collect();
 
     let stamp_a = autonome_a.stamp.clone();
     let stamp_b = autonome_b.stamp.clone();
 
-    let innocent_descriptors = [descriptors_a.as_slice(), descriptors_b.as_slice()].concat();
+    let innocent_descriptors: BTreeSet<action::Descriptor> =
+        descriptors_a.union(&descriptors_b).copied().collect();
     let innocent_stamp = ProofStamp::merge(rng, (stamp_a, descriptors_a), (stamp_b, descriptors_b))
         .expect("innocent merge");
 
@@ -1224,20 +1225,21 @@ fn coverage_check_matches_stamp_actions() {
         alloc::vec![b_output],
     );
 
-    let based_descriptors: Vec<action::Descriptor> = becomes_based
+    let based_descriptors: BTreeSet<action::Descriptor> = becomes_based
         .actions
         .iter()
         .map(Action::descriptor)
         .collect();
-    let descriptors_a: Vec<action::Descriptor> =
+    let descriptors_a: BTreeSet<action::Descriptor> =
         autonome_a.actions.iter().map(Action::descriptor).collect();
-    let descriptors_b: Vec<action::Descriptor> =
+    let descriptors_b: BTreeSet<action::Descriptor> =
         autonome_b.actions.iter().map(Action::descriptor).collect();
 
     let stamp_a = autonome_a.stamp.clone();
     let stamp_b = autonome_b.stamp.clone();
 
-    let innocent_descriptors = [descriptors_a.as_slice(), descriptors_b.as_slice()].concat();
+    let innocent_descriptors: BTreeSet<action::Descriptor> =
+        descriptors_a.union(&descriptors_b).copied().collect();
     let innocent_stamp = ProofStamp::merge(rng, (stamp_a, descriptors_a), (stamp_b, descriptors_b))
         .expect("innocent merge");
 

@@ -1,6 +1,6 @@
 #![allow(clippy::panic, reason = "test code")]
 
-use alloc::{string::ToString as _, vec, vec::Vec};
+use alloc::{boxed::Box, string::ToString as _, vec, vec::Vec};
 
 use ff::Field as _;
 use rand::{SeedableRng as _, rngs::StdRng};
@@ -49,8 +49,8 @@ fn merge_stamp_iff_matching_anchors() {
 
         let result = ProofStamp::merge(
             rng,
-            (stamp_a, vec![plan_a.descriptor()]),
-            (stamp_b, vec![plan_b.descriptor()]),
+            (stamp_a, BTreeSet::from_iter([plan_a.descriptor()])),
+            (stamp_b, BTreeSet::from_iter([plan_b.descriptor()])),
         );
         assert_eq!(
             result.is_ok(),
@@ -167,13 +167,172 @@ fn merge_populates_covered_actions() {
 
     let merged = ProofStamp::merge(
         rng,
-        (stamp_a, vec![plan_a.descriptor()]),
-        (stamp_b, vec![plan_b.descriptor()]),
+        (stamp_a, BTreeSet::from_iter([plan_a.descriptor()])),
+        (stamp_b, BTreeSet::from_iter([plan_b.descriptor()])),
     )
     .expect("merge");
     // `merge` sorts the concatenated descriptors into canonical order, so the
     // covered-actions digest is independent of the order they were passed in.
     assert_eq!(merged.coverage, expected);
+}
+
+/// The honest merge workflow refuses to combine two stamps whose tachygram
+/// sets intersect. `MergeStamp` encodes the merged set as the polynomial
+/// product of its inputs (a multiset union), but `prove_merge` witnesses the
+/// deduplicated set union; the two coincide only for disjoint inputs. An
+/// overlap makes `merged == left · right` unsatisfiable, so the product
+/// relation fails and no proof is produced.
+#[test]
+fn merge_rejects_overlapping_tachygrams() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let anchor = pool.anchor();
+
+    // Two output stamps for the same note share their sole tachygram (the note
+    // commitment) but carry distinct descriptors (independent trapdoors), so
+    // the action sets stay disjoint and the failure isolates to the tachygram
+    // product relation.
+    let note = wallet.random_note(200);
+    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note);
+    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note);
+    assert_eq!(
+        stamp_a.tachygrams, stamp_b.tachygrams,
+        "tachygram sets must overlap"
+    );
+    assert_ne!(
+        plan_a.descriptor(),
+        plan_b.descriptor(),
+        "action sets must stay disjoint"
+    );
+
+    let err = ProofStamp::merge(
+        rng,
+        (stamp_a, BTreeSet::from_iter([plan_a.descriptor()])),
+        (stamp_b, BTreeSet::from_iter([plan_b.descriptor()])),
+    )
+    .expect_err("overlapping tachygram sets must not merge");
+
+    let ProveError::MergeFailed(ragu::Error::InvalidWitness(inner)) = err else {
+        panic!("expected MergeFailed(InvalidWitness), got {err:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "poly product: product identity fails at challenge"
+    );
+}
+
+/// A malicious prover could execute `MergeStamp` to prove a merge of
+/// intersecting sets, but no verifier will accept such a proof.
+#[test]
+fn verify_rejects_maliciously_merged_overlapping_tachygrams() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let anchor = pool.anchor();
+
+    let note = wallet.random_note(200);
+    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note);
+    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note);
+    assert_eq!(
+        stamp_a.tachygrams, stamp_b.tachygrams,
+        "tachygram sets must overlap"
+    );
+
+    let app = &*PROOF_SYSTEM;
+
+    let digest_a = plan_a.descriptor().digest().expect("action digest");
+    let digest_b = plan_b.descriptor().digest().expect("action digest");
+
+    let left_acts = ActionSetPoly::from_iter([digest_a]);
+    let right_acts = ActionSetPoly::from_iter([digest_b]);
+    let left_tg = stamp_a
+        .tachygrams
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>();
+    let right_tg = stamp_b
+        .tachygrams
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>();
+
+    let left_pcd =
+        stamp_a
+            .proof
+            .carry::<StampHeader>((left_acts.commit(), left_tg.commit(), stamp_a.anchor));
+    let right_pcd = stamp_b.proof.carry::<StampHeader>((
+        right_acts.commit(),
+        right_tg.commit(),
+        stamp_b.anchor,
+    ));
+
+    // The malicious witness: the shared tachygram appears twice, so the merged
+    // set polynomial equals `left · right` and the product relation holds. The
+    // action sets are disjoint, so their set and multiset unions coincide.
+    let merged_acts = ActionSetPoly::from_iter([digest_a, digest_b]);
+    let malicious_merged_tg = stamp_a
+        .tachygrams
+        .iter()
+        .chain(stamp_b.tachygrams.iter())
+        .copied()
+        .collect::<TachygramSetPoly>();
+
+    let proof = {
+        let (pcd, ()) = app
+            .fuse(
+                rng,
+                MergeStamp,
+                (
+                    (left_acts, left_tg),
+                    (merged_acts, malicious_merged_tg),
+                    (right_acts, right_tg),
+                ),
+                left_pcd,
+                right_pcd,
+            )
+            .expect("multiset merge must prove");
+        Box::new(
+            app.rerandomize(pcd, rng)
+                .expect("rerandomize")
+                .proof()
+                .clone(),
+        )
+    };
+
+    // The published stamp must bear a canonical deduplicated tachygram vector,
+    // or it will be rejected at deserialization.
+    let malicious_stamp = ProofStamp {
+        coverage: blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(
+            BTreeSet::from_iter([plan_a.descriptor(), plan_b.descriptor()]),
+        )),
+        anchor,
+        tachygrams: stamp_a
+            .tachygrams
+            .union(&stamp_b.tachygrams)
+            .copied()
+            .collect(),
+        proof,
+    };
+
+    let read_malicious_stamp = {
+        let mut buf = Vec::new();
+        malicious_stamp
+            .write(&mut buf)
+            .expect("write malicious stamp");
+        ProofStamp::read(&*buf).expect("malicious stamp is wire-valid")
+    };
+    assert_eq!(read_malicious_stamp.tachygrams, malicious_stamp.tachygrams);
+
+    // The malicious stamp will be rejected at verification, since the canonical
+    // tachygram vector does not represent the multiset union necessary to
+    // verify the malicious proof.
+    let err = read_malicious_stamp
+        .verify(rng, &[plan_a.descriptor(), plan_b.descriptor()])
+        .expect_err("multiset-backed proof must not verify against the deduplicated set");
+    let VerificationError::Disproved = err else {
+        panic!("expected Disproved, got {err:?}");
+    };
 }
 
 /// Bundle-validity rule 9 requires a proof stamp's tachygrams to be

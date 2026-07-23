@@ -246,20 +246,17 @@ impl StampState for ProofStamp {
 }
 
 /// Error during stamp verification.
-#[derive(Clone, Debug, Display, Error)]
+#[derive(Debug, Display, Error)]
 pub enum VerificationError {
     /// An action's cv or rk is the identity point.
     #[display("action digest error: {_0}")]
     ActionDigest(ActionDigestError),
     /// The proof system returned an error.
     #[display("proof system error")]
-    ProofSystem,
+    ProofSystem(ragu::Error),
     /// The proof did not verify against the reconstructed header.
     #[display("proof did not verify")]
     Disproved,
-    /// The carried `hStampActionsTachyon` indicator does not match the actions.
-    #[display("covered actions indicator mismatch")]
-    ActionsMismatch,
 }
 
 /// Everything needed to produce a [`ProofStamp`].
@@ -614,8 +611,8 @@ impl ProofStamp {
     /// system, but we might want to fail early.
     pub fn merge<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
-        (left_stamp, left_desc): (Self, Vec<action::Descriptor>),
-        (right_stamp, right_desc): (Self, Vec<action::Descriptor>),
+        (left_stamp, left_desc): (Self, BTreeSet<action::Descriptor>),
+        (right_stamp, right_desc): (Self, BTreeSet<action::Descriptor>),
     ) -> Result<Self, ProveError> {
         let left_actions_digest = left_desc
             .iter()
@@ -645,11 +642,13 @@ impl ProofStamp {
         )
         .map_err(ProveError::MergeFailed)?;
 
-        let coverage = {
-            let mut desc_bytes = Vec::<[u8; 64]>::from_iter([left_desc, right_desc].concat());
-            desc_bytes.sort_unstable();
-            blake2b::action_descriptor_digest(&desc_bytes)
-        };
+        let coverage = blake2b::action_descriptor_digest(
+            left_desc
+                .union(&right_desc)
+                .copied()
+                .collect::<Vec<[u8; 64]>>()
+                .as_slice(),
+        );
 
         Ok(Self {
             coverage,
@@ -659,9 +658,10 @@ impl ProofStamp {
         })
     }
 
-    /// Checks if this stamp covers the given action descriptors. The
-    /// descriptors are sorted into canonical order before hashing, so the
-    /// check is independent of the order the caller presents them in.
+    /// Confirm `hStampActionsTachyon` represents the given action descriptors.
+    ///
+    /// Action descriptors will be sorted but not deduplicated, so that a caller
+    /// checking a collection which contains duplicates can detect the mismatch.
     #[must_use]
     pub fn covers(&self, descs: &[action::Descriptor]) -> bool {
         let mut desc_bytes = descs.iter().copied().collect::<Vec<[u8; 64]>>();
@@ -672,9 +672,8 @@ impl ProofStamp {
     /// Verifies this stamp's proof by reconstructing the PCD header from
     /// public data.
     ///
-    /// The verifier recomputes the covered-actions digest, fails early if
-    /// it disagrees with the carried `hStampActionsTachyon`, then reconstructs
-    /// the action and tachygram accumulators and calls Ragu `verify()`.
+    /// You might want to call [`ProofStamp::covers`] first, to check if the
+    /// verification may be expected to fail.
     pub fn verify<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -682,34 +681,27 @@ impl ProofStamp {
     ) -> Result<(), VerificationError> {
         let app = &*PROOF_SYSTEM;
 
-        if !self.covers(actions) {
-            return Err(VerificationError::ActionsMismatch);
-        }
-
-        let action_digests = actions
+        let action_set = actions
             .iter()
             .map(action::Descriptor::digest)
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
+            .collect::<Result<ActionSetPoly, ActionDigestError>>()
             .map_err(VerificationError::ActionDigest)?;
-        let action_set = action_digests
-            .into_iter()
-            .collect::<ActionSetPoly>()
-            .commit();
-        let header = (
-            action_set,
-            self.tachygrams
-                .iter()
-                .copied()
-                .collect::<TachygramSetPoly>()
-                .commit(),
-            self.anchor,
-        );
 
-        let pcd = self.proof.clone().carry::<StampHeader>(header);
+        let tachygram_set = self
+            .tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>();
+
+        let pcd = self.proof.clone().carry::<StampHeader>((
+            action_set.commit(),
+            tachygram_set.commit(),
+            self.anchor,
+        ));
 
         let valid = app
             .verify(&pcd, rng)
-            .map_err(|_err| VerificationError::ProofSystem)?;
+            .map_err(VerificationError::ProofSystem)?;
 
         if valid {
             Ok(())
