@@ -136,3 +136,109 @@ pub(crate) fn anchor_epoch_step(anchor_prev: Fp, new_epoch: EpochIndex) -> Fp {
         Fp::from(new_epoch),
     ])
 }
+
+#[cfg(test)]
+mod domain_separation {
+    //! Registry of every Poseidon hash context and a check that they are
+    //! mutually domain-separated.
+    //!
+    //! Each [`hash`] call absorbs a 16-byte domain tag first, so two contexts
+    //! are separated whenever their `(tag, arity)` pair differs. The single
+    //! unseparated reuse is legacy GGM (`nf_master`/`nf_prefix`, see
+    //! `KNOWN_SHARED`); the flat-MiMC nullifier rework (#171) removes that path.
+    //! New code must not introduce another shared `(tag, arity)` without an
+    //! in-preimage discriminator.
+
+    use super::{
+        ACTION_DIGEST_DOMAIN, ANCHOR_EMPTY_DOMAIN, ANCHOR_EPOCH_DOMAIN, ANCHOR_STAMP_DOMAIN,
+        NOTE_COMMITMENT_DOMAIN, NULLIFIER_DOMAIN, NULLIFIER_PREFIX_DOMAIN, PAYMENT_KEY_DOMAIN,
+    };
+
+    /// A Poseidon hash context: the domain tag it absorbs first and its total
+    /// arity (tag element included). `(tag, arity)` is the separation key.
+    struct Context {
+        name: &'static str,
+        tag: &'static [u8; 16],
+        arity: usize,
+    }
+
+    const REGISTRY: &[Context] = &[
+        Context {
+            name: "action_digest",
+            tag: ACTION_DIGEST_DOMAIN,
+            arity: 5,
+        },
+        Context {
+            name: "payment_key",
+            tag: PAYMENT_KEY_DOMAIN,
+            arity: 3,
+        },
+        Context {
+            name: "note_commitment",
+            tag: NOTE_COMMITMENT_DOMAIN,
+            arity: 5,
+        },
+        Context {
+            name: "nf_master",
+            tag: NULLIFIER_PREFIX_DOMAIN,
+            arity: 3,
+        },
+        Context {
+            name: "nf_prefix",
+            tag: NULLIFIER_PREFIX_DOMAIN,
+            arity: 3,
+        },
+        Context {
+            name: "nullifier",
+            tag: NULLIFIER_DOMAIN,
+            arity: 2,
+        },
+        Context {
+            name: "anchor_stamp_step",
+            tag: ANCHOR_STAMP_DOMAIN,
+            arity: 6,
+        },
+        Context {
+            name: "anchor_empty_step",
+            tag: ANCHOR_EMPTY_DOMAIN,
+            arity: 2,
+        },
+        Context {
+            name: "anchor_epoch_step",
+            tag: ANCHOR_EPOCH_DOMAIN,
+            arity: 3,
+        },
+    ];
+
+    /// Context pairs that intentionally share `(tag, arity)` with no in-preimage
+    /// discriminator. Legacy GGM: `nf_master(psi, nk)` and
+    /// `nf_prefix(prefix_prev, step)` both absorb `Tachyon-NfPrefix` at arity 3,
+    /// separated only by the meaning of their second field. The flat-MiMC
+    /// nullifier rework (#171) deletes this path; until it lands the reuse is
+    /// documented here rather than treated as a fresh collision.
+    const KNOWN_SHARED: &[[&str; 2]] = &[["nf_master", "nf_prefix"]];
+
+    fn is_known_shared(a: &str, b: &str) -> bool {
+        KNOWN_SHARED
+            .iter()
+            .any(|pair| *pair == [a, b] || *pair == [b, a])
+    }
+
+    #[test]
+    fn every_poseidon_context_is_domain_separated() {
+        for (index, a) in REGISTRY.iter().enumerate() {
+            for b in REGISTRY.iter().skip(index + 1) {
+                let collides = a.tag == b.tag && a.arity == b.arity;
+                assert!(
+                    !collides || is_known_shared(a.name, b.name),
+                    "Poseidon contexts `{}` and `{}` share a domain tag at arity {} \
+                     with no discriminator — add a discriminator or a justified \
+                     KNOWN_SHARED entry",
+                    a.name,
+                    b.name,
+                    a.arity,
+                );
+            }
+        }
+    }
+}

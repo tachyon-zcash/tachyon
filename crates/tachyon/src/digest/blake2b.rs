@@ -236,6 +236,114 @@ pub(crate) fn bundle_auth_digest(
     })
 }
 
+#[cfg(test)]
+mod domain_separation {
+    //! Registry of every BLAKE2b hash context and a check that they are
+    //! mutually domain-separated.
+    //!
+    //! Separation comes from the fixed 16-byte `personal` field, optionally
+    //! refined by a trailing in-preimage domain byte. BLAKE2b zero-pads
+    //! shorter tags to 16 bytes, so distinctness is checked on the padded
+    //! block — the form the hash actually sees — not the source literal
+    //! (`b"foo"` and `b"foo\0"` are the same personalization). Two contexts
+    //! are separated whenever their `(personal_block, domain_byte)` pair
+    //! differs. `prf_expand_ask`/`prf_expand_nk` deliberately share the
+    //! global `Zcash_ExpandSeed` personalization and are separated by that
+    //! trailing byte (the standard Zcash PRF^expand pattern), so no reuse is
+    //! unseparated here.
+
+    use super::{
+        ACTION_DESCRIPTOR_PERSONALIZATION, AUTH_DIGEST_PERSONALIZATION,
+        BUNDLE_COMMITMENT_PERSONALIZATION, OUTPUT_ALPHA_PERSONALIZATION, PRF_EXPAND_DOMAIN_ASK,
+        PRF_EXPAND_DOMAIN_NK, PRF_EXPAND_PERSONALIZATION, SPEND_ALPHA_PERSONALIZATION,
+        STAMP_DATA_PERSONALIZATION, STAMP_PROOF_PERSONALIZATION,
+    };
+
+    /// A BLAKE2b hash context: its `personal` field and any trailing in-preimage
+    /// domain byte. `(personal_block(personal), domain_byte)` is the separation
+    /// key.
+    struct Context {
+        name: &'static str,
+        personal: &'static [u8],
+        domain_byte: Option<u8>,
+    }
+
+    /// The 16-byte `personal` block BLAKE2b actually keys on: shorter tags are
+    /// zero-padded, so distinctness must be compared on this form.
+    fn personal_block(personal: &[u8]) -> [u8; 16] {
+        assert!(personal.len() <= 16, "personalization exceeds 16 bytes");
+        let mut block = [0u8; 16];
+        for (dst, src) in block.iter_mut().zip(personal) {
+            *dst = *src;
+        }
+        block
+    }
+
+    const REGISTRY: &[Context] = &[
+        Context {
+            name: "alpha_spend",
+            personal: SPEND_ALPHA_PERSONALIZATION,
+            domain_byte: None,
+        },
+        Context {
+            name: "alpha_output",
+            personal: OUTPUT_ALPHA_PERSONALIZATION,
+            domain_byte: None,
+        },
+        Context {
+            name: "prf_expand_ask",
+            personal: PRF_EXPAND_PERSONALIZATION,
+            domain_byte: Some(PRF_EXPAND_DOMAIN_ASK),
+        },
+        Context {
+            name: "prf_expand_nk",
+            personal: PRF_EXPAND_PERSONALIZATION,
+            domain_byte: Some(PRF_EXPAND_DOMAIN_NK),
+        },
+        Context {
+            name: "action_descriptor_digest",
+            personal: ACTION_DESCRIPTOR_PERSONALIZATION,
+            domain_byte: None,
+        },
+        Context {
+            name: "bundle_commitment",
+            personal: BUNDLE_COMMITMENT_PERSONALIZATION,
+            domain_byte: None,
+        },
+        Context {
+            name: "bundle_auth_digest",
+            personal: AUTH_DIGEST_PERSONALIZATION,
+            domain_byte: None,
+        },
+        Context {
+            name: "stamp_proof_digest",
+            personal: STAMP_PROOF_PERSONALIZATION,
+            domain_byte: None,
+        },
+        Context {
+            name: "stamp_data_digest",
+            personal: STAMP_DATA_PERSONALIZATION,
+            domain_byte: None,
+        },
+    ];
+
+    #[test]
+    fn every_blake2b_context_is_domain_separated() {
+        for (index, a) in REGISTRY.iter().enumerate() {
+            for b in REGISTRY.iter().skip(index + 1) {
+                let collides = personal_block(a.personal) == personal_block(b.personal)
+                    && a.domain_byte == b.domain_byte;
+                assert!(
+                    !collides,
+                    "BLAKE2b contexts `{}` and `{}` share a personalization and domain \
+                     byte — they are not domain-separated",
+                    a.name, b.name,
+                );
+            }
+        }
+    }
+}
+
 lazy_static! {
     /// A non-Tachyon transaction's contribution to the transaction sighash.
     ///
