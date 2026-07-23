@@ -62,6 +62,7 @@ pub(crate) fn enforce_poly_product(
     multiplicand: &Polynomial,
     multiplier: &Polynomial,
     product: &Polynomial,
+    err: &'static str,
 ) -> Result<()> {
     let multiplicand_com = multiplicand.commit();
     let multiplier_com = multiplier.commit();
@@ -69,9 +70,7 @@ pub(crate) fn enforce_poly_product(
     let z = ctx.derive_challenge(&[multiplicand_com, multiplier_com, product_com])?;
 
     if product.eval(z) != multiplicand.eval(z) * multiplier.eval(z) {
-        return Err(Error::InvalidWitness(
-            "poly product: product identity fails at challenge".into(),
-        ));
+        return Err(Error::InvalidWitness(err.into()));
     }
 
     ctx.enforce_poly_query(multiplicand_com, z, multiplicand.eval(z))?;
@@ -130,6 +129,7 @@ pub(crate) fn enforce_shifted_combination<const SHIFTED_POLYS: usize, const MONO
     shifted_polys: [(&Polynomial, usize); SHIFTED_POLYS],
     monomials: [(Fp, usize); MONOMIALS],
     result: &Polynomial,
+    err: &'static str,
 ) -> Result<()> {
     let poly_coms = shifted_polys.map(|(poly, _)| poly.commit());
     let result_com = result.commit();
@@ -145,9 +145,7 @@ pub(crate) fn enforce_shifted_combination<const SHIFTED_POLYS: usize, const MONO
         )
         .sum::<Fp>();
     if result.eval(z) != combination {
-        return Err(Error::InvalidWitness(
-            "shifted combination: identity fails at challenge".into(),
-        ));
+        return Err(Error::InvalidWitness(err.into()));
     }
 
     for (&(poly, _), com) in shifted_polys.iter().zip(poly_coms) {
