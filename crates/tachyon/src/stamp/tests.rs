@@ -616,6 +616,48 @@ fn read_accepts_distinct_sorted_tachygrams() {
     ProofStamp::read(&*buf).expect("distinct sorted tachygrams must be accepted");
 }
 
+/// In debug builds, `merge` asserts when the left descriptor list does not
+/// match the left stamp's covered-actions digest, before any proving work.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "left descriptor list does not match stamp coverage")]
+fn merge_asserts_left_coverage() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user_a = WalletSim::random(rng);
+    let user_b = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let anchor = pool.anchor();
+    let (stamp_a, _plan_a) = build_output_stamp(rng, anchor, user_a.random_note(200));
+    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, user_b.random_note(300));
+
+    let _unused = ProofStamp::merge(
+        rng,
+        (stamp_a, BTreeSet::from_iter([plan_b.descriptor()])),
+        (stamp_b, BTreeSet::from_iter([plan_b.descriptor()])),
+    );
+}
+
+/// In debug builds, `merge` asserts when the right descriptor list does not
+/// match the right stamp's covered-actions digest, before any proving work.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "right descriptor list does not match stamp coverage")]
+fn merge_asserts_right_coverage() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user_a = WalletSim::random(rng);
+    let user_b = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let anchor = pool.anchor();
+    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, user_a.random_note(200));
+    let (stamp_b, _plan_b) = build_output_stamp(rng, anchor, user_b.random_note(300));
+
+    let _unused = ProofStamp::merge(
+        rng,
+        (stamp_a, BTreeSet::from_iter([plan_a.descriptor()])),
+        (stamp_b, BTreeSet::from_iter([plan_a.descriptor()])),
+    );
+}
+
 /// `hStampActionsTachyon` survives a `write`/`read` round-trip.
 #[test]
 fn covered_actions_round_trip() {
