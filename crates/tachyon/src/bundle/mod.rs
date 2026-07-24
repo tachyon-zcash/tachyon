@@ -150,8 +150,6 @@ pub struct Bundle<S: BundleState + ?Sized> {
     pub value_balance: value::Balance,
 
     /// Actions (cv, rk, sig).
-    ///
-    /// Order is significant to [`Bundle::commitment`].
     pub actions: Vec<Action>,
 
     /// Binding signature over the transaction sighash.
@@ -184,6 +182,9 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     /// This contributes to the transaction sighash. The stamp is excluded
     /// because it is considered authorizing data, and is malleable during
     /// aggregation.
+    ///
+    /// The digest binds actions in wire order and is therefore sensitive to
+    /// their ordering.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
         let descriptors: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
