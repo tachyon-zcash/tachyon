@@ -187,7 +187,7 @@ pub fn build_autonome(
 ///
 /// However, `MergeStamp` actually handles a commitment scheme that represents a
 /// multiset, and proves a relationship equivalent to a multiset union. So, a
-/// dishonest prover can feasibly prove a merge violates consensus rules.
+/// dishonest prover can feasibly prove a merge that violates consensus rules.
 ///
 /// Normal tools in this crate don't allow you to carry out such operations, so
 /// this utility will fuse a `MergeStamp` without checking for intersection.
