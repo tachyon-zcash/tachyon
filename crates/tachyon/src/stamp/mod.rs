@@ -660,9 +660,7 @@ impl ProofStamp {
     ///
     /// # Soundness
     ///
-    /// The input parameter represents a multiset. Order does not matter, but
-    /// multiplicity does. A set containing duplicate members is not the same as
-    /// a similar set without duplicates.
+    /// The parameter is a multiset: order does not matter, multiplicity does.
     #[must_use]
     pub fn covers(&self, action_descs: &[action::Descriptor]) -> bool {
         let mut desc_bytes = action_descs.iter().copied().collect::<Vec<[u8; 64]>>();
@@ -670,17 +668,12 @@ impl ProofStamp {
         blake2b::action_descriptor_digest(&desc_bytes) == self.coverage
     }
 
-    /// Verifies this stamp's proof by reconstructing the PCD header from
-    /// public data.
-    ///
-    /// You might want to call [`ProofStamp::covers`] first, to check if the
-    /// verification may be expected to fail.
+    /// Verify this stamp's proof, reconstructing the PCD header from public data.
+    /// Call [`ProofStamp::covers`] first to cheaply predict a mismatch.
     ///
     /// # Soundness
     ///
-    /// The input parameter represents a multiset. Order does not matter, but
-    /// multiplicity does. A set containing duplicate members is not the same as
-    /// a similar set without duplicates.
+    /// The parameter is a multiset: order does not matter, multiplicity does.
     pub fn verify_proof<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,

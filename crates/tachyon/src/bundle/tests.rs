@@ -572,23 +572,12 @@ fn double_spend_obvious() {
     );
 }
 
-/// A duplicated *spend* would mint value, and `verify` catches it by
-/// reconstructing the action multiset from the wire.
-///
-/// The attacker holds one real spendable note worth `v` and its honest
-/// single-spend stamp (covering `{d}`, one nullifier pair). By hand they build
-/// an autonome whose action list is `[d, d]` — the same spend twice — with
-/// `value_balance = 2v` (a valid binding signature over the doubled `cv` and
-/// `bsk = 2·rcv`) and `coverage` forged to `digest([d, d])`. Signatures verify
-/// and `is_autonome` accepts the forged coverage; the stamp evidences one spent
-/// note against a balance that withdraws `2v`, so accepting it would mint `v`.
-///
-/// It dies at the proof: `verify` reconstructs `(x−d)²` from the wire's
-/// `[d, d]`, which the honest single-spend `(x−d)` proof does not commit to →
-/// `Disproved`. This defense relies on `verify` seeing the full multiset. A
-/// `verify` that deduplicated its input would collapse `[d, d]` to `{d}`, which
-/// the honest proof satisfies, and the distinctness check would have to be
-/// hoisted to the caller.
+/// A duplicated spend would mint value: one honest single-spend stamp,
+/// republished by hand as an autonome with action list `[d, d]`,
+/// `value_balance = 2v`, `bsk = 2·rcv`, and `coverage` forged to `digest([d, d])`.
+/// Signatures and coverage pass, but `verify_proof` rejects the repeat as
+/// `DuplicateActions`, and the proof reconstructs `(x−d)²`, which the honest
+/// `(x−d)` proof does not commit to.
 #[test]
 fn duplicated_spend_cannot_inflate() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -715,11 +704,9 @@ fn duplicated_spend_cannot_inflate() {
     };
 }
 
-/// `verify_proof` deduplicates across the self+adjunct boundary, not just
-/// within one bundle: an aggregate and one of its adjuncts claiming the same
-/// action is the cross-bundle double-cover, and the count check rejects it
-/// before the proof. Every other duplicate test passes `&[]`, exercising only
-/// the self-only path; this drives the chained adjunct descriptors.
+/// `verify_proof` deduplicates across the self+adjunct boundary: an aggregate
+/// and an adjunct claiming the same action are rejected as `DuplicateActions`
+/// before the proof.
 #[test]
 fn verify_proof_rejects_action_shared_with_adjunct() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -738,11 +725,9 @@ fn verify_proof_rejects_action_shared_with_adjunct() {
     };
 }
 
-/// A unique but uncovered adjunct action clears the duplicate check yet fails
-/// the proof: `verify_proof` reconstructs the action polynomial over the
-/// combined set, which the bundle's stamp — proving only its own actions — does
-/// not commit to. This is the bundle-level route to `Disproved`, distinct from
-/// the `DuplicateActions` path (here the combined set stays a set).
+/// A unique but uncovered adjunct action passes the duplicate check but fails
+/// the proof: the combined action set is not what the bundle's stamp commits to,
+/// so `verify_proof` returns `Disproved`.
 #[test]
 fn verify_proof_disproves_uncovered_adjunct() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -762,13 +747,10 @@ fn verify_proof_disproves_uncovered_adjunct() {
     };
 }
 
-/// A more obfuscated double spend: the same note spent under two independent
-/// randomizations yields distinct descriptors, so the cheap bundle checks
-/// (descriptor-uniqueness and signatures) pass. It is still caught elsewhere —
-/// the proof refuses to aggregate the shared nullifiers (the stamp-level
-/// `double_spend_cannot_aggregate`) and the pool nullifier set rejects reuse
-/// across transactions — this test covers only that the cheap checks alone do
-/// not catch it.
+/// The same note spent under two independent randomizations yields distinct
+/// descriptors, so the cheap bundle checks (descriptor-uniqueness, signatures)
+/// pass. It is caught at the proof (shared nullifiers, see
+/// `double_spend_cannot_aggregate`) and by the pool nullifier set, not here.
 #[test]
 fn double_spend_secret() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1031,10 +1013,9 @@ fn based_aggregate_with_two_adjuncts() {
     }
 }
 
-/// The outer `verify` composes coverage, signatures, and proof for an autonome
-/// bundle with no adjuncts: the honest bundle passes, and a corrupted binding
-/// signature surfaces as `VerificationError::Signatures`. With no adjuncts the
-/// `wtxid` is never compared, so any nonzero value serves.
+/// The outer `verify` on an autonome (no adjuncts): the honest bundle passes,
+/// and a corrupted binding signature surfaces as `Signatures`. Without adjuncts
+/// the `wtxid` is unchecked, so any nonzero value serves.
 #[test]
 fn autonome_verify_composes_all_checks() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1099,15 +1080,11 @@ fn stamped_read_write_round_trip() {
         .expect("deserialized bundle must verify");
 }
 
-/// Actions are an ordered multiset: their wire order is significant and `read`
-/// reproduces it exactly, without reordering. There is no canonical order to
-/// enforce (the planner happens to emit sorted, but that is not a consensus
-/// rule), and an arbitrary order is fully valid: assembled in descending
-/// descriptor order with signatures over that order's commitment, the bundle
-/// round-trips unchanged and its signatures verify. Order still binds:
-/// [`permuted_actions_change_commitment`] shows a different order is a
-/// different commitment, so reordering after signing would break the
-/// signatures.
+/// Actions are an ordered multiset: `read` reproduces the wire order exactly,
+/// without reordering, and any order is valid. Assembled in descending
+/// descriptor order (non-canonical) with signatures over that order's
+/// commitment, the bundle round-trips unchanged and verifies. Order binds
+/// through the commitment; see [`permuted_actions_change_commitment`].
 #[test]
 fn read_preserves_action_order() {
     let rng = &mut StdRng::seed_from_u64(0);

@@ -385,15 +385,12 @@ fn double_spend_cannot_aggregate() {
 }
 
 /// A stamp cannot cover the same action twice. The honest merge refuses it on
-/// the action-set product relation (asserted below), since the two contributors
-/// share the action's descriptor. A malicious prover who force-fuses the
-/// multiset union bypasses that — but every action carries a tachygram (a
-/// spend's nullifiers, an output's commitment), so the doubled action doubles
-/// its tachygram, and the published stamp's canonical deduplicated set cannot
-/// reconstruct it. Verifying against the *doubled* action descriptors makes the
-/// action accumulator match, leaving the tachygram accumulator as the mismatch,
-/// so the forgery is `Disproved`. Publishing the duplicate tachygram on the
-/// wire is instead caught by [`read_rejects_duplicate_tachygrams`].
+/// the action-set product relation (the two contributors share the descriptor).
+/// A forced-fuse forgery bypasses that, but every action carries a tachygram, so
+/// the doubled action doubles its tachygram: verifying against `[d, d]` matches
+/// the action accumulator while the published deduplicated tachygram set fails
+/// to reconstruct the doubled one, so the proof is `Disproved`. The wire-level
+/// duplicate tachygram is caught by [`read_rejects_duplicate_tachygrams`].
 #[test]
 fn cannot_forge_stamp_covering_duplicated_action() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -466,13 +463,10 @@ fn cannot_forge_stamp_covering_duplicated_action() {
     );
 }
 
-/// `verify` characterization: it checks the proof against exactly the
-/// descriptor multiset it is handed, and nothing more. A duplicated action that
-/// a caller deduplicated to `{d}` verifies against the single-action proof; the
-/// true multiset `[d, d]` reconstructs `(x−d)²` and does not. So `verify`
-/// cannot distinguish a deduplicated duplicate from a genuine single action —
-/// detecting the duplicate is the caller's responsibility, which is why it must
-/// pass the full multiset.
+/// `verify_proof` checks the proof against exactly the multiset it is handed:
+/// the deduplicated `{d}` matches the single-action proof, while the true
+/// `[d, d]` reconstructs `(x−d)²` and does not. Detecting a duplicate is the
+/// caller's obligation.
 #[test]
 fn verify_cannot_distinguish_a_deduplicated_duplicate() {
     let rng = &mut StdRng::seed_from_u64(0);

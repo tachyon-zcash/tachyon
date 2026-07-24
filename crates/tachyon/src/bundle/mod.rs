@@ -179,13 +179,11 @@ impl<S: StampState + 'static> PartialEq for Bundle<S> {
 }
 
 impl<S: BundleState + ?Sized> Bundle<S> {
-    /// Collect the descriptors of all actions in the bundle, in order.
+    /// Collect the descriptors of all actions in the bundle, preserving wire
+    /// order and duplicates.
     ///
-    /// Original construction or wire order is preserved and duplicates are
-    /// kept. Multiplicity is evident in both the bundle commitment and the set
-    /// commitment used for proof verification, so callers must not deduplicate
-    /// before before passing these to [`ProofStamp::verify`] or
-    /// [`ProofStamp::covers`].
+    /// Multiplicity is significant to both the bundle commitment and proof
+    /// verification, so callers must not deduplicate these.
     #[must_use]
     pub fn descriptors(&self) -> Vec<action::Descriptor> {
         // Do NOT sort here: maintain order as constructed.
@@ -495,8 +493,8 @@ impl Bundle<ProofStamp> {
     /// Confirm `hStampActionsTachyon` represents the combined actions of this
     /// bundle and the given bundles.
     ///
-    /// Action descriptors will be sorted but not deduplicated, so that a caller
-    /// checking a collection which contains duplicates can detect the mismatch.
+    /// Descriptors are sorted but not deduplicated, so a collection containing
+    /// duplicates mismatches.
     #[must_use]
     pub fn covers(&self, others: &[&Bundle<dyn StampState>]) -> bool {
         let own_descs = self.descriptors().into_iter();
@@ -559,15 +557,12 @@ impl Bundle<ProofStamp> {
         Ok(())
     }
 
-    /// Fully verify the bundle: stamp coverage, signatures, then the proof.
+    /// Fully verify the bundle: adjunct pointers, stamp coverage, signatures,
+    /// then the proof.
     ///
-    /// The coverage and proof checks span the combined action set of this
-    /// bundle and its `adjuncts` (empty for an autonome bundle). The value
-    /// balance is confirmed by the binding signature, which signs under a
-    /// verification key derived from the action value commitments and the
-    /// plaintext balance, so a balance error surfaces as a
-    /// binding-signature failure. Action uniqueness is enforced by
-    /// [`Bundle::verify_proof`].
+    /// Coverage and proof span this bundle's actions plus its `adjuncts` (empty
+    /// for an autonome). A wrong value balance surfaces as a binding-signature
+    /// failure; action uniqueness is enforced by [`Bundle::verify_proof`].
     pub fn verify<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -864,8 +859,8 @@ impl TachyonBundle {
     /// Confirm `hStampActionsTachyon` represents the combined actions of this
     /// bundle and the given bundles.
     ///
-    /// Action descriptors will be sorted but not deduplicated, so that a caller
-    /// checking a collection which contains duplicates can detect the mismatch.
+    /// Descriptors are sorted but not deduplicated, so a collection containing
+    /// duplicates mismatches.
     #[must_use]
     pub fn covers(&self, adjuncts: &[Self]) -> bool {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
