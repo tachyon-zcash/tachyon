@@ -48,13 +48,13 @@
 //!
 //! When `tachyonBundleState == 1`, the bundle carries a proof stamp.
 //!
-//! | Name                  | Format               | Description                              |
-//! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `hStampActionsTachyon`     | 32 bytes             | BLAKE2b digest of the covered actions    |
-//! | `anchorTachyon`       | 32 bytes             | pool state reference                     |
-//! | `nTachygrams`         | compactsize          | number of tachygrams                     |
-//! | `vTachygrams`         | 32 * nTachygrams     | tachygrams for this proof                |
-//! | `proofTachyon`        | PROOF_SIZE blob      | serialized proof of fixed size           |
+//! | Name                   | Format               | Description                              |
+//! | ---------------------- | -------------------- | ---------------------------------------- |
+//! | `hStampActionsTachyon` | 32 bytes             | BLAKE2b digest of the covered actions    |
+//! | `anchorTachyon`        | 32 bytes             | pool state reference                     |
+//! | `nTachygrams`          | compactsize          | number of tachygrams                     |
+//! | `vTachygrams`          | 32 * nTachygrams     | tachygrams for this proof                |
+//! | `proofTachyon`         | PROOF_SIZE blob      | serialized proof of fixed size           |
 //!
 //! ## Pointer stamp
 //!
@@ -68,20 +68,24 @@
 //! 64-byte value: the pointer stamp's `wtxid` directly, or
 //! `hStampActionsTachyon || stamp_data_digest` for a proof stamp.
 
-use alloc::{collections::BTreeSet, vec::Vec};
-use core::ops::Neg as _;
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec::Vec,
+};
+use core::{cmp::Ordering, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
+    ActionDigest, ActionDigestError,
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
-    primitives::{ActionDigestError, Anchor, effect},
+    primitives::{Anchor, effect},
     reddsa, serialization,
-    stamp::{self, PointerStamp, ProofStamp, StampState, Unproven},
+    stamp::{self, AggregateIdError, PointerStamp, ProofStamp, StampState, Unproven},
     value,
 };
 
@@ -140,13 +144,13 @@ pub trait BundleState: sealed::Sealed {}
 impl<T: sealed::Sealed> BundleState for T {}
 
 /// A Tachyon transaction bundle parameterized by bundle state `S`.
-#[derive(Clone, Debug, PartialEq, TotalEq)]
+#[derive(Clone, Debug)]
 pub struct Bundle<S: BundleState + ?Sized> {
-    /// Actions (cv, rk, sig).
-    pub actions: Vec<Action>,
-
     /// Net value of spends minus outputs (plaintext integer).
     pub value_balance: value::Balance,
+
+    /// Actions (cv, rk, sig).
+    pub actions: Vec<Action>,
 
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
@@ -155,11 +159,21 @@ pub struct Bundle<S: BundleState + ?Sized> {
     pub stamp: S,
 }
 
+impl<S: StampState + 'static> PartialEq for Bundle<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.commitment() == other.commitment() && self.auth_digest() == other.auth_digest()
+    }
+}
+
 impl<S: BundleState + ?Sized> Bundle<S> {
-    /// Collect the descriptors of all actions in the bundle.
+    /// Collect the descriptors of all actions in the bundle, preserving wire
+    /// order and duplicates.
+    ///
+    /// Multiplicity is significant to both the bundle commitment and proof
+    /// verification, so callers must not deduplicate these.
     #[must_use]
     pub fn descriptors(&self) -> Vec<action::Descriptor> {
-        // Do NOT sort here: a constructed bundle should already be canonical.
+        // Do NOT sort here: maintain order as constructed.
         self.actions.iter().map(Action::descriptor).collect()
     }
 
@@ -168,6 +182,9 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     /// This contributes to the transaction sighash. The stamp is excluded
     /// because it is considered authorizing data, and is malleable during
     /// aggregation.
+    ///
+    /// The digest binds actions in wire order and is therefore sensitive to
+    /// their ordering.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
         let descriptors: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
@@ -198,30 +215,6 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     }
 }
 
-/// Errors during bundle construction.
-#[derive(Clone, Copy, Debug, Display, Error)]
-pub enum BuildError {
-    /// Ragu proof verification failed.
-    #[display("proof verification failed")]
-    ProofInvalid,
-
-    /// BSK/BVK mismatch (see Protocol §4.14).
-    #[display("binding signing key does not match verification key")]
-    BalanceKeyMismatch,
-}
-
-/// Errors that can occur when computing a bundle plan commitment.
-#[derive(Debug, Display, Error, From)]
-#[non_exhaustive]
-pub enum CommitError {
-    /// An action digest could not be constructed.
-    #[display("action digest: {_0}")]
-    ActionDigest(#[error(not(source))] ActionDigestError),
-    /// The value balance overflows the representable range.
-    #[display("value balance overflow")]
-    BalanceOverflow(#[error(not(source))] value::OutOfRange),
-}
-
 /// Errors from bundle signature verification.
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
@@ -234,13 +227,63 @@ pub enum SignatureError {
     Action(#[error(not(source))] action::Signature),
 }
 
+/// Error during proof verification.
+#[derive(Debug, Display, Error)]
+pub enum VerifyProofError {
+    /// An action's cv or rk is the identity point.
+    #[display("action digest error: {_0}")]
+    ActionDigest(ActionDigestError),
+    /// The proof system returned an error.
+    #[display("proof system error: {_0}")]
+    ProofSystem(ragu::Error),
+}
+
+/// Errors during coverage verification.
+#[derive(Debug, Display, Error)]
+pub enum VerifyCoverageError {
+    /// The actions are not unique.
+    #[display("actions are not unique")]
+    DuplicateActions,
+    /// The stamp on this bundle does not claim to cover these actions.
+    #[display("stamp on this bundle does not claim to cover these actions")]
+    StampActionsMismatch,
+}
+
+/// Errors during adjunct pointer verification.
+#[derive(Debug, Display, Error)]
+pub enum VerifyPointersError {
+    /// The pointer of an adjunct is not the expected aggregate id.
+    #[display("stamp on an adjunct does not match the expected aggregate id")]
+    AdjunctPointerMismatch,
+    /// The adjunct is not in the expected state.
+    #[display("stamp on an adjunct does not contain a valid pointer")]
+    AdjunctPointerInvalid(AggregateIdError),
+}
+
+/// Errors during bundle verification.
+#[derive(Debug, Display, Error)]
+pub enum VerificationError {
+    /// The pointer of an adjunct is not the expected aggregate id.
+    #[display("stamp on an adjunct does not match the expected aggregate id")]
+    Pointers(VerifyPointersError),
+    /// An error occurred while verifying the coverage.
+    #[display("coverage verification error: {_0}")]
+    Coverage(VerifyCoverageError),
+    /// An error occurred while verifying the proof.
+    #[display("proof verification error: {_0}")]
+    Proof(VerifyProofError),
+    /// The proof did not verify.
+    #[display("proof did not verify")]
+    Disproved,
+}
+
 /// Errors that can occur while signing a bundle plan.
-#[derive(Clone, Copy, Debug, Display, Error)]
+#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
 #[non_exhaustive]
-pub enum SignError {
-    /// The number of signatures does not match the number of actions.
-    #[display("expected {_0} signatures")]
-    SigCountMismatch(#[error(not(source))] usize),
+pub enum PlanError {
+    /// The signatures do not match the planned actions.
+    #[display("planned actions do not match signed actions")]
+    ActionSigMismatch,
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
     BalanceOverflow,
@@ -279,14 +322,15 @@ impl Plan {
         spend_transform.chain(output_transform)
     }
 
-    /// Collect and sort the descriptors of all actions in the plan.
+    /// Collect the descriptors of all actions in the plan, sorted and
+    /// deduplicated.
+    ///
+    /// This is the prover-side set. Contrast [`Bundle::descriptors`], the wire
+    /// multiset that preserves order and duplicates.
     #[must_use]
-    pub fn descriptors(&self) -> Vec<action::Descriptor> {
-        let mut desc = self
-            .iter_actions(action::Plan::descriptor, action::Plan::descriptor)
-            .collect::<Vec<action::Descriptor>>();
-        desc.sort_unstable();
-        desc
+    pub fn descriptors(&self) -> BTreeSet<action::Descriptor> {
+        self.iter_actions(action::Plan::descriptor, action::Plan::descriptor)
+            .collect()
     }
 
     /// Derive value_balance from note values.
@@ -309,8 +353,11 @@ impl Plan {
     }
 
     /// Compute a digest of all the bundle's effecting data.
-    /// See [`Bundle::commitment`].
-    pub fn commitment(&self) -> Result<[u8; 32], CommitError> {
+    ///
+    /// # Errors
+    ///
+    /// Fails if the value balance overflows the representable range.
+    pub fn commitment(&self) -> Result<[u8; 32], value::OutOfRange> {
         let desc_bytes: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
 
         Ok(blake2b::bundle_commitment(
@@ -353,10 +400,7 @@ impl Plan {
     /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i$.
     #[must_use]
     pub fn derive_bsk_private(&self) -> private::BindingSigningKey {
-        let trapdoors: Vec<_> = self
-            .iter_actions(|plan| plan.rcv, |plan| plan.rcv)
-            .collect();
-        private::BindingSigningKey::from(trapdoors.as_slice())
+        private::BindingSigningKey::from(self.iter_actions(|plan| plan.rcv, |plan| plan.rcv))
     }
 
     /// Sign actions with the provided [`private::SpendAuthorizingKey`] and then
@@ -369,44 +413,28 @@ impl Plan {
         rng: &mut RNG,
         sighash: &[u8; 32],
         ask: &private::SpendAuthorizingKey,
-    ) -> Result<Bundle<Unproven>, SignError> {
-        let mut authorized = Vec::with_capacity(self.spends.len() + self.outputs.len());
+    ) -> Result<Bundle<Unproven>, PlanError> {
+        let mut authorized: BTreeMap<action::Descriptor, action::Signature> = BTreeMap::new();
 
         for plan in &self.spends {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Spend>(cm);
             let rsk = ask.derive_action_private(&alpha);
-            authorized.push(Action {
-                cv: plan.cv(),
-                rk: plan.rk,
-                sig: rsk.sign(rng, sighash),
-            });
+            authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
         }
 
         for plan in &self.outputs {
             let cm = plan.note.commitment();
             let alpha = plan.theta.randomizer::<effect::Output>(cm);
             let rsk = private::ActionSigningKey::new(&alpha);
-            authorized.push(Action {
-                cv: plan.cv(),
-                rk: plan.rk,
-                sig: rsk.sign(rng, sighash),
-            });
+            authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
         }
 
-        authorized.sort_unstable();
-
-        self.apply_signatures(
-            rng,
-            sighash,
-            authorized.into_iter().map(|action| action.sig).collect(),
-        )
+        self.apply_signatures(rng, sighash, authorized)
     }
 
     /// Apply externally-produced action signatures and then sign the bundle
     /// with the [`private::BindingSigningKey`].
-    ///
-    /// Signatures must be provided in canonical order.
     ///
     /// To confirm correct application, call [`Bundle::verify_signatures`] on
     /// the return value.
@@ -414,28 +442,22 @@ impl Plan {
         &self,
         rng: &mut RNG,
         sighash: &[u8; 32],
-        sigs: Vec<action::Signature>,
-    ) -> Result<Bundle<Unproven>, SignError> {
-        let n_actions = self.spends.len() + self.outputs.len();
-        if sigs.len() != n_actions {
-            return Err(SignError::SigCountMismatch(n_actions));
+        authorized: BTreeMap<action::Descriptor, action::Signature>,
+    ) -> Result<Bundle<Unproven>, PlanError> {
+        let value_balance = self
+            .value_balance()
+            .map_err(|_err| PlanError::BalanceOverflow)?;
+
+        if self.descriptors() != authorized.keys().copied().collect() {
+            return Err(PlanError::ActionSigMismatch);
         }
+        let actions = authorized.into_iter().map(Action::from).collect();
 
-        let authorized = self
-            .descriptors()
-            .into_iter()
-            .zip(sigs)
-            .map(|(desc, sig)| Action::from_parts(desc, sig))
-            .collect::<Vec<Action>>();
-
-        let bsk = self.derive_bsk_private();
-        let binding_sig = bsk.sign(rng, sighash);
+        let binding_sig = self.derive_bsk_private().sign(rng, sighash);
 
         Ok(Bundle {
-            actions: authorized,
-            value_balance: self
-                .value_balance()
-                .map_err(|_err| SignError::BalanceOverflow)?,
+            actions,
+            value_balance,
             binding_sig,
             stamp: Unproven,
         })
@@ -467,36 +489,135 @@ impl Bundle<ProofStamp> {
         }
     }
 
-    /// Confirm published coverage without verifying the proof: reconstruct
-    /// the covered-actions digest from this bundle's actions plus every
-    /// adjunct's and check it against the carried `hStampActionsTachyon`.
-    /// Adjuncts may be in any stamp state, mixed freely. Assistive, not
-    /// soundness.
+    /// Confirm `hStampActionsTachyon` represents the combined actions of this
+    /// bundle and the given bundles.
     #[must_use]
-    pub fn covers(&self, adjuncts: &[&Bundle<dyn StampState>]) -> bool {
-        let own_descs = self.actions.iter().map(Action::descriptor);
-        let other_descs = adjuncts
-            .iter()
-            .flat_map(|adjunct| adjunct.actions.iter())
-            .map(Action::descriptor);
+    pub fn is_covering(&self, others: &[&Bundle<dyn StampState>]) -> bool {
+        let own_descs = self.descriptors();
+        let other_descs = others.iter().flat_map(|&adjunct| adjunct.descriptors());
 
-        self.stamp.covers(
-            &own_descs
-                .chain(other_descs)
-                .collect::<Vec<action::Descriptor>>(),
-        )
+        self.stamp
+            .is_covering(own_descs.into_iter().chain(other_descs))
     }
 
-    /// Check if this bundle is an aggregate, by computing the digest of its
-    /// owned actions and comparing to its stamp's `hStampActionsTachyon`.
+    /// Confirm `hStampActionsTachyon` represents this bundle's actions.
+    #[must_use]
+    pub fn is_autonome(&self) -> bool {
+        self.is_covering(&[])
+    }
+
+    /// Confirm `hStampActionsTachyon` does not represent this bundle's actions.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
-        let desc_bytes = self.descriptors().into_iter().collect::<Vec<[u8; 64]>>();
-        blake2b::action_descriptor_digest(&desc_bytes) == self.stamp.actions
+        !self.is_covering(&[])
+    }
+
+    /// Verify the stamp's coverage against the combined unique actions of this
+    /// bundle and the provided bundles.
+    pub fn verify_coverage(
+        &self,
+        adjuncts: &[&Bundle<dyn StampState>],
+    ) -> Result<BTreeSet<action::Descriptor>, VerifyCoverageError> {
+        let own_descs = self.descriptors();
+        let other_descs: Vec<action::Descriptor> =
+            adjuncts.iter().flat_map(|&adj| adj.descriptors()).collect();
+
+        let n_descs = own_descs.len() + other_descs.len();
+
+        let unique_descs: BTreeSet<action::Descriptor> =
+            own_descs.into_iter().chain(other_descs).collect();
+
+        if unique_descs.len() != n_descs {
+            return Err(VerifyCoverageError::DuplicateActions);
+        }
+
+        if !self.stamp.is_covering(unique_descs.clone()) {
+            return Err(VerifyCoverageError::StampActionsMismatch);
+        }
+
+        Ok(unique_descs)
+    }
+
+    /// Verify the pointers of the adjuncts against the expected wtxid.
+    pub fn verify_pointers(
+        &self,
+        wtxid: &[u8; 64],
+        adjuncts: &[&Bundle<dyn StampState>],
+    ) -> Result<(), VerifyPointersError> {
+        PointerStamp::try_from(*wtxid).map_err(VerifyPointersError::AdjunctPointerInvalid)?;
+
+        if adjuncts
+            .iter()
+            .all(|&adj| &adj.stamp.stamp_digest() == wtxid)
+        {
+            Ok(())
+        } else {
+            Err(VerifyPointersError::AdjunctPointerMismatch)
+        }
+    }
+
+    /// Verify the stamp's proof against the combined actions of this bundle and
+    /// the provided bundles.
+    pub fn verify_proof<RNG: RngCore + CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        adjuncts: &[&Bundle<dyn StampState>],
+    ) -> Result<bool, VerifyProofError> {
+        let own_digests = self.actions.iter().map(|&action| action.digest());
+
+        let other_digests = adjuncts
+            .iter()
+            .flat_map(|&adj| adj.actions.iter().map(|&action| action.digest()));
+
+        let action_digests = own_digests
+            .chain(other_digests)
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
+            .map_err(VerifyProofError::ActionDigest)?;
+
+        self.stamp
+            .verify_proof(rng, action_digests)
+            .map_err(VerifyProofError::ProofSystem)
+    }
+
+    /// Verify the proof stamp with given adjuncts.
+    ///
+    /// Verification of signatures remains the responsibility of the caller.
+    pub fn verify<RNG: RngCore + CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        wtxid: &[u8; 64],
+        adjuncts: &[&Bundle<PointerStamp>],
+    ) -> Result<(), VerificationError> {
+        let adjuncts_dyn: Vec<&Bundle<dyn StampState>> =
+            adjuncts.iter().map(|&adj| adj.as_dyn()).collect();
+
+        self.verify_pointers(wtxid, &adjuncts_dyn)
+            .map_err(VerificationError::Pointers)?;
+
+        self.verify_coverage(&adjuncts_dyn)
+            .map_err(VerificationError::Coverage)?;
+
+        if self
+            .verify_proof(rng, &adjuncts_dyn)
+            .map_err(VerificationError::Proof)?
+        {
+            Ok(())
+        } else {
+            Err(VerificationError::Disproved)
+        }
     }
 }
 
 impl<S: StampState> Bundle<S> {
+    /// Borrow this bundle as a trait object.
+    #[must_use]
+    pub fn as_dyn(&self) -> &Bundle<dyn StampState>
+    where
+        S: 'static,
+    {
+        self
+    }
+
     /// Read a stamped bundle in state `S` from the consensus wire format.
     ///
     /// See the module-level wire format documentation.
@@ -516,12 +637,13 @@ impl<S: StampState> Bundle<S> {
     /// Read everything after the `tachyonBundleState` byte: value balance,
     /// action descriptors, action sigs, binding sig, and the stamp trailer.
     fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
-        let mut vb_bytes = [0u8; 8];
-        reader.read_exact(&mut vb_bytes)?;
-        let value_balance =
-            value::Balance::try_from(i64::from_le_bytes(vb_bytes)).map_err(|_err| {
+        let value_balance = {
+            let mut bytes = [0u8; size_of::<i64>()];
+            reader.read_exact(&mut bytes)?;
+            value::Balance::try_from(i64::from_le_bytes(bytes)).map_err(|_err| {
                 io::Error::new(io::ErrorKind::InvalidData, "value balance out of range")
-            })?;
+            })
+        }?;
 
         // `n_actions` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
         // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
@@ -535,19 +657,16 @@ impl<S: StampState> Bundle<S> {
                 )
             })?;
 
+        if n_actions == 0 && value_balance != value::Balance::ZERO {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bundle with no actions must have zero value balance",
+            ));
+        }
+
         let mut descriptors: Vec<action::Descriptor> = Vec::new();
         for _ in 0..n_actions {
             descriptors.push(action::Descriptor::read(&mut reader)?);
-        }
-
-        let mut unique_descriptors = BTreeSet::new();
-        for descriptor in &descriptors {
-            if !unique_descriptors.insert(descriptor) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "action descriptors are not unique",
-                ));
-            }
         }
 
         let mut signatures: Vec<action::Signature> = Vec::new();
@@ -558,30 +677,16 @@ impl<S: StampState> Bundle<S> {
         let actions: Vec<Action> = descriptors
             .into_iter()
             .zip(signatures)
-            .map(|(desc, sig)| Action::from_parts(desc, sig))
+            .map(Action::from)
             .collect();
-
-        if !actions.is_sorted() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "actions are not canonically sorted",
-            ));
-        }
-
-        if actions.is_empty() && value_balance != value::Balance::ZERO {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "bundle with no actions must have zero value balance",
-            ));
-        }
 
         let binding_sig = Signature::read(&mut reader)?;
 
         let stamp = S::read(&mut reader)?;
 
         Ok(Self {
-            actions,
             value_balance,
+            actions,
             binding_sig,
             stamp,
         })
@@ -600,11 +705,12 @@ impl<S: StampState> Bundle<S> {
                 "actions vector length exceeds u64",
             )
         })?;
-        serialization::write_compactsize(&mut writer, n_actions)?;
 
+        serialization::write_compactsize(&mut writer, n_actions)?;
         for action in &self.actions {
             action.descriptor().write(&mut writer)?;
         }
+
         for action in &self.actions {
             action.sig.write(&mut writer)?;
         }
@@ -647,7 +753,47 @@ pub enum TachyonBundle {
     Adjunct(Bundle<PointerStamp>),
 }
 
+impl PartialEq for TachyonBundle {
+    fn eq(&self, other: &Self) -> bool {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
+        match *self {
+            Self::NoBundle => other.is_no_bundle(),
+            Self::Proven(ref bundle) => {
+                other.is_proven()
+                    && bundle.commitment() == other.commitment()
+                    && bundle.auth_digest() == other.auth_digest()
+            },
+            Self::Adjunct(ref bundle) => {
+                other.is_adjunct()
+                    && bundle.commitment() == other.commitment()
+                    && bundle.auth_digest() == other.auth_digest()
+            },
+        }
+    }
+}
+
+impl PartialOrd for TachyonBundle {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(
+            self.commitment()
+                .cmp(&other.commitment())
+                .then(self.auth_digest().cmp(&other.auth_digest())),
+        )
+    }
+}
+
 impl TachyonBundle {
+    /// Borrow the inner bundle as a trait object, if it exists.
+    #[must_use]
+    pub fn as_dyn(&self) -> Option<&Bundle<dyn StampState>> {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
+        match *self {
+            Self::NoBundle => None,
+            Self::Proven(ref bundle) => Some(bundle),
+            Self::Adjunct(ref bundle) => Some(bundle),
+        }
+    }
+
     /// Read any Tachyon bundle from the consensus wire format, dispatching
     /// on the `tachyonBundleState` byte.
     ///
@@ -699,13 +845,45 @@ impl TachyonBundle {
         }
     }
 
-    /// Check if this bundle is an aggregate.
+    /// Confirm this bundle has a proof stamp, but its `hStampActionsTachyon`
+    /// does not represent this bundle's actions.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => false,
             Self::Proven(ref stamped) => stamped.is_aggregate(),
+            Self::Adjunct(ref _stamped) => false,
+        }
+    }
+
+    /// Confirm this bundle has a proof stamp, and its `hStampActionsTachyon`
+    /// represents this bundle's actions.
+    #[must_use]
+    pub fn is_autonome(&self) -> bool {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
+        match *self {
+            Self::NoBundle => false,
+            Self::Proven(ref stamped) => stamped.is_autonome(),
+            Self::Adjunct(ref _stamped) => false,
+        }
+    }
+
+    /// Confirm `hStampActionsTachyon` represents the combined actions of this
+    /// bundle and the given bundles.
+    ///
+    /// Descriptors are sorted but not deduplicated, so a collection containing
+    /// duplicates mismatches.
+    #[must_use]
+    pub fn is_covering(&self, adjuncts: &[Self]) -> bool {
+        #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
+        match *self {
+            Self::NoBundle => false,
+            Self::Proven(ref stamped) => adjuncts
+                .iter()
+                .map(|adj| adj.as_dyn())
+                .collect::<Option<Vec<&Bundle<dyn StampState>>>>()
+                .is_some_and(|dyn_adjuncts| stamped.is_covering(&dyn_adjuncts)),
             Self::Adjunct(ref _stamped) => false,
         }
     }

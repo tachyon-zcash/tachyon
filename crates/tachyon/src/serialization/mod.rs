@@ -6,8 +6,6 @@
 
 #![allow(dead_code, reason = "may not be used")]
 
-use alloc::vec::Vec;
-
 use corez::io::{self, Read, Write};
 use ff::PrimeField as _;
 use pasta_curves::{EpAffine, EqAffine, Fp, Fq, group::GroupEncoding as _};
@@ -44,34 +42,6 @@ pub(crate) fn read_fp<R: Read>(mut reader: R) -> io::Result<Fp> {
     reader.read_exact(&mut bytes)?;
     Option::from(Fp::from_repr(bytes))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid Fp encoding"))
-}
-
-pub(crate) fn read_fp_list<R: Read>(mut reader: R) -> io::Result<Vec<Fp>> {
-    let n = usize::try_from(read_compactsize(&mut reader)?).map_err(|_err| {
-        io::Error::new(io::ErrorKind::InvalidData, "vector length exceeds usize")
-    })?;
-    // TODO: `n` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so do
-    // not pre-allocate from it; growth on push hits EOF and errors before any
-    // dangerous allocation.
-    let mut fp_list = Vec::new();
-    for _ in 0..n {
-        let fp = read_fp(&mut reader)?;
-        fp_list.push(fp);
-    }
-    Ok(fp_list)
-}
-
-pub(crate) fn write_fp_list<W: Write>(mut writer: W, fp_list: &[Fp]) -> io::Result<()> {
-    write_compactsize(
-        &mut writer,
-        u64::try_from(fp_list.len()).map_err(|_err| {
-            io::Error::new(io::ErrorKind::InvalidData, "vector length exceeds u64")
-        })?,
-    )?;
-    for fp in fp_list {
-        write_fp(&mut writer, fp)?;
-    }
-    Ok(())
 }
 
 /// Write a Pallas base field element (`Fp`) as 32 bytes.

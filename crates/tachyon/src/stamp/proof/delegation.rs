@@ -279,12 +279,8 @@ impl Step for NullifierFuse {
             ],
             [(-Fp::ONE, offset)],
             &Polynomial::from(merged_seq),
-        )
-        .map_err(|_relation_err| {
-            ragu::Error::InvalidWitness(
-                "NullifierFuse: merged is not the concat of the halves".into(),
-            )
-        })?;
+            "NullifierFuse: merged is not the concat of the halves",
+        )?;
         // Pin the boundary nullifiers that sit at a queryable degree-0 position:
         // the merged sequence opens to `left_nf_start` (its first leaf), and the
         // right half opens to `right_nf_start`. Each ties a witnessed sequence to

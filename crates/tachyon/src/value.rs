@@ -1,9 +1,6 @@
 //! Value commitments and bounded value types.
 
-use core::{
-    cmp,
-    ops::{self, Neg as _},
-};
+use core::{cmp, ops};
 
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
 use ff::Field as _;

@@ -31,7 +31,10 @@ mod serialization;
 pub(crate) mod fixtures;
 
 pub use action::{Action, Plan as ActionPlan};
-pub use bundle::{Bundle, Plan as BundlePlan, TachyonBundle};
+pub use bundle::{
+    Bundle, Plan as BundlePlan, SignatureError, TachyonBundle, VerificationError,
+    VerifyCoverageError, VerifyPointersError, VerifyProofError,
+};
 pub use note::Note;
 pub use primitives::*;
-pub use stamp::{PointerStamp, ProofStamp, Unproven};
+pub use stamp::{AggregateIdError, Plan as StampPlan, PointerStamp, ProofStamp, Unproven};

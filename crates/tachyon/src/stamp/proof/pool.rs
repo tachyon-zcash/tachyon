@@ -440,12 +440,8 @@ impl Step for UnspentFuse {
             ],
             [(-Fp::ONE, offset)],
             &Polynomial::from(combined_elapsed_seq),
-        )
-        .map_err(|_relation_err| {
-            ragu::Error::InvalidWitness(
-                "UnspentFuse: combined is not the concatenation of the halves".into(),
-            )
-        })?;
+            "UnspentFuse: combined is not the concatenation of the halves",
+        )?;
         Ok((
             (
                 left_anchor_prev,
@@ -536,12 +532,8 @@ impl Step for UnspentEpochFuse {
             ],
             [(Fp::from(left_nf_end) - Fp::ONE, offset)],
             &Polynomial::from(combined_elapsed_seq),
-        )
-        .map_err(|_relation_err| {
-            ragu::Error::InvalidWitness(
-                "UnspentEpochFuse: combined is not the splice of the halves".into(),
-            )
-        })?;
+            "UnspentEpochFuse: combined is not the splice of the halves",
+        )?;
         Ok((
             (
                 left_anchor_prev,
@@ -628,12 +620,8 @@ impl Step for VerifyUnspent {
                 (Fp::ONE, offset + 1),
             ],
             &Polynomial::from(nf_seq),
-        )
-        .map_err(|_relation_err| {
-            ragu::Error::InvalidWitness(
-                "VerifyUnspent: range is not elapsed followed by the tip".into(),
-            )
-        })?;
+            "VerifyUnspent: range is not elapsed followed by the tip",
+        )?;
         // Bind the unspent's free-witness boundary nullifiers to the range's
         // genuine boundary leaves, which the derivation header proved by
         // construction.

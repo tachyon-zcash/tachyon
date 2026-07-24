@@ -18,7 +18,7 @@ mod sealed {
 }
 
 /// Sealed trait marking an action effect (spend or output).
-pub trait Effect: sealed::Sealed + 'static {
+pub trait Effect: sealed::Sealed {
     /// Derive this effect's $\alpha$ scalar from per-action entropy and a note
     /// commitment.
     ///

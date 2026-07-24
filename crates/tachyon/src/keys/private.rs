@@ -234,14 +234,6 @@ impl ActionSigningKey<effect::Output> {
 #[derive(Clone, Copy, Debug)]
 pub struct BindingSigningKey(#[debug(skip)] reddsa::SigningKey<reddsa::BindingAuth>);
 
-impl TryFrom<[u8; 32]> for BindingSigningKey {
-    type Error = reddsa::Error;
-
-    fn try_from(bytes: [u8; 32]) -> Result<Self, Self::Error> {
-        reddsa::SigningKey::<reddsa::BindingAuth>::try_from(bytes).map(Self)
-    }
-}
-
 impl BindingSigningKey {
     /// Sign a transaction sighash with this binding key.
     pub fn sign<RNG: RngCore + CryptoRng>(
@@ -260,16 +252,17 @@ impl BindingSigningKey {
     }
 }
 
-impl From<&[value::Trapdoor]> for BindingSigningKey {
+impl<I: IntoIterator<Item = value::Trapdoor>> From<I> for BindingSigningKey {
     /// BindingAuth signing key is the scalar sum of all value commitment
     /// trapdoors.
     ///
     /// Every Pallas scalar field element, including zero, is a valid binding
     /// signing key. See Zcash protocol §4.14.
-    fn from(trapdoors: &[value::Trapdoor]) -> Self {
+    fn from(trapdoors: I) -> Self {
         let sum: Fq = trapdoors
-            .iter()
-            .fold(Fq::ZERO, |acc, rcv| acc + Into::<Fq>::into(*rcv));
+            .into_iter()
+            .fold(Fq::ZERO, |acc, rcv| acc + Fq::from(rcv));
+
         #[expect(
             clippy::expect_used,
             reason = "all Fq are valid RedPallas signing keys"

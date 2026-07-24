@@ -33,11 +33,15 @@ use crate::{
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note, Nullifier, NullifierTrapdoor},
     primitives::{
-        Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
+        ActionSetPoly, Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit,
+        TachygramSetPoly, effect,
     },
     stamp::{
-        PointerStamp, ProofStamp,
-        proof::{PROOF_SYSTEM, delegation, pool, spendable},
+        PointerStamp, ProofStamp, StampState,
+        proof::{
+            PROOF_SYSTEM, delegation, pool, spendable,
+            stamp::{MergeStamp, StampHeader},
+        },
     },
     value, witness,
 };
@@ -55,19 +59,43 @@ pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     out
 }
 
-/// A stand-in for the covering aggregate's `wtxid = txid || auth_digest`:
-/// a mock txid over the bundle commitment, beside the real `auth_digest`.
-pub fn mock_wtxid(bundle: &Bundle<ProofStamp>) -> PointerStamp {
-    let txid = blake2b_simd::Params::new()
+pub fn mock_txid(bundle_commitment: [u8; 32]) -> [u8; 32] {
+    let hash = blake2b_simd::Params::new()
         .hash_length(32)
         .personal(b"pretend txid")
         .to_state()
-        .update(&bundle.commitment())
+        .update(&bundle_commitment)
         .finalize();
 
+    let mut out = [0u8; 32];
+    out.copy_from_slice(hash.as_bytes());
+    out
+}
+
+pub fn mock_auth_digest(bundle_auth_digest: [u8; 32]) -> [u8; 32] {
+    let hash = blake2b_simd::Params::new()
+        .hash_length(32)
+        .personal(b"pretend auth")
+        .to_state()
+        .update(&bundle_auth_digest)
+        .finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(hash.as_bytes());
+    out
+}
+
+/// A stand-in for the covering aggregate's `wtxid = txid || auth_digest`.
+///
+/// Kept distinct from [`mock_sighash`] on purpose: the transaction sighash
+/// equals the txid only for a fully shielded transaction, and `Bundle::verify`
+/// takes the sighash and the covering wtxid as independent inputs. Deriving the
+/// txid half from a separate transform lets tests catch any regression that
+/// conflates the two.
+pub fn mock_wtxid<S: StampState + 'static>(bundle: &Bundle<S>) -> PointerStamp {
     let mut wtxid = [0u8; 64];
-    wtxid[..32].copy_from_slice(txid.as_bytes());
-    wtxid[32..].copy_from_slice(&bundle.auth_digest());
+    wtxid[..32].copy_from_slice(&mock_txid(bundle.commitment()));
+    wtxid[32..].copy_from_slice(&mock_auth_digest(bundle.auth_digest()));
+
     PointerStamp::try_from(wtxid).expect("nonzero wtxid")
 }
 
@@ -122,7 +150,7 @@ pub fn build_output_stamp(
     let (tachygrams, stamp_anchor, proof) =
         ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
     let stamp = ProofStamp {
-        actions: blake2b::action_descriptor_digest(
+        coverage: blake2b::action_descriptor_digest(
             &iter::once(plan.descriptor()).collect::<Vec<[u8; 64]>>(),
         ),
         tachygrams,
@@ -153,6 +181,78 @@ pub fn build_autonome(
         alloc::vec![(spend_note, spendable_pcd, spend_epoch)],
         alloc::vec![output_note],
     )
+}
+
+/// An honest prover will not merge intersecting stamps.
+///
+/// However, `MergeStamp` actually handles a commitment scheme that represents a
+/// multiset, and proves a relationship equivalent to a multiset union. So, a
+/// dishonest prover can feasibly prove a merge that violates consensus rules.
+///
+/// Normal tools in this crate don't allow you to carry out such operations, so
+/// this utility will fuse a `MergeStamp` without checking for intersection.
+pub fn forge_overlapping_merge(
+    rng: &mut (impl RngCore + CryptoRng),
+    (stamp_a, descriptors_a): (&ProofStamp, &Vec<action::Descriptor>),
+    (stamp_b, descriptors_b): (&ProofStamp, &Vec<action::Descriptor>),
+) -> Pcd<StampHeader> {
+    let left_acts = descriptors_a
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect::<ActionSetPoly>();
+    let right_acts = descriptors_b
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect::<ActionSetPoly>();
+    let left_tg = stamp_a
+        .tachygrams
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>();
+    let right_tg = stamp_b
+        .tachygrams
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>();
+
+    let left_pcd = stamp_a.proof.clone().carry::<StampHeader>((
+        left_acts.commit(),
+        left_tg.commit(),
+        stamp_a.anchor,
+    ));
+    let right_pcd = stamp_b.proof.clone().carry::<StampHeader>((
+        right_acts.commit(),
+        right_tg.commit(),
+        stamp_b.anchor,
+    ));
+
+    let merged_acts = descriptors_a
+        .iter()
+        .chain(descriptors_b.iter())
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect::<ActionSetPoly>();
+    let merged_tg = stamp_a
+        .tachygrams
+        .iter()
+        .chain(stamp_b.tachygrams.iter())
+        .copied()
+        .collect::<TachygramSetPoly>();
+
+    let (pcd, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            MergeStamp,
+            (
+                (left_acts, left_tg),
+                (merged_acts, merged_tg),
+                (right_acts, right_tg),
+            ),
+            left_pcd,
+            right_pcd,
+        )
+        .expect("multiset merge must prove");
+
+    pcd
 }
 
 pub fn random_block(

@@ -2,7 +2,7 @@
 
 use core::cmp::Eq as CoreTotalEq;
 
-use derive_more::{Debug, Display, PartialEq};
+use derive_more::{Debug, Display};
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 
 use crate::{
@@ -26,11 +26,18 @@ use crate::{
 ///
 /// This unification lets consensus treat all actions identically while
 /// the type system enforces the authority boundary at construction time.
-#[derive(Clone, Copy, Debug, Display, PartialEq)]
+#[derive(Clone, Copy, Debug, Display)]
 #[display("ActionVerificationKey({:?})", reddsa::VerificationKeyBytes::from(self.0))]
 pub struct ActionVerificationKey(pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>);
 
 impl CoreTotalEq for ActionVerificationKey {}
+impl PartialEq for ActionVerificationKey {
+    fn eq(&self, other: &Self) -> bool {
+        let bytes: [u8; 32] = self.0.into();
+        let other_bytes: [u8; 32] = other.0.into();
+        bytes == other_bytes
+    }
+}
 
 impl ActionVerificationKey {
     /// Verify an action signature against a transaction sighash.
@@ -81,11 +88,18 @@ impl From<ActionVerificationKey> for EpAffine {
 ///
 /// Wraps `reddsa::VerificationKey<reddsa::BindingAuth>`, which internally
 /// stores a Pallas curve point (EpAffine, encoded as 32 compressed bytes).
-#[derive(Clone, Copy, Debug, Display, PartialEq)]
+#[derive(Clone, Copy, Debug, Display)]
 #[display("BindingVerificationKey({:?})", reddsa::VerificationKeyBytes::from(self.0))]
 pub struct BindingVerificationKey(pub(super) reddsa::VerificationKey<reddsa::BindingAuth>);
 
 impl CoreTotalEq for BindingVerificationKey {}
+impl PartialEq for BindingVerificationKey {
+    fn eq(&self, other: &Self) -> bool {
+        let bytes: [u8; 32] = self.0.into();
+        let other_bytes: [u8; 32] = other.0.into();
+        bytes == other_bytes
+    }
+}
 
 impl BindingVerificationKey {
     /// Derive the binding verification key from public action data.

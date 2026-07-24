@@ -278,12 +278,14 @@ impl Step for MergeStamp {
             &left_action_set.into(),
             &right_action_set.into(),
             &merged_action_set.into(),
+            "MergeStamp: merged action set must be the product of left and right action sets",
         )?;
         enforce_poly_product(
             ctx,
             &left_tachygram_set.into(),
             &right_tachygram_set.into(),
             &merged_tachygram_set.into(),
+            "MergeStamp: merged tachygram set must be the product of left and right tachygram sets",
         )?;
 
         Ok((
