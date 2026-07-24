@@ -151,9 +151,7 @@ pub struct Bundle<S: BundleState + ?Sized> {
 
     /// Actions (cv, rk, sig).
     ///
-    /// The bundle commitment is sensitive to the order of actions. The [`Plan`]
-    /// utility in this crate sorts actions by descriptor, but other
-    /// implementations may create any arbitrary ordering.
+    /// Order is significant to [`Bundle::commitment`].
     pub actions: Vec<Action>,
 
     /// Binding signature over the transaction sighash.
@@ -188,7 +186,6 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     /// aggregation.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
-        // Do NOT sort here: maintain order as constructed.
         let descriptors: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
@@ -257,7 +254,6 @@ pub enum VerifyPointersError {
     /// The pointer of an adjunct is not the expected aggregate id.
     #[display("stamp on an adjunct does not match the expected aggregate id")]
     AdjunctPointerMismatch,
-
     /// The adjunct is not in the expected state.
     #[display("stamp on an adjunct does not contain a valid pointer")]
     AdjunctPointerInvalid(AggregateIdError),
@@ -357,9 +353,6 @@ impl Plan {
 
     /// Compute a digest of all the bundle's effecting data.
     ///
-    /// Bundle digest is sensitive to the order of actions. Actions in this
-    /// planner are sorted by descriptor.
-    ///
     /// # Errors
     ///
     /// Fails if the value balance overflows the representable range.
@@ -441,9 +434,6 @@ impl Plan {
 
     /// Apply externally-produced action signatures and then sign the bundle
     /// with the [`private::BindingSigningKey`].
-    ///
-    /// Bundle digest is sensitive to the order of actions. Actions in this
-    /// planner are sorted by descriptor.
     ///
     /// To confirm correct application, call [`Bundle::verify_signatures`] on
     /// the return value.
