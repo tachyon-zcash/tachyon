@@ -200,8 +200,11 @@ impl Action {
 
     /// Obtain a descriptor for this action.
     #[must_use]
-    pub fn descriptor(&self) -> Descriptor {
-        Descriptor::from(*self)
+    pub const fn descriptor(&self) -> Descriptor {
+        Descriptor {
+            cv: self.cv,
+            rk: self.rk,
+        }
     }
 }
 

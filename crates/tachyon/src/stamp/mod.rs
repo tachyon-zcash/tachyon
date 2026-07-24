@@ -176,6 +176,7 @@ impl StampState for ProofStamp {
         let mut stamp_digest = [0u8; 64];
         stamp_digest[..32].copy_from_slice(&self.coverage);
         stamp_digest[32..].copy_from_slice(&stamp_data_digest);
+
         stamp_digest
     }
 
@@ -662,19 +663,22 @@ impl ProofStamp {
     ///
     /// The parameter is a multiset: order does not matter, multiplicity does.
     #[must_use]
-    pub fn covers(&self, action_descs: impl IntoIterator<Item = action::Descriptor>) -> bool {
+    pub(crate) fn is_covering(
+        &self,
+        action_descs: impl IntoIterator<Item = action::Descriptor>,
+    ) -> bool {
         let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes) == self.coverage
     }
 
-    /// Verify this stamp's proof, reconstructing the PCD header from public data.
-    /// Call [`ProofStamp::covers`] first to cheaply predict a mismatch.
+    /// Reconstruct the PCD header and verify the proof. Call
+    /// [`ProofStamp::is_covering`] first to cheaply predict a mismatch.
     ///
     /// # Soundness
     ///
     /// The parameter is a multiset: order does not matter, multiplicity does.
-    pub fn verify_proof<RNG: RngCore + CryptoRng>(
+    pub(crate) fn verify_proof<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,

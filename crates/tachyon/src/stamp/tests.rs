@@ -256,7 +256,7 @@ fn double_output_cannot_aggregate() {
         .collect();
     assert!(
         !stamp
-            .verify_proof(rng, &digests)
+            .verify_proof(rng, digests)
             .expect("proof system verification"),
         "multiset-backed proof must not verify against the deduplicated set"
     );
@@ -378,7 +378,7 @@ fn double_spend_cannot_aggregate() {
         .collect();
     assert!(
         !stamp
-            .verify_proof(rng, &digests)
+            .verify_proof(rng, digests)
             .expect("proof system verification"),
         "doubled-nullifier proof must not verify"
     );
@@ -386,11 +386,12 @@ fn double_spend_cannot_aggregate() {
 
 /// A stamp cannot cover the same action twice. The honest merge refuses it on
 /// the action-set product relation (the two contributors share the descriptor).
-/// A forced-fuse forgery bypasses that, but every action carries a tachygram, so
-/// the doubled action doubles its tachygram: verifying against `[d, d]` matches
-/// the action accumulator while the published deduplicated tachygram set fails
-/// to reconstruct the doubled one, so the proof is `Disproved`. The wire-level
-/// duplicate tachygram is caught by [`read_rejects_duplicate_tachygrams`].
+/// A forced-fuse forgery bypasses that, but every action carries a tachygram,
+/// so the doubled action doubles its tachygram: verifying against `[d, d]`
+/// matches the action accumulator while the published deduplicated tachygram
+/// set fails to reconstruct the doubled one, so the proof is `Disproved`. The
+/// wire-level duplicate tachygram is caught by
+/// [`read_rejects_duplicate_tachygrams`].
 #[test]
 fn cannot_forge_stamp_covering_duplicated_action() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -457,7 +458,7 @@ fn cannot_forge_stamp_covering_duplicated_action() {
         .collect();
     assert!(
         !stamp
-            .verify_proof(rng, &digests)
+            .verify_proof(rng, digests)
             .expect("proof system verification"),
         "a stamp covering a duplicated action must not verify"
     );
@@ -482,7 +483,7 @@ fn verify_cannot_distinguish_a_deduplicated_duplicate() {
     let single = descriptor.digest().expect("action digest");
     assert!(
         stamp
-            .verify_proof(rng, &[single])
+            .verify_proof(rng, [single])
             .expect("proof system verification"),
         "the single covered action verifies"
     );
@@ -490,7 +491,7 @@ fn verify_cannot_distinguish_a_deduplicated_duplicate() {
     // The true multiset is a different action polynomial: (x−d)² ≠ (x−d).
     assert!(
         !stamp
-            .verify_proof(rng, &[single, single])
+            .verify_proof(rng, [single, single])
             .expect("proof system verification"),
         "the doubled action must not verify"
     );
@@ -516,7 +517,7 @@ fn verify_proof_action_multiset_invariants() {
     assert!(
         stamped
             .stamp
-            .verify_proof(rng, &[digests[1], digests[0]])
+            .verify_proof(rng, [digests[1], digests[0]])
             .expect("proof system verification"),
         "permuted actions must verify"
     );
@@ -528,7 +529,7 @@ fn verify_proof_action_multiset_invariants() {
         assert!(
             !stamped
                 .stamp
-                .verify_proof(rng, &dropped)
+                .verify_proof(rng, dropped)
                 .expect("proof system verification"),
             "dropped action must not verify"
         );
@@ -541,7 +542,7 @@ fn verify_proof_action_multiset_invariants() {
         assert!(
             !stamped
                 .stamp
-                .verify_proof(rng, &duplicated)
+                .verify_proof(rng, duplicated)
                 .expect("proof system verification"),
             "duplicated action must not verify"
         );
@@ -559,7 +560,7 @@ fn verify_proof_action_multiset_invariants() {
         assert!(
             !stamped
                 .stamp
-                .verify_proof(rng, &extended)
+                .verify_proof(rng, extended)
                 .expect("proof system verification"),
             "extra action must not verify"
         );
@@ -575,7 +576,7 @@ fn verify_proof_action_multiset_invariants() {
         assert!(
             !stamped
                 .stamp
-                .verify_proof(rng, &replaced)
+                .verify_proof(rng, replaced)
                 .expect("proof system verification"),
             "replaced action must not verify"
         );

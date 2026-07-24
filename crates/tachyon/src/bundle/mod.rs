@@ -94,7 +94,7 @@ use crate::{
     keys::{private, public},
     primitives::{Anchor, effect},
     reddsa, serialization,
-    stamp::{self, PointerStamp, ProofStamp, StampState, Unproven},
+    stamp::{self, AggregateIdError, PointerStamp, ProofStamp, StampState, Unproven},
     value,
 };
 
@@ -206,20 +206,20 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     }
 
     /// Verify the bundle's binding signature and all action signatures.
-    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), VerifySignaturesError> {
+    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
         // 1. Derive bvk from public data
         let bvk = public::BindingVerificationKey::derive(&self.actions, self.value_balance);
 
         // 2. Verify binding signature
         bvk.verify(sighash, &self.binding_sig)
-            .map_err(|_err| VerifySignaturesError::Binding(self.binding_sig))?;
+            .map_err(|_err| SignatureError::Binding(self.binding_sig))?;
 
         // 3. Verify each action signature
         for action in &self.actions {
             action
                 .rk
                 .verify(sighash, &action.sig)
-                .map_err(|_err| VerifySignaturesError::Action(action.sig))?;
+                .map_err(|_err| SignatureError::Action(action.sig))?;
         }
 
         Ok(())
@@ -229,7 +229,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
 /// Errors from bundle signature verification.
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
-pub enum VerifySignaturesError {
+pub enum SignatureError {
     /// The binding signature is invalid.
     #[display("invalid binding signature {_0:?}")]
     Binding(#[error(not(source))] Signature),
@@ -241,18 +241,35 @@ pub enum VerifySignaturesError {
 /// Error during proof verification.
 #[derive(Debug, Display, Error)]
 pub enum VerifyProofError {
-    /// The actions are not unique.
-    #[display("actions are not unique")]
-    DuplicateActions,
     /// An action's cv or rk is the identity point.
     #[display("action digest error: {_0}")]
     ActionDigest(ActionDigestError),
     /// The proof system returned an error.
     #[display("proof system error: {_0}")]
     ProofSystem(ragu::Error),
-    /// The proof did not verify.
-    #[display("proof did not verify")]
-    Disproved,
+}
+
+/// Errors during coverage verification.
+#[derive(Debug, Display, Error)]
+pub enum VerifyCoverageError {
+    /// The actions are not unique.
+    #[display("actions are not unique")]
+    DuplicateActions,
+    /// The stamp on this bundle does not claim to cover these actions.
+    #[display("stamp on this bundle does not claim to cover these actions")]
+    StampActionsMismatch,
+}
+
+/// Errors during adjunct pointer verification.
+#[derive(Debug, Display, Error)]
+pub enum VerifyPointersError {
+    /// The pointer of an adjunct is not the expected aggregate id.
+    #[display("stamp on an adjunct does not match the expected aggregate id")]
+    AdjunctPointerMismatch,
+
+    /// The adjunct is not in the expected state.
+    #[display("stamp on an adjunct does not contain a valid pointer")]
+    AdjunctPointerInvalid(AggregateIdError),
 }
 
 /// Errors during bundle verification.
@@ -260,16 +277,16 @@ pub enum VerifyProofError {
 pub enum VerificationError {
     /// The pointer of an adjunct is not the expected aggregate id.
     #[display("stamp on an adjunct does not match the expected aggregate id")]
-    PointerStampMismatch,
-    /// The stamp on this bundle does not claim to cover these actions.
-    #[display("stamp on this bundle does not claim to cover these actions")]
-    StampActionsMismatch,
-    /// The signatures did not verify.
-    #[display("signatures did not verify: {_0}")]
-    Signatures(VerifySignaturesError),
-    /// The proof did not verify.
-    #[display("proof did not verify: {_0}")]
+    Pointers(VerifyPointersError),
+    /// An error occurred while verifying the coverage.
+    #[display("coverage verification error: {_0}")]
+    Coverage(VerifyCoverageError),
+    /// An error occurred while verifying the proof.
+    #[display("proof verification error: {_0}")]
     Proof(VerifyProofError),
+    /// The proof did not verify.
+    #[display("proof did not verify")]
+    Disproved,
 }
 
 /// Errors that can occur while signing a bundle plan.
@@ -492,15 +509,13 @@ impl Bundle<ProofStamp> {
 
     /// Confirm `hStampActionsTachyon` represents the combined actions of this
     /// bundle and the given bundles.
-    ///
-    /// Descriptors are sorted but not deduplicated, so a collection containing
-    /// duplicates mismatches.
     #[must_use]
     pub fn is_covering(&self, others: &[&Bundle<dyn StampState>]) -> bool {
-        let own_descs = self.descriptors().into_iter();
+        let own_descs = self.descriptors();
         let other_descs = others.iter().flat_map(|&adjunct| adjunct.descriptors());
 
-        self.stamp.covers(own_descs.chain(other_descs))
+        self.stamp
+            .is_covering(own_descs.into_iter().chain(other_descs))
     }
 
     /// Confirm `hStampActionsTachyon` represents this bundle's actions.
@@ -515,91 +530,109 @@ impl Bundle<ProofStamp> {
         !self.is_covering(&[])
     }
 
-    /// Verify the proof against the combined actions of this bundle and the
-    /// provided bundles.
+    /// Verify the stamp's coverage against the combined unique actions of this
+    /// bundle and the provided bundles.
+    pub fn verify_coverage(
+        &self,
+        adjuncts: &[&Bundle<dyn StampState>],
+    ) -> Result<BTreeSet<action::Descriptor>, VerifyCoverageError> {
+        let own_descs = self.descriptors();
+        let other_descs: Vec<action::Descriptor> =
+            adjuncts.iter().flat_map(|&adj| adj.descriptors()).collect();
+
+        let n_descs = own_descs.len() + other_descs.len();
+
+        let unique_descs: BTreeSet<action::Descriptor> =
+            own_descs.into_iter().chain(other_descs).collect();
+
+        if unique_descs.len() != n_descs {
+            return Err(VerifyCoverageError::DuplicateActions);
+        }
+
+        if !self.stamp.is_covering(unique_descs.clone()) {
+            return Err(VerifyCoverageError::StampActionsMismatch);
+        }
+
+        Ok(unique_descs)
+    }
+
+    /// Verify the pointers of the adjuncts against the expected wtxid.
+    pub fn verify_pointers(
+        &self,
+        wtxid: &[u8; 64],
+        adjuncts: &[&Bundle<dyn StampState>],
+    ) -> Result<(), VerifyPointersError> {
+        PointerStamp::try_from(*wtxid).map_err(VerifyPointersError::AdjunctPointerInvalid)?;
+
+        if adjuncts
+            .iter()
+            .all(|&adj| &adj.stamp.stamp_digest() == wtxid)
+        {
+            Ok(())
+        } else {
+            Err(VerifyPointersError::AdjunctPointerMismatch)
+        }
+    }
+
+    /// Verify the stamp's proof against the combined actions of this bundle and
+    /// the provided bundles.
     pub fn verify_proof<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
         adjuncts: &[&Bundle<dyn StampState>],
-    ) -> Result<(), VerifyProofError> {
-        let own_descs = self.descriptors();
-        let other_descs = adjuncts
+    ) -> Result<bool, VerifyProofError> {
+        let own_digests = self.actions.iter().map(|&action| action.digest());
+
+        let other_digests = adjuncts
             .iter()
-            .flat_map(|&adj| adj.descriptors())
-            .collect::<Vec<action::Descriptor>>();
+            .flat_map(|&adj| adj.actions.iter().map(|&action| action.digest()));
 
-        let n_descs = own_descs.len() + other_descs.len();
-
-        let action_descriptors: BTreeSet<action::Descriptor> =
-            own_descs.into_iter().chain(other_descs).collect();
-
-        if n_descs != action_descriptors.len() {
-            return Err(VerifyProofError::DuplicateActions);
-        }
-
-        let action_digests = action_descriptors
-            .iter()
-            .map(action::Descriptor::digest)
-            .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
+        let action_digests = own_digests
+            .chain(other_digests)
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
             .map_err(VerifyProofError::ActionDigest)?;
 
-        let proof_verified = self
-            .stamp
+        self.stamp
             .verify_proof(rng, action_digests)
-            .map_err(VerifyProofError::ProofSystem)?;
-
-        if !proof_verified {
-            return Err(VerifyProofError::Disproved);
-        }
-
-        Ok(())
+            .map_err(VerifyProofError::ProofSystem)
     }
 
-    /// Fully verify the bundle: adjunct pointers, stamp coverage, signatures,
-    /// then the proof.
+    /// Verify the proof stamp with given adjuncts.
     ///
-    /// Coverage and proof span this bundle's actions plus its `adjuncts` (empty
-    /// for an autonome). A wrong value balance surfaces as a binding-signature
-    /// failure; action uniqueness is enforced by [`Bundle::verify_proof`].
+    /// Verification of signatures remains the responsibility of the caller.
     pub fn verify<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
-        sighash: &[u8; 32],
-        wtxid: PointerStamp,
+        wtxid: &[u8; 64],
         adjuncts: &[&Bundle<PointerStamp>],
     ) -> Result<(), VerificationError> {
-        if adjuncts.iter().any(|&adjunct| adjunct.stamp != wtxid) {
-            return Err(VerificationError::PointerStampMismatch);
+        let adjuncts_dyn: Vec<&Bundle<dyn StampState>> =
+            adjuncts.iter().map(|&adj| adj.as_dyn()).collect();
+
+        self.verify_pointers(wtxid, &adjuncts_dyn)
+            .map_err(VerificationError::Pointers)?;
+
+        self.verify_coverage(&adjuncts_dyn)
+            .map_err(VerificationError::Coverage)?;
+
+        if self
+            .verify_proof(rng, &adjuncts_dyn)
+            .map_err(VerificationError::Proof)?
+        {
+            Ok(())
+        } else {
+            Err(VerificationError::Disproved)
         }
-
-        let descriptors: Vec<action::Descriptor> = self
-            .descriptors()
-            .into_iter()
-            .chain(adjuncts.iter().flat_map(|&input| input.descriptors()))
-            .collect();
-
-        if !self.stamp.covers(descriptors) {
-            return Err(VerificationError::StampActionsMismatch);
-        }
-
-        self.verify_signatures(sighash)
-            .map_err(VerificationError::Signatures)?;
-
-        self.verify_proof(
-            rng,
-            &adjuncts
-                .iter()
-                .map(|&adj| adj.as_dyn())
-                .collect::<Vec<&Bundle<dyn StampState>>>(),
-        )
-        .map_err(VerificationError::Proof)
     }
 }
 
-impl<S: StampState + 'static> Bundle<S> {
+impl<S: StampState> Bundle<S> {
     /// Borrow this bundle as a trait object.
     #[must_use]
-    pub fn as_dyn(&self) -> &Bundle<dyn StampState> {
+    pub fn as_dyn(&self) -> &Bundle<dyn StampState>
+    where
+        S: 'static,
+    {
         self
     }
 
