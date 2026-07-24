@@ -97,9 +97,6 @@ The remaining terms are defined by this ZIP:
 Bundle
 :   The Tachyon section of a transaction: actions, a value balance, action signatures, a binding signature, and a state-dependent stamp.
 
-Covering transaction
-:   The proof-stamped transaction whose stamp covers a pointer-stamped transaction's actions, named by the pointer-stamped bundle's `tachyonAggregateId`.
-
 Bundle state
 :   The three-valued wire discriminator `tachyonBundleState` selecting no bundle, a proof stamp, or a pointer stamp.
 
@@ -126,10 +123,14 @@ Proof stamp
 Pointer stamp
 :   A stamp carrying `tachyonAggregateId`, the `wtxid` of a covering transaction, in place of a proof.
 
+Covering transaction
+:   The proof-stamped transaction whose stamp covers a pointer-stamped transaction's actions, named by the pointer-stamped bundle's `tachyonAggregateId`.
+
 ## Abstract
 
 This ZIP specifies the consensus wire format of the Tachyon bundle: a three-state discriminator byte, a bundle body carrying actions, a value balance, and signatures, and a stamp carrying either a proof (with the public data needed to verify it) or a pointer to a covering transaction.
-It defines the canonical field encodings and sequence orders, the action digests, descriptor digests, and multiset commitments cited by the other Tachyon ZIPs, the bundle's transaction-digest inputs, the consensus rules scoped to a single bundle, and the block-scoped rules that validate a block's bundles together.
+It defines the canonical field encodings and sequence orders, together with the action digests, descriptor digests, and multiset commitments the other Tachyon ZIPs cite.
+It further defines the bundle's transaction-digest inputs, the consensus rules scoped to a single bundle, and the block-scoped rules that validate a block's bundles together.
 It plays the role for the *Tachyon pool* that ZIP 225 [^zip-0225] plays for the v5 transaction.
 
 ## Motivation
@@ -162,7 +163,8 @@ This ZIP does not specify:
 
 ## Specification
 
-The specification proceeds from the wire layout of the bundle body to the rules over its fields, the digest and commitment constructions those rules use, the two stamp forms, the canonical encodings of every field, the bundle's transaction-digest inputs, a consolidated summary of the bundle-scoped consensus rules, and the block-scoped rules that validate a block's bundles together.
+The specification proceeds from the wire layout of the bundle body to the rules over its fields, then to the digest and commitment constructions those rules use, then to the two stamp forms.
+It closes with the canonical encodings of every field, the bundle's transaction-digest inputs, a consolidated summary of the bundle-scoped consensus rules, and the block-scoped rules that validate a block's bundles together.
 
 ### Placement and bundle states
 
@@ -187,14 +189,14 @@ The complete wire layout across the serialized states:
 | **Bundle body**   |                            |                        |                                  |                                                                         |
 | ⹋                 | $8$                        | `valueBalanceTachyon`  | `int64`                          | The net value of Tachyon spends minus outputs                           |
 | ⹋                 | varies                     | `nActionsTachyon`      | `compactSize`                    | The number of Tachyon actions                                           |
-| ⹋                 | $64 \cdot$ nActionsTachyon | `vActionsTachyon`      | `TachyonAction[nActionsTachyon]` | A sequence of action descriptors, each (`cv`: 32 bytes, `rk`: 32 bytes) |
-| ⹋                 | $64 \cdot$ nActionsTachyon | `vActionSigsTachyon`   | `byte[64][nActionsTachyon]`      | An authorizing signature for each action                                |
+| ⹋                 | $64 \cdot$ `nActionsTachyon` | `vActionsTachyon`      | `TachyonAction[nActionsTachyon]` | A sequence of action descriptors, each (`cv`: 32 bytes, `rk`: 32 bytes) |
+| ⹋                 | $64 \cdot$ `nActionsTachyon` | `vActionSigsTachyon`   | `byte[64][nActionsTachyon]`      | An authorizing signature for each action                                |
 | ⹋                 | $64$                       | `bindingSigTachyon`    | `byte[64]`                       | A binding signature for the bundle                                      |
 | **Proof stamp**   |                            |                        |                                  |                                                                         |
 | †                 | $32$                       | `hStampActionsTachyon` | `byte[32]`                       | Descriptor digest over the covered actions                              |
 | †                 | $32$                       | `anchorTachyon`        | `byte[32]`                       | Anchor referencing the pool state                                       |
 | †                 | varies                     | `nTachygrams`          | `compactSize`                    | The number of tachygrams                                                |
-| †                 | $32 \cdot$ nTachygrams     | `vTachygrams`          | `byte[32][nTachygrams]`          | The stamp's tachygrams                                                  |
+| †                 | $32 \cdot$ `nTachygrams`     | `vTachygrams`          | `byte[32][nTachygrams]`          | The stamp's tachygrams                                                  |
 | †                 | $\mathrm{PROOF\_SIZE}$     | `proofTachyon`         | `byte[PROOF_SIZE]`               | Ragu proof                                                              |
 | **Pointer stamp** |                            |                        |                                  |                                                                         |
 | ‡                 | $64$                       | `tachyonAggregateId`   | `byte[64]`                       | wtxid of a covering transaction                                         |
@@ -283,7 +285,7 @@ $$ A(X) = \prod_i \bigl(X - d_i\bigr) \qquad T(X) = \prod_j \bigl(X - t_j\bigr) 
 The commitment to a polynomial of degree $n$ is the deterministic, untrapdoored Pedersen commitment to its $n+1$ coefficients over the Vesta group, using the polynomial-commitment generators fixed by the Ragu proof system.
 The coefficients are ordered by ascending degree: the constant term pairs with the first generator, the degree-$k$ coefficient with the $k$-th.
 A polynomial is invariant under permutation of its roots, and a repeated member becomes a repeated root, so the commitment depends only on the multiset, with multiplicity, and never on any ordering.
-The empty multiset has no commitment.
+The empty multiset gives the constant polynomial $1$, whose single coefficient commits to the first generator; a proof stamp covers at least one action and publishes at least one tachygram, so neither commitment is taken over an empty multiset.
 
 A stamp's proof binds two multiset commitments: `cStampActionsTachyon`, over the digests of every action the stamp covers ($A$), and `cTachygrams`, over the stamp's tachygrams ($T$).
 Both are deterministic functions of the public data they commit to and carry no information beyond it.
@@ -340,7 +342,8 @@ The effecting contribution (to `txid` and the sighash) commits to `hActionsTachy
 `hActionsTachyon` is distinct from `hStampActionsTachyon`, which may cover more actions than the bundle's own.
 The stamp is excluded, so the contribution is invariant across stamping, merging, stripping, and re-stamping.
 
-The authorizing contribution (to `auth_digest`) commits to the action and binding signatures and to the stamp, the latter through the 64-byte `stamp_digest` whose algorithm the ZIP 244 update specifies: a proof stamp's covered-actions digest and remaining fields, or a pointer stamp's `tachyonAggregateId` directly.
+The authorizing contribution (to `auth_digest`) commits to `tachyonBundleState`, to the action and binding signatures, and to the stamp, the latter through the 64-byte `stamp_digest` whose algorithm the ZIP 244 update specifies: a proof stamp's covered-actions digest and remaining fields, or a pointer stamp's `tachyonAggregateId` directly.
+The state byte separates the two stamp forms, whose contributions share the 64-byte shape.
 
 A transaction with no Tachyon bundle contributes distinctly from a bundle with no actions: no bundle produces the empty preimage, while every bundle's effecting contribution contains its encoded balance and its authorizing contribution contains at least its binding signature and `stamp_digest`.
 
@@ -356,32 +359,28 @@ The rules owned by this ZIP, applying to a single transaction's bundle:
 6. `bindingSigTachyon` MUST verify over the transaction sighash under the derived $\mathsf{bvk}$.
 7. `valueBalanceTachyon` MUST be in the range $-\mathrm{MAX\_MONEY}$ to $\mathrm{MAX\_MONEY}$ inclusive.
 8. A bundle with no actions MUST have `valueBalanceTachyon` equal to $0$.
-9. A proof stamp's `proofTachyon` MUST be exactly `PROOF_SIZE` bytes and a valid proof encoding, and its tachygrams MUST be distinct.
-10. An pointer stamp's `tachyonAggregateId` MUST NOT be all zero.
+9. A proof stamp's `proofTachyon` MUST be exactly `PROOF_SIZE` bytes and a valid proof encoding.
+10. A proof stamp's tachygrams MUST be distinct.
+11. A pointer stamp's `tachyonAggregateId` MUST NOT be all zero.
 
 Rules outside the scope of this ZIP are enumerated in [Non-requirements](#non-requirements).
 
 ### Block validity
 
-The rules owned by this ZIP that constrain a block's Tachyon bundles together:
+The rules owned by this ZIP that constrain a block's Tachyon bundles together.
+A validator enforces them fail-fast, in this order:
 
-* All tachygrams in a block MUST be distinct.
-* Every pointer-stamped transaction MUST bear a `tachyonAggregateId` referring to the proof-stamped transaction in the same block covering its actions.
-* Every proof-stamped Tachyon transaction MUST bear an `hStampActionsTachyon` matching the descriptor digest of the complete set of actions of its covered transactions in the same block.
-* All proofs in a block MUST verify.
-
-A validator enforces these fail-fast, in this order:
-
-1. **Tachygram uniqueness.** The block's tachygrams are the multiset union of the `vTachygrams` of every proof stamp.
-   A single scan enforces this rule and the per-bundle distinctness of [Bundle validity](#bundle-validity) rule 9 together; reject on any duplicate.
+1. **Tachygram uniqueness.** All tachygrams in a block MUST be distinct.
+   The block's tachygrams are the multiset union of the `vTachygrams` of every proof stamp, and a single scan enforces this rule and the per-bundle distinctness of [Bundle validity](#bundle-validity) rule 10 together; reject on any duplicate.
    Reuse within the wider epoch window is governed by the epoch-window rule ([Tachyon Accumulator / Hash Chain](tachyon-accumulator.md#epoch-window)).
-2. **Proof coverage.** The `tachyonAggregateId` of every pointer-stamped transaction MUST identify a proof-stamped transaction in the same block; reject if absent or not proof-stamped.
-   A pointer-stamped transaction with no actions satisfies this check against any proof-stamped transaction in the block: it contributes no action descriptors to step 3, so consensus attaches no further meaning to its reference.
-3. **Covered-actions digest per stamp.** For each proof stamp, collect the descriptors of the bundle's own actions together with those of every pointer-stamped transaction naming it, sort them, and compute the descriptor digest ([Action descriptor digests](#action-descriptor-digests)); reject on mismatch with the carried `hStampActionsTachyon`.
-  The check is a sort and one BLAKE2b-256 hash, with no curve arithmetic.
+2. **Proof coverage.** Every pointer-stamped transaction MUST bear a `tachyonAggregateId` identifying a proof-stamped transaction in the same block; reject if absent or not proof-stamped.
+   A pointer-stamped transaction with no actions satisfies this rule against any proof-stamped transaction in the block: it contributes no action descriptors to rule 3, so consensus attaches no further meaning to its reference.
+3. **Covered-actions digest.** The descriptors collected across a proof stamp and every transaction it covers MUST be distinct, and the stamp's `hStampActionsTachyon` MUST match their descriptor digest.
+   For each proof stamp, collect the descriptors of the bundle's own actions together with those of every pointer-stamped transaction naming it, sort them, and compute the descriptor digest ([Action descriptor digests](#action-descriptor-digests)); reject on any repeated descriptor, and on mismatch with the carried `hStampActionsTachyon`.
+   The check is a sort and one BLAKE2b-256 hash, with no curve arithmetic.
 4. **Proof verification.** Every proof stamp MUST verify.
    The validator reassembles the stamp PCD from `proofTachyon`, `anchorTachyon`, `cTachygrams`, and `cStampActionsTachyon` formed over the confirmed action set's digests ([Action digests](#action-digests), [Multiset commitments](#multiset-commitments)); reject if any proof fails.
-   The base requirement that a proof verifies the Tachyon statement is the shielded-protocol rule ([Tachyon Shielded Protocol](tachyon-shielded-protocol.md#proof-verification)); these items apply it per stamp within a block.
+   The base requirement that a proof verifies the Tachyon statement is the shielded-protocol rule ([Tachyon Shielded Protocol](tachyon-shielded-protocol.md#proof-verification)); this rule applies it per stamp within a block.
 
 ## Rationale
 
@@ -408,6 +407,12 @@ Excluding it also rejects a degenerate verification key and a degenerate value c
 `hStampActionsTachyon` can cover many transactions' actions, combined by whatever merge tree an aggregator chose.
 Sorting before hashing makes it a function of the covered multiset alone, so any party reconstructs the same digest regardless of merge history.
 The multiset commitments ([Multiset commitments](#multiset-commitments)) get this order-independence for free, as polynomial multiplication.
+
+### Covered actions are required to be distinct
+
+Two identical descriptors carry an identical $\mathsf{rk}$, so one signature would authorize both.
+The digest of [Block validity](#block-validity) rule 3 does not catch that on its own, since a stamp is free to carry a digest computed over the duplicated collection, leaving only the proof to reject it ([Duplicate actions are gated after parsing, not by the parser](#duplicate-actions-are-gated-after-parsing-not-by-the-parser)).
+Stating distinctness as its own obligation rejects the collection ahead of both checks.
 
 ### `vTachygrams` is sorted against `wtxid` malleability
 
@@ -448,6 +453,19 @@ Every field but `vActionsTachyon` has exactly one accepted serialization, so a b
 That permutation is not a malleability concern: it changes `hActionsTachyon`, and therefore the sighash every signature covers, so a re-ordered bundle needs new signatures, not just new bytes.
 Leaving action order to the author's choice is the same property Sapling and Orchard rely on for their own unordered spend, output, and action arrays.
 Authorization-form changes (re-stamping, stripping) produce distinct bundles by design and are reflected in `auth_digest` and `wtxid` (ZIP 239 [^zip-0239]).
+
+### Duplicate actions are gated after parsing, not by the parser
+
+The parser enforces no distinctness over `vActionsTachyon`, so a bundle carrying a repeated action descriptor parses.
+Each descriptor's $\mathsf{cv}$ enters the binding sum, so action multiplicity is load-bearing and the parser cannot deduplicate without changing the asserted balance; the descriptor multiset is exactly what a stamp's proof commits to through `cStampActionsTachyon`.
+
+Two block-validity checks gate the duplicate, in the order they run.
+The covered-actions digest is taken over the collected descriptors sorted but not deduplicated, so a repeated descriptor changes the digest and mismatches the `hStampActionsTachyon` an honest stamp carries.
+Should a stamp instead carry a digest computed over the duplicated list, proof verification is the second gate: it reconstructs the covered action set as the roots of $A(X)$ ([Multiset commitments](#multiset-commitments)), where a repeated descriptor yields a repeated action digest and so a repeated root $d$, contributing a factor $\bigl(X - d\bigr)^2$ that a proof over the actual covered actions never commits to.
+A duplicate action descriptor on the wire is therefore a forgery attempt that fails one of the two ([Block validity](#block-validity)), and the parser need not guard it.
+
+`vTachygrams` is the opposite case.
+A tachygram carries no multiplicity, so duplication is meaningless, and distinctness is a wire-format invariant the parser enforces directly ([Bundle validity](#bundle-validity) rule 10).
 
 ### Balance consistency is enforced by the binding property
 
