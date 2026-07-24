@@ -31,8 +31,10 @@ impl Anchor {
     #[must_use]
     pub fn next_stamp(self, stamp_commit: &TachygramSetCommit) -> Self {
         let point = Eq::from(*stamp_commit).to_affine();
+        #[expect(clippy::expect_used, reason = "specified behavior")]
         let coords = point
             .coordinates()
+            .into_option()
             .expect("must not be identity commitment"); // TODO: error?
         Self(poseidon::anchor_stamp_step(self.0, coords))
     }

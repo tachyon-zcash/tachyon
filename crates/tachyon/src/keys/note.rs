@@ -113,7 +113,6 @@ fn vk_x_coordinate(ak: &SpendValidatingKey) -> Fp {
 
 #[cfg(test)]
 mod tests {
-    use ff::{Field as _, PrimeField as _};
     use pasta_curves::Fq;
     use rand::{SeedableRng as _, rngs::StdRng};
 

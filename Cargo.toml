@@ -44,6 +44,9 @@ perf = { level = "deny", priority = -1 }
 style = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 
+# see clippy.toml for more details
+disallowed_methods = "forbid"
+
 cast_possible_truncation = "deny"
 as_conversions = "deny"
 
