@@ -1558,19 +1558,19 @@ fn coverage_check_matches_stamp_actions() {
     // Coverage confirmation: the based aggregate's carried digest matches
     // its own actions plus both covered adjuncts'.
     assert!(
-        becomes_based.covers(&[&adjunct_a, &adjunct_b]),
+        becomes_based.is_covering(&[&adjunct_a, &adjunct_b]),
         "full covered set matches hStampActionsTachyon"
     );
 
     // Missing an adjunct: fewer descriptors, no match.
     assert!(
-        !becomes_based.covers(&[&adjunct_a]),
+        !becomes_based.is_covering(&[&adjunct_a]),
         "missing adjunct must mismatch"
     );
 
     // Extra (duplicated) adjunct: more descriptors, no match.
     assert!(
-        !becomes_based.covers(&[&adjunct_a, &adjunct_b, &adjunct_a]),
+        !becomes_based.is_covering(&[&adjunct_a, &adjunct_b, &adjunct_a]),
         "extra adjunct must mismatch"
     );
 }

@@ -496,27 +496,23 @@ impl Bundle<ProofStamp> {
     /// Descriptors are sorted but not deduplicated, so a collection containing
     /// duplicates mismatches.
     #[must_use]
-    pub fn covers(&self, others: &[&Bundle<dyn StampState>]) -> bool {
+    pub fn is_covering(&self, others: &[&Bundle<dyn StampState>]) -> bool {
         let own_descs = self.descriptors().into_iter();
         let other_descs = others.iter().flat_map(|&adjunct| adjunct.descriptors());
 
-        self.stamp.covers(
-            &own_descs
-                .chain(other_descs)
-                .collect::<Vec<action::Descriptor>>(),
-        )
+        self.stamp.covers(own_descs.chain(other_descs))
     }
 
     /// Confirm `hStampActionsTachyon` represents this bundle's actions.
     #[must_use]
     pub fn is_autonome(&self) -> bool {
-        self.stamp.covers(&self.descriptors())
+        self.is_covering(&[])
     }
 
     /// Confirm `hStampActionsTachyon` does not represent this bundle's actions.
     #[must_use]
     pub fn is_aggregate(&self) -> bool {
-        !self.stamp.covers(&self.descriptors())
+        !self.is_covering(&[])
     }
 
     /// Verify the proof against the combined actions of this bundle and the
@@ -526,11 +522,20 @@ impl Bundle<ProofStamp> {
         rng: &mut RNG,
         adjuncts: &[&Bundle<dyn StampState>],
     ) -> Result<(), VerifyProofError> {
-        let action_descriptors = self
-            .descriptors()
-            .into_iter()
-            .chain(adjuncts.iter().flat_map(|&adj| adj.descriptors()))
+        let own_descs = self.descriptors();
+        let other_descs = adjuncts
+            .iter()
+            .flat_map(|&adj| adj.descriptors())
             .collect::<Vec<action::Descriptor>>();
+
+        let n_descs = own_descs.len() + other_descs.len();
+
+        let action_descriptors: BTreeSet<action::Descriptor> =
+            own_descs.into_iter().chain(other_descs).collect();
+
+        if n_descs != action_descriptors.len() {
+            return Err(VerifyProofError::DuplicateActions);
+        }
 
         let action_digests = action_descriptors
             .iter()
@@ -538,16 +543,9 @@ impl Bundle<ProofStamp> {
             .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
             .map_err(VerifyProofError::ActionDigest)?;
 
-        if action_digests.len() != action_descriptors.len() {
-            return Err(VerifyProofError::DuplicateActions);
-        }
-
         let proof_verified = self
             .stamp
-            .verify_proof(
-                rng,
-                &action_digests.into_iter().collect::<Vec<ActionDigest>>(),
-            )
+            .verify_proof(rng, action_digests)
             .map_err(VerifyProofError::ProofSystem)?;
 
         if !proof_verified {
@@ -580,7 +578,7 @@ impl Bundle<ProofStamp> {
             .chain(adjuncts.iter().flat_map(|&input| input.descriptors()))
             .collect();
 
-        if !self.stamp.covers(&descriptors) {
+        if !self.stamp.covers(descriptors) {
             return Err(VerificationError::StampActionsMismatch);
         }
 
@@ -862,7 +860,7 @@ impl TachyonBundle {
     /// Descriptors are sorted but not deduplicated, so a collection containing
     /// duplicates mismatches.
     #[must_use]
-    pub fn covers(&self, adjuncts: &[Self]) -> bool {
+    pub fn is_covering(&self, adjuncts: &[Self]) -> bool {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
             Self::NoBundle => false,
@@ -870,7 +868,7 @@ impl TachyonBundle {
                 .iter()
                 .map(|adj| adj.as_dyn())
                 .collect::<Option<Vec<&Bundle<dyn StampState>>>>()
-                .is_some_and(|dyn_adjuncts| stamped.covers(&dyn_adjuncts)),
+                .is_some_and(|dyn_adjuncts| stamped.is_covering(&dyn_adjuncts)),
             Self::Adjunct(ref _stamped) => false,
         }
     }

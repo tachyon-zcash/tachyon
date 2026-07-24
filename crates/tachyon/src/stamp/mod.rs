@@ -662,8 +662,8 @@ impl ProofStamp {
     ///
     /// The parameter is a multiset: order does not matter, multiplicity does.
     #[must_use]
-    pub fn covers(&self, action_descs: &[action::Descriptor]) -> bool {
-        let mut desc_bytes = action_descs.iter().copied().collect::<Vec<[u8; 64]>>();
+    pub fn covers(&self, action_descs: impl IntoIterator<Item = action::Descriptor>) -> bool {
+        let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes) == self.coverage
     }
@@ -677,9 +677,9 @@ impl ProofStamp {
     pub fn verify_proof<RNG: RngCore + CryptoRng>(
         &self,
         rng: &mut RNG,
-        action_digests: &[ActionDigest],
+        action_digests: impl IntoIterator<Item = ActionDigest>,
     ) -> Result<bool, ragu::Error> {
-        let action_set = action_digests.iter().copied().collect::<ActionSetPoly>();
+        let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
 
         let tachygram_set = self
             .tachygrams
