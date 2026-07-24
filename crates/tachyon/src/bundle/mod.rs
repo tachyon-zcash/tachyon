@@ -44,26 +44,17 @@
 //! | `vActionSigsTachyon`  | 64 * nActionsTachyon | authorization per action over tx sighash |
 //! | `bindingSigTachyon`   | 64 bytes             | binding over tx sighash                  |
 //!
-//! `vActionsTachyon` is a multiset: descriptors may repeat and multiplicity is
-//! significant, so it is neither sorted nor deduplicated on read. The proof
-//! validates the action set, reconstructing it as a product of roots, so a
-//! repeated descriptor is rejected there rather than at read.
-//!
 //! ### Proof stamp
 //!
 //! When `tachyonBundleState == 1`, the bundle carries a proof stamp.
 //!
-//! | Name                  | Format               | Description                              |
-//! | --------------------- | -------------------- | ---------------------------------------- |
-//! | `hStampActionsTachyon`     | 32 bytes             | BLAKE2b digest of the covered actions    |
-//! | `anchorTachyon`       | 32 bytes             | pool state reference                     |
-//! | `nTachygrams`         | compactsize          | number of tachygrams                     |
-//! | `vTachygrams`         | 32 * nTachygrams     | tachygrams for this proof                |
-//! | `proofTachyon`        | PROOF_SIZE blob      | serialized proof of fixed size           |
-//!
-//! Unlike `vActionsTachyon`, `vTachygrams` is a set: entries must be distinct
-//! and canonically ordered, and read rejects a duplicate or out-of-order
-//! tachygram.
+//! | Name                   | Format               | Description                              |
+//! | ---------------------- | -------------------- | ---------------------------------------- |
+//! | `hStampActionsTachyon` | 32 bytes             | BLAKE2b digest of the covered actions    |
+//! | `anchorTachyon`        | 32 bytes             | pool state reference                     |
+//! | `nTachygrams`          | compactsize          | number of tachygrams                     |
+//! | `vTachygrams`          | 32 * nTachygrams     | tachygrams for this proof                |
+//! | `proofTachyon`         | PROOF_SIZE blob      | serialized proof of fixed size           |
 //!
 //! ## Pointer stamp
 //!

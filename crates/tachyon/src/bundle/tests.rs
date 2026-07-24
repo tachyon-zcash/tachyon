@@ -456,8 +456,8 @@ fn payment_bundle_verifies() {
         .expect("payment bundle must verify");
 }
 
-/// An obvious double spend, two actions with identical descriptors, clears the
-/// signature check yet fails coverage verification on its uniqueness check.
+/// Two actions with identical descriptors clear the signature check but fail
+/// `verify_coverage` on uniqueness.
 #[test]
 fn double_spend_obvious() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -543,8 +543,8 @@ fn double_spend_obvious() {
         "the actions are identical"
     );
 
-    // Coverage verification rejects the duplicate outright: the descriptors dedup
-    // into a `BTreeSet`, collapsing the repeat, so the count shrinks.
+    // `verify_coverage` rejects the duplicate; deduplicating the descriptors
+    // shrinks the count below the wire multiset.
     let dup_err = decoded
         .verify_coverage(&[])
         .expect_err("duplicated actions must be rejected");
@@ -668,8 +668,8 @@ fn duplicated_spend_cannot_inflate() {
     let backed = i64::try_from(u64::from(note.value)).expect("note value fits i64");
     assert_eq!(withdrawn, 2 * backed, "the bundle balances two spends");
 
-    // Coverage verification rejects the duplicate outright: the descriptors dedup
-    // into a `BTreeSet`, collapsing the repeat, so the count shrinks.
+    // `verify_coverage` rejects the duplicate; deduplicating the descriptors
+    // shrinks the count below the wire multiset.
     let dup_err = decoded
         .verify_coverage(&[])
         .expect_err("the duplicated spend must be rejected");
@@ -693,10 +693,8 @@ fn duplicated_spend_cannot_inflate() {
         "the doubled action must not verify against the single-spend proof"
     );
 
-    // The same failure surfaces through the composed `verify` (autonome, no
-    // adjuncts): the forged coverage digest matches the duplicated action set, and
-    // the duplicate is caught at the coverage step's uniqueness check. (`verify`
-    // does not check signatures; that is done separately above.)
+    // `verify` catches the same duplicate at its coverage step. It does not
+    // check signatures; those are verified separately above.
     let err = decoded
         .verify(rng, &mock_wtxid(&decoded).into(), &[])
         .expect_err("the duplicated spend must fail full verification");
@@ -705,9 +703,8 @@ fn duplicated_spend_cannot_inflate() {
     };
 }
 
-/// `verify_coverage` deduplicates across the self+adjunct boundary: an
-/// aggregate and an adjunct claiming the same action are rejected as
-/// `DuplicateActions`. `verify_proof` independently returns `false` on the
+/// An action shared between the aggregate and an adjunct is rejected by
+/// `verify_coverage` as a duplicate; `verify_proof` also returns `false` on the
 /// repeated multiset.
 #[test]
 fn verify_proof_rejects_action_shared_with_adjunct() {
@@ -734,9 +731,9 @@ fn verify_proof_rejects_action_shared_with_adjunct() {
     );
 }
 
-/// A unique but uncovered adjunct action passes the duplicate check but fails
-/// the proof: the combined action set is not what the bundle's stamp commits
-/// to, so `verify_proof` returns `false`.
+/// A unique but uncovered adjunct action passes the duplicate check, but
+/// `verify_proof` returns `false` since the combined action set is not what the
+/// stamp commits to.
 #[test]
 fn verify_proof_disproves_uncovered_adjunct() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -983,9 +980,8 @@ fn based_aggregate_with_two_adjuncts() {
         "based aggregate proof must verify against its adjuncts"
     );
 
-    // Outer `verify` composes the pointer, coverage, and proof checks against the
-    // covering wtxid the adjuncts were stripped with. Signatures are verified
-    // separately (above).
+    // `verify` composes the pointer, coverage, and proof checks against the
+    // covering wtxid. Signatures are verified separately above.
     assert!(
         becomes_based.is_aggregate(),
         "a based aggregate does not cover its own actions alone"
@@ -1015,8 +1011,7 @@ fn based_aggregate_with_two_adjuncts() {
         };
     }
 
-    // A corrupted action signature is caught by `verify_signatures`, the caller's
-    // responsibility alongside `verify`.
+    // A corrupted action signature is caught by `verify_signatures`, not `verify`.
     {
         let mut tampered = becomes_based.clone();
         let mut sig_bytes: [u8; 64] = tampered.actions[0].sig.0.into();
@@ -1031,10 +1026,9 @@ fn based_aggregate_with_two_adjuncts() {
     }
 }
 
-/// The outer `verify` on an autonome (no adjuncts): the honest bundle passes,
-/// with signatures verified separately via `verify_signatures`, which also
-/// catches a corrupted binding signature. Without adjuncts there is nothing to
-/// match the `wtxid` against, though it must still be a valid (nonzero)
+/// `verify` on an autonome (no adjuncts). Signatures are checked separately by
+/// `verify_signatures`, which also catches a corrupted binding signature. With
+/// no adjuncts the `wtxid` is not matched, but must still be a valid nonzero
 /// aggregate id.
 #[test]
 fn autonome_verify_composes_all_checks() {
