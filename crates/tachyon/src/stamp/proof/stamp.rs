@@ -267,31 +267,28 @@ impl Step for MergeStamp {
             "MergeStamp: right tachygram accumulator must commit to header commit",
         )?;
 
-        let merged_action_set_commit = merged_action_set.commit();
-        let merged_tachygram_set_commit = merged_tachygram_set.commit();
-
         // The merged sets are witnessed; confirm each is the `left · right`
         // union of its halves via the product-opening relation, never built
         // in-step.
         enforce_poly_product(
             ctx,
-            &left_action_set.into(),
-            &right_action_set.into(),
-            &merged_action_set.into(),
+            left_action_set.as_ref(),
+            right_action_set.as_ref(),
+            merged_action_set.as_ref(),
             "MergeStamp: merged action set must be the product of left and right action sets",
         )?;
         enforce_poly_product(
             ctx,
-            &left_tachygram_set.into(),
-            &right_tachygram_set.into(),
-            &merged_tachygram_set.into(),
+            left_tachygram_set.as_ref(),
+            right_tachygram_set.as_ref(),
+            merged_tachygram_set.as_ref(),
             "MergeStamp: merged tachygram set must be the product of left and right tachygram sets",
         )?;
 
         Ok((
             (
-                merged_action_set_commit,
-                merged_tachygram_set_commit,
+                merged_action_set.commit(),
+                merged_tachygram_set.commit(),
                 left_anchor,
             ),
             (),

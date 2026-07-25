@@ -20,7 +20,7 @@ use alloc::{vec, vec::Vec};
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
-    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Polynomial, Step, Suffix,
+    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
     constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
@@ -421,10 +421,7 @@ impl Step for UnspentFuse {
             "UnspentFuse: halves disagree on the junction nullifier",
         )?;
         let combined_commit = combined_elapsed_seq.commit();
-        let offset =
-            usize::try_from(left_epoch_end.0 - left_epoch_start.0).map_err(|_too_many_epochs| {
-                ragu::Error::InvalidWitness("UnspentFuse: crossing count exceeds usize".into())
-            })?;
+        let offset = u64::from(left_epoch_end.0 - left_epoch_start.0);
         // Sentinel concat: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
         // `combined = left ++ right` is the shifted combination
         // `combined(X) = left(X) + X^offset·right(X) - X^offset`. The
@@ -435,11 +432,11 @@ impl Step for UnspentFuse {
         enforce_shifted_combination(
             ctx,
             [
-                (&Polynomial::from(left_elapsed_seq), 0),
-                (&Polynomial::from(right_elapsed_seq), offset),
+                (left_elapsed_seq.as_ref(), 0),
+                (right_elapsed_seq.as_ref(), offset),
             ],
             [(-Fp::ONE, offset)],
-            &Polynomial::from(combined_elapsed_seq),
+            combined_elapsed_seq.as_ref(),
             "UnspentFuse: combined is not the concatenation of the halves",
         )?;
         Ok((
@@ -512,10 +509,7 @@ impl Step for UnspentEpochFuse {
             "UnspentEpochFuse: boundary anchor does not match right.anchor_prev",
         )?;
         let combined_commit = combined_elapsed_seq.commit();
-        let offset =
-            usize::try_from(left_epoch_end.0 - left_epoch_start.0).map_err(|_too_many_epochs| {
-                ragu::Error::InvalidWitness("UnspentEpochFuse: crossing count exceeds usize".into())
-            })?;
+        let offset = u64::from(left_epoch_end.0 - left_epoch_start.0);
         // Sentinel splice: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
         // `combined = left ++ [left_nf_end] ++ right` is the shifted
         // combination `combined(X) = left(X) + (left_nf_end - 1)·X^offset +
@@ -527,11 +521,11 @@ impl Step for UnspentEpochFuse {
         enforce_shifted_combination(
             ctx,
             [
-                (&Polynomial::from(left_elapsed_seq), 0),
-                (&Polynomial::from(right_elapsed_seq), offset + 1),
+                (left_elapsed_seq.as_ref(), 0),
+                (right_elapsed_seq.as_ref(), offset + 1),
             ],
             [(Fp::from(left_nf_end) - Fp::ONE, offset)],
-            &Polynomial::from(combined_elapsed_seq),
+            combined_elapsed_seq.as_ref(),
             "UnspentEpochFuse: combined is not the splice of the halves",
         )?;
         Ok((
@@ -599,11 +593,7 @@ impl Step for VerifyUnspent {
             Eq::from(nf_seq_commit),
             "VerifyUnspent: range polynomial does not match header",
         )?;
-        let offset = usize::try_from(unspent_epoch_end.0 - unspent_epoch_start.0).map_err(
-            |_too_many_epochs| {
-                ragu::Error::InvalidWitness("VerifyUnspent: crossing count exceeds usize".into())
-            },
-        )?;
+        let offset = u64::from(unspent_epoch_end.0 - unspent_epoch_start.0);
         // Sentinel append: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
         // `nf_seq = elapsed ++ [unspent_nf_end]` is the shifted combination
         // `nf_seq(X) = elapsed(X) + (unspent_nf_end - 1)·X^offset +
@@ -614,12 +604,12 @@ impl Step for VerifyUnspent {
         // [`Unspent`] PCD; `offset` is elapsed's header-fixed span.
         enforce_shifted_combination(
             ctx,
-            [(&Polynomial::from(elapsed_seq), 0)],
+            [(elapsed_seq.as_ref(), 0)],
             [
                 (Fp::from(unspent_nf_end) - Fp::ONE, offset),
                 (Fp::ONE, offset + 1),
             ],
-            &Polynomial::from(nf_seq),
+            nf_seq.as_ref(),
             "VerifyUnspent: range is not elapsed followed by the tip",
         )?;
         // Bind the unspent's free-witness boundary nullifiers to the range's

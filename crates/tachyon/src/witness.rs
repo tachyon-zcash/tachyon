@@ -70,8 +70,7 @@ pub fn unspent_fuse(
     left_elapsed: &[Nullifier],
     right_elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentFuse> {
-    let mut combined: Vec<Nullifier> = left_elapsed.to_vec();
-    combined.extend_from_slice(right_elapsed);
+    let combined = [left_elapsed, right_elapsed].concat();
     (
         left_elapsed.iter().copied().collect::<NfSeqPoly>(),
         combined.into_iter().collect::<NfSeqPoly>(),
@@ -88,9 +87,7 @@ pub fn unspent_epoch_fuse(
     right_elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentEpochFuse> {
     let (_, _, _, (_, nf_end), _) = left;
-    let mut combined: Vec<Nullifier> = left_elapsed.to_vec();
-    combined.push(nf_end);
-    combined.extend_from_slice(right_elapsed);
+    let combined = [left_elapsed, &[nf_end], right_elapsed].concat();
     (
         left_elapsed.iter().copied().collect::<NfSeqPoly>(),
         combined.into_iter().collect::<NfSeqPoly>(),
