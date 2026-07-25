@@ -227,9 +227,7 @@ fn stamp_lift_within_epoch() {
     let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
     let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
 
-    pool.advance(usize::try_from(EPOCH_SIZE - 2).expect("fits"), |_| {
-        random_block(rng, 1, 4)
-    });
+    pool.advance(EPOCH_SIZE - 2, |_| random_block(rng, 1, 4));
     let new_height = pool.height();
 
     let stamp_pcd = stamp
@@ -395,9 +393,7 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let mut pool = PoolSim::genesis(rng);
-        pool.advance(usize::try_from(EPOCH_SIZE + 1).expect("fits"), |_| {
-            random_block(rng, 1, 2)
-        });
+        pool.advance(EPOCH_SIZE + 1, |_| random_block(rng, 1, 2));
 
         let left = build_anchor_chain_pcd(rng, &pool, BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1));
         let right = build_anchor_chain_pcd(
@@ -934,9 +930,7 @@ fn multi_epoch_fuse_setup(
     Pcd<pool::Unspent>,
 ) {
     let mut pool = PoolSim::genesis(rng);
-    pool.advance(usize::try_from(3 * EPOCH_SIZE + 3).expect("fits"), |_| {
-        random_block(rng, 1, 2)
-    });
+    pool.advance(3 * EPOCH_SIZE + 3, |_| random_block(rng, 1, 2));
     let nf0 = Nullifier::from(Fp::random(&mut *rng));
     let nf1 = Nullifier::from(Fp::random(&mut *rng));
     let nf2 = Nullifier::from(Fp::random(&mut *rng));
@@ -1084,9 +1078,7 @@ fn unspent_fuse_rejects_wrong_combined() {
 fn unspent_fuse_rejects_epoch_boundary_crossing() {
     let rng = &mut StdRng::seed_from_u64(0);
     let mut pool = PoolSim::genesis(rng);
-    pool.advance(usize::try_from(EPOCH_SIZE + 1).expect("fits"), |_| {
-        random_block(rng, 1, 2)
-    });
+    pool.advance(EPOCH_SIZE + 1, |_| random_block(rng, 1, 2));
 
     let nf0 = Nullifier::from(Fp::random(&mut *rng));
     let nf1 = Nullifier::from(Fp::random(&mut *rng));
@@ -1130,9 +1122,7 @@ fn unspent_fuse_rejects_epoch_boundary_crossing() {
 /// anchor, the right half from the boundary to inside a block of epoch 4.
 fn epoch_fuse_setup(rng: &mut StdRng) -> ([Nullifier; 5], Pcd<pool::Unspent>, Pcd<pool::Unspent>) {
     let mut pool = PoolSim::genesis(rng);
-    pool.advance(usize::try_from(4 * EPOCH_SIZE + 3).expect("fits"), |_| {
-        random_block(rng, 1, 2)
-    });
+    pool.advance(4 * EPOCH_SIZE + 3, |_| random_block(rng, 1, 2));
     let nf: [Nullifier; 5] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
     let start_height = BlockHeight(2);
     let end_height = BlockHeight(4 * EPOCH_SIZE + 2);
@@ -1307,9 +1297,7 @@ fn unspent_epoch_fuse_rejects_wrong_boundary_anchor() {
 fn unspent_epoch_fuse_rejects_epoch_skip() {
     let rng = &mut StdRng::seed_from_u64(0);
     let mut pool = PoolSim::genesis(rng);
-    pool.advance(usize::try_from(2 * EPOCH_SIZE).expect("fits"), |_| {
-        random_block(rng, 1, 2)
-    });
+    pool.advance(2 * EPOCH_SIZE, |_| random_block(rng, 1, 2));
     let nf_e0 = Nullifier::from(Fp::random(&mut *rng));
     let nf_e2 = Nullifier::from(Fp::random(&mut *rng));
     let left = build_unspent_pcd_between_blocks(

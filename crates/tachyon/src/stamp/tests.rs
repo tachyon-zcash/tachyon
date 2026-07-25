@@ -31,18 +31,13 @@ fn merge_stamp_iff_matching_anchors() {
         let user_b = WalletSim::random(rng);
         let mut pool = PoolSim::genesis(rng);
 
-        pool.advance(
-            usize::try_from(anchor_height_a.0 + 1).expect("fits"),
-            |_| random_block(rng, 1, 50),
-        );
+        pool.advance(anchor_height_a.0 + 1, |_| random_block(rng, 1, 50));
         let anchor_a = pool.anchor();
         let note_a = user_a.random_note(200);
         let (stamp_a, plan_a) = build_output_stamp(rng, anchor_a, note_a);
 
         let n_between = anchor_height_b.0 - anchor_height_a.0;
-        pool.advance(usize::try_from(n_between).expect("fits"), |_| {
-            random_block(rng, 1, 50)
-        });
+        pool.advance(n_between, |_| random_block(rng, 1, 50));
         let anchor_b = pool.anchor();
         let note_b = user_b.random_note(300);
         let (stamp_b, plan_b) = build_output_stamp(rng, anchor_b, note_b);
