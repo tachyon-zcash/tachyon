@@ -83,6 +83,11 @@ impl PaymentKey {
     /// Derive the payment key from `ak` and `nk`:
     /// $\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
     /// \mathsf{nk})$.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `ak` is not sign-normalized or is the identity — either
+    /// means it did not come from the crate's key derivation.
     #[must_use]
     pub fn derive(ak: &SpendValidatingKey, nk: &NullifierKey) -> Self {
         Self(poseidon::payment_key(vk_x_coordinate(ak), nk.0))
@@ -91,24 +96,30 @@ impl PaymentKey {
 
 /// Extract the Pallas base-field x-coordinate from a spend validating key.
 ///
-/// A [`SpendValidatingKey`] wraps a
-/// [`reddsa::VerificationKey`](crate::reddsa::VerificationKey), whose 32-byte
-/// encoding is always a valid Pallas point: the canonical x-coordinate in the
-/// low 255 bits plus the y-sign in byte 31, bit 7 (Zcash protocol spec
-/// §5.4.9.7). Clearing that sign bit leaves the canonical x, which is always a
-/// valid `Fp`, so the conversion cannot fail — the fallback is unreachable. The
-/// identity encoding `[0; 32]` maps to `Fp::ZERO`.
+/// A [`SpendValidatingKey`] only comes from
+/// [`SpendAuthorizingKey::derive_auth_public`](super::private::SpendAuthorizingKey),
+/// whose scalar is sign-normalized by `SpendingKey::derive_auth_private`
+/// (§5.4.7.1), so the 32-byte encoding's y-sign bit (byte 31, bit 7) is always
+/// clear and the bytes are the canonical x-coordinate, a valid `Fp`.
 ///
-/// Feeding the raw compressed bytes to [`Fp::from_repr`] directly instead
-/// panics whenever the y-sign bit is set: those bytes encode `x + 2^255 > p`,
-/// which is not a canonical field element. The honest `SpendingKey` path
-/// sign-normalizes `ak` (§5.4.7.1) so the bit is always clear, but an
-/// un-normalized valid key — e.g. one parsed from the wire — would trip it.
+/// # Panics
+///
+/// Panics if the encoding is not a canonical x-coordinate (y-sign bit set:
+/// `x + 2^255 > p` fails [`Fp::from_repr`]) or is the identity (`x = 0`, which
+/// no valid point has). Either means `ak` did not come from the crate's
+/// derivation — an invariant violation, not an input error — and deriving a
+/// payment key from a transformed value would silently produce a different
+/// key.
 fn vk_x_coordinate(ak: &SpendValidatingKey) -> Fp {
-    let mut bytes: [u8; 32] = ak.0.into();
-    // Clear the y-sign bit (byte 31, bit 7), leaving the canonical x-coordinate.
-    bytes[31] &= 0b0111_1111;
-    Option::from(Fp::from_repr(bytes)).unwrap_or(Fp::ZERO)
+    let bytes: [u8; 32] = ak.0.into();
+    #[expect(
+        clippy::expect_used,
+        reason = "invariant: `ak` comes from the crate's sign-normalizing derivation"
+    )]
+    Fp::from_repr(bytes)
+        .into_option()
+        .filter(|x| *x != Fp::ZERO)
+        .expect("`ak` must be a sign-normalized, non-identity verification key")
 }
 
 #[cfg(test)]
@@ -119,13 +130,13 @@ mod tests {
     use super::*;
     use crate::{primitives::EpochIndex, reddsa};
 
-    /// A `SpendValidatingKey` whose canonical compressed encoding has the y-sign
-    /// bit set (byte 31, bit 7) must not panic in `derive`, and must derive from
-    /// the masked x-coordinate. The honest `SpendingKey` path normalizes this
-    /// bit away, but a key parsed or constructed without normalization can set
-    /// it — the case that previously panicked in `Fp::from_repr`.
+    /// A `SpendValidatingKey` whose compressed encoding has the y-sign bit set
+    /// (byte 31, bit 7) did not come from the crate's sign-normalizing
+    /// derivation — `derive` must panic on the invariant violation rather than
+    /// silently deriving a payment key from a transformed value.
     #[test]
-    fn derive_masks_sign_bit_on_unnormalized_ak() {
+    #[should_panic(expected = "sign-normalized, non-identity")]
+    fn derive_panics_on_unnormalized_ak() {
         let rng = &mut StdRng::seed_from_u64(7);
 
         // Find a valid verification key whose encoding sets the y-sign bit.
@@ -144,31 +155,22 @@ mod tests {
         );
         let nk = NullifierKey(Fp::random(&mut *rng));
 
-        // Previously panicked here; masked extraction must succeed.
-        let pk = PaymentKey::derive(&ak, &nk);
-
-        // It must derive from the masked x-coordinate, independently recomputed.
-        let mut masked = vk_bytes;
-        masked[31] &= 0b0111_1111;
-        let expected_x = Option::from(Fp::from_repr(masked)).expect("masked x is canonical");
-        assert_eq!(pk.0, poseidon::payment_key(expected_x, nk.0));
+        let _ = PaymentKey::derive(&ak, &nk);
     }
 
-    /// The identity key encoding `[0; 32]` must map to `Fp::ZERO` (not error) —
-    /// the behaviour the sign-bit mask deliberately preserves. reddsa permits
-    /// identity verification keys.
+    /// reddsa permits identity verification keys, but the crate's derivation
+    /// never produces one and identity `ak` is unsupported — `derive` must
+    /// panic rather than map the identity encoding to `Fp::ZERO`.
     #[test]
-    fn derive_identity_ak_maps_to_zero() {
+    #[should_panic(expected = "sign-normalized, non-identity")]
+    fn derive_rejects_identity_ak() {
         let rng = &mut StdRng::seed_from_u64(0);
         let ak = SpendValidatingKey(
             reddsa::VerificationKey::try_from([0u8; 32]).expect("identity is a valid key"),
         );
         let nk = NullifierKey(Fp::random(&mut *rng));
 
-        assert_eq!(
-            PaymentKey::derive(&ak, &nk).0,
-            poseidon::payment_key(Fp::ZERO, nk.0)
-        );
+        let _ = PaymentKey::derive(&ak, &nk);
     }
 
     #[test]
