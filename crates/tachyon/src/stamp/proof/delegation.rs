@@ -259,7 +259,7 @@ impl Step for NullifierFuse {
             "NullifierFuse: right polynomial does not match header",
         )?;
         let merged_nf_seq_commit = merged_seq.commit();
-        let offset = u64::from(left_epoch_end.0 - left_epoch_start.0);
+        let offset = left_epoch_end - left_epoch_start;
         // Sentinel concat: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
         // `merged = left ++ right` is the shifted combination
         // `merged(X) = left(X) + X^offset·right(X) - X^offset`. The `-X^offset`
@@ -269,8 +269,8 @@ impl Step for NullifierFuse {
         // and `offset` is left's header-fixed span.
         enforce_shifted_combination(
             ctx,
-            [(left_seq.as_ref(), 0), (right_seq.as_ref(), offset)],
-            [(-Fp::ONE, offset)],
+            [(left_seq.as_ref(), 0), (right_seq.as_ref(), offset.into())],
+            [(-Fp::ONE, offset.into())],
             merged_seq.as_ref(),
             "NullifierFuse: merged is not the concat of the halves",
         )?;

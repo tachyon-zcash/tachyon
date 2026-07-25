@@ -1,3 +1,5 @@
+use core::ops;
+
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use pasta_curves::Fp;
 
@@ -13,6 +15,10 @@ use pasta_curves::Fp;
 #[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct EpochIndex(pub u32);
 
+/// A non-negative distance between two [`EpochIndex`]es, from subtraction.
+#[derive(Clone, Copy, Debug, Ord, PartialEq, PartialOrd, TotalEq)]
+pub struct EpochDiff(u32);
+
 impl EpochIndex {
     /// Returns the next epoch index.
     #[must_use]
@@ -24,5 +30,42 @@ impl EpochIndex {
 impl From<EpochIndex> for Fp {
     fn from(epoch: EpochIndex) -> Self {
         Self::from(u64::from(epoch.0))
+    }
+}
+
+impl ops::Sub<Self> for EpochIndex {
+    type Output = EpochDiff;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        #[expect(clippy::expect_used, reason = "don't do it wrong")]
+        EpochDiff(
+            self.0
+                .checked_sub(rhs.0)
+                .expect("epoch difference is positive"),
+        )
+    }
+}
+
+impl From<EpochDiff> for u64 {
+    fn from(diff: EpochDiff) -> Self {
+        diff.0.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn epoch_difference_counts_the_span() {
+        assert_eq!(u64::from(EpochIndex(7) - EpochIndex(3)), 4);
+        assert_eq!(u64::from(EpochIndex(3) - EpochIndex(3)), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "epoch difference is positive")]
+    fn epoch_difference_rejects_reversed_operands() {
+        let reversed = EpochIndex(3) - EpochIndex(7);
+        panic!("reversed operands must not produce a difference, got {reversed:?}");
     }
 }

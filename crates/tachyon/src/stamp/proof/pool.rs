@@ -421,7 +421,7 @@ impl Step for UnspentFuse {
             "UnspentFuse: halves disagree on the junction nullifier",
         )?;
         let combined_commit = combined_elapsed_seq.commit();
-        let offset = u64::from(left_epoch_end.0 - left_epoch_start.0);
+        let offset = left_epoch_end - left_epoch_start;
         // Sentinel concat: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
         // `combined = left ++ right` is the shifted combination
         // `combined(X) = left(X) + X^offset·right(X) - X^offset`. The
@@ -433,9 +433,9 @@ impl Step for UnspentFuse {
             ctx,
             [
                 (left_elapsed_seq.as_ref(), 0),
-                (right_elapsed_seq.as_ref(), offset),
+                (right_elapsed_seq.as_ref(), offset.into()),
             ],
-            [(-Fp::ONE, offset)],
+            [(-Fp::ONE, offset.into())],
             combined_elapsed_seq.as_ref(),
             "UnspentFuse: combined is not the concatenation of the halves",
         )?;
@@ -509,7 +509,7 @@ impl Step for UnspentEpochFuse {
             "UnspentEpochFuse: boundary anchor does not match right.anchor_prev",
         )?;
         let combined_commit = combined_elapsed_seq.commit();
-        let offset = u64::from(left_epoch_end.0 - left_epoch_start.0);
+        let offset = left_epoch_end - left_epoch_start;
         // Sentinel splice: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
         // `combined = left ++ [left_nf_end] ++ right` is the shifted
         // combination `combined(X) = left(X) + (left_nf_end - 1)·X^offset +
@@ -522,9 +522,9 @@ impl Step for UnspentEpochFuse {
             ctx,
             [
                 (left_elapsed_seq.as_ref(), 0),
-                (right_elapsed_seq.as_ref(), offset + 1),
+                (right_elapsed_seq.as_ref(), u64::from(offset) + 1),
             ],
-            [(Fp::from(left_nf_end) - Fp::ONE, offset)],
+            [(Fp::from(left_nf_end) - Fp::ONE, offset.into())],
             combined_elapsed_seq.as_ref(),
             "UnspentEpochFuse: combined is not the splice of the halves",
         )?;
@@ -593,7 +593,7 @@ impl Step for VerifyUnspent {
             Eq::from(nf_seq_commit),
             "VerifyUnspent: range polynomial does not match header",
         )?;
-        let offset = u64::from(unspent_epoch_end.0 - unspent_epoch_start.0);
+        let offset = unspent_epoch_end - unspent_epoch_start;
         // Sentinel append: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
         // `nf_seq = elapsed ++ [unspent_nf_end]` is the shifted combination
         // `nf_seq(X) = elapsed(X) + (unspent_nf_end - 1)·X^offset +
@@ -606,8 +606,8 @@ impl Step for VerifyUnspent {
             ctx,
             [(elapsed_seq.as_ref(), 0)],
             [
-                (Fp::from(unspent_nf_end) - Fp::ONE, offset),
-                (Fp::ONE, offset + 1),
+                (Fp::from(unspent_nf_end) - Fp::ONE, offset.into()),
+                (Fp::ONE, u64::from(offset) + 1),
             ],
             nf_seq.as_ref(),
             "VerifyUnspent: range is not elapsed followed by the tip",
