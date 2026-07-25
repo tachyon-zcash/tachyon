@@ -4,6 +4,8 @@ use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::PrimeField as _;
 use pasta_curves::Fp;
 
+use crate::{note::Commitment, nullifier::Nullifier};
+
 /// A tachygram is a field element ($\mathbb{F}_p$) representing either a
 /// note commitment or a nullifier in the Tachyon polynomial accumulator.
 ///
@@ -33,5 +35,17 @@ impl Ord for Tachygram {
     /// commits to. `Fp` has no intrinsic `Ord`.
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.to_repr().as_ref().cmp(other.0.to_repr().as_ref())
+    }
+}
+
+impl From<Nullifier> for Tachygram {
+    fn from(nullifier: Nullifier) -> Self {
+        Self::from(Fp::from(nullifier))
+    }
+}
+
+impl From<Commitment> for Tachygram {
+    fn from(commitment: Commitment) -> Self {
+        Self::from(Fp::from(commitment))
     }
 }

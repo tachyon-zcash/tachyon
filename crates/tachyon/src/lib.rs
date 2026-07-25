@@ -17,6 +17,7 @@ pub mod constants;
 pub mod entropy;
 pub mod keys;
 pub mod note;
+pub mod nullifier;
 pub mod reddsa;
 pub mod stamp;
 pub mod value;

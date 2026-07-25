@@ -16,7 +16,8 @@ use ragu::{
 use crate::{
     digest::poseidon,
     keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, ProofAuthorizingKey},
-    note::{self, Note, Nullifier},
+    note::{self, Note},
+    nullifier::Nullifier,
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
     relations::enforce::enforce_shifted_combination,
 };
@@ -115,7 +116,7 @@ impl Step for NfMasterSeed {
             note.pk.0 - pak.derive_payment_key().0,
             "NfMasterSeed: pak not related to note",
         )?;
-        let mk = pak.nk.derive_note_private(&note.psi);
+        let mk = pak.nk.derive_note_private(note.psi);
         let cm = note.commitment();
         Ok(((cm, mk.0, 0, EpochIndex(0)), ()))
     }

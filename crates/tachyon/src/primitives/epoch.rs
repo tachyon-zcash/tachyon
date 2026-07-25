@@ -8,10 +8,9 @@ use pasta_curves::Fp;
 /// The tachyon accumulator evolves as tachygrams are included. Each
 /// epoch identifies a specific pool accumulator state.
 ///
-/// Used as **flavor** in nullifier derivation:
-/// $mk = \text{KDF}(\psi, nk)$, then $nf = F_{mk}(\text{flavor})$.
-/// Different epochs produce different nullifiers for the same note,
-/// enabling range-restricted delegation via the GGM tree PRF.
+/// Indexes nullifier derivation: $mk = \text{KDF}(\psi, nk)$, then
+/// $nf_e = F_{mk}(e)$. Different epochs produce different nullifiers for
+/// the same note, enabling range-restricted delegation via the GGM tree PRF.
 #[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct EpochIndex(pub u32);
 

@@ -8,7 +8,7 @@ use ff::Field as _;
 use pasta_curves::{Eq, Fp};
 use ragu::Polynomial;
 
-use crate::note::Nullifier;
+use crate::nullifier::Nullifier;
 
 /// Pedersen commitment to a nullifier sequence $N$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]

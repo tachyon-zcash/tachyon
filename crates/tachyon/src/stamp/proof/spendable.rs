@@ -19,7 +19,8 @@ use super::{
     pool::{AnchorChain, VerifiedUnspent},
 };
 use crate::{
-    note::{self, Nullifier},
+    note,
+    nullifier::Nullifier,
     primitives::{Anchor, TachygramSetPoly},
 };
 

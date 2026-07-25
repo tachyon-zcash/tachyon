@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use ragu::{Header, Step};
 
 use crate::{
-    note::Nullifier,
+    nullifier::Nullifier,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, Tachygram, TachygramSetPoly,
     },

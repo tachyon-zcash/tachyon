@@ -59,10 +59,10 @@
 //! Nullifiers are derived via a GGM tree PRF instantiated from Poseidon:
 //!
 //! $$\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk})$$
-//! $$\mathsf{nf} = F_{\mathsf{mk}}(\text{flavor})$$
+//! $$\mathsf{nf}_e = F_{\mathsf{mk}}(e)$$
 //!
 //! where $\psi$ is the note's nullifier trapdoor, $\mathsf{nk}$ is the
-//! nullifier key, and flavor is the epoch-id.
+//! nullifier key, and $e$ is the epoch index.
 //!
 //! The master root key $\mathsf{mk}$ supports oblivious sync delegation:
 //! prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
@@ -94,6 +94,7 @@ mod tests {
         entropy::ActionEntropy,
         keys::{NullifierKey, PaymentKey, private},
         note::{self, Note},
+        nullifier,
         primitives::effect,
         value,
     };
@@ -143,7 +144,7 @@ mod tests {
         let note = Note {
             pk: sk.derive_payment_key(),
             value: value::Positive::try_from(1000u64).unwrap(),
-            psi: note::NullifierTrapdoor::random(rng),
+            psi: nullifier::Trapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };
         let theta = ActionEntropy::random(rng);

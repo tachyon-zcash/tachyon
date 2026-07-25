@@ -15,7 +15,7 @@ use core::{num::NonZeroU8, ops::RangeInclusive};
 use derive_more::{Debug, Eq as TotalEq, PartialEq};
 use pasta_curves::Fp;
 
-use crate::{constants::EPOCH_MAX, digest::poseidon, note::Nullifier, primitives::EpochIndex};
+use crate::{constants::EPOCH_MAX, digest::poseidon, nullifier::Nullifier, primitives::EpochIndex};
 
 /// Maximum leaf index. Equal to [`EPOCH_MAX`] so every epoch maps to a
 /// distinct leaf.
@@ -54,7 +54,7 @@ pub const GGM_TREE_DEPTH: u8 = GGM_MAX_INDEX.trailing_ones() as u8 / GGM_CHUNK_S
 ///
 /// ```text
 /// nk + psi → mk (per-note root, user device)
-///              ├── nf = F_mk(flavor)     nullifier for a specific epoch
+///              ├── nf = F_mk(e)          nullifier for a specific epoch
 ///              └── psi_t = GGM(mk, t)    prefix key for epochs e ≤ t (OSS)
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
@@ -75,10 +75,10 @@ impl NoteMasterKey {
 
     /// Derive a nullifier for the given epoch.
     #[must_use]
-    pub fn derive_nullifier(&self, flavor: EpochIndex) -> Nullifier {
+    pub fn derive_nullifier(&self, epoch: EpochIndex) -> Nullifier {
         Nullifier::from(poseidon::nullifier(ggm_walk(
             self.0,
-            flavor.0,
+            epoch.0,
             GGM_TREE_DEPTH,
         )))
     }
@@ -204,11 +204,11 @@ impl NotePrefixedKey {
     ///
     /// Panics if the epoch is outside this key's authorized range.
     #[must_use]
-    pub fn derive_nullifier(&self, flavor: EpochIndex) -> Nullifier {
-        assert!(self.range().contains(&flavor.0), "epoch out of range");
+    pub fn derive_nullifier(&self, epoch: EpochIndex) -> Nullifier {
+        assert!(self.range().contains(&epoch.0), "epoch out of range");
         let remaining = GGM_TREE_DEPTH - self.depth.get();
         Nullifier::from(poseidon::nullifier(ggm_walk(
-            self.inner, flavor.0, remaining,
+            self.inner, epoch.0, remaining,
         )))
     }
 }

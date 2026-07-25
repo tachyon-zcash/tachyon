@@ -26,7 +26,8 @@ use ragu::{
 
 use super::delegation::NullifierHeader;
 use crate::{
-    note::{self, Nullifier},
+    note,
+    nullifier::Nullifier,
     primitives::{
         Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, TachygramSetCommit, TachygramSetPoly,
     },

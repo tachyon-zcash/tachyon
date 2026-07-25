@@ -16,7 +16,8 @@ use crate::{
     constants::MAX_MONEY,
     entropy::ActionRandomizer,
     keys::ProofAuthorizingKey,
-    note::{self, Note, Nullifier},
+    note::{self, Note},
+    nullifier::Nullifier,
     primitives::{Anchor, effect},
     value,
 };

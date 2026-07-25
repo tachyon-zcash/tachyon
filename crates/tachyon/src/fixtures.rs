@@ -31,7 +31,8 @@ use crate::{
     digest::blake2b,
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
-    note::{self, Note, Nullifier, NullifierTrapdoor},
+    note::{self, Note},
+    nullifier::{self, Nullifier},
     primitives::{
         ActionSetPoly, Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit,
         TachygramSetPoly, effect,
@@ -944,14 +945,14 @@ impl WalletSim {
         Note {
             pk,
             value: value::Positive::try_from(value_amount).expect("fixture value in range"),
-            psi: NullifierTrapdoor::random(notes),
+            psi: nullifier::Trapdoor::random(notes),
             rcm: note::CommitmentTrapdoor::random(notes),
         }
     }
 
     #[must_use]
     pub fn mk(&self, note: &Note) -> NoteMasterKey {
-        self.pak.nk.derive_note_private(&note.psi)
+        self.pak.nk.derive_note_private(note.psi)
     }
 
     #[must_use]
@@ -1264,7 +1265,7 @@ pub mod ggm_tools {
         EpochIndex,
         digest::poseidon,
         keys::{GGM_CHUNK_SIZE, GGM_TREE_DEPTH},
-        note::Nullifier,
+        nullifier::Nullifier,
         stamp::proof::{PROOF_SYSTEM, delegation},
         witness,
     };

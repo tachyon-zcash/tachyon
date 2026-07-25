@@ -25,7 +25,8 @@ use crate::{
         build_unspent_seed_pcd, random_block, random_block_with, shared_sk, spend_witness,
         spendable_init_inputs,
     },
-    note::{self, Nullifier},
+    note,
+    nullifier::{self, Nullifier},
     primitives::{Anchor, BlockHeight, EpochIndex, Tachygram, effect},
     value, witness,
 };
@@ -290,7 +291,7 @@ fn unspent_seed_rejects_tg_present() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
-    let nf = note.nullifier(&user.pak.nk, EpochIndex(0));
+    let nf = user.nf_at(&note, EpochIndex(0));
 
     let start = Anchor::default();
 
@@ -654,7 +655,7 @@ fn step_rejects_zero_value_note() {
     let zero_note = Note {
         pk: user.pak.derive_payment_key(),
         value: value::Positive::new_unchecked(0),
-        psi: note::NullifierTrapdoor::random(rng),
+        psi: nullifier::Trapdoor::random(rng),
         rcm: note::CommitmentTrapdoor::random(rng),
     };
 
