@@ -537,22 +537,35 @@ A **Tachyon Action transfer** either spends an old note or creates a new one.
 Whether a spend or an output, its *Action description* is uniformly represented
 by a pair $(\rk, \cv)$, where $\rk$ is the randomized spend validating key, whose
 derivation *binds to the underlying note*, and $\cv$ is a blinding commitment to
-the net value (negative for a spend).
+the net value (positive for a spend, negative for an output, following the
+Sapling/Orchard sign convention).
 Unlike Sapling and Orchard, the tachygrams (nullifier or commitment) are left
 out of the description, because evolving per-epoch nullifiers are no longer
 static. We instead bind the note to $\rk$ through its randomizer $\alpha$:
 
 $$
 \begin{cases}
-\rk = [\ask + \alpha]\,\G \\
+\rk = [\ask + \alpha]\,\G \;\;\text{(spend)}
+\qquad
+\rk = [\alpha]\,\G \;\;\text{(output)}\\
 \alpha = \PRF(\cm \| \theta)  \quad\theta\text{: arbitrary entropy}
 \end{cases}
 $$
 
+A spend's $\rk$ re-randomizes the custody-held spending authority $\ask$; an
+output's carries no authority at all — creating a note requires none, since the
+binding signature already enforces that outputs are funded. An output's signing
+key is thus just $\alpha$, so a hot device can sign outputs without a custody
+round-trip; only spends need the custody-held $\ask$. Both forms of $\rk$ are
+uniformly random points, indistinguishable on chain.
+
 The Tachyon bundle inside a transaction carries a sequence of Action
 descriptions together with the net balance of all action transfers
-$v^{\mathsf{bal}}$, proven by a *binding signature* $\sigma^{\mathsf{bind}}$ as
-in Sapling/Orchard.
+$v^{\mathsf{bal}} = \sum_{\mathsf{spends}} v - \sum_{\mathsf{outputs}} v$,
+positive when value leaves the shielded pool, matching the `valueBalance`
+convention of Sapling/Orchard and keeping the ZIP-209 pool-turnstile accounting
+uniform across pools. The balance is proven by a *binding signature*
+$\sigma^{\mathsf{bind}}$ as in Sapling/Orchard.
 
 <details>
 <summary>Recall: How binding signature works.</summary>
@@ -564,6 +577,8 @@ $$
 $$
 
 where $\rcv$ is the blinding factor and $\H$ is an independent group generator.
+(Both value-commitment bases are independent of the spend-authorization base
+behind $\rk$; in practice Tachyon reuses Orchard's `ValueCommit` generators.)
 
 By the homomorphic property of Pedersen commitments, the verifier can sum the
 $\cv$ in a bundle to obtain $\sum_i{\cv_i}$, itself a blinding commitment to the
@@ -657,13 +672,22 @@ All non-malleable parts, collectively the *effecting data*, hash into a stable
 identifier `txid`: a bundle commitment from each pool and their value balance
 $v^{\mathsf{bal}}$. In-band encrypted memos count as effecting data for the legacy
 pools, but, as detailed below, *not* for the Tachyon pool.
-The Tachyon bundle commitment $\actacc$ is defined similarly to the tachygram accumulator:
+The Tachyon bundle commitment $\actacc$ is an order-committing,
+personalized hash over the Action descriptions in wire order:
 
 $$
-\actacc = \mathsf{Com}(\prod_i{(X - a_i)})
-\quad\text{where }
-a_i = H(\cv_i, \rk_i)
+\actacc = H\bigl( (\cv_1, \rk_1) \,\|\, (\cv_2, \rk_2) \,\|\, \ldots \,\|\, (\cv_n, \rk_n) \bigr)
 $$
+
+A plain hash suffices here: `txid` needs no algebraic structure, and committing
+to the wire order (as ZIP-244 digests do) keeps `txid` in one-to-one
+correspondence with the serialized effecting data.[^actacc]
+
+[^actacc]: An earlier draft realized $\actacc$ as a polynomial accumulator
+    $\mathsf{Com}(\prod_i(X - a_i))$ with $a_i = H(\cv_i, \rk_i)$, mirroring the
+    tachygram accumulator. That algebraic form is only needed where a *proof*
+    consumes the action set; for a transaction identifier it buys nothing and
+    drags group operations into `txid` derivation.
 
 All mutable parts (orange in the diagram) commit only to the `auth_digest`, and
 hence transitively to `wtxid = txid || auth_digest`; only the stable parts
@@ -996,9 +1020,10 @@ the pair $(\nf_e, \nf_{e+1})$ we already reveal.
 4. **Authorize and bind.** Concurrent to the proving path of steps 1-3,
 the wallet assembles the transaction body, computes the [`SIGHASH`](#tx) over
 the effecting data, and produces:
-    - a spend-authorization signature for every action, signed under the
-    [re-randomized key](#payment-key) $\ask + \alpha$ and verifiable against the
-    published $\rk$;
+    - an authorization signature for every action, verifiable against its
+    published $\rk$: spends sign under the [re-randomized key](#payment-key)
+    $\ask + \alpha$ (a custody round-trip), outputs under the bare randomizer
+    $\alpha$ (no authority needed, signable by the hot device);
     - the net value balance $v^\mathsf{bal}$ and a single [binding signature](#tx)
     $\sigma^\mathsf{bind}$ over the value commitments.
 
@@ -1094,8 +1119,11 @@ security analysis into two independent checks: that the monolithic statement is
 *sufficient*, and that the decomposition is *sound* (e.g., every step refers to
 the same note). A sub-statement is split into its own step for one of three reasons:
 
-- **Circuit size.** Each step is a bounded circuit (we target $2^{13}$ constraints),
-so a statement too large for one step must be spread across several.
+- **Circuit size.** Each step is a bounded circuit: $2^{11}$ multiplication
+gates, plus up to $4n = 2^{13}$ linear constraints over those gates' wires. The
+linear budget is abundant in practice, so the multiplication-gate count is the
+binding limit and the unit we size steps by. A statement too large for one step
+must be spread across several.
 - **Privacy boundary.** Some sub-statements need secret witnesses that would leak
 note privacy or spend linkability if the OSS saw them, so the OSS proves up to that
 boundary and relays the partial proof to the user, who finishes the step.
@@ -1120,7 +1148,7 @@ users), $\Uc$ (the user), or $\Oc$ (the OSS).
 A valid instance of an *Output Action statement* assures that, given the public input:
 
 - $\cv$: net value commitment
-- $\rk$: randomized proof validation key *of the sender*
+- $\rk$: randomized action validation key, carrying no spend authority
 - $\cm$: the output note commitment, published as a tachygram
 - $\tg_\bot$: a dummy tachygram, so an output reveals two tachygrams,
   [indistinguishable](#race) from a spend's nullifier pair
@@ -1131,19 +1159,33 @@ the prover knows the secret witness:
   recipient's payment key taken from their address
 - $\mathsf{Note}_\bot := (\pk_\bot, 0, \psi_\bot, \rcm_\bot)$: dummy note opening
   with arbitrary $\pk_\bot, \psi_\bot, \rcm_\bot$ values.
-- $\ak$: *sender* authorization key
 - the randomizers $\theta, \rcv$
 
 such that the following conditions hold:
 
-- **Value commitment integrity** ($\Uc$): $\cv = [v]\,\G + [\rcv]\,\H$, committing the
-  (non-negative) created value $v$.
+- **Value commitment integrity** ($\Uc$): $\cv = [-v]\,\G + [\rcv]\,\H$, committing the
+  negated created value (value entering the pool counts negatively toward
+  $v^\mathsf{bal}$, per the [sign convention](#tx)).
+- **Value range** ($\Uc$): $1 \leq v \leq v_\mathsf{max}$ in-circuit, with
+  $v_\mathsf{max} = 2.1\times10^{15}$ zatoshi (`MAX_MONEY`). Zero-value
+  *spendable* notes are forbidden; the dummy note below is the deliberate,
+  never-spendable exception.
 - **Note commitment integrity** ($\Uc$): $\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$, the
   published commitment opens to this note.
 - **Zero-value Dummy Commitment** ($\Uc$): $\tg_\bot = \mathsf{Com}
   (\pk_\bot, 0, \psi_\bot; \rcm_\bot)$, ensures zero-value dummy note.
-- **Authorization** ($\Uc$): $\rk = \ak + [\alpha]\,\G$ and
-  $\alpha = \PRF(\cm \,\|\, \theta)$ binding the validation key to the output note.
+- **Nonzero tachygrams** ($\Uc$): $\cm \neq 0$ and $\tg_\bot \neq 0$.[^nonzero]
+- **Authorization** ($\Uc$): $\rk = [\alpha]\,\G$ and
+  $\alpha = \PRF(\cm \,\|\, \theta)$, binding the validation key to the output
+  note. The signing key behind $\rk$ is $\alpha$ itself — creating an output
+  requires no spend authority ([rationale](#tx)).
+
+[^nonzero]: Every published tachygram is constrained nonzero. Poseidon outputs
+    hit zero only with negligible probability, but the explicit guard reserves
+    zero as a degenerate value: it keeps every accumulator factor $(X - \tg)$
+    non-trivial, and closes the zero-valued edge cases that tend to produce
+    identity points in committed form, which in-circuit point representations
+    cannot hold (a bug class already paid for once in the implementation).
 
 <a id="spend">**Spend Action Statement**</a>
 
@@ -1164,8 +1206,13 @@ the prover knows the secret witness:
 
 such that the following conditions hold:
 
-- **Value commitment integrity** ($\Uc$): $\cv = [-v]\,\G + [\rcv]\,\H$, committing the
-  negated spent value.
+- **Value commitment integrity** ($\Uc$): $\cv = [v]\,\G + [\rcv]\,\H$, committing the
+  spent value (value leaving the pool counts positively toward $v^\mathsf{bal}$,
+  per the [sign convention](#tx)).
+- **Value range** ($\Uc$): $1 \leq v \leq v_\mathsf{max}$, re-checked on the
+  witnessed note — its creating output already enforced the range, but the
+  redundant check is cheap defense in depth and keeps balance arithmetic
+  overflow-free.
 - **Note commitment integrity** ($\Uc$): $\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$.
 - **Payment key integrity** ($\Uc$): $\pkd = \mathsf{Com}(\ak, \nk; \rpk)$.
 - **Spend Authority** ($\Uc$): $\rk = \ak + [\alpha]\,\G$ and
@@ -1192,7 +1239,7 @@ such that the following conditions hold:
     the epoch's tachygram count).
 - **Spend-time Nullifier Integrity** ($\Uc$): $\nf_e, \nf_{e+1}$ are this note's
   [GGM nullifiers](#nf-ggm) at epochs $e, e+1$, derived from the seed
-  $\PRF_\nk(\psi)$ and so bound to $\cm$.
+  $\PRF_\nk(\psi)$ and so bound to $\cm$; both constrained nonzero.[^nonzero]
 
 There's an obvious challenge on catching up anchor chain for inclusion proof,
 which is linear hash chain proving, scale with the anchor chain length, but with flyclient
@@ -1409,7 +1456,7 @@ Left and Right are PCD inputs; a dash marks a leaf with witness only.
 | ---- | ----- | ---- | ----- | ------ | ------- |
 | `NfDerive` | $\Uc$ | — | — | `NfHeader` | $\mathsf{Note}, \nk$ |
 | `SpendCore` | $\Uc$ | `NfHeader` | — | `SpendCoreHeader` | $\mathsf{Note}, (\ak,\nk,\rpk), (\alpha,\theta,\rcv)$ |
-| `OutputCore` | $\Uc$ | — | — | `OutputHeader` | $\mathsf{Note}, \mathsf{Note}_\bot, \ak, (\alpha,\theta,\rcv)$ |
+| `OutputCore` | $\Uc$ | — | — | `OutputHeader` | $\mathsf{Note}, \mathsf{Note}_\bot, (\alpha,\theta,\rcv)$ |
 | `DelegateCert` | $\Uc$ | — | — | `DelegationHeader` | $\mathsf{Note}$ opening, $\nk$, prefix path |
 | `EpochAccCert` | $\Sc$ | — | — | `EpochAccHeader` | epoch $i$'s per-stamp accumulators |
 | `AnchorLift` | $\Sc$ | — | — | `AnchorChainHeader` | end-of-epoch anchors, flyclient samples |
@@ -1490,7 +1537,7 @@ flowchart BT
   w_note[/Note, keys, randomizers/]
   w_init[/Note, creating stamp/]
   w_stamps[/per-stamp tg accumulators/]
-  w_out[/Note, dummy, keys/]
+  w_out[/Note, dummy, randomizers/]
 
   nfderive[NfDerive]:::u
   score[SpendCore]:::u
@@ -1546,6 +1593,14 @@ wallet and the OSS.
    the proof to this note and running the [final lift into epoch $e$](#lift-e). The
    output side is a lone `OutputCore`, which `BundleAssemble` folds with the bound
    spend into the published stamp.
+
+> Note: at every hand-off across a trust boundary, the carried PCD proof is
+> [re-randomized](https://tachyon.z.cash/ragu/implementation/proofs.html#rerandomization)
+> first. The relayed proof is then unlinkable to its pre-handoff form and reveals
+> nothing about the private inputs of earlier steps beyond its public header.
+> These hand-off points include: the wallet delegating to the OSS; the OSS
+> returning the synced header; the wallet publishing its stamp; and an aggregator
+> merging published stamps.
 
 #### In-epoch Lift {#in-e}
 
@@ -2076,7 +2131,8 @@ quantum computer learns nothing about old transactions:
 - memos travel under [ML-KEM](#address), post-quantum from day one.
 
 The only discrete-log values on chain are the per-action value commitment $\cv$,
-the randomized validating key $\rk = [\ask + \alpha]\,\G$, and the binding key. The
+the randomized validating key $\rk$ ($[\ask + \alpha]\,\G$ for spends,
+$[\alpha]\,\G$ for outputs), and the binding key. The
 Pedersen $\cv = [v]\,\G + [\rcv]\,\H$ is perfectly hiding, so even a quantum
 computer learns nothing about $v$. Re-randomization makes the other two
 quantum-*private* as well: a quantum computer can take the discrete log of $\rk$ to
