@@ -1,5 +1,10 @@
 # Nullifier Analysis
 
+> TL;DR:
+> our [conclusion](#conclusion) recommends [Attempt 3](#attempt3) which
+> directly use Poseidon permutation to derive $\mathsf{Rate}=4$ nullifers per
+> squeeze; thus $7\cdot 4 = 32$ nullifier derivations per PCD step.
+
 ## Background
 
 Excerpt from the Tachyon [deep dive](./revisit.md) below.
@@ -358,10 +363,10 @@ number of rounds.
 In this attempt, we pick an off-the-shelf ZK-friendly hash function and use it
 as a black box. In the [next attempt](#attempt4), we open the black box, and
 tweak parameters and design axis in pursuit of a more circuit-efficient AOC.
-We pick battle-tested Poseidon with some domain separation string $\mathsf{ds}$:
+We pick battle-tested Poseidon with proper domain separation:
 
 $$
-f_k(X) = \mathsf{Poseidon}(\mathsf{ds}, k, x)
+f_k(X) = \mathsf{Poseidon}^\nf(k, x)
 $$
 
 To reiterate the overall flow:
@@ -369,7 +374,7 @@ To reiterate the overall flow:
 - Sender prepares the Output note with arbitrary $\psi$ (random if honest).
 - User proves nullifier derivation in-circuit as:
   $$
-  \nf_e = \mathsf{Poseidon}(\mathsf{ds}, \nk, \psi, e)
+  \nf_e = \mathsf{Poseidon}^\nf(\nk, \psi, e)
   $$
 - OSS directly receives a single PCD proof attesting $\{\nf_i\}_{i\in R}$ for the
   delegated range.
@@ -385,6 +390,18 @@ This is the first attempts that satisfy all our security and efficiency
 requirements. On the positive side, it requires no new/in-house cryptoanalysis,
 no additional assumptions or trusted primitives. However, the efficiency
 improvements over the GGM-based nullifiers is a moderate $7\times$.
+
+A natural optimization is producing $\mathsf{Rate}=4$ nullifiers, rather than
+just one nullifier, per Poseidon squeeze.
+
+$$
+\nf_e = \mathsf{Poseidon}^\nf.\mathsf{Permute}
+(\nk, \psi, \lceil \frac{e}{4} \rceil)[e \bmod 4]
+$$
+
+In practice, we would prove a batch of $4 \cdot 7 = 32$ nullifiers in one PCD
+step and separately show that the list of nullifiers OSS had proven exclusion
+for is a sub-sequence of these $32$ nullifiers.
 
 ## Attempt 4: AOC with Reduced Rounds {#attempt4}
 
@@ -959,6 +976,18 @@ expand the full key, which incurs higher circuit cost.
 
 ## Conclusion
 
+Overall, we recommend [Attempt 3](#attempt3) which offers a $32\times$
+improvement on circuit efficiency for nullifier derivations. This attempt
+demands minimum engineering effort, no extra assumption or in-house cryptanalysis,
+while meeting our security computationally.
+
+If our circuit size can double to $2^{12}$, then we recommend
+[Attempt 5](#attempt5) which supports up to $120$ nullifiers per PCD step.
+However, for current $2^{11}$-size step circuit, we estimate only $14$ nullifier
+derivations per step, which is worse than Attempt 3. See the circuit cost
+breakdown [here](#prove-cost).
+
+The concrete parameter suggestion for Attempt 5 is:
 Use MiMC with rounds $r=63, \alpha=5$ over $254$-bit scalar field.[^final-r]
 Concretely, the nullifier polynomial $f_k(X)$ is:
 
@@ -970,16 +999,7 @@ f_k(X) &= \left( F_k^{(r-1)} \circ F_k^{(r-2)} \circ \ldots F_k^{(1)}
 \end{aligned}
 $$
 
-Follow [Attempt 5](#mimc-iop) to prove its execution trace cheaply in Ragu.
-
-The circuit cost is shown [here](#prove-cost), for the current PCD step circuit
-size of $2^{11}$, we estimate $14$ nullifier derivation. But, if we are open to
-doubling the size limit to $2^{12}$, then we can support up to $120$ nullifiers
-per PCD step ($120\times$ improvement over the GGM approach).
-
-If we want the sweet spot of minimum engineering effort while meeting the security
-requirement, then we recommend [Attempt 3](#attempt3) which offers a $7\times$
-improvement on circuit efficiency for nullifier derivations.
+then [batch-prove](#mimc-batch) multiple MiMC execution traces.
 
 [^final-r]: Three more clarifications on the final recommended rounds $r$.
 
