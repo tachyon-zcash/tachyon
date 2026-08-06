@@ -176,7 +176,8 @@ pub(crate) fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
     })
 }
 
-/// Digest of a proof stamp's proof, anchor, and tachygrams.
+/// Digest of a proof stamp's proof, anchor, tachygram-set commitment, and
+/// tachygrams.
 ///
 /// Tachygrams are hashed in the order given, so the digest commits to that
 /// order.
@@ -185,17 +186,20 @@ pub(crate) fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Stamp}(
 ///     \mathsf{hStampProofTachyon} \|
 ///     \mathsf{stampAnchorTachyon} \|
+///     \mathsf{stampTachygramSetTachyon} \|
 ///     \mathsf{vTachygrams}
 ///   )
 /// $$
 pub(crate) fn stamp_data_digest(
     stamp_proof_digest: [u8; 32],
     anchor: [u8; 32],
+    tachygram_set: [u8; 32],
     tachygrams: &[[u8; 32]],
 ) -> [u8; 32] {
     hasher_256(STAMP_DATA_PERSONALIZATION, |state| {
         state.update(&stamp_proof_digest);
         state.update(&anchor);
+        state.update(&tachygram_set);
 
         // only variable-length component
         for tg in tachygrams {

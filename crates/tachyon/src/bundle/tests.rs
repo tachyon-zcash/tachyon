@@ -17,7 +17,7 @@ use crate::{
         forge_overlapping_merge, mock_sighash, mock_wtxid, random_block, random_block_with,
         shared_sk, spend_witness,
     },
-    primitives::{BlockHeight, Tachygram},
+    primitives::{BlockHeight, Tachygram, TachygramSetPoly},
     value,
 };
 
@@ -492,8 +492,13 @@ fn double_spend_obvious() {
         coverage: action_descriptor_digest(
             &vec![descriptor].into_iter().collect::<Vec<[u8; 64]>>(),
         ),
-        tachygrams,
         anchor: stamp_anchor,
+        tachygram_set: tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit(),
+        tachygrams,
         proof,
     };
     let evil_pcd = forge_overlapping_merge(
@@ -512,6 +517,12 @@ fn double_spend_obvious() {
     let stamp = ProofStamp {
         coverage,
         anchor: evil_pcd.data().2,
+        tachygram_set: output_stamp
+            .tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit(),
         tachygrams: output_stamp.tachygrams.iter().copied().collect(),
         proof: Box::new(evil_pcd.proof().clone()),
     };
@@ -640,6 +651,7 @@ fn duplicated_spend_cannot_inflate() {
         stamp: ProofStamp {
             coverage,
             anchor: honest_stamp.anchor,
+            tachygram_set: honest_stamp.tachygram_set,
             tachygrams: honest_stamp.tachygrams,
             proof: honest_stamp.proof,
         },

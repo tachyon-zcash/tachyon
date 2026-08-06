@@ -154,8 +154,13 @@ pub fn build_output_stamp(
         coverage: blake2b::action_descriptor_digest(
             &iter::once(plan.descriptor()).collect::<Vec<[u8; 64]>>(),
         ),
-        tachygrams,
         anchor: stamp_anchor,
+        tachygram_set: tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit(),
+        tachygrams,
         proof,
     };
     (stamp, plan)

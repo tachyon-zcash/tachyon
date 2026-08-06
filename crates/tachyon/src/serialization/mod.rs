@@ -61,7 +61,6 @@ pub(crate) fn write_ep_affine<W: Write>(mut writer: W, point: &EpAffine) -> io::
 }
 
 /// Read a Vesta affine curve point (`EqAffine`) from 32 compressed bytes.
-#[expect(dead_code, reason = "awaiting the tachygram set commitment field")]
 pub(crate) fn read_eq_affine<R: Read>(mut reader: R) -> io::Result<EqAffine> {
     let mut bytes = [0u8; 32];
     reader.read_exact(&mut bytes)?;
@@ -70,7 +69,6 @@ pub(crate) fn read_eq_affine<R: Read>(mut reader: R) -> io::Result<EqAffine> {
 }
 
 /// Write a Vesta affine curve point (`EqAffine`) as 32 compressed bytes.
-#[expect(dead_code, reason = "awaiting the tachygram set commitment field")]
 pub(crate) fn write_eq_affine<W: Write>(mut writer: W, point: &EqAffine) -> io::Result<()> {
     writer.write_all(&point.to_bytes())
 }

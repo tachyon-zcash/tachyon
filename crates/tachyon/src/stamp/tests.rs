@@ -1,4 +1,4 @@
-#![allow(clippy::panic, reason = "test code")]
+#![allow(clippy::panic, clippy::too_many_lines, reason = "test code")]
 
 use alloc::{boxed::Box, string::ToString as _, vec, vec::Vec};
 
@@ -237,14 +237,20 @@ fn double_output_cannot_aggregate() {
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
+    let tachygrams: BTreeSet<Tachygram> = stamp_a
+        .tachygrams
+        .union(&stamp_b.tachygrams)
+        .copied()
+        .collect();
     let stamp = ProofStamp {
         coverage,
         anchor: evil_pcd.data().2,
-        tachygrams: stamp_a
-            .tachygrams
-            .union(&stamp_b.tachygrams)
+        tachygram_set: tachygrams
+            .iter()
             .copied()
-            .collect(),
+            .collect::<TachygramSetPoly>()
+            .commit(),
+        tachygrams,
         proof: Box::new(evil_pcd.proof().clone()),
     };
     let digests: Vec<ActionDigest> = all_descriptors
@@ -358,14 +364,20 @@ fn double_spend_cannot_aggregate() {
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
+    let tachygrams: BTreeSet<Tachygram> = stamp_a
+        .tachygrams
+        .union(&stamp_b.tachygrams)
+        .copied()
+        .collect();
     let stamp = ProofStamp {
         coverage,
         anchor: evil_pcd.data().2,
-        tachygrams: stamp_a
-            .tachygrams
-            .union(&stamp_b.tachygrams)
+        tachygram_set: tachygrams
+            .iter()
             .copied()
-            .collect(),
+            .collect::<TachygramSetPoly>()
+            .commit(),
+        tachygrams,
         proof: Box::new(evil_pcd.proof().clone()),
     };
 
@@ -439,10 +451,16 @@ fn cannot_forge_stamp_covering_duplicated_action() {
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
+    let tachygrams: BTreeSet<Tachygram> = output_stamp.tachygrams.iter().copied().collect();
     let stamp = ProofStamp {
         coverage,
         anchor: evil_pcd.data().2,
-        tachygrams: output_stamp.tachygrams.iter().copied().collect(),
+        tachygram_set: tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit(),
+        tachygrams,
         proof: Box::new(evil_pcd.proof().clone()),
     };
 
@@ -590,6 +608,10 @@ fn read_rejects_duplicate_tachygrams() {
     let mut buf = Vec::new();
     buf.extend_from_slice(&[0u8; 32]); // covered actions digest
     Anchor(Fp::ZERO).write(&mut buf).expect("write anchor");
+    TachygramSetPoly::from_iter([tg])
+        .commit()
+        .write(&mut buf)
+        .expect("write tachygram set commitment");
     serialization::write_compactsize(&mut buf, 2).expect("write tachygram count");
     serialization::write_fp(&mut buf, &Fp::from(tg)).expect("write tachygram");
     serialization::write_fp(&mut buf, &Fp::from(tg)).expect("write tachygram");
@@ -628,5 +650,44 @@ fn covered_actions_round_trip() {
 
     assert_eq!(decoded.coverage, stamp.coverage);
     assert_eq!(decoded.anchor, stamp.anchor);
+    assert_eq!(decoded.tachygram_set, stamp.tachygram_set);
     assert_eq!(decoded.tachygrams, stamp.tachygrams);
+}
+
+/// An honest stamp's carried commitment matches its published tachygrams.
+#[test]
+fn accumulating_accepts_honest_stamp() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let note = wallet.random_note(200);
+    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+
+    assert!(stamp.is_accumulating());
+}
+
+/// A carried commitment over the wrong tachygrams is rejected, and the
+/// rejection reaches proof verification.
+#[test]
+fn accumulating_rejects_mismatched_commitment() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let note = wallet.random_note(200);
+    let (honest, plan) = build_output_stamp(rng, pool.anchor(), note);
+
+    // Publish the real tachygrams under a commitment to a different set.
+    let other = Tachygram::from(Fp::random(&mut *rng));
+    let forged = ProofStamp {
+        tachygram_set: TachygramSetPoly::from_iter([other]).commit(),
+        ..honest
+    };
+
+    assert!(!forged.is_accumulating());
+    assert!(
+        !forged
+            .verify_proof(rng, [plan.digest().expect("valid plan")])
+            .expect("verify"),
+        "verification must reject an unconfirmed commitment"
+    );
 }
