@@ -9,14 +9,17 @@
 use core::{num::TryFromIntError, ops::RangeInclusive};
 
 use corez::io::{self, Read, Write};
-use derive_more::{Debug, Eq as TotalEq, PartialEq};
+use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};
 
-#[derive(Debug)]
-pub(crate) enum CompactSizeError {
+/// Canonicity errors for [`CompactSize`].
+#[derive(Debug, Display, Error)]
+pub enum CompactSizeError {
     /// The value should be in a different encoding form.
-    NonCanonical(CompactSize),
+    #[display("value is not canonical: {}", _0)]
+    NonCanonical(#[error(not(source))] CompactSize),
     /// The value exceeds the zcash consensus bound.
-    ExceedsMaximum(CompactSize),
+    #[display("value exceeds consensus bound: {}", _0)]
+    ExceedsMaximum(#[error(not(source))] CompactSize),
 }
 
 /// The maximum allowed value representable as a [`CompactSize`].
@@ -26,7 +29,7 @@ pub(crate) enum CompactSizeError {
 /// Zcash spec does not state this bound explicitly; specific consensus
 /// rules (§7.1.2) impose tighter caps on individual fields (e.g.
 /// `nSpendsSapling < 2^16`).
-pub(crate) const MAX_COMPACT_SIZE: u32 = 0x0200_0000;
+const MAX_COMPACT_SIZE: u32 = 0x0200_0000;
 
 /// Largest value canonically encoded in the single-byte form.
 const MAX_ONE_BYTE: u8 = 0xFC;
@@ -59,8 +62,8 @@ const VALID_EIGHT_BYTES: RangeInclusive<u64> = (u32::MAX as u64) + 1..=u64::MAX;
 /// Zcash protocol spec §7.1 (page 132): "Like other serialized fields of
 /// type compactSize, ... MUST be encoded with the minimum number of bytes
 /// ..., and other encodings MUST be rejected."
-#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
-pub(crate) enum CompactSize {
+#[derive(Clone, Copy, Debug, Display, PartialEq, TotalEq)]
+pub enum CompactSize {
     /// Single-byte form (no flag prefix), `0..=MAX_ONE_BYTE`.
     OneByte(u8),
     /// Flag-`FLAG_TWO_BYTES` form, `(MAX_ONE_BYTE + 1)..=u16::MAX`.
@@ -75,35 +78,40 @@ pub(crate) enum CompactSize {
 }
 
 impl CompactSize {
-    pub(crate) fn one_byte(value: u8) -> Result<Self, CompactSizeError> {
+    /// Construct a canonical single-byte [`CompactSize`] value.
+    pub fn one_byte(value: u8) -> Result<Self, CompactSizeError> {
         if !VALID_ONE_BYTE.contains(&value.into()) {
             return Err(CompactSizeError::NonCanonical(Self::from(value)));
         }
         Ok(Self::from(value))
     }
 
-    pub(crate) fn two_bytes(value: u16) -> Result<Self, CompactSizeError> {
+    /// Construct a canonical two-byte [`CompactSize`] value.
+    pub fn two_bytes(value: u16) -> Result<Self, CompactSizeError> {
         if !VALID_TWO_BYTES.contains(&value.into()) {
             return Err(CompactSizeError::NonCanonical(Self::from(value)));
         }
         Ok(Self::from(value))
     }
 
-    pub(crate) fn four_bytes(value: u32) -> Result<Self, CompactSizeError> {
+    /// Construct a canonical four-byte [`CompactSize`] value.
+    pub fn four_bytes(value: u32) -> Result<Self, CompactSizeError> {
         if !VALID_FOUR_BYTES.contains(&value.into()) {
             return Err(CompactSizeError::NonCanonical(Self::from(value)));
         }
         Ok(Self::from(value))
     }
 
-    pub(crate) fn eight_bytes(value: u64) -> Result<Self, CompactSizeError> {
+    /// Construct a canonical eight-byte [`CompactSize`] value.
+    pub fn eight_bytes(value: u64) -> Result<Self, CompactSizeError> {
         if !VALID_EIGHT_BYTES.contains(&value) {
             return Err(CompactSizeError::NonCanonical(Self::from(value)));
         }
         Ok(Self::from(value))
     }
 
-    pub(crate) fn enforce_canon(self) -> Result<Self, CompactSizeError> {
+    /// Enforce canonical form.
+    pub fn enforce_canon(self) -> Result<Self, CompactSizeError> {
         match self {
             Self::OneByte(inner_u8) => {
                 if VALID_ONE_BYTE.contains(&inner_u8.into()) {
@@ -145,7 +153,8 @@ impl CompactSize {
         }
     }
 
-    pub(crate) fn enforce_valid(self) -> Result<Self, CompactSizeError> {
+    /// Enforce canonical form and consensus bound.
+    pub fn enforce_valid(self) -> Result<Self, CompactSizeError> {
         self.enforce_canon()?.enforce_max()
     }
 
@@ -153,7 +162,7 @@ impl CompactSize {
     /// consensus-bound checks — callers are responsible for invoking
     /// [`Self::enforce_canon`], [`Self::enforce_max`], or
     /// [`Self::enforce_valid`] as appropriate.
-    pub(crate) fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+    pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut flag = [0u8; 1];
         reader.read_exact(&mut flag)?;
 
@@ -178,7 +187,7 @@ impl CompactSize {
     }
 
     /// Write this [`CompactSize`] to `writer`.
-    pub(crate) fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
+    pub fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
         match self {
             Self::OneByte(value) => writer.write_all(&[value]),
             Self::TwoBytes(value) => {
