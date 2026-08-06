@@ -14,13 +14,14 @@ use ragu::{Pcd, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
 
-use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
+use super::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp};
 use crate::{
     ActionSetPoly, NfSeqPoly, Note, TachygramSetPoly,
     constants::EPOCH_SIZE,
+    digest::poseidon,
     entropy::ActionEntropy,
     fixtures::{
-        PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_stamp,
+        PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_plan, build_output_stamp,
         build_unspent_pcd_between_anchors, build_unspent_pcd_between_blocks,
         build_unspent_seed_pcd, random_block, random_block_with, shared_sk, spend_witness,
         spendable_init_inputs,
@@ -635,11 +636,17 @@ fn step_accepts_zero_value_note() {
         let out_alpha = out_theta.randomizer::<effect::Output>(zero_note.commitment());
         let out_anchor = PoolSim::genesis(rng).anchor();
 
+        let (bind_pcd, ()) = PROOF_SYSTEM
+            .seed(rng, output::OutputBind, (zero_note,))
+            .expect("bind of a zero-value note");
+
         PROOF_SYSTEM
-            .seed(
+            .fuse(
                 rng,
                 stamp::OutputStamp,
                 (out_rcv, out_alpha, zero_note, out_anchor),
+                bind_pcd,
+                Proof::trivial().carry::<()>(()),
             )
             .expect("output of a zero-value note");
     }
@@ -1731,4 +1738,73 @@ fn nullifier_fuse_rejects_wrong_cm() {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(inner.to_string(), "NullifierFuse: note commitments differ");
+}
+
+/// The pad the step publishes is `pad_tachygram` over the note's own fields.
+fn expected_pad(note: &Note) -> Tachygram {
+    Tachygram::from(poseidon::pad_tachygram(
+        Fp::from(note.rcm),
+        note.pk.0,
+        u64::from(note.value),
+        Fp::from(note.psi),
+    ))
+}
+
+/// `OutputBind` emits the note's commitment and pad, both derived natively.
+#[test]
+fn output_bind_publishes_the_note_pair() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let note = WalletSim::new(shared_sk()).random_note(200);
+
+    let (pcd, ()) = PROOF_SYSTEM
+        .seed(rng, output::OutputBind, (note,))
+        .expect("OutputBind honest");
+
+    assert_eq!(
+        *pcd.data(),
+        (Tachygram::from(note.commitment()), expected_pad(&note))
+    );
+}
+
+/// Domain separation is what the pad buys: the same note fields hashed under
+/// two domains must not coincide.
+#[test]
+fn pad_differs_from_commitment() {
+    let note = WalletSim::new(shared_sk()).random_note(200);
+
+    assert_ne!(Tachygram::from(note.commitment()), expected_pad(&note));
+}
+
+/// `OutputStamp` binds its note to the pair `OutputBind` settled.
+#[test]
+fn output_stamp_rejects_note_not_matching_the_bind() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let bound_note = user.random_note(200);
+    let other_note = user.random_note(300);
+
+    let (bind_pcd, ()) = PROOF_SYSTEM
+        .seed(rng, output::OutputBind, (bound_note,))
+        .expect("OutputBind honest");
+
+    let (rcv, alpha, _plan) = build_output_plan(rng, other_note);
+    let anchor = PoolSim::genesis(rng).anchor();
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            stamp::OutputStamp,
+            (rcv, alpha, other_note, anchor),
+            bind_pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .err()
+        .unwrap();
+    let ragu::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "OutputStamp: note does not match the bound output"
+    );
 }

@@ -252,6 +252,9 @@ pub enum VerifyCoverageError {
     /// The stamp on this bundle does not claim to cover these actions.
     #[display("stamp on this bundle does not claim to cover these actions")]
     StampActionsMismatch,
+    /// The stamp publishes a number of tachygrams other than two per action.
+    #[display("stamp does not publish two tachygrams per covered action")]
+    TachygramArityMismatch,
 }
 
 /// Errors during adjunct pointer verification.
@@ -538,6 +541,13 @@ impl Bundle<ProofStamp> {
 
         if !self.stamp.is_covering(unique_descs.clone()) {
             return Err(VerifyCoverageError::StampActionsMismatch);
+        }
+
+        // Every action publishes two tachygrams: a spend its nullifier pair, an
+        // output its commitment and pad. The set collapses duplicates, so a
+        // tachygram reused across actions also shows up as a short count.
+        if !self.stamp.has_tachygram_arity(unique_descs.len()) {
+            return Err(VerifyCoverageError::TachygramArityMismatch);
         }
 
         Ok(unique_descs)

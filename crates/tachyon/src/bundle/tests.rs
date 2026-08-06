@@ -1827,3 +1827,34 @@ fn zero_action_bundle_rejects_nonzero_balance() {
         panic!("expected SignatureError::Binding, got {err:?}");
     };
 }
+
+/// Every action publishes two tachygrams, so a stamp carrying any other count
+/// is rejected before its proof is verified. Dropping one from an otherwise
+/// honest stamp stands in for a stamp that withheld a nullifier.
+#[test]
+fn verify_coverage_rejects_wrong_tachygram_arity() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let ask = wallet.sk.derive_auth_private();
+    let note = wallet.random_note(200);
+    let pool = PoolSim::genesis(rng);
+    let (stamp, output_plan) = build_output_stamp(rng, pool.anchor(), note);
+
+    assert_eq!(stamp.tachygrams.len(), 2, "an output publishes cm and pad");
+
+    let mut short = stamp;
+    let dropped = *short.tachygrams.iter().next().expect("nonempty");
+    short.tachygrams.remove(&dropped);
+
+    let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
+    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+    let bundle = bundle_plan
+        .sign(rng, &sighash, &ask)
+        .expect("sign output bundle")
+        .stamp(short);
+
+    let err = bundle.verify_coverage(&[]).unwrap_err();
+    let VerifyCoverageError::TachygramArityMismatch = err else {
+        panic!("expected TachygramArityMismatch, got {err:?}");
+    };
+}

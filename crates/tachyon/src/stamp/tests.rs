@@ -173,10 +173,10 @@ fn merge_populates_covered_actions() {
     assert_eq!(merged.coverage, expected);
 }
 
-/// Reusing a note as an output collides on the note commitment: each
-/// `OutputStamp`'s sole tachygram is that commitment. The nullifier-side analog
-/// is [`double_spend_cannot_aggregate`] — both reuse modes are caught the same
-/// way once the collision lands in the tachygram set.
+/// Reusing a note as an output collides on both of its tachygrams, since the
+/// commitment and the pad are each derived from the note's fields. The
+/// nullifier-side analog is [`double_spend_cannot_aggregate`]; both reuse modes
+/// are caught the same way once the collision lands in the tachygram set.
 #[test]
 fn double_output_cannot_aggregate() {
     let rng = &mut StdRng::seed_from_u64(0);

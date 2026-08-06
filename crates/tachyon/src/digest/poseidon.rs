@@ -61,6 +61,25 @@ pub(crate) fn note_commitment(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     ])
 }
 
+const PAD_TACHYGRAM_DOMAIN: &[u8; 16] = b"Tachyon-PadDeriv";
+
+/// Derives an output's padding tachygram from the same note fields
+/// [`note_commitment`] commits to.
+///
+/// The preimage is the note opening rather than the commitment: both values are
+/// published in one multiset, so a pad derived from $\mathsf{cm}$ would let an
+/// observer pair them off and recover the output count.
+#[must_use]
+pub(crate) fn pad_tachygram(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
+    hash::<5>([
+        Fp::from_u128(u128::from_le_bytes(*PAD_TACHYGRAM_DOMAIN)),
+        rcm,
+        pk,
+        Fp::from(value),
+        psi,
+    ])
+}
+
 const NULLIFIER_PREFIX_DOMAIN: &[u8; 16] = b"Tachyon-NfPrefix";
 
 /// Derives a GGM root (master key) from note trapdoor and wallet nullifier key.

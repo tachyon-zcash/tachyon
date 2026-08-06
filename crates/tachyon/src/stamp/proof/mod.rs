@@ -6,6 +6,7 @@
 extern crate alloc;
 
 pub mod delegation;
+pub mod output;
 pub mod pool;
 pub mod spend;
 pub mod spendable;
@@ -34,6 +35,7 @@ fn make_app() -> Result<Application, ragu::Error> {
         .register(pool::VerifyUnspent)?
         .register(spendable::SpendableInit)?
         .register(spendable::SpendableLift)?
+        .register(output::OutputBind)?
         .register(stamp::OutputStamp)?
         .register(spend::SpendBind)?
         .register(stamp::SpendStamp)?

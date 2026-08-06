@@ -12,9 +12,9 @@ use rand_core::{CryptoRng, RngCore};
 /// [`Commitment`](crate::note::Commitment) both wrap a tachygram, and the
 /// accumulator does not distinguish them.
 ///
-/// The number of tachygrams in a stamp need not equal the number of
-/// actions. The invariant is consistency between the listed tachygrams
-/// and the proof's `tachygram_acc`, not a fixed ratio to actions.
+/// Every action publishes exactly two: a spend its epoch nullifier pair, an
+/// output its commitment and padding tachygram. The uniform arity is what
+/// keeps a stamp's tachygram count from revealing its spend/output split.
 ///
 /// Consensus rejects a published tachygram that has already appeared in
 /// any block of the current or immediately preceding epoch. See the

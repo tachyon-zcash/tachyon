@@ -13,7 +13,7 @@ use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
 use ff::PrimeField as _;
 use pasta_curves::Fp;
 use proof::{
-    PROOF_SYSTEM,
+    PROOF_SYSTEM, output,
     stamp::{MergeStamp, OutputStamp, SpendStamp, StampHeader},
 };
 use ragu::{self, proof::PROOF_SIZE_COMPRESSED};
@@ -505,8 +505,9 @@ impl ProofStamp {
     /// Proves a single output action, returning the stamp components
     /// `(tachygrams, anchor, proof)`.
     ///
-    /// The output tachygram (note commitment) is derived inside the circuit
-    /// and placed on the stamp for data availability.
+    /// [`output::OutputBind`] settles the tachygram pair, then [`OutputStamp`]
+    /// proves the action over it. Both tachygrams are derived inside the
+    /// circuit and placed on the stamp for data availability.
     pub fn prove_output<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         rcv: value::Trapdoor,
@@ -514,9 +515,17 @@ impl ProofStamp {
         note: Note,
         anchor: Anchor,
     ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
-        let (pcd, ()) = PROOF_SYSTEM.seed(rng, OutputStamp, (rcv, alpha, note, anchor))?;
-        let tachygrams = BTreeSet::from_iter([Tachygram::from(note.commitment())]);
+        let (bind_pcd, ()) = PROOF_SYSTEM.seed(rng, output::OutputBind, (note,))?;
+        let tgs = *bind_pcd.data();
+        let tachygrams = BTreeSet::from_iter(<[Tachygram; 2]>::from(tgs));
 
+        let (pcd, ()) = PROOF_SYSTEM.fuse(
+            rng,
+            OutputStamp,
+            (rcv, alpha, note, anchor),
+            bind_pcd,
+            ragu::Proof::trivial().carry::<()>(()),
+        )?;
         let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
 
         Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))
@@ -700,6 +709,18 @@ impl ProofStamp {
         let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes) == self.coverage
+    }
+
+    /// Confirm the stamp publishes two tachygrams per covered action.
+    ///
+    /// # Soundness
+    ///
+    /// Every action emits a pair: a spend its epoch nullifiers, an output its
+    /// commitment and pad. A stamp short of the arity has reused a tachygram
+    /// across actions, since `tachygrams` is a set.
+    #[must_use]
+    pub(crate) fn has_tachygram_arity(&self, action_count: usize) -> bool {
+        self.tachygrams.len() == 2 * action_count
     }
 
     /// Confirm `tachygram_set` commits to the published tachygrams.
