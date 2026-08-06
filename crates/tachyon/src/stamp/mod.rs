@@ -350,19 +350,16 @@ impl Plan {
         for ((desc, alpha, note, rcv), (nf_pcd, spendable_pcd)) in
             self.spends.into_iter().zip(spendbind_inputs)
         {
+            // SpendBind: confirm the live pair against the derived range.
+            let (_, _, _, (_, nf_next)) = *nf_pcd.data();
             let (bind_pcd, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    spend::SpendBind,
-                    (note, rcv, alpha, *pak),
-                    spendable_pcd,
-                    ragu::Proof::trivial().carry::<()>(()),
-                )
+                .fuse(rng, spend::SpendBind, (nf_next,), spendable_pcd, nf_pcd)
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: bind the live pair to the derived range and publish.
+            // SpendStamp: prove the action and publish.
             let (tachygrams, anchor, proof) =
-                ProofStamp::prove_spend(rng, bind_pcd, nf_pcd).map_err(ProveError::ProofFailed)?;
+                ProofStamp::prove_spend(rng, bind_pcd, note, rcv, alpha, *pak)
+                    .map_err(ProveError::ProofFailed)?;
 
             let digest = desc.digest().map_err(ProveError::ActionDigest)?;
             entries.push((
@@ -504,25 +501,30 @@ impl ProofStamp {
         Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))
     }
 
-    /// Proves a single spend action from pre-built spend and
-    /// nullifier-range PCDs, returning the stamp components
-    /// `(tachygrams, anchor, proof)`.
+    /// Proves a single spend action from a pre-built [`spend::SpendBind`]
+    /// PCD, returning the stamp components `(tachygrams, anchor, proof)`.
     ///
     /// The spend's `anchor` is taken as the stamp's anchor — chain
     /// validation lives inside the spendable lineage, not here.
     pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
-        nf_pcd: ragu::Pcd<delegation::NullifierHeader>,
+        note: Note,
+        rcv: value::Trapdoor,
+        alpha: ActionRandomizer<effect::Spend>,
+        pak: ProofAuthorizingKey,
     ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
-        let (_, _, nf_present, anchor) = *bind_pcd.data();
-        let (_, _, _, (_, nf_next)) = *nf_pcd.data();
-
+        let (_cm, present_nf, nf_next, anchor) = *bind_pcd.data();
         let tachygrams =
-            BTreeSet::from_iter([Tachygram::from(nf_present), Tachygram::from(nf_next)]);
+            BTreeSet::from_iter([Tachygram::from(present_nf), Tachygram::from(nf_next)]);
 
-        let (pcd, ()) = PROOF_SYSTEM.fuse(rng, SpendStamp, (nf_next,), bind_pcd, nf_pcd)?;
-
+        let (pcd, ()) = PROOF_SYSTEM.fuse(
+            rng,
+            SpendStamp,
+            (note, rcv, alpha, pak),
+            bind_pcd,
+            ragu::Proof::trivial().carry::<()>(()),
+        )?;
         let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
 
         Ok((tachygrams, anchor, Box::new(rerand.proof().clone())))

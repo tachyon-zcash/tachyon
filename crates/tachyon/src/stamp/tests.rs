@@ -126,8 +126,10 @@ fn plan_prove_rejects_invalid_inputs() {
         );
     }
 
-    // Correspondence swap: lengths match, pairing is wrong. SpendBind's
-    // `spendable.cm == note.commitment()` check rejects the mismatched lineage.
+    // Correspondence swap: lengths match, pairing is wrong. Each pair is
+    // internally consistent, so SpendBind binds it; the plan's note is the
+    // odd one out, and SpendStamp's `note.commitment() == cm` check catches
+    // it when the action is proven.
     {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
@@ -137,7 +139,7 @@ fn plan_prove_rejects_invalid_inputs() {
         };
         assert_eq!(
             inner.to_string(),
-            "SpendBind: note does not match the spendable lineage"
+            "SpendStamp: note does not match the spend"
         );
     }
 }
