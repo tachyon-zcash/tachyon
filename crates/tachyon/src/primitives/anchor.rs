@@ -2,7 +2,7 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
 use group::Curve as _;
-use pasta_curves::{Eq, Fp, arithmetic::CurveAffine as _};
+use pasta_curves::{Eq, Fp};
 
 use super::{EpochIndex, TachygramSetCommit};
 use crate::{digest::poseidon, serialization};
@@ -30,16 +30,10 @@ impl Anchor {
     /// Panics if `stamp_commit` is the identity point.
     #[must_use]
     pub fn next_stamp(self, stamp_commit: &TachygramSetCommit) -> Self {
-        let point = Eq::from(*stamp_commit).to_affine();
-        #[expect(
-            clippy::expect_used,
-            reason = "a monic set polynomial cannot commit to the identity"
-        )]
-        let coords = point
-            .coordinates()
-            .into_option()
-            .expect("must not be identity commitment"); // TODO: error?
-        Self(poseidon::anchor_stamp_step(self.0, coords))
+        Self(poseidon::anchor_stamp_step(
+            self.0,
+            Eq::from(*stamp_commit).to_affine(),
+        ))
     }
 
     /// Advance the anchor through one empty block (zero stamps).
