@@ -7,7 +7,7 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
     Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
-    constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
+    constraint::{enforce_equal_point, enforce_zero},
 };
 
 use super::{pool::AnchorChain, spend::SpendHeader};
@@ -91,10 +91,6 @@ impl Step for OutputStamp {
             .expect("at least two generators")
             .0;
 
-        enforce_nonzero(
-            Fp::from(u64::from(note.value)),
-            "OutputStamp: zero-value note",
-        )?;
         if u64::from(note.value) > MAX_MONEY {
             return Err(ragu::Error::InvalidWitness(
                 "OutputStamp: note value exceeds maximum".into(),
@@ -164,10 +160,6 @@ impl Step for SpendStamp {
             .expect("at least three generators")
             .0;
 
-        enforce_nonzero(
-            Fp::from(u64::from(note.value)),
-            "SpendStamp: zero-value note",
-        )?;
         if u64::from(note.value) > MAX_MONEY {
             return Err(ragu::Error::InvalidWitness(
                 "SpendStamp: note value exceeds maximum".into(),

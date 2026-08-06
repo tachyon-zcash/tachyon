@@ -20,11 +20,11 @@ pub type Commitment = ValueCommitment;
 /// An integer bounded to `-MAX_MONEY..=MAX_MONEY`.
 pub type Balance = Value<{ -MAX_MONEY.cast_signed() }, { MAX_MONEY.cast_signed() }>;
 
-/// A nonzero positive integer not greater than `MAX_MONEY`.
-pub type Positive = Value<1, { MAX_MONEY.cast_signed() }>;
+/// A non-negative integer not greater than `MAX_MONEY`.
+pub type Positive = Value<0, { MAX_MONEY.cast_signed() }>;
 
-/// A nonzero negative integer not less than `-MAX_MONEY`.
-pub type Negative = Value<{ -MAX_MONEY.cast_signed() }, -1>;
+/// A non-positive integer not less than `-MAX_MONEY`.
+pub type Negative = Value<{ -MAX_MONEY.cast_signed() }, 0>;
 
 /// Shared with Orchard (§5.4.8.3).
 const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
@@ -206,8 +206,8 @@ impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for i128 {
     }
 }
 
-impl<const MAX: i64> From<Value<1, MAX>> for u64 {
-    fn from(value: Value<1, MAX>) -> Self {
+impl<const MAX: i64> From<Value<0, MAX>> for u64 {
+    fn from(value: Value<0, MAX>) -> Self {
         value.0.unsigned_abs()
     }
 }

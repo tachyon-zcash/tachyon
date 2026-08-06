@@ -607,40 +607,37 @@ fn spend_bind_rejects_zero_next_nullifier() {
     );
 }
 
+/// Zero-value notes are valid, so both stamping steps accept them: an output
+/// mints one, and a spend consumes one.
 #[test]
-fn step_rejects_zero_value_note() {
+fn step_accepts_zero_value_note() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
 
-    let zero_note = Note {
-        pk: user.pak.derive_payment_key(),
-        value: value::Positive::new_unchecked(0),
-        psi: nullifier::Trapdoor::random(rng),
-        rcm: note::CommitmentTrapdoor::random(rng),
-    };
-
     {
+        let zero_note = Note {
+            pk: user.pak.derive_payment_key(),
+            value: value::Positive::try_from(0u64).expect("zero is in range"),
+            psi: nullifier::Trapdoor::random(rng),
+            rcm: note::CommitmentTrapdoor::random(rng),
+        };
         let out_rcv = value::Trapdoor::random(rng);
         let out_theta = ActionEntropy::random(rng);
         let out_alpha = out_theta.randomizer::<effect::Output>(zero_note.commitment());
         let out_anchor = PoolSim::genesis(rng).anchor();
-        let err = PROOF_SYSTEM
+
+        PROOF_SYSTEM
             .seed(
                 rng,
                 stamp::OutputStamp,
                 (out_rcv, out_alpha, zero_note, out_anchor),
             )
-            .err()
-            .unwrap();
-        let ragu::Error::InvalidWitness(inner) = err else {
-            panic!("expected InvalidWitness, got {err:?}");
-        };
-        assert_eq!(inner.to_string(), "OutputStamp: zero-value note");
+            .expect("output of a zero-value note");
     }
 
     {
         let mut pool = PoolSim::genesis(rng);
-        let note = user.random_note(500);
+        let note = user.random_note(0);
         pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
         let height = pool.height();
         let spend_epoch = height.epoch();
@@ -649,28 +646,15 @@ fn step_rejects_zero_value_note() {
 
         let (rcv, _theta, alpha) = spend_witness(rng, &note);
 
-        let err = PROOF_SYSTEM
+        PROOF_SYSTEM
             .fuse(
                 rng,
                 stamp::SpendStamp,
-                (
-                    Note {
-                        value: value::Positive::new_unchecked(0),
-                        ..note
-                    },
-                    rcv,
-                    alpha,
-                    user.pak,
-                ),
+                (note, rcv, alpha, user.pak),
                 bind_pcd,
                 Proof::trivial().carry::<()>(()),
             )
-            .err()
-            .unwrap();
-        let ragu::Error::InvalidWitness(inner) = err else {
-            panic!("expected InvalidWitness, got {err:?}");
-        };
-        assert_eq!(inner.to_string(), "SpendStamp: zero-value note");
+            .expect("spend of a zero-value note");
     }
 }
 

@@ -115,25 +115,27 @@ mod tests {
     use super::*;
     use crate::{constants::MAX_MONEY, value};
 
-    /// MAX_MONEY must be accepted (boundary is inclusive).
     #[test]
-    fn value_accepts_max() {
+    fn positive_value_accepts_max() {
         value::Positive::try_from(MAX_MONEY).unwrap();
     }
 
-    /// Anything above MAX_MONEY must be rejected.
     #[test]
-    fn value_rejects_overflow() {
+    fn positive_value_rejects_over_max() {
         assert_eq!(
             value::Positive::try_from(MAX_MONEY + 1),
             Err(value::OutOfRange)
         );
     }
 
-    /// Notes must have nonzero value.
     #[test]
-    fn value_rejects_zero() {
-        assert_eq!(value::Positive::try_from(0u64), Err(value::OutOfRange));
+    fn positive_value_accepts_zero() {
+        value::Positive::try_from(0u64).unwrap();
+    }
+
+    #[test]
+    fn positive_value_rejects_negative() {
+        assert_eq!(value::Positive::try_from(-1i64), Err(value::OutOfRange));
     }
 
     /// Different trapdoors produce different commitments.
