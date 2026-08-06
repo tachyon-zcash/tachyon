@@ -668,7 +668,16 @@ UX and a potential timing side-channel that leaks privacy. We therefore require
 every spend action to reveal (and prove in circuit) the nullifiers for **both the
 current and the next epoch**, leaving an ample buffer against this cross-epoch
 race. To keep spend and output actions indistinguishable, we further require each
-output action to publish a random dummy tachygram alongside its note commitment.
+output action to publish a dummy tachygram alongside its note commitment, so
+every action uniformly carries two.[^padding]
+
+[^padding]: Without the dummy, a spend would carry two tachygrams and an output
+    one. A bundle already reveals its action count $n$ — one authorization
+    signature per action — so the tachygram count $t$ would give away the
+    split: $s = t - n$ spends and $o = 2n - t$ outputs. Padding fixes $t = 2n$
+    identically, hiding the split. The leak without padding is only *arity*:
+    tachygrams ride in the stamp as one flat multiset, so *which* action is a
+    spend is never visible either way.
 
 All non-malleable parts, collectively the *effecting data*, hash into a stable
 identifier `txid`: a bundle commitment from each pool and their value balance
@@ -700,11 +709,15 @@ Specifically,
 - `txid` commits to $(\actacc \| v^\mathsf{bal})$. Importantly, for the Tachyon
 pool the memos are *not* effecting data and are therefore excluded from the
 `txid` inputs.
-- `auth_digest` commits to $(\set{\sigma^\mathsf{act}}, \sigma^\mathsf{bind}, \mathsf{stamp})$.
-- an additional `da_digest` commits to the (optional) opaque memo bytes, which
-are unconstrained (never parsed or interpreted) and thus have no effect on the
+- `da_digest` commits to the (optional) opaque memo bytes, which are
+unconstrained (never parsed or interpreted) and thus have no effect on the
 shielded protocol.
+- `auth_digest` commits to $(\set{\sigma^\mathsf{act}}, \sigma^\mathsf{bind}, \mathsf{stamp}, \mathsf{da\_digest})$.
 
+Although the shielded protocol never interprets the DA bytes, they are still
+pinned by `wtxid` through `da_digest` as part of the authorizing data.
+This prevents malleable memo payload since stripping or replacing them in flight
+would result in different `wtxid`.
 
 Finally, the Tachyon bundle carries a spend authorization signature for every
 Action description, each signed over the `SIGHASH`, which commits to the same
@@ -992,7 +1005,7 @@ current and next-epoch nullifiers $\nf_e, \nf_{e+1}$ (both
 computation of the bundle accumulator $\tgacc$ over all revealed tachygrams (the
 [batched correctness check](#acc-correct)). The accumulator collects *two tachygrams
 per action*: $(\nf_e, \nf_{e+1})$ for a spend, the note commitment and a
-zero-value dummy $(\cm, \tg_\bot)$ for an output.
+dummy $(\cm, \tg_\bot)$ for an output.
 The result is the [Tachyon stamp](#tx): the PCD proof for the
 [Action statement](#statement) together with its public inputs
 $(\set{\tg_i}, \tgacc, \mathsf{anchor}, e)$, whose anchor now sits in epoch $e$.
@@ -1159,8 +1172,7 @@ the prover knows the secret witness:
 
 - $\mathsf{Note} := (\pk, v, \psi, \rcm)$: note opening, where $\pk$ is the
   recipient's payment key taken from their address
-- $\mathsf{Note}_\bot := (\pk_\bot, 0, \psi_\bot, \rcm_\bot)$: dummy note opening
-  with arbitrary $\pk_\bot, \psi_\bot, \rcm_\bot$ values.
+- $r_\bot$: an arbitrary preimage for the dummy tachygram
 - the randomizers $\theta, \rcv$
 
 such that the following conditions hold:
@@ -1168,14 +1180,14 @@ such that the following conditions hold:
 - **Value commitment integrity** ($\Uc$): $\cv = [-v]\,\G + [\rcv]\,\H$, committing the
   negated created value (value entering the pool counts negatively toward
   $v^\mathsf{bal}$, per the [sign convention](#tx)).
-- **Value range** ($\Uc$): $1 \leq v \leq v_\mathsf{max}$ in-circuit, with
-  $v_\mathsf{max} = 2.1\times10^{15}$ zatoshi (`MAX_MONEY`). Zero-value
-  *spendable* notes are forbidden; the dummy note below is the deliberate,
-  never-spendable exception.
-- **Note commitment integrity** ($\Uc$): $\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$, the
+- **Value range** ($\Uc$): $0 \leq v \leq v_\mathsf{max}$ in-circuit, with
+  $v_\mathsf{max} = 2.1\times10^{15}$ zatoshi (`MAX_MONEY`): non-negative as in
+  Ironwood: zero-value outputs are legal (e.g., carrying a memo with no
+  payment); with the upper bound keeping balance arithmetic overflow-free.
+- **Note commitment integrity** ($\Uc$): $\cm = \mathsf{Com}(\pk, v, \psi; \rcm)$, the
   published commitment opens to this note.
-- **Zero-value Dummy Commitment** ($\Uc$): $\tg_\bot = \mathsf{Com}
-  (\pk_\bot, 0, \psi_\bot; \rcm_\bot)$, ensures zero-value dummy note.
+- **Dummy tachygram integrity** ($\Uc$): $\tg_\bot = H^{\cm_\bot}(r_\bot)$, where
+  $H^{\cm_\bot}$ is a domain-separated hash reserved for dummy commitment.
 - **Nonzero tachygrams** ($\Uc$): $\cm \neq 0$ and $\tg_\bot \neq 0$.[^nonzero]
 - **Authorization** ($\Uc$): $\rk = [\alpha]\,\G$ and
   $\alpha = \PRF(\cm \,\|\, \theta)$, binding the validation key to the output
@@ -1211,7 +1223,7 @@ such that the following conditions hold:
 - **Value commitment integrity** ($\Uc$): $\cv = [v]\,\G + [\rcv]\,\H$, committing the
   spent value (value leaving the pool counts positively toward $v^\mathsf{bal}$,
   per the [sign convention](#tx)).
-- **Value range** ($\Uc$): $1 \leq v \leq v_\mathsf{max}$, re-checked on the
+- **Value range** ($\Uc$): $0 \leq v \leq v_\mathsf{max}$, re-checked on the
   witnessed note — its creating output already enforced the range, but the
   redundant check is cheap defense in depth and keeps balance arithmetic
   overflow-free.
@@ -1457,8 +1469,8 @@ Left and Right are PCD inputs; a dash marks a leaf with witness only.
 | Step | Party | Left | Right | Output | Witness |
 | ---- | ----- | ---- | ----- | ------ | ------- |
 | `NfDerive` | $\Uc$ | — | — | `NfHeader` | $\mathsf{Note}, \nk$ |
-| `SpendCore` | $\Uc$ | `NfHeader` | — | `SpendCoreHeader` | $\mathsf{Note}, (\ak,\nk,\rpk), (\alpha,\theta,\rcv)$ |
-| `OutputCore` | $\Uc$ | — | — | `OutputHeader` | $\mathsf{Note}, \mathsf{Note}_\bot, (\alpha,\theta,\rcv)$ |
+| `SpendCore` | $\Uc$ | `NfHeader` | — | `SpendCoreHeader` | $\mathsf{Note}, (\ak,\nk), (\alpha,\theta,\rcv)$ |
+| `OutputCore` | $\Uc$ | — | — | `OutputHeader` | $\mathsf{Note}, r_\bot, (\alpha,\theta,\rcv)$ |
 | `DelegateCert` | $\Uc$ | — | — | `DelegationHeader` | $\mathsf{Note}$ opening, $\nk$, prefix path |
 | `EpochAccCert` | $\Sc$ | — | — | `EpochAccHeader` | epoch $i$'s per-stamp accumulators |
 | `AnchorLift` | $\Sc$ | — | — | `AnchorChainHeader` | end-of-epoch anchors, flyclient samples |
