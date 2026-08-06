@@ -216,9 +216,8 @@ impl From<u32> for CompactSize {
 }
 
 impl From<u64> for CompactSize {
-    #[expect(clippy::expect_used, reason = "checked conversions")]
-    #[expect(clippy::unreachable, reason = "exhaustive conditions")]
     fn from(value: u64) -> Self {
+        #[expect(clippy::expect_used, reason = "checked conversions")]
         if VALID_ONE_BYTE.contains(&value) {
             Self::OneByte(u8::try_from(value).expect("checked"))
         } else if VALID_TWO_BYTES.contains(&value) {

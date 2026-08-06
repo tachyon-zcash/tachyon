@@ -5,8 +5,8 @@ fmt:
     cargo +nightly fmt --all
 
 lint: doc
-    cargo +nightly clippy --workspace --lib --no-default-features # no_std
-    cargo +nightly clippy --workspace --all-targets --all-features
+    cargo clippy --workspace --lib --no-default-features # no_std
+    cargo clippy --workspace --all-targets --all-features
 
 test *ARGS:
     cargo test --workspace --all-features {{ARGS}}
