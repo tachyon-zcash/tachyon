@@ -11,7 +11,7 @@ use crate::{digest::poseidon, serialization};
 ///
 /// A Poseidon hash sequence with three domain-separated link types:
 ///
-/// - [`Anchor::next_stamp`] (`Tachyon-StampFld`) absorbs one stamp's
+/// - [`Anchor::next_stamp`] (`Tachyon-StampFld`) absorbs one stamp's epoch and
 ///   tachygram-set commitment.
 /// - [`Anchor::next_empty`] (`Tachyon-EmptyBlk`) advances through one block
 ///   that contains zero stamps, preserving per-height anchor uniqueness.
@@ -23,23 +23,25 @@ use crate::{digest::poseidon, serialization};
 pub struct Anchor(pub Fp);
 
 impl Anchor {
-    /// Advance the anchor by absorbing one stamp's commit.
+    /// Advance the anchor by absorbing one stamp's commit, bound to the epoch
+    /// of the block containing it.
     ///
     /// # Panics
     ///
     /// Panics if `stamp_commit` is the identity point.
     #[must_use]
-    pub fn next_stamp(self, stamp_commit: &TachygramSetCommit) -> Self {
+    pub fn next_stamp(self, epoch: EpochIndex, stamp_commit: &TachygramSetCommit) -> Self {
         Self(poseidon::anchor_stamp_step(
             self.0,
+            epoch,
             Eq::from(*stamp_commit).to_affine(),
         ))
     }
 
-    /// Advance the anchor through one empty block (zero stamps).
+    /// Advance the anchor through one empty block (zero stamps) in `epoch`.
     #[must_use]
-    pub fn next_empty(self) -> Self {
-        Self(poseidon::anchor_empty_step(self.0))
+    pub fn next_empty(self, epoch: EpochIndex) -> Self {
+        Self(poseidon::anchor_empty_step(self.0, epoch))
     }
 
     /// Lift the anchor across an epoch boundary into the new epoch's
@@ -74,6 +76,8 @@ mod tests {
     use super::*;
     use crate::{Tachygram, TachygramSetPoly};
 
+    const EPOCH: EpochIndex = EpochIndex(7);
+
     /// Folding the same stamps in the same order yields the same anchor.
     #[test]
     fn next_stamp_is_deterministic() {
@@ -81,8 +85,12 @@ mod tests {
         let first = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
         let second = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
 
-        let run_one = Anchor::default().next_stamp(&first).next_stamp(&second);
-        let run_two = Anchor::default().next_stamp(&first).next_stamp(&second);
+        let run_one = Anchor::default()
+            .next_stamp(EPOCH, &first)
+            .next_stamp(EPOCH, &second);
+        let run_two = Anchor::default()
+            .next_stamp(EPOCH, &first)
+            .next_stamp(EPOCH, &second);
         assert_eq!(run_one, run_two);
     }
 
@@ -94,8 +102,8 @@ mod tests {
         let second = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
 
         assert_ne!(
-            Anchor::default().next_stamp(&first),
-            Anchor::default().next_stamp(&second),
+            Anchor::default().next_stamp(EPOCH, &first),
+            Anchor::default().next_stamp(EPOCH, &second),
         );
     }
 
@@ -106,23 +114,44 @@ mod tests {
         let first = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
         let second = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
 
-        let forward = Anchor::default().next_stamp(&first).next_stamp(&second);
-        let reverse = Anchor::default().next_stamp(&second).next_stamp(&first);
+        let forward = Anchor::default()
+            .next_stamp(EPOCH, &first)
+            .next_stamp(EPOCH, &second);
+        let reverse = Anchor::default()
+            .next_stamp(EPOCH, &second)
+            .next_stamp(EPOCH, &first);
         assert_ne!(forward, reverse);
+    }
+
+    /// Every link binds its epoch: the same tick in two epochs diverges.
+    #[test]
+    fn epoch_distinguishes_ticks() {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let stamp = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
+        let start = Anchor::default();
+
+        assert_ne!(
+            start.next_stamp(EpochIndex(1), &stamp),
+            start.next_stamp(EpochIndex(2), &stamp),
+        );
+        assert_ne!(
+            start.next_empty(EpochIndex(1)),
+            start.next_empty(EpochIndex(2))
+        );
     }
 
     /// An empty-block tick changes the anchor.
     #[test]
     fn next_empty_advances_anchor() {
         let start = Anchor::default();
-        assert_ne!(start, start.next_empty());
+        assert_ne!(start, start.next_empty(EPOCH));
     }
 
     /// Consecutive empty-block ticks produce distinct anchors.
     #[test]
     fn consecutive_empty_distinct() {
-        let first = Anchor::default().next_empty();
-        let second = first.next_empty();
+        let first = Anchor::default().next_empty(EPOCH);
+        let second = first.next_empty(EPOCH);
         assert_ne!(first, second);
     }
 
@@ -131,8 +160,8 @@ mod tests {
     fn next_empty_distinct_from_next_stamp() {
         let rng = &mut StdRng::seed_from_u64(0);
         let stamp = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
-        let via_empty = Anchor::default().next_empty();
-        let via_stamp = Anchor::default().next_stamp(&stamp);
+        let via_empty = Anchor::default().next_empty(EPOCH);
+        let via_stamp = Anchor::default().next_stamp(EPOCH, &stamp);
         assert_ne!(via_empty, via_stamp);
     }
 }

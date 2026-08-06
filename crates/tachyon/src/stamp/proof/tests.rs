@@ -174,7 +174,7 @@ fn spendable_init_accepts_forged_chain() {
         .seed(
             rng,
             pool::AnchorSeed,
-            witness::anchor_seed(((), ()), forged_start, &stamps[cm_idx]),
+            witness::anchor_seed(((), ()), forged_start, wrong, &stamps[cm_idx]),
         )
         .expect("AnchorSeed");
 
@@ -199,7 +199,7 @@ fn spendable_init_accepts_forged_chain() {
     // The circuit accepted, but the produced anchor is off the published sequence,
     // so consensus anchor membership is what rejects the eventual spend.
     let forged_anchor = forged_spendable.data().2;
-    assert_eq!(forged_anchor, forged_start.next_stamp(&cm_commit));
+    assert_eq!(forged_anchor, forged_start.next_stamp(wrong, &cm_commit));
     let forged_off_sequence =
         (0..=cm_height.0).all(|height| pool.anchor_at(BlockHeight(height)) != forged_anchor);
     assert!(
@@ -254,7 +254,7 @@ fn spendable_init_rejects_tg_absent() {
         .seed(
             rng,
             pool::AnchorSeed,
-            witness::anchor_seed(((), ()), Anchor::default(), &[dummy_tg]),
+            witness::anchor_seed(((), ()), Anchor::default(), EpochIndex(0), &[dummy_tg]),
         )
         .expect("AnchorSeed");
 
@@ -309,7 +309,10 @@ fn unspent_fuse_rejects_invalid_compositions() {
     let stamps_left = vec![Tachygram::random(&mut *rng)];
     let stamps_right = vec![Tachygram::random(&mut *rng)];
     let start = Anchor::default();
-    let mid = start.next_stamp(&TachygramSetPoly::from_iter(stamps_left.clone()).commit());
+    let mid = start.next_stamp(
+        EpochIndex(0),
+        &TachygramSetPoly::from_iter(stamps_left.clone()).commit(),
+    );
 
     // nf mismatch: contiguous states but different nfs.
     {
@@ -368,7 +371,7 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
             .seed(
                 rng,
                 pool::AnchorSeed,
-                witness::anchor_seed(((), ()), bogus_start, &stamps[0]),
+                witness::anchor_seed(((), ()), bogus_start, BlockHeight(1).epoch(), &stamps[0]),
             )
             .expect("AnchorSeed");
 
@@ -421,7 +424,10 @@ fn empty_block_anchor_unique_per_height() {
     let h2 = BlockHeight(2);
     assert_ne!(pool.anchor_at(h1), pool.anchor_at(h2));
     // h2's anchor is h1's anchor advanced via next_empty.
-    assert_eq!(pool.anchor_at(h2), pool.anchor_at(h1).next_empty());
+    assert_eq!(
+        pool.anchor_at(h2),
+        pool.anchor_at(h1).next_empty(h2.epoch())
+    );
 }
 
 #[test]
@@ -452,7 +458,10 @@ fn empty_block_unspent_lifts_spendable() {
     let unspent = build_unspent_pcd_between_blocks(rng, &pool, &[nf], empty_height..=empty_height);
     let lifted = user.lift(rng, spendable, unspent, &note, epoch, epoch);
 
-    assert_eq!(lifted.data().2, spendable_anchor_before.next_empty());
+    assert_eq!(
+        lifted.data().2,
+        spendable_anchor_before.next_empty(empty_height.epoch())
+    );
     assert_eq!(lifted.data().2, pool.anchor_at(empty_height));
 }
 
@@ -888,15 +897,17 @@ fn multi_epoch_fuse_setup(
     let start_height = BlockHeight(2);
     let junction_height = BlockHeight(2 * EPOCH_SIZE + 2);
     let end_height = BlockHeight(3 * EPOCH_SIZE + 2);
-    let start = pool
-        .prev_anchor_at(start_height)
-        .next_stamp(&pool.stamp_commits_at(start_height)[0]);
-    let junction = pool
-        .prev_anchor_at(junction_height)
-        .next_stamp(&pool.stamp_commits_at(junction_height)[0]);
+    let start = pool.prev_anchor_at(start_height).next_stamp(
+        start_height.epoch(),
+        &pool.stamp_commits_at(start_height)[0],
+    );
+    let junction = pool.prev_anchor_at(junction_height).next_stamp(
+        junction_height.epoch(),
+        &pool.stamp_commits_at(junction_height)[0],
+    );
     let end = pool
         .prev_anchor_at(end_height)
-        .next_stamp(&pool.stamp_commits_at(end_height)[0]);
+        .next_stamp(end_height.epoch(), &pool.stamp_commits_at(end_height)[0]);
     let left = build_unspent_pcd_between_anchors(rng, &pool, &[nf0, nf1, nf2], (start, junction));
     let right = build_unspent_pcd_between_anchors(rng, &pool, &[nf2, nf3], (junction, end));
     assert_eq!(left.data().0, start, "left rooted at the sub-block start");
@@ -1076,12 +1087,13 @@ fn epoch_fuse_setup(rng: &mut StdRng) -> ([Nullifier; 5], Pcd<pool::Unspent>, Pc
     let nf: [Nullifier; 5] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
     let start_height = BlockHeight(2);
     let end_height = BlockHeight(4 * EPOCH_SIZE + 2);
-    let start = pool
-        .prev_anchor_at(start_height)
-        .next_stamp(&pool.stamp_commits_at(start_height)[0]);
+    let start = pool.prev_anchor_at(start_height).next_stamp(
+        start_height.epoch(),
+        &pool.stamp_commits_at(start_height)[0],
+    );
     let end = pool
         .prev_anchor_at(end_height)
-        .next_stamp(&pool.stamp_commits_at(end_height)[0]);
+        .next_stamp(end_height.epoch(), &pool.stamp_commits_at(end_height)[0]);
     let left = build_unspent_pcd_between_anchors(
         rng,
         &pool,

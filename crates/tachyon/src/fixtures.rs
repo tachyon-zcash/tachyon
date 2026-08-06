@@ -315,16 +315,17 @@ impl PoolSimBlock {
 
     /// The block's commitments and post anchors in one pass: one anchor per
     /// stamp (folding `next_stamp` from `prev`), or a single `next_empty` tick
-    /// for an empty block. The anchors reuse the commitments, so the MSMs run
-    /// once.
-    fn digest(&self) -> BlockDigest {
+    /// for an empty block. Every link binds `epoch`, the epoch of the block at
+    /// `height`. The anchors reuse the commitments, so the MSMs run once.
+    fn digest(&self, height: BlockHeight) -> BlockDigest {
+        let epoch = height.epoch();
         let commits = self.commits();
         let anchors = if commits.is_empty() {
-            alloc::vec![self.prev.next_empty()]
+            alloc::vec![self.prev.next_empty(epoch)]
         } else {
             commits.iter().fold(Vec::new(), |mut acc, commit| {
                 let last = acc.last().unwrap_or(&self.prev);
-                acc.push(last.next_stamp(commit));
+                acc.push(last.next_stamp(epoch, commit));
                 acc
             })
         };
@@ -393,7 +394,7 @@ impl PoolSim {
             return Rc::clone(digest);
         }
         self.digest_misses.set(self.digest_misses.get() + 1);
-        let digest = Rc::new(self.block(height).digest());
+        let digest = Rc::new(self.block(height).digest(height));
         let mut locs = self.anchor_locs.borrow_mut();
         for (position, anchor) in digest.anchors.iter().enumerate() {
             locs.insert(Fp::from(*anchor), (height, position));
@@ -599,9 +600,9 @@ fn build_anchor_chain_inner(
     loop {
         let stamps = pool.tachygrams_at(height);
         if stamps.is_empty() {
-            let next_state = state.next_empty();
+            let next_state = state.next_empty(height.epoch());
             let (seed, ()) = PROOF_SYSTEM
-                .seed(rng, pool::EmptyBlockSeed, (state,))
+                .seed(rng, pool::EmptyBlockSeed, (state, height.epoch()))
                 .expect("EmptyBlockSeed");
             chain = Some(match chain.take() {
                 None => seed,
@@ -621,8 +622,8 @@ fn build_anchor_chain_inner(
                 stamps.len()
             };
             for tgs in &stamps[..upto] {
-                let witness = witness::anchor_seed(((), ()), state, tgs);
-                let next_state = state.next_stamp(&witness.1);
+                let witness = witness::anchor_seed(((), ()), state, height.epoch(), tgs);
+                let next_state = state.next_stamp(witness.1, &witness.2);
                 let (seed, ()) = PROOF_SYSTEM
                     .seed(rng, pool::AnchorSeed, witness)
                     .expect("AnchorSeed");
@@ -716,7 +717,9 @@ pub(crate) fn spendable_init_inputs(
     // Anchor immediately before the cm-stamp (the cm-block prefix fold).
     let pre_cm_anchor = stamp_commits[..cm_idx]
         .iter()
-        .fold(pool.prev_anchor_at(height), Anchor::next_stamp);
+        .fold(pool.prev_anchor_at(height), |anchor, commit| {
+            anchor.next_stamp(height.epoch(), commit)
+        });
 
     // Root the lineage at the epoch boundary `B_E = pre_epoch_anchor.next_epoch(E)
     // == prev_anchor_at(epoch_first)`; the boundary->cm chain ends at
@@ -815,7 +818,7 @@ pub(crate) fn build_unspent_pcd_between_anchors(
             for tgs in block_stamps {
                 let commit = TachygramSetPoly::from_iter(tgs.clone()).commit();
                 leaves.push(build_unspent_seed_pcd(rng, entry, epoch, &tgs, leaf_nf));
-                entry = entry.next_stamp(&commit);
+                entry = entry.next_stamp(epoch, &commit);
             }
         }
     }

@@ -131,15 +131,17 @@ pub fn spendable_init(
     )
 }
 
-/// Prepare the witness for [`AnchorSeed`]: `(start, stamp_commit)`.
+/// Prepare the witness for [`AnchorSeed`]: `(start, epoch, stamp_commit)`.
 #[must_use]
 pub fn anchor_seed(
     (_left, _right): (StepLeft<AnchorSeed>, StepRight<AnchorSeed>),
     start: Anchor,
+    epoch: EpochIndex,
     tgs: &[Tachygram],
 ) -> StepWitness<'static, AnchorSeed> {
     (
         start,
+        epoch,
         tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
     )
 }

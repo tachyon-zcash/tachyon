@@ -117,17 +117,19 @@ fn point_limbs(point: EqAffine) -> (Fp, Fp) {
 
 const ANCHOR_STAMP_DOMAIN: &[u8; 16] = b"Tachyon-StampFld";
 
-/// Advances the anchor by absorbing one stamp's tachygram-set commitment.
+/// Advances the anchor by absorbing one stamp's epoch and tachygram-set
+/// commitment.
 ///
 /// # Panics
 ///
 /// Panics if `tgs` is the identity point.
 #[must_use]
-pub(crate) fn anchor_stamp_step(anchor_prev: Fp, tgs: EqAffine) -> Fp {
+pub(crate) fn anchor_stamp_step(anchor_prev: Fp, epoch: EpochIndex, tgs: EqAffine) -> Fp {
     let (tgs_lo, tgs_hi) = point_limbs(tgs);
-    hash::<4>([
+    hash::<5>([
         Fp::from_u128(u128::from_le_bytes(*ANCHOR_STAMP_DOMAIN)),
         anchor_prev,
+        Fp::from(epoch),
         tgs_lo,
         tgs_hi,
     ])
@@ -137,10 +139,11 @@ const ANCHOR_EMPTY_DOMAIN: &[u8; 16] = b"Tachyon-EmptyBlk";
 
 /// Advances the anchor through one block that contains zero stamps.
 #[must_use]
-pub(crate) fn anchor_empty_step(anchor_prev: Fp) -> Fp {
-    hash::<2>([
+pub(crate) fn anchor_empty_step(anchor_prev: Fp, epoch: EpochIndex) -> Fp {
+    hash::<3>([
         Fp::from_u128(u128::from_le_bytes(*ANCHOR_EMPTY_DOMAIN)),
         anchor_prev,
+        Fp::from(epoch),
     ])
 }
 
