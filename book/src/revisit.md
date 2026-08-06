@@ -87,12 +87,10 @@ SNARK proof.
 
 In Zcash today, a shielded payment address binds together $(\ak, \nk)$ and
 additionally includes $\ivk$ for incoming note detection. Tachyon instead
-decomposes this structure into a diversifiable payment key
-$\pkd = \mathsf{Com}(\ak, \nk; \rpk)$, a hiding commitment to the pair with $\rpk$
-a per-address diversifier, and a separate transmission key managed entirely by the
-payment protocol. This significantly
-simplifies the shielded protocol’s key architecture by removing functionality
-unrelated to spend authorization.
+decomposes this structure into a payment key $\pk = \mathsf{Com}(\ak, \nk)$, a
+binding commitment to the pair and a *separate* transmission key managed entirely
+by the payment protocol. This significantly simplifies the shielded protocol’s
+key architecture by removing functionality unrelated to spend authorization.
 
 > Among the main [security properties](https://zcash.github.io/orchard/design/nullifiers.html#security-properties),
 > Tachyon shielded protocol needs to uphold Ledger Indistinguishability
@@ -151,9 +149,11 @@ indistinguishable from randomly sampled keys.
   <img src="./assets/tachyon_keys.svg" alt="tachyon_keys" />
 </p>
 
-The payment key $\pkd = \mathsf{Com}(\ak, \nk; \rpk)$ is the owner field every note
-commits to: a hiding commitment to the $(\ak, \nk)$ pair, diversified by a
-per-address trapdoor $\rpk$. Being a symmetric (Poseidon-based) commitment, $\pkd$
+The payment key $\pk = \mathsf{Com}(\ak, \nk)$ is the owner field every note
+commits to: a binding commitment to the $(\ak, \nk)$ pair. A wallet
+mints a fresh address per sender from its master spending key in 
+[ZIP-32](https://zips.z.cash/zip-0032)-style.
+Instantiated with a hash-based commitment, $\pk$
 gives a succinct owner field and
 [quantum recoverability](https://zips.z.cash/draft-ecc-quantum-recoverability)
 today.
@@ -179,14 +179,14 @@ $$
 A tachyon note is a tuple:
 
 $$
-\mathsf{Note}^\mathsf{Tachyon} := (\pkd, v, \psi, \rcm)
+\mathsf{Note}^\mathsf{Tachyon} := (\pk, v, \psi, \rcm)
 $$
 
-where $\pkd$ is the [payment key](#payment-key), $v$ is the value of the note,
+where $\pk$ is the [payment key](#payment-key), $v$ is the value of the note,
 $\psi$ is pseudo-random note identity that binds to the note nullifier value
 as an input to its derivation, and $\rcm$ is a random commitment trapdoor[^cm-psi].
 In contrast to Sapling/Orchard, the note commitment in Tachyon
-$\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$ is purely based on symmetric primitives[^cm].
+$\cm = \mathsf{Com}(\pk, v, \psi; \rcm)$ is purely based on symmetric primitives[^cm].
 Thus, Tachyon doesn't require extra enforcement on $\rcm$ derivation on wallets
 to achieve quantum recoverability
 like [Orchard does](https://x.com/zkDragon/status/2026047830759182672).
@@ -391,14 +391,14 @@ across the epoch boundary, so a note cannot be spent twice even as $e$ advances.
 on-chain transaction, including any in-band memo. The shielded footprint, namely
 the commitment $\cm$ (hidden by $\rcm$), the spend's revealed nullifiers
 (pseudorandom by GGM PRF security), the rerandomized $\rk$, and the hiding $\cv$,
-reveals none of $\pkd$, $v$, $\psi$. The in-band memo is payment-protocol data
+reveals none of $\pk$, $v$, $\psi$. The in-band memo is payment-protocol data
 that the shielded protocol carries opaquely and never parses (committed only to
 `da_digest`), so its secrecy rests on the payment protocol's encryption, not on
 the shielded core.
 
 **Note Privacy (OOB).** Here the note plaintext travels out of band rather than
 as an in-band ciphertext, so the adversary of concern is the sender, who learns
-$\pkd, v, \psi, \rcm$ but never the recipient's $\nk$. Because every $\nf_e$ hangs
+$\pk, v, \psi, \rcm$ but never the recipient's $\nk$. Because every $\nf_e$ hangs
 off the secret seed $\PRF_\nk(\psi)$, knowledge of the note plaintext alone does
 not let the sender, or anyone it colludes with, recognize the recipient's
 eventual spend on chain or link it back to the note it sent.
@@ -445,7 +445,7 @@ nullifier *or* a commitment.
 
 $$
 \tg := \begin{cases}
-    \cm = \mathsf{Com}(\pkd, v, \psi; \rcm) &\quad\text{in Output actions}\\
+    \cm = \mathsf{Com}(\pk, v, \psi; \rcm) &\quad\text{in Output actions}\\
     \nf_e = \mathsf{KDF}(\nk, \psi, e) &\quad\text{in Spend actions}
 \end{cases}
 $$
@@ -1157,7 +1157,7 @@ A valid instance of an *Output Action statement* assures that, given the public 
 
 the prover knows the secret witness:
 
-- $\mathsf{Note} := (\pkd, v, \psi, \rcm)$: note opening, where $\pkd$ is the
+- $\mathsf{Note} := (\pk, v, \psi, \rcm)$: note opening, where $\pk$ is the
   recipient's payment key taken from their address
 - $\mathsf{Note}_\bot := (\pk_\bot, 0, \psi_\bot, \rcm_\bot)$: dummy note opening
   with arbitrary $\pk_\bot, \psi_\bot, \rcm_\bot$ values.
@@ -1201,8 +1201,8 @@ A valid instance of a *Spend Action statement* assures that, given the public in
 
 the prover knows the secret witness:
 
-- $\mathsf{Note} := (\pkd, v, \psi, \rcm)$: note opening
-- $(\ak, \nk, \rpk)$: authorization key, nullifier key, payment-key trapdoor
+- $\mathsf{Note} := (\pk, v, \psi, \rcm)$: note opening
+- $(\ak, \nk)$: authorization key, nullifier key
 - the witness for the [spendability proof](#spendability)
 - the randomizers $\alpha, \theta, \rcv$
 
@@ -1215,8 +1215,8 @@ such that the following conditions hold:
   witnessed note — its creating output already enforced the range, but the
   redundant check is cheap defense in depth and keeps balance arithmetic
   overflow-free.
-- **Note commitment integrity** ($\Uc$): $\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$.
-- **Payment key integrity** ($\Uc$): $\pkd = \mathsf{Com}(\ak, \nk; \rpk)$.
+- **Note commitment integrity** ($\Uc$): $\cm = \mathsf{Com}(\pk, v, \psi; \rcm)$.
+- **Payment key integrity** ($\Uc$): $\pk = \mathsf{Com}(\ak, \nk)$.
 - **Spend Authority** ($\Uc$): $\rk = \ak + [\alpha]\,\G$ and
   $\alpha = \PRF(\cm \,\|\, \theta)$, binding the validating key to the note.
 - **Commitment Inclusion**: $\cm$ entered the pool at a point preceding the anchor.
@@ -1482,7 +1482,7 @@ Left and Right are PCD inputs; a dash marks a leaf with witness only.
   boundary-to-boundary and matches the `EpochAccHeader`'s epoch $i$, then emits
   the shared `EpochHeader` binding that boundary anchor pair to the accumulator.
   Being note-independent, it is built once and reused across all notes.
-- `UnspentInit` checks $\cm = \mathsf{Com}(\pkd, v, \psi; \rcm)$, that
+- `UnspentInit` checks $\cm = \mathsf{Com}(\pk, v, \psi; \rcm)$, that
   $H(\seed, \cm)$ equals `DelegationHeader`'s $\kappa$, and that $\cm$ lies in
   its creating stamp's tachygram set. It sets the anchor just past that stamp
   (still in epoch $e_0$) and forward-walks $\pck$ to $\nf_{e_0}$ to confirm the
@@ -1850,24 +1850,24 @@ least the following PIR databases (entries written as `key => value`):
 
 The [decoupling](#decouple) split the owner-binding payment key from the
 note-transmission key, leaving the latter for the payment protocol to define. A
-Tachyon *diversified payment address* is
+Tachyon *payment address* is
 
 $$
-\addr = (\pkd,\,\ek)
+\addr = (\pk,\,\ek)
 \qquad
 \begin{cases}
-    \pkd = \mathsf{Com}(\ak, \nk; \rpk)\\
+    \pk = \mathsf{Com}(\ak, \nk)\\
     (\ek, \dk) \leftarrow \mathsf{ML\text{-}KEM.KeyGen}()
 \end{cases}
 $$
 
-with two components:
+with two components, both minted fresh per sender:
 
-- *Diversified payment key* $\pkd$: the owner field every note commits to
-  ([defined earlier](#payment-key)), randomized by the trapdoor $\rpk$ so that
-  payment keys from the same wallet are unlinkable. The decoupling lets us
-  diversify it independently of the transmission key.
-- *Diversified transmission key* $\ek$: the encapsulation key of a freshly sampled
+- *Payment key* $\pk$: the owner field every note commits to
+  ([defined earlier](#payment-key)), committing to a freshly indexed
+  $(\ak, \nk)$ pair so that payment keys from the same wallet are unlinkable.
+  The decoupling lets us refresh it independently of the transmission key.
+- *Transmission key* $\ek$: the encapsulation key of a freshly sampled
   ML-KEM key pair.
 
 **Why not an Orchard-style transmission key.** Orchard derives a whole family of
@@ -1884,7 +1884,7 @@ secret is already quantum-safe today.
 **No persistent viewing key? Tags to the rescue.**
 An unfortunate byproduct of switching to ML-KEM is that the "diversified base,
 same $\ivk$" algebraic relation no longer holds[^ivk]: instead, the decapsulation
-key $\dk$ is freshly sampled for each new diversified address. Naively, this
+key $\dk$ is freshly sampled for each new address. Naively, this
 multiplies the cost of shielded sync by the number of $\dk$ in the wallet, since
 each must be trialed during the linear scan. PIR shortcuts that trial decryption
 by attaching to every encrypted memo a retrieval handle, the $\tag$, which the
@@ -1913,7 +1913,7 @@ about tags in the [next section](#discovery).
   <img src="./assets/ek_and_tag.svg" alt="ek_and_tag" />
 </p>
 
-**Two diversification schedules: per-sender and per-note.**
+**Two freshness schedules: per-sender and per-note.**
 Address diversification historically existed to stop colluding senders from
 recognizing that two addresses belong to the same recipient, which calls for a
 per-sender schedule for $\ek$. Tags need a tighter one: since a $\tag$ appears
@@ -1930,7 +1930,7 @@ preprocessing rerun touches only the last, not-yet-full chunk.
 
 ### Note Discovery {#discovery}
 
-> **In one breath:** first contact hands the sender a diversified address, the
+> **In one breath:** first contact hands the sender a fresh address, the
 > opening transaction completes the handshake, a stateful wallet then fast-syncs
 > through the PIR databases, and an AEAD-encrypted wallet state posted on chain
 > backs full recovery from the mnemonic alone.
@@ -1950,7 +1950,7 @@ by scanning the chain alone, ideally accelerated by PIR servers when available.
 
 We examine each procedure more closely and explore possible design choices.
 
-Everything starts with the recipient sharing a diversified address: the sender
+Everything starts with the recipient sharing a fresh address: the sender
 uses its payment key to construct the output note and its transmission key for
 secure in-band secret distribution. Disseminating $\addr$ is trivial when the two
 already share a secure channel (Signal, WhatsApp, and the like), and a recipient
@@ -1983,7 +1983,7 @@ primary reason we maximize shared-secret reuse. Three subtleties follow:
   same first-contact $\ek$, and hence to the same sender.
 
 [^intro-service]: A fancier option is an *introduction service* that shares a
-    channel with the recipient Bob, who hands it a list of diversified addresses
+    channel with the recipient Bob, who hands it a list of fresh addresses
     in advance, each authenticated by a signature under a well-known public key of
     his. Alice then reaches the always-online service, which accepts all incoming
     requests. Two subtleties: (1) the service must vouch for the authenticity of a
@@ -2125,7 +2125,7 @@ coordinated network upgrade before quantum computers arrive.
 commitment or encrypted under post-quantum symmetric/KEM crypto, so a future
 quantum computer learns nothing about old transactions:
 
-- the owner field $\pkd = \mathsf{Com}(\ak, \nk; \rpk)$ and the note commitment
+- the owner field $\pk = \mathsf{Com}(\ak, \nk)$ and the note commitment
   $\cm$ are hash/symmetric (Poseidon) commitments, hiding even against a quantum
   computer;
 - nullifiers are PRF/hash outputs, pseudorandom against a quantum computer, so
