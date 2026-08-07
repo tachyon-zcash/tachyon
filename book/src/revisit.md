@@ -672,8 +672,8 @@ output action to publish a dummy tachygram alongside its note commitment, so
 every action uniformly carries two.[^padding]
 
 [^padding]: Without the dummy, a spend would carry two tachygrams and an output
-    one. A bundle already reveals its action count $n$ — one authorization
-    signature per action — so the tachygram count $t$ would give away the
+    one. A bundle already reveals its action count $n$ (one authorization
+    signature per action), so the tachygram count $t$ would give away the
     split: $s = t - n$ spends and $o = 2n - t$ outputs. Padding fixes $t = 2n$
     identically, hiding the split. The leak without padding is only *arity*:
     tachygrams ride in the stamp as one flat multiset, so *which* action is a
@@ -681,8 +681,9 @@ every action uniformly carries two.[^padding]
 
 All non-malleable parts, collectively the *effecting data*, hash into a stable
 identifier `txid`: a bundle commitment from each pool and their value balance
-$v^{\mathsf{bal}}$. In-band encrypted memos count as effecting data for the legacy
-pools, but, as detailed below, *not* for the Tachyon pool.
+$v^{\mathsf{bal}}$. In-band memos count as effecting data in the legacy pools,
+and they remain so in the Tachyon pool, entering `txid` through the `da_digest`
+described below.
 The Tachyon bundle commitment $\actacc$ is an order-committing,
 personalized hash over the Action descriptions in wire order:
 
@@ -706,18 +707,20 @@ hence transitively to `wtxid = txid || auth_digest`; only the stable parts
 
 Specifically,
 
-- `txid` commits to $(\actacc \| v^\mathsf{bal})$. Importantly, for the Tachyon
-pool the memos are *not* effecting data and are therefore excluded from the
-`txid` inputs.
-- `da_digest` commits to the (optional) opaque memo bytes, which are
-unconstrained (never parsed or interpreted) and thus have no effect on the
+- `da_digest` commits to the (optional) memo bytes, which the Tachyon pool
+carries as an opaque DA blob: unconstrained, never parsed or interpreted by the
 shielded protocol.
-- `auth_digest` commits to $(\set{\sigma^\mathsf{act}}, \sigma^\mathsf{bind}, \mathsf{stamp}, \mathsf{da\_digest})$.
+- `txid` commits to $(\actacc \| v^\mathsf{bal} \| \mathsf{da\_digest})$.
+- `auth_digest` commits to $(\set{\sigma^\mathsf{act}}, \sigma^\mathsf{bind}, \mathsf{stamp})$.
 
-Although the shielded protocol never interprets the DA bytes, they are still
-pinned by `wtxid` through `da_digest` as part of the authorizing data.
-This prevents malleable memo payload since stripping or replacing them in flight
-would result in different `wtxid`.
+Keeping the memo payload inside the effecting data is what makes it
+tamper-proof. Authorizing data is malleable by definition, and Tachyon relayers
+rewrite it in flight: aggregation replaces a transaction's stamp, and with it
+`auth_digest` and `wtxid`. With `da_digest` inside `txid`, tampering becomes
+detectable: every authorization signature signs over it through the `SIGHASH`,
+so altering the DA bytes yields a different transaction whose signatures no
+longer verify. ZIP-244 makes the same choice for the legacy pools by hashing
+their in-band memo ciphertexts into `txid`.
 
 Finally, the Tachyon bundle carries a spend authorization signature for every
 Action description, each signed over the `SIGHASH`, which commits to the same
