@@ -3,7 +3,7 @@
 > TL;DR:
 > our [conclusion](#conclusion) recommends [Attempt 3](#attempt3) which
 > directly use Poseidon permutation to derive $\mathsf{Rate}=4$ nullifers per
-> squeeze; thus $7\cdot 4 = 32$ nullifier derivations per PCD step.
+> squeeze; thus $7\cdot 4 = 28$ nullifier derivations per PCD step.
 
 ## Background
 
@@ -399,9 +399,9 @@ $$
 (\nk, \psi, \lceil \frac{e}{4} \rceil)[e \bmod 4]
 $$
 
-In practice, we would prove a batch of $4 \cdot 7 = 32$ nullifiers in one PCD
+In practice, we would prove a batch of $4 \cdot 7 = 28$ nullifiers in one PCD
 step and separately show that the list of nullifiers OSS had proven exclusion
-for is a sub-sequence of these $32$ nullifiers.
+for is a sub-sequence of these $28$ nullifiers.
 
 ## Attempt 4: AOC with Reduced Rounds {#attempt4}
 
@@ -952,12 +952,7 @@ $$
 \Rightarrow \ell \leq 14
 $$
 
-**If we decide to double our step circuit size to $2^{12}$, then $\ell\leq 120$**.
-This is due to the relatively large fix-cost from PRF and polynomial oracles,
-and the super low variable-cost for individual MiMC trace boundary conditions
-(i.e. public inputs enforcement on $\{(x_i, y_i)\}$).
-
-**Optimization Axis.**
+**Parameter Tuning.**
 The two parameters to tune are per-round exponent $\alpha$ and key dimension
 $\kappa := \dim(k)$.
 
@@ -974,18 +969,73 @@ to ensure $T(\omega^{i+1}) = \big(T(\omega^i) + k_{i \bmod \kappa} + C(\omega^i)
 If $\kappa > \mathsf{Rate}$, then we need to squeeze Poseidon multiple times to
 expand the full key, which incurs higher circuit cost.
 
+**Optimization: Multi-step Amortization.**
+While mere parameter tuning renders futile, we can achieve lower amortized cost
+if we span over the derivation across many steps. This is motivated by the
+relatively **large fix-cost** from PRF and polynomial oracles, and the super
+**low variable-cost for individual MiMC trace** boundary conditions
+(i.e. public inputs enforcement on $\{(x_i, y_i)\}$).
+
+Let $t$ be the number of PCD steps covered by one IOP. The first step commits
+to $(M, C, Q)$ and each later step carries the same commitments unchanged in
+its header. Ragu's staged commitments enforce that the two curve-side views of
+this header agree at the following recursion step, which prevents a prover from
+mixing different IOPs across the span.
+
+We assume an extra query of an already committed polynomial costs $3$ `mul`
+gates and no extra endoscaling. Since every trace adds its input and output
+query, this adds $6$ `mul` gates per trace to the first-order estimate above:
+
+$$
+\ell \leq
+\frac{t\cdot2^{11} - 288 - 3\cdot512}{\log 64 + \log \ell + 6 + 6}.
+$$
+
+| Spanned steps $t$ | $\ell$ bound | Amortized per step |
+| -- | --: | --: |
+| $1$ | $\ell\leq 14$ | $14$ |
+| $2$ | $\ell\leq 92$ | $46$ |
+| $3$ | $\ell\leq 170$ | $56.7$ |
+| $4$ | $\ell\leq 245$ | $61.25$ |
+| $5$ | $\ell\leq 319$ | $63.8$ |
+| $6$ | $\ell\leq 393$ | $65.5$ |
+| $7$ | $\ell\leq 465$ | $66.4$ |
+| $8$ | $\ell\leq 537$ | $67.1$ |
+| $9$ | $\ell\leq 609$ | $67.7$ |
+| $10$ | $\ell\leq 680$ | $68$ |
+| $11$ | $\ell\leq 751$ | $68.3$ |
+| $12$ | $\ell\leq 821$ | $68.4$ |
+| $13$ | $\ell\leq 892$ | $68.6$ |
+| $14$ | $\ell\leq 961$ | $68.6$ |
+| $15$ | $\ell\leq 1031$ | $68.7$ |
+
+There is one placement constraint: if all $2\ell+4$ queries are emitted in the
+first step, that step alone caps at $\ell\leq32$. Its multiplication-gate
+budget binds well before the $2^{13}$ linear-constraint budget. Therefore, the
+larger bounds above require *distributing the polynomial queries over the $t$
+steps* while threading the same IOP commitments through them.
+
+This split preserves IOP soundness. The first step publishes an IOP descriptor
+$\mathcal I=(\cm_M,\cm_C,\cm_Q,N)$ in its header and checks the one quotient
+relation at $\gamma$. Each later step must copy $\mathcal I$ unchanged, and
+adds only the endpoint queries for its assigned, non-overlapping trace range.
+Ragu's nested staged commitments make the two curve-side copies of
+$\mathcal I$ agree in the following recursion step; thus no later step can
+silently switch to a different $M$, $C$, or $Q$.
+
 ## Conclusion
 
-Overall, we recommend [Attempt 3](#attempt3) which offers a $32\times$
+Overall, we recommend [Attempt 3](#attempt3) which offers a $28\times$
 improvement on circuit efficiency for nullifier derivations. This attempt
 demands minimum engineering effort, no extra assumption or in-house cryptanalysis,
 while meeting our security computationally.
 
-If our circuit size can double to $2^{12}$, then we recommend
-[Attempt 5](#attempt5) which supports up to $120$ nullifiers per PCD step.
-However, for current $2^{11}$-size step circuit, we estimate only $14$ nullifier
-derivations per step, which is worse than Attempt 3. See the circuit cost
-breakdown [here](#prove-cost).
+If we accept the additional dependency on MiMC and its recommended security
+parameter, then our [Attempt 5](#attempt5) delivers an amortized cost of
+$\approx 50\sim 68$ nullifiers per PCD step. This performance is possible
+due to a combination of optimization including batch-proving MiMC traces and
+amortizing IOP verifier logic across steps. See the circuit cost breakdown
+[here](#prove-cost).
 
 The concrete parameter suggestion for Attempt 5 is:
 Use MiMC with rounds $r=63, \alpha=5$ over $254$-bit scalar field.[^final-r]
