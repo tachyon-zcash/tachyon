@@ -16,7 +16,7 @@ use rand_core::{CryptoRng, RngCore};
 /// - Have an epoch component for sync delegation
 /// - Are prunable by validators after a window of blocks
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct Nullifier(#[debug(skip)] Fp);
+pub struct Nullifier(Fp);
 
 /// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
 ///
@@ -44,14 +44,5 @@ mod tests {
         assert!(dbg.contains("Trapdoor"), "must name the type");
         assert!(!dbg.contains("CAFE"), "must not leak field element");
         assert!(!dbg.contains("51966"), "must not leak decimal value");
-    }
-
-    #[test]
-    fn debug_nullifier_redacts_value() {
-        let nf = Nullifier::from(Fp::from(0xBEEFu64));
-        let dbg = alloc::format!("{nf:?}");
-        assert!(dbg.contains("Nullifier"), "must name the type");
-        assert!(!dbg.contains("BEEF"), "must not leak field element");
-        assert!(!dbg.contains("48879"), "must not leak decimal value");
     }
 }

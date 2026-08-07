@@ -106,7 +106,7 @@ impl Note {
 /// - For **output** operations, `cm` IS the tachygram directly.
 /// - For **spend** operations, `cm` is a private witness.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct Commitment(#[debug(skip)] Fp);
+pub struct Commitment(Fp);
 
 #[cfg(test)]
 mod tests {
@@ -157,13 +157,5 @@ mod tests {
         };
 
         assert_ne!(note1.commitment(), note2.commitment());
-    }
-
-    #[test]
-    fn debug_note_commitment_redacts_value() {
-        let cm = Commitment::from(Fp::from(42u64));
-        let dbg = alloc::format!("{cm:?}");
-        assert!(dbg.contains("Commitment"), "must name the type");
-        assert!(!dbg.contains("42"), "must not leak field element");
     }
 }
