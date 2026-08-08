@@ -104,19 +104,9 @@ impl Note {
 /// Produced by committing to the note fields. An output publishes `cm` as a
 /// tachygram; a spend keeps it as a private witness.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+#[from(Fp, Tachygram)]
+#[into(Fp, Tachygram)]
 pub struct Commitment(Tachygram);
-
-impl From<Fp> for Commitment {
-    fn from(value: Fp) -> Self {
-        Self(Tachygram::from(value))
-    }
-}
-
-impl From<Commitment> for Fp {
-    fn from(commitment: Commitment) -> Self {
-        Self::from(commitment.0)
-    }
-}
 
 #[cfg(test)]
 mod tests {

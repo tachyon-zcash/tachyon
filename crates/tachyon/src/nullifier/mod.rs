@@ -17,19 +17,9 @@ use crate::primitives::Tachygram;
 /// - Have an epoch component for sync delegation
 /// - Are prunable by validators after a window of blocks
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+#[from(Fp, Tachygram)]
+#[into(Fp, Tachygram)]
 pub struct Nullifier(Tachygram);
-
-impl From<Fp> for Nullifier {
-    fn from(value: Fp) -> Self {
-        Self(Tachygram::from(value))
-    }
-}
-
-impl From<Nullifier> for Fp {
-    fn from(nullifier: Nullifier) -> Self {
-        Self::from(nullifier.0)
-    }
-}
 
 /// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
 ///
