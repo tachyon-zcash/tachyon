@@ -5,18 +5,31 @@ use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
+use crate::primitives::Tachygram;
+
 /// A Tachyon nullifier.
 ///
 /// Derived via GGM tree PRF: $mk = \text{KDF}(\psi, nk)$, then
-/// $nf = F_{mk}(\text{epoch})$. Published when a note is spent;
-/// becomes a tachygram in the polynomial accumulator.
+/// $nf = F_{mk}(\text{epoch})$. Published when a note is spent.
 ///
 /// Unlike Orchard, Tachyon nullifiers:
 /// - Don't need collision resistance (no faerie gold defense)
 /// - Have an epoch component for sync delegation
 /// - Are prunable by validators after a window of blocks
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct Nullifier(Fp);
+pub struct Nullifier(Tachygram);
+
+impl From<Fp> for Nullifier {
+    fn from(value: Fp) -> Self {
+        Self(Tachygram::from(value))
+    }
+}
+
+impl From<Nullifier> for Fp {
+    fn from(nullifier: Nullifier) -> Self {
+        Self::from(nullifier.0)
+    }
+}
 
 /// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
 ///

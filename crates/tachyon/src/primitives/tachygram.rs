@@ -3,18 +3,14 @@ use core::cmp::Ordering;
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::PrimeField as _;
 use pasta_curves::Fp;
-
 #[cfg(test)]
 use rand_core::{CryptoRng, RngCore};
 
-use crate::{note::Commitment, nullifier::Nullifier};
-
-/// A tachygram is a field element ($\mathbb{F}_p$) representing either a
-/// note commitment or a nullifier in the Tachyon polynomial accumulator.
+/// A field element ($\mathbb{F}_p$) in the Tachyon polynomial accumulator.
 ///
-/// The accumulator does not distinguish between commitments and nullifiers.
-/// This unified approach simplifies the proof system and enables efficient
-/// batch operations.
+/// [`Nullifier`](crate::nullifier::Nullifier) and
+/// [`Commitment`](crate::note::Commitment) both wrap a tachygram, and the
+/// accumulator does not distinguish them.
 ///
 /// The number of tachygrams in a stamp need not equal the number of
 /// actions. The invariant is consistency between the listed tachygrams
@@ -47,17 +43,5 @@ impl Ord for Tachygram {
     /// commits to. `Fp` has no intrinsic `Ord`.
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.to_repr().as_ref().cmp(other.0.to_repr().as_ref())
-    }
-}
-
-impl From<Nullifier> for Tachygram {
-    fn from(nullifier: Nullifier) -> Self {
-        Self::from(Fp::from(nullifier))
-    }
-}
-
-impl From<Commitment> for Tachygram {
-    fn from(commitment: Commitment) -> Self {
-        Self::from(Fp::from(commitment))
     }
 }

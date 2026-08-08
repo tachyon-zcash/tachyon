@@ -39,7 +39,7 @@ use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
-use crate::{digest::poseidon, keys::PaymentKey, nullifier, value};
+use crate::{digest::poseidon, keys::PaymentKey, nullifier, primitives::Tachygram, value};
 
 /// Note commitment trapdoor ($rcm$) — randomness that blinds the note
 /// commitment.
@@ -101,12 +101,22 @@ impl Note {
 
 /// A Tachyon note commitment (`cm`).
 ///
-/// A field element produced by committing to the note fields. This is
-/// the value that becomes a tachygram:
-/// - For **output** operations, `cm` IS the tachygram directly.
-/// - For **spend** operations, `cm` is a private witness.
+/// Produced by committing to the note fields. An output publishes `cm` as a
+/// tachygram; a spend keeps it as a private witness.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct Commitment(Fp);
+pub struct Commitment(Tachygram);
+
+impl From<Fp> for Commitment {
+    fn from(value: Fp) -> Self {
+        Self(Tachygram::from(value))
+    }
+}
+
+impl From<Commitment> for Fp {
+    fn from(commitment: Commitment) -> Self {
+        Self::from(commitment.0)
+    }
+}
 
 #[cfg(test)]
 mod tests {
