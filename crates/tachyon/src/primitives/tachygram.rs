@@ -4,6 +4,9 @@ use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::PrimeField as _;
 use pasta_curves::Fp;
 
+#[cfg(test)]
+use rand_core::{CryptoRng, RngCore};
+
 use crate::{note::Commitment, nullifier::Nullifier};
 
 /// A tachygram is a field element ($\mathbb{F}_p$) representing either a
@@ -22,6 +25,15 @@ use crate::{note::Commitment, nullifier::Nullifier};
 /// Tachygrams book chapter for why the window spans two epochs.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Tachygram(Fp);
+
+impl Tachygram {
+    #[cfg(test)]
+    pub(crate) fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
+        use ff::Field as _;
+
+        Self(Fp::random(rng))
+    }
+}
 
 impl PartialOrd for Tachygram {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {

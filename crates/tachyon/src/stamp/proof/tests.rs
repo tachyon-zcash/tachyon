@@ -31,10 +31,6 @@ use crate::{
     value, witness,
 };
 
-fn tg<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Tachygram {
-    Tachygram::from(Fp::random(rng))
-}
-
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
     pool.mine(random_block_with(rng, &[alloc::vec![cm]], 4));
     pool.height()
@@ -251,9 +247,9 @@ fn spendable_init_rejects_tg_absent() {
 
     let nf_header = user.derived_range(rng, &note, EpochIndex(0), 1);
     let present_nf = user.nf_at(&note, EpochIndex(0));
-    let absent_tg = tg(rng);
+    let absent_tg = Tachygram::random(&mut *rng);
     // cm-inclusion is checked first, so a dummy boundary chain suffices here.
-    let dummy_tg = tg(rng);
+    let dummy_tg = Tachygram::random(&mut *rng);
     let (dummy_chain, ()) = PROOF_SYSTEM
         .seed(
             rng,
@@ -310,8 +306,8 @@ fn unspent_seed_rejects_tg_present() {
 #[test]
 fn unspent_fuse_rejects_invalid_compositions() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let stamps_left = vec![tg(rng)];
-    let stamps_right = vec![tg(rng)];
+    let stamps_left = vec![Tachygram::random(&mut *rng)];
+    let stamps_right = vec![Tachygram::random(&mut *rng)];
     let start = Anchor::default();
     let mid = start.next_stamp(&TachygramSetPoly::from_iter(stamps_left.clone()).commit());
 
@@ -1093,7 +1089,7 @@ fn unspent_fuse_rejects_epoch_boundary_crossing() {
     // A forged epoch-1 right half rooted directly at `left.anchor_last` (no
     // `next_epoch` fold). The anchors line up, but the epoch labels reveal a
     // boundary the fuse refuses to cross: that is `UnspentEpochFuse`'s job.
-    let stamp = [tg(rng)];
+    let stamp = [Tachygram::random(&mut *rng)];
     let forged_right = build_unspent_seed_pcd(rng, left_end, EpochIndex(1), &stamp, nf1);
 
     let err = PROOF_SYSTEM
@@ -1272,7 +1268,7 @@ fn unspent_epoch_fuse_rejects_wrong_boundary_anchor() {
     // A forged epoch-3 right half rooted directly at `left.anchor_last`: the
     // epoch labels are adjacent, but the root skips the `next_epoch` fold the
     // boundary demands.
-    let stamp = [tg(rng)];
+    let stamp = [Tachygram::random(&mut *rng)];
     let forged_right = build_unspent_seed_pcd(rng, left_end, EpochIndex(3), &stamp, nf3);
     let err = PROOF_SYSTEM
         .fuse(

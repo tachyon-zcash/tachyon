@@ -262,7 +262,7 @@ pub fn random_block(
     n_stamps: usize,
 ) -> Vec<Vec<Tachygram>> {
     iter::repeat_with(|| {
-        iter::repeat_with(|| Tachygram::from(Fp::random(&mut *rng)))
+        iter::repeat_with(|| Tachygram::random(&mut *rng))
             .take(stamp_size)
             .collect()
     })
@@ -284,7 +284,7 @@ pub fn random_block_with(
         .map(|cms| cms.iter().map(|&cm| Tachygram::from(cm)).collect())
         .collect();
     stamps.extend(
-        iter::repeat_with(|| alloc::vec![Tachygram::from(Fp::random(&mut *rng))])
+        iter::repeat_with(|| alloc::vec![Tachygram::random(&mut *rng)])
             .take(n_stamps - stamps_cms.len()),
     );
     stamps
