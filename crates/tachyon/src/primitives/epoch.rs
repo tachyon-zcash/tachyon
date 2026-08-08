@@ -15,7 +15,8 @@ use pasta_curves::Fp;
 pub struct EpochIndex(pub u32);
 
 /// A non-negative distance between two [`EpochIndex`]es, from subtraction.
-#[derive(Clone, Copy, Debug, Ord, PartialEq, PartialOrd, TotalEq)]
+#[derive(Clone, Copy, Debug, Into, Ord, PartialEq, PartialOrd, TotalEq)]
+#[into(u64)]
 pub struct EpochDiff(u32);
 
 impl EpochIndex {
@@ -42,12 +43,6 @@ impl ops::Sub<Self> for EpochIndex {
                 .checked_sub(rhs.0)
                 .expect("epoch difference is positive"),
         )
-    }
-}
-
-impl From<EpochDiff> for u64 {
-    fn from(diff: EpochDiff) -> Self {
-        diff.0.into()
     }
 }
 

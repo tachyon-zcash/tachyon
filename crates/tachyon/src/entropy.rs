@@ -6,7 +6,7 @@
 
 use core::{any::type_name, marker::PhantomData};
 
-use derive_more::Debug;
+use derive_more::{Debug, Into};
 use pasta_curves::Fq;
 use rand_core::{CryptoRng, RngCore};
 
@@ -66,15 +66,12 @@ mod sealed {
 /// - [`ActionRandomizer<Spend>`]: $\mathsf{rsk} = \mathsf{ask} + \alpha$,
 ///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
 /// - [`ActionRandomizer<Output>`]: $\mathsf{rsk} = \alpha$.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Into)]
 #[debug("ActionRandomizer<{}>", type_name::<S>())]
-pub struct ActionRandomizer<S: sealed::RandomizerState>(pub(crate) Fq, pub(crate) PhantomData<S>);
-
-impl<S: sealed::RandomizerState> From<ActionRandomizer<S>> for Fq {
-    fn from(randomizer: ActionRandomizer<S>) -> Self {
-        randomizer.0
-    }
-}
+pub struct ActionRandomizer<S: sealed::RandomizerState>(
+    pub(crate) Fq,
+    #[into(skip)] pub(crate) PhantomData<S>,
+);
 
 #[cfg(test)]
 mod tests {
