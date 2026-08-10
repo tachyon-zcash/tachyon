@@ -1,7 +1,7 @@
 //! Utilities for preparing step witnesses.
 //!
 //! One function per [`Step`] with a non-empty witness: it assembles the step's
-//! [`Witness`](ragu::Step::Witness) tuple from raw inputs (interpolating
+//! [`Witness`](Step::Witness) tuple from raw inputs (interpolating
 //! nullifiers and tachygrams into the polynomials the step opens against),
 //! ready to seed or fuse through `PROOF_SYSTEM`. Functions are named after the
 //! step they serve. Steps with an empty `()` witness need no utility.

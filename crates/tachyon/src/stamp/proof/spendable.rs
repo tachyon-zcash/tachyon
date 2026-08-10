@@ -4,7 +4,7 @@
 //! nullifier `GGM(mk, e)`, its pool position, and the minted-note commitment
 //! binding the lineage (and its value) across lifts. [`SpendableInit`]
 //! bootstraps it from a minted note; [`SpendableLift`] advances it over
-//! [`VerifiedUnspent`](super::pool::VerifiedUnspent) segments.
+//! [`VerifiedUnspent`] segments.
 
 extern crate alloc;
 
@@ -51,7 +51,7 @@ impl Header for SpendableHeader {
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
 /// Wallet-only. Fuses a boundary-rooted [`AnchorChain`] with the wallet's
-/// single-leaf [`NullifierHeader`](super::delegation::NullifierHeader): binds
+/// single-leaf [`NullifierHeader`]: binds
 /// `present_nf` to the proven leaf, checks `cm in creation_set`, roots the
 /// chain at the epoch boundary, and requires the cm-stamp to be its final link.
 #[derive(Debug)]

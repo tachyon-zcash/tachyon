@@ -269,7 +269,7 @@ impl StampState for ProofStamp {
 /// stamp.
 ///
 /// Construct via [`Plan::new`] with pre-derived action witnesses, or
-/// via [`bundle::Plan::stamp_plan`](crate::bundle::Plan::stamp_plan)
+/// via [`Plan::stamp_plan`](crate::bundle::Plan::stamp_plan)
 /// for the typed single-party path.
 #[derive(Clone, Debug)]
 pub struct Plan {

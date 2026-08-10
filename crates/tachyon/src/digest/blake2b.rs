@@ -218,8 +218,8 @@ pub(crate) fn stamp_data_digest(
 ///
 /// | $\mathsf{tachyonBundleState}$ | Impl | $\mathsf{tachyonStampState}$ |
 /// | ----------------------------- | ---- | ---------------------------- |
-/// | `0x01` | [`ProofStamp`](`crate::stamp::ProofStamp`) | $ \mathsf{hStampActionsTachyon} \| \mathsf{hStampDataTachyon} $ |
-/// | `0x02` | [`PointerStamp`](`crate::stamp::PointerStamp`) | aggregate's `wtxid` |
+/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{hStampActionsTachyon} \| \mathsf{hStampDataTachyon} $ |
+/// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | aggregate's `wtxid` |
 pub(crate) fn bundle_auth_digest(
     state_header: u8,
     action_sigs: &[[u8; 64]],

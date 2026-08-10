@@ -18,7 +18,7 @@ use crate::{
 /// The simple fields of an action, without the signature.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Descriptor {
-    /// Value commitment $\mathsf{cv} = [v]\,\mathcal{V}
+    /// Value commitment $\mathsf{cv} = \lbrack v \rbrack\,\mathcal{V}
     /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
     pub cv: value::Commitment,
 
