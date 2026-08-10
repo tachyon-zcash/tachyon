@@ -9,8 +9,8 @@ rust-version = "1.90"
 
 # dependency opt level matters for fft performance in tests
 [profile.dev.package."*"]
-opt-level = 3
 debug-assertions = false
+opt-level = 3
 overflow-checks = false
 
 [workspace.lints.rust]
@@ -34,6 +34,9 @@ unused_macro_rules = "warn"
 unused_qualifications = "warn"
 variant_size_differences = "warn"
 
+[workspace.lints.rustdoc]
+private_intra_doc_links = "allow"
+
 [workspace.lints.clippy]
 cargo = { level = "warn", priority = -1 }
 complexity = { level = "deny", priority = -1 }
@@ -44,15 +47,15 @@ perf = { level = "deny", priority = -1 }
 style = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 
-cast_possible_truncation = "deny"
 as_conversions = "deny"
+cast_possible_truncation = "deny"
 
-multiple_crate_versions = "allow"   # todo
-doc_markdown = "allow"              # https://github.com/rust-lang/rust-clippy/issues/7273
-default_numeric_fallback = "allow"  # would demand a literal suffix at every untyped literal
-unreachable = "allow"               # awkward to disable
-redundant_pub_crate = "allow"       # pub(crate) in private modules is fine
-little_endian_bytes = "allow"       # many specified conversions
+default_numeric_fallback = "allow" # would demand a literal suffix at every untyped literal
+doc_markdown = "allow"             # https://github.com/rust-lang/rust-clippy/issues/7273
+little_endian_bytes = "allow"      # many specified conversions
+multiple_crate_versions = "allow"  # todo
+redundant_pub_crate = "allow"      # pub(crate) in private modules is fine
+unreachable = "allow"              # awkward to disable
 
 # -- forbid: error handling --------------------------------------------------
 # unwrap() is always wrong; use expect() for a reason string.
@@ -75,8 +78,8 @@ return_and_then = "forbid"
 
 # -- forbid: type coercion ---------------------------------------------------
 # use From/TryFrom.
-as_underscore = "forbid"
 as_pointer_underscore = "forbid"
+as_underscore = "forbid"
 fn_to_numeric_cast_any = "forbid" # casting function pointers to integers is never appropriate.
 
 # -- forbid: no floats -------------------------------------------------------
@@ -86,10 +89,10 @@ float_cmp_const = "forbid"
 lossy_float_literal = "forbid"
 
 # -- forbid: memory safety ---------------------------------------------------
-mem_forget = "forbid" 
+default_union_representation = "forbid"  # unions must have explicit repr.
+mem_forget = "forbid"
 multiple_unsafe_ops_per_block = "forbid" # one unsafe op per block for auditability.
-undocumented_unsafe_blocks = "forbid" # every unsafe block must be documented.
-default_union_representation = "forbid" # unions must have explicit repr.
+undocumented_unsafe_blocks = "forbid"    # every unsafe block must be documented.
 
 # -- forbid: no panicking slicing --------------------------------------------
 string_slice = "forbid" # string slicing can panic on char boundaries.
@@ -104,14 +107,14 @@ shadow_unrelated = "forbid"
 
 # -- forbid: core-first architecture ----------------------------------------
 # architectural decision: use core/alloc over std where possible.
-std_instead_of_core = "forbid"
-std_instead_of_alloc = "forbid"
 alloc_instead_of_core = "forbid"
+std_instead_of_alloc = "forbid"
+std_instead_of_core = "forbid"
 
 # -- forbid: identifier hygiene ---------------------------------------------
 # pairs with rustc non_ascii_idents = "forbid".
-non_ascii_literal = "forbid"
 disallowed_script_idents = "forbid"
+non_ascii_literal = "forbid"
 # descriptive lifetime names always.
 single_char_lifetime_names = "forbid"
 
@@ -218,5 +221,5 @@ dbg_macro = "warn"
 panic = "warn"
 
 # deny, forbid later
-indexing_slicing = "deny" # use .get() or iterators. test/const exceptions via clippy.toml.
+indexing_slicing = "deny"                # use .get() or iterators
 integer_division_remainder_used = "deny"
