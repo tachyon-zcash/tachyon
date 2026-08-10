@@ -579,7 +579,7 @@ impl Bundle<ProofStamp> {
         // Every action publishes two tachygrams: a spend its nullifier pair, an
         // output its commitment and pad. The set collapses duplicates, so a
         // tachygram reused across actions also shows up as a short count.
-        if !self.stamp.has_tachygram_arity(unique_descs.len()) {
+        if self.stamp.tachygrams.len() != 2 * unique_descs.len() {
             return Err(VerifyCoverageError::TachygramArityMismatch);
         }
 

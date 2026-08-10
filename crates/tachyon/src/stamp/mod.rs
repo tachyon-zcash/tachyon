@@ -711,18 +711,6 @@ impl ProofStamp {
         blake2b::action_descriptor_digest(&desc_bytes) == self.coverage
     }
 
-    /// Confirm the stamp publishes two tachygrams per covered action.
-    ///
-    /// # Soundness
-    ///
-    /// Every action emits a pair: a spend its epoch nullifiers, an output its
-    /// commitment and pad. A stamp short of the arity has reused a tachygram
-    /// across actions, since `tachygrams` is a set.
-    #[must_use]
-    pub(crate) fn has_tachygram_arity(&self, action_count: usize) -> bool {
-        self.tachygrams.len() == 2 * action_count
-    }
-
     /// Confirm `tachygram_set` commits to the published tachygrams.
     ///
     /// # Soundness
