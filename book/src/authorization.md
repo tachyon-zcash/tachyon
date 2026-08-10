@@ -73,15 +73,32 @@ Then during authorization, the custody device is able to confirm correctness of 
 
 The bundle commitment is a digest of the bundle's effect.
 
+$$
+\mathsf{hActionsTachyon} =
+    \text{BLAKE2b-256}_\text{Tachyon-Actions}\bigl( \mathsf{cv}_i \| \mathsf{rk}_i \bigr)
+$$
+
+$$
+\mathsf{hMemoTachyon} =
+    \text{BLAKE2b-256}_\text{Tachyon-Memo}( \mathsf{vMemoTachyon} )
+$$
+
+$$
+\text{BLAKE2b-256}_\text{ZTxIdTachyonHash}\bigl(
+    \mathsf{hActionsTachyon} \| \mathsf{valueBalanceTachyon} \| \mathsf{hMemoTachyon}
+\bigr)
+$$
+
+The action digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire order, so the commitment fixes the actions and their order. Hashing the memo to a fixed width is what lets the outer digest absorb a variable-length payload without a length prefix.
+
+The stamp proof binds the same action set by a different construction: a Pedersen commitment to the polynomial whose roots are the Poseidon action digests,
+
 $$ d_i = \text{Poseidon}_\text{Tachyon-ActionDg}(\mathsf{cv}_i \| \mathsf{rk}_i) $$
 $$ \mathsf{action\_acc} = \text{Commit}\Bigl(\prod_i \bigl(X - d_i\bigr)\Bigr) $$
-$$ \text{BLAKE2b-256}_\text{ZTxIdTachyonHash}( \mathsf{action\_acc} \| \mathsf{value\_balance}) $$
 
-The bundle commitment hashes accumulated action digests with the value balance.
+which is order-independent, as a set commitment must be to survive [aggregation](./aggregation.md). The two digests are computed over the same actions and are not interchangeable.
 
-The same action digest accumulation is bound to the stamp proof.
-
-The stamp is excluded from the bundle commitment because it is stripped during [aggregation](./aggregation.md).
+The stamp is excluded from the bundle commitment because it is stripped during aggregation.
 
 ### Transaction sighash
 
@@ -219,7 +236,7 @@ flowchart LR
     pczt ~~~ sighash
 ```
 
-Consensus recomputes action digests from visible actions and checks them against both the sighash (via the bundle commitment) and the stamp (via the polynomial commitment in the PCD header).
+Consensus recomputes the actions from the visible bundle and checks them against both the sighash (via the bundle commitment's ordered BLAKE2b digest) and the stamp (via the polynomial commitment in the PCD header).
 
 A modified action breaks both checks.
 
@@ -281,7 +298,8 @@ par Authorizing
             end
             note over Custody: action_digest_i = Poseidon(cv || rk)
         end
-        note over Custody: bundle_commitment = Blake2b(action_acc || value_balance)
+        note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
+        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon)
         note over Custody: compute sighash
 
         break
@@ -353,7 +371,8 @@ destroy User
 User ->> Consensus: transaction
 break
     note over Consensus: action_digest_i = Poseidon(cv_i || rk_i)
-    note over Consensus: bundle_commitment = Blake2b(action_acc || value_balance)
+    note over Consensus: hActionsTachyon = Blake2b(cv_i || rk_i)
+    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon)
     note over Consensus: compute sighash
     note over Consensus: check action sigs against sighash
     note over Consensus: check binding sig against sighash

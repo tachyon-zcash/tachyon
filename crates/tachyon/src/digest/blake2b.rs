@@ -211,8 +211,8 @@ pub(crate) fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Stamp}(
 ///     \mathsf{hStampProofTachyon} \|
-///     \mathsf{stampAnchorTachyon} \|
-///     \mathsf{stampTachygramSetTachyon} \|
+///     \mathsf{anchorTachyon} \|
+///     \mathsf{cTachygrams} \|
 ///     \mathsf{vTachygrams}
 ///   )
 /// $$

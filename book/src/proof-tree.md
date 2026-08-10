@@ -58,9 +58,9 @@ The output `SpendHeader` carries `cm`, the confirmed pair `(present_nf, nf_next)
 It requires `note.commitment() == cm`, so the witnessed note is the spendable lineage's note: the value commitment `cv` then commits to the minted value[^notes].
 It derives the action digest from `cv` and the randomized action key `rk`, and emits a `StampHeader` whose tachygram set contains both nullifiers and whose anchor is threaded from the spend.
 
-An output operation runs `OutputStamp` directly.
-The step witnesses the new note, value-randomness, action-randomness, and an anchor; the wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
-The resulting `StampHeader` is a single-action stamp committing to the new note's commitment as its sole tachygram.
+An output operation splits the same way, into `OutputBind` and `OutputStamp`.
+`OutputBind` witnesses the new note and derives its tachygram pair, the note commitment `cm` and the padding tachygram `pad`, both from the same note fields[^tachygrams]; the resulting `OutputHeader` carries the pair and nothing else.
+`OutputStamp` re-witnesses the note against `cm`, adds value-randomness, action-randomness, and an anchor, and emits a single-action `StampHeader` whose tachygram set is the pair. The wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
 
 A transaction with multiple spend and output stamps composes them with `MergeStamp`.
 The output is a single `StampHeader` whose multisets are the union of the two inputs' at the shared anchor.
@@ -78,7 +78,7 @@ The aggregated stamp has the same shape as any other, so it is itself eligible f
 ## Roles
 
 The wallet runs every step that touches the note's commitment or master key.
-It seeds and walks the private GGM tree (`NfMasterSeed`, `NfPrefixStep`, `NullifierStep`, `NullifierFuse`), derives spendable status from its own leaf (`SpendableInit`), binds and lifts over sync-built segments (`VerifyUnspent`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `OutputStamp`, `SpendStamp`).
+It seeds and walks the private GGM tree (`NfMasterSeed`, `NfPrefixStep`, `NullifierStep`, `NullifierFuse`), derives spendable status from its own leaf (`SpendableInit`), binds and lifts over sync-built segments (`VerifyUnspent`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `SpendStamp`, `OutputBind`, `OutputStamp`).
 
 The sync service holds the per-epoch nullifier values the wallet shared and pool history.
 It produces the `Unspent` segments that carry the spendable forward (`UnspentSeed`, `EmptyBlockUnspentSeed`, `UnspentFuse`, `UnspentEpochFuse`) and hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
@@ -103,6 +103,7 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `E
 | SpendableInit | yes | no | no |
 | SpendableLift | yes | no | no |
 | SpendBind | yes | no | no |
+| OutputBind | yes | no | no |
 | OutputStamp | yes | no | no |
 | SpendStamp | yes | no | no |
 | MergeStamp | yes | no | yes |
@@ -190,7 +191,8 @@ The note's age never becomes public. The lineage carries only a single current n
 ### Stamp construction
 
 A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
-`OutputStamp` derives a value commitment, action verification key, and action digest from a witnessed note, value-randomness, and action-randomness; constraints reject zero or over-range note values and require the note's payment key to match the witnessed key material[^keys].
+`OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists. Each is nonzero-guarded, and the pad's preimage is the note opening rather than `cm`, which is what stops an observer pairing the two off in the published set[^tachygrams].
+`OutputStamp` then derives a value commitment, action verification key, and action digest from a re-witnessed note, value-randomness, and action-randomness; constraints tie the note to the header's `cm` and reject over-range note values. No key material is witnessed: an output's `rk` is a fresh randomizer's public key, and the recipient's payment key rides inside `cm` where the sender cannot be asked to prove anything about it[^keys].
 `SpendStamp` mirrors it on the spend side: it re-witnesses the note against the `SpendHeader`'s `cm`, derives the value commitment, action verification key, and action digest, and emits a stamp whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was already confirmed against the covering range at `SpendBind`.
 `MergeStamp` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 
@@ -242,6 +244,8 @@ flowchart TB
   subgraph merge [transaction assembly]
     w_stamp[/note, rcv, alpha, pak/]
     s_spendstamp[SpendStamp]
+    w_outbind[/note/]
+    s_outbind[OutputBind]
     w_output[/rcv, alpha, note, anchor/]
     s_output[OutputStamp]
     s_merge[MergeStamp]
@@ -269,6 +273,8 @@ flowchart TB
   s_bind -->|SpendHeader| s_spendstamp
   w_stamp --> s_spendstamp
 
+  w_outbind --> s_outbind
+  s_outbind -->|OutputHeader| s_output
   w_output --> s_output
   s_spendstamp -->|StampHeader| s_merge
   s_output -->|StampHeader| s_merge
@@ -333,6 +339,7 @@ flowchart LR
 | NfPrefixHeader | (cm, node, depth, index) |
 | NullifierHeader | (cm, (epoch_start, nf_start), nf_seq_commit, (epoch_end, nf_end)) |
 | SpendableHeader | (cm, present_nf, anchor) |
+| OutputHeader | (cm, pad) |
 | SpendHeader | (cm, present_nf, nf_next, anchor) |
 | StampHeader | (action_commit, tachygram_commit, anchor) |
 
@@ -340,8 +347,8 @@ flowchart LR
 
 | Step | Left | Right | Witness | Output |
 | ---- | ---- | ----- | ------- | ------ |
-| AnchorSeed | — | — | start, stamp_commit | AnchorChain |
-| EmptyBlockSeed | — | — | start | AnchorChain |
+| AnchorSeed | — | — | start, epoch, stamp_commit | AnchorChain |
+| EmptyBlockSeed | — | — | start, epoch | AnchorChain |
 | AnchorFuse | AnchorChain | AnchorChain | — | AnchorChain |
 | UnspentSeed | — | — | anchor_prev, (epoch, nf), stamp_tg_set | Unspent |
 | EmptyBlockUnspentSeed | — | — | anchor_prev, (epoch, nf) | Unspent |
@@ -355,7 +362,8 @@ flowchart LR
 | SpendableInit | AnchorChain | NullifierHeader | (pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf | SpendableHeader |
 | SpendableLift | SpendableHeader | VerifiedUnspent | — | SpendableHeader |
 | SpendBind | SpendableHeader | NullifierHeader | nf_next | SpendHeader |
-| OutputStamp | — | — | rcv, alpha, note, anchor | StampHeader |
+| OutputBind | — | — | note | OutputHeader |
+| OutputStamp | OutputHeader | — | rcv, alpha, note, anchor | StampHeader |
 | SpendStamp | SpendHeader | — | note, rcv, alpha, pak | StampHeader |
 | MergeStamp | StampHeader | StampHeader | (action_set, tachygram_set) × left, merged, right | StampHeader |
 | StampLift | StampHeader | AnchorChain | — | StampHeader |

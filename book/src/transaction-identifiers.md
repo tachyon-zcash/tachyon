@@ -4,7 +4,7 @@ A Tachyon bundle's authorization form changes as it moves through aggregation: s
 
 Tachyon routes the mutable parts through `auth_digest`, leaving `txid` stable:
 
-- `txid` commits to [effecting data](./authorization.md#bundle-commitment) only: `action_acc || value_balance`. Stripping, merging, and re-stamping leave `txid` unchanged.
+- `txid` commits to [effecting data](./authorization.md#bundle-commitment) only: the actions, the value balance, and the memo. Stripping, merging, and re-stamping leave `txid` unchanged.
 - `auth_digest` commits to sigs plus the stamp trailer. Each physical auth form yields a distinct `auth_digest` and therefore a distinct `wtxid`.
 
 ## `auth_digest` contribution
@@ -13,20 +13,39 @@ Zcash's transaction-level `auth_digest` commits to authorization data — the ha
 
 Tachyon's bundle contributes on both sides:
 
-- **Effecting data → `txid`.** Tachyon's contribution is the bundle commitment `action_acc || value_balance`.
-- **Authorization data → `auth_digest`.** Tachyon's contribution hashes action signatures, the binding signature, and the bundle's stamp trailer:
+- **Effecting data → `txid`.** Tachyon's contribution is the bundle commitment over $\mathsf{hActionsTachyon} \,\|\, \mathsf{valueBalanceTachyon} \,\|\, \mathsf{hMemoTachyon}$.
+- **Authorization data → `auth_digest`.** Tachyon's contribution hashes the bundle state byte, the action signatures, the binding signature, and a fixed-width summary of whichever stamp the bundle carries:
 
 $$
 \mathsf{auth\_digest\_contribution} =
-\text{BLAKE2b-256}_{\text{``ZTxAuthTachyHash''}}\bigl(\\
-\quad \mathsf{vActionSigs} \,\|\, \mathsf{bindingSig} \\
-\quad\|\,\begin{cases}
-    \text{cActionsTachyon}_{32} \,\|\, \text{anchor}_{32} \,\|\, \text{vTachygrams} \,\|\, \text{proof} & \text{if stamped}\\
-    \text{stampWtxid}_{64} & \text{if stripped}
-\end{cases}\bigr)
+\text{BLAKE2b-256}_{\text{``ZTxAuthTachyHash''}}\bigl(
+    \mathsf{tachyonBundleState} \,\|\, \mathsf{vActionSigs} \,\|\, \mathsf{bindingSigTachyon}
+    \,\|\, \mathsf{tachyonStampState}
+\bigr)
 $$
 
-A stamped bundle's trailer is its stamp (`cActionsTachyon` + anchor + tachygrams + proof); a stripped bundle's trailer is the 64-byte `wtxid` of the covering aggregate. The `cActionsTachyon` is an assistive action-set indicator that strips away with the rest of the stamp when a bundle becomes an adjunct. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
+$\mathsf{tachyonStampState}$ is 64 bytes in both states, so the two are the same width and are told apart by the state byte:
+
+$$
+\mathsf{tachyonStampState} = \begin{cases}
+    \mathsf{hStampActionsTachyon} \,\|\, \mathsf{hStampDataTachyon} & \text{if stamped}\\
+    \mathsf{tachyonAggregateId} & \text{if stripped}
+\end{cases}
+$$
+
+A stamped bundle summarizes its stamp as two digests. $\mathsf{hStampActionsTachyon}$ is the [action set indicator](./aggregation.md#action-set-indicator), which strips away with the rest of the stamp when a bundle becomes an adjunct. $\mathsf{hStampDataTachyon}$ covers everything else the stamp carries:
+
+$$
+\mathsf{hStampDataTachyon} =
+\text{BLAKE2b-256}_\text{Tachyon-Stamp}\bigl(
+    \mathsf{hStampProofTachyon} \,\|\, \mathsf{anchorTachyon} \,\|\, \mathsf{cTachygrams}
+    \,\|\, \mathsf{vTachygrams}
+\bigr)
+$$
+
+with $\mathsf{hStampProofTachyon} = \text{BLAKE2b-256}_\text{Tachyon-Proof}(\mathsf{proofTachyon})$. Hashing the proof separately keeps the tachygram vector as the only variable-length input.
+
+A stripped bundle's summary is the 64-byte `wtxid` of the covering aggregate, used directly. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
 
 ## Covering-aggregate references
 

@@ -147,7 +147,7 @@ The first byte `tachyonBundleState` selects one of three bundle states:
 | value | state | bundle contents |
 | --- | --- | --- |
 | `0b0000_0000` | non-tachyon | no bundle |
-| `0b0000_0001` | stamped | bundle with `cActionsTachyon`, anchor, tachygrams, proof |
+| `0b0000_0001` | stamped | bundle with `hStampActionsTachyon`, anchor, tachygrams, proof |
 | `0b0000_0010` | stripped | bundle with the covering aggregate's `wtxid` |
 
 ### Bundle body
@@ -174,7 +174,7 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 
 | Name | Format | Description |
 | --- | --- | --- |
-| `cActionsTachyon` | 32 bytes | compressed Pedersen commitment to the stamp's merged action-digest set |
+| `hStampActionsTachyon` | 32 bytes | BLAKE2b-256 digest of the covered action descriptors |
 | `anchorTachyon` | 32 bytes | pool state reference |
 | `cTachygrams` | 32 bytes | commitment to the tachygrams below |
 | `nTachygrams` | compactsize | number of tachygrams |
@@ -191,7 +191,7 @@ $$
 
 for its own actions, and the sum over covered actions once stamps are merged. A spend publishes its present and next nullifier; an output publishes its note commitment and a padding tachygram. Uniform arity is what keeps the two action kinds indistinguishable in the published set.
 
-`cActionsTachyon` is an assistive indicator committing to the action digests of every action the stamp covers, mirroring the commitment the proof attests to. It is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
+`hStampActionsTachyon` is an assistive indicator: a BLAKE2b-256 digest, under the `Tachyon-Actions` personalization, over the sorted `cv || rk` descriptors of every action the stamp covers. It is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. The proof binds the same actions by a different construction, a Pedersen commitment to their Poseidon digests, so the trailer field is a second digest of one action set rather than a copy of the proof's. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
 
 ### Stripped trailer
 
@@ -203,4 +203,4 @@ When `tachyonBundleState == 0x02`, the bundle body is followed by a stripped tra
 
 Every stripped bundle names a covering aggregate, so `tachyonAggregateId` is always nonzero. This holds even for a stripped innocent (an aggregate with no Tachyon actions of its own): the all-zero `wtxid`, which refers to no aggregate, is rejected on read.
 
-The stripped trailer carries no `cActionsTachyon`: that field rides on the stamp, so it strips away when a bundle becomes an adjunct. Observers read the covering aggregate's `cActionsTachyon` from the stamped aggregate, not from the adjunct.
+The stripped trailer carries no `hStampActionsTachyon`: that field rides on the stamp, so it strips away when a bundle becomes an adjunct. Observers read the covering aggregate's `hStampActionsTachyon` from the stamped aggregate, not from the adjunct.

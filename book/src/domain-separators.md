@@ -16,6 +16,17 @@ Digests used to commit to Tachyon bundle contents for sighash and auth digest.
 | Bundle commitment | `ZTxIdTachyonHash` |
 | Bundle auth digest | `ZTxAuthTachyHash` |
 
+### Bundle contents
+
+Digests over bundle contents, feeding the two above. These are Tachyon-specific and so take Tachyon personalizations.
+
+| Purpose | Value |
+| ------- | ----- |
+| Action descriptors | `Tachyon-Actions` |
+| Memo payload | `Tachyon-Memo` |
+| Stamp proof | `Tachyon-Proof` |
+| Stamp data | `Tachyon-Stamp` |
+
 ## BLAKE2b-512
 
 ### Action alpha
@@ -52,6 +63,7 @@ These are all Tachyon-specific digests, performed in-circuit.
 | Nullifier prefix key | `Tachyon-NfPrefix` |
 | Nullifier derivation | `Tachyon-NfDerive` |
 | Note commitment | `Tachyon-CmDerive` |
+| Output padding tachygram | `Tachyon-PadDeriv` |
 | Action digest | `Tachyon-ActionDg` |
 | Payment key derivation | `Tachyon-PkDerive` |
 | Anchor stamp step | `Tachyon-StampFld` |
