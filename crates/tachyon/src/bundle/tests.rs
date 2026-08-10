@@ -10,7 +10,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use super::*;
 use crate::{
     constants::{EPOCH_SIZE, MAX_MONEY},
-    digest::blake2b::{COMMIT_NO_BUNDLE, action_descriptor_digest, bundle_commitment},
+    digest::blake2b::{COMMIT_NO_BUNDLE, action_descriptor_digest, bundle_commitment, memo_digest},
     entropy::ActionEntropy,
     fixtures::{
         PoolSim, WalletSim, build_autonome, build_output_plan, build_output_stamp,
@@ -423,6 +423,7 @@ fn zero_action_bundle_is_valid() {
         actions: alloc::vec![],
         value_balance: value::Balance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+        memo: Vec::new(),
         stamp: mock_wtxid(&covering),
     };
 
@@ -479,6 +480,7 @@ fn double_spend_obvious() {
     let sighash = mock_sighash(bundle_commitment(
         &action_descriptor_digest(&action_bytes),
         doubled,
+        &memo_digest(&[]),
     ));
     let sig = private::ActionSigningKey::new(&alpha).sign(rng, &sighash);
     let action = Action::from((descriptor, sig));
@@ -531,6 +533,7 @@ fn double_spend_obvious() {
         actions: vec![action, action],
         value_balance,
         binding_sig,
+        memo: Vec::new(),
         stamp,
     };
 
@@ -630,6 +633,7 @@ fn duplicated_spend_cannot_inflate() {
     let sighash = mock_sighash(bundle_commitment(
         &action_descriptor_digest(&action_bytes),
         doubled,
+        &memo_digest(&[]),
     ));
     let alpha = theta.randomizer::<effect::Spend>(note.commitment());
     let sig = wallet
@@ -648,6 +652,7 @@ fn duplicated_spend_cannot_inflate() {
         actions: vec![action, action],
         value_balance,
         binding_sig,
+        memo: Vec::new(),
         stamp: ProofStamp {
             coverage,
             anchor: honest_stamp.anchor,
@@ -871,6 +876,7 @@ fn innocent_aggregate_from_two_autonomes() {
             binding_sig: innocent_plan
                 .derive_bsk_private()
                 .sign(rng, &innocent_sighash),
+            memo: Vec::new(),
             stamp,
         }
     };
@@ -1140,6 +1146,7 @@ fn read_preserves_action_order() {
     let sighash = mock_sighash(bundle_commitment(
         &action_descriptor_digest(&descriptors),
         value_balance.into(),
+        &memo_digest(&[]),
     ));
     let actions: Vec<Action> = items
         .iter()
@@ -1157,6 +1164,7 @@ fn read_preserves_action_order() {
         actions,
         value_balance,
         binding_sig,
+        memo: Vec::new(),
         stamp: PointerStamp::try_from([0x11u8; 64]).expect("nonzero wtxid"),
     };
 
@@ -1354,6 +1362,7 @@ fn read_rejects_zero_wtxid() {
             actions: alloc::vec![],
             value_balance: value::Balance::ZERO,
             binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+            memo: Vec::new(),
             stamp: wtxid,
         };
         assert!(bundle.actions.is_empty());
@@ -1402,6 +1411,7 @@ fn innocent_round_trips_with_nonzero_wtxid() {
         actions: alloc::vec![],
         value_balance: value::Balance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+        memo: Vec::new(),
         stamp: mock_wtxid(&covering),
     };
 
@@ -1780,6 +1790,7 @@ fn read_rejects_zero_actions_with_nonzero_balance() {
         actions: alloc::vec![],
         value_balance: value::Balance::try_from(1).unwrap(),
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+        memo: Vec::new(),
         stamp: PointerStamp::try_from([0x42u8; 64]).expect("nonzero id"),
     };
 
@@ -1819,6 +1830,7 @@ fn zero_action_bundle_rejects_nonzero_balance() {
         actions: alloc::vec![],
         value_balance: value::Balance::try_from(1).unwrap(),
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+        memo: Vec::new(),
         stamp: PointerStamp::try_from([1u8; 64]).expect("nonzero id"),
     };
 
@@ -1857,4 +1869,116 @@ fn verify_coverage_rejects_wrong_tachygram_arity() {
     let VerifyCoverageError::TachygramArityMismatch = err else {
         panic!("expected TachygramArityMismatch, got {err:?}");
     };
+}
+
+/// The length prefix bounds the memo read: the stamp trailer parses after it,
+/// so a memo that over-consumed would take the stamp's bytes with it.
+#[test]
+fn memo_round_trips_present_and_absent() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
+
+    for memo in [Vec::new(), vec![0xABu8; 1500]] {
+        bundle.memo = memo.clone();
+
+        let mut buf = Vec::new();
+        bundle.write(&mut buf).expect("write");
+        let decoded = Bundle::<ProofStamp>::read(&*buf).expect("read");
+
+        assert_eq!(decoded.memo, memo);
+        assert_eq!(decoded.stamp.tachygrams, bundle.stamp.tachygrams);
+    }
+}
+
+/// Memos are effecting data, so stripping one changes the transaction sighash
+/// and invalidates every signature over it. This is why the payload rides the
+/// commitment rather than `auth_digest`, which relayers rewrite while
+/// aggregating.
+#[test]
+fn stripping_memo_changes_commitment() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
+
+    bundle.memo = vec![0x01u8; 64];
+    let with_memo = bundle.commitment();
+
+    bundle.memo = Vec::new();
+    let without_memo = bundle.commitment();
+
+    assert_ne!(with_memo, without_memo);
+}
+
+#[test]
+fn memo_absent_from_auth_digest() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
+
+    let without_memo = bundle.auth_digest();
+    bundle.memo = vec![0x01u8; 64];
+
+    assert_eq!(bundle.auth_digest(), without_memo);
+}
+
+#[test]
+fn plan_memo_reaches_the_signed_bundle() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let ask = wallet.sk.derive_auth_private();
+    let note = wallet.random_note(200);
+    let pool = PoolSim::genesis(rng);
+    let (stamp, output_plan) = build_output_stamp(rng, pool.anchor(), note);
+
+    let memo = vec![0x7Fu8; 900];
+    let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]).with_memo(memo.clone());
+    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+
+    let bundle = bundle_plan
+        .sign(rng, &sighash, &ask)
+        .expect("sign output bundle")
+        .stamp(stamp);
+
+    assert_eq!(bundle.memo, memo);
+    assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
+    bundle.verify_signatures(&sighash).unwrap();
+}
+
+/// Stripping a bundle to an adjunct replaces the stamp only. The memo is
+/// effecting data covered by signatures the adjunct retains, so dropping it
+/// here would invalidate them.
+#[test]
+fn memo_survives_strip() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
+    bundle.memo = vec![0x5Au8; 128];
+
+    let covering = build_autonome(rng, &wallet, 500, 300);
+    let adjunct = bundle.clone().strip(mock_wtxid(&covering));
+
+    assert_eq!(adjunct.memo, bundle.memo);
+    assert_eq!(adjunct.commitment(), bundle.commitment());
+}
+
+/// A declared length longer than the bytes behind it is a read failure, not a
+/// short memo. Truncating well inside the payload keeps the cut clear of the
+/// fixed-width fields that precede it.
+#[test]
+fn read_rejects_truncated_memo() {
+    const DECLARED: usize = 8192;
+    const KEPT: usize = 1024;
+
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
+    bundle.memo = vec![0x33u8; DECLARED];
+
+    let mut buf = Vec::new();
+    bundle.write(&mut buf).expect("write");
+    buf.truncate(KEPT);
+
+    let err = Bundle::<ProofStamp>::read(&*buf).expect_err("declared memo length must be honoured");
+    assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }

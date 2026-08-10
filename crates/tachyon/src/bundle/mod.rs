@@ -43,6 +43,14 @@
 //! | `vActionsTachyon`     | 64 * nActionsTachyon | (cv: 32 bytes, rk: 32 bytes)             |
 //! | `vActionSigsTachyon`  | 64 * nActionsTachyon | authorization per action over tx sighash |
 //! | `bindingSigTachyon`   | 64 bytes             | binding over tx sighash                  |
+//! | `nMemoTachyon`        | compactsize          | memo length, `0` when absent             |
+//! | `vMemoTachyon`        | nMemoTachyon bytes   | opaque recipient-directed payload        |
+//!
+//! The memo is effecting data, so it is covered by the transaction sighash
+//! rather than by `auth_digest`. Its length is public, and `nMemoTachyon == 0`
+//! reveals that no payload is present; the payload is variable-length because
+//! it carries key-exchange ciphertexts on first contact and ordinary memo text
+//! otherwise, sizes that differ by more than an order of magnitude.
 //!
 //! ### Proof stamp
 //!
@@ -160,6 +168,9 @@ pub struct Bundle<S: BundleState + ?Sized> {
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
 
+    /// Opaque recipient-directed payload, empty when absent.
+    pub memo: Vec<u8>,
+
     /// Bundle state: `Unproven`, `ProofStamp`, or `PointerStamp`.
     pub stamp: S,
 }
@@ -186,7 +197,8 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     ///
     /// This contributes to the transaction sighash. The stamp is excluded
     /// because it is considered authorizing data, and is malleable during
-    /// aggregation.
+    /// aggregation. The memo is included, so a miner cannot strip the payload
+    /// and leave the block committing to the same transaction.
     ///
     /// The digest binds actions in wire order and is therefore sensitive to
     /// their ordering.
@@ -196,6 +208,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
             self.value_balance.into(),
+            &blake2b::memo_digest(&self.memo),
         )
     }
 
@@ -305,16 +318,32 @@ pub struct Plan {
 
     /// Output action plans.
     outputs: Vec<action::Plan<effect::Output>>,
+
+    /// Opaque recipient-directed payload, empty when absent.
+    memo: Vec<u8>,
 }
 
 impl Plan {
-    /// Create a new bundle plan from assembled action plans.
+    /// Create a new bundle plan from assembled action plans, carrying no memo.
     #[must_use]
     pub const fn new(
         spends: Vec<action::Plan<effect::Spend>>,
         outputs: Vec<action::Plan<effect::Output>>,
     ) -> Self {
-        Self { spends, outputs }
+        Self {
+            spends,
+            outputs,
+            memo: Vec::new(),
+        }
+    }
+
+    /// Attach an opaque recipient-directed payload, replacing any existing one.
+    ///
+    /// The payload is effecting data, so it must be set before
+    /// [`Self::commitment`] is taken for the sighash.
+    #[must_use]
+    pub fn with_memo(self, memo: Vec<u8>) -> Self {
+        Self { memo, ..self }
     }
 
     /// Iterate over all actions in the plan, mapping with the provided
@@ -371,6 +400,7 @@ impl Plan {
         Ok(blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&desc_bytes),
             self.value_balance()?.into(),
+            &blake2b::memo_digest(&self.memo),
         ))
     }
 
@@ -467,6 +497,7 @@ impl Plan {
             actions,
             value_balance,
             binding_sig,
+            memo: self.memo.clone(),
             stamp: Unproven,
         })
     }
@@ -480,6 +511,7 @@ impl Bundle<Unproven> {
             actions: self.actions,
             value_balance: self.value_balance,
             binding_sig: self.binding_sig,
+            memo: self.memo,
             stamp,
         }
     }
@@ -493,6 +525,7 @@ impl Bundle<ProofStamp> {
             actions: self.actions,
             value_balance: self.value_balance,
             binding_sig: self.binding_sig,
+            memo: self.memo,
             stamp: wtxid,
         }
     }
@@ -650,7 +683,8 @@ impl<S: StampState> Bundle<S> {
     }
 
     /// Read everything after the `tachyonBundleState` byte: value balance,
-    /// action descriptors, action sigs, binding sig, and the stamp trailer.
+    /// action descriptors, action sigs, binding sig, memo, and the stamp
+    /// trailer.
     fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
         let value_balance = {
             let mut bytes = [0u8; size_of::<i64>()];
@@ -697,12 +731,29 @@ impl<S: StampState> Bundle<S> {
 
         let binding_sig = Signature::read(&mut reader)?;
 
+        // `n_memo` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so do
+        // not pre-allocate, on the same reasoning as `n_actions` above.
+        let n_memo =
+            usize::try_from(serialization::read_compactsize(&mut reader)?).map_err(|_err| {
+                io::Error::new(io::ErrorKind::InvalidData, "memo length exceeds usize")
+            })?;
+
+        let mut memo: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 64];
+        #[expect(clippy::indexing_slicing, reason = "take is clamped to chunk.len()")]
+        while memo.len() < n_memo {
+            let take = (n_memo - memo.len()).min(chunk.len());
+            reader.read_exact(&mut chunk[..take])?;
+            memo.extend_from_slice(&chunk[..take]);
+        }
+
         let stamp = S::read(&mut reader)?;
 
         Ok(Self {
             value_balance,
             actions,
             binding_sig,
+            memo,
             stamp,
         })
     }
@@ -732,13 +783,21 @@ impl<S: StampState> Bundle<S> {
 
         self.binding_sig.write(&mut writer)?;
 
+        let n_memo = u64::try_from(self.memo.len()).map_err(|_err| {
+            io::Error::new(io::ErrorKind::InvalidData, "memo length exceeds u64")
+        })?;
+
+        serialization::write_compactsize(&mut writer, n_memo)?;
+        writer.write_all(&self.memo)?;
+
         self.stamp.write(&mut writer)
     }
 
     /// Tachyon's contribution to the transaction `auth_digest`.
     ///
     /// Commits the action signatures, the binding signature, and the stamp's
-    /// digest. See [`blake2b::bundle_auth_digest`].
+    /// digest. See [`blake2b::bundle_auth_digest`]. The memo is absent here
+    /// because it is effecting data, committed by [`Self::commitment`].
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 32] {
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig).collect();

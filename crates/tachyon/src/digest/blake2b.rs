@@ -137,6 +137,24 @@ pub(crate) fn action_descriptor_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
     })
 }
 
+const MEMO_PERSONALIZATION: &[u8; 12] = b"Tachyon-Memo";
+
+/// Digest of a bundle's memo payload.
+///
+/// $$
+///   \text{BLAKE2b-256}_\texttt{Tachyon-Memo}(
+///     \mathsf{vMemoTachyon}
+///   )
+/// $$
+///
+/// This is `hMemoTachyon`. Hashing the payload to a fixed width here is what
+/// lets [`bundle_commitment`] absorb it without a length prefix.
+pub(crate) fn memo_digest(memo: &[u8]) -> [u8; 32] {
+    hasher_256(MEMO_PERSONALIZATION, |state| {
+        state.update(memo);
+    })
+}
+
 // See https://github.com/zcash/orchard/blob/main/src/bundle/commitments.rs
 const BUNDLE_COMMITMENT_PERSONALIZATION: &[u8; 16] = b"ZTxIdTachyonHash";
 const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
@@ -147,16 +165,24 @@ const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxIdTachyonHash}(
-///     \mathsf{hActionsTachyon} \| \mathsf{vBalanceTachyon}
+///     \mathsf{hActionsTachyon} \| \mathsf{vBalanceTachyon} \|
+///     \mathsf{hMemoTachyon}
 ///   )
 /// $$
 ///
-/// The stamp is excluded because it is mutable auth data.
+/// The stamp is excluded because it is mutable auth data. The memo is included
+/// because it is effecting: relayers rewrite `auth_digest` during aggregation,
+/// so only the sighash can hold a payload a miner must not strip.
 #[must_use]
-pub(crate) fn bundle_commitment(action_commit: &[u8; 32], value_balance: i64) -> [u8; 32] {
+pub(crate) fn bundle_commitment(
+    action_commit: &[u8; 32],
+    value_balance: i64,
+    memo_digest: &[u8; 32],
+) -> [u8; 32] {
     hasher_256(BUNDLE_COMMITMENT_PERSONALIZATION, |state| {
         state.update(action_commit);
         state.update(&value_balance.to_le_bytes());
+        state.update(memo_digest);
     })
 }
 
