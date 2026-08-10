@@ -274,25 +274,113 @@ to prove nullifier derivations**, relieving the OSS from the task, thus
 the GGM approach. Instead, we envision a polynomial-based nullifier with the
 following workflow and characteristics:
 
-1. The user natively derives nullifiers of epoch range $R$:
+<a id="nf-flow"></a>
+
+1. The user natively derives nullifiers of an epoch range $R$:
    $$
-   \{ \nf_e := f_k(e)\}_{i\in R} \quad\text{where } k = \mathsf{KDF}(\nk, \psi)
+   \{ \nf_i := f_k(i)\}_{i\in R} \quad\text{where } k = \mathsf{KDF}(\nk, \psi)
     $$
-    Where the keyed polynomial $f_k(\cdot)$ is only known to and evaluable for
+    where the keyed polynomial $f_k(\cdot)$ is only known to and evaluable for
     the $\nk$-holder (namely note owner).
     - $f_k(X)$ has a high degree $d$ to be resilient against algebraic attacks,
       while super *efficient to evaluate*: only $O(\log{d})$ work required.
     - Given any set of evaluation points $S$ and their evaluations
       $\{f_k(i)\}_{i\in S}$, any evaluation *outside* the set $f_k(j \notin S)$
       is (at least computationally) *indistinguishable from random*.
-2. The user hands over nullifiers for the delegated range $S$ to the OSS:
-   $\{(e, \nf_e)\}_{e\in S \subseteq R}$. Meanwhile, user can start batch-proving
-   the derivation for all nullifiers in $R$.
-3. The OSS continues to incrementally prove non-membership of delegated nullifiers
-   in parallel. All proven nullifiers are verifiably collected (i.e. in circuit)
-   into a vector commitment which is sent back to the user alongside the PCD proof.
-4. The user fuses the derivation proof from Step 2 with OSS's proof; and proving
-   the committed nullifier vectors is a subset/sub-sequence of $\{\nf_e\}_{e\in R}$.
+2. The user hands the nonempty delegated subrange
+   $S=[s_0,s_1)\subseteq R$ to the OSS as
+   the list $[(i,\nf_i)]_{i\in S}$. The OSS may immediately begin proving their
+   exclusions, implicitly trusting these nullifier values.
+   In parallel, the user batch-proves all derivations in $R$.
+3. As the OSS incrementally proves the exclusions in epoch order, it
+   *verifiably* collects proven nullifiers into a polynomial-based accumulator:
+   $$
+   g_S(X) := \sum_{i=0}^{|S| - 1} \nf_{s_0 + i} \cdot X^{|S|-1-i}
+   $$
+   We use the *Horner-ordering* for its simple, $i$-independent relation during
+   the accumulation of the $i$-th nullifier. For example, let $g(X)$ be the
+   polynomial after accumulating nullifiers in the subrange $[s_0, s_m)$ for
+   some $s_m < s_1$. Then appending the next value $\nf_{s_m}$ gives an updated
+   accumulator $g'(X)$:
+   $$
+   g'(X) = g(X) \cdot X + \nf_{s_m}
+   $$
+
+   This incremental update relation can be enforced efficiently in Ragu using
+   its *online polynomial oracles*[^polyoracle] and evaluating this identity at
+   a random point.
+4. Upon receiving the proof and the $g_S(X)$ commitment from the OSS, the user
+   fuses it with their nullifier derivation proof (generated locally). Importantly,
+   the user further enforces that nullifiers accumulated in $g_S(X)$ are a
+   *subset/sub-sequence* of $\{\nf_i\}_{i\in R}$ whose derivations are proven.
+
+   The user proves the "sub-sequence relation" by constructing a *masked
+   accumulator* $g_R(X)$ that scans through all of
+   $\{\nf_i\}_{i\in R=[r_0, r_1)}$, while only those within the
+   $S=[s_0,s_1)$ subrange contribute meaningfully.
+   To clarify, the polynomial is constructed natively outside the circuit, and
+   probabilistically tested inside Ragu using the polynomial oracle capability.
+   $$
+   \begin{aligned}
+   g_R(X) &:= \sum_{i=0}^{|R|-1} b_i \cdot \nf_{r_0+i} \cdot X^{|R|-1-i}
+   &&\text{(construction integrity)}\\
+   &= X^{r_1-s_1} \cdot g_S(X) &&\text{(sub-sequence relation)} \\
+   \text{where}\quad
+   b_i &= \begin{cases}
+   1 &\text{if } (s_0-r_0)\leq i<(s_1-r_0), \\
+   0 &\text{otherwise}.
+   \end{cases}
+   \end{aligned}
+   $$
+
+   <P align="center">
+       <img src="./assets/range_subseq.svg" alt="range_subseq" />
+   </p>
+
+   Note that the construction integrity is proven locally as part of the nullifier
+   derivation, independent of the OSS, since the user is aware of the ranges
+   $R, S$ in advance. The exponent $r_1-s_1$ is the number of masked positions
+   *after* $S$: Horner-scanning those trailing zeros multiplies the accumulated
+   $g_S(X)$ by $X$ once per position. The sub-sequence relation is only enforced
+   during proof folding after the user gets back the exclusion proof from the OSS.
+   Furthermore, users may split the construction of $g_R(X)$ into multiple
+   PCD steps due to the circuit size limit. Similar to $g_S(X)$, we can check
+   the incremental accumulation of $\nf_i$ easily thanks to the Horner-ordering.
+   As a generalization, let $g(X)$ be the accumulator after proving the subrange
+   $[r_0, r_m)$ for some $r_m<r_1$. In the next step, the user proves the
+   derivation of the next $\ell$ values $\{\nf_{r_m},\ldots,\nf_{r_m+\ell-1}\}$,
+   then checks the updated accumulator $g'(X)$ via:
+   $$
+   g'(X) = g(X)\cdot X^\ell
+   + \sum_{j=0}^{\ell-1} b_{r_m - r_0 +j} \cdot \nf_{r_m+j}\cdot X^{\ell-1-j}.
+   $$
+
+   Crucially for circuit efficiency, we can constrain $b_i$ transitively without
+   resorting to any interpolation across the entire $[0, r_1 - r_0)$ domain.
+   The following definition avoids any comparison, which induces bit decomposition
+   and range checks in circuit. It also avoids any witness-dependent branches:
+   $$
+   \begin{cases}
+   b_0 &= \mathsf{isLeft}_0 - \mathsf{isRight}_0 \\
+   b_{i+1} &= b_i + \mathsf{isLeft}_{i+1} - \mathsf{isRight}_{i+1}
+   \end{cases}
+   \\\text{where}\qquad
+   \mathsf{isLeft}_i = \begin{cases}
+   1 &\text{if } i= s_0 - r_0, \\
+   0 &\text{otherwise},
+   \end{cases}
+   \quad
+   \mathsf{isRight}_i = \begin{cases}
+   1 &\text{if } i= s_1 - r_0, \\
+   0 &\text{otherwise}.
+   \end{cases}
+   $$
+
+   This check is probabilistically sound under Ragu's binding, degree-bounded
+   polynomial oracles. If the two committed polynomials do not satisfy the
+   claimed relation, their difference is a nonzero polynomial of degree at most
+   $|R|-1$, so it passes an independently sampled evaluation point with
+   probability at most $(|R|-1)/|\mathbb{F}|$.
    
 Our leading candidate among [all options](./nf-analysis.md) uses off-the-shelf
 algebraic hash function (like Poseidon) as the nullifier polynomial. This
@@ -927,11 +1015,13 @@ proof (shared by all) are paid once and amortized across the epoch.
 and the output notes to create, fixing the target spending epoch $e$. For each
 input note the bulk of the work is bringing its [spendability proof](#spendability)
 up to date, from wherever it was last synced through epoch $e-1$. The wallet
-delegates this to an [OSS](#nf), handing over the
-[prefix-constrained keys](#nf-ggm) for exactly the epoch range to be synced. From
-those, the OSS derives the note's per-epoch nullifiers $\nf_i$ and proves their
-derivation in-circuit, while learning nothing about epochs outside the range,
-especially the eventual spend leaf $\nf_e$.
+delegates this to an [OSS](#nf), handing over an explicit list
+$\{(i,\nf_i)\}_{i\in S}$ for exactly the epoch range $S$ to be synced. The OSS
+learns no key material and therefore nothing about epochs outside that list,
+especially the eventual spend nullifier $\nf_e$. At the same time, the wallet
+starts proving the derivation of a circuit-efficient covering range
+$R\supseteq S$ and builds the masked user-side [nullifier polynomial
+oracle](#nf-flow).
 
 2. **Lift the spendability proof.** Maintaining the proof means advancing its
 [anchor](#anchor) along the anchor chain while preserving both halves of the

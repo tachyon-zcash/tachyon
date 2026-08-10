@@ -46,5 +46,5 @@
 \memo:\mathsf{memo}
 \blk:\mathsf{blk}
 \Sc:\textcolor{ForestGreen}{\mathsf{S}}
-\Uc:\textcolor{RoyalBlue}{\mathsf{U}}
-\Oc:\textcolor{Crimson}{\mathsf{O}}
+\Uc:{\textcolor{RoyalBlue}{\mathsf{U}}}
+\Oc:{\textcolor{Crimson}{\mathsf{O}}}
