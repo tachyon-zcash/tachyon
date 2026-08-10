@@ -102,7 +102,9 @@ where $\mathsf{ak}_x$ is the x-coordinate of the spend validating key. Replaces 
 
 Deriving $\mathsf{pk}$ from $(\mathsf{ak}, \mathsf{nk})$ binds the payment key to the full proof authorizing key. Since $\mathsf{pk}$ is committed in the note commitment $\mathsf{cm}$, the accumulator membership check transitively pins both $\mathsf{ak}$ and $\mathsf{nk}$. A wrong $\mathsf{nk}$ produces a wrong $\mathsf{pk}$, a wrong $\mathsf{cm}$, and accumulator inclusion fails.
 
-$\mathsf{pk}$ is **deterministic per spending key** — every note from the same $\mathsf{sk}$ shares the same $\mathsf{pk}$. There is no per-note diversification. Unlinkability is the wallet layer's responsibility, handled via out-of-band payment protocols (ZIP 321 payment requests, ZIP 324 URI encapsulated payments).
+$\mathsf{pk}$ is deterministic in $(\mathsf{ak}, \mathsf{nk})$, so unlinkability comes from **minting a fresh address per sender**: a receiver walks its wallet-standard derivation path to a freshly indexed $(\mathsf{ak}, \mathsf{nk})$ pair and hands the sender the $\mathsf{pk}$ that follows. The index sits above $\mathsf{sk}$ rather than between $\mathsf{sk}$ and $(\mathsf{ak}, \mathsf{nk})$, so the concrete path is a wallet-standard concern; the protocol requires only that the resulting keys be indistinguishable from randomly sampled ones. Transfer proofs never constrain the derivation. Address distribution is handled out of band (ZIP 321 payment requests, ZIP 324 URI encapsulated payments).
+
+Freshness is receiver-minted by necessity, not by choice of API. A sender-chosen tweak would need $\mathsf{pk}$ to admit one, and $\mathsf{pk}$ is a hash-based commitment deliberately: the diversified-base trick behind Orchard's $\mathsf{pk_d}$ has no known secure analogue under lattice assumptions, and publishing $\mathsf{ak}$ to senders would expose harvest-now-decrypt-later risk. A hash admits no tweak.
 
 ### Proof authorizing key ($\mathsf{pak}$)
 

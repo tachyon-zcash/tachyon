@@ -4,31 +4,41 @@ A tachygram is an opaque Poseidon $\mathbb{F}_p$ commitment to the creation or d
 
 A tachyon transaction is published with a stamp containing tachygrams for the notes involved in its proven actions.
 
-An output action involves a note commitment.
+Every action publishes exactly two tachygrams, whichever kind it is.
+
+An output action publishes its note commitment and a padding tachygram.
 
 $$
-\mathsf{tg} = \mathsf{cm} =
+\mathsf{tg}_0 = \mathsf{cm} =
     \mathsf{Poseidon}_\texttt{Tachyon-CmDerive}(
         \mathsf{rcm}, \mathsf{pk}, v, \psi
     )
 $$
 
-A spend action involves a nullifier[^nullifiers].
+$$
+\mathsf{tg}_1 = \mathsf{tg}_\bot =
+    \mathsf{Poseidon}_\texttt{Tachyon-PadDeriv}(
+        \mathsf{rcm}, \mathsf{pk}, v, \psi
+    )
+$$
+
+The pad commits to the note opening rather than to $\mathsf{cm}$. Both values appear in the same published multiset, so a pad derived as $\mathsf{tg}_\bot = H^\mathsf{pad}(\mathsf{cm})$ would let an observer test every pair in the set for that relation, match each output to its own pad, and recover the output count. Deriving both from the opening leaves an observer with two unlinkable field elements.
+
+A spend action publishes a nullifier for the present epoch and one for the next[^nullifiers].
 
 $$
-\mathsf{tg} = \mathsf{nf} =
-    \mathsf{Poseidon}_\texttt{Tachyon-NfDerive}\!\left(
-        \mathsf{KDF}^{\mathsf{climb}}_\psi(e, D)
-    \right)
+\mathsf{tg}_0 = \mathsf{nf}_e, \qquad \mathsf{tg}_1 = \mathsf{nf}_{e+1}
 $$
+
+Uniform arity is what makes the two action kinds indistinguishable in the published set: an observer counting tachygrams learns the action count and nothing about the split between spends and outputs.
 
 ## Tachygram sets
 
 A stamp contains the tachygrams of every action it covers.
 
-A stamp's covered actions may be small (a single action with one or two
-tachygrams) or large (many aggregated actions). Ideally, the consensus chain
-will contain aggregated[^aggregation] bundles[^bundle].
+A stamp's covered actions may be few (a single action, so two tachygrams) or
+many (aggregated actions, two apiece). Ideally, the consensus chain will
+contain aggregated[^aggregation] bundles[^bundle].
 
 The covering proof in a stamp has witnessed a commitment to an unordered set of those tachygrams.
 
@@ -53,7 +63,7 @@ A spend publishes a nullifier for the current epoch and one for the next epoch[^
 
 [^notes]: See [Notes](./notes.md) for the note's field structure: $\mathsf{pk}$, $v$, $\psi$, $\mathsf{rcm}$.
 
-[^nullifiers]: See [Nullifiers](./nullifiers.md) for the GGM derivation that yields $\mathsf{KDF}^\mathsf{climb}_\psi(e, D)$.
+[^nullifiers]: [Nullifiers](./nullifiers.md) gives the derivation of $\mathsf{nf}_e$ from the note's master key, and why a spend publishes the pair rather than one value.
 
 [^aggregation]: See [Aggregation](./aggregation.md) for how stamps merge their tachygram sets.
 

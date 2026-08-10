@@ -42,7 +42,7 @@ impl NullifierKey {
     }
 }
 
-/// A Tachyon payment key — static per-spending-key recipient identifier.
+/// A Tachyon payment key: a recipient identifier, minted fresh per sender.
 ///
 /// Replaces Orchard's diversified transmission key $\mathsf{pk_d}$ and
 /// the entire diversified address system. Tachyon removes the diversifier
@@ -66,9 +66,12 @@ impl NullifierKey {
 /// Wrong `nk` produces wrong `pk`, wrong `cm`, and accumulator inclusion
 /// fails.
 ///
-/// Every note from the same spending key shares the same `pk`. There is
-/// no per-note diversification — unlinkability is the wallet layer's
-/// responsibility, not the core protocol's.
+/// `pk` is deterministic in `(ak, nk)`, so unlinkability comes from minting
+/// a fresh address per sender: a receiver walks its wallet-standard
+/// derivation path to a freshly indexed `(ak, nk)` pair. That index sits
+/// above `sk`, so [`SpendingKey`](super::private::SpendingKey) takes it
+/// already applied and no derivation path is fixed here. Transfer proofs
+/// never constrain it; they check `pk` against a witnessed `pak`.
 ///
 /// ## Usage
 ///

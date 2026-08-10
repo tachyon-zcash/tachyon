@@ -60,14 +60,14 @@
 //! | ---------------------- | -------------------- | ---------------------------------------- |
 //! | `hStampActionsTachyon` | 32 bytes             | BLAKE2b digest of the covered actions    |
 //! | `anchorTachyon`        | 32 bytes             | pool state reference                     |
-//! | `tachygramSetTachyon`  | 32 bytes             | commitment to the tachygrams below       |
+//! | `cTachygrams`          | 32 bytes             | commitment to the tachygrams below       |
 //! | `nTachygrams`          | compactsize          | number of tachygrams                     |
 //! | `vTachygrams`          | 32 * nTachygrams     | tachygrams for this proof                |
 //! | `proofTachyon`         | PROOF_SIZE blob      | serialized proof of fixed size           |
 //!
-//! `tachygramSetTachyon` is carried rather than derived, so full validation
-//! must confirm it against `vTachygrams`. Anchor advancement then reads the
-//! point instead of rebuilding it.
+//! `cTachygrams` is carried rather than derived, so full validation must
+//! confirm it against `vTachygrams`. Anchor advancement then reads the point
+//! instead of rebuilding it.
 //!
 //! ## Pointer stamp
 //!
