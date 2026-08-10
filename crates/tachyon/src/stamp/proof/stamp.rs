@@ -81,7 +81,7 @@ impl Step for OutputStamp {
         Anchor,
     );
 
-    const INDEX: Index = Index::new(13);
+    const INDEX: Index = Index::new(11);
 
     fn witness<'source>(
         &self,
@@ -138,7 +138,7 @@ impl Step for OutputStamp {
 /// the randomized action key `rk`, and commits the one-action set plus the
 /// two-element tachygram set `{present_nf, nf_next}` (the pair
 /// [`SpendBind`](super::spend::SpendBind) already confirmed against the
-/// covering range).
+/// covering derivation).
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -155,7 +155,7 @@ impl Step for SpendStamp {
         ProofAuthorizingKey,
     );
 
-    const INDEX: Index = Index::new(15);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
@@ -209,7 +209,7 @@ impl Step for SpendStamp {
     }
 }
 
-/// Universal merge — transaction assembly and aggregation.
+/// Transaction assembly and aggregation.
 #[derive(Debug)]
 pub struct MergeStamp;
 
@@ -225,7 +225,7 @@ impl Step for MergeStamp {
         (ActionSetPoly, TachygramSetPoly),
     );
 
-    const INDEX: Index = Index::new(16);
+    const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,
@@ -267,9 +267,7 @@ impl Step for MergeStamp {
             "MergeStamp: right tachygram accumulator must commit to header commit",
         )?;
 
-        // The merged sets are witnessed; confirm each is the `left · right`
-        // union of its halves via the product-opening relation, never built
-        // in-step.
+        // Confirm union via product-opening relation.
         enforce_poly_product(
             ctx,
             left_action_set.as_ref(),
@@ -309,7 +307,7 @@ impl Step for StampLift {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(17);
+    const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,

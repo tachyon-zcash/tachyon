@@ -56,31 +56,33 @@
 //!
 //! ## Nullifier Derivation
 //!
-//! Nullifiers are derived via a GGM tree PRF instantiated from Poseidon:
+//! Nullifiers come `NF_GROUP` at a time from one Poseidon sponge keyed on the
+//! note's master key and the epoch's group index
+//! $w = \lfloor e / \mathsf{NF\_GROUP} \rfloor$:
 //!
-//! $$\mathsf{mk} = \text{KDF}(\psi, \mathsf{nk})$$
-//! $$\mathsf{nf}_e = F_{\mathsf{mk}}(e)$$
+//! $$\mathsf{mk} = \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi,
+//! \mathsf{nk})$$
+//! $$\mathsf{nf}_e = \mathsf{squeeze}_{e \bmod \mathsf{NF\_GROUP}}\big(
+//!     \mathsf{absorb}(\mathtt{NF\_DOMAIN},\ \mathsf{mk},\ w)\big)$$
 //!
 //! where $\psi$ is the note's nullifier trapdoor, $\mathsf{nk}$ is the
-//! nullifier key, and $e$ is the epoch index.
+//! nullifier key, and $e$ is the epoch index. Each group re-absorbs $w$, so
+//! $\mathsf{nf}_e$ depends on $(\mathsf{mk}, e)$ alone and overlapping
+//! derivation windows agree on the epochs they share; window bases are
+//! group-aligned.
 //!
-//! The master root key $\mathsf{mk}$ supports oblivious sync delegation:
-//! prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
-//! $e \leq t$, enabling range-restricted delegation without revealing
-//! spend capability.
+//! `mk` evaluates the whole epoch space; delegation carries proven value
+//! windows.
 
 pub mod private;
 pub mod public;
 
-mod ggm;
+mod master;
 mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use ggm::{
-    GGM_CHUNK_MASK, GGM_CHUNK_SIZE, GGM_MAX_INDEX, GGM_TREE_ARITY, GGM_TREE_DEPTH, NoteMasterKey,
-    NotePrefixedKey, cover_candidates,
-};
+pub use master::NoteMasterKey;
 pub use note::{NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 

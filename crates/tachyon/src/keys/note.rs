@@ -4,7 +4,7 @@ use derive_more::{AsRef, Debug, From, Into};
 use group::GroupEncoding as _;
 use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
 
-use super::{ggm::NoteMasterKey, proof::SpendValidatingKey};
+use super::{master::NoteMasterKey, proof::SpendValidatingKey};
 use crate::{digest::poseidon, nullifier};
 
 /// A Tachyon nullifier deriving key.
@@ -22,11 +22,10 @@ use crate::{digest::poseidon, nullifier};
 /// ## Capabilities
 ///
 /// - **Nullifier derivation**: detecting when a note has been spent
-/// - **Oblivious sync delegation** (Nullifier Derivation Scheme doc): the
-///   master root key $\mathsf{mk} = \text{KDF}(\Psi, \mathsf{nk})$ seeds a GGM
-///   tree PRF; prefix keys $\Psi_t$ permit evaluating the PRF only for epochs
-///   $e \leq t$, enabling range-restricted delegation without revealing spend
-///   capability
+/// - **Oblivious sync delegation**: a delegate receives proven value windows.
+///   The master key $\mathsf{mk} =
+///   \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \Psi, \mathsf{nk})$
+///   evaluates every epoch.
 ///
 /// `nk` alone does NOT confer spend authority — combined with `ak` it
 /// forms the proof authorizing key `pak`, enabling proof construction
@@ -35,7 +34,7 @@ use crate::{digest::poseidon, nullifier};
 pub struct NullifierKey(#[debug(skip)] pub(super) Fp);
 
 impl NullifierKey {
-    /// Derive a note's GGM master root from its nullifier trapdoor `psi`.
+    /// Derive a note's master key from its nullifier trapdoor `psi`.
     #[must_use]
     pub fn derive_note_private(&self, psi: nullifier::Trapdoor) -> NoteMasterKey {
         NoteMasterKey(poseidon::nf_master(psi.into(), self.0))
@@ -159,39 +158,5 @@ mod tests {
             mk.derive_nullifier(EpochIndex(0u32)),
             mk.derive_nullifier(EpochIndex(1u32)),
         );
-    }
-
-    /// Delegate key produces same nullifiers as master for epochs in range.
-    #[test]
-    fn delegate_matches_master() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let nk = NullifierKey(Fp::random(&mut *rng));
-        let psi = nullifier::Trapdoor::random(rng);
-        let mk = nk.derive_note_private(psi);
-
-        for dk in &mk.derive_note_delegates(0..=99) {
-            for epoch in dk.range() {
-                assert_eq!(
-                    mk.derive_nullifier(EpochIndex(epoch)),
-                    dk.derive_nullifier(EpochIndex(epoch)),
-                    "mismatch at epoch {epoch} with delegate {dk:?}"
-                );
-            }
-        }
-    }
-
-    /// A delegate key panics for epochs outside its authorized range.
-    #[test]
-    #[should_panic(expected = "epoch out of range")]
-    fn delegate_rejects_outside_range() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let nk = NullifierKey(Fp::random(&mut *rng));
-        let psi = nullifier::Trapdoor::random(rng);
-        let mk = nk.derive_note_private(psi);
-
-        // Delegate covering [0..=63]
-        let dk = &mk.derive_note_delegates(0..=63)[0];
-        // epoch 64 is outside the authorized range
-        let _compute = dk.derive_nullifier(EpochIndex(64u32));
     }
 }

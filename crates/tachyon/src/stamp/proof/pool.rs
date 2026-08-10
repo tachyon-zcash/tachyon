@@ -24,22 +24,21 @@ use ragu::{
     constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
-use super::delegation::NullifierHeader;
+use super::delegation::NullifierDerivation;
 use crate::{
-    note,
+    note::{self},
     nullifier::Nullifier,
     primitives::{
-        Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, TachygramSetCommit, TachygramSetPoly,
+        Anchor, EpochIndex, NfMarginPoly, NfSeqCommit, NfSeqPoly, NfTailPoly, TachygramSetCommit,
+        TachygramSetPoly,
     },
-    relations::enforce::enforce_shifted_combination,
+    relations::{enforce::enforce_shifted_combination, read::enforce_covering_read},
 };
 
 /// Anchor segment between two endpoints. Composable via [`AnchorFuse`].
 ///
 /// Direction-agnostic: `start` and `end` are both anchors. Sole consumer:
-/// [`super::stamp::StampLift`] advances a stamp's anchor. Extending a
-/// spendable's anchor must instead go through [`ArbitraryUnspent`] so each
-/// step proves nf-exclusion.
+/// [`super::stamp::StampLift`] advances a stamp's anchor.
 ///
 /// Structurally intra-epoch: the sole builder ([`AnchorSeed`]) invokes only
 /// [`Anchor::next_stamp`], which binds an epoch. The [`Anchor::next_epoch`]
@@ -91,7 +90,7 @@ impl Header for AnchorChain {
 /// sequence's exact rank is pinned. The seeds establish the sentinel form and
 /// the fuses preserve it.
 ///
-/// `nf_start` is the range's first tested nullifier (the leaf at
+/// `nf_start` is the range's first tested nullifier (the nullifier at
 /// `epoch_start`); the in-progress `nf_end` corresponds to `epoch_end` and is
 /// represented in `elapsed` only once a segment covering its epoch's closing
 /// boundary joins on, since [`EndEpochUnspentSeed`] is where a member is added.
@@ -196,7 +195,7 @@ impl Step for AnchorSeed {
     /// `(start, epoch, stamp_commit)`.
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(4);
+    const INDEX: Index = Index::new(2);
 
     fn witness<'source>(
         &self,
@@ -222,7 +221,7 @@ impl Step for AnchorFuse {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(5);
+    const INDEX: Index = Index::new(3);
 
     fn witness<'source>(
         &self,
@@ -241,7 +240,8 @@ impl Step for AnchorFuse {
 
 /// Per-stamp exclusion seed.
 ///
-/// Verify `nf ∉ stamp_tg_set` and use the stamp's commit to produce the
+/// Verify $\mathsf{nf} \notin \mathsf{stamp\_tg\_set}$ and use the stamp's
+/// commit to produce the
 /// appropriate anchor. The `elapsed` sequence is empty, since we have not
 /// progressed past any nullifiers yet.
 #[derive(Debug)]
@@ -255,7 +255,7 @@ impl Step for UnspentSeed {
     /// `(anchor_prev, (epoch, nf), stamp_tg_set)`.
     type Witness<'source> = (Anchor, (EpochIndex, Nullifier), TachygramSetPoly);
 
-    const INDEX: Index = Index::new(6);
+    const INDEX: Index = Index::new(4);
 
     fn witness<'source>(
         &self,
@@ -322,7 +322,7 @@ impl Step for EndEpochUnspentSeed {
     /// `(anchor_prev, (epoch_prev, nf_prev), nf)`.
     type Witness<'source> = (Anchor, (EpochIndex, Nullifier), Nullifier);
 
-    const INDEX: Index = Index::new(7);
+    const INDEX: Index = Index::new(5);
 
     fn witness<'source>(
         &self,
@@ -380,7 +380,7 @@ impl Step for UnspentFuse {
     /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(8);
+    const INDEX: Index = Index::new(6);
 
     fn witness<'source>(
         &self,
@@ -460,11 +460,27 @@ impl Step for UnspentFuse {
 /// Bind an [`ArbitraryUnspent`]'s free-witness nullifiers to a
 /// note's genuine nullifiers.
 ///
-/// Proves `range == elapsed ++ [nf_end]` against the derived
-/// [`NullifierHeader`], emitting an [`Unspent`] with the `cm`. The tip
-/// enters as a monomial coefficient of [`enforce_shifted_combination`]:
-/// `unspent_nf_end` is a left-header value, fixed by the recursive
-/// verification of the [`ArbitraryUnspent`] PCD before the challenge.
+/// Consumes a [`NullifierDerivation`] that merely *covers* the unspent span
+/// (`deriv.start <= unspent.start`, `unspent.end < deriv.end`), not one
+/// aligned to it. The covering read confirms
+/// `elapsed ++ [unspent_nf_end]` against the covering sequence's band at the
+/// unspent's epochs: `elapsed` is the read operand with its sentinel swapped
+/// for the tip, which is a left-header value, fixed by the recursive
+/// verification of the [`ArbitraryUnspent`] PCD before the transcript
+/// challenge. Emits an [`Unspent`] stamped with the derivation's `cm`.
+///
+/// `unspent_nf_start` is `elapsed`'s degree-0 coefficient (its first
+/// crossing, pinned by a repeat opening), or the tip itself when no epoch
+/// was crossed and `elapsed` is empty.
+///
+/// # Committed polynomials
+///
+/// | polynomial | role |
+/// |---|---|
+/// | `elapsed_seq` | the read operand, bound to the unspent header |
+/// | `g` | the covering sequence, bound to the derivation header |
+/// | `older` | sentineled absorbing margin above the read |
+/// | `tail` | cap-shifted sentineled absorbing margin below the read |
 #[derive(Debug)]
 pub struct UnspentBind;
 
@@ -472,16 +488,16 @@ impl Step for UnspentBind {
     type Aux<'source> = ();
     type Left = ArbitraryUnspent;
     type Output = Unspent;
-    type Right = NullifierHeader;
-    /// `(elapsed_seq, nf_seq)`.
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly);
+    type Right = NullifierDerivation;
+    /// `(elapsed_seq, g, older, tail)`.
+    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfMarginPoly, NfTailPoly);
 
-    const INDEX: Index = Index::new(9);
+    const INDEX: Index = Index::new(7);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (elapsed_seq, nf_seq): Self::Witness<'source>,
+        (elapsed_seq, g, older, tail): Self::Witness<'source>,
         (
             unspent_anchor_prev,
             (unspent_epoch_start, unspent_nf_start),
@@ -489,59 +505,73 @@ impl Step for UnspentBind {
             (unspent_epoch_end, unspent_nf_end),
             unspent_anchor_last,
         ): <Self::Left as Header>::Data,
-        (nf_cm, (nf_epoch_start, nf_start), nf_seq_commit, (nf_epoch_end, nf_end)): <Self::Right as Header>::Data,
+        (
+            deriv_cm,
+            (deriv_start, _deriv_nf_start),
+            nf_commit,
+            (deriv_end, _deriv_nf_end),
+        ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(nf_epoch_start) - Fp::from(unspent_epoch_start),
-            "UnspentBind: derived range does not start at the unspent's start epoch",
-        )?;
-        enforce_zero(
-            Fp::from(nf_epoch_end) - Fp::from(unspent_epoch_end.next()),
-            "UnspentBind: derived range does not span the crossings plus the tip",
-        )?;
         enforce_equal_point(
             Eq::from(elapsed_seq.commit()),
             Eq::from(unspent_elapsed),
             "UnspentBind: elapsed polynomial does not match header",
         )?;
         enforce_equal_point(
-            Eq::from(nf_seq.commit()),
-            Eq::from(nf_seq_commit),
-            "UnspentBind: range polynomial does not match header",
+            Eq::from(g.commit()),
+            Eq::from(nf_commit),
+            "UnspentBind: covering sequence does not match header",
         )?;
-        let offset = unspent_epoch_end - unspent_epoch_start;
-        // Sentinel append: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
-        // `nf_seq = elapsed ++ [unspent_nf_end]` is the shifted combination
-        // `nf_seq(X) = elapsed(X) + (unspent_nf_end - 1)·X^offset +
-        // X^{offset+1}`. The first monomial overwrites elapsed's sentinel with
-        // the appended tip; the second re-terminates `nf_seq`. Both
-        // coefficients are challenge-independent: `unspent_nf_end` is a
-        // left-header value, fixed by the recursive verification of the
-        // [`ArbitraryUnspent`] PCD; `offset` is elapsed's header-fixed span.
-        enforce_shifted_combination(
+
+        // Native coverage guards: mock stand-ins for range constraints over
+        // the header-pinned bounds.
+        if deriv_start.0 > unspent_epoch_start.0 {
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentBind: derivation does not cover the unspent start".into(),
+            ));
+        }
+        if deriv_end.0 <= unspent_epoch_end.0 {
+            return Err(ragu::Error::InvalidWitness(
+                "UnspentBind: derivation does not cover the unspent end".into(),
+            ));
+        }
+
+        // The read window is `[epoch_start, epoch_end]` inclusive: `elapsed`
+        // carries the crossings and the tip rides as the sentinel swap.
+        let span = u64::from(unspent_epoch_end - unspent_epoch_start);
+        let margin = u64::from(unspent_epoch_start - deriv_start);
+        enforce_covering_read(
             ctx,
-            [(elapsed_seq.as_ref(), 0)],
-            [
-                (Fp::from(unspent_nf_end) - Fp::ONE, offset.into()),
-                (Fp::ONE, u64::from(offset) + 1),
-            ],
-            nf_seq.as_ref(),
-            "UnspentBind: range is not elapsed followed by the tip",
+            g.as_ref(),
+            older.as_ref(),
+            tail.as_ref(),
+            elapsed_seq.as_ref(),
+            Fp::from(unspent_nf_end),
+            span,
+            margin,
+            "UnspentBind: sequence does not match the derivation",
         )?;
-        // Bind the unspent's free-witness boundary nullifiers to the range's
-        // genuine boundary leaves, which the derivation header proved by
-        // construction.
-        enforce_zero(
-            Fp::from(unspent_nf_start) - Fp::from(nf_start),
-            "UnspentBind: start nullifier does not match the derived range",
-        )?;
-        enforce_zero(
-            Fp::from(unspent_nf_end) - Fp::from(nf_end),
-            "UnspentBind: end nullifier does not match the derived range",
-        )?;
+
+        // Boundary nullifiers: `unspent_nf_end` is pinned as the sentinel
+        // swap and bound by the read above. `unspent_nf_start` is `elapsed`'s
+        // degree-0 coefficient (its first crossing), or the tip itself when
+        // no epoch was crossed and `elapsed` is empty.
+        if span == 0 {
+            enforce_zero(
+                Fp::from(unspent_nf_start) - Fp::from(unspent_nf_end),
+                "UnspentBind: single-epoch segment boundary nullifiers differ",
+            )?;
+        } else {
+            ctx.enforce_poly_query(
+                elapsed_seq.commit().into(),
+                Fp::ZERO,
+                Fp::from(unspent_nf_start),
+            )?;
+        }
+
         Ok((
             (
-                nf_cm,
+                deriv_cm,
                 unspent_anchor_prev,
                 (unspent_epoch_start, unspent_nf_start),
                 (unspent_epoch_end, unspent_nf_end),
