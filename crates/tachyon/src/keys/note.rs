@@ -1,8 +1,8 @@
 //! Note-related keys: NullifierKey, PaymentKey.
 
 use derive_more::{AsRef, Debug, From, Into};
-use ff::PrimeField as _;
-use pasta_curves::Fp;
+use group::GroupEncoding as _;
+use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
 
 use super::{ggm::NoteMasterKey, proof::SpendValidatingKey};
 use crate::{digest::poseidon, nullifier};
@@ -57,9 +57,10 @@ impl NullifierKey {
 /// Derived from the proof authorizing key components:
 ///
 /// $$\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
-/// \mathsf{nk})$$
+/// \mathsf{ak}_y, \mathsf{nk})$$
 ///
-/// where $\mathsf{ak}_x$ is the x-coordinate of the spend validating key.
+/// where $(\mathsf{ak}_x, \mathsf{ak}_y)$ are the affine coordinates of the
+/// spend validating key.
 /// This binds `pk` to both `ak` and `nk`, so the note commitment `cm`
 /// (which contains `pk`) transitively pins the full proof authorizing key.
 /// Wrong `nk` produces wrong `pk`, wrong `cm`, and accumulator inclusion
@@ -81,18 +82,24 @@ pub struct PaymentKey(#[debug(skip)] Fp);
 impl PaymentKey {
     /// Derive the payment key from `ak` and `nk`:
     /// $\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
-    /// \mathsf{nk})$.
+    /// \mathsf{ak}_y, \mathsf{nk})$.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `ak` is the identity, which has no affine coordinates.
     #[must_use]
     pub fn derive(ak: &SpendValidatingKey, nk: &NullifierKey) -> Self {
         let ak_bytes: [u8; 32] = ak.0.into();
-        #[expect(
-            clippy::expect_used,
-            reason = "ask is sign-normalized at derivation, so the y-sign bit is clear"
-        )]
-        let ak_fp = Fp::from_repr(ak_bytes)
+        #[expect(clippy::expect_used, reason = "a validating key is a curve point")]
+        let point = EpAffine::from_bytes(&ak_bytes)
             .into_option()
-            .expect("ak bytes should be a valid Fp");
-        Self(poseidon::payment_key(ak_fp, nk.0))
+            .expect("ak bytes should be a valid curve point");
+        #[expect(clippy::expect_used, reason = "a validating key is not the identity")]
+        let coords = point
+            .coordinates()
+            .into_option()
+            .expect("ak must not be the identity");
+        Self(poseidon::payment_key(coords, nk.0))
     }
 }
 
@@ -102,7 +109,21 @@ mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::primitives::EpochIndex;
+    use crate::{primitives::EpochIndex, reddsa};
+
+    /// reddsa accepts the identity as a verification key, but it has no affine
+    /// coordinates to absorb.
+    #[test]
+    #[should_panic(expected = "identity")]
+    fn derive_rejects_identity_ak() {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let ak = SpendValidatingKey(
+            reddsa::VerificationKey::try_from([0u8; 32]).expect("identity is a valid key"),
+        );
+        let nk = NullifierKey(Fp::random(rng));
+
+        let _derived = PaymentKey::derive(&ak, &nk);
+    }
 
     #[test]
     fn derive_note_private_deterministic() {

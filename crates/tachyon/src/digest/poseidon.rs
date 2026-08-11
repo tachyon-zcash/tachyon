@@ -38,10 +38,11 @@ const PAYMENT_KEY_DOMAIN: &[u8; 16] = b"Tachyon-PkDerive";
 
 /// Derives a payment key from a spend validating key and nullifier key.
 #[must_use]
-pub(crate) fn payment_key(ak: Fp, nk: Fp) -> Fp {
-    hash::<3>([
+pub(crate) fn payment_key(ak: Coordinates<EpAffine>, nk: Fp) -> Fp {
+    hash::<4>([
         Fp::from_u128(u128::from_le_bytes(*PAYMENT_KEY_DOMAIN)),
-        ak,
+        *ak.x(),
+        *ak.y(),
         nk,
     ])
 }
