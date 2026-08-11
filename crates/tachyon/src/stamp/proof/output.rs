@@ -61,7 +61,7 @@ impl Step for OutputBind {
         let (cm, pad) = {
             let (rcm, pk, value, psi) = (
                 Fp::from(note.rcm),
-                note.pk.0,
+                Fp::from(note.pk),
                 u64::from(note.value),
                 Fp::from(note.psi),
             );

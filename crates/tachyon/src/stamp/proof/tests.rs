@@ -1744,7 +1744,7 @@ fn nullifier_fuse_rejects_wrong_cm() {
 fn expected_pad(note: &Note) -> Tachygram {
     Tachygram::from(poseidon::pad_tachygram(
         Fp::from(note.rcm),
-        note.pk.0,
+        Fp::from(note.pk),
         u64::from(note.value),
         Fp::from(note.psi),
     ))
