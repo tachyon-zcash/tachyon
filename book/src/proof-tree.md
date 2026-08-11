@@ -48,15 +48,15 @@ A single lift can consume an arbitrarily long composed `Unspent`, including one 
 ### Spending
 
 To spend, the wallet runs `SpendBind`.
-It consumes the `SpendableHeader` and witnesses the note and the action fields.
-It derives `cm` from the note and requires `spendable.cm == cm`, so the witnessed note is the spendable lineage's note: the value commitment `cv` then commits to the minted value[^notes].
-The output `SpendHeader` carries `cm`, the value commitment and action verification key `(cv, rk)`, the lineage's current nullifier `present_nf`, and the threaded anchor.
-
-`SpendStamp` composes that `SpendHeader` with a length-2 `NullifierHeader` range (the live pair for the current and next epochs) and witnesses the next-epoch nullifier `nf_next`.
-It requires `range.epoch_end == range.epoch_start + 2` and `range.cm == cm`, then binds the published pair to the range's boundary leaves by equality: `present_nf == range.nf_start` and `nf_next == range.nf_end`.
+It consumes the `SpendableHeader` and a length-2 `NullifierHeader` range (the live pair for the current and next epochs), and witnesses the next-epoch nullifier `nf_next`.
+It requires `range.epoch_end == range.epoch_start + 2` and `range.cm == spendable.cm`, then binds the published pair to the range's boundary leaves by equality: `present_nf == range.nf_start` and `nf_next == range.nf_end`.
 Because `present_nf` is threaded from the lineage, the `nf_start` equality forces the range to start at the lineage's current epoch, while `nf_next` is pinned to the genuine end leaf $N_{e+1}$.
 Nonzero guards close the `nf == 0` degenerate.
-It derives the action digest from the value commitment and verification key, and emits a `StampHeader` whose tachygram set contains both nullifiers and whose anchor is threaded from the spend.
+The output `SpendHeader` carries `cm`, the confirmed pair `(present_nf, nf_next)`, and the threaded anchor; it carries no curve points.
+
+`SpendStamp` consumes that `SpendHeader` and witnesses the note and the action fields.
+It requires `note.commitment() == cm`, so the witnessed note is the spendable lineage's note: the value commitment `cv` then commits to the minted value[^notes].
+It derives the action digest from `cv` and the randomized action key `rk`, and emits a `StampHeader` whose tachygram set contains both nullifiers and whose anchor is threaded from the spend.
 
 An output operation runs `OutputStamp` directly.
 The step witnesses the new note, value-randomness, action-randomness, and an anchor; the wallet typically anchors each output at the same height as the transaction's spends so the merge can proceed without an intervening lift.
@@ -173,15 +173,15 @@ The anchor adjacency check (`verified.anchor_prev == spendable.anchor`) welds th
 ### Spend binding
 
 Spending a note publishes two nullifiers, one for the current epoch and one for the next, both pinned to the note's genuine leaves.
-`SpendBind` witnesses the note's fields and the action material and consumes the `SpendableHeader`.
-It derives `cm` from the note and requires `spendable.cm == cm`: the witnessed note is the lineage's note, so a phantom note reusing the same `psi` (and so the same nullifiers) but carrying a different value, and hence a different `cm`, is rejected.
-The value commitment binds to `value`, which `cm` digests, so the spent value is the minted value[^notes].
-The output `SpendHeader` threads the lineage's `present_nf`, anchor, and `cm`; `SpendBind` is an intermediate step, its `SpendHeader` consumed only by `SpendStamp`, so the note never propagates.
-
-`SpendStamp` completes the publication: it composes the `SpendHeader` with a length-2 `NullifierHeader` range, witnesses `nf_next`, and requires the range to span exactly two epochs with `range.cm == cm`.
+`SpendBind` consumes the `SpendableHeader` and a length-2 `NullifierHeader` range, witnesses `nf_next`, and requires the range to span exactly two epochs with `range.cm == spendable.cm`.
 It binds the published pair to the range's boundary leaves by equality (`present_nf == range.nf_start`, `nf_next == range.nf_end`): `present_nf` is threaded from the lineage, so the `nf_start` equality forces the range to start at the lineage's current epoch, and `nf_next` is pinned to the genuine `nf_end` leaf.
 Each published nullifier must be nonzero, or it would collide with the note's own `cm` in the tachygram scan.
-Deferring the boundary-leaf binding and the action digest to `SpendStamp` keeps each step within its per-step gate budget.
+No note witness is needed here: the range and the lineage are already tied to the same note by their two `cm` fields, bound where the range was derived and at `SpendableInit` respectively.
+The output `SpendHeader` threads `cm`, the confirmed pair, and the anchor, and carries no curve points.
+
+`SpendStamp` completes the publication: it re-witnesses the note against the header's `cm`, derives the value commitment `cv` and the randomized action key `rk`, and commits the one-action set alongside the two-element tachygram set.
+Requiring `note.commitment() == cm` rejects a phantom note reusing the same `psi`, and so the same nullifiers, while carrying a different value and hence a different `cm`.
+The note is witnessed only in this terminal step, so it never propagates.
 
 The two complementary `cm` checks pin value two independent ways. `cm == note.commitment()` ties `cm` to the note by `Poseidon` collision-resistance (the spender must know `rcm`, `pk`, `value`, `psi`). `spendable.cm == cm` ties it to the lineage, which the creation stamp proved minted. Together they bind the action's value commitment to the note actually being spent. Publishing both nullifiers lets consensus apply the spend across an epoch transition that may occur between proof construction and inclusion.
 
@@ -191,7 +191,7 @@ The note's age never becomes public. The lineage carries only a single current n
 
 A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
 `OutputStamp` derives a value commitment, action verification key, and action digest from a witnessed note, value-randomness, and action-randomness; constraints reject zero or over-range note values and require the note's payment key to match the witnessed key material[^keys].
-`SpendStamp` composes a `SpendHeader` (carrying value commitment, action verification key, `present_nf`, anchor, and `cm`) with the note's length-2 `NullifierHeader` range, binds the published pair to the range, derives the action digest, and emits a stamp whose action digest, two-nullifier tachygram set, and threaded anchor follow.
+`SpendStamp` mirrors it on the spend side: it re-witnesses the note against the `SpendHeader`'s `cm`, derives the value commitment, action verification key, and action digest, and emits a stamp whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was already confirmed against the covering range at `SpendBind`.
 `MergeStamp` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 
 ### Stamp anchor
@@ -225,12 +225,12 @@ flowchart TB
   end
 
   subgraph spend_action [spend action]
-    w_bind[/note, rcv, alpha, pak/]
+    w_bind[/nf_next/]
     s_bind[SpendBind]
   end
 
   subgraph merge [transaction assembly]
-    w_stamp[/nf_next/]
+    w_stamp[/note, rcv, alpha, pak/]
     s_spendstamp[SpendStamp]
     w_output[/rcv, alpha, note, anchor/]
     s_output[OutputStamp]
@@ -255,8 +255,8 @@ flowchart TB
   s_lift -->|SpendableHeader| s_bind
 
   w_bind --> s_bind
+  nf_range -->|NullifierHeader| s_bind
   s_bind -->|SpendHeader| s_spendstamp
-  nf_range -->|NullifierHeader| s_spendstamp
   w_stamp --> s_spendstamp
 
   w_output --> s_output
@@ -323,7 +323,7 @@ flowchart LR
 | NfPrefixHeader | (cm, node, depth, index) |
 | NullifierHeader | (cm, (epoch_start, nf_start), nf_seq_commit, (epoch_end, nf_end)) |
 | SpendableHeader | (cm, present_nf, anchor) |
-| SpendHeader | (cm, (cv, rk), present_nf, anchor) |
+| SpendHeader | (cm, present_nf, nf_next, anchor) |
 | StampHeader | (action_commit, tachygram_commit, anchor) |
 
 ## Steps
@@ -344,9 +344,9 @@ flowchart LR
 | NullifierFuse | NullifierHeader | NullifierHeader | left_seq, merged_seq, right_seq | NullifierHeader |
 | SpendableInit | AnchorChain | NullifierHeader | (pre_epoch_anchor, pre_cm_anchor), creation_set, present_nf | SpendableHeader |
 | SpendableLift | SpendableHeader | VerifiedUnspent | — | SpendableHeader |
-| SpendBind | SpendableHeader | — | note, rcv, alpha, pak | SpendHeader |
+| SpendBind | SpendableHeader | NullifierHeader | nf_next | SpendHeader |
 | OutputStamp | — | — | rcv, alpha, note, anchor | StampHeader |
-| SpendStamp | SpendHeader | NullifierHeader | nf_next | StampHeader |
+| SpendStamp | SpendHeader | — | note, rcv, alpha, pak | StampHeader |
 | MergeStamp | StampHeader | StampHeader | (action_set, tachygram_set) × left, merged, right | StampHeader |
 | StampLift | StampHeader | AnchorChain | — | StampHeader |
 
