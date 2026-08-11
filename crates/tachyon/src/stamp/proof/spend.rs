@@ -91,7 +91,7 @@ impl Step for SpendBind {
             ));
         }
         enforce_zero(
-            note.pk.0 - pak.derive_payment_key().0,
+            Fp::from(note.pk) - Fp::from(pak.derive_payment_key()),
             "SpendBind: pak not related to note",
         )?;
         let cm = note.commitment();

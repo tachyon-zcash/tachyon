@@ -92,7 +92,7 @@ impl Note {
 
         Commitment::from(poseidon::note_commitment(
             self.rcm.0,
-            self.pk.0,
+            Fp::from(self.pk),
             u64::from(self.value),
             self.psi.into(),
         ))
@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn distinct_rcm_distinct_commitments() {
         let rng = &mut StdRng::seed_from_u64(0);
-        let pk = PaymentKey(Fp::random(&mut *rng));
+        let pk = PaymentKey::from(Fp::random(&mut *rng));
         let psi = nullifier::Trapdoor::random(rng);
 
         let note1 = Note {

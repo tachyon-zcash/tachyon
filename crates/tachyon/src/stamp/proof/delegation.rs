@@ -113,7 +113,7 @@ impl Step for NfMasterSeed {
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            note.pk.0 - pak.derive_payment_key().0,
+            Fp::from(note.pk) - Fp::from(pak.derive_payment_key()),
             "NfMasterSeed: pak not related to note",
         )?;
         let mk = pak.nk.derive_note_private(note.psi);

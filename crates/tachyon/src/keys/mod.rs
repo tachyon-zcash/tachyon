@@ -110,10 +110,10 @@ mod tests {
 
         let ak_bytes: [u8; 32] = ak.0.into();
         assert_ne!(ak_bytes, nk.0.to_repr());
-        assert_ne!(nk.0.to_repr(), pk.0.to_repr());
+        assert_ne!(nk.0.to_repr(), Fp::from(pk).to_repr());
 
         let pak = sk.derive_proof_private();
-        assert_eq!(pak.derive_payment_key().0, pk.0);
+        assert_eq!(Fp::from(pak.derive_payment_key()), Fp::from(pk));
     }
 
     /// pk must bind to nk: varying nk (with ak fixed) must produce a
@@ -129,7 +129,7 @@ mod tests {
 
         let nk_other = NullifierKey(nk.0 + Fp::ONE);
         let pk_other = PaymentKey::derive(&ak, &nk_other);
-        assert_ne!(pk.0, pk_other.0);
+        assert_ne!(Fp::from(pk), Fp::from(pk_other));
     }
 
     /// rsk.derive_action_public() must equal ak.derive_action_public(alpha) for

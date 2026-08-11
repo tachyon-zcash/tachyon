@@ -891,7 +891,7 @@ fn note_stream_seed(pk: PaymentKey, value: u64) -> [u8; 32] {
         .hash_length(32)
         .personal(b"Tachyon-NoteRnd")
         .to_state()
-        .update(&pk.0.to_repr())
+        .update(&Fp::from(pk).to_repr())
         .update(&value.to_le_bytes())
         .finalize();
     let mut seed = [0u8; 32];

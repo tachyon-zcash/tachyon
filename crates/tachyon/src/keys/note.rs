@@ -1,6 +1,6 @@
 //! Note-related keys: NullifierKey, PaymentKey.
 
-use derive_more::Debug;
+use derive_more::{AsRef, Debug, From, Into};
 use ff::PrimeField as _;
 use pasta_curves::Fp;
 
@@ -75,9 +75,8 @@ impl NullifierKey {
 /// note commitment. It is NOT an on-chain address; payment coordination
 /// happens out-of-band via higher-level protocols (ZIP 321 payment
 /// requests, ZIP 324 URI encapsulated payments).
-#[derive(Clone, Copy, Debug)]
-#[expect(clippy::field_scoped_visibility_modifiers, reason = "for internal use")]
-pub struct PaymentKey(#[debug(skip)] pub(crate) Fp);
+#[derive(Clone, Copy, Debug, AsRef, From, Into)]
+pub struct PaymentKey(#[debug(skip)] Fp);
 
 impl PaymentKey {
     /// Derive the payment key from `ak` and `nk`:
