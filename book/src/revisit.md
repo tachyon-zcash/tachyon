@@ -376,11 +376,11 @@ following workflow and characteristics:
    \end{cases}
    $$
 
-   This check is probabilistically sound for binding, degree-bounded polynomial
-   commitments. If the two committed polynomials do not satisfy the
-   claimed relation, their difference is a nonzero polynomial of degree at most
-   $|R|-1$, so it passes an independently sampled evaluation point with
-   probability at most $(|R|-1)/|\mathbb{F}|$.
+   Each sequence commitment carries the bound $\deg g_n<n$, enforced by the PCS
+   interface together with the processed length $n$. If the two committed
+   polynomials do not satisfy the claimed relation, their difference is therefore
+   a nonzero polynomial of degree at most $|R|-1$, so it passes an independently
+   sampled evaluation point with probability at most $(|R|-1)/|\mathbb{F}|$.
 
 $\mathsf{Com}(g_S)$ and $\mathsf{Com}(g_R)$ are **nullifier commitments**. They
 bind ordered coefficients for construction and sub-sequence checks. The
@@ -394,14 +394,14 @@ our [first-order estimation](./nf-analysis.md#attempt3).
 
 $$
 \nf_e = \mathsf{Poseidon}^\nf.\mathsf{Permute}
-(\nk, \psi, \lceil \frac{e}{\mathsf{Rate}} \rceil)[e \bmod \mathsf{Rate}]
+(\nk, \psi, \lfloor \frac{e}{\mathsf{Rate}} \rfloor)[e \bmod \mathsf{Rate}]
 $$
 
 A concrete example. If a user wants to delegate range $S = \{5, 6, 7\}$, with a
 sponge rate of $\mathsf{Rate} = 4$, she would compute and prove derivation for
 the range $R = [4, 8) \supseteq S$ using a single Poseidon permutation:
 $\nf_4,\ldots,\nf_7 = \mathsf{Poseidon}^\nf.\mathsf{Permute}
-(\nk, \psi, \lceil \frac{7}{4} \rceil=1)$.
+(\nk, \psi, \lfloor \frac{7}{4} \rfloor=1)$.
 In practice, the delegation range may be larger, which requires users multiple
 PCD steps to reach a minimally covering superset $R$. 
 
@@ -530,6 +530,10 @@ The key properties of this universal accumulator:
     pseudorandom blob, so multiplicity exceeds one only with negligible (or
     adversarial) probability; and since (non-)membership ignores multiplicity,
     such cases are harmless. 
+  - Consensus nevertheless requires every newly validated tachygram to be distinct
+    from both the retained window and earlier tachygrams in the same candidate
+    bundle. Consequently every accepted per-epoch accumulator guarantees to have
+    a multiplicity of $1$ for all members/roots.
 - Members are *unordered*: a multiset commitment, not a vector commitment.
 - <a id="union">**Multiset union**</a>
   is polynomial multiplication, yielding a product accumulator
@@ -540,17 +544,14 @@ The key properties of this universal accumulator:
     $r\sample\F$.
 
 We emphasize a subtlety in the security of this polynomial-based accumulator.
-Since some polynomial commitment schemes are not degree-binding (KZG, Pedersen,
-etc.), the (non-)membership test is complete and sound only if the commitment
-is honestly computed.
-Concretely, consider a set of 10 items with its correct accumulator $\acc$.
-An attacker appends a malicious item $\tg_{11}$ and produces an $\acc'$
-indistinguishable from a normal Pedersen commitment. Since $\acc'$ does not
-bind the degree of the committed polynomial, a verifier could be fooled into
-accepting a membership test for $\tg_{11}$. Similarly, an attacker given an
-untrusted accumulator could drop genuine members from the polynomial. These
-attacks are impossible in Tachyon because every $\tgacc$ is verified by
-consensus validators using the technique [below](#acc-correct).
+Polynomial-commitment binding says that a commitment opens to one polynomial; it
+does not say that this polynomial is the accumulator of the claimed tachygrams.
+An attacker could instead commit to a polynomial that adds a malicious root or
+drops a genuine one, making the corresponding membership test true or false at
+will. Tachyon therefore verifies every $\tgacc$ against its published tachygram
+list using the technique [below](#acc-correct). The randomized identity test is
+sound relative to the PCS degree bound $D$: commitments are fixed before the
+challenge, so a false identity passes with probability at most $D/|\F|$.
 
 #### Checking Accumulator Correctness {#acc-correct}
 
@@ -669,10 +670,10 @@ machinery (the [proof tree](#prooftree) and its steps) to a later section; for
 now it suffices that every spend consumes a spendability proof anchored near the
 chain tip when its transaction is published.
 
-A **Tachyon Stamp** provides the PCD proof for the [Action statement](#statement)
-along with its public inputs: a set of tachygrams $\set{\tg_i}$, their
-accumulator $\tgacc$, an anchor value from the [anchor chain](#anchor), and the
-epoch $e$ that anchor lies in.
+A **Tachyon Stamp** provides the PCD proof for the [Action statement](#statement).
+Its public inputs are the bundle's Action descriptions, a set of tachygrams
+$\set{\tg_i}$, their accumulator $\tgacc$, an anchor value from the
+[anchor chain](#anchor), and the epoch $e$ that anchor lies in.
 Alternatively, the stamp holds a `wtxid` reference to another transaction whose
 stamp carries an aggregated PCD proof and the corresponding public inputs.
 The accumulator is included to spare miners from recomputing it over all
@@ -869,7 +870,8 @@ trick that reduces the amortized per-nullifier cost to strictly sublinear.
 #### Quadratic Residue Filters {#qr-trick}
 
 > This subsection is a self-contained optimization; readers can safely skip it and
-> continue to the [transaction life cycle](#txflow).
+> continue to the [transaction life cycle](#txflow). The current proof tree uses
+> the full epoch accumulator for simplicity; QR filter is a future optimization.
 
 Our goal: let a user prove non-membership of $\nf_e$ over an *entire epoch* at
 cost logarithmic in $N$, the number of tachygrams that epoch (equivalently, the
@@ -901,28 +903,39 @@ x\in\NQR \iff c\cdot x \in\QR
 $$
 
 A **QR filter** is one such split with a random offset: draw $R \sample \F$ and
-classify $x$ by whether $x + R$ is a residue. A random offset cuts the field
-roughly in half, and $k$ independent offsets $R_1, \ldots, R_k$ tag every element
-with a $k$-bit **QR profile** $\v{b} = (b_1, \ldots, b_k) \in \{0,1\}^k$, where
-$b_j = 1$ iff $x + R_j \in \QR$ (written $x \in \QR_{R_j}$) and $b_j = 0$
-otherwise. The $k$ filters together sort the field into $2^k$ disjoint buckets of
-roughly equal size.
+classify $x$ by whether $x + R$ is a square, assigning the exceptional value
+$x+R=0$ to the residue side. A random offset cuts any fixed epoch set roughly in
+half, and $k$ independent offsets $R_1, \ldots, R_k$ tag every element with a
+$k$-bit **QR profile** $\v{b} = (b_1, \ldots, b_k) \in \{0,1\}^k$, where $b_j=1$
+iff $x+R_j$ is a square (written $x\in\QR_{R_j}$), including zero, and $b_j=0$
+otherwise. The $k$ filters together sort the field into $2^k$ disjoint buckets
+of roughly equal expected size.
 
-<a id="batch-qr">**Batched QR Test.**</a> Given the vanishing polynomial over
-some elements $f(X)=\prod_i{(X - x_i)}$, we can batch-test that all elements are
-QR, namely $\forall x_i \in \QR$, as follows:
+<a id="batch-qr">**Batched QR Test.**</a> Given the square-free vanishing
+polynomial $f(X)=\prod_i{(X-x_i)}$, we can batch-test that all roots are QR,
+namely $\forall x_i\in\QR$, as follows. Canonical epoch accumulators are
+square-free by the [consensus uniqueness rule](#consensus-rule).
+"Square-free" here means the multiplicity of each root is $1$, namely no repeated
+or duplicated $x_i$.
 
 - Prover interpolates all QR pairs $(x_i, y_i)$ into a polynomial $g(X)$ where
 $g(x_i) = y_i$ and $x_i = y_i^2$
 - Prover computes $h(X)=\frac{g(X)^2 - X}{f(X)}$ and sends commitments to $g(X)$
 and $h(X)$ to the Verifier
   - Observe that the numerator $g(X)^2 - X$ vanishes over all $x_i$ (since
-  $g(x_i)^2 = y_i^2 = x_i$), thus must perfectly divide the vanishing polynomial $f(X)$
+  $g(x_i)^2 = y_i^2 = x_i$), so $f(X)$ perfectly divides the numerator
 - Verifier samples a random $r\sample\F$, and test: $g(r)^2 - r \iseq f(r)\cdot h(r)$
 
-**Building the buckets (once, by the OSS).** Fix $R_1, \ldots, R_k \sample \F$ at
-system startup. Conceptually, the buckets are the leaves of a binary tree built
-by recursively splitting the epoch accumulator by each filter. Splitting
+For an offset $R_j$, the corresponding identities replace $X$ by $X+R_j$.
+A residue sibling checks $g(X)^2-(X+R_j)=f(X)h(X)$. A non-residue sibling checks
+$g(X)^2-c(X+R_j)=f(X)h(X)$ and additionally interpolates the inverses into
+$z(X)$ and checks $(X+R_j)z(X)-1=f(X)q(X)$. The latter excludes zero from the
+non-residue side.
+
+**Building the buckets (once, by the OSS).** Fix
+$R_1,\ldots,R_k\sample\F$ as transparent system parameters. Conceptually, the
+buckets are the leaves of a binary tree built by recursively splitting the epoch
+accumulator by each filter. Splitting
 $e(X) = \prod_{j=1}^N (X - \tg_j)$ by $R_1$ gives
 
 $$
@@ -954,12 +967,12 @@ After $k$ filters we reach $2^k$ leaves, where leaf $q_{\v{b}}(X)$ holds exactly
 the tachygrams of profile $\v{b}$.
 
 In practice the OSS never splits top-down. It keeps the $2^k$ bucket accumulators
-live and *streams* tachygrams into them: as each new stamp lands, it computes
-every tachygram's profile $\v{b}$ (its $k$ QR bits) and folds the factor
-$(X - \tg)$ into the matching leaf $q_{\v{b}}$. Internal product nodes are formed
-bottom-up only when a decomposition proof calls for them. Maintaining the buckets
-costs $O(kN)$ linear-factor multiplications across the epoch, amortized over all
-users and all nullifiers.
+live and streams tachygrams into them: as each new stamp lands, it computes the
+tachygram's profile $\v{b}$ and folds $(X-\tg)$ into the matching leaf
+$q_{\v{b}}$. Internal product nodes are formed bottom-up only when a
+decomposition proof calls for them. Maintaining the buckets costs $O(kN)$
+profile work and linear-factor insertions, amortized over all users and all
+nullifiers.
 
 <P align="center">
   <img src="./assets/qr_trick.svg" alt="qr_trick" />
@@ -978,8 +991,8 @@ in three parts:
    - *product relation*: the on-path parent equals the product of its two children,
    tested at a random point as in the [accumulator correctness check](#acc-correct);
    - *sibling QR purity*: the *off-path* sibling is pure in its QR class with
-     respect to $R_j$: a single [batched QR test](#batch-qr), applied directly for
-     a $\QR$ sibling or to $c\cdot(\cdot)$ for an $\NQR$ one.[^sibling]
+     respect to $R_j$, using the shifted [batched QR identities](#batch-qr)
+     above.[^sibling]
 
 [^sibling]: Why the sibling test, and why only one per level? The product checks
     alone are not enough: a cheating OSS could hide a tachygram equal to $\nf_e$
@@ -1031,10 +1044,10 @@ commitment](#nf-flow).
 2. **Lift the spendability proof.** Maintaining the proof means advancing its
 [anchor](#anchor) along the anchor chain while preserving both halves of the
 claim:
-    - *Exclusion* is extended exactly as in the [anchor chain section](#anchor):
-    for each epoch, the note's nullifier $\nf_i$ for that epoch is shown absent
-    from the epoch accumulator $e(X)$ (cheaply, via the
-    [QR-filter test](#qr-trick)), with no per-stamp membership tests.
+    - *Exclusion* is extended exactly as in the [anchor chain section](#anchor).
+    A complete closed epoch uses its shared epoch accumulator $e(X)$ (and may
+    later use the [QR-filter optimization](#qr-trick)); a custom partial-epoch
+    span instead tests the traversed stamps directly.
     - *Inclusion* needs no re-proving of membership: the note's commitment was
     shown to lie in its creating stamp's accumulator *once*, and each lift simply
     extends that anchor to the new one along the chain's hash links.
@@ -1114,7 +1127,8 @@ accumulator $\tgacc$, the anchor, and the anchor's epoch $e$, the validator:
    $e = e_\mathsf{cur} \lor e = e_\mathsf{cur} - 1$
 2. confirms the $\mathsf{anchor}$ is a genuine node value in the consensus
    [anchor chain](#anchor), lying in epoch $e$;
-3. verifies the stamp's PCD proof against $(\set{\tg_i}, \tgacc, \mathsf{anchor}, e)$,
+3. verifies the stamp's PCD proof against
+   $(\set{(\cv_i,\rk_i)},\set{\tg_i},\tgacc,\mathsf{anchor},e)$,
    i.e. the [Action statement](#statement). The statement internally enforces
    $\tgacc$'s consistency with the published $\set{\tg_i}$ (the
    [batched check](#acc-correct)), the integrity of the revealed nullifiers and
@@ -1132,8 +1146,11 @@ that drifts across an epoch boundary while waiting in the mempool stays valid.
 To close the gap between the anchor and the block that includes the stamp,
 consensus enforces a live duplicate check spanning **the current and preceding
 epochs**. Validators hold the tachygrams of the two most recent epochs in memory
-and reject any bundle whose published tachygram already appears among them. The
-window is two epochs wide exactly because the stamp proof may be one epoch stale.
+and process a candidate bundle's tachygrams in deterministic order, checking and
+inserting each before checking the next. A tachygram therefore conflicts with
+the retained window, an earlier bundle in the block, or an earlier tachygram in
+the same bundle. The window is two epochs wide exactly because the stamp proof
+may be one epoch stale.
 
 Relaxed freshness does *not* weaken soundness, because each spend publishes the
 pair $(\nf_e, \nf_{e+1})$. Whichever of the two permitted epochs accepts the
@@ -1372,13 +1389,17 @@ proves a sub-statement of the same bundle-level statement.
   nullifiers, value, and authority are thereby tied to the same note.
 - The pool-history evidence for a *full* epoch is **note-independent**, so it
   factors into a shared sub-tree, built once and reused by every note the OSS
-  syncs. `EpochAccCert` ($\Sc$) certifies epoch $i$'s accumulator $e_i(X)$;
-  `AnchorLift` ($\Sc$) is the flyclient segment spanning that epoch
-  *boundary-to-boundary* (both ends are end-of-epoch anchors);
-  `EpochEvidenceFuse` ($\Sc$) fuses the two into one `EpochHeader`. It is
+  syncs. `EpochAccCert` ($\Sc$) folds one ordered sequence of per-stamp
+  accumulators into both epoch accumulator $e_i(X)$ and the corresponding anchor
+  segment. `AnchorLift` ($\Sc$) authenticates that segment's boundary anchors
+  against the miner-authenticated Flyclient headers for epoch $i$;
+  `EpochEvidenceFuse` ($\Sc$) equality-checks the epoch and both endpoints before
+  fusing the two into one `EpochHeader`. It is
   shareable because its start anchor, the canonical end-of-$(i\!-\!1)$ boundary,
   is the same anchor every note must reach before it can start a cross-epoch lift
-  there.
+  there. The Flyclient header is already authenticated by Zcash consensus; these
+  steps consume that authenticated root rather than introduce another
+  authentication mechanism.
 - **Spendability** (inclusion *and* exclusion together) is carried by the
   advancing `UnspentHeader`. `UnspentInit` ($\Uc$) proves $\cm$ is in its
   creating stamp, derives the same $\kappa=H^{\mathsf{bind}}(\nk,\cm)$,
@@ -1406,9 +1427,11 @@ proves a sub-statement of the same bundle-level statement.
   `EpochHeader` to fast-track against. It is a single per-stamp step to the first
   anchor in $e$, extending inclusion and running one exclusion test that $\nf_e$
   (already revealed in `SpendCoreHeader`) is absent up to that anchor.
-- `BundleAssemble` ($\Uc$) then fuses `SpendHeader` from the `SpendBind` step
-  and `OutputHeader` from the `OutputCore` step, both carrying their action
-  proofs; and folds in the [accumulator integrity](#bundle) check, emitting the
+- `SpendBind` and `OutputCore` both emit the common `ActionHeader`, carrying one
+  action description, its two tachygrams, and the chosen bundle anchor and epoch.
+  Repeated `BundleAssemble` steps recursively merge any number of action or
+  partial-bundle headers, concatenate their action descriptions and tachygram
+  lists, and multiply their tachygram polynomials. The final merge emits the
   published stamp.
 
 <a id="step-range"></a>
@@ -1473,13 +1496,12 @@ the end-of-epoch-$i$ boundary anchor.
 | ------ | ------ | ----- |
 | `NfHeader` | $(\kappa,R,S,\mathsf{Com}(g_n^\Uc),n,b_n)$ | $\Uc$ |
 | `SpendCoreHeader` | $(\kappa,R,S,\mathsf{Com}(g_R^\Uc),\cv,\rk,\nf_e,\nf_{e+1},e)$ | $\Uc$ |
-| `AnchorChainHeader` | $(\mathsf{anchor}_\mathsf{start}, \mathsf{anchor}_\mathsf{end})$ | $\Sc$ |
-| `EpochAccHeader` | $(i, \mathsf{Com}(e_i(X)))$ | $\Sc$ |
+| `AnchorChainHeader` | $(i,\mathsf{anchor}_{i-1},\mathsf{anchor}_i)$ | $\Sc$ |
+| `EpochAccHeader` | $(i,\mathsf{anchor}_{i-1},\mathsf{anchor}_i,\mathsf{Com}(e_i(X)))$ | $\Sc$ |
 | `EpochHeader` | $(i, \mathsf{anchor}_{i-1}, \mathsf{anchor}_i, \mathsf{Com}(e_i(X)))$ | $\Sc$ |
 | `UnspentHeader` | $(\kappa,S,\mathsf{Com}(g_m^\Oc),m,\mathsf{anchor},j)$ | $\Uc/\Oc$ |
-| `SpendHeader` | $(\cv, \rk, \nf_e, \nf_{e+1}, \mathsf{anchor}, e)$ | $\Uc$ |
-| `OutputHeader` | $(\cm, \tg_\bot, \cv, \rk)$ | $\Uc$ |
-| `StampHeader` | $(\set{(\cv_i, \rk_i)}, \tgacc, \mathsf{anchor}, e)$ | $\Uc$ |
+| `ActionHeader` | $(\cv,\rk,\tg_0,\tg_1,\mathsf{anchor},e)$ | $\Uc$ |
+| `StampHeader` | $(\set{(\cv_i,\rk_i)},\set{\tg_i},\tgacc,\mathsf{anchor},e)$ | $\Uc$ |
 
 No header the OSS holds (`AnchorChainHeader`, `EpochHeader`, `UnspentHeader`)
 carries $\cm$, $\nk$, or $\psi$: the OSS works with the explicit delegated
@@ -1498,15 +1520,15 @@ Left and Right are PCD inputs; a dash marks a leaf with witness only.
 | ---- | ----- | ---- | ----- | ------ | ------- |
 | `NfDerive` | $\Uc$ | `NfHeader`/— | — | `NfHeader` | $\mathsf{Note},\nk$, next nullifier batch, full old and updated sequence polynomials |
 | `SpendCore` | $\Uc$ | `NfHeader` | — | `SpendCoreHeader` | $\mathsf{Note}, (\ak,\nk), (\alpha,\theta,\rcv)$ |
-| `OutputCore` | $\Uc$ | — | — | `OutputHeader` | $\mathsf{Note}, r_\bot, (\alpha,\theta,\rcv)$ |
-| `EpochAccCert` | $\Sc$ | — | — | `EpochAccHeader` | epoch $i$'s per-stamp accumulators |
-| `AnchorLift` | $\Sc$ | — | — | `AnchorChainHeader` | end-of-epoch anchors, flyclient samples |
+| `OutputCore` | $\Uc$ | — | — | `ActionHeader` | $\mathsf{Note}, r_\bot, (\alpha,\theta,\rcv)$ |
+| `EpochAccCert` | $\Sc$ | — | — | `EpochAccHeader` | epoch $i$'s ordered per-stamp accumulator polynomials |
+| `AnchorLift` | $\Sc$ | — | — | `AnchorChainHeader` | epoch boundary anchors, Flyclient authentication paths |
 | `EpochEvidenceFuse` | $\Sc$ | `AnchorChainHeader` | `EpochAccHeader` | `EpochHeader` | — |
 | `UnspentInit` | $\Uc$ | — | — | `UnspentHeader` | $\mathsf{Note},\nk$, first delegated $\nf_{s_0}$, creating stamp opening |
 | `InEpochLift` | $\Uc/\Oc$ | `UnspentHeader` | — | `UnspentHeader` | delegated $\nf_j$, full sequence polynomial, per-stamp accumulators and anchors |
 | `CrossEpochLift` | $\Oc$ | `UnspentHeader` | `EpochHeader` | `UnspentHeader` | delegated $\nf_i$, full old and updated sequence polynomials, epoch polynomial $e_i(X)$ |
-| `SpendBind` | $\Uc$ | `SpendCoreHeader` | `UnspentHeader` | `SpendHeader` | sequence polynomials, single-stamp $f^\tg(X)$ and anchor link |
-| `BundleAssemble` | $\Uc$ | `SpendHeader` | `OutputHeader` | `StampHeader` | multiset gadgets |
+| `SpendBind` | $\Uc$ | `SpendCoreHeader` | `UnspentHeader` | `ActionHeader` | sequence polynomials, single-stamp $f^\tg(X)$ and anchor link |
+| `BundleAssemble` | $\Uc$ | `ActionHeader`/`StampHeader` | `ActionHeader`/`StampHeader`/— | `StampHeader` | full child and product tachygram polynomials |
 
 **Bridging checks.** Each fold's equality checks across its two headers:
 
@@ -1523,16 +1545,21 @@ Left and Right are PCD inputs; a dash marks a leaf with witness only.
   commitment to belong to *this* note. It separately derives
   $\nf_e,\nf_{e+1}$ from the same $(\nk,\psi)$ and emits
   $\mathsf{Com}(g_R^\Uc)$.
-- `AnchorLift` proves the start anchor connects to the end anchor through the
-  hash chain (flyclient-sampled); a pure chain fact, no note data.
-- `EpochEvidenceFuse` checks the `AnchorChainHeader` spans epoch $i$
-  boundary-to-boundary and matches the `EpochAccHeader`'s epoch $i$, then emits
-  the shared `EpochHeader` binding that boundary anchor pair to the accumulator.
-  Being note-independent, it is built once and reused across all notes.
+- `EpochAccCert` uses the same ordered per-stamp accumulator sequence to compute
+  $e_i(X)=\prod_t f^\tg_{i,t}(X)$ and to hash from
+  $\mathsf{anchor}_{i-1}$ to $\mathsf{anchor}_i$. Its header binds the product to
+  that exact anchor segment.
+- `AnchorLift` authenticates $(i,\mathsf{anchor}_{i-1},\mathsf{anchor}_i)$ against
+  the miner-authenticated Flyclient headers; a pure chain fact, no note data.
+- `EpochEvidenceFuse` checks both children carry the same
+  $(i,\mathsf{anchor}_{i-1},\mathsf{anchor}_i)$, then emits the shared
+  `EpochHeader`. Being note-independent, it is built once and reused across all
+  notes.
 - `UnspentInit` checks $\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$, derives
   $\kappa=H^{\mathsf{bind}}(\nk,\cm)$, and proves $\cm$ lies in its creating
-  stamp's tachygram set. It sets the anchor just past that stamp, takes the first
-  explicitly delegated nullifier as the current value, and commits to
+  stamp's tachygram set. It checks that stamp and $s_0$ belong to the same epoch,
+  sets the anchor just past the stamp, takes the first explicitly delegated
+  nullifier as the current value, and commits to
   $g_1^\Oc(X)=\nf_{s_0}$, with frontier $j=s_0$. Its derivation is bound by the
   masked-polynomial equality at `SpendBind`.
 - `InEpochLift` consumes the epoch's stamps one at a time as witness: each
@@ -1558,11 +1585,17 @@ Left and Right are PCD inputs; a dash marks a leaf with witness only.
   (already revealed in `SpendCoreHeader`) absent up to that anchor. The rest of
   epoch $e$ and epoch $e+1$ fall to consensus's live-window check on
   $(\nf_e, \nf_{e+1})$. That the anchor genuinely lies in epoch $e$ is the external
-  [anchor-genuineness](#consensus-rule) check. It emits `SpendHeader`.
-- `BundleAssemble` checks both children share the bundle $\mathsf{anchor}$ and
-  multiplies their tachygram accumulators (multiset union,
-  [verified at a random point](#acc-correct)) into $\tgacc$, collecting their
-  $(\cv,\rk)$.
+  [anchor-genuineness](#consensus-rule) check. It emits `ActionHeader` with
+  $(\tg_0,\tg_1)=(\nf_e,\nf_{e+1})$.
+- `OutputCore` emits the same `ActionHeader` shape with
+  $(\tg_0,\tg_1)=(\cm,\tg_\bot)$; its $\mathsf{anchor},e$ are the chosen bundle
+  context and carry no output-specific claim.
+- Each `BundleAssemble` checks its children share $\mathsf{anchor},e$,
+  concatenates their action descriptions in wire order and their tachygram
+  lists, and multiplies their tachygram polynomials into $\tgacc$ (multiset
+  union, verified at a random point). A one-action bundle uses the empty
+  polynomial $1$ as its right input; further steps recursively merge partial
+  `StampHeader`s.
 
 <a id="prooftree-diagram">**The tree.**</a>
 For a one-spend, one-output transaction (colored by proving party). Private
@@ -1589,7 +1622,7 @@ flowchart BT
   ulift["CrossEpochLift<br/>× full epochs"]:::o
   sbind[SpendBind]:::u
   ocore[OutputCore]:::u
-  bmerge[BundleAssemble]:::u
+  bmerge["BundleAssemble<br/>× action tree"]:::u
   stamp((stamp))
 
   nfderive -->|NfHeader| score
@@ -1599,8 +1632,8 @@ flowchart BT
   ulift -->|UnspentHeader| sbind
   score -->|SpendCoreHeader| sbind
 
-  sbind -->|SpendHeader| bmerge
-  ocore -->|OutputHeader| bmerge
+  sbind -->|ActionHeader| bmerge
+  ocore -->|ActionHeader| bmerge
   bmerge -->|StampHeader| stamp
 ```
 
@@ -1627,9 +1660,9 @@ wallet and the OSS.
    `NfDerive` and `SpendCore` branches supply $\mathsf{Com}(g_R^\Uc)$ and the
    spend-time nullifiers $(\nf_e,\nf_{e+1})$. `SpendBind` matches $\kappa$, the
    ranges and lengths, then checks $g_R^\Uc(X)=X^{r_1-s_1}g_S^\Oc(X)$ before
-   running the [final lift into epoch $e$](#lift-e). The output side is a lone
-   `OutputCore`, which `BundleAssemble` folds with the bound spend into the
-   published stamp.
+   running the [final lift into epoch $e$](#lift-e). Each `SpendBind` or
+   `OutputCore` emits an `ActionHeader`; recursive `BundleAssemble` steps fold all
+   such headers into the published stamp.
 
 > Note: at every hand-off across a trust boundary, the carried PCD proof is
 > [re-randomized](https://tachyon.z.cash/ragu/implementation/proofs.html#rerandomization)
@@ -1706,6 +1739,8 @@ the prover knows the secret witness:
 
 - the child PCD proofs carried by the two input headers
 - the explicitly delegated nullifier $\nf_i$
+- the full old and updated sequence polynomials
+  $g_m^\Oc(X),g_{m+1}^\Oc(X)$
 - the epoch polynomial $e_i(X)$ for epoch $i$
 
 such that the following conditions hold:
@@ -1738,7 +1773,7 @@ A valid instance assures that, given the public input:
 - the [`SpendCoreHeader`](#headers)
   $(\kappa,R,S,\mathsf{Com}(g_R^\Uc),\cv,\rk,\nf_e,\nf_{e+1},e)$,
   already revealing the spend nullifier $\nf_e$ and carrying the masked commitment
-- the output [`SpendHeader`](#headers)
+- the output [`ActionHeader`](#headers)
   $(\cv, \rk, \nf_e, \nf_{e+1}, \mathsf{anchor}, e)$, with $\mathsf{anchor}$ the
   first anchor reached inside epoch $e$
 
@@ -1777,8 +1812,8 @@ live-window check](#consensus-rule) on $(\nf_e, \nf_{e+1})$;
 
 Aggregation folds several finished stamps into one, run by any aggregator or miner.
 It is a distinct step from [`BundleAssemble`](#steps): where `BundleAssemble`
-composes one transaction's `SpendHeader`s and `OutputHeader`s into that
-transaction's stamp, aggregation merges the [`StampHeader`](#headers)s of
+composes one transaction's `ActionHeader`s into that transaction's stamp,
+aggregation merges the [`StampHeader`](#headers)s of
 already-stamped transactions — the same multiset-union-by-product, one level up. It
 first lifts each stamp's independently chosen anchor onto a common one; afterward
 each constituent's stamp can be replaced by a reference to the aggregate's `wtxid`.
@@ -1786,10 +1821,11 @@ each constituent's stamp can be replaced by a reference to the aggregate's `wtxi
 A valid Aggregation step assures that, given the public input:
 
 - the constituent `StampHeader`s $\set{\mathsf{StampHeader}_k}$, each
-  $(\set{(\cv_i, \rk_i)}_k, \tgacc_k, \mathsf{anchor}_k, e)$
+  $(\set{(\cv_i,\rk_i)}_k,\set{\tg_i}_k,\tgacc_k,\mathsf{anchor}_k,e)$
 - the output aggregate `StampHeader`
-  $(\set{(\cv_i, \rk_i)}, \tgacc, \mathsf{anchor}^\ast, e)$, the anchors aligned to a
-  common $\mathsf{anchor}^\ast$ and the tachygrams unioned into $\tgacc$
+  $(\set{(\cv_i,\rk_i)},\set{\tg_i},\tgacc,\mathsf{anchor}^\ast,e)$, the anchors
+  aligned to a common $\mathsf{anchor}^\ast$ and the tachygram lists and
+  accumulators unioned
 
 the prover knows the secret witness:
 
@@ -1805,8 +1841,9 @@ such that the following conditions hold:
 - **Anchor alignment**: each $\mathsf{anchor}_k$ lifts forward to the common
   $\mathsf{anchor}^\ast$ — an anchor-only lift adding no tachygram, so inclusion
   carries over unchanged.
-- **Multiset union**: $\tgacc = \prod_k \tgacc_k$, the [multiset union](#union) of
-  the constituents' tachygrams, [verified at a random point](#acc-correct).
+- **Multiset union**: $\set{\tg_i}$ is the union of the constituent tachygram
+  lists and $\tgacc=\prod_k\tgacc_k$ is its [multiset accumulator](#union),
+  verified at a random point.
 - **Action aggregation**: the aggregate action list $\set{(\cv_i, \rk_i)}$ concatenates
   the constituents'.
 
