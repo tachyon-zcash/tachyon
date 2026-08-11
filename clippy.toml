@@ -15,3 +15,9 @@ disallowed-macros = [
   { path = "core::cmp::Eq", reason = "please use `derive_more` instead" },
 ]
 enforced-import-renames = [{ path = "derive_more::Eq", rename = "TotalEq" }]
+
+# error handling
+disallowed-methods = [
+  { path = "subtle::CtOption::expect", replacement = "into_option().expect", reason = "convert to `Option` explicitly" },
+  { path = "subtle::CtOption::unwrap", replacement = "into_option().unwrap", reason = "convert to `Option` explicitly" },
+]

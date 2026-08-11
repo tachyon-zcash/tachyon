@@ -62,6 +62,8 @@ unreachable = "allow"              # awkward to disable
 unwrap_used = "forbid"
 # expect() is a speed bump; allowed in tests via clippy.toml.
 expect_used = "deny"
+# CtOption has its own unwrap/expect; see clippy.toml.
+disallowed_methods = "forbid"
 # result-returning fns must not panic or unwrap/expect internally.
 panic_in_result_fn = "forbid"
 unwrap_in_result = "forbid"

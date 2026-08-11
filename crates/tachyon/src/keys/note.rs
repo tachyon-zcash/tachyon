@@ -86,7 +86,13 @@ impl PaymentKey {
     #[must_use]
     pub fn derive(ak: &SpendValidatingKey, nk: &NullifierKey) -> Self {
         let ak_bytes: [u8; 32] = ak.0.into();
-        let ak_fp = Fp::from_repr(ak_bytes).expect("ak bytes should be a valid Fp");
+        #[expect(
+            clippy::expect_used,
+            reason = "ask is sign-normalized at derivation, so the y-sign bit is clear"
+        )]
+        let ak_fp = Fp::from_repr(ak_bytes)
+            .into_option()
+            .expect("ak bytes should be a valid Fp");
         Self(poseidon::payment_key(ak_fp, nk.0))
     }
 }
