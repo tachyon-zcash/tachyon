@@ -292,30 +292,30 @@ following workflow and characteristics:
    the list $[(i,\nf_i)]_{i\in S}$. The OSS may immediately begin proving their
    exclusions, implicitly trusting these nullifier values.
    In parallel, the user batch-proves all derivations in $R$.
-3. As the OSS incrementally proves the exclusions in epoch order, it
-   *verifiably* collects proven nullifiers into a polynomial-based accumulator:
+3. As the OSS incrementally proves the exclusions in epoch order, it collects
+   the tested nullifiers into an ordered sequence polynomial:
    $$
    g_S(X) := \sum_{i=0}^{|S| - 1} \nf_{s_0 + i} \cdot X^{|S|-1-i}
    $$
-   We use the *Horner-ordering* for its simple, $i$-independent relation during
-   the accumulation of the $i$-th nullifier. For example, let $g(X)$ be the
-   polynomial after accumulating nullifiers in the subrange $[s_0, s_m)$ for
-   some $s_m < s_1$. Then appending the next value $\nf_{s_m}$ gives an updated
-   accumulator $g'(X)$:
+   We use the *Horner-ordering* for its simple, $i$-independent relation when
+   extending the polynomial with the $i$-th nullifier. For example, let $g(X)$
+   encode the tested nullifiers in the subrange $[s_0,s_m)$ for
+   some $s_m < s_1$. Then adding the next value $\nf_{s_m}$ gives an updated
+   sequence polynomial $g'(X)$:
    $$
    g'(X) = g(X) \cdot X + \nf_{s_m}
    $$
 
-   This incremental update relation can be enforced efficiently in Ragu using
-   its *online polynomial oracles*[^polyoracle] and evaluating this identity at
-   a random point.
-4. Upon receiving the proof and the $g_S(X)$ commitment from the OSS, the user
-   fuses it with their nullifier derivation proof (generated locally). Importantly,
-   the user further enforces that nullifiers accumulated in $g_S(X)$ are a
+   The OSS maintains the full polynomial and its commitment. Ragu certifies each
+   update efficiently through its *online polynomial-oracle* capability[^polyoracle],
+   by testing the identity at a random point.
+4. Upon receiving the proof and $\mathsf{Com}(g_S)$ from the OSS, the user fuses
+   it with their nullifier derivation proof (generated locally). Importantly,
+   the user further enforces that nullifiers encoded by $g_S(X)$ are a
    *subset/sub-sequence* of $\{\nf_i\}_{i\in R}$ whose derivations are proven.
 
    The user proves the "sub-sequence relation" by constructing a *masked
-   accumulator* $g_R(X)$ that scans through all of
+   sequence polynomial* $g_R(X)$ that scans through all of
    $\{\nf_i\}_{i\in R=[r_0, r_1)}$, while only those within the
    $S=[s_0,s_1)$ subrange contribute meaningfully.
    To clarify, the polynomial is constructed natively outside the circuit, and
@@ -340,16 +340,16 @@ following workflow and characteristics:
    Note that the construction integrity is proven locally as part of the nullifier
    derivation, independent of the OSS, since the user is aware of the ranges
    $R, S$ in advance. The exponent $r_1-s_1$ is the number of masked positions
-   *after* $S$: Horner-scanning those trailing zeros multiplies the accumulated
+   *after* $S$: Horner-scanning those trailing zeros multiplies the resulting
    $g_S(X)$ by $X$ once per position. The sub-sequence relation is only enforced
    during proof folding after the user gets back the exclusion proof from the OSS.
    Furthermore, users may split the construction of $g_R(X)$ into multiple
    PCD steps due to the circuit size limit. Similar to $g_S(X)$, we can check
-   the incremental accumulation of $\nf_i$ easily thanks to the Horner-ordering.
-   As a generalization, let $g(X)$ be the accumulator after proving the subrange
-   $[r_0, r_m)$ for some $r_m<r_1$. In the next step, the user proves the
+   each incremental extension easily thanks to the Horner-ordering.
+   As a generalization, let $g(X)$ be the sequence polynomial after proving the
+   subrange $[r_0,r_m)$ for some $r_m<r_1$. In the next step, the user proves the
    derivation of the next $\ell$ values $\{\nf_{r_m},\ldots,\nf_{r_m+\ell-1}\}$,
-   then checks the updated accumulator $g'(X)$ via:
+   then checks the updated polynomial $g'(X)$ via:
    $$
    g'(X) = g(X)\cdot X^\ell
    + \sum_{j=0}^{\ell-1} b_{r_m - r_0 +j} \cdot \nf_{r_m+j}\cdot X^{\ell-1-j}.
@@ -376,11 +376,16 @@ following workflow and characteristics:
    \end{cases}
    $$
 
-   This check is probabilistically sound under Ragu's binding, degree-bounded
-   polynomial oracles. If the two committed polynomials do not satisfy the
+   This check is probabilistically sound for binding, degree-bounded polynomial
+   commitments. If the two committed polynomials do not satisfy the
    claimed relation, their difference is a nonzero polynomial of degree at most
    $|R|-1$, so it passes an independently sampled evaluation point with
    probability at most $(|R|-1)/|\mathbb{F}|$.
+
+$\mathsf{Com}(g_S)$ and $\mathsf{Com}(g_R)$ are **nullifier commitments**. They
+bind ordered coefficients for construction and sub-sequence checks. The
+[tachygram accumulator](#acc) separately commits to an unordered multiset for
+membership and non-membership tests.
    
 Our leading candidate among [all options](./nf-analysis.md) uses off-the-shelf
 algebraic hash function (like Poseidon) as the nullifier polynomial. This
@@ -1020,8 +1025,8 @@ $\{(i,\nf_i)\}_{i\in S}$ for exactly the epoch range $S$ to be synced. The OSS
 learns no key material and therefore nothing about epochs outside that list,
 especially the eventual spend nullifier $\nf_e$. At the same time, the wallet
 starts proving the derivation of a circuit-efficient covering range
-$R\supseteq S$ and builds the masked user-side [nullifier polynomial
-oracle](#nf-flow).
+$R\supseteq S$ and builds the masked user-side [nullifier
+commitment](#nf-flow).
 
 2. **Lift the spendability proof.** Maintaining the proof means advancing its
 [anchor](#anchor) along the anchor chain while preserving both halves of the
@@ -1035,17 +1040,16 @@ claim:
     extends that anchor to the new one along the chain's hash links.
     - Within an epoch this is an [in-epoch lift](#in-e); crossing a boundary is a
     [cross-epoch lift](#cross-e), which consumes the explicitly supplied
-    nullifier for the new epoch, checks its exclusion, and appends it to the OSS's
-    polynomial oracle. The OSS repeats this epoch by epoch up to $e-1$ and returns
-    the synced proof. It deliberately stops one epoch short of the spend: lifting
-    only through $e-1$ keeps $\nf_e,\nf_{e+1}$ outside the delegated list and the
-    eventual spend opaque to the service.
+    nullifier for the new epoch, checks its exclusion, and extends the delegated
+    [nullifier commitment](#nf-flow). The OSS repeats this epoch by epoch up to
+    $e-1$ and returns the synced proof. It deliberately stops one epoch short of
+    the spend: lifting only through $e-1$ keeps $\nf_e,\nf_{e+1}$ outside the
+    delegated list and the eventual spend opaque to the service.
 
 3. **Generate the stamp.** The OSS hands back a proof synced through $e-1$; the
-wallet first fuses it with its derivation proof. `SpendBind` checks the same
-$\kappa=H^{\mathsf{bind}}(\nk,\cm)$ on both branches and uses the polynomial-oracle
-relation to establish that the OSS-tested vector is exactly the delegated slice
-of the user-derived range. The wallet then performs the final cross-epoch lift
+wallet first fuses it with its derivation proof, checking that the ordered
+nullifiers tested by the OSS are exactly the delegated sub-sequence of the
+correctly derived range. The wallet then performs the final cross-epoch lift
 into the spending epoch $e$ *itself*, keeping the spend-epoch nullifiers private,
 and establishes the remaining spend-specific facts: the integrity of
 $\nf_e,\nf_{e+1}$, the output commitments, and the correct computation of the
@@ -1290,14 +1294,14 @@ such that the following conditions hold:
   absent in every epoch up to the anchor.
   - epoch accumulator integrity ($\Sc$): each [epoch accumulator $e(X)$](#epoch-acc) is
     the correct product of the per-stamp accumulators fixed in the anchor chain.
-  - delegated-vector integrity ($\Uc$): for declared ranges $S\subseteq R$, the
-    user's `NfDerive` proof derives every nullifier in $R$ and Horner-constructs
-    the masked polynomial $g_R^\Uc(X)$, using coefficient $\nf_i$ exactly when
-    $i\in S$ and zero otherwise.
-  - used-vector integrity ($\Oc$): the OSS appends every nullifier it actually
-    tests, in epoch order, to $g_S^\Oc(X)$; `SpendBind` proves
-    $g_R^\Uc(X)=X^{r_1-s_1}g_S^\Oc(X)$, so it is exactly the range selected by
-    the user's mask.
+  - masked nullifier commitment ($\Uc$): for declared ranges $S\subseteq R$,
+    every nullifier in $R$ is correctly derived, while the [masked
+    commitment](#nf-flow) includes coefficient $\nf_i$ exactly when $i\in S$
+    and zero otherwise.
+  - delegated nullifier commitment ($\Oc$): every nullifier tested by the OSS is
+    [committed](#nf-flow) as the next coefficient in epoch order.
+  - sub-sequence consistency ($\Uc$): the masked and delegated commitments encode
+    the same ordered nullifiers over $S$.
   - epoched nullifier non-membership ($\Oc$): each $\nf_i$ satisfies $e_i(\nf_i) \neq 0$
     against the epoch accumulator $e_i(X)$ (the [QR-filter trick](#qr-trick) is an
     orthogonal refinement of this leaf test, taking it from linear to sublinear in
@@ -1346,7 +1350,7 @@ step's output is its **header** (the "data" of proof-carrying data), the public
 input that captures the computation so far. Headers flow upward, from children
 to parents. A parent **bridges** its two children by loading both headers and
 equality-checking the fields they must agree on (a shared $\mathsf{anchor}$, the
-same note tag $\kappa$, range containment and oracle lengths, contiguous epochs),
+same note tag $\kappa$, range containment and sequence lengths, contiguous epochs),
 then emits its own. Enough bridging makes the decomposition sound: every step
 proves a sub-statement of the same bundle-level statement.
 
@@ -1354,8 +1358,9 @@ proves a sub-statement of the same bundle-level statement.
   one step, `OutputCore`.
 - `NfDerive` ($\Uc$) proves the nullifiers of the covering range $R$ in bounded
   batches and Horner-scans them into the masked $g_R^\Uc(X)$: a derived value is
-  accumulated exactly on the delegated subrange $S$, while positions outside
-  $S$ contribute zero. It eventually emits the commitment and processed length.
+  included exactly on the delegated subrange $S$, while positions outside $S$
+  contribute zero. It eventually emits the masked commitment and processed
+  length.
   It also emits the
   **note tag**
   $\kappa=H^{\mathsf{bind}}(\nk,\cm)$, a domain-separated Poseidon hash that hides
@@ -1363,9 +1368,8 @@ proves a sub-statement of the same bundle-level statement.
 - The remaining $\Uc$ [Spend conditions](#spend) (value, note, payment-key, and
   authority integrity) are cheap and all tied to one note, so they share a step,
   `SpendCore`. It consumes the completed `NfDerive` proof and re-derives
-  $\kappa$, then separately derives $\nf_e,\nf_{e+1}$. This ties the masked range,
-  spend-time nullifiers, value, and authority to the same note without requiring
-  epochs $e,e+1$ to lie in $R$.
+  $\kappa$, then derives $\nf_e,\nf_{e+1}$. The masked range, spend-time
+  nullifiers, value, and authority are thereby tied to the same note.
 - The pool-history evidence for a *full* epoch is **note-independent**, so it
   factors into a shared sub-tree, built once and reused by every note the OSS
   syncs. `EpochAccCert` ($\Sc$) certifies epoch $i$'s accumulator $e_i(X)$;
@@ -1375,28 +1379,28 @@ proves a sub-statement of the same bundle-level statement.
   shareable because its start anchor, the canonical end-of-$(i\!-\!1)$ boundary,
   is the same anchor every note must reach before it can start a cross-epoch lift
   there.
-- **Spendability** (inclusion *and* exclusion together) is carried as one
-  advancing object, the `UnspentHeader`, instead of two subtrees fused only at
-  the end. `UnspentInit` ($\Uc$) proves $\cm$ is in its creating stamp, derives
-  the same $\kappa=H^{\mathsf{bind}}(\nk,\cm)$, initializes the OSS polynomial
-  oracle, and emits the first `UnspentHeader` at an anchor just past the creation
-  block (still mid-epoch). Stamp lift steps then advance it in **lock-step**,
-  inclusion and exclusion moving together. [`InEpochLift`](#in-e) ($\Uc/\Oc$)
+- **Spendability** (inclusion *and* exclusion together) is carried by the
+  advancing `UnspentHeader`. `UnspentInit` ($\Uc$) proves $\cm$ is in its
+  creating stamp, derives the same $\kappa=H^{\mathsf{bind}}(\nk,\cm)$,
+  initializes the delegated sequence
+  polynomial and commitment, and emits the first `UnspentHeader` at an anchor
+  just past the creation block (still mid-epoch). Stamp lift steps then advance
+  it in **lock-step**, with inclusion and exclusion moving together.
+  [`InEpochLift`](#in-e) ($\Uc/\Oc$)
   walks the anchor forward one stamp at a time and tests the current epoch's
-  explicitly delegated nullifier without appending it again. Users and OSS run
-  it where no shared `EpochHeader` applies. [`CrossEpochLift`](#cross-e) ($\Oc$)
+  explicitly delegated nullifier while preserving the commitment. Users and OSS
+  run it where no shared `EpochHeader` applies. [`CrossEpochLift`](#cross-e) ($\Oc$)
   fast-tracks each *full* intermediate epoch: it consumes the shared
-  `EpochHeader`, appends that epoch's supplied nullifier to $g_S^\Oc(X)$ through
-  an online-oracle identity, tests it against the whole-epoch accumulator, and
-  jumps the anchor boundary-to-boundary. Both lifts are $\cm$-free and carry only
-  $\kappa$, the OSS oracle state, the current nullifier, and public range/anchor
-  metadata.
+  `EpochHeader`, Horner-extends $g_S^\Oc(X)$ with that epoch's supplied nullifier,
+  has Ragu certify that update, tests the value against the whole-epoch
+  accumulator, and jumps the anchor boundary-to-boundary. Both lifts are
+  $\cm$-free and carry only $\kappa$, the delegated commitment, and public
+  range/anchor metadata.
 - `SpendBind` ($\Uc$) fuses `SpendCore` with the `UnspentHeader`. It checks they
   carry the same $\kappa$ and $S$, checks $S\subseteq R$, then invokes the
-  polynomial oracle to check
+  polynomial-oracle capability to check
   $g_R^\Uc(X)=X^{r_1-s_1}g_S^\Oc(X)$. This binds every OSS exclusion to the
-  correctly derived nullifier at the same position without a separate
-  polynomial-decomposition argument. It then performs [a final
+  correctly derived nullifier at the same position. It then performs [a final
   cross-epoch lift](#lift-e) carrying the anchor from the $e\!-\!1$ boundary into
   epoch $e$. This last lift is special: epoch $e$ is still open, so there is no
   `EpochHeader` to fast-track against. It is a single per-stamp step to the first
@@ -1428,9 +1432,9 @@ $\cm$ makes it unique to the note even when a sender reuses $\psi$.
 
 Two independent bridges meet at `SpendBind`. First, matching
 $\kappa=H^{\mathsf{bind}}(\nk,\cm)$ ties the note opened by `SpendCore` to the
-commitment proven included by `UnspentInit`. Second, the polynomial-oracle
-equality ties the ordered vector the OSS actually tested to the positions selected
-by the mask constructed in `NfDerive`. Together
+commitment proven included by `UnspentInit`. Second, the polynomial identity
+tested by Ragu ties the ordered vector the OSS actually tested to the positions
+selected by the mask constructed in `NfDerive`. Together
 they prevent either half from being spliced: an
 included note cannot borrow another note's derived nullifiers, and a correctly
 derived vector cannot replace the values used in the exclusion proof. Including
@@ -1460,8 +1464,8 @@ throughput win, touching neither soundness nor privacy.
 <a id="headers">**Headers.**</a> Each header carries only its binding fields.
 $\kappa=H^{\mathsf{bind}}(\nk,\cm)$ is the note tag, $S$ the delegated range,
 $R$ its user-proven covering range, $n$ the number of positions the user has
-Horner-scanned, $b_n$ the mask state for the next position, $m$ the current
-length of the OSS accumulator, $j$ the current exclusion frontier,
+Horner-scanned, $b_n$ the mask state for the next position, $m$ the number of
+nullifiers in the delegated commitment, $j$ the current exclusion frontier,
 $\mathsf{Com}(e_i(X))$ the committed epoch accumulator, and $\mathsf{anchor}_i$
 the end-of-epoch-$i$ boundary anchor.
 
@@ -1472,32 +1476,36 @@ the end-of-epoch-$i$ boundary anchor.
 | `AnchorChainHeader` | $(\mathsf{anchor}_\mathsf{start}, \mathsf{anchor}_\mathsf{end})$ | $\Sc$ |
 | `EpochAccHeader` | $(i, \mathsf{Com}(e_i(X)))$ | $\Sc$ |
 | `EpochHeader` | $(i, \mathsf{anchor}_{i-1}, \mathsf{anchor}_i, \mathsf{Com}(e_i(X)))$ | $\Sc$ |
-| `UnspentHeader` | $(\kappa,S,\mathsf{Com}(g_m^\Oc),m,\nf_j,\mathsf{anchor},j)$ | $\Uc/\Oc$ |
+| `UnspentHeader` | $(\kappa,S,\mathsf{Com}(g_m^\Oc),m,\mathsf{anchor},j)$ | $\Uc/\Oc$ |
 | `SpendHeader` | $(\cv, \rk, \nf_e, \nf_{e+1}, \mathsf{anchor}, e)$ | $\Uc$ |
 | `OutputHeader` | $(\cm, \tg_\bot, \cv, \rk)$ | $\Uc$ |
 | `StampHeader` | $(\set{(\cv_i, \rk_i)}, \tgacc, \mathsf{anchor}, e)$ | $\Uc$ |
 
 No header the OSS holds (`AnchorChainHeader`, `EpochHeader`, `UnspentHeader`)
 carries $\cm$, $\nk$, or $\psi$: the OSS works with the explicit delegated
-nullifiers, the opaque tag $\kappa$, polynomial-oracle commitments, and public
-range/anchor metadata. The spent note's $\cm$ stays a witness inside the
-recursion and re-binds through $\kappa$ at `SpendBind`.
+nullifiers as private witness, the opaque tag $\kappa$, polynomial commitments,
+and public range/anchor metadata. The spent note's $\cm$ stays a witness inside
+the recursion and re-binds through $\kappa$ at `SpendBind`.
+
+`UnspentHeader` carries the delegated range, sequence commitment and length,
+anchor, and exclusion frontier. The current $\nf_j$ is a private witness, bound
+to the sequence by $g_m^\Oc(0)=\nf_j$ whenever it is used.
 
 <a id="steps">**Steps.**</a>
 Left and Right are PCD inputs; a dash marks a leaf with witness only.
 
 | Step | Party | Left | Right | Output | Witness |
 | ---- | ----- | ---- | ----- | ------ | ------- |
-| `NfDerive` | $\Uc$ | `NfHeader`/— | — | `NfHeader` | $\mathsf{Note},\nk$, next nullifier batch |
+| `NfDerive` | $\Uc$ | `NfHeader`/— | — | `NfHeader` | $\mathsf{Note},\nk$, next nullifier batch, full old and updated sequence polynomials |
 | `SpendCore` | $\Uc$ | `NfHeader` | — | `SpendCoreHeader` | $\mathsf{Note}, (\ak,\nk), (\alpha,\theta,\rcv)$ |
 | `OutputCore` | $\Uc$ | — | — | `OutputHeader` | $\mathsf{Note}, r_\bot, (\alpha,\theta,\rcv)$ |
 | `EpochAccCert` | $\Sc$ | — | — | `EpochAccHeader` | epoch $i$'s per-stamp accumulators |
 | `AnchorLift` | $\Sc$ | — | — | `AnchorChainHeader` | end-of-epoch anchors, flyclient samples |
 | `EpochEvidenceFuse` | $\Sc$ | `AnchorChainHeader` | `EpochAccHeader` | `EpochHeader` | — |
 | `UnspentInit` | $\Uc$ | — | — | `UnspentHeader` | $\mathsf{Note},\nk$, first delegated $\nf_{s_0}$, creating stamp opening |
-| `InEpochLift` | $\Uc/\Oc$ | `UnspentHeader` | — | `UnspentHeader` | delegated $\nf_j$, per-stamp accumulators and anchors |
-| `CrossEpochLift` | $\Oc$ | `UnspentHeader` | `EpochHeader` | `UnspentHeader` | delegated $\nf_i$, epoch polynomial $e_i(X)$ |
-| `SpendBind` | $\Uc$ | `SpendCoreHeader` | `UnspentHeader` | `SpendHeader` | single-stamp $f^\tg(X)$ and anchor link |
+| `InEpochLift` | $\Uc/\Oc$ | `UnspentHeader` | — | `UnspentHeader` | delegated $\nf_j$, full sequence polynomial, per-stamp accumulators and anchors |
+| `CrossEpochLift` | $\Oc$ | `UnspentHeader` | `EpochHeader` | `UnspentHeader` | delegated $\nf_i$, full old and updated sequence polynomials, epoch polynomial $e_i(X)$ |
+| `SpendBind` | $\Uc$ | `SpendCoreHeader` | `UnspentHeader` | `SpendHeader` | sequence polynomials, single-stamp $f^\tg(X)$ and anchor link |
 | `BundleAssemble` | $\Uc$ | `SpendHeader` | `OutputHeader` | `StampHeader` | multiset gadgets |
 
 **Bridging checks.** Each fold's equality checks across its two headers:
@@ -1506,14 +1514,15 @@ Left and Right are PCD inputs; a dash marks a leaf with witness only.
   advances $n$, and Horner-extends $g_n^\Uc(X)$ with $b_i\nf_{r_0+i}$ in epoch
   order. It consumes the prior $b_n$, applies the boundary transition, and
   exposes the new terminal mask state. The transition is tied to the endpoints
-  of $R$ and $S$; the online-oracle update fixes the masked coefficient values
-  and their order. The leaf starts from $g_0^\Uc(X)=0$, $n=0$, and the
+  of $R$ and $S$; Ragu tests the polynomial update, fixing the masked coefficient
+  values and their order. The leaf starts from $g_0^\Uc(X)=0$, $n=0$, and the
   boundary-derived $b_0$.
 - `SpendCore` recomputes $\cm$ and $H^{\mathsf{bind}}(\nk,\cm)$ from the witnessed
   note, checks the input has reached $n=|R|$ with $b_n=0$, and checks the tag equals
   `NfHeader`'s $\kappa$, forcing the completed masked polynomial and value
   commitment to belong to *this* note. It separately derives
-  $\nf_e,\nf_{e+1}$ from the same $(\nk,\psi)$ and emits $g_R^\Uc(X)$.
+  $\nf_e,\nf_{e+1}$ from the same $(\nk,\psi)$ and emits
+  $\mathsf{Com}(g_R^\Uc)$.
 - `AnchorLift` proves the start anchor connects to the end anchor through the
   hash chain (flyclient-sampled); a pure chain fact, no note data.
 - `EpochEvidenceFuse` checks the `AnchorChainHeader` spans epoch $i$
@@ -1523,23 +1532,22 @@ Left and Right are PCD inputs; a dash marks a leaf with witness only.
 - `UnspentInit` checks $\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$, derives
   $\kappa=H^{\mathsf{bind}}(\nk,\cm)$, and proves $\cm$ lies in its creating
   stamp's tachygram set. It sets the anchor just past that stamp, takes the first
-  explicitly delegated nullifier as the current value, and initializes
-  $g_1^\Oc(X)=\nf_{s_0}$ through the online oracle, with frontier $j=s_0$. It
-  does not prove that nullifier's derivation; the eventual masked-polynomial
-  equality supplies that binding.
+  explicitly delegated nullifier as the current value, and commits to
+  $g_1^\Oc(X)=\nf_{s_0}$, with frontier $j=s_0$. Its derivation is bound by the
+  masked-polynomial equality at `SpendBind`.
 - `InEpochLift` consumes the epoch's stamps one at a time as witness: each
   stamp's tachygram accumulator is folded into the anchor (advancing inclusion
-  and keeping the anchor chain intact) and evaluated at the carried $\nf_j$ to
-  test non-membership. It walks to a later anchor in the same epoch, leaving
-  $\kappa,g_m^\Oc(X),m,\nf_j$ unchanged after the epoch's coefficient has been
-  appended once.
+  and keeping the anchor chain intact). It privately supplies $\nf_j$, binds it
+  as the last committed coefficient by checking $g_m^\Oc(0)=\nf_j$, and tests
+  non-membership. It walks to a later anchor in the same epoch without changing
+  $\kappa,\mathsf{Com}(g_m^\Oc),m$, or $j$.
 - `CrossEpochLift` checks the `EpochHeader`'s start anchor equals the
   `UnspentHeader`'s anchor (so the note's anchor sits at the end-of-$(i\!-\!1)$
   boundary, the start of epoch $i$) and that epoch $i$ is contiguous with the
   frontier $j$. It consumes the supplied $\nf_i$, tests
-  $e_i(\nf_i)\neq0$, and asserts through the polynomial oracle that
+  $e_i(\nf_i)\neq0$, and has Ragu test that
   $g_{m+1}^\Oc(X)=Xg_m^\Oc(X)+\nf_i$. It then jumps the anchor to the end-of-$i$
-  boundary and advances $(j,m,\nf_j)$ to $(i,m+1,\nf_i)$.
+  boundary and advances $(j,m)$ to $(i,m+1)$; $\nf_i$ remains witness-only.
 - `SpendBind` checks `SpendCore`'s $\kappa$ equals the `UnspentHeader`'s
   $\kappa$, both headers carry the same $S$, $S\subseteq R$, $m=|S|$, and
   $g_R^\Uc(X)=X^{r_1-s_1}g_S^\Oc(X)$. It also checks the
@@ -1557,7 +1565,8 @@ Left and Right are PCD inputs; a dash marks a leaf with witness only.
   $(\cv,\rk)$.
 
 <a id="prooftree-diagram">**The tree.**</a>
-For a one-spend, one-output transaction (colored by proving party):
+For a one-spend, one-output transaction (colored by proving party). Private
+witnesses are listed in the [step table](#steps) and omitted here:
 
 ```mermaid
 flowchart BT
@@ -1565,48 +1574,32 @@ flowchart BT
   classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
-  subgraph shared [shared per-epoch evidence, reused across notes]
-    alift["AnchorLift (boundary-to-boundary)"]:::s
-    eacc["EpochAccCert (accumulator)"]:::s
+  subgraph shared [shared epoch evidence]
+    alift[AnchorLift]:::s
+    eacc[EpochAccCert]:::s
     efuse[EpochEvidenceFuse]:::s
     alift -->|AnchorChainHeader| efuse
     eacc -->|EpochAccHeader| efuse
   end
 
-  w_nk[/nk, psi, note, ranges R and S/]
-  w_note[/Note, keys, randomizers/]
-  w_init[/Note, nk, creating stamp/]
-  w_delegated[/delegated epoch-nullifier list S/]
-  w_stamps[/per-stamp tg accumulators/]
-  w_out[/Note, dummy, randomizers/]
-
-  nfderive[NfDerive]:::u
+  nfderive["NfDerive<br/>× batches over R"]:::u
   score[SpendCore]:::u
   uinit[UnspentInit]:::u
-  inlift["InEpochLift (per stamp)"]:::o
-  ulift["CrossEpochLift (per full epoch)"]:::o
+  inlift["InEpochLift<br/>× stamps"]:::o
+  ulift["CrossEpochLift<br/>× full epochs"]:::o
   sbind[SpendBind]:::u
   ocore[OutputCore]:::u
   bmerge[BundleAssemble]:::u
   stamp((stamp))
 
-  w_nk --> nfderive
   nfderive -->|NfHeader| score
-  w_note --> score
-
-  w_init --> uinit
-
   uinit -->|UnspentHeader| inlift
-  w_delegated --> inlift
-  w_stamps --> inlift
   inlift -->|"UnspentHeader @ boundary"| ulift
-  w_delegated --> ulift
   efuse -->|EpochHeader| ulift
-  ulift -->|"UnspentHeader (kappa, S, g_S, m, anchor, j)"| sbind
+  ulift -->|UnspentHeader| sbind
   score -->|SpendCoreHeader| sbind
 
   sbind -->|SpendHeader| bmerge
-  w_out --> ocore
   ocore -->|OutputHeader| bmerge
   bmerge -->|StampHeader| stamp
 ```
@@ -1618,7 +1611,7 @@ wallet and the OSS.
    delegated task: `UnspentInit` derives $\kappa$, proves initial inclusion, and
    bootstraps the spendability proof at the creation block. It may then run
    `InEpochLift` itself to avoid leaking that block. The handoff exposes only
-   $\kappa$, the delegated range and nullifiers, oracle metadata, and a public
+   $\kappa$, the delegated range and nullifiers, commitment metadata, and a public
    anchor, never $\cm$ or the note secrets. In parallel it begins `NfDerive` over
    the covering range $R$, using $S$ to construct the mask.
 
@@ -1626,11 +1619,12 @@ wallet and the OSS.
    that header epoch by epoch: `InEpochLift` walks stamp by stamp where no shared
    evidence covers the span, and `CrossEpochLift` clears a full epoch in one step
    against a shared `EpochHeader` ($\Sc$, built once and reused across all synced
-   notes). Every new epoch nullifier is appended to $g_S^\Oc(X)$. It stops at the
-   end of epoch $e-1$ and returns the caught-up header.
+   notes). Each tested nullifier Horner-extends $g_S^\Oc(X)$, whose updated
+   commitment is carried forward. The OSS stops at the end of epoch $e-1$ and
+   returns the caught-up header.
 
 3. **Wallet, after the sync ($\Uc$).** Back on the wallet, the completed
-   `NfDerive` and `SpendCore` branches supply the masked $g_R^\Uc(X)$ and the
+   `NfDerive` and `SpendCore` branches supply $\mathsf{Com}(g_R^\Uc)$ and the
    spend-time nullifiers $(\nf_e,\nf_{e+1})$. `SpendBind` matches $\kappa$, the
    ranges and lengths, then checks $g_R^\Uc(X)=X^{r_1-s_1}g_S^\Oc(X)$ before
    running the [final lift into epoch $e$](#lift-e). The output side is a lone
@@ -1650,19 +1644,20 @@ wallet and the OSS.
 The in-epoch lift advances the `UnspentHeader` one stamp at a time *within a
 single epoch*. Users run it right after the [`UnspentInit`](#steps) to hide the
 creation block; then the OSS carries on from the handoff up to the next epoch
-boundary. `UnspentInit` has already appended $\nf_{s_0}$; every in-epoch lift
-reuses that coefficient rather than appending the same nullifier once per stamp.
+boundary. `UnspentInit` has already initialized the delegated commitment with
+$\nf_{s_0}$ as its first coefficient; every in-epoch lift reuses that coefficient.
 
 A valid instance of an [`InEpochLift`](#steps) assures that, given the public input:
 
 - the input [`UnspentHeader`](#headers)
-  $(\kappa,S,\mathsf{Com}(g_m^\Oc),m,\nf_j,\mathsf{anchor},j)$
-- the output `UnspentHeader` with the same $\kappa,S,m,\nf_j,j$ and oracle
+  $(\kappa,S,\mathsf{Com}(g_m^\Oc),m,\mathsf{anchor},j)$
+- the output `UnspentHeader` with the same $\kappa,S,m,j$ and polynomial
   commitment, but with $\mathsf{anchor}$ advanced to $\mathsf{anchor}'$.
 
 the prover knows the secret witness:
 
 - the child PCD proof carried by the input header
+- the delegated nullifier $\nf_j$ and full sequence polynomial $g_m^\Oc(X)$
 - a list of tachygram accumulator polynomial $\set{f^\tg_i(X)}$ whose commitments
   $\set{ \acc^\tg_i }$ establish the [anchor chain](#anchor) linkage from
   $\mathsf{anchor}$ to $\mathsf{anchor}'$
@@ -1677,8 +1672,10 @@ such that the following conditions hold:
   H(\mathsf{anchor}^\mathsf{tmp}_{i-1} \| j \| \acc^\tg_i)
   \overset{\ldots}{\longrightarrow} \mathsf{anchor}'
   $$.
-- **Oracle stability**: leave $g_m^\Oc(X)$, $m$, and the carried $\nf_j$
-  unchanged throughout the epoch.
+- **Current-nullifier binding**: $g_m^\Oc(0)=\nf_j$, attested through Ragu's
+  polynomial-oracle capability.
+- **Delegated commitment stability**: leave $\mathsf{Com}(g_m^\Oc)$, $m$, and
+  $j$ unchanged throughout the epoch.
 - **Exclusion extension**: for all intermediary anchor index $i$ from
   $\mathsf{anchor}$ to $\mathsf{anchor}'$: $f^\tg_i(\nf_j) \neq 0$,
   attested through the [poly-query oracle](#acc). 
@@ -1696,14 +1693,14 @@ A valid instance of a [`CrossEpochLift`](#steps) ($\Oc$) assures that, given the
 public input:
 
 - the input [`UnspentHeader`](#headers)
-  $(\kappa,S,\mathsf{Com}(g_m^\Oc),m,\nf_j,\mathsf{anchor}_{i-1},j)$
+  $(\kappa,S,\mathsf{Com}(g_m^\Oc),m,\mathsf{anchor}_{i-1},j)$
 - the shared [`EpochHeader`](#headers)
   $(i, \mathsf{anchor}_{i-1}, \mathsf{anchor}_i, \mathsf{Com}(e_i(X)))$, certifying
   epoch $i$ boundary-to-boundary with its [whole-epoch accumulator](#epoch-acc)
   $e_i(X)$
 - the output `UnspentHeader`
-  $(\kappa,S,\mathsf{Com}(g_{m+1}^\Oc),m+1,\nf_i,\mathsf{anchor}_i,i)$,
-  with the new nullifier appended, anchor jumped, and frontier advanced
+  $(\kappa,S,\mathsf{Com}(g_{m+1}^\Oc),m+1,\mathsf{anchor}_i,i)$,
+  with the delegated commitment extended, anchor jumped, and frontier advanced
 
 the prover knows the secret witness:
 
@@ -1715,9 +1712,9 @@ such that the following conditions hold:
 
 - **Child proof recursion**: fold the child proofs into the running PCD proof.
 - **Consecutive epoch**: $i = j+1$.
-- **Ordered oracle append**:
-  $g_{m+1}^\Oc(X)=Xg_m^\Oc(X)+\nf_i$. At the oracle's randomized opening
-  point $r$, this is the field identity
+- **Delegated commitment extension**:
+  $g_{m+1}^\Oc(X)=Xg_m^\Oc(X)+\nf_i$. Ragu tests this at its randomized
+  polynomial-oracle point $r$ as the field identity
   $g_{m+1}^\Oc(r)=r\,g_m^\Oc(r)+\nf_i$.
 - **Anchor advancement**: two input headers carry the same
   $\mathsf{anchor}_{i-1}$, implicitly proving inclusion extension.
@@ -1736,11 +1733,11 @@ reasons given here](#lift-e).
 A valid instance assures that, given the public input:
 
 - the [`UnspentHeader`](#headers)
-  $(\kappa,S,\mathsf{Com}(g_S^\Oc),m,\nf_j,\mathsf{anchor}_j,j)$
+  $(\kappa,S,\mathsf{Com}(g_S^\Oc),m,\mathsf{anchor}_j,j)$
   returned by the OSS
 - the [`SpendCoreHeader`](#headers)
   $(\kappa,R,S,\mathsf{Com}(g_R^\Uc),\cv,\rk,\nf_e,\nf_{e+1},e)$,
-  already revealing the spend nullifier $\nf_e$ and carrying the user oracle
+  already revealing the spend nullifier $\nf_e$ and carrying the masked commitment
 - the output [`SpendHeader`](#headers)
   $(\cv, \rk, \nf_e, \nf_{e+1}, \mathsf{anchor}, e)$, with $\mathsf{anchor}$ the
   first anchor reached inside epoch $e$
@@ -1756,14 +1753,14 @@ such that the following conditions hold:
 
 - **Child proof recursion**: fold the child proofs into the running PCD proof.
 - **Note tag integrity**: the two headers carry the same $\kappa$.
-- **Delegated-vector integrity**: the headers carry the same $S$,
+- **Sub-sequence consistency**: the headers carry the same $S$,
   $S=[s_0,s_1)\subseteq R=[r_0,r_1)$, $m=|S|$, and
   $$
   g_R^\Uc(X)=X^{r_1-s_1}g_S^\Oc(X).
   $$
   `NfDerive` has already checked that every one of the $|R|$ positions was
-  derived and that only positions in $S$ contributed to $g_R^\Uc(X)$. The online
-  polynomial oracle tests the displayed identity at a fresh random point.
+  derived and that only positions in $S$ contributed to $g_R^\Uc(X)$. Ragu tests
+  the displayed identity at a fresh polynomial-oracle point.
 - **Consecutive epoch**: $j=s_1-1$ and $j+1=e$.
 - **Anchor advancement**: a single-stamp update, implicitly extending inclusion
   $$
