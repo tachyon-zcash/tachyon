@@ -154,18 +154,6 @@ pub(crate) fn anchor_stamp_step(anchor_prev: Fp, epoch: EpochIndex, tgs: EqAffin
     ])
 }
 
-const ANCHOR_EMPTY_DOMAIN: &[u8; 16] = b"Tachyon-EmptyBlk";
-
-/// Advances the anchor through one block that contains zero stamps.
-#[must_use]
-pub(crate) fn anchor_empty_step(anchor_prev: Fp, epoch: EpochIndex) -> Fp {
-    hash::<3>([
-        Fp::from_u128(u128::from_le_bytes(*ANCHOR_EMPTY_DOMAIN)),
-        anchor_prev,
-        Fp::from(epoch),
-    ])
-}
-
 const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-EpochStp";
 
 /// Advances the terminal anchor of an epoch into a new epoch's initial state.

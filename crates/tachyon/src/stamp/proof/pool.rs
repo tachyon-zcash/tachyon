@@ -2,7 +2,7 @@
 //!
 //! Hosts the nf-free anchor segment ([`AnchorChain`]) used by
 //! [`super::stamp::StampLift`] to advance a stamp's anchor, and the
-//! multi-stamp / multi-epoch exclusion proof ([`Unspent`]) used by
+//! multi-stamp / multi-epoch exclusion proof ([`ArbitraryUnspent`]) used by
 //! [`super::spendable::SpendableLift`] to advance a spendable.
 //!
 //! Anchor advances are single-level: every link absorbs the containing
@@ -36,38 +36,33 @@ use crate::{
 
 /// Anchor segment between two endpoints. Composable via [`AnchorFuse`].
 ///
-/// Direction-agnostic: `start` and `end` are both anchors. Two consumers:
-/// [`super::stamp::StampLift`] advances a stamp's anchor, and
-/// [`super::spendable::SpendableInit`] consumes a boundary-rooted segment (from
-/// the epoch boundary through the cm-stamp) to pin a spendable's starting
-/// epoch. Extending an *existing* spendable's anchor must instead go through
-/// [`Unspent`] so each step proves nf-exclusion.
+/// Direction-agnostic: `start` and `end` are both anchors. Sole consumer:
+/// [`super::stamp::StampLift`] advances a stamp's anchor. Extending a
+/// spendable's anchor must instead go through [`ArbitraryUnspent`] so each
+/// step proves nf-exclusion.
 ///
-/// Structurally intra-epoch: the builders ([`AnchorSeed`] / [`EmptyBlockSeed`])
-/// invoke only [`Anchor::next_stamp`] / [`Anchor::next_empty`]. Both bind an
-/// epoch, but the [`Anchor::next_epoch`] boundary domain is distinct and never
-/// a chain link; it is folded at a crossing by [`UnspentEpochFuse`] and checked
-/// against a chain's `start` by [`super::spendable::SpendableInit`].
+/// Structurally intra-epoch: the sole builder ([`AnchorSeed`]) invokes only
+/// [`Anchor::next_stamp`], which binds an epoch. The [`Anchor::next_epoch`]
+/// boundary domain is distinct and never a chain link; it is folded at a
+/// crossing by [`UnspentEpochFuse`].
 ///
 /// The within-epoch property pairs with a consensus-side two-epoch
 /// tachygram scan that catches any tachygram already published earlier
 /// in the epoch a stamp is lifted across. See the Tachygrams book chapter.
 ///
-/// `start` at the seed steps ([`AnchorSeed`] / [`EmptyBlockSeed`]) has
+/// `start` at [`AnchorSeed`] has
 /// PCD lineage rooted in an unbound `start: Anchor` witness, so a
 /// standalone segment proves nothing about real coverage. Final binding
-/// closes through a consensus-published stamp's anchor membership:
-/// [`super::stamp::StampLift`] emits that stamp directly, while a segment
-/// consumed by [`super::spendable::SpendableInit`] binds only once the
-/// resulting (private) spendable is spent into a stamp.
+/// closes through a consensus-published stamp's anchor membership at
+/// [`super::stamp::StampLift`]'s emitted stamp.
 #[derive(Clone, Debug)]
 pub struct AnchorChain;
 
 impl Header for AnchorChain {
-    /// `(start, end)`. `start` roots in an unbound witness at [`AnchorSeed`] or
-    /// [`EmptyBlockSeed`] and flows to [`super::stamp::StampLift`] which must
-    /// ultimately be checked by consensus. `end` is always computed in-circuit
-    /// as `start.next_stamp(epoch, ...)` or `start.next_empty(epoch)`.
+    /// `(start, end)`. `start` roots in an unbound witness at [`AnchorSeed`]
+    /// and flows to [`super::stamp::StampLift`] which must ultimately be
+    /// checked by consensus. `end` is always computed in-circuit as
+    /// `start.next_stamp(epoch, ...)`.
     type Data = (Anchor, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(5);
@@ -82,7 +77,11 @@ impl Header for AnchorChain {
     }
 }
 
-/// Multi-stamp / multi-epoch nf-exclusion proof
+/// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
+///
+/// The tested values are arbitrary field elements until [`UnspentBind`]
+/// attributes them to a note's derivation, which is what makes the segment
+/// safe to delegate: no step producing one touches a note, `cm`, or `mk`.
 ///
 /// An `elapsed` polynomial holds one nullifier per crossed epoch boundary over
 /// `[epoch_start, epoch_end)`, sentinel-terminated (see
@@ -90,16 +89,20 @@ impl Header for AnchorChain {
 /// `1` at the crossing count, so the commitment is never the identity point
 /// (the empty sequence is the constant `1`, committing to `g0`) and the
 /// sequence's exact rank is pinned. The seeds establish the sentinel form and
-/// both fuses preserve it.
+/// the fuses preserve it.
 ///
 /// `nf_start` is the range's first tested nullifier (the leaf at
 /// `epoch_start`); the in-progress `nf_end` corresponds to `epoch_end` and is
-/// folded into `elapsed` when its epoch completes. [`VerifyUnspent`] binds both
+/// folded into `elapsed` when its epoch completes. [`UnspentBind`] binds both
 /// endpoints to the note's genuine derivation nullifiers.
+///
+/// `epoch_start` is the epoch of the exclusive `anchor_prev`; `epoch_end` the
+/// epoch of `anchor_last`, not yet represented in `elapsed`, so
+/// [`UnspentBind`]'s derived range runs one epoch past it.
 #[derive(Clone, Debug)]
-pub struct Unspent;
+pub struct ArbitraryUnspent;
 
-impl Header for Unspent {
+impl Header for ArbitraryUnspent {
     /// `(anchor_prev, (epoch_start, nf_start), elapsed,
     /// (epoch_end, nf_end), anchor_last)`.
     type Data = (
@@ -131,15 +134,16 @@ impl Header for Unspent {
     }
 }
 
-/// An [`Unspent`] bound to a note's genuine derivation nullifiers by
-/// [`VerifyUnspent`], collapsed to boundary scalars.
+/// A note proven unspent across a span: an [`ArbitraryUnspent`] whose values
+/// [`UnspentBind`] has attributed to the note's genuine derivation, collapsed
+/// to boundary scalars.
 #[derive(Clone, Debug)]
-pub struct VerifiedUnspent;
+pub struct Unspent;
 
-impl Header for VerifiedUnspent {
+impl Header for Unspent {
     /// `(cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end),
-    /// anchor_last)`. `cm` leads; the rest mirrors the [`Unspent`] boundaries
-    /// collapsed to scalars (no `elapsed` poly).
+    /// anchor_last)`. `cm` leads; the rest mirrors the [`ArbitraryUnspent`]
+    /// boundaries collapsed to scalars (no `elapsed` poly).
     type Data = (
         note::Commitment,
         Anchor,
@@ -204,40 +208,6 @@ impl Step for AnchorSeed {
     }
 }
 
-/// One-empty-block [`AnchorChain`] seed. Witness `(start, epoch)`; emit
-/// `(start, start.next_empty(epoch))`.
-///
-/// Advances the anchor through one block that contains zero stamps.
-/// Used alongside [`AnchorSeed`] when an anchor segment must traverse
-/// a mix of empty and non-empty blocks.
-///
-/// # Soundness
-///
-/// `epoch` is unconstrained here, for the reason given on [`AnchorSeed`].
-#[derive(Debug)]
-pub struct EmptyBlockSeed;
-
-impl Step for EmptyBlockSeed {
-    type Aux<'source> = ();
-    type Left = ();
-    type Output = AnchorChain;
-    type Right = ();
-    /// `(start, epoch)`.
-    type Witness<'source> = (Anchor, EpochIndex);
-
-    const INDEX: Index = Index::new(5);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (start, epoch): Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        Ok(((start, start.next_empty(epoch)), ()))
-    }
-}
-
 /// Compose two adjacent [`AnchorChain`] segments — `left.end ==
 /// right.start`.
 #[derive(Debug)]
@@ -250,7 +220,7 @@ impl Step for AnchorFuse {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(6);
+    const INDEX: Index = Index::new(5);
 
     fn witness<'source>(
         &self,
@@ -278,12 +248,12 @@ pub struct UnspentSeed;
 impl Step for UnspentSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = Unspent;
+    type Output = ArbitraryUnspent;
     type Right = ();
     /// `(anchor_prev, (epoch, nf), stamp_tg_set)`.
     type Witness<'source> = (Anchor, (EpochIndex, Nullifier), TachygramSetPoly);
 
-    const INDEX: Index = Index::new(7);
+    const INDEX: Index = Index::new(6);
 
     fn witness<'source>(
         &self,
@@ -321,25 +291,43 @@ impl Step for UnspentSeed {
     }
 }
 
-/// One-empty-block [`Unspent`] seed: emit a one-block segment that crosses no
-/// epoch boundary (an empty block trivially excludes any nf, so no set check).
+/// Whole-epoch seed for an epoch that published nothing.
+///
+/// An empty epoch has exactly one anchor: the epoch tick's output is both its
+/// opening boundary anchor and its terminal anchor. The step folds that tick
+/// from the previous epoch's terminal anchor and bounds the segment by it on
+/// both sides, so `epoch_start == epoch_end` and `elapsed` stays empty.
+///
+/// [`UnspentEpochFuse`] splices a segment in each of the two epochs it crosses
+/// between; this supplies the one for an epoch with no stamp to seed from.
+///
+/// # Soundness
+///
+/// `nf` is unconstrained here, as at every seed; [`UnspentBind`] forces the
+/// endpoints against the note's genuine derivation.
+///
+/// `prev_epoch_tip` is likewise unconstrained, and the "nothing was published"
+/// claim rests on it: skipping a stamp would leave it short of the previous
+/// epoch's real terminal anchor, and the tick of a short anchor is not the
+/// boundary anchor consensus recomputes. The boundary domain is distinct from
+/// the stamp domain, so no chain link reaches a boundary anchor either.
 #[derive(Debug)]
-pub struct EmptyBlockUnspentSeed;
+pub struct EmptyEpochUnspentSeed;
 
-impl Step for EmptyBlockUnspentSeed {
+impl Step for EmptyEpochUnspentSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = Unspent;
+    type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(anchor_prev, (epoch, nf))`.
+    /// `(prev_epoch_tip, (epoch, nf))`.
     type Witness<'source> = (Anchor, (EpochIndex, Nullifier));
 
-    const INDEX: Index = Index::new(8);
+    const INDEX: Index = Index::new(7);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (anchor_prev, (epoch, nf)): Self::Witness<'source>,
+        (prev_epoch_tip, (epoch, nf)): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -349,24 +337,18 @@ impl Step for EmptyBlockUnspentSeed {
             .first()
             .expect("at least one generator");
 
-        let tested_anchor = anchor_prev.next_empty(epoch);
+        let boundary = prev_epoch_tip.next_epoch(epoch);
         // Empty elapsed: the sentinel constant `1` commits to `g0`, never the
         // identity point.
         let elapsed_commit = NfSeqCommit::from(g0 * Fp::ONE);
         Ok((
-            (
-                anchor_prev,
-                (epoch, nf),
-                elapsed_commit,
-                (epoch, nf),
-                tested_anchor,
-            ),
+            (boundary, (epoch, nf), elapsed_commit, (epoch, nf), boundary),
             (),
         ))
     }
 }
 
-/// Compose two [`Unspent`] lineages sharing a mid-epoch junction.
+/// Compose two [`ArbitraryUnspent`] lineages sharing a mid-epoch junction.
 ///
 /// The halves meet inside one epoch (`right.epoch_start == left.epoch_end`), at
 /// adjacent anchors (`left.anchor_last == right.anchor_prev`), and agree on the
@@ -380,13 +362,13 @@ pub struct UnspentFuse;
 
 impl Step for UnspentFuse {
     type Aux<'source> = ();
-    type Left = Unspent;
-    type Output = Unspent;
-    type Right = Unspent;
+    type Left = ArbitraryUnspent;
+    type Output = ArbitraryUnspent;
+    type Right = ArbitraryUnspent;
     /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(9);
+    const INDEX: Index = Index::new(8);
 
     fn witness<'source>(
         &self,
@@ -463,8 +445,8 @@ impl Step for UnspentFuse {
     }
 }
 
-/// Cross-epoch [`Unspent`] composition. This is the only step that grows
-/// `elapsed`.
+/// Cross-epoch [`ArbitraryUnspent`] composition. The only step that crosses an
+/// epoch boundary, and so the only one that grows `elapsed`.
 ///
 /// At the boundary, left's tip epoch completes
 /// (`left.anchor_last.next_epoch(new_epoch) == right.anchor_prev`) and is
@@ -474,13 +456,13 @@ pub struct UnspentEpochFuse;
 
 impl Step for UnspentEpochFuse {
     type Aux<'source> = ();
-    type Left = Unspent;
-    type Output = Unspent;
-    type Right = Unspent;
+    type Left = ArbitraryUnspent;
+    type Output = ArbitraryUnspent;
+    type Right = ArbitraryUnspent;
     /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(10);
+    const INDEX: Index = Index::new(9);
 
     fn witness<'source>(
         &self,
@@ -552,26 +534,26 @@ impl Step for UnspentEpochFuse {
     }
 }
 
-/// Bind an [`Unspent`]'s free-witness nullifiers to a
+/// Bind an [`ArbitraryUnspent`]'s free-witness nullifiers to a
 /// note's genuine nullifiers.
 ///
 /// Proves `range == elapsed ++ [nf_end]` against the derived
-/// [`NullifierHeader`], emitting a [`VerifiedUnspent`] with the `cm`. The tip
+/// [`NullifierHeader`], emitting an [`Unspent`] with the `cm`. The tip
 /// enters as a monomial coefficient of [`enforce_shifted_combination`]:
 /// `unspent_nf_end` is a left-header value, fixed by the recursive
-/// verification of the [`Unspent`] PCD before the challenge.
+/// verification of the [`ArbitraryUnspent`] PCD before the challenge.
 #[derive(Debug)]
-pub struct VerifyUnspent;
+pub struct UnspentBind;
 
-impl Step for VerifyUnspent {
+impl Step for UnspentBind {
     type Aux<'source> = ();
-    type Left = Unspent;
-    type Output = VerifiedUnspent;
+    type Left = ArbitraryUnspent;
+    type Output = Unspent;
     type Right = NullifierHeader;
     /// `(elapsed_seq, nf_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(11);
+    const INDEX: Index = Index::new(10);
 
     fn witness<'source>(
         &self,
@@ -588,21 +570,21 @@ impl Step for VerifyUnspent {
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(nf_epoch_start) - Fp::from(unspent_epoch_start),
-            "VerifyUnspent: derived range does not start at the unspent's start epoch",
+            "UnspentBind: derived range does not start at the unspent's start epoch",
         )?;
         enforce_zero(
             Fp::from(nf_epoch_end) - Fp::from(unspent_epoch_end.next()),
-            "VerifyUnspent: derived range does not span the crossings plus the tip",
+            "UnspentBind: derived range does not span the crossings plus the tip",
         )?;
         enforce_equal_point(
             Eq::from(elapsed_seq.commit()),
             Eq::from(unspent_elapsed),
-            "VerifyUnspent: elapsed polynomial does not match header",
+            "UnspentBind: elapsed polynomial does not match header",
         )?;
         enforce_equal_point(
             Eq::from(nf_seq.commit()),
             Eq::from(nf_seq_commit),
-            "VerifyUnspent: range polynomial does not match header",
+            "UnspentBind: range polynomial does not match header",
         )?;
         let offset = unspent_epoch_end - unspent_epoch_start;
         // Sentinel append: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
@@ -612,7 +594,7 @@ impl Step for VerifyUnspent {
         // the appended tip; the second re-terminates `nf_seq`. Both
         // coefficients are challenge-independent: `unspent_nf_end` is a
         // left-header value, fixed by the recursive verification of the
-        // [`Unspent`] PCD; `offset` is elapsed's header-fixed span.
+        // [`ArbitraryUnspent`] PCD; `offset` is elapsed's header-fixed span.
         enforce_shifted_combination(
             ctx,
             [(elapsed_seq.as_ref(), 0)],
@@ -621,18 +603,18 @@ impl Step for VerifyUnspent {
                 (Fp::ONE, u64::from(offset) + 1),
             ],
             nf_seq.as_ref(),
-            "VerifyUnspent: range is not elapsed followed by the tip",
+            "UnspentBind: range is not elapsed followed by the tip",
         )?;
         // Bind the unspent's free-witness boundary nullifiers to the range's
         // genuine boundary leaves, which the derivation header proved by
         // construction.
         enforce_zero(
             Fp::from(unspent_nf_start) - Fp::from(nf_start),
-            "VerifyUnspent: start nullifier does not match the derived range",
+            "UnspentBind: start nullifier does not match the derived range",
         )?;
         enforce_zero(
             Fp::from(unspent_nf_end) - Fp::from(nf_end),
-            "VerifyUnspent: end nullifier does not match the derived range",
+            "UnspentBind: end nullifier does not match the derived range",
         )?;
         Ok((
             (

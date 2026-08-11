@@ -67,7 +67,6 @@ These are all Tachyon-specific digests, performed in-circuit.
 | Action digest | `Tachyon-ActionDg` |
 | Payment key derivation | `Tachyon-PkDerive` |
 | Anchor stamp step | `Tachyon-StampFld` |
-| Anchor empty step | `Tachyon-EmptyBlk` |
 | Anchor epoch step | `Tachyon-EpochStp` |
 
 ## Hash-to-curve

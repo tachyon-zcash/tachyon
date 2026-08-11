@@ -9,14 +9,15 @@ use crate::{digest::poseidon, serialization};
 
 /// Running anchor over the consensus state.
 ///
-/// A Poseidon hash sequence with three domain-separated link types:
+/// A Poseidon hash sequence with two domain-separated link types:
 ///
 /// - [`Anchor::next_stamp`] (`Tachyon-StampFld`) absorbs one stamp's epoch and
 ///   tachygram-set commitment.
-/// - [`Anchor::next_empty`] (`Tachyon-EmptyBlk`) advances through one block
-///   that contains zero stamps, preserving per-height anchor uniqueness.
 /// - [`Anchor::next_epoch`] (`Tachyon-EpochStp`) lifts across an epoch
 ///   boundary; checked against a boundary chain's root by `SpendableInit`.
+///
+/// A block that publishes no stamp contributes no link, so the anchor is
+/// constant across a stampless span.
 ///
 /// Opening reveals each link's role by its domain.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
@@ -36,12 +37,6 @@ impl Anchor {
             epoch,
             Eq::from(*stamp_commit).to_affine(),
         ))
-    }
-
-    /// Advance the anchor through one empty block (zero stamps) in `epoch`.
-    #[must_use]
-    pub fn next_empty(self, epoch: EpochIndex) -> Self {
-        Self(poseidon::anchor_empty_step(self.0, epoch))
     }
 
     /// Lift the anchor across an epoch boundary into the new epoch's
@@ -135,33 +130,19 @@ mod tests {
             start.next_stamp(EpochIndex(2), &stamp),
         );
         assert_ne!(
-            start.next_empty(EpochIndex(1)),
-            start.next_empty(EpochIndex(2))
+            start.next_epoch(EpochIndex(1)),
+            start.next_epoch(EpochIndex(2))
         );
     }
 
-    /// An empty-block tick changes the anchor.
+    /// The boundary lift is domain-separated from stamp absorption, so a
+    /// boundary anchor is unreachable by any chain link.
     #[test]
-    fn next_empty_advances_anchor() {
-        let start = Anchor::default();
-        assert_ne!(start, start.next_empty(EPOCH));
-    }
-
-    /// Consecutive empty-block ticks produce distinct anchors.
-    #[test]
-    fn consecutive_empty_distinct() {
-        let first = Anchor::default().next_empty(EPOCH);
-        let second = first.next_empty(EPOCH);
-        assert_ne!(first, second);
-    }
-
-    /// Empty-block tick is domain-separated from stamp absorption.
-    #[test]
-    fn next_empty_distinct_from_next_stamp() {
+    fn next_epoch_distinct_from_next_stamp() {
         let rng = &mut StdRng::seed_from_u64(0);
         let stamp = TachygramSetPoly::from_iter([Tachygram::random(&mut *rng)]).commit();
-        let via_empty = Anchor::default().next_empty(EPOCH);
+        let via_epoch = Anchor::default().next_epoch(EPOCH);
         let via_stamp = Anchor::default().next_stamp(EPOCH, &stamp);
-        assert_ne!(via_empty, via_stamp);
+        assert_ne!(via_epoch, via_stamp);
     }
 }

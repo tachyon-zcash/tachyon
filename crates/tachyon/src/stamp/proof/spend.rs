@@ -74,12 +74,16 @@ impl Step for SpendBind {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (nf_next,): Self::Witness<'source>,
-        (spendable_cm, present_nf, anchor): <Self::Left as Header>::Data,
+        (spendable_cm, (spendable_epoch, present_nf), anchor): <Self::Left as Header>::Data,
         (nf_cm, (nf_epoch_start, nf_start), _nf_seq_commit, (nf_epoch_end, nf_end)): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(nf_epoch_end) - (Fp::from(nf_epoch_start) + Fp::from(2u64)),
             "SpendBind: live range must span two epochs",
+        )?;
+        enforce_zero(
+            Fp::from(nf_epoch_start) - Fp::from(spendable_epoch),
+            "SpendBind: live range does not start at the lineage epoch",
         )?;
         enforce_zero(
             Fp::from(nf_cm) - Fp::from(spendable_cm),
