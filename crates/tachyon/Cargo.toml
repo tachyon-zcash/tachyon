@@ -49,7 +49,7 @@ lazy_static = { version = "1", default-features = false, features = [
     "spin_no_std",
 ] }
 pasta_curves = "0.5.1"
-ragu = { git = "https://github.com/turbocrime/ragu", rev = "eda373435d851107533762a990124993ce6cb89c", default-features = false, features = [
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "284882da60128b03ca210b32793c17aea5103a8e", default-features = false, features = [
     "mock",
     "legacy-deps",
 ] }
