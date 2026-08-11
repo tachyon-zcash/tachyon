@@ -11,13 +11,12 @@ These end-of-block states are anchors.
 Each stamp lands at a definite position in a definite block, when the block is accepted by consensus. A stamp's contribution to the pool state is
 
 $$
-\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}StampFld}(\mathsf{anchor},\ x,\ y)
+\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}StampFld}(\mathsf{anchor},\ \mathsf{tg}_\mathsf{lo},\ \mathsf{tg}_\mathsf{hi})
 $$
 
-where $(x, y)$ are coordinates of the stamp's tachygram-set commitment[^tachygrams].
-Absorbing the complete coordinates (rather than a compressed encoding) ensures the binding is unambiguous.
+where $(\mathsf{tg}_\mathsf{lo}, \mathsf{tg}_\mathsf{hi})$ are the two 128-bit limbs of the stamp's tachygram-set commitment[^tachygrams] in compressed form. The compressed encoding carries $x$ with the sign of $y$ in its high bit, so the limb pair determines the point.
 
-[^tachygrams]: [Tachygrams](./tachygrams.md) describes the tachygram commitment are absorbed here
+[^tachygrams]: [Tachygrams](./tachygrams.md) describes the tachygram commitment absorbed here.
 
 ## Empty block
 
