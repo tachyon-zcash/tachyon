@@ -2,69 +2,45 @@
 
 use core::array;
 
-use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
+use derive_more::{Debug, Eq as TotalEq, PartialEq};
 use pasta_curves::Fp;
 
 use crate::{
-    digest::poseidon::{self, NF_GROUP},
-    nullifier::{NF_DERIVATION_GROUPS, NF_DERIVATION_WIDTH, Nullifier},
+    nullifier::{NF_DERIVATION_WIDTH, Nullifier, NullifierTrace, derivation},
     primitives::EpochIndex,
 };
 
-/// Per-note master key.
-///
-/// Derived by the user device from [`NullifierKey`](super::NullifierKey) and
-/// the note's $\psi$ trapdoor, and the only key material a nullifier
-/// derivation needs. Epochs are derived `NF_GROUP` at a time from one sponge
-/// keyed on the group index $w = \lfloor e / \mathsf{NF\_GROUP} \rfloor$:
-///
-/// $$
-/// \mathsf{nf}_e = \mathsf{squeeze}_{e \bmod \mathsf{NF\_GROUP}}\big(
-///     \mathsf{absorb}(\mathtt{NF\_DOMAIN},\ \mathsf{mk},\ w)\big)
-/// $$
-///
-/// `mk` grants derivation over the whole epoch space; a delegate receives
-/// proven value windows.
-#[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
-pub struct NoteMasterKey(#[debug(skip)] pub(crate) Fp);
+/// Per-note master key $\mathsf{mk} = \[k, w\]$ representing a round key and
+/// whitening key.
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct NoteMasterKey(#[debug(skip)] pub(crate) Fp, #[debug(skip)] pub(crate) Fp);
 
 impl NoteMasterKey {
-    /// Derive the nullifier for a single epoch.
+    /// Derive a nullifier for the given epoch.
     #[must_use]
-    #[expect(
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
-        clippy::indexing_slicing,
-        clippy::integer_division,
-        clippy::integer_division_remainder_used,
-        reason = "the group width is a small constant, and the remainder \
-                  indexes an array of exactly NF_GROUP entries"
-    )]
     pub fn derive_nullifier(&self, epoch: EpochIndex) -> Nullifier {
-        let group = poseidon::nullifier_group(self.0, epoch.0 / NF_GROUP as u32);
-        Nullifier::from(group[epoch.0 as usize % NF_GROUP])
+        Nullifier::from(derivation::nullifier(self.0, self.1, epoch))
+    }
+
+    /// Derive the nullifier trace for the given epoch.
+    ///
+    /// The trace is unwhitened; [`NullifierTrace::whiten`] reads the nullifier
+    /// off it.
+    #[must_use]
+    pub fn derive_nullifier_trace(&self, epoch: EpochIndex) -> NullifierTrace {
+        NullifierTrace::from(derivation::nullifier_trace(self.0, epoch))
     }
 
     /// Derive one derivation window: the nullifiers for
-    /// `[NF_GROUP * group_base, … + NF_DERIVATION_WIDTH)`.
-    ///
-    /// `group_base` is the window's *group* index. Group alignment makes the
-    /// sponge count a compile-time constant inside
-    /// [`NfDerive`](crate::stamp::proof::delegation::NfDerive):
-    /// `NF_DERIVATION_GROUPS` permutations.
+    /// `[base, base + NF_DERIVATION_WIDTH)`, from any base.
     #[must_use]
     #[expect(
         clippy::as_conversions,
         clippy::cast_possible_truncation,
-        clippy::indexing_slicing,
-        clippy::integer_division,
-        clippy::integer_division_remainder_used,
-        reason = "both widths are small powers of two and divide exactly"
+        reason = "the window width is a small constant"
     )]
-    pub fn derive_window(&self, group_base: u32) -> [Nullifier; NF_DERIVATION_WIDTH] {
-        let groups: [[Fp; NF_GROUP]; NF_DERIVATION_GROUPS] =
-            array::from_fn(|offset| poseidon::nullifier_group(self.0, group_base + offset as u32));
-        array::from_fn(|slot| Nullifier::from(groups[slot / NF_GROUP][slot % NF_GROUP]))
+    pub fn derive_window(&self, base: EpochIndex) -> [Nullifier; NF_DERIVATION_WIDTH] {
+        array::from_fn(|offset| self.derive_nullifier(EpochIndex(base.0 + offset as u32)))
     }
 }
 
@@ -73,16 +49,10 @@ mod tests {
     #![allow(
         clippy::as_conversions,
         clippy::cast_possible_truncation,
-        clippy::indexing_slicing,
-        clippy::integer_division,
-        clippy::integer_division_remainder_used,
-        reason = "epoch and group arithmetic over constant widths, indexing \
-                  arrays of exactly those widths"
+        reason = "epoch arithmetic over a constant window width"
     )]
 
     extern crate alloc;
-
-    use alloc::vec::Vec;
 
     use ff::Field as _;
     use rand::{SeedableRng as _, rngs::StdRng};
@@ -90,65 +60,20 @@ mod tests {
     use super::*;
 
     fn master(seed: u64) -> NoteMasterKey {
-        NoteMasterKey(Fp::random(&mut StdRng::seed_from_u64(seed)))
+        let rng = &mut StdRng::seed_from_u64(seed);
+        NoteMasterKey(Fp::random(&mut *rng), Fp::random(rng))
     }
 
     /// The window is the per-epoch derivation, laid out.
     #[test]
     fn window_matches_per_epoch_derivation() {
         let mk = master(0);
-        let group_base = 24u32;
+        let base = EpochIndex(391);
 
-        for (offset, nf) in mk.derive_window(group_base).into_iter().enumerate() {
-            let epoch = EpochIndex(group_base * NF_GROUP as u32 + offset as u32);
+        for (offset, nf) in mk.derive_window(base).into_iter().enumerate() {
+            let epoch = EpochIndex(base.0 + offset as u32);
             assert_eq!(nf, mk.derive_nullifier(epoch), "epoch {}", epoch.0);
         }
-    }
-
-    /// An epoch's nullifier depends only on its own group, so overlapping
-    /// windows agree on the epochs they share. `UnspentBind` reads a window
-    /// that merely *covers* its span.
-    #[test]
-    fn overlapping_windows_agree() {
-        let mk = master(0);
-        let low = mk.derive_window(10);
-        let high = mk.derive_window(11);
-        let shared = NF_DERIVATION_WIDTH - NF_GROUP;
-
-        for offset in 0..shared {
-            assert_eq!(
-                low[offset + NF_GROUP],
-                high[offset],
-                "epoch {}",
-                11 * NF_GROUP + offset
-            );
-        }
-    }
-
-    /// Distinct epochs within one group must not collide: the four squeezes
-    /// of a single permutation are distinct outputs.
-    #[test]
-    fn distinct_epochs_within_a_group_differ() {
-        let mk = master(1);
-        let derived: Vec<Nullifier> = (0..NF_GROUP)
-            .map(|epoch| mk.derive_nullifier(EpochIndex(epoch as u32)))
-            .collect();
-
-        for (index, nf) in derived.iter().enumerate() {
-            for other in derived.iter().skip(index + 1) {
-                assert_ne!(*nf, *other, "squeeze {index} collides within its group");
-            }
-        }
-    }
-
-    /// Distinct groups must not collide either: the group index is absorbed.
-    #[test]
-    fn distinct_groups_differ() {
-        let mk = master(1);
-        assert_ne!(
-            mk.derive_nullifier(EpochIndex(0)),
-            mk.derive_nullifier(EpochIndex(NF_GROUP as u32)),
-        );
     }
 
     /// Distinct master keys must not collide at the same epoch.
@@ -158,5 +83,33 @@ mod tests {
             master(2).derive_nullifier(EpochIndex(7)),
             master(3).derive_nullifier(EpochIndex(7)),
         );
+    }
+
+    /// The two cipher entry points agree: the unwhitened trace's final cell,
+    /// whitened, is the epoch's nullifier. `derive_nullifier` runs
+    /// `encrypt_with` and whitens internally; `derive_nullifier_trace` runs
+    /// `sbox_output_sequence` and stops short.
+    #[test]
+    fn trace_whitens_to_the_derived_nullifier() {
+        let mk = master(1);
+
+        for epoch in [0u32, 1, 127] {
+            assert_eq!(
+                mk.derive_nullifier_trace(EpochIndex(epoch)).whiten(&mk),
+                mk.derive_nullifier(EpochIndex(epoch)),
+            );
+        }
+    }
+
+    /// Both components are secret, so neither may reach a debug rendering.
+    #[test]
+    fn debug_master_key_redacts_both_components() {
+        let mk = NoteMasterKey(Fp::from(0xDEADu64), Fp::from(0xBEEFu64));
+        let dbg = alloc::format!("{mk:?}");
+        assert!(dbg.contains("NoteMasterKey"), "must name the type");
+        assert!(!dbg.contains("DEAD"), "must not leak the round key");
+        assert!(!dbg.contains("57005"), "must not leak the round key");
+        assert!(!dbg.contains("BEEF"), "must not leak the whitening key");
+        assert!(!dbg.contains("48879"), "must not leak the whitening key");
     }
 }

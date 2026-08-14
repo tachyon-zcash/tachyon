@@ -22,7 +22,7 @@ use ragu::{Application, ApplicationBuilder};
 
 fn make_app() -> Result<Application, ragu::Error> {
     ApplicationBuilder::new()
-        .register(delegation::NfMasterSeed)?
+        .register(delegation::NfSboxStep)?
         .register(delegation::NfDerive)?
         .register(pool::AnchorSeed)?
         .register(pool::AnchorFuse)?
@@ -46,6 +46,7 @@ fn make_app() -> Result<Application, ragu::Error> {
         .register(pool::UnspentEpochLift)?
         .register(spendable::SpendableBatch)?
         .register(spendable::SpendableAdvance)?
+        .register(delegation::NfWrapStep)?
         .finalize()
 }
 

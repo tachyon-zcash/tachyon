@@ -10,19 +10,23 @@ extern crate alloc;
 
 use alloc::collections::BTreeSet;
 
+use pasta_curves::Fp;
 use ragu::{Header, Step};
 
 use crate::{
-    digest::poseidon::NF_GROUP,
-    keys::ProofAuthorizingKey,
+    digest::poseidon,
+    keys::{NoteMasterKey, ProofAuthorizingKey},
     note::Note,
-    nullifier::Nullifier,
+    nullifier::{
+        NF_DERIVATION_WIDTH, NfTraceGrid, Nullifier,
+        derivation::{nf_fold_accumulator, sbox_quotient, wrap_quotient},
+    },
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfMarginPoly, NfSeqPoly, NfTailPoly,
         Tachygram, TachygramSetPoly,
     },
     stamp::proof::{
-        delegation::{NfDerive, NfMasterSeed, NullifierFuse},
+        delegation::{NfDerive, NfSboxStep, NfWrapStep, NullifierFuse},
         pool::{
             AnchorSeed, EndEpochUnspentSeed, UnspentAdvance, UnspentBatch, UnspentBind,
             UnspentEpochLift, UnspentFuse, UnspentSeed,
@@ -40,64 +44,93 @@ type StepRight<S> = <<S as Step>::Right as Header>::Data;
 
 type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 
-/// Prepare the witness for [`NfMasterSeed`]: `(note, pak)`.
+/// Prepare the witness for [`NfSboxStep`]:
+/// `(trace, square, quartic, quotient, mk, base)`.
+///
+/// Derives `base`'s window trace out of `mk`, builds the S-box intermediates
+/// `(square, quartic)`, computes $\chi_A$ over their commitments (matching
+/// the step), and builds the S-box/boundary quotient $Q_A$.
 #[must_use]
-pub const fn nf_master_seed(
-    (_left, _right): (StepLeft<NfMasterSeed>, StepRight<NfMasterSeed>),
-    note: Note,
-    pak: ProofAuthorizingKey,
-) -> StepWitness<'static, NfMasterSeed> {
-    (note, pak)
+pub fn nf_sbox_step(
+    (_left, _right): (StepLeft<NfSboxStep>, StepRight<NfSboxStep>),
+    mk: &NoteMasterKey,
+    base: EpochIndex,
+) -> StepWitness<'static, NfSboxStep> {
+    let grid = NfTraceGrid::derive(mk, base);
+    let trace = grid.spectrum();
+
+    let (square, quartic, _wrap) = grid.round_binding_spectra(mk);
+
+    let chi = poseidon::derivation_challenge(
+        trace.commit().into(),
+        square.commit().into(),
+        quartic.commit().into(),
+    );
+
+    let quotient = sbox_quotient(&trace, &square, &quartic, mk.0, Fp::from(base), chi);
+
+    (trace, square, quartic, quotient, *mk, base)
+}
+
+/// Prepare the witness for [`NfWrapStep`]:
+/// `(trace, quartic, wrap, quotient, mk)`.
+///
+/// Derives `base`'s window trace out of `mk`, builds the `quartic`
+/// intermediate and the wrap correction, and builds the round quotient
+/// $Q_B$ (single identity, no combination challenge).
+#[must_use]
+pub fn nf_wrap_step(
+    (_left, _right): (StepLeft<NfWrapStep>, StepRight<NfWrapStep>),
+    mk: &NoteMasterKey,
+    base: EpochIndex,
+) -> StepWitness<'static, NfWrapStep> {
+    let grid = NfTraceGrid::derive(mk, base);
+    let trace = grid.spectrum();
+
+    let (_square, quartic, wrap) = grid.round_binding_spectra(mk);
+
+    let quotient = wrap_quotient(&trace, &quartic, &wrap, mk.0);
+
+    (trace, quartic, wrap, quotient, *mk)
 }
 
 /// Prepare the witness for [`NfDerive`]:
-/// `(group_base, epoch_start, epoch_end, seq)`.
+/// `(note, pak, window, accumulator, seq)`.
 ///
-/// Reads `mk` off the seed header, derives the window covering `epoch_start`,
-/// and lays the requested `[epoch_start, epoch_end)` sub-range out as the
-/// sequence. The range must fit inside the covering window.
+/// Reads `mk` and `base` off the sbox cert, whitens the certified trace,
+/// lays the window's nullifiers out as a bare Horner sequence, computes the
+/// fold weight $\chi$ over the two commitments (matching the step), and
+/// builds the fold accumulator for it.
 #[must_use]
 pub fn nf_derive(
     (left, _right): (StepLeft<NfDerive>, StepRight<NfDerive>),
-    epoch_start: EpochIndex,
-    epoch_end: EpochIndex,
+    note: Note,
+    pak: ProofAuthorizingKey,
 ) -> StepWitness<'static, NfDerive> {
-    let (_cm, mk) = left;
-    let group_base = covering_group(epoch_start);
-    #[expect(
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
-        reason = "the group width is a small constant"
-    )]
-    let base = group_base * NF_GROUP as u32;
-    #[expect(
-        clippy::indexing_slicing,
-        clippy::as_conversions,
-        reason = "the caller requests a range inside the covering window"
-    )]
-    let seq = mk.derive_window(group_base)
-        [(epoch_start.0 - base) as usize..(epoch_end.0 - base) as usize]
-        .iter()
-        .copied()
-        .collect::<NfSeqPoly>();
-    (group_base, epoch_start, epoch_end, seq)
+    let (_, nf_commit, _, mk, base) = left;
+    let grid = NfTraceGrid::derive(&mk, base);
+    let window = grid.spectrum().whiten(&mk);
+    let seq: NfSeqPoly = mk.derive_window(base).into_iter().collect();
+    let chi = poseidon::fold_challenge(nf_commit.into(), seq.commit().into());
+    let accumulator = nf_fold_accumulator(&window, chi);
+    (note, pak, window, accumulator, seq)
 }
 
-/// The group base of the window covering `epoch`.
+/// A canonical window base covering `epoch`: the window-aligned floor.
 ///
-/// Windows are group-aligned, so the covering window starts at the epoch's
-/// own group.
+/// Windows from it are shared across the epochs they cover. The base is free
+/// in-circuit; alignment here is wallet policy.
 #[must_use]
 #[expect(
     clippy::as_conversions,
     clippy::cast_possible_truncation,
     clippy::integer_division,
     clippy::integer_division_remainder_used,
-    reason = "the group width is a small constant, and flooring to the \
-              containing group is the intended index"
+    reason = "the window width is a small constant, and flooring to the \
+              containing window is the intended base"
 )]
-pub const fn covering_group(epoch: EpochIndex) -> u32 {
-    epoch.0 / NF_GROUP as u32
+pub const fn covering_base(epoch: EpochIndex) -> EpochIndex {
+    EpochIndex(epoch.0 / NF_DERIVATION_WIDTH as u32 * NF_DERIVATION_WIDTH as u32)
 }
 
 /// Prepare the witness for [`NullifierFuse`]:
@@ -366,7 +399,7 @@ pub fn summary_seed(
 /// `acc_tgs` is the summary's accumulated tachygram list so far, `stamp_tgs`
 /// the folded stamp's. The extended accumulator is the root polynomial of
 /// their concatenation, which *is* the product `acc · stamp` (all three are
-/// monic root polynomials).
+/// monic root polynomials), so no polynomial multiplication happens here.
 #[must_use]
 pub fn summary_advance(
     (_left, _right): (StepLeft<SummaryAdvance>, StepRight<SummaryAdvance>),

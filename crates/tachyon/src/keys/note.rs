@@ -7,25 +7,11 @@ use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
 use super::{master::NoteMasterKey, proof::SpendValidatingKey};
 use crate::{digest::poseidon, nullifier};
 
-/// A Tachyon nullifier deriving key.
-///
-/// Tachyon simplifies Orchard's nullifier construction
-/// ("Tachyaction at a Distance", Bowe 2025):
-///
-/// $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| e)$$
-///
-/// where $F$ is a keyed PRF (Poseidon), $\Psi$ is the note's nullifier
-/// trapdoor, and $e$ is the epoch index. This replaces Orchard's more
-/// complex construction that defended against faerie gold attacks — which
-/// are moot under out-of-band payments.
+/// A Tachyon nullifier deriving key, which seeds the per-note master key.
 ///
 /// ## Capabilities
 ///
 /// - **Nullifier derivation**: detecting when a note has been spent
-/// - **Oblivious sync delegation**: a delegate receives proven value windows.
-///   The master key $\mathsf{mk} =
-///   \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \Psi, \mathsf{nk})$
-///   evaluates every epoch.
 ///
 /// `nk` alone does NOT confer spend authority — combined with `ak` it
 /// forms the proof authorizing key `pak`, enabling proof construction
@@ -37,7 +23,8 @@ impl NullifierKey {
     /// Derive a note's master key from its nullifier trapdoor `psi`.
     #[must_use]
     pub fn derive_note_private(&self, psi: nullifier::Trapdoor) -> NoteMasterKey {
-        NoteMasterKey(poseidon::nf_master(psi.into(), self.0))
+        let (mk_r, mk_w) = poseidon::nf_master_key(psi.into(), self.0);
+        NoteMasterKey(mk_r, mk_w)
     }
 }
 
@@ -111,7 +98,7 @@ mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::{primitives::EpochIndex, reddsa};
+    use crate::{keys::proof::SpendValidatingKey, nullifier, primitives::EpochIndex};
 
     /// reddsa accepts the identity as a verification key, but it has no affine
     /// coordinates to absorb.

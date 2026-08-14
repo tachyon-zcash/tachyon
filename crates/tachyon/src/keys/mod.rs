@@ -56,20 +56,14 @@
 //!
 //! ## Nullifier Derivation
 //!
-//! Nullifiers come `NF_GROUP` at a time from one Poseidon sponge keyed on the
-//! note's master key and the epoch's group index
-//! $w = \lfloor e / \mathsf{NF\_GROUP} \rfloor$:
+//! Nullifiers are derived from a per-note master key $\mathsf{mk} = [k, w]$:
 //!
-//! $$\mathsf{mk} = \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi,
-//! \mathsf{nk})$$
-//! $$\mathsf{nf}_e = \mathsf{squeeze}_{e \bmod \mathsf{NF\_GROUP}}\big(
-//!     \mathsf{absorb}(\mathtt{NF\_DOMAIN},\ \mathsf{mk},\ w)\big)$$
+//! $$[k, w] = \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(\psi, \mathsf{nk})$$
+//! $$\mathsf{nf}_e = E_k(e) + w$$
 //!
 //! where $\psi$ is the note's nullifier trapdoor, $\mathsf{nk}$ is the
-//! nullifier key, and $e$ is the epoch index. Each group re-absorbs $w$, so
-//! $\mathsf{nf}_e$ depends on $(\mathsf{mk}, e)$ alone and overlapping
-//! derivation windows agree on the epochs they share; window bases are
-//! group-aligned.
+//! nullifier key, and the cipher input $e$ is the epoch index itself, so
+//! derivation windows may start at any epoch.
 //!
 //! `mk` evaluates the whole epoch space; delegation carries proven value
 //! windows.
@@ -92,9 +86,9 @@ mod tests {
     use pasta_curves::Fp;
     use rand::{SeedableRng as _, rngs::StdRng};
 
+    use super::*;
     use crate::{
         entropy::ActionEntropy,
-        keys::{NullifierKey, PaymentKey, private},
         note::{self, Note},
         nullifier,
         primitives::effect,

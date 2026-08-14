@@ -1,52 +1,56 @@
 //! Nullifiers and nullifier operations.
 
+#![allow(
+    clippy::module_name_repetitions,
+    reason = "name repetition is intentional"
+)]
+
+pub mod derivation;
+mod trace;
+
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::Fp;
+use ragu::Polynomial;
 use rand_core::{CryptoRng, RngCore};
+pub use trace::{
+    NfFoldAccumulator, NfFoldAccumulatorCommit, NfGridSpectrum, NfGridSpectrumCommit, NfTraceGrid,
+    NfWindowSpectrum, NfWindowSpectrumCommit, NullifierTrace, SboxQuarticSpectrum,
+    SboxQuarticSpectrumCommit, SboxQuotientSpectrum, SboxQuotientSpectrumCommit,
+    SboxSquareSpectrum, SboxSquareSpectrumCommit, WrapQuotientSpectrum, WrapQuotientSpectrumCommit,
+    WrapSpectrum, WrapSpectrumCommit,
+};
+pub use zcash_mimc::specs::tachyon::TachyonP5R64;
 
-use crate::{constants::EPOCH_MAX, digest::poseidon::NF_GROUP, primitives::Tachygram};
+use crate::{constants::EPOCH_MAX, primitives::Tachygram};
 
 /// Epoch nullifiers per derivation window.
 ///
-/// A multiple of [`NF_GROUP`], so the sponge count is exact.
-///
-/// 16 epochs is four sponges, one permutation each, within the per-step gate
-/// cap.
-pub const NF_DERIVATION_WIDTH: usize = 16;
-
-/// Sponges one derivation window costs, a compile-time constant because
-/// window bases are group-aligned.
-#[expect(
-    clippy::integer_division,
-    clippy::integer_division_remainder_used,
-    reason = "both operands are powers of two and divide exactly"
-)]
-pub const NF_DERIVATION_GROUPS: usize = NF_DERIVATION_WIDTH / NF_GROUP;
-
-// The property the width's doc comment claims, as a build failure.
-const _: () = assert!(
-    NF_DERIVATION_GROUPS * NF_GROUP == NF_DERIVATION_WIDTH,
-    "the window width must be a whole number of sponges"
-);
-
-/// The largest group base whose window fits inside the epoch space.
+/// One window's round-state grid fills exactly one commitment polynomial:
+/// $W = 2^{R_{\mathsf{poly}}} / \mathsf{ROUNDS}$ rows of `ROUNDS` columns.
 #[expect(
     clippy::as_conversions,
     clippy::cast_possible_truncation,
     clippy::integer_division,
     clippy::integer_division_remainder_used,
-    reason = "both widths are small constants, and flooring to the last whole \
-              group is the intended bound"
+    reason = "the round count is a small constant, and both operands are \
+              powers of two"
 )]
-pub const NF_GROUP_BASE_MAX: u32 = (EPOCH_MAX - NF_DERIVATION_WIDTH as u32) / NF_GROUP as u32;
+pub const NF_DERIVATION_WIDTH: usize = (1 << Polynomial::R) / TachyonP5R64::ROUNDS as usize;
+
+/// The largest window base whose window stays inside the epoch space.
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    reason = "the window width is a small constant"
+)]
+pub const NF_BASE_MAX: u32 = EPOCH_MAX - (NF_DERIVATION_WIDTH as u32 - 1);
 
 /// A Tachyon nullifier.
 ///
-/// Derived from the note's master key $\mathsf{mk} =
-/// \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi, \mathsf{nk})$ as one
-/// squeeze of the sponge keyed on $\mathsf{mk}$ and the epoch's group index.
-/// Published when a note is spent.
+/// Derived directly from the note's master key: $\mathsf{mk} = [k, w] =
+/// \mathsf{Poseidon}(\psi, \mathsf{nk})$, then $\mathsf{nf}_e = E_k(e) + w$
+/// under the nullifier cipher. Published when a note is spent.
 ///
 /// Unlike Orchard, Tachyon nullifiers:
 /// - Don't need collision resistance (no faerie gold defense)

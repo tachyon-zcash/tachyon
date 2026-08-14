@@ -34,7 +34,7 @@ use crate::{
     action::{self, Action},
     bundle::{self, Bundle},
     constants::{EPOCH_SIZE, SUMMARY_CAPACITY},
-    digest::{blake2b, poseidon::NF_GROUP},
+    digest::blake2b,
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note},
@@ -835,11 +835,8 @@ pub struct WalletSim {
     /// different values draw from disjoint field sequences, and interleaved
     /// draws of other values never shift a stream's position.
     notes: RefCell<BTreeMap<u64, StdRng>>,
-    /// Per-note master seed PCDs, keyed by the note's `cm` tachygram: the note
-    /// is witnessed once and every window for it fuses against the same seed.
-    masters: RefCell<BTreeMap<Tachygram, Pcd<delegation::NfMasterHeader>>>,
     /// Per-(note, range) derivation PCDs, keyed by `(cm, epoch_start,
-    /// epoch_end)`: repeated derivations of the same exact range share the
+    /// epoch_end)`: repeated derivations of the same covering range share the
     /// proof.
     derivations: RefCell<BTreeMap<(Tachygram, u32, u32), Pcd<delegation::NullifierDerivation>>>,
 }
@@ -850,7 +847,6 @@ impl WalletSim {
             sk,
             pak: sk.derive_proof_private(),
             notes: RefCell::new(BTreeMap::new()),
-            masters: RefCell::new(BTreeMap::new()),
             derivations: RefCell::new(BTreeMap::new()),
         }
     }
@@ -901,36 +897,16 @@ impl WalletSim {
         self.mk(note).derive_nullifier(epoch)
     }
 
-    /// The certified master-key seed PCD for this note, cached by `cm`. The
-    /// note is witnessed once; every window fuses against the same seed.
-    pub fn master_pcd(
-        &self,
-        rng: &mut (impl RngCore + CryptoRng),
-        note: Note,
-    ) -> Pcd<delegation::NfMasterHeader> {
-        let cm = Tachygram::from(note.commitment());
-        if let Some(pcd) = self.masters.borrow().get(&cm) {
-            return pcd.clone();
-        }
-        let (pcd, ()) = PROOF_SYSTEM
-            .seed(
-                rng,
-                delegation::NfMasterSeed,
-                witness::nf_master_seed(((), ()), note, self.pak),
-            )
-            .expect("NfMasterSeed");
-
-        self.masters.borrow_mut().insert(cm, pcd.clone());
-        pcd
-    }
-
     /// The certified derivation PCD covering `[epoch_start, epoch_end)`,
     /// built from whole windows and cached by the covering range.
     ///
-    /// The first window is the one covering `epoch_start`; window-aligned
-    /// whole windows chain through [`delegation::NullifierFuse`] until the
-    /// requested bound is covered. Consumers read their own sub-ranges out of
-    /// the covering PCD.
+    /// The first window is the one covering `epoch_start`: the base is free
+    /// in-circuit, and the fixture's canonical choice is the window-aligned
+    /// floor ([`witness::covering_base`]). Whole windows chain through
+    /// [`delegation::NullifierFuse`] until the requested bound is covered;
+    /// each window seeds the two parallel cipher certs and joins them at
+    /// `NfDerive`. Consumers read their own sub-ranges out of the covering
+    /// PCD.
     pub fn derivation_pcd(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
@@ -938,32 +914,46 @@ impl WalletSim {
         epoch_start: EpochIndex,
         epoch_end: EpochIndex,
     ) -> Pcd<delegation::NullifierDerivation> {
-        let base = witness::covering_group(epoch_start) * NF_GROUP as u32;
-        let windows = (epoch_end.0 - base).div_ceil(NF_DERIVATION_WIDTH as u32);
-        let cover_end = base + windows * NF_DERIVATION_WIDTH as u32;
-        let key = (Tachygram::from(note.commitment()), base, cover_end);
+        let base = witness::covering_base(epoch_start);
+        let windows = (epoch_end.0 - base.0).div_ceil(NF_DERIVATION_WIDTH as u32);
+        let cover_end = base.0 + windows * NF_DERIVATION_WIDTH as u32;
+        let key = (Tachygram::from(note.commitment()), base.0, cover_end);
         if let Some(pcd) = self.derivations.borrow().get(&key) {
             return pcd.clone();
         }
-        let master = self.master_pcd(rng, note);
+        let mk = self.mk(&note);
 
         let mut merged: Option<Pcd<delegation::NullifierDerivation>> = None;
         for window in 0..windows {
-            let chunk_start = EpochIndex(base + window * NF_DERIVATION_WIDTH as u32);
+            let chunk_start = EpochIndex(base.0 + window * NF_DERIVATION_WIDTH as u32);
             let chunk_end = EpochIndex(chunk_start.0 + NF_DERIVATION_WIDTH as u32);
+            let (sbox, ()) = PROOF_SYSTEM
+                .seed(
+                    rng,
+                    delegation::NfSboxStep,
+                    witness::nf_sbox_step(((), ()), &mk, chunk_start),
+                )
+                .expect("NfSboxStep");
+            let (wrap, ()) = PROOF_SYSTEM
+                .seed(
+                    rng,
+                    delegation::NfWrapStep,
+                    witness::nf_wrap_step(((), ()), &mk, chunk_start),
+                )
+                .expect("NfWrapStep");
             let (leaf, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
                     delegation::NfDerive,
-                    witness::nf_derive((*master.data(), ()), chunk_start, chunk_end),
-                    master.clone(),
-                    Proof::trivial().carry::<()>(()),
+                    witness::nf_derive((*sbox.data(), *wrap.data()), note, self.pak),
+                    sbox,
+                    wrap,
                 )
                 .expect("NfDerive");
             merged = Some(match merged {
                 None => leaf,
                 Some(left) => {
-                    let left_nfs: Vec<Nullifier> = (base..chunk_start.0)
+                    let left_nfs: Vec<Nullifier> = (base.0..chunk_start.0)
                         .map(|epoch| self.nf_at(&note, EpochIndex(epoch)))
                         .collect();
                     let right_nfs: Vec<Nullifier> = (chunk_start.0..chunk_end.0)

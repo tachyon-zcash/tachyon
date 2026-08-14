@@ -25,8 +25,8 @@ use rand_core::{CryptoRng, RngCore};
 use super::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp, summary};
 use crate::{
     ActionSetPoly, NfSeqPoly, Note, TachygramSetPoly,
-    constants::{EPOCH_MAX, EPOCH_SIZE},
-    digest::{poseidon, poseidon::NF_GROUP},
+    constants::EPOCH_SIZE,
+    digest::poseidon,
     entropy::ActionEntropy,
     fixtures::{
         PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_plan, build_output_stamp,
@@ -34,7 +34,7 @@ use crate::{
         build_unspent_seed_pcd, random_block, random_block_with, shared_sk, spend_witness,
     },
     note,
-    nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
+    nullifier::{self, NF_BASE_MAX, NF_DERIVATION_WIDTH, Nullifier},
     primitives::{Anchor, BlockHeight, EpochIndex, NfMarginPoly, NfTailPoly, Tachygram, effect},
     value, witness,
 };
@@ -1484,7 +1484,12 @@ fn unspent_bind_rejects_uncovered_start() {
     // later window) cannot cover it.
     // This range is outside the builder's domain, so the witness is
     // assembled by hand: the genuine covering sequence, empty margins.
-    let range = user.derivation_pcd(rng, note, EpochIndex(64), EpochIndex(65));
+    let range = user.derivation_pcd(
+        rng,
+        note,
+        EpochIndex(NF_DERIVATION_WIDTH as u32),
+        EpochIndex(NF_DERIVATION_WIDTH as u32 + 1),
+    );
     let window = user.covering_window(&note, &range);
     let witness = (
         iter::once(user.nf_at(&note, EpochIndex(0))).collect(),
@@ -1654,170 +1659,216 @@ fn expect_invalid<H: ragu::Header, S>(
     assert_eq!(inner.to_string(), message);
 }
 
-fn honest_master(
+/// Honest cipher certs for a note's window at `base`: the two parallel
+/// seeds `NfDerive` joins.
+fn honest_certs(
     rng: &mut StdRng,
     user: &WalletSim,
-    note: Note,
-) -> Pcd<delegation::NfMasterHeader> {
-    let (master, ()) = PROOF_SYSTEM
+    note: &Note,
+    base: EpochIndex,
+) -> (Pcd<delegation::Sbox>, Pcd<delegation::Wrap>) {
+    let mk = user.mk(note);
+    let (sbox, ()) = PROOF_SYSTEM
         .seed(
             rng,
-            delegation::NfMasterSeed,
-            witness::nf_master_seed(((), ()), note, user.pak),
+            delegation::NfSboxStep,
+            witness::nf_sbox_step(((), ()), &mk, base),
         )
-        .expect("NfMasterSeed");
-    master
+        .expect("NfSboxStep");
+    let (wrap, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            delegation::NfWrapStep,
+            witness::nf_wrap_step(((), ()), &mk, base),
+        )
+        .expect("NfWrapStep");
+    (sbox, wrap)
 }
 
 /// A note paired with an unrelated proof authorizing key fails the
-/// payment-key pin before any master derivation.
+/// payment-key pin at the join.
 #[test]
-fn master_seed_rejects_unrelated_pak() {
+fn nf_derive_rejects_unrelated_pak() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let stranger = WalletSim::random(rng);
     let note = user.random_note(500);
 
+    let (sbox, wrap) = honest_certs(rng, &user, &note, EpochIndex(0));
+    let (_, _, window, accumulator, seq) =
+        witness::nf_derive((*sbox.data(), *wrap.data()), note, user.pak);
     expect_invalid(
         rng,
-        delegation::NfMasterSeed,
-        (note, stranger.pak),
-        Proof::trivial().carry::<()>(()),
-        Proof::trivial().carry::<()>(()),
-        "NfMasterSeed: pak not related to note",
+        delegation::NfDerive,
+        (note, stranger.pak, window, accumulator, seq),
+        sbox,
+        wrap,
+        "NfDerive: pak not related to note",
     );
 }
 
-/// A sequence built from a different note's nullifiers fails the accumulation
-/// opening: `mk` is threaded off the seed header, so the step derives the
-/// real note's nullifiers no matter what polynomial is offered.
+/// Certs built for a different note's master key do not join with this note:
+/// the key pin fires however genuine the cipher work is.
 #[test]
-fn nf_derive_rejects_a_foreign_sequence() {
+fn nf_derive_rejects_a_foreign_note() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note_a = user.random_note(500);
     let note_b = user.random_note(700);
 
-    let master_a = honest_master(rng, &user, note_a);
-    let (cm_a, _) = *master_a.data();
-    let (group_base, epoch_start, epoch_end, foreign_seq) = witness::nf_derive(
-        ((cm_a, user.mk(&note_b)), ()),
-        EpochIndex(16),
-        EpochIndex(20),
-    );
+    let (sbox_b, wrap_b) = honest_certs(rng, &user, &note_b, EpochIndex(0));
+    let (_, _, window, accumulator, seq) =
+        witness::nf_derive((*sbox_b.data(), *wrap_b.data()), note_b, user.pak);
     expect_invalid(
         rng,
         delegation::NfDerive,
-        (group_base, epoch_start, epoch_end, foreign_seq),
-        master_a,
-        Proof::trivial().carry::<()>(()),
-        "NfDerive: sequence does not match the derived range",
+        (note_a, user.pak, window, accumulator, seq),
+        sbox_b,
+        wrap_b,
+        "NfDerive: sbox round key does not match the note",
     );
 }
 
-/// A window whose declared base runs past the epoch space is rejected before
-/// any squeezing.
+/// A wrap cert over a different window's trace does not stitch to the sbox
+/// cert: the join requires both certs to constrain the same polynomials.
 #[test]
-fn nf_derive_rejects_base_out_of_range() {
+fn nf_derive_rejects_a_foreign_wrap_cert() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let master = honest_master(rng, &user, note);
-    let (_, _, _, seq) = witness::nf_derive((*master.data(), ()), EpochIndex(0), EpochIndex(1));
-    let over = EPOCH_MAX / NF_GROUP as u32;
+    let (sbox, _wrap) = honest_certs(rng, &user, &note, EpochIndex(0));
+    let (_, foreign_wrap) = honest_certs(rng, &user, &note, EpochIndex(NF_DERIVATION_WIDTH as u32));
+    let derive_witness = witness::nf_derive((*sbox.data(), *foreign_wrap.data()), note, user.pak);
     expect_invalid(
         rng,
         delegation::NfDerive,
-        (over, EpochIndex(0), EpochIndex(1), seq),
-        master,
-        Proof::trivial().carry::<()>(()),
-        "NfDerive: base exceeds epoch space",
+        derive_witness,
+        sbox,
+        foreign_wrap,
+        "NfDerive: certs disagree on the trace",
     );
 }
 
-/// An empty range is rejected along with one starting before the window.
+/// A sequence laid out for a different window fails the telescope: the fold
+/// weight binds the offered sequence's commitment, and the folded window
+/// disagrees with it.
 #[test]
-fn nf_derive_rejects_a_range_outside_the_window() {
+fn nf_derive_rejects_a_foreign_sequence() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
+    let mk = user.mk(&note);
 
-    let master = honest_master(rng, &user, note);
-    let (_, _, _, seq) = witness::nf_derive((*master.data(), ()), EpochIndex(16), EpochIndex(17));
+    let (sbox, wrap) = honest_certs(rng, &user, &note, EpochIndex(0));
+    let (_, _, window, _accumulator, _seq) =
+        witness::nf_derive((*sbox.data(), *wrap.data()), note, user.pak);
+    let foreign: NfSeqPoly = mk
+        .derive_window(EpochIndex(NF_DERIVATION_WIDTH as u32))
+        .into_iter()
+        .collect();
+    // The accumulator must be rebuilt for the foreign sequence's fold
+    // weight, or the fold identity itself fails first.
+    let (_, nf_commit, ..) = *sbox.data();
+    let chi = poseidon::fold_challenge(nf_commit.into(), foreign.commit().into());
+    let accumulator = nullifier::derivation::nf_fold_accumulator(&window, chi);
     expect_invalid(
         rng,
         delegation::NfDerive,
-        (4, EpochIndex(15), EpochIndex(17), seq.clone()),
-        master.clone(),
-        Proof::trivial().carry::<()>(()),
-        "NfDerive: range is empty or starts before the window",
-    );
-    expect_invalid(
-        rng,
-        delegation::NfDerive,
-        (
-            4,
-            EpochIndex(16),
-            EpochIndex(16 + NF_DERIVATION_WIDTH as u32 + 1),
-            seq,
-        ),
-        master,
-        Proof::trivial().carry::<()>(()),
-        "NfDerive: range ends past the window",
+        (note, user.pak, window, accumulator, foreign),
+        sbox,
+        wrap,
+        "NfDerive: sequence does not match the folded window",
     );
 }
 
-/// A direct [`delegation::NfDerive`] leaf exporting `[start, end)`.
-fn leaf_range(
-    rng: &mut StdRng,
-    user: &WalletSim,
-    note: Note,
-    start: EpochIndex,
-    end: EpochIndex,
-) -> Pcd<delegation::NullifierDerivation> {
-    let master = honest_master(rng, user, note);
-    let (leaf, ()) = PROOF_SYSTEM
-        .fuse(
+/// A window whose declared base runs past the epoch space is rejected at the
+/// sbox seed before any identity work.
+#[test]
+fn sbox_rejects_base_out_of_range() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let mk = user.mk(&note);
+
+    let over = EpochIndex(NF_BASE_MAX + 1);
+    let err = PROOF_SYSTEM
+        .seed(
             rng,
-            delegation::NfDerive,
-            witness::nf_derive((*master.data(), ()), start, end),
-            master,
-            Proof::trivial().carry::<()>(()),
+            delegation::NfSboxStep,
+            witness::nf_sbox_step(((), ()), &mk, over),
         )
-        .expect("NfDerive");
-    leaf
+        .err()
+        .unwrap();
+    let ragu::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(inner.to_string(), "Sbox: base exceeds epoch space");
 }
 
-/// A leaf exports exactly the requested sub-range of its window, labelled
-/// with its genuine boundary members, and every range of the same note
-/// carries the same `cm`.
+/// The base is free: a window may start at any epoch, and the header labels
+/// exactly what it covers. The fixture's canonical windows stay
+/// window-aligned as cache policy, not a rule.
 #[test]
-fn derivation_exports_the_requested_range() {
+fn derivation_covers_from_a_free_base() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let epoch = EpochIndex(NF_GROUP as u32 * 3 + 1);
-    let end = EpochIndex(epoch.0 + 2);
-    let range = leaf_range(rng, &user, note, epoch, end);
-    let (cm, (start, nf_start), commit, (range_end, nf_end)) = *range.data();
+    let base = EpochIndex(7);
+    let (sbox, wrap) = honest_certs(rng, &user, &note, base);
+    let derive_witness = witness::nf_derive((*sbox.data(), *wrap.data()), note, user.pak);
+    let (pcd, ()) = PROOF_SYSTEM
+        .fuse(rng, delegation::NfDerive, derive_witness, sbox, wrap)
+        .expect("NfDerive at a free base");
 
-    assert_eq!(start, epoch, "starts at the requested epoch");
-    assert_eq!(range_end, end, "ends at the requested bound");
-    assert_eq!(nf_start, user.nf_at(&note, epoch), "genuine start member");
+    let (cm, (start, nf_start), _commit, (end, nf_last)) = *pcd.data();
+    assert_eq!(cm, note.commitment());
     assert_eq!(
-        nf_end,
-        user.nf_at(&note, EpochIndex(end.0 - 1)),
-        "genuine end member"
+        (start, end),
+        (base, EpochIndex(base.0 + NF_DERIVATION_WIDTH as u32))
     );
-    let seq = (epoch.0..end.0)
-        .map(|index| user.nf_at(&note, EpochIndex(index)))
-        .collect::<NfSeqPoly>();
-    assert_eq!(commit, seq.commit(), "header commits the range sequence");
+    assert_eq!(nf_start, user.nf_at(&note, base));
+    assert_eq!(
+        nf_last,
+        user.nf_at(&note, EpochIndex(base.0 + NF_DERIVATION_WIDTH as u32 - 1))
+    );
 
-    let far = leaf_range(rng, &user, note, EpochIndex(100_000), EpochIndex(100_001));
-    assert_eq!(cm, far.data().0, "same note cm");
+    let epoch = EpochIndex(3);
+    let range = user.derivation_pcd(rng, note, epoch, EpochIndex(epoch.0 + 1));
+    let (_, (canon_start, _), _, (canon_end, _)) = *range.data();
+    assert_eq!(
+        canon_start,
+        EpochIndex(0),
+        "the fixture's canonical window starts at the epoch's window floor"
+    );
+    assert!(
+        canon_start <= epoch && epoch < canon_end,
+        "covers the requested epoch"
+    );
+}
+
+/// The published `nf_commit` is the window sequence's commitment, so a
+/// consumer that re-witnesses the sequence binds to the derivation this
+/// step certified.
+#[test]
+fn derivation_publishes_the_window_sequence() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let mk = user.mk(&note);
+
+    let epoch = EpochIndex(2);
+    let pcd = user.derivation_pcd(rng, note, epoch, EpochIndex(epoch.0 + 1));
+    let expected: NfSeqPoly = mk
+        .derive_window(witness::covering_base(epoch))
+        .into_iter()
+        .collect();
+    assert_eq!(
+        pcd.data().2,
+        expected.commit(),
+        "header commits the window sequence"
+    );
 }
 
 /// The fixture's covering derivation spans whole windows around the request
@@ -1852,28 +1903,33 @@ fn derivation_covers_with_whole_windows() {
     assert_eq!(commit, seq.commit(), "merged commit is the concat sequence");
 }
 
+/// The fuse requires adjacent ranges: a gap would break the degree-to-epoch
+/// correspondence every covering read relies on.
 #[test]
 fn nullifier_fuse_rejects_non_contiguous() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let range_a = leaf_range(rng, &user, note, EpochIndex(0), EpochIndex(1));
-    let range_b = leaf_range(rng, &user, note, EpochIndex(2), EpochIndex(3));
-    let witness = witness::nullifier_fuse(
-        (*range_a.data(), *range_b.data()),
-        &[user.nf_at(&note, EpochIndex(0))],
-        &[user.nf_at(&note, EpochIndex(2))],
+    let width = NF_DERIVATION_WIDTH as u32;
+    let range_a = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
+    let range_b = user.derivation_pcd(rng, note, EpochIndex(2 * width), EpochIndex(2 * width + 1));
+    let left_nfs: Vec<Nullifier> = (0..width)
+        .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
+        .collect();
+    let right_nfs: Vec<Nullifier> = (2 * width..3 * width)
+        .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
+        .collect();
+    let fuse_witness =
+        witness::nullifier_fuse((*range_a.data(), *range_b.data()), &left_nfs, &right_nfs);
+    expect_invalid(
+        rng,
+        delegation::NullifierFuse,
+        fuse_witness,
+        range_a,
+        range_b,
+        "NullifierFuse: ranges not contiguous",
     );
-
-    let err = PROOF_SYSTEM
-        .fuse(rng, delegation::NullifierFuse, witness, range_a, range_b)
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(inner.to_string(), "NullifierFuse: ranges not contiguous");
 }
 
 #[test]
@@ -1883,22 +1939,25 @@ fn nullifier_fuse_rejects_wrong_cm() {
     let note_a = user.random_note(500);
     let note_b = user.random_note(700);
 
-    let range_a = leaf_range(rng, &user, note_a, EpochIndex(0), EpochIndex(1));
-    let range_b = leaf_range(rng, &user, note_b, EpochIndex(1), EpochIndex(2));
-    let witness = witness::nullifier_fuse(
-        (*range_a.data(), *range_b.data()),
-        &[user.nf_at(&note_a, EpochIndex(0))],
-        &[user.nf_at(&note_b, EpochIndex(1))],
+    let width = NF_DERIVATION_WIDTH as u32;
+    let range_a = user.derivation_pcd(rng, note_a, EpochIndex(0), EpochIndex(1));
+    let range_b = user.derivation_pcd(rng, note_b, EpochIndex(width), EpochIndex(width + 1));
+    let left_nfs: Vec<Nullifier> = (0..width)
+        .map(|epoch| user.nf_at(&note_a, EpochIndex(epoch)))
+        .collect();
+    let right_nfs: Vec<Nullifier> = (width..2 * width)
+        .map(|epoch| user.nf_at(&note_b, EpochIndex(epoch)))
+        .collect();
+    let fuse_witness =
+        witness::nullifier_fuse((*range_a.data(), *range_b.data()), &left_nfs, &right_nfs);
+    expect_invalid(
+        rng,
+        delegation::NullifierFuse,
+        fuse_witness,
+        range_a,
+        range_b,
+        "NullifierFuse: note commitments differ",
     );
-
-    let err = PROOF_SYSTEM
-        .fuse(rng, delegation::NullifierFuse, witness, range_a, range_b)
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(inner.to_string(), "NullifierFuse: note commitments differ");
 }
 
 /// An honest spendable and covering derivation for `SpendBind` witness
@@ -2273,12 +2332,13 @@ fn nullifier_fuse_composes() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let left = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(16));
-    let right = user.derivation_pcd(rng, note, EpochIndex(16), EpochIndex(32));
-    let left_nfs: Vec<Nullifier> = (0..16)
+    let width = NF_DERIVATION_WIDTH as u32;
+    let left = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(width));
+    let right = user.derivation_pcd(rng, note, EpochIndex(width), EpochIndex(2 * width));
+    let left_nfs: Vec<Nullifier> = (0..width)
         .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
         .collect();
-    let right_nfs: Vec<Nullifier> = (16..32)
+    let right_nfs: Vec<Nullifier> = (width..2 * width)
         .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
         .collect();
     let fuse_witness =
@@ -2289,10 +2349,10 @@ fn nullifier_fuse_composes() {
 
     let (cm, (start, nf_start), commit, (end, nf_last)) = *merged.data();
     assert_eq!(cm, note.commitment());
-    assert_eq!((start, end), (EpochIndex(0), EpochIndex(32)));
+    assert_eq!((start, end), (EpochIndex(0), EpochIndex(2 * width)));
     assert_eq!(nf_start, user.nf_at(&note, EpochIndex(0)));
-    assert_eq!(nf_last, user.nf_at(&note, EpochIndex(31)));
-    let expected: NfSeqPoly = (0..32)
+    assert_eq!(nf_last, user.nf_at(&note, EpochIndex(2 * width - 1)));
+    let expected: NfSeqPoly = (0..2 * width)
         .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
         .collect();
     assert_eq!(
@@ -2310,18 +2370,19 @@ fn nullifier_fuse_rejects_a_wrong_merged() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let left = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(16));
-    let right = user.derivation_pcd(rng, note, EpochIndex(16), EpochIndex(32));
-    let left_nfs: Vec<Nullifier> = (0..16)
+    let width = NF_DERIVATION_WIDTH as u32;
+    let left = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(width));
+    let right = user.derivation_pcd(rng, note, EpochIndex(width), EpochIndex(2 * width));
+    let left_nfs: Vec<Nullifier> = (0..width)
         .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
         .collect();
-    let right_nfs: Vec<Nullifier> = (16..32)
+    let right_nfs: Vec<Nullifier> = (width..2 * width)
         .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
         .collect();
     let (left_seq, _merged, right_seq) =
         witness::nullifier_fuse((*left.data(), *right.data()), &left_nfs, &right_nfs);
     let wrong: NfSeqPoly = iter::repeat_with(|| Nullifier::from(Fp::random(&mut *rng)))
-        .take(32)
+        .take(2 * NF_DERIVATION_WIDTH)
         .collect();
     expect_invalid(
         rng,

@@ -2,18 +2,12 @@
 //!
 //! Each named function provides one protocol-defined hash.
 
-use core::array;
-
 use ff::PrimeField as _;
 use group::{Curve as _, GroupEncoding as _, prime::PrimeCurveAffine as _};
 use pasta_curves::{EpAffine, Eq, EqAffine, Fp, arithmetic::Coordinates};
 use ragu::Sponge;
 
 use crate::EpochIndex;
-
-/// Epoch nullifiers derived per sponge, the rate of ragu's `PoseidonFp`
-/// ($T = 5$, rate 4), which ragu does not export.
-pub(crate) const NF_GROUP: usize = 4;
 
 #[expect(
     clippy::expect_used,
@@ -88,52 +82,76 @@ pub(crate) fn pad_tachygram(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
 
 const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 
-/// Derives a note's master key from its trapdoor and the wallet nullifier key.
+/// Derive a note's master key `mk = [k, w]` from the note trapdoor `psi` and
+/// the nullifier key `nk`.
 ///
-/// $\mathsf{mk} = \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi,
-/// \mathsf{nk})$
-#[must_use]
-pub(crate) fn nf_master(psi: Fp, nk: Fp) -> Fp {
-    hash::<3>([
-        Fp::from_u128(u128::from_le_bytes(*NULLIFIER_MASTER_DOMAIN)),
-        psi,
-        nk,
-    ])
-}
-
-const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
-
-/// Derives one group of [`NF_GROUP`] consecutive epoch nullifiers from the
-/// note's master key.
-///
-/// With $w$ the group index and $j$ the squeeze ordinal, the epoch
-/// $e = \mathsf{NF\_GROUP} \cdot w + j$ has
-///
-/// $$
-/// \mathsf{nf}_e = \mathsf{squeeze}_j\big(
-///     \mathsf{absorb}(\mathtt{NF\_DOMAIN},\ \mathsf{mk},\ w)\big).
-/// $$
-///
-/// Three absorbs stay inside the sponge rate, so the first squeeze is the
-/// group's only permutation and the remaining $\mathsf{NF\_GROUP} - 1$ come
-/// from the same permutation's output buffer. Each group re-absorbs $w$, so
-/// $\mathsf{nf}_e$ is a function of $(\mathsf{mk}, e)$ alone and overlapping
-/// derivation windows agree on the epochs they share.
+/// This is the nullifier cipher's round key `k` and whitening key `w`.
 #[expect(
     clippy::expect_used,
     reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
 )]
 #[must_use]
-pub(crate) fn nullifier_group(mk: Fp, group: u32) -> [Fp; NF_GROUP] {
+pub(crate) fn nf_master_key(psi: Fp, nk: Fp) -> (Fp, Fp) {
     let mut sponge = Sponge::new();
-    for value in [
-        Fp::from_u128(u128::from_le_bytes(*NULLIFIER_DOMAIN)),
-        mk,
-        Fp::from(u64::from(group)),
-    ] {
-        sponge.absorb(value).expect("infallible");
-    }
-    array::from_fn(|_| sponge.squeeze().expect("infallible"))
+    sponge
+        .absorb(Fp::from_u128(u128::from_le_bytes(*NULLIFIER_MASTER_DOMAIN)))
+        .expect("infallible");
+    sponge.absorb(psi).expect("infallible");
+    sponge.absorb(nk).expect("infallible");
+    (
+        sponge.squeeze().expect("infallible"),
+        sponge.squeeze().expect("infallible"),
+    )
+}
+
+const DERIVATION_BIND_DOMAIN: &[u8; 16] = b"Tachyon-NfLeafSq";
+
+/// Derive the combination challenge $\chi_A$ over the commitments of the
+/// three polynomials the S-box identities relate: the trace $T$ and the
+/// intermediates `(square, quartic)`.
+///
+/// The scalar operands $k$ and $\mathsf{base}$ are not absorbed; the join's
+/// `mk` pin completes the combination argument, per `NfSboxStep`'s soundness
+/// section. The combined quotient depends on $\chi_A$, so the challenge must
+/// be a Poseidon digest the native witness builder replicates.
+#[must_use]
+pub(crate) fn derivation_challenge(trace: Eq, square: Eq, quartic: Eq) -> Fp {
+    let (trace_lo, trace_hi) = point_limbs(trace.to_affine());
+    let (square_lo, square_hi) = point_limbs(square.to_affine());
+    let (quartic_lo, quartic_hi) = point_limbs(quartic.to_affine());
+    hash::<7>([
+        Fp::from_u128(u128::from_le_bytes(*DERIVATION_BIND_DOMAIN)),
+        trace_lo,
+        trace_hi,
+        square_lo,
+        square_hi,
+        quartic_lo,
+        quartic_hi,
+    ])
+}
+
+const NF_FOLD_DOMAIN: &[u8; 16] = b"Tachyon-NfLeafFd";
+
+/// Derive the nullifier-fold weight $\chi$ over the commitments of the two
+/// polynomials the fold relates: the whitened trace $W$ and the exported
+/// sequence $g$.
+///
+/// Both operands are pinned before $\chi$ exists, so the single-point
+/// telescope discharge forces every coefficient of $g$ to the genuine
+/// nullifiers (Schwartz-Zippel). The fold accumulator `A` depends on $\chi$,
+/// so the weight must be a Poseidon digest the native witness builder
+/// replicates.
+#[must_use]
+pub(crate) fn fold_challenge(trace: Eq, seq: Eq) -> Fp {
+    let (trace_lo, trace_hi) = point_limbs(trace.to_affine());
+    let (seq_lo, seq_hi) = point_limbs(seq.to_affine());
+    hash::<5>([
+        Fp::from_u128(u128::from_le_bytes(*NF_FOLD_DOMAIN)),
+        trace_lo,
+        trace_hi,
+        seq_lo,
+        seq_hi,
+    ])
 }
 
 const NF_READ_DOMAIN: &[u8; 16] = b"Tachyon-NfReadCh";
@@ -144,8 +162,8 @@ const NF_READ_DOMAIN: &[u8; 16] = b"Tachyon-NfReadCh";
 /// A scalar member has no commitment, and the read identity is linear in
 /// each, so every member is absorbed: that makes the solve a fixed point and
 /// forces each member to the covering sequence's genuine coefficient. The
-/// witness is built from this challenge, so it must be a Poseidon digest the
-/// native witness builders replicate.
+/// members depend on the challenge's inputs, so the challenge must be a
+/// Poseidon digest the native witness builders replicate.
 ///
 /// # Panics
 ///
