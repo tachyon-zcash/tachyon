@@ -35,7 +35,7 @@ This is what makes anchors unique per block height. Without it, a run of empty b
 When the chain crosses from epoch $e$ into epoch $e+1$:
 
 $$
-\mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}EpochStp}(\mathsf{anchor},\ e+1)
+\anchor' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}EpochStp}(\anchor,\ e+1)
 $$
 
 All three link types absorb an epoch, so the epoch index alone does not distinguish them. What distinguishes this one is that it absorbs the epoch being *entered* rather than the epoch it sits inside, under its own domain. Reaching a boundary anchor by any other link would therefore be a cross-domain collision, which is what lets a proof pin a lineage to a real epoch boundary.

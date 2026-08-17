@@ -27,6 +27,10 @@
 \nk:\mathsf{nk}
 \seed:\mathsf{seed}
 \nf:\mathsf{nf}
+\incl:\mathsf{incl}
+\join:\mathsf{join}
+\anchor:\mathsf{anchor}
+\sntl:\mathsf{sntl}
 \rcm:\mathsf{rcm}
 \cm:\mathsf{cm}
 \pos:\mathsf{pos}
@@ -34,7 +38,6 @@
 \acc:\mathsf{acc}
 \tgacc:\mathsf{acc^{tg}}
 \actacc:\mathsf{acc^{act}}
-\tgst:\mathsf{st^{tg}}
 \QR:\mathsf{QR}
 \NQR:\mathsf{NQR}
 \addr:\mathsf{addr}
