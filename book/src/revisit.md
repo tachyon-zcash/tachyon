@@ -1703,7 +1703,9 @@ as camouflage. The wallet therefore follows the same branches through
 nonempty $S=[s_0,e)$, derives the note's actual nullifiers for that range, and
 runs `NfDerive`, the OSS branch, and `SpendBind` normally. It chooses an
 independent $e_\join\in S$, so the request has the same shape as an
-older note's.
+older note's. How well this hides the same-epoch case depends on wallet policy:
+the wallet should sample $(s_0,e_\join)$ from the same joint distribution that
+older-note requests expose.
 
 Its inclusion branch is shorter: `InclusionInit` stops at the inclusion anchor,
 which `SpendBind` carries into the `ActionHeader`. `ActionLift` then advances the
@@ -1740,17 +1742,23 @@ $$
 n=|S|,\qquad b_n=0.
 $$
 Here $g_n^\Uc(X)$ contains exactly the derived sequence over $S$, with no
-trailing masked positions. `ExtendRange` replaces $S$ by a right extension $S'$,
-resets $b_n$ to one, and preserves every other field, including
-$\mathsf{Com}(g_n^\Uc)$. `NfDerive` then resumes at epoch $s_0+n$ and turns the
-mask off after the last position of $S'$. If the main derivation branch has
-already appended trailing zeros, the wallet extends from the retained boundary
-header instead.
+trailing masked positions. `ExtendRange` checks $n=|S|$, replaces $S$ by a
+right extension $S'$ with the same $s_0$, resets $b_n$ to one, and preserves
+every other field, including $\mathsf{Com}(g_n^\Uc)$. `NfDerive` then resumes
+at epoch $s_0+n$ and turns the mask off after the last position of $S'$. If the
+main derivation branch has already appended trailing zeros, the wallet extends
+from the retained boundary header instead.
 
-This enforces a genuine extension without an endpoint comparison. Starting from
-$n=|S|$, the reset mask can return to zero only if the new turn-off position
-$|S'|-1$ still lies ahead; bounded counters exclude field wraparound. At the
-final fold, the branches agree on
+The equality $n=|S|$ is necessary. A header that has advanced past $|S|$
+already commits to zero coefficients at positions $|S|,\ldots,n-1$. Resetting
+its mask would turn derivation back on after this gap. The delegated list could
+then use zero at each corresponding epoch; since every published tachygram is
+nonzero, zero passes the non-membership checks, leaving the note's actual
+nullifiers in the gap untested. Starting instead from $n=|S|$ keeps the derived
+sequence a prefix. It also enforces a strict extension without comparing
+endpoints: the reset mask can return to zero only if the new turn-off position
+$|S'|-1$ still lies ahead, while bounded counters exclude field wraparound. At
+the final fold, the branches agree on
 $$
 S'=[s_0,s_0+m),\qquad
 g_n^\Uc(X)=X^{n-m}g_m^\Oc(X),
