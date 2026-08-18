@@ -5,10 +5,6 @@
 //! nullifiers and tachygrams into the polynomials the step opens against),
 //! ready to seed or fuse through `PROOF_SYSTEM`. Functions are named after the
 //! step they serve. Steps with an empty `()` witness need no utility.
-//!
-//! A `window` argument is always the complete covering sequence, one member
-//! per epoch of the derivation header's range; the covering read and its
-//! margins are segmented from it.
 
 use ragu::{Header, Step};
 
@@ -50,8 +46,8 @@ pub const fn nf_master_seed(
 /// `(group_base, epoch_start, epoch_end, seq)`.
 ///
 /// Reads `mk` off the seed header, derives the window covering `epoch_start`,
-/// and interpolates the requested `[epoch_start, epoch_end)` sub-range into
-/// the sequence. The range must fit inside the covering window; a longer span
+/// and lays the requested `[epoch_start, epoch_end)` sub-range out as the
+/// sequence. The range must fit inside the covering window; a longer span
 /// fuses ranges via [`NullifierFuse`].
 #[must_use]
 pub fn nf_derive(
@@ -148,13 +144,21 @@ pub const fn end_epoch_unspent_seed(
 
 /// Prepare the witness for [`UnspentFuse`]:
 /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
+///
+/// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
+/// covered epoch. Both include the junction epoch's member, which the
+/// combined sequence keeps once.
 #[must_use]
 pub fn unspent_fuse(
     (_left, _right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
     left_elapsed: &[Nullifier],
     right_elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentFuse> {
-    let combined = [left_elapsed, right_elapsed].concat();
+    #[expect(clippy::expect_used, reason = "member lists are nonempty")]
+    let (_junction, right_tail) = right_elapsed
+        .split_first()
+        .expect("right members include the junction");
+    let combined = [left_elapsed, right_tail].concat();
     (
         left_elapsed.iter().copied().collect::<NfSeqPoly>(),
         combined.into_iter().collect::<NfSeqPoly>(),
@@ -162,11 +166,12 @@ pub fn unspent_fuse(
     )
 }
 
-/// Prepare the witness for [`UnspentBind`]:
-/// `(elapsed_seq, g, older, tail)`.
+/// Prepare the witness for [`UnspentBind`]: `(elapsed_seq, g, older, tail)`.
 ///
-/// `elapsed` is the unspent's per-crossing history; the read covers
-/// `[epoch_start, epoch_end]` inclusive, the tip riding as the sentinel swap.
+/// `elapsed` is the unspent's member list, one per covered epoch. `window`
+/// is the complete covering sequence, one member per epoch of the
+/// derivation header's range; the read of the unspent's span and its
+/// margins are segmented from it.
 #[must_use]
 #[expect(
     clippy::indexing_slicing,
@@ -174,19 +179,19 @@ pub fn unspent_fuse(
     reason = "the window covers the derivation header's range"
 )]
 pub fn unspent_bind(
-    (left, right): (StepLeft<UnspentBind>, StepRight<UnspentBind>),
+    (unspent, deriv): (StepLeft<UnspentBind>, StepRight<UnspentBind>),
     window: &[Nullifier],
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentBind> {
-    let (_, (epoch_start, _), _, (epoch_end, _), _) = left;
-    let (_, (deriv_start, _), ..) = right;
+    let (_, (epoch_start, _), _, (epoch_last, _), _) = unspent;
+    let (_, (deriv_start, _), ..) = deriv;
     let lo = (epoch_start.0 - deriv_start.0) as usize;
-    let hi = (epoch_end.next().0 - deriv_start.0) as usize;
+    let hi = (epoch_last.next().0 - deriv_start.0) as usize;
     (
         elapsed.iter().copied().collect::<NfSeqPoly>(),
         window.iter().copied().collect::<NfSeqPoly>(),
-        NfMarginPoly::new(&window[hi..]),
-        NfTailPoly::new(&window[..lo]),
+        NfMarginPoly::new(&window[..lo]),
+        NfTailPoly::new(&window[hi..]),
     )
 }
 
@@ -194,7 +199,9 @@ pub fn unspent_bind(
 /// `(pre_cm_anchor, creation_set, creation_epoch, present_nf, g, older,
 /// tail)`.
 ///
-/// The read is 1-wide at `creation_epoch`.
+/// `window` is the complete covering sequence, one member per epoch of the
+/// derivation header's range; the 1-wide read at `creation_epoch` and its
+/// margins are segmented from it, `present_nf` the member the read forces.
 #[must_use]
 #[expect(
     clippy::indexing_slicing,
@@ -202,13 +209,13 @@ pub fn unspent_bind(
     reason = "the window covers the derivation header's range"
 )]
 pub fn spendable_init(
-    (left, _right): (StepLeft<SpendableInit>, StepRight<SpendableInit>),
+    (deriv, _right): (StepLeft<SpendableInit>, StepRight<SpendableInit>),
     pre_cm_anchor: Anchor,
     creation_tgs: &[Tachygram],
     creation_epoch: EpochIndex,
     window: &[Nullifier],
 ) -> StepWitness<'static, SpendableInit> {
-    let (_, (deriv_start, _), ..) = left;
+    let (_, (deriv_start, _), ..) = deriv;
     let lo = (creation_epoch.0 - deriv_start.0) as usize;
     (
         pre_cm_anchor,
@@ -216,14 +223,16 @@ pub fn spendable_init(
         creation_epoch,
         window[lo],
         window.iter().copied().collect::<NfSeqPoly>(),
-        NfMarginPoly::new(&window[lo + 1..]),
-        NfTailPoly::new(&window[..lo]),
+        NfMarginPoly::new(&window[..lo]),
+        NfTailPoly::new(&window[lo + 1..]),
     )
 }
 
 /// Prepare the witness for [`SpendBind`]: `(g, older, tail, nf_next)`.
 ///
-/// The read is 2-wide at the lineage's epoch.
+/// `window` is the complete covering sequence, one member per epoch of the
+/// derivation header's range; the 2-wide read at the lineage's epoch and
+/// its margins are segmented from it, `nf_next` the next epoch's member.
 #[must_use]
 #[expect(
     clippy::indexing_slicing,
@@ -231,16 +240,16 @@ pub fn spendable_init(
     reason = "the window covers the derivation header's range"
 )]
 pub fn spend_bind(
-    (left, right): (StepLeft<SpendBind>, StepRight<SpendBind>),
+    (spendable, deriv): (StepLeft<SpendBind>, StepRight<SpendBind>),
     window: &[Nullifier],
 ) -> StepWitness<'static, SpendBind> {
-    let (_, (epoch, _), _) = left;
-    let (_, (deriv_start, _), ..) = right;
+    let (_, (epoch, _), _) = spendable;
+    let (_, (deriv_start, _), ..) = deriv;
     let lo = (epoch.0 - deriv_start.0) as usize;
     (
         window.iter().copied().collect::<NfSeqPoly>(),
-        NfMarginPoly::new(&window[lo + 2..]),
-        NfTailPoly::new(&window[..lo]),
+        NfMarginPoly::new(&window[..lo]),
+        NfTailPoly::new(&window[lo + 2..]),
         window[lo + 1],
     )
 }

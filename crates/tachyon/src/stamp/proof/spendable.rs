@@ -26,15 +26,17 @@ use crate::{
     relations::read::enforce_covering_read_members,
 };
 
-/// Wallet's spendable position `(cm, (epoch, present_nf), anchor)`.
+/// Wallet's spendable position `(cm, (epoch, present_nf), anchor)`
 ///
-/// `cm` is threaded unchanged so the spent value cannot drift to a different
-/// same-`mk` note.
+/// The note's current epoch and its nullifier there, plus the pool position
+/// (all advanced per lift) and the minted-note commitment, threaded unchanged
+/// so the spent value cannot drift to a different same-`mk` note.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
 impl Header for SpendableHeader {
-    /// `(cm, (epoch, present_nf), anchor)`. The boundary pairing matches
+    /// `(cm, (epoch, present_nf), anchor)`. `cm` threads unchanged; the rest
+    /// advances per lift. The boundary pairing matches
     /// [`Unspent`]'s, which is what a lift checks continuity against.
     type Data = (note::Commitment, (EpochIndex, Nullifier), Anchor);
 
@@ -58,14 +60,14 @@ impl Header for SpendableHeader {
 
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
-/// Wallet-only, one-child over a wallet [`NullifierDerivation`]. Any range
-/// covering the creation epoch is suitable: the 1-wide covering read forces
-/// `present_nf` to the range's genuine member there and the margins absorb the
-/// range's remaining span, so the wallet can derive one range covering from
-/// before init to past the expected spend and feed the same PCD to init, lift,
-/// and spend. `cm` is proven among the creation stamp's tachygrams, which is
-/// the consensus binding, and the post-cm anchor folds from a free-witnessed
-/// predecessor.
+/// Wallet-only, one-child over a wallet [`NullifierDerivation`]. **Any window
+/// covering the creation epoch is accepted**, so one derived window feeds
+/// init, bind, and spend alike: the 1-wide covering read at the creation epoch
+/// forces `present_nf` to the window's genuine member, with the newer margin
+/// absorbing the window's remaining span and the older margin any
+/// pre-creation coverage. `cm` is proven among the creation stamp's
+/// tachygrams, which is the consensus binding, and the post-cm anchor folds
+/// from a free-witnessed predecessor.
 ///
 /// # Soundness
 ///
@@ -76,12 +78,19 @@ impl Header for SpendableHeader {
 /// preimage resistance forces all three once the eventual spend's anchor is
 /// consensus-checked — a wrong epoch folds into an anchor off the published
 /// sequence. `present_nf` closes through the read identity, whose challenge
-/// absorbs it (see `poseidon::read_challenge`): left out, a scalar member is
-/// solvable after the challenge is known.
+/// absorbs it (see `poseidon::read_challenge`).
 ///
-/// No sameness constraint ties this range to the one the spend later reads:
-/// `cm` equality binds every range of the same note to the same lattice, so
-/// one derivation suffices and none is forced.
+/// No sameness constraint ties this window to the one the spend later reads:
+/// `cm` equality binds every window of the same note to the same lattice.
+///
+/// # Committed polynomials
+///
+/// | polynomial | role |
+/// |---|---|
+/// | `creation_set` | the creating stamp's tachygram set, membership-queried |
+/// | `g` | the covering sequence, bound to the derivation header |
+/// | `older` | sentineled absorbing margin above the read |
+/// | `tail` | cap-shifted sentineled absorbing margin below the read |
 #[derive(Debug)]
 pub struct SpendableInit;
 
@@ -114,7 +123,7 @@ impl Step for SpendableInit {
             cm,
             (deriv_start, _deriv_nf_start),
             nf_commit,
-            (deriv_end, _deriv_nf_end),
+            (deriv_end, _deriv_nf_last),
         ): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -124,9 +133,8 @@ impl Step for SpendableInit {
             "SpendableInit: covering sequence does not match header",
         )?;
 
-        // Native coverage guard: mock stand-in for the range constraint over
-        // the header-pinned bounds. `creation_epoch` is pinned downstream
-        // through the emitted anchor (see the step doc).
+        // Native coverage guard over the header-pinned bounds.
+        // `creation_epoch` is pinned downstream through the emitted anchor.
         if deriv_start.0 > creation_epoch.0 || deriv_end.0 <= creation_epoch.0 {
             return Err(ragu::Error::InvalidWitness(
                 "SpendableInit: derivation does not cover the creation epoch".into(),
@@ -134,8 +142,10 @@ impl Step for SpendableInit {
         }
 
         // The 1-wide read at the creation epoch. `present_nf` enters as a
-        // scalar monomial, so the challenge must absorb it.
-        let margin = u64::from(creation_epoch - deriv_start);
+        // scalar monomial, so the challenge must absorb it: the
+        // member-absorbing Poseidon digest, which the witness builder
+        // replicates.
+        let margin = u64::from(deriv_end - creation_epoch) - 1;
         let z = poseidon::read_challenge(
             g.commit().into(),
             older.commit().into(),
@@ -161,7 +171,8 @@ impl Step for SpendableInit {
         let creation_commit = creation_set.commit();
 
         // The anchor immediately after the creation stamp, computed in-circuit
-        // so the proof certifies the fold of `epoch` and `creation_commit`.
+        // so the proof certifies the fold of `epoch` and `creation_commit`;
+        // consensus membership of the eventual spend anchor binds the rest.
         let post_cm_anchor = pre_cm_anchor.next_stamp(creation_epoch, &creation_commit);
 
         Ok(((cm, (creation_epoch, present_nf), post_cm_anchor), ()))
@@ -172,7 +183,7 @@ impl Step for SpendableInit {
 ///
 /// Wallet-only, witness-free. Checks `cm`, the boundary pair `(epoch_start,
 /// nf_start) == (epoch, present_nf)`, and anchor adjacency, then advances to
-/// the tip `(epoch_end, nf_end, anchor_last)`.
+/// the tip `(epoch_last, nf_last, anchor_last)`.
 ///
 /// The segment may span any number of epochs. A lineage resting on its epoch's
 /// terminal anchor advances the same way, over a segment that opens with the
@@ -198,7 +209,7 @@ impl Step for SpendableLift {
             unspent_cm,
             unspent_anchor_prev,
             (unspent_epoch_start, unspent_nf_start),
-            (unspent_epoch_end, unspent_nf_end),
+            (unspent_epoch_last, unspent_nf_last),
             unspent_anchor_last,
         ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -221,7 +232,7 @@ impl Step for SpendableLift {
         Ok((
             (
                 spendable_cm,
-                (unspent_epoch_end, unspent_nf_end),
+                (unspent_epoch_last, unspent_nf_last),
                 unspent_anchor_last,
             ),
             (),

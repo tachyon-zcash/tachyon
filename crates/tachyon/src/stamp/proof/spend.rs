@@ -29,7 +29,9 @@ use crate::{
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(cm, present_nf, nf_next, anchor)`.
+    /// `(cm, present_nf, nf_next, anchor)`. `cm` binds the spent note;
+    /// `present_nf`/`nf_next` are the confirmed epoch pair; `anchor` threads
+    /// the spendable lineage's pool position.
     type Data = (note::Commitment, Nullifier, Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(10);
@@ -56,18 +58,25 @@ impl Header for SpendHeader {
 /// The range is tied to the lineage's note by `nf_cm == spendable_cm` (both
 /// are the note commitment, bound where the range was derived and at
 /// [`SpendableInit`](super::spendable::SpendableInit) respectively), so no
-/// note witness is needed here. Any range covering the two epochs is
-/// suitable: the 2-wide covering read at the lineage's epoch confirms the
-/// pair, with `present_nf` pinned against the spendable and `nf_next` a
-/// witnessed scalar the identity forces. Both nullifiers are emitted on the
-/// [`SpendHeader`] for the action-producing step to publish.
+/// note witness is needed here. **Any range covering the lineage's epoch and
+/// the next is accepted**: the 2-wide covering read at the lineage's epoch
+/// confirms the pair, with `present_nf` pinned against the spendable and
+/// `nf_next` a witnessed scalar the identity forces. Both nullifiers are
+/// emitted on the [`SpendHeader`] for the action-producing step to publish.
 ///
 /// # Soundness
 ///
-/// The read's challenge absorbs both scalar members; left out, a member is
-/// solvable after the challenge is known and a garbage `nf_next` would
-/// publish. See
-/// [`read_challenge`](crate::digest::poseidon::read_challenge).
+/// The read's challenge absorbs both scalar members (see
+/// `poseidon::read_challenge`), which forces each to the covering sequence's
+/// genuine coefficient.
+///
+/// # Committed polynomials
+///
+/// | polynomial | role |
+/// |---|---|
+/// | `g` | the covering sequence, bound to the derivation header |
+/// | `older` | sentineled absorbing margin above the read |
+/// | `tail` | cap-shifted sentineled absorbing margin below the read |
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -90,7 +99,7 @@ impl Step for SpendBind {
             nf_cm,
             (deriv_start, _deriv_nf_start),
             nf_commit,
-            (deriv_end, _deriv_nf_end),
+            (deriv_end, _deriv_nf_last),
         ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
@@ -116,10 +125,12 @@ impl Step for SpendBind {
             ));
         }
 
-        // The 2-wide read at the lineage's epoch, members newest-first. Both
-        // enter as scalar monomials, so the challenge must absorb them.
-        let margin = u64::from(spendable_epoch - deriv_start);
-        let members = [Fp::from(nf_next), Fp::from(present_nf)];
+        // The 2-wide read at the lineage's epoch, members oldest-first. Both
+        // enter as scalar monomials, so the challenge must absorb them: the
+        // member-absorbing Poseidon digest, which the witness builder
+        // replicates.
+        let margin = u64::from(deriv_end - spendable_epoch) - 2;
+        let members = [Fp::from(present_nf), Fp::from(nf_next)];
         let z = poseidon::read_challenge(
             g.commit().into(),
             older.commit().into(),
@@ -137,7 +148,7 @@ impl Step for SpendBind {
             "SpendBind: nullifier pair does not match the derivation",
         )?;
 
-        // A zero nullifier would collide with the note's own cm tachygram.
+        // Nullifiers are nonzero; zero is reserved.
         enforce_nonzero(
             Fp::from(present_nf),
             "SpendBind: present-epoch nullifier is zero",
