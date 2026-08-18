@@ -17,7 +17,7 @@ A wallet proves a window of its note's nullifiers were correctly derived[^nullif
 `NfMasterSeed` witnesses the note and the proof-authorizing key `pak`, checks `note.pk == pak.derive_payment_key()` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits an `NfMasterHeader` carrying `(cm, mk)`. `nk` never leaves the step.
 `NfDerive` consumes that seed. It witnesses the window's group base, the range `[epoch_start, epoch_end)` to export, and the range sequence; runs four sponges over $(\texttt{Tachyon-NfDerive}, \mathsf{mk}, w)$ to squeeze the window's 16 nullifiers natively; and binds the sequence to the range's members with one opening at a free challenge (below).
 `NullifierFuse` concatenates two adjacent nullifier sequences into one, requiring the same `cm` and contiguity (`right.epoch_start == left.epoch_end`).
-The result is a `NullifierDerivation` proving the range `[epoch_start, epoch_end)` commits to the genuine nullifiers of the note identified by `cm`, surfacing `nf_start` and `nf_end` as its boundary members.
+The result is a `NullifierDerivation` proving the range `[epoch_start, epoch_end)` commits to the genuine nullifiers of the note identified by `cm`, surfacing `nf_start` and `nf_last` as its boundary members.
 
 ### Bootstrapping a spendable
 
@@ -28,21 +28,19 @@ It witnesses `(pre_cm_anchor, creation_set, creation_epoch, present_nf)` and the
 ### Maintaining a spendable
 
 Maintaining the spendable means advancing its anchor forward over `ArbitraryUnspent` segments while proving the crossed nullifiers absent.
-The sync service produces `ArbitraryUnspent` segments without ever holding the note, its `cm`, or `psi`.
-The values a segment tests are arbitrary field elements as far as its own proof is concerned, which is why the segment can be built by a party that knows nothing about the note; only `UnspentBind` attributes them to a derivation.
-`UnspentSeed` absorbs one stamp at a given absolute epoch and proves a wallet-supplied nullifier was absent from that stamp's tachygram set; the resulting `ArbitraryUnspent` has crossed no epoch boundary, so its `elapsed` is empty and `epoch_start == epoch_end` with `nf_start == nf_end` the tested nullifier.
+The sync service produces `ArbitraryUnspent` segments without ever holding the note, its `cm`, or `psi`: the values a segment tests are arbitrary field elements as far as its own proof is concerned, and only `UnspentBind` attributes them to a derivation.
+`UnspentSeed` absorbs one stamp at a given absolute epoch and proves a wallet-supplied nullifier was absent from that stamp's tachygram set; the resulting `ArbitraryUnspent` crosses no epoch boundary, so `epoch_start == epoch_last` and the tested nullifier is its single `elapsed` member.
 A block that publishes no stamp advances no anchor, so a stampless span needs no segment and no proof work.
-`UnspentFuse` composes two contiguous ranges that share a junction epoch (`right.epoch_start == left.epoch_end`): it concatenates their `elapsed` histories and seam-binds the junction nullifier (`left.nf_end == right.nf_start`) at adjacent anchors.
-`EndEpochUnspentSeed` is the segment for the boundary itself: it folds the epoch tick from a witnessed epoch-terminal anchor and records the epoch it leaves as the one member of its `elapsed`, so `epoch_end == epoch_start + 1`.
+`UnspentFuse` composes two contiguous ranges that share a junction epoch (`right.epoch_start == left.epoch_last`): it concatenates their `elapsed` histories, keeping the junction member once, at adjacent anchors.
+`EndEpochUnspentSeed` is the segment for the boundary itself: it folds the epoch tick from a witnessed epoch-terminal anchor, its two `elapsed` members being the epochs it leaves and enters, so `epoch_last == epoch_start + 1`.
 A boundary is therefore a link like any other, and `UnspentFuse` composes it with its neighbours on both sides; an epoch that published nothing is simply two crossings with no stamp segment between them.
-An `ArbitraryUnspent` records its span as two absolute epoch endpoints, `epoch_start` and `epoch_end`; the crossing count is their difference.
 
-`UnspentBind` binds a sync-built `ArbitraryUnspent` to genuine derivation. It is wallet-side: it consumes the `ArbitraryUnspent` and a `NullifierDerivation` that covers the unspent's span, and reads that span out of the range, confirming the `elapsed` crossings followed by the tip `nf_end` against the covering members. So every crossed nullifier and the tip are proven genuine nullifiers of the note.
+`UnspentBind` binds a sync-built `ArbitraryUnspent` to genuine derivation. It is wallet-side: it consumes the `ArbitraryUnspent` and a `NullifierDerivation` covering its span, and reads that span out of the range, so every member of `elapsed` up to its tip is a genuine nullifier of the note.
 It emits an `Unspent` carrying the span's boundary nullifiers, anchors and epochs, and the note's `cm`.
 
 `SpendableLift` is wallet-side and witness-free: it consumes a `SpendableHeader` and an `Unspent`.
 It checks the verified segment's `cm` equals the spendable's (so the absence-proven nullifiers are this note's, and the value cannot drift), the segment's `nf_start` equals the spendable's `present_nf` (continuity), and the segment's `anchor_prev` equals the spendable's anchor (adjacency).
-It advances to the segment's `nf_end` and `anchor_last`, threading `cm` unchanged.
+It advances to the segment's `nf_last` and `anchor_last`, threading `cm` unchanged.
 A single lift can consume an arbitrarily long composed `ArbitraryUnspent`, including one that crosses many epoch boundaries.
 A lineage resting on its epoch's terminal anchor lifts the same way: the boundary tick is a link, so a segment can open on it.
 
@@ -119,17 +117,17 @@ A segment ties to real chain history only through a consensus-published stamp wh
 
 ### ArbitraryUnspent composition
 
-An `ArbitraryUnspent` is a contiguous range bracketed by `anchor_prev` and `anchor_last`, with boundary pairs `(epoch_start, nf_start)` and `(epoch_end, nf_end)`, plus `elapsed` (one nullifier coefficient per epoch-boundary crossing in its span, forward-chronological, terminated by a sentinel coefficient $1$ at the crossing count)[^nullifiers]. `nf_start`/`nf_end` are the nullifiers at `epoch_start`/`epoch_end`; the crossing count is `epoch_end - epoch_start`.
-The sentinel keeps the committed polynomial nonzero for every sequence, so the commitment never falls on the identity point, which the in-circuit point representation cannot hold; it also pins the sequence's exact length, which commit-equality alone bounds only from above.
-`UnspentSeed` produces a within-epoch `ArbitraryUnspent` for one stamp's worth of anchor advance: `elapsed` is empty (the sentinel constant $1$, committing to $\mathcal{G}_0$), `epoch_start == epoch_end`, and the nullifier it just non-membership-checked is both `nf_start` and `nf_end`.
-`EndEpochUnspentSeed` produces the other base case, the epoch boundary itself. It folds a witnessed epoch-terminal anchor through the cross-epoch domain and emits the tick's output as `anchor_last`, with `epoch_end == epoch_start + 1` and a one-member `elapsed` holding the nullifier tested in the epoch being left. It is the only step that adds a member, so the invariant that `elapsed` holds exactly `epoch_end - epoch_start` of them holds by induction: the other seed establishes it at zero and the fuse preserves it additively. There is no exclusion to prove; that the witnessed predecessor really is its epoch's terminal anchor rests on consensus anchor membership of the eventual spend, since the tick of a short anchor is not a value consensus recomputes.
-`UnspentFuse` composes two contiguous ranges sharing a junction epoch (`right.epoch_start == left.epoch_end`) at adjacent anchors (`left.anchor_last == right.anchor_prev`): it concatenates their histories and seam-binds the junction nullifier (`left.nf_end == right.nf_start`). Writing $s$ for the left crossing count, the concat confirms
+An `ArbitraryUnspent` is a contiguous range bracketed by `anchor_prev` and `anchor_last`, with boundary pairs `(epoch_start, nf_start)` and `(epoch_last, nf_last)`, plus `elapsed` (one nullifier coefficient per epoch covered over `[epoch_start, epoch_last]`, in Horner order: `nf_start` at the top degree, the present `nf_last` at degree $0$)[^nullifiers]. The member count is `epoch_last - epoch_start + 1`.
+A sequence is never empty and its members are nonzero, so the commitment never falls on the identity point. `nf_start` is the rank pin: guarded nonzero at both seeds and threaded by the fuse, it fixes the announced span as the exact rank, which commit-equality alone bounds only from above.
+`UnspentSeed` produces a within-epoch `ArbitraryUnspent` for one stamp's worth of anchor advance: `epoch_start == epoch_last`, and the nullifier it just non-membership-checked is the single member, hence both `nf_start` and `nf_last`.
+`EndEpochUnspentSeed` produces the other base case, the epoch boundary itself. It folds a witnessed epoch-terminal anchor through the cross-epoch domain and emits the tick's output as `anchor_last`, with `epoch_last == epoch_start + 1` and a two-member `elapsed`, the nullifier tested in the epoch being left over the one tested in the epoch entered. There is no exclusion to prove; that the witnessed predecessor really is its epoch's terminal anchor rests on consensus anchor membership of the eventual spend, since the tick of a short anchor is not a value consensus recomputes.
+`UnspentFuse` composes two contiguous ranges sharing a junction epoch (`right.epoch_start == left.epoch_last`) at adjacent anchors (`left.anchor_last == right.anchor_prev`). Writing $k_R$ for the right half's member count, the concat confirms
 
-$$C(X) = L(X) + X^{s}\,(R(X) - 1)$$
+$$C(X) = X^{k_R - 1}\,L(X) + R(X) - [\texttt{left.nf\_last}]\,X^{k_R - 1}$$
 
-for the witnessed `combined` $C$, left $L$, and right $R$, at a Fiat-Shamir challenge: the $-1$ cancels the left half's sentinel at degree $s$, the right half's first crossing takes its slot, and the right half's sentinel re-terminates the combined sequence; the seam-bind makes the shared junction epoch's nullifier unambiguous across the merge.
-Every seam is intra-epoch, because a crossing arrives as a segment of its own rather than as a property of the merge, so this concatenation is the only sequence relation the composition needs and its shift $s$ is the only header-fixed quantity in it.
-$L$ and $R$ are bound by the recursive verification of the two input PCDs before the challenge, and $s$ is a left-header value bound likewise; because the identity is linear in $L$ and $R$ with a constant coefficient, that prior binding is what makes the concatenation sound.
+for the witnessed `combined` $C$, left $L$, and right $R$, at a Fiat-Shamir challenge: both halves hold the junction member, and the monomial removes the double-counted one. At a one-member right it degenerates to $C = L$.
+Every seam is intra-epoch, because a crossing arrives as a segment of its own rather than as a property of the merge, so this concatenation is the only sequence relation the composition needs.
+$L$, $R$, the monomial's coefficient and its exponent are all bound before the challenge, by the recursive verification of the two input PCDs and their headers; because the identity is linear in $L$ and $R$, that prior binding is what makes the concatenation sound. The junction agreement (`left.nf_last == right.nf_start`) is well-formedness only: a consistent pair of lies yields a wrong `elapsed`, which `UnspentBind` rejects.
 A crossing's absolute epoch is consensus-tied where the crossing is built rather than where it merges: `EndEpochUnspentSeed` folds its witnessed epoch through the cross-epoch domain, and a wrong epoch yields an anchor the published sequence does not contain.
 
 ### Derivation window
@@ -137,22 +135,23 @@ A crossing's absolute epoch is consensus-tied where the crossing is built rather
 `NfMasterSeed` is the only seed. It binds the master key to the note: `note.pk == pak.derive_payment_key()` pins `nk`, and the note commitment digests `nk` (through `pk`) and `psi`, so the derived `mk = Poseidon(psi, nk)` is consistent with the `cm` the seed threads forward.
 `NfDerive` threads `mk` from that header rather than witnessing it, squeezes the window's nullifiers natively, and binds the witnessed sequence to them at a fresh challenge $z$:
 
-$$g(z) = \sum_{j < K} \mathsf{nf}_{\texttt{epoch\_start}+j}\, z^{j} + z^{K}$$
+$$g(z) = \sum_{j < K} \mathsf{nf}_{\texttt{epoch\_start}+j}\, z^{\,K-1-j}$$
 
-for $K$ the exported range's width, the top term being the sequence's sentinel. Both sides have degree at most $K$ and $z$ is free, so the single opening forces every coefficient of $g$ to the genuine nullifier. The group base makes the sponge count a circuit constant; it and the range are range-checked but otherwise unbound, since the range is labelled with its epochs and a different base yields a correct range for a different span.
-`NullifierFuse` witnesses the two nullifier sequences and their concatenation, binds each by commit-equality, and confirms the concat at the constant offset `left.epoch_end - left.epoch_start`, requiring the same `cm` and contiguity.
+for $K$ the exported range's width. Both sides have degree below $K$ and $z$ is free, so the single opening forces every coefficient of $g$ to the genuine nullifier; `nf_start`, guarded nonzero at the top, pins the rank. The base and range are range-checked but otherwise unbound: the range is labelled with its epochs, so a different base yields a correct range for a different span.
+`NullifierFuse` binds both sequences and their concatenation by commit-equality and confirms the Horner shift $M(X) = X^{k_R} L(X) + R(X)$ for $k_R$ right's header-fixed member count, requiring the same `cm` and contiguity.
 So a `NullifierDerivation` is a sound proof that a contiguous epoch range commits to the genuine nullifiers of the note identified by `cm`.
 
 ### Binding unspent to derivation
 
-`UnspentBind` consumes the sync's `ArbitraryUnspent` and a `NullifierDerivation` covering its span (`deriv.epoch_start <= epoch_start`, `epoch_end < deriv.epoch_end`), not one aligned to it.
-It binds `elapsed` to the `ArbitraryUnspent` header and the covering sequence $g$ to the derivation header, both by commit-equality, and reads the span out of $g$ with `elapsed`'s sentinel swapped for the header's tip scalar `nf_end`. For a read of `members` consecutive coefficients sitting `margin` coefficients above $g$'s degree 0, the read confirms
+`UnspentBind` consumes the sync's `ArbitraryUnspent` and a `NullifierDerivation` covering its span (`deriv.epoch_start <= epoch_start`, `epoch_last < deriv.epoch_end`), not one aligned to it.
+It binds `elapsed` to the `ArbitraryUnspent` header and the covering sequence $g$ to the derivation header, both by commit-equality, and reads `elapsed` out of $g$ over `[epoch_start, epoch_last + 1)`. For a read of `members` consecutive coefficients sitting `margin` coefficients above $g$'s degree 0, the read confirms
 
 $$z^{\mathrm{CAP}-\texttt{margin}}\,g(z) = z^{\mathrm{CAP}+\texttt{members}}\,(\texttt{older}(z) - 1) + z^{\mathrm{CAP}}\,\texttt{read}(z) + (\texttt{tail}(z) - 1)$$
 
-at a challenge over all four commitments, with free margins `older` above the band and a cap-shifted `tail` below it. $\mathrm{CAP}$ is the coefficient bound on a witnessed polynomial, so the three bands are disjoint: the identity forces the read's coefficients onto $g$'s, and the margins absorb whatever $g$ carries outside the band. The sequence sentinel pins $g$'s rank to its announced span, without which every band would slide.
-So the crossings and the tip are exactly the derived nullifiers over the unspent's epochs. The tip scalar is a left-header value, fixed by the recursive verification of the `ArbitraryUnspent` PCD before the challenge.
-`nf_start` is `elapsed`'s degree-0 coefficient, or `nf_end` itself when no epoch was crossed, and the range's `cm` is threaded onto the `Unspent`.
+at a challenge over all four commitments, with free margins `older` above the band and a cap-shifted `tail` below it. $\mathrm{CAP}$ is the witnessable coefficient cap, so the three bands are disjoint: the identity forces the read's coefficients onto $g$'s, and the margins absorb whatever $g$ carries outside the band. The rank pin on $g$ places the bands.
+So `elapsed`'s members are exactly the derived nullifiers over the unspent's epochs.
+Of the boundary caches, `nf_last` is `elapsed`'s degree-0 coefficient, pinned here by a repeat opening. `nf_start` is the non-extractable top coefficient: it equals `nf_last` for a single-epoch segment, checked here, and is otherwise forced at the lift.
+The derivation's `cm` is stamped onto the `Unspent`.
 
 ### Spendable lineage
 
@@ -164,10 +163,10 @@ It emits `SpendableHeader(cm, (creation_epoch, present_nf), anchor)`, where `anc
 
 `SpendableLift` advances the lineage over an `Unspent`.
 It threads `cm` by equality (`unspent.cm == spendable.cm`), so every consumed segment belongs to the lineage's one note and the spent value cannot drift to a different same-`mk` note.
-Combined with the tip binding at `UnspentBind` (which makes each new `present_nf` itself genuine), a lineage cannot skip an epoch or splice in another note.
+Combined with the `nf_last` opening at `UnspentBind` (which makes each new `present_nf` itself genuine), a lineage cannot skip an epoch or splice in another note.
 
-Continuity holds through the boundary pair: `unspent.nf_start == spendable.present_nf` and `unspent.epoch_start == spendable.epoch`.
-The nullifiers are both PRF outputs of the note's sponge, so value-equality alone already forces the same note and the same epoch; carrying the epoch makes that a checked equality per lift rather than one inferred from the PRF, and it is what lets the lineage state its position without a derivation in hand.
+Continuity holds through the boundary pair: `unspent.nf_start == spendable.present_nf` and `unspent.epoch_start == spendable.epoch`. This is where `nf_start`, the cache no opening isolates, is pinned.
+The nullifiers are both PRF outputs of the note's sponge, so value-equality alone already forces the same note and the same epoch; carrying the epoch makes that a checked equality per lift, and it is what lets the lineage state its position without a derivation in hand.
 The anchor adjacency check (`unspent.anchor_prev == spendable.anchor`) welds the segment to the lineage's current position.
 
 A lineage resting on its epoch's terminal anchor is not a special position: the segment it lifts over opens with the boundary tick, so adjacency holds against the anchor it already sits on.
@@ -343,10 +342,10 @@ flowchart LR
 | Header | Fields |
 | ------ | ------ |
 | AnchorChain | (start, end) |
-| ArbitraryUnspent | (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), anchor_last) |
-| Unspent | (cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end), anchor_last) |
+| ArbitraryUnspent | (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_last, nf_last), anchor_last) |
+| Unspent | (cm, anchor_prev, (epoch_start, nf_start), (epoch_last, nf_last), anchor_last) |
 | NfMasterHeader | (cm, mk) |
-| NullifierDerivation | (cm, (epoch_start, nf_start), nf_seq_commit, (epoch_end, nf_end)) |
+| NullifierDerivation | (cm, (epoch_start, nf_start), nf_commit, (epoch_end, nf_last)) |
 | SpendableHeader | (cm, (epoch, present_nf), anchor) |
 | OutputHeader | (cm, pad) |
 | SpendHeader | (cm, present_nf, nf_next, anchor) |

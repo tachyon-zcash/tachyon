@@ -752,10 +752,11 @@ pub(crate) fn build_unspent_pcd_between_anchors(
 
 /// Fuse contiguous [`ArbitraryUnspent`] chains as a binary tree: split at the
 /// midpoint, fuse each half, then concatenate the halves at their shared epoch
-/// ([`UnspentFuse`]). Every seam is intra-epoch, since a boundary is itself a
-/// chain link. Everything a seam needs is read off the halves' headers; a
-/// chain's elapsed slice is `nf[epoch_start - base..epoch_end - base]` (one
-/// nullifier per crossed boundary).
+/// ([`UnspentFuse`]). Every seam is a shared junction, since a boundary is
+/// itself a chain link. Everything a seam needs is read off the halves'
+/// headers; a chain's member slice is
+/// `nf[epoch_start - base..=epoch_last - base]` (one nullifier per covered
+/// epoch).
 fn fuse_unspent_tree(
     rng: &mut (impl RngCore + CryptoRng),
     nf: &[Nullifier],
@@ -778,14 +779,14 @@ fn fuse_unspent_tree(
     let elapsed_slice = |lo: EpochIndex, hi: EpochIndex| -> &[Nullifier] {
         let from = usize::try_from(u64::from(lo - base)).expect("epoch within span");
         let to = usize::try_from(u64::from(hi - base)).expect("epoch within span");
-        &nf[from..to]
+        &nf[from..=to]
     };
-    let (_, (left_epoch_start, _), _, (left_epoch_end, _), _) = *left.data();
-    let (_, (right_epoch_start, _), _, (right_epoch_end, _), _) = *right.data();
-    let left_el = elapsed_slice(left_epoch_start, left_epoch_end);
-    let right_el = elapsed_slice(right_epoch_start, right_epoch_end);
+    let (_, (left_epoch_start, _), _, (left_epoch_last, _), _) = *left.data();
+    let (_, (right_epoch_start, _), _, (right_epoch_last, _), _) = *right.data();
+    let left_el = elapsed_slice(left_epoch_start, left_epoch_last);
+    let right_el = elapsed_slice(right_epoch_start, right_epoch_last);
     assert_eq!(
-        right_epoch_start.0, left_epoch_end.0,
+        right_epoch_start.0, left_epoch_last.0,
         "fused chains must meet inside one epoch"
     );
     let witness = witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
@@ -1055,7 +1056,7 @@ impl WalletSim {
         present_epoch: EpochIndex,
     ) -> Pcd<pool::Unspent> {
         let range = self.derivation_pcd(rng, *note, epoch_start, present_epoch.next());
-        let elapsed: Vec<Nullifier> = (epoch_start.0..present_epoch.0)
+        let elapsed: Vec<Nullifier> = (epoch_start.0..=present_epoch.0)
             .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
             .collect();
         let (unspent, ()) = PROOF_SYSTEM

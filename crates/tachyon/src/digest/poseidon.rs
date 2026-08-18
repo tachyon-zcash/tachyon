@@ -142,12 +142,10 @@ const NF_READ_DOMAIN: &[u8; 16] = b"Tachyon-NfReadCh";
 /// monomials, over the three polynomial commitments and every member.
 ///
 /// A scalar member has no commitment, and the read identity is linear in
-/// each: a member left out of the challenge is solvable *after* the
-/// challenge is known, so garbage margins plus a solved member would pass
-/// and publish a forged value. Absorbing the members makes the solve a fixed
-/// point, forcing each to the covering sequence's genuine coefficient. The
-/// members depend on the challenge's inputs, so the challenge is a Poseidon
-/// digest the native witness builders replicate, not a transcript challenge.
+/// each, so every member is absorbed: that makes the solve a fixed point and
+/// forces each member to the covering sequence's genuine coefficient. The
+/// witness is built from this challenge, so it must be a Poseidon digest the
+/// native witness builders replicate.
 ///
 /// # Panics
 ///

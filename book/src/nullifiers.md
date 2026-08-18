@@ -39,7 +39,7 @@ Because $\mathsf{nf}$ is a pseudo-random function of $\mathsf{mk}$ and the epoch
 
 ### Windows
 
-One derivation proof derives a window of 16 consecutive epochs, four groups, from a group-aligned base, and exports any range inside it. The exported range is carried as one sequence polynomial in the coefficient encoding described under [Delegation](#delegation), so a consumer reads the epochs it needs out of the range, and a longer span is a chain of fused ranges.
+One derivation proof derives a window of 16 consecutive epochs, four groups, from a group-aligned base, and exports any range inside it. The exported range is carried as one sequence polynomial in the Horner encoding described under [Delegation](#delegation), so a consumer reads the epochs it needs out of the range, and a longer span is a chain of fused ranges.
 
 ## Binding
 
@@ -61,13 +61,13 @@ A lift advances the current nullifier only to the genuine next nullifier, and th
 
 ### Delegation
 
-The holder of $\mathsf{mk}$ can outsource the search for its nullifiers in the pool.[^delegation] It hands a delegate the next window of values $\Delta_{e..e+d}$, which should be the nullifiers $\mathsf{nf}_{e..e+d}$ but which the delegate treats as opaque. The delegate proves them absent from the pool across stamps and epochs, oblivious to $\mathsf{mk}$, $\psi$, $\mathsf{cm}$, and the note, and commits the sequence on the coefficient generators, terminated by a sentinel $1$ one position above the window:
+The holder of $\mathsf{mk}$ can outsource the search for its nullifiers in the pool.[^delegation] It hands a delegate the next window of values $\Delta_{e..e+d}$, which should be the nullifiers $\mathsf{nf}_{e..e+d}$ but which the delegate treats as opaque. The delegate proves them absent from the pool across stamps and epochs, oblivious to $\mathsf{mk}$, $\psi$, $\mathsf{cm}$, and the note, and commits the sequence on the coefficient generators in Horner order, oldest member at the top and the present one at $\mathcal{G}_0$:
 
-$$\delta = \sum_{i} [\Delta_{e+i}]\,\mathcal{G}_i + \mathcal{G}_d$$
+$$\delta = \sum_{i} [\Delta_{e+i}]\,\mathcal{G}_{d-i}$$
 
-The sentinel keeps every committed sequence nonzero (an empty window is the constant $1$), so $\delta$ is never the identity point, and it pins the window's exact length.
+A sequence is never empty and its members are nonzero, so $\delta$ is never the identity point. The oldest member pins the window's exact length.
 
-At the lift the wallet binds $\delta$ to genuine nullifiers: it reads the window's coefficients at the delegated epochs out of a derived window that covers them, so each $\Delta_{e+i}$ is the real $\mathsf{nf}_{e+i}$. The window is measured in epoch-boundary crossings: $d$ is the crossing count and $\delta$ holds one nullifier per crossing, plus the nullifier of the epoch in progress at the span's tip, which is carried separately because that epoch is not yet complete. The wallet binds the tip too, so the lineage's new current nullifier is itself a genuine nullifier rather than a free value.
+At the lift the wallet binds $\delta$ to genuine nullifiers: it reads the window's coefficients at the delegated epochs out of a derived window that covers them, so each $\Delta_{e+i}$ is the real $\mathsf{nf}_{e+i}$. The window is measured in epoch-boundary crossings: $d$ is the crossing count and $\delta$ holds one nullifier per crossing, and the nullifier of the epoch in progress at the span's tip.
 
 A window may be arbitrary because the read takes any run of coefficients out of a covering derivation. So the wallet can delegate any window inside one, and only the wallet, holding the note, can fold the proven absence into the lineage.[^lift]
 
