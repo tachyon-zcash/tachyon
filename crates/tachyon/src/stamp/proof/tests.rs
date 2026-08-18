@@ -13,7 +13,7 @@
 
 extern crate alloc;
 
-use alloc::{string::ToString as _, vec, vec::Vec};
+use alloc::{collections::BTreeSet, rc::Rc, string::ToString as _, vec, vec::Vec};
 use core::{array, iter};
 
 use ff::Field as _;
@@ -22,7 +22,7 @@ use ragu::{Pcd, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::{CryptoRng, RngCore};
 
-use super::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp};
+use super::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp, summary};
 use crate::{
     ActionSetPoly, NfSeqPoly, Note, TachygramSetPoly,
     constants::{EPOCH_MAX, EPOCH_SIZE},
@@ -332,8 +332,8 @@ fn empty_blocks_do_not_advance_the_anchor() {
 
 #[test]
 fn spendable_stays_current_across_empty_blocks() {
-    // A note idling over a stampless span needs no proof work at all: the pool
-    // anchor never leaves the spendable's, so there is nothing to lift over.
+    // A note idling over a stampless span: the pool anchor never leaves the
+    // spendable's, so there is nothing to lift over.
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(100);
@@ -1482,8 +1482,8 @@ fn unspent_bind_rejects_uncovered_start() {
     );
     // A derivation whose coverage begins after the unspent's start epoch (a
     // later window) cannot cover it.
-    // The builder would segment out of range, so the witness is assembled
-    // by hand: the genuine covering sequence, empty margins.
+    // This range is outside the builder's domain, so the witness is
+    // assembled by hand: the genuine covering sequence, empty margins.
     let range = user.derivation_pcd(rng, note, EpochIndex(64), EpochIndex(65));
     let window = user.covering_window(&note, &range);
     let witness = (
@@ -1654,7 +1654,6 @@ fn expect_invalid<H: ragu::Header, S>(
     assert_eq!(inner.to_string(), message);
 }
 
-/// An honest master seed for a note.
 fn honest_master(
     rng: &mut StdRng,
     user: &WalletSim,
@@ -1737,7 +1736,7 @@ fn nf_derive_rejects_base_out_of_range() {
     );
 }
 
-/// A range that starts before the window or is empty is rejected.
+/// An empty range is rejected along with one starting before the window.
 #[test]
 fn nf_derive_rejects_a_range_outside_the_window() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1955,8 +1954,8 @@ fn spend_bind_rejects_uncovering_range() {
     let (spendable, _derived, epoch) = spend_bind_parts(rng, &user, &note);
     let ahead = EpochIndex(epoch.0 + NF_DERIVATION_WIDTH as u32);
     let derived_ahead = user.derivation_pcd(rng, note, ahead, EpochIndex(ahead.0 + 2));
-    // The builder would segment out of range, so the witness is assembled
-    // by hand: the genuine covering sequence, empty margins.
+    // This range is outside the builder's domain, so the witness is
+    // assembled by hand: the genuine covering sequence, empty margins.
     let window = user.covering_window(&note, &derived_ahead);
     let witness = (
         window.iter().copied().collect::<NfSeqPoly>(),
@@ -2022,8 +2021,7 @@ fn spend_bind_rejects_a_foreign_sequence() {
     );
 }
 
-/// A forged present nullifier fails the member-absorbing read at
-/// `SpendableInit`.
+/// A forged present nullifier fails the member-absorbing read.
 #[test]
 fn spendable_init_rejects_a_forged_nullifier() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2058,8 +2056,7 @@ fn spendable_init_rejects_a_forged_nullifier() {
     );
 }
 
-/// A range that does not cover the creation epoch is rejected at
-/// `SpendableInit`.
+/// A range that does not cover the creation epoch is rejected.
 #[test]
 fn spendable_init_rejects_an_uncovering_range() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2069,8 +2066,9 @@ fn spendable_init_rejects_an_uncovering_range() {
     let nf_header = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
     let past = EpochIndex(NF_DERIVATION_WIDTH as u32);
     let dummy_tg = Tachygram::random(&mut *rng);
-    // The builder would segment out of range, so the witness is assembled
-    // by hand: the genuine covering sequence, the whole window as the tail.
+    // This range is outside the builder's domain, so the witness is
+    // assembled by hand: the genuine covering sequence, the whole window as
+    // the tail.
     let window = user.covering_window(&note, &nf_header);
     let witness = (
         Anchor::default(),
@@ -2092,7 +2090,7 @@ fn spendable_init_rejects_an_uncovering_range() {
 }
 
 /// A covering sequence built from a different note does not match the
-/// derivation header's commitment at `UnspentBind`.
+/// derivation header's commitment.
 #[test]
 fn unspent_bind_rejects_a_foreign_sequence() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2224,8 +2222,8 @@ fn output_bind_publishes_the_note_pair() {
     );
 }
 
-/// Domain separation is what the pad buys: the same note fields hashed under
-/// two domains must not coincide.
+/// The same note fields hashed under the commitment and pad domains do not
+/// coincide.
 #[test]
 fn pad_differs_from_commitment() {
     let note = WalletSim::new(shared_sk()).random_note(200);
@@ -2337,8 +2335,7 @@ fn nullifier_fuse_rejects_a_wrong_merged() {
 
 /// A next-epoch nullifier *solved* against garbage margins passes the
 /// identity at the challenge the members are absent from; the step's
-/// member-absorbing challenge lands elsewhere and rejects. This is the
-/// free-scalar attack `poseidon::read_challenge` exists to close.
+/// member-absorbing challenge lands elsewhere and rejects.
 #[test]
 fn spend_bind_rejects_a_solved_next_over_garbage_margins() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2366,7 +2363,7 @@ fn spend_bind_rejects_a_solved_next_over_garbage_margins() {
     let tail = NfTailPoly::new(&tail_members);
 
     // Solve the member at a challenge that omits it: the identity is linear
-    // in `nf_next`, so without absorption this forgery would pass.
+    // in `nf_next`.
     let cap = 1u64 << ragu::Polynomial::R;
     let members = 2u64;
     let margin = u64::from(deriv_end - epoch) - 2;
@@ -2610,7 +2607,7 @@ fn unspent_bind_rejects_a_tail_below_its_band() {
 }
 
 /// An `older` margin whose sentinel slot is not exactly 1 breaks the
-/// identity: the slot is forced, not conventional.
+/// identity: the read forces the slot to exactly 1.
 #[test]
 fn unspent_bind_rejects_a_forged_sentinel() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2684,8 +2681,8 @@ fn sentinel_less_empty_margin_cannot_be_witnessed() {
     );
 }
 
-/// A span exceeding one window binds once, against a fused chain of cached
-/// whole windows; no bind-per-window rounds and no partial leaves.
+/// A span exceeding one window binds once, against a fused chain of whole
+/// windows.
 #[test]
 fn multi_window_span_binds_once() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2755,4 +2752,905 @@ fn one_window_serves_init_bind_and_spend() {
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable, epoch);
     assert_eq!(bind_pcd.data().1, user.nf_at(&note, epoch));
     assert_eq!(bind_pcd.data().2, user.nf_at(&note, epoch.next()));
+}
+
+/// The shared summaries partition an epoch's stamps: several summaries under
+/// the test capacity, bracketed by the epoch's boundary and terminal anchors,
+/// welded summary to summary by adjacency, and built once.
+#[test]
+fn epoch_summaries_partition_the_epoch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis(rng);
+    pool.advance(EPOCH_SIZE - 1, |_| random_block(rng, 1, 2));
+    let sync = SyncSim::new();
+
+    let summaries = sync.epoch_summaries(rng, &pool, EpochIndex(0));
+    assert!(
+        summaries.len() > 1,
+        "test capacity forces multiple summaries"
+    );
+    assert_eq!(
+        summaries.first().expect("nonempty").0.data().1,
+        Anchor::default(),
+        "rooted at the epoch boundary anchor"
+    );
+    assert_eq!(
+        summaries.last().expect("nonempty").0.data().2,
+        pool.anchor_at(BlockHeight(EPOCH_SIZE - 1)),
+        "ends at the epoch terminal anchor"
+    );
+    for (prev, next) in summaries.iter().zip(summaries.iter().skip(1)) {
+        assert_eq!(
+            prev.0.data().2,
+            next.0.data().1,
+            "summaries weld by anchor adjacency"
+        );
+    }
+    for built in summaries.iter() {
+        assert_eq!(
+            built.0.data().0,
+            EpochIndex(0),
+            "every summary names its epoch"
+        );
+    }
+    assert!(
+        Rc::ptr_eq(&summaries, &sync.epoch_summaries(rng, &pool, EpochIndex(0))),
+        "the epoch's summaries are memoized"
+    );
+}
+
+/// One honest fold: the accumulator commits the union root polynomial of the
+/// summary's stamps and the anchor absorbs the same stamp commitment.
+#[test]
+fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch = EpochIndex(3);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let stamp_a: Vec<Tachygram> = iter::repeat_with(|| Tachygram::random(&mut *rng))
+        .take(3)
+        .collect();
+    let stamp_b: Vec<Tachygram> = iter::repeat_with(|| Tachygram::random(&mut *rng))
+        .take(2)
+        .collect();
+
+    let (seeded, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            summary::SummarySeed,
+            witness::summary_seed(((), ()), start, epoch, &stamp_a),
+        )
+        .expect("SummarySeed");
+    let commit_a = TachygramSetPoly::from_iter(stamp_a.clone()).commit();
+    assert_eq!(
+        *seeded.data(),
+        (epoch, start, start.next_stamp(epoch, &commit_a), commit_a),
+        "the seed's accumulator is the stamp's own commitment"
+    );
+
+    let (advanced, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            summary::SummaryAdvance,
+            witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b),
+            seeded,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("SummaryAdvance");
+
+    let commit_b = TachygramSetPoly::from_iter(stamp_b.clone()).commit();
+    let union = stamp_a
+        .iter()
+        .chain(stamp_b.iter())
+        .copied()
+        .collect::<TachygramSetPoly>()
+        .commit();
+    let expected_last = start
+        .next_stamp(epoch, &commit_a)
+        .next_stamp(epoch, &commit_b);
+    assert_eq!(
+        *advanced.data(),
+        (epoch, start, expected_last, union),
+        "the product accumulator is the union's root polynomial"
+    );
+}
+
+#[test]
+fn summary_advance_rejects_wrong_accumulator() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch = EpochIndex(3);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let stamp_a = [Tachygram::random(&mut *rng)];
+    let stamp_b = [Tachygram::random(&mut *rng)];
+    let foreign = [Tachygram::random(&mut *rng)];
+
+    let (seeded, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            summary::SummarySeed,
+            witness::summary_seed(((), ()), start, epoch, &stamp_a),
+        )
+        .expect("SummarySeed");
+
+    expect_invalid(
+        rng,
+        summary::SummaryAdvance,
+        witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
+        seeded,
+        Proof::trivial().carry::<()>(()),
+        "SummaryAdvance: accumulator does not match header",
+    );
+}
+
+#[test]
+fn summary_advance_rejects_forged_extension() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch = EpochIndex(3);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let stamp_a = [Tachygram::random(&mut *rng)];
+    let stamp_b = [Tachygram::random(&mut *rng)];
+
+    let (seeded, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            summary::SummarySeed,
+            witness::summary_seed(((), ()), start, epoch, &stamp_a),
+        )
+        .expect("SummarySeed");
+
+    let (acc, _extended, stamp) =
+        witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b);
+    let forged = stamp_a.iter().copied().collect::<TachygramSetPoly>();
+    expect_invalid(
+        rng,
+        summary::SummaryAdvance,
+        (acc, forged, stamp),
+        seeded,
+        Proof::trivial().carry::<()>(()),
+        "SummaryAdvance: extended accumulator must fold the stamp",
+    );
+}
+
+/// A lineage born from a two-stamp summary, plus the adjacent same-epoch
+/// successor summary (its PCD and the tachygrams its accumulator commits),
+/// all anchors synthetic (seeds root freely).
+fn unspent_batch_setup(
+    rng: &mut StdRng,
+) -> (
+    Nullifier,
+    Pcd<pool::ArbitraryUnspent>,
+    Pcd<summary::Summary>,
+    BTreeSet<Tachygram>,
+) {
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let epoch = EpochIndex(2);
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let stamps_a = vec![
+        vec![Tachygram::random(&mut *rng)],
+        vec![Tachygram::random(&mut *rng)],
+    ];
+    let summary_a = SyncSim::build_summary_pcd(rng, start, epoch, &stamps_a);
+    let (born, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::UnspentBatch,
+            witness::unspent_batch((*summary_a.0.data(), ()), &summary_a.1, nf),
+            summary_a.0,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("UnspentBatch");
+    let stamps_b = vec![vec![Tachygram::random(&mut *rng)]];
+    let (summary_b, summary_b_tgs) =
+        SyncSim::build_summary_pcd(rng, born.data().4, epoch, &stamps_b);
+    (nf, born, summary_b, summary_b_tgs)
+}
+
+#[test]
+fn unspent_batch_births_the_lineage() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let epoch = EpochIndex(2);
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let stamps = vec![
+        vec![Tachygram::random(&mut *rng)],
+        vec![Tachygram::random(&mut *rng)],
+    ];
+    let built = SyncSim::build_summary_pcd(rng, start, epoch, &stamps);
+    let summary_last = built.0.data().2;
+
+    let (born, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::UnspentBatch,
+            witness::unspent_batch((*built.0.data(), ()), &built.1, nf),
+            built.0,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("UnspentBatch");
+    assert_eq!(
+        *born.data(),
+        (
+            start,
+            (epoch, nf),
+            NfSeqPoly::from_iter([nf]).commit(),
+            (epoch, nf),
+            summary_last,
+        ),
+        "the lineage covers one epoch inside the summary's bracket"
+    );
+}
+
+#[test]
+fn unspent_batch_rejects_nf_present() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let stamps = vec![vec![Tachygram::random(&mut *rng), nf.into()]];
+    let built = SyncSim::build_summary_pcd(rng, start, EpochIndex(2), &stamps);
+
+    expect_invalid(
+        rng,
+        pool::UnspentBatch,
+        witness::unspent_batch((*built.0.data(), ()), &built.1, nf),
+        built.0,
+        Proof::trivial().carry::<()>(()),
+        "UnspentBatch: found nullifier in summary",
+    );
+}
+
+#[test]
+fn unspent_batch_rejects_foreign_accumulator() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let stamps = vec![vec![Tachygram::random(&mut *rng)]];
+    let built = SyncSim::build_summary_pcd(rng, start, EpochIndex(2), &stamps);
+    let foreign = BTreeSet::from([Tachygram::random(&mut *rng)]);
+
+    expect_invalid(
+        rng,
+        pool::UnspentBatch,
+        witness::unspent_batch((*built.0.data(), ()), &foreign, nf),
+        built.0,
+        Proof::trivial().carry::<()>(()),
+        "UnspentBatch: accumulator does not match header",
+    );
+}
+
+#[test]
+fn unspent_advance_advances_over_an_adjacent_summary() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_nf, born, summary_b, summary_b_tgs) = unspent_batch_setup(rng);
+    let before = *born.data();
+
+    let (advanced, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::UnspentAdvance,
+            witness::unspent_advance((*born.data(), *summary_b.data()), &summary_b_tgs),
+            born,
+            summary_b.clone(),
+        )
+        .expect("UnspentAdvance");
+    assert_eq!(
+        *advanced.data(),
+        (before.0, before.1, before.2, before.3, summary_b.data().2,),
+        "only the anchor advances"
+    );
+}
+
+#[test]
+fn unspent_advance_rejects_non_adjacent_summary() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_nf, born, _summary_b, _summary_b_tgs) = unspent_batch_setup(rng);
+    // A summary rooted somewhere other than the lineage's position.
+    let elsewhere = Anchor::from(Fp::random(&mut *rng));
+    let stamps = vec![vec![Tachygram::random(&mut *rng)]];
+    let stray = SyncSim::build_summary_pcd(rng, elsewhere, EpochIndex(2), &stamps);
+
+    expect_invalid(
+        rng,
+        pool::UnspentAdvance,
+        witness::unspent_advance((*born.data(), *stray.0.data()), &stray.1),
+        born,
+        stray.0,
+        "UnspentAdvance: summary not adjacent to the lineage",
+    );
+}
+
+#[test]
+fn unspent_advance_rejects_epoch_mismatch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_nf, born, _summary_b, _summary_b_tgs) = unspent_batch_setup(rng);
+    // Adjacent anchor, wrong epoch label.
+    let stamps = vec![vec![Tachygram::random(&mut *rng)]];
+    let mislabelled = SyncSim::build_summary_pcd(rng, born.data().4, EpochIndex(3), &stamps);
+
+    expect_invalid(
+        rng,
+        pool::UnspentAdvance,
+        witness::unspent_advance((*born.data(), *mislabelled.0.data()), &mislabelled.1),
+        born,
+        mislabelled.0,
+        "UnspentAdvance: summary epoch must match the lineage tip",
+    );
+}
+
+#[test]
+fn unspent_advance_rejects_nf_present() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (nf, born, _summary_b, _summary_b_tgs) = unspent_batch_setup(rng);
+    let stamps = vec![vec![Tachygram::random(&mut *rng), nf.into()]];
+    let spent = SyncSim::build_summary_pcd(rng, born.data().4, EpochIndex(2), &stamps);
+
+    expect_invalid(
+        rng,
+        pool::UnspentAdvance,
+        witness::unspent_advance((*born.data(), *spent.0.data()), &spent.1),
+        born,
+        spent.0,
+        "UnspentAdvance: found nullifier in summary",
+    );
+}
+
+#[test]
+fn unspent_epoch_lift_crosses_on_the_terminal_summary() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (nf, born, summary_b, summary_b_tgs) = unspent_batch_setup(rng);
+    let before = *born.data();
+    let nf_next = Nullifier::from(Fp::random(&mut *rng));
+
+    let (crossed, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::UnspentEpochLift,
+            witness::unspent_epoch_lift(
+                (*born.data(), *summary_b.data()),
+                &summary_b_tgs,
+                &[nf],
+                nf_next,
+            ),
+            born,
+            summary_b.clone(),
+        )
+        .expect("UnspentEpochLift");
+
+    let (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_last, nf_last), anchor_last) =
+        *crossed.data();
+    assert_eq!(anchor_prev, before.0);
+    assert_eq!((epoch_start, nf_start), (EpochIndex(2), nf));
+    assert_eq!(
+        (epoch_last, nf_last),
+        (EpochIndex(3), nf_next),
+        "the crossing appends the incoming member"
+    );
+    assert_eq!(
+        elapsed,
+        NfSeqPoly::from_iter([nf, nf_next]).commit(),
+        "the sequence extends by the bare Horner append"
+    );
+    assert_eq!(
+        anchor_last,
+        summary_b.data().2.next_epoch(EpochIndex(3)),
+        "the boundary fold rides the summary's terminal anchor"
+    );
+}
+
+#[test]
+fn unspent_epoch_lift_rejects_wrong_extension() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (nf, born, summary_b, summary_b_tgs) = unspent_batch_setup(rng);
+
+    // The extension forged as the elapsed sequence alone, dropping the
+    // append.
+    let (summary_set, elapsed_seq, _extended, nf_next) = witness::unspent_epoch_lift(
+        (*born.data(), *summary_b.data()),
+        &summary_b_tgs,
+        &[nf],
+        Nullifier::from(Fp::random(&mut *rng)),
+    );
+    let forged = iter::once(nf).collect::<NfSeqPoly>();
+    expect_invalid(
+        rng,
+        pool::UnspentEpochLift,
+        (summary_set, elapsed_seq, forged, nf_next),
+        born,
+        summary_b,
+        "UnspentEpochLift: extended sequence must append the crossing member",
+    );
+}
+
+#[test]
+fn unspent_epoch_lift_rejects_wrong_elapsed() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (nf, born, summary_b, summary_b_tgs) = unspent_batch_setup(rng);
+    let stranger = Nullifier::from(Fp::random(&mut *rng));
+
+    let (summary_set, _elapsed, extended, nf_next) = witness::unspent_epoch_lift(
+        (*born.data(), *summary_b.data()),
+        &summary_b_tgs,
+        &[nf],
+        Nullifier::from(Fp::random(&mut *rng)),
+    );
+    let wrong = iter::once(stranger).collect::<NfSeqPoly>();
+    expect_invalid(
+        rng,
+        pool::UnspentEpochLift,
+        (summary_set, wrong, extended, nf_next),
+        born,
+        summary_b,
+        "UnspentEpochLift: elapsed polynomial does not match header",
+    );
+}
+
+/// A spendable batch-bootstrapped from a synthetic summary containing the
+/// note's creation, plus the adjacent same-epoch successor summary (its PCD
+/// and the tachygrams its accumulator commits).
+fn spendable_batch_setup(
+    rng: &mut StdRng,
+) -> (
+    WalletSim,
+    Note,
+    Pcd<spendable::SpendableHeader>,
+    Pcd<summary::Summary>,
+    BTreeSet<Tachygram>,
+) {
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let epoch = EpochIndex(2);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let stamps_a = vec![
+        vec![note.commitment().into()],
+        vec![Tachygram::random(&mut *rng)],
+    ];
+    let summary_a = SyncSim::build_summary_pcd(rng, start, epoch, &stamps_a);
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let (spendable, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableBatch,
+            witness::spendable_batch(
+                (*deriv.data(), *summary_a.0.data()),
+                &summary_a.1,
+                epoch,
+                &user.covering_window(&note, &deriv),
+            ),
+            deriv,
+            summary_a.0,
+        )
+        .expect("SpendableBatch");
+    let stamps_b = vec![vec![Tachygram::random(&mut *rng)]];
+    let (summary_b, summary_b_tgs) =
+        SyncSim::build_summary_pcd(rng, spendable.data().2, epoch, &stamps_b);
+    (user, note, spendable, summary_b, summary_b_tgs)
+}
+
+#[test]
+fn spendable_batch_bootstraps_from_a_summary() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let epoch = EpochIndex(2);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let stamps = vec![
+        vec![Tachygram::random(&mut *rng)],
+        vec![note.commitment().into(), Tachygram::random(&mut *rng)],
+        vec![Tachygram::random(&mut *rng)],
+    ];
+    let built = SyncSim::build_summary_pcd(rng, start, epoch, &stamps);
+    let summary_last = built.0.data().2;
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+
+    let (spendable, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableBatch,
+            witness::spendable_batch(
+                (*deriv.data(), *built.0.data()),
+                &built.1,
+                epoch,
+                &user.covering_window(&note, &deriv),
+            ),
+            deriv,
+            built.0,
+        )
+        .expect("SpendableBatch");
+    assert_eq!(
+        *spendable.data(),
+        (
+            note.commitment(),
+            (epoch, user.nf_at(&note, epoch)),
+            summary_last,
+        ),
+        "the spendable emerges at the run's terminal anchor"
+    );
+}
+
+#[test]
+fn spendable_batch_rejects_nf_present() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let epoch = EpochIndex(2);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    // The run holds the creation and, later, the note's own nullifier: a
+    // spent note.
+    let stamps = vec![
+        vec![note.commitment().into()],
+        vec![user.nf_at(&note, epoch).into()],
+    ];
+    let built = SyncSim::build_summary_pcd(rng, start, epoch, &stamps);
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+
+    expect_invalid(
+        rng,
+        spendable::SpendableBatch,
+        witness::spendable_batch(
+            (*deriv.data(), *built.0.data()),
+            &built.1,
+            epoch,
+            &user.covering_window(&note, &deriv),
+        ),
+        deriv,
+        built.0,
+        "SpendableBatch: found nullifier in summary",
+    );
+}
+
+#[test]
+fn spendable_batch_rejects_cm_absent() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let epoch = EpochIndex(2);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    // A run that never published the note's creation.
+    let stamps = vec![vec![Tachygram::random(&mut *rng)]];
+    let built = SyncSim::build_summary_pcd(rng, start, epoch, &stamps);
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+
+    expect_invalid(
+        rng,
+        spendable::SpendableBatch,
+        witness::spendable_batch(
+            (*deriv.data(), *built.0.data()),
+            &built.1,
+            epoch,
+            &user.covering_window(&note, &deriv),
+        ),
+        deriv,
+        built.0,
+        "SpendableBatch: commitment not in summary",
+    );
+}
+
+#[test]
+fn spendable_batch_rejects_foreign_accumulator() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let epoch = EpochIndex(2);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let stamps = vec![vec![note.commitment().into()]];
+    let built = SyncSim::build_summary_pcd(rng, start, epoch, &stamps);
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+    let foreign = BTreeSet::from([note.commitment().into(), Tachygram::random(&mut *rng)]);
+
+    expect_invalid(
+        rng,
+        spendable::SpendableBatch,
+        witness::spendable_batch(
+            (*deriv.data(), *built.0.data()),
+            &foreign,
+            epoch,
+            &user.covering_window(&note, &deriv),
+        ),
+        deriv,
+        built.0,
+        "SpendableBatch: accumulator does not match header",
+    );
+}
+
+#[test]
+fn spendable_batch_rejects_epoch_mismatch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let epoch = EpochIndex(2);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    // The summary labels a different epoch than the read tests, so its
+    // exclusion covers the wrong nullifier.
+    let stamps = vec![vec![note.commitment().into()]];
+    let built = SyncSim::build_summary_pcd(rng, start, EpochIndex(3), &stamps);
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch.next());
+
+    expect_invalid(
+        rng,
+        spendable::SpendableBatch,
+        witness::spendable_batch(
+            (*deriv.data(), *built.0.data()),
+            &built.1,
+            epoch,
+            &user.covering_window(&note, &deriv),
+        ),
+        deriv,
+        built.0,
+        "SpendableBatch: summary epoch must match the creation epoch",
+    );
+}
+
+#[test]
+fn spendable_advance_advances_over_an_adjacent_summary() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_user, _note, spendable, summary_b, summary_b_tgs) = spendable_batch_setup(rng);
+    let before = *spendable.data();
+
+    let (advanced, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableAdvance,
+            witness::spendable_advance((*spendable.data(), *summary_b.data()), &summary_b_tgs),
+            spendable,
+            summary_b.clone(),
+        )
+        .expect("SpendableAdvance");
+    assert_eq!(
+        *advanced.data(),
+        (before.0, before.1, summary_b.data().2),
+        "only the anchor advances"
+    );
+}
+
+#[test]
+fn spendable_advance_rejects_non_adjacent_summary() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_user, _note, spendable, _summary_b, _summary_b_tgs) = spendable_batch_setup(rng);
+    let elsewhere = Anchor::from(Fp::random(&mut *rng));
+    let stamps = vec![vec![Tachygram::random(&mut *rng)]];
+    let stray = SyncSim::build_summary_pcd(rng, elsewhere, EpochIndex(2), &stamps);
+
+    expect_invalid(
+        rng,
+        spendable::SpendableAdvance,
+        witness::spendable_advance((*spendable.data(), *stray.0.data()), &stray.1),
+        spendable,
+        stray.0,
+        "SpendableAdvance: summary not adjacent to the spendable",
+    );
+}
+
+#[test]
+fn spendable_advance_rejects_epoch_mismatch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_user, _note, spendable, _summary_b, _summary_b_tgs) = spendable_batch_setup(rng);
+    let stamps = vec![vec![Tachygram::random(&mut *rng)]];
+    let mislabelled = SyncSim::build_summary_pcd(rng, spendable.data().2, EpochIndex(3), &stamps);
+
+    expect_invalid(
+        rng,
+        spendable::SpendableAdvance,
+        witness::spendable_advance((*spendable.data(), *mislabelled.0.data()), &mislabelled.1),
+        spendable,
+        mislabelled.0,
+        "SpendableAdvance: summary epoch must match the spendable",
+    );
+}
+
+#[test]
+fn spendable_advance_rejects_nf_present() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (user, note, spendable, _summary_b, _summary_b_tgs) = spendable_batch_setup(rng);
+    let stamps = vec![vec![user.nf_at(&note, EpochIndex(2)).into()]];
+    let spent = SyncSim::build_summary_pcd(rng, spendable.data().2, EpochIndex(2), &stamps);
+
+    expect_invalid(
+        rng,
+        spendable::SpendableAdvance,
+        witness::spendable_advance((*spendable.data(), *spent.0.data()), &spent.1),
+        spendable,
+        spent.0,
+        "SpendableAdvance: found nullifier in summary",
+    );
+}
+
+/// The self-sync pathway end to end: batch-bootstrap on the creation
+/// epoch's first summary, advance over the epoch's remaining summaries to
+/// its terminal anchor, lift across the boundary over a crossing seed,
+/// walk through the next epoch, and spend.
+#[test]
+fn spendable_batch_self_syncs_to_a_spend() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let mut pool = PoolSim::genesis(rng);
+    let note = user.random_note(300);
+    pool.mine(vec![vec![note.commitment().into()]]);
+    while pool.height().0 + 1 < EPOCH_SIZE {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
+    let sync = SyncSim::new();
+    let summaries = sync.epoch_summaries(rng, &pool, EpochIndex(0));
+    let cm_tg = Tachygram::from(note.commitment());
+    let (batch_at, _) = summaries
+        .iter()
+        .enumerate()
+        .find(|&(_, built)| built.1.contains(&cm_tg))
+        .expect("some summary holds the creation");
+
+    let deriv = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
+    let (mut spendable, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SpendableBatch,
+            witness::spendable_batch(
+                (*deriv.data(), *summaries[batch_at].0.data()),
+                &summaries[batch_at].1,
+                EpochIndex(0),
+                &user.covering_window(&note, &deriv),
+            ),
+            deriv,
+            summaries[batch_at].0.clone(),
+        )
+        .expect("SpendableBatch");
+
+    for built in summaries.iter().skip(batch_at + 1) {
+        let (advanced, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spendable::SpendableAdvance,
+                witness::spendable_advance((*spendable.data(), *built.0.data()), &built.1),
+                spendable,
+                built.0.clone(),
+            )
+            .expect("SpendableAdvance");
+        spendable = advanced;
+    }
+    assert_eq!(
+        spendable.data().2,
+        pool.pre_epoch_anchor(EpochIndex(1)),
+        "the advances reach the epoch's terminal anchor"
+    );
+
+    pool.advance(1, |_| random_block(rng, 1, 2));
+    let target_height = pool.height();
+    let epoch0_tip = spendable.data().2;
+    let (crossing, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::EndEpochUnspentSeed,
+            witness::end_epoch_unspent_seed(
+                ((), ()),
+                epoch0_tip,
+                EpochIndex(0),
+                user.nf_at(&note, EpochIndex(0)),
+                user.nf_at(&note, EpochIndex(1)),
+            ),
+        )
+        .expect("EndEpochUnspentSeed");
+    let at_boundary = user.lift(
+        rng,
+        spendable,
+        crossing,
+        &note,
+        EpochIndex(0),
+        EpochIndex(1),
+    );
+
+    let arbitrary = build_unspent_pcd_between_anchors(
+        rng,
+        &pool,
+        &[user.nf_at(&note, EpochIndex(1))],
+        (at_boundary.data().2, pool.anchor_at(target_height)),
+    );
+    let lifted = user.lift(
+        rng,
+        at_boundary,
+        arbitrary,
+        &note,
+        EpochIndex(1),
+        EpochIndex(1),
+    );
+    let bind_pcd = honest_spend_bind(rng, &user, &note, lifted, EpochIndex(1));
+    assert_eq!(bind_pcd.data().1, user.nf_at(&note, EpochIndex(1)));
+    assert_eq!(bind_pcd.data().2, user.nf_at(&note, EpochIndex(2)));
+}
+
+/// The summary path and the per-stamp path produce identical
+/// `ArbitraryUnspent` headers over the same span: a sub-block start in
+/// epoch 0, whole interior epochs (consuming the shared summaries), and a
+/// sub-block end in epoch 3. A crossing rides the outgoing epoch's terminal
+/// summary when one remains and otherwise takes its own crossing segment.
+#[test]
+fn summary_path_twins_the_per_stamp_walk() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis(rng);
+    pool.advance(3 * EPOCH_SIZE + 3, |_| random_block(rng, 1, 2));
+    let nf: [Nullifier; 4] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
+    let start_height = BlockHeight(2);
+    let end_height = BlockHeight(3 * EPOCH_SIZE + 2);
+    let start = pool.prev_anchor_at(start_height).next_stamp(
+        start_height.epoch(),
+        &pool.stamp_commits_at(start_height)[0],
+    );
+    let end = pool
+        .prev_anchor_at(end_height)
+        .next_stamp(end_height.epoch(), &pool.stamp_commits_at(end_height)[0]);
+
+    let per_stamp = build_unspent_pcd_between_anchors(rng, &pool, &nf, (start, end));
+    let sync = SyncSim::new();
+    let summarized = sync.build_unspent_over_summaries(rng, &pool, &nf, (start, end));
+    assert_eq!(
+        per_stamp.data(),
+        summarized.data(),
+        "the two walks converge on one header"
+    );
+}
+
+/// The stampless-epoch twin: the summary path crosses a silent epoch exactly
+/// as the per-stamp path, by a boundary seed spliced onto the lineage.
+#[test]
+fn summary_path_twins_the_stampless_epoch_walk() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis(rng);
+    while pool.height().0 + 1 < EPOCH_SIZE {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
+    // Epoch 1 publishes nothing; epoch 2 resumes.
+    while pool.height().0 + 1 < 2 * EPOCH_SIZE {
+        pool.advance(1, |_| Vec::new());
+    }
+    pool.advance(1, |_| random_block(rng, 1, 2));
+    let target = pool.height();
+    assert_eq!(target.epoch(), EpochIndex(2));
+
+    let nf: [Nullifier; 3] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
+    let start = pool.anchor_at(BlockHeight(0));
+    let end = pool.anchor_at(target);
+
+    let per_stamp = build_unspent_pcd_between_anchors(rng, &pool, &nf, (start, end));
+    let sync = SyncSim::new();
+    let summarized = sync.build_unspent_over_summaries(rng, &pool, &nf, (start, end));
+    assert_eq!(
+        per_stamp.data(),
+        summarized.data(),
+        "the two walks converge across the silent epoch"
+    );
+}
+
+/// The two pathways interleave inside one lineage: a per-stamp walk segment
+/// fuses with a summary-fed segment at `UnspentFuse`, and the result equals
+/// the whole-span per-stamp walk.
+#[test]
+fn walk_and_summary_segments_fuse() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis(rng);
+    pool.advance(8, |_| random_block(rng, 1, 1));
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let epoch = EpochIndex(0);
+
+    let walk = build_unspent_pcd_between_blocks(rng, &pool, &[nf], BlockHeight(1)..=BlockHeight(4));
+    let stamps: Vec<Vec<Tachygram>> = (5..=8)
+        .flat_map(|height| pool.tachygrams_at(BlockHeight(height)))
+        .collect();
+    let built = SyncSim::build_summary_pcd(rng, walk.data().4, epoch, &stamps);
+    let (batch, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::UnspentBatch,
+            witness::unspent_batch((*built.0.data(), ()), &built.1, nf),
+            built.0,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("UnspentBatch");
+
+    let witness = witness::unspent_fuse((*walk.data(), *batch.data()), &[nf], &[nf]);
+    let (fused, ()) = PROOF_SYSTEM
+        .fuse(rng, pool::UnspentFuse, witness, walk, batch)
+        .expect("UnspentFuse joins the two pathways");
+
+    let whole =
+        build_unspent_pcd_between_blocks(rng, &pool, &[nf], BlockHeight(1)..=BlockHeight(8));
+    assert_eq!(
+        fused.data(),
+        whole.data(),
+        "the mixed lineage equals the whole-span walk"
+    );
 }

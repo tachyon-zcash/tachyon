@@ -6,6 +6,10 @@
 //! ready to seed or fuse through `PROOF_SYSTEM`. Functions are named after the
 //! step they serve. Steps with an empty `()` witness need no utility.
 
+extern crate alloc;
+
+use alloc::collections::BTreeSet;
+
 use ragu::{Header, Step};
 
 use crate::{
@@ -19,10 +23,14 @@ use crate::{
     },
     stamp::proof::{
         delegation::{NfDerive, NfMasterSeed, NullifierFuse},
-        pool::{AnchorSeed, EndEpochUnspentSeed, UnspentBind, UnspentFuse, UnspentSeed},
+        pool::{
+            AnchorSeed, EndEpochUnspentSeed, UnspentAdvance, UnspentBatch, UnspentBind,
+            UnspentEpochLift, UnspentFuse, UnspentSeed,
+        },
         spend::SpendBind,
-        spendable::SpendableInit,
+        spendable::{SpendableAdvance, SpendableBatch, SpendableInit},
         stamp::MergeStamp,
+        summary::{SummaryAdvance, SummarySeed},
     },
 };
 
@@ -47,8 +55,7 @@ pub const fn nf_master_seed(
 ///
 /// Reads `mk` off the seed header, derives the window covering `epoch_start`,
 /// and lays the requested `[epoch_start, epoch_end)` sub-range out as the
-/// sequence. The range must fit inside the covering window; a longer span
-/// fuses ranges via [`NullifierFuse`].
+/// sequence. The range must fit inside the covering window.
 #[must_use]
 pub fn nf_derive(
     (left, _right): (StepLeft<NfDerive>, StepRight<NfDerive>),
@@ -78,8 +85,8 @@ pub fn nf_derive(
 
 /// The group base of the window covering `epoch`.
 ///
-/// Windows are group-aligned, so a covering window starts at the epoch's own
-/// group and runs `NF_DERIVATION_WIDTH` epochs from there.
+/// Windows are group-aligned, so the covering window starts at the epoch's
+/// own group.
 #[must_use]
 #[expect(
     clippy::as_conversions,
@@ -166,6 +173,50 @@ pub fn unspent_fuse(
     )
 }
 
+/// Prepare the witness for [`UnspentBatch`]: `(nf, summary_set)`.
+#[must_use]
+pub fn unspent_batch(
+    (_summary, _right): (StepLeft<UnspentBatch>, StepRight<UnspentBatch>),
+    summary_tgs: &BTreeSet<Tachygram>,
+    nf: Nullifier,
+) -> StepWitness<'static, UnspentBatch> {
+    (
+        nf,
+        summary_tgs.iter().copied().collect::<TachygramSetPoly>(),
+    )
+}
+
+/// Prepare the witness for [`UnspentAdvance`]: `(summary_set,)`, the
+/// re-witnessed summary accumulator.
+#[must_use]
+pub fn unspent_advance(
+    (_unspent, _summary): (StepLeft<UnspentAdvance>, StepRight<UnspentAdvance>),
+    summary_tgs: &BTreeSet<Tachygram>,
+) -> StepWitness<'static, UnspentAdvance> {
+    (summary_tgs.iter().copied().collect::<TachygramSetPoly>(),)
+}
+
+/// Prepare the witness for [`UnspentEpochLift`]:
+/// `(summary_set, elapsed_seq, extended_seq, nf_next)`.
+///
+/// `elapsed` is the lineage's member list, one per covered epoch; the
+/// extension appends the incoming epoch's member `nf_next`.
+#[must_use]
+pub fn unspent_epoch_lift(
+    (_unspent, _summary): (StepLeft<UnspentEpochLift>, StepRight<UnspentEpochLift>),
+    summary_tgs: &BTreeSet<Tachygram>,
+    elapsed: &[Nullifier],
+    nf_next: Nullifier,
+) -> StepWitness<'static, UnspentEpochLift> {
+    let extended: NfSeqPoly = elapsed.iter().copied().chain([nf_next]).collect();
+    (
+        summary_tgs.iter().copied().collect::<TachygramSetPoly>(),
+        elapsed.iter().copied().collect::<NfSeqPoly>(),
+        extended,
+        nf_next,
+    )
+}
+
 /// Prepare the witness for [`UnspentBind`]: `(elapsed_seq, g, older, tail)`.
 ///
 /// `elapsed` is the unspent's member list, one per covered epoch. `window`
@@ -228,6 +279,46 @@ pub fn spendable_init(
     )
 }
 
+/// Prepare the witness for [`SpendableBatch`]:
+/// `(creation_epoch, present_nf, g, older, tail, summary_set)`.
+///
+/// `window` is the complete covering sequence, one member per epoch of the
+/// derivation header's range; the 1-wide read at `creation_epoch` and its
+/// margins are segmented from it, `present_nf` the member the read forces.
+#[must_use]
+#[expect(
+    clippy::indexing_slicing,
+    clippy::as_conversions,
+    reason = "the window covers the derivation header's range"
+)]
+pub fn spendable_batch(
+    (deriv, _summary): (StepLeft<SpendableBatch>, StepRight<SpendableBatch>),
+    summary_tgs: &BTreeSet<Tachygram>,
+    creation_epoch: EpochIndex,
+    window: &[Nullifier],
+) -> StepWitness<'static, SpendableBatch> {
+    let (_, (deriv_start, _), ..) = deriv;
+    let lo = (creation_epoch.0 - deriv_start.0) as usize;
+    (
+        creation_epoch,
+        window[lo],
+        window.iter().copied().collect::<NfSeqPoly>(),
+        NfMarginPoly::new(&window[..lo]),
+        NfTailPoly::new(&window[lo + 1..]),
+        summary_tgs.iter().copied().collect::<TachygramSetPoly>(),
+    )
+}
+
+/// Prepare the witness for [`SpendableAdvance`]: `(summary_set,)`, the
+/// re-witnessed summary accumulator.
+#[must_use]
+pub fn spendable_advance(
+    (_spendable, _summary): (StepLeft<SpendableAdvance>, StepRight<SpendableAdvance>),
+    summary_tgs: &BTreeSet<Tachygram>,
+) -> StepWitness<'static, SpendableAdvance> {
+    (summary_tgs.iter().copied().collect::<TachygramSetPoly>(),)
+}
+
 /// Prepare the witness for [`SpendBind`]: `(g, older, tail, nf_next)`.
 ///
 /// `window` is the complete covering sequence, one member per epoch of the
@@ -251,6 +342,46 @@ pub fn spend_bind(
         NfMarginPoly::new(&window[..lo]),
         NfTailPoly::new(&window[lo + 2..]),
         window[lo + 1],
+    )
+}
+
+/// Prepare the witness for [`SummarySeed`]:
+/// `(anchor_prev, epoch, stamp_commit)`.
+#[must_use]
+pub fn summary_seed(
+    (_left, _right): (StepLeft<SummarySeed>, StepRight<SummarySeed>),
+    anchor_prev: Anchor,
+    epoch: EpochIndex,
+    tgs: &[Tachygram],
+) -> StepWitness<'static, SummarySeed> {
+    (
+        anchor_prev,
+        epoch,
+        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
+    )
+}
+
+/// Prepare the witness for [`SummaryAdvance`]: `(acc, extended, stamp)`.
+///
+/// `acc_tgs` is the summary's accumulated tachygram list so far, `stamp_tgs`
+/// the folded stamp's. The extended accumulator is the root polynomial of
+/// their concatenation, which *is* the product `acc · stamp` (all three are
+/// monic root polynomials).
+#[must_use]
+pub fn summary_advance(
+    (_left, _right): (StepLeft<SummaryAdvance>, StepRight<SummaryAdvance>),
+    acc_tgs: &[Tachygram],
+    stamp_tgs: &[Tachygram],
+) -> StepWitness<'static, SummaryAdvance> {
+    let extended = acc_tgs
+        .iter()
+        .chain(stamp_tgs.iter())
+        .copied()
+        .collect::<TachygramSetPoly>();
+    (
+        acc_tgs.iter().copied().collect::<TachygramSetPoly>(),
+        extended,
+        stamp_tgs.iter().copied().collect::<TachygramSetPoly>(),
     )
 }
 

@@ -11,6 +11,7 @@ pub mod pool;
 pub mod spend;
 pub mod spendable;
 pub mod stamp;
+pub mod summary;
 
 #[cfg(test)]
 mod tests;
@@ -38,6 +39,13 @@ fn make_app() -> Result<Application, ragu::Error> {
         .register(stamp::MergeStamp)?
         .register(stamp::StampLift)?
         .register(delegation::NullifierFuse)?
+        .register(summary::SummarySeed)?
+        .register(summary::SummaryAdvance)?
+        .register(pool::UnspentBatch)?
+        .register(pool::UnspentAdvance)?
+        .register(pool::UnspentEpochLift)?
+        .register(spendable::SpendableBatch)?
+        .register(spendable::SpendableAdvance)?
         .finalize()
 }
 

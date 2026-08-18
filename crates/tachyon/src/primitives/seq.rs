@@ -168,6 +168,25 @@ mod tests {
         );
     }
 
+    /// The bare Horner append identity on the smallest sequences: appending
+    /// a member is exactly $N \mapsto X N + n$. Both sides have degree at
+    /// most $2$, so agreement at three points is polynomial equality, not a
+    /// probabilistic check.
+    #[test]
+    fn append_is_shift_plus_member() {
+        let members = [3u64, 5, 7].map(|n| Nullifier::from(Fp::from(n)));
+        let seq: NfSeqPoly = members[..2].iter().copied().collect();
+        let extended: NfSeqPoly = members.into_iter().collect();
+
+        for x in [Fp::ZERO, Fp::ONE, Fp::from(1000)] {
+            assert_eq!(
+                extended.eval(x),
+                x * seq.eval(x) + Fp::from(7),
+                "append must be the shift-plus-member identity"
+            );
+        }
+    }
+
     /// Sequences always have members; the empty sequence has no encoding.
     #[test]
     #[should_panic(expected = "at least one member")]

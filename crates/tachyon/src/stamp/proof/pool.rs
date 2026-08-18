@@ -24,7 +24,7 @@ use ragu::{
     constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
-use super::delegation::NullifierDerivation;
+use super::{delegation::NullifierDerivation, summary::Summary};
 use crate::{
     note::{self},
     nullifier::Nullifier,
@@ -490,9 +490,9 @@ impl Step for UnspentFuse {
 /// window `[epoch_start, epoch_last + 1)` converts to the derivation's
 /// exclusive convention. The margins absorb whatever the window covers
 /// outside the lineage: `older` any epochs below it (including before the
-/// note existed), `tail` the epochs the derivation runs ahead of the
-/// exclusion evidence — a spend publishes two nullifiers, so the wallet
-/// derives past the lineage while the lineage stops at published evidence.
+/// note existed), `tail` the epochs the derivation runs ahead of the tested
+/// span — a spend publishes two nullifiers, so the wallet derives past the
+/// lineage while the lineage stops at the published tachygrams.
 ///
 /// # Soundness
 ///
@@ -609,6 +609,240 @@ impl Step for UnspentBind {
                 (unspent_epoch_start, unspent_nf_start),
                 (unspent_epoch_last, unspent_nf_last),
                 unspent_anchor_last,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Birth the [`ArbitraryUnspent`] lineage from a [`Summary`]: one query
+/// proves the tested value absent from the whole summarized run.
+///
+/// [`UnspentSeed`] at summary granularity: the segment covers one epoch,
+/// with `elapsed` the one-member sequence of the tested nullifier and the
+/// summary's bracket as its anchors. The segment binds at [`UnspentBind`]
+/// with the same covering read as any other.
+///
+/// # Committed polynomials
+///
+/// | polynomial | role |
+/// |---|---|
+/// | `summary_set` | the summary accumulator, bound to the header commit |
+#[derive(Debug)]
+pub struct UnspentBatch;
+
+impl Step for UnspentBatch {
+    type Aux<'source> = ();
+    type Left = Summary;
+    type Output = ArbitraryUnspent;
+    type Right = ();
+    /// `(nf, summary_set)`.
+    type Witness<'source> = (Nullifier, TachygramSetPoly);
+
+    const INDEX: Index = Index::new(19);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (nf, summary_set): Self::Witness<'source>,
+        (summary_epoch, summary_anchor_prev, summary_anchor_last, summary_acc_commit): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &g0 = Pasta::host_generators(Pasta::baked())
+            .g()
+            .first()
+            .expect("at least one generator");
+
+        enforce_equal_point(
+            Eq::from(summary_set.commit()),
+            Eq::from(summary_acc_commit),
+            "UnspentBatch: accumulator does not match header",
+        )?;
+
+        // Exclusion: nf ∉ summary ⇔ the accumulator is nonzero at nf.
+        let nf_point = Fp::from(nf);
+        let eval = summary_set.eval(nf_point);
+        ctx.enforce_poly_query(summary_set.commit().into(), nf_point, eval)?;
+        enforce_nonzero(eval, "UnspentBatch: found nullifier in summary")?;
+
+        // One-member elapsed, as at `UnspentSeed`.
+        let elapsed_commit = NfSeqCommit::from(g0 * nf_point);
+        Ok((
+            (
+                summary_anchor_prev,
+                (summary_epoch, nf),
+                elapsed_commit,
+                (summary_epoch, nf),
+                summary_anchor_last,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Advance the lineage over an adjacent same-epoch [`Summary`]: one query
+/// clears the whole summarized run.
+///
+/// Also legal over the active epoch's published prefix: a summary cut short
+/// of the epoch's terminal anchor advances the lineage to wherever the
+/// summary ends.
+///
+/// # Committed polynomials
+///
+/// | polynomial | role |
+/// |---|---|
+/// | `summary_set` | the summary accumulator, bound to the header commit |
+#[derive(Debug)]
+pub struct UnspentAdvance;
+
+impl Step for UnspentAdvance {
+    type Aux<'source> = ();
+    type Left = ArbitraryUnspent;
+    type Output = ArbitraryUnspent;
+    type Right = Summary;
+    /// `(summary_set,)`: the re-witnessed summary accumulator.
+    type Witness<'source> = (TachygramSetPoly,);
+
+    const INDEX: Index = Index::new(20);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (summary_set,): Self::Witness<'source>,
+        (
+            unspent_anchor_prev,
+            (unspent_epoch_start, unspent_nf_start),
+            unspent_elapsed,
+            (unspent_epoch_last, unspent_nf_last),
+            unspent_anchor_last,
+        ): <Self::Left as Header>::Data,
+        (summary_epoch, summary_anchor_prev, summary_anchor_last, summary_acc_commit): <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_equal_point(
+            Eq::from(summary_set.commit()),
+            Eq::from(summary_acc_commit),
+            "UnspentAdvance: accumulator does not match header",
+        )?;
+        enforce_zero(
+            Fp::from(unspent_anchor_last) - Fp::from(summary_anchor_prev),
+            "UnspentAdvance: summary not adjacent to the lineage",
+        )?;
+        enforce_zero(
+            Fp::from(summary_epoch) - Fp::from(unspent_epoch_last),
+            "UnspentAdvance: summary epoch must match the lineage tip",
+        )?;
+
+        // Exclusion at summary granularity: the tip's nullifier is absent
+        // from every stamp the summary folded.
+        let nf_point = Fp::from(unspent_nf_last);
+        let eval = summary_set.eval(nf_point);
+        ctx.enforce_poly_query(summary_set.commit().into(), nf_point, eval)?;
+        enforce_nonzero(eval, "UnspentAdvance: found nullifier in summary")?;
+
+        Ok((
+            (
+                unspent_anchor_prev,
+                (unspent_epoch_start, unspent_nf_start),
+                unspent_elapsed,
+                (unspent_epoch_last, unspent_nf_last),
+                summary_anchor_last,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Cross an epoch boundary on the outgoing epoch's terminal [`Summary`].
+///
+/// The three [`UnspentAdvance`] checks, the bare Horner append of the
+/// incoming member, and the boundary anchor fold, in one step.
+///
+/// The summary must be the outgoing epoch's terminal one: the boundary fold
+/// `summary.anchor_last.next_epoch(next)` of any earlier cut lands off the
+/// published anchor sequence, which consensus anchor membership of the
+/// eventual spend forces. `nf_next` is freely witnessed, as at every
+/// crossing; [`UnspentBind`] discharges it against the genuine derivation.
+///
+/// # Committed polynomials
+///
+/// | polynomial | role |
+/// |---|---|
+/// | `summary_set` | the summary accumulator, bound to the header commit |
+/// | `elapsed_seq` | the lineage's sequence, bound to the header commit |
+/// | `extended_seq` | the appended sequence, `X·elapsed + nf_next` |
+#[derive(Debug)]
+pub struct UnspentEpochLift;
+
+impl Step for UnspentEpochLift {
+    type Aux<'source> = ();
+    type Left = ArbitraryUnspent;
+    type Output = ArbitraryUnspent;
+    type Right = Summary;
+    /// `(summary_set, elapsed_seq, extended_seq, nf_next)`.
+    type Witness<'source> = (TachygramSetPoly, NfSeqPoly, NfSeqPoly, Nullifier);
+
+    const INDEX: Index = Index::new(21);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (summary_set, elapsed_seq, extended_seq, nf_next): Self::Witness<'source>,
+        (
+            unspent_anchor_prev,
+            (unspent_epoch_start, unspent_nf_start),
+            unspent_elapsed,
+            (unspent_epoch_last, unspent_nf_last),
+            unspent_anchor_last,
+        ): <Self::Left as Header>::Data,
+        (summary_epoch, summary_anchor_prev, summary_anchor_last, summary_acc_commit): <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_equal_point(
+            Eq::from(elapsed_seq.commit()),
+            Eq::from(unspent_elapsed),
+            "UnspentEpochLift: elapsed polynomial does not match header",
+        )?;
+        enforce_equal_point(
+            Eq::from(summary_set.commit()),
+            Eq::from(summary_acc_commit),
+            "UnspentEpochLift: accumulator does not match header",
+        )?;
+        enforce_zero(
+            Fp::from(unspent_anchor_last) - Fp::from(summary_anchor_prev),
+            "UnspentEpochLift: summary not adjacent to the lineage",
+        )?;
+        enforce_zero(
+            Fp::from(summary_epoch) - Fp::from(unspent_epoch_last),
+            "UnspentEpochLift: summary epoch must match the lineage tip",
+        )?;
+
+        // Exclusion at summary granularity, closing the outgoing epoch.
+        let nf_point = Fp::from(unspent_nf_last);
+        let eval = summary_set.eval(nf_point);
+        ctx.enforce_poly_query(summary_set.commit().into(), nf_point, eval)?;
+        enforce_nonzero(eval, "UnspentEpochLift: found nullifier in summary")?;
+
+        // Bare Horner append: `extended = X·elapsed + nf_next`, the incoming
+        // epoch's member at degree 0. The monomial coefficient is a witness
+        // scalar fixed before the challenge; its content is not bound here
+        // but at `UnspentBind`, like every crossing's.
+        let extended_commit = extended_seq.commit();
+        enforce_shifted_combination(
+            ctx,
+            [(elapsed_seq.as_ref(), 1)],
+            [(Fp::from(nf_next), 0)],
+            extended_seq.as_ref(),
+            "UnspentEpochLift: extended sequence must append the crossing member",
+        )?;
+
+        let new_epoch = unspent_epoch_last.next();
+        Ok((
+            (
+                unspent_anchor_prev,
+                (unspent_epoch_start, unspent_nf_start),
+                extended_commit,
+                (new_epoch, nf_next),
+                summary_anchor_last.next_epoch(new_epoch),
             ),
             (),
         ))

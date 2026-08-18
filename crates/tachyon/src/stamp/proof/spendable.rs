@@ -14,10 +14,10 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
     Header, Index, Step, Suffix,
-    constraint::{enforce_equal_point, enforce_zero},
+    constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
-use super::{delegation::NullifierDerivation, pool::Unspent};
+use super::{delegation::NullifierDerivation, pool::Unspent, summary::Summary};
 use crate::{
     digest::poseidon,
     note,
@@ -234,6 +234,185 @@ impl Step for SpendableLift {
                 spendable_cm,
                 (unspent_epoch_last, unspent_nf_last),
                 unspent_anchor_last,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Bootstrap a spendable from a [`Summary`] covering the note's creation.
+///
+/// [`SpendableInit`] at summary granularity: membership proves the creation
+/// inside the summarized run ($\mathsf{cm} \in \mathsf{summary}$, a root of
+/// the product accumulator is a root of some folded stamp's set), exclusion
+/// proves nothing spent the note anywhere in that run
+/// ($\mathsf{nf} \notin \mathsf{summary}$; stamps predating the creation
+/// exclude it vacuously), and the spendable emerges at the run's terminal
+/// anchor.
+///
+/// # Soundness
+///
+/// The summary's `epoch` is absorbed into every anchor link at
+/// [`SummarySeed`](super::summary::SummarySeed) /
+/// [`SummaryAdvance`](super::summary::SummaryAdvance), so a lied epoch
+/// yields a bracket off the published anchor sequence, which consensus
+/// anchor membership of the eventual spend rejects; the
+/// `summary_epoch == creation_epoch` guard transfers that binding to the
+/// covering read, forcing `present_nf` to the genuine nullifier of the
+/// genuine epoch. Both bracket anchors close through the same membership.
+///
+/// # Committed polynomials
+///
+/// | polynomial | role |
+/// |---|---|
+/// | `g` | covering derivation window, bound to the derivation header |
+/// | `older` | absorbing older margin |
+/// | `tail` | cap-shifted absorbing newer margin |
+/// | `summary_set` | the summary accumulator, membership- and exclusion-queried |
+#[derive(Debug)]
+pub struct SpendableBatch;
+
+impl Step for SpendableBatch {
+    type Aux<'source> = ();
+    type Left = NullifierDerivation;
+    type Output = SpendableHeader;
+    type Right = Summary;
+    /// `(creation_epoch, present_nf, g, older, tail, summary_set)`.
+    type Witness<'source> = (
+        EpochIndex,
+        Nullifier,
+        NfSeqPoly,
+        NfMarginPoly,
+        NfTailPoly,
+        TachygramSetPoly,
+    );
+
+    const INDEX: Index = Index::new(22);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (creation_epoch, present_nf, g, older, tail, summary_set): Self::Witness<'source>,
+        (
+            cm,
+            (deriv_start, _deriv_nf_start),
+            nf_commit,
+            (deriv_end, _deriv_nf_last),
+        ): <Self::Left as Header>::Data,
+        (summary_epoch, _summary_anchor_prev, summary_anchor_last, summary_acc_commit): <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_equal_point(
+            Eq::from(g.commit()),
+            Eq::from(nf_commit),
+            "SpendableBatch: covering sequence does not match header",
+        )?;
+        enforce_equal_point(
+            Eq::from(summary_set.commit()),
+            Eq::from(summary_acc_commit),
+            "SpendableBatch: accumulator does not match header",
+        )?;
+        enforce_zero(
+            Fp::from(summary_epoch) - Fp::from(creation_epoch),
+            "SpendableBatch: summary epoch must match the creation epoch",
+        )?;
+
+        // Native coverage guard, as at `SpendableInit`.
+        if deriv_start.0 > creation_epoch.0 || deriv_end.0 <= creation_epoch.0 {
+            return Err(ragu::Error::InvalidWitness(
+                "SpendableBatch: derivation does not cover the creation epoch".into(),
+            ));
+        }
+
+        // The 1-wide read at the creation epoch, as at `SpendableInit`.
+        let margin = u64::from(deriv_end - creation_epoch) - 1;
+        let z = poseidon::read_challenge(
+            g.commit().into(),
+            older.commit().into(),
+            tail.commit().into(),
+            &[Fp::from(present_nf)],
+        );
+        enforce_covering_read_members(
+            ctx,
+            g.as_ref(),
+            older.as_ref(),
+            tail.as_ref(),
+            [Fp::from(present_nf)],
+            margin,
+            z,
+            "SpendableBatch: nullifier does not match the derivation",
+        )?;
+
+        // Membership: the note's creation lies inside the summarized run.
+        let cm_in_set = summary_set.eval(cm.into());
+        ctx.enforce_poly_query(summary_set.commit().into(), cm.into(), cm_in_set)?;
+        enforce_zero(cm_in_set, "SpendableBatch: commitment not in summary")?;
+
+        // Exclusion: nothing spent the note anywhere in the run.
+        let nf_point = Fp::from(present_nf);
+        let nf_in_set = summary_set.eval(nf_point);
+        ctx.enforce_poly_query(summary_set.commit().into(), nf_point, nf_in_set)?;
+        enforce_nonzero(nf_in_set, "SpendableBatch: found nullifier in summary")?;
+
+        Ok(((cm, (creation_epoch, present_nf), summary_anchor_last), ()))
+    }
+}
+
+/// Advance a spendable over an adjacent same-epoch [`Summary`]: one
+/// exclusion query proves the note unspent across the whole summarized run.
+///
+/// `present_nf` is threaded and certified upstream, so only the summary
+/// accumulator is witnessed.
+///
+/// # Committed polynomials
+///
+/// | polynomial | role |
+/// |---|---|
+/// | `summary_set` | the summary accumulator, bound to the header commit |
+#[derive(Debug)]
+pub struct SpendableAdvance;
+
+impl Step for SpendableAdvance {
+    type Aux<'source> = ();
+    type Left = SpendableHeader;
+    type Output = SpendableHeader;
+    type Right = Summary;
+    /// `(summary_set,)`: the re-witnessed summary accumulator.
+    type Witness<'source> = (TachygramSetPoly,);
+
+    const INDEX: Index = Index::new(23);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (summary_set,): Self::Witness<'source>,
+        (spendable_cm, (spendable_epoch, present_nf), spendable_anchor): <Self::Left as Header>::Data,
+        (summary_epoch, summary_anchor_prev, summary_anchor_last, summary_acc_commit): <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_equal_point(
+            Eq::from(summary_set.commit()),
+            Eq::from(summary_acc_commit),
+            "SpendableAdvance: accumulator does not match header",
+        )?;
+        enforce_zero(
+            Fp::from(spendable_anchor) - Fp::from(summary_anchor_prev),
+            "SpendableAdvance: summary not adjacent to the spendable",
+        )?;
+        enforce_zero(
+            Fp::from(summary_epoch) - Fp::from(spendable_epoch),
+            "SpendableAdvance: summary epoch must match the spendable",
+        )?;
+
+        // Exclusion at summary granularity.
+        let nf_point = Fp::from(present_nf);
+        let eval = summary_set.eval(nf_point);
+        ctx.enforce_poly_query(summary_set.commit().into(), nf_point, eval)?;
+        enforce_nonzero(eval, "SpendableAdvance: found nullifier in summary")?;
+
+        Ok((
+            (
+                spendable_cm,
+                (spendable_epoch, present_nf),
+                summary_anchor_last,
             ),
             (),
         ))

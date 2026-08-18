@@ -12,10 +12,15 @@
 extern crate alloc;
 extern crate std;
 
-use alloc::{collections::BTreeMap, rc::Rc, vec, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+    vec,
+    vec::Vec,
+};
 use core::{
     cell::{Cell, RefCell},
-    iter,
+    iter, mem,
     ops::RangeInclusive,
 };
 
@@ -28,7 +33,7 @@ use rand_core::{CryptoRng, RngCore};
 use crate::{
     action::{self, Action},
     bundle::{self, Bundle},
-    constants::EPOCH_SIZE,
+    constants::{EPOCH_SIZE, SUMMARY_CAPACITY},
     digest::{blake2b, poseidon::NF_GROUP},
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
@@ -43,6 +48,7 @@ use crate::{
         proof::{
             PROOF_SYSTEM, delegation, pool, spendable,
             stamp::{MergeStamp, StampHeader},
+            summary,
         },
     },
     value, witness,
@@ -322,8 +328,7 @@ impl PoolSimBlock {
     /// The block's commitments and post anchors in one pass: one anchor per
     /// stamp, folding `next_stamp` from `prev`. Every link binds `epoch`, the
     /// epoch of the block at `height`. A stampless block contributes no link,
-    /// so its anchor list is empty. The anchors reuse the commitments, so the
-    /// MSMs run once.
+    /// so its anchor list is empty. The anchors reuse the commitments.
     fn digest(&self, height: BlockHeight) -> BlockDigest {
         let epoch = height.epoch();
         let commits = self.commits();
@@ -457,7 +462,7 @@ impl PoolSim {
     /// sit mid-block; the first and last blocks are trimmed to the span.
     /// Stampless blocks advance no anchor and so contribute no entry, though
     /// a boundary marker is still emitted for a stampless epoch-first block.
-    /// Anchors are not returned (the caller folds them).
+    /// The caller folds the anchors.
     #[must_use]
     pub fn anchor_steps(
         &self,
@@ -770,7 +775,7 @@ fn fuse_unspent_tree(
     #[expect(
         clippy::integer_division,
         clippy::integer_division_remainder_used,
-        reason = "midpoint split"
+        reason = "halving a length cannot overflow or divide by zero"
     )]
     let right_chains = chains.split_off(chains.len() / 2);
     let left = fuse_unspent_tree(rng, nf, base, chains);
@@ -925,8 +930,7 @@ impl WalletSim {
     /// The first window is the one covering `epoch_start`; window-aligned
     /// whole windows chain through [`delegation::NullifierFuse`] until the
     /// requested bound is covered. Consumers read their own sub-ranges out of
-    /// the covering PCD, so every request inside the same covering range
-    /// shares one proof.
+    /// the covering PCD.
     pub fn derivation_pcd(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
@@ -1170,6 +1174,9 @@ impl WalletSim {
 
 pub struct SyncSim {
     entries: Vec<SyncEntry>,
+    /// Shared epoch summaries, built once per epoch and reused by every
+    /// consumer. Note-independent: no delegation is involved.
+    summaries: RefCell<BTreeMap<u32, Rc<[(Pcd<summary::Summary>, BTreeSet<Tachygram>)]>>>,
 }
 
 struct SyncEntry {
@@ -1185,7 +1192,211 @@ impl SyncSim {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
+            summaries: RefCell::new(BTreeMap::new()),
         }
+    }
+
+    /// The epoch's summary sequence, memoized: stamps in pool order, greedily
+    /// packed to [`SUMMARY_CAPACITY`] tachygrams per summary, rooted at the
+    /// epoch's boundary anchor. Empty for a stampless epoch.
+    pub fn epoch_summaries(
+        &self,
+        rng: &mut (impl RngCore + CryptoRng),
+        pool: &PoolSim,
+        epoch: EpochIndex,
+    ) -> Rc<[(Pcd<summary::Summary>, BTreeSet<Tachygram>)]> {
+        if let Some(summaries) = self.summaries.borrow().get(&epoch.0) {
+            return Rc::clone(summaries);
+        }
+        let first = epoch_first_of(epoch);
+        let last = epoch_final_of(epoch).min(pool.height());
+        let stamps: Vec<Vec<Tachygram>> = (first.0..=last.0)
+            .flat_map(|height| pool.tachygrams_at(BlockHeight(height)))
+            .collect();
+        let entry = pool.pre_epoch_anchor(epoch).next_epoch(epoch);
+        let built: Rc<[(Pcd<summary::Summary>, BTreeSet<Tachygram>)]> =
+            Self::build_summary_pcds(rng, entry, epoch, &stamps).into();
+        self.summaries
+            .borrow_mut()
+            .insert(epoch.0, Rc::clone(&built));
+        built
+    }
+
+    /// Summary-path sibling of [`build_unspent_pcd_between_anchors`]: walk
+    /// the same anchor span over [`Summary`](summary::Summary)s. The first
+    /// covered summary births the lineage
+    /// ([`UnspentBatch`](pool::UnspentBatch)), same-epoch summaries advance
+    /// it ([`UnspentAdvance`](pool::UnspentAdvance)), and every epoch
+    /// crossing rides the outgoing epoch's terminal summary
+    /// ([`UnspentEpochLift`](pool::UnspentEpochLift)) when one remains,
+    /// otherwise taking its own segment
+    /// ([`EndEpochUnspentSeed`](pool::EndEpochUnspentSeed)). A wholly
+    /// covered epoch consumes the shared memoized summaries; partial
+    /// portions cut custom summaries from the entry anchor.
+    pub fn build_unspent_over_summaries(
+        &self,
+        rng: &mut (impl RngCore + CryptoRng),
+        pool: &PoolSim,
+        nf: &[Nullifier],
+        (start_anchor, end_anchor): (Anchor, Anchor),
+    ) -> Pcd<pool::ArbitraryUnspent> {
+        let steps = pool.anchor_steps(start_anchor, end_anchor);
+        let leading = steps.first().expect("anchor span covers at least one step");
+        // The same leading-marker disambiguation as the per-stamp builder.
+        let base = match *leading {
+            Ok((height, _)) => height.epoch(),
+            Err(epoch) if start_anchor == pool.pre_epoch_anchor(epoch).next_epoch(epoch) => epoch,
+            Err(epoch) => EpochIndex(epoch.0 - 1),
+        };
+        let nf_at = |epoch: EpochIndex| -> Nullifier {
+            nf[usize::try_from(u64::from(epoch - base)).expect("epoch within span")]
+        };
+        let members = |lo: EpochIndex, hi: EpochIndex| -> &[Nullifier] {
+            let from = usize::try_from(u64::from(lo - base)).expect("epoch within span");
+            let to = usize::try_from(u64::from(hi - base)).expect("epoch within span");
+            &nf[from..=to]
+        };
+
+        // Group the walk into per-epoch portions: the portion's in-span
+        // stamps and whether it ends at a crossing.
+        let mut portions: Vec<(EpochIndex, Vec<Vec<Tachygram>>, bool)> = Vec::new();
+        let mut cursor_epoch = base;
+        let mut pending: Vec<Vec<Tachygram>> = Vec::new();
+        for step in steps {
+            match step {
+                Ok((_height, stamps)) => pending.extend(stamps),
+                Err(new_epoch) if new_epoch == cursor_epoch => {
+                    // The span begins at this boundary; it is already crossed.
+                },
+                Err(new_epoch) => {
+                    portions.push((cursor_epoch, mem::take(&mut pending), true));
+                    cursor_epoch = new_epoch;
+                },
+            }
+        }
+        portions.push((cursor_epoch, pending, false));
+
+        let mut running: Option<Pcd<pool::ArbitraryUnspent>> = None;
+        for (epoch, stamps, crossing) in portions {
+            let cursor = running
+                .as_ref()
+                .map_or(start_anchor, |lineage| lineage.data().4);
+
+            // A wholly covered epoch reuses the shared summaries; a partial
+            // portion cuts custom summaries from the entry anchor.
+            let whole = crossing && cursor == pool.pre_epoch_anchor(epoch).next_epoch(epoch);
+            let summaries: Vec<(Pcd<summary::Summary>, BTreeSet<Tachygram>)> = if whole {
+                self.epoch_summaries(rng, pool, epoch).to_vec()
+            } else if stamps.is_empty() {
+                Vec::new()
+            } else {
+                Self::build_summary_pcds(rng, cursor, epoch, &stamps)
+            };
+
+            // A crossing rides the epoch's terminal summary when one remains
+            // after the lineage is born; otherwise it is its own segment.
+            let remaining = summaries.len();
+            let cross_on_summary = crossing
+                && match running {
+                    None => remaining >= 2,
+                    Some(_) => remaining >= 1,
+                };
+            let plain = summaries.len() - usize::from(cross_on_summary);
+
+            for built in summaries.iter().take(plain) {
+                running = Some(match running.take() {
+                    None => {
+                        let witness =
+                            witness::unspent_batch((*built.0.data(), ()), &built.1, nf_at(epoch));
+                        let (born, ()) = PROOF_SYSTEM
+                            .fuse(
+                                rng,
+                                pool::UnspentBatch,
+                                witness,
+                                built.0.clone(),
+                                Proof::trivial().carry::<()>(()),
+                            )
+                            .expect("UnspentBatch");
+                        born
+                    },
+                    Some(lineage) => {
+                        let witness =
+                            witness::unspent_advance((*lineage.data(), *built.0.data()), &built.1);
+                        let (advanced, ()) = PROOF_SYSTEM
+                            .fuse(rng, pool::UnspentAdvance, witness, lineage, built.0.clone())
+                            .expect("UnspentAdvance");
+                        advanced
+                    },
+                });
+            }
+
+            if !crossing {
+                continue;
+            }
+            if cross_on_summary {
+                let built = summaries
+                    .last()
+                    .expect("crossing rides the terminal summary");
+                let lineage = running.take().expect("crossing summary follows a lineage");
+                let (_, (epoch_start, _), _, (epoch_last, _), _) = *lineage.data();
+                let witness = witness::unspent_epoch_lift(
+                    (*lineage.data(), *built.0.data()),
+                    &built.1,
+                    members(epoch_start, epoch_last),
+                    nf_at(epoch.next()),
+                );
+                let (crossed, ()) = PROOF_SYSTEM
+                    .fuse(
+                        rng,
+                        pool::UnspentEpochLift,
+                        witness,
+                        lineage,
+                        built.0.clone(),
+                    )
+                    .expect("UnspentEpochLift");
+                running = Some(crossed);
+            } else {
+                // No terminal summary to ride, so the crossing is its own
+                // segment. With no lineage yet the epoch is wholly silent and
+                // its entry anchor is also its terminal one.
+                let (anchor_prev, epoch_prev, nf_prev) = running.as_ref().map_or_else(
+                    || (cursor, epoch, nf_at(epoch)),
+                    |lineage| {
+                        let (_, _, _, (epoch_last, nf_last), anchor_last) = *lineage.data();
+                        (anchor_last, epoch_last, nf_last)
+                    },
+                );
+                let (seed, ()) = PROOF_SYSTEM
+                    .seed(
+                        rng,
+                        pool::EndEpochUnspentSeed,
+                        witness::end_epoch_unspent_seed(
+                            ((), ()),
+                            anchor_prev,
+                            epoch_prev,
+                            nf_prev,
+                            nf_at(epoch.next()),
+                        ),
+                    )
+                    .expect("EndEpochUnspentSeed");
+                running = Some(match running.take() {
+                    None => seed,
+                    Some(lineage) => {
+                        let (_, (start, _), _, (last, _), _) = *lineage.data();
+                        let witness = witness::unspent_fuse(
+                            (*lineage.data(), *seed.data()),
+                            members(start, last),
+                            members(epoch_prev, epoch.next()),
+                        );
+                        let (crossed, ()) = PROOF_SYSTEM
+                            .fuse(rng, pool::UnspentFuse, witness, lineage, seed)
+                            .expect("UnspentFuse over the crossing");
+                        crossed
+                    },
+                });
+            }
+        }
+        running.expect("anchor span produces at least one segment")
     }
 
     pub fn accept_delegation(
@@ -1235,7 +1446,7 @@ impl SyncSim {
             "target_height must be at least the next uncovered height"
         );
         let nfs_from = usize::try_from(entry.consumed).expect("fits usize");
-        let unspent = build_unspent_pcd_between_anchors(
+        let unspent = self.build_unspent_over_summaries(
             rng,
             pool,
             &entry.nfs[nfs_from..],
@@ -1253,6 +1464,79 @@ impl SyncSim {
             .iter()
             .find(|entry| entry.handle == handle)
             .expect("no delegation for handle")
+    }
+
+    /// Greedily pack `stamps` into [`SUMMARY_CAPACITY`]-bounded runs and build
+    /// one [`Summary`](summary::Summary) PCD per run, rooted at `entry` and
+    /// chained by adjacency.
+    pub(crate) fn build_summary_pcds(
+        rng: &mut (impl RngCore + CryptoRng),
+        entry: Anchor,
+        epoch: EpochIndex,
+        stamps: &[Vec<Tachygram>],
+    ) -> Vec<(Pcd<summary::Summary>, BTreeSet<Tachygram>)> {
+        let mut runs: Vec<Vec<Vec<Tachygram>>> = Vec::new();
+        let mut current: Vec<Vec<Tachygram>> = Vec::new();
+        let mut current_len = 0usize;
+        for tgs in stamps {
+            assert!(
+                tgs.len() <= SUMMARY_CAPACITY,
+                "a single stamp must fit a summary"
+            );
+            if current_len + tgs.len() > SUMMARY_CAPACITY {
+                runs.push(mem::take(&mut current));
+                current_len = 0;
+            }
+            current_len += tgs.len();
+            current.push(tgs.clone());
+        }
+        if !current.is_empty() {
+            runs.push(current);
+        }
+
+        let mut summaries = Vec::with_capacity(runs.len());
+        let mut cursor = entry;
+        for run in &runs {
+            let built = Self::build_summary_pcd(rng, cursor, epoch, run);
+            cursor = built.0.data().2;
+            summaries.push(built);
+        }
+        summaries
+    }
+
+    /// Build one [`Summary`](summary::Summary) PCD over `stamps`: seeded on
+    /// the first stamp, advanced over the rest.
+    pub(crate) fn build_summary_pcd(
+        rng: &mut (impl RngCore + CryptoRng),
+        anchor_prev: Anchor,
+        epoch: EpochIndex,
+        stamps: &[Vec<Tachygram>],
+    ) -> (Pcd<summary::Summary>, BTreeSet<Tachygram>) {
+        let (first, rest) = stamps
+            .split_first()
+            .expect("summary has at least one stamp");
+        let (mut pcd, ()) = PROOF_SYSTEM
+            .seed(
+                rng,
+                summary::SummarySeed,
+                witness::summary_seed(((), ()), anchor_prev, epoch, first),
+            )
+            .expect("SummarySeed");
+        let mut acc: Vec<Tachygram> = first.clone();
+        for tgs in rest {
+            let (advanced, ()) = PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    summary::SummaryAdvance,
+                    witness::summary_advance((*pcd.data(), ()), &acc, tgs),
+                    pcd,
+                    Proof::trivial().carry::<()>(()),
+                )
+                .expect("SummaryAdvance");
+            pcd = advanced;
+            acc.extend(tgs.iter().copied());
+        }
+        (pcd, acc.into_iter().collect())
     }
 }
 

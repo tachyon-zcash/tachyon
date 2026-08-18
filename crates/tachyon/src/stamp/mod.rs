@@ -335,6 +335,8 @@ impl Plan {
     ///
     /// `spend_pcds` items must correspond to each planned spend, in
     /// order.
+    ///
+    /// TODO: provide a way to lift spend stamps when necessary to merge
     pub fn prove<RNG: RngCore + CryptoRng>(
         self,
         rng: &mut RNG,
@@ -379,8 +381,7 @@ impl Plan {
                 )
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: prove the action and publish. The tachygram pair is
-            // read straight off the bind header.
+            // SpendStamp: prove the action and publish.
             let (tachygrams, anchor, proof) =
                 ProofStamp::prove_spend(rng, bind_pcd, note, rcv, alpha, *pak)
                     .map_err(ProveError::ProofFailed)?;
@@ -551,9 +552,9 @@ impl ProofStamp {
     /// [`SpendHeader`](spend::SpendHeader) PCD.
     ///
     /// The nullifier pair `{present_nf, nf_next}` published for data
-    /// availability is read straight off the bind header (already confirmed
-    /// against the derivation at [`SpendBind`](spend::SpendBind)); this step
-    /// only proves the action `(cv, rk)`. The spend's `anchor` is taken as the
+    /// availability is read off the bind header, where
+    /// [`SpendBind`](spend::SpendBind) confirmed it against the derivation.
+    /// Proves the action `(cv, rk)`. The spend's `anchor` is taken as the
     /// stamp's anchor; chain validation lives inside the spendable lineage.
     pub fn prove_spend<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,

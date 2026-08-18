@@ -17,3 +17,16 @@ pub const EPOCH_SIZE: u32 = 1 << { if cfg!(test) { 4 } else { 12 } };
     reason = "the trailing epoch is partial; flooring is the intended index"
 )]
 pub const EPOCH_MAX: u32 = BLOCK_MAX / EPOCH_SIZE;
+
+/// Maximum tachygrams per epoch summary.
+///
+/// A summary's accumulator is a root-encoded set polynomial, one root per
+/// tachygram below the monic top coefficient, so the polynomial rank cap
+/// admits one root fewer than its coefficient count. Prover-side packing
+/// only: no circuit reads a length. Small under test so walks exercise
+/// multi-summary epochs.
+pub const SUMMARY_CAPACITY: usize = if cfg!(test) {
+    8
+} else {
+    (1 << ragu::Polynomial::R) - 1
+};
