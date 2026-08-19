@@ -1245,6 +1245,71 @@ fn spendable_epoch_lift_advances_from_an_epoch_tip() {
     assert_eq!(lifted.data().2, pool.anchor_at(target_height));
 }
 
+/// Nothing constrains the lifted lineage to sit on its epoch's terminal
+/// anchor. Ticking a mid-epoch anchor succeeds in-circuit and emits an anchor
+/// no block ever published, so consensus anchor membership of the eventual
+/// spend is what rejects it.
+#[test]
+fn spendable_epoch_lift_accepts_a_mid_epoch_anchor() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let mut pool = PoolSim::genesis(rng);
+    let note = user.random_note(300);
+    let cm_height = mine_cm_in_epoch_one(rng, &mut pool, note.commitment());
+    let epoch = cm_height.epoch();
+
+    // The cm-block carries four stamps, so the lineage sits on the cm-stamp's
+    // post anchor: on the published sequence, but neither the block's terminal
+    // anchor nor the epoch's.
+    let spendable = user.spendable_init(rng, &note, &pool, cm_height);
+    let mid_epoch_anchor = spendable.data().2;
+    assert_ne!(
+        mid_epoch_anchor,
+        pool.anchor_at(cm_height),
+        "the lineage sits mid-block"
+    );
+
+    // Fill out the epoch and enter the next, so the genuine boundary tick is
+    // published and the forged one has something to differ from.
+    while pool.height().epoch().0 == epoch.0 {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
+    assert_ne!(
+        mid_epoch_anchor,
+        pool.pre_epoch_anchor(epoch.next()),
+        "the lineage sits mid-epoch"
+    );
+
+    let lifted = user.epoch_lift(rng, spendable, &note);
+    assert_eq!(
+        *lifted.data(),
+        (
+            note.commitment(),
+            (epoch.next(), user.nf_at(&note, epoch.next())),
+            mid_epoch_anchor.next_epoch(epoch.next())
+        ),
+        "the tick advances from the mid-epoch anchor"
+    );
+
+    // The published sequence is each block's entry anchor, which carries the
+    // epoch ticks, followed by one post anchor per stamp it contains.
+    let forged_anchor = lifted.data().2;
+    for height in (0..=pool.height().0).map(BlockHeight) {
+        let mut anchor = pool.prev_anchor_at(height);
+        assert_ne!(
+            forged_anchor, anchor,
+            "forged anchor must be absent from the published sequence"
+        );
+        for commit in pool.stamp_commits_at(height) {
+            anchor = anchor.next_stamp(height.epoch(), &commit);
+            assert_ne!(
+                forged_anchor, anchor,
+                "forged anchor must be absent from the published sequence"
+            );
+        }
+    }
+}
+
 /// The empty-epoch seed is the segment `UnspentEpochFuse` splices against on
 /// each side of a stampless epoch.
 #[test]

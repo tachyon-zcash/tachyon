@@ -39,7 +39,7 @@ A block that publishes no stamp advances no anchor, so a stampless span needs no
 An `ArbitraryUnspent` records its span as two absolute epoch endpoints, `epoch_start` and `epoch_end`; the crossing count is their difference.
 
 `UnspentBind` binds a sync-built `ArbitraryUnspent` to genuine derivation. It is wallet-side: it consumes the `ArbitraryUnspent` and a wallet `NullifierHeader` range, and proves the range commits to exactly the `elapsed` crossings followed by the tip `nf_end`, with the range's epochs equal to the `ArbitraryUnspent`'s span. So every crossed nullifier and the tip are proven `GGM(mk, ·)` leaves.
-It emits an `Unspent` carrying the span's boundary nullifiers and anchors, the end epoch, and the note's `cm`.
+It emits an `Unspent` carrying the span's boundary nullifiers, anchors and epochs, and the note's `cm`.
 
 `SpendableLift` is wallet-side and witness-free: it consumes a `SpendableHeader` and an `Unspent`.
 It checks the verified segment's `cm` equals the spendable's (so the absence-proven nullifiers are this note's, and the value cannot drift), the segment's `nf_start` equals the spendable's `present_nf` (continuity), and the segment's `anchor_prev` equals the spendable's anchor (adjacency).
@@ -247,7 +247,7 @@ flowchart TB
     w_init[/pre_cm_anchor, creation_set, present_nf/]
     s_init[SpendableInit]
     unspent_in((ArbitraryUnspent))
-    s_bind[UnspentBind]
+    s_unspentbind[UnspentBind]
     s_lift[SpendableLift]
     s_epochlift[SpendableEpochLift]
   end
@@ -277,10 +277,10 @@ flowchart TB
 
   nf_range -->|NullifierHeader| s_init
   w_init --> s_init
-  nf_range --> s_bind
-  unspent_in --> s_bind
+  nf_range --> s_unspentbind
+  unspent_in --> s_unspentbind
   s_init -->|SpendableHeader| s_lift
-  s_bind -->|Unspent| s_lift
+  s_unspentbind -->|Unspent| s_lift
   s_init -->|SpendableHeader| s_epochlift
   nf_range -->|NullifierHeader| s_epochlift
   s_epochlift -->|SpendableHeader| s_lift
@@ -309,9 +309,9 @@ A lineage resting on an epoch's terminal anchor takes `SpendableEpochLift` first
 ```mermaid
 flowchart LR
   sh_in((StampHeader))
-  w_seed[/start, stamp_commit/]
+  w_seed[/start, epoch, stamp_commit/]
   s_seed[AnchorSeed]
-  w_next[/start, stamp_commit/]
+  w_next[/start, epoch, stamp_commit/]
   s_next[AnchorSeed]
   s_fuse[AnchorFuse]
   s_lift[StampLift]
@@ -330,9 +330,9 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  w_seed[/start, epoch, stamp_tg_set, nf/]
+  w_seed[/anchor_prev, epoch, stamp_tg_set, nf/]
   s_useed[UnspentSeed]
-  w_next[/start, epoch, stamp_tg_set, nf/]
+  w_next[/anchor_prev, epoch, stamp_tg_set, nf/]
   s_unext[UnspentSeed]
   s_ufuse[UnspentFuse]
   w_eseed[/prev_epoch_tip, epoch, nf/]
@@ -364,7 +364,7 @@ flowchart LR
 | SpendableHeader | (cm, (epoch, present_nf), anchor) |
 | OutputHeader | (cm, pad) |
 | SpendHeader | (cm, present_nf, nf_next, anchor) |
-| StampHeader | (action_commit, tachygram_commit, anchor) |
+| StampHeader | (action_commit, stamp_tg_commit, anchor) |
 
 ## Steps
 
