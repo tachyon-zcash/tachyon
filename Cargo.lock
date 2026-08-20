@@ -508,7 +508,7 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 [[package]]
 name = "ragu"
 version = "0.0.0"
-source = "git+https://github.com/TalDerei/ragu?rev=98ff39a10088d3c763028409026b057efd3bd0e7#98ff39a10088d3c763028409026b057efd3bd0e7"
+source = "git+https://github.com/TalDerei/ragu?rev=e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd#e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd"
 dependencies = [
  "blake2b_simd",
  "ragu_arithmetic",
@@ -522,7 +522,7 @@ dependencies = [
 [[package]]
 name = "ragu_arithmetic"
 version = "0.0.0"
-source = "git+https://github.com/TalDerei/ragu?rev=98ff39a10088d3c763028409026b057efd3bd0e7#98ff39a10088d3c763028409026b057efd3bd0e7"
+source = "git+https://github.com/TalDerei/ragu?rev=e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd#e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd"
 dependencies = [
  "ff",
  "group",
@@ -535,7 +535,7 @@ dependencies = [
 [[package]]
 name = "ragu_circuits"
 version = "0.0.0"
-source = "git+https://github.com/TalDerei/ragu?rev=98ff39a10088d3c763028409026b057efd3bd0e7#98ff39a10088d3c763028409026b057efd3bd0e7"
+source = "git+https://github.com/TalDerei/ragu?rev=e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd#e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd"
 dependencies = [
  "blake2b_simd",
  "maybe-rayon",
@@ -547,7 +547,7 @@ dependencies = [
 [[package]]
 name = "ragu_core"
 version = "0.0.0"
-source = "git+https://github.com/TalDerei/ragu?rev=98ff39a10088d3c763028409026b057efd3bd0e7#98ff39a10088d3c763028409026b057efd3bd0e7"
+source = "git+https://github.com/TalDerei/ragu?rev=e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd#e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd"
 dependencies = [
  "ragu_arithmetic",
  "ragu_macros",
@@ -557,7 +557,7 @@ dependencies = [
 [[package]]
 name = "ragu_macros"
 version = "0.0.0"
-source = "git+https://github.com/TalDerei/ragu?rev=98ff39a10088d3c763028409026b057efd3bd0e7#98ff39a10088d3c763028409026b057efd3bd0e7"
+source = "git+https://github.com/TalDerei/ragu?rev=e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd#e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -570,7 +570,7 @@ dependencies = [
 [[package]]
 name = "ragu_pasta"
 version = "0.0.0"
-source = "git+https://github.com/TalDerei/ragu?rev=98ff39a10088d3c763028409026b057efd3bd0e7#98ff39a10088d3c763028409026b057efd3bd0e7"
+source = "git+https://github.com/TalDerei/ragu?rev=e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd#e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd"
 dependencies = [
  "lazy_static",
  "ragu_arithmetic",
@@ -579,7 +579,7 @@ dependencies = [
 [[package]]
 name = "ragu_pcd"
 version = "0.0.0"
-source = "git+https://github.com/TalDerei/ragu?rev=98ff39a10088d3c763028409026b057efd3bd0e7#98ff39a10088d3c763028409026b057efd3bd0e7"
+source = "git+https://github.com/TalDerei/ragu?rev=e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd#e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd"
 dependencies = [
  "maybe-rayon",
  "ragu_arithmetic",
@@ -591,7 +591,7 @@ dependencies = [
 [[package]]
 name = "ragu_primitives"
 version = "0.0.0"
-source = "git+https://github.com/TalDerei/ragu?rev=98ff39a10088d3c763028409026b057efd3bd0e7#98ff39a10088d3c763028409026b057efd3bd0e7"
+source = "git+https://github.com/TalDerei/ragu?rev=e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd#e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd"
 dependencies = [
  "ragu_arithmetic",
  "ragu_core",
@@ -846,8 +846,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-bls12-381"
-version = "1.0.0-rc.1"
-source = "git+https://github.com/zakura-core/libraries?rev=d18bb89a277ddb4f72eb64f6bef955d9342cedcf#d18bb89a277ddb4f72eb64f6bef955d9342cedcf"
+version = "1.0.0-rc.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73462d28b889c0430135dfcc633d9b79ca282d0b1e2089e697b9a60e58e0240e"
 dependencies = [
  "ff",
  "rand_core 0.10.1",
@@ -856,8 +857,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-jubjub"
-version = "1.0.0-rc.1"
-source = "git+https://github.com/zakura-core/libraries?rev=d18bb89a277ddb4f72eb64f6bef955d9342cedcf#d18bb89a277ddb4f72eb64f6bef955d9342cedcf"
+version = "1.0.0-rc.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d5a2da7e032f0d65d6f41826d465e682b3e8a7ba130f53eb3f0f785986a448e"
 dependencies = [
  "bitvec",
  "ff",
@@ -869,8 +871,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-pasta-curves"
-version = "1.0.0-rc.1"
-source = "git+https://github.com/zakura-core/libraries?rev=d18bb89a277ddb4f72eb64f6bef955d9342cedcf#d18bb89a277ddb4f72eb64f6bef955d9342cedcf"
+version = "1.0.0-rc.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e778e0af70387b9f1e988d9a280f936350340c509e5dc26ed32a962c4a708c42"
 dependencies = [
  "blake2b_simd",
  "ff",
@@ -883,8 +886,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-reddsa"
-version = "1.0.0-rc.1"
-source = "git+https://github.com/zakura-core/libraries?rev=d18bb89a277ddb4f72eb64f6bef955d9342cedcf#d18bb89a277ddb4f72eb64f6bef955d9342cedcf"
+version = "1.0.0-rc.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e0620f5a6b2297d2a2d211d3e31e6906619b0f7756c7a919f3ab40fbc65dbfe"
 dependencies = [
  "blake2b_simd",
  "byteorder",

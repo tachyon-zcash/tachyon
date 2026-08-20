@@ -48,13 +48,13 @@ group = "0.14"
 lazy_static = { version = "1", default-features = false, features = [
     "spin_no_std",
 ] }
-pasta_curves = { package = "zakura-pasta-curves", git = "https://github.com/zakura-core/libraries", rev = "d18bb89a277ddb4f72eb64f6bef955d9342cedcf" }
-ragu = { git = "https://github.com/TalDerei/ragu", rev = "98ff39a10088d3c763028409026b057efd3bd0e7", default-features = false, features = [
+pasta_curves = { package = "zakura-pasta-curves", version = "1.0.0-rc.2" }
+ragu = { git = "https://github.com/TalDerei/ragu", rev = "e5d71c2fb6194f9b654c5d275dae8b7c73aba9bd", default-features = false, features = [
     "mock",
 ] }
 
 rand_core = { version = "0.10", default-features = false }
-reddsa = { package = "zakura-reddsa", git = "https://github.com/zakura-core/libraries", rev = "d18bb89a277ddb4f72eb64f6bef955d9342cedcf", default-features = false }
+reddsa = { package = "zakura-reddsa", version = "1.0.0-rc.2", default-features = false }
 
 [dev-dependencies]
 rand = "0.10"
