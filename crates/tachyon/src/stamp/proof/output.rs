@@ -49,7 +49,7 @@ impl Step for OutputBind {
     /// `(note,)`.
     type Witness<'source> = (Note,);
 
-    const INDEX: Index = Index::new(14);
+    const INDEX: Index = Index::new(12);
 
     fn witness<'source>(
         &self,

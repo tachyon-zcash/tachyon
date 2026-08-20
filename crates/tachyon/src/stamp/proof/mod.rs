@@ -28,20 +28,17 @@ fn make_app() -> Result<Application, ragu::Error> {
         .register(pool::AnchorSeed)?
         .register(pool::AnchorFuse)?
         .register(pool::UnspentSeed)?
-        .register(pool::EmptyEpochUnspentSeed)?
+        .register(pool::EndEpochUnspentSeed)?
         .register(pool::UnspentFuse)?
-        .register(pool::UnspentEpochFuse)?
         .register(pool::UnspentBind)?
         .register(spendable::SpendableInit)?
         .register(spendable::SpendableLift)?
-        .register(spendable::SpendableEpochLift)?
         .register(output::OutputBind)?
         .register(stamp::OutputStamp)?
         .register(spend::SpendBind)?
         .register(stamp::SpendStamp)?
         .register(stamp::MergeStamp)?
         .register(stamp::StampLift)?
-        .register(pool::EndEpochUnspentSeed)?
         .finalize()
 }
 

@@ -14,9 +14,8 @@ use crate::{digest::poseidon, serialization};
 /// - [`Anchor::next_stamp`] (`Tachyon-StampFld`) absorbs one stamp's epoch and
 ///   tachygram-set commitment.
 /// - [`Anchor::next_epoch`] (`Tachyon-EpochStp`) lifts across an epoch
-///   boundary. `UnspentEpochFuse` checks the boundary against the anchors it
-///   joins; `SpendableEpochLift` and `EmptyEpochUnspentSeed` fold it from a
-///   predecessor they do not constrain to be the epoch's terminal anchor.
+///   boundary. `EndEpochUnspentSeed` is the only step that folds it, from a
+///   predecessor it does not constrain to be the epoch's terminal anchor.
 ///
 /// A block that publishes no stamp contributes no link, so the anchor is
 /// constant across a stampless span.

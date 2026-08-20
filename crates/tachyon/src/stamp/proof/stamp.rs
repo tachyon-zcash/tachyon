@@ -81,7 +81,7 @@ impl Step for OutputStamp {
         Anchor,
     );
 
-    const INDEX: Index = Index::new(15);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
@@ -155,7 +155,7 @@ impl Step for SpendStamp {
         ProofAuthorizingKey,
     );
 
-    const INDEX: Index = Index::new(17);
+    const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,
@@ -225,7 +225,7 @@ impl Step for MergeStamp {
         (ActionSetPoly, TachygramSetPoly),
     );
 
-    const INDEX: Index = Index::new(18);
+    const INDEX: Index = Index::new(16);
 
     fn witness<'source>(
         &self,
@@ -309,7 +309,7 @@ impl Step for StampLift {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(19);
+    const INDEX: Index = Index::new(17);
 
     fn witness<'source>(
         &self,

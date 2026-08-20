@@ -44,7 +44,7 @@ use crate::{
 /// Structurally intra-epoch: the sole builder ([`AnchorSeed`]) invokes only
 /// [`Anchor::next_stamp`], which binds an epoch. The [`Anchor::next_epoch`]
 /// boundary domain is distinct and never a chain link; it is folded at a
-/// crossing by [`UnspentEpochFuse`].
+/// crossing by [`EndEpochUnspentSeed`].
 ///
 /// The within-epoch property pairs with a consensus-side two-epoch
 /// tachygram scan that catches any tachygram already published earlier
@@ -93,8 +93,10 @@ impl Header for AnchorChain {
 ///
 /// `nf_start` is the range's first tested nullifier (the leaf at
 /// `epoch_start`); the in-progress `nf_end` corresponds to `epoch_end` and is
-/// folded into `elapsed` when its epoch completes. [`UnspentBind`] binds both
-/// endpoints to the note's genuine derivation nullifiers.
+/// represented in `elapsed` only once a segment covering its epoch's closing
+/// boundary joins on, since [`EndEpochUnspentSeed`] is where a member is added.
+/// [`UnspentBind`] binds both endpoints to the note's genuine derivation
+/// nullifiers.
 ///
 /// `epoch_start` is the epoch of the exclusive `anchor_prev`; `epoch_end` the
 /// epoch of `anchor_last`, not yet represented in `elapsed`, so
@@ -291,63 +293,6 @@ impl Step for UnspentSeed {
     }
 }
 
-/// Whole-epoch seed for an epoch that published nothing.
-///
-/// An empty epoch has exactly one anchor: the epoch tick's output is both its
-/// opening boundary anchor and its terminal anchor. The step folds that tick
-/// from the previous epoch's terminal anchor and bounds the segment by it on
-/// both sides, so `epoch_start == epoch_end` and `elapsed` stays empty.
-///
-/// [`UnspentEpochFuse`] splices a segment in each of the two epochs it crosses
-/// between; this supplies the one for an epoch with no stamp to seed from.
-///
-/// # Soundness
-///
-/// `nf` is unconstrained here, as at every seed; [`UnspentBind`] forces the
-/// endpoints against the note's genuine derivation.
-///
-/// `prev_epoch_tip` is likewise unconstrained, and the "nothing was published"
-/// claim rests on it: skipping a stamp would leave it short of the previous
-/// epoch's real terminal anchor, and the tick of a short anchor is not the
-/// boundary anchor consensus recomputes. The boundary domain is distinct from
-/// the stamp domain, so no chain link reaches a boundary anchor either.
-#[derive(Debug)]
-pub struct EmptyEpochUnspentSeed;
-
-impl Step for EmptyEpochUnspentSeed {
-    type Aux<'source> = ();
-    type Left = ();
-    type Output = ArbitraryUnspent;
-    type Right = ();
-    /// `(prev_epoch_tip, (epoch, nf))`.
-    type Witness<'source> = (Anchor, (EpochIndex, Nullifier));
-
-    const INDEX: Index = Index::new(7);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (prev_epoch_tip, (epoch, nf)): Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
-
-        let boundary = prev_epoch_tip.next_epoch(epoch);
-        // Empty elapsed: the sentinel constant `1` commits to `g0`, never the
-        // identity point.
-        let elapsed_commit = NfSeqCommit::from(g0 * Fp::ONE);
-        Ok((
-            (boundary, (epoch, nf), elapsed_commit, (epoch, nf), boundary),
-            (),
-        ))
-    }
-}
-
 /// Seed spanning one epoch boundary link, from an epoch's terminal anchor to
 /// the next epoch's opening boundary anchor.
 ///
@@ -377,7 +322,7 @@ impl Step for EndEpochUnspentSeed {
     /// `(anchor_prev, (epoch_prev, nf_prev), nf)`.
     type Witness<'source> = (Anchor, (EpochIndex, Nullifier), Nullifier);
 
-    const INDEX: Index = Index::new(20);
+    const INDEX: Index = Index::new(7);
 
     fn witness<'source>(
         &self,
@@ -422,7 +367,8 @@ impl Step for EndEpochUnspentSeed {
 /// concatenated (`combined = left_elapsed ++ right_elapsed`). No epoch boundary
 /// is crossed, so `elapsed` gains no entry (the junction nf is
 /// `right_elapsed`'s head if right later crossed a boundary; otherwise it stays
-/// the in-progress `nf_end`). A crossing is [`UnspentEpochFuse`]'s job.
+/// the in-progress `nf_end`). A crossing is its own segment
+/// ([`EndEpochUnspentSeed`]), so every seam this fuse sees is intra-epoch.
 #[derive(Debug)]
 pub struct UnspentFuse;
 
@@ -511,95 +457,6 @@ impl Step for UnspentFuse {
     }
 }
 
-/// Cross-epoch [`ArbitraryUnspent`] composition. The only step that crosses an
-/// epoch boundary, and so the only one that grows `elapsed`.
-///
-/// At the boundary, left's tip epoch completes
-/// (`left.anchor_last.next_epoch(new_epoch) == right.anchor_prev`) and is
-/// folded into `elapsed`.
-#[derive(Debug)]
-pub struct UnspentEpochFuse;
-
-impl Step for UnspentEpochFuse {
-    type Aux<'source> = ();
-    type Left = ArbitraryUnspent;
-    type Output = ArbitraryUnspent;
-    type Right = ArbitraryUnspent;
-    /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
-
-    const INDEX: Index = Index::new(9);
-
-    fn witness<'source>(
-        &self,
-        ctx: &mut ragu::StepCtx<'_>,
-        (left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq): Self::Witness<'source>,
-        (
-            left_anchor_prev,
-            (left_epoch_start, left_nf_start),
-            left_elapsed,
-            (left_epoch_end, left_nf_end),
-            left_anchor_last,
-        ): <Self::Left as Header>::Data,
-        (
-            right_anchor_prev,
-            (right_epoch_start, _right_nf_start),
-            right_elapsed,
-            (right_epoch_end, right_nf_end),
-            right_anchor_last,
-        ): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
-            Eq::from(left_elapsed_seq.commit()),
-            Eq::from(left_elapsed),
-            "UnspentEpochFuse: left polynomial does not match header",
-        )?;
-        enforce_equal_point(
-            Eq::from(right_elapsed_seq.commit()),
-            Eq::from(right_elapsed),
-            "UnspentEpochFuse: right polynomial does not match header",
-        )?;
-        enforce_zero(
-            Fp::from(right_epoch_start) - Fp::from(left_epoch_end.next()),
-            "UnspentEpochFuse: right epoch must be one past left's tip",
-        )?;
-        enforce_zero(
-            Fp::from(left_anchor_last.next_epoch(right_epoch_start)) - Fp::from(right_anchor_prev),
-            "UnspentEpochFuse: boundary anchor does not match right.anchor_prev",
-        )?;
-        let combined_commit = combined_elapsed_seq.commit();
-        let offset = left_epoch_end - left_epoch_start;
-        // Sentinel splice: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
-        // `combined = left ++ [left_nf_end] ++ right` is the shifted
-        // combination `combined(X) = left(X) + (left_nf_end - 1)·X^offset +
-        // X^{offset+1}·right(X)`. The monomial overwrites left's sentinel with
-        // the folded tip nullifier and right's own sentinel re-terminates
-        // `combined`. The monomial's coefficient is challenge-independent:
-        // `left_nf_end` is a left-header value, fixed by the recursive
-        // verification of the left PCD; `offset` is left's header-fixed span.
-        enforce_shifted_combination(
-            ctx,
-            [
-                (left_elapsed_seq.as_ref(), 0),
-                (right_elapsed_seq.as_ref(), u64::from(offset) + 1),
-            ],
-            [(Fp::from(left_nf_end) - Fp::ONE, offset.into())],
-            combined_elapsed_seq.as_ref(),
-            "UnspentEpochFuse: combined is not the splice of the halves",
-        )?;
-        Ok((
-            (
-                left_anchor_prev,
-                (left_epoch_start, left_nf_start),
-                combined_commit,
-                (right_epoch_end, right_nf_end),
-                right_anchor_last,
-            ),
-            (),
-        ))
-    }
-}
-
 /// Bind an [`ArbitraryUnspent`]'s free-witness nullifiers to a
 /// note's genuine nullifiers.
 ///
@@ -619,7 +476,7 @@ impl Step for UnspentBind {
     /// `(elapsed_seq, nf_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(10);
+    const INDEX: Index = Index::new(9);
 
     fn witness<'source>(
         &self,

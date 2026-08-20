@@ -17,10 +17,7 @@ use crate::{
     },
     stamp::proof::{
         delegation::NullifierFuse,
-        pool::{
-            AnchorSeed, EmptyEpochUnspentSeed, EndEpochUnspentSeed, UnspentBind, UnspentEpochFuse,
-            UnspentFuse, UnspentSeed,
-        },
+        pool::{AnchorSeed, EndEpochUnspentSeed, UnspentBind, UnspentFuse, UnspentSeed},
         spendable::SpendableInit,
         stamp::MergeStamp,
     },
@@ -65,23 +62,8 @@ pub fn unspent_seed(
     )
 }
 
-/// Prepare the witness for [`EmptyEpochUnspentSeed`]:
-/// `(prev_epoch_tip, (epoch, nf))`.
-#[must_use]
-pub const fn empty_epoch_unspent_seed(
-    (_left, _right): (
-        StepLeft<EmptyEpochUnspentSeed>,
-        StepRight<EmptyEpochUnspentSeed>,
-    ),
-    prev_epoch_tip: Anchor,
-    epoch: EpochIndex,
-    nf: Nullifier,
-) -> StepWitness<'static, EmptyEpochUnspentSeed> {
-    (prev_epoch_tip, (epoch, nf))
-}
-
 /// Prepare the witness for [`EndEpochUnspentSeed`]:
-/// `(epoch_tip, (epoch, nf_out), nf_in)`.
+/// `(anchor_prev, (epoch_prev, nf_prev), nf)`.
 #[must_use]
 pub const fn end_epoch_unspent_seed(
     (_left, _right): (
@@ -105,23 +87,6 @@ pub fn unspent_fuse(
     right_elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentFuse> {
     let combined = [left_elapsed, right_elapsed].concat();
-    (
-        left_elapsed.iter().copied().collect::<NfSeqPoly>(),
-        combined.into_iter().collect::<NfSeqPoly>(),
-        right_elapsed.iter().copied().collect::<NfSeqPoly>(),
-    )
-}
-
-/// Prepare the witness for [`UnspentEpochFuse`]:
-/// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
-#[must_use]
-pub fn unspent_epoch_fuse(
-    (left, _right): (StepLeft<UnspentEpochFuse>, StepRight<UnspentEpochFuse>),
-    left_elapsed: &[Nullifier],
-    right_elapsed: &[Nullifier],
-) -> StepWitness<'static, UnspentEpochFuse> {
-    let (_, _, _, (_, nf_end), _) = left;
-    let combined = [left_elapsed, &[nf_end], right_elapsed].concat();
     (
         left_elapsed.iter().copied().collect::<NfSeqPoly>(),
         combined.into_iter().collect::<NfSeqPoly>(),

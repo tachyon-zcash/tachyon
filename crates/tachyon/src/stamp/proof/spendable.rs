@@ -5,8 +5,7 @@
 //! and the minted-note commitment binding the lineage (and its value) across
 //! lifts. [`SpendableInit`]
 //! bootstraps it from a minted note; [`SpendableLift`] advances it over
-//! [`Unspent`] segments, and [`SpendableEpochLift`] across an epoch boundary it
-//! rests on.
+//! [`Unspent`] segments.
 
 extern crate alloc;
 
@@ -82,7 +81,7 @@ impl Step for SpendableInit {
     /// `(pre_cm_anchor, creation_set, present_nf)`.
     type Witness<'source> = (Anchor, TachygramSetPoly, Nullifier);
 
-    const INDEX: Index = Index::new(11);
+    const INDEX: Index = Index::new(10);
 
     fn witness<'source>(
         &self,
@@ -125,8 +124,9 @@ impl Step for SpendableInit {
 /// nf_start) == (epoch, present_nf)`, and anchor adjacency, then advances to
 /// the tip `(epoch_end, nf_end, anchor_last)`.
 ///
-/// The segment may span any number of epochs. Advancing across a boundary the
-/// lineage rests on is [`SpendableEpochLift`]'s.
+/// The segment may span any number of epochs. A lineage resting on its epoch's
+/// terminal anchor advances the same way, over a segment that opens with the
+/// boundary tick ([`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed)).
 #[derive(Debug)]
 pub struct SpendableLift;
 
@@ -137,7 +137,7 @@ impl Step for SpendableLift {
     type Right = Unspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(12);
+    const INDEX: Index = Index::new(11);
 
     fn witness<'source>(
         &self,
@@ -173,71 +173,6 @@ impl Step for SpendableLift {
                 spendable_cm,
                 (unspent_epoch_end, unspent_nf_end),
                 unspent_anchor_last,
-            ),
-            (),
-        ))
-    }
-}
-
-/// Advance the spendable across one epoch boundary.
-///
-/// Wallet-only, witness-free. Takes the lineage from `(e, GGM(mk, e), A)` to
-/// `(e+1, GGM(mk, e+1), A.next_epoch(e+1))`, reading both nullifiers off a
-/// two-epoch [`NullifierHeader`] tied to the lineage by `cm`.
-///
-/// A lineage on its epoch's terminal anchor has no segment to lift over: a
-/// segment's `anchor_prev` is the anchor before its first link, and the epoch
-/// has no link left.
-///
-/// # Soundness
-///
-/// That `spendable_anchor` is epoch `e`'s terminal anchor is unconstrained
-/// here, as at [`EmptyEpochUnspentSeed`](super::pool::EmptyEpochUnspentSeed).
-/// Ticking a mid-epoch anchor lands off the published sequence, which no later
-/// link rejoins, so consensus anchor membership of the eventual spend rejects
-/// it.
-#[derive(Debug)]
-pub struct SpendableEpochLift;
-
-impl Step for SpendableEpochLift {
-    type Aux<'source> = ();
-    type Left = SpendableHeader;
-    type Output = SpendableHeader;
-    type Right = NullifierHeader;
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(13);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (spendable_cm, (spendable_epoch, present_nf), spendable_anchor): <Self::Left as Header>::Data,
-        (nf_cm, (nf_epoch_start, nf_start), _nf_seq_commit, (nf_epoch_end, nf_end)): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(nf_cm) - Fp::from(spendable_cm),
-            "SpendableEpochLift: derived range does not match note",
-        )?;
-        enforce_zero(
-            Fp::from(nf_epoch_start) - Fp::from(spendable_epoch),
-            "SpendableEpochLift: derived range does not start at the lineage epoch",
-        )?;
-        enforce_zero(
-            Fp::from(nf_epoch_end) - (Fp::from(nf_epoch_start) + Fp::from(2u64)),
-            "SpendableEpochLift: derived range must span two epochs",
-        )?;
-        enforce_zero(
-            Fp::from(nf_start) - Fp::from(present_nf),
-            "SpendableEpochLift: derived range does not start at the lineage nullifier",
-        )?;
-
-        let new_epoch = spendable_epoch.next();
-        Ok((
-            (
-                spendable_cm,
-                (new_epoch, nf_end),
-                spendable_anchor.next_epoch(new_epoch),
             ),
             (),
         ))

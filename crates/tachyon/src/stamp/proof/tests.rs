@@ -754,8 +754,8 @@ fn unspent_lift_spans_partial_and_whole_epochs() {
 
     // Advance to a mid-epoch-3 block (neither first nor last) so the last epoch is
     // also partial; epochs 1 and 2 are covered whole. The block-granular tree
-    // therefore mixes mid-epoch `UnspentFuse` (incl. multi-epoch right at upper
-    // merges) with boundary `UnspentEpochFuse`. One interior empty block sits in
+    // therefore mixes stamp leaves (incl. multi-epoch right at upper
+    // merges) with boundary crossing leaves. One interior empty block sits in
     // the walk, contributing no leaf.
     let empty_height = BlockHeight(EPOCH_SIZE + 4);
     let target_height = BlockHeight(3 * EPOCH_SIZE + 7);
@@ -969,7 +969,7 @@ fn unspent_fuse_rejects_epoch_boundary_crossing() {
     let left_end = left.data().4;
     // A forged epoch-1 right half rooted directly at `left.anchor_last` (no
     // `next_epoch` fold). The anchors line up, but the epoch labels reveal a
-    // boundary the fuse refuses to cross: that is `UnspentEpochFuse`'s job.
+    // boundary the fuse refuses to cross: a crossing needs its own segment.
     let stamp = [Tachygram::random(&mut *rng)];
     let forged_right = build_unspent_seed_pcd(rng, left_end, EpochIndex(1), &stamp, nf1);
 
@@ -1085,147 +1085,6 @@ fn end_epoch_unspent_seed_composes_across_a_boundary() {
         NfSeqPoly::from_iter([nf0, nf1, nf2, nf3]).commit(),
         "the crossing seed carries left's tip into the merged history"
     );
-}
-
-/// Phase-1 equivalence: a crossing seed spliced between two halves by two
-/// plain fuses reproduces `UnspentEpochFuse`'s header exactly.
-#[test]
-fn end_epoch_unspent_seed_reproduces_the_epoch_fuse() {
-    let (nf, left, right) = epoch_fuse_setup(&mut StdRng::seed_from_u64(0));
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (_, alt_left, alt_right) = epoch_fuse_setup(&mut StdRng::seed_from_u64(0));
-
-    let (fused, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentEpochFuse,
-            witness::unspent_epoch_fuse((*left.data(), *right.data()), &nf[..2], &nf[3..4]),
-            left,
-            right,
-        )
-        .expect("UnspentEpochFuse");
-
-    let (_, _, _, (left_epoch_end, left_nf_end), left_anchor_last) = *alt_left.data();
-    let (_, (_, right_nf_start), ..) = *alt_right.data();
-    let (seed, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EndEpochUnspentSeed,
-            witness::end_epoch_unspent_seed(
-                ((), ()),
-                left_anchor_last,
-                left_epoch_end,
-                left_nf_end,
-                right_nf_start,
-            ),
-        )
-        .expect("EndEpochUnspentSeed");
-    let (crossed, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            witness::unspent_fuse((*alt_left.data(), *seed.data()), &nf[..2], &nf[2..3]),
-            alt_left,
-            seed,
-        )
-        .expect("UnspentFuse over the crossing");
-    let (alt_fused, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            witness::unspent_fuse((*crossed.data(), *alt_right.data()), &nf[..3], &nf[3..4]),
-            crossed,
-            alt_right,
-        )
-        .expect("UnspentFuse onto the right half");
-
-    assert_eq!(*alt_fused.data(), *fused.data());
-}
-
-/// Phase-1 equivalence: a silent epoch's point segment adds nothing to the
-/// crossing that enters it, so the empty-epoch seed is redundant.
-#[test]
-fn end_epoch_unspent_seed_absorbs_the_empty_epoch_seed() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch_tip = Anchor::from(Fp::random(&mut *rng));
-    let nf_out = Nullifier::from(Fp::random(&mut *rng));
-    let nf_in = Nullifier::from(Fp::random(&mut *rng));
-    let epoch = EpochIndex(4);
-
-    let (seed, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EndEpochUnspentSeed,
-            witness::end_epoch_unspent_seed(((), ()), epoch_tip, epoch, nf_out, nf_in),
-        )
-        .expect("EndEpochUnspentSeed");
-    let expected = *seed.data();
-
-    let (empty, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EmptyEpochUnspentSeed,
-            witness::empty_epoch_unspent_seed(((), ()), epoch_tip, epoch.next(), nf_in),
-        )
-        .expect("EmptyEpochUnspentSeed");
-    let (fused, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            witness::unspent_fuse((*seed.data(), *empty.data()), &[nf_out], &[]),
-            seed,
-            empty,
-        )
-        .expect("UnspentFuse");
-
-    assert_eq!(*fused.data(), expected);
-}
-
-/// Phase-1 equivalence: `SpendableEpochLift` decomposes into a crossing seed,
-/// an ordinary bind and an ordinary lift.
-#[test]
-fn end_epoch_unspent_seed_reproduces_the_spendable_epoch_lift() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(300);
-    pool.mine(vec![vec![note.commitment().into()]]);
-    let cm_height = pool.height();
-    while pool.height().0 + 1 < EPOCH_SIZE {
-        pool.advance(1, |_| Vec::new());
-    }
-    let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let alt_spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let epoch0_tip = spendable.data().2;
-
-    let range = user.derived_range(rng, &note, EpochIndex(0), 2);
-    let (at_boundary, ()) = PROOF_SYSTEM
-        .fuse(rng, spendable::SpendableEpochLift, (), spendable, range)
-        .expect("SpendableEpochLift");
-
-    let (seed, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EndEpochUnspentSeed,
-            witness::end_epoch_unspent_seed(
-                ((), ()),
-                epoch0_tip,
-                EpochIndex(0),
-                user.nf_at(&note, EpochIndex(0)),
-                user.nf_at(&note, EpochIndex(1)),
-            ),
-        )
-        .expect("EndEpochUnspentSeed");
-    let alt_at_boundary = user.lift(
-        rng,
-        alt_spendable,
-        seed,
-        &note,
-        EpochIndex(0),
-        EpochIndex(1),
-    );
-
-    assert_eq!(*alt_at_boundary.data(), *at_boundary.data());
 }
 
 /// The seed spans exactly one boundary link, recording the epoch it leaves.
