@@ -34,8 +34,8 @@ The values a segment tests are arbitrary field elements as far as its own proof 
 `UnspentSeed` absorbs one stamp at a given absolute epoch and proves a wallet-supplied nullifier was absent from that stamp's tachygram set; the resulting `ArbitraryUnspent` has crossed no epoch boundary, so its `elapsed` is empty and `epoch_start == epoch_end` with `nf_start == nf_end` the tested nullifier.
 A block that publishes no stamp advances no anchor, so a stampless span needs no segment and no proof work.
 `UnspentFuse` composes two contiguous ranges that share a junction epoch (`right.epoch_start == left.epoch_end`): it concatenates their `elapsed` histories and seam-binds the junction nullifier (`left.nf_end == right.nf_start`) at adjacent anchors.
-`UnspentEpochFuse` crosses an epoch boundary: it advances the anchor across the boundary and splices the left range's completing tip `nf_end` into `elapsed`, so the crossing count grows by exactly one; either half may itself be a multi-epoch range.
-`EmptyEpochUnspentSeed` supplies the segment for an epoch that published nothing, which the fuse would otherwise have no operand for on that side. An empty epoch has a single anchor, the epoch tick's output, so the seed folds that tick from the previous epoch's terminal anchor and sits at it on both sides: it crosses nothing itself, and there is no exclusion to prove.
+`EndEpochUnspentSeed` is the segment for the boundary itself: it folds the epoch tick from a witnessed epoch-terminal anchor and records the epoch it leaves as the one member of its `elapsed`, so `epoch_end == epoch_start + 1`.
+A boundary is therefore a link like any other, and `UnspentFuse` composes it with its neighbours on both sides; an epoch that published nothing is simply two crossings with no stamp segment between them.
 An `ArbitraryUnspent` records its span as two absolute epoch endpoints, `epoch_start` and `epoch_end`; the crossing count is their difference.
 
 `UnspentBind` binds a sync-built `ArbitraryUnspent` to genuine derivation. It is wallet-side: it consumes the `ArbitraryUnspent` and a wallet `NullifierHeader` range, and proves the range commits to exactly the `elapsed` crossings followed by the tip `nf_end`, with the range's epochs equal to the `ArbitraryUnspent`'s span. So every crossed nullifier and the tip are proven `GGM(mk, ·)` leaves.
@@ -45,10 +45,7 @@ It emits an `Unspent` carrying the span's boundary nullifiers, anchors and epoch
 It checks the verified segment's `cm` equals the spendable's (so the absence-proven nullifiers are this note's, and the value cannot drift), the segment's `nf_start` equals the spendable's `present_nf` (continuity), and the segment's `anchor_prev` equals the spendable's anchor (adjacency).
 It advances to the segment's `nf_end` and `anchor_last`, threading `cm` unchanged.
 A single lift can consume an arbitrarily long composed `ArbitraryUnspent`, including one that crosses many epoch boundaries.
-
-`SpendableEpochLift` advances the lineage across a single epoch boundary instead of over a segment.
-A lineage resting on its epoch's terminal anchor cannot lift at all: a segment's `anchor_prev` is the anchor before its first link, and the epoch has no link left for one to open on.
-The step reads both nullifiers off a two-epoch `NullifierHeader` tied to the lineage by `cm`, the same shape `SpendBind` uses, and emits the lineage one epoch on at `anchor.next_epoch(epoch + 1)`.
+A lineage resting on its epoch's terminal anchor lifts the same way: the boundary tick is a link, so a segment can open on it.
 
 ### Spending
 
@@ -83,10 +80,10 @@ The aggregated stamp has the same shape as any other, so it is itself eligible f
 ## Roles
 
 The wallet runs every step that touches the note's commitment or master key.
-It seeds and walks the private GGM tree (`NfMasterSeed`, `NfPrefixStep`, `NullifierStep`, `NullifierFuse`), derives spendable status from its own leaf (`SpendableInit`), binds and lifts over sync-built segments (`UnspentBind`, `SpendableLift`) or across a boundary it rests on (`SpendableEpochLift`), and produces spend and output stamps (`SpendBind`, `SpendStamp`, `OutputBind`, `OutputStamp`).
+It seeds and walks the private GGM tree (`NfMasterSeed`, `NfPrefixStep`, `NullifierStep`, `NullifierFuse`), derives spendable status from its own leaf (`SpendableInit`), binds and lifts over sync-built segments (`UnspentBind`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `SpendStamp`, `OutputBind`, `OutputStamp`).
 
 The sync service holds the per-epoch nullifier values the wallet shared and pool history.
-It produces the `ArbitraryUnspent` segments that carry the spendable forward (`UnspentSeed`, `EmptyEpochUnspentSeed`, `UnspentFuse`, `UnspentEpochFuse`) and hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
+It produces the `ArbitraryUnspent` segments that carry the spendable forward (`UnspentSeed`, `EndEpochUnspentSeed`, `UnspentFuse`) and hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
 
 The aggregator works only with published `StampHeader`s.
 It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `AnchorFuse`) and fuses with `MergeStamp`.
@@ -96,9 +93,8 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `A
 | AnchorSeed | possible | yes | yes |
 | AnchorFuse | possible | yes | yes |
 | UnspentSeed | possible | yes | no |
-| EmptyEpochUnspentSeed | possible | yes | no |
+| EndEpochUnspentSeed | possible | yes | no |
 | UnspentFuse | possible | yes | no |
-| UnspentEpochFuse | possible | yes | no |
 | NfMasterSeed | yes | no | no |
 | NfPrefixStep | yes | no | no |
 | NullifierStep | yes | no | no |
@@ -106,7 +102,6 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `A
 | UnspentBind | yes | no | no |
 | SpendableInit | yes | no | no |
 | SpendableLift | yes | no | no |
-| SpendableEpochLift | yes | no | no |
 | SpendBind | yes | no | no |
 | OutputBind | yes | no | no |
 | OutputStamp | yes | no | no |
@@ -120,7 +115,7 @@ The subsections below walk each subtree bottom-up: the chain segments that act a
 
 ### Anchor segments
 
-`AnchorSeed`, `UnspentSeed`, and `EmptyEpochUnspentSeed` each witness a predecessor anchor and prove one anchor step from it.
+`AnchorSeed`, `UnspentSeed`, and `EndEpochUnspentSeed` each witness a predecessor anchor and prove one anchor step from it.
 `AnchorFuse` composes adjacent segments by checking endpoint equality; `UnspentFuse` additionally concatenates the two halves' `elapsed` histories.
 A segment ties to real chain history only through a consensus-published stamp whose anchor matches an end-of-block value, emitted at `StampLift`. `SpendableInit`'s anchor closes the same way without a segment: the private spendable's anchor reaches consensus once it is spent into a stamp.
 
@@ -129,20 +124,15 @@ A segment ties to real chain history only through a consensus-published stamp wh
 An `ArbitraryUnspent` is a contiguous range bracketed by `anchor_prev` and `anchor_last`, with boundary pairs `(epoch_start, nf_start)` and `(epoch_end, nf_end)`, plus `elapsed` (one nullifier coefficient per epoch-boundary crossing in its span, forward-chronological, terminated by a sentinel coefficient $1$ at the crossing count)[^nullifiers]. `nf_start`/`nf_end` are the nullifiers at `epoch_start`/`epoch_end`; the crossing count is `epoch_end - epoch_start`.
 The sentinel keeps the committed polynomial nonzero for every sequence, so the commitment never falls on the identity point, which the in-circuit point representation cannot hold; it also pins the sequence's exact length, which commit-equality alone bounds only from above.
 `UnspentSeed` produces a within-epoch `ArbitraryUnspent` for one stamp's worth of anchor advance: `elapsed` is empty (the sentinel constant $1$, committing to $\mathcal{G}_0$), `epoch_start == epoch_end`, and the nullifier it just non-membership-checked is both `nf_start` and `nf_end`.
-`EmptyEpochUnspentSeed` produces the other base case, a whole epoch in which nothing was published. Such an epoch has exactly one anchor, since the tick that opens it is also its terminal anchor, so the seed folds `prev_epoch_tip` through the cross-epoch domain and emits that value as both `anchor_prev` and `anchor_last`, with `epoch_start == epoch_end` and `elapsed` empty. There is no exclusion to prove; the claim that nothing was published rests entirely on `prev_epoch_tip` being the previous epoch's real terminal anchor, which consensus anchor membership of the eventual spend forces.
+`EndEpochUnspentSeed` produces the other base case, the epoch boundary itself. It folds a witnessed epoch-terminal anchor through the cross-epoch domain and emits the tick's output as `anchor_last`, with `epoch_end == epoch_start + 1` and a one-member `elapsed` holding the nullifier tested in the epoch being left. It is the only step that adds a member, so the invariant that `elapsed` holds exactly `epoch_end - epoch_start` of them holds by induction: the other seed establishes it at zero and the fuse preserves it additively. There is no exclusion to prove; that the witnessed predecessor really is its epoch's terminal anchor rests on consensus anchor membership of the eventual spend, since the tick of a short anchor is not a value consensus recomputes.
 `UnspentFuse` composes two contiguous ranges sharing a junction epoch (`right.epoch_start == left.epoch_end`) at adjacent anchors (`left.anchor_last == right.anchor_prev`): it concatenates their histories and seam-binds the junction nullifier (`left.nf_end == right.nf_start`). Writing $s$ for the left crossing count, the concat confirms
 
 $$C(X) = L(X) + X^{s}\,(R(X) - 1)$$
 
 for the witnessed `combined` $C$, left $L$, and right $R$, at a Fiat-Shamir challenge: the $-1$ cancels the left half's sentinel at degree $s$, the right half's first crossing takes its slot, and the right half's sentinel re-terminates the combined sequence; the seam-bind makes the shared junction epoch's nullifier unambiguous across the merge.
-`UnspentEpochFuse` crosses an epoch boundary: it witnesses the two halves' nullifier polynomials and the combined result, advances the anchor via the cross-epoch domain, and splices the left range's completing tip between them.
-Writing $p$ for the left tip `nf_end`, the splice confirms
-
-$$C(X) = L(X) + X^{s}\,(p - 1) + X^{s+1}\,R(X)$$
-
-at a Fiat-Shamir challenge: the spliced tip overwrites the left half's sentinel and the right half's sentinel re-terminates the combined sequence.
-$L$ and $R$ are bound by the recursive verification of the two input PCDs, and the scalar $p$ is a left-header value bound likewise, all before the challenge; because the identity is linear in $L$, $R$, and $p$, that prior binding is what makes the splice sound.
-The crossing epoch is the right half's `epoch_start`, which must be exactly one past the left tip, and folding it into the boundary anchor via the cross-epoch domain consensus-ties the absolute epoch.
+Every seam is intra-epoch, because a crossing arrives as a segment of its own rather than as a property of the merge, so this concatenation is the only sequence relation the composition needs and its shift $s$ is the only header-fixed quantity in it.
+$L$ and $R$ are bound by the recursive verification of the two input PCDs before the challenge, and $s$ is a left-header value bound likewise; because the identity is linear in $L$ and $R$ with a constant coefficient, that prior binding is what makes the concatenation sound.
+A crossing's absolute epoch is consensus-tied where the crossing is built rather than where it merges: `EndEpochUnspentSeed` folds its witnessed epoch through the cross-epoch domain, and a wrong epoch yields an anchor the published sequence does not contain.
 
 ### Derivation chain
 
@@ -179,13 +169,11 @@ Continuity holds through the boundary pair: `unspent.nf_start == spendable.prese
 The nullifiers are both `GGM(mk, ·)` PRF outputs, so value-equality alone already forces the same note and the same epoch; carrying the epoch makes that a checked equality per lift rather than one inferred from the PRF, and it is what lets the lineage state its position without a derivation in hand.
 The anchor adjacency check (`unspent.anchor_prev == spendable.anchor`) welds the segment to the lineage's current position.
 
-`SpendableEpochLift` covers the position no segment can adjoin, a lineage resting on its epoch's terminal anchor, and is likewise witness-free.
-It requires `range.epoch_start == spendable.epoch`, `range.epoch_end == range.epoch_start + 2`, and `range.cm == spendable.cm`, binds `range.nf_start == spendable.present_nf`, and emits the lineage at `(epoch + 1, range.nf_end, anchor.next_epoch(epoch + 1))`.
-Only the anchor advances by construction; the nullifier it lands on is a genuine `GGM(mk, ·)` leaf of the same note, so a lineage cannot tick onto a value it did not derive.
+A lineage resting on its epoch's terminal anchor is not a special position: the segment it lifts over opens with the boundary tick, so adjacency holds against the anchor it already sits on.
 
-That `spendable.anchor` really is the epoch's terminal anchor is not checked and cannot be, being a negative claim about what was published.
+That the anchor a crossing folds from really is its epoch's terminal anchor is not checked and cannot be, being a negative claim about what was published.
 Ticking a mid-epoch anchor lands off the published sequence, which no later link rejoins, so consensus anchor membership of the eventual spend rejects it.
-No coverage is skipped: the tick leaves the epoch at its terminal anchor, and `present_nf`'s absence up to that anchor was proven by whatever placed the lineage there.
+No coverage is skipped: the crossing leaves the epoch at its terminal anchor, and `present_nf`'s absence up to that anchor was proven by whatever placed the lineage there.
 
 ### Spend binding
 
@@ -249,7 +237,6 @@ flowchart TB
     unspent_in((ArbitraryUnspent))
     s_unspentbind[UnspentBind]
     s_lift[SpendableLift]
-    s_epochlift[SpendableEpochLift]
   end
 
   subgraph spend_action [spend action]
@@ -281,9 +268,6 @@ flowchart TB
   unspent_in --> s_unspentbind
   s_init -->|SpendableHeader| s_lift
   s_unspentbind -->|Unspent| s_lift
-  s_init -->|SpendableHeader| s_epochlift
-  nf_range -->|NullifierHeader| s_epochlift
-  s_epochlift -->|SpendableHeader| s_lift
   s_lift -->|SpendableHeader| s_bind
 
   w_bind --> s_bind
@@ -300,7 +284,6 @@ flowchart TB
 ```
 
 The single `SpendableLift` consumes one composed `Unspent` (potentially crossing many epoch boundaries); threading `cm` chains the lineage's binding to the note through every advance.
-A lineage resting on an epoch's terminal anchor takes `SpendableEpochLift` first, since no segment can open there.
 
 ## Focused subgraphs
 
@@ -332,24 +315,26 @@ flowchart LR
 flowchart LR
   w_seed[/anchor_prev, epoch, stamp_tg_set, nf/]
   s_useed[UnspentSeed]
+  w_cross[/anchor_prev, epoch_prev, nf_prev, nf/]
+  s_cross[EndEpochUnspentSeed]
+  w_ufuse[/left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq/]
+  s_ufuse[UnspentFuse]
   w_next[/anchor_prev, epoch, stamp_tg_set, nf/]
   s_unext[UnspentSeed]
-  s_ufuse[UnspentFuse]
-  w_eseed[/prev_epoch_tip, epoch, nf/]
-  s_eseed[EmptyEpochUnspentSeed]
-  w_efuse[/left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq/]
-  s_efuse[UnspentEpochFuse]
+  w_ufuse2[/left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq/]
+  s_ufuse2[UnspentFuse]
   unspent_out((ArbitraryUnspent))
 
   w_seed --> s_useed
+  w_cross --> s_cross
   w_next --> s_unext
-  w_eseed --> s_eseed
   s_useed -->|ArbitraryUnspent| s_ufuse
-  s_unext -->|ArbitraryUnspent| s_ufuse
-  s_ufuse -->|ArbitraryUnspent| s_efuse
-  s_eseed -->|ArbitraryUnspent| s_efuse
-  w_efuse --> s_efuse
-  s_efuse --> unspent_out
+  s_cross -->|ArbitraryUnspent| s_ufuse
+  w_ufuse --> s_ufuse
+  s_ufuse -->|ArbitraryUnspent| s_ufuse2
+  s_unext -->|ArbitraryUnspent| s_ufuse2
+  w_ufuse2 --> s_ufuse2
+  s_ufuse2 --> unspent_out
 ```
 
 ## Headers
@@ -373,9 +358,8 @@ flowchart LR
 | AnchorSeed | — | — | start, epoch, stamp_commit | AnchorChain |
 | AnchorFuse | AnchorChain | AnchorChain | — | AnchorChain |
 | UnspentSeed | — | — | anchor_prev, (epoch, nf), stamp_tg_set | ArbitraryUnspent |
-| EmptyEpochUnspentSeed | — | — | prev_epoch_tip, (epoch, nf) | ArbitraryUnspent |
+| EndEpochUnspentSeed | — | — | anchor_prev, (epoch_prev, nf_prev), nf | ArbitraryUnspent |
 | UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | ArbitraryUnspent |
-| UnspentEpochFuse | ArbitraryUnspent | ArbitraryUnspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | ArbitraryUnspent |
 | UnspentBind | ArbitraryUnspent | NullifierHeader | elapsed_seq, nf_seq | Unspent |
 | NfMasterSeed | — | — | note, pak | NfPrefixHeader |
 | NfPrefixStep | NfPrefixHeader | — | chunk | NfPrefixHeader |
@@ -383,7 +367,6 @@ flowchart LR
 | NullifierFuse | NullifierHeader | NullifierHeader | left_seq, merged_seq, right_seq | NullifierHeader |
 | SpendableInit | NullifierHeader | — | pre_cm_anchor, creation_set, present_nf | SpendableHeader |
 | SpendableLift | SpendableHeader | Unspent | — | SpendableHeader |
-| SpendableEpochLift | SpendableHeader | NullifierHeader | — | SpendableHeader |
 | SpendBind | SpendableHeader | NullifierHeader | nf_next | SpendHeader |
 | OutputBind | — | — | note | OutputHeader |
 | OutputStamp | OutputHeader | — | rcv, alpha, note, anchor | StampHeader |
