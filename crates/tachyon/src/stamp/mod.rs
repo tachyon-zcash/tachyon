@@ -7,14 +7,17 @@ extern crate alloc;
 pub mod proof;
 
 use alloc::{boxed::Box, collections::BTreeSet, vec, vec::Vec};
+use core::fmt;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
 use ff::PrimeField as _;
+use group::Group as _;
 use pasta_curves::Fp;
 use proof::{
     PROOF_SYSTEM, output,
-    stamp::{MergeStamp, OutputStamp, SpendStamp, StampHeader},
+    pool::{AnchorChain, AnchorFuse, AnchorSeed, EmptyBlockSeed},
+    stamp::{MergeStamp, OutputStamp, SpendStamp, StampHeader, StampLift},
 };
 use ragu::{self, proof::PROOF_SIZE_COMPRESSED};
 use rand_core::{CryptoRng, RngCore};
@@ -26,7 +29,9 @@ use crate::{
     effect,
     entropy::ActionRandomizer,
     keys::ProofAuthorizingKey,
-    primitives::{ActionDigest, ActionDigestError, Anchor, Tachygram, TachygramSetCommit},
+    primitives::{
+        ActionDigest, ActionDigestError, Anchor, EpochIndex, Tachygram, TachygramSetCommit,
+    },
     serialization,
     stamp::proof::{delegation, spend, spendable},
     value,
@@ -456,6 +461,17 @@ pub enum ProveError {
     /// Stamp merge failed; carries the underlying step-level error.
     #[display("stamp merge failed: {_0}")]
     MergeFailed(ragu::Error),
+    /// A lift's segment does not start at the stamp's anchor.
+    #[display("anchor segment starts at {segment_start:?}, stamp is at {stamp_anchor:?}")]
+    LiftStartMismatch {
+        /// The stamp's current anchor.
+        stamp_anchor: Anchor,
+        /// The supplied segment's starting anchor.
+        segment_start: Anchor,
+    },
+    /// Stamp lift failed; carries the underlying step-level error.
+    #[display("stamp lift failed: {_0}")]
+    LiftFailed(ragu::Error),
     /// Number of spendable PCDs doesn't match number of spends.
     #[display("spendable PCD count mismatch")]
     SpendableMismatch,
@@ -500,6 +516,212 @@ type StampComponents = (
     Anchor,
     Box<ragu::Proof>,
 );
+
+/// An invalid [`AnchorStep`].
+#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
+#[non_exhaustive]
+pub enum AnchorStepError {
+    /// A stamp step carried the identity point instead of a real set
+    /// commitment.
+    #[display("stamp tachygram-set commitment is the identity point")]
+    IdentityTachygramSet,
+}
+
+/// One transition in an intra-epoch anchor segment.
+///
+/// A node derives these from validated blocks: one stamp step per proof stamp,
+/// in transaction order, or one empty-block step when a block contains no
+/// proof stamps. The epoch is carried once by [`AnchorSegment`], rather than in
+/// every step, so a segment cannot accidentally mix epochs.
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct AnchorStep(AnchorStepKind);
+
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+enum AnchorStepKind {
+    Stamp { tachygram_set: TachygramSetCommit },
+    EmptyBlock,
+}
+
+impl AnchorStep {
+    /// Construct a step that absorbs one proof stamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnchorStepError::IdentityTachygramSet`] if `tachygram_set` is
+    /// the identity point, which no real set-polynomial commitment can be.
+    pub fn stamp(tachygram_set: TachygramSetCommit) -> Result<Self, AnchorStepError> {
+        let point: pasta_curves::Eq = tachygram_set.into();
+        if bool::from(point.is_identity()) {
+            return Err(AnchorStepError::IdentityTachygramSet);
+        }
+
+        Ok(Self(AnchorStepKind::Stamp { tachygram_set }))
+    }
+
+    /// Construct the single step contributed by a block with no proof stamps.
+    #[must_use]
+    pub const fn empty_block() -> Self {
+        Self(AnchorStepKind::EmptyBlock)
+    }
+
+    /// Whether this is an empty-block step.
+    #[must_use]
+    pub const fn is_empty_block(self) -> bool {
+        matches!(self.0, AnchorStepKind::EmptyBlock)
+    }
+
+    /// Advance `anchor` across this step in `epoch`, matching what the circuit
+    /// computes.
+    ///
+    /// Folding this method over a step sequence predicts its endpoint without
+    /// proving. Construction rejects the only input on which
+    /// [`Anchor::next_stamp`] can panic.
+    #[must_use]
+    pub fn advance(self, anchor: Anchor, epoch: EpochIndex) -> Anchor {
+        match self.0 {
+            AnchorStepKind::Stamp { tachygram_set } => anchor.next_stamp(epoch, &tachygram_set),
+            AnchorStepKind::EmptyBlock => anchor.next_empty(epoch),
+        }
+    }
+}
+
+/// Errors constructing a reusable [`AnchorSegment`].
+#[derive(Debug, Display, Error)]
+#[non_exhaustive]
+pub enum AnchorSegmentError {
+    /// A segment had no steps.
+    #[display("anchor segment has no steps")]
+    Empty,
+    /// The supplied steps do not reach the expected endpoint.
+    #[display("anchor segment ends at {actual:?}, expected {expected:?}")]
+    EndMismatch {
+        /// The endpoint supplied by the caller from consensus state.
+        expected: Anchor,
+        /// The endpoint obtained by folding the supplied steps.
+        actual: Anchor,
+    },
+    /// Proving the anchor segment failed.
+    #[display("anchor segment proof failed: {_0}")]
+    Proof(ragu::Error),
+}
+
+/// A reusable proof of an intra-epoch anchor segment.
+///
+/// Constructing the segment separately lets an aggregator reuse its proof for
+/// multiple stamps at the same anchor. Its endpoint is checked against the
+/// caller's consensus-state anchor before any proof work begins.
+#[derive(Clone)]
+pub struct AnchorSegment {
+    epoch: EpochIndex,
+    chain: ragu::Pcd<AnchorChain>,
+}
+
+impl fmt::Debug for AnchorSegment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnchorSegment")
+            .field("epoch", &self.epoch)
+            .field("start", &self.start())
+            .field("end", &self.end())
+            .finish_non_exhaustive()
+    }
+}
+
+impl AnchorSegment {
+    /// Prove that `steps` advance `start` to `expected_end` within `epoch`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnchorSegmentError::Empty`] for an empty segment,
+    /// [`AnchorSegmentError::EndMismatch`] when the host-side fold does not
+    /// reach `expected_end`, or [`AnchorSegmentError::Proof`] if recursive
+    /// proof construction fails.
+    pub fn prove<RNG: RngCore + CryptoRng>(
+        rng: &mut RNG,
+        start: Anchor,
+        epoch: EpochIndex,
+        expected_end: Anchor,
+        steps: &[AnchorStep],
+    ) -> Result<Self, AnchorSegmentError> {
+        let Some((&first, rest)) = steps.split_first() else {
+            return Err(AnchorSegmentError::Empty);
+        };
+
+        let actual = steps
+            .iter()
+            .fold(start, |anchor, step| step.advance(anchor, epoch));
+        if actual != expected_end {
+            return Err(AnchorSegmentError::EndMismatch {
+                expected: expected_end,
+                actual,
+            });
+        }
+
+        let chain = build_anchor_chain(rng, start, epoch, (first, rest))
+            .map_err(AnchorSegmentError::Proof)?;
+
+        Ok(Self { epoch, chain })
+    }
+
+    /// The epoch containing every step in this segment.
+    #[must_use]
+    pub const fn epoch(&self) -> EpochIndex {
+        self.epoch
+    }
+
+    /// The segment's starting anchor.
+    #[must_use]
+    pub fn start(&self) -> Anchor {
+        self.chain.data().0
+    }
+
+    /// The segment's ending anchor.
+    #[must_use]
+    pub fn end(&self) -> Anchor {
+        self.chain.data().1
+    }
+}
+
+/// Seeds the one-step [`AnchorChain`] segment that `step` spans, rooted at
+/// `start`.
+fn seed_anchor_step<RNG: RngCore + CryptoRng>(
+    rng: &mut RNG,
+    start: Anchor,
+    epoch: EpochIndex,
+    step: AnchorStep,
+) -> Result<ragu::Pcd<AnchorChain>, ragu::Error> {
+    let (seed, ()) = match step.0 {
+        AnchorStepKind::Stamp { tachygram_set } => {
+            PROOF_SYSTEM.seed(rng, AnchorSeed, (start, epoch, tachygram_set))?
+        },
+        AnchorStepKind::EmptyBlock => PROOF_SYSTEM.seed(rng, EmptyBlockSeed, (start, epoch))?,
+    };
+
+    Ok(seed)
+}
+
+/// Builds the [`AnchorChain`] segment rooted at `start` that spans `first`
+/// followed by `rest`, by seeding each step and composing adjacent segments.
+///
+/// Taking the first step separately keeps the segment non-empty by
+/// construction: [`AnchorChain`] has no identity element to start a fold from.
+fn build_anchor_chain<RNG: RngCore + CryptoRng>(
+    rng: &mut RNG,
+    start: Anchor,
+    epoch: EpochIndex,
+    (first, rest): (AnchorStep, &[AnchorStep]),
+) -> Result<ragu::Pcd<AnchorChain>, ragu::Error> {
+    let mut chain = seed_anchor_step(rng, start, epoch, first)?;
+
+    for &step in rest {
+        let next_start = chain.data().1;
+        let seed = seed_anchor_step(rng, next_start, epoch, step)?;
+
+        let (fused, ()) = PROOF_SYSTEM.fuse(rng, AnchorFuse, (), chain, seed)?;
+        chain = fused;
+    }
+
+    Ok(chain)
+}
 
 impl ProofStamp {
     /// Proves a single output action, returning the stamp components
@@ -693,6 +915,90 @@ impl ProofStamp {
             tachygram_set,
             tachygrams,
             proof,
+        })
+    }
+
+    /// Advances this stamp's anchor along `segment`, so it can [`merge`] with
+    /// stamps that already sit at the segment's later anchor.
+    ///
+    /// [`MergeStamp`] constrains both sides to one anchor, but wallets stamp
+    /// against whatever anchor was current when they built, and every block
+    /// mints a new one. Lifting is what lets an aggregator collect stamps from
+    /// different heights into a single merge.
+    ///
+    /// The stamp pairs with the descriptors of its covered actions, as it does
+    /// for [`merge`], because the PCD header is reconstructed rather than
+    /// stored. A segment can be cloned and reused to lift multiple stamps from
+    /// the same anchor.
+    ///
+    /// Only `anchor` and `proof` change. [`StampLift`] passes the action and
+    /// tachygram commitments through untouched, so `coverage`, `tachygrams`,
+    /// and `tachygram_set` all survive the lift, and a lifted stamp still
+    /// covers exactly the actions it covered before.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError::LiftStartMismatch`] if the segment does not start
+    /// at this stamp's anchor. The proof system also verifies the stamp against
+    /// the commitments reconstructed from `descriptors` and the stamp's
+    /// tachygrams.
+    ///
+    /// [`merge`]: ProofStamp::merge
+    pub fn lift<RNG: RngCore + CryptoRng>(
+        rng: &mut RNG,
+        (stamp, descriptors): (Self, BTreeSet<action::Descriptor>),
+        segment: &AnchorSegment,
+    ) -> Result<Self, ProveError> {
+        let Self {
+            coverage,
+            anchor,
+            tachygrams,
+            proof,
+            ..
+        } = stamp;
+
+        let segment_start = segment.start();
+        if segment_start != anchor {
+            return Err(ProveError::LiftStartMismatch {
+                stamp_anchor: anchor,
+                segment_start,
+            });
+        }
+
+        let action_commit = descriptors
+            .iter()
+            .map(action::Descriptor::digest)
+            .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
+            .map_err(ProveError::ActionDigest)?
+            .into_iter()
+            .collect::<ActionSetPoly>()
+            .commit();
+
+        // Recomputed rather than trusting the carried cache, as `prove_merge`
+        // does. The proof binds the accumulator the circuit witnessed, so
+        // tachygrams that disagree with the proof fail the fuse.
+        let tachygram_commit = tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit();
+
+        let stamp_pcd = proof.carry::<StampHeader>((action_commit, tachygram_commit, anchor));
+
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(rng, StampLift, (), stamp_pcd, segment.chain.clone())
+            .map_err(ProveError::LiftFailed)?;
+        let lifted_anchor = pcd.data().2;
+        let rerand = PROOF_SYSTEM
+            .rerandomize(pcd, rng)
+            .map_err(ProveError::LiftFailed)?;
+
+        Ok(Self {
+            coverage,
+            anchor: lifted_anchor,
+            tachygram_set: tachygram_commit,
+            tachygrams,
+            proof: Box::new(rerand.proof().clone()),
         })
     }
 

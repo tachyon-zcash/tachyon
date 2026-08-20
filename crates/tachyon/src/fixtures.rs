@@ -38,7 +38,7 @@ use crate::{
         TachygramSetPoly, effect,
     },
     stamp::{
-        PointerStamp, ProofStamp, StampState,
+        AnchorStep, PointerStamp, ProofStamp, StampState,
         proof::{
             PROOF_SYSTEM, delegation, pool, spendable,
             stamp::{MergeStamp, StampHeader},
@@ -651,6 +651,47 @@ fn build_anchor_chain_inner(
     }
 
     chain.expect("AnchorChain range must cover at least one block")
+}
+
+/// The [`AnchorStep`] sequence covering blocks `range` in full: one stamp step
+/// per stamp absorbed, in stamp order, or one empty-block step for a block that
+/// absorbs none.
+///
+/// This is the link view of the same walk [`build_anchor_chain_inner`] proves,
+/// and is what a node assembles from block data to drive
+/// [`ProofStamp::lift`].
+pub(crate) fn anchor_steps_between(
+    pool: &PoolSim,
+    range: RangeInclusive<BlockHeight>,
+) -> Vec<AnchorStep> {
+    let (start, end) = (*range.start(), *range.end());
+    assert!(start <= end);
+    assert_eq!(
+        start.epoch(),
+        end.epoch(),
+        "anchor segment must be intra-epoch"
+    );
+
+    let mut links = Vec::new();
+    let mut height = start;
+    loop {
+        let commits = pool.stamp_commits_at(height);
+        if commits.is_empty() {
+            links.push(AnchorStep::empty_block());
+        } else {
+            links.extend(commits.into_iter().map(|tachygram_set| {
+                AnchorStep::stamp(tachygram_set)
+                    .expect("PoolSim stamps have non-identity set commitments")
+            }));
+        }
+
+        if height >= end {
+            break;
+        }
+        height = height.next().expect("height < max");
+    }
+
+    links
 }
 
 /// Build an [`AnchorChain`] covering blocks `range` in full, rooted at the

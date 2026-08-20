@@ -1,0 +1,5 @@
+[build]
+# Inject KaTeX + mermaid into rustdoc output so `cargo doc --open` renders
+# math and diagrams from doc comments. Path is relative to the workspace
+# root (the cwd of rustdoc when cargo invokes it).
+rustdocflags = ["--html-in-header", "doc/rustdoc-header.html"]
