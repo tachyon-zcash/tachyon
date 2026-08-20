@@ -1001,30 +1001,6 @@ impl WalletSim {
         lifted
     }
 
-    /// Advance a lineage across the boundary out of its current epoch.
-    pub fn epoch_lift(
-        &self,
-        rng: &mut (impl RngCore + CryptoRng),
-        spendable: Pcd<spendable::SpendableHeader>,
-        note: &Note,
-    ) -> Pcd<spendable::SpendableHeader> {
-        let (_, (epoch, present_nf), anchor) = *spendable.data();
-        let (crossing, ()) = PROOF_SYSTEM
-            .seed(
-                rng,
-                pool::EndEpochUnspentSeed,
-                witness::end_epoch_unspent_seed(
-                    ((), ()),
-                    anchor,
-                    epoch,
-                    present_nf,
-                    self.nf_at(note, epoch.next()),
-                ),
-            )
-            .expect("EndEpochUnspentSeed");
-        self.lift(rng, spendable, crossing, note, epoch, epoch.next())
-    }
-
     pub fn lift_over_creation_epoch(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
