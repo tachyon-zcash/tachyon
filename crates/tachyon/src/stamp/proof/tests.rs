@@ -12,7 +12,7 @@ use ff::Field as _;
 use pasta_curves::Fp;
 use ragu::{Pcd, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
-use rand_core::{CryptoRng, RngCore};
+use rand_core::CryptoRng;
 
 use super::{PROOF_SYSTEM, delegation, pool, spend, spendable, stamp};
 use crate::{
@@ -30,7 +30,7 @@ use crate::{
     value, witness,
 };
 
-fn tg<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Tachygram {
+fn tg<RNG: CryptoRng>(rng: &mut RNG) -> Tachygram {
     Tachygram::from(Fp::random(rng))
 }
 
@@ -40,7 +40,7 @@ fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> 
 }
 
 fn mine_cm_in_epoch_one(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     pool: &mut PoolSim,
     cm: note::Commitment,
 ) -> BlockHeight {

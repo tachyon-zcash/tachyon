@@ -18,7 +18,7 @@ use proof::{
     stamp::{MergeStamp, OutputStamp, SpendStamp, StampHeader},
 };
 use ragu::{self, proof::PROOF_SIZE_COMPRESSED};
-use rand_core::{CryptoRng, RngCore};
+use rand_core::CryptoRng;
 
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly,
@@ -193,7 +193,7 @@ impl Plan {
     /// Stamps are recursively merged via [`MergeStamp`] into a single stamp.
     ///
     /// `spend_pcds` items must correspond to each planned spend, in order.
-    pub fn prove<RNG: RngCore + CryptoRng>(
+    pub fn prove<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
@@ -312,7 +312,7 @@ impl Stamp {
     ///
     /// The output tachygram (note commitment) is derived inside the circuit
     /// and placed on the stamp for data availability.
-    pub fn prove_output<RNG: RngCore + CryptoRng>(
+    pub fn prove_output<RNG: CryptoRng>(
         rng: &mut RNG,
         rcv: value::CommitmentTrapdoor,
         alpha: ActionRandomizer<effect::Output>,
@@ -339,7 +339,7 @@ impl Stamp {
     ///
     /// The spend's `anchor` is taken as the stamp's anchor — chain
     /// validation lives inside the spendable lineage, not here.
-    pub fn prove_spend<RNG: RngCore + CryptoRng>(
+    pub fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
         spend_pcd: ragu::Pcd<spend::SpendHeader>,
         range_pcd: ragu::Pcd<delegation::NullifierHeader>,
@@ -370,7 +370,7 @@ impl Stamp {
     /// the `ActionCommit` multiset that `MergeStamp` verifies via
     /// Schwartz-Zippel. Digests are derived from public action data by the
     /// caller and are never stored on the stamp.
-    pub fn prove_merge<RNG: RngCore + CryptoRng>(
+    pub fn prove_merge<RNG: CryptoRng>(
         rng: &mut RNG,
         (left, left_digests): (Self, &[ActionDigest]),
         (right, right_digests): (Self, &[ActionDigest]),
@@ -438,7 +438,7 @@ impl Stamp {
     /// The verifier recomputes the action and tachygram accumulators, fails
     /// early if the computed action set disagrees with the carried action set
     /// commitment, and calls Ragu `verify()`.
-    pub fn verify<RNG: RngCore + CryptoRng>(
+    pub fn verify<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         actions: &[Action],

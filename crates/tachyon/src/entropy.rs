@@ -8,7 +8,7 @@ use core::{any::type_name, marker::PhantomData};
 
 use derive_more::Debug;
 use pasta_curves::Fq;
-use rand_core::{CryptoRng, RngCore};
+use rand_core::CryptoRng;
 
 use crate::{note, primitives::Effect};
 
@@ -38,7 +38,7 @@ impl ActionEntropy {
     }
 
     /// Sample fresh per-action entropy.
-    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
+    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         let mut bytes = [0u8; 32];
         rng.fill_bytes(&mut bytes);
         Self(bytes)

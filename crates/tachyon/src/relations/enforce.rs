@@ -179,7 +179,17 @@ mod tests {
     const POINTS: [u64; 3] = [0, 2, 927];
 
     fn poly(coeffs: &[u64]) -> Polynomial {
-        Polynomial::from_coeffs(&coeffs.iter().copied().map(Fp::from).collect::<Vec<_>>())
+        Polynomial::from_coeffs(coeffs.iter().copied().map(Fp::from).collect::<Vec<_>>())
+    }
+
+    /// Dense coefficients with trailing zeros trimmed (the shape the old
+    /// mock `coefficients()` accessor exposed).
+    fn dense(polynomial: &Polynomial) -> Vec<Fp> {
+        let mut coefficients: Vec<Fp> = polynomial.iter_coeffs().collect();
+        while coefficients.last() == Some(&Fp::ZERO) {
+            coefficients.pop();
+        }
+        coefficients
     }
 
     /// `x^exponent` by repeated multiplication (exponents here are tiny).
@@ -191,20 +201,20 @@ mod tests {
     fn combine(shifted_polys: &[(&Polynomial, usize)], monomials: &[(Fp, usize)]) -> Polynomial {
         let len = shifted_polys
             .iter()
-            .map(|&(poly, shift)| shift + poly.coefficients().len())
+            .map(|&(poly, shift)| shift + dense(poly).len())
             .chain(monomials.iter().map(|&(_, degree)| degree + 1))
             .max()
             .unwrap_or(0);
         let mut coeffs = vec![Fp::ZERO; len];
         for &(poly, shift) in shifted_polys {
-            for (position, coeff) in poly.coefficients().iter().enumerate() {
+            for (position, coeff) in dense(poly).into_iter().enumerate() {
                 coeffs[shift + position] += coeff;
             }
         }
         for &(coeff, degree) in monomials {
             coeffs[degree] += coeff;
         }
-        Polynomial::from_coeffs(&coeffs)
+        Polynomial::from_coeffs(coeffs)
     }
 
     /// The relation's point-wise check, at every sample point.
@@ -232,7 +242,7 @@ mod tests {
     fn identity_on_single_unshifted_polynomial() {
         let operand = poly(&[3, 5, 7]);
         let result = combine(&[(&operand, 0)], &[]);
-        assert_eq!(result.coefficients(), operand.coefficients());
+        assert_eq!(dense(&result), dense(&operand));
         assert!(identity_holds(&[(&operand, 0)], &[], &result));
     }
 
@@ -242,7 +252,7 @@ mod tests {
         let high = poly(&[11, 13]);
         let terms = [(&low, 0), (&high, 1)];
         let result = combine(&terms, &[]);
-        assert_eq!(result.coefficients(), poly(&[3, 16, 20]).coefficients());
+        assert_eq!(dense(&result), dense(&poly(&[3, 16, 20])));
         assert!(identity_holds(&terms, &[], &result));
     }
 
@@ -250,7 +260,7 @@ mod tests {
     fn identity_on_monomials_alone() {
         let monomials = [(Fp::from(5), 0), (Fp::from(9), 3)];
         let result = combine(&[], &monomials);
-        assert_eq!(result.coefficients(), poly(&[5, 0, 0, 9]).coefficients());
+        assert_eq!(dense(&result), dense(&poly(&[5, 0, 0, 9])));
         assert!(identity_holds(&[], &monomials, &result));
     }
 
@@ -263,7 +273,7 @@ mod tests {
         let terms = [(&low, 0), (&high, 2)];
         let monomials = [(-Fp::ONE, 2)];
         let result = combine(&terms, &monomials);
-        assert_eq!(result.coefficients(), poly(&[3, 5, 7, 11]).coefficients());
+        assert_eq!(dense(&result), dense(&poly(&[3, 5, 7, 11])));
         assert!(identity_holds(&terms, &monomials, &result));
     }
 

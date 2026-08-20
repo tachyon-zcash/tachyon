@@ -22,7 +22,7 @@ use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
 use ragu::Pcd;
 use rand::{SeedableRng as _, rngs::StdRng};
-use rand_core::{CryptoRng, RngCore};
+use rand_core::CryptoRng;
 
 use crate::{
     action::{self, Action},
@@ -62,7 +62,7 @@ pub fn action_digests(actions: &[Action]) -> Vec<ActionDigest> {
         .collect()
 }
 
-pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {
+pub fn random_action(rng: &mut impl CryptoRng) -> Action {
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(400);
@@ -76,7 +76,7 @@ pub fn random_action(rng: &mut (impl RngCore + CryptoRng)) -> Action {
 }
 
 pub fn spend_witness(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     note: &Note,
 ) -> (
     value::CommitmentTrapdoor,
@@ -90,7 +90,7 @@ pub fn spend_witness(
 }
 
 pub fn build_output_plan(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     note: Note,
 ) -> (
     value::CommitmentTrapdoor,
@@ -105,7 +105,7 @@ pub fn build_output_plan(
 }
 
 pub fn build_output_stamp(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     anchor: Anchor,
     note: Note,
 ) -> (Stamp, action::Plan<effect::Output>) {
@@ -115,7 +115,7 @@ pub fn build_output_stamp(
 }
 
 pub fn build_autonome(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     wallet: &WalletSim,
     spend_value: u64,
     output_value: u64,
@@ -138,7 +138,7 @@ pub fn build_autonome(
 }
 
 pub fn random_block(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     stamp_size: usize,
     n_stamps: usize,
 ) -> Vec<Vec<Tachygram>> {
@@ -152,7 +152,7 @@ pub fn random_block(
 }
 
 pub fn random_block_with(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     stamps_cms: &[Vec<note::Commitment>],
     n_stamps: usize,
 ) -> Vec<Vec<Tachygram>> {
@@ -243,7 +243,7 @@ impl Drop for PoolSim {
 
 impl PoolSim {
     #[must_use]
-    pub fn genesis(rng: &mut (impl RngCore + CryptoRng)) -> Self {
+    pub fn genesis(rng: &mut impl CryptoRng) -> Self {
         Self::genesis_with(random_block(rng, 1, 50))
     }
 
@@ -469,7 +469,7 @@ impl PoolSim {
 /// [`AnchorFuse`]. Per empty block: one [`EmptyBlockSeed`]. All segments fused
 /// linearly.
 fn build_anchor_chain_inner(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
     last_block_upto: Option<usize>,
@@ -536,7 +536,7 @@ fn build_anchor_chain_inner(
 /// Build an [`AnchorChain`] covering blocks `range` in full, rooted at the
 /// block-start anchor of `*range.start()`.
 pub(crate) fn build_anchor_chain_pcd(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
 ) -> Pcd<pool::AnchorChain> {
@@ -551,7 +551,7 @@ pub(crate) fn build_anchor_chain_pcd(
 /// chain's last absorbed link. A note created first-in-epoch (`epoch_first ==
 /// cm_height`, `cm_idx == 0`) produces a single-link chain.
 pub(crate) fn build_anchor_chain_prefix_pcd(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     pool: &PoolSim,
     epoch_first: BlockHeight,
     cm_height: BlockHeight,
@@ -587,7 +587,7 @@ pub(crate) fn build_anchor_chain_prefix_pcd(
 /// [`WalletSim::spendable_init`] (which `.expect`s the fuse) and tests that
 /// drive a raw fuse to capture the `Err`.
 pub(crate) fn spendable_init_inputs(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     pool: &PoolSim,
     cm: note::Commitment,
     height: BlockHeight,
@@ -616,7 +616,7 @@ pub(crate) fn spendable_init_inputs(
 }
 
 pub(crate) fn build_unspent_seed_pcd(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     start: Anchor,
     epoch: EpochIndex,
     tgs: &[Tachygram],
@@ -637,7 +637,7 @@ pub(crate) fn build_unspent_seed_pcd(
 /// `nf` holds one nullifier per epoch the range spans (`nf[0]` for
 /// `range.start().epoch()`).
 pub(crate) fn build_unspent_pcd_between_blocks(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     pool: &PoolSim,
     nf: &[Nullifier],
     range: RangeInclusive<BlockHeight>,
@@ -659,7 +659,7 @@ pub(crate) fn build_unspent_pcd_between_blocks(
 /// spanned, `nf[0]` for `start_anchor`'s epoch. Seeds one leaf per anchor
 /// step and fuses them as a binary tree via [`fuse_unspent_tree`].
 pub(crate) fn build_unspent_pcd_between_anchors(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     pool: &PoolSim,
     nf: &[Nullifier],
     (start_anchor, end_anchor): (Anchor, Anchor),
@@ -716,7 +716,7 @@ pub(crate) fn build_unspent_pcd_between_anchors(
 /// `nf[epoch_start - base..epoch_end - base]` (one nullifier per crossed
 /// boundary).
 fn fuse_unspent_tree(
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut impl CryptoRng,
     nf: &[Nullifier],
     base: EpochIndex,
     mut chains: Vec<Pcd<pool::Unspent>>,
@@ -808,7 +808,7 @@ impl WalletSim {
         }
     }
 
-    pub fn random(rng: &mut (impl RngCore + CryptoRng)) -> Self {
+    pub fn random(rng: &mut impl CryptoRng) -> Self {
         Self::new(private::SpendingKey::random(rng))
     }
 
@@ -843,7 +843,7 @@ impl WalletSim {
 
     pub fn note_master(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         note: Note,
     ) -> Pcd<delegation::NfPrefixHeader> {
         let (pcd, ()) = PROOF_SYSTEM
@@ -854,7 +854,7 @@ impl WalletSim {
 
     pub fn nullifier_pcd(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         note: Note,
         target_epoch: EpochIndex,
     ) -> Pcd<delegation::NullifierHeader> {
@@ -864,7 +864,7 @@ impl WalletSim {
 
     pub fn derived_range(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         note: &Note,
         epoch_start: EpochIndex,
         len: u32,
@@ -875,7 +875,7 @@ impl WalletSim {
 
     pub fn spendable_init(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         note: &Note,
         pool: &PoolSim,
         init_height: BlockHeight,
@@ -907,7 +907,7 @@ impl WalletSim {
 
     pub fn fresh_spend(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         pool: &PoolSim,
         height: BlockHeight,
         spend_note: &Note,
@@ -917,7 +917,7 @@ impl WalletSim {
 
     pub fn verify_unspent(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         unspent: Pcd<pool::Unspent>,
         note: &Note,
         epoch_start: EpochIndex,
@@ -942,7 +942,7 @@ impl WalletSim {
 
     pub fn lift(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         spendable: Pcd<spendable::SpendableHeader>,
         unspent: Pcd<pool::Unspent>,
         note: &Note,
@@ -958,7 +958,7 @@ impl WalletSim {
 
     pub fn lift_over_creation_epoch(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         pool: &PoolSim,
         note: &Note,
         cm_height: BlockHeight,
@@ -988,7 +988,7 @@ impl WalletSim {
 
     pub fn autonome(
         &self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         anchor: Anchor,
         spends: Vec<(Note, Pcd<spendable::SpendableHeader>, EpochIndex)>,
         output_notes: Vec<Note>,
@@ -1087,7 +1087,7 @@ impl SyncSim {
 
     pub fn build_next_unspent(
         &mut self,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         handle: usize,
         pool: &PoolSim,
         target_height: BlockHeight,
@@ -1144,7 +1144,7 @@ pub mod ggm_tools {
     use alloc::vec::Vec;
 
     use ragu::{Pcd, Proof};
-    use rand_core::{CryptoRng, RngCore};
+    use rand_core::CryptoRng;
 
     use crate::{
         EpochIndex,
@@ -1156,7 +1156,7 @@ pub mod ggm_tools {
     };
 
     pub fn walk_master_to_depth(
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         master_pcd: Pcd<delegation::NfPrefixHeader>,
         epoch: EpochIndex,
         target_depth: u8,
@@ -1186,7 +1186,7 @@ pub mod ggm_tools {
     }
 
     pub fn nullifier_from_master(
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         master_pcd: Pcd<delegation::NfPrefixHeader>,
         target_epoch: EpochIndex,
     ) -> Pcd<delegation::NullifierHeader> {
@@ -1204,7 +1204,7 @@ pub mod ggm_tools {
     }
 
     pub fn nullifier_range_from_master(
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut impl CryptoRng,
         master_pcd: &Pcd<delegation::NfPrefixHeader>,
         epoch_start: EpochIndex,
         len: u32,

@@ -11,10 +11,10 @@ use lazy_static::lazy_static;
 use pasta_curves::{
     Ep, EpAffine, Fq,
     arithmetic::CurveExt as _,
-    group::{GroupEncoding as _, prime::PrimeCurveAffine as _},
+    group::{CurveAffine as _, GroupEncoding as _},
     pallas,
 };
-use rand_core::{CryptoRng, RngCore};
+use rand_core::CryptoRng;
 
 /// Hash-to-curve domain for value commitment generators $\mathcal{V}$ and
 /// $\mathcal{R}$. Shared with Orchard to reuse `reddsa::orchard::Binding` —
@@ -51,7 +51,7 @@ pub struct CommitmentTrapdoor(#[debug(skip)] Fq);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
-    pub fn random<RNG: RngCore + CryptoRng>(rng: &mut RNG) -> Self {
+    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
         Self(Fq::random(rng))
     }
 

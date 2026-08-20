@@ -49,7 +49,8 @@ impl From<ActionDigest> for [u8; 32] {
 
 #[cfg(test)]
 mod tests {
-    use rand::{CryptoRng, RngCore, SeedableRng as _, rngs::StdRng};
+    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand_core::CryptoRng;
 
     use super::*;
     use crate::{
@@ -60,7 +61,7 @@ mod tests {
         value,
     };
 
-    fn make_action_parts<RNG: RngCore + CryptoRng>(
+    fn make_action_parts<RNG: CryptoRng>(
         rng: &mut RNG,
         val: u64,
     ) -> (value::Commitment, public::ActionVerificationKey) {
@@ -95,7 +96,7 @@ mod tests {
     /// Identity cv is rejected.
     #[test]
     fn digest_rejects_identity_cv() {
-        use pasta_curves::group::prime::PrimeCurveAffine as _;
+        use pasta_curves::group::CurveAffine as _;
 
         let rng = &mut StdRng::seed_from_u64(0);
         let (_, rk) = make_action_parts(rng, 500);

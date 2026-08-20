@@ -43,22 +43,21 @@ corez = { version = "0.1.1", default-features = false, features = [
 derive_more = { version = "~2.1", default-features = false, features = [
     "full", # todo: use more specific features
 ] }
-ff = "0.13"
-group = "0.13"
+ff = "0.14"
+group = "0.14"
 lazy_static = { version = "1", default-features = false, features = [
     "spin_no_std",
 ] }
-pasta_curves = "0.5.1"
-ragu = { git = "https://github.com/turbocrime/ragu", rev = "98a15d32d2e5dd8b13fb5a86d3a51d77357fbe2b", default-features = false, features = [
+pasta_curves = { package = "zakura-pasta-curves", git = "https://github.com/zakura-core/libraries", rev = "d18bb89a277ddb4f72eb64f6bef955d9342cedcf" }
+ragu = { git = "https://github.com/TalDerei/ragu", rev = "98ff39a10088d3c763028409026b057efd3bd0e7", default-features = false, features = [
     "mock",
-    "legacy-deps",
 ] }
 
-rand_core = { version = "0.6", default-features = false }
-reddsa = { version = "0.5.1", default-features = false }
+rand_core = { version = "0.10", default-features = false }
+reddsa = { package = "zakura-reddsa", git = "https://github.com/zakura-core/libraries", rev = "d18bb89a277ddb4f72eb64f6bef955d9342cedcf", default-features = false }
 
 [dev-dependencies]
-rand = "0.8"
+rand = "0.10"
 
 [lib]
 bench = false

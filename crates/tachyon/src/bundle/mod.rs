@@ -70,7 +70,7 @@ use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, PartialEq};
 use group::GroupEncoding as _;
 use pasta_curves::{Eq, Fp, group::Curve as _};
-use rand_core::{CryptoRng, RngCore};
+use rand_core::CryptoRng;
 
 pub use crate::digest::blake2b::{AUTH_DIGEST_NO_BUNDLE, COMMIT_NO_BUNDLE};
 use crate::{
@@ -366,7 +366,7 @@ impl Plan {
     ///
     /// The result is a `Bundle<Unproven>` — combine with a [`Stamp`] via
     /// [`Bundle::stamp`] to produce a `Bundle<Stamp>`.
-    pub fn sign<RNG: RngCore + CryptoRng>(
+    pub fn sign<RNG: CryptoRng>(
         &self,
         sighash: &[u8; 32],
         ask: &private::SpendAuthorizingKey,
@@ -420,7 +420,7 @@ impl Plan {
     ///
     /// Validates each signature against the action's rk and the sighash.
     /// Derives cv from each plan and produces the binding signature.
-    pub fn apply_signatures<RNG: RngCore + CryptoRng>(
+    pub fn apply_signatures<RNG: CryptoRng>(
         &self,
         sighash: &[u8; 32],
         sigs: Vec<action::Signature>,
