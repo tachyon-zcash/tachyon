@@ -222,7 +222,7 @@ incrementally via [proof-carrying data (PCD)](https://tachyon.z.cash/ragu/concep
 Since constantly scanning blocks and refreshing proofs is onerous, users can
 outsource the task to an *oblivious syncing service (OSS)*. However, updating
 an exclusion proof requires knowing the nullifier value, and a nullifier revealed
-to the syncing service let it trace the eventual spend of that note — a disastrous
+to the OSS lets it trace the eventual spend of that note — a disastrous
 privacy leak. Tachyon resolves this by letting nullifiers **evolve across
 epochs**: the value a user shares with the OSS in one epoch is unlinkable to the
 value revealed at spend time. This breaks a long-standing Zcash invariant:
@@ -250,159 +250,141 @@ both the spending authority (via $\nk$) and the underlying note (via its
 per-note trapdoor $\psi$), while remaining unlinkable across epochs to anyone
 without $\nk$.
 
-Two additional constraints shape the choice of $\mathsf{KDF}$:
+Circuit efficiency and delegated privacy shape the choice of $\mathsf{KDF}$.
+A *constrained PRF* [[BW13]](https://eprint.iacr.org/2013/352.pdf) would let the
+wallet hand an OSS an evaluation key for a delegation range, but the [GGM-based
+candidate](./ggm.md) has relatively poor circuit efficiency (see its [cost
+analysis](./nf-analysis.md#ggm-cost)). After exploring the
+[alternatives](./nf-analysis.md), we instead entrust users themselves to derive
+and prove their nullifiers. The OSS receives nullifier values and a proclaimed
+range without any note-binding evidence: a valid request may equally be a decoy
+list unrelated to any note. The user/wallet later binds the returned exclusion
+proof to nullifiers derived from the actual note.
 
-- **Constrained evaluation.** The wallet should be able to delegate $\nf_e$
-  computation for a *range* of epochs to an OSS while keeping every epoch
-  outside that range opaque to the service. Without this, outsourcing
-  block-scanning would cost the user their privacy.
-- **Circuit efficiency.** The spend proof constrains $\nf_e$ in-circuit, so the
-  construction should be circuit friendly.
-
-A natural abstraction for the first constraint is the *constrained PRF*
-[[BW13]](https://eprint.iacr.org/2013/352.pdf): from the master key one can
-derive a constrained key that enables the evaluation of the PRF at a certain
-subset of the input domain and nowhere else. Section 3.3 of [BW13]
-explains the *prefix-fixing* family realized by the seminal 
-[[GGM84] PRF](https://crypto.stanford.edu/pbc/notes/crypto/ggm.html).
-While sufficient, the [GGM-based nullifier](./ggm.md) has relatively poor circuit
-efficiency (see its [cost analysis](./nf-analysis.md#ggm-cost)).
-
-After exploring the [alternatives](./nf-analysis.md), we decide to **entrust users
-to prove nullifier derivations**, relieving the OSS from the task, thus
-*dropping the constrained evaluation requirement* and removing our reliance on
-the GGM approach. Instead, we envision a polynomial-based nullifier with the
-following workflow:
-
-<a id="nf-flow"></a>
-
-1. The user natively derives nullifiers of an epoch range $R$:
-   $$
-   \{ \nf_i := f_k(i)\}_{i\in R} \quad\text{where } k = \mathsf{KDF}(\nk, \psi)
-    $$
-    where the keyed polynomial $f_k(\cdot)$ is only known to and evaluable for
-    the $\nk$-holder (namely note owner).
-    - $f_k(X)$ has a high degree $d$ to be resilient against algebraic attacks,
-      while super *efficient to evaluate*: only $O(\log{d})$ work required.
-    - Given any set of evaluation points $S$ and their evaluations
-      $\{f_k(i)\}_{i\in S}$, any evaluation *outside* the set $f_k(j \notin S)$
-      is (at least computationally) *indistinguishable from random*.
-2. The user hands the nonempty delegated range $S=[s_0,s_1)$ to the
-   OSS as the list $[(i,\nf_i)]_{i\in S}$. This is the entire proving request, no
-   note-binding evidence accompanies it: a valid request may equally be a decoy
-   list unrelated to any note. The OSS proves exclusion of each $\nf_i$ against
-   the nullifier set of epoch $i$, implicitly trusting the supplied nullifiers.
-   In parallel, the user batch-proves derivations of all nullifiers in $R$.
-    - We strictly requires $S$ to be a **prefix** of $R$ (i.e. $s_0 = r_0, s_1
-      \leq r_1$) to simplify our subset check later. This (left-extend $s_0$ to
-      align with $r_0$) preserves completeness because if a note is unspent until
-      $s_1$, then its nullifiers are absent in the epoch range $[0, s_1)$.
-      Left-extending $s_0$ also helps obfuscating note metadata such as its
-      inclusion epoch.
-3. As the OSS incrementally proves the exclusions in epoch order, it collects
-   the tested nullifiers into an ordered sequence polynomial:
-   $$
-   g_S(X) := \sum_{j=0}^{|S| - 1} \nf_{s_0 + j} \cdot X^{|S|-1-j}
-   $$
-   We use the *Horner-ordering* for its position-independent extension relation.
-   For example, if $g(X)$ encodes the first $m$ tested nullifiers over
-   $[s_0,s_0+m)$, adding $\nf_{s_0+m}$ gives
-   $$
-   g'(X) = g(X) \cdot X + \nf_{s_0+m}.
-   $$
-
-   The OSS maintains the full polynomial and its commitment. Ragu certifies each
-   update efficiently through its *online polynomial-oracle* capability[^polyoracle],
-   by testing the identity at a random point.
-4. Upon receiving the proof and $\mathsf{Com}(g_S)$ from the OSS, the user fuses
-   it with their nullifier derivation proof (generated locally). Importantly,
-   the user further enforces that nullifiers encoded by $g_S(X)$ are a
-   *prefix* of $[\nf_i]_{i\in R}$ whose derivations are proven.
-
-   The user proves the "prefix relation" by constructing a *masked
-   sequence polynomial* $g_R(X)$ that scans through all of
-   $[\nf_i]_{i\in R}$, while only its prefix $S$ contributes meaningfully.
-   To clarify, the polynomial is constructed natively outside the circuit, and
-   probabilistically tested inside Ragu using the polynomial oracle capability.
-   $$
-   \begin{aligned}
-   g_R(X) &:= \sum_{j=0}^{|R|-1} b_j \cdot \nf_{r_0+j} \cdot X^{|R|-1-j}
-   &&\text{(construction integrity)}\\
-   &= X^{r_1 - s_1} \cdot g_S(X) &&\text{(prefix relation)} \\
-   \text{where}\quad
-   b_j &= \begin{cases}
-   1 &\text{if } 0 \leq j < |S| \\
-   0 &\text{otherwise}
-   \end{cases}
-   \end{aligned}
-   $$
-
-   <P align="center">
-       <img src="./assets/range_prefix.svg" alt="range_prefix" />
-   </p>
-
-   Note that the construction integrity is proven locally as part of the nullifier
-   derivation, independent of the OSS, since the user is aware of the ranges
-   $R, S$ in advance. The exponent $|R|-|S|$ is the number of masked positions
-   *after* $S$. The prefix relation is only enforced during proof folding after
-   the user gets back the exclusion proof from the OSS.
-   Furthermore, users may split the construction of $g_R(X)$ into multiple
-   PCD steps due to the circuit size limit. Similar to $g_S(X)$, we can check
-   each incremental extension easily thanks to the Horner-ordering.
-   As a generalization, let $g(X)$ be the sequence polynomial after proving $m$
-   positions. In the next step, the user proves the next $\ell$ values
-   $\{\nf_{s_0+m},\ldots,\nf_{s_0+m+\ell-1}\}$,
-   then checks the updated polynomial $g'(X)$ via:
-   $$
-   g'(X) = g(X)\cdot X^\ell
-   + \sum_{j=0}^{\ell-1} b_{m+j} \cdot \nf_{s_0+m+j}\cdot X^{\ell-1-j}.
-   $$
-
-   Crucially for circuit efficiency, we can constrain $b_j$ transitively without
-   resorting to any interpolation across the entire $[0,|R|)$ domain.
-   The following definition avoids comparison, bit decomposition, and
-   witness-dependent branches:
-   $$
-   \begin{cases}
-   b_0&= 1, \\
-   b_{j+1} &= b_j - \mathsf{isEq}(j, |S| - 1).
-   \end{cases}
-   $$
-
-   A sequence commitment after $m$ processed positions carries the bound
-   $\deg(g(X))<m$, enforced by the PCS interface together with $m$. If the two
-   committed polynomials do not satisfy the claimed relation, their difference is therefore
-   a nonzero polynomial of degree at most $|R|-1$, so it passes an independently
-   sampled evaluation point with probability at most $(|R|-1)/|\mathbb{F}|$.
-
-$\mathsf{Com}(g_S)$ and $\mathsf{Com}(g_R)$ are **nullifier commitments**. They
-bind ordered coefficients for construction and prefix checks. The
-[tachygram accumulator](#acc) separately commits to an unordered multiset for
-membership and non-membership tests.
-   
-Our leading candidate among [all options](./nf-analysis.md) uses off-the-shelf
-algebraic hash function (like Poseidon) as the nullifier polynomial. This
-candidate gives us a capacity of $28$ nullifier derivation per PCD step based on
-our [first-order estimation](./nf-analysis.md#attempt3).
+The [leading candidate](./nf-analysis.md) evaluates several consecutive
+nullifiers with one algebraic permutation:
 
 $$
 \nf_e = \mathsf{Poseidon}^\nf.\mathsf{Permute}
-(\nk, \psi, \lfloor \frac{e}{\mathsf{Rate}} \rfloor)[e \bmod \mathsf{Rate}]
+(\nk, \psi, \lfloor e/\mathsf{Rate}\rfloor)[e\bmod\mathsf{Rate}].
 $$
 
-A concrete example. If a user wants to cover epochs $\{5,6\}$ with a sponge
-rate of $\mathsf{Rate}=4$, she left-extends the delegated range to $S=[4,7)$,
-a prefix of the range $R=[4, 8)$ realized by one Poseidon permutation:
-$\nf_4,\ldots,\nf_7 = \mathsf{Poseidon}^\nf.\mathsf{Permute}
-(\nk, \psi, \lfloor \frac{6}{4} \rfloor=1)$.
-In practice, the delegation range may be larger, which requires users multiple
-PCD steps to reach a minimally covering superset $R$. 
+For example, a wallet may prove the whole permutation block
+$[4,8)$ once, while one OSS tests epochs $\{5,6\}$ and another later tests
+$\{4,7\}$. Both delegated lists can be checked as subsequences of the same
+locally derived range. The local proof may be extended whenever later epochs
+become relevant.
 
-> Note: $\mathsf{Poseidon}^\nf.\mathsf{Permute}$ *is* a polynomial-based block
-> cipher, or an instantiation of the keyed nullifier polynomial $f_k(X)$.
-> For generality, we will use $\nf_e = f_k(e)$ generically for the remaining
-> presentation to be generic over any choice that meet our aforementioned
-> requirements (efficient evaluation and semantic security).
+> For the remaining presentation, $\nf_e=f_k(e)$ denotes any construction that
+> provides efficient batched evaluation and the required semantic security.
+
+#### Ranged Nullifier Commitment {#nf-flow}
+
+Let $\nf_i=f_k(i)$ for $k=\mathsf{KDF}(\nk,\psi)$. A **ranged nullifier
+commitment** binds a sequence of epoched nullifiers
+
+$$
+[(i,\nf_i)]_{i\in R}
+$$
+
+for some epoch range $R$. Its interface provides three properties:
+
+- **Position and value binding.** A committed entry binds both its epoch $i$ and
+  its nullifier $\nf_i$.
+- **Incremental extension.** The wallet can append newly derived epochs without
+  fixing the eventual endpoint or any delegated range in advance.
+- **Subsequence checking.** Given commitments to two epoched-nullifier lists,
+  the prover can show that every entry in one occurs in the other with the same
+  epoch and value. The smaller list need not be a prefix or a contiguous range.
+
+The wallet proves correct derivation of a locally chosen range $R$ and commits
+to its epoched nullifiers. The OSS receives opaque pairs $(i,\nf_i)$, proves each
+value absent from the assigned portion of epoch $i$'s public history, and commits
+to the epoched nullifiers it tested. The wallet then proves that the OSS-tested
+list is a subsequence of its locally derived list. This binds the delegated
+exclusion proof back to the note without revealing the note or derivation key to
+the OSS.
+
+The rest of the protocol may refer only to this interface, keeping the proof
+tree independent of the particular commitment scheme. The following concrete
+construction realizes that interface.
+
+Let $\nf_i=f_k(i), k=\mathsf{KDF}(\nk,\psi)$
+where evaluations outside any revealed set remain computationally
+indistinguishable from random. To bind both an epoch position and its value, fix
+a *non-cubic residue* $c\in\F$ and encode $(i,v_i)$ as the cubic factor
+
+$$
+F_{i,v_i}(X) := ((i+1)\, X + v_i)^3 - c.
+$$
+
+The absolute index inside the factor removes the need for an ordered vector
+commitment or a mask whose shape is fixed before delegation.
+
+The wallet begins at an arbitrary epoch $r_0$. For a consecutive range
+$R=[r_0,r_0+n)$ it derives the corresponding nullifiers and commits to
+
+$$
+g_R(X) := \prod_{i\in R} F_{i,\nf_i}(X)
+$$
+
+The commitment is incrementally built. Starting from $g_\varnothing(X)=1$,
+appending the next epoch gives
+
+$$
+\begin{aligned}
+g_{n+1}(X) &= g_n(X)\cdot F_{r_0+n,\nf_{r_0+n}}(X) \\
+&= g_n(X)\cdot \left( ((r_0+n+1)\, X + \nf_{r_0+n})^3 - c \right)
+\end{aligned}
+$$
+
+Using Ragu's polynomial oracle[^polyoracle] functionality, we can easily check the
+update by identity-testing at a random point.
+Importantly, this commitment is naturally extensible without fixing the overall
+range or the endpoint in advance.
+
+An OSS receives opaque pairs $(i,\nf_i)$ and proves each $\nf_i$ absent from the
+assigned portion of epoch $i$'s public history. It commits to the corresponding
+indexed factors for the consecutive range $S=[s_0, s_0+m) \subseteq R$:
+
+$$
+g_S(X):=\prod_{i\in S} F_{i,\nf_i}(X)
+$$
+
+To bind the delegated work back to the note, the wallet proves that every
+OSS-tested $\nf_i$ occurs in its locally derived nullifier list. This
+*sub-sequence relation* is enforced via the standard quotient argument: by the
+existence of a quotient $q(X)$ such that:
+
+$$
+g_R(X)=g_S(X)\cdot q(X).
+$$
+
+In fact, this divisibility ensures a general sub-sequence relation: $S$ needs not
+to be prefix or even a contiguous sub-range of $R$.
+
+**Soundness sketch.** The binding property of this commitment comes from the
+irreducibility of each factor, because for divisibility to imply unique
+factorization, we need each factor to be irreducible. Take $Y = (aX + b)$,
+$F(Y)=Y^3 - c$ is irreducible over $\F$ because $c$ is chosen to be a non cubic
+residue. Setting $a = i+1$ further ensures $a\neq 0$. There is a rare chance of
+$F_{a,b}(X)$ not being injective:
+
+$$
+\begin{cases}
+a_1 = \omega\, a_2 \\
+b_1 = \omega\, b_2 \\
+\omega^3 = 1
+\end{cases}\Longrightarrow
+(a_1\,X + b_1)^3 = (a_2\,X + b_2)^3 \quad\text{over }\F_p
+$$
+
+But since our epoch range is small $i\in \{0,1\}^{32} \ll F_p$ and the unit cubic
+root $\omega$ is very large, such coincidence will never occur. Even though we
+didn't explicitly enforce $i$'s range in circuit, we do enforce its increment as
+the user or the OSS incrementally builds $g_R(X)$ and $g_S(X)$. Additionally,
+an out-of-range $i$ will result in invalid [anchor](#anchor) values in the final
+proof; thus indirectly prevented.
 
 #### Nullifier Security {#nf-sec}
 
@@ -411,16 +393,14 @@ out](#decouple) for the shielded protocol. Readers can safely skip this
 section and come back later since the analysis refers to concepts introduced
 in later sections.
 
-**Balance.** Only the holder of $\nk$ can compute any $\nf_e = f_k(e)$, since
-$k=\mathsf{KDF}(\nk, \psi)$ requires it. The spend circuit pins both $\nf_e$ and
+**Balance.** Only the holder of $\nk$ can compute any $\nf_e=f_k(e)$, since
+$k=\mathsf{KDF}(\nk,\psi)$ requires it. A spend proof pins both $\nf_e$ and
 $\nf_{e+1}$ to a deterministic function of the note and epoch, so a note has
 exactly one valid nullifier per epoch and no freedom to mint a fresh value that
-dodges a past spend. Double-spending is then ruled out by two complementary
-checks that [leave no gap](#consensus-rule). Along the delegated path, the
-[spendability proof](#spendability) certifies absence throughout pruned history
-ending at the target epoch's starting sentinel; consensus checks the recent
-window that this proof does not reach. Publishing both $\nf_e$ and $\nf_{e+1}$ extends this
-across the epoch boundary, so a note cannot be spent twice even as $e$ advances.
+dodges a past spend. Double-spending is ruled out by two complementary checks:
+the user proves exclusion from authenticated older history, while consensus
+checks duplicates in the recent epochs it retains. Publishing both adjacent
+nullifiers makes those checks overlap across an epoch boundary.
 
 **Note Privacy.** The adversary is a keyless third party reading the whole
 on-chain transaction, including any in-band memo. The shielded footprint, namely
@@ -444,14 +424,13 @@ mutually pseudorandom to anyone lacking $\nk$: by the semantic security of
 $f_k$, any set of revealed evaluations leaves every evaluation outside it
 indistinguishable from random, and this holds even for the pair
 $\nf_e, \nf_{e+1}$ revealed together at spend. Delegation is *list-bounded*: an
-OSS [delegated](#nf) a range $S$ holds the explicit evaluations
+OSS [delegated](#nf) a set $S$ holds the explicit evaluations
 $\{(e, \nf_e)\}_{e \in S}$ and no key material at all, so it can refresh
-exclusion proofs for exactly those epochs and predict nothing beyond the list,
-in particular the spend-epoch nullifier, since [syncing stops at $e-1$](#txflow).
-The OSS also sees a selected join epoch $e_\join$, which equals the
-inclusion epoch for an older real request but may be chosen independently for
-same-epoch and decoy requests. This leaks epoch metadata, not a cryptographic
-link to a note.
+exclusion proofs for exactly those epochs and predict nothing beyond the list.
+It sees the public history segments assigned to it, but not the note commitment,
+the user's note-binding proof, or the eventual spend endpoint. Range
+standardization, decoys, and local continuation can therefore keep maintenance
+and imminent-spend requests in the same cryptographic shape.
 And since $k$ binds the per-note $\psi$, a list delegated for one note reveals
 nothing about any other note the user owns. To an attacker holding only the on-chain
 $\cm$, the spend is unlinkable to it, since the two draw on disjoint randomness
@@ -655,19 +634,22 @@ finalized block (*inclusion*), and its epoch-specific nullifier remained absent
 afterward (*exclusion*). Since old tachygrams are pruned from the live pool, these
 facts are proven against authenticated [anchor-chain](#anchor) history.
 
-This evidence need not be kept continuously fresh: it can be assembled when a
-spend is intended, against an anchor in the target epoch. A same-epoch spend
-still carries a nonempty exclusion range predating the note as camouflage.
+Once the creation block is finalized, the wallet may initialize and cache the
+spendability proof as updatable PCD, making the note immediately spendable. A
+same-epoch spend can use this proof directly without exclusion evidence. For a
+later-epoch spend, the wallet advances the cached proof to a newer anchor by
+folding authenticated exclusion evidence into it.
 
-A **Tachyon Stamp** provides the PCD proof for the [Action statement](#statement).
+A **Tachyon Stamp** provides a PCD proof that every action in the bundle is
+valid and that the published tachygrams and accumulator match those actions.
 Its public inputs are the bundle's Action descriptions, a set of tachygrams
-$\set{\tg_i}$, their accumulator $\tgacc$, a target $\anchor$
-in the [anchor chain](#anchor), and the target epoch $e$.
+$\set{\tg_i}$, their accumulator $\tgacc$, and a target $\anchor$
+in the [anchor chain](#anchor). The target epoch is implied by that anchor.
 Alternatively, the stamp holds a `wtxid` reference to another transaction whose
 stamp carries an aggregated PCD proof and the corresponding public inputs.
 The accumulator is included to spare miners from recomputing it over all
-tachygrams; instead, the correctness of $\tgacc$ is proven as part of the Action
-statement using the [batched verification trick](#acc-correct).
+tachygrams; instead, the correctness of $\tgacc$ is proven using the
+[batched verification trick](#acc-correct).
 The PCD construction supports aggregating finished bundle proofs: a new
 aggregated transaction will be created whose stamp contains the union of
 tachygrams, the accumulator of that union, the common anchor, and an aggregated
@@ -804,6 +786,11 @@ $i$ therefore spans $\sntl_i$ to $\sntl_{i+1}$. Every transition has a sentinel,
 so even an empty epoch has two distinct, authenticated boundaries. For epoch
 zero, the genesis anchor-chain state replaces $\anchor_{-1,\mathsf{end}}$.
 
+Every canonical anchor therefore determines a unique epoch: $\sntl_i$ and all
+ordinary anchors after it but before $\sntl_{i+1}$ belong to epoch $i$. We write
+$\mathsf{Epoch}(\anchor)$ for this value and assume validator implements this
+map efficiently.
+
 <P align="center">
   <img src="./assets/anchor_chain.svg" alt="anchor_chain" />
 </p>
@@ -864,9 +851,9 @@ trick that reduces the amortized per-nullifier cost to strictly sublinear.
 
 #### Quadratic Residue Filters {#qr-trick}
 
-> This subsection is a self-contained optimization; readers can safely skip it and
-> continue to the [transaction life cycle](#txflow). The current proof tree uses
-> the full epoch accumulator for simplicity; QR filter is a future optimization.
+> This subsection is an optional optimization. The base protocol can test the
+> exact accumulator of each history segment directly; QR filtering only reduces
+> the cost of large full-epoch segments.
 
 Our goal: let a user prove non-membership of $\nf_e$ over an *entire epoch* at
 cost logarithmic in $N$, the number of tachygrams that epoch.
@@ -1023,77 +1010,60 @@ proof (shared by all) are paid once and amortized across the epoch.
 
 ### Transaction Life Cycle {#txflow}
 
-The main delegated flow follows four named anchors:
-
-$$
-\underbrace{
-  \underbrace{
-    \mathsf{creation\ stamp}\Rightarrow\mathsf{inclusion\ anchor}
-  }_{\mathsf{inclusion\ block}}
-  \Rightarrow\mathsf{join\ anchor}
-}_{\mathsf{inclusion\ epoch}}
-\Rightarrow
-\underbrace{
-  \mathsf{exclusion\ anchor}\Rightarrow\mathsf{target\ anchor}
-}_{\mathsf{spending\ epoch}}.
-$$
-
-The **inclusion anchor** is the anchor produced by the end-of-block stamp of the
-block containing the creation stamp. The
-<a id="join-anchor"></a>**join anchor** is the ending sentinel
-$\sntl_{e_\incl+1}$ of the inclusion epoch. It is where the wallet's local path
-from the note's creation meets the delegated history advancing across later
-epochs. The **exclusion anchor** is $\sntl_e$, proving exclusion through epoch
-$e-1$. The **target anchor** is the published anchor in the spending epoch $e$.
-The same-epoch case shortens this path as described later.
+The wallet maintains one renewable spendability proof per unspent note. It binds
+the note's action description and active nullifier pair to an authenticated
+anchor, while remembering the note's original inclusion and every exclusion
+segment proven since. Extending this one proof advances inclusion ancestry and
+unspent history together.
 
 The flow is as follows:
 
-1. **Select notes, dispatch syncing.** The wallet picks the input notes to spend
-and the output notes to create, fixing the target spending epoch $e$. For each
-input, let $e_\incl$ be the note inclusion epoch. The wallet natively derives
-the explicit list $\{(i,\nf_i)\}_{i\in S}$ for a nonempty past range $S=[s_0,e)$
-and chooses a join epoch $e_\join\in S$. For an older note it sets
-$e_\join=e_\incl$; for a same-epoch spend or decoy request it may choose
-$e_\join$ independently. It immediately sends $e_\join$ and the
-opaque list to an [OSS](#nf). Derivation proof for
-$\{\nf_i\}$ is not required, so the request may be unrelated to any real note.
-If $e_\incl=e$, the entire range $S$ predates the note; proving their
-exclusion anyway makes the request and resulting proof indistinguishable from
-those of an older note.
+1. **Initialize as soon as the note is usable.** Once the creation block is
+   finalized, the wallet proves that the note commitment belongs to its creation
+   stamp, authenticates the remainder of that block, and proves the complete
+   ownership, value, and authorization relation. If the resulting anchor is in
+   epoch $e$, the proof exposes $(\nf_e,\nf_{e+1})$. No exclusion proof or OSS
+   response is required, and the result can immediately support a same-epoch
+   spend.
 
-2. **Build the spendability proof in parallel.**
-   - **Inclusion**: Once the creation block is finalized, the
-   wallet proves the note commitment belongs to the creation stamp and advances
-   to the inclusion anchor. For an older note it continues to the join anchor;
-   for a same-epoch spend it stops at the inclusion anchor.
-   - **Past nullifier derivation**: The wallet concurrently proves nullifier
-   derivation over a covering range $R\supseteq S$.
-   - **Delegated history**: The OSS proves each supplied nullifier absent from
-   its past epoch, advances the anchor chain from $\sntl_{s_0}$ to the exclusion
-   anchor $\sntl_e$, and records the join anchor $\sntl_{e_\join+1}$.
+2. **Derive nullifiers and prove exclusion in parallel.** As epochs become
+   relevant, the wallet locally derives epoched nullifiers and commits to them
+   using an extensible [ranged nullifier commitment](#nf-flow). In parallel, it
+   may give one or more OSSs opaque $(i,\nf_i)$ lists and authenticated history
+   intervals. The OSS proves each supplied nullifier absent from its assigned
+   interval and commits to the epoched nullifiers it tested. This exclusion
+   proof is note-independent: the request carries neither $\cm$ nor a user
+   proof, so maintenance, an imminent spend, and a decoy have the same
+   cryptographic shape.
 
-3. **Generate the stamp.** The wallet binds inclusion and nullifier derivation to
-the same $\cm$ and verifies that the OSS-proven nullifiers are a prefix of the
-derived nullifiers. For an older note it checks
-$e_\join=e_\incl$ and that the wallet's join anchor equals the one
-recorded by the OSS, producing an action at the exclusion anchor. For a
-same-epoch spend, it instead checks $e_\incl=e$ and produces the action at the
-inclusion anchor. The wallet then lifts only the anchor field of the action to
-the target anchor within the spending epoch.
+3. **Bind and advance.** The wallet proves that the epoched nullifiers tested by
+   the OSS form a subsequence of its locally derived range, binds the result to
+   the same note as the cached spendability proof, and checks that the proved
+   interval starts at the cached anchor. It then advances the proof to the
+   interval's end and derives the nullifier pair for that endpoint's epoch.
 
-    The wallet also establishes the remaining spend-specific facts: the integrity
-of $\nf_e,\nf_{e+1}$, the output commitments, and the correct computation of the
-bundle accumulator $\tgacc$ over all revealed tachygrams (the [batched
-correctness check](#acc-correct)). The accumulator collects *two tachygrams per
-action*: $(\nf_e, \nf_{e+1})$ for a spend, the note commitment and a dummy
-$(\cm, \tg_\bot)$ for an output. The result is the [Tachyon stamp](#tx):
-the PCD proof for the [Action statement](#statement) together with its public
-inputs $(\{ (\cv_i, \rk_i)\}, \{ \tg_i \}, \tgacc, \anchor, e)$.
-Revealing *both* $\nf_e$ and $\nf_{e+1}$ is what insures the transaction against
-the [cross-epoch race](#race) while it waits in the mempool.
+   A client may apply adjacent OSS responses sequentially, which already
+   combines work from multiple OSSs. It may also perform the entire update
+   locally. In particular, the wallet can privately extend a short distance
+   beyond the OSS endpoint, immediately testing the active nullifier against
+   that additional history so the resulting proof remains renewable.
 
-4. **Authorize and bind.** Concurrent to the proving path of steps 1-3,
+4. **Generate a stamp.** Output proofs are independent of historical anchors and
+   can be reused. The wallet combines them with its spend proofs at one target
+   anchor. If several spends begin at different anchors in the target epoch, it
+   proves their ancestry to the common target without treating that terminal
+   adjustment as renewable maintenance; consensus's live window covers the
+   target epoch. A single newly included spend can use its inclusion anchor
+   directly, giving the shortest path from inclusion proof to stamp.
+
+   The bundle accumulator collects *two tachygrams per action*:
+   $(\nf_e,\nf_{e+1})$ for a spend and $(\cm,\tg_\bot)$ for an output. The result
+   is the [Tachyon stamp](#tx), with public input
+   $(\{(\cv_i,\rk_i)\},\{\tg_i\},\tgacc,\anchor)$.
+   Revealing both adjacent nullifiers protects the transaction against the
+   [cross-epoch race](#race) while it waits in the mempool.
+
+5. **Authorize and bind.** Concurrent to the proving path above,
 the wallet assembles the transaction body, computes the [`SIGHASH`](#tx) over
 the effecting data, and produces:
     - an authorization signature for every action, verifiable against its
@@ -1103,9 +1073,10 @@ the effecting data, and produces:
     - the net value balance $v^\mathsf{bal}$ and a single [binding signature](#tx)
     $\sigma^\mathsf{bind}$ over the value commitments.
 
-5. **Mempool and aggregation.** The finished transaction enters the mempool as a
-standalone *Tachyon autonome*. A miner (or any [aggregator](#aggregation)) may
-then lift several stamps targeting $e$ to a common later anchor, take the
+6. **Mempool and aggregation.** The finished transaction enters the mempool as a
+standalone *Tachyon autonome*. A miner or another aggregator may then lift
+several stamps whose anchors lie in the same epoch to a common later anchor,
+take the
 [multiset union](#union) of their tachygrams and accumulators, and produce one
 aggregated PCD proof. Each constituent's stamp is replaced by a reference to the
 aggregate transaction's `wtxid`, moving the tachygrams, anchor, and proof
@@ -1117,14 +1088,14 @@ Of the consensus rules, the bundle balance check and authorization-signature
 validation are unchanged from Orchard; only stamp verification is new.
 
 **Stamp verification.** Given the published tachygrams $\set{\tg_i}$, accumulator
-$\tgacc$, $\anchor$, and target epoch $e$, the validator:
+$\tgacc$, and $\anchor$, the validator:
 
-1. confirms $e$ is either the current or the preceding epoch:
-   $e = e_\mathsf{cur} \lor e = e_\mathsf{cur} - 1$
-2. checks the target $\anchor$ occurs in canonical finalized history in epoch $e$
+1. checks that the target $\anchor$ occurs in canonical finalized history and
+   obtains $e=\mathsf{Epoch}(\anchor)$;
+2. confirms $e$ is either the current or the preceding epoch:
+   $e = e_\mathsf{cur} \lor e = e_\mathsf{cur} - 1$; and
 3. verifies the stamp's PCD proof against
-   $(\set{(\cv_i,\rk_i)},\set{\tg_i},\tgacc,\anchor,e)$,
-   i.e. the [Action statement](#statement). The statement internally enforces
+   $(\set{(\cv_i,\rk_i)},\set{\tg_i},\tgacc,\anchor)$. The proof enforces
    $\tgacc$'s consistency with the published $\set{\tg_i}$ (the
    [batched check](#acc-correct)), the integrity of the revealed nullifiers and
    output commitments, and the finalized inclusion and required past exclusion
