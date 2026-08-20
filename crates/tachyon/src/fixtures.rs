@@ -679,114 +679,72 @@ pub(crate) fn build_unspent_pcd_between_anchors(
     nf: &[Nullifier],
     (start_anchor, end_anchor): (Anchor, Anchor),
 ) -> Pcd<pool::ArbitraryUnspent> {
-    // The tree fold derives seams from headers, so anchors are folded here: the
-    // running cursor enters the span at `start_anchor` (possibly mid-block),
-    // takes a `next_stamp` per absorbed stamp and a `next_epoch` per boundary.
+    // One leaf per stamp, each advancing its block's running anchor, plus one
+    // per epoch the span crosses without a stamp. The tree fold derives seams
+    // from headers, so the interleaved boundary markers seed no leaf of their
+    // own. Anchors are folded here: the first block runs from `start_anchor`
+    // (possibly mid-block), every other from its recorded entry anchor.
     let steps = pool.anchor_steps(start_anchor, end_anchor);
     let leading = steps.first().expect("anchor span covers at least one step");
-    // A leading marker is ambiguous on its own: `anchor_steps` emits one both
-    // when the span *starts* at a boundary and when its first crossing precedes
-    // any stamp. The span's epoch tells them apart.
-    let (base, base_tip) = match *leading {
-        Ok((height, _)) => (height.epoch(), None),
-        Err(epoch) if start_anchor == pool.pre_epoch_anchor(epoch).next_epoch(epoch) => {
-            (epoch, Some(pool.pre_epoch_anchor(epoch)))
-        },
-        Err(epoch) => {
-            // Epoch 0's boundary marker is `Anchor::default()`, which equals
-            // `pre_epoch_anchor(0).next_epoch(0)` and so matches the arm above.
-            let prior = epoch
-                .0
-                .checked_sub(1)
-                .expect("a leading marker into epoch 0 starts at the genesis anchor");
-            (EpochIndex(prior), None)
-        },
+    // `nf` is indexed from the epoch `start_anchor` sits in, which a boundary
+    // anchor names directly and any other names through its block.
+    let base = match pool.locate_anchor(start_anchor) {
+        Ok((height, _)) => height.epoch(),
+        Err((_, epoch)) => epoch,
     };
     let nf_at = |epoch: EpochIndex| -> Nullifier {
         nf[usize::try_from(u64::from(epoch - base)).expect("epoch within span")]
     };
 
     let mut leaves: Vec<Pcd<pool::ArbitraryUnspent>> = Vec::with_capacity(steps.len());
-    let mut cursor_epoch = base;
-    let mut cursor_anchor = start_anchor;
-    // The terminal anchor of the epoch before `cursor_epoch`, present only when
-    // the cursor entered `cursor_epoch` at its boundary. An empty-epoch leaf
-    // folds that tick, so a span opening mid-epoch has nothing to seed with.
-    let mut entry_tip = base_tip;
-    let mut epoch_has_leaf = false;
-    for step in steps {
-        match step {
-            Err(new_epoch) => {
-                if new_epoch == cursor_epoch {
-                    // The span begins at this boundary; it is already crossed.
-                    continue;
-                }
-                if !epoch_has_leaf && let Some(tip) = entry_tip {
-                    leaves.push({
-                        PROOF_SYSTEM
-                            .seed(
-                                rng,
-                                pool::EmptyEpochUnspentSeed,
-                                witness::empty_epoch_unspent_seed(
-                                    ((), ()),
-                                    tip,
-                                    cursor_epoch,
-                                    nf_at(cursor_epoch),
-                                ),
-                            )
-                            .expect("EmptyEpochUnspentSeed")
-                            .0
-                    });
-                }
-                entry_tip = Some(cursor_anchor);
-                cursor_anchor = cursor_anchor.next_epoch(new_epoch);
-                cursor_epoch = new_epoch;
-                epoch_has_leaf = false;
-            },
-            Ok((height, block_stamps)) => {
-                let epoch = height.epoch();
-                let leaf_nf = nf_at(epoch);
+    // Every epoch the span crosses opens with a boundary marker, so breaking a
+    // chunk before each marker buffers one epoch's blocks and defers the choice
+    // of leaf to the chunk's end.
+    for chunk in steps.chunk_by(|_, right| right.is_ok()) {
+        let blocks: Vec<_> = chunk.iter().filter_map(|step| step.as_ref().ok()).collect();
+        if let Some(&&(first_height, _)) = blocks.first() {
+            let epoch = first_height.epoch();
+            let leaf_nf = nf_at(epoch);
+            for step in blocks {
+                let (height, block_stamps) = (step.0, &step.1);
+                let mut entry = if leaves.is_empty() && leading.is_ok() {
+                    start_anchor
+                } else {
+                    pool.prev_anchor_at(height)
+                };
                 for tgs in block_stamps {
                     let commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
-                    leaves.push(
-                        PROOF_SYSTEM
-                            .seed(
-                                rng,
-                                pool::UnspentSeed,
-                                witness::unspent_seed(
-                                    ((), ()),
-                                    cursor_anchor,
-                                    epoch,
-                                    &tgs,
-                                    leaf_nf,
-                                ),
-                            )
-                            .expect("UnspentSeed")
-                            .0,
-                    );
-                    cursor_anchor = cursor_anchor.next_stamp(epoch, &commit);
-                    epoch_has_leaf = true;
+                    let (seed, ()) = PROOF_SYSTEM
+                        .seed(
+                            rng,
+                            pool::UnspentSeed,
+                            witness::unspent_seed(((), ()), entry, epoch, tgs, leaf_nf),
+                        )
+                        .expect("UnspentSeed");
+                    leaves.push(seed);
+                    entry = entry.next_stamp(epoch, &commit);
                 }
-            },
-        }
-    }
-    // The span's final epoch, if it published nothing after the crossing in.
-    if !epoch_has_leaf && let Some(tip) = entry_tip {
-        leaves.push({
-            PROOF_SYSTEM
+            }
+        } else {
+            // An epoch crossed without a stamp has a single anchor, the boundary
+            // tick's output, folded from the previous epoch's terminal anchor.
+            let Err(epoch) = chunk[0] else {
+                panic!("a chunk with no block is a lone boundary marker")
+            };
+            let (seed, ()) = PROOF_SYSTEM
                 .seed(
                     rng,
                     pool::EmptyEpochUnspentSeed,
                     witness::empty_epoch_unspent_seed(
                         ((), ()),
-                        tip,
-                        cursor_epoch,
-                        nf_at(cursor_epoch),
+                        pool.pre_epoch_anchor(epoch),
+                        epoch,
+                        nf_at(epoch),
                     ),
                 )
-                .expect("EmptyEpochUnspentSeed")
-                .0
-        });
+                .expect("EmptyEpochUnspentSeed");
+            leaves.push(seed);
+        }
     }
     fuse_unspent_tree(rng, nf, base, leaves)
 }
