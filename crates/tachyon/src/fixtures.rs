@@ -624,32 +624,6 @@ pub(crate) fn build_anchor_chain_pcd(
     chain.expect("AnchorChain range must cover at least one stamp")
 }
 
-/// The honest [`spendable::SpendableInit`] witness inputs for `cm` at
-/// `height`, reconstructed from pool state: `(pre_cm_anchor, creation_tgs)`.
-/// Shared by [`WalletSim::spendable_init`] (which `.expect`s the fuse) and
-/// tests that drive a raw fuse directly.
-pub(crate) fn spendable_init_inputs(
-    pool: &PoolSim,
-    cm: note::Commitment,
-    height: BlockHeight,
-) -> (Anchor, Vec<Tachygram>) {
-    let stamps = pool.tachygrams_at(height);
-    let stamp_commits = pool.stamp_commits_at(height);
-    let cm_idx = stamps
-        .iter()
-        .position(|tgs| tgs.contains(&cm.into()))
-        .expect("cm not found in any stamp at the cm-block");
-
-    // Anchor immediately before the cm-stamp (the cm-block prefix fold).
-    let pre_cm_anchor = stamp_commits[..cm_idx]
-        .iter()
-        .fold(pool.prev_anchor_at(height), |anchor, commit| {
-            anchor.next_stamp(height.epoch(), commit)
-        });
-
-    (pre_cm_anchor, stamps[cm_idx].clone())
-}
-
 pub(crate) fn build_unspent_seed_pcd(
     rng: &mut (impl RngCore + CryptoRng),
     start: Anchor,
@@ -664,22 +638,6 @@ pub(crate) fn build_unspent_seed_pcd(
             witness::unspent_seed(((), ()), start, epoch, tgs, nf),
         )
         .expect("UnspentSeed");
-    pcd
-}
-
-pub(crate) fn build_empty_epoch_seed_pcd(
-    rng: &mut (impl RngCore + CryptoRng),
-    prev_epoch_tip: Anchor,
-    epoch: EpochIndex,
-    nf: Nullifier,
-) -> Pcd<pool::ArbitraryUnspent> {
-    let (pcd, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EmptyEpochUnspentSeed,
-            witness::empty_epoch_unspent_seed(((), ()), prev_epoch_tip, epoch, nf),
-        )
-        .expect("EmptyEpochUnspentSeed");
     pcd
 }
 
@@ -734,7 +692,15 @@ pub(crate) fn build_unspent_pcd_between_anchors(
         Err(epoch) if start_anchor == pool.pre_epoch_anchor(epoch).next_epoch(epoch) => {
             (epoch, Some(pool.pre_epoch_anchor(epoch)))
         },
-        Err(epoch) => (EpochIndex(epoch.0 - 1), None),
+        Err(epoch) => {
+            // Epoch 0's boundary marker is `Anchor::default()`, which equals
+            // `pre_epoch_anchor(0).next_epoch(0)` and so matches the arm above.
+            let prior = epoch
+                .0
+                .checked_sub(1)
+                .expect("a leading marker into epoch 0 starts at the genesis anchor");
+            (EpochIndex(prior), None)
+        },
     };
     let nf_at = |epoch: EpochIndex| -> Nullifier {
         nf[usize::try_from(u64::from(epoch - base)).expect("epoch within span")]
@@ -756,12 +722,21 @@ pub(crate) fn build_unspent_pcd_between_anchors(
                     continue;
                 }
                 if !epoch_has_leaf && let Some(tip) = entry_tip {
-                    leaves.push(build_empty_epoch_seed_pcd(
-                        rng,
-                        tip,
-                        cursor_epoch,
-                        nf_at(cursor_epoch),
-                    ));
+                    leaves.push({
+                        PROOF_SYSTEM
+                            .seed(
+                                rng,
+                                pool::EmptyEpochUnspentSeed,
+                                witness::empty_epoch_unspent_seed(
+                                    ((), ()),
+                                    tip,
+                                    cursor_epoch,
+                                    nf_at(cursor_epoch),
+                                ),
+                            )
+                            .expect("EmptyEpochUnspentSeed")
+                            .0
+                    });
                 }
                 entry_tip = Some(cursor_anchor);
                 cursor_anchor = cursor_anchor.next_epoch(new_epoch);
@@ -773,13 +748,22 @@ pub(crate) fn build_unspent_pcd_between_anchors(
                 let leaf_nf = nf_at(epoch);
                 for tgs in block_stamps {
                     let commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
-                    leaves.push(build_unspent_seed_pcd(
-                        rng,
-                        cursor_anchor,
-                        epoch,
-                        &tgs,
-                        leaf_nf,
-                    ));
+                    leaves.push(
+                        PROOF_SYSTEM
+                            .seed(
+                                rng,
+                                pool::UnspentSeed,
+                                witness::unspent_seed(
+                                    ((), ()),
+                                    cursor_anchor,
+                                    epoch,
+                                    &tgs,
+                                    leaf_nf,
+                                ),
+                            )
+                            .expect("UnspentSeed")
+                            .0,
+                    );
                     cursor_anchor = cursor_anchor.next_stamp(epoch, &commit);
                     epoch_has_leaf = true;
                 }
@@ -788,12 +772,21 @@ pub(crate) fn build_unspent_pcd_between_anchors(
     }
     // The span's final epoch, if it published nothing after the crossing in.
     if !epoch_has_leaf && let Some(tip) = entry_tip {
-        leaves.push(build_empty_epoch_seed_pcd(
-            rng,
-            tip,
-            cursor_epoch,
-            nf_at(cursor_epoch),
-        ));
+        leaves.push({
+            PROOF_SYSTEM
+                .seed(
+                    rng,
+                    pool::EmptyEpochUnspentSeed,
+                    witness::empty_epoch_unspent_seed(
+                        ((), ()),
+                        tip,
+                        cursor_epoch,
+                        nf_at(cursor_epoch),
+                    ),
+                )
+                .expect("EmptyEpochUnspentSeed")
+                .0
+        });
     }
     fuse_unspent_tree(rng, nf, base, leaves)
 }
@@ -973,7 +966,23 @@ impl WalletSim {
         let cm = note.commitment();
         let epoch = init_height.epoch();
         let present_nf = self.nf_at(note, epoch);
-        let (pre_cm_anchor, creation_tgs) = spendable_init_inputs(pool, cm, init_height);
+        let (pre_cm_anchor, creation_tgs) = {
+            let stamps = pool.tachygrams_at(init_height);
+            let stamp_commits = pool.stamp_commits_at(init_height);
+            let cm_idx = stamps
+                .iter()
+                .position(|tgs| tgs.contains(&cm.into()))
+                .expect("cm not found in any stamp at the cm-block");
+
+            // Anchor immediately before the cm-stamp (the cm-block prefix fold).
+            let pre_cm_anchor = stamp_commits[..cm_idx]
+                .iter()
+                .fold(pool.prev_anchor_at(init_height), |anchor, commit| {
+                    anchor.next_stamp(init_height.epoch(), commit)
+                });
+
+            (pre_cm_anchor, stamps[cm_idx].clone())
+        };
         let nf_header = self.nullifier_pcd(rng, *note, epoch);
 
         let (spendable, ()) = PROOF_SYSTEM

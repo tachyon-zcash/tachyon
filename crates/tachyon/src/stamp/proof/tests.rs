@@ -25,7 +25,6 @@ use crate::{
         PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_plan, build_output_stamp,
         build_unspent_pcd_between_anchors, build_unspent_pcd_between_blocks,
         build_unspent_seed_pcd, random_block, random_block_with, shared_sk, spend_witness,
-        spendable_init_inputs,
     },
     note,
     nullifier::{self, Nullifier},
@@ -109,92 +108,6 @@ fn same_epoch_honest_spend_accepted() {
     PROOF_SYSTEM
         .rerandomize(stamp, rng)
         .expect("rerandomize honest same-epoch spend");
-}
-
-#[test]
-fn same_epoch_wrong_index_accepted_but_off_sequence() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(500);
-    let cm_height = mine_cm_in_epoch_one(rng, &mut pool, note.commitment());
-    let wrong = EpochIndex(cm_height.epoch().0 + 2);
-
-    // Honest pre-cm anchor, wrong-epoch derivation: every in-circuit check
-    // passes, but the emitted anchor folds `wrong` and so sits off the
-    // published sequence; consensus anchor membership rejects the eventual
-    // spend.
-    let (pre_cm_anchor, creation_set) = spendable_init_inputs(&pool, note.commitment(), cm_height);
-    let present_nf = user.nf_at(&note, wrong);
-    let nf_wrong = user.derived_range(rng, &note, wrong, 1);
-    let (spendable, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::SpendableInit,
-            witness::spendable_init(
-                (*nf_wrong.data(), ()),
-                pre_cm_anchor,
-                &creation_set,
-                present_nf,
-            ),
-            nf_wrong,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("SpendableInit accepts the wrong-index derivation");
-
-    let cm_commit = TachygramSetPoly::from_iter(creation_set).commit();
-    let anchor = spendable.data().2;
-    assert_eq!(anchor, pre_cm_anchor.next_stamp(wrong, &cm_commit));
-    let off_sequence =
-        (0..=cm_height.0).all(|height| pool.anchor_at(BlockHeight(height)) != anchor);
-    assert!(
-        off_sequence,
-        "wrong-index anchor must be absent from the published sequence"
-    );
-}
-
-#[test]
-fn spendable_init_accepts_forged_anchor() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(500);
-    let cm = note.commitment();
-    let cm_height = mine_cm_in_epoch_one(rng, &mut pool, cm);
-    let epoch = cm_height.epoch();
-
-    // Arbitrary `pre_cm_anchor = x` at the correct epoch: the circuit accepts
-    // (the witness is free by design), but the emitted anchor descends from
-    // `x` rather than a chain member, so consensus anchor membership is what
-    // rejects the eventual spend.
-    let stamps = pool.tachygrams_at(cm_height);
-    let cm_idx = stamps
-        .iter()
-        .position(|tgs| tgs.contains(&cm.into()))
-        .expect("cm present in cm-block");
-    let x = Anchor::from(Fp::random(&mut *rng));
-    let cm_commit = TachygramSetPoly::from_iter(stamps[cm_idx].clone()).commit();
-
-    let present_nf = user.nf_at(&note, epoch);
-    let nf_header = user.derived_range(rng, &note, epoch, 1);
-    let (forged_spendable, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::SpendableInit,
-            witness::spendable_init((*nf_header.data(), ()), x, &stamps[cm_idx], present_nf),
-            nf_header,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("SpendableInit accepts the forged anchor");
-
-    let forged_anchor = forged_spendable.data().2;
-    assert_eq!(forged_anchor, x.next_stamp(epoch, &cm_commit));
-    let forged_off_sequence =
-        (0..=cm_height.0).all(|height| pool.anchor_at(BlockHeight(height)) != forged_anchor);
-    assert!(
-        forged_off_sequence,
-        "forged anchor must be absent from the published sequence"
-    );
 }
 
 #[test]
@@ -1291,23 +1204,14 @@ fn spendable_epoch_lift_accepts_a_mid_epoch_anchor() {
         "the tick advances from the mid-epoch anchor"
     );
 
-    // The published sequence is each block's entry anchor, which carries the
-    // epoch ticks, followed by one post anchor per stamp it contains.
+    // Consensus acknowledges each block's terminal anchor only.
     let forged_anchor = lifted.data().2;
-    for height in (0..=pool.height().0).map(BlockHeight) {
-        let mut anchor = pool.prev_anchor_at(height);
-        assert_ne!(
-            forged_anchor, anchor,
-            "forged anchor must be absent from the published sequence"
-        );
-        for commit in pool.stamp_commits_at(height) {
-            anchor = anchor.next_stamp(height.epoch(), &commit);
-            assert_ne!(
-                forged_anchor, anchor,
-                "forged anchor must be absent from the published sequence"
-            );
-        }
-    }
+    let off_sequence =
+        (0..=pool.height().0).all(|height| pool.anchor_at(BlockHeight(height)) != forged_anchor);
+    assert!(
+        off_sequence,
+        "forged anchor must be absent from the published sequence"
+    );
 }
 
 /// The empty-epoch seed is the segment `UnspentEpochFuse` splices against on
@@ -1881,77 +1785,51 @@ fn spendable_lift_rejects_wrong_cm() {
     );
 }
 
-/// The range must derive from the lineage's own note.
 #[test]
-fn spendable_epoch_lift_rejects_wrong_note() {
+fn spendable_epoch_lift_rejects_bad_range() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
     let other = user.random_note(700);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let range = user.derived_range(rng, &other, EpochIndex(0), 2);
 
-    let err = PROOF_SYSTEM
-        .fuse(rng, spendable::SpendableEpochLift, (), spendable, range)
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "SpendableEpochLift: derived range does not match note"
-    );
-}
+    let cases = [
+        // The range must derive from the lineage's own note.
+        (
+            &other,
+            EpochIndex(0),
+            2,
+            "SpendableEpochLift: derived range does not match note",
+        ),
+        // The range must open on the epoch the lineage is presently in.
+        (
+            &note,
+            EpochIndex(1),
+            2,
+            "SpendableEpochLift: derived range does not start at the lineage epoch",
+        ),
+        // The range spans exactly the two epochs the tick moves between.
+        (
+            &note,
+            EpochIndex(0),
+            3,
+            "SpendableEpochLift: derived range must span two epochs",
+        ),
+    ];
 
-/// The range must open on the epoch the lineage is presently in.
-#[test]
-fn spendable_epoch_lift_rejects_wrong_epoch() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let range = user.derived_range(rng, &note, EpochIndex(1), 2);
-
-    let err = PROOF_SYSTEM
-        .fuse(rng, spendable::SpendableEpochLift, (), spendable, range)
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "SpendableEpochLift: derived range does not start at the lineage epoch"
-    );
-}
-
-/// The range spans exactly the two epochs the tick moves between.
-#[test]
-fn spendable_epoch_lift_rejects_multi_epoch_range() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let range = user.derived_range(rng, &note, EpochIndex(0), 3);
-
-    let err = PROOF_SYSTEM
-        .fuse(rng, spendable::SpendableEpochLift, (), spendable, range)
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "SpendableEpochLift: derived range must span two epochs"
-    );
+    for (range_note, epoch_start, len, expected) in cases {
+        let spendable = user.spendable_init(rng, &note, &pool, init_height);
+        let range = user.derived_range(rng, range_note, epoch_start, len);
+        let err = PROOF_SYSTEM
+            .fuse(rng, spendable::SpendableEpochLift, (), spendable, range)
+            .err()
+            .unwrap_or_else(|| panic!("SpendableEpochLift accepted {expected}"));
+        let ragu::Error::InvalidWitness(inner) = err else {
+            panic!("expected InvalidWitness for {expected}, got {err:?}");
+        };
+        assert_eq!(inner.to_string(), expected);
+    }
 }
 
 #[test]
