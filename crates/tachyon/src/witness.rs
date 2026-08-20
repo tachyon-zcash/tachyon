@@ -18,8 +18,8 @@ use crate::{
     stamp::proof::{
         delegation::NullifierFuse,
         pool::{
-            AnchorSeed, EmptyEpochUnspentSeed, UnspentBind, UnspentEpochFuse, UnspentFuse,
-            UnspentSeed,
+            AnchorSeed, EmptyEpochUnspentSeed, EndEpochUnspentSeed, UnspentBind, UnspentEpochFuse,
+            UnspentFuse, UnspentSeed,
         },
         spendable::SpendableInit,
         stamp::MergeStamp,
@@ -78,6 +78,22 @@ pub const fn empty_epoch_unspent_seed(
     nf: Nullifier,
 ) -> StepWitness<'static, EmptyEpochUnspentSeed> {
     (prev_epoch_tip, (epoch, nf))
+}
+
+/// Prepare the witness for [`EndEpochUnspentSeed`]:
+/// `(epoch_tip, (epoch, nf_out), nf_in)`.
+#[must_use]
+pub const fn end_epoch_unspent_seed(
+    (_left, _right): (
+        StepLeft<EndEpochUnspentSeed>,
+        StepRight<EndEpochUnspentSeed>,
+    ),
+    anchor_prev: Anchor,
+    epoch_prev: EpochIndex,
+    nf_prev: Nullifier,
+    nf: Nullifier,
+) -> StepWitness<'static, EndEpochUnspentSeed> {
+    (anchor_prev, (epoch_prev, nf_prev), nf)
 }
 
 /// Prepare the witness for [`UnspentFuse`]:

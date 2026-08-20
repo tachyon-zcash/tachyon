@@ -348,6 +348,72 @@ impl Step for EmptyEpochUnspentSeed {
     }
 }
 
+/// Seed spanning one epoch boundary link, from an epoch's terminal anchor to
+/// the next epoch's opening boundary anchor.
+///
+/// The segment covers exactly the tick `anchor_prev.next_epoch(epoch_prev +
+/// 1)`, so its `elapsed` holds the single nullifier `nf_prev` tested in the
+/// epoch being left, and `nf` opens as the tip in the epoch being entered.
+///
+/// # Soundness
+///
+/// `nf_prev` and `nf` are unconstrained here, as at every seed;
+/// [`UnspentBind`] forces the endpoints against the note's genuine derivation.
+/// `elapsed` is derived from `nf_prev` rather than witnessed, so the two cannot
+/// disagree.
+///
+/// `anchor_prev` is likewise unconstrained, and nothing here requires it to be
+/// its epoch's terminal anchor. Adjacency at the fuses that consume this
+/// segment, and consensus membership of the eventual spend's anchor, are what
+/// reject a tick folded from a short anchor.
+#[derive(Debug)]
+pub struct EndEpochUnspentSeed;
+
+impl Step for EndEpochUnspentSeed {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = ArbitraryUnspent;
+    type Right = ();
+    /// `(anchor_prev, (epoch_prev, nf_prev), nf)`.
+    type Witness<'source> = (Anchor, (EpochIndex, Nullifier), Nullifier);
+
+    const INDEX: Index = Index::new(20);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (anchor_prev, (epoch_prev, nf_prev), nf): Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let (&g0, &g1) = {
+            let generators = Pasta::host_generators(Pasta::baked());
+            (
+                generators.g().first().expect("at least one generator"),
+                generators.g().get(1).expect("at least two generators"),
+            )
+        };
+
+        // One-member elapsed: `[nf_prev]` plus the sentinel `1`.
+        let elapsed_commit = NfSeqCommit::from(g0 * Fp::from(nf_prev) + g1);
+
+        let epoch = epoch_prev.next();
+        let anchor = anchor_prev.next_epoch(epoch);
+
+        Ok((
+            (
+                anchor_prev,
+                (epoch_prev, nf_prev),
+                elapsed_commit,
+                (epoch, nf),
+                anchor,
+            ),
+            (),
+        ))
+    }
+}
+
 /// Compose two [`ArbitraryUnspent`] lineages sharing a mid-epoch junction.
 ///
 /// The halves meet inside one epoch (`right.epoch_start == left.epoch_end`), at

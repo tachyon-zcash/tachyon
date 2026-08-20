@@ -41,6 +41,7 @@ fn make_app() -> Result<Application, ragu::Error> {
         .register(stamp::SpendStamp)?
         .register(stamp::MergeStamp)?
         .register(stamp::StampLift)?
+        .register(pool::EndEpochUnspentSeed)?
         .finalize()
 }
 
