@@ -477,9 +477,13 @@ impl PoolSim {
             },
         };
 
-        // One past the last included stamp of the end block (whose post is `end`).
-        let (end_height, end_position) = self.locate_anchor(end).expect("end anchor must exist");
-        let to = (end_position + 1).min(stamp_len(end_height));
+        // One past the last included stamp of the end block (whose post is
+        // `end`). A boundary end covers nothing in the epoch it enters, so the
+        // walk stops at that epoch's first block having taken no stamp from it.
+        let (end_height, to) = match self.locate_anchor(end) {
+            Ok((height, position)) => (height, (position + 1).min(stamp_len(height))),
+            Err((_pre_boundary, epoch)) => (epoch_first_of(epoch), 0),
+        };
 
         // Forward walk. The first block is trimmed at its head (`from`), the last
         // at its tail (`to`). A boundary marker precedes every epoch-first block
@@ -668,11 +672,9 @@ pub(crate) fn build_unspent_pcd_between_blocks(
 /// spanned, `nf[0]` for the span's starting epoch. Seeds one leaf per anchor
 /// step and fuses them as a binary tree via [`fuse_unspent_tree`].
 ///
-/// An epoch that publishes no stamp in the span gets an
-/// [`EmptyEpochUnspentSeed`](pool::EmptyEpochUnspentSeed) leaf, seeded from the
-/// previous epoch's terminal anchor. An epoch the span enters mid-way through
-/// has no such anchor to seed from, so a stampless remainder there contributes
-/// no leaf and the segment starts in the next epoch.
+/// Every epoch boundary the span crosses gets an
+/// [`EndEpochUnspentSeed`](pool::EndEpochUnspentSeed) leaf spanning the
+/// boundary tick, seeded from the leaving epoch's terminal anchor.
 pub(crate) fn build_unspent_pcd_between_anchors(
     rng: &mut (impl RngCore + CryptoRng),
     pool: &PoolSim,
@@ -680,33 +682,30 @@ pub(crate) fn build_unspent_pcd_between_anchors(
     (start_anchor, end_anchor): (Anchor, Anchor),
 ) -> Pcd<pool::ArbitraryUnspent> {
     // One leaf per stamp, each advancing its block's running anchor, plus one
-    // per epoch the span crosses without a stamp. The tree fold derives seams
-    // from headers, so the interleaved boundary markers seed no leaf of their
-    // own. Anchors are folded here: the first block runs from `start_anchor`
-    // (possibly mid-block), every other from its recorded entry anchor.
+    // per boundary the span crosses. Anchors are folded here: the first block
+    // runs from `start_anchor` (possibly mid-block), every other from its
+    // recorded entry anchor.
     let steps = pool.anchor_steps(start_anchor, end_anchor);
     let leading = steps.first().expect("anchor span covers at least one step");
     // `nf` is indexed from the epoch `start_anchor` sits in, which a boundary
-    // anchor names directly and any other names through its block.
-    let base = match pool.locate_anchor(start_anchor) {
-        Ok((height, _)) => height.epoch(),
-        Err((_, epoch)) => epoch,
+    // anchor names directly and any other names through its block. A boundary
+    // start's own crossing precedes the span, so its leading marker seeds
+    // nothing; a marker after a block-terminal start is a genuine crossing.
+    let (base, skip) = match pool.locate_anchor(start_anchor) {
+        Ok((height, _)) => (height.epoch(), 0),
+        Err((_, epoch)) => (epoch, 1),
     };
     let nf_at = |epoch: EpochIndex| -> Nullifier {
         nf[usize::try_from(u64::from(epoch - base)).expect("epoch within span")]
     };
 
     let mut leaves: Vec<Pcd<pool::ArbitraryUnspent>> = Vec::with_capacity(steps.len());
-    // Every epoch the span crosses opens with a boundary marker, so breaking a
-    // chunk before each marker buffers one epoch's blocks and defers the choice
-    // of leaf to the chunk's end.
-    for chunk in steps.chunk_by(|_, right| right.is_ok()) {
-        let blocks: Vec<_> = chunk.iter().filter_map(|step| step.as_ref().ok()).collect();
-        if let Some(&&(first_height, _)) = blocks.first() {
-            let epoch = first_height.epoch();
-            let leaf_nf = nf_at(epoch);
-            for step in blocks {
-                let (height, block_stamps) = (step.0, &step.1);
+    for step in steps.iter().skip(skip) {
+        match step.as_ref() {
+            Ok(block) => {
+                let (height, block_stamps) = (block.0, &block.1);
+                let epoch = height.epoch();
+                let leaf_nf = nf_at(epoch);
                 let mut entry = if leaves.is_empty() && leading.is_ok() {
                     start_anchor
                 } else {
@@ -724,38 +723,38 @@ pub(crate) fn build_unspent_pcd_between_anchors(
                     leaves.push(seed);
                     entry = entry.next_stamp(epoch, &commit);
                 }
-            }
-        } else {
-            // An epoch crossed without a stamp has a single anchor, the boundary
-            // tick's output, folded from the previous epoch's terminal anchor.
-            let Err(epoch) = chunk[0] else {
-                panic!("a chunk with no block is a lone boundary marker")
-            };
-            let (seed, ()) = PROOF_SYSTEM
-                .seed(
-                    rng,
-                    pool::EmptyEpochUnspentSeed,
-                    witness::empty_epoch_unspent_seed(
-                        ((), ()),
-                        pool.pre_epoch_anchor(epoch),
-                        epoch,
-                        nf_at(epoch),
-                    ),
-                )
-                .expect("EmptyEpochUnspentSeed");
-            leaves.push(seed);
+            },
+            // The marker denotes the crossing *into* `epoch`, so the segment
+            // leaves `epoch - 1` from that epoch's terminal anchor, which is
+            // what `pre_epoch_anchor` names.
+            Err(&epoch) => {
+                let prev_epoch = EpochIndex(epoch.0 - 1);
+                let (seed, ()) = PROOF_SYSTEM
+                    .seed(
+                        rng,
+                        pool::EndEpochUnspentSeed,
+                        witness::end_epoch_unspent_seed(
+                            ((), ()),
+                            pool.pre_epoch_anchor(epoch),
+                            prev_epoch,
+                            nf_at(prev_epoch),
+                            nf_at(epoch),
+                        ),
+                    )
+                    .expect("EndEpochUnspentSeed");
+                leaves.push(seed);
+            },
         }
     }
     fuse_unspent_tree(rng, nf, base, leaves)
 }
 
 /// Fuse contiguous [`ArbitraryUnspent`] chains as a binary tree: split at the
-/// midpoint, fuse each half, then join the halves at whatever seam their
-/// headers meet: a shared epoch concatenates ([`UnspentFuse`]), consecutive
-/// epochs splice at the boundary ([`UnspentEpochFuse`]). Everything a seam
-/// needs is read off the halves' headers; a chain's elapsed slice is
-/// `nf[epoch_start - base..epoch_end - base]` (one nullifier per crossed
-/// boundary).
+/// midpoint, fuse each half, then concatenate the halves at their shared epoch
+/// ([`UnspentFuse`]). Every seam is intra-epoch, since a boundary is itself a
+/// chain link. Everything a seam needs is read off the halves' headers; a
+/// chain's elapsed slice is `nf[epoch_start - base..epoch_end - base]` (one
+/// nullifier per crossed boundary).
 fn fuse_unspent_tree(
     rng: &mut (impl RngCore + CryptoRng),
     nf: &[Nullifier],
@@ -784,24 +783,15 @@ fn fuse_unspent_tree(
     let (_, (right_epoch_start, _), _, (right_epoch_end, _), _) = *right.data();
     let left_el = elapsed_slice(left_epoch_start, left_epoch_end);
     let right_el = elapsed_slice(right_epoch_start, right_epoch_end);
-    if right_epoch_start.0 == left_epoch_end.0 {
-        let witness = witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
-        let (fused, ()) = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, witness, left, right)
-            .expect("UnspentFuse mid-epoch");
-        fused
-    } else {
-        debug_assert_eq!(
-            right_epoch_start.0,
-            left_epoch_end.0 + 1,
-            "fused chains must be contiguous"
-        );
-        let witness = witness::unspent_epoch_fuse((*left.data(), *right.data()), left_el, right_el);
-        let (fused, ()) = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentEpochFuse, witness, left, right)
-            .expect("UnspentEpochFuse boundary");
-        fused
-    }
+    assert_eq!(
+        right_epoch_start.0, left_epoch_end.0,
+        "fused chains must meet inside one epoch"
+    );
+    let witness = witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
+    let (fused, ()) = PROOF_SYSTEM
+        .fuse(rng, pool::UnspentFuse, witness, left, right)
+        .expect("UnspentFuse");
+    fused
 }
 
 /// A fixed, deterministic spending key. Tests that don't need a distinct wallet
@@ -1018,11 +1008,21 @@ impl WalletSim {
         spendable: Pcd<spendable::SpendableHeader>,
         note: &Note,
     ) -> Pcd<spendable::SpendableHeader> {
-        let range = self.derived_range(rng, note, spendable.data().1.0, 2);
-        let (lifted, ()) = PROOF_SYSTEM
-            .fuse(rng, spendable::SpendableEpochLift, (), spendable, range)
-            .expect("SpendableEpochLift");
-        lifted
+        let (_, (epoch, present_nf), anchor) = *spendable.data();
+        let (crossing, ()) = PROOF_SYSTEM
+            .seed(
+                rng,
+                pool::EndEpochUnspentSeed,
+                witness::end_epoch_unspent_seed(
+                    ((), ()),
+                    anchor,
+                    epoch,
+                    present_nf,
+                    self.nf_at(note, epoch.next()),
+                ),
+            )
+            .expect("EndEpochUnspentSeed");
+        self.lift(rng, spendable, crossing, note, epoch, epoch.next())
     }
 
     pub fn lift_over_creation_epoch(
