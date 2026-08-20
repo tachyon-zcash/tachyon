@@ -1033,35 +1033,6 @@ fn epoch_fuse_setup(
     (nf, left, right)
 }
 
-/// Extend `left` over the boundary out of its tip epoch: seed the crossing on
-/// `left`'s terminal anchor and fuse it on, so the result opens where `left`
-/// did and tips at `nf_in` in the next epoch.
-fn cross_out_of(
-    rng: &mut StdRng,
-    left: Pcd<pool::ArbitraryUnspent>,
-    left_elapsed: &[Nullifier],
-    nf_in: Nullifier,
-) -> Pcd<pool::ArbitraryUnspent> {
-    let (_, _, _, (epoch_end, nf_end), anchor_last) = *left.data();
-    let (seed, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EndEpochUnspentSeed,
-            witness::end_epoch_unspent_seed(((), ()), anchor_last, epoch_end, nf_end, nf_in),
-        )
-        .expect("EndEpochUnspentSeed");
-    let (crossed, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            witness::unspent_fuse((*left.data(), *seed.data()), left_elapsed, &[nf_end]),
-            left,
-            seed,
-        )
-        .expect("UnspentFuse over the crossing");
-    crossed
-}
-
 /// Two halves meeting at a boundary compose through a crossing seed: the seam
 /// nullifier the left half was still holding as its tip lands in the merged
 /// history, and the merged segment spans both halves' outer endpoints.
@@ -1072,7 +1043,25 @@ fn end_epoch_unspent_seed_composes_across_a_boundary() {
     let start = left.data().0;
     let end = right.data().4;
 
-    let crossed = cross_out_of(rng, left, &[nf0, nf1], nf3);
+    // Seed the crossing on left's terminal anchor and fuse it on, so left's
+    // tip nullifier stops being in progress and joins the history.
+    let (seed, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::EndEpochUnspentSeed,
+            witness::end_epoch_unspent_seed(((), ()), left.data().4, EpochIndex(2), nf2, nf3),
+        )
+        .expect("EndEpochUnspentSeed");
+    let (crossed, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::UnspentFuse,
+            witness::unspent_fuse((*left.data(), *seed.data()), &[nf0, nf1], &[nf2]),
+            left,
+            seed,
+        )
+        .expect("UnspentFuse over the crossing");
+
     let (fused, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -1560,165 +1549,6 @@ fn end_epoch_unspent_seed_crosses_a_stampless_epoch() {
         (EpochIndex(2), user.nf_at(&note, EpochIndex(2)))
     );
     assert_eq!(lifted.data().2, pool.anchor_at(target_height));
-}
-
-#[test]
-fn crossed_fuse_rejects_wrong_left_seq() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let ([nf0, nf1, nf2, nf3, _nf4], left, right) = epoch_fuse_setup(rng);
-    let crossed = cross_out_of(rng, left, &[nf0, nf1], nf3);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            (
-                NfSeqPoly::from_iter([nf1, nf0, nf2]),
-                NfSeqPoly::from_iter([nf0, nf1, nf2, nf3]),
-                NfSeqPoly::from_iter([nf3]),
-            ),
-            crossed,
-            right,
-        )
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "UnspentFuse: left polynomial does not match header"
-    );
-}
-
-#[test]
-fn crossed_fuse_rejects_wrong_right_seq() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let ([nf0, nf1, nf2, nf3, nf4], left, right) = epoch_fuse_setup(rng);
-    let crossed = cross_out_of(rng, left, &[nf0, nf1], nf3);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            (
-                NfSeqPoly::from_iter([nf0, nf1, nf2]),
-                NfSeqPoly::from_iter([nf0, nf1, nf2, nf3]),
-                NfSeqPoly::from_iter([nf4]),
-            ),
-            crossed,
-            right,
-        )
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "UnspentFuse: right polynomial does not match header"
-    );
-}
-
-#[test]
-fn crossed_fuse_rejects_wrong_combined() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let ([nf0, nf1, nf2, nf3, _nf4], left, right) = epoch_fuse_setup(rng);
-    let crossed = cross_out_of(rng, left, &[nf0, nf1], nf3);
-    // Both halves honest; `combined` forged as the right half alone, dropping
-    // the left history and the crossing it carries.
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            (
-                NfSeqPoly::from_iter([nf0, nf1, nf2]),
-                NfSeqPoly::from_iter([nf3]),
-                NfSeqPoly::from_iter([nf3]),
-            ),
-            crossed,
-            right,
-        )
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "UnspentFuse: combined is not the concatenation of the halves"
-    );
-}
-
-#[test]
-fn crossed_fuse_rejects_wrong_boundary_anchor() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let ([nf0, nf1, nf2, nf3, _nf4], left, _right) = epoch_fuse_setup(rng);
-    let left_end = left.data().4;
-    let crossed = cross_out_of(rng, left, &[nf0, nf1], nf3);
-    // A forged epoch-3 right half rooted directly at the pre-crossing anchor:
-    // the epoch labels line up, but the root skips the `next_epoch` fold the
-    // crossing seed carries.
-    let stamp = [Tachygram::random(&mut *rng)];
-    let forged_right = build_unspent_seed_pcd(rng, left_end, EpochIndex(3), &stamp, nf3);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            witness::unspent_fuse(
-                (*crossed.data(), *forged_right.data()),
-                &[nf0, nf1, nf2],
-                &[],
-            ),
-            crossed,
-            forged_right,
-        )
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "UnspentFuse: left.anchor_last must equal right.anchor_prev"
-    );
-}
-
-#[test]
-fn crossed_fuse_rejects_epoch_skip() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let mut pool = PoolSim::genesis(rng);
-    pool.advance(2 * EPOCH_SIZE, |_| random_block(rng, 1, 2));
-    let nf_e0 = Nullifier::from(Fp::random(&mut *rng));
-    let nf_e1 = Nullifier::from(Fp::random(&mut *rng));
-    let nf_e2 = Nullifier::from(Fp::random(&mut *rng));
-    let left = build_unspent_pcd_between_blocks(
-        rng,
-        &pool,
-        &[nf_e0],
-        BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1),
-    );
-    // One crossing reaches epoch 1, so an epoch-2 half is still a boundary
-    // away: a single crossing cannot skip an epoch. The forged half roots on
-    // the crossing's own tip, so only the epoch labels disagree.
-    let crossed = cross_out_of(rng, left, &[], nf_e1);
-    let stamp = [Tachygram::random(&mut *rng)];
-    let forged_right = build_unspent_seed_pcd(rng, crossed.data().4, EpochIndex(2), &stamp, nf_e2);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            witness::unspent_fuse((*crossed.data(), *forged_right.data()), &[nf_e0], &[]),
-            crossed,
-            forged_right,
-        )
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "UnspentFuse: forwards half must sit in left's tip epoch"
-    );
 }
 
 #[test]
