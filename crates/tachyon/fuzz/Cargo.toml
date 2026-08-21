@@ -1,0 +1,43 @@
+[package]
+name = "zcash_tachyon-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.zcash_tachyon]
+path = ".."
+features = ["std"]
+
+# Detach from the parent workspace: cargo-fuzz crates are built with an
+# unstable sanitizer flag and their own dependency set.
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "bundle_read"
+path = "fuzz_targets/bundle_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stamped_bundle_read"
+path = "fuzz_targets/stamped_bundle_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stripped_bundle_read"
+path = "fuzz_targets/stripped_bundle_read.rs"
+test = false
+doc = false
+bench = false
