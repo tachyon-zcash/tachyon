@@ -5,8 +5,8 @@
 use core::array;
 
 use ff::PrimeField as _;
-use group::{Curve as _, GroupEncoding as _, prime::PrimeCurveAffine as _};
-use pasta_curves::{EpAffine, Eq, EqAffine, Fp, arithmetic::Coordinates};
+use group::{GroupEncoding as _, prime::PrimeCurveAffine as _};
+use pasta_curves::{EpAffine, EqAffine, Fp, arithmetic::Coordinates};
 use ragu::Sponge;
 
 use crate::EpochIndex;
@@ -134,47 +134,6 @@ pub(crate) fn nullifier_group(mk: Fp, group: u32) -> [Fp; NF_GROUP] {
         sponge.absorb(value).expect("infallible");
     }
     array::from_fn(|_| sponge.squeeze().expect("infallible"))
-}
-
-const NF_READ_DOMAIN: &[u8; 16] = b"Tachyon-NfReadCh";
-
-/// The challenge for a covering read whose members enter as scalar
-/// monomials, over the three polynomial commitments and every member.
-///
-/// A scalar member has no commitment, and the read identity is linear in
-/// each, so every member is absorbed: that makes the solve a fixed point and
-/// forces each member to the covering sequence's genuine coefficient. The
-/// witness is built from this challenge, so it must be a Poseidon digest the
-/// native witness builders replicate.
-///
-/// # Panics
-///
-/// Panics if any commitment is the identity point.
-#[expect(
-    clippy::expect_used,
-    reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
-)]
-#[must_use]
-pub(crate) fn read_challenge(covering: Eq, older: Eq, tail: Eq, members: &[Fp]) -> Fp {
-    let (covering_lo, covering_hi) = point_limbs(covering.to_affine());
-    let (older_lo, older_hi) = point_limbs(older.to_affine());
-    let (tail_lo, tail_hi) = point_limbs(tail.to_affine());
-    let mut sponge = Sponge::new();
-    for value in [
-        Fp::from_u128(u128::from_le_bytes(*NF_READ_DOMAIN)),
-        covering_lo,
-        covering_hi,
-        older_lo,
-        older_hi,
-        tail_lo,
-        tail_hi,
-    ] {
-        sponge.absorb(value).expect("infallible");
-    }
-    for &member in members {
-        sponge.absorb(member).expect("infallible");
-    }
-    sponge.squeeze().expect("infallible")
 }
 
 /// A Vesta point's compressed encoding as two 128-bit $\mathbb{F}_p$ limbs.

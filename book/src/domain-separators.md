@@ -62,7 +62,6 @@ These are all Tachyon-specific digests, performed in-circuit.
 | ------- | ----- |
 | Nullifier master key | `Tachyon-NfMaster` |
 | Nullifier derivation | `Tachyon-NfDerive` |
-| Nullifier read challenge | `Tachyon-NfReadCh` |
 | Note commitment | `Tachyon-CmDerive` |
 | Output padding tachygram | `Tachyon-PadDeriv` |
 | Action digest | `Tachyon-ActionDg` |

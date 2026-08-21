@@ -86,59 +86,6 @@ pub(crate) fn enforce_covering_read(
     Ok(())
 }
 
-/// Confirm the scalars `members` match consecutive coefficients of the
-/// committed covering polynomial `covering`, `margin` coefficients above
-/// `covering`'s degree 0, at the caller-supplied challenge `z`.
-///
-/// The members enter as monomial coefficients, so they carry no commitment,
-/// and the identity is linear in each. **The caller must derive `z` over the
-/// three commitments and every member** (see `poseidon::read_challenge`),
-/// which makes the solve a fixed point and forces each member to `covering`'s
-/// genuine coefficient.
-///
-/// # Caller obligations (soundness)
-///
-/// The `z` derivation above; the module-level binding obligation for
-/// `covering`; statement-fixed `margin`; `covering`'s rank pinned as the module
-/// documents.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the polynomials, members, and window bounds are all independent \
-              statement inputs"
-)]
-pub(crate) fn enforce_covering_read_members<const MEMBERS: usize>(
-    ctx: &mut StepCtx<'_>,
-    covering: &Polynomial,
-    older: &Polynomial,
-    tail: &Polynomial,
-    members: [Fp; MEMBERS],
-    margin: u64,
-    z: Fp,
-    err: &'static str,
-) -> Result<()> {
-    let read_at_z = members
-        .iter()
-        .fold(Fp::ZERO, |acc, &member| acc * z + member);
-
-    #[expect(clippy::as_conversions, reason = "member counts are tiny constants")]
-    check_read_identity(
-        covering,
-        older,
-        tail,
-        read_at_z,
-        MEMBERS as u64,
-        margin,
-        z,
-        err,
-    )?;
-
-    ctx.enforce_poly_query(covering.commit(), z, covering.eval(z))?;
-    ctx.enforce_poly_query(older.commit(), z, older.eval(z))?;
-    ctx.enforce_poly_query(tail.commit(), z, tail.eval(z))?;
-
-    Ok(())
-}
-
 /// The lifted identity at `z`. Every exponent is bounded by the rank cap.
 #[expect(
     clippy::too_many_arguments,

@@ -12,11 +12,10 @@ use ragu::{
 
 use super::{delegation::NullifierDerivation, spendable::SpendableHeader};
 use crate::{
-    digest::poseidon,
     note,
     nullifier::Nullifier,
     primitives::{Anchor, NfMarginPoly, NfSeqPoly, NfTailPoly},
-    relations::read::enforce_covering_read_members,
+    relations::read::enforce_covering_read,
 };
 
 /// Header binding a spend to its lineage note and epoch nullifier pair.
@@ -60,15 +59,15 @@ impl Header for SpendHeader {
 /// [`SpendableInit`](super::spendable::SpendableInit) respectively), so no
 /// note witness is needed here. **Any range covering the lineage's epoch and
 /// the next is accepted**: the 2-wide covering read at the lineage's epoch
-/// confirms the pair, with `present_nf` pinned against the spendable and
-/// `nf_next` a witnessed scalar the identity forces. Both nullifiers are
-/// emitted on the [`SpendHeader`] for the action-producing step to publish.
+/// confirms the pair, with `present_nf` pinned against the spendable. Both
+/// nullifiers are emitted on the [`SpendHeader`] for the action-producing step
+/// to publish.
 ///
 /// # Soundness
 ///
-/// The read's challenge absorbs both scalar members (see
-/// `poseidon::read_challenge`), which forces each to the covering sequence's
-/// genuine coefficient.
+/// The pair rides the read as a committed operand, so the transcript challenge
+/// absorbs its commitment and the identity forces both coefficients to the
+/// covering sequence's genuine members.
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -117,26 +116,17 @@ impl Step for SpendBind {
             ));
         }
 
-        // The 2-wide read at the lineage's epoch, members oldest-first. Both
-        // enter as scalar monomials, so the challenge must absorb them: the
-        // member-absorbing Poseidon digest, which the witness builder
-        // replicates.
+        // The 2-wide read at the lineage's epoch, members oldest-first.
         let margin = u64::from(deriv_end - spendable_epoch) - 2;
-        let members = [Fp::from(present_nf), Fp::from(nf_next)];
-        let z = poseidon::read_challenge(
-            nf_seq.commit().into(),
-            older.commit().into(),
-            tail.commit().into(),
-            &members,
-        );
-        enforce_covering_read_members(
+        let read = [present_nf, nf_next].into_iter().collect::<NfSeqPoly>();
+        enforce_covering_read(
             ctx,
             nf_seq.as_ref(),
             older.as_ref(),
             tail.as_ref(),
-            members,
+            read.as_ref(),
+            2,
             margin,
-            z,
             "SpendBind: nullifier pair does not match the derivation",
         )?;
 

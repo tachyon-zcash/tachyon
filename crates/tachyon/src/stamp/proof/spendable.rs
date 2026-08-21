@@ -19,11 +19,10 @@ use ragu::{
 
 use super::{delegation::NullifierDerivation, pool::Unspent};
 use crate::{
-    digest::poseidon,
     note,
     nullifier::Nullifier,
     primitives::{Anchor, EpochIndex, NfMarginPoly, NfSeqPoly, NfTailPoly, TachygramSetPoly},
-    relations::read::enforce_covering_read_members,
+    relations::read::enforce_covering_read,
 };
 
 /// Wallet's spendable position `(cm, (epoch, present_nf), anchor)`
@@ -77,8 +76,9 @@ impl Header for SpendableHeader {
 /// chain node is `H(prev || epoch || commit)` under the stamp domain, and
 /// preimage resistance forces all three once the eventual spend's anchor is
 /// consensus-checked — a wrong epoch folds into an anchor off the published
-/// sequence. `present_nf` closes through the read identity, whose challenge
-/// absorbs it (see `poseidon::read_challenge`).
+/// sequence. `present_nf` closes through the read identity: it rides as the
+/// read's committed operand, so the transcript challenge absorbs its
+/// commitment.
 ///
 /// No sameness constraint ties this window to the one the spend later reads:
 /// `cm` equality binds every window of the same note to the same lattice.
@@ -132,25 +132,17 @@ impl Step for SpendableInit {
             ));
         }
 
-        // The 1-wide read at the creation epoch. `present_nf` enters as a
-        // scalar monomial, so the challenge must absorb it: the
-        // member-absorbing Poseidon digest, which the witness builder
-        // replicates.
+        // The 1-wide read at the creation epoch.
         let margin = u64::from(deriv_end - creation_epoch) - 1;
-        let z = poseidon::read_challenge(
-            nf_seq.commit().into(),
-            older.commit().into(),
-            tail.commit().into(),
-            &[Fp::from(present_nf)],
-        );
-        enforce_covering_read_members(
+        let read = [present_nf].into_iter().collect::<NfSeqPoly>();
+        enforce_covering_read(
             ctx,
             nf_seq.as_ref(),
             older.as_ref(),
             tail.as_ref(),
-            [Fp::from(present_nf)],
+            read.as_ref(),
+            1,
             margin,
-            z,
             "SpendableInit: nullifier does not match the derivation",
         )?;
 

@@ -1921,7 +1921,7 @@ fn spend_bind_parts(
     (spendable, derived, epoch)
 }
 
-/// A forged next nullifier fails the member-absorbing read.
+/// A forged next nullifier fails the covering read.
 #[test]
 fn spend_bind_rejects_forged_next() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2022,7 +2022,7 @@ fn spend_bind_rejects_a_foreign_sequence() {
     );
 }
 
-/// A forged present nullifier fails the member-absorbing read at
+/// A forged present nullifier fails the covering read at
 /// `SpendableInit`.
 #[test]
 fn spendable_init_rejects_a_forged_nullifier() {
@@ -2335,19 +2335,31 @@ fn nullifier_fuse_rejects_a_wrong_merged() {
     );
 }
 
-/// A next-epoch nullifier *solved* against garbage margins passes the
-/// identity at the challenge the members are absent from; the step's
-/// member-absorbing challenge lands elsewhere and rejects. This is the
-/// free-scalar attack `poseidon::read_challenge` exists to close.
+/// A forged next-epoch nullifier cannot be compensated by choosing the
+/// margins: both bands are disjoint from the read's, so no margin content
+/// moves the read's coefficients.
+///
+/// The derivation starts below the pair's epoch so that *both* margins carry
+/// members. `spend_bind_parts` mints at genesis, which leaves the older margin
+/// empty and reduces this to `spend_bind_rejects_forged_next` with a garbled
+/// tail.
 #[test]
-fn spend_bind_rejects_a_solved_next_over_garbage_margins() {
+fn spend_bind_rejects_a_forged_next_over_garbage_margins() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
+    let mut pool = PoolSim::genesis(rng);
+
+    // Mint into a later epoch, so the window can start below the pair.
+    while pool.height() < BlockHeight(EPOCH_SIZE) {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
     let note = user.random_note(500);
     let stranger = user.random_note(900);
+    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
+    let epoch = init_height.epoch();
+    let spendable = user.spendable_init(rng, &note, &pool, init_height);
+    let derived = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(epoch.0 + 2));
 
-    let (spendable, derived, epoch) = spend_bind_parts(rng, &user, &note);
-    let (_, (_, present_nf), _) = *spendable.data();
     let (nf_seq, _older, _tail, _nf_next) = witness::spend_bind(
         (*spendable.data(), *derived.data()),
         &user.covering_window(&note, &derived),
@@ -2362,36 +2374,16 @@ fn spend_bind_rejects_a_solved_next_over_garbage_margins() {
     let tail_members: Vec<Nullifier> = (epoch.0 + 2..deriv_end.0)
         .map(|epoch_idx| stranger_mk.derive_nullifier(EpochIndex(epoch_idx)))
         .collect();
+    assert!(!older_members.is_empty(), "older margin must carry members");
+    assert!(!tail_members.is_empty(), "newer margin must carry members");
     let older = NfMarginPoly::new(&older_members);
     let tail = NfTailPoly::new(&tail_members);
 
-    // Solve the member at a challenge that omits it: the identity is linear
-    // in `nf_next`, so without absorption this forgery would pass.
-    let cap = 1u64 << ragu::Polynomial::R;
-    let members = 2u64;
-    let margin = u64::from(deriv_end - epoch) - 2;
-    let z_unabsorbed = poseidon::read_challenge(
-        nf_seq.commit().into(),
-        older.commit().into(),
-        tail.commit().into(),
-        &[Fp::from(present_nf)],
-    );
-    let z_cap = z_unabsorbed.pow_vartime([cap]);
-    let lhs = z_unabsorbed.pow_vartime([cap - margin]) * nf_seq.eval(z_unabsorbed);
-    let known =
-        z_cap * z_unabsorbed.pow_vartime([members]) * (older.as_ref().eval(z_unabsorbed) - Fp::ONE)
-            + z_cap * z_unabsorbed * Fp::from(present_nf)
-            + (tail.as_ref().eval(z_unabsorbed) - Fp::ONE);
-    let solved = (lhs - known)
-        * z_cap
-            .invert()
-            .into_option()
-            .expect("challenge is nonzero with overwhelming probability");
-
+    let forged = Nullifier::from(Fp::random(&mut *rng));
     expect_invalid(
         rng,
         spend::SpendBind,
-        (nf_seq, older, tail, Nullifier::from(solved)),
+        (nf_seq, older, tail, forged),
         spendable,
         derived,
         "SpendBind: nullifier pair does not match the derivation",
