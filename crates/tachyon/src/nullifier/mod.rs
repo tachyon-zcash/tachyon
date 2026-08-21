@@ -5,12 +5,48 @@ use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
-use crate::primitives::Tachygram;
+use crate::{constants::EPOCH_MAX, digest::poseidon::NF_GROUP, primitives::Tachygram};
+
+/// Epoch nullifiers per derivation window.
+///
+/// A multiple of [`NF_GROUP`], so the sponge count is exact.
+///
+/// 16 epochs is four sponges, one permutation each, within the per-step gate
+/// cap.
+pub const NF_DERIVATION_WIDTH: usize = 16;
+
+/// Sponges one derivation window costs, a compile-time constant because
+/// window bases are group-aligned.
+#[expect(
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
+    reason = "both operands are powers of two and divide exactly"
+)]
+pub const NF_DERIVATION_GROUPS: usize = NF_DERIVATION_WIDTH / NF_GROUP;
+
+// The property the width's doc comment claims, as a build failure.
+const _: () = assert!(
+    NF_DERIVATION_GROUPS * NF_GROUP == NF_DERIVATION_WIDTH,
+    "the window width must be a whole number of sponges"
+);
+
+/// The largest group base whose window fits inside the epoch space.
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
+    reason = "both widths are small constants, and flooring to the last whole \
+              group is the intended bound"
+)]
+pub const NF_GROUP_BASE_MAX: u32 = (EPOCH_MAX - NF_DERIVATION_WIDTH as u32) / NF_GROUP as u32;
 
 /// A Tachyon nullifier.
 ///
-/// Derived via GGM tree PRF: $mk = \text{KDF}(\psi, nk)$, then
-/// $nf = F_{mk}(\text{epoch})$. Published when a note is spent.
+/// Derived from the note's master key $\mathsf{mk} =
+/// \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi, \mathsf{nk})$ as one
+/// squeeze of the sponge keyed on $\mathsf{mk}$ and the epoch's group index.
+/// Published when a note is spent.
 ///
 /// Unlike Orchard, Tachyon nullifiers:
 /// - Don't need collision resistance (no faerie gold defense)
@@ -21,11 +57,11 @@ use crate::primitives::Tachygram;
 #[into(Fp, Tachygram)]
 pub struct Nullifier(Tachygram);
 
-/// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
+/// Nullifier trapdoor ($\psi$), per-note randomness for nullifier derivation.
 ///
-/// Used to derive the master root key: $mk = \text{KDF}(\psi, nk)$.
-/// The GGM tree PRF then evaluates $nf = F_{mk}(\text{epoch})$.
-/// Prefix keys derived from $mk$ enable range-restricted delegation.
+/// Used to derive the note's master key $\mathsf{mk} =
+/// \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi, \mathsf{nk})$, which
+/// evaluates every epoch. Delegation carries proven value windows.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Trapdoor(#[debug(skip)] Fp);
 

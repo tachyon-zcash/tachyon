@@ -5,3 +5,4 @@
 //! and opens them to check the identity point-wise.
 
 pub(crate) mod enforce;
+pub(crate) mod read;

@@ -1,6 +1,12 @@
-//! GGM nullifier-derivation chain: prove a contiguous range of a note's
-//! per-epoch nullifiers `GGM(mk, ·)`. Wallet-only; every range header carries
-//! `cm` for its consumers.
+//! Prove a fusable range of a note's per-epoch nullifiers.
+//!
+//! Three steps. [`NfMasterSeed`] witnesses the note once and certifies its
+//! commitment and master key; [`NfDerive`] consumes that seed as often as
+//! the wallet needs windows, exporting any sub-range of its window per
+//! proof; and [`NullifierFuse`] concatenates adjacent ranges, so a span of
+//! any length is a chain of windows.
+//! All headers are wallet-only, and no key material rides the exported
+//! [`NullifierDerivation`].
 
 extern crate alloc;
 
@@ -9,58 +15,63 @@ use alloc::{vec, vec::Vec};
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
-    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
-    constraint::{enforce_equal_point, enforce_zero},
+    Header, Index, Step, Suffix,
+    constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
 use crate::{
-    digest::poseidon,
-    keys::{GGM_TREE_ARITY, GGM_TREE_DEPTH, ProofAuthorizingKey},
+    digest::poseidon::{self, NF_GROUP},
+    keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
-    nullifier::Nullifier,
+    nullifier::{NF_DERIVATION_GROUPS, NF_DERIVATION_WIDTH, NF_GROUP_BASE_MAX, Nullifier},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
     relations::enforce::enforce_shifted_combination,
 };
 
-/// In-progress GGM walk position `(cm, node, depth, index)`: the note
-/// commitment `cm` carried for the final binding, the current tree `node`,
-/// levels descended `depth`, and leaf `index`. Wallet-only.
+/// A note's certified commitment and master key (wallet-only).
+///
+/// `mk` is derived natively from the note's secrets and certified here, so
+/// every consuming [`NfDerive`] threads a genuine master key without
+/// re-witnessing the note. `cm` rides along for the derivation's consumers to
+/// bind against.
 #[derive(Clone, Debug)]
-pub struct NfPrefixHeader;
+pub struct NfMasterHeader;
 
-impl Header for NfPrefixHeader {
-    type Data = (note::Commitment, Fp, u8, EpochIndex);
+impl Header for NfMasterHeader {
+    /// `(cm, mk)`.
+    type Data = (note::Commitment, NoteMasterKey);
 
-    const SUFFIX: Suffix = Suffix::new(1);
+    const SUFFIX: Suffix = Suffix::new(13);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (
-            vec![
-                Fp::from(data.0),
-                data.1,
-                Fp::from(u64::from(data.2)),
-                Fp::from(u64::from(data.3.0)),
-            ],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
+        let (cm, mk) = *data;
+        (vec![Fp::from(cm), mk.0], Vec::new(), Vec::new(), Vec::new())
     }
 }
 
 /// A proven contiguous range of derived nullifiers (wallet-only).
 ///
-/// `(cm, (epoch_start, nf_start), nf_seq_commit, (epoch_end, nf_end))`: `cm`
-/// lets every consumer bind the range to the real note; `nf_seq_commit` (the
-/// nullifier sequence) sits between its boundary `(epoch, nullifier)` pairs and
-/// commits to the half-open range `[nf_start, .., nf_end]` (`N_e = GGM(mk, e)`)
-/// at degree 0, sentinel-terminated (see [`NfSeqPoly`]) so the commitment is
-/// never the identity point. `nf_start`/`nf_end` are the genuine boundary
-/// leaves, so a consumer can bind them without opening the sequence.
+/// `(cm, (epoch_start, nf_start), nf_commit, (epoch_end, nf_last))`: covers
+/// epochs `[epoch_start, epoch_end)`; `nf_commit` commits the range's
+/// nullifier sequence $g$ in bare Horner order (see
+/// [`NfSeqPoly`]), one coefficient per covered
+/// epoch, the newest at degree $0$. `cm` binds the range to the real note.
+///
+/// No consumer reads either boundary nullifier as data; every read selects
+/// its own window out of the sequence. `nf_start` is the **rank pin**: it is
+/// $g$'s top coefficient, nonzero by the leaf's guards and threaded by the
+/// fuse, and that induction is what places every covering read's bands.
+/// `nf_last` is pinned by the fuse's degree-0 query.
+///
+/// The header carries a range and a commitment, nothing about who will read
+/// it or where: masking is the consuming step's responsibility.
 #[derive(Clone, Debug)]
-pub struct NullifierHeader;
+pub struct NullifierDerivation;
 
-impl Header for NullifierHeader {
+impl Header for NullifierDerivation {
+    /// `(cm, (epoch_start, nf_start), nf_commit, (epoch_end, nf_last))`.
+    /// `epoch_end` is exclusive and names no item; `nf_last` is the member at
+    /// `epoch_end - 1`.
     type Data = (
         note::Commitment,
         (EpochIndex, Nullifier),
@@ -68,37 +79,59 @@ impl Header for NullifierHeader {
         (EpochIndex, Nullifier),
     );
 
-    const SUFFIX: Suffix = Suffix::new(2);
+    const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, (epoch_start, nf_start), nf_seq_commit, (epoch_end, nf_end)) = *data;
+        let (cm, (epoch_start, nf_start), nf_commit, (epoch_end, nf_last)) = *data;
         (
             vec![
                 Fp::from(cm),
-                Fp::from(u64::from(epoch_start.0)),
+                Fp::from(epoch_start),
                 Fp::from(nf_start),
-                Fp::from(u64::from(epoch_end.0)),
-                Fp::from(nf_end),
+                Fp::from(epoch_end),
+                Fp::from(nf_last),
             ],
             Vec::new(),
             Vec::new(),
-            vec![Eq::from(nf_seq_commit)],
+            vec![Eq::from(nf_commit)],
         )
     }
 }
 
-/// Seed the GGM walk at the master root.
+/// Certify a note's commitment and master key.
 ///
-/// Witnesses the note and `pak`, proves `mk` is the note's master key
-/// (`note.pk == pak.derive_payment_key()`), and emits the depth-0 node carrying
-/// the note's `cm`.
+/// Seed step. Witnesses the note and its proof authorizing key, proves the
+/// key belongs to the note (`note.pk == pak.derive_payment_key()`, which pins
+/// `nk`), derives `mk` from `nk` and the note's trapdoor, and computes `cm`.
+/// `nk` never leaves the step; only `pk`, which preimage-hides it, enters
+/// `cm`.
+///
+/// # Soundness
+///
+/// A seed can invent a note, so `cm` proves nothing on its own. It closes
+/// downstream, where
+/// [`SpendableInit`](super::spendable::SpendableInit) binds it to
+/// creation-set membership and
+/// [`SpendStamp`](super::stamp::SpendStamp) re-derives it from the spent
+/// note. What this step does establish is that `mk` is *this* `cm`'s master
+/// key, and PCD soundness carries that pairing into every consuming
+/// [`NfDerive`].
+///
+/// # Gate budget
+///
+/// | item | gates |
+/// |---|---|
+/// | payment-key sponge (one permutation) | ~293 |
+/// | note-commitment sponge (two permutations) | ~586 |
+/// | master-key sponge (one permutation) | ~293 |
+/// | total | ~1172 |
 #[derive(Debug)]
 pub struct NfMasterSeed;
 
 impl Step for NfMasterSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = NfPrefixHeader;
+    type Output = NfMasterHeader;
     type Right = ();
     /// `(note, pak)`.
     type Witness<'source> = (Note, ProofAuthorizingKey);
@@ -118,111 +151,234 @@ impl Step for NfMasterSeed {
         )?;
         let mk = pak.nk.derive_note_private(note.psi);
         let cm = note.commitment();
-        Ok(((cm, mk.0, 0, EpochIndex(0)), ()))
+        Ok(((cm, mk), ()))
     }
 }
 
-/// Descend one level of the GGM tree.
+/// Derive a window of nullifiers and export any sub-range of it as a
+/// [`NullifierDerivation`].
 ///
-/// Witnesses a free `chunk`; `node' = nf_prefix(node, chunk)`, `index' =
-/// index*ARITY + chunk`, `depth' = depth + 1`.
+/// `Left = NfMasterSeed`. Witnesses the window's group base, the exported
+/// range `[epoch_start, epoch_end)`, and the range sequence $g$. Runs
+/// `NF_DERIVATION_GROUPS` sponges over $(\mathtt{NF\_DOMAIN}, \mathsf{mk},
+/// w)$, each absorbing three elements and squeezing `NF_GROUP` nullifiers for
+/// one permutation, then binds $g$ to the range's members by a single opening
+/// at a free $z$ against their bare Horner accumulation
+///
+/// $$g(z) = \sum_{j < K} \mathsf{nf}_{\mathsf{epoch\_start}+j}\, z^{\,K-1-j}$$
+///
+/// for $K$ the range width. Because $z$ is free and both sides have degree
+/// below $K$, the single opening forces every coefficient of $g$ to the
+/// genuine nullifier, and the boundary members are emitted on the header as
+/// derived values.
+///
+/// # Group alignment
+///
+/// The witness carries the window's *group* base $w_0$ and the step derives
+/// $\mathsf{base} = \mathsf{NF\_GROUP} \cdot w_0$, which makes the sponge
+/// count a circuit constant: `NF_DERIVATION_GROUPS` permutations. The exported
+/// range is free of the alignment: any `[epoch_start, epoch_end)` inside the
+/// window's `NF_DERIVATION_WIDTH` epochs may ride the header. A longer span is
+/// a fused chain of ranges ([`NullifierFuse`]).
+///
+/// # Soundness
+///
+/// `mk` is threaded from the left header, so it is the note's genuine master
+/// key by PCD soundness. The nullifiers are derived natively from it and
+/// certified into `nf_commit` by the opening, whose only free operand is the
+/// range sequence, committed before $z$ exists.
+///
+/// `group_base` and the range are witnessed and range-checked but otherwise
+/// unbound: the range is *labelled* with its epochs, and a prover choosing a
+/// different base gets a correct range for a different span, honestly
+/// labelled. Consumers pick the span they need out of the label. The
+/// window-wide nonzero guard doubles as the rank pin: `nf_start` is $g$'s
+/// top coefficient and cannot be zero, so the announced span is the exact
+/// rank.
+///
+/// # Committed polynomials
+///
+/// | polynomial | role |
+/// |---|---|
+/// | `seq` | the range sequence, bound by the accumulation opening |
+///
+/// # Gate budget
+///
+/// | item | gates |
+/// |---|---|
+/// | four group sponges (one permutation each) | ~1152 |
+/// | accumulation sum (16 gated multiply-adds) | ~48 |
+/// | base and range checks | ~30 |
+/// | total | ~1230 |
 #[derive(Debug)]
-pub struct NfPrefixStep;
+pub struct NfDerive;
 
-impl Step for NfPrefixStep {
+impl Step for NfDerive {
     type Aux<'source> = ();
-    type Left = NfPrefixHeader;
-    type Output = NfPrefixHeader;
+    type Left = NfMasterHeader;
+    type Output = NullifierDerivation;
     type Right = ();
-    /// `(chunk,)`.
-    type Witness<'source> = (u8,);
+    /// `(group_base, epoch_start, epoch_end, seq)`.
+    type Witness<'source> = (u32, EpochIndex, EpochIndex, NfSeqPoly);
 
     const INDEX: Index = Index::new(1);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (chunk,): Self::Witness<'source>,
-        (cm, node, depth, index): <Self::Left as Header>::Data,
+        ctx: &mut ragu::StepCtx<'_>,
+        (group_base, epoch_start, epoch_end, seq): Self::Witness<'source>,
+        (cm, mk): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if depth >= GGM_TREE_DEPTH {
+        // Native stand-ins for the base and range checks. `base` is the
+        // product `NF_GROUP * group_base`.
+        if group_base > NF_GROUP_BASE_MAX {
             return Err(ragu::Error::InvalidWitness(
-                "NfPrefixStep: already at maximum depth".into(),
+                "NfDerive: base exceeds epoch space".into(),
             ));
         }
-        if chunk >= GGM_TREE_ARITY {
+        #[expect(
+            clippy::as_conversions,
+            clippy::cast_possible_truncation,
+            reason = "the group and window widths are small constants"
+        )]
+        let base = EpochIndex(group_base * NF_GROUP as u32);
+        if epoch_start.0 < base.0 || epoch_start.0 >= epoch_end.0 {
             return Err(ragu::Error::InvalidWitness(
-                "NfPrefixStep: chunk exceeds GGM arity".into(),
+                "NfDerive: range is empty or starts before the window".into(),
             ));
         }
-        let child = poseidon::nf_prefix(node, chunk);
-        let child_index = EpochIndex(index.0 * u32::from(GGM_TREE_ARITY) + u32::from(chunk));
-        Ok(((cm, child, depth + 1, child_index), ()))
-    }
-}
+        #[expect(
+            clippy::as_conversions,
+            clippy::cast_possible_truncation,
+            reason = "the window width is a small constant"
+        )]
+        if epoch_end.0 > base.0 + NF_DERIVATION_WIDTH as u32 {
+            return Err(ragu::Error::InvalidWitness(
+                "NfDerive: range ends past the window".into(),
+            ));
+        }
 
-/// Turn a leaf node into a single-leaf [`NullifierHeader`].
-///
-/// Requires the walk to be at a leaf (`depth == GGM_TREE_DEPTH`); the nullifier
-/// is `Poseidon(node)` and the range commits to it alone at degree 0 (sentinel
-/// above), spanning the single epoch `[index, index + 1)`.
-#[derive(Debug)]
-pub struct NullifierStep;
+        // The window's nullifiers, `NF_GROUP` per permutation. `mk` is
+        // threaded, so these are the note's genuine nullifiers.
+        let mut nullifiers = [Fp::ZERO; NF_DERIVATION_WIDTH];
+        for group in 0..NF_DERIVATION_GROUPS {
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_possible_truncation,
+                reason = "the group count is a small constant"
+            )]
+            let squeezed = poseidon::nullifier_group(mk.0, group_base + group as u32);
+            for (slot, value) in squeezed.into_iter().enumerate() {
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "constant widths, indexing the window this loop fills"
+                )]
+                {
+                    nullifiers[group * NF_GROUP + slot] = value;
+                }
+            }
+        }
 
-impl Step for NullifierStep {
-    type Aux<'source> = ();
-    type Left = NfPrefixHeader;
-    type Output = NullifierHeader;
-    type Right = ();
-    type Witness<'source> = ();
+        // Window-wide nonzero guard: a nonzero `nf_start` is the sequence's
+        // rank pin.
+        for &nf in &nullifiers {
+            enforce_nonzero(nf, "NfDerive: derived nullifier is zero")?;
+        }
 
-    const INDEX: Index = Index::new(2);
+        // `z`: a fresh transcript challenge over the sequence commitment. The
+        // polynomial is fixed before it exists, so the single opening below
+        // is not vacuous.
+        let z = ctx.derive_challenge(&[seq.commit().into()])?;
+        let seq_at_z = seq.eval(z);
+        ctx.enforce_poly_query(seq.commit().into(), z, seq_at_z)?;
 
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (cm, node, depth, index): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &[g0, g1] = Pasta::host_generators(Pasta::baked())
-            .g()
-            .split_first_chunk::<2>()
-            .expect("at least two generators")
-            .0;
+        // Horner-accumulate the range's squeezes at `z`, oldest first: both
+        // sides have degree below the range width, so equality at a free
+        // point forces every coefficient of the committed sequence. The
+        // offset gating is a native mock stand-in for the selection
+        // indicators over the range bounds checked above.
+        #[expect(
+            clippy::as_conversions,
+            reason = "offsets are within the window width by the range checks"
+        )]
+        let (off_start, off_end) = (
+            (epoch_start.0 - base.0) as usize,
+            (epoch_end.0 - base.0) as usize,
+        );
+        let mut accumulated = Fp::ZERO;
+        for (offset, &nf) in nullifiers.iter().enumerate() {
+            if (off_start..off_end).contains(&offset) {
+                accumulated = accumulated * z + nf;
+            }
+        }
 
         enforce_zero(
-            Fp::from(u64::from(depth)) - Fp::from(u64::from(GGM_TREE_DEPTH)),
-            "NullifierStep: not at maximum depth",
+            seq_at_z - accumulated,
+            "NfDerive: sequence does not match the derived range",
         )?;
-        let nf = Nullifier::from(poseidon::nullifier(node));
 
-        // Single-leaf sentinel sequence `nf + X`: `g1` carries the sentinel.
-        let nf_seq_commit = NfSeqCommit::from(g0 * Fp::from(nf) + g1);
-        Ok(((cm, (index, nf), nf_seq_commit, (index.next(), nf)), ()))
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "offsets are within the window width by the range checks"
+        )]
+        let (nf_start, nf_last) = (
+            Nullifier::from(nullifiers[off_start]),
+            Nullifier::from(nullifiers[off_end - 1]),
+        );
+        Ok((
+            (
+                cm,
+                (epoch_start, nf_start),
+                seq.commit(),
+                (epoch_end, nf_last),
+            ),
+            (),
+        ))
     }
 }
 
 /// Merge two adjacent derived ranges into one (`left ++ right`).
 ///
-/// Requires the same `cm` and contiguity (`right.start == left.end`). Witnesses
-/// the two range polynomials and their concatenation, binds each by
-/// commit-equality, and proves the concat at `offset = left.end - left.start`
-/// via the faithful opening relation.
+/// Requires the same `cm` and contiguity (`right.epoch_start ==
+/// left.epoch_end`). Witnesses the two range polynomials and their
+/// concatenation, binds each by commit-equality, and proves the concat as the
+/// bare Horner shift: a sequence of $k$ members is $\sum n_i X^{k-1-i}$ and
+/// no member is shared across the seam, so
+///
+/// $$\mathsf{merged}(X) = X^{k_R}\,\mathsf{left}(X) + \mathsf{right}(X),$$
+///
+/// with the member count $k_R$ fixed by right's header span: bare Horner
+/// concatenation is exactly the shifted sum.
+///
+/// # Soundness
+///
+/// The degree-0 queries pin the *end* nullifiers, the only coefficients a
+/// single opening isolates under Horner order: `merged` opens to
+/// `right.nf_last` (also right's own degree 0) and `left` opens to
+/// `left.nf_last`. `nf_start` is the
+/// non-extractable top coefficient; it threads from the left header, and its
+/// nonzero-ness (the rank pin) is inductive from the leaf's cover-wide guard.
+///
+/// # Committed polynomials
+///
+/// | polynomial | role |
+/// |---|---|
+/// | `left_seq` | left half, bound to `left.nf_commit` |
+/// | `right_seq` | right half, bound to `right.nf_commit` |
+/// | `merged_seq` | the concatenation, bound by the shifted combination |
 #[derive(Debug)]
 pub struct NullifierFuse;
 
 impl Step for NullifierFuse {
     type Aux<'source> = ();
-    type Left = NullifierHeader;
-    type Output = NullifierHeader;
-    type Right = NullifierHeader;
+    type Left = NullifierDerivation;
+    type Output = NullifierDerivation;
+    type Right = NullifierDerivation;
     /// `(left_seq, merged_seq, right_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(3);
+    const INDEX: Index = Index::new(16);
 
     fn witness<'source>(
         &self,
@@ -231,14 +387,14 @@ impl Step for NullifierFuse {
         (
             left_cm,
             (left_epoch_start, left_nf_start),
-            left_nf_seq_commit,
-            (left_epoch_end, _left_nf_end),
+            left_nf_commit,
+            (left_epoch_end, left_nf_last),
         ): <Self::Left as Header>::Data,
         (
             right_cm,
-            (right_epoch_start, right_nf_start),
-            right_nf_seq_commit,
-            (right_epoch_end, right_nf_end),
+            (right_epoch_start, _right_nf_start),
+            right_nf_commit,
+            (right_epoch_end, right_nf_last),
         ): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
@@ -251,51 +407,34 @@ impl Step for NullifierFuse {
         )?;
         enforce_equal_point(
             Eq::from(left_seq.commit()),
-            Eq::from(left_nf_seq_commit),
+            Eq::from(left_nf_commit),
             "NullifierFuse: left polynomial does not match header",
         )?;
         enforce_equal_point(
             Eq::from(right_seq.commit()),
-            Eq::from(right_nf_seq_commit),
+            Eq::from(right_nf_commit),
             "NullifierFuse: right polynomial does not match header",
         )?;
-        let merged_nf_seq_commit = merged_seq.commit();
-        let offset = left_epoch_end - left_epoch_start;
-        // Sentinel concat: a sequence of `k` members is `Σ n_i·X^i + X^k`, so
-        // `merged = left ++ right` is the shifted combination
-        // `merged(X) = left(X) + X^offset·right(X) - X^offset`. The `-X^offset`
-        // monomial cancels left's sentinel, right's first member lands in the
-        // vacated slot, and right's own sentinel re-terminates `merged`. The
-        // monomial's constant coefficient is trivially challenge-independent,
-        // and `offset` is left's header-fixed span.
+        let merged_nf_commit = merged_seq.commit();
+        let right_span = right_epoch_end - right_epoch_start;
         enforce_shifted_combination(
             ctx,
-            [(left_seq.as_ref(), 0), (right_seq.as_ref(), offset.into())],
-            [(-Fp::ONE, offset.into())],
+            [
+                (left_seq.as_ref(), right_span.into()),
+                (right_seq.as_ref(), 0),
+            ],
+            [],
             merged_seq.as_ref(),
             "NullifierFuse: merged is not the concat of the halves",
         )?;
-        // Pin the boundary nullifiers that sit at a queryable degree-0 position:
-        // the merged sequence opens to `left_nf_start` (its first leaf), and the
-        // right half opens to `right_nf_start`. Each ties a witnessed sequence to
-        // the header value its seed proved by construction. (`left_nf_end` is the
-        // left half's top coefficient, not extractable by a single opening.)
-        ctx.enforce_poly_query(
-            merged_nf_seq_commit.into(),
-            Fp::ZERO,
-            Fp::from(left_nf_start),
-        )?;
-        ctx.enforce_poly_query(
-            right_nf_seq_commit.into(),
-            Fp::ZERO,
-            Fp::from(right_nf_start),
-        )?;
+        ctx.enforce_poly_query(merged_nf_commit.into(), Fp::ZERO, Fp::from(right_nf_last))?;
+        ctx.enforce_poly_query(left_seq.commit().into(), Fp::ZERO, Fp::from(left_nf_last))?;
         Ok((
             (
                 left_cm,
                 (left_epoch_start, left_nf_start),
-                merged_nf_seq_commit,
-                (right_epoch_end, right_nf_end),
+                merged_nf_commit,
+                (right_epoch_end, right_nf_last),
             ),
             (),
         ))

@@ -11,6 +11,7 @@ pub mod pool;
 pub mod spend;
 pub mod spendable;
 pub mod stamp;
+pub mod summary;
 
 #[cfg(test)]
 mod tests;
@@ -22,9 +23,7 @@ use ragu::{Application, ApplicationBuilder};
 fn make_app() -> Result<Application, ragu::Error> {
     ApplicationBuilder::new()
         .register(delegation::NfMasterSeed)?
-        .register(delegation::NfPrefixStep)?
-        .register(delegation::NullifierStep)?
-        .register(delegation::NullifierFuse)?
+        .register(delegation::NfDerive)?
         .register(pool::AnchorSeed)?
         .register(pool::AnchorFuse)?
         .register(pool::UnspentSeed)?
@@ -39,6 +38,14 @@ fn make_app() -> Result<Application, ragu::Error> {
         .register(stamp::SpendStamp)?
         .register(stamp::MergeStamp)?
         .register(stamp::StampLift)?
+        .register(delegation::NullifierFuse)?
+        .register(summary::SummarySeed)?
+        .register(summary::SummaryAdvance)?
+        .register(pool::UnspentBatch)?
+        .register(pool::UnspentAdvance)?
+        .register(pool::UnspentEpochLift)?
+        .register(spendable::SpendableBatch)?
+        .register(spendable::SpendableAdvance)?
         .finalize()
 }
 

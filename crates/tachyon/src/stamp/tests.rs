@@ -13,7 +13,7 @@ use crate::{
         PoolSim, WalletSim, build_autonome, build_output_stamp, forge_overlapping_merge,
         random_action, random_block, random_block_with, shared_sk, spend_witness,
     },
-    primitives::BlockHeight,
+    primitives::{BlockHeight, EpochIndex},
 };
 
 const WITHIN_EPOCH_ANCHOR_PAIRS: &[(BlockHeight, BlockHeight)] = &[
@@ -74,8 +74,9 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
-    let range_a = user.derived_range(rng, &note_a, spend_epoch, 2);
-    let range_b = user.derived_range(rng, &note_b, spend_epoch, 2);
+    let spend_end = EpochIndex(spend_epoch.0 + 2);
+    let range_a = user.derivation_pcd(rng, note_a, spend_epoch, spend_end);
+    let range_b = user.derivation_pcd(rng, note_b, spend_epoch, spend_end);
 
     let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
@@ -126,10 +127,9 @@ fn plan_prove_rejects_invalid_inputs() {
         );
     }
 
-    // Correspondence swap: lengths match, pairing is wrong. Each pair is
-    // internally consistent, so SpendBind binds it; the plan's note is the
-    // odd one out, and SpendStamp's `note.commitment() == cm` check catches
-    // it when the action is proven.
+    // Correspondence swap: lengths match, pairing is wrong. The spend's note
+    // key rebuilds a covering sequence that cannot match the mispaired
+    // derivation's commitment, so SpendBind rejects.
     {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
@@ -139,7 +139,7 @@ fn plan_prove_rejects_invalid_inputs() {
         };
         assert_eq!(
             inner.to_string(),
-            "SpendStamp: note does not match the spend"
+            "SpendBind: covering sequence does not match header"
         );
     }
 }
