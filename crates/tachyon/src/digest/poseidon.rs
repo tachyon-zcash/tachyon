@@ -3,8 +3,8 @@
 //! Each named function provides one protocol-defined hash.
 
 use ff::PrimeField as _;
-use group::{GroupEncoding as _, prime::PrimeCurveAffine as _};
-use pasta_curves::{EpAffine, EqAffine, Fp, arithmetic::Coordinates};
+use group::{Curve as _, GroupEncoding as _, prime::PrimeCurveAffine as _};
+use pasta_curves::{EpAffine, Eq, EqAffine, Fp, arithmetic::Coordinates};
 use ragu::Sponge;
 
 use crate::EpochIndex;
@@ -80,34 +80,119 @@ pub(crate) fn pad_tachygram(rcm: Fp, pk: Fp, value: u64, psi: Fp) -> Fp {
     ])
 }
 
-const NULLIFIER_PREFIX_DOMAIN: &[u8; 16] = b"Tachyon-NfPrefix";
+const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 
-/// Derives a GGM root (master key) from note trapdoor and wallet nullifier key.
+/// Derive a note's master key `mk = [k, w]` from the note trapdoor `psi` and
+/// the nullifier key `nk`.
+///
+/// This is the nullifier cipher's round key `k` and whitening key `w`.
+#[expect(
+    clippy::expect_used,
+    reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
+)]
 #[must_use]
-pub(crate) fn nf_master(psi: Fp, nk: Fp) -> Fp {
-    hash::<3>([
-        Fp::from_u128(u128::from_le_bytes(*NULLIFIER_PREFIX_DOMAIN)),
-        psi,
-        nk,
+pub(crate) fn nf_master_key(psi: Fp, nk: Fp) -> (Fp, Fp) {
+    let mut sponge = Sponge::new();
+    sponge
+        .absorb(Fp::from_u128(u128::from_le_bytes(*NULLIFIER_MASTER_DOMAIN)))
+        .expect("infallible");
+    sponge.absorb(psi).expect("infallible");
+    sponge.absorb(nk).expect("infallible");
+    (
+        sponge.squeeze().expect("infallible"),
+        sponge.squeeze().expect("infallible"),
+    )
+}
+
+const DERIVATION_BIND_DOMAIN: &[u8; 16] = b"Tachyon-NfLeafSq";
+
+/// Derive the combination challenge $\chi_A$ over the commitments of the
+/// three polynomials the S-box identities relate: the trace $T$ and the
+/// intermediates `(square, quartic)`.
+///
+/// The scalar operands $k$ and $\mathsf{base}$ are not absorbed; the join's
+/// `mk` pin completes the combination argument, per `NfSboxStep`'s soundness
+/// section. The combined quotient depends on $\chi_A$, so the challenge must
+/// be a Poseidon digest the native witness builder replicates.
+#[must_use]
+pub(crate) fn derivation_challenge(trace: Eq, square: Eq, quartic: Eq) -> Fp {
+    let (trace_lo, trace_hi) = point_limbs(trace.to_affine());
+    let (square_lo, square_hi) = point_limbs(square.to_affine());
+    let (quartic_lo, quartic_hi) = point_limbs(quartic.to_affine());
+    hash::<7>([
+        Fp::from_u128(u128::from_le_bytes(*DERIVATION_BIND_DOMAIN)),
+        trace_lo,
+        trace_hi,
+        square_lo,
+        square_hi,
+        quartic_lo,
+        quartic_hi,
     ])
 }
 
-/// Derives a nullifier prefix from a previous prefix and a walk direction.
+const NF_FOLD_DOMAIN: &[u8; 16] = b"Tachyon-NfLeafFd";
+
+/// Derive the nullifier-fold weight $\chi$ over the commitments of the two
+/// polynomials the fold relates: the whitened trace $W$ and the exported
+/// sequence $g$.
+///
+/// Both operands are pinned before $\chi$ exists, so the single-point
+/// telescope discharge forces every coefficient of $g$ to the genuine
+/// nullifiers (Schwartz-Zippel). The fold accumulator `A` depends on $\chi$,
+/// so the weight must be a Poseidon digest the native witness builder
+/// replicates.
 #[must_use]
-pub(crate) fn nf_prefix(prefix_prev: Fp, step: u8) -> Fp {
-    hash::<3>([
-        Fp::from_u128(u128::from_le_bytes(*NULLIFIER_PREFIX_DOMAIN)),
-        prefix_prev,
-        Fp::from(u64::from(step)), // TODO: chunk some booleans by arity?
+pub(crate) fn fold_challenge(trace: Eq, seq: Eq) -> Fp {
+    let (trace_lo, trace_hi) = point_limbs(trace.to_affine());
+    let (seq_lo, seq_hi) = point_limbs(seq.to_affine());
+    hash::<5>([
+        Fp::from_u128(u128::from_le_bytes(*NF_FOLD_DOMAIN)),
+        trace_lo,
+        trace_hi,
+        seq_lo,
+        seq_hi,
     ])
 }
 
-const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
+const NF_READ_DOMAIN: &[u8; 16] = b"Tachyon-NfReadCh";
 
-/// Derives a nullifier from a leaf of the prefix tree.
+/// The challenge for a covering read whose members enter as scalar
+/// monomials, over the three polynomial commitments and every member.
+///
+/// A scalar member has no commitment, and the read identity is linear in
+/// each, so every member is absorbed: that makes the solve a fixed point and
+/// forces each member to the covering sequence's genuine coefficient. The
+/// members depend on the challenge's inputs, so the challenge must be a
+/// Poseidon digest the native witness builders replicate.
+///
+/// # Panics
+///
+/// Panics if any commitment is the identity point.
+#[expect(
+    clippy::expect_used,
+    reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
+)]
 #[must_use]
-pub(crate) fn nullifier(leaf: Fp) -> Fp {
-    hash::<2>([Fp::from_u128(u128::from_le_bytes(*NULLIFIER_DOMAIN)), leaf])
+pub(crate) fn read_challenge(g: Eq, older: Eq, tail: Eq, members: &[Fp]) -> Fp {
+    let (g_lo, g_hi) = point_limbs(g.to_affine());
+    let (older_lo, older_hi) = point_limbs(older.to_affine());
+    let (tail_lo, tail_hi) = point_limbs(tail.to_affine());
+    let mut sponge = Sponge::new();
+    for value in [
+        Fp::from_u128(u128::from_le_bytes(*NF_READ_DOMAIN)),
+        g_lo,
+        g_hi,
+        older_lo,
+        older_hi,
+        tail_lo,
+        tail_hi,
+    ] {
+        sponge.absorb(value).expect("infallible");
+    }
+    for &member in members {
+        sponge.absorb(member).expect("infallible");
+    }
+    sponge.squeeze().expect("infallible")
 }
 
 /// A Vesta point's compressed encoding as two 128-bit $\mathbb{F}_p$ limbs.

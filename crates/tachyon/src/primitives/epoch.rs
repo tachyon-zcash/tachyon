@@ -10,11 +10,15 @@ use pasta_curves::Fp;
 ///
 /// Indexes nullifier derivation: $mk = \text{KDF}(\psi, nk)$, then
 /// $nf_e = F_{mk}(e)$. Different epochs produce different nullifiers for
-/// the same note, enabling range-restricted delegation via the GGM tree PRF.
+/// the same note.
 #[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct EpochIndex(pub u32);
 
 /// A non-negative distance between two [`EpochIndex`]es, from subtraction.
+///
+/// Subtraction is the only constructor, and $\mathbb{N}$ the only target: a
+/// distance indexes a multiplicative order, so it is never an $\mathbb{F}_p$
+/// element.
 #[derive(Clone, Copy, Debug, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 #[into(u64)]
 pub struct EpochDiff(u32);
