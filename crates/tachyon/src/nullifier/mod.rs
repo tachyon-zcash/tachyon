@@ -9,10 +9,8 @@ use crate::{constants::EPOCH_MAX, digest::poseidon::NF_GROUP, primitives::Tachyg
 
 /// Epoch nullifiers per derivation window.
 ///
-/// A multiple of [`NF_GROUP`], so the sponge count is exact.
-///
-/// 16 epochs is four sponges, one permutation each, within the per-step gate
-/// cap.
+/// A multiple of [`NF_GROUP`], so the sponge count is exact: 16 epochs is
+/// four sponges, one permutation each.
 pub const NF_DERIVATION_WIDTH: usize = 16;
 
 /// Sponges one derivation window costs, a compile-time constant because
@@ -24,7 +22,6 @@ pub const NF_DERIVATION_WIDTH: usize = 16;
 )]
 pub const NF_DERIVATION_GROUPS: usize = NF_DERIVATION_WIDTH / NF_GROUP;
 
-// The property the width's doc comment claims, as a build failure.
 const _: () = assert!(
     NF_DERIVATION_GROUPS * NF_GROUP == NF_DERIVATION_WIDTH,
     "the window width must be a whole number of sponges"

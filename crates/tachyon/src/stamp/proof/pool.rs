@@ -472,15 +472,6 @@ impl Step for UnspentFuse {
 /// `unspent_nf_start` is `elapsed`'s degree-0 coefficient (its first
 /// crossing, pinned by a repeat opening), or the tip itself when no epoch
 /// was crossed and `elapsed` is empty.
-///
-/// # Committed polynomials
-///
-/// | polynomial | role |
-/// |---|---|
-/// | `elapsed_seq` | the read operand, bound to the unspent header |
-/// | `g` | the covering sequence, bound to the derivation header |
-/// | `older` | sentineled absorbing margin above the read |
-/// | `tail` | cap-shifted sentineled absorbing margin below the read |
 #[derive(Debug)]
 pub struct UnspentBind;
 
@@ -552,10 +543,7 @@ impl Step for UnspentBind {
             "UnspentBind: sequence does not match the derivation",
         )?;
 
-        // Boundary nullifiers: `unspent_nf_end` is pinned as the sentinel
-        // swap and bound by the read above. `unspent_nf_start` is `elapsed`'s
-        // degree-0 coefficient (its first crossing), or the tip itself when
-        // no epoch was crossed and `elapsed` is empty.
+        // `unspent_nf_end` is already bound by the read, as the sentinel swap.
         if span == 0 {
             enforce_zero(
                 Fp::from(unspent_nf_start) - Fp::from(unspent_nf_end),

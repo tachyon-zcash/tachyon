@@ -107,15 +107,6 @@ impl Header for NullifierDerivation {
 /// note. What this step does establish is that `mk` is *this* `cm`'s master
 /// key, and PCD soundness carries that pairing into every consuming
 /// [`NfDerive`].
-///
-/// # Gate budget
-///
-/// | item | gates |
-/// |---|---|
-/// | payment-key sponge (one permutation) | ~293 |
-/// | note-commitment sponge (two permutations) | ~586 |
-/// | master-key sponge (one permutation) | ~293 |
-/// | total | ~1172 |
 #[derive(Debug)]
 pub struct NfMasterSeed;
 
@@ -186,21 +177,6 @@ impl Step for NfMasterSeed {
 /// unbound: the range is *labelled* with its epochs, and a prover choosing a
 /// different base gets a correct range for a different span, honestly
 /// labelled. Consumers pick the span they need out of the label.
-///
-/// # Committed polynomials
-///
-/// | polynomial | role |
-/// |---|---|
-/// | `seq` | the range sequence, bound by the accumulation opening |
-///
-/// # Gate budget
-///
-/// | item | gates |
-/// |---|---|
-/// | four group sponges (one permutation each) | ~1152 |
-/// | accumulation sum (16 gated multiply-adds) | ~48 |
-/// | base and range checks | ~30 |
-/// | total | ~1230 |
 #[derive(Debug)]
 pub struct NfDerive;
 
@@ -250,8 +226,7 @@ impl Step for NfDerive {
             ));
         }
 
-        // The window's nullifiers, `NF_GROUP` per permutation. `mk` is
-        // threaded, so these are the note's genuine nullifiers.
+        // The window's nullifiers, `NF_GROUP` per permutation.
         let mut nullifiers = [Fp::ZERO; NF_DERIVATION_WIDTH];
         for group in 0..NF_DERIVATION_GROUPS {
             #[expect(
@@ -283,9 +258,7 @@ impl Step for NfDerive {
         let seq_at_z = seq.eval(z);
         ctx.enforce_poly_query(seq.commit().into(), z, seq_at_z)?;
 
-        // Accumulate the range's squeezes at `z`, sentinel first: both sides
-        // have degree at most the range width, so equality at a free point
-        // forces every coefficient of the committed sequence. The offset
+        // Accumulate the range's squeezes at `z`, sentinel first. The offset
         // gating is a native mock stand-in for the selection indicators over
         // the range bounds checked above.
         #[expect(
@@ -398,11 +371,10 @@ impl Step for NullifierFuse {
             merged_seq.as_ref(),
             "NullifierFuse: merged is not the concat of the halves",
         )?;
-        // Pin the boundary nullifiers that sit at a queryable degree-0 position:
-        // the merged sequence opens to `left_nf_start` (its first leaf), and the
-        // right half opens to `right_nf_start`. Each ties a witnessed sequence to
-        // the header value its seed proved by construction. (`left_nf_end` is the
-        // left half's top coefficient, not extractable by a single opening.)
+        // Pin the boundary nullifiers that sit at degree 0: the merged sequence
+        // opens to `left_nf_start` and the right half to `right_nf_start`.
+        // `left_nf_end` is the left half's top coefficient, not extractable by
+        // a single opening.
         ctx.enforce_poly_query(
             merged_nf_seq_commit.into(),
             Fp::ZERO,

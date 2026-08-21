@@ -63,12 +63,7 @@ pub struct NfMarginCommit(Eq);
 /// ascending order, followed by the covering sequence's own sentinel $1$ at
 /// the margin's top; $+1$ is added at degree $0$, compensated by the read
 /// identity's $-1$ at evaluation. Carrying the covering sentinel makes the
-/// margin nonzero even when no member sits above the read, and the added
-/// degree-$0$ sentinel keeps the constructor uniform with
-/// [`NfTailPoly`]'s.
-///
-/// The one constructor owns both sentinels, so a builder cannot mis-shape a
-/// margin.
+/// margin nonzero even when no member sits above the read.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct NfMarginPoly(Polynomial);
 
@@ -107,16 +102,10 @@ pub struct NfTailCommit(Eq);
 /// $\mathsf{tail} = X^{D-m}\cdot\mathsf{below} + 1$ for the $m$-member
 /// margin $\mathsf{below}$ and $D$ the coefficient cap.
 ///
-/// Below the read no commitment bounds a witness's degree, so the margin
-/// cannot ride as a free polynomial at its own position. The cap shift is
-/// the degree bound: a witnessed polynomial holds at most $D$ coefficients,
-/// so `tail` cannot reach the read's band at $[D, D+K)$ and nothing a prover
-/// controls can perturb the read. The $+1$ sentinel at degree $0$
-/// (compensated at evaluation) keeps the empty margin off the identity
-/// point, and the read identity forces the slot to exactly $1$.
-///
-/// The one constructor owns the sentinel and the shift, so a builder cannot
-/// mis-shape a margin.
+/// The shift is what bounds the margin's degree, since no commitment does
+/// below the read; see [`read`](crate::relations::read). The $+1$ sentinel at
+/// degree $0$ (compensated at evaluation) keeps the empty margin off the
+/// identity point, and the read identity forces the slot to exactly $1$.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct NfTailPoly(Polynomial);
 

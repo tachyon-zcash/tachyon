@@ -26,17 +26,15 @@ use crate::{
     relations::read::enforce_covering_read_members,
 };
 
-/// Wallet's spendable position `(cm, (epoch, present_nf), anchor)`
+/// Wallet's spendable position `(cm, (epoch, present_nf), anchor)`.
 ///
-/// The note's current epoch and its nullifier there, plus the pool position
-/// (all advanced per lift) and the minted-note commitment, threaded unchanged
-/// so the spent value cannot drift to a different same-`mk` note.
+/// `cm` is threaded unchanged so the spent value cannot drift to a different
+/// same-`mk` note.
 #[derive(Clone, Debug)]
 pub struct SpendableHeader;
 
 impl Header for SpendableHeader {
-    /// `(cm, (epoch, present_nf), anchor)`. `cm` threads unchanged; the rest
-    /// advances per lift. The boundary pairing matches
+    /// `(cm, (epoch, present_nf), anchor)`. The boundary pairing matches
     /// [`Unspent`]'s, which is what a lift checks continuity against.
     type Data = (note::Commitment, (EpochIndex, Nullifier), Anchor);
 
@@ -60,13 +58,12 @@ impl Header for SpendableHeader {
 
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
-/// Wallet-only, one-child over a wallet [`NullifierDerivation`], and
-/// **absolutely any covering range is suitable**: the wallet derives one
-/// range — ideally covering from before init to past the expected spend —
-/// and the same PCD feeds init, lift, and spend. The 1-wide covering read at
-/// the creation epoch forces `present_nf` to the range's genuine member;
-/// the margins absorb the range's remaining span, so no range shape is ever
-/// required. `cm` is proven among the creation stamp's tachygrams, which is
+/// Wallet-only, one-child over a wallet [`NullifierDerivation`]. Any range
+/// covering the creation epoch is suitable: the 1-wide covering read forces
+/// `present_nf` to the range's genuine member there and the margins absorb the
+/// range's remaining span, so the wallet can derive one range covering from
+/// before init to past the expected spend and feed the same PCD to init, lift,
+/// and spend. `cm` is proven among the creation stamp's tachygrams, which is
 /// the consensus binding, and the post-cm anchor folds from a free-witnessed
 /// predecessor.
 ///
@@ -85,15 +82,6 @@ impl Header for SpendableHeader {
 /// No sameness constraint ties this range to the one the spend later reads:
 /// `cm` equality binds every range of the same note to the same lattice, so
 /// one derivation suffices and none is forced.
-///
-/// # Committed polynomials
-///
-/// | polynomial | role |
-/// |---|---|
-/// | `creation_set` | the creating stamp's tachygram set, membership-queried |
-/// | `g` | the covering sequence, bound to the derivation header |
-/// | `older` | sentineled absorbing margin above the read |
-/// | `tail` | cap-shifted sentineled absorbing margin below the read |
 #[derive(Debug)]
 pub struct SpendableInit;
 
@@ -146,8 +134,7 @@ impl Step for SpendableInit {
         }
 
         // The 1-wide read at the creation epoch. `present_nf` enters as a
-        // scalar monomial, so the challenge is the member-absorbing Poseidon
-        // digest rather than a transcript challenge.
+        // scalar monomial, so the challenge must absorb it.
         let margin = u64::from(creation_epoch - deriv_start);
         let z = poseidon::read_challenge(
             g.commit().into(),
@@ -174,9 +161,7 @@ impl Step for SpendableInit {
         let creation_commit = creation_set.commit();
 
         // The anchor immediately after the creation stamp, computed in-circuit
-        // so the proof certifies the fold of `epoch` and `creation_commit`;
-        // consensus membership of the eventual spend anchor binds the rest
-        // (see the step doc).
+        // so the proof certifies the fold of `epoch` and `creation_commit`.
         let post_cm_anchor = pre_cm_anchor.next_stamp(creation_epoch, &creation_commit);
 
         Ok(((cm, (creation_epoch, present_nf), post_cm_anchor), ()))

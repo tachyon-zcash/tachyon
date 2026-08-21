@@ -6,9 +6,8 @@
 //! polynomial `g`, with `margin` coefficients of `g` below the window and the
 //! rest above it, the naive decomposition
 //! `g = X^{members+margin}·above + X^margin·read + below` is never checked
-//! directly: below the read a free polynomial is vacuous, since Pedersen
-//! commitments bound degree from above only and a prover solves
-//! `below' = below + X^margin·(read − read')`. Instead the whole identity is
+//! directly: Pedersen commitments bound degree from above only, so a free
+//! polynomial below the read is vacuous. Instead the whole identity is
 //! multiplied through by `X^{CAP−margin}`, lifting the read window to degrees
 //! `[CAP, CAP+members)`:
 //!
@@ -43,10 +42,6 @@ use pasta_curves::Fp;
 use ragu::{Error, Result, ctx::StepCtx, polynomial::Polynomial};
 
 /// The physical coefficient cap witnessed polynomials cannot exceed.
-///
-/// Derived from [`Polynomial::R`] rather than restated: the soundness
-/// argument rests on this being *the* witnessability cap, and a detached
-/// constant would break silently if the cap moved.
 pub(crate) const CAP: u64 = 1 << Polynomial::R;
 
 /// Confirm a committed sentinel-terminated polynomial `read`, its sentinel
@@ -108,18 +103,13 @@ pub(crate) fn enforce_covering_read(
 /// degree and the last its degree 0, matching the covering sequence's
 /// ascending order.
 ///
-/// The members enter as monomial coefficients rather than a committed
-/// polynomial, so they are not absorbed into any challenge here, and the
-/// identity is linear in each: a prover free to choose one after seeing `z`
-/// solves it against garbage margins and passes. **The caller must derive
-/// `z` over the three commitments and every member** (see
-/// `poseidon::read_challenge`), which makes the solve a fixed point and
-/// forces each member to `g`'s genuine coefficient.
-///
 /// # Caller obligations (soundness)
 ///
-/// The `z` derivation above; the module-level binding obligation for `g`;
-/// statement-fixed `margin`; `g`'s rank pinned as the module documents.
+/// **`z` must be derived over the three commitments and every member** (see
+/// [`read_challenge`](crate::digest::poseidon::read_challenge)): the identity
+/// is linear in each member, so one chosen after `z` is known is solvable
+/// against garbage margins. Also the module-level binding obligation for `g`,
+/// statement-fixed `margin`, and `g`'s rank pinned as the module documents.
 #[expect(
     clippy::too_many_arguments,
     reason = "a covering read names its polynomials, members, and window arithmetic"
@@ -149,9 +139,7 @@ pub(crate) fn enforce_covering_read_members<const MEMBERS: usize>(
 }
 
 /// The lifted identity at `z`. The runtime exponents are native mock
-/// stand-ins for fixed-width exponentiation chains; each is bounded by the
-/// rank cap, so a real chain is ~13 squarings plus as many conditional
-/// multiplies.
+/// stand-ins for fixed-width exponentiation chains.
 #[expect(clippy::too_many_arguments, reason = "one identity, named operands")]
 fn check_read_identity(
     g: &Polynomial,

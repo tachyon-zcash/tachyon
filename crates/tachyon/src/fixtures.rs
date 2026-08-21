@@ -829,8 +829,7 @@ pub struct WalletSim {
     /// different values draw from disjoint field sequences, and interleaved
     /// draws of other values never shift a stream's position.
     notes: RefCell<BTreeMap<u64, StdRng>>,
-    /// Per-note master seed PCDs, keyed by the note's `cm` tachygram: the note
-    /// is witnessed once and every window for it fuses against the same seed.
+    /// Per-note master seed PCDs, keyed by the note's `cm` tachygram.
     masters: RefCell<BTreeMap<Tachygram, Pcd<delegation::NfMasterHeader>>>,
     /// Per-(note, range) derivation PCDs, keyed by `(cm, epoch_start,
     /// epoch_end)`: repeated derivations of the same exact range share the

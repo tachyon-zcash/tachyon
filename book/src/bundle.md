@@ -50,7 +50,7 @@ The proof establishes:
 - tachygrams are correctly bound to action keys
 - action balance effect matches pool balance effect
 
-The nullifier for epoch $e$ is a squeeze of a Poseidon sponge keyed by the note's master key:
+The nullifier for epoch $e$ is a pseudo-random function of the note's master key and the epoch:
 
 $$ \mathsf{nf}_e = \mathsf{PRF}^{\mathsf{nfTachyon}}_{\mathsf{mk}}(e) $$
 

@@ -29,9 +29,7 @@ use crate::{
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(cm, present_nf, nf_next, anchor)`. `cm` binds the spent note;
-    /// `present_nf`/`nf_next` are the confirmed epoch pair; `anchor` threads
-    /// the spendable lineage's pool position.
+    /// `(cm, present_nf, nf_next, anchor)`.
     type Data = (note::Commitment, Nullifier, Nullifier, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(10);
@@ -58,25 +56,18 @@ impl Header for SpendHeader {
 /// The range is tied to the lineage's note by `nf_cm == spendable_cm` (both
 /// are the note commitment, bound where the range was derived and at
 /// [`SpendableInit`](super::spendable::SpendableInit) respectively), so no
-/// note witness is needed here, and **absolutely any covering range is
-/// suitable**: the 2-wide covering read at the lineage's epoch confirms the
+/// note witness is needed here. Any range covering the two epochs is
+/// suitable: the 2-wide covering read at the lineage's epoch confirms the
 /// pair, with `present_nf` pinned against the spendable and `nf_next` a
 /// witnessed scalar the identity forces. Both nullifiers are emitted on the
 /// [`SpendHeader`] for the action-producing step to publish.
 ///
 /// # Soundness
 ///
-/// The read's challenge absorbs both scalar members (see
-/// `poseidon::read_challenge`); left out, a member is solvable after the
-/// challenge is known and a garbage `nf_next` would publish.
-///
-/// # Committed polynomials
-///
-/// | polynomial | role |
-/// |---|---|
-/// | `g` | the covering sequence, bound to the derivation header |
-/// | `older` | sentineled absorbing margin above the read |
-/// | `tail` | cap-shifted sentineled absorbing margin below the read |
+/// The read's challenge absorbs both scalar members; left out, a member is
+/// solvable after the challenge is known and a garbage `nf_next` would
+/// publish. See
+/// [`read_challenge`](crate::digest::poseidon::read_challenge).
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -126,8 +117,7 @@ impl Step for SpendBind {
         }
 
         // The 2-wide read at the lineage's epoch, members newest-first. Both
-        // enter as scalar monomials, so the challenge is the member-absorbing
-        // Poseidon digest rather than a transcript challenge.
+        // enter as scalar monomials, so the challenge must absorb them.
         let margin = u64::from(spendable_epoch - deriv_start);
         let members = [Fp::from(nf_next), Fp::from(present_nf)];
         let z = poseidon::read_challenge(

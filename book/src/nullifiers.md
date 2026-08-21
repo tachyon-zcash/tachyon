@@ -33,7 +33,7 @@ $$
 \bigr)
 $$
 
-counting squeezes from zero. The group size is the sponge's rate, so a group of four costs one permutation. Each group absorbs $w$ from scratch, so $\mathsf{nf}_e$ is a function of $\mathsf{mk}$ and $e$ alone.
+counting squeezes from zero. The group size is the sponge's rate, so a group of four costs one permutation. Each group absorbs $w$ from scratch, so $\mathsf{nf}_e$ is a function of $\mathsf{mk}$ and $e$ alone, written $\mathsf{PRF}^{\mathsf{nfTachyon}}_{\mathsf{mk}}(e)$ where the derivation's structure does not matter.
 
 Because $\mathsf{nf}$ is a pseudo-random function of $\mathsf{mk}$ and the epoch $e$, distinct epochs yield unrelated nullifiers, and an author cannot steer a nullifier toward a chosen value.
 

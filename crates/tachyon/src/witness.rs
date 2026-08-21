@@ -5,6 +5,10 @@
 //! nullifiers and tachygrams into the polynomials the step opens against),
 //! ready to seed or fuse through `PROOF_SYSTEM`. Functions are named after the
 //! step they serve. Steps with an empty `()` witness need no utility.
+//!
+//! A `window` argument is always the complete covering sequence, one member
+//! per epoch of the derivation header's range; the covering read and its
+//! margins are segmented from it.
 
 use ragu::{Header, Step};
 
@@ -162,9 +166,7 @@ pub fn unspent_fuse(
 /// `(elapsed_seq, g, older, tail)`.
 ///
 /// `elapsed` is the unspent's per-crossing history; the read covers
-/// `[epoch_start, epoch_end]` inclusive, the tip riding as the sentinel
-/// swap. `window` is the complete covering sequence, one member per epoch
-/// of the derivation header's range; the margins are segmented from it.
+/// `[epoch_start, epoch_end]` inclusive, the tip riding as the sentinel swap.
 #[must_use]
 #[expect(
     clippy::indexing_slicing,
@@ -192,9 +194,7 @@ pub fn unspent_bind(
 /// `(pre_cm_anchor, creation_set, creation_epoch, present_nf, g, older,
 /// tail)`.
 ///
-/// `window` is the complete covering sequence, one member per epoch of the
-/// derivation header's range; the 1-wide read at `creation_epoch` and its
-/// margins are segmented from it.
+/// The read is 1-wide at `creation_epoch`.
 #[must_use]
 #[expect(
     clippy::indexing_slicing,
@@ -223,9 +223,7 @@ pub fn spendable_init(
 
 /// Prepare the witness for [`SpendBind`]: `(g, older, tail, nf_next)`.
 ///
-/// `window` is the complete covering sequence, one member per epoch of the
-/// derivation header's range; the 2-wide read at the lineage's epoch and
-/// its margins are segmented from it.
+/// The read is 2-wide at the lineage's epoch.
 #[must_use]
 #[expect(
     clippy::indexing_slicing,

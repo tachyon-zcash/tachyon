@@ -16,12 +16,7 @@ use crate::{
 /// Derived by the user device from [`NullifierKey`](super::NullifierKey) and
 /// the note's $\psi$ trapdoor, and the only key material a nullifier
 /// derivation needs. Epochs are derived `NF_GROUP` at a time from one sponge
-/// keyed on the group index $w = \lfloor e / \mathsf{NF\_GROUP} \rfloor$:
-///
-/// $$
-/// \mathsf{nf}_e = \mathsf{squeeze}_{e \bmod \mathsf{NF\_GROUP}}\big(
-///     \mathsf{absorb}(\mathtt{NF\_DOMAIN},\ \mathsf{mk},\ w)\big)
-/// $$
+/// keyed on the group index $w = \lfloor e / \mathsf{NF\_GROUP} \rfloor$.
 ///
 /// `mk` grants derivation over the whole epoch space; a delegate receives
 /// proven value windows.
