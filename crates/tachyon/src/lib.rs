@@ -33,7 +33,7 @@ pub(crate) mod fixtures;
 
 pub use action::{Action, Plan as ActionPlan};
 pub use bundle::{
-    Bundle, Plan as BundlePlan, SignatureError, TachyonBundle, VerificationError,
+    Bundle, LiftError, Plan as BundlePlan, SignatureError, TachyonBundle, VerificationError,
     VerifyCoverageError, VerifyPointersError, VerifyProofError,
 };
 pub use note::Note;
