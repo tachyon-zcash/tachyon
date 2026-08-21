@@ -21,7 +21,7 @@ use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
     Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
-    constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
+    constraint::{conditional_enforce_equal, enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
 use super::delegation::NullifierDerivation;
@@ -29,10 +29,10 @@ use crate::{
     note::{self},
     nullifier::Nullifier,
     primitives::{
-        Anchor, EpochIndex, NfMarginPoly, NfSeqCommit, NfSeqPoly, NfTailPoly, TachygramSetCommit,
+        Anchor, EpochIndex, NF_FACTOR_RESIDUE, NfSeqCommit, NfSeqPoly, TachygramSetCommit,
         TachygramSetPoly,
     },
-    relations::{enforce::enforce_shifted_combination, read::enforce_covering_read},
+    relations::enforce::enforce_poly_product,
 };
 
 /// Anchor segment between two endpoints. Composable via [`AnchorFuse`].
@@ -83,21 +83,29 @@ impl Header for AnchorChain {
 /// safe to delegate: no step producing one touches a note, `cm`, or `mk`.
 ///
 /// An `elapsed` polynomial holds one tested nullifier per covered epoch over
-/// `[epoch_start, epoch_last]`, in bare Horner order (see [`NfSeqPoly`]):
-/// `nf_start` at the top degree, the present `nf_last` at degree `0`. The
-/// seeds establish the form and the fuses preserve it; every relation over
-/// the sequence takes its exponents from the header-pinned epoch spans.
+/// `[epoch_start, epoch_last]`, as the factor product (see [`NfSeqPoly`]):
+/// each member rides an indexed cubic factor carrying its own epoch.
+///
+/// Three provenance invariants bind every producer of this header, and
+/// [`UnspentBind`]'s completeness argument leans on all of them: **epoch
+/// support** (every factor's epoch lies in `[epoch_start, epoch_last]`; the
+/// seeds build each factor from the same epoch scalar they fold into the
+/// anchor), **exactly one member per epoch** (the seeds pin their factor
+/// counts by their challenge identities; [`UnspentFuse`]'s identity determines
+/// the combined polynomial exactly, so the invariants compose by induction),
+/// and **boundary caches naming held factors** (each seed pins its boundary
+/// factors into `elapsed`, and the fuse inherits boundaries whose factors
+/// survive into `combined`).
+///
+/// Member count equals span size structurally rather than by any check:
+/// [`UnspentSeed`] spans one epoch, [`EndEpochUnspentSeed`] spans two, and
+/// [`UnspentFuse`] requires `right.epoch_start == left.epoch_last`, so each
+/// composition adds the same to the count as to the span.
 ///
 /// `nf_start` and `nf_last` are scalar caches of the sequence's boundary
-/// members. [`UnspentBind`] binds both, and every interior member, to the
-/// note's genuine derivation nullifiers.
-///
-/// `nf_start` is also the **rank pin**, as at
-/// [`super::delegation::NullifierDerivation`]: it is
-/// `elapsed`'s top coefficient, guarded nonzero at both seeds and threaded by
-/// the fuse, so the announced span is the exact rank. Without it a two-member
-/// sequence with a zero head would commit exactly as a one-member sequence
-/// does, and a crossing could present itself as a point segment.
+/// members, consumed by [`UnspentFuse`]'s junction check and
+/// [`super::spendable::SpendableLift`]'s seam. [`UnspentBind`] binds every
+/// member, boundaries included, to the note's genuine derivation nullifiers.
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
@@ -240,7 +248,22 @@ impl Step for AnchorFuse {
 ///
 /// Verify $\mathsf{nf} \notin \mathsf{stamp\_tg\_set}$ and use the stamp's
 /// commit to produce the appropriate anchor. The `elapsed` sequence is the
-/// single member $\mathsf{nf}$, the epoch under test.
+/// single member $\mathsf{nf}$ at the epoch under test.
+///
+/// # Soundness
+///
+/// The witnessed one-member `elapsed` is pinned to the emitted pair
+/// unconditionally: its commitment and the scalar-binding point
+/// $G_0 \cdot \mathsf{nf}$ (an injective in-circuit function of the free
+/// nullifier) are absorbed into the challenge before it exists, so the
+/// identity at the challenge forces `elapsed` to exactly the pair's factor,
+/// so the post-challenge cube-root solve is unavailable.
+///
+/// `epoch` is free, and needs no pin of its own: it is one variable, entering
+/// the factor, the emitted header and the anchor fold alike. A solved value
+/// therefore lands in an anchor off the consensus-published chain, and the
+/// factor it builds still names the epoch the header announces — which is the
+/// epoch-support invariant [`UnspentBind`] leans on.
 #[derive(Debug)]
 pub struct UnspentSeed;
 
@@ -249,24 +272,18 @@ impl Step for UnspentSeed {
     type Left = ();
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(anchor_prev, (epoch, nf), stamp_tg_set)`.
-    type Witness<'source> = (Anchor, (EpochIndex, Nullifier), TachygramSetPoly);
+    /// `(anchor_prev, (epoch, nf), stamp_tg_set, elapsed_seq)`.
+    type Witness<'source> = (Anchor, (EpochIndex, Nullifier), TachygramSetPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(4);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (anchor_prev, (epoch, nf), stamp_tg_set): Self::Witness<'source>,
+        (anchor_prev, (epoch, nf), stamp_tg_set, elapsed_seq): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
-
         // Exclusion: nf ∉ set ⇔ the set polynomial is nonzero at nf.
         let nf_point = Fp::from(nf);
         let eval = stamp_tg_set.eval(nf_point);
@@ -274,14 +291,27 @@ impl Step for UnspentSeed {
         enforce_nonzero(eval, "UnspentSeed: found nullifier in set")?;
         let stamp_commit = stamp_tg_set.commit();
         let tested_anchor = anchor_prev.next_stamp(epoch, &stamp_commit);
-        // Nonzero guard: a nonzero `nf` is the sequence's rank pin, and it
-        // keeps the one-member commitment below off the identity point, which
-        // the in-circuit point representation cannot hold. Zero is reserved.
+        // Nonzero guard, defensive: zero is reserved.
         enforce_nonzero(nf_point, "UnspentSeed: tested nullifier is zero")?;
 
-        // One-member elapsed: the Horner encoding of `[nf]` is the constant
-        // `nf`, committing to `g0 * nf`.
-        let elapsed_commit = NfSeqCommit::from(g0 * nf_point);
+        // One-member elapsed: bind the witnessed sequence to the emitted
+        // pair's factor at a challenge absorbing the commitment and the
+        // scalar-binding point.
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &g0 = Pasta::host_generators(Pasta::baked())
+            .g()
+            .first()
+            .expect("at least one generator");
+        let elapsed_commit = elapsed_seq.commit();
+        let z = ctx.derive_challenge(&[elapsed_commit.into(), g0 * nf_point])?;
+        let elapsed_at_z = elapsed_seq.eval(z);
+        let linear = Fp::from(u64::from(epoch.0) + 1) * z + nf_point;
+        enforce_zero(
+            elapsed_at_z - (linear.square() * linear - NF_FACTOR_RESIDUE),
+            "UnspentSeed: elapsed does not match the tested pair",
+        )?;
+        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
+
         Ok((
             (
                 anchor_prev,
@@ -309,8 +339,11 @@ impl Step for UnspentSeed {
 ///
 /// `nf_prev` and `nf` are unconstrained here, as at every seed;
 /// [`UnspentBind`] forces every `elapsed` member against the note's genuine
-/// derivation. `elapsed` is derived from them rather than witnessed, so the
-/// commitment and the header scalars cannot disagree.
+/// derivation. The witnessed `elapsed` cannot disagree with the header
+/// scalars: its commitment and the two-scalar binding point
+/// $G_0 \cdot \mathsf{nf\_prev} + G_1 \cdot \mathsf{nf}$ are absorbed into
+/// the challenge before it exists, and the identity at the challenge forces
+/// the sequence to exactly the two crossing factors.
 ///
 /// `anchor_prev` is likewise unconstrained, and nothing here requires it to be
 /// its epoch's terminal anchor. Adjacency at the fuses that consume this
@@ -324,30 +357,19 @@ impl Step for EndEpochUnspentSeed {
     type Left = ();
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(anchor_prev, (epoch_prev, nf_prev), nf)`.
-    type Witness<'source> = (Anchor, (EpochIndex, Nullifier), Nullifier);
+    /// `(anchor_prev, (epoch_prev, nf_prev), nf, elapsed_seq)`.
+    type Witness<'source> = (Anchor, (EpochIndex, Nullifier), Nullifier, NfSeqPoly);
 
     const INDEX: Index = Index::new(5);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (anchor_prev, (epoch_prev, nf_prev), nf): Self::Witness<'source>,
+        ctx: &mut ragu::StepCtx<'_>,
+        (anchor_prev, (epoch_prev, nf_prev), nf, elapsed_seq): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let (&g0, &g1) = {
-            let generators = Pasta::host_generators(Pasta::baked());
-            (
-                generators.g().first().expect("at least one generator"),
-                generators.g().get(1).expect("at least two generators"),
-            )
-        };
-
-        // Nonzero guard: a nonzero `nf_prev` is the sequence's rank pin, and
-        // without it the two-member encoding below collapses onto the
-        // one-member commitment `UnspentSeed` emits. Zero is reserved.
+        // Nonzero guards, defensive: zero is reserved.
         enforce_nonzero(
             Fp::from(nf_prev),
             "EndEpochUnspentSeed: outgoing nullifier is zero",
@@ -357,13 +379,33 @@ impl Step for EndEpochUnspentSeed {
             "EndEpochUnspentSeed: incoming nullifier is zero",
         )?;
 
-        // Two-member elapsed: the Horner encoding of `[nf_prev, nf]` is
-        // `nf_prev·X + nf`, the first member at the top degree as at
-        // `UnspentSeed`, which is the one-member case of the same encoding.
-        let elapsed_commit = NfSeqCommit::from(g0 * Fp::from(nf) + g1 * Fp::from(nf_prev));
-
         let epoch = epoch_prev.next();
         let anchor = anchor_prev.next_epoch(epoch);
+
+        // Two-member elapsed: bind the witnessed sequence to the two
+        // crossing factors at a challenge absorbing the commitment and the
+        // two-scalar binding point.
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let (&g0, &g1) = {
+            let generators = Pasta::host_generators(Pasta::baked());
+            (
+                generators.g().first().expect("at least one generator"),
+                generators.g().get(1).expect("at least two generators"),
+            )
+        };
+        let elapsed_commit = elapsed_seq.commit();
+        let binding = g0 * Fp::from(nf_prev) + g1 * Fp::from(nf);
+        let z = ctx.derive_challenge(&[elapsed_commit.into(), binding])?;
+        let elapsed_at_z = elapsed_seq.eval(z);
+        let linear_prev = Fp::from(u64::from(epoch_prev.0) + 1) * z + Fp::from(nf_prev);
+        let linear = Fp::from(u64::from(epoch.0) + 1) * z + Fp::from(nf);
+        enforce_zero(
+            elapsed_at_z
+                - (linear_prev.square() * linear_prev - NF_FACTOR_RESIDUE)
+                    * (linear.square() * linear - NF_FACTOR_RESIDUE),
+            "EndEpochUnspentSeed: elapsed does not match the crossing pairs",
+        )?;
+        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
 
         Ok((
             (
@@ -445,27 +487,31 @@ impl Step for UnspentFuse {
             "UnspentFuse: halves disagree on the junction nullifier",
         )?;
         let combined_commit = combined_elapsed_seq.commit();
-        let offset = right_epoch_last - right_epoch_start;
-        // Junction dedup: a sequence of `k` members is `Σ n_i·X^{k-1-i}`, and
-        // the halves share the junction member (left's degree 0, right's top
-        // degree `k_R - 1`), so `combined = left ++ right[1..]` is the shifted
-        // combination `combined(X) = X^{k_R-1}·left(X) + right(X) -
-        // nf_j·X^{k_R-1}`: the monomial removes the double-counted junction.
-        // Its coefficient is challenge-independent: `left_nf_last` is a
-        // left-header value, fixed by the recursive verification of the left
-        // PCD; the exponent `k_R - 1` is right's header-fixed span. At a
-        // one-member right (`k_R = 1`) the identity degenerates to
-        // `combined = left`: the merge adds stamps, not members.
-        enforce_shifted_combination(
-            ctx,
-            [
-                (left_elapsed_seq.as_ref(), offset.into()),
-                (right_elapsed_seq.as_ref(), 0),
-            ],
-            [(-Fp::from(left_nf_last), offset.into())],
-            combined_elapsed_seq.as_ref(),
+        // Junction dedup: both halves carry the junction epoch's factor, and
+        // the combined lineage keeps it once, so
+        // `combined · F_junction = left · right`. The junction factor is
+        // native from left-header scalars, fixed by the recursive
+        // verification of the left PCD before the challenge. At a one-member
+        // right the identity degenerates to `combined = left`: the merge adds
+        // stamps, not members.
+        let z = ctx.derive_challenge(&[
+            combined_commit.into(),
+            left_elapsed_seq.commit().into(),
+            right_elapsed_seq.commit().into(),
+        ])?;
+        let combined_at_z = combined_elapsed_seq.eval(z);
+        let left_at_z = left_elapsed_seq.eval(z);
+        let right_at_z = right_elapsed_seq.eval(z);
+        let junction_linear =
+            Fp::from(u64::from(left_epoch_last.0) + 1) * z + Fp::from(left_nf_last);
+        let junction_at_z = junction_linear.square() * junction_linear - NF_FACTOR_RESIDUE;
+        enforce_zero(
+            combined_at_z * junction_at_z - left_at_z * right_at_z,
             "UnspentFuse: combined is not the concatenation of the halves",
         )?;
+        ctx.enforce_poly_query(combined_commit.into(), z, combined_at_z)?;
+        ctx.enforce_poly_query(left_elapsed_seq.commit().into(), z, left_at_z)?;
+        ctx.enforce_poly_query(right_elapsed_seq.commit().into(), z, right_at_z)?;
         Ok((
             (
                 left_anchor_prev,
@@ -480,32 +526,49 @@ impl Step for UnspentFuse {
 }
 
 /// Bind an [`ArbitraryUnspent`]'s free-witness nullifiers to a note's genuine
-/// nullifiers, by a covering read out of the derivation's sequence.
+/// nullifiers, by divisibility into the derivation's sequence.
 ///
-/// Consumes a [`NullifierDerivation`] that merely *covers* the unspent span
-/// (`deriv.epoch_start <= unspent.epoch_start`,
-/// `unspent.epoch_last < deriv.epoch_end`). Any window covering the span
-/// serves, at any margin sizes. `elapsed` covers
-/// `[epoch_start, epoch_last]` inclusive, one member per epoch; the read
-/// window `[epoch_start, epoch_last + 1)` converts to the derivation's
-/// exclusive convention. The margins absorb whatever the window covers
-/// outside the lineage: `older` any epochs below it (including before the
-/// note existed), `tail` the epochs the derivation runs ahead of the
-/// exclusion evidence — a spend publishes two nullifiers, so the wallet
-/// derives past the lineage while the lineage stops at published evidence.
+/// Consumes any [`NullifierDerivation`], with no bound comparison against the
+/// unspent span: coverage is a *conclusion* of the read, not a precondition
+/// for it, because each factor carries its own epoch. `elapsed` covers
+/// `[epoch_start, epoch_last]` inclusive, one factor per epoch, and the bind
+/// is the divisibility
+///
+/// $$\mathsf{nf\_seq}(X) = \mathsf{elapsed}(X) \cdot \mathsf{complement}(X)$$
+///
+/// with the complement the product of the derivation's factors outside
+/// the lineage: epochs below it (including before the note existed), and
+/// the epochs the derivation runs ahead of the exclusion evidence — a spend
+/// publishes two nullifiers, so the wallet derives past the lineage while
+/// the lineage stops at published evidence.
 ///
 /// # Soundness
 ///
-/// The read identity forces elapsed's *content*. Of the endpoint scalar
-/// caches, `nf_last` is `elapsed`'s degree-0 coefficient (the present
-/// value), pinned here by a repeat opening; `nf_start` is the
-/// non-extractable top coefficient, equal to `nf_last` when the segment
-/// covers a single epoch and otherwise forced downstream where the join
-/// pins it against the spendable's independently pinned `present_nf` (with
-/// `epoch_start == spendable.epoch` stopping a right value at a wrong
-/// epoch). [`UnspentFuse`]'s junction check is therefore a well-formedness
-/// check, not the genuineness pin: a consistent pair of lies there yields a
-/// wrong merged `elapsed`, which this identity rejects.
+/// Every factor is irreducible, so divisibility is multiset containment:
+/// the identity forces every `elapsed` factor — each an `(epoch, nf)` pair,
+/// position included — to be a genuine derived pair. An epoch the derivation
+/// does not hold has no matching factor to divide out, so an uncovering
+/// derivation is rejected by this identity alone; that is why the step
+/// compares no bounds. Completeness rides
+/// `elapsed`'s provenance invariants (epoch support inside the span and
+/// exactly one member per epoch: the seeds pin their factor counts by their
+/// challenge identities, and the fuse identity determines `combined`
+/// exactly), so the genuine members are distinct, in-span, and
+/// `span`-many: every epoch of the span was tested with exactly its
+/// genuine nullifier. [`UnspentFuse`]'s junction check is a
+/// well-formedness check, not the genuineness pin: a consistent pair of
+/// lies there yields a wrong merged `elapsed`, which this identity
+/// rejects.
+///
+/// The emitted boundary scalars are not checked against `elapsed` here, and
+/// need no check: both seeds pin their boundary factors into `elapsed` by
+/// their own identities, and [`UnspentFuse`] inherits `left_nf_start` and
+/// `right_nf_last`, whose factors are contained in
+/// `combined = left · right / F_junction`. So every producer of this header
+/// leaves the boundary caches naming factors `elapsed` actually holds, and
+/// this identity makes those factors genuine — which is what
+/// [`super::spendable::SpendableLift`] relies on when it advances a lineage
+/// across the segment.
 ///
 /// The lineage is note-blind, so the bind *stamps* the derivation's `cm` onto
 /// the validated [`Unspent`].
@@ -517,15 +580,15 @@ impl Step for UnspentBind {
     type Left = ArbitraryUnspent;
     type Output = Unspent;
     type Right = NullifierDerivation;
-    /// `(elapsed_seq, nf_seq, older, tail)`.
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfMarginPoly, NfTailPoly);
+    /// `(elapsed_seq, nf_seq, complement_seq)`.
+    type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(7);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (elapsed_seq, nf_seq, older, tail): Self::Witness<'source>,
+        (elapsed_seq, nf_seq, complement_seq): Self::Witness<'source>,
         (
             unspent_anchor_prev,
             (unspent_epoch_start, unspent_nf_start),
@@ -533,12 +596,7 @@ impl Step for UnspentBind {
             (unspent_epoch_last, unspent_nf_last),
             unspent_anchor_last,
         ): <Self::Left as Header>::Data,
-        (
-            deriv_cm,
-            (deriv_start, _deriv_nf_start),
-            nf_commit,
-            (deriv_end, _deriv_nf_last),
-        ): <Self::Right as Header>::Data,
+        (deriv_cm, _, nf_commit, _): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             elapsed_seq.commit().into(),
@@ -551,47 +609,24 @@ impl Step for UnspentBind {
             "UnspentBind: covering sequence does not match header",
         )?;
 
-        // Native coverage guards: mock stand-ins for range constraints over
-        // the header-pinned bounds.
-        if deriv_start.0 > unspent_epoch_start.0 {
-            return Err(ragu::Error::InvalidWitness(
-                "UnspentBind: derivation does not cover the unspent start".into(),
-            ));
-        }
-        if deriv_end.0 <= unspent_epoch_last.0 {
-            return Err(ragu::Error::InvalidWitness(
-                "UnspentBind: derivation does not cover the unspent end".into(),
-            ));
-        }
-
-        // The read window is `[epoch_start, epoch_last + 1)`: the `+1` is the
-        // declared conversion between the unspent's inclusive bounds and the
-        // derivation's exclusive one.
-        let members = u64::from(unspent_epoch_last - unspent_epoch_start) + 1;
-        let margin = u64::from(deriv_end - unspent_epoch_last) - 1;
-        enforce_covering_read(
+        // The divisibility bind: `nf_seq = elapsed · complement`, so every
+        // elapsed factor is a genuine derived pair.
+        enforce_poly_product(
             ctx,
-            nf_seq.as_ref(),
-            older.as_ref(),
-            tail.as_ref(),
             elapsed_seq.as_ref(),
-            members,
-            margin,
+            complement_seq.as_ref(),
+            nf_seq.as_ref(),
             "UnspentBind: sequence does not match the derivation",
         )?;
 
-        // Boundary nullifiers, per the step's soundness section.
-        ctx.enforce_poly_query(
-            elapsed_seq.commit().into(),
-            Fp::ZERO,
+        // Defensive: a single-epoch segment's boundary caches coincide.
+        let span = Fp::from(unspent_epoch_last) - Fp::from(unspent_epoch_start);
+        conditional_enforce_equal(
+            bool::from(span.is_zero()),
+            Fp::from(unspent_nf_start),
             Fp::from(unspent_nf_last),
+            "UnspentBind: single-epoch segment boundary nullifiers differ",
         )?;
-        if members == 1 {
-            enforce_zero(
-                Fp::from(unspent_nf_start) - Fp::from(unspent_nf_last),
-                "UnspentBind: single-epoch segment boundary nullifiers differ",
-            )?;
-        }
 
         Ok((
             (

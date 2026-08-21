@@ -22,9 +22,8 @@ use ragu::{
 use crate::{
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
-    nullifier::Nullifier,
-    primitives::{EpochGroup, EpochIndex, NfSeqCommit, NfSeqPoly},
-    relations::enforce::enforce_shifted_combination,
+    primitives::{EpochGroup, EpochIndex, NF_FACTOR_RESIDUE, NfSeqCommit, NfSeqPoly},
+    relations::enforce::enforce_poly_product,
 };
 
 /// A note's certified commitment and master key (wallet-only).
@@ -50,16 +49,21 @@ impl Header for NfMasterHeader {
 
 /// A proven contiguous range of derived nullifiers (wallet-only).
 ///
-/// `(cm, (epoch_start, nf_start), nf_commit, (epoch_end, nf_last))`: covers
-/// epochs `[epoch_start, epoch_end)`; `nf_commit` commits the range's
-/// nullifier sequence $g$ in bare Horner order (see
-/// [`NfSeqPoly`]), one coefficient per covered
-/// epoch, the newest at degree $0$. `cm` binds the range to the real note.
+/// `(cm, epoch_start, nf_commit, epoch_end)`: covers epochs
+/// `[epoch_start, epoch_end)`; `nf_commit` commits the range's nullifier
+/// sequence as the factor product (see [`NfSeqPoly`]), **exactly one factor
+/// per covered epoch**, each factor carrying its own epoch index — a
+/// provenance invariant established at [`NfDerive`] and preserved by
+/// [`NullifierFuse`]'s contiguity check, and what the divisibility binds
+/// lean on for per-epoch completeness. `cm` binds the range to the real
+/// note.
 ///
-/// No consumer reads either boundary nullifier as data; every read selects
-/// its own window out of the sequence. `nf_start` is $g$'s top coefficient and
-/// `nf_last` its degree-0 coefficient, both derived at the leaf and threaded by
-/// the fuse, which places every covering read's bands.
+/// No consumer reads the range: each factor carries its own epoch, so a read
+/// concludes coverage from divisibility rather than comparing bounds. The
+/// range is here for [`NullifierFuse`]'s contiguity check, which is what keeps
+/// the product squarefree — and squarefreeness is what forces a tested
+/// sequence's factors distinct at
+/// [`UnspentBind`](super::pool::UnspentBind).
 ///
 /// The header carries a range and a commitment, nothing about who will read
 /// it or where: masking is the consuming step's responsibility.
@@ -67,28 +71,15 @@ impl Header for NfMasterHeader {
 pub struct NullifierDerivation;
 
 impl Header for NullifierDerivation {
-    /// `(cm, (epoch_start, nf_start), nf_commit, (epoch_end, nf_last))`.
-    /// `epoch_end` is exclusive and names no item; `nf_last` is the member at
-    /// `epoch_end - 1`.
-    type Data = (
-        note::Commitment,
-        (EpochIndex, Nullifier),
-        NfSeqCommit,
-        (EpochIndex, Nullifier),
-    );
+    /// `(cm, epoch_start, nf_commit, epoch_end)`. `epoch_end` is exclusive.
+    type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
 
     const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, (epoch_start, nf_start), nf_commit, (epoch_end, nf_last)) = *data;
+        let (cm, epoch_start, nf_commit, epoch_end) = *data;
         (
-            vec![
-                Fp::from(cm),
-                Fp::from(epoch_start),
-                Fp::from(nf_start),
-                Fp::from(epoch_end),
-                Fp::from(nf_last),
-            ],
+            vec![Fp::from(cm), Fp::from(epoch_start), Fp::from(epoch_end)],
             Vec::new(),
             Vec::new(),
             vec![Eq::from(nf_commit)],
@@ -147,19 +138,19 @@ impl Step for NfMasterSeed {
 /// Derive one window of nullifiers and export it as a
 /// [`NullifierDerivation`].
 ///
-/// `Left = NfMasterSeed`. Witnesses the window's [`EpochGroup`] and the
-/// window sequence $g$. Runs one sponge per group over
+/// `Left = NfMasterSeed`. Witnesses the window's [`EpochGroup`] and the window
+/// sequence. Runs one sponge per group over
 /// $(\mathtt{NF\_DOMAIN}, \mathsf{mk}, w)$, each absorbing three elements and
 /// squeezing `NF_DERIVATION_GROUP` nullifiers for one permutation, then binds
-/// $g$ to the window's members by a single opening at a free $z$ against their
-/// bare Horner accumulation
+/// the sequence to the window's members by a single opening at a free $z$
+/// against the native product of the window's factors
 ///
-/// $$g(z) = \sum_{j < W} \mathsf{nf}_{\mathsf{base}+j}\, z^{\,W-1-j}$$
+/// $$\mathsf{seq}(z) = \prod_{j < W} F_{\mathsf{base}+j,\
+/// \mathsf{nf}_{\mathsf{base}+j}}(z)$$
 ///
-/// for $W$ = `NF_DERIVATION_WIDTH`. Because $z$ is free and both sides have
-/// degree below $W$, the single opening forces every coefficient of $g$ to
-/// the genuine nullifier, and the boundary members are emitted on the header
-/// as derived values.
+/// for $W$ = `NF_DERIVATION_WIDTH`. The sequence is committed and absorbed
+/// before $z$ exists and the factor scalars are pinned (see soundness), so the
+/// identity forces it to exactly the product of the genuine factors.
 ///
 /// # Group alignment
 ///
@@ -182,6 +173,12 @@ impl Step for NfMasterSeed {
 /// = \mathsf{NF\_DERIVATION\_GROUP} \cdot w_0$ is injective, so the emitted
 /// epoch determines $w_0$ and hence the sponge inputs, and every choice is an
 /// honestly labelled window.
+///
+/// The epoch indices enter the factors natively without being absorbed into
+/// $z$, and need no absorbing: each is $\mathsf{base}$ plus a circuit
+/// constant, so none of them is free. The nullifier scalars are sponge outputs
+/// of the threaded `mk`, pinned in-circuit, so the product identity alone
+/// forces every factor.
 #[derive(Debug)]
 pub struct NfDerive;
 
@@ -205,6 +202,14 @@ impl Step for NfDerive {
         // NF_DERIVATION_WIDTH nullifiers from NF_DERIVATION_GROUP sponges.
         let nullifiers = mk.derive_window(group_start);
 
+        let epoch_start = group_start.start_epoch();
+        #[expect(
+            clippy::as_conversions,
+            clippy::cast_possible_truncation,
+            reason = "constant length"
+        )]
+        let epoch_end = EpochIndex(epoch_start.0 + nullifiers.len() as u32);
+
         // `z`: a fresh transcript challenge over the sequence commitment. The
         // polynomial is fixed before it exists, so the single opening below
         // is not vacuous.
@@ -212,12 +217,13 @@ impl Step for NfDerive {
         let seq_at_z = seq.eval(z);
         ctx.enforce_poly_query(seq.commit().into(), z, seq_at_z)?;
 
-        // Horner-accumulate the window's squeezes at `z`, oldest first: both
-        // sides have degree below the window width, so equality at a free
-        // point forces every coefficient of the committed sequence.
-        let mut accumulated = Fp::ZERO;
-        for nf in nullifiers {
-            accumulated = accumulated * z + Fp::from(nf);
+        // The window's factor product at `z`, each factor evaluated natively
+        // from the sponge-derived member and its epoch.
+        let mut accumulated = Fp::ONE;
+        for (offset, nf) in nullifiers.into_iter().enumerate() {
+            #[expect(clippy::as_conversions, reason = "the window is a constant width")]
+            let linear = Fp::from(u64::from(epoch_start.0) + 1 + offset as u64) * z + Fp::from(nf);
+            accumulated *= linear.square() * linear - NF_FACTOR_RESIDUE;
         }
 
         enforce_zero(
@@ -225,30 +231,7 @@ impl Step for NfDerive {
             "NfDerive: sequence does not match the derived window",
         )?;
 
-        #[expect(clippy::expect_used, reason = "constant length")]
-        let (&nf_start, &nf_last) = (
-            nullifiers.first().expect("constant length"),
-            nullifiers.last().expect("constant length"),
-        );
-
-        let start_epoch = group_start.start_epoch();
-
-        #[expect(
-            clippy::as_conversions,
-            clippy::cast_possible_truncation,
-            reason = "constant length"
-        )]
-        let end_epoch = EpochIndex(start_epoch.0 + nullifiers.len() as u32);
-
-        Ok((
-            (
-                cm,
-                (start_epoch, nf_start),
-                seq.commit(),
-                (end_epoch, nf_last),
-            ),
-            (),
-        ))
+        Ok(((cm, epoch_start, seq.commit(), epoch_end), ()))
     }
 }
 
@@ -257,22 +240,21 @@ impl Step for NfDerive {
 /// Requires the same `cm` and contiguity (`right.epoch_start ==
 /// left.epoch_end`). Witnesses the two range polynomials and their
 /// concatenation, binds each by commit-equality, and proves the concat as the
-/// bare Horner shift: a sequence of $k$ members is $\sum n_i X^{k-1-i}$ and
-/// no member is shared across the seam, so
+/// factor product
 ///
-/// $$\mathsf{merged}(X) = X^{k_R}\,\mathsf{left}(X) + \mathsf{right}(X),$$
+/// $$\mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X):$$
 ///
-/// with the member count $k_R$ fixed by right's header span: bare Horner
-/// concatenation is exactly the shifted sum.
+/// under the factor encoding, concatenation of disjoint ranges is exactly
+/// multiplication.
 ///
 /// # Soundness
 ///
-/// The degree-0 queries pin the *end* nullifiers, the only coefficients a
-/// single opening isolates under Horner order: `merged` opens to
-/// `right.nf_last` (also right's own degree 0) and `left` opens to
-/// `left.nf_last`. `nf_start` is the
-/// non-extractable top coefficient; it threads from the left header, and its
-/// nonzero-ness (the rank pin) is inductive from the leaf's cover-wide guard.
+/// All three operands are committed and absorbed into the challenge, so the
+/// product identity pins `merged`'s factor multiset to the union of the
+/// halves'. The contiguity check preserves the header invariant established
+/// at the leaf: exactly one factor per epoch in `[epoch_start, epoch_end)`,
+/// so the announced range labels the factor multiset truthfully. The
+/// product identity is confirmed a second time at the fixed point $0$.
 #[derive(Debug)]
 pub struct NullifierFuse;
 
@@ -290,18 +272,8 @@ impl Step for NullifierFuse {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (left_seq, merged_seq, right_seq): Self::Witness<'source>,
-        (
-            left_cm,
-            (left_epoch_start, left_nf_start),
-            left_nf_commit,
-            (left_epoch_end, left_nf_last),
-        ): <Self::Left as Header>::Data,
-        (
-            right_cm,
-            (right_epoch_start, _right_nf_start),
-            right_nf_commit,
-            (right_epoch_end, right_nf_last),
-        ): <Self::Right as Header>::Data,
+        (left_cm, left_epoch_start, left_nf_commit, left_epoch_end): <Self::Left as Header>::Data,
+        (right_cm, right_epoch_start, right_nf_commit, right_epoch_end): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(left_cm) - Fp::from(right_cm),
@@ -322,26 +294,28 @@ impl Step for NullifierFuse {
             "NullifierFuse: right polynomial does not match header",
         )?;
         let merged_nf_commit = merged_seq.commit();
-        let right_span = right_epoch_end - right_epoch_start;
-        enforce_shifted_combination(
+        enforce_poly_product(
             ctx,
-            [
-                (left_seq.as_ref(), right_span.into()),
-                (right_seq.as_ref(), 0),
-            ],
-            [],
+            left_seq.as_ref(),
+            right_seq.as_ref(),
             merged_seq.as_ref(),
             "NullifierFuse: merged is not the concat of the halves",
         )?;
-        ctx.enforce_poly_query(merged_nf_commit.into(), Fp::ZERO, Fp::from(right_nf_last))?;
-        ctx.enforce_poly_query(left_seq.commit().into(), Fp::ZERO, Fp::from(left_nf_last))?;
+        // The same product identity at the fixed point 0.
+        let (left_at_zero, right_at_zero, merged_at_zero) = (
+            left_seq.eval(Fp::ZERO),
+            right_seq.eval(Fp::ZERO),
+            merged_seq.eval(Fp::ZERO),
+        );
+        enforce_zero(
+            merged_at_zero - left_at_zero * right_at_zero,
+            "NullifierFuse: merged constant term is not the product of the halves'",
+        )?;
+        ctx.enforce_poly_query(left_seq.commit().into(), Fp::ZERO, left_at_zero)?;
+        ctx.enforce_poly_query(right_seq.commit().into(), Fp::ZERO, right_at_zero)?;
+        ctx.enforce_poly_query(merged_nf_commit.into(), Fp::ZERO, merged_at_zero)?;
         Ok((
-            (
-                left_cm,
-                (left_epoch_start, left_nf_start),
-                merged_nf_commit,
-                (right_epoch_end, right_nf_last),
-            ),
+            (left_cm, left_epoch_start, merged_nf_commit, right_epoch_end),
             (),
         ))
     }

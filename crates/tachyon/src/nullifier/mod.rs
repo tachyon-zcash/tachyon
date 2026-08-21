@@ -10,6 +10,20 @@ use crate::primitives::Tachygram;
 /// Epochs covered per nullifier derivation step.
 pub(crate) const NF_DERIVATION_WIDTH: usize = 16;
 
+/// The longest epoch span one factor-product sequence can hold: each member
+/// is a cubic factor, so a span of $n$ epochs costs $3n + 1$ coefficients
+/// against the $2^{\mathsf{R}}$ polynomial cap.
+///
+/// Host-side constructors assert this bound; in-circuit no enforcement is
+/// needed, since an oversized product exceeds the coefficient cap and cannot
+/// be committed at all.
+#[expect(
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
+    reason = "flooring to the last whole factor is the intended bound"
+)]
+pub const NF_MAX_FUSED_SPAN: usize = ((1 << ragu::Polynomial::R) - 1) / 3;
+
 /// A Tachyon nullifier.
 ///
 /// Derived from the note's master key $\mathsf{mk} =

@@ -13,8 +13,8 @@ use crate::{
     note::Note,
     nullifier::Nullifier,
     primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochGroup, EpochIndex, NfMarginPoly, NfSeqPoly,
-        NfTailPoly, Tachygram, TachygramSetPoly,
+        ActionDigest, ActionSetPoly, Anchor, EpochGroup, EpochIndex, NfSeqPoly, Tachygram,
+        TachygramSetPoly,
     },
     stamp::proof::{
         delegation::{NfDerive, NfMasterSeed, NullifierFuse},
@@ -51,28 +51,32 @@ pub fn nf_derive(
     group: EpochGroup,
 ) -> StepWitness<'static, NfDerive> {
     let (_cm, mk) = left;
-    let seq = mk.derive_window(group).into_iter().collect::<NfSeqPoly>();
-    (group, seq)
+    (
+        group,
+        NfSeqPoly::new(group.start_epoch(), &mk.derive_window(group)),
+    )
 }
 
 /// Prepare the witness for [`NullifierFuse`]:
 /// `(left_seq, merged_seq, right_seq)`.
 #[must_use]
 pub fn nullifier_fuse(
-    (_left, _right): (StepLeft<NullifierFuse>, StepRight<NullifierFuse>),
+    (left, right): (StepLeft<NullifierFuse>, StepRight<NullifierFuse>),
     left_nfs: &[Nullifier],
     right_nfs: &[Nullifier],
 ) -> StepWitness<'static, NullifierFuse> {
+    let (_, left_epoch_start, ..) = left;
+    let (_, right_epoch_start, ..) = right;
     let merged = [left_nfs, right_nfs].concat();
     (
-        left_nfs.iter().copied().collect::<NfSeqPoly>(),
-        merged.into_iter().collect::<NfSeqPoly>(),
-        right_nfs.iter().copied().collect::<NfSeqPoly>(),
+        NfSeqPoly::new(left_epoch_start, left_nfs),
+        NfSeqPoly::new(left_epoch_start, &merged),
+        NfSeqPoly::new(right_epoch_start, right_nfs),
     )
 }
 
 /// Prepare the witness for [`UnspentSeed`]: `(anchor_prev, (epoch, nf),
-/// tg_set)`.
+/// tg_set, elapsed_seq)`.
 #[must_use]
 pub fn unspent_seed(
     (_left, _right): (StepLeft<UnspentSeed>, StepRight<UnspentSeed>),
@@ -85,13 +89,14 @@ pub fn unspent_seed(
         anchor_prev,
         (epoch, nf),
         tgs.iter().copied().collect::<TachygramSetPoly>(),
+        NfSeqPoly::new(epoch, &[nf]),
     )
 }
 
 /// Prepare the witness for [`EndEpochUnspentSeed`]:
-/// `(anchor_prev, (epoch_prev, nf_prev), nf)`.
+/// `(anchor_prev, (epoch_prev, nf_prev), nf, elapsed_seq)`.
 #[must_use]
-pub const fn end_epoch_unspent_seed(
+pub fn end_epoch_unspent_seed(
     (_left, _right): (
         StepLeft<EndEpochUnspentSeed>,
         StepRight<EndEpochUnspentSeed>,
@@ -101,7 +106,12 @@ pub const fn end_epoch_unspent_seed(
     nf_prev: Nullifier,
     nf: Nullifier,
 ) -> StepWitness<'static, EndEpochUnspentSeed> {
-    (anchor_prev, (epoch_prev, nf_prev), nf)
+    (
+        anchor_prev,
+        (epoch_prev, nf_prev),
+        nf,
+        NfSeqPoly::new(epoch_prev, &[nf_prev, nf]),
+    )
 }
 
 /// Prepare the witness for [`UnspentFuse`]:
@@ -112,29 +122,31 @@ pub const fn end_epoch_unspent_seed(
 /// combined sequence keeps once.
 #[must_use]
 pub fn unspent_fuse(
-    (_left, _right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
+    (left, right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
     left_elapsed: &[Nullifier],
     right_elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentFuse> {
+    let (_, (left_epoch_start, _), ..) = left;
+    let (_, (right_epoch_start, _), ..) = right;
     #[expect(clippy::expect_used, reason = "member lists are nonempty")]
     let (_junction, right_tail) = right_elapsed
         .split_first()
         .expect("right members include the junction");
     let combined = [left_elapsed, right_tail].concat();
     (
-        left_elapsed.iter().copied().collect::<NfSeqPoly>(),
-        combined.into_iter().collect::<NfSeqPoly>(),
-        right_elapsed.iter().copied().collect::<NfSeqPoly>(),
+        NfSeqPoly::new(left_epoch_start, left_elapsed),
+        NfSeqPoly::new(left_epoch_start, &combined),
+        NfSeqPoly::new(right_epoch_start, right_elapsed),
     )
 }
 
-/// Prepare the witness for [`UnspentBind`]: `(elapsed_seq, nf_seq, older,
-/// tail)`.
+/// Prepare the witness for [`UnspentBind`]:
+/// `(elapsed_seq, nf_seq, complement_seq)`.
 ///
 /// `elapsed` is the unspent's member list, one per covered epoch. `window`
 /// is the complete covering sequence, one member per epoch of the
-/// derivation header's range; the read of the unspent's span and its
-/// margins are segmented from it.
+/// derivation header's range; the complement is the window's runs on both
+/// sides of the unspent's span, multiplied.
 #[must_use]
 #[expect(
     clippy::indexing_slicing,
@@ -147,24 +159,26 @@ pub fn unspent_bind(
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentBind> {
     let (_, (epoch_start, _), _, (epoch_last, _), _) = unspent;
-    let (_, (deriv_start, _), ..) = deriv;
+    let (_, deriv_start, ..) = deriv;
     let lo = (epoch_start.0 - deriv_start.0) as usize;
     let hi = (epoch_last.next().0 - deriv_start.0) as usize;
+    let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
+        * NfSeqPoly::new(epoch_last.next(), &window[hi..]);
     (
-        elapsed.iter().copied().collect::<NfSeqPoly>(),
-        window.iter().copied().collect::<NfSeqPoly>(),
-        NfMarginPoly::new(&window[..lo]),
-        NfTailPoly::new(&window[hi..]),
+        NfSeqPoly::new(epoch_start, elapsed),
+        NfSeqPoly::new(deriv_start, window),
+        complement_seq,
     )
 }
 
 /// Prepare the witness for [`SpendableInit`]:
-/// `(pre_cm_anchor, creation_set, creation_epoch, present_nf, nf_seq, older,
-/// tail)`.
+/// `(pre_cm_anchor, creation_set, creation_epoch, present_nf, nf_seq,
+/// complement_seq)`.
 ///
 /// `window` is the complete covering sequence, one member per epoch of the
-/// derivation header's range; the 1-wide read at `creation_epoch` and its
-/// margins are segmented from it, `present_nf` the member the read forces.
+/// derivation header's range; `present_nf` is the member the read forces,
+/// and the complement is the window's runs on both sides of the creation
+/// epoch, multiplied.
 #[must_use]
 #[expect(
     clippy::indexing_slicing,
@@ -178,24 +192,27 @@ pub fn spendable_init(
     creation_epoch: EpochIndex,
     window: &[Nullifier],
 ) -> StepWitness<'static, SpendableInit> {
-    let (_, (deriv_start, _), ..) = deriv;
+    let (_, deriv_start, ..) = deriv;
     let lo = (creation_epoch.0 - deriv_start.0) as usize;
+    let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
+        * NfSeqPoly::new(creation_epoch.next(), &window[lo + 1..]);
     (
         pre_cm_anchor,
         creation_tgs.iter().copied().collect::<TachygramSetPoly>(),
         creation_epoch,
         window[lo],
-        window.iter().copied().collect::<NfSeqPoly>(),
-        NfMarginPoly::new(&window[..lo]),
-        NfTailPoly::new(&window[lo + 1..]),
+        NfSeqPoly::new(deriv_start, window),
+        complement_seq,
     )
 }
 
-/// Prepare the witness for [`SpendBind`]: `(nf_seq, older, tail, nf_next)`.
+/// Prepare the witness for [`SpendBind`]:
+/// `(nf_seq, complement_seq, nf_next)`.
 ///
 /// `window` is the complete covering sequence, one member per epoch of the
-/// derivation header's range; the 2-wide read at the lineage's epoch and
-/// its margins are segmented from it, `nf_next` the next epoch's member.
+/// derivation header's range; `nf_next` is the next epoch's member, and the
+/// complement is the window's runs on both sides of the read pair,
+/// multiplied.
 #[must_use]
 #[expect(
     clippy::indexing_slicing,
@@ -207,12 +224,13 @@ pub fn spend_bind(
     window: &[Nullifier],
 ) -> StepWitness<'static, SpendBind> {
     let (_, (epoch, _), _) = spendable;
-    let (_, (deriv_start, _), ..) = deriv;
+    let (_, deriv_start, ..) = deriv;
     let lo = (epoch.0 - deriv_start.0) as usize;
+    let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
+        * NfSeqPoly::new(EpochIndex(epoch.0 + 2), &window[lo + 2..]);
     (
-        window.iter().copied().collect::<NfSeqPoly>(),
-        NfMarginPoly::new(&window[..lo]),
-        NfTailPoly::new(&window[lo + 2..]),
+        NfSeqPoly::new(deriv_start, window),
+        complement_seq,
         window[lo + 1],
     )
 }

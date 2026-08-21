@@ -361,9 +361,9 @@ impl Plan {
             // SpendBind: confirm the live pair against the covering
             // derivation. The covering sequence is rebuilt natively from the
             // note's master key (the succinct header carries only the
-            // commitment); the witness segments its read and margins.
+            // commitment); the witness segments its read and complement.
             let mk = pak.nk.derive_note_private(note.psi);
-            let (_, (deriv_start, _), _, (deriv_end, _)) = *range_pcd.data();
+            let (_, deriv_start, _, deriv_end) = *range_pcd.data();
             let window: Vec<Nullifier> = (deriv_start.0..deriv_end.0)
                 .map(|epoch| mk.derive_nullifier(EpochIndex(epoch)))
                 .collect();

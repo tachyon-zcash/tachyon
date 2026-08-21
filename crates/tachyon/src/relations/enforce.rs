@@ -37,8 +37,6 @@
 //! operand). A refactor that recomputed or separately witnessed the evals could
 //! let the checked value diverge from the opened one and break soundness.
 
-use ff::Field as _;
-use pasta_curves::Fp;
 use ragu::{Error, Result, ctx::StepCtx, polynomial::Polynomial};
 
 /// Faithful polynomial product: confirm `product = multiplicand · multiplier`
@@ -76,76 +74,6 @@ pub(crate) fn enforce_poly_product(
     ctx.enforce_poly_query(multiplicand_com, z, multiplicand.eval(z))?;
     ctx.enforce_poly_query(multiplier_com, z, multiplier.eval(z))?;
     ctx.enforce_poly_query(product_com, z, product.eval(z))?;
-
-    Ok(())
-}
-
-/// Shifted linear combination of committed polynomials and monomials: confirm
-/// `result(X) = Σ_i X^{k_i}·p_i(X) + Σ_j c_j·X^{m_j}` by opening each `p_i`
-/// and `result` at a Fiat-Shamir challenge.
-///
-/// `result` is prover-supplied (built off-circuit). Each `shifted_polys` entry
-/// pairs a committed operand `p_i` with its shift exponent `k_i`; each
-/// `monomials` entry pairs a raw scalar coefficient `c_j` with its degree
-/// `m_j`. The point-wise identity at a random `z` confirms the combination:
-/// every polynomial operand is committed and absorbed into `z`, so the
-/// difference of the two sides is a fixed polynomial pinned to zero by
-/// Schwartz-Zippel.
-///
-/// # Caller obligations (soundness)
-///
-/// 1. **Binding.** Subject to the module-level binding obligation for every
-///    `shifted_polys` entry and `result`. One nuance: `commit(X^k·p)` lands on
-///    shifted generators, so it is not homomorphically recoverable from
-///    `commit(p)`; a `result` consumed downstream must have its commitment
-///    threaded independently.
-/// 2. **Monomial coefficients fixed before the challenge.** The scalars `c_j`
-///    are not absorbed into `z`, and the identity is *linear* in each: a prover
-///    free to choose one after seeing `z` solves it and passes for any
-///    committed `result`. Pin each coefficient independently of `z` -- a
-///    public/statement input, a prior-step output, or a value absorbed into the
-///    transcript before `z`.
-/// 3. **Exponents.** The integer exponents `k_i` and `m_j` may be left free:
-///    `z` is fixed by the commitments before any exponent is chosen, an
-///    adaptive search over wrong exponents succeeds with probability `<=
-///    tries/|F|`, and recovering an exponent from a `z` power is
-///    discrete-log-hard. Whether a *specific* exponent is the one the
-///    surrounding statement needs (an operand's span, say) is that statement's
-///    obligation, as is any structural well-formedness of the operands (a
-///    shifted sum proves the sum, not that the addends avoid overlapping).
-///
-/// The exponent parameters and the `z^k` point-wise factors stand in for
-/// positional shifts the commitment scheme does not express directly; a
-/// first-class committed `X^k·p` (or a built-in shifted sum) would carry the
-/// shift itself and collapse this to a direct check.
-pub(crate) fn enforce_shifted_combination<const SHIFTED_POLYS: usize, const MONOMIALS: usize>(
-    ctx: &mut StepCtx<'_>,
-    shifted_polys: [(&Polynomial, u64); SHIFTED_POLYS],
-    monomials: [(Fp, u64); MONOMIALS],
-    result: &Polynomial,
-    err: &'static str,
-) -> Result<()> {
-    let poly_coms = shifted_polys.map(|(poly, _)| poly.commit());
-    let result_com = result.commit();
-    let z = ctx.derive_challenge(&[poly_coms.as_slice(), [result_com].as_slice()].concat())?;
-
-    let combination = shifted_polys
-        .iter()
-        .map(|&(poly, shift)| z.pow_vartime([shift]) * poly.eval(z))
-        .chain(
-            monomials
-                .iter()
-                .map(|&(coeff, degree)| coeff * z.pow_vartime([degree])),
-        )
-        .sum::<Fp>();
-    if result.eval(z) != combination {
-        return Err(Error::InvalidWitness(err.into()));
-    }
-
-    for (&(poly, _), com) in shifted_polys.iter().zip(poly_coms) {
-        ctx.enforce_poly_query(com, z, poly.eval(z))?;
-    }
-    ctx.enforce_poly_query(result_com, z, result.eval(z))?;
 
     Ok(())
 }

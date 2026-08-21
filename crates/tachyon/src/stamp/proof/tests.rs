@@ -35,9 +35,7 @@ use crate::{
     },
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    primitives::{
-        Anchor, BlockHeight, EpochGroup, EpochIndex, NfMarginPoly, NfTailPoly, Tachygram, effect,
-    },
+    primitives::{Anchor, BlockHeight, EpochGroup, EpochIndex, Tachygram, effect},
     value, witness,
 };
 
@@ -745,7 +743,7 @@ fn unspent_fuse_composes() {
     assert_eq!(anchor_last, end);
     assert_eq!(
         elapsed,
-        NfSeqPoly::from_iter([nf0, nf1, nf2, nf3]).commit(),
+        NfSeqPoly::new(EpochIndex(0), &[nf0, nf1, nf2, nf3]).commit(),
         "the junction member appears once in the combined sequence"
     );
     assert_eq!(nf_start, nf0);
@@ -766,9 +764,9 @@ fn unspent_fuse_rejects_wrong_left_seq() {
             rng,
             pool::UnspentFuse,
             (
-                NfSeqPoly::from_iter([nf1, nf0, nf2]),
-                NfSeqPoly::from_iter([nf0, nf1, nf2, nf3]),
-                NfSeqPoly::from_iter([nf2, nf3]),
+                NfSeqPoly::new(EpochIndex(0), &[nf1, nf0, nf2]),
+                NfSeqPoly::new(EpochIndex(0), &[nf0, nf1, nf2, nf3]),
+                NfSeqPoly::new(EpochIndex(2), &[nf2, nf3]),
             ),
             left,
             right,
@@ -793,9 +791,9 @@ fn unspent_fuse_rejects_wrong_right_seq() {
             rng,
             pool::UnspentFuse,
             (
-                NfSeqPoly::from_iter([nf0, nf1, nf2]),
-                NfSeqPoly::from_iter([nf0, nf1, nf2, nf3]),
-                NfSeqPoly::from_iter([nf3, nf2]),
+                NfSeqPoly::new(EpochIndex(0), &[nf0, nf1, nf2]),
+                NfSeqPoly::new(EpochIndex(0), &[nf0, nf1, nf2, nf3]),
+                NfSeqPoly::new(EpochIndex(2), &[nf3, nf2]),
             ),
             left,
             right,
@@ -823,9 +821,9 @@ fn unspent_fuse_rejects_wrong_combined() {
             rng,
             pool::UnspentFuse,
             (
-                NfSeqPoly::from_iter([nf0, nf1, nf2]),
-                NfSeqPoly::from_iter([nf2, nf3]),
-                NfSeqPoly::from_iter([nf2, nf3]),
+                NfSeqPoly::new(EpochIndex(0), &[nf0, nf1, nf2]),
+                NfSeqPoly::new(EpochIndex(2), &[nf2, nf3]),
+                NfSeqPoly::new(EpochIndex(2), &[nf2, nf3]),
             ),
             left,
             right,
@@ -871,7 +869,7 @@ fn unspent_fuse_accepts_left_as_combined_for_one_member_right() {
         .expect("one-member halves fuse");
     assert_eq!(
         fused.data().2,
-        NfSeqPoly::from_iter([nf]).commit(),
+        NfSeqPoly::new(EpochIndex(0), &[nf]).commit(),
         "combined equals the left sequence"
     );
 }
@@ -1011,14 +1009,13 @@ fn end_epoch_unspent_seed_composes_across_a_boundary() {
     assert_eq!(nf_last, nf4, "tip is the right half's present nf");
     assert_eq!(
         elapsed,
-        NfSeqPoly::from_iter([nf0, nf1, nf2, nf3, nf4]).commit(),
+        NfSeqPoly::new(EpochIndex(0), &[nf0, nf1, nf2, nf3, nf4]).commit(),
         "the crossing seed shares a member with each half it joins"
     );
 }
 
-/// A zero head would make the two-member encoding commit exactly as a
-/// one-member sequence does, so the crossing could present itself as a point
-/// segment. The rank pin is the guard against it.
+/// Zero is reserved and never a genuine member; the crossing seed's guards
+/// reject it outright.
 #[test]
 fn end_epoch_unspent_seed_rejects_a_zero_member() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1075,7 +1072,7 @@ fn end_epoch_unspent_seed_spans_one_boundary_link() {
     assert_eq!(nf_last, nf);
     assert_eq!(
         elapsed,
-        NfSeqPoly::from_iter([nf_prev, nf]).commit(),
+        NfSeqPoly::new(EpochIndex(4), &[nf_prev, nf]).commit(),
         "the crossing records the epoch it leaves and the one it enters"
     );
 }
@@ -1228,10 +1225,13 @@ fn unspent_span_starting_on_a_boundary_anchor() {
     assert_eq!(epoch_last, EpochIndex(2));
     assert_eq!(
         elapsed,
-        NfSeqPoly::from_iter([
-            user.nf_at(&note, EpochIndex(1)),
-            user.nf_at(&note, EpochIndex(2)),
-        ])
+        NfSeqPoly::new(
+            EpochIndex(1),
+            &[
+                user.nf_at(&note, EpochIndex(1)),
+                user.nf_at(&note, EpochIndex(2)),
+            ],
+        )
         .commit(),
         "only the crossing out of the silent epoch, not the one into it"
     );
@@ -1293,10 +1293,13 @@ fn unspent_span_ending_on_a_boundary_anchor() {
     assert_eq!(anchor_last, pool.anchor_at(target_height));
     assert_eq!(
         elapsed,
-        NfSeqPoly::from_iter([
-            user.nf_at(&note, EpochIndex(0)),
-            user.nf_at(&note, EpochIndex(1)),
-        ])
+        NfSeqPoly::new(
+            EpochIndex(0),
+            &[
+                user.nf_at(&note, EpochIndex(0)),
+                user.nf_at(&note, EpochIndex(1)),
+            ],
+        )
         .commit()
     );
 
@@ -1353,11 +1356,14 @@ fn end_epoch_unspent_seed_crosses_a_stampless_epoch() {
     assert_eq!(epoch_last, EpochIndex(2));
     assert_eq!(
         elapsed,
-        NfSeqPoly::from_iter([
-            user.nf_at(&note, EpochIndex(0)),
-            user.nf_at(&note, EpochIndex(1)),
-            user.nf_at(&note, EpochIndex(2)),
-        ])
+        NfSeqPoly::new(
+            EpochIndex(0),
+            &[
+                user.nf_at(&note, EpochIndex(0)),
+                user.nf_at(&note, EpochIndex(1)),
+                user.nf_at(&note, EpochIndex(2)),
+            ],
+        )
         .commit(),
         "every covered epoch's member recorded, including the silent epoch's"
     );
@@ -1402,8 +1408,8 @@ fn unspent_bind_rejects_tip_mismatch() {
     let unspent = sync.build_next_unspent(rng, 0, &pool, target_height);
 
     // The witnessed sequence matches the header, with the forged tip as its
-    // final member, so the poly bind passes; the covering read then compares
-    // it against the genuine sequence and rejects the tip's coefficient.
+    // final member, so the poly bind passes; the divisibility read then
+    // finds no such factor in the genuine sequence and rejects it.
     let (_, _, _, (unspent_last, _), _) = *unspent.data();
     let range = user.derivation_pcd(rng, note, EpochIndex(0), unspent_last.next());
     let witness = witness::unspent_bind(
@@ -1441,18 +1447,18 @@ fn unspent_bind_rejects_elapsed_mismatch() {
         BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
     );
     let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
-    let (_honest_elapsed_seq, nf_seq, older, tail) = witness::unspent_bind(
+    let (_honest_elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &[user.nf_at(&note, EpochIndex(0))],
     );
-    let bogus_elapsed = NfSeqPoly::from_iter([Nullifier::from(Fp::random(&mut *rng))]);
+    let bogus_elapsed = NfSeqPoly::new(EpochIndex(0), &[Nullifier::from(Fp::random(&mut *rng))]);
 
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             pool::UnspentBind,
-            (bogus_elapsed, nf_seq, older, tail),
+            (bogus_elapsed, nf_seq, complement_seq),
             unspent,
             range,
         )
@@ -1485,14 +1491,13 @@ fn unspent_bind_rejects_uncovered_start() {
     // A derivation whose coverage begins after the unspent's start epoch (a
     // later window) cannot cover it.
     // The builder would segment out of range, so the witness is assembled
-    // by hand: the genuine covering sequence, empty margins.
+    // by hand: the genuine covering sequence, an empty complement.
     let range = user.derivation_pcd(rng, note, EpochIndex(64), EpochIndex(65));
     let window = user.covering_window(&note, &range);
     let witness = (
-        iter::once(user.nf_at(&note, EpochIndex(0))).collect(),
-        window.iter().copied().collect::<NfSeqPoly>(),
-        NfMarginPoly::new(&[]),
-        NfTailPoly::new(&[]),
+        NfSeqPoly::new(EpochIndex(0), &[user.nf_at(&note, EpochIndex(0))]),
+        NfSeqPoly::new(EpochIndex(64), &window),
+        NfSeqPoly::new(EpochIndex(64), &[]),
     );
 
     let err = PROOF_SYSTEM
@@ -1504,11 +1509,11 @@ fn unspent_bind_rejects_uncovered_start() {
     };
     assert_eq!(
         inner.to_string(),
-        "UnspentBind: derivation does not cover the unspent start"
+        "UnspentBind: sequence does not match the derivation"
     );
 }
 
-/// The covering read needs the tip as well as the crossings, so a derivation
+/// The bind needs the tip as well as the crossings, so a derivation
 /// stopping at the unspent's own end epoch does not cover it.
 #[test]
 fn unspent_bind_rejects_uncovered_end() {
@@ -1536,14 +1541,15 @@ fn unspent_bind_rejects_uncovered_end() {
     let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
     let window = user.covering_window(&note, &range);
     // The builder would segment out of range, so the witness is assembled
-    // by hand: the genuine elapsed and covering sequence, empty margins.
+    // by hand: the genuine elapsed and covering sequence, an empty
+    // complement.
     let witness = (
-        [user.nf_at(&note, last), user.nf_at(&note, last.next())]
-            .into_iter()
-            .collect::<NfSeqPoly>(),
-        window.iter().copied().collect::<NfSeqPoly>(),
-        NfMarginPoly::new(&[]),
-        NfTailPoly::new(&[]),
+        NfSeqPoly::new(
+            last,
+            &[user.nf_at(&note, last), user.nf_at(&note, last.next())],
+        ),
+        NfSeqPoly::new(EpochIndex(0), &window),
+        NfSeqPoly::new(EpochIndex(0), &[]),
     );
 
     let err = PROOF_SYSTEM
@@ -1555,7 +1561,7 @@ fn unspent_bind_rejects_uncovered_end() {
     };
     assert_eq!(
         inner.to_string(),
-        "UnspentBind: derivation does not cover the unspent end"
+        "UnspentBind: sequence does not match the derivation"
     );
 }
 
@@ -1741,9 +1747,8 @@ fn window_members(user: &WalletSim, note: &Note, group: EpochGroup) -> Vec<Nulli
         .collect()
 }
 
-/// A leaf exports its whole window, labelled with the window's bounds and its
-/// genuine boundary members, and every window of the same note carries the
-/// same `cm`.
+/// A leaf exports its whole window, labelled with the window's bounds, and
+/// every window of the same note carries the same `cm`.
 #[test]
 fn derivation_exports_the_whole_window() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1752,7 +1757,7 @@ fn derivation_exports_the_whole_window() {
 
     let group = EpochGroup(3);
     let range = leaf_window(rng, &user, note, group);
-    let (cm, (start, nf_start), commit, (range_end, nf_end)) = *range.data();
+    let (cm, start, commit, range_end) = *range.data();
 
     assert_eq!(start, group.start_epoch(), "starts at the group's base");
     assert_eq!(
@@ -1761,17 +1766,7 @@ fn derivation_exports_the_whole_window() {
         "spans the whole window"
     );
     let members = window_members(&user, &note, group);
-    assert_eq!(
-        nf_start,
-        *members.first().expect("window is nonempty"),
-        "genuine start member"
-    );
-    assert_eq!(
-        nf_end,
-        *members.last().expect("window is nonempty"),
-        "genuine end member"
-    );
-    let seq = members.iter().copied().collect::<NfSeqPoly>();
+    let seq = NfSeqPoly::new(group.start_epoch(), &members);
     assert_eq!(commit, seq.commit(), "header commits the window sequence");
 
     let far = leaf_window(rng, &user, note, EpochGroup(25_000));
@@ -1790,7 +1785,7 @@ fn derivation_covers_with_whole_windows() {
     let start = EpochIndex(NF_DERIVATION_WIDTH as u32 - 2);
     let end = EpochIndex(NF_DERIVATION_WIDTH as u32 + 2);
     let range = user.derivation_pcd(rng, note, start, end);
-    let (cm, (cover_start, nf_start), commit, (cover_end, nf_end)) = *range.data();
+    let (cm, cover_start, commit, cover_end) = *range.data();
 
     assert_eq!(Tachygram::from(cm), note.commitment().into());
     assert!(
@@ -1802,11 +1797,10 @@ fn derivation_covers_with_whole_windows() {
         0,
         "whole windows"
     );
-    assert_eq!(nf_start, user.nf_at(&note, cover_start));
-    assert_eq!(nf_end, user.nf_at(&note, EpochIndex(cover_end.0 - 1)));
-    let seq = (cover_start.0..cover_end.0)
+    let members: Vec<Nullifier> = (cover_start.0..cover_end.0)
         .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
-        .collect::<NfSeqPoly>();
+        .collect();
+    let seq = NfSeqPoly::new(cover_start, &members);
     assert_eq!(commit, seq.commit(), "merged commit is the concat sequence");
 }
 
@@ -1882,7 +1876,7 @@ fn spend_bind_parts(
     (spendable, derived, epoch)
 }
 
-/// A forged next nullifier fails the covering read.
+/// A forged next nullifier fails the divisibility read.
 #[test]
 fn spend_bind_rejects_forged_next() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1890,7 +1884,7 @@ fn spend_bind_rejects_forged_next() {
     let note = user.random_note(500);
 
     let (spendable, derived, _epoch) = spend_bind_parts(rng, &user, &note);
-    let (nf_seq, older, tail, _nf_next) = witness::spend_bind(
+    let (nf_seq, complement_seq, _nf_next) = witness::spend_bind(
         (*spendable.data(), *derived.data()),
         &user.covering_window(&note, &derived),
     );
@@ -1898,7 +1892,7 @@ fn spend_bind_rejects_forged_next() {
     expect_invalid(
         rng,
         spend::SpendBind,
-        (nf_seq, older, tail, forged),
+        (nf_seq, complement_seq, forged),
         spendable,
         derived,
         "SpendBind: nullifier pair does not match the derivation",
@@ -1917,12 +1911,11 @@ fn spend_bind_rejects_uncovering_range() {
     let ahead = EpochIndex(epoch.0 + NF_DERIVATION_WIDTH as u32);
     let derived_ahead = user.derivation_pcd(rng, note, ahead, EpochIndex(ahead.0 + 2));
     // The builder would segment out of range, so the witness is assembled
-    // by hand: the genuine covering sequence, empty margins.
+    // by hand: the genuine covering sequence, an empty complement.
     let window = user.covering_window(&note, &derived_ahead);
     let witness = (
-        window.iter().copied().collect::<NfSeqPoly>(),
-        NfMarginPoly::new(&[]),
-        NfTailPoly::new(&[]),
+        NfSeqPoly::new(ahead, &window),
+        NfSeqPoly::new(ahead, &[]),
         user.nf_at(&note, epoch.next()),
     );
     expect_invalid(
@@ -1931,7 +1924,7 @@ fn spend_bind_rejects_uncovering_range() {
         witness,
         spendable,
         derived_ahead,
-        "SpendBind: derivation does not cover the lineage epoch",
+        "SpendBind: nullifier pair does not match the derivation",
     );
 }
 
@@ -1983,7 +1976,7 @@ fn spend_bind_rejects_a_foreign_sequence() {
     );
 }
 
-/// A forged present nullifier fails the covering read at
+/// A forged present nullifier fails the divisibility read at
 /// `SpendableInit`.
 #[test]
 fn spendable_init_rejects_a_forged_nullifier() {
@@ -1993,7 +1986,7 @@ fn spendable_init_rejects_a_forged_nullifier() {
 
     let nf_header = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
     let dummy_tg = Tachygram::random(&mut *rng);
-    let (_, _, _, _, nf_seq, older, tail) = witness::spendable_init(
+    let (_, _, _, _, nf_seq, complement_seq) = witness::spendable_init(
         (*nf_header.data(), ()),
         Anchor::default(),
         &[dummy_tg],
@@ -2010,8 +2003,7 @@ fn spendable_init_rejects_a_forged_nullifier() {
             EpochIndex(0),
             forged,
             nf_seq,
-            older,
-            tail,
+            complement_seq,
         ),
         nf_header,
         Proof::trivial().carry::<()>(()),
@@ -2031,16 +2023,16 @@ fn spendable_init_rejects_an_uncovering_range() {
     let past = EpochIndex(NF_DERIVATION_WIDTH as u32);
     let dummy_tg = Tachygram::random(&mut *rng);
     // The builder would segment out of range, so the witness is assembled
-    // by hand: the genuine covering sequence, the whole window as the tail.
+    // by hand: the genuine covering sequence, the whole window as the
+    // complement.
     let window = user.covering_window(&note, &nf_header);
     let witness = (
         Anchor::default(),
         TachygramSetPoly::from_iter([dummy_tg]),
         past,
         user.nf_at(&note, past),
-        window.iter().copied().collect::<NfSeqPoly>(),
-        NfMarginPoly::new(&[]),
-        NfTailPoly::new(&window),
+        NfSeqPoly::new(EpochIndex(0), &window),
+        NfSeqPoly::new(EpochIndex(0), &window),
     );
     expect_invalid(
         rng,
@@ -2048,7 +2040,7 @@ fn spendable_init_rejects_an_uncovering_range() {
         witness,
         nf_header,
         Proof::trivial().carry::<()>(()),
-        "SpendableInit: derivation does not cover the creation epoch",
+        "SpendableInit: nullifier does not match the derivation",
     );
 }
 
@@ -2228,8 +2220,8 @@ fn output_stamp_rejects_note_not_matching_the_bind() {
     );
 }
 
-/// Adjacent ranges fuse into one: the merged sequence is the bare Horner
-/// concatenation, with the endpoints threaded from the halves.
+/// Adjacent ranges fuse into one: the merged sequence is the factor
+/// product of the halves, with the range threaded from the halves.
 #[test]
 fn nullifier_fuse_composes() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2250,14 +2242,13 @@ fn nullifier_fuse_composes() {
         .fuse(rng, delegation::NullifierFuse, fuse_witness, left, right)
         .expect("NullifierFuse");
 
-    let (cm, (start, nf_start), commit, (end, nf_last)) = *merged.data();
+    let (cm, start, commit, end) = *merged.data();
     assert_eq!(cm, note.commitment());
     assert_eq!((start, end), (EpochIndex(0), EpochIndex(32)));
-    assert_eq!(nf_start, user.nf_at(&note, EpochIndex(0)));
-    assert_eq!(nf_last, user.nf_at(&note, EpochIndex(31)));
-    let expected: NfSeqPoly = (0..32)
+    let members: Vec<Nullifier> = (0..32)
         .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
         .collect();
+    let expected = NfSeqPoly::new(EpochIndex(0), &members);
     assert_eq!(
         commit,
         expected.commit(),
@@ -2265,8 +2256,8 @@ fn nullifier_fuse_composes() {
     );
 }
 
-/// A merged polynomial that is not the concatenation fails the shifted
-/// combination.
+/// A merged polynomial that is not the product of the halves fails the
+/// fuse identity.
 #[test]
 fn nullifier_fuse_rejects_a_wrong_merged() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2283,9 +2274,11 @@ fn nullifier_fuse_rejects_a_wrong_merged() {
         .collect();
     let (left_seq, _merged, right_seq) =
         witness::nullifier_fuse((*left.data(), *right.data()), &left_nfs, &right_nfs);
-    let wrong: NfSeqPoly = iter::repeat_with(|| Nullifier::from(Fp::random(&mut *rng)))
-        .take(32)
-        .collect();
+    let wrong_members: Vec<Nullifier> =
+        iter::repeat_with(|| Nullifier::from(Fp::random(&mut *rng)))
+            .take(32)
+            .collect();
+    let wrong = NfSeqPoly::new(EpochIndex(0), &wrong_members);
     expect_invalid(
         rng,
         delegation::NullifierFuse,
@@ -2297,15 +2290,15 @@ fn nullifier_fuse_rejects_a_wrong_merged() {
 }
 
 /// A forged next-epoch nullifier cannot be compensated by choosing the
-/// margins: both bands are disjoint from the read's, so no margin content
-/// moves the read's coefficients.
+/// complement: the identity pins the whole factorization, so no complement
+/// content absorbs a wrong read factor.
 ///
-/// The derivation starts below the pair's epoch so that *both* margins carry
-/// members. `spend_bind_parts` mints at genesis, which leaves the older margin
-/// empty and reduces this to `spend_bind_rejects_forged_next` with a garbled
-/// tail.
+/// The derivation starts below the pair's epoch so that the complement
+/// carries runs on *both* sides of the read. `spend_bind_parts` mints at
+/// genesis, which leaves the lower run empty and reduces this to
+/// `spend_bind_rejects_forged_next` with a garbled complement.
 #[test]
-fn spend_bind_rejects_a_forged_next_over_garbage_margins() {
+fn spend_bind_rejects_a_forged_next_over_a_garbage_complement() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
@@ -2321,30 +2314,30 @@ fn spend_bind_rejects_a_forged_next_over_garbage_margins() {
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let derived = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(epoch.0 + 2));
 
-    let (nf_seq, _older, _tail, _nf_next) = witness::spend_bind(
+    let (nf_seq, _complement_seq, _nf_next) = witness::spend_bind(
         (*spendable.data(), *derived.data()),
         &user.covering_window(&note, &derived),
     );
 
-    // Garbage margins: another note's members in place of this note's.
-    let (_, (deriv_start, _), _, (deriv_end, _)) = *derived.data();
+    // Garbage complement: another note's members in place of this note's.
+    let (_, deriv_start, _, deriv_end) = *derived.data();
     let stranger_mk = user.mk(&stranger);
     let older_members: Vec<Nullifier> = (deriv_start.0..epoch.0)
         .map(|epoch_idx| stranger_mk.derive_nullifier(EpochIndex(epoch_idx)))
         .collect();
-    let tail_members: Vec<Nullifier> = (epoch.0 + 2..deriv_end.0)
+    let newer_members: Vec<Nullifier> = (epoch.0 + 2..deriv_end.0)
         .map(|epoch_idx| stranger_mk.derive_nullifier(EpochIndex(epoch_idx)))
         .collect();
-    assert!(!older_members.is_empty(), "older margin must carry members");
-    assert!(!tail_members.is_empty(), "newer margin must carry members");
-    let older = NfMarginPoly::new(&older_members);
-    let tail = NfTailPoly::new(&tail_members);
+    assert!(!older_members.is_empty(), "lower run must carry members");
+    assert!(!newer_members.is_empty(), "upper run must carry members");
+    let complement_seq = NfSeqPoly::new(deriv_start, &older_members)
+        * NfSeqPoly::new(EpochIndex(epoch.0 + 2), &newer_members);
 
     let forged = Nullifier::from(Fp::random(&mut *rng));
     expect_invalid(
         rng,
         spend::SpendBind,
-        (nf_seq, older, tail, forged),
+        (nf_seq, complement_seq, forged),
         spendable,
         derived,
         "SpendBind: nullifier pair does not match the derivation",
@@ -2522,11 +2515,10 @@ fn crossing_seed_carries_a_terminal_anchor_to_a_spend() {
     assert_eq!(stamp.data().1, expected, "publishes {{N_1, N_2}}");
 }
 
-/// A `tail` carrying weight in its forced-zero band (below the cap shift)
-/// breaks the lifted identity: the margin cannot smuggle content anywhere
-/// but its own band.
+/// A forged complement cannot compensate the identity: the divisibility
+/// pins the whole factorization, so junk in the complement fails the bind.
 #[test]
-fn unspent_bind_rejects_a_tail_below_its_band() {
+fn unspent_bind_rejects_a_forged_complement() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
@@ -2540,70 +2532,66 @@ fn unspent_bind_rejects_a_tail_below_its_band() {
         &[user.nf_at(&note, EpochIndex(0))],
         BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
     );
-    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
-    let (elapsed_seq, nf_seq, older, _tail) = witness::unspent_bind(
+    // A two-epoch derivation, so the honest complement is nonempty and the
+    // forgery cannot hide behind the constant 1.
+    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(2));
+    let (elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &[user.nf_at(&note, EpochIndex(0))],
     );
-    // The honest tail plus a stray coefficient in the forced-zero band.
-    let cap = 1usize << ragu::Polynomial::R;
-    let mut coeffs = alloc::vec![Fp::ZERO; cap];
-    coeffs[0] = Fp::ONE;
-    coeffs[7] = Fp::random(&mut *rng);
-    let below_band = NfTailPoly::from(ragu::Polynomial::from_coeffs(coeffs));
+    let forged = NfSeqPoly::new(EpochIndex(1), &[Nullifier::from(Fp::random(&mut *rng))]);
     expect_invalid(
         rng,
         pool::UnspentBind,
-        (elapsed_seq, nf_seq, older, below_band),
+        (elapsed_seq, nf_seq, forged),
         unspent,
         range,
         "UnspentBind: sequence does not match the derivation",
     );
 }
 
-/// An `older` margin whose sentinel slot is not exactly 1 breaks the
-/// identity: the slot is forced, not conventional.
+/// The right nullifier value at the wrong epoch is a different factor: the
+/// pair binding is positional through the factor index, not just the value.
 #[test]
-fn unspent_bind_rejects_a_forged_sentinel() {
+fn unspent_bind_rejects_a_wrong_epoch_member() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    pool.advance(1, |_| random_block(rng, 1, 2));
+    let _init_height = mine_cm_block(rng, &mut pool, note.commitment());
+    while pool.height().0 < EPOCH_SIZE {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
 
+    // A lineage over epoch 1 testing epoch 0's genuine nullifier: the value
+    // is genuine, the epoch is not.
+    let epoch1_height = pool.height();
     let unspent = build_unspent_pcd_between_blocks(
         rng,
         &pool,
         &[user.nf_at(&note, EpochIndex(0))],
-        BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
+        epoch1_height..=epoch1_height,
     );
-    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
-    let (elapsed_seq, nf_seq, _older, tail) = witness::unspent_bind(
-        (*unspent.data(), *range.data()),
-        &user.covering_window(&note, &range),
-        &[user.nf_at(&note, EpochIndex(0))],
-    );
-    // The read's older margin is empty here, so the honest witness is the
-    // constant 1; a doubled sentinel breaks the compensated identity.
-    let forged_sentinel =
-        NfMarginPoly::from(ragu::Polynomial::from_coeffs(alloc::vec![Fp::from(2u64)]));
+    let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(2));
+    let elapsed_seq = NfSeqPoly::new(EpochIndex(1), &[user.nf_at(&note, EpochIndex(0))]);
+    let complement_seq = NfSeqPoly::new(EpochIndex(0), &[user.nf_at(&note, EpochIndex(0))]);
+    let nf_seq = NfSeqPoly::new(EpochIndex(0), &user.covering_window(&note, &range));
     expect_invalid(
         rng,
         pool::UnspentBind,
-        (elapsed_seq, nf_seq, forged_sentinel, tail),
+        (elapsed_seq, nf_seq, complement_seq),
         unspent,
         range,
         "UnspentBind: sequence does not match the derivation",
     );
 }
 
-/// A sentinel-less empty margin is the zero polynomial, which commits to the
-/// identity point; witnessing rejects it. This is the path that makes the
-/// sentinel necessary.
+/// A complement duplicating the tested member cannot pass: the derivation
+/// carries each factor exactly once, so a duplicated factor does not divide
+/// it.
 #[test]
-fn sentinel_less_empty_margin_cannot_be_witnessed() {
+fn unspent_bind_rejects_a_duplicating_complement() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
@@ -2618,22 +2606,21 @@ fn sentinel_less_empty_margin_cannot_be_witnessed() {
         BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
     );
     let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
-    let (elapsed_seq, nf_seq, _older, tail) = witness::unspent_bind(
+    let (elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &[user.nf_at(&note, EpochIndex(0))],
     );
-    let zero_margin = NfMarginPoly::from(ragu::Polynomial::from_coeffs(alloc::vec![Fp::ZERO]));
-    let result = PROOF_SYSTEM.fuse(
+    // The honest complement is empty; duplicating the tested member squares
+    // its factor, and the squarefree derivation rejects it.
+    let duplicating = NfSeqPoly::new(EpochIndex(0), &[user.nf_at(&note, EpochIndex(0))]);
+    expect_invalid(
         rng,
         pool::UnspentBind,
-        (elapsed_seq, nf_seq, zero_margin, tail),
+        (elapsed_seq, nf_seq, duplicating),
         unspent,
         range,
-    );
-    assert!(
-        result.is_err(),
-        "an identity-commitment margin must not witness"
+        "UnspentBind: sequence does not match the derivation",
     );
 }
 

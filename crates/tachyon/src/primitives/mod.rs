@@ -12,6 +12,6 @@ pub use anchor::Anchor;
 pub use block_height::BlockHeight;
 pub use effect::Effect;
 pub use epoch::{EpochDiff, EpochGroup, EpochIndex};
-pub use seq::{NfMarginCommit, NfMarginPoly, NfSeqCommit, NfSeqPoly, NfTailCommit, NfTailPoly};
+pub use seq::{NF_FACTOR_RESIDUE, NfSeqCommit, NfSeqPoly};
 pub use sets::{ActionSetCommit, ActionSetPoly, TachygramSetCommit, TachygramSetPoly};
 pub use tachygram::Tachygram;

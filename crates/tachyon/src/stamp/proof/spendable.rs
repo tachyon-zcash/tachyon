@@ -13,7 +13,7 @@ use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
-    Header, Index, Step, Suffix,
+    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
     constraint::{enforce_equal_point, enforce_zero},
 };
 
@@ -21,8 +21,7 @@ use super::{delegation::NullifierDerivation, pool::Unspent};
 use crate::{
     note,
     nullifier::Nullifier,
-    primitives::{Anchor, EpochIndex, NfMarginPoly, NfSeqPoly, NfTailPoly, TachygramSetPoly},
-    relations::read::enforce_covering_read,
+    primitives::{Anchor, EpochIndex, NF_FACTOR_RESIDUE, NfSeqPoly, TachygramSetPoly},
 };
 
 /// Wallet's spendable position `(cm, (epoch, present_nf), anchor)`
@@ -61,12 +60,14 @@ impl Header for SpendableHeader {
 ///
 /// Wallet-only, one-child over a wallet [`NullifierDerivation`]. **Any window
 /// covering the creation epoch is accepted**, so one derived window feeds
-/// init, bind, and spend alike: the 1-wide covering read at the creation epoch
-/// forces `present_nf` to the window's genuine member, with the newer margin
-/// absorbing the window's remaining span and the older margin any
-/// pre-creation coverage. `cm` is proven among the creation stamp's
-/// tachygrams, which is the consensus binding, and the post-cm anchor folds
-/// from a free-witnessed predecessor.
+/// init, bind, and spend alike: the divisibility
+/// $\mathsf{nf\_seq} = F_{\mathsf{creation\_epoch},\mathsf{present\_nf}}
+/// \cdot \mathsf{complement}$ forces `present_nf` to the window's genuine
+/// member at the creation epoch, with the complement absorbing the window's
+/// remaining span.
+/// `cm` is proven among the creation stamp's tachygrams, which is the
+/// consensus binding, and the post-cm anchor folds from a free-witnessed
+/// predecessor.
 ///
 /// # Soundness
 ///
@@ -76,9 +77,18 @@ impl Header for SpendableHeader {
 /// chain node is `H(prev || epoch || commit)` under the stamp domain, and
 /// preimage resistance forces all three once the eventual spend's anchor is
 /// consensus-checked — a wrong epoch folds into an anchor off the published
-/// sequence. `present_nf` closes through the read identity: it rides as the
-/// read's committed operand, so the transcript challenge absorbs its
-/// commitment.
+/// sequence. `present_nf` closes through the read identity: its
+/// scalar-binding point $G_0 \cdot \mathsf{present\_nf}$ is absorbed into
+/// the transcript challenge, fixing the free scalar before the challenge
+/// exists, so the identity forces the read factor to the emitted pair.
+/// Without that point the nullifier would be solvable once the challenge is
+/// known, since $\mathsf{nf} = \sqrt\[3\]{t + c} - (e+1)z$.
+///
+/// `creation_epoch` needs no bound check against the derivation's range: the
+/// divisibility forces $F_{\mathsf{creation\_epoch},\mathsf{present\_nf}}$ to
+/// be one of the derivation's own factors, so the epoch is one the derivation
+/// actually holds a member for — a stronger statement than lying between its
+/// bounds.
 ///
 /// No sameness constraint ties this window to the one the spend later reads:
 /// `cm` equality binds every window of the same note to the same lattice.
@@ -91,15 +101,14 @@ impl Step for SpendableInit {
     type Output = SpendableHeader;
     type Right = ();
     /// `(pre_cm_anchor, creation_set, creation_epoch, present_nf, nf_seq,
-    /// older, tail)`.
+    /// complement_seq)`.
     type Witness<'source> = (
         Anchor,
         TachygramSetPoly,
         EpochIndex,
         Nullifier,
         NfSeqPoly,
-        NfMarginPoly,
-        NfTailPoly,
+        NfSeqPoly,
     );
 
     const INDEX: Index = Index::new(8);
@@ -107,15 +116,10 @@ impl Step for SpendableInit {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (pre_cm_anchor, creation_set, creation_epoch, present_nf, nf_seq, older, tail): Self::Witness<
+        (pre_cm_anchor, creation_set, creation_epoch, present_nf, nf_seq, complement_seq): Self::Witness<
             'source,
         >,
-        (
-            cm,
-            (deriv_start, _deriv_nf_start),
-            nf_commit,
-            (deriv_end, _deriv_nf_last),
-        ): <Self::Left as Header>::Data,
+        (cm, _, nf_commit, _): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
@@ -124,27 +128,29 @@ impl Step for SpendableInit {
             "SpendableInit: covering sequence does not match header",
         )?;
 
-        // Native coverage guard over the header-pinned bounds.
-        // `creation_epoch` is pinned downstream through the emitted anchor.
-        if deriv_start.0 > creation_epoch.0 || deriv_end.0 <= creation_epoch.0 {
-            return Err(ragu::Error::InvalidWitness(
-                "SpendableInit: derivation does not cover the creation epoch".into(),
-            ));
-        }
-
-        // The 1-wide read at the creation epoch.
-        let margin = u64::from(deriv_end - creation_epoch) - 1;
-        let read = NfSeqPoly::from_iter([present_nf]);
-        enforce_covering_read(
-            ctx,
-            nf_seq.as_ref(),
-            older.as_ref(),
-            tail.as_ref(),
-            read.as_ref(),
-            1,
-            margin,
+        // The 1-wide read at the creation epoch: the divisibility
+        // `nf_seq = read · complement` at a challenge absorbing the witnessed
+        // commitments and the scalar-binding point of the free `present_nf`,
+        // with the read factor evaluated natively.
+        #[expect(clippy::expect_used, reason = "constant size")]
+        let &g0 = Pasta::host_generators(Pasta::baked())
+            .g()
+            .first()
+            .expect("at least one generator");
+        let z = ctx.derive_challenge(&[
+            nf_seq.commit().into(),
+            complement_seq.commit().into(),
+            g0 * Fp::from(present_nf),
+        ])?;
+        let nf_seq_at_z = nf_seq.eval(z);
+        let complement_at_z = complement_seq.eval(z);
+        let linear = Fp::from(u64::from(creation_epoch.0) + 1) * z + Fp::from(present_nf);
+        enforce_zero(
+            nf_seq_at_z - (linear.square() * linear - NF_FACTOR_RESIDUE) * complement_at_z,
             "SpendableInit: nullifier does not match the derivation",
         )?;
+        ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
+        ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
 
         // Inclusion: $\mathsf{cm} \in \mathsf{set}$ iff the set polynomial
         // vanishes at `cm`.

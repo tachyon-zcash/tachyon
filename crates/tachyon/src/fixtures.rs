@@ -887,7 +887,7 @@ impl WalletSim {
         note: &Note,
         range: &Pcd<delegation::NullifierDerivation>,
     ) -> Vec<Nullifier> {
-        let (_, (start, _), _, (end, _)) = *range.data();
+        let (_, start, _, end) = *range.data();
         (start.0..end.0)
             .map(|epoch| self.nf_at(note, EpochIndex(epoch)))
             .collect()
