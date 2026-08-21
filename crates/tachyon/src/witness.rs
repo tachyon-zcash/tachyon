@@ -166,7 +166,8 @@ pub fn unspent_fuse(
     )
 }
 
-/// Prepare the witness for [`UnspentBind`]: `(elapsed_seq, g, older, tail)`.
+/// Prepare the witness for [`UnspentBind`]: `(elapsed_seq, nf_seq, older,
+/// tail)`.
 ///
 /// `elapsed` is the unspent's member list, one per covered epoch. `window`
 /// is the complete covering sequence, one member per epoch of the
@@ -196,7 +197,7 @@ pub fn unspent_bind(
 }
 
 /// Prepare the witness for [`SpendableInit`]:
-/// `(pre_cm_anchor, creation_set, creation_epoch, present_nf, g, older,
+/// `(pre_cm_anchor, creation_set, creation_epoch, present_nf, nf_seq, older,
 /// tail)`.
 ///
 /// `window` is the complete covering sequence, one member per epoch of the
@@ -228,7 +229,7 @@ pub fn spendable_init(
     )
 }
 
-/// Prepare the witness for [`SpendBind`]: `(g, older, tail, nf_next)`.
+/// Prepare the witness for [`SpendBind`]: `(nf_seq, older, tail, nf_next)`.
 ///
 /// `window` is the complete covering sequence, one member per epoch of the
 /// derivation header's range; the 2-wide read at the lineage's epoch and

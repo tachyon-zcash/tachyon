@@ -116,15 +116,6 @@ impl Header for NullifierDerivation {
 /// note. What this step does establish is that `mk` is *this* `cm`'s master
 /// key, and PCD soundness carries that pairing into every consuming
 /// [`NfDerive`].
-///
-/// # Gate budget
-///
-/// | item | gates |
-/// |---|---|
-/// | payment-key sponge (one permutation) | ~293 |
-/// | note-commitment sponge (two permutations) | ~586 |
-/// | master-key sponge (one permutation) | ~293 |
-/// | total | ~1172 |
 #[derive(Debug)]
 pub struct NfMasterSeed;
 
@@ -195,21 +186,6 @@ impl Step for NfMasterSeed {
 /// window-wide nonzero guard doubles as the rank pin: `nf_start` is $g$'s
 /// top coefficient and cannot be zero, so the announced span is the exact
 /// rank.
-///
-/// # Committed polynomials
-///
-/// | polynomial | role |
-/// |---|---|
-/// | `seq` | the range sequence, bound by the accumulation opening |
-///
-/// # Gate budget
-///
-/// | item | gates |
-/// |---|---|
-/// | four group sponges (one permutation each) | ~1152 |
-/// | accumulation sum (16 gated multiply-adds) | ~48 |
-/// | base and range checks | ~30 |
-/// | total | ~1230 |
 #[derive(Debug)]
 pub struct NfDerive;
 
@@ -359,14 +335,6 @@ impl Step for NfDerive {
 /// `left.nf_last`. `nf_start` is the
 /// non-extractable top coefficient; it threads from the left header, and its
 /// nonzero-ness (the rank pin) is inductive from the leaf's cover-wide guard.
-///
-/// # Committed polynomials
-///
-/// | polynomial | role |
-/// |---|---|
-/// | `left_seq` | left half, bound to `left.nf_commit` |
-/// | `right_seq` | right half, bound to `right.nf_commit` |
-/// | `merged_seq` | the concatenation, bound by the shifted combination |
 #[derive(Debug)]
 pub struct NullifierFuse;
 

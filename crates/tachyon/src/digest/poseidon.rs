@@ -155,15 +155,15 @@ const NF_READ_DOMAIN: &[u8; 16] = b"Tachyon-NfReadCh";
     reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
 )]
 #[must_use]
-pub(crate) fn read_challenge(g: Eq, older: Eq, tail: Eq, members: &[Fp]) -> Fp {
-    let (g_lo, g_hi) = point_limbs(g.to_affine());
+pub(crate) fn read_challenge(covering: Eq, older: Eq, tail: Eq, members: &[Fp]) -> Fp {
+    let (covering_lo, covering_hi) = point_limbs(covering.to_affine());
     let (older_lo, older_hi) = point_limbs(older.to_affine());
     let (tail_lo, tail_hi) = point_limbs(tail.to_affine());
     let mut sponge = Sponge::new();
     for value in [
         Fp::from_u128(u128::from_le_bytes(*NF_READ_DOMAIN)),
-        g_lo,
-        g_hi,
+        covering_lo,
+        covering_hi,
         older_lo,
         older_hi,
         tail_lo,

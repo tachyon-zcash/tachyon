@@ -1439,7 +1439,7 @@ fn unspent_bind_rejects_elapsed_mismatch() {
         BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
     );
     let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
-    let (_honest_elapsed_seq, g, older, tail) = witness::unspent_bind(
+    let (_honest_elapsed_seq, nf_seq, older, tail) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &[user.nf_at(&note, EpochIndex(0))],
@@ -1450,7 +1450,7 @@ fn unspent_bind_rejects_elapsed_mismatch() {
         .fuse(
             rng,
             pool::UnspentBind,
-            (bogus_elapsed, g, older, tail),
+            (bogus_elapsed, nf_seq, older, tail),
             unspent,
             range,
         )
@@ -1929,7 +1929,7 @@ fn spend_bind_rejects_forged_next() {
     let note = user.random_note(500);
 
     let (spendable, derived, _epoch) = spend_bind_parts(rng, &user, &note);
-    let (g, older, tail, _nf_next) = witness::spend_bind(
+    let (nf_seq, older, tail, _nf_next) = witness::spend_bind(
         (*spendable.data(), *derived.data()),
         &user.covering_window(&note, &derived),
     );
@@ -1937,7 +1937,7 @@ fn spend_bind_rejects_forged_next() {
     expect_invalid(
         rng,
         spend::SpendBind,
-        (g, older, tail, forged),
+        (nf_seq, older, tail, forged),
         spendable,
         derived,
         "SpendBind: nullifier pair does not match the derivation",
@@ -2032,7 +2032,7 @@ fn spendable_init_rejects_a_forged_nullifier() {
 
     let nf_header = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
     let dummy_tg = Tachygram::random(&mut *rng);
-    let (_, _, _, _, g, older, tail) = witness::spendable_init(
+    let (_, _, _, _, nf_seq, older, tail) = witness::spendable_init(
         (*nf_header.data(), ()),
         Anchor::default(),
         &[dummy_tg],
@@ -2048,7 +2048,7 @@ fn spendable_init_rejects_a_forged_nullifier() {
             TachygramSetPoly::from_iter([dummy_tg]),
             EpochIndex(0),
             forged,
-            g,
+            nf_seq,
             older,
             tail,
         ),
@@ -2348,7 +2348,7 @@ fn spend_bind_rejects_a_solved_next_over_garbage_margins() {
 
     let (spendable, derived, epoch) = spend_bind_parts(rng, &user, &note);
     let (_, (_, present_nf), _) = *spendable.data();
-    let (g, _older, _tail, _nf_next) = witness::spend_bind(
+    let (nf_seq, _older, _tail, _nf_next) = witness::spend_bind(
         (*spendable.data(), *derived.data()),
         &user.covering_window(&note, &derived),
     );
@@ -2371,13 +2371,13 @@ fn spend_bind_rejects_a_solved_next_over_garbage_margins() {
     let members = 2u64;
     let margin = u64::from(deriv_end - epoch) - 2;
     let z_unabsorbed = poseidon::read_challenge(
-        g.commit().into(),
+        nf_seq.commit().into(),
         older.commit().into(),
         tail.commit().into(),
         &[Fp::from(present_nf)],
     );
     let z_cap = z_unabsorbed.pow_vartime([cap]);
-    let lhs = z_unabsorbed.pow_vartime([cap - margin]) * g.eval(z_unabsorbed);
+    let lhs = z_unabsorbed.pow_vartime([cap - margin]) * nf_seq.eval(z_unabsorbed);
     let known =
         z_cap * z_unabsorbed.pow_vartime([members]) * (older.as_ref().eval(z_unabsorbed) - Fp::ONE)
             + z_cap * z_unabsorbed * Fp::from(present_nf)
@@ -2391,7 +2391,7 @@ fn spend_bind_rejects_a_solved_next_over_garbage_margins() {
     expect_invalid(
         rng,
         spend::SpendBind,
-        (g, older, tail, Nullifier::from(solved)),
+        (nf_seq, older, tail, Nullifier::from(solved)),
         spendable,
         derived,
         "SpendBind: nullifier pair does not match the derivation",
@@ -2588,7 +2588,7 @@ fn unspent_bind_rejects_a_tail_below_its_band() {
         BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
     );
     let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
-    let (elapsed_seq, g, older, _tail) = witness::unspent_bind(
+    let (elapsed_seq, nf_seq, older, _tail) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &[user.nf_at(&note, EpochIndex(0))],
@@ -2602,7 +2602,7 @@ fn unspent_bind_rejects_a_tail_below_its_band() {
     expect_invalid(
         rng,
         pool::UnspentBind,
-        (elapsed_seq, g, older, below_band),
+        (elapsed_seq, nf_seq, older, below_band),
         unspent,
         range,
         "UnspentBind: sequence does not match the derivation",
@@ -2627,7 +2627,7 @@ fn unspent_bind_rejects_a_forged_sentinel() {
         BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
     );
     let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
-    let (elapsed_seq, g, _older, tail) = witness::unspent_bind(
+    let (elapsed_seq, nf_seq, _older, tail) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &[user.nf_at(&note, EpochIndex(0))],
@@ -2639,7 +2639,7 @@ fn unspent_bind_rejects_a_forged_sentinel() {
     expect_invalid(
         rng,
         pool::UnspentBind,
-        (elapsed_seq, g, forged_sentinel, tail),
+        (elapsed_seq, nf_seq, forged_sentinel, tail),
         unspent,
         range,
         "UnspentBind: sequence does not match the derivation",
@@ -2665,7 +2665,7 @@ fn sentinel_less_empty_margin_cannot_be_witnessed() {
         BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
     );
     let range = user.derivation_pcd(rng, note, EpochIndex(0), EpochIndex(1));
-    let (elapsed_seq, g, _older, tail) = witness::unspent_bind(
+    let (elapsed_seq, nf_seq, _older, tail) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
         &[user.nf_at(&note, EpochIndex(0))],
@@ -2674,7 +2674,7 @@ fn sentinel_less_empty_margin_cannot_be_witnessed() {
     let result = PROOF_SYSTEM.fuse(
         rng,
         pool::UnspentBind,
-        (elapsed_seq, g, zero_margin, tail),
+        (elapsed_seq, nf_seq, zero_margin, tail),
         unspent,
         range,
     );

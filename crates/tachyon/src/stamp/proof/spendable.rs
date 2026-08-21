@@ -82,15 +82,6 @@ impl Header for SpendableHeader {
 ///
 /// No sameness constraint ties this window to the one the spend later reads:
 /// `cm` equality binds every window of the same note to the same lattice.
-///
-/// # Committed polynomials
-///
-/// | polynomial | role |
-/// |---|---|
-/// | `creation_set` | the creating stamp's tachygram set, membership-queried |
-/// | `g` | the covering sequence, bound to the derivation header |
-/// | `older` | sentineled absorbing margin above the read |
-/// | `tail` | cap-shifted sentineled absorbing margin below the read |
 #[derive(Debug)]
 pub struct SpendableInit;
 
@@ -99,8 +90,8 @@ impl Step for SpendableInit {
     type Left = NullifierDerivation;
     type Output = SpendableHeader;
     type Right = ();
-    /// `(pre_cm_anchor, creation_set, creation_epoch, present_nf, g, older,
-    /// tail)`.
+    /// `(pre_cm_anchor, creation_set, creation_epoch, present_nf, nf_seq,
+    /// older, tail)`.
     type Witness<'source> = (
         Anchor,
         TachygramSetPoly,
@@ -116,7 +107,7 @@ impl Step for SpendableInit {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (pre_cm_anchor, creation_set, creation_epoch, present_nf, g, older, tail): Self::Witness<
+        (pre_cm_anchor, creation_set, creation_epoch, present_nf, nf_seq, older, tail): Self::Witness<
             'source,
         >,
         (
@@ -128,7 +119,7 @@ impl Step for SpendableInit {
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
-            Eq::from(g.commit()),
+            Eq::from(nf_seq.commit()),
             Eq::from(nf_commit),
             "SpendableInit: covering sequence does not match header",
         )?;
@@ -147,14 +138,14 @@ impl Step for SpendableInit {
         // replicates.
         let margin = u64::from(deriv_end - creation_epoch) - 1;
         let z = poseidon::read_challenge(
-            g.commit().into(),
+            nf_seq.commit().into(),
             older.commit().into(),
             tail.commit().into(),
             &[Fp::from(present_nf)],
         );
         enforce_covering_read_members(
             ctx,
-            g.as_ref(),
+            nf_seq.as_ref(),
             older.as_ref(),
             tail.as_ref(),
             [Fp::from(present_nf)],

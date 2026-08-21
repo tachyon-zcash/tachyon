@@ -69,14 +69,6 @@ impl Header for SpendHeader {
 /// The read's challenge absorbs both scalar members (see
 /// `poseidon::read_challenge`), which forces each to the covering sequence's
 /// genuine coefficient.
-///
-/// # Committed polynomials
-///
-/// | polynomial | role |
-/// |---|---|
-/// | `g` | the covering sequence, bound to the derivation header |
-/// | `older` | sentineled absorbing margin above the read |
-/// | `tail` | cap-shifted sentineled absorbing margin below the read |
 #[derive(Debug)]
 pub struct SpendBind;
 
@@ -85,7 +77,7 @@ impl Step for SpendBind {
     type Left = SpendableHeader;
     type Output = SpendHeader;
     type Right = NullifierDerivation;
-    /// `(g, older, tail, nf_next)`.
+    /// `(nf_seq, older, tail, nf_next)`.
     type Witness<'source> = (NfSeqPoly, NfMarginPoly, NfTailPoly, Nullifier);
 
     const INDEX: Index = Index::new(12);
@@ -93,7 +85,7 @@ impl Step for SpendBind {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (g, older, tail, nf_next): Self::Witness<'source>,
+        (nf_seq, older, tail, nf_next): Self::Witness<'source>,
         (spendable_cm, (spendable_epoch, present_nf), anchor): <Self::Left as Header>::Data,
         (
             nf_cm,
@@ -107,7 +99,7 @@ impl Step for SpendBind {
             "SpendBind: derived range does not match note",
         )?;
         enforce_equal_point(
-            Eq::from(g.commit()),
+            Eq::from(nf_seq.commit()),
             Eq::from(nf_commit),
             "SpendBind: covering sequence does not match header",
         )?;
@@ -132,14 +124,14 @@ impl Step for SpendBind {
         let margin = u64::from(deriv_end - spendable_epoch) - 2;
         let members = [Fp::from(present_nf), Fp::from(nf_next)];
         let z = poseidon::read_challenge(
-            g.commit().into(),
+            nf_seq.commit().into(),
             older.commit().into(),
             tail.commit().into(),
             &members,
         );
         enforce_covering_read_members(
             ctx,
-            g.as_ref(),
+            nf_seq.as_ref(),
             older.as_ref(),
             tail.as_ref(),
             members,

@@ -509,15 +509,6 @@ impl Step for UnspentFuse {
 ///
 /// The lineage is note-blind, so the bind *stamps* the derivation's `cm` onto
 /// the validated [`Unspent`].
-///
-/// # Committed polynomials
-///
-/// | polynomial | role |
-/// |---|---|
-/// | `elapsed` | the tested sequence, bound to the unspent header |
-/// | `g` | the covering sequence, bound to the derivation header |
-/// | `older` | sentineled absorbing margin above the read |
-/// | `tail` | cap-shifted sentineled absorbing margin below the read |
 #[derive(Debug)]
 pub struct UnspentBind;
 
@@ -526,7 +517,7 @@ impl Step for UnspentBind {
     type Left = ArbitraryUnspent;
     type Output = Unspent;
     type Right = NullifierDerivation;
-    /// `(elapsed_seq, g, older, tail)`.
+    /// `(elapsed_seq, nf_seq, older, tail)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfMarginPoly, NfTailPoly);
 
     const INDEX: Index = Index::new(7);
@@ -534,7 +525,7 @@ impl Step for UnspentBind {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (elapsed_seq, g, older, tail): Self::Witness<'source>,
+        (elapsed_seq, nf_seq, older, tail): Self::Witness<'source>,
         (
             unspent_anchor_prev,
             (unspent_epoch_start, unspent_nf_start),
@@ -555,7 +546,7 @@ impl Step for UnspentBind {
             "UnspentBind: elapsed polynomial does not match header",
         )?;
         enforce_equal_point(
-            Eq::from(g.commit()),
+            Eq::from(nf_seq.commit()),
             Eq::from(nf_commit),
             "UnspentBind: covering sequence does not match header",
         )?;
@@ -580,7 +571,7 @@ impl Step for UnspentBind {
         let margin = u64::from(deriv_end - unspent_epoch_last) - 1;
         enforce_covering_read(
             ctx,
-            g.as_ref(),
+            nf_seq.as_ref(),
             older.as_ref(),
             tail.as_ref(),
             elapsed_seq.as_ref(),
