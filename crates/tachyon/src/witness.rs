@@ -56,7 +56,15 @@ pub fn nf_derive(
     epoch_end: EpochIndex,
 ) -> StepWitness<'static, NfDerive> {
     let (_cm, mk) = left;
-    let group_base = covering_group(epoch_start);
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::integer_division,
+        clippy::integer_division_remainder_used,
+        reason = "the group width is a small constant, and flooring to the \
+                  containing group is the intended index"
+    )]
+    let group_base = epoch_start.0 / NF_GROUP as u32;
     #[expect(
         clippy::as_conversions,
         clippy::cast_possible_truncation,
@@ -74,23 +82,6 @@ pub fn nf_derive(
         .copied()
         .collect::<NfSeqPoly>();
     (group_base, epoch_start, epoch_end, seq)
-}
-
-/// The group base of the window covering `epoch`.
-///
-/// Windows are group-aligned, so a covering window starts at the epoch's own
-/// group and runs `NF_DERIVATION_WIDTH` epochs from there.
-#[must_use]
-#[expect(
-    clippy::as_conversions,
-    clippy::cast_possible_truncation,
-    clippy::integer_division,
-    clippy::integer_division_remainder_used,
-    reason = "the group width is a small constant, and flooring to the \
-              containing group is the intended index"
-)]
-pub const fn covering_group(epoch: EpochIndex) -> u32 {
-    epoch.0 / NF_GROUP as u32
 }
 
 /// Prepare the witness for [`NullifierFuse`]:

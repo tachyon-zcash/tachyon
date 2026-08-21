@@ -3,6 +3,8 @@
     clippy::type_complexity,
     clippy::as_conversions,
     clippy::cast_possible_truncation,
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
     clippy::partial_pub_fields,
     clippy::too_many_lines,
     clippy::too_many_arguments,
@@ -933,7 +935,7 @@ impl WalletSim {
         epoch_start: EpochIndex,
         epoch_end: EpochIndex,
     ) -> Pcd<delegation::NullifierDerivation> {
-        let base = witness::covering_group(epoch_start) * NF_GROUP as u32;
+        let base = epoch_start.0 / NF_GROUP as u32 * NF_GROUP as u32;
         let windows = (epoch_end.0 - base).div_ceil(NF_DERIVATION_WIDTH as u32);
         let cover_end = base + windows * NF_DERIVATION_WIDTH as u32;
         let key = (Tachygram::from(note.commitment()), base, cover_end);

@@ -118,7 +118,7 @@ impl Step for SpendBind {
 
         // The 2-wide read at the lineage's epoch, members oldest-first.
         let margin = u64::from(deriv_end - spendable_epoch) - 2;
-        let read = [present_nf, nf_next].into_iter().collect::<NfSeqPoly>();
+        let read = NfSeqPoly::from_iter([present_nf, nf_next]);
         enforce_covering_read(
             ctx,
             nf_seq.as_ref(),

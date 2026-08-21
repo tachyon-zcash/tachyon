@@ -66,8 +66,7 @@ pub struct NfMarginCommit(Eq);
 /// **empty** margin witnessable: it keeps that case at the constant $1$,
 /// clear of the identity point witnessing rejects.
 ///
-/// [`NfMarginPoly::new`] is the only constructor, and it applies the
-/// sentinel.
+/// [`NfMarginPoly::new`] applies the sentinel.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct NfMarginPoly(Polynomial);
 
