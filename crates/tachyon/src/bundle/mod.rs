@@ -92,13 +92,16 @@ use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, Partial
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    ActionDigest, ActionDigestError,
+    ActionDigest, ActionDigestError, TachygramSetCommit,
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
-    primitives::{Anchor, effect},
+    primitives::{Anchor, EpochIndex, effect},
     reddsa, serialization,
-    stamp::{self, AggregateIdError, PointerStamp, ProofStamp, StampState, Unproven},
+    stamp::{
+        self, AggregateIdError, PointerStamp, ProofStamp, StampState, Unproven,
+        proof::{PROOF_SYSTEM, pool},
+    },
     value,
 };
 
@@ -279,6 +282,24 @@ pub enum VerifyPointersError {
     /// The adjunct is not in the expected state.
     #[display("stamp on an adjunct does not contain a valid pointer")]
     AdjunctPointerInvalid(AggregateIdError),
+}
+
+/// Errors that can occur while lifting a bundle's stamp onto a later anchor.
+#[derive(Debug, Display, Error)]
+#[non_exhaustive]
+pub enum LiftError {
+    /// No lift is needed.
+    #[display("no lift is needed")]
+    NoLift,
+    /// Action digest construction failed (cv or rk was the identity point).
+    #[display("action digest failed: {_0}")]
+    ActionDigest(ActionDigestError),
+    /// Anchor continuity could not be proved
+    #[display("anchor continuity failed: {_0}")]
+    AnchorContinuityFailed(ragu::Error),
+    /// The stamp lift itself failed
+    #[display("stamp lift failed: {_0}")]
+    LiftFailed(ragu::Error),
 }
 
 /// Errors during bundle verification.
@@ -528,6 +549,57 @@ impl Bundle<ProofStamp> {
             memo: self.memo,
             stamp: wtxid,
         }
+    }
+
+    /// Advance the stamp's anchor across the stamps that follow it.
+    pub fn lift<RNG: RngCore + CryptoRng>(
+        self,
+        rng: &mut RNG,
+        adjuncts: &[&Bundle<dyn StampState>],
+        epoch: EpochIndex,
+        anchor_inputs: Vec<TachygramSetCommit>,
+    ) -> Result<Self, LiftError> {
+        let own_digests = self.actions.iter().map(|&action| action.digest());
+        let other_digests = adjuncts
+            .iter()
+            .flat_map(|&adj| adj.actions.iter().map(|&action| action.digest()));
+        let action_digests = own_digests
+            .chain(other_digests)
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
+            .map_err(LiftError::ActionDigest)?;
+
+        let anchor_chain = {
+            let anchor_seeds = anchor_inputs
+                .into_iter()
+                .scan(self.stamp.anchor, |running_anchor, tg_set| {
+                    Some(
+                        PROOF_SYSTEM
+                            .seed(rng, pool::AnchorSeed, (*running_anchor, epoch, tg_set))
+                            .map_err(LiftError::AnchorContinuityFailed)
+                            .map(|(pcd, _aux)| {
+                                *running_anchor = pcd.data().1;
+                                pcd
+                            }),
+                    )
+                })
+                .collect::<Result<Vec<_>, LiftError>>()?;
+
+            let anchor_fused = anchor_seeds.into_iter().map(Ok).reduce(|left, right| {
+                PROOF_SYSTEM
+                    .fuse(rng, pool::AnchorFuse, (), left?, right?)
+                    .map(|(pcd, _aux)| pcd)
+                    .map_err(LiftError::AnchorContinuityFailed)
+            });
+
+            anchor_fused.unwrap_or(Err(LiftError::NoLift))?
+        };
+
+        let stamp = self
+            .stamp
+            .lift(rng, action_digests, anchor_chain)
+            .map_err(LiftError::LiftFailed)?;
+
+        Ok(Self { stamp, ..self })
     }
 
     /// Confirm `hStampActionsTachyon` represents the combined actions of this

@@ -1982,3 +1982,155 @@ fn read_rejects_truncated_memo() {
     let err = Bundle::<ProofStamp>::read(&*buf).expect_err("declared memo length must be honoured");
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
+
+/// A lift moves the bundle's anchor to the pool's later state while leaving
+/// its coverage untouched.
+#[test]
+fn bundle_lift_preserves_coverage() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+
+    // `build_autonome` keeps its pool to itself, and a lift needs the pool's
+    // own tachygrams: the anchor is a hash chain over published stamp
+    // commitments, so invented sets land nowhere the pool recognizes.
+    let spend_note = wallet.random_note(1000);
+    let output_note = wallet.random_note(700);
+    let mut pool = PoolSim::genesis(rng);
+    // One stamp in the block, so the spendable's anchor is that block's
+    // terminal anchor and the lift's segment starts at the next block.
+    pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 1));
+    let cm_height = pool.height();
+    let spendable_pcd = wallet.fresh_spend(rng, &pool, cm_height, &spend_note);
+    let bundle = wallet.autonome(
+        rng,
+        spendable_pcd.data().2,
+        vec![(spend_note, spendable_pcd, cm_height.epoch())],
+        vec![output_note],
+    );
+
+    let descriptors = bundle.verify_coverage(&[]).expect("autonome coverage");
+
+    // Two blocks, so the chain fuses rather than standing on one seed.
+    pool.advance(2, |_| random_block(rng, 1, 4));
+    let commits = (cm_height.0 + 1..=pool.height().0)
+        .flat_map(|height| pool.stamp_commits_at(BlockHeight(height)))
+        .collect();
+
+    let lifted = bundle
+        .lift(rng, &[], cm_height.epoch(), commits)
+        .expect("lift an autonome bundle");
+
+    assert_eq!(lifted.stamp.anchor, pool.anchor());
+    assert!(lifted.is_autonome());
+    assert_eq!(
+        lifted
+            .verify_coverage(&[])
+            .expect("coverage survives a lift"),
+        descriptors
+    );
+}
+
+/// An aggregate's action commitment spans its adjuncts, so a lift that was
+/// handed them rebuilds the header the proof was made against.
+#[test]
+fn bundle_lift_over_an_aggregate() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+
+    let spend_a = wallet.random_note(1000);
+    let output_a = wallet.random_note(700);
+    let spend_b = wallet.random_note(500);
+    let output_b = wallet.random_note(200);
+
+    let mut pool = PoolSim::genesis(rng);
+    pool.mine(random_block_with(
+        rng,
+        &[vec![spend_a.commitment()], vec![spend_b.commitment()]],
+        50,
+    ));
+    let cm_height = pool.height();
+    while pool.height() < BlockHeight(EPOCH_SIZE) {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
+
+    let init_a = wallet.spendable_init(rng, &spend_a, &pool, cm_height);
+    let sp_a = wallet.lift_over_creation_epoch(rng, &pool, &spend_a, cm_height, init_a);
+    let init_b = wallet.spendable_init(rng, &spend_b, &pool, cm_height);
+    let sp_b = wallet.lift_over_creation_epoch(rng, &pool, &spend_b, cm_height, init_b);
+    let anchor = sp_a.data().2;
+
+    let spend_epoch = cm_height.epoch().next();
+    let autonome_a = wallet.autonome(
+        rng,
+        anchor,
+        vec![(spend_a, sp_a, spend_epoch)],
+        vec![output_a],
+    );
+    let autonome_b = wallet.autonome(
+        rng,
+        anchor,
+        vec![(spend_b, sp_b, spend_epoch)],
+        vec![output_b],
+    );
+
+    let descriptors_a: BTreeSet<action::Descriptor> =
+        autonome_a.actions.iter().map(Action::descriptor).collect();
+    let descriptors_b: BTreeSet<action::Descriptor> =
+        autonome_b.actions.iter().map(Action::descriptor).collect();
+
+    let innocent_plan = Plan::new(vec![], vec![]);
+    let innocent = Bundle {
+        actions: vec![],
+        value_balance: value::Balance::ZERO,
+        binding_sig: innocent_plan
+            .derive_bsk_private()
+            .sign(rng, &mock_sighash(innocent_plan.commitment().unwrap())),
+        memo: Vec::new(),
+        stamp: ProofStamp::merge(
+            rng,
+            (autonome_a.stamp.clone(), descriptors_a),
+            (autonome_b.stamp.clone(), descriptors_b),
+        )
+        .expect("merge"),
+    };
+
+    let adjunct_a = autonome_a.strip(mock_wtxid(&innocent));
+    let adjunct_b = autonome_b.strip(mock_wtxid(&innocent));
+    let adjuncts = [adjunct_a.as_dyn(), adjunct_b.as_dyn()];
+
+    // The aggregate's anchor is the epoch's terminal one, so the segment it
+    // lifts over must start in the next epoch's first block.
+    let lifted_from = pool.height();
+    pool.advance(2, |_| random_block(rng, 1, 2));
+    let commits = (lifted_from.0 + 1..=pool.height().0)
+        .flat_map(|height| pool.stamp_commits_at(BlockHeight(height)))
+        .collect();
+
+    let lifted = innocent
+        .lift(rng, &adjuncts, pool.height().epoch(), commits)
+        .expect("lift an aggregate over its adjuncts");
+
+    assert_eq!(lifted.stamp.anchor, pool.anchor());
+    assert!(
+        lifted
+            .verify_proof(rng, &adjuncts)
+            .expect("a lifted aggregate verifies against its adjuncts"),
+        "a lifted aggregate must verify against its adjuncts"
+    );
+}
+
+/// An anchor chain has no zero-link form, so a lift with nothing to cross is
+/// refused rather than silently returning the bundle unchanged.
+#[test]
+fn bundle_lift_over_no_stamps_is_refused() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let bundle = build_autonome(rng, &wallet, 1000, 700);
+
+    let err = bundle
+        .lift(rng, &[], EpochIndex(0), vec![])
+        .expect_err("a lift over no stamps must be refused");
+    let LiftError::NoLift = err else {
+        panic!("expected NoLift, got {err:?}");
+    };
+}

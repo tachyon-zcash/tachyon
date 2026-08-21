@@ -10,8 +10,9 @@ use crate::{
     action,
     constants::EPOCH_SIZE,
     fixtures::{
-        PoolSim, WalletSim, build_autonome, build_output_stamp, forge_overlapping_merge,
-        random_action, random_block, random_block_with, shared_sk, spend_witness,
+        PoolSim, WalletSim, build_anchor_chain_pcd, build_autonome, build_output_stamp,
+        forge_overlapping_merge, random_action, random_block, random_block_with, shared_sk,
+        spend_witness,
     },
     primitives::BlockHeight,
 };
@@ -690,4 +691,148 @@ fn accumulating_rejects_mismatched_commitment() {
             .expect("verify"),
         "verification must reject an unconfirmed commitment"
     );
+}
+
+/// A lift moves the anchor to the segment's end and leaves the stamp's
+/// published data alone.
+#[test]
+fn lift_advances_a_stamp_anchor() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+
+    pool.advance(3, |_| random_block(rng, 1, 4));
+    let note = wallet.random_note(200);
+    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let stamped_at = pool.height();
+
+    pool.advance(2, |_| random_block(rng, 1, 4));
+    let lifted_to = pool.height();
+    let chain = build_anchor_chain_pcd(rng, &pool, stamped_at.next().expect("next")..=lifted_to);
+
+    let before = stamp.clone();
+    let lifted = stamp
+        .lift(rng, [], chain)
+        .expect("lift over a within-epoch segment");
+
+    assert_eq!(lifted.anchor, pool.anchor_at(lifted_to));
+    assert_eq!(lifted.coverage, before.coverage);
+    assert_eq!(lifted.tachygram_set, before.tachygram_set);
+    assert_eq!(lifted.tachygrams, before.tachygrams);
+}
+
+/// The header the lift rebuilds is the one the original proof was made
+/// against, so the lifted stamp still verifies against its covered actions.
+#[test]
+fn lift_then_verify() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+
+    pool.advance(3, |_| random_block(rng, 1, 4));
+    let note = wallet.random_note(200);
+    let (stamp, plan) = build_output_stamp(rng, pool.anchor(), note);
+    let stamped_at = pool.height();
+    let digest = plan.digest().expect("valid plan");
+
+    pool.advance(2, |_| random_block(rng, 1, 4));
+    let chain =
+        build_anchor_chain_pcd(rng, &pool, stamped_at.next().expect("next")..=pool.height());
+
+    let lifted = stamp.lift(rng, [digest], chain).expect("lift");
+
+    assert!(
+        lifted.verify_proof(rng, [digest]).expect("verify"),
+        "a lifted stamp must verify against the actions it covers"
+    );
+}
+
+/// A segment from an unrelated chain does not root at the stamp's anchor.
+#[test]
+fn lift_rejects_a_foreign_chain() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+    pool.advance(3, |_| random_block(rng, 1, 4));
+
+    let note = wallet.random_note(200);
+    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+
+    let mut foreign = PoolSim::genesis(rng);
+    foreign.advance(3, |_| random_block(rng, 1, 4));
+    let chain = build_anchor_chain_pcd(rng, &foreign, BlockHeight(1)..=foreign.height());
+
+    stamp
+        .lift(rng, [], chain)
+        .expect_err("a segment from another chain must not lift a stamp");
+}
+
+/// A lift takes the caller's word for the covered action set, so a wrong
+/// digest list is caught at verification rather than at prove time.
+#[test]
+fn lift_rejects_wrong_digests() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+
+    pool.advance(3, |_| random_block(rng, 1, 4));
+    let note = wallet.random_note(200);
+    let (stamp, plan) = build_output_stamp(rng, pool.anchor(), note);
+    let stamped_at = pool.height();
+    let digest = plan.digest().expect("valid plan");
+    let foreign_digest = random_action(rng).digest().expect("valid action");
+
+    pool.advance(2, |_| random_block(rng, 1, 4));
+    let chain =
+        build_anchor_chain_pcd(rng, &pool, stamped_at.next().expect("next")..=pool.height());
+
+    let lifted = stamp
+        .lift(rng, [foreign_digest], chain)
+        .expect("the lift itself cannot see the wrong action set");
+
+    assert!(
+        !lifted.verify_proof(rng, [digest]).expect("verify"),
+        "a stamp lifted under a forged action set must not verify"
+    );
+}
+
+/// Stamps taken at different anchors cannot merge until one is lifted onto
+/// the other's anchor.
+#[test]
+fn merge_after_lift() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user_a = WalletSim::random(rng);
+    let user_b = WalletSim::random(rng);
+    let mut pool = PoolSim::genesis(rng);
+
+    pool.advance(3, |_| random_block(rng, 1, 4));
+    let note_a = user_a.random_note(200);
+    let (stamp_a, plan_a) = build_output_stamp(rng, pool.anchor(), note_a);
+    let height_a = pool.height();
+
+    pool.advance(3, |_| random_block(rng, 1, 4));
+    let note_b = user_b.random_note(300);
+    let (stamp_b, plan_b) = build_output_stamp(rng, pool.anchor(), note_b);
+    let height_b = pool.height();
+
+    let (desc_a, desc_b) = (
+        BTreeSet::from_iter([plan_a.descriptor()]),
+        BTreeSet::from_iter([plan_b.descriptor()]),
+    );
+
+    ProofStamp::merge(
+        rng,
+        (stamp_a.clone(), desc_a.clone()),
+        (stamp_b.clone(), desc_b.clone()),
+    )
+    .expect_err("mismatched anchors must not merge");
+
+    let chain = build_anchor_chain_pcd(rng, &pool, height_a.next().expect("next")..=height_b);
+    let lifted_a = stamp_a
+        .lift(rng, [plan_a.digest().expect("valid plan")], chain)
+        .expect("lift onto the later anchor");
+
+    assert_eq!(lifted_a.anchor, stamp_b.anchor);
+    ProofStamp::merge(rng, (lifted_a, desc_a), (stamp_b, desc_b))
+        .expect("a lifted stamp merges with one at the anchor it was lifted to");
 }
