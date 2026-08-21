@@ -639,13 +639,24 @@ impl ProofStamp {
     /// The action digests for the merge proof and the merged
     /// `covered_actions` are both derived from the descriptor lists.
     ///
-    /// TODO: confirm desc list against stamp? it's forbidden by the proof
-    /// system, but we might want to fail early.
+    /// In debug builds, asserts that each descriptor list matches its stamp's
+    /// covered-actions digest. The proof system rejects a mismatched merge
+    /// regardless, but only after the merge proving work has been spent; a
+    /// caller that hits these assertions has selected the wrong inputs.
     pub fn merge<RNG: RngCore + CryptoRng>(
         rng: &mut RNG,
         (left_stamp, left_desc): (Self, BTreeSet<action::Descriptor>),
         (right_stamp, right_desc): (Self, BTreeSet<action::Descriptor>),
     ) -> Result<Self, ProveError> {
+        debug_assert!(
+            left_stamp.is_covering(left_desc.iter().copied()),
+            "merge: left descriptor list does not match stamp coverage",
+        );
+        debug_assert!(
+            right_stamp.is_covering(right_desc.iter().copied()),
+            "merge: right descriptor list does not match stamp coverage",
+        );
+
         let left_actions_digest = left_desc
             .iter()
             .map(action::Descriptor::digest)
