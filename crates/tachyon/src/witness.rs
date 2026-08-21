@@ -9,13 +9,12 @@
 use ragu::{Header, Step};
 
 use crate::{
-    digest::poseidon::NF_GROUP,
     keys::ProofAuthorizingKey,
     note::Note,
     nullifier::Nullifier,
     primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfMarginPoly, NfSeqPoly, NfTailPoly,
-        Tachygram, TachygramSetPoly,
+        ActionDigest, ActionSetPoly, Anchor, EpochGroup, EpochIndex, NfMarginPoly, NfSeqPoly,
+        NfTailPoly, Tachygram, TachygramSetPoly,
     },
     stamp::proof::{
         delegation::{NfDerive, NfMasterSeed, NullifierFuse},
@@ -42,46 +41,18 @@ pub const fn nf_master_seed(
     (note, pak)
 }
 
-/// Prepare the witness for [`NfDerive`]:
-/// `(group_base, epoch_start, epoch_end, seq)`.
+/// Prepare the witness for [`NfDerive`]: `(group, seq)`.
 ///
-/// Reads `mk` off the seed header, derives the window covering `epoch_start`,
-/// and lays the requested `[epoch_start, epoch_end)` sub-range out as the
-/// sequence. The range must fit inside the covering window; a longer span
-/// fuses ranges via [`NullifierFuse`].
+/// Reads `mk` off the seed header and lays the group's whole window out as the
+/// sequence. A longer span fuses windows via [`NullifierFuse`].
 #[must_use]
 pub fn nf_derive(
     (left, _right): (StepLeft<NfDerive>, StepRight<NfDerive>),
-    epoch_start: EpochIndex,
-    epoch_end: EpochIndex,
+    group: EpochGroup,
 ) -> StepWitness<'static, NfDerive> {
     let (_cm, mk) = left;
-    #[expect(
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
-        clippy::integer_division,
-        clippy::integer_division_remainder_used,
-        reason = "the group width is a small constant, and flooring to the \
-                  containing group is the intended index"
-    )]
-    let group_base = epoch_start.0 / NF_GROUP as u32;
-    #[expect(
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
-        reason = "the group width is a small constant"
-    )]
-    let base = group_base * NF_GROUP as u32;
-    #[expect(
-        clippy::indexing_slicing,
-        clippy::as_conversions,
-        reason = "the caller requests a range inside the covering window"
-    )]
-    let seq = mk.derive_window(group_base)
-        [(epoch_start.0 - base) as usize..(epoch_end.0 - base) as usize]
-        .iter()
-        .copied()
-        .collect::<NfSeqPoly>();
-    (group_base, epoch_start, epoch_end, seq)
+    let seq = mk.derive_window(group).into_iter().collect::<NfSeqPoly>();
+    (group, seq)
 }
 
 /// Prepare the witness for [`NullifierFuse`]:

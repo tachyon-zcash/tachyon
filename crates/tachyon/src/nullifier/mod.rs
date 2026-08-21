@@ -5,7 +5,7 @@ use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
-use crate::{constants::EPOCH_MAX, digest::poseidon::NF_GROUP, primitives::Tachygram};
+use crate::{digest::poseidon::NF_GROUP, primitives::Tachygram};
 
 /// Epoch nullifiers per derivation window.
 ///
@@ -26,17 +26,6 @@ const _: () = assert!(
     NF_DERIVATION_GROUPS * NF_GROUP == NF_DERIVATION_WIDTH,
     "the window width must be a whole number of sponges"
 );
-
-/// The largest group base whose window fits inside the epoch space.
-#[expect(
-    clippy::as_conversions,
-    clippy::cast_possible_truncation,
-    clippy::integer_division,
-    clippy::integer_division_remainder_used,
-    reason = "both widths are small constants, and flooring to the last whole \
-              group is the intended bound"
-)]
-pub const NF_GROUP_BASE_MAX: u32 = (EPOCH_MAX - NF_DERIVATION_WIDTH as u32) / NF_GROUP as u32;
 
 /// A Tachyon nullifier.
 ///

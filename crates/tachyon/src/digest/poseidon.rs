@@ -9,7 +9,7 @@ use group::{GroupEncoding as _, prime::PrimeCurveAffine as _};
 use pasta_curves::{EpAffine, EqAffine, Fp, arithmetic::Coordinates};
 use ragu::Sponge;
 
-use crate::EpochIndex;
+use crate::{EpochGroup, EpochIndex};
 
 /// Epoch nullifiers derived per sponge, the rate of ragu's `PoseidonFp`
 /// ($T = 5$, rate 4), which ragu does not export.
@@ -124,12 +124,12 @@ const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
     reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
 )]
 #[must_use]
-pub(crate) fn nullifier_group(mk: Fp, group: u32) -> [Fp; NF_GROUP] {
+pub(crate) fn nullifier_group(mk: Fp, group: EpochGroup) -> [Fp; NF_GROUP] {
     let mut sponge = Sponge::new();
     for value in [
         Fp::from_u128(u128::from_le_bytes(*NULLIFIER_DOMAIN)),
         mk,
-        Fp::from(u64::from(group)),
+        Fp::from(group),
     ] {
         sponge.absorb(value).expect("infallible");
     }

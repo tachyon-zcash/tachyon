@@ -35,7 +35,9 @@ use crate::{
     },
     note,
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    primitives::{Anchor, BlockHeight, EpochIndex, NfMarginPoly, NfTailPoly, Tachygram, effect},
+    primitives::{
+        Anchor, BlockHeight, EpochGroup, EpochIndex, NfMarginPoly, NfTailPoly, Tachygram, effect,
+    },
     value, witness,
 };
 
@@ -1701,18 +1703,14 @@ fn nf_derive_rejects_a_foreign_sequence() {
 
     let master_a = honest_master(rng, &user, note_a);
     let (cm_a, _) = *master_a.data();
-    let (group_base, epoch_start, epoch_end, foreign_seq) = witness::nf_derive(
-        ((cm_a, user.mk(&note_b)), ()),
-        EpochIndex(16),
-        EpochIndex(20),
-    );
+    let (group, foreign_seq) = witness::nf_derive(((cm_a, user.mk(&note_b)), ()), EpochGroup(4));
     expect_invalid(
         rng,
         delegation::NfDerive,
-        (group_base, epoch_start, epoch_end, foreign_seq),
+        (group, foreign_seq),
         master_a,
         Proof::trivial().carry::<()>(()),
-        "NfDerive: sequence does not match the derived range",
+        "NfDerive: sequence does not match the derived window",
     );
 }
 
@@ -1725,64 +1723,31 @@ fn nf_derive_rejects_base_out_of_range() {
     let note = user.random_note(500);
 
     let master = honest_master(rng, &user, note);
-    let (_, _, _, seq) = witness::nf_derive((*master.data(), ()), EpochIndex(0), EpochIndex(1));
-    let over = EPOCH_MAX / NF_GROUP as u32;
+    let (_, seq) = witness::nf_derive((*master.data(), ()), EpochGroup(0));
+    let over = EpochGroup(EPOCH_MAX / NF_GROUP as u32);
     expect_invalid(
         rng,
         delegation::NfDerive,
-        (over, EpochIndex(0), EpochIndex(1), seq),
+        (over, seq),
         master,
         Proof::trivial().carry::<()>(()),
         "NfDerive: base exceeds epoch space",
     );
 }
 
-/// A range that starts before the window or is empty is rejected.
-#[test]
-fn nf_derive_rejects_a_range_outside_the_window() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let master = honest_master(rng, &user, note);
-    let (_, _, _, seq) = witness::nf_derive((*master.data(), ()), EpochIndex(16), EpochIndex(17));
-    expect_invalid(
-        rng,
-        delegation::NfDerive,
-        (4, EpochIndex(15), EpochIndex(17), seq.clone()),
-        master.clone(),
-        Proof::trivial().carry::<()>(()),
-        "NfDerive: range is empty or starts before the window",
-    );
-    expect_invalid(
-        rng,
-        delegation::NfDerive,
-        (
-            4,
-            EpochIndex(16),
-            EpochIndex(16 + NF_DERIVATION_WIDTH as u32 + 1),
-            seq,
-        ),
-        master,
-        Proof::trivial().carry::<()>(()),
-        "NfDerive: range ends past the window",
-    );
-}
-
-/// A direct [`delegation::NfDerive`] leaf exporting `[start, end)`.
-fn leaf_range(
+/// A direct [`delegation::NfDerive`] leaf over one whole window.
+fn leaf_window(
     rng: &mut StdRng,
     user: &WalletSim,
     note: Note,
-    start: EpochIndex,
-    end: EpochIndex,
+    group: EpochGroup,
 ) -> Pcd<delegation::NullifierDerivation> {
     let master = honest_master(rng, user, note);
     let (leaf, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NfDerive,
-            witness::nf_derive((*master.data(), ()), start, end),
+            witness::nf_derive((*master.data(), ()), group),
             master,
             Proof::trivial().carry::<()>(()),
         )
@@ -1790,34 +1755,43 @@ fn leaf_range(
     leaf
 }
 
-/// A leaf exports exactly the requested sub-range of its window, labelled
-/// with its genuine boundary members, and every range of the same note
-/// carries the same `cm`.
+/// The window's members, oldest first.
+fn window_members(user: &WalletSim, note: &Note, group: EpochGroup) -> Vec<Nullifier> {
+    (group.start_epoch().0..group.end_epoch().0)
+        .map(|epoch| user.nf_at(note, EpochIndex(epoch)))
+        .collect()
+}
+
+/// A leaf exports its whole window, labelled with the window's bounds and its
+/// genuine boundary members, and every window of the same note carries the
+/// same `cm`.
 #[test]
-fn derivation_exports_the_requested_range() {
+fn derivation_exports_the_whole_window() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let epoch = EpochIndex(NF_GROUP as u32 * 3 + 1);
-    let end = EpochIndex(epoch.0 + 2);
-    let range = leaf_range(rng, &user, note, epoch, end);
+    let group = EpochGroup(3);
+    let range = leaf_window(rng, &user, note, group);
     let (cm, (start, nf_start), commit, (range_end, nf_end)) = *range.data();
 
-    assert_eq!(start, epoch, "starts at the requested epoch");
-    assert_eq!(range_end, end, "ends at the requested bound");
-    assert_eq!(nf_start, user.nf_at(&note, epoch), "genuine start member");
+    assert_eq!(start, group.start_epoch(), "starts at the group's base");
+    assert_eq!(range_end, group.end_epoch(), "spans the whole window");
+    let members = window_members(&user, &note, group);
+    assert_eq!(
+        nf_start,
+        *members.first().expect("window is nonempty"),
+        "genuine start member"
+    );
     assert_eq!(
         nf_end,
-        user.nf_at(&note, EpochIndex(end.0 - 1)),
+        *members.last().expect("window is nonempty"),
         "genuine end member"
     );
-    let seq = (epoch.0..end.0)
-        .map(|index| user.nf_at(&note, EpochIndex(index)))
-        .collect::<NfSeqPoly>();
-    assert_eq!(commit, seq.commit(), "header commits the range sequence");
+    let seq = members.iter().copied().collect::<NfSeqPoly>();
+    assert_eq!(commit, seq.commit(), "header commits the window sequence");
 
-    let far = leaf_range(rng, &user, note, EpochIndex(100_000), EpochIndex(100_001));
+    let far = leaf_window(rng, &user, note, EpochGroup(25_000));
     assert_eq!(cm, far.data().0, "same note cm");
 }
 
@@ -1859,12 +1833,15 @@ fn nullifier_fuse_rejects_non_contiguous() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let range_a = leaf_range(rng, &user, note, EpochIndex(0), EpochIndex(1));
-    let range_b = leaf_range(rng, &user, note, EpochIndex(2), EpochIndex(3));
+    // Windows separated by a gap: group 0 covers `[0, 16)`, group 8 starts at
+    // 32, so the halves are not adjacent.
+    let (left_group, right_group) = (EpochGroup(0), EpochGroup(8));
+    let range_a = leaf_window(rng, &user, note, left_group);
+    let range_b = leaf_window(rng, &user, note, right_group);
     let witness = witness::nullifier_fuse(
         (*range_a.data(), *range_b.data()),
-        &[user.nf_at(&note, EpochIndex(0))],
-        &[user.nf_at(&note, EpochIndex(2))],
+        &window_members(&user, &note, left_group),
+        &window_members(&user, &note, right_group),
     );
 
     let err = PROOF_SYSTEM
@@ -1884,12 +1861,13 @@ fn nullifier_fuse_rejects_wrong_cm() {
     let note_a = user.random_note(500);
     let note_b = user.random_note(700);
 
-    let range_a = leaf_range(rng, &user, note_a, EpochIndex(0), EpochIndex(1));
-    let range_b = leaf_range(rng, &user, note_b, EpochIndex(1), EpochIndex(2));
+    let (left_group, right_group) = (EpochGroup(0), EpochGroup(4));
+    let range_a = leaf_window(rng, &user, note_a, left_group);
+    let range_b = leaf_window(rng, &user, note_b, right_group);
     let witness = witness::nullifier_fuse(
         (*range_a.data(), *range_b.data()),
-        &[user.nf_at(&note_a, EpochIndex(0))],
-        &[user.nf_at(&note_b, EpochIndex(1))],
+        &window_members(&user, &note_a, left_group),
+        &window_members(&user, &note_b, right_group),
     );
 
     let err = PROOF_SYSTEM

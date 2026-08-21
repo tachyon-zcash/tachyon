@@ -31,13 +31,13 @@ use crate::{
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EPOCH_SIZE,
-    digest::{blake2b, poseidon::NF_GROUP},
+    digest::blake2b,
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     primitives::{
-        ActionSetPoly, Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetCommit,
+        ActionSetPoly, Anchor, BlockHeight, EpochGroup, EpochIndex, Tachygram, TachygramSetCommit,
         TachygramSetPoly, effect,
     },
     stamp::{
@@ -923,11 +923,10 @@ impl WalletSim {
     /// The certified derivation PCD covering `[epoch_start, epoch_end)`,
     /// built from whole windows and cached by the covering range.
     ///
-    /// The first window is the one covering `epoch_start`; window-aligned
-    /// whole windows chain through [`delegation::NullifierFuse`] until the
-    /// requested bound is covered. Consumers read their own sub-ranges out of
-    /// the covering PCD, so every request inside the same covering range
-    /// shares one proof.
+    /// The first window is the one opened by `epoch_start`'s group; further
+    /// windows chain through [`delegation::NullifierFuse`] until the requested
+    /// bound is covered. Consumers read their own epochs out of the covering
+    /// PCD, so every request inside the same covering range shares one proof.
     pub fn derivation_pcd(
         &self,
         rng: &mut (impl RngCore + CryptoRng),
@@ -935,7 +934,7 @@ impl WalletSim {
         epoch_start: EpochIndex,
         epoch_end: EpochIndex,
     ) -> Pcd<delegation::NullifierDerivation> {
-        let base = epoch_start.0 / NF_GROUP as u32 * NF_GROUP as u32;
+        let base = EpochGroup::from(epoch_start).start_epoch().0;
         let windows = (epoch_end.0 - base).div_ceil(NF_DERIVATION_WIDTH as u32);
         let cover_end = base + windows * NF_DERIVATION_WIDTH as u32;
         let key = (Tachygram::from(note.commitment()), base, cover_end);
@@ -952,7 +951,7 @@ impl WalletSim {
                 .fuse(
                     rng,
                     delegation::NfDerive,
-                    witness::nf_derive((*master.data(), ()), chunk_start, chunk_end),
+                    witness::nf_derive((*master.data(), ()), EpochGroup::from(chunk_start)),
                     master.clone(),
                     Proof::trivial().carry::<()>(()),
                 )

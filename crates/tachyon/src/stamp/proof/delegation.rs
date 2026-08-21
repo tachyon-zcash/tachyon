@@ -2,9 +2,9 @@
 //!
 //! Three steps. [`NfMasterSeed`] witnesses the note once and certifies its
 //! commitment and master key; [`NfDerive`] consumes that seed as often as
-//! the wallet needs windows, exporting any sub-range of its window per
-//! proof; and [`NullifierFuse`] concatenates adjacent ranges, so a span of
-//! any length is a chain of windows.
+//! the wallet needs windows, exporting one whole window per proof; and
+//! [`NullifierFuse`] concatenates adjacent windows, so a span of any length
+//! is a chain of them.
 //! All headers are wallet-only, and no key material rides the exported
 //! [`NullifierDerivation`].
 
@@ -23,8 +23,8 @@ use crate::{
     digest::poseidon::{self, NF_GROUP},
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
-    nullifier::{NF_DERIVATION_GROUPS, NF_DERIVATION_WIDTH, NF_GROUP_BASE_MAX, Nullifier},
-    primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
+    nullifier::{NF_DERIVATION_GROUPS, NF_DERIVATION_WIDTH, Nullifier},
+    primitives::{EpochGroup, EpochIndex, NfSeqCommit, NfSeqPoly},
     relations::enforce::enforce_shifted_combination,
 };
 
@@ -146,46 +146,48 @@ impl Step for NfMasterSeed {
     }
 }
 
-/// Derive a window of nullifiers and export any sub-range of it as a
+/// Derive one window of nullifiers and export it as a
 /// [`NullifierDerivation`].
 ///
-/// `Left = NfMasterSeed`. Witnesses the window's group base, the exported
-/// range `[epoch_start, epoch_end)`, and the range sequence $g$. Runs
-/// `NF_DERIVATION_GROUPS` sponges over $(\mathtt{NF\_DOMAIN}, \mathsf{mk},
-/// w)$, each absorbing three elements and squeezing `NF_GROUP` nullifiers for
-/// one permutation, then binds $g$ to the range's members by a single opening
-/// at a free $z$ against their bare Horner accumulation
+/// `Left = NfMasterSeed`. Witnesses the window's [`EpochGroup`] and the
+/// window sequence $g$. Runs `NF_DERIVATION_GROUPS` sponges over
+/// $(\mathtt{NF\_DOMAIN}, \mathsf{mk}, w)$, each absorbing three elements and
+/// squeezing `NF_GROUP` nullifiers for one permutation, then binds $g$ to the
+/// window's members by a single opening at a free $z$ against their bare
+/// Horner accumulation
 ///
-/// $$g(z) = \sum_{j < K} \mathsf{nf}_{\mathsf{epoch\_start}+j}\, z^{\,K-1-j}$$
+/// $$g(z) = \sum_{j < W} \mathsf{nf}_{\mathsf{base}+j}\, z^{\,W-1-j}$$
 ///
-/// for $K$ the range width. Because $z$ is free and both sides have degree
-/// below $K$, the single opening forces every coefficient of $g$ to the
-/// genuine nullifier, and the boundary members are emitted on the header as
-/// derived values.
+/// for $W$ = `NF_DERIVATION_WIDTH`. Because $z$ is free and both sides have
+/// degree below $W$, the single opening forces every coefficient of $g$ to
+/// the genuine nullifier, and the boundary members are emitted on the header
+/// as derived values.
 ///
 /// # Group alignment
 ///
-/// The witness carries the window's *group* base $w_0$ and the step derives
+/// The witness carries the window's group $w_0$ and the step derives
 /// $\mathsf{base} = \mathsf{NF\_GROUP} \cdot w_0$, which makes the sponge
-/// count a circuit constant: `NF_DERIVATION_GROUPS` permutations. The exported
-/// range is free of the alignment: any `[epoch_start, epoch_end)` inside the
-/// window's `NF_DERIVATION_WIDTH` epochs may ride the header. A longer span is
-/// a fused chain of ranges ([`NullifierFuse`]).
+/// count a circuit constant: `NF_DERIVATION_GROUPS` permutations. The export
+/// is the whole window, so its bounds are derived rather than witnessed and a
+/// span of any length is a fused chain of windows ([`NullifierFuse`]).
+/// Consumers accept any derivation *covering* the epochs they read, so none of
+/// them sees the alignment.
 ///
 /// # Soundness
 ///
 /// `mk` is threaded from the left header, so it is the note's genuine master
 /// key by PCD soundness. The nullifiers are derived natively from it and
 /// certified into `nf_commit` by the opening, whose only free operand is the
-/// range sequence, committed before $z$ exists.
+/// window sequence, committed before $z$ exists.
 ///
-/// `group_base` and the range are witnessed and range-checked but otherwise
-/// unbound: the range is *labelled* with its epochs, and a prover choosing a
-/// different base gets a correct range for a different span, honestly
-/// labelled. Consumers pick the span they need out of the label. The
-/// window-wide nonzero guard doubles as the rank pin: `nf_start` is $g$'s
-/// top coefficient and cannot be zero, so the announced span is the exact
-/// rank.
+/// `group` is witnessed and otherwise unbound, and needs no further binding:
+/// $\mathsf{base} = \mathsf{NF\_GROUP} \cdot w_0$ is injective, so the emitted
+/// bounds determine $w_0$ and hence the sponge inputs. A prover choosing a
+/// different group gets a correct window for a different span, honestly
+/// labelled, and one past [`EpochGroup::MAX`] labels epochs that do not
+/// exist. The window-wide nonzero guard doubles as the rank pin: `nf_start` is
+/// $g$'s top coefficient and cannot be zero, so the announced span is the
+/// exact rank.
 #[derive(Debug)]
 pub struct NfDerive;
 
@@ -194,64 +196,44 @@ impl Step for NfDerive {
     type Left = NfMasterHeader;
     type Output = NullifierDerivation;
     type Right = ();
-    /// `(group_base, epoch_start, epoch_end, seq)`.
-    type Witness<'source> = (u32, EpochIndex, EpochIndex, NfSeqPoly);
+    /// `(group, seq)`.
+    type Witness<'source> = (EpochGroup, NfSeqPoly);
 
     const INDEX: Index = Index::new(1);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (group_base, epoch_start, epoch_end, seq): Self::Witness<'source>,
+        (group, seq): Self::Witness<'source>,
         (cm, mk): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // Native stand-ins for the base and range checks. `base` is the
-        // product `NF_GROUP * group_base`.
-        if group_base > NF_GROUP_BASE_MAX {
+        // Native stand-in for the base check. `base` is the product
+        // `NF_GROUP * group`, so alignment needs no check of its own.
+        if group > EpochGroup::MAX {
             return Err(ragu::Error::InvalidWitness(
                 "NfDerive: base exceeds epoch space".into(),
             ));
         }
-        #[expect(
-            clippy::as_conversions,
-            clippy::cast_possible_truncation,
-            reason = "the group and window widths are small constants"
-        )]
-        let base = EpochIndex(group_base * NF_GROUP as u32);
-        if epoch_start.0 < base.0 || epoch_start.0 >= epoch_end.0 {
-            return Err(ragu::Error::InvalidWitness(
-                "NfDerive: range is empty or starts before the window".into(),
-            ));
-        }
-        #[expect(
-            clippy::as_conversions,
-            clippy::cast_possible_truncation,
-            reason = "the window width is a small constant"
-        )]
-        if epoch_end.0 > base.0 + NF_DERIVATION_WIDTH as u32 {
-            return Err(ragu::Error::InvalidWitness(
-                "NfDerive: range ends past the window".into(),
-            ));
-        }
+        let base = group.start_epoch();
 
         // The window's nullifiers, `NF_GROUP` per permutation. `mk` is
         // threaded, so these are the note's genuine nullifiers.
         let mut nullifiers = [Fp::ZERO; NF_DERIVATION_WIDTH];
-        for group in 0..NF_DERIVATION_GROUPS {
+        for sponge in 0..NF_DERIVATION_GROUPS {
             #[expect(
                 clippy::as_conversions,
                 clippy::cast_possible_truncation,
                 reason = "the group count is a small constant"
             )]
-            let squeezed = poseidon::nullifier_group(mk.0, group_base + group as u32);
+            let squeezed = poseidon::nullifier_group(mk.0, EpochGroup(group.0 + sponge as u32));
             for (slot, value) in squeezed.into_iter().enumerate() {
                 #[expect(
                     clippy::indexing_slicing,
                     reason = "constant widths, indexing the window this loop fills"
                 )]
                 {
-                    nullifiers[group * NF_GROUP + slot] = value;
+                    nullifiers[sponge * NF_GROUP + slot] = value;
                 }
             }
         }
@@ -269,45 +251,29 @@ impl Step for NfDerive {
         let seq_at_z = seq.eval(z);
         ctx.enforce_poly_query(seq.commit().into(), z, seq_at_z)?;
 
-        // Horner-accumulate the range's squeezes at `z`, oldest first: both
-        // sides have degree below the range width, so equality at a free
-        // point forces every coefficient of the committed sequence. The
-        // offset gating is a native mock stand-in for the selection
-        // indicators over the range bounds checked above.
-        #[expect(
-            clippy::as_conversions,
-            reason = "offsets are within the window width by the range checks"
-        )]
-        let (off_start, off_end) = (
-            (epoch_start.0 - base.0) as usize,
-            (epoch_end.0 - base.0) as usize,
-        );
+        // Horner-accumulate the window's squeezes at `z`, oldest first: both
+        // sides have degree below the window width, so equality at a free
+        // point forces every coefficient of the committed sequence.
         let mut accumulated = Fp::ZERO;
-        for (offset, &nf) in nullifiers.iter().enumerate() {
-            if (off_start..off_end).contains(&offset) {
-                accumulated = accumulated * z + nf;
-            }
+        for &nf in &nullifiers {
+            accumulated = accumulated * z + nf;
         }
 
         enforce_zero(
             seq_at_z - accumulated,
-            "NfDerive: sequence does not match the derived range",
+            "NfDerive: sequence does not match the derived window",
         )?;
 
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "offsets are within the window width by the range checks"
-        )]
         let (nf_start, nf_last) = (
-            Nullifier::from(nullifiers[off_start]),
-            Nullifier::from(nullifiers[off_end - 1]),
+            Nullifier::from(nullifiers[0]),
+            Nullifier::from(nullifiers[NF_DERIVATION_WIDTH - 1]),
         );
         Ok((
             (
                 cm,
-                (epoch_start, nf_start),
+                (base, nf_start),
                 seq.commit(),
-                (epoch_end, nf_last),
+                (group.end_epoch(), nf_last),
             ),
             (),
         ))

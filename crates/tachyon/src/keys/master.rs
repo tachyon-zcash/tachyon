@@ -8,7 +8,7 @@ use pasta_curves::Fp;
 use crate::{
     digest::poseidon::{self, NF_GROUP},
     nullifier::{NF_DERIVATION_GROUPS, NF_DERIVATION_WIDTH, Nullifier},
-    primitives::EpochIndex,
+    primitives::{EpochGroup, EpochIndex},
 };
 
 /// Per-note master key.
@@ -28,23 +28,19 @@ impl NoteMasterKey {
     #[must_use]
     #[expect(
         clippy::as_conversions,
-        clippy::cast_possible_truncation,
         clippy::indexing_slicing,
-        clippy::integer_division,
         clippy::integer_division_remainder_used,
-        reason = "the group width is a small constant, and the remainder \
-                  indexes an array of exactly NF_GROUP entries"
+        reason = "the remainder indexes an array of exactly NF_GROUP entries"
     )]
     pub fn derive_nullifier(&self, epoch: EpochIndex) -> Nullifier {
-        let group = poseidon::nullifier_group(self.0, epoch.0 / NF_GROUP as u32);
-        Nullifier::from(group[epoch.0 as usize % NF_GROUP])
+        let squeezed = poseidon::nullifier_group(self.0, EpochGroup::from(epoch));
+        Nullifier::from(squeezed[epoch.0 as usize % NF_GROUP])
     }
 
     /// Derive one derivation window: the nullifiers for
-    /// `[NF_GROUP * group_base, … + NF_DERIVATION_WIDTH)`.
+    /// `[group.start_epoch(), … + NF_DERIVATION_WIDTH)`.
     ///
-    /// `group_base` is the window's *group* index. Group alignment makes the
-    /// sponge count a compile-time constant inside
+    /// Group alignment makes the sponge count a compile-time constant inside
     /// [`NfDerive`](crate::stamp::proof::delegation::NfDerive):
     /// `NF_DERIVATION_GROUPS` permutations.
     #[must_use]
@@ -56,9 +52,10 @@ impl NoteMasterKey {
         clippy::integer_division_remainder_used,
         reason = "both widths are small powers of two and divide exactly"
     )]
-    pub fn derive_window(&self, group_base: u32) -> [Nullifier; NF_DERIVATION_WIDTH] {
-        let groups: [[Fp; NF_GROUP]; NF_DERIVATION_GROUPS] =
-            array::from_fn(|offset| poseidon::nullifier_group(self.0, group_base + offset as u32));
+    pub fn derive_window(&self, group: EpochGroup) -> [Nullifier; NF_DERIVATION_WIDTH] {
+        let groups: [[Fp; NF_GROUP]; NF_DERIVATION_GROUPS] = array::from_fn(|offset| {
+            poseidon::nullifier_group(self.0, EpochGroup(group.0 + offset as u32))
+        });
         array::from_fn(|slot| Nullifier::from(groups[slot / NF_GROUP][slot % NF_GROUP]))
     }
 }
@@ -92,10 +89,10 @@ mod tests {
     #[test]
     fn window_matches_per_epoch_derivation() {
         let mk = master(0);
-        let group_base = 24u32;
+        let group = EpochGroup(24);
 
-        for (offset, nf) in mk.derive_window(group_base).into_iter().enumerate() {
-            let epoch = EpochIndex(group_base * NF_GROUP as u32 + offset as u32);
+        for (offset, nf) in mk.derive_window(group).into_iter().enumerate() {
+            let epoch = EpochIndex(group.start_epoch().0 + offset as u32);
             assert_eq!(nf, mk.derive_nullifier(epoch), "epoch {}", epoch.0);
         }
     }
@@ -106,8 +103,8 @@ mod tests {
     #[test]
     fn overlapping_windows_agree() {
         let mk = master(0);
-        let low = mk.derive_window(10);
-        let high = mk.derive_window(11);
+        let low = mk.derive_window(EpochGroup(10));
+        let high = mk.derive_window(EpochGroup(11));
         let shared = NF_DERIVATION_WIDTH - NF_GROUP;
 
         for offset in 0..shared {
