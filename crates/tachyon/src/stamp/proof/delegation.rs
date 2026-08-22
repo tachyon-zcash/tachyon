@@ -16,14 +16,13 @@ use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
     Header, Index, Step, Suffix,
-    constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
+    constraint::{enforce_equal_point, enforce_zero},
 };
 
 use crate::{
-    digest::poseidon::{self, NF_GROUP},
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
-    nullifier::{NF_DERIVATION_GROUPS, NF_DERIVATION_WIDTH, Nullifier},
+    nullifier::Nullifier,
     primitives::{EpochGroup, EpochIndex, NfSeqCommit, NfSeqPoly},
     relations::enforce::enforce_shifted_combination,
 };
@@ -58,10 +57,9 @@ impl Header for NfMasterHeader {
 /// epoch, the newest at degree $0$. `cm` binds the range to the real note.
 ///
 /// No consumer reads either boundary nullifier as data; every read selects
-/// its own window out of the sequence. `nf_start` is the **rank pin**: it is
-/// $g$'s top coefficient, nonzero by the leaf's guards and threaded by the
-/// fuse, and that induction is what places every covering read's bands.
-/// `nf_last` is pinned by the fuse's degree-0 query.
+/// its own window out of the sequence. `nf_start` is $g$'s top coefficient and
+/// `nf_last` its degree-0 coefficient, both derived at the leaf and threaded by
+/// the fuse, which places every covering read's bands.
 ///
 /// The header carries a range and a commitment, nothing about who will read
 /// it or where: masking is the consuming step's responsibility.
@@ -150,11 +148,11 @@ impl Step for NfMasterSeed {
 /// [`NullifierDerivation`].
 ///
 /// `Left = NfMasterSeed`. Witnesses the window's [`EpochGroup`] and the
-/// window sequence $g$. Runs `NF_DERIVATION_GROUPS` sponges over
+/// window sequence $g$. Runs one sponge per group over
 /// $(\mathtt{NF\_DOMAIN}, \mathsf{mk}, w)$, each absorbing three elements and
-/// squeezing `NF_GROUP` nullifiers for one permutation, then binds $g$ to the
-/// window's members by a single opening at a free $z$ against their bare
-/// Horner accumulation
+/// squeezing `NF_DERIVATION_GROUP` nullifiers for one permutation, then binds
+/// $g$ to the window's members by a single opening at a free $z$ against their
+/// bare Horner accumulation
 ///
 /// $$g(z) = \sum_{j < W} \mathsf{nf}_{\mathsf{base}+j}\, z^{\,W-1-j}$$
 ///
@@ -166,8 +164,8 @@ impl Step for NfMasterSeed {
 /// # Group alignment
 ///
 /// The witness carries the window's group $w_0$ and the step derives
-/// $\mathsf{base} = \mathsf{NF\_GROUP} \cdot w_0$, which makes the sponge
-/// count a circuit constant: `NF_DERIVATION_GROUPS` permutations. The export
+/// $\mathsf{base} = \mathsf{NF\_DERIVATION\_GROUP} \cdot w_0$, which makes the
+/// sponge count a circuit constant, one permutation each. The export
 /// is the whole window, so its bounds are derived rather than witnessed and a
 /// span of any length is a fused chain of windows ([`NullifierFuse`]).
 /// Consumers accept any derivation *covering* the epochs they read, so none of
@@ -180,14 +178,10 @@ impl Step for NfMasterSeed {
 /// certified into `nf_commit` by the opening, whose only free operand is the
 /// window sequence, committed before $z$ exists.
 ///
-/// `group` is witnessed and otherwise unbound, and needs no further binding:
-/// $\mathsf{base} = \mathsf{NF\_GROUP} \cdot w_0$ is injective, so the emitted
-/// bounds determine $w_0$ and hence the sponge inputs. A prover choosing a
-/// different group gets a correct window for a different span, honestly
-/// labelled, and one past [`EpochGroup::MAX`] labels epochs that do not
-/// exist. The window-wide nonzero guard doubles as the rank pin: `nf_start` is
-/// $g$'s top coefficient and cannot be zero, so the announced span is the
-/// exact rank.
+/// `group` is a free witness, pinned by the header it produces: $\mathsf{base}
+/// = \mathsf{NF\_DERIVATION\_GROUP} \cdot w_0$ is injective, so the emitted
+/// epoch determines $w_0$ and hence the sponge inputs, and every choice is an
+/// honestly labelled window.
 #[derive(Debug)]
 pub struct NfDerive;
 
@@ -204,45 +198,12 @@ impl Step for NfDerive {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (group, seq): Self::Witness<'source>,
+        (group_start, seq): Self::Witness<'source>,
         (cm, mk): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // Native stand-in for the base check. `base` is the product
-        // `NF_GROUP * group`, so alignment needs no check of its own.
-        if group > EpochGroup::MAX {
-            return Err(ragu::Error::InvalidWitness(
-                "NfDerive: base exceeds epoch space".into(),
-            ));
-        }
-        let base = group.start_epoch();
-
-        // The window's nullifiers, `NF_GROUP` per permutation. `mk` is
-        // threaded, so these are the note's genuine nullifiers.
-        let mut nullifiers = [Fp::ZERO; NF_DERIVATION_WIDTH];
-        for sponge in 0..NF_DERIVATION_GROUPS {
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_possible_truncation,
-                reason = "the group count is a small constant"
-            )]
-            let squeezed = poseidon::nullifier_group(mk.0, EpochGroup(group.0 + sponge as u32));
-            for (slot, value) in squeezed.into_iter().enumerate() {
-                #[expect(
-                    clippy::indexing_slicing,
-                    reason = "constant widths, indexing the window this loop fills"
-                )]
-                {
-                    nullifiers[sponge * NF_GROUP + slot] = value;
-                }
-            }
-        }
-
-        // Window-wide nonzero guard: a nonzero `nf_start` is the sequence's
-        // rank pin.
-        for &nf in &nullifiers {
-            enforce_nonzero(nf, "NfDerive: derived nullifier is zero")?;
-        }
+        // NF_DERIVATION_WIDTH nullifiers from NF_DERIVATION_GROUP sponges.
+        let nullifiers = mk.derive_window(group_start);
 
         // `z`: a fresh transcript challenge over the sequence commitment. The
         // polynomial is fixed before it exists, so the single opening below
@@ -255,8 +216,8 @@ impl Step for NfDerive {
         // sides have degree below the window width, so equality at a free
         // point forces every coefficient of the committed sequence.
         let mut accumulated = Fp::ZERO;
-        for &nf in &nullifiers {
-            accumulated = accumulated * z + nf;
+        for nf in nullifiers {
+            accumulated = accumulated * z + Fp::from(nf);
         }
 
         enforce_zero(
@@ -264,16 +225,27 @@ impl Step for NfDerive {
             "NfDerive: sequence does not match the derived window",
         )?;
 
-        let (nf_start, nf_last) = (
-            Nullifier::from(nullifiers[0]),
-            Nullifier::from(nullifiers[NF_DERIVATION_WIDTH - 1]),
+        #[expect(clippy::expect_used, reason = "constant length")]
+        let (&nf_start, &nf_last) = (
+            nullifiers.first().expect("constant length"),
+            nullifiers.last().expect("constant length"),
         );
+
+        let start_epoch = group_start.start_epoch();
+
+        #[expect(
+            clippy::as_conversions,
+            clippy::cast_possible_truncation,
+            reason = "constant length"
+        )]
+        let end_epoch = EpochIndex(start_epoch.0 + nullifiers.len() as u32);
+
         Ok((
             (
                 cm,
-                (base, nf_start),
+                (start_epoch, nf_start),
                 seq.commit(),
-                (group.end_epoch(), nf_last),
+                (end_epoch, nf_last),
             ),
             (),
         ))

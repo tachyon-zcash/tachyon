@@ -3,7 +3,7 @@ use core::ops;
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use pasta_curves::Fp;
 
-use crate::{constants::EPOCH_MAX, digest::poseidon::NF_GROUP, nullifier::NF_DERIVATION_WIDTH};
+use crate::digest::poseidon::NF_DERIVATION_GROUP;
 
 /// A tachyon epoch — a point in the accumulator's history.
 ///
@@ -25,11 +25,7 @@ pub struct EpochIndex(pub u32);
 #[into(u64)]
 pub struct EpochDiff(u32);
 
-/// The index of a group of [`NF_GROUP`] consecutive epochs, and so of the
-/// derivation window it opens.
-///
-/// Epoch $e$ belongs to group $\lfloor e / \mathsf{NF\_GROUP} \rfloor$ and
-/// arrives as that group's squeeze $e \bmod \mathsf{NF\_GROUP}$.
+/// The index of a group of [`NF_DERIVATION_GROUP`] consecutive epochs.
 #[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct EpochGroup(pub u32);
 
@@ -44,25 +40,20 @@ impl EpochIndex {
 #[expect(
     clippy::as_conversions,
     clippy::cast_possible_truncation,
-    clippy::integer_division,
-    clippy::integer_division_remainder_used,
     reason = "the group and window widths are small constants, and flooring to \
               the last whole group is the intended bound"
 )]
 impl EpochGroup {
-    /// The largest group whose window fits inside the epoch space.
-    pub const MAX: Self = Self((EPOCH_MAX - NF_DERIVATION_WIDTH as u32) / NF_GROUP as u32);
-
-    /// The window's first epoch.
+    /// The group's first epoch.
     #[must_use]
     pub const fn start_epoch(self) -> EpochIndex {
-        EpochIndex(self.0 * NF_GROUP as u32)
+        EpochIndex(self.0 * NF_DERIVATION_GROUP as u32)
     }
 
-    /// One past the window's last epoch.
+    /// Returns the next group index.
     #[must_use]
-    pub const fn end_epoch(self) -> EpochIndex {
-        EpochIndex(self.start_epoch().0 + NF_DERIVATION_WIDTH as u32)
+    pub const fn next(self) -> Self {
+        Self(self.0 + 1)
     }
 }
 
@@ -76,7 +67,7 @@ impl From<EpochIndex> for EpochGroup {
                   containing group is the intended index"
     )]
     fn from(epoch: EpochIndex) -> Self {
-        Self(epoch.0 / NF_GROUP as u32)
+        Self(epoch.0 / (NF_DERIVATION_GROUP as u32))
     }
 }
 

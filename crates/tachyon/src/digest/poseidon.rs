@@ -11,10 +11,6 @@ use ragu::Sponge;
 
 use crate::{EpochGroup, EpochIndex};
 
-/// Epoch nullifiers derived per sponge, the rate of ragu's `PoseidonFp`
-/// ($T = 5$, rate 4), which ragu does not export.
-pub(crate) const NF_GROUP: usize = 4;
-
 #[expect(
     clippy::expect_used,
     reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
@@ -101,30 +97,17 @@ pub(crate) fn nf_master(psi: Fp, nk: Fp) -> Fp {
     ])
 }
 
+/// Nullifiers derived per sponge.
+pub(crate) const NF_DERIVATION_GROUP: usize = 4;
 const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 
-/// Derives one group of [`NF_GROUP`] consecutive epoch nullifiers from the
-/// note's master key.
-///
-/// With $w$ the group index and $j$ the squeeze ordinal, the epoch
-/// $e = \mathsf{NF\_GROUP} \cdot w + j$ has
-///
-/// $$
-/// \mathsf{nf}_e = \mathsf{squeeze}_j\big(
-///     \mathsf{absorb}(\mathtt{NF\_DOMAIN},\ \mathsf{mk},\ w)\big).
-/// $$
-///
-/// Three absorbs stay inside the sponge rate, so the first squeeze is the
-/// group's only permutation and the remaining $\mathsf{NF\_GROUP} - 1$ come
-/// from the same permutation's output buffer. Each group re-absorbs $w$, so
-/// $\mathsf{nf}_e$ is a function of $(\mathsf{mk}, e)$ alone and overlapping
-/// derivation windows agree on the epochs they share.
+/// Derives group of consecutive epoch nullifiers from the note's master key.
 #[expect(
     clippy::expect_used,
     reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
 )]
 #[must_use]
-pub(crate) fn nullifier_group(mk: Fp, group: EpochGroup) -> [Fp; NF_GROUP] {
+pub(crate) fn nullifier_group(mk: Fp, group: EpochGroup) -> [Fp; NF_DERIVATION_GROUP] {
     let mut sponge = Sponge::new();
     for value in [
         Fp::from_u128(u128::from_le_bytes(*NULLIFIER_DOMAIN)),

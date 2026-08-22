@@ -5,27 +5,10 @@ use ff::Field as _;
 use pasta_curves::Fp;
 use rand_core::{CryptoRng, RngCore};
 
-use crate::{digest::poseidon::NF_GROUP, primitives::Tachygram};
+use crate::primitives::Tachygram;
 
-/// Epoch nullifiers per derivation window.
-///
-/// A multiple of [`NF_GROUP`], so the sponge count is exact: 16 epochs is
-/// four sponges, one permutation each.
-pub const NF_DERIVATION_WIDTH: usize = 16;
-
-/// Sponges one derivation window costs, a compile-time constant because
-/// window bases are group-aligned.
-#[expect(
-    clippy::integer_division,
-    clippy::integer_division_remainder_used,
-    reason = "both operands are powers of two and divide exactly"
-)]
-pub const NF_DERIVATION_GROUPS: usize = NF_DERIVATION_WIDTH / NF_GROUP;
-
-const _: () = assert!(
-    NF_DERIVATION_GROUPS * NF_GROUP == NF_DERIVATION_WIDTH,
-    "the window width must be a whole number of sponges"
-);
+/// Epochs covered per nullifier derivation step.
+pub(crate) const NF_DERIVATION_WIDTH: usize = 16;
 
 /// A Tachyon nullifier.
 ///

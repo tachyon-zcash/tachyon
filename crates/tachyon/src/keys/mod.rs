@@ -56,13 +56,14 @@
 //!
 //! ## Nullifier Derivation
 //!
-//! Nullifiers come `NF_GROUP` at a time from one Poseidon sponge keyed on the
-//! note's master key and the epoch's group index
-//! $w = \lfloor e / \mathsf{NF\_GROUP} \rfloor$:
+//! Nullifiers come `NF_DERIVATION_GROUP` at a time from one Poseidon sponge
+//! keyed on the note's master key and the epoch's group index
+//! $w = \lfloor e / \mathsf{NF\_DERIVATION\_GROUP} \rfloor$:
 //!
 //! $$\mathsf{mk} = \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi,
 //! \mathsf{nk})$$
-//! $$\mathsf{nf}_e = \mathsf{squeeze}_{e \bmod \mathsf{NF\_GROUP}}\big(
+//! $$\mathsf{nf}_e =
+//! \mathsf{squeeze}_{e \bmod \mathsf{NF\_DERIVATION\_GROUP}}\big(
 //!     \mathsf{absorb}(\mathtt{NF\_DOMAIN},\ \mathsf{mk},\ w)\big)$$
 //!
 //! where $\psi$ is the note's nullifier trapdoor, $\mathsf{nk}$ is the

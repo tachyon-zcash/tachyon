@@ -6,8 +6,8 @@ use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
 use pasta_curves::Fp;
 
 use crate::{
-    digest::poseidon::{self, NF_GROUP},
-    nullifier::{NF_DERIVATION_GROUPS, NF_DERIVATION_WIDTH, Nullifier},
+    digest::poseidon::{self, NF_DERIVATION_GROUP},
+    nullifier::{NF_DERIVATION_WIDTH, Nullifier},
     primitives::{EpochGroup, EpochIndex},
 };
 
@@ -15,8 +15,9 @@ use crate::{
 ///
 /// Derived by the user device from [`NullifierKey`](super::NullifierKey) and
 /// the note's $\psi$ trapdoor, and the only key material a nullifier
-/// derivation needs. Epochs are derived `NF_GROUP` at a time from one sponge
-/// keyed on the group index $w = \lfloor e / \mathsf{NF\_GROUP} \rfloor$.
+/// derivation needs. Epochs are derived `NF_DERIVATION_GROUP` at a time from
+/// one sponge keyed on the group index
+/// $w = \lfloor e / \mathsf{NF\_DERIVATION\_GROUP} \rfloor$.
 ///
 /// `mk` grants derivation over the whole epoch space; a delegate receives
 /// proven value windows.
@@ -30,11 +31,12 @@ impl NoteMasterKey {
         clippy::as_conversions,
         clippy::indexing_slicing,
         clippy::integer_division_remainder_used,
-        reason = "the remainder indexes an array of exactly NF_GROUP entries"
+        reason = "the remainder indexes an array of exactly NF_DERIVATION_GROUP \
+                  entries"
     )]
     pub fn derive_nullifier(&self, epoch: EpochIndex) -> Nullifier {
         let squeezed = poseidon::nullifier_group(self.0, EpochGroup::from(epoch));
-        Nullifier::from(squeezed[epoch.0 as usize % NF_GROUP])
+        Nullifier::from(squeezed[epoch.0 as usize % NF_DERIVATION_GROUP])
     }
 
     /// Derive one derivation window: the nullifiers for
@@ -53,10 +55,13 @@ impl NoteMasterKey {
         reason = "both widths are small powers of two and divide exactly"
     )]
     pub fn derive_window(&self, group: EpochGroup) -> [Nullifier; NF_DERIVATION_WIDTH] {
-        let groups: [[Fp; NF_GROUP]; NF_DERIVATION_GROUPS] = array::from_fn(|offset| {
-            poseidon::nullifier_group(self.0, EpochGroup(group.0 + offset as u32))
-        });
-        array::from_fn(|slot| Nullifier::from(groups[slot / NF_GROUP][slot % NF_GROUP]))
+        let groups: [[Fp; NF_DERIVATION_GROUP]; NF_DERIVATION_WIDTH / NF_DERIVATION_GROUP] =
+            array::from_fn(|offset| {
+                poseidon::nullifier_group(self.0, EpochGroup(group.0 + offset as u32))
+            });
+        array::from_fn(|slot| {
+            Nullifier::from(groups[slot / NF_DERIVATION_GROUP][slot % NF_DERIVATION_GROUP])
+        })
     }
 }
 
@@ -105,14 +110,14 @@ mod tests {
         let mk = master(0);
         let low = mk.derive_window(EpochGroup(10));
         let high = mk.derive_window(EpochGroup(11));
-        let shared = NF_DERIVATION_WIDTH - NF_GROUP;
+        let shared = NF_DERIVATION_WIDTH - NF_DERIVATION_GROUP;
 
         for offset in 0..shared {
             assert_eq!(
-                low[offset + NF_GROUP],
+                low[offset + NF_DERIVATION_GROUP],
                 high[offset],
                 "epoch {}",
-                11 * NF_GROUP + offset
+                11 * NF_DERIVATION_GROUP + offset
             );
         }
     }
@@ -122,7 +127,7 @@ mod tests {
     #[test]
     fn distinct_epochs_within_a_group_differ() {
         let mk = master(1);
-        let derived: Vec<Nullifier> = (0..NF_GROUP)
+        let derived: Vec<Nullifier> = (0..NF_DERIVATION_GROUP)
             .map(|epoch| mk.derive_nullifier(EpochIndex(epoch as u32)))
             .collect();
 
@@ -139,7 +144,7 @@ mod tests {
         let mk = master(1);
         assert_ne!(
             mk.derive_nullifier(EpochIndex(0)),
-            mk.derive_nullifier(EpochIndex(NF_GROUP as u32)),
+            mk.derive_nullifier(EpochIndex(NF_DERIVATION_GROUP as u32)),
         );
     }
 

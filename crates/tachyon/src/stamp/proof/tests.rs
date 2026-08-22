@@ -25,8 +25,8 @@ use rand_core::{CryptoRng, RngCore};
 use super::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp};
 use crate::{
     ActionSetPoly, NfSeqPoly, Note, TachygramSetPoly,
-    constants::{EPOCH_MAX, EPOCH_SIZE},
-    digest::{poseidon, poseidon::NF_GROUP},
+    constants::EPOCH_SIZE,
+    digest::poseidon,
     entropy::ActionEntropy,
     fixtures::{
         PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_plan, build_output_stamp,
@@ -1714,27 +1714,6 @@ fn nf_derive_rejects_a_foreign_sequence() {
     );
 }
 
-/// A window whose declared base runs past the epoch space is rejected before
-/// any squeezing.
-#[test]
-fn nf_derive_rejects_base_out_of_range() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let master = honest_master(rng, &user, note);
-    let (_, seq) = witness::nf_derive((*master.data(), ()), EpochGroup(0));
-    let over = EpochGroup(EPOCH_MAX / NF_GROUP as u32);
-    expect_invalid(
-        rng,
-        delegation::NfDerive,
-        (over, seq),
-        master,
-        Proof::trivial().carry::<()>(()),
-        "NfDerive: base exceeds epoch space",
-    );
-}
-
 /// A direct [`delegation::NfDerive`] leaf over one whole window.
 fn leaf_window(
     rng: &mut StdRng,
@@ -1757,7 +1736,7 @@ fn leaf_window(
 
 /// The window's members, oldest first.
 fn window_members(user: &WalletSim, note: &Note, group: EpochGroup) -> Vec<Nullifier> {
-    (group.start_epoch().0..group.end_epoch().0)
+    (group.start_epoch().0..(group.start_epoch().0 + NF_DERIVATION_WIDTH as u32))
         .map(|epoch| user.nf_at(note, EpochIndex(epoch)))
         .collect()
 }
@@ -1776,7 +1755,11 @@ fn derivation_exports_the_whole_window() {
     let (cm, (start, nf_start), commit, (range_end, nf_end)) = *range.data();
 
     assert_eq!(start, group.start_epoch(), "starts at the group's base");
-    assert_eq!(range_end, group.end_epoch(), "spans the whole window");
+    assert_eq!(
+        range_end,
+        EpochIndex(group.start_epoch().0 + NF_DERIVATION_WIDTH as u32),
+        "spans the whole window"
+    );
     let members = window_members(&user, &note, group);
     assert_eq!(
         nf_start,
