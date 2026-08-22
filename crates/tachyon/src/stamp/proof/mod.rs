@@ -22,9 +22,7 @@ use ragu::{Application, ApplicationBuilder};
 fn make_app() -> Result<Application, ragu::Error> {
     ApplicationBuilder::new()
         .register(delegation::NfMasterSeed)?
-        .register(delegation::NfPrefixStep)?
-        .register(delegation::NullifierStep)?
-        .register(delegation::NullifierFuse)?
+        .register(delegation::NfDerive)?
         .register(pool::AnchorSeed)?
         .register(pool::AnchorFuse)?
         .register(pool::UnspentSeed)?
@@ -39,6 +37,7 @@ fn make_app() -> Result<Application, ragu::Error> {
         .register(stamp::SpendStamp)?
         .register(stamp::MergeStamp)?
         .register(stamp::StampLift)?
+        .register(delegation::NullifierFuse)?
         .finalize()
 }
 

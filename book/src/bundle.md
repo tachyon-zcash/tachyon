@@ -50,13 +50,14 @@ The proof establishes:
 - tachygrams are correctly bound to action keys
 - action balance effect matches pool balance effect
 
-The nullifier for epoch $e$ is the leaf of the note's GGM tree at index $e$:
+The nullifier for epoch $e$ is a pseudo-random function of the note's master key and the epoch:
 
-$$ \mathsf{nf}_e = \mathrm{Poseidon}\bigl(\mathrm{walk}(\mathsf{mk}, e)\bigr) $$
+$$ \mathsf{nf}_e = \mathsf{PRF}^{\mathsf{nfTachyon}}_{\mathsf{mk}}(e) $$
 
 where
 
-- $\mathsf{mk} = \mathrm{Poseidon}(\psi, \mathsf{nk})$ is the note's GGM master key, seeded by the trapdoor $\psi$ committed in the $\psi$ field[^commitment]
+- $\mathsf{mk} = \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}\!(\psi, \mathsf{nk})$ is the note's master key, seeded by the trapdoor $\psi$ committed in the $\psi$ field[^commitment]
+- $\mathsf{PRF}^{\mathsf{nfTachyon}}$ is the [nullifier PRF](./nullifiers.md)
 - $e$ is an epoch index
 
 [^commitment]: User-controlled randomness [commitment trapdoor](https://zips.z.cash/protocol/protocol.pdf#commitment)
