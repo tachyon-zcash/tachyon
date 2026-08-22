@@ -7,10 +7,29 @@ use rand_core::{CryptoRng, RngCore};
 
 use crate::primitives::Tachygram;
 
+/// Epochs covered per nullifier derivation step.
+pub(crate) const NF_DERIVATION_WIDTH: usize = 16;
+
+/// The longest epoch span one factor-product sequence can hold: each member
+/// is a cubic factor, so a span of $n$ epochs costs $3n + 1$ coefficients
+/// against the $2^{\mathsf{R}}$ polynomial cap.
+///
+/// Host-side constructors assert this bound; in-circuit no enforcement is
+/// needed, since an oversized product exceeds the coefficient cap and cannot
+/// be committed at all.
+#[expect(
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
+    reason = "flooring to the last whole factor is the intended bound"
+)]
+pub const NF_MAX_FUSED_SPAN: usize = ((1 << ragu::Polynomial::R) - 1) / 3;
+
 /// A Tachyon nullifier.
 ///
-/// Derived via GGM tree PRF: $mk = \text{KDF}(\psi, nk)$, then
-/// $nf = F_{mk}(\text{epoch})$. Published when a note is spent.
+/// Derived from the note's master key $\mathsf{mk} =
+/// \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi, \mathsf{nk})$ as one
+/// squeeze of the sponge keyed on $\mathsf{mk}$ and the epoch's group index.
+/// Published when a note is spent.
 ///
 /// Unlike Orchard, Tachyon nullifiers:
 /// - Don't need collision resistance (no faerie gold defense)
@@ -21,11 +40,11 @@ use crate::primitives::Tachygram;
 #[into(Fp, Tachygram)]
 pub struct Nullifier(Tachygram);
 
-/// Nullifier trapdoor ($\psi$) — per-note randomness for nullifier derivation.
+/// Nullifier trapdoor ($\psi$), per-note randomness for nullifier derivation.
 ///
-/// Used to derive the master root key: $mk = \text{KDF}(\psi, nk)$.
-/// The GGM tree PRF then evaluates $nf = F_{mk}(\text{epoch})$.
-/// Prefix keys derived from $mk$ enable range-restricted delegation.
+/// Used to derive the note's master key $\mathsf{mk} =
+/// \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi, \mathsf{nk})$, which
+/// evaluates every epoch. Delegation carries proven value windows.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Trapdoor(#[debug(skip)] Fp);
 
