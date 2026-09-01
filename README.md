@@ -55,11 +55,11 @@ Stubbed (pending Ragu PCD and Poseidon integration):
 
 ## Development
 
-Requires Rust stable (1.85+) and nightly for formatting/linting.
+Requires Rust 1.97.1 (pinned in `rust-toolchain.toml`) and nightly for formatting.
 
 ```sh
 just test    # cargo test --workspace --all-features
-just lint    # cargo +nightly clippy --workspace --all-targets --all-features
+just lint    # cargo clippy --workspace --all-targets --all-features
 just fmt     # cargo +nightly fmt --all
 just doc     # cargo doc --workspace --no-deps
 ```

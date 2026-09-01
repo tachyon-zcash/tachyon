@@ -379,7 +379,7 @@ impl Plan {
         // lists. Digests are computed once per leaf and carried through the
         // fold rather than re-derived at each merge step. The covered-actions
         // digest is computed once, on the final stamp.
-        let mut entries = Vec::with_capacity(self.spends.len() + self.outputs.len());
+        let mut entries = Vec::with_capacity(self.spends.len().saturating_add(self.outputs.len()));
 
         if self.spends.len() != spend_pcds.len() {
             return Err(ProveError::MissingPcd(

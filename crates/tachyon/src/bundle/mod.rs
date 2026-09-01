@@ -610,6 +610,10 @@ impl Bundle<ProofStamp> {
 
     /// Verify the stamp's coverage against the combined unique actions of this
     /// bundle and the provided bundles.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "action counts are far below usize::MAX"
+    )]
     pub fn verify_coverage(
         &self,
         adjuncts: &[&Bundle<dyn StampState>],
@@ -797,7 +801,7 @@ impl<S: StampState> Bundle<S> {
         let mut chunk = [0u8; 64];
         #[expect(clippy::indexing_slicing, reason = "take is clamped to chunk.len()")]
         while memo.len() < n_memo {
-            let take = (n_memo - memo.len()).min(chunk.len());
+            let take = n_memo.saturating_sub(memo.len()).min(chunk.len());
             reader.read_exact(&mut chunk[..take])?;
             memo.extend_from_slice(&chunk[..take]);
         }

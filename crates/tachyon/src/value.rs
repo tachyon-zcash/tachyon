@@ -154,6 +154,10 @@ impl<const MIN: i64, const MAX: i64> Value<MIN, MAX> {
                 "NEG_MAX must be -MAX and NEG_MIN must be -MIN"
             );
         }
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "the const assert above rejects negation overflows"
+        )]
         Value(-self.0)
     }
 }

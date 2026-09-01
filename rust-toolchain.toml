@@ -1,8 +1,13 @@
 [toolchain]
-channel = "stable"
+channel = "1.97.1"
 components = [
     "clippy",
     "rust-src",
     "rust-docs",
 ]
 profile = "minimal"
+
+# Bumping MSRV
+# * update `toolchain.channel` key in `rust-toolchain.toml` (this file)
+# * update `workspace.package.rust-version` key in root `Cargo.toml`
+# * update the requirements line in `README.md`

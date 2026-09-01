@@ -160,6 +160,7 @@ pub fn unspent_fuse(
 /// sides of the unspent's span, multiplied.
 #[must_use]
 #[expect(
+    clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
     clippy::as_conversions,
     reason = "the derivation header's range covers the window"
@@ -192,6 +193,7 @@ pub fn unspent_bind(
 /// epoch, multiplied.
 #[must_use]
 #[expect(
+    clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
     clippy::as_conversions,
     reason = "the derivation header's range covers the window"
@@ -227,6 +229,7 @@ pub fn spendable_init(
 /// least one epoch past the spendable's epoch.
 #[must_use]
 #[expect(
+    clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
     clippy::as_conversions,
     reason = "the derivation header's range covers the window"
@@ -239,7 +242,7 @@ pub fn spend_bind(
     let (_, deriv_start, ..) = deriv;
     let lo = (epoch.0 - deriv_start.0) as usize;
     let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
-        * NfSeqPoly::new(EpochIndex(epoch.0 + 2), &window[lo + 2..]);
+        * NfSeqPoly::new(epoch.next().next(), &window[lo + 2..]);
     (
         NfSeqPoly::new(deriv_start, window),
         complement_seq,

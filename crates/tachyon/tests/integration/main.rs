@@ -1,4 +1,5 @@
 #![allow(
+    clippy::arithmetic_side_effects,
     clippy::as_conversions,
     clippy::cast_possible_truncation,
     clippy::expect_used,

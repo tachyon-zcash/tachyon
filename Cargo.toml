@@ -144,6 +144,7 @@ rc_mutex = "forbid"
 
 # -- deny: restrictions (may need localized #[expect]) -----------------------
 absolute_paths = "deny"
+arithmetic_side_effects = "deny"
 assertions_on_result_states = "deny"
 big_endian_bytes = "deny"
 cfg_not_test = "deny"
@@ -207,7 +208,6 @@ verbose_file_reads = "deny"
 
 # deny later
 arbitrary_source_item_ordering = "allow"
-arithmetic_side_effects = "allow"
 exhaustive_enums = "allow"
 exhaustive_structs = "allow"
 missing_errors_doc = "allow"

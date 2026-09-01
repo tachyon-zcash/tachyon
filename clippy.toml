@@ -16,6 +16,21 @@ disallowed-macros = [
 ]
 enforced-import-renames = [{ path = "derive_more::Eq", rename = "TotalEq" }]
 
+# arithmetic
+# modular field/curve arithmetic cannot overflow by definition
+arithmetic-side-effects-allowed = [
+  "pasta_curves::Ep",
+  "pasta_curves::EpAffine",
+  "pasta_curves::Eq",
+  "pasta_curves::EqAffine",
+  "pasta_curves::Fp",
+  "pasta_curves::Fq",
+  "value::ValueCommitment",
+]
+# negation of a range-bounded value cannot overflow (see `Value::negate`);
+# binary ops on `Value` stay linted since none are implemented
+arithmetic-side-effects-allowed-unary = ["value::Value"]
+
 # error handling
 disallowed-methods = [
   { path = "subtle::CtOption::expect", replacement = "into_option().expect", reason = "convert to `Option` explicitly" },

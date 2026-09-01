@@ -26,19 +26,37 @@ impl EpochIndex {
     /// Returns the next epoch index.
     #[must_use]
     pub const fn next(self) -> Self {
-        Self(self.0 + 1)
+        #[expect(
+            clippy::expect_used,
+            reason = "wrapping would alias epoch 0; panic instead at the end of the epoch space"
+        )]
+        Self(self.0.checked_add(1).expect("epoch index overflow"))
     }
 
     /// Returns the first block height of the epoch.
     #[must_use]
     pub const fn first_block(self) -> BlockHeight {
-        BlockHeight(self.0 * EPOCH_SIZE)
+        #[expect(
+            clippy::expect_used,
+            reason = "wrapping would alias an earlier block; panic instead past the last representable height"
+        )]
+        BlockHeight(self.0.checked_mul(EPOCH_SIZE).expect("block height overflow"))
     }
 
     /// Returns the last block height of the epoch.
     #[must_use]
     pub const fn last_block(self) -> BlockHeight {
-        BlockHeight(self.next().first_block().0 - 1)
+        #[expect(
+            clippy::expect_used,
+            reason = "the next epoch's first block is at least EPOCH_SIZE, so the subtraction cannot fail"
+        )]
+        BlockHeight(
+            self.next()
+                .first_block()
+                .0
+                .checked_sub(1)
+                .expect("the next epoch's first block is positive"),
+        )
     }
 }
 

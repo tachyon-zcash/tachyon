@@ -155,7 +155,7 @@ mod tests {
             let m_ix_cube = poly_mul(&poly_mul(&m_ix, &m_ix), &m_ix);
 
             {
-                let mut coeffs = Vec::from_iter(m_ix_cube.iter_coeffs());
+                let mut coeffs: Vec<_> = m_ix_cube.iter_coeffs().collect();
                 coeffs[0] -= NON_RESIDUE;
                 Polynomial::<Fp, ProductionRank>::from_coeffs(coeffs)
             }

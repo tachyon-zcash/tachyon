@@ -20,6 +20,7 @@ use crate::{
     collections::indexed_multiset,
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
+    nullifier::NF_DERIVATION_WIDTH,
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::enforce_poly_product,
@@ -175,6 +176,7 @@ impl Step for NfDerive {
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(
+            clippy::arithmetic_side_effects,
             clippy::as_conversions,
             clippy::integer_division_remainder_used,
             reason = "the group width is a small constant"
@@ -184,15 +186,24 @@ impl Step for NfDerive {
             "NfDerive: epoch_start is not group-aligned",
         )?;
 
-        // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
-        let nullifiers = mk.derive_window(epoch_start);
-
+        // The witnessed start epoch must leave room for the whole window;
+        // `derive_window` relies on this bound.
         #[expect(
             clippy::as_conversions,
             clippy::cast_possible_truncation,
-            reason = "constant length"
+            reason = "the window width is a small constant"
         )]
-        let epoch_end = EpochIndex(epoch_start.0 + nullifiers.len() as u32);
+        let epoch_end = EpochIndex(
+            epoch_start
+                .0
+                .checked_add(NF_DERIVATION_WIDTH as u32)
+                .ok_or_else(|| {
+                    ragu::Error::InvalidWitness("NfDerive: window exceeds the epoch range".into())
+                })?,
+        );
+
+        // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
+        let nullifiers = mk.derive_window(epoch_start);
 
         // `z`: a fresh transcript challenge over the sequence commitment. The
         // polynomial is fixed before it exists, so the single opening below

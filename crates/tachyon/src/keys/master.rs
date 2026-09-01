@@ -29,11 +29,12 @@ impl NoteMasterKey {
     /// Derive the nullifier for a single epoch.
     #[must_use]
     #[expect(
+        clippy::arithmetic_side_effects,
         clippy::as_conversions,
         clippy::cast_possible_truncation,
         clippy::indexing_slicing,
         clippy::integer_division_remainder_used,
-        reason = "the remainder indexes an array of PoseidonFp::RATE"
+        reason = "the remainder indexes an array of PoseidonFp::RATE and never exceeds the epoch"
     )]
     pub fn derive_nullifier(&self, epoch: EpochIndex) -> Nullifier {
         let inner_index = epoch.0 as usize % PoseidonFp::RATE;
@@ -51,6 +52,7 @@ impl NoteMasterKey {
     /// `NF_DERIVATION_WIDTH / PoseidonFp::RATE` permutations each way.
     #[must_use]
     #[expect(
+        clippy::arithmetic_side_effects,
         clippy::as_conversions,
         clippy::cast_possible_truncation,
         clippy::indexing_slicing,
@@ -66,7 +68,14 @@ impl NoteMasterKey {
         );
         let groups: [[Fp; PoseidonFp::RATE]; NF_DERIVATION_WIDTH / PoseidonFp::RATE] =
             array::from_fn(|offset| {
-                let group_start = epoch_start.0 + (offset * PoseidonFp::RATE) as u32;
+                #[expect(
+                    clippy::expect_used,
+                    reason = "a window past the epoch range is a caller bug; NfDerive rejects such witnesses up front"
+                )]
+                let group_start = epoch_start
+                    .0
+                    .checked_add((offset * PoseidonFp::RATE) as u32)
+                    .expect("derivation window exceeds the epoch range");
                 poseidon::nullifier_group(self.0, Fp::from(EpochIndex(group_start)))
             });
         array::from_fn(|slot| {
