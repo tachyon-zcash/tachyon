@@ -4,7 +4,7 @@ use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use pasta_curves::Fp;
 
 use super::BlockHeight;
-use crate::constants::EPOCH_SIZE;
+use crate::constants::{EPOCH_MAX, EPOCH_SIZE};
 
 /// A tachyon epoch — a point in the accumulator's history.
 ///
@@ -24,13 +24,17 @@ pub struct EpochDiff(u32);
 
 impl EpochIndex {
     /// Returns the next epoch index.
+    ///
+    /// Panics rather than step past [`EPOCH_MAX`]: indexes beyond it map to
+    /// no block height in the protocol's range.
     #[must_use]
     pub const fn next(self) -> Self {
+        assert!(self.0 < EPOCH_MAX, "epoch index past EPOCH_MAX");
         #[expect(
-            clippy::expect_used,
-            reason = "wrapping would alias epoch 0; panic instead at the end of the epoch space"
+            clippy::arithmetic_side_effects,
+            reason = "the assert above bounds the index below EPOCH_MAX"
         )]
-        Self(self.0.checked_add(1).expect("epoch index overflow"))
+        Self(self.0 + 1)
     }
 
     /// Returns the first block height of the epoch.
@@ -44,18 +48,20 @@ impl EpochIndex {
     }
 
     /// Returns the last block height of the epoch.
+    ///
+    /// Computed from this epoch's own first block, so the final epoch
+    /// ([`EPOCH_MAX`], whose last block is `BLOCK_MAX`) does not overflow.
     #[must_use]
     pub const fn last_block(self) -> BlockHeight {
         #[expect(
             clippy::expect_used,
-            reason = "the next epoch's first block is at least EPOCH_SIZE, so the subtraction cannot fail"
+            reason = "every epoch index up to EPOCH_MAX ends at or below BLOCK_MAX"
         )]
         BlockHeight(
-            self.next()
-                .first_block()
+            self.first_block()
                 .0
-                .checked_sub(1)
-                .expect("the next epoch's first block is positive"),
+                .checked_add(EPOCH_SIZE - 1)
+                .expect("block height overflow"),
         )
     }
 }
@@ -100,5 +106,21 @@ mod tests {
     fn epoch_difference_rejects_reversed_operands() {
         let reversed = EpochIndex(3) - EpochIndex(7);
         panic!("reversed operands must not produce a difference, got {reversed:?}");
+    }
+
+    #[test]
+    fn final_epoch_ends_at_the_final_block() {
+        use crate::constants::BLOCK_MAX;
+
+        assert_eq!(EpochIndex(EPOCH_MAX).last_block(), BlockHeight(BLOCK_MAX));
+        assert_eq!(EpochIndex(EPOCH_MAX - 1).next(), EpochIndex(EPOCH_MAX));
+        assert_eq!(BlockHeight(BLOCK_MAX).epoch(), EpochIndex(EPOCH_MAX));
+    }
+
+    #[test]
+    #[should_panic(expected = "epoch index past EPOCH_MAX")]
+    fn next_rejects_the_final_epoch() {
+        let past_the_end = EpochIndex(EPOCH_MAX).next();
+        panic!("the final epoch must have no successor, got {past_the_end:?}");
     }
 }
