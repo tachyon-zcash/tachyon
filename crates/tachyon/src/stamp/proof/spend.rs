@@ -5,10 +5,9 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
-use ragu::{
-    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
-    constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-};
+use ragu::{Header, Index, Step, Suffix};
+use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
+use ragu_pasta::Pasta;
 
 use super::{delegation::NullifierDerivation, spendable::SpendableHeader};
 use crate::{
@@ -16,6 +15,7 @@ use crate::{
     note,
     nullifier::Nullifier,
     primitives::{Anchor, NfSeqPoly},
+    relations::constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
 /// Header binding a spend to its lineage note and epoch nullifier pair.
@@ -94,7 +94,7 @@ impl Step for SpendBind {
         (nf_seq, complement_seq, nf_next): Self::Witness<'source>,
         (spendable_cm, (spendable_epoch, present_nf), anchor): <Self::Left as Header>::Data,
         (nf_cm, _, nf_commit, _): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(nf_cm) - Fp::from(spendable_cm),
             "SpendBind: derived range does not match note",

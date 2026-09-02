@@ -5,10 +5,9 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
-use ragu::{
-    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
-    constraint::{enforce_equal_point, enforce_zero},
-};
+use ragu::{Header, Index, Step, Suffix};
+use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
+use ragu_pasta::Pasta;
 
 use super::{output::OutputHeader, pool::AnchorChain, spend::SpendHeader};
 use crate::{
@@ -18,7 +17,10 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::Note,
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
-    relations::enforce::enforce_poly_product,
+    relations::{
+        constraint::{enforce_equal_point, enforce_zero},
+        enforce::enforce_poly_product,
+    },
     value,
 };
 
@@ -89,7 +91,7 @@ impl Step for OutputStamp {
         (rcv, alpha, note, anchor): Self::Witness<'source>,
         (cm, pad): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(clippy::expect_used, reason = "constant size")]
         let &[g0, g1, g2] = Pasta::host_generators(Pasta::baked())
             .g()
@@ -98,7 +100,7 @@ impl Step for OutputStamp {
             .0;
 
         if u64::from(note.value) > MAX_MONEY {
-            return Err(ragu::Error::InvalidWitness(
+            return Err(ragu_core::Error::InvalidWitness(
                 "OutputStamp: note value exceeds maximum".into(),
             ));
         }
@@ -110,7 +112,9 @@ impl Step for OutputStamp {
         let cv = rcv.commit(-note.value);
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
-            ragu::Error::InvalidWitness("OutputStamp: action digest construction failed".into())
+            ragu_core::Error::InvalidWitness(
+                "OutputStamp: action digest construction failed".into(),
+            )
         })?;
 
         // Set commitment to one action.
@@ -163,7 +167,7 @@ impl Step for SpendStamp {
         (note, rcv, alpha, pak): Self::Witness<'source>,
         (cm, present_nf, nf_next, anchor): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(clippy::expect_used, reason = "constant size")]
         let &[g0, g1, g2] = Pasta::host_generators(Pasta::baked())
             .g()
@@ -172,7 +176,7 @@ impl Step for SpendStamp {
             .0;
 
         if u64::from(note.value) > MAX_MONEY {
-            return Err(ragu::Error::InvalidWitness(
+            return Err(ragu_core::Error::InvalidWitness(
                 "SpendStamp: note value exceeds maximum".into(),
             ));
         }
@@ -188,7 +192,7 @@ impl Step for SpendStamp {
         let cv = rcv.commit(note.value);
         let rk = pak.ak.derive_action_public(&alpha);
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
-            ragu::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
+            ragu_core::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
         })?;
 
         // Set commitment to one action.
@@ -237,7 +241,7 @@ impl Step for MergeStamp {
         ): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
         (right_action_commit, right_tachygram_commit, right_anchor): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Same-anchor constraint.
         enforce_zero(
             Fp::from(left_anchor) - Fp::from(right_anchor),
@@ -315,7 +319,7 @@ impl Step for StampLift {
         (): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, old_anchor): <Self::Left as Header>::Data,
         (segment_start, segment_end): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // The anchor segment must root at the stamp's old anchor.
         enforce_zero(
             Fp::from(segment_start) - Fp::from(old_anchor),

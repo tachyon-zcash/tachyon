@@ -19,10 +19,9 @@ use alloc::{vec, vec::Vec};
 
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
-use ragu::{
-    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
-    constraint::{conditional_enforce_equal, enforce_equal_point, enforce_nonzero, enforce_zero},
-};
+use ragu::{Header, Index, Step, Suffix};
+use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
+use ragu_pasta::Pasta;
 
 use super::{delegation::NullifierDerivation, summary::Summary};
 use crate::{
@@ -32,7 +31,12 @@ use crate::{
     primitives::{
         Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, TachygramSetCommit, TachygramSetPoly,
     },
-    relations::enforce::enforce_poly_product,
+    relations::{
+        constraint::{
+            conditional_enforce_equal, enforce_equal_point, enforce_nonzero, enforce_zero,
+        },
+        enforce::enforce_poly_product,
+    },
 };
 
 /// Anchor segment between two endpoints. Composable via [`AnchorFuse`].
@@ -209,10 +213,10 @@ impl Step for AnchorSeed {
         (start, epoch, stamp_commit): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let end = start
             .next_stamp(epoch, &stamp_commit)
-            .map_err(|_e| ragu::Error::InvalidWitness("invalid anchor step".into()))?;
+            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
         Ok(((start, end), ()))
     }
@@ -238,7 +242,7 @@ impl Step for AnchorFuse {
         _witness: Self::Witness<'source>,
         (left_start, left_end): <Self::Left as Header>::Data,
         (right_start, right_end): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(left_end) - Fp::from(right_start),
             "AnchorFuse: segments not adjacent",
@@ -282,7 +286,7 @@ impl Step for UnspentSeed {
         (anchor_prev, (epoch, nf), stamp_tg_set, elapsed_seq): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Exclusion: nf ∉ set ⇔ the set polynomial is nonzero at nf.
         let eval = stamp_tg_set.eval(Fp::from(nf));
         ctx.enforce_poly_query(stamp_tg_set.commit().into(), Fp::from(nf), eval)?;
@@ -290,7 +294,7 @@ impl Step for UnspentSeed {
         let stamp_commit = stamp_tg_set.commit();
         let tested_anchor = anchor_prev
             .next_stamp(epoch, &stamp_commit)
-            .map_err(|_e| ragu::Error::InvalidWitness("invalid anchor step".into()))?;
+            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         // Nonzero guard, defensive: zero is reserved.
         enforce_nonzero(Fp::from(nf), "UnspentSeed: tested nullifier is zero")?;
 
@@ -366,7 +370,7 @@ impl Step for EndEpochUnspentSeed {
         (anchor_prev, (epoch_prev, nf_prev), nf, elapsed_seq): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Nonzero guards, defensive: zero is reserved.
         enforce_nonzero(
             Fp::from(nf_prev),
@@ -380,7 +384,7 @@ impl Step for EndEpochUnspentSeed {
         let epoch = epoch_prev.next();
         let anchor = anchor_prev
             .next_epoch(epoch)
-            .map_err(|_e| ragu::Error::InvalidWitness("invalid anchor step".into()))?;
+            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
         // Two-member elapsed: bind the witnessed sequence to the two
         // crossing members at a challenge absorbing the commitment and the
@@ -467,7 +471,7 @@ impl Step for UnspentFuse {
             (right_epoch_last, right_nf_last),
             right_anchor_last,
         ): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             Eq::from(left_elapsed_seq.commit()),
             Eq::from(left_elapsed),
@@ -585,7 +589,7 @@ impl Step for UnspentBind {
             unspent_anchor_last,
         ): <Self::Left as Header>::Data,
         (deriv_cm, _, nf_commit, _): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             elapsed_seq.commit().into(),
             Eq::from(unspent_elapsed),
@@ -658,7 +662,7 @@ impl Step for SummaryUnspentInit {
         (nf, summary_set, elapsed_seq): Self::Witness<'source>,
         (summary_epoch, summary_anchor_prev, summary_anchor_last, summary_acc_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             Eq::from(summary_set.commit()),
             Eq::from(summary_acc_commit),

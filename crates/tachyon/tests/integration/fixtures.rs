@@ -5,8 +5,9 @@ use core::{cell::RefCell, iter, ops::RangeInclusive};
 
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
-use ragu::{Pcd, Polynomial, Proof};
+use ragu::{Pcd, Proof};
 use ragu_arithmetic::PoseidonPermutation as _;
+use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_pasta::PoseidonFp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
@@ -483,7 +484,10 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
         height = height.next();
     }
     let members: usize = stamps.iter().map(Vec::len).sum();
-    assert!(members < 1 << Polynomial::R, "range exceeds one summary");
+    assert!(
+        members < 1 << ProductionRank::RANK,
+        "range exceeds one summary"
+    );
 
     let (first, rest) = stamps
         .split_first()

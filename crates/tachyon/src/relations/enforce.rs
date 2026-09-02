@@ -37,7 +37,12 @@
 //! operand). A refactor that recomputed or separately witnessed the evals could
 //! let the checked value diverge from the opened one and break soundness.
 
-use ragu::{Error, Result, ctx::StepCtx, polynomial::Polynomial};
+use pasta_curves::Fp;
+use ragu::StepCtx;
+use ragu_arithmetic::Cycle as _;
+use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_core::{Error, Result};
+use ragu_pasta::Pasta;
 
 /// Faithful polynomial product: confirm `product = multiplicand · multiplier`
 /// among three committed polynomials by opening all three at a Fiat-Shamir
@@ -57,14 +62,15 @@ use ragu::{Error, Result, ctx::StepCtx, polynomial::Polynomial};
 /// `multiplier`, and `product` -- is the only precondition.
 pub(crate) fn enforce_poly_product(
     ctx: &mut StepCtx<'_>,
-    multiplicand: &Polynomial,
-    multiplier: &Polynomial,
-    product: &Polynomial,
+    multiplicand: &Polynomial<Fp, ProductionRank>,
+    multiplier: &Polynomial<Fp, ProductionRank>,
+    product: &Polynomial<Fp, ProductionRank>,
     err: &'static str,
 ) -> Result<()> {
-    let multiplicand_com = multiplicand.commit();
-    let multiplier_com = multiplier.commit();
-    let product_com = product.commit();
+    let generators = Pasta::host_generators(Pasta::baked());
+    let multiplicand_com = multiplicand.commit(generators);
+    let multiplier_com = multiplier.commit(generators);
+    let product_com = product.commit(generators);
     let z = ctx.derive_challenge(&[multiplicand_com, multiplier_com, product_com])?;
 
     if product.eval(z) != multiplicand.eval(z) * multiplier.eval(z) {

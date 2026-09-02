@@ -17,7 +17,7 @@ use lazy_static::lazy_static;
 pub use ragu::Proof;
 use ragu::{Application, ApplicationBuilder};
 
-fn make_app() -> Result<Application, ragu::Error> {
+fn make_app() -> Result<Application, ragu_core::Error> {
     ApplicationBuilder::new()
         .register(delegation::NfMasterSeed)?
         .register(delegation::NfDerive)?

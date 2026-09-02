@@ -167,7 +167,7 @@ fn spendable_init_rejects_tg_absent() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(inner.to_string(), "SpendableInit: commitment not in set");
@@ -191,7 +191,7 @@ fn unspent_seed_rejects_tg_present() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(inner.to_string(), "UnspentSeed: found nullifier in set");
@@ -221,7 +221,7 @@ fn unspent_fuse_rejects_invalid_compositions() {
             .fuse(rng, pool::UnspentFuse, w, shard_a, shard_b)
             .err()
             .unwrap();
-        let ragu::Error::InvalidWitness(inner) = err else {
+        let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
         assert_eq!(
@@ -241,7 +241,7 @@ fn unspent_fuse_rejects_invalid_compositions() {
             .fuse(rng, pool::UnspentFuse, w, shard_a, shard_b)
             .err()
             .unwrap();
-        let ragu::Error::InvalidWitness(inner) = err else {
+        let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
         assert_eq!(
@@ -275,7 +275,7 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
             .fuse(rng, pool::AnchorFuse, (), left, right)
             .err()
             .unwrap();
-        let ragu::Error::InvalidWitness(inner) = err else {
+        let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
         assert_eq!(inner.to_string(), "AnchorFuse: segments not adjacent");
@@ -301,7 +301,7 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
             .fuse(rng, pool::AnchorFuse, (), left, right)
             .err()
             .unwrap();
-        let ragu::Error::InvalidWitness(inner) = err else {
+        let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
         assert_eq!(inner.to_string(), "AnchorFuse: segments not adjacent");
@@ -431,7 +431,7 @@ fn spend_stamp_rejects_invalid_note() {
             )
             .err()
             .unwrap();
-        let ragu::Error::InvalidWitness(inner) = err else {
+        let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
         assert_eq!(inner.to_string(), expected, "{label}");
@@ -785,7 +785,7 @@ fn unspent_fuse_rejects_wrong_left_seq() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -812,7 +812,7 @@ fn unspent_fuse_rejects_wrong_right_seq() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -842,7 +842,7 @@ fn unspent_fuse_rejects_wrong_combined() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -920,7 +920,7 @@ fn unspent_fuse_rejects_epoch_boundary_crossing() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1058,7 +1058,7 @@ fn end_epoch_unspent_seed_rejects_a_zero_member() {
             )
             .err()
             .unwrap_or_else(|| panic!("EndEpochUnspentSeed accepted {expected}"));
-        let ragu::Error::InvalidWitness(inner) = err else {
+        let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness for {expected}, got {err:?}");
         };
         assert_eq!(inner.to_string(), expected);
@@ -1405,7 +1405,7 @@ fn unspent_bind_rejects_tip_mismatch() {
         .fuse(rng, pool::UnspentBind, witness, unspent, range)
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1447,7 +1447,7 @@ fn unspent_bind_rejects_elapsed_mismatch() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1487,7 +1487,7 @@ fn unspent_bind_rejects_uncovered_start() {
         .fuse(rng, pool::UnspentBind, witness, unspent, range)
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1539,7 +1539,7 @@ fn unspent_bind_rejects_uncovered_end() {
         .fuse(rng, pool::UnspentBind, witness, unspent, range)
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1584,7 +1584,7 @@ fn spendable_lift_rejects_wrong_cm() {
         .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1615,7 +1615,7 @@ fn spendable_lift_rejects_non_adjacent_unspent() {
         .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1639,7 +1639,7 @@ fn expect_invalid<H: ragu::Header, S>(
         .fuse(rng, step, witness, left, right)
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(inner.to_string(), message);
@@ -1803,7 +1803,7 @@ fn nullifier_fuse_rejects_non_contiguous() {
         .fuse(rng, delegation::NullifierFuse, witness, range_a, range_b)
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(inner.to_string(), "NullifierFuse: ranges not contiguous");
@@ -1829,7 +1829,7 @@ fn nullifier_fuse_rejects_wrong_cm() {
         .fuse(rng, delegation::NullifierFuse, witness, range_a, range_b)
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(inner.to_string(), "NullifierFuse: note commitments differ");
@@ -2175,7 +2175,7 @@ fn output_stamp_rejects_note_not_matching_the_bind() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(

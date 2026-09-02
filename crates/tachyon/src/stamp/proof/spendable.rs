@@ -13,10 +13,9 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
-use ragu::{
-    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
-    constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-};
+use ragu::{Header, Index, Step, Suffix};
+use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
+use ragu_pasta::Pasta;
 
 use super::{delegation::NullifierDerivation, pool::Unspent, summary::Summary};
 use crate::{
@@ -24,6 +23,7 @@ use crate::{
     note,
     nullifier::Nullifier,
     primitives::{Anchor, EpochIndex, NfSeqPoly, TachygramSetPoly},
+    relations::constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
 /// Wallet's spendable position `(cm, (epoch, present_nf), anchor)`
@@ -118,7 +118,7 @@ impl Step for SpendableInit {
         >,
         (cm, _, nf_commit, _): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             Eq::from(nf_seq.commit()),
             Eq::from(nf_commit),
@@ -162,7 +162,7 @@ impl Step for SpendableInit {
         // (see the step doc).
         let post_cm_anchor = pre_cm_anchor
             .next_stamp(creation_epoch, &creation_commit)
-            .map_err(|_e| ragu::Error::InvalidWitness("invalid anchor step".into()))?;
+            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
         Ok(((cm, (creation_epoch, present_nf), post_cm_anchor), ()))
     }
@@ -210,7 +210,7 @@ impl Step for SummarySpendableInit {
         (creation_epoch, present_nf, nf_seq, complement_seq, summary_set): Self::Witness<'source>,
         (cm, _, nf_commit, _): <Self::Left as Header>::Data,
         (summary_epoch, _summary_anchor_prev, summary_anchor_last, summary_acc_commit): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             Eq::from(nf_seq.commit()),
             Eq::from(nf_commit),
@@ -303,7 +303,7 @@ impl Step for SpendableLift {
             (unspent_epoch_last, unspent_nf_last),
             unspent_anchor_last,
         ): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(unspent_cm) - Fp::from(spendable_cm),
             "SpendableLift: unspent cm does not match spendable",

@@ -149,7 +149,7 @@ fn plan_prove_rejects_invalid_inputs() {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
-        let ProveError::ProofFailed(ragu::Error::InvalidWitness(reason)) = err else {
+        let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(reason)) = err else {
             panic!("expected ProofFailed(InvalidWitness), got {err:?}");
         };
         assert_eq!(
@@ -226,7 +226,7 @@ fn double_output_cannot_aggregate() {
             (stamp_b.clone(), descriptors_b.clone()),
         )
         .expect_err("overlapping tachygrams must not merge");
-        let ProveError::ProofFailed(ragu::Error::InvalidWitness(inner)) = merge_err else {
+        let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
             panic!("expected ProofFailed(InvalidWitness), got {merge_err:?}");
         };
         assert_eq!(
@@ -353,7 +353,7 @@ fn double_spend_cannot_aggregate() {
             (stamp_b.clone(), descriptors_b.clone()),
         )
         .expect_err("shared nullifiers must not merge");
-        let ProveError::ProofFailed(ragu::Error::InvalidWitness(inner)) = merge_err else {
+        let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
             panic!("expected ProofFailed(InvalidWitness), got {merge_err:?}");
         };
         assert_eq!(
@@ -437,7 +437,7 @@ fn cannot_forge_stamp_covering_duplicated_action() {
             (output_stamp.clone(), descriptors.clone()),
         )
         .expect_err("a duplicated action must not merge");
-        let ProveError::ProofFailed(ragu::Error::InvalidWitness(inner)) = merge_err else {
+        let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
             panic!("expected ProofFailed(InvalidWitness), got {merge_err:?}");
         };
         assert_eq!(

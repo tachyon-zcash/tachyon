@@ -5,9 +5,9 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
-use ragu::{Header, Index, Step, Suffix, constraint::enforce_nonzero};
+use ragu::{Header, Index, Step, Suffix};
 
-use crate::{Tachygram, digest::poseidon, note::Note};
+use crate::{Tachygram, digest::poseidon, note::Note, relations::constraint::enforce_nonzero};
 
 /// Header binding an output's tachygram pair to one note.
 ///
@@ -57,7 +57,7 @@ impl Step for OutputBind {
         (note,): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let (cm, pad) = {
             let (rcm, pk, value, psi) = (
                 Fp::from(note.rcm),

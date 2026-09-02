@@ -74,7 +74,7 @@ extern crate alloc;
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::Polynomial;
+use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_pasta::fp;
 
 use super::poly_mul;
@@ -82,7 +82,7 @@ use super::poly_mul;
 const NON_RESIDUE: Fp = fp!(0x02);
 
 #[must_use]
-fn encode_single(idx: u64, m: Fp) -> Polynomial {
+fn encode_single(idx: u64, m: Fp) -> Polynomial<Fp, ProductionRank> {
     let i = Fp::from(idx) + Fp::ONE;
     // writing out expanded coefficients for $F(X) = (iX + m)^3 - c$ is
     // cheaper than constructing a linear $f(X) = iX + m$ and then cubing it.
@@ -104,7 +104,9 @@ fn direct_eval_single(idx: u64, m: Fp, x: Fp) -> Fp {
 }
 
 /// Encode the provided indexed members.
-pub(crate) fn encode(members: impl IntoIterator<Item = (u64, Fp)>) -> Polynomial {
+pub(crate) fn encode(
+    members: impl IntoIterator<Item = (u64, Fp)>,
+) -> Polynomial<Fp, ProductionRank> {
     members.into_iter().fold(
         Polynomial::from_coeffs([Fp::ONE].to_vec()),
         |acc, (idx, m)| poly_mul(&acc, &encode_single(idx, m)),
@@ -155,7 +157,7 @@ mod tests {
             {
                 let mut coeffs = Vec::from_iter(m_ix_cube.iter_coeffs());
                 coeffs[0] -= NON_RESIDUE;
-                Polynomial::from_coeffs(coeffs)
+                Polynomial::<Fp, ProductionRank>::from_coeffs(coeffs)
             }
         };
 

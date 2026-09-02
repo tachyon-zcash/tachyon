@@ -30,6 +30,7 @@ std = [
     "reddsa/std",
     "corez/std",
     "ragu/multicore",
+    "ragu_circuits/multicore",
 ]
 test-epoch-size = [
 ]
@@ -51,11 +52,25 @@ lazy_static = "1.5.0"
 pasta_curves = { package = "zakura-pasta-curves", version = "1.0.1", features = [
     "deferred",
 ] }
-ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "f4f6315b10ed96944c40b2bbdbca0fe06af66ce0", default-features = false, features = [
+ragu = { git = "https://github.com/tachyon-zcash/ragu", rev = "0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9", default-features = false, features = [
     "mock",
 ] }
-ragu_arithmetic = { git = "https://github.com/tachyon-zcash/ragu", rev = "f4f6315b10ed96944c40b2bbdbca0fe06af66ce0", package = "ragu_arithmetic", default-features = false }
-ragu_pasta = { git = "https://github.com/tachyon-zcash/ragu", rev = "f4f6315b10ed96944c40b2bbdbca0fe06af66ce0", package = "ragu_pasta", default-features = false }
+ragu_arithmetic = { git = "https://github.com/tachyon-zcash/ragu", rev = "0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9", package = "ragu_arithmetic", default-features = false, features = [
+    "alloc",
+] }
+ragu_circuits = { git = "https://github.com/tachyon-zcash/ragu", rev = "0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9", package = "ragu_circuits", default-features = false, features = [
+    "alloc",
+] }
+ragu_core = { git = "https://github.com/tachyon-zcash/ragu", rev = "0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9", package = "ragu_core", default-features = false, features = [
+    "alloc",
+] }
+ragu_pasta = { git = "https://github.com/tachyon-zcash/ragu", rev = "0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9", package = "ragu_pasta", default-features = false, features = [
+    "alloc",
+    "baked",
+] }
+ragu_primitives = { git = "https://github.com/tachyon-zcash/ragu", rev = "0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9", package = "ragu_primitives", default-features = false, features = [
+    "alloc",
+] }
 rand_core = { version = "0.10", default-features = false }
 reddsa = { version = "1.0.1", package = "zakura-reddsa" }
 

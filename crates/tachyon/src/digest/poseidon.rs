@@ -7,20 +7,37 @@ use core::array;
 use ff::PrimeField as _;
 use group::{CurveAffine as _, GroupEncoding as _};
 use pasta_curves::{EpAffine, EqAffine, Fp, arithmetic::Coordinates};
-use ragu::Sponge;
-use ragu_arithmetic::PoseidonPermutation as _;
-use ragu_pasta::PoseidonFp;
+use ragu_arithmetic::{Cycle as _, PoseidonPermutation as _};
+use ragu_core::{
+    drivers::emulator::{Emulator, Wireless},
+    maybe::{Always, Maybe as _},
+};
+use ragu_pasta::{Pasta, PoseidonFp};
+use ragu_primitives::{Element, poseidon::Sponge};
+
+/// The wireless emulator that evaluates the real in-circuit sponge natively:
+/// witness values are always present and no wires are tracked, so absorb and
+/// squeeze compute field values without building constraints.
+type Emu = Emulator<Wireless<Always<()>, Fp>>;
+
+fn sponge() -> (Emu, Sponge<'static, Emu, PoseidonFp>) {
+    let mut emulator = Emu::execute();
+    let sponge = Sponge::new(&mut emulator, Pasta::circuit_poseidon(Pasta::baked()));
+    (emulator, sponge)
+}
 
 #[expect(
     clippy::expect_used,
-    reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
+    reason = "sponge absorb/squeeze cannot fail in wireless `Always` mode"
 )]
 fn hash<const L: usize>(input: [Fp; L]) -> Fp {
-    let mut sponge = Sponge::new();
+    let (mut emulator, mut sponge) = sponge();
     for value in input {
-        sponge.absorb(value).expect("infallible");
+        let element = Element::constant(&mut emulator, value);
+        sponge.absorb(&mut emulator, &element).expect("infallible");
     }
-    sponge.squeeze().expect("infallible")
+    let squeezed = sponge.squeeze(&mut emulator).expect("infallible");
+    *squeezed.value().take()
 }
 
 const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
@@ -104,19 +121,23 @@ const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 /// group-aligned epoch `epoch_start` from the note's master key.
 #[expect(
     clippy::expect_used,
-    reason = "mock sponge absorb/squeeze cannot fail in wireless `Always` mode"
+    reason = "sponge absorb/squeeze cannot fail in wireless `Always` mode"
 )]
 #[must_use]
 pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
-    let mut sponge = Sponge::new();
+    let (mut emulator, mut sponge) = sponge();
     for value in [
         Fp::from_u128(u128::from_le_bytes(*NULLIFIER_DOMAIN)),
         mk,
         epoch_start,
     ] {
-        sponge.absorb(value).expect("infallible");
+        let element = Element::constant(&mut emulator, value);
+        sponge.absorb(&mut emulator, &element).expect("infallible");
     }
-    array::from_fn(|_| sponge.squeeze().expect("infallible"))
+    array::from_fn(|_| {
+        let squeezed = sponge.squeeze(&mut emulator).expect("infallible");
+        *squeezed.value().take()
+    })
 }
 
 /// A Vesta point's compressed encoding as two 128-bit $\mathbb{F}_p$ limbs.

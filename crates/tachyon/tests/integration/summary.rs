@@ -134,7 +134,7 @@ fn summary_seed_rejects_empty_stamp() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(inner.to_string(), "invalid anchor step");
@@ -167,7 +167,7 @@ fn summary_advance_rejects_wrong_accumulator() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -207,7 +207,7 @@ fn summary_advance_rejects_forged_extension() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -299,7 +299,7 @@ fn summary_unspent_init_rejects_a_published_nullifier() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -328,7 +328,7 @@ fn summary_unspent_init_rejects_a_foreign_accumulator() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -458,7 +458,7 @@ fn summary_spendable_init_rejects_a_foreign_covering_sequence() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -494,7 +494,7 @@ fn summary_spendable_init_rejects_a_foreign_accumulator() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -530,7 +530,7 @@ fn summary_spendable_init_rejects_an_epoch_mismatch() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -568,7 +568,7 @@ fn summary_spendable_init_rejects_a_forged_nullifier() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -604,7 +604,7 @@ fn summary_spendable_init_rejects_an_absent_commitment() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -641,7 +641,7 @@ fn summary_spendable_init_rejects_a_published_nullifier() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
