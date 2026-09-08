@@ -665,8 +665,8 @@ impl Step for SummaryUnspentInit {
             "SummaryUnspentInit: accumulator does not match header",
         )?;
 
-        let eval = summary_set.eval(nf.into());
-        ctx.enforce_poly_query(summary_set.commit().into(), nf.into(), eval)?;
+        let eval = summary_set.eval(Fp::from(nf));
+        ctx.enforce_poly_query(summary_set.commit().into(), Fp::from(nf), eval)?;
         enforce_nonzero(eval, "SummaryUnspentInit: found nullifier in summary")?;
         enforce_nonzero(Fp::from(nf), "SummaryUnspentInit: tested nullifier is zero")?;
 
@@ -679,7 +679,7 @@ impl Step for SummaryUnspentInit {
         let z = ctx.derive_challenge(&[elapsed_commit.into(), g0 * Fp::from(nf)])?;
         let elapsed_at_z = elapsed_seq.eval(z);
 
-        let member_at_z = indexed_multiset::direct_eval([(summary_epoch.into(), nf.into())], z);
+        let member_at_z = indexed_multiset::direct_eval([(summary_epoch.into(), Fp::from(nf))], z);
 
         enforce_zero(
             elapsed_at_z - member_at_z,

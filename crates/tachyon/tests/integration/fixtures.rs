@@ -684,8 +684,9 @@ fn merge_qr_run<RNG: CryptoRng>(
     capacity: usize,
 ) -> Vec<QrIntakeEntry> {
     let joins = |left: &QrIntakeEntry, right: &QrIntakeEntry| {
-        left.pcd.data().4 == right.pcd.data().4
-            && (left.members.len() + right.members.len()) <= capacity
+        let (_, _, _, _, left_profile, _) = *left.pcd.data();
+        let (_, _, _, _, right_profile, _) = *right.pcd.data();
+        left_profile == right_profile && (left.members.len() + right.members.len()) <= capacity
     };
 
     let mut merged: Vec<QrIntakeEntry> = Vec::new();

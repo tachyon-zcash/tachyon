@@ -7,8 +7,8 @@
 //! $$
 //!
 //! from an $R_1$ the routing prover derives from entropy of its choice and
-//! every header carries. A value takes the residue side at depth $j$ iff
-//! $x + R_j$ is a square or zero.
+//! every header carries, so depth $j$ classifies at $R_{j+1} = R_1 + j$. A
+//! value takes the residue side there iff $x + R_{j+1}$ is a square or zero.
 //!
 //! [`QrSummaryIntakeInit`] starts a [`QrIntake`] from a [`Summary`], and
 //! [`QrStampIntakeSeed`] from one unsummarized stamp. [`QrIntakeSplit`]
@@ -166,8 +166,7 @@ impl Step for QrSummaryIntakeInit {
 /// # Soundness
 ///
 /// The entropy is the prover's choice and $R_1$ its digest, as at
-/// [`QrSummaryIntakeInit`]. `stamp_commit` is folded into `anchor_last`, and
-/// the span binds through the lineage that consumes it.
+/// [`QrSummaryIntakeInit`]. `stamp_commit` is folded into `anchor_last`.
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
 
@@ -379,8 +378,7 @@ impl Step for QrIntakeSplit {
 /// child.
 ///
 /// Committed polynomials: the sibling, its interpolant, its quotient; three
-/// oracles. Gate cost is one scalar multiplication binding $R_1$ into the
-/// challenge.
+/// oracles.
 ///
 /// # Soundness
 ///
@@ -390,8 +388,8 @@ impl Step for QrIntakeSplit {
 /// commit-equality and the challenge absorbs all three commitments and $R_1$
 /// as $G_0 \cdot R_1$. $R_1$ is the digest of the entropy, so a prover cannot
 /// choose it to satisfy the identity at a $z$ it already knows; absorbing it
-/// makes the identity independent of that argument, at the cost of one scalar
-/// multiplication. The child's commitment is read off the header. Both header
+/// makes the identity independent of that argument. The child's commitment is
+/// read off the header. Both header
 /// commitments are selected by point arithmetic on `bit`, and the class
 /// multiplier is linear in `bit`, so no constraint branches on the witness. The
 /// parent's depth is checked below [`QrProfile::MAX_DEPTH`], so `bits` stays
