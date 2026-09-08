@@ -12,10 +12,7 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
-use ragu::{
-    Header, Index, Step, Suffix,
-    constraint::{enforce_equal_point, enforce_zero},
-};
+use ragu::{Header, Index, Step, Suffix};
 use ragu_arithmetic::PoseidonPermutation as _;
 use ragu_pasta::PoseidonFp;
 
@@ -24,6 +21,7 @@ use crate::{
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
+    ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::enforce_poly_product,
 };
 
@@ -117,7 +115,7 @@ impl Step for NfMasterSeed {
         (note, pak): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(note.pk) - Fp::from(pak.derive_payment_key()),
             "NfMasterSeed: pak not related to note",
@@ -175,7 +173,7 @@ impl Step for NfDerive {
         (epoch_start, seq): Self::Witness<'source>,
         (cm, mk): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(
             clippy::as_conversions,
             clippy::integer_division_remainder_used,
@@ -254,7 +252,7 @@ impl Step for NullifierFuse {
         (left_seq, merged_seq, right_seq): Self::Witness<'source>,
         (left_cm, left_epoch_start, left_nf_commit, left_epoch_end): <Self::Left as Header>::Data,
         (right_cm, right_epoch_start, right_nf_commit, right_epoch_end): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(left_cm) - Fp::from(right_cm),
             "NullifierFuse: note commitments differ",

@@ -38,7 +38,7 @@ fn fuse_unspent_init(
     rng: &mut StdRng,
     bucket: Pcd<qr::QrBucket>,
     witness: UnspentInitWitness,
-) -> ragu::Result<Pcd<ArbitraryUnspent>> {
+) -> ragu_core::Result<Pcd<ArbitraryUnspent>> {
     PROOF_SYSTEM
         .fuse(
             rng,
@@ -51,8 +51,8 @@ fn fuse_unspent_init(
 }
 
 /// The message of an `InvalidWitness` error.
-fn invalid_witness(err: ragu::Error) -> String {
-    let ragu::Error::InvalidWitness(inner) = err else {
+fn invalid_witness(err: ragu_core::Error) -> String {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     inner.to_string()
@@ -245,7 +245,7 @@ fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(inner.to_string(), "invalid anchor step");
@@ -364,7 +364,7 @@ fn qr_intake_split_rejects_a_forged_partition() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -424,7 +424,7 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -640,7 +640,7 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -876,7 +876,7 @@ fn qr_side_descend_refuses_a_full_register() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1006,7 +1006,7 @@ fn qr_intake_merge_rejects_a_gap() {
         .fuse(rng, qr::QrIntakeMerge, witness, left, right)
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1093,7 +1093,7 @@ fn qr_intake_merge_rejects_different_profiles() {
         .fuse(rng, qr::QrIntakeMerge, witness, deeper, right)
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1324,7 +1324,7 @@ fn qr_bucket_seal_rejects_an_intake_short_of_the_epoch_boundary() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1640,7 +1640,7 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
@@ -1691,7 +1691,7 @@ fn qr_spendable_init_rejects_a_bucket_whose_span_differs_from_the_segment() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
+    let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(

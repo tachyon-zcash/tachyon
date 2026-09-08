@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::Polynomial;
 use ragu_arithmetic as arithmetic;
+use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 
 pub(crate) mod indexed_multiset;
 pub(crate) mod multiset;
@@ -17,7 +17,10 @@ fn trim(coeffs: &mut Vec<Fp>) {
     }
 }
 
-pub(super) fn poly_mul(input_a: &Polynomial, input_b: &Polynomial) -> Polynomial {
+pub(super) fn poly_mul(
+    input_a: &Polynomial<Fp, ProductionRank>,
+    input_b: &Polynomial<Fp, ProductionRank>,
+) -> Polynomial<Fp, ProductionRank> {
     let mut a_coeffs = Vec::from_iter(input_a.iter_coeffs());
     let mut b_coeffs = Vec::from_iter(input_b.iter_coeffs());
 
@@ -34,7 +37,7 @@ pub(super) fn poly_mul(input_a: &Polynomial, input_b: &Polynomial) -> Polynomial
 }
 
 #[expect(clippy::as_conversions, reason = "degree is under u64::MAX")]
-fn derivative(coeffs: &[Fp]) -> Polynomial {
+fn derivative(coeffs: &[Fp]) -> Polynomial<Fp, ProductionRank> {
     Polynomial::from_coeffs(
         coeffs
             .iter()

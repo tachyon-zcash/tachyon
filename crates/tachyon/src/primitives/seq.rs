@@ -5,7 +5,9 @@ use core::ops::Mul;
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::{Eq, Fp};
-use ragu::Polynomial;
+use ragu_arithmetic::Cycle as _;
+use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_pasta::Pasta;
 
 use crate::{
     collections::{indexed_multiset, poly_mul},
@@ -20,7 +22,7 @@ pub struct NfSeqCommit(Eq);
 /// Witness polynomial for a nullifier sequence: the product of its members'
 /// encodings, one per member.
 #[derive(AsRef, Clone, Debug, From, Into)]
-pub struct NfSeqPoly(Polynomial);
+pub struct NfSeqPoly(Polynomial<Fp, ProductionRank>);
 
 impl NfSeqPoly {
     /// Build the sequence polynomial for one contiguous run: the members of
@@ -35,7 +37,7 @@ impl NfSeqPoly {
     /// Deterministic (untrapdoored) commitment to the sequence polynomial.
     #[must_use]
     pub fn commit(&self) -> NfSeqCommit {
-        NfSeqCommit(self.0.commit())
+        NfSeqCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
     }
 
     /// Evaluate the sequence polynomial at a given point.

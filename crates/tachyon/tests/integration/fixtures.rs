@@ -5,8 +5,9 @@ use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
 
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
-use ragu::{Pcd, Polynomial, Proof};
+use ragu::{Pcd, Proof};
 use ragu_arithmetic::PoseidonPermutation as _;
+use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_pasta::PoseidonFp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
@@ -525,7 +526,10 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
 ) -> (Pcd<summary::Summary>, Vec<Tachygram>) {
     let entries = pool.stamps_between(start, end);
     let members: usize = entries.iter().map(|entry| entry.1.len()).sum();
-    assert!(members < (1 << Polynomial::R), "span exceeds one summary");
+    assert!(
+        members < (1 << ProductionRank::RANK),
+        "span exceeds one summary"
+    );
     let epoch = pool.anchor_index[&start].0.epoch();
 
     let (first, rest) = entries

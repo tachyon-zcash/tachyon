@@ -27,8 +27,8 @@ use alloc::vec::Vec;
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::Polynomial;
 use ragu_arithmetic as arithmetic;
+use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 
 /// The least quadratic non-residue of the Pallas base field. Distinct from
 /// the cubic non-residue the sequence encoding uses.
@@ -115,7 +115,10 @@ pub(crate) fn decomposition(
     points: &[(Fp, Fp)],
     class: Fp,
     shift: Fp,
-) -> Option<(Polynomial, Polynomial)> {
+) -> Option<(
+    Polynomial<Fp, ProductionRank>,
+    Polynomial<Fp, ProductionRank>,
+)> {
     let mut g_coeffs = if points.is_empty() {
         [Fp::ONE].to_vec()
     } else {
@@ -152,6 +155,7 @@ mod tests {
     use core::iter;
 
     use ff::PrimeField as _;
+    use ragu_circuits::polynomials::Rank as _;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
@@ -244,7 +248,7 @@ mod tests {
 
     /// Collects a polynomial's coefficients with the sparse capacity padding
     /// trimmed; the zero polynomial densifies to `[0]`.
-    fn dense(poly: &Polynomial) -> Vec<Fp> {
+    fn dense(poly: &Polynomial<Fp, ProductionRank>) -> Vec<Fp> {
         let mut coeffs = Vec::from_iter(poly.iter_coeffs());
         let last_nonzero = coeffs.iter().rposition(|coeff| coeff != &Fp::ZERO);
         coeffs.truncate(last_nonzero.map_or(1, |idx| idx + 1));
@@ -257,7 +261,13 @@ mod tests {
 
     /// Verifies $g^2 - c\,(X + s) = q\,h$ coefficient by coefficient for one
     /// side.
-    fn verify_side(points: &[(Fp, Fp)], class: Fp, shift: Fp, g: &Polynomial, h: &Polynomial) {
+    fn verify_side(
+        points: &[(Fp, Fp)],
+        class: Fp,
+        shift: Fp,
+        g: &Polynomial<Fp, ProductionRank>,
+        h: &Polynomial<Fp, ProductionRank>,
+    ) {
         let q = multiset::encode(abscissas_of(points));
         let mut lhs = dense(&super::super::poly_mul(g, g));
         if lhs.len() < 2 {
@@ -313,7 +323,7 @@ mod tests {
         let rng = &mut StdRng::seed_from_u64(26);
         let discriminant = Fp::random(&mut *rng);
         let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-            .take((1 << Polynomial::R) - 1)
+            .take((1 << ProductionRank::RANK) - 1)
             .collect();
         let (residue, non_residue) = split(values, discriminant);
         for (points, class) in [

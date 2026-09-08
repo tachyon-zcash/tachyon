@@ -12,7 +12,7 @@ use core::cmp::Reverse;
 use corez::io;
 use group::Group as _;
 use pasta_curves::{Eq, Fp};
-use ragu::proof::PROOF_SIZE_COMPRESSED;
+use ragu::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action,

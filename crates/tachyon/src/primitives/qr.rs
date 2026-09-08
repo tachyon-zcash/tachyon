@@ -3,7 +3,9 @@ use core::array;
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::{Eq, Fp};
-use ragu::Polynomial;
+use ragu_arithmetic::Cycle as _;
+use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_pasta::Pasta;
 
 use crate::{collections::qr, digest::poseidon};
 
@@ -31,13 +33,13 @@ impl QrDiscriminant {
 /// Witness polynomial interpolating one class's roots: $g(x_i) = y_i$ with
 /// $y_i^2 = c\,(x_i + s)$ at that class's multiplier $c$ and shift $s$.
 #[derive(AsRef, Clone, Debug, From, Into)]
-pub struct QrInterpolantPoly(Polynomial);
+pub struct QrInterpolantPoly(Polynomial<Fp, ProductionRank>);
 
 impl QrInterpolantPoly {
     /// Deterministic (untrapdoored) commitment to the interpolant.
     #[must_use]
     pub fn commit(&self) -> QrInterpolantCommit {
-        QrInterpolantCommit(self.0.commit())
+        QrInterpolantCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
     }
 
     /// Evaluate the interpolant at a given point.
@@ -54,13 +56,13 @@ pub struct QrInterpolantCommit(Eq);
 /// Witness polynomial for one class decomposition's quotient: $h$ in $g^2 -
 /// c\,(X + s) = q\,h$.
 #[derive(AsRef, Clone, Debug, From, Into)]
-pub struct QrQuotientPoly(Polynomial);
+pub struct QrQuotientPoly(Polynomial<Fp, ProductionRank>);
 
 impl QrQuotientPoly {
     /// Deterministic (untrapdoored) commitment to the quotient.
     #[must_use]
     pub fn commit(&self) -> QrQuotientCommit {
-        QrQuotientCommit(self.0.commit())
+        QrQuotientCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
     }
 
     /// Evaluate the quotient at a given point.

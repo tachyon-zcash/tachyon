@@ -11,10 +11,11 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
-use ragu::{Header, Index, Step, Suffix, constraint::enforce_equal_point};
+use ragu::{Header, Index, Step, Suffix};
 
 use crate::{
     primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
+    ragu_constraint::enforce_equal_point,
     relations::enforce::enforce_poly_product,
 };
 
@@ -72,10 +73,10 @@ impl Step for SummarySeed {
         (anchor_prev, epoch, stamp_commit): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let anchor_last = anchor_prev
             .next_stamp(epoch, &stamp_commit)
-            .map_err(|_e| ragu::Error::InvalidWitness("invalid anchor step".into()))?;
+            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         Ok(((epoch, anchor_prev, anchor_last, stamp_commit), ()))
     }
 }
@@ -103,7 +104,7 @@ impl Step for SummaryAdvance {
         (acc, extended, stamp): Self::Witness<'source>,
         (summary_epoch, summary_anchor_prev, summary_anchor_last, summary_acc_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             Eq::from(acc.commit()),
             Eq::from(summary_acc_commit),
@@ -118,7 +119,7 @@ impl Step for SummaryAdvance {
         )?;
         let anchor_last = summary_anchor_last
             .next_stamp(summary_epoch, &stamp.commit())
-            .map_err(|_e| ragu::Error::InvalidWitness("invalid anchor step".into()))?;
+            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         Ok((
             (
                 summary_epoch,

@@ -253,7 +253,7 @@ pub enum VerifyProofError {
     ActionDigest(ActionDigestError),
     /// The proof system returned an error.
     #[display("proof system error: {_0}")]
-    ProofSystem(ragu::Error),
+    ProofSystem(ragu_core::Error),
 }
 
 /// Errors during coverage verification.

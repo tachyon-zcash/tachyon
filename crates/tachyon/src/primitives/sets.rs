@@ -4,7 +4,9 @@ use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use group::Curve as _;
 use pasta_curves::{Eq, Fp};
-use ragu::Polynomial;
+use ragu_arithmetic::Cycle as _;
+use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_pasta::Pasta;
 
 use super::{ActionDigest, Tachygram};
 use crate::{collections::multiset, serialization};
@@ -30,7 +32,7 @@ impl TachygramSetCommit {
 impl Default for TachygramSetCommit {
     /// A commitment to an empty set.
     fn default() -> Self {
-        Self(multiset::encode(iter::empty()).commit())
+        TachygramSetPoly::from_iter(iter::empty()).commit()
     }
 }
 
@@ -55,24 +57,24 @@ impl ActionSetCommit {
 impl Default for ActionSetCommit {
     /// A commitment to an empty set.
     fn default() -> Self {
-        Self(multiset::encode(iter::empty()).commit())
+        ActionSetPoly::from_iter(iter::empty()).commit()
     }
 }
 
 /// Witness polynomial for a stamp's tachygram set (members encoded as roots).
 #[derive(AsRef, Clone, Debug, Into)]
-pub struct TachygramSetPoly(Polynomial);
+pub struct TachygramSetPoly(Polynomial<Fp, ProductionRank>);
 
 /// Witness polynomial for a stamp's action-digest set (members encoded as
 /// roots).
 #[derive(AsRef, Clone, Debug, Into)]
-pub struct ActionSetPoly(Polynomial);
+pub struct ActionSetPoly(Polynomial<Fp, ProductionRank>);
 
 impl TachygramSetPoly {
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> TachygramSetCommit {
-        TachygramSetCommit(self.0.commit())
+        TachygramSetCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
     }
 
     /// Evaluate the set polynomial at a given point.
@@ -86,7 +88,7 @@ impl ActionSetPoly {
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> ActionSetCommit {
-        ActionSetCommit(self.0.commit())
+        ActionSetCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
     }
 
     /// Evaluate the set polynomial at a given point.

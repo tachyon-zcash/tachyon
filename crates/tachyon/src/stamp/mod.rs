@@ -23,7 +23,7 @@ use proof::{
     PROOF_SYSTEM, output,
     stamp::{MergeStamp, OutputStamp, SpendStamp, StampHeader, StampLift},
 };
-use ragu::{self, proof::PROOF_SIZE_COMPRESSED};
+use ragu::PROOF_SIZE_COMPRESSED;
 use rand_core::CryptoRng;
 
 use crate::{
@@ -507,7 +507,7 @@ pub enum ProveError {
     ActionDigest(ActionDigestError),
     /// Proof creation failed; carries the underlying step-level error.
     #[display("proof failed: {_0}")]
-    ProofFailed(ragu::Error),
+    ProofFailed(ragu_core::Error),
 }
 
 /// A stamp carrying tachygrams, anchor, and a proof for specific actions.
@@ -559,7 +559,7 @@ impl ProofStamp {
         alpha: ActionRandomizer<effect::Output>,
         note: Note,
         anchor: Anchor,
-    ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
+    ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu_core::Error> {
         let (bind_pcd, ()) = PROOF_SYSTEM.seed(rng, output::OutputBind, (note,))?;
         let tgs = *bind_pcd.data();
         let tachygrams = BTreeSet::from_iter(<[Tachygram; 2]>::from(tgs));
@@ -591,7 +591,7 @@ impl ProofStamp {
         rcv: value::Trapdoor,
         alpha: ActionRandomizer<effect::Spend>,
         pak: ProofAuthorizingKey,
-    ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu::Error> {
+    ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu_core::Error> {
         let (_cm, present_nf, nf_next, anchor) = *bind_pcd.data();
         let tachygrams =
             BTreeSet::from_iter([Tachygram::from(present_nf), Tachygram::from(nf_next)]);
@@ -623,7 +623,7 @@ impl ProofStamp {
         rng: &mut RNG,
         (left_digests, left_tachygrams, left_anchor, left_proof): StampComponents,
         (right_digests, right_tachygrams, right_anchor, right_proof): StampComponents,
-    ) -> Result<StampComponents, ragu::Error> {
+    ) -> Result<StampComponents, ragu_core::Error> {
         let (left_acts_poly, left_tg_poly) = (
             left_digests.iter().copied().collect::<ActionSetPoly>(),
             left_tachygrams
@@ -687,7 +687,7 @@ impl ProofStamp {
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,
         anchor_chain: ragu::Pcd<pool::AnchorChain>,
-    ) -> Result<Self, ragu::Error> {
+    ) -> Result<Self, ragu_core::Error> {
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
         let stamp_pcd =
             self.proof
@@ -851,7 +851,7 @@ impl ProofStamp {
         &self,
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-    ) -> Result<bool, ragu::Error> {
+    ) -> Result<bool, ragu_core::Error> {
         if !self.is_accumulating() {
             return Ok(false);
         }

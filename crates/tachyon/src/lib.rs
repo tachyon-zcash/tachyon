@@ -26,6 +26,7 @@ pub mod witness;
 
 mod collections;
 mod primitives;
+mod ragu_constraint;
 mod relations;
 mod serialization;
 

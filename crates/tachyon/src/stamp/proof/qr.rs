@@ -24,10 +24,9 @@ use alloc::{vec, vec::Vec};
 
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
-use ragu::{
-    Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
-    constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-};
+use ragu::{Header, Index, Step, Suffix};
+use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
+use ragu_pasta::Pasta;
 
 use super::{pool::ArbitraryUnspent, summary::Summary};
 pub use crate::collections::qr::classify;
@@ -39,6 +38,7 @@ use crate::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
         QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
+    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::enforce_poly_product,
 };
 
@@ -144,7 +144,7 @@ impl Step for QrSummaryIntakeInit {
         (discriminant_entropy,): Self::Witness<'source>,
         (summary_epoch, summary_anchor_prev, summary_anchor_last, summary_acc_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let discriminant = poseidon::qr_discriminant(discriminant_entropy);
         Ok((
             (
@@ -186,11 +186,11 @@ impl Step for QrStampIntakeSeed {
         (anchor_prev, epoch, discriminant_entropy, stamp_commit): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let discriminant = poseidon::qr_discriminant(discriminant_entropy);
         let anchor_last = anchor_prev
             .next_stamp(epoch, &stamp_commit)
-            .map_err(|_e| ragu::Error::InvalidWitness("invalid anchor step".into()))?;
+            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         Ok((
             (
                 epoch,
@@ -240,7 +240,7 @@ impl Step for QrIntakeMerge {
             right_profile,
             right_commit,
         ): <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(u64::from(epoch.0)) - Fp::from(u64::from(right_epoch.0)),
             "QrIntakeMerge: inputs cover different epochs",
@@ -322,7 +322,7 @@ impl Step for QrIntakeSplit {
         (contents, residue, non_residue): Self::Witness<'source>,
         (epoch, anchor_prev, anchor_last, discriminant, profile, contents_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             Eq::from(contents.commit()),
             Eq::from(contents_commit),
@@ -413,11 +413,11 @@ impl Step for QrSideDescend {
         (bit, sibling_contents, interpolant, quotient): Self::Witness<'source>,
         (epoch, anchor_prev, anchor_last, discriminant, profile, residue, non_residue): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // TODO: a real circuit needs a bit decomposition of `depth` here; mock
         // ragu accepts the native comparison.
         if profile.depth >= u32::BITS {
-            return Err(ragu::Error::InvalidWitness(
+            return Err(ragu_core::Error::InvalidWitness(
                 "QrSideDescend: profile has no bit left for another side".into(),
             ));
         }
@@ -563,7 +563,7 @@ impl Step for QrBucketSeal {
         (prev_last,): Self::Witness<'source>,
         (epoch, anchor_prev, anchor_last, discriminant, profile, contents): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(anchor_prev)
                 - poseidon::anchor_next_epoch(Fp::from(prev_last), Fp::from(u64::from(epoch.0))),
@@ -659,7 +659,7 @@ impl Step for QrUnspentInit {
         (value, classes, mask, sequence, contents): Self::Witness<'source>,
         (epoch, anchor_prev, anchor_last, discriminant, profile, contents_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             Eq::from(contents.commit()),
             Eq::from(contents_commit),
