@@ -388,9 +388,10 @@ impl Step for QrIntakeSplit {
 /// a value of the child's own profile, and a stray member of the other class
 /// only tightens that opening. The sibling is pinned to the header by
 /// commit-equality and the challenge absorbs all three commitments and $R_1$
-/// as $G_0 \cdot R_1$: the entropy is otherwise free, and a challenge that did
-/// not depend on it would let the prover solve for the $R$ satisfying the
-/// identity at $z$. The child's commitment is read off the header. Both header
+/// as $G_0 \cdot R_1$. $R_1$ is the digest of the entropy, so a prover cannot
+/// choose it to satisfy the identity at a $z$ it already knows; absorbing it
+/// makes the identity independent of that argument, at the cost of one scalar
+/// multiplication. The child's commitment is read off the header. Both header
 /// commitments are selected by point arithmetic on `bit`, and the class
 /// multiplier is linear in `bit`, so no constraint branches on the witness. The
 /// parent's depth is checked below [`QrProfile::MAX_DEPTH`], so `bits` stays
@@ -589,9 +590,10 @@ impl Step for QrBucketSeal {
 ///
 /// The step fixes the value's side at every discriminant of the epoch, matches
 /// the bucket's profile against the first `depth` of them, and opens the
-/// bucket at the value for nonzero. With $x$ the value, $s_j = x + R_j$ and
-/// $R_j = R_1 + (j - 1)$, each position witnesses a side $b_j$ and a root
-/// $r_j$ with
+/// bucket at the value for nonzero. Positions $j = 0, \dots,
+/// \mathsf{MAX\_DEPTH} - 1$ index the progression, so position $j$
+/// classifies at $R_{j+1} = R_1 + j$. With $x$ the value and $s_j = x +
+/// R_1 + j$, each position witnesses a side $b_j$ and a root $r_j$ with
 ///
 /// $$
 ///   r_j^2 = \bigl(c - (c - 1)\,b_j\bigr)\, s_j,
@@ -606,11 +608,11 @@ impl Step for QrBucketSeal {
 ///   \qquad
 ///   \sum_j j\, m_j = \frac{\mathsf{depth}\,(\mathsf{depth} - 1)}{2},
 ///   \qquad
-///   a_j = a_{j-1} + m_j\,(a_{j-1} + b_j),
+///   a_{j+1} = a_j + m_j\,(a_j + b_j),
 /// $$
 ///
-/// with positions indexed from zero and $a_0 = 0$; the fold ends at
-/// $\mathsf{bits}$ exactly when the bucket's sides are the value's. The
+/// with $a_0 = 0$; the fold ends at $\mathsf{bits}$ exactly when the
+/// bucket's sides are the value's. The
 /// emitted segment reads the value as a nullifier and covers the bucket's
 /// own span, one epoch, so consecutive epochs' segments need an
 /// [`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed) between them.
