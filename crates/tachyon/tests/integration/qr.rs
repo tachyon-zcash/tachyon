@@ -1,5 +1,5 @@
-//! QR epoch evidence: the partition of an epoch's tachygrams, its filters, and
-//! the `ArbitraryUnspent` lineage born from one bucket.
+//! QR epoch evidence: the partition of an epoch's tachygrams and the
+//! `ArbitraryUnspent` lineage born from one bucket.
 
 extern crate alloc;
 
@@ -8,27 +8,66 @@ use core::{array, iter};
 
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
-use ragu::{Pcd, Proof};
+use ragu::{Pcd, Proof, Step};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrDiscriminant, QrFilterPoly, QrProfile, Tachygram,
-    TachygramSetPoly,
+    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoots, QrDepthMask, QrDiscriminant,
+    QrProfile, Tachygram, TachygramSetPoly,
     constants::EPOCH_SIZE,
     note::Note,
     nullifier::Nullifier,
     stamp::proof::{
         PROOF_SYSTEM,
-        pool::{EndEpochUnspentSeed, Unspent, UnspentFuse},
+        pool::{ArbitraryUnspent, EndEpochUnspentSeed, Unspent, UnspentFuse},
         qr, spend, spendable, summary,
     },
     witness,
 };
 
 use crate::fixtures::{
-    PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_qr_filter_pcd, build_qr_partition,
+    PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_qr_branch, build_qr_partition,
     build_summary_pcd, qr_profile_of, random_block, seal_qr_intake, seed_qr_stamp_intake,
     shared_sk, split_qr_intake,
 };
+
+/// The witness of [`qr::QrUnspentInit`].
+type UnspentInitWitness = <qr::QrUnspentInit as Step>::Witness<'static>;
+
+/// Run [`qr::QrUnspentInit`] over `bucket`.
+fn fuse_unspent_init(
+    rng: &mut StdRng,
+    bucket: Pcd<qr::QrBucket>,
+    witness: UnspentInitWitness,
+) -> ragu::Result<Pcd<ArbitraryUnspent>> {
+    PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrUnspentInit,
+            witness,
+            bucket,
+            Proof::trivial().carry::<()>(()),
+        )
+        .map(|(unspent, ())| unspent)
+}
+
+/// The message of an `InvalidWitness` error.
+fn invalid_witness(err: ragu::Error) -> String {
+    let ragu::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    inner.to_string()
+}
+
+/// Four blocks of epoch zero, two actions of three tachygrams each; with the
+/// terminal anchor.
+fn small_epoch(rng: &mut StdRng) -> (PoolSim, Anchor) {
+    let mut pool = PoolSim::genesis_with(random_block(rng, 2, 3));
+    for _ in 0..3 {
+        pool.mine(random_block(rng, 2, 3));
+    }
+    let terminal = pool.block(pool.height()).anchor();
+    (pool, terminal)
+}
 
 /// The members an epoch holds in the pools these tests build: one tachygram
 /// per stamp and one stamp per block, so the whole epoch fits one polynomial
@@ -42,43 +81,41 @@ fn qr_bucket_for(
     pool: &PoolSim,
     (start, terminal): (Anchor, Anchor),
     capacity: usize,
-    depth: u64,
+    depth: u32,
     value: Fp,
     prev_last: Anchor,
 ) -> QrBucketEntry {
     let boundary = pool.boundary_after(terminal);
     let profile = qr_profile_of(value, boundary, depth);
-    let intake = build_qr_partition(rng, pool, (start, terminal), boundary, capacity, depth)
-        .into_iter()
-        .find(|intake| intake.pcd.data().4 == profile)
-        .expect("an intake carries the value's profile");
+    let mut branch = build_qr_branch(
+        rng,
+        pool,
+        (start, terminal),
+        boundary,
+        capacity,
+        value,
+        depth,
+    );
+    assert_eq!(branch.len(), 1, "the value's profile fits one intake");
+    let intake = branch.pop().expect("one intake");
+    assert_eq!(intake.pcd.data().4, profile);
     seal_qr_intake(rng, intake, prev_last)
 }
 
-/// The note's QR segment across a bucket's epoch, bound to the note. The
-/// filter descends the bucket's own path, which is the one the note's
-/// nullifier takes.
+/// The note's QR segment across a bucket's epoch, bound to the note.
 fn qr_epoch_unspent(
     rng: &mut StdRng,
     user: &WalletSim,
     note: &Note,
     bucket: &QrBucketEntry,
 ) -> Pcd<Unspent> {
-    let (epoch, _, _, boundary, profile, ..) = *bucket.pcd.data();
-    let filter = build_qr_filter_pcd(rng, epoch, boundary, profile);
-    let (claim, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrProfileAttest,
-            witness::qr_profile_attest((*filter.data(), ()), user.nf_at(note, epoch).into()),
-            filter,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("QrProfileAttest");
-    let witness = witness::qr_unspent_init((*claim.data(), *bucket.pcd.data()), &bucket.members);
-    let (arbitrary, ()) = PROOF_SYSTEM
-        .fuse(rng, qr::QrUnspentInit, witness, claim, bucket.pcd.clone())
-        .expect("QrUnspentInit");
+    let (epoch, ..) = *bucket.pcd.data();
+    let witness = witness::qr_unspent_init(
+        (*bucket.pcd.data(), ()),
+        user.nf_at(note, epoch).into(),
+        &bucket.members,
+    );
+    let arbitrary = fuse_unspent_init(rng, bucket.pcd.clone(), witness).expect("QrUnspentInit");
     user.unspent_bind(rng, arbitrary, note)
 }
 
@@ -832,7 +869,7 @@ fn qr_side_descend_refuses_a_full_register() {
         pcd: root,
         members: members.to_vec(),
     };
-    for _ in 0..u64::BITS {
+    for _ in 0..QrProfile::MAX_DEPTH {
         let (residue, _non_residue) = split_qr_intake(rng, intake);
         intake = residue;
     }
@@ -840,10 +877,10 @@ fn qr_side_descend_refuses_a_full_register() {
     assert_eq!(
         profile,
         QrProfile {
-            depth: u64::from(u64::BITS),
-            bits: u64::MAX
+            depth: u32::BITS,
+            bits: u32::MAX
         },
-        "sixty-four residue sides fill the register"
+        "thirty-two residue sides reach the maximum depth"
     );
 
     let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
@@ -1135,7 +1172,7 @@ fn qr_partition_covers_the_epoch_by_profile() {
     let routed = build_qr_partition(rng, &pool, (Anchor::default(), terminal), boundary, 24, 2);
 
     assert_eq!(routed.len(), 4, "two layers leave one intake per profile");
-    let mut profiles: Vec<u64> = routed
+    let mut profiles: Vec<u32> = routed
         .iter()
         .map(|intake| {
             let (_, anchor_prev, anchor_last, _, profile, ..) = *intake.pcd.data();
@@ -1163,7 +1200,8 @@ fn qr_partition_covers_the_epoch_by_profile() {
         );
         for &member in &intake.members {
             let mut discriminant = QrDiscriminant::of(boundary);
-            for &side in &profile.path() {
+            for level in 0..profile.depth {
+                let side = (profile.bits >> (profile.depth - 1 - level)) & 1 == 1;
                 assert_eq!(
                     qr::classify(Fp::from(member), Fp::from(discriminant)).0,
                     side,
@@ -1297,106 +1335,6 @@ fn qr_intakes_at_one_profile_merge_across_adjacent_spans() {
     assert_eq!(
         anchor_last, terminal,
         "the merged residue bucket spans both runs"
-    );
-}
-
-#[test]
-fn qr_filter_descend_records_the_path_by_side() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
-    let boundary = Anchor::from(Fp::random(&mut *rng));
-    let profile = QrProfile::ROOT.descend(true).descend(false).descend(true);
-
-    let filter = build_qr_filter_pcd(rng, epoch, boundary, profile);
-    let (residue, non_residue) = profile.discriminants_by_side(boundary);
-    let discriminant = QrDiscriminant::of(boundary).next().next().next();
-
-    assert_eq!(
-        *filter.data(),
-        (
-            epoch,
-            boundary,
-            profile,
-            discriminant,
-            residue.iter().copied().collect::<QrFilterPoly>().commit(),
-            non_residue
-                .iter()
-                .copied()
-                .collect::<QrFilterPoly>()
-                .commit()
-        ),
-        "each side's filter holds the discriminants the path took that way"
-    );
-    assert_eq!(residue.len(), 2);
-    assert_eq!(non_residue.len(), 1);
-}
-
-#[test]
-fn qr_filter_descend_rejects_a_forged_extension() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
-    let boundary = Anchor::from(Fp::random(&mut *rng));
-
-    let (seeded, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            qr::QrFilterSeed,
-            witness::qr_filter_seed(((), ()), epoch, boundary),
-        )
-        .expect("QrFilterSeed");
-
-    let (bit, side_filter, _extended) = witness::qr_filter_descend((*seeded.data(), ()), true);
-    let foreign = iter::once(QrDiscriminant::of(boundary).next()).collect::<QrFilterPoly>();
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrFilterDescend,
-            (bit, side_filter, foreign),
-            seeded,
-            Proof::trivial().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrFilterDescend: extended filter does not record this discriminant"
-    );
-}
-
-#[test]
-fn qr_filter_descend_refuses_a_full_register() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
-    let boundary = Anchor::from(Fp::random(&mut *rng));
-    let full = QrProfile {
-        depth: u64::from(u64::BITS),
-        bits: u64::MAX,
-    };
-
-    let filter = build_qr_filter_pcd(rng, epoch, boundary, full);
-    let (_, _, profile, ..) = *filter.data();
-    assert_eq!(profile, full, "sixty-four residue sides fill the register");
-
-    let witness = witness::qr_filter_descend((*filter.data(), ()), true);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrFilterDescend,
-            witness,
-            filter,
-            Proof::trivial().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrFilterDescend: profile has no bit left for another side"
     );
 }
 
@@ -1537,20 +1475,8 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
     );
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
 
-    let filter = build_qr_filter_pcd(rng, epoch, boundary, profile);
-    let (claim, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrProfileAttest,
-            witness::qr_profile_attest((*filter.data(), ()), nf.into()),
-            filter,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("QrProfileAttest");
-    let witness = witness::qr_unspent_init((*claim.data(), *bucket.pcd.data()), &bucket.members);
-    let (unspent, ()) = PROOF_SYSTEM
-        .fuse(rng, qr::QrUnspentInit, witness, claim, bucket.pcd)
-        .expect("QrUnspentInit");
+    let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+    let unspent = fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit");
 
     let (anchor_prev, first, elapsed, last, anchor_last) = *unspent.data();
     assert_eq!(
@@ -1606,23 +1532,9 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_over_a_boundary_link() {
     );
 
     let mut segment = |bucket: QrBucketEntry, nf: Nullifier| {
-        let (epoch, _, _, boundary, ..) = *bucket.pcd.data();
-        let filter = build_qr_filter_pcd(rng, epoch, boundary, QrProfile::ROOT);
-        let (claim, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrProfileAttest,
-                witness::qr_profile_attest((*filter.data(), ()), nf.into()),
-                filter,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("QrProfileAttest");
         let witness =
-            witness::qr_unspent_init((*claim.data(), *bucket.pcd.data()), &bucket.members);
-        let (unspent, ()) = PROOF_SYSTEM
-            .fuse(rng, qr::QrUnspentInit, witness, claim, bucket.pcd)
-            .expect("QrUnspentInit");
-        unspent
+            witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+        fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit")
     };
     let left = segment(bucket0, nf0);
     let right = segment(bucket1, nf1);
@@ -1866,7 +1778,6 @@ fn qr_unspent_init_rejects_a_published_nullifier() {
     }
     let terminal = pool.block(pool.height()).anchor();
     let boundary = pool.boundary_after(terminal);
-    let epoch = BlockHeight(0).epoch();
 
     let routed = build_qr_partition(rng, &pool, (Anchor::default(), terminal), boundary, 24, 2);
     let intake = routed
@@ -1875,29 +1786,12 @@ fn qr_unspent_init_rejects_a_published_nullifier() {
         .expect("some intake holds a member");
     let published = *intake.members.first().expect("a member");
     let nf = Nullifier::from(Fp::from(published));
-    let (_, _, _, _, profile, ..) = *intake.pcd.data();
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
 
-    let filter = build_qr_filter_pcd(rng, epoch, boundary, profile);
-    let (claim, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrProfileAttest,
-            witness::qr_profile_attest((*filter.data(), ()), nf.into()),
-            filter,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("QrProfileAttest");
-    let witness = witness::qr_unspent_init((*claim.data(), *bucket.pcd.data()), &bucket.members);
-    let err = PROOF_SYSTEM
-        .fuse(rng, qr::QrUnspentInit, witness, claim, bucket.pcd)
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
+    let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
     assert_eq!(
-        inner.to_string(),
+        invalid_witness(err),
         "QrUnspentInit: found nullifier in the bucket"
     );
 }
@@ -1911,7 +1805,6 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
     }
     let terminal = pool.block(pool.height()).anchor();
     let boundary = pool.boundary_after(terminal);
-    let epoch = BlockHeight(0).epoch();
     let nf = Nullifier::from(Fp::random(&mut *rng));
 
     let routed = build_qr_partition(rng, &pool, (Anchor::default(), terminal), boundary, 24, 2);
@@ -1922,75 +1815,377 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
         .expect("three intakes carry another profile");
     let bucket = seal_qr_intake(rng, foreign, Anchor::from(Fp::ZERO));
 
-    let filter = build_qr_filter_pcd(rng, epoch, boundary, profile);
-    let (claim, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrProfileAttest,
-            witness::qr_profile_attest((*filter.data(), ()), nf.into()),
-            filter,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("QrProfileAttest");
-    let witness = witness::qr_unspent_init((*claim.data(), *bucket.pcd.data()), &bucket.members);
-    let err = PROOF_SYSTEM
-        .fuse(rng, qr::QrUnspentInit, witness, claim, bucket.pcd)
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
+    let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
     assert_eq!(
-        inner.to_string(),
-        "QrUnspentInit: claim and bucket sit at different profiles"
+        invalid_witness(err),
+        "QrUnspentInit: value does not take the bucket's profile"
+    );
+}
+
+/// A fresh nullifier, its depth-two bucket over a small epoch, and the honest
+/// witness, which is checked to pass before any test tampers with it.
+fn honest_unspent_init(rng: &mut StdRng) -> (Nullifier, QrBucketEntry, UnspentInitWitness) {
+    let (pool, terminal) = small_epoch(rng);
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let bucket = qr_bucket_for(
+        rng,
+        &pool,
+        (Anchor::default(), terminal),
+        24,
+        2,
+        Fp::from(nf),
+        Anchor::from(Fp::ZERO),
+    );
+    let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+    fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone()).expect("the honest witness passes");
+    (nf, bucket, witness)
+}
+
+/// The squaring message for a claimed `side`.
+fn class_message(side: bool) -> &'static str {
+    if side {
+        "QrUnspentInit: root does not square to the residue class"
+    } else {
+        "QrUnspentInit: root does not square to the non-residue class"
+    }
+}
+
+#[test]
+fn qr_unspent_init_rejects_a_root_off_its_class() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
+
+    let (_, QrClassRoots(ref mut roots), ..) = witness;
+    let (side, ref mut root) = roots[0];
+    let off = *root + Fp::ONE;
+    assert_ne!(off.square(), root.square());
+    *root = off;
+
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    assert_eq!(invalid_witness(err), class_message(side));
+}
+
+/// Positions past the bucket's depth are compared to nothing, but still
+/// tested against the value.
+#[test]
+fn qr_unspent_init_tests_sides_past_the_bucket_depth() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (nf, bucket, mut witness) = honest_unspent_init(rng);
+    let (_, _, _, boundary, profile, ..) = *bucket.pcd.data();
+    assert_eq!(profile.depth, 2);
+
+    let position = 5;
+    let shifted = Fp::from(nf) + Fp::from(QrDiscriminant::of(boundary)) + Fp::from(position);
+    assert_ne!(shifted, Fp::ZERO);
+    let (_, QrClassRoots(ref mut roots), ..) = witness;
+    let (ref mut side, _) = roots[usize::try_from(position).unwrap()];
+    let flipped = !*side;
+    *side = flipped;
+
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    assert_eq!(invalid_witness(err), class_message(flipped));
+}
+
+/// The exceptional value $-R_j$ has root zero under either class and is filed
+/// residue-side, so claiming the non-residue side there is refused.
+#[test]
+fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, terminal) = small_epoch(rng);
+    let boundary = pool.boundary_after(terminal);
+    let position = 1;
+    let value = -(Fp::from(QrDiscriminant::of(boundary)) + Fp::from(position));
+    assert_ne!(value, Fp::ZERO);
+    let nf = Nullifier::from(value);
+
+    let bucket = qr_bucket_for(
+        rng,
+        &pool,
+        (Anchor::default(), terminal),
+        24,
+        2,
+        value,
+        Anchor::from(Fp::ZERO),
+    );
+    assert!(
+        !bucket
+            .members
+            .iter()
+            .any(|&member| Fp::from(member) == value),
+        "the fixed point is absent from the epoch"
+    );
+    let mut witness =
+        witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+    let (_, QrClassRoots(honest_roots), ..) = witness;
+    assert_eq!(
+        honest_roots[usize::try_from(position).unwrap()],
+        (true, Fp::ZERO)
+    );
+    fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone())
+        .expect("the fixed point passes on the residue side");
+
+    let (_, QrClassRoots(ref mut roots), ..) = witness;
+    let (ref mut side, _) = roots[usize::try_from(position).unwrap()];
+    *side = false;
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrUnspentInit: exceptional discriminant claimed the non-residue class"
     );
 }
 
 #[test]
-fn qr_profile_attest_rejects_a_foreign_interpolant() {
+fn qr_unspent_init_rejects_a_non_prefix_mask() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
-    let boundary = Anchor::from(Fp::random(&mut *rng));
-    let value = Tachygram::from(Fp::random(&mut *rng));
-    let profile = qr_profile_of(Fp::from(value), boundary, 3);
+    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
 
-    let filter = build_qr_filter_pcd(rng, epoch, boundary, profile);
-    let (_, residue_filter, _interpolant, quotient, sequence) =
-        witness::qr_profile_attest((*filter.data(), ()), value);
+    let (_, _, ref mut depth_mask, ..) = witness;
+    *depth_mask = QrDepthMask(array::from_fn(|position| position == 0 || position == 2));
 
-    // A decomposition exists only along the value's own path, so the forgery
-    // has to come from another value's attestation.
-    let foreign = Tachygram::from(Fp::random(&mut *rng));
-    let foreign_filter = build_qr_filter_pcd(
-        rng,
-        epoch,
-        boundary,
-        qr_profile_of(Fp::from(foreign), boundary, 3),
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrUnspentInit: depth mask is not a prefix"
     );
-    let (_, _, foreign_interpolant, ..) =
-        witness::qr_profile_attest((*foreign_filter.data(), ()), foreign);
+}
 
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrProfileAttest,
-            (
-                value,
-                residue_filter,
-                foreign_interpolant,
-                quotient,
-                sequence,
-            ),
-            filter,
-            Proof::trivial().carry::<()>(()),
-        )
+#[test]
+fn qr_unspent_init_rejects_a_mask_of_the_wrong_depth() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
+
+    let (_, _, ref mut depth_mask, ..) = witness;
+    *depth_mask = QrDepthMask::of(3);
+
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrUnspentInit: depth mask does not match the bucket's depth"
+    );
+}
+
+/// Recarrying a proof under altered header data exercises the step's own
+/// constraints under mock ragu; a real proof would not authenticate the
+/// altered header.
+fn recarry_bucket(
+    bucket: &QrBucketEntry,
+    alter: impl FnOnce(&mut <qr::QrBucket as ragu::Header>::Data),
+) -> Pcd<qr::QrBucket> {
+    let mut data = *bucket.pcd.data();
+    alter(&mut data);
+    bucket.pcd.proof().clone().carry::<qr::QrBucket>(data)
+}
+
+#[test]
+fn qr_unspent_init_rejects_a_bucket_past_the_maximum_depth() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
+
+    let forged = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
+        profile.depth = u32::BITS + 1;
+    });
+    let (_, _, ref mut depth_mask, ..) = witness;
+    // Bypass the constructor's range check to exercise the step's constraint.
+    *depth_mask = QrDepthMask([true; QrProfile::MAX_DEPTH]);
+    let err = fuse_unspent_init(rng, forged, witness.clone())
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
     assert_eq!(
-        inner.to_string(),
-        "QrProfileAttest: value fails the residue side of this profile"
+        invalid_witness(err),
+        "QrUnspentInit: depth mask does not match the bucket's depth"
     );
+
+    let saturated = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
+        profile.depth = u32::MAX;
+    });
+    let (_, _, ref mut saturated_mask, ..) = witness;
+    *saturated_mask = QrDepthMask([true; QrProfile::MAX_DEPTH]);
+    let saturated_err = fuse_unspent_init(rng, saturated, witness).err().unwrap();
+    assert_eq!(
+        invalid_witness(saturated_err),
+        "QrUnspentInit: depth mask does not match the bucket's depth"
+    );
+}
+
+#[test]
+fn qr_unspent_init_rejects_a_malformed_profile() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_nf, bucket, witness) = honest_unspent_init(rng);
+
+    let forged = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
+        *profile = QrProfile { depth: 0, bits: 1 };
+    });
+    let mut shallow = witness.clone();
+    let (_, _, ref mut depth_mask, ..) = shallow;
+    *depth_mask = QrDepthMask::of(0);
+    let err = fuse_unspent_init(rng, forged, shallow).err().unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrUnspentInit: value does not take the bucket's profile"
+    );
+
+    let overflowing = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
+        profile.bits |= 1 << 2;
+    });
+    let overflowing_err = fuse_unspent_init(rng, overflowing, witness).err().unwrap();
+    assert_eq!(
+        invalid_witness(overflowing_err),
+        "QrUnspentInit: value does not take the bucket's profile"
+    );
+}
+
+#[test]
+fn qr_unspent_init_rejects_a_discriminant_off_the_progression() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_nf, bucket, witness) = honest_unspent_init(rng);
+
+    let forged = recarry_bucket(&bucket, |&mut (_, _, _, _, _, ref mut discriminant, _)| {
+        *discriminant = discriminant.next();
+    });
+    let err = fuse_unspent_init(rng, forged, witness).err().unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrUnspentInit: bucket discriminant is off the epoch's progression"
+    );
+}
+
+#[test]
+fn qr_unspent_init_rejects_a_zero_value() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_nf, bucket, _witness) = honest_unspent_init(rng);
+
+    let witness = witness::qr_unspent_init(
+        (*bucket.pcd.data(), ()),
+        Tachygram::from(Fp::ZERO),
+        &bucket.members,
+    );
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    assert_eq!(invalid_witness(err), "QrUnspentInit: tested value is zero");
+}
+
+#[test]
+fn qr_unspent_init_rejects_a_sequence_naming_another_value() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (nf, bucket, mut witness) = honest_unspent_init(rng);
+    let (epoch, ..) = *bucket.pcd.data();
+
+    let other = Nullifier::from(Fp::random(&mut *rng));
+    assert_ne!(other, nf);
+    let (_, _, _, ref mut sequence, _) = witness;
+    *sequence = NfSeqPoly::new(epoch, &[other]);
+
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrUnspentInit: sequence does not match the tested value"
+    );
+}
+
+#[test]
+fn qr_unspent_init_rejects_foreign_contents() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_nf, bucket, mut witness) = honest_unspent_init(rng);
+
+    let foreign = iter::once(Tachygram::from(Fp::random(&mut *rng))).collect::<TachygramSetPoly>();
+    let (.., contents_commit) = *bucket.pcd.data();
+    assert_ne!(foreign.commit(), contents_commit);
+    let (.., ref mut contents) = witness;
+    *contents = foreign;
+
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrUnspentInit: contents do not match the bucket"
+    );
+}
+
+/// A bucket at any depth up to the maximum admits the segment, whatever its
+/// bits.
+#[test]
+fn qr_unspent_init_accepts_buckets_at_every_depth() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, terminal) = small_epoch(rng);
+    let boundary = pool.boundary_after(terminal);
+    let epoch = BlockHeight(0).epoch();
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+
+    for depth in [0, 1, 31, u32::BITS] {
+        let bucket = qr_bucket_for(
+            rng,
+            &pool,
+            (Anchor::default(), terminal),
+            24,
+            depth,
+            Fp::from(nf),
+            Anchor::from(Fp::ZERO),
+        );
+        let (_, _, _, _, profile, ..) = *bucket.pcd.data();
+        assert_eq!(profile, qr_profile_of(Fp::from(nf), boundary, depth));
+
+        let witness =
+            witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit");
+        assert_eq!(
+            *unspent.data(),
+            (
+                Anchor::default(),
+                (epoch, nf),
+                NfSeqPoly::new(epoch, &[nf]).commit(),
+                (epoch, nf),
+                terminal
+            ),
+            "the segment is the bucket's span at depth {depth}"
+        );
+    }
+}
+
+/// Routing consecutive values: each lands in the bucket of its own profile,
+/// and the buckets together hold every value. A correctness check on
+/// structured input, not a balance measurement.
+#[test]
+fn qr_partition_routes_consecutive_values_by_profile() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch = EpochIndex(3);
+    let anchor_prev = Anchor::from(Fp::random(&mut *rng));
+    let boundary = Anchor::from(Fp::random(&mut *rng));
+    let base = Fp::random(&mut *rng);
+    let members: Vec<Tachygram> = (0..12u64)
+        .map(|offset| Tachygram::from(base + Fp::from(offset)))
+        .collect();
+    let depth = 3;
+
+    let (pcd, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            qr::QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(((), ()), anchor_prev, epoch, boundary, &members),
+        )
+        .expect("QrStampIntakeSeed");
+    let mut layer = vec![QrIntakeEntry {
+        pcd,
+        members: members.clone(),
+    }];
+    for _ in 0..depth {
+        let mut next = Vec::with_capacity(layer.len() * 2);
+        for intake in layer {
+            let (residue, non_residue) = split_qr_intake(rng, intake);
+            next.push(residue);
+            next.push(non_residue);
+        }
+        layer = next;
+    }
+
+    let mut routed = Vec::new();
+    for leaf in &layer {
+        let (.., profile, _discriminant, _contents) = *leaf.pcd.data();
+        for &member in &leaf.members {
+            assert_eq!(qr_profile_of(Fp::from(member), boundary, depth), profile);
+            routed.push(member);
+        }
+    }
+    routed.sort_by_key(|member| Fp::from(*member).to_repr());
+    let mut expected = members;
+    expected.sort_by_key(|member| Fp::from(*member).to_repr());
+    assert_eq!(routed, expected, "every value reaches exactly one leaf");
 }

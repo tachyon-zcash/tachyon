@@ -275,8 +275,7 @@ impl Step for SummarySpendableInit {
 /// over the note's [`Unspent`] for that epoch.
 ///
 /// The `Unspent` is the epoch's QR segment bound to the note
-/// ([`QrProfileAttest`](super::qr::QrProfileAttest),
-/// [`QrUnspentInit`](super::qr::QrUnspentInit),
+/// ([`QrUnspentInit`](super::qr::QrUnspentInit) then
 /// [`UnspentBind`](super::pool::UnspentBind)), so `cm` and the whole-epoch
 /// absence of the note's nullifier arrive on its header. This step adds the
 /// membership $\mathsf{contents}(\mathsf{cm}) = 0$ and emits the spendable at
@@ -307,7 +306,7 @@ impl Step for QrSpendableInit {
     /// `(contents)`.
     type Witness<'source> = (TachygramSetPoly,);
 
-    const INDEX: Index = Index::new(31);
+    const INDEX: Index = Index::new(28);
 
     fn witness<'source>(
         &self,

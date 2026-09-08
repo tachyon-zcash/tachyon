@@ -15,8 +15,8 @@ use crate::{
     note::Note,
     nullifier::Nullifier,
     primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, QrFilterPoly, Tachygram,
-        TachygramSetPoly,
+        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, QrClassRoots, QrDepthMask,
+        Tachygram, TachygramSetPoly,
     },
     stamp::proof::{
         delegation::{NfDerive, NfMasterSeed, NullifierFuse},
@@ -25,8 +25,8 @@ use crate::{
             UnspentSeed,
         },
         qr::{
-            QrBucketSeal, QrFilterDescend, QrFilterSeed, QrIntakeMerge, QrIntakeSplit,
-            QrProfileAttest, QrSideDescend, QrStampIntakeSeed, QrSummaryIntakeInit, QrUnspentInit,
+            QrBucketSeal, QrIntakeMerge, QrIntakeSplit, QrSideDescend, QrStampIntakeSeed,
+            QrSummaryIntakeInit, QrUnspentInit,
         },
         spend::SpendBind,
         spendable::{QrSpendableInit, SpendableInit, SummarySpendableInit},
@@ -463,62 +463,6 @@ pub fn qr_side_descend(
     )
 }
 
-/// Prepare the witness for [`QrFilterSeed`]: `(epoch, boundary)`.
-#[must_use]
-pub const fn qr_filter_seed(
-    (_left, _right): (StepLeft<QrFilterSeed>, StepRight<QrFilterSeed>),
-    epoch: EpochIndex,
-    boundary: Anchor,
-) -> StepWitness<'static, QrFilterSeed> {
-    (epoch, boundary)
-}
-
-/// Prepare the witness for [`QrFilterDescend`]: `(bit, side_filter,
-/// extended)`.
-///
-/// The filters replay from the header's profile and boundary. `side` is the
-/// residue side when set.
-#[must_use]
-pub fn qr_filter_descend(
-    (filter, _right): (StepLeft<QrFilterDescend>, StepRight<QrFilterDescend>),
-    side: bool,
-) -> StepWitness<'static, QrFilterDescend> {
-    let (_epoch, boundary, profile, discriminant, ..) = filter;
-    let (residue, non_residue) = profile.discriminants_by_side(boundary);
-    let recorded = if side { residue } else { non_residue };
-    let extended = recorded
-        .iter()
-        .copied()
-        .chain([discriminant])
-        .collect::<QrFilterPoly>();
-    (side, recorded.into_iter().collect(), extended)
-}
-
-/// Prepare the witness for [`QrProfileAttest`]: `(value, residue_filter,
-/// interpolant, quotient, sequence)`.
-#[must_use]
-pub fn qr_profile_attest(
-    (filter, _right): (StepLeft<QrProfileAttest>, StepRight<QrProfileAttest>),
-    value: Tachygram,
-) -> StepWitness<'static, QrProfileAttest> {
-    let (epoch, boundary, profile, ..) = filter;
-    let (residue, _non_residue) = profile.discriminants_by_side(boundary);
-    #[expect(
-        clippy::expect_used,
-        reason = "a path's discriminants are distinct and each root is on its side"
-    )]
-    let (interpolant, quotient) = profile
-        .class_decomposition(boundary, true, Fp::from(value))
-        .expect("a path's discriminants are distinct");
-    (
-        value,
-        residue.into_iter().collect(),
-        interpolant,
-        quotient,
-        NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
-    )
-}
-
 /// Prepare the witness for [`QrBucketSeal`]: `(prev_last)`.
 ///
 /// `prev_last` is the terminal anchor of the preceding epoch, the zero anchor
@@ -531,26 +475,25 @@ pub const fn qr_bucket_seal(
     (prev_last,)
 }
 
-/// Prepare the witness for [`QrUnspentInit`]: `(non_residue_filter,
-/// interpolant, quotient, contents)`.
+/// Prepare the witness for [`QrUnspentInit`]: `(value, classes, mask,
+/// sequence, contents)`.
+///
+/// # Panics
+///
+/// Panics when the bucket's profile depth exceeds
+/// [`QrProfile::MAX_DEPTH`](crate::primitives::QrProfile::MAX_DEPTH).
 #[must_use]
 pub fn qr_unspent_init(
-    (claim, _bucket): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
+    (bucket, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
+    value: Tachygram,
     bucket_members: &[Tachygram],
 ) -> StepWitness<'static, QrUnspentInit> {
-    let (_epoch, boundary, profile, _discriminant, value, ..) = claim;
-    let (_residue, non_residue) = profile.discriminants_by_side(boundary);
-    #[expect(
-        clippy::expect_used,
-        reason = "a path's discriminants are distinct and each root is on its side"
-    )]
-    let (interpolant, quotient) = profile
-        .class_decomposition(boundary, false, Fp::from(value))
-        .expect("a path's discriminants are distinct");
+    let (epoch, _anchor_prev, _anchor_last, boundary, profile, ..) = bucket;
     (
-        non_residue.into_iter().collect(),
-        interpolant,
-        quotient,
+        value,
+        QrClassRoots::of(Fp::from(value), boundary),
+        QrDepthMask::of(profile.depth),
+        NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
         bucket_members.iter().copied().collect(),
     )
 }

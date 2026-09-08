@@ -781,7 +781,7 @@ pub(crate) fn build_qr_partition<RNG: CryptoRng>(
     (start, end): (Anchor, Anchor),
     boundary: Anchor,
     capacity: usize,
-    depth: u64,
+    depth: u32,
 ) -> Vec<QrIntakeEntry> {
     let mut layer = build_qr_roots(rng, pool, (start, end), boundary, capacity);
     for _ in 0..depth {
@@ -798,41 +798,38 @@ pub(crate) fn build_qr_partition<RNG: CryptoRng>(
     layer
 }
 
-/// Build `profile`'s [`QrFilter`](qr::QrFilter): a seed, then one descent per
-/// bit of the path.
-pub(crate) fn build_qr_filter_pcd<RNG: CryptoRng>(
+/// Route the anchor span `(start, end)`'s tachygrams to `depth` along
+/// `value`'s own path, over intakes holding at most `capacity` members each.
+///
+/// Each layer splits every intake on the path, keeps `value`'s side, and
+/// merges same-profile neighbours as far as `capacity` allows. The work grows
+/// with the depth, not with the number of profiles.
+pub(crate) fn build_qr_branch<RNG: CryptoRng>(
     rng: &mut RNG,
-    epoch: EpochIndex,
+    pool: &PoolSim,
+    (start, end): (Anchor, Anchor),
     boundary: Anchor,
-    profile: QrProfile,
-) -> Pcd<qr::QrFilter> {
-    let (seeded, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            qr::QrFilterSeed,
-            witness::qr_filter_seed(((), ()), epoch, boundary),
-        )
-        .expect("QrFilterSeed");
-
-    let mut pcd = seeded;
-    for side in profile.path() {
-        let witness = witness::qr_filter_descend((*pcd.data(), ()), side);
-        let (descended, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                qr::QrFilterDescend,
-                witness,
-                pcd,
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("QrFilterDescend");
-        pcd = descended;
+    capacity: usize,
+    value: Fp,
+    depth: u32,
+) -> Vec<QrIntakeEntry> {
+    let mut layer = build_qr_roots(rng, pool, (start, end), boundary, capacity);
+    let mut discriminant = QrDiscriminant::of(boundary);
+    for _ in 0..depth {
+        let side = qr::classify(value, Fp::from(discriminant)).0;
+        let mut kept = Vec::with_capacity(layer.len());
+        for intake in layer {
+            let (residue, non_residue) = split_qr_intake(rng, intake);
+            kept.push(if side { residue } else { non_residue });
+        }
+        layer = merge_qr_run(rng, kept, capacity);
+        discriminant = discriminant.next();
     }
-    pcd
+    layer
 }
 
 /// The profile a value takes at `depth` levels of an epoch's discriminants.
-pub(crate) fn qr_profile_of(value: Fp, boundary: Anchor, depth: u64) -> QrProfile {
+pub(crate) fn qr_profile_of(value: Fp, boundary: Anchor, depth: u32) -> QrProfile {
     let mut profile = QrProfile::ROOT;
     let mut discriminant = QrDiscriminant::of(boundary);
     for _ in 0..depth {

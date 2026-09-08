@@ -1,10 +1,10 @@
 //! QR epoch evidence: one epoch's tachygrams partitioned by profile.
 //!
-//! Each depth classifies at a discriminant iterated from the boundary anchor
-//! that closes the epoch,
+//! Each depth classifies at a discriminant of the progression seeded on the
+//! boundary anchor that closes the epoch,
 //!
 //! $$
-//!   R_1 = H(\mathsf{boundary}), \qquad R_{j+1} = H(R_j).
+//!   R_1 = H(\mathsf{boundary}), \qquad R_{j+1} = R_j + 1.
 //! $$
 //!
 //! A value takes the residue side at depth $j$ iff $x + R_j$ is a square or
@@ -15,12 +15,14 @@
 //! partitions an intake at its discriminant into [`QrIntakeSides`],
 //! [`QrSideDescend`] carries one side down a level, and [`QrIntakeMerge`]
 //! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] is the
-//! only step that produces a [`QrBucket`].
+//! only step that produces a [`QrBucket`], and [`QrUnspentInit`] tests a
+//! value's profile against a bucket and opens the bucket at it.
 
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
+use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
     Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
@@ -34,7 +36,7 @@ use crate::{
     digest::poseidon,
     nullifier::Nullifier,
     primitives::{
-        Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, QrDiscriminant, QrFilterCommit, QrFilterPoly,
+        Anchor, EpochIndex, NfSeqPoly, QrClassRoots, QrDepthMask, QrDiscriminant,
         QrInterpolantPoly, QrProfile, QrQuotientPoly, Tachygram, TachygramSetCommit,
         TachygramSetPoly,
     },
@@ -71,8 +73,8 @@ impl Header for QrIntake {
                 Fp::from(anchor_prev),
                 Fp::from(anchor_last),
                 Fp::from(boundary),
-                Fp::from(profile.depth),
-                Fp::from(profile.bits),
+                Fp::from(u64::from(profile.depth)),
+                Fp::from(u64::from(profile.bits)),
                 Fp::from(discriminant),
             ],
             Vec::new(),
@@ -121,8 +123,8 @@ impl Header for QrIntakeSides {
                 Fp::from(anchor_prev),
                 Fp::from(anchor_last),
                 Fp::from(boundary),
-                Fp::from(profile.depth),
-                Fp::from(profile.bits),
+                Fp::from(u64::from(profile.depth)),
+                Fp::from(u64::from(profile.bits)),
                 Fp::from(discriminant),
             ],
             Vec::new(),
@@ -194,7 +196,7 @@ impl Step for QrStampIntakeSeed {
     /// `(anchor_prev, epoch, boundary, stamp_commit)`.
     type Witness<'source> = (Anchor, EpochIndex, Anchor, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(30);
+    const INDEX: Index = Index::new(27);
 
     fn witness<'source>(
         &self,
@@ -267,11 +269,11 @@ impl Step for QrIntakeMerge {
             "QrIntakeMerge: inputs derive from different boundary anchors",
         )?;
         enforce_zero(
-            Fp::from(profile.depth) - Fp::from(right_profile.depth),
+            Fp::from(u64::from(profile.depth)) - Fp::from(u64::from(right_profile.depth)),
             "QrIntakeMerge: inputs sit at different depths",
         )?;
         enforce_zero(
-            Fp::from(profile.bits) - Fp::from(right_profile.bits),
+            Fp::from(u64::from(profile.bits)) - Fp::from(u64::from(right_profile.bits)),
             "QrIntakeMerge: inputs sit at different profiles",
         )?;
         enforce_zero(
@@ -412,8 +414,9 @@ impl Step for QrIntakeSplit {
 /// child's commitment is read off the header. Both header commitments are
 /// selected by point arithmetic on `bit`, and both class identities are
 /// computed with the sibling's gated in, so no constraint branches on the
-/// witness. The parent's depth is checked below `u64::BITS`, so `bits` stays
-/// below $2^{64} < p$ and distinct paths of one depth never share a profile.
+/// witness. The parent's depth is checked below [`QrProfile::MAX_DEPTH`], so
+/// `bits` stays below $2^{32} < p$ and distinct paths of one depth never share
+/// a profile.
 #[derive(Debug)]
 pub struct QrSideDescend;
 
@@ -436,7 +439,7 @@ impl Step for QrSideDescend {
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // TODO: a real circuit needs a bit decomposition of `depth` here; mock
         // ragu accepts the native comparison.
-        if profile.depth >= u64::from(u64::BITS) {
+        if profile.depth >= u32::BITS {
             return Err(ragu::Error::InvalidWitness(
                 "QrSideDescend: profile has no bit left for another side".into(),
             ));
@@ -497,310 +500,6 @@ impl Step for QrSideDescend {
     }
 }
 
-/// The discriminants on one profile's path, as roots, sorted by the side
-/// taken at each.
-#[derive(Clone, Debug)]
-pub struct QrFilter;
-
-impl Header for QrFilter {
-    /// `(epoch, boundary, profile, discriminant, residue_filter,
-    /// non_residue_filter)`. `discriminant` is the one a descent from here
-    /// classifies at.
-    type Data = (
-        EpochIndex,
-        Anchor,
-        QrProfile,
-        QrDiscriminant,
-        QrFilterCommit,
-        QrFilterCommit,
-    );
-
-    const SUFFIX: Suffix = Suffix::new(16);
-
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (epoch, boundary, profile, discriminant, residue_filter, non_residue_filter) = *data;
-        (
-            vec![
-                Fp::from(u64::from(epoch.0)),
-                Fp::from(boundary),
-                Fp::from(profile.depth),
-                Fp::from(profile.bits),
-                Fp::from(discriminant),
-            ],
-            Vec::new(),
-            Vec::new(),
-            vec![Eq::from(residue_filter), Eq::from(non_residue_filter)],
-        )
-    }
-}
-
-/// Open an epoch's empty filter pair.
-///
-/// # Soundness
-///
-/// `epoch` and `boundary` are free; [`QrUnspentInit`] requires the bucket to
-/// agree on both.
-#[derive(Debug)]
-pub struct QrFilterSeed;
-
-impl Step for QrFilterSeed {
-    type Aux<'source> = ();
-    type Left = ();
-    type Output = QrFilter;
-    type Right = ();
-    /// `(epoch, boundary)`.
-    type Witness<'source> = (EpochIndex, Anchor);
-
-    const INDEX: Index = Index::new(25);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (epoch, boundary): Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        Ok((
-            (
-                epoch,
-                boundary,
-                QrProfile::ROOT,
-                QrDiscriminant::of(boundary),
-                QrFilterCommit::empty(),
-                QrFilterCommit::empty(),
-            ),
-            (),
-        ))
-    }
-}
-
-/// Extend side `bit`'s filter by $(Y - \mathsf{discriminant})$ and forward the
-/// other side.
-///
-/// Committed polynomials: the side's filter, the extended filter; two
-/// oracles. The multiplier is public in circuit.
-///
-/// # Soundness
-///
-/// The selected filter is pinned to the header by commit-equality, with the
-/// header commitment selected by point arithmetic on `bit`, and the challenge
-/// absorbs both commitments. `discriminant` iterates from `boundary` as an
-/// intake's does. The parent's depth is checked below `u64::BITS`, so
-/// `bits` stays below $2^{64} < p$ and distinct paths of one depth never
-/// share a profile.
-#[derive(Debug)]
-pub struct QrFilterDescend;
-
-impl Step for QrFilterDescend {
-    type Aux<'source> = ();
-    type Left = QrFilter;
-    type Output = QrFilter;
-    type Right = ();
-    /// `(bit, side_filter, extended)`.
-    type Witness<'source> = (bool, QrFilterPoly, QrFilterPoly);
-
-    const INDEX: Index = Index::new(26);
-
-    fn witness<'source>(
-        &self,
-        ctx: &mut ragu::StepCtx<'_>,
-        (bit, side_filter, extended): Self::Witness<'source>,
-        (epoch, boundary, profile, discriminant, residue_filter, non_residue_filter): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // TODO: a real circuit needs a bit decomposition of `depth` here; mock
-        // ragu accepts the native comparison.
-        if profile.depth >= u64::from(u64::BITS) {
-            return Err(ragu::Error::InvalidWitness(
-                "QrFilterDescend: profile has no bit left for another side".into(),
-            ));
-        }
-        // TODO: a real circuit must constrain `bit` boolean; the type carries it
-        // under mock ragu.
-        let side_commit = side_filter.commit();
-        let selected = Eq::from(non_residue_filter)
-            + (Eq::from(residue_filter) - Eq::from(non_residue_filter)) * Fp::from(u64::from(bit));
-        enforce_equal_point(
-            Eq::from(side_commit),
-            selected,
-            "QrFilterDescend: side filter does not match header",
-        )?;
-
-        let extended_commit = extended.commit();
-        let z = ctx.derive_challenge(&[side_commit.into(), extended_commit.into()])?;
-        let side_at_z = side_filter.eval(z);
-        let extended_at_z = extended.eval(z);
-        ctx.enforce_poly_query(side_commit.into(), z, side_at_z)?;
-        ctx.enforce_poly_query(extended_commit.into(), z, extended_at_z)?;
-        enforce_zero(
-            extended_at_z - side_at_z * (z - Fp::from(discriminant)),
-            "QrFilterDescend: extended filter does not record this discriminant",
-        )?;
-
-        let (child_residue, child_non_residue) = if bit {
-            (extended_commit, non_residue_filter)
-        } else {
-            (residue_filter, extended_commit)
-        };
-        Ok((
-            (
-                epoch,
-                boundary,
-                profile.descend(bit),
-                discriminant.next(),
-                child_residue,
-                child_non_residue,
-            ),
-            (),
-        ))
-    }
-}
-
-/// A tachygram attested residue-side at every residue-side discriminant of
-/// one profile's path, with the single-member sequence naming it in `epoch`.
-#[derive(Clone, Debug)]
-pub struct QrProfileClaim;
-
-impl Header for QrProfileClaim {
-    /// `(epoch, boundary, profile, discriminant, value, non_residue_filter,
-    /// sequence)`.
-    type Data = (
-        EpochIndex,
-        Anchor,
-        QrProfile,
-        QrDiscriminant,
-        Tachygram,
-        QrFilterCommit,
-        NfSeqCommit,
-    );
-
-    const SUFFIX: Suffix = Suffix::new(17);
-
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (epoch, boundary, profile, discriminant, value, non_residue_filter, sequence) = *data;
-        (
-            vec![
-                Fp::from(u64::from(epoch.0)),
-                Fp::from(boundary),
-                Fp::from(profile.depth),
-                Fp::from(profile.bits),
-                Fp::from(discriminant),
-                Fp::from(value),
-            ],
-            Vec::new(),
-            Vec::new(),
-            vec![Eq::from(non_residue_filter), Eq::from(sequence)],
-        )
-    }
-}
-
-/// Attest a tachygram's residue-side classifications against one profile's
-/// filter, and bind the single-member sequence naming it in `epoch`.
-///
-/// With $g$ interpolating the value's root at each residue-side discriminant,
-///
-/// $$
-///   g(Y)^2 - (\mathsf{value} + Y) = P_\mathsf{res}(Y)\, h(Y)
-/// $$
-///
-/// reads $g(R_j)^2 = \mathsf{value} + R_j$ at every root $R_j$ of
-/// $P_\mathsf{res}$, at any depth.
-///
-/// Committed polynomials: the residue filter, its interpolant, its quotient,
-/// the sequence; four oracles.
-///
-/// # Soundness
-///
-/// The filter is pinned to the header by commit-equality; `value` is free and
-/// absorbed as $G_0 \cdot \mathsf{value}$ into both challenges, so the
-/// identity forces `sequence` to the emitted member. Nothing here says the
-/// value is a nullifier; [`QrUnspentInit`] attests the non-residue side, opens
-/// the bucket, and gives the claim its segment reading.
-#[derive(Debug)]
-pub struct QrProfileAttest;
-
-impl Step for QrProfileAttest {
-    type Aux<'source> = ();
-    type Left = QrFilter;
-    type Output = QrProfileClaim;
-    type Right = ();
-    /// `(value, residue_filter, interpolant, quotient, sequence)`.
-    type Witness<'source> = (
-        Tachygram,
-        QrFilterPoly,
-        QrInterpolantPoly,
-        QrQuotientPoly,
-        NfSeqPoly,
-    );
-
-    const INDEX: Index = Index::new(27);
-
-    fn witness<'source>(
-        &self,
-        ctx: &mut ragu::StepCtx<'_>,
-        (value, residue_filter, interpolant, quotient, sequence): Self::Witness<'source>,
-        (epoch, boundary, profile, discriminant, residue_commit, non_residue_commit): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
-            Eq::from(residue_filter.commit()),
-            Eq::from(residue_commit),
-            "QrProfileAttest: residue filter does not match header",
-        )?;
-        let tested = Fp::from(value);
-        enforce_nonzero(tested, "QrProfileAttest: tested value is zero")?;
-
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
-        let binding = g0 * tested;
-
-        let interpolant_commit = interpolant.commit();
-        let quotient_commit = quotient.commit();
-        let y = ctx.derive_challenge(&[
-            residue_commit.into(),
-            interpolant_commit.into(),
-            quotient_commit.into(),
-            binding,
-        ])?;
-        let filter_at_y = residue_filter.eval(y);
-        let interpolant_at_y = interpolant.eval(y);
-        let quotient_at_y = quotient.eval(y);
-        ctx.enforce_poly_query(residue_commit.into(), y, filter_at_y)?;
-        ctx.enforce_poly_query(interpolant_commit.into(), y, interpolant_at_y)?;
-        ctx.enforce_poly_query(quotient_commit.into(), y, quotient_at_y)?;
-        enforce_zero(
-            interpolant_at_y.square() - (tested + y) - filter_at_y * quotient_at_y,
-            "QrProfileAttest: value fails the residue side of this profile",
-        )?;
-
-        let sequence_commit = sequence.commit();
-        let z = ctx.derive_challenge(&[sequence_commit.into(), binding])?;
-        let sequence_at_z = sequence.eval(z);
-        let member_at_z = indexed_multiset::direct_eval([(u64::from(epoch), tested)], z);
-        enforce_zero(
-            sequence_at_z - member_at_z,
-            "QrProfileAttest: sequence does not match the tested value",
-        )?;
-        ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
-
-        Ok((
-            (
-                epoch,
-                boundary,
-                profile,
-                discriminant,
-                value,
-                non_residue_commit,
-                sequence_commit,
-            ),
-            (),
-        ))
-    }
-}
-
 /// One profile's members over a whole epoch.
 ///
 /// `anchor_prev` is the epoch's opening boundary anchor, `anchor_last` its
@@ -833,8 +532,8 @@ impl Header for QrBucket {
                 Fp::from(anchor_prev),
                 Fp::from(anchor_last),
                 Fp::from(boundary),
-                Fp::from(profile.depth),
-                Fp::from(profile.bits),
+                Fp::from(u64::from(profile.depth)),
+                Fp::from(u64::from(profile.bits)),
                 Fp::from(discriminant),
             ],
             Vec::new(),
@@ -878,7 +577,7 @@ impl Step for QrBucketSeal {
     /// `(prev_last)`, the terminal anchor of the preceding epoch.
     type Witness<'source> = (Anchor,);
 
-    const INDEX: Index = Index::new(29);
+    const INDEX: Index = Index::new(26);
 
     fn witness<'source>(
         &self,
@@ -915,126 +614,152 @@ impl Step for QrBucketSeal {
     }
 }
 
-/// Start an [`ArbitraryUnspent`] from a [`QrBucket`]: attest the claimed
-/// value's non-residue side, then open the bucket at it for nonzero.
+/// Start an [`ArbitraryUnspent`] from a [`QrBucket`].
 ///
-/// With [`QrProfileAttest`], the value's class is fixed at every discriminant
-/// of the bucket's path, so no other bucket of the epoch can hold it. The
-/// emitted segment reads the value as a nullifier and covers the bucket's own
-/// span, one epoch, so consecutive epochs' segments need an
+/// The step fixes the value's side at every discriminant of the epoch, matches
+/// the bucket's profile against the first `depth` of them, and opens the
+/// bucket at the value for nonzero. With $x$ the value and $R_j = R_1 + (j -
+/// 1)$, each position witnesses a side $b_j$ and a root $r_j$ with
+///
+/// $$
+///   r_j^2 = \begin{cases} x + R_j & b_j = 1 \\ c\,(x + R_j) & b_j = 0
+///   \end{cases}
+///   \qquad
+///   b_j = 0 \implies x + R_j \neq 0.
+/// $$
+///
+/// A prefix mask $m_1 \ge \cdots \ge m_{32}$ with $\sum_j m_j =
+/// \mathsf{depth}$ selects the bucket's path, and the fold
+///
+/// $$
+///   a_0 = 0, \qquad a_j = a_{j-1} + m_j\,(a_{j-1} + b_j), \qquad a_{32} =
+///   \mathsf{bits}
+/// $$
+///
+/// holds exactly when the bucket's sides are the value's. The emitted segment
+/// reads the value as a nullifier and covers the bucket's own span, one epoch,
+/// so consecutive epochs' segments need an
 /// [`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed) between them.
 ///
-/// Committed polynomials: the non-residue filter, its interpolant, its
-/// quotient, the contents; four oracles.
+/// Committed polynomials: the sequence, the contents; two oracles. Gate cost
+/// is one Poseidon permutation for $R_1$, one scalar multiplication binding
+/// the value into the challenge, and a few multiplications per position.
 ///
 /// # Soundness
 ///
-/// Claim and bucket must agree on epoch, boundary, profile and discriminant;
-/// the span is [`QrBucketSeal`]'s. $\mathsf{nf} = -R_j$ has root zero under
-/// either class, so the non-residue filter must open nonzero at
-/// $-\mathsf{nf}$, matching where [`QrIntakeSplit`] files the exceptional
-/// value.
+/// $c$ is a non-residue, so when $x + R_j \neq 0$ exactly one side has a
+/// root and $b_j$ is the value's true side there; when $x + R_j = 0$ both
+/// sides have root zero and the nonzero rule forces the residue side, where
+/// [`QrIntakeSplit`] files the exceptional value. Every side is therefore the
+/// value's own, independent of the header, and the masked fold compares the
+/// bucket's prefix against them. Positions past `depth` are tested but
+/// compared to nothing. The mask sum bounds `depth` by
+/// [`QrProfile::MAX_DEPTH`] in circuit. $R_1$ is derived from the bucket's
+/// `boundary`, which [`QrBucketSeal`] pins to the epoch's terminal anchor;
+/// the bucket's `discriminant` is checked against the progression. `value`
+/// is absorbed as $G_0 \cdot \mathsf{value}$ into the sequence challenge, so
+/// the sequence names the emitted member.
 #[derive(Debug)]
 pub struct QrUnspentInit;
 
 impl Step for QrUnspentInit {
     type Aux<'source> = ();
-    type Left = QrProfileClaim;
+    type Left = QrBucket;
     type Output = ArbitraryUnspent;
-    type Right = QrBucket;
-    /// `(non_residue_filter, interpolant, quotient, contents)`.
+    type Right = ();
+    /// `(value, classes, mask, sequence, contents)`.
     type Witness<'source> = (
-        QrFilterPoly,
-        QrInterpolantPoly,
-        QrQuotientPoly,
+        Tachygram,
+        QrClassRoots,
+        QrDepthMask,
+        NfSeqPoly,
         TachygramSetPoly,
     );
 
-    const INDEX: Index = Index::new(28);
+    const INDEX: Index = Index::new(25);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (non_residue_filter, interpolant, quotient, contents): Self::Witness<'source>,
-        (epoch, boundary, profile, discriminant, value, non_residue_commit, sequence_commit): <Self::Left as Header>::Data,
-        (
-            bucket_epoch,
-            anchor_prev,
-            anchor_last,
-            bucket_boundary,
-            bucket_profile,
-            bucket_discriminant,
-            bucket_commit,
-        ): <Self::Right as Header>::Data,
+        (value, classes, mask, sequence, contents): Self::Witness<'source>,
+        (epoch, anchor_prev, anchor_last, boundary, profile, discriminant, contents_commit): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(u64::from(epoch.0)) - Fp::from(u64::from(bucket_epoch.0)),
-            "QrUnspentInit: claim and bucket cover different epochs",
-        )?;
-        enforce_zero(
-            Fp::from(boundary) - Fp::from(bucket_boundary),
-            "QrUnspentInit: claim and bucket derive from different boundary anchors",
-        )?;
-        enforce_zero(
-            Fp::from(profile.depth) - Fp::from(bucket_profile.depth),
-            "QrUnspentInit: claim and bucket sit at different depths",
-        )?;
-        enforce_zero(
-            Fp::from(profile.bits) - Fp::from(bucket_profile.bits),
-            "QrUnspentInit: claim and bucket sit at different profiles",
-        )?;
-        enforce_zero(
-            Fp::from(discriminant) - Fp::from(bucket_discriminant),
-            "QrUnspentInit: claim and bucket disagree on the discriminant",
-        )?;
-        enforce_equal_point(
-            Eq::from(non_residue_filter.commit()),
-            Eq::from(non_residue_commit),
-            "QrUnspentInit: non-residue filter does not match header",
-        )?;
         enforce_equal_point(
             Eq::from(contents.commit()),
-            Eq::from(bucket_commit),
+            Eq::from(contents_commit),
             "QrUnspentInit: contents do not match the bucket",
         )?;
-
         let tested = Fp::from(value);
+        enforce_nonzero(tested, "QrUnspentInit: tested value is zero")?;
+
+        let first = poseidon::qr_discriminant(Fp::from(boundary));
+        // TODO: a real circuit must constrain every side and mask bit boolean;
+        // the types carry it under mock ragu.
+        let mut shifted = tested + first;
+        let mut depth_acc = Fp::ZERO;
+        let mut bits_acc = Fp::ZERO;
+        for (position, (&(side, root), &selected)) in classes.0.iter().zip(&mask.0).enumerate() {
+            let side_fp = Fp::from(u64::from(side));
+            conditional_enforce_equal(
+                side,
+                root.square(),
+                shifted,
+                "QrUnspentInit: root does not square to the residue class",
+            )?;
+            conditional_enforce_equal(
+                !side,
+                root.square(),
+                QUADRATIC_NON_RESIDUE * shifted,
+                "QrUnspentInit: root does not square to the non-residue class",
+            )?;
+            enforce_nonzero(
+                shifted * (Fp::ONE - side_fp) + side_fp,
+                "QrUnspentInit: exceptional discriminant claimed the non-residue class",
+            )?;
+
+            let selected_fp = Fp::from(u64::from(selected));
+            if let Some(&next) = mask.0.get(position + 1) {
+                enforce_zero(
+                    Fp::from(u64::from(next)) * (Fp::ONE - selected_fp),
+                    "QrUnspentInit: depth mask is not a prefix",
+                )?;
+            }
+            depth_acc += selected_fp;
+            bits_acc += selected_fp * (bits_acc + side_fp);
+            shifted += Fp::ONE;
+        }
+        enforce_zero(
+            depth_acc - Fp::from(u64::from(profile.depth)),
+            "QrUnspentInit: depth mask does not match the bucket's depth",
+        )?;
+        enforce_zero(
+            bits_acc - Fp::from(u64::from(profile.bits)),
+            "QrUnspentInit: value does not take the bucket's profile",
+        )?;
+        enforce_zero(
+            first + depth_acc - Fp::from(discriminant),
+            "QrUnspentInit: bucket discriminant is off the epoch's progression",
+        )?;
+
         #[expect(clippy::expect_used, reason = "constant size")]
         let &g0 = Pasta::host_generators(Pasta::baked())
             .g()
             .first()
             .expect("at least one generator");
         let binding = g0 * tested;
-        let interpolant_commit = interpolant.commit();
-        let quotient_commit = quotient.commit();
-        let y = ctx.derive_challenge(&[
-            non_residue_commit.into(),
-            interpolant_commit.into(),
-            quotient_commit.into(),
-            binding,
-        ])?;
-        let filter_at_y = non_residue_filter.eval(y);
-        let interpolant_at_y = interpolant.eval(y);
-        let quotient_at_y = quotient.eval(y);
-        ctx.enforce_poly_query(non_residue_commit.into(), y, filter_at_y)?;
-        ctx.enforce_poly_query(interpolant_commit.into(), y, interpolant_at_y)?;
-        ctx.enforce_poly_query(quotient_commit.into(), y, quotient_at_y)?;
+        let sequence_commit = sequence.commit();
+        let z = ctx.derive_challenge(&[sequence_commit.into(), binding])?;
+        let sequence_at_z = sequence.eval(z);
+        let member_at_z = indexed_multiset::direct_eval([(u64::from(epoch), tested)], z);
         enforce_zero(
-            interpolant_at_y.square()
-                - QUADRATIC_NON_RESIDUE * (tested + y)
-                - filter_at_y * quotient_at_y,
-            "QrUnspentInit: nullifier fails the non-residue side of this profile",
+            sequence_at_z - member_at_z,
+            "QrUnspentInit: sequence does not match the tested value",
         )?;
-
-        let filter_at_exceptional = non_residue_filter.eval(-tested);
-        ctx.enforce_poly_query(non_residue_commit.into(), -tested, filter_at_exceptional)?;
-        enforce_nonzero(
-            filter_at_exceptional,
-            "QrUnspentInit: exceptional discriminant claimed the non-residue class",
-        )?;
+        ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
 
         let contents_at_value = contents.eval(tested);
-        ctx.enforce_poly_query(bucket_commit.into(), tested, contents_at_value)?;
+        ctx.enforce_poly_query(contents_commit.into(), tested, contents_at_value)?;
         enforce_nonzero(
             contents_at_value,
             "QrUnspentInit: found nullifier in the bucket",
