@@ -5,26 +5,26 @@ use ff::Field as _;
 use pasta_curves::{Eq, Fp};
 use ragu::Polynomial;
 
-use super::Anchor;
 use crate::{collections::qr, digest::poseidon};
 
-/// One depth's discriminant $R_j$, with $R_1 = H(\mathsf{boundary})$ and
-/// $R_{j+1} = R_j + 1$. Every discriminant postdates the epoch's tachygrams.
+/// An epoch's first discriminant $R_1$, the digest of entropy the routing
+/// prover chooses.
+///
+/// Depth $j$ classifies at $R_{j+1} = R_1 + j$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(pub Fp);
 
 impl QrDiscriminant {
-    /// The epoch's first discriminant, seeded on the boundary anchor that
-    /// closes the epoch.
+    /// Derive $R_1$ from an arbitrary value.
     #[must_use]
-    pub fn of(boundary: Anchor) -> Self {
-        Self(poseidon::qr_discriminant(Fp::from(boundary)))
+    pub fn derive(entropy: Fp) -> Self {
+        Self(poseidon::qr_discriminant(entropy))
     }
 
-    /// The next depth's discriminant.
+    /// The discriminant a split at `depth` classifies at.
     #[must_use]
-    pub fn next(self) -> Self {
-        Self(self.0 + Fp::ONE)
+    pub fn at(self, depth: u32) -> Fp {
+        self.0 + Fp::from(u64::from(depth))
     }
 }
 
@@ -78,7 +78,7 @@ pub struct QrQuotientCommit(Eq);
 ///
 /// A profile descends at most [`MAX_DEPTH`](Self::MAX_DEPTH) times; within
 /// that bound two paths never share an encoding.
-#[derive(Clone, Copy, Debug, PartialEq, TotalEq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct QrProfile {
     /// The number of splits taken.
     pub depth: u32,
@@ -119,14 +119,14 @@ impl QrProfile {
 pub struct QrClassRoots(pub [(bool, Fp); QrProfile::MAX_DEPTH]);
 
 impl QrClassRoots {
-    /// Classify `value` at every discriminant of the epoch closed by
-    /// `boundary`.
+    /// Classify `value` at every discriminant of the progression from
+    /// `discriminant`.
     #[must_use]
-    pub fn of(value: Fp, boundary: Anchor) -> Self {
-        let mut discriminant = QrDiscriminant::of(boundary);
+    pub fn of(value: Fp, discriminant: QrDiscriminant) -> Self {
+        let mut shifted = value + Fp::from(discriminant);
         Self(array::from_fn(|_| {
-            let class = qr::classify(value, Fp::from(discriminant));
-            discriminant = discriminant.next();
+            let class = qr::classify(shifted, Fp::ZERO);
+            shifted += Fp::ONE;
             class
         }))
     }
@@ -199,33 +199,31 @@ mod tests {
 
     #[test]
     fn the_discriminants_progress_by_one() {
-        let boundary = Anchor::from(Fp::from(7));
-        let first = QrDiscriminant::of(boundary);
-        assert_eq!(first, QrDiscriminant::of(boundary));
-        assert_eq!(first.next().0, first.0 + Fp::ONE);
-        assert_eq!(QrDiscriminant(-Fp::ONE).next().0, Fp::ZERO);
+        let first = QrDiscriminant::from(Fp::from(7));
+        assert_eq!(first.at(0), Fp::from(7));
+        assert_eq!(first.at(1), Fp::from(8));
+        assert_eq!(first.at(u32::BITS), Fp::from(7 + 32));
+        assert_eq!(QrDiscriminant::from(-Fp::ONE).at(1), Fp::ZERO);
     }
 
     #[test]
     fn class_roots_square_to_the_shifted_value() {
-        let boundary = Anchor::from(Fp::from(11));
+        let discriminant = QrDiscriminant::from(Fp::from(11));
         for value in [Fp::from(3), Fp::from(1_000_003), -Fp::from(9)] {
-            let QrClassRoots(classes) = QrClassRoots::of(value, boundary);
-            let mut discriminant = QrDiscriminant::of(boundary);
-            for (side, root) in classes {
-                let shifted = value + Fp::from(discriminant);
+            let QrClassRoots(classes) = QrClassRoots::of(value, discriminant);
+            for (depth, (side, root)) in (0..).zip(classes) {
+                let shifted = value + discriminant.at(depth);
                 assert_eq!(root.square(), qr::class_multiplier(side) * shifted);
-                discriminant = discriminant.next();
             }
         }
     }
 
     #[test]
     fn the_fixed_point_takes_the_residue_side_with_root_zero() {
-        let boundary = Anchor::from(Fp::from(13));
+        let discriminant = QrDiscriminant::from(Fp::from(13));
         let position = 5;
-        let value = -(Fp::from(QrDiscriminant::of(boundary)) + Fp::from(position));
-        let QrClassRoots(classes) = QrClassRoots::of(value, boundary);
+        let value = -discriminant.at(position);
+        let QrClassRoots(classes) = QrClassRoots::of(value, discriminant);
         assert_eq!(
             classes[usize::try_from(position).unwrap()],
             (true, Fp::ZERO)

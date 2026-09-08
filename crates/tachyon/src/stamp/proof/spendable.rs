@@ -290,11 +290,9 @@ impl Step for SummarySpendableInit {
 /// polynomials, root through split and merge, so a root of any bucket is a
 /// tachygram published in the bucket's span. The span closes by equality with
 /// the segment's: `anchor_last` is emitted and reaches consensus through the
-/// lineage, and [`QrBucketSeal`](super::qr::QrBucketSeal) ties the bucket's own
-/// `anchor_last` to the boundary its routing used, so the stamp commitments
-/// absorbed across the span are the published ones. Without that equality a
-/// bucket over invented stamps onto the real opening anchor would pass the
-/// opening.
+/// lineage, so the stamp commitments absorbed across the span are the
+/// published ones. Without that equality a bucket over invented stamps onto
+/// the real opening anchor would pass the opening.
 #[derive(Debug)]
 pub struct QrSpendableInit;
 
@@ -319,7 +317,7 @@ impl Step for QrSpendableInit {
             (unspent_epoch_last, unspent_nf_last),
             unspent_anchor_last,
         ): <Self::Left as Header>::Data,
-        (bucket_epoch, bucket_anchor_prev, bucket_anchor_last, _, _, _, bucket_commit): <Self::Right as Header>::Data,
+        (bucket_epoch, bucket_anchor_prev, bucket_anchor_last, _, _, bucket_commit): <Self::Right as Header>::Data,
     ) -> ragu::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             Eq::from(contents.commit()),

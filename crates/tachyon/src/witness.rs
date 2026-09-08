@@ -353,32 +353,32 @@ pub fn qr_spendable_init(
     (bucket_members.iter().copied().collect(),)
 }
 
-/// Prepare the witness for [`QrSummaryIntakeInit`]: `(boundary)`.
+/// Prepare the witness for [`QrSummaryIntakeInit`]: `(discriminant_entropy)`.
 #[must_use]
 pub const fn qr_summary_intake_init(
     (_left, _right): (
         StepLeft<QrSummaryIntakeInit>,
         StepRight<QrSummaryIntakeInit>,
     ),
-    boundary: Anchor,
+    discriminant_entropy: Fp,
 ) -> StepWitness<'static, QrSummaryIntakeInit> {
-    (boundary,)
+    (discriminant_entropy,)
 }
 
 /// Prepare the witness for [`QrStampIntakeSeed`]: `(anchor_prev, epoch,
-/// boundary, stamp_commit)`.
+/// discriminant_entropy, stamp_commit)`.
 #[must_use]
 pub fn qr_stamp_intake_seed(
     (_left, _right): (StepLeft<QrStampIntakeSeed>, StepRight<QrStampIntakeSeed>),
     anchor_prev: Anchor,
     epoch: EpochIndex,
-    boundary: Anchor,
+    discriminant_entropy: Fp,
     tgs: &[Tachygram],
 ) -> StepWitness<'static, QrStampIntakeSeed> {
     (
         anchor_prev,
         epoch,
-        boundary,
+        discriminant_entropy,
         tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
     )
 }
@@ -409,10 +409,10 @@ pub fn qr_intake_split(
     (intake, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
     members: &[Tachygram],
 ) -> StepWitness<'static, QrIntakeSplit> {
-    let (.., discriminant, _contents) = intake;
+    let (_epoch, _anchor_prev, _anchor_last, discriminant, profile, _contents) = intake;
     let (residue, non_residue) = collections::qr::split(
         members.iter().copied().map(Fp::from),
-        Fp::from(discriminant),
+        discriminant.at(profile.depth),
     );
     (
         members.iter().copied().collect::<TachygramSetPoly>(),
@@ -439,17 +439,17 @@ pub fn qr_side_descend(
     members: &[Tachygram],
     side: bool,
 ) -> StepWitness<'static, QrSideDescend> {
-    let (.., discriminant, _residue, _non_residue) = sides;
+    let (_epoch, _anchor_prev, _anchor_last, discriminant, profile, _residue, _non_residue) = sides;
     let (residue, non_residue) = collections::qr::split(
         members.iter().copied().map(Fp::from),
-        Fp::from(discriminant),
+        discriminant.at(profile.depth),
     );
     let sibling = if side { non_residue } else { residue };
     #[expect(clippy::expect_used, reason = "members of a split are distinct")]
     let (interpolant, quotient) = collections::qr::decomposition(
         &sibling,
         collections::qr::class_multiplier(!side),
-        Fp::from(discriminant),
+        discriminant.at(profile.depth),
     )
     .expect("members of a split are distinct");
     (
@@ -488,10 +488,10 @@ pub fn qr_unspent_init(
     value: Tachygram,
     bucket_members: &[Tachygram],
 ) -> StepWitness<'static, QrUnspentInit> {
-    let (epoch, _anchor_prev, _anchor_last, boundary, profile, ..) = bucket;
+    let (epoch, _anchor_prev, _anchor_last, discriminant, profile, _contents) = bucket;
     (
         value,
-        QrClassRoots::of(Fp::from(value), boundary),
+        QrClassRoots::of(Fp::from(value), discriminant),
         QrDepthMask::of(profile.depth),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
         bucket_members.iter().copied().collect(),

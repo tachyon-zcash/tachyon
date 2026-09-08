@@ -429,14 +429,6 @@ impl PoolSim {
         self.anchor_index[&anchor].0.epoch()
     }
 
-    /// The boundary anchor closing the epoch `terminal` sits in, which is what
-    /// seeds that epoch's QR discriminants.
-    pub fn boundary_after(&self, terminal: Anchor) -> Anchor {
-        terminal
-            .next_epoch(self.epoch_at(terminal).next())
-            .expect("an indexed anchor sits in a real epoch")
-    }
-
     pub fn advance(
         &mut self,
         count: u32,
@@ -607,11 +599,12 @@ pub(crate) fn seed_qr_stamp_intake<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     stamp: &StampEntry,
-    boundary: Anchor,
+    discriminant_entropy: Fp,
 ) -> QrIntakeEntry {
     let (entry, members) = (stamp.0, stamp.1.clone());
     let epoch = pool.epoch_at(entry);
-    let witness = witness::qr_stamp_intake_seed(((), ()), entry, epoch, boundary, &members);
+    let witness =
+        witness::qr_stamp_intake_seed(((), ()), entry, epoch, discriminant_entropy, &members);
     let (pcd, ()) = PROOF_SYSTEM
         .seed(rng, qr::QrStampIntakeSeed, witness)
         .expect("QrStampIntakeSeed");
@@ -630,7 +623,7 @@ fn build_qr_roots<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     (start, end): (Anchor, Anchor),
-    boundary: Anchor,
+    discriminant_entropy: Fp,
     capacity: usize,
 ) -> Vec<QrIntakeEntry> {
     let mut runs: Vec<Vec<&StampEntry>> = Vec::new();
@@ -660,11 +653,11 @@ fn build_qr_roots<RNG: CryptoRng>(
             run.last().expect("nonempty run"),
         );
         if run.len() == 1 && first.1.len() > capacity {
-            roots.push(seed_qr_stamp_intake(rng, pool, first, boundary));
+            roots.push(seed_qr_stamp_intake(rng, pool, first, discriminant_entropy));
             continue;
         }
         let (summary, members) = build_summary_pcd(rng, pool, (first.0, last.3));
-        let witness = witness::qr_summary_intake_init((*summary.data(), ()), boundary);
+        let witness = witness::qr_summary_intake_init((*summary.data(), ()), discriminant_entropy);
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
@@ -732,7 +725,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
     rng: &mut RNG,
     intake: QrIntakeEntry,
 ) -> (QrIntakeEntry, QrIntakeEntry) {
-    let (.., discriminant, _contents) = *intake.pcd.data();
+    let (_epoch, _anchor_prev, _anchor_last, discriminant, profile, _contents) = *intake.pcd.data();
     let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
     let (sides, ()) = PROOF_SYSTEM
         .fuse(
@@ -750,7 +743,9 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
             .members
             .iter()
             .copied()
-            .filter(|&member| qr::classify(Fp::from(member), Fp::from(discriminant)).0 == side)
+            .filter(|&member| {
+                qr::classify(Fp::from(member), discriminant.at(profile.depth)).0 == side
+            })
             .collect::<Vec<_>>();
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
@@ -779,11 +774,11 @@ pub(crate) fn build_qr_partition<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     (start, end): (Anchor, Anchor),
-    boundary: Anchor,
+    discriminant_entropy: Fp,
     capacity: usize,
     depth: u32,
 ) -> Vec<QrIntakeEntry> {
-    let mut layer = build_qr_roots(rng, pool, (start, end), boundary, capacity);
+    let mut layer = build_qr_roots(rng, pool, (start, end), discriminant_entropy, capacity);
     for _ in 0..depth {
         let mut residue = Vec::new();
         let mut non_residue = Vec::new();
@@ -808,33 +803,31 @@ pub(crate) fn build_qr_branch<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     (start, end): (Anchor, Anchor),
-    boundary: Anchor,
+    discriminant_entropy: Fp,
     capacity: usize,
     value: Fp,
     depth: u32,
 ) -> Vec<QrIntakeEntry> {
-    let mut layer = build_qr_roots(rng, pool, (start, end), boundary, capacity);
-    let mut discriminant = QrDiscriminant::of(boundary);
-    for _ in 0..depth {
-        let side = qr::classify(value, Fp::from(discriminant)).0;
+    let discriminant = QrDiscriminant::derive(discriminant_entropy);
+    let mut layer = build_qr_roots(rng, pool, (start, end), discriminant_entropy, capacity);
+    for level in 0..depth {
+        let side = qr::classify(value, discriminant.at(level)).0;
         let mut kept = Vec::with_capacity(layer.len());
         for intake in layer {
             let (residue, non_residue) = split_qr_intake(rng, intake);
             kept.push(if side { residue } else { non_residue });
         }
         layer = merge_qr_run(rng, kept, capacity);
-        discriminant = discriminant.next();
     }
     layer
 }
 
-/// The profile a value takes at `depth` levels of an epoch's discriminants.
-pub(crate) fn qr_profile_of(value: Fp, boundary: Anchor, depth: u32) -> QrProfile {
+/// The profile a value takes at `depth` levels of the progression from
+/// `discriminant`.
+pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32) -> QrProfile {
     let mut profile = QrProfile::ROOT;
-    let mut discriminant = QrDiscriminant::of(boundary);
-    for _ in 0..depth {
-        profile = profile.descend(qr::classify(value, Fp::from(discriminant)).0);
-        discriminant = discriminant.next();
+    for level in 0..depth {
+        profile = profile.descend(qr::classify(value, discriminant.at(level)).0);
     }
     profile
 }
