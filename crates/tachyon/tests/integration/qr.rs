@@ -1068,7 +1068,7 @@ fn qr_partition_covers_the_epoch_by_profile() {
         );
         for &member in &intake.members {
             for level in 0..profile.depth {
-                let side = (profile.bits >> (profile.depth - 1 - level)) & 1 == 1;
+                let side = ((profile.bits >> (profile.depth - 1 - level)) & 1) == 1;
                 assert_eq!(
                     qr::classify(Fp::from(member), discriminant.at(level)).0,
                     side,
@@ -1140,7 +1140,7 @@ fn qr_partition_chunks_a_span_past_the_polynomial_capacity() {
                 "the side's intakes cover adjacent spans"
             );
             assert!(
-                pair[0].members.len() + pair[1].members.len() > capacity,
+                (pair[0].members.len() + pair[1].members.len()) > capacity,
                 "neighbours merge as far as the capacity allows"
             );
             cursor = pair[1].pcd.data().2;

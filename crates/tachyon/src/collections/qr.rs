@@ -89,7 +89,7 @@ fn divide_by_root(coeffs: &mut Vec<Fp>, root: Fp) -> Option<()> {
     let mut carry = Fp::ZERO;
     for coeff in coeffs.iter_mut().rev() {
         let quotient_coeff = carry;
-        carry = *coeff + carry * root;
+        carry = *coeff + (carry * root);
         *coeff = quotient_coeff;
     }
     // After the pass, `carry` is the remainder and the vector holds the
@@ -291,7 +291,7 @@ mod tests {
         for count in [0, 1, 2, 7] {
             let discriminant = Fp::random(&mut *rng);
             let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-                .take(2 * count + 2)
+                .take((2 * count) + 2)
                 .collect();
             let (residue, non_residue) = split(values, discriminant);
             let (g1, h1) = decomposition(&residue, class_multiplier(true), discriminant).unwrap();
@@ -327,7 +327,7 @@ mod tests {
             for _ in 0..4 {
                 let z = Fp::random(&mut *rng);
                 assert_eq!(
-                    g.eval(z).square() - class * (z + discriminant),
+                    g.eval(z).square() - (class * (z + discriminant)),
                     q.eval(z) * h.eval(z)
                 );
             }

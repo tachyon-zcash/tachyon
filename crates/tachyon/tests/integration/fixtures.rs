@@ -525,7 +525,7 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
 ) -> (Pcd<summary::Summary>, Vec<Tachygram>) {
     let entries = pool.stamps_between(start, end);
     let members: usize = entries.iter().map(|entry| entry.1.len()).sum();
-    assert!(members < 1 << Polynomial::R, "span exceeds one summary");
+    assert!(members < (1 << Polynomial::R), "span exceeds one summary");
     let epoch = pool.anchor_index[&start].0.epoch();
 
     let (first, rest) = entries
@@ -631,7 +631,7 @@ fn build_qr_roots<RNG: CryptoRng>(
     let mut held = 0;
     for entry in pool.stamps_between(start, end) {
         let size = entry.1.len();
-        if !open.is_empty() && held + size > capacity {
+        if !open.is_empty() && (held + size) > capacity {
             runs.push(mem::take(&mut open));
             held = 0;
         }
@@ -685,7 +685,7 @@ fn merge_qr_run<RNG: CryptoRng>(
 ) -> Vec<QrIntakeEntry> {
     let joins = |left: &QrIntakeEntry, right: &QrIntakeEntry| {
         left.pcd.data().4 == right.pcd.data().4
-            && left.members.len() + right.members.len() <= capacity
+            && (left.members.len() + right.members.len()) <= capacity
     };
 
     let mut merged: Vec<QrIntakeEntry> = Vec::new();

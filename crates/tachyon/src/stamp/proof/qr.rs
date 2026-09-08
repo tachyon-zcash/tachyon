@@ -436,14 +436,14 @@ impl Step for QrSideDescend {
         // under mock ragu.
         let sibling_commit = sibling_contents.commit();
         let sibling = Eq::from(residue)
-            + (Eq::from(non_residue) - Eq::from(residue)) * Fp::from(u64::from(bit));
+            + ((Eq::from(non_residue) - Eq::from(residue)) * Fp::from(u64::from(bit)));
         enforce_equal_point(
             Eq::from(sibling_commit),
             sibling,
             "QrSideDescend: sibling does not match the header",
         )?;
         let selected = Eq::from(non_residue)
-            + (Eq::from(residue) - Eq::from(non_residue)) * Fp::from(u64::from(bit));
+            + ((Eq::from(residue) - Eq::from(non_residue)) * Fp::from(u64::from(bit)));
 
         let interpolant_commit = interpolant.commit();
         let quotient_commit = quotient.commit();
@@ -460,11 +460,11 @@ impl Step for QrSideDescend {
         ctx.enforce_poly_query(interpolant_commit.into(), z, interpolant_at_z)?;
         ctx.enforce_poly_query(quotient_commit.into(), z, quotient_at_z)?;
         let shifted = z + discriminant.at(profile.depth);
-        let class_residual = interpolant_at_z.square() - sibling_at_z * quotient_at_z;
+        let class_residual = interpolant_at_z.square() - (sibling_at_z * quotient_at_z);
         let sibling_multiplier =
-            Fp::ONE + (QUADRATIC_NON_RESIDUE - Fp::ONE) * Fp::from(u64::from(bit));
+            Fp::ONE + ((QUADRATIC_NON_RESIDUE - Fp::ONE) * Fp::from(u64::from(bit)));
         enforce_zero(
-            class_residual - sibling_multiplier * shifted,
+            class_residual - (sibling_multiplier * shifted),
             "QrSideDescend: the sibling fails its class decomposition",
         )?;
 
@@ -676,13 +676,13 @@ impl Step for QrUnspentInit {
         let mut bits_acc = Fp::ZERO;
         for (&QrClassRoot(side, root), &selected) in classes.iter().zip(&mask) {
             let side_fp = Fp::from(u64::from(side));
-            let multiplier = QUADRATIC_NON_RESIDUE - (QUADRATIC_NON_RESIDUE - Fp::ONE) * side_fp;
+            let multiplier = QUADRATIC_NON_RESIDUE - ((QUADRATIC_NON_RESIDUE - Fp::ONE) * side_fp);
             enforce_zero(
-                root.square() - multiplier * shifted,
+                root.square() - (multiplier * shifted),
                 "QrUnspentInit: root does not square to the claimed class",
             )?;
             enforce_nonzero(
-                shifted * (Fp::ONE - side_fp) + side_fp,
+                (shifted * (Fp::ONE - side_fp)) + side_fp,
                 "QrUnspentInit: exceptional discriminant claimed the non-residue class",
             )?;
 
@@ -698,7 +698,7 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: depth mask does not match the bucket's depth",
         )?;
         enforce_zero(
-            index_acc.double() - depth_acc * (depth_acc - Fp::ONE),
+            index_acc.double() - (depth_acc * (depth_acc - Fp::ONE)),
             "QrUnspentInit: depth mask is not a prefix",
         )?;
         enforce_zero(
