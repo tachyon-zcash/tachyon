@@ -433,6 +433,96 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
     );
 }
 
+/// A split at `depth` opens the non-residue side at $-R_{\mathsf{depth}+1}$.
+#[test]
+fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    for depth in [1, 31] {
+        let epoch = EpochIndex(3);
+        let start = Anchor::from(Fp::random(&mut *rng));
+        let discriminant_entropy = Fp::random(&mut *rng);
+        let discriminant = QrDiscriminant::derive(discriminant_entropy);
+        // Choose x from the derived R_1 and the selected split depth.
+        let value = -Fp::from(discriminant) - Fp::from(u64::from(depth));
+        assert_ne!(value, Fp::ZERO);
+        let exceptional = Tachygram::from(value);
+        let members: Vec<Tachygram> = iter::repeat_with(|| Tachygram::from(Fp::random(&mut *rng)))
+            .take(8)
+            .chain([exceptional])
+            .collect();
+        assert!(members.iter().all(|member| Fp::from(*member) != Fp::ZERO));
+        for (index, member) in members.iter().enumerate() {
+            assert!(!members[index + 1..].contains(member));
+        }
+
+        let (summary, ()) = PROOF_SYSTEM
+            .seed(
+                rng,
+                summary::SummarySeed,
+                witness::summary_seed(((), ()), start, epoch, &members),
+            )
+            .expect("SummarySeed");
+        let (root, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSummaryIntakeInit,
+                witness::qr_summary_intake_init((*summary.data(), ()), discriminant_entropy),
+                summary,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("QrSummaryIntakeInit");
+
+        // Reach the selected depth through honest splits and descents, keeping
+        // the branch containing x rather than fabricating a deeper profile.
+        let mut intake = QrIntakeEntry { pcd: root, members };
+        for level in 0..depth {
+            let side = qr::classify(value, discriminant.at(level)).0;
+            let (residue_side, non_residue_side) = split_qr_intake(rng, intake);
+            intake = if side { residue_side } else { non_residue_side };
+        }
+        assert_eq!(intake.pcd.data().4.depth, depth);
+        assert!(intake.members.contains(&exceptional));
+        assert_eq!(value + discriminant.at(depth), Fp::ZERO);
+        PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrIntakeSplit,
+                witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members),
+                intake.pcd.clone(),
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("honest QrIntakeSplit accepts the exceptional value");
+
+        // Moving only x across the partition leaves the product intact, so
+        // only the opening at -R_{depth+1} separates the two filings.
+        let (residue, non_residue): (Vec<Tachygram>, Vec<Tachygram>) =
+            intake.members.iter().copied().partition(|member| {
+                *member != exceptional && qr::classify(Fp::from(*member), discriminant.at(depth)).0
+            });
+        assert!(!residue.contains(&exceptional));
+        assert!(non_residue.contains(&exceptional));
+        let (contents, ..) = witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members);
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrIntakeSplit,
+                (
+                    contents,
+                    residue.iter().copied().collect(),
+                    non_residue.iter().copied().collect(),
+                ),
+                intake.pcd,
+                Proof::trivial().carry::<()>(()),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(
+            invalid_witness(err),
+            "QrIntakeSplit: exceptional value claimed the non-residue class"
+        );
+    }
+}
+
 #[test]
 fn qr_side_descend_carries_each_side_one_level_down() {
     let rng = &mut StdRng::seed_from_u64(0);
