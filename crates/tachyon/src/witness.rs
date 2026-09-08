@@ -15,8 +15,8 @@ use crate::{
     note::Note,
     nullifier::Nullifier,
     primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, QrClassRoots, QrDepthMask,
-        Tachygram, TachygramSetPoly,
+        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, QrClassRoot, Tachygram,
+        TachygramSetPoly,
     },
     stamp::proof::{
         delegation::{NfDerive, NfMasterSeed, NullifierFuse},
@@ -491,8 +491,8 @@ pub fn qr_unspent_init(
     let (epoch, _anchor_prev, _anchor_last, discriminant, profile, _contents) = bucket;
     (
         value,
-        QrClassRoots::of(Fp::from(value), discriminant),
-        QrDepthMask::of(profile.depth),
+        QrClassRoot::along(Fp::from(value), discriminant),
+        profile.depth_mask(),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
         bucket_members.iter().copied().collect(),
     )

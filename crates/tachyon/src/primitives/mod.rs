@@ -14,7 +14,7 @@ pub use block_height::BlockHeight;
 pub use effect::Effect;
 pub use epoch::{EpochDiff, EpochIndex};
 pub use qr::{
-    QrClassRoots, QrDepthMask, QrDiscriminant, QrInterpolantCommit, QrInterpolantPoly, QrProfile,
+    QrClassRoot, QrDiscriminant, QrInterpolantCommit, QrInterpolantPoly, QrProfile,
     QrQuotientCommit, QrQuotientPoly,
 };
 pub use seq::{NfSeqCommit, NfSeqPoly};

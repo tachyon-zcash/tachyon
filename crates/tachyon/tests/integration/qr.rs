@@ -11,8 +11,8 @@ use pasta_curves::Fp;
 use ragu::{Pcd, Proof, Step};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoots, QrDepthMask, QrDiscriminant,
-    QrProfile, Tachygram, TachygramSetPoly,
+    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
+    TachygramSetPoly,
     constants::EPOCH_SIZE,
     note::Note,
     nullifier::Nullifier,
@@ -1703,8 +1703,8 @@ fn qr_unspent_init_rejects_a_root_off_its_class() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_nf, bucket, mut witness) = honest_unspent_init(rng);
 
-    let (_, QrClassRoots(ref mut roots), ..) = witness;
-    let (_, ref mut root) = roots[0];
+    let (_, ref mut roots, ..) = witness;
+    let QrClassRoot(_, ref mut root) = roots[0];
     let off = *root + Fp::ONE;
     assert_ne!(off.square(), root.square());
     *root = off;
@@ -1728,8 +1728,8 @@ fn qr_unspent_init_tests_sides_past_the_bucket_depth() {
     let position = 5;
     let shifted = Fp::from(nf) + discriminant.at(position);
     assert_ne!(shifted, Fp::ZERO);
-    let (_, QrClassRoots(ref mut roots), ..) = witness;
-    let (ref mut side, _) = roots[usize::try_from(position).unwrap()];
+    let (_, ref mut roots, ..) = witness;
+    let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
     *side = !*side;
 
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
@@ -1771,16 +1771,16 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     );
     let mut witness =
         witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-    let (_, QrClassRoots(honest_roots), ..) = witness;
+    let (_, honest_roots, ..) = witness;
     assert_eq!(
         honest_roots[usize::try_from(position).unwrap()],
-        (true, Fp::ZERO)
+        QrClassRoot(true, Fp::ZERO)
     );
     fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone())
         .expect("the fixed point passes on the residue side");
 
-    let (_, QrClassRoots(ref mut roots), ..) = witness;
-    let (ref mut side, _) = roots[usize::try_from(position).unwrap()];
+    let (_, ref mut roots, ..) = witness;
+    let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
     *side = false;
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
     assert_eq!(
@@ -1795,7 +1795,7 @@ fn qr_unspent_init_rejects_a_non_prefix_mask() {
     let (_nf, bucket, mut witness) = honest_unspent_init(rng);
 
     let (_, _, ref mut depth_mask, ..) = witness;
-    *depth_mask = QrDepthMask(array::from_fn(|position| position == 0 || position == 2));
+    *depth_mask = array::from_fn(|position| position == 0 || position == 2);
 
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
     assert_eq!(
@@ -1810,7 +1810,7 @@ fn qr_unspent_init_rejects_a_mask_of_the_wrong_depth() {
     let (_nf, bucket, mut witness) = honest_unspent_init(rng);
 
     let (_, _, ref mut depth_mask, ..) = witness;
-    *depth_mask = QrDepthMask::of(3);
+    *depth_mask = QrProfile { depth: 3, bits: 0 }.depth_mask();
 
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
     assert_eq!(
@@ -1841,7 +1841,7 @@ fn qr_unspent_init_rejects_a_bucket_past_the_maximum_depth() {
     });
     let (_, _, ref mut depth_mask, ..) = witness;
     // Bypass the constructor's range check to exercise the step's constraint.
-    *depth_mask = QrDepthMask([true; QrProfile::MAX_DEPTH]);
+    *depth_mask = [true; QrProfile::MAX_DEPTH];
     let err = fuse_unspent_init(rng, forged, witness.clone())
         .err()
         .unwrap();
@@ -1854,7 +1854,7 @@ fn qr_unspent_init_rejects_a_bucket_past_the_maximum_depth() {
         profile.depth = u32::MAX;
     });
     let (_, _, ref mut saturated_mask, ..) = witness;
-    *saturated_mask = QrDepthMask([true; QrProfile::MAX_DEPTH]);
+    *saturated_mask = [true; QrProfile::MAX_DEPTH];
     let saturated_err = fuse_unspent_init(rng, saturated, witness).err().unwrap();
     assert_eq!(
         invalid_witness(saturated_err),
@@ -1872,7 +1872,7 @@ fn qr_unspent_init_rejects_a_malformed_profile() {
     });
     let mut shallow = witness.clone();
     let (_, _, ref mut depth_mask, ..) = shallow;
-    *depth_mask = QrDepthMask::of(0);
+    *depth_mask = QrProfile::ROOT.depth_mask();
     let err = fuse_unspent_init(rng, forged, shallow).err().unwrap();
     assert_eq!(
         invalid_witness(err),

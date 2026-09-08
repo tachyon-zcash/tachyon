@@ -110,44 +110,44 @@ impl QrProfile {
             bits: (self.bits << 1) | u32::from(bit),
         }
     }
-}
 
-/// A value's side and square root at each of an epoch's discriminants, in
-/// depth order: `(true, r)` with $r^2 = x + R_j$, or `(false, r)` with $r^2 =
-/// c\,(x + R_j)$.
-#[derive(Clone, Copy, Debug, From, Into)]
-pub struct QrClassRoots(pub [(bool, Fp); QrProfile::MAX_DEPTH]);
-
-impl QrClassRoots {
-    /// Classify `value` at every discriminant of the progression from
-    /// `discriminant`.
-    #[must_use]
-    pub fn of(value: Fp, discriminant: QrDiscriminant) -> Self {
-        let mut shifted = value + Fp::from(discriminant);
-        Self(array::from_fn(|_| {
-            let class = qr::classify(shifted, Fp::ZERO);
-            shifted += Fp::ONE;
-            class
-        }))
-    }
-}
-
-/// The positions below a profile's depth: `depth` leading ones, then zeros.
-#[derive(Clone, Copy, Debug, From, Into)]
-pub struct QrDepthMask(pub [bool; QrProfile::MAX_DEPTH]);
-
-impl QrDepthMask {
-    /// The mask selecting the first `depth` positions.
+    /// The positions below this profile's depth: `depth` leading ones, then
+    /// zeros.
     ///
     /// # Panics
     ///
-    /// Panics when `depth` exceeds [`QrProfile::MAX_DEPTH`].
+    /// Panics when `depth` exceeds [`MAX_DEPTH`](Self::MAX_DEPTH).
     #[must_use]
-    pub fn of(depth: u32) -> Self {
-        assert!(depth <= u32::BITS, "depth out of range");
-        Self(array::from_fn(|position| {
-            u32::try_from(position).is_ok_and(|selected| selected < depth)
-        }))
+    pub fn depth_mask(self) -> [bool; Self::MAX_DEPTH] {
+        assert!(self.depth <= u32::BITS, "depth out of range");
+        array::from_fn(|position| {
+            u32::try_from(position).is_ok_and(|selected| selected < self.depth)
+        })
+    }
+}
+
+/// A value's side and square root at one discriminant: `(true, r)` with
+/// $r^2 = s$, or `(false, r)` with $r^2 = c\,s$, for $s$ the shifted value.
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct QrClassRoot(pub bool, pub Fp);
+
+impl QrClassRoot {
+    /// Classify `value` at `discriminant`.
+    #[must_use]
+    pub fn of(value: Fp, discriminant: Fp) -> Self {
+        qr::classify(value, discriminant).into()
+    }
+
+    /// Classify `value` at every discriminant of the progression from
+    /// `discriminant`, in depth order.
+    #[must_use]
+    pub fn along(value: Fp, discriminant: QrDiscriminant) -> [Self; QrProfile::MAX_DEPTH] {
+        let mut shifted = value + Fp::from(discriminant);
+        array::from_fn(|_| {
+            let class = Self::of(shifted, Fp::ZERO);
+            shifted += Fp::ONE;
+            class
+        })
     }
 }
 
@@ -210,8 +210,9 @@ mod tests {
     fn class_roots_square_to_the_shifted_value() {
         let discriminant = QrDiscriminant::from(Fp::from(11));
         for value in [Fp::from(3), Fp::from(1_000_003), -Fp::from(9)] {
-            let QrClassRoots(classes) = QrClassRoots::of(value, discriminant);
-            for (depth, (side, root)) in (0..).zip(classes) {
+            for (depth, QrClassRoot(side, root)) in
+                (0..).zip(QrClassRoot::along(value, discriminant))
+            {
                 let shifted = value + discriminant.at(depth);
                 assert_eq!(root.square(), qr::class_multiplier(side) * shifted);
             }
@@ -223,17 +224,17 @@ mod tests {
         let discriminant = QrDiscriminant::from(Fp::from(13));
         let position = 5;
         let value = -discriminant.at(position);
-        let QrClassRoots(classes) = QrClassRoots::of(value, discriminant);
+        let classes = QrClassRoot::along(value, discriminant);
         assert_eq!(
             classes[usize::try_from(position).unwrap()],
-            (true, Fp::ZERO)
+            QrClassRoot(true, Fp::ZERO)
         );
     }
 
     #[test]
     fn the_depth_mask_is_a_prefix_of_the_depth() {
         for depth in [0, 1, 31, 32] {
-            let QrDepthMask(mask) = QrDepthMask::of(depth);
+            let mask = QrProfile { depth, bits: 0 }.depth_mask();
             let ones = mask.iter().filter(|&&selected| selected).count();
             assert_eq!(ones, usize::try_from(depth).unwrap());
             assert!(
@@ -247,12 +248,20 @@ mod tests {
     #[test]
     #[should_panic(expected = "depth out of range")]
     fn a_depth_mask_past_the_maximum_depth_panics() {
-        let _mask = QrDepthMask::of(u32::BITS + 1);
+        let _mask = QrProfile {
+            depth: u32::BITS + 1,
+            bits: 0,
+        }
+        .depth_mask();
     }
 
     #[test]
     #[should_panic(expected = "depth out of range")]
     fn a_depth_mask_at_the_integer_limit_panics() {
-        let _mask = QrDepthMask::of(u32::MAX);
+        let _mask = QrProfile {
+            depth: u32::MAX,
+            bits: 0,
+        }
+        .depth_mask();
     }
 }

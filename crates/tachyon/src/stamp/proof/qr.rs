@@ -36,9 +36,8 @@ use crate::{
     digest::poseidon,
     nullifier::Nullifier,
     primitives::{
-        Anchor, EpochIndex, NfSeqPoly, QrClassRoots, QrDepthMask, QrDiscriminant,
-        QrInterpolantPoly, QrProfile, QrQuotientPoly, Tachygram, TachygramSetCommit,
-        TachygramSetPoly,
+        Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
+        QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
     relations::enforce::enforce_poly_product,
 };
@@ -646,8 +645,8 @@ impl Step for QrUnspentInit {
     /// `(value, classes, mask, sequence, contents)`.
     type Witness<'source> = (
         Tachygram,
-        QrClassRoots,
-        QrDepthMask,
+        [QrClassRoot; QrProfile::MAX_DEPTH],
+        [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
         TachygramSetPoly,
     );
@@ -675,7 +674,7 @@ impl Step for QrUnspentInit {
         let mut depth_acc = Fp::ZERO;
         let mut index_acc = Fp::ZERO;
         let mut bits_acc = Fp::ZERO;
-        for (&(side, root), &selected) in classes.0.iter().zip(&mask.0) {
+        for (&QrClassRoot(side, root), &selected) in classes.iter().zip(&mask) {
             let side_fp = Fp::from(u64::from(side));
             let multiplier = QUADRATIC_NON_RESIDUE - (QUADRATIC_NON_RESIDUE - Fp::ONE) * side_fp;
             enforce_zero(
@@ -687,7 +686,7 @@ impl Step for QrUnspentInit {
                 "QrUnspentInit: exceptional discriminant claimed the non-residue class",
             )?;
 
-            let selected_fp = Fp::from(u64::from(selected));
+            let selected_fp = Fp::from(selected);
             depth_acc += selected_fp;
             index_acc += selected_fp * position_fp;
             bits_acc += selected_fp * (bits_acc + side_fp);
