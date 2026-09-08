@@ -7,7 +7,7 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use crate::{Tachygram, digest::poseidon, note::Note, relations::constraint::enforce_nonzero};
+use crate::{Tachygram, digest::poseidon, note::Note, ragu_constraint::enforce_nonzero};
 
 /// Header binding an output's tachygram pair to one note.
 ///

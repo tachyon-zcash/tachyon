@@ -15,7 +15,7 @@ use crate::{
     note,
     nullifier::Nullifier,
     primitives::{Anchor, NfSeqPoly},
-    relations::constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
+    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
 /// Header binding a spend to its lineage note and epoch nullifier pair.

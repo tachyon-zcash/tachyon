@@ -21,10 +21,8 @@ use crate::{
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
-    relations::{
-        constraint::{enforce_equal_point, enforce_zero},
-        enforce::enforce_poly_product,
-    },
+    ragu_constraint::{enforce_equal_point, enforce_zero},
+    relations::enforce::enforce_poly_product,
 };
 
 /// A note's certified commitment and master key (wallet-only).

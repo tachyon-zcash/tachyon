@@ -17,10 +17,8 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::Note,
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
-    relations::{
-        constraint::{enforce_equal_point, enforce_zero},
-        enforce::enforce_poly_product,
-    },
+    ragu_constraint::{enforce_equal_point, enforce_zero},
+    relations::enforce::enforce_poly_product,
     value,
 };
 

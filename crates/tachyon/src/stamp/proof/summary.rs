@@ -15,7 +15,8 @@ use ragu::{Header, Index, Step, Suffix};
 
 use crate::{
     primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
-    relations::{constraint::enforce_equal_point, enforce::enforce_poly_product},
+    ragu_constraint::enforce_equal_point,
+    relations::enforce::enforce_poly_product,
 };
 
 /// One summarized run of an epoch's stamps. `acc_commit` commits the root

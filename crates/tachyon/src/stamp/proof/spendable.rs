@@ -23,7 +23,7 @@ use crate::{
     note,
     nullifier::Nullifier,
     primitives::{Anchor, EpochIndex, NfSeqPoly, TachygramSetPoly},
-    relations::constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
+    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
 /// Wallet's spendable position `(cm, (epoch, present_nf), anchor)`
