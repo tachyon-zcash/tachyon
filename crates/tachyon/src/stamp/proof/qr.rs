@@ -26,7 +26,7 @@ use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{
     Cycle as _, FixedGenerators as _, Header, Index, Pasta, Step, Suffix,
-    constraint::{conditional_enforce_equal, enforce_equal_point, enforce_nonzero, enforce_zero},
+    constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
 use super::{pool::ArbitraryUnspent, summary::Summary};
@@ -392,11 +392,10 @@ impl Step for QrIntakeSplit {
 /// as $G_0 \cdot R_1$: the entropy is otherwise free, and a challenge that did
 /// not depend on it would let the prover solve for the $R$ satisfying the
 /// identity at $z$. The child's commitment is read off the header. Both header
-/// commitments are selected by point arithmetic on `bit`, and both class
-/// identities are computed with the sibling's gated in, so no constraint
-/// branches on the witness. The parent's depth is checked below
-/// [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32} < p$ and distinct
-/// paths of one depth never share a profile.
+/// commitments are selected by point arithmetic on `bit`, and the class
+/// multiplier is linear in `bit`, so no constraint branches on the witness. The
+/// parent's depth is checked below [`QrProfile::MAX_DEPTH`], so `bits` stays
+/// below $2^{32} < p$ and distinct paths of one depth never share a profile.
 #[derive(Debug)]
 pub struct QrSideDescend;
 
@@ -463,17 +462,11 @@ impl Step for QrSideDescend {
         ctx.enforce_poly_query(quotient_commit.into(), z, quotient_at_z)?;
         let shifted = z + discriminant.at(profile.depth);
         let class_residual = interpolant_at_z.square() - sibling_at_z * quotient_at_z;
-        conditional_enforce_equal(
-            bit,
-            class_residual,
-            QUADRATIC_NON_RESIDUE * shifted,
-            "QrSideDescend: the sibling fails the non-residue class decomposition",
-        )?;
-        conditional_enforce_equal(
-            !bit,
-            class_residual,
-            shifted,
-            "QrSideDescend: the sibling fails the residue class decomposition",
+        let sibling_multiplier =
+            Fp::ONE + (QUADRATIC_NON_RESIDUE - Fp::ONE) * Fp::from(u64::from(bit));
+        enforce_zero(
+            class_residual - sibling_multiplier * shifted,
+            "QrSideDescend: the sibling fails its class decomposition",
         )?;
 
         Ok((
@@ -597,43 +590,48 @@ impl Step for QrBucketSeal {
 ///
 /// The step fixes the value's side at every discriminant of the epoch, matches
 /// the bucket's profile against the first `depth` of them, and opens the
-/// bucket at the value for nonzero. With $x$ the value and $R_j = R_1 + (j -
-/// 1)$, each position witnesses a side $b_j$ and a root $r_j$ with
+/// bucket at the value for nonzero. With $x$ the value, $s_j = x + R_j$ and
+/// $R_j = R_1 + (j - 1)$, each position witnesses a side $b_j$ and a root
+/// $r_j$ with
 ///
 /// $$
-///   r_j^2 = \begin{cases} x + R_j & b_j = 1 \\ c\,(x + R_j) & b_j = 0
-///   \end{cases}
+///   r_j^2 = \bigl(c - (c - 1)\,b_j\bigr)\, s_j,
 ///   \qquad
-///   b_j = 0 \implies x + R_j \neq 0.
+///   b_j = 0 \implies s_j \neq 0.
 /// $$
 ///
-/// A prefix mask $m_1 \ge \cdots \ge m_{32}$ with $\sum_j m_j =
-/// \mathsf{depth}$ selects the bucket's path, and the fold
+/// A mask $m_j$ selects the bucket's path through two sums and a fold,
 ///
 /// $$
-///   a_0 = 0, \qquad a_j = a_{j-1} + m_j\,(a_{j-1} + b_j), \qquad a_{32} =
-///   \mathsf{bits}
+///   \sum_j m_j = \mathsf{depth},
+///   \qquad
+///   \sum_j j\, m_j = \frac{\mathsf{depth}\,(\mathsf{depth} - 1)}{2},
+///   \qquad
+///   a_j = a_{j-1} + m_j\,(a_{j-1} + b_j),
 /// $$
 ///
-/// holds exactly when the bucket's sides are the value's. The emitted segment
-/// reads the value as a nullifier and covers the bucket's own span, one epoch,
-/// so consecutive epochs' segments need an
+/// with positions indexed from zero and $a_0 = 0$; the fold ends at
+/// $\mathsf{bits}$ exactly when the bucket's sides are the value's. The
+/// emitted segment reads the value as a nullifier and covers the bucket's
+/// own span, one epoch, so consecutive epochs' segments need an
 /// [`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed) between them.
 ///
 /// Committed polynomials: the sequence, the contents; two oracles. Gate cost
-/// is one scalar multiplication binding the value into the challenge and a
-/// few multiplications per position.
+/// is one scalar multiplication binding the value into the challenge and
+/// about seven multiplications per position.
 ///
 /// # Soundness
 ///
-/// $c$ is a non-residue, so when $x + R_j \neq 0$ exactly one side has a
-/// root and $b_j$ is the value's true side there; when $x + R_j = 0$ both
-/// sides have root zero and the nonzero rule forces the residue side, where
-/// [`QrIntakeSplit`] files the exceptional value. Every side is therefore the
-/// value's own, independent of the header, and the masked fold compares the
-/// bucket's prefix against them. Positions past `depth` are tested but
-/// compared to nothing. The mask sum bounds `depth` by
-/// [`QrProfile::MAX_DEPTH`] in circuit. $R_1$ is the bucket's own
+/// $c$ is a non-residue, so when $s_j \neq 0$ exactly one of $s_j$, $c\,s_j$
+/// is a square and $b_j$ is the value's true side there; when $s_j = 0$
+/// both sides have root zero and the nonzero rule forces the residue side,
+/// where [`QrIntakeSplit`] files the exceptional value. Every side is
+/// therefore the value's own, independent of the header, and the masked fold
+/// compares the bucket's prefix against them. Among boolean vectors of weight
+/// `depth` the index sum is minimised exactly by the leading positions, so
+/// the two sums force the mask to be that prefix and bound `depth` by
+/// [`QrProfile::MAX_DEPTH`] in circuit. Positions past `depth` are tested but
+/// compared to nothing. $R_1$ is the bucket's own
 /// `discriminant`, the one its routing classified at. `value` is absorbed as
 /// $G_0 \cdot \mathsf{value}$ into the sequence challenge, so the sequence
 /// names the emitted member.
@@ -668,27 +666,21 @@ impl Step for QrUnspentInit {
             Eq::from(contents_commit),
             "QrUnspentInit: contents do not match the bucket",
         )?;
-        let tested = Fp::from(value);
-        enforce_nonzero(tested, "QrUnspentInit: tested value is zero")?;
+        enforce_nonzero(Fp::from(value), "QrUnspentInit: tested value is zero")?;
 
         // TODO: a real circuit must constrain every side and mask bit boolean;
         // the types carry it under mock ragu.
-        let mut shifted = tested + Fp::from(discriminant);
+        let mut shifted = Fp::from(value) + Fp::from(discriminant);
+        let mut position_fp = Fp::ZERO;
         let mut depth_acc = Fp::ZERO;
+        let mut index_acc = Fp::ZERO;
         let mut bits_acc = Fp::ZERO;
-        for (position, (&(side, root), &selected)) in classes.0.iter().zip(&mask.0).enumerate() {
+        for (&(side, root), &selected) in classes.0.iter().zip(&mask.0) {
             let side_fp = Fp::from(u64::from(side));
-            conditional_enforce_equal(
-                side,
-                root.square(),
-                shifted,
-                "QrUnspentInit: root does not square to the residue class",
-            )?;
-            conditional_enforce_equal(
-                !side,
-                root.square(),
-                QUADRATIC_NON_RESIDUE * shifted,
-                "QrUnspentInit: root does not square to the non-residue class",
+            let multiplier = QUADRATIC_NON_RESIDUE - (QUADRATIC_NON_RESIDUE - Fp::ONE) * side_fp;
+            enforce_zero(
+                root.square() - multiplier * shifted,
+                "QrUnspentInit: root does not square to the claimed class",
             )?;
             enforce_nonzero(
                 shifted * (Fp::ONE - side_fp) + side_fp,
@@ -696,19 +688,19 @@ impl Step for QrUnspentInit {
             )?;
 
             let selected_fp = Fp::from(u64::from(selected));
-            if let Some(&next) = mask.0.get(position + 1) {
-                enforce_zero(
-                    Fp::from(u64::from(next)) * (Fp::ONE - selected_fp),
-                    "QrUnspentInit: depth mask is not a prefix",
-                )?;
-            }
             depth_acc += selected_fp;
+            index_acc += selected_fp * position_fp;
             bits_acc += selected_fp * (bits_acc + side_fp);
             shifted += Fp::ONE;
+            position_fp += Fp::ONE;
         }
         enforce_zero(
             depth_acc - Fp::from(u64::from(profile.depth)),
             "QrUnspentInit: depth mask does not match the bucket's depth",
+        )?;
+        enforce_zero(
+            index_acc.double() - depth_acc * (depth_acc - Fp::ONE),
+            "QrUnspentInit: depth mask is not a prefix",
         )?;
         enforce_zero(
             bits_acc - Fp::from(u64::from(profile.bits)),
@@ -720,19 +712,18 @@ impl Step for QrUnspentInit {
             .g()
             .first()
             .expect("at least one generator");
-        let binding = g0 * tested;
         let sequence_commit = sequence.commit();
-        let z = ctx.derive_challenge(&[sequence_commit.into(), binding])?;
+        let z = ctx.derive_challenge(&[sequence_commit.into(), g0 * Fp::from(value)])?;
         let sequence_at_z = sequence.eval(z);
-        let member_at_z = indexed_multiset::direct_eval([(u64::from(epoch), tested)], z);
+        let member_at_z = indexed_multiset::direct_eval([(u64::from(epoch), value.into())], z);
         enforce_zero(
             sequence_at_z - member_at_z,
             "QrUnspentInit: sequence does not match the tested value",
         )?;
         ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
 
-        let contents_at_value = contents.eval(tested);
-        ctx.enforce_poly_query(contents_commit.into(), tested, contents_at_value)?;
+        let contents_at_value = contents.eval(value.into());
+        ctx.enforce_poly_query(contents_commit.into(), value.into(), contents_at_value)?;
         enforce_nonzero(
             contents_at_value,
             "QrUnspentInit: found nullifier in the bucket",

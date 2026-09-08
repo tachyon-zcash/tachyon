@@ -559,6 +559,8 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
     );
 }
 
+/// The interpolant of the other side does not decompose the sibling at its
+/// class, on either side.
 #[test]
 fn qr_side_descend_rejects_a_foreign_interpolant() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -593,84 +595,26 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
         )
         .expect("QrIntakeSplit");
 
-    let (bit, sibling_contents, _interpolant, quotient) =
-        witness::qr_side_descend((*split.data(), ()), &members, true);
-    let (_, _, foreign_interpolant, _) =
-        witness::qr_side_descend((*split.data(), ()), &members, false);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSideDescend,
-            (bit, sibling_contents, foreign_interpolant, quotient),
-            split,
-            Proof::trivial().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrSideDescend: the sibling fails the non-residue class decomposition"
-    );
-}
-
-#[test]
-fn qr_side_descend_rejects_a_foreign_interpolant_on_the_non_residue_side() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex(3);
-    let start = Anchor::from(Fp::random(&mut *rng));
-    let discriminant_entropy = Fp::random(&mut *rng);
-    let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
-
-    let (summary, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            summary::SummarySeed,
-            witness::summary_seed(((), ()), start, epoch, &members),
-        )
-        .expect("SummarySeed");
-    let (root, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant_entropy),
-            summary,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("QrSummaryIntakeInit");
-    let (split, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrIntakeSplit,
-            witness::qr_intake_split((*root.data(), ()), &members),
-            root,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("QrIntakeSplit");
-
-    let (bit, sibling_contents, _interpolant, quotient) =
-        witness::qr_side_descend((*split.data(), ()), &members, false);
-    let (_, _, foreign_interpolant, _) =
-        witness::qr_side_descend((*split.data(), ()), &members, true);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrSideDescend,
-            (bit, sibling_contents, foreign_interpolant, quotient),
-            split,
-            Proof::trivial().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "QrSideDescend: the sibling fails the residue class decomposition"
-    );
+    for bit in [true, false] {
+        let (_, sibling_contents, _interpolant, quotient) =
+            witness::qr_side_descend((*split.data(), ()), &members, bit);
+        let (_, _, foreign_interpolant, _) =
+            witness::qr_side_descend((*split.data(), ()), &members, !bit);
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSideDescend,
+                (bit, sibling_contents, foreign_interpolant, quotient),
+                split.clone(),
+                Proof::trivial().carry::<()>(()),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(
+            invalid_witness(err),
+            "QrSideDescend: the sibling fails its class decomposition"
+        );
+    }
 }
 
 #[test]
@@ -744,12 +688,9 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
         )
         .err()
         .unwrap();
-    let ragu::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
     assert_eq!(
-        inner.to_string(),
-        "QrSideDescend: the sibling fails the non-residue class decomposition"
+        invalid_witness(err),
+        "QrSideDescend: the sibling fails its class decomposition"
     );
 
     // The padded child is complete for its class, merely impure: its short
@@ -1757,28 +1698,22 @@ fn honest_unspent_init(rng: &mut StdRng) -> (Nullifier, QrBucketEntry, UnspentIn
     (nf, bucket, witness)
 }
 
-/// The squaring message for a claimed `side`.
-fn class_message(side: bool) -> &'static str {
-    if side {
-        "QrUnspentInit: root does not square to the residue class"
-    } else {
-        "QrUnspentInit: root does not square to the non-residue class"
-    }
-}
-
 #[test]
 fn qr_unspent_init_rejects_a_root_off_its_class() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_nf, bucket, mut witness) = honest_unspent_init(rng);
 
     let (_, QrClassRoots(ref mut roots), ..) = witness;
-    let (side, ref mut root) = roots[0];
+    let (_, ref mut root) = roots[0];
     let off = *root + Fp::ONE;
     assert_ne!(off.square(), root.square());
     *root = off;
 
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(invalid_witness(err), class_message(side));
+    assert_eq!(
+        invalid_witness(err),
+        "QrUnspentInit: root does not square to the claimed class"
+    );
 }
 
 /// Positions past the bucket's depth are compared to nothing, but still
@@ -1795,11 +1730,13 @@ fn qr_unspent_init_tests_sides_past_the_bucket_depth() {
     assert_ne!(shifted, Fp::ZERO);
     let (_, QrClassRoots(ref mut roots), ..) = witness;
     let (ref mut side, _) = roots[usize::try_from(position).unwrap()];
-    let flipped = !*side;
-    *side = flipped;
+    *side = !*side;
 
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
-    assert_eq!(invalid_witness(err), class_message(flipped));
+    assert_eq!(
+        invalid_witness(err),
+        "QrUnspentInit: root does not square to the claimed class"
+    );
 }
 
 /// The exceptional value $-R_j$ has root zero under either class and is filed
@@ -2000,6 +1937,71 @@ fn qr_unspent_init_rejects_foreign_contents() {
         invalid_witness(err),
         "QrUnspentInit: contents do not match the bucket"
     );
+}
+
+/// The step reads one bucket's depth, so a router splits only what is over
+/// capacity and its partition is an unbalanced trie: one side sealed at
+/// depth 1 and a leaf under the other side sealed at depth 3 each admit
+/// their own value's segment.
+#[test]
+fn qr_unspent_init_accepts_ragged_depths() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, terminal) = small_epoch(rng);
+    let epoch = BlockHeight(0).epoch();
+    let discriminant_entropy = Fp::random(&mut *rng);
+    let discriminant = QrDiscriminant::derive(discriminant_entropy);
+    let shallow_value = Fp::random(&mut *rng);
+    let shallow_side = qr::classify(shallow_value, discriminant.at(0)).0;
+    let deep_value = iter::repeat_with(|| Fp::random(&mut *rng))
+        .find(|&value| qr::classify(value, discriminant.at(0)).0 != shallow_side)
+        .expect("a value on the other side");
+
+    let root = build_qr_partition(
+        rng,
+        &pool,
+        (Anchor::default(), terminal),
+        discriminant_entropy,
+        24,
+        0,
+    )
+    .pop()
+    .expect("one root");
+    let (residue, non_residue) = split_qr_intake(rng, root);
+    let (shallow, mut deep) = if shallow_side {
+        (residue, non_residue)
+    } else {
+        (non_residue, residue)
+    };
+    for level in 1..3 {
+        let (deep_residue, deep_non_residue) = split_qr_intake(rng, deep);
+        deep = if qr::classify(deep_value, discriminant.at(level)).0 {
+            deep_residue
+        } else {
+            deep_non_residue
+        };
+    }
+
+    let buckets = [(shallow, shallow_value, 1), (deep, deep_value, 3)];
+    for (intake, value, depth) in buckets {
+        let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
+        let (_, _, _, _, profile, _) = *bucket.pcd.data();
+        assert_eq!(profile, qr_profile_of(value, discriminant, depth));
+        let nf = Nullifier::from(value);
+        let witness =
+            witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
+        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit");
+        assert_eq!(
+            *unspent.data(),
+            (
+                Anchor::default(),
+                (epoch, nf),
+                NfSeqPoly::new(epoch, &[nf]).commit(),
+                (epoch, nf),
+                terminal
+            ),
+            "the segment is the bucket's span at depth {depth}"
+        );
+    }
 }
 
 /// A bucket at any depth up to the maximum admits the segment, whatever its

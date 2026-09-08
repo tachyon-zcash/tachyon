@@ -665,11 +665,10 @@ impl Step for SummaryUnspentInit {
             "SummaryUnspentInit: accumulator does not match header",
         )?;
 
-        let tested = Fp::from(nf);
-        let eval = summary_set.eval(tested);
-        ctx.enforce_poly_query(summary_set.commit().into(), tested, eval)?;
+        let eval = summary_set.eval(nf.into());
+        ctx.enforce_poly_query(summary_set.commit().into(), nf.into(), eval)?;
         enforce_nonzero(eval, "SummaryUnspentInit: found nullifier in summary")?;
-        enforce_nonzero(tested, "SummaryUnspentInit: tested nullifier is zero")?;
+        enforce_nonzero(Fp::from(nf), "SummaryUnspentInit: tested nullifier is zero")?;
 
         #[expect(clippy::expect_used, reason = "constant size")]
         let &g0 = Pasta::host_generators(Pasta::baked())
@@ -677,7 +676,7 @@ impl Step for SummaryUnspentInit {
             .first()
             .expect("at least one generator");
         let elapsed_commit = elapsed_seq.commit();
-        let z = ctx.derive_challenge(&[elapsed_commit.into(), g0 * tested])?;
+        let z = ctx.derive_challenge(&[elapsed_commit.into(), g0 * Fp::from(nf)])?;
         let elapsed_at_z = elapsed_seq.eval(z);
 
         let member_at_z = indexed_multiset::direct_eval([(summary_epoch.into(), nf.into())], z);
