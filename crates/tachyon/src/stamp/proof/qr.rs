@@ -422,6 +422,9 @@ impl Step for QrSideDescend {
 
         // TODO: a real circuit must constrain `bit` boolean; the type carries it
         // under mock ragu.
+        // TODO: select point coordinates in the real circuit. These native group
+        // selectors produce identity intermediates when the commitments agree or
+        // `bit` is false, which Ragu's nonidentity point gadgets cannot represent.
         let sibling_commit = sibling_contents.commit();
         let sibling = Eq::from(residue)
             + ((Eq::from(non_residue) - Eq::from(residue)) * Fp::from(u64::from(bit)));
