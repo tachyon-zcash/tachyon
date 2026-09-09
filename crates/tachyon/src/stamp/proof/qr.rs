@@ -3,12 +3,14 @@
 //! Each depth classifies at a discriminant of the progression
 //!
 //! $$
-//!   R_{j+1} = R_j + 1
+//!   R_1 = H_\mathsf{ep}(\mathsf{anchor\_last}, \mathsf{epoch} + 1),
+//!   \qquad R_{j+1} = R_j + 1,
 //! $$
 //!
-//! from an $R_1$ the routing prover derives from entropy of its choice and
-//! every header carries, so depth $j$ classifies at $R_{j+1} = R_1 + j$. A
-//! value takes the residue side there iff $x + R_{j+1}$ is a square or zero.
+//! from the closing boundary anchor the epoch's terminal anchor ticks to.
+//! Every header carries $R_1$, so depth $j$ classifies at $R_{j+1} = R_1 +
+//! j$, and a value takes the residue side there iff $x + R_{j+1}$ is a
+//! square or zero.
 //!
 //! [`QrSummaryIntakeInit`] starts a [`QrIntake`] from a [`Summary`], and
 //! [`QrStampIntakeSeed`] from one unsummarized stamp. [`QrIntakeSplit`]
@@ -50,7 +52,8 @@ pub struct QrIntake;
 impl Header for QrIntake {
     /// `(epoch, anchor_prev, anchor_last, discriminant, profile, contents)`.
     /// `anchor_prev` and `anchor_last` bracket the anchor links the contents
-    /// were drawn from; `discriminant` is the epoch's $R_1$.
+    /// were drawn from; `discriminant` is the epoch's $R_1$, its closing
+    /// boundary anchor, free until [`QrBucketSeal`].
     type Data = (
         EpochIndex,
         Anchor,
@@ -123,8 +126,8 @@ impl Header for QrIntakeSides {
 ///
 /// # Soundness
 ///
-/// The entropy is the prover's choice; $R_1$ is its digest under
-/// `Tachyon-QrDiscrm`. A consumer reads $R_1$ off the bucket.
+/// `discriminant` is free here, as every seed witness is; [`QrBucketSeal`]
+/// pins it to the span's closing tick.
 #[derive(Debug)]
 pub struct QrSummaryIntakeInit;
 
@@ -133,25 +136,24 @@ impl Step for QrSummaryIntakeInit {
     type Left = Summary;
     type Output = QrIntake;
     type Right = ();
-    /// `(discriminant_entropy)`.
-    type Witness<'source> = (Fp,);
+    /// `(discriminant)`.
+    type Witness<'source> = (QrDiscriminant,);
 
     const INDEX: Index = Index::new(21);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (discriminant_entropy,): Self::Witness<'source>,
+        (discriminant,): Self::Witness<'source>,
         (summary_epoch, summary_anchor_prev, summary_anchor_last, summary_acc_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let discriminant = poseidon::qr_discriminant(discriminant_entropy);
         Ok((
             (
                 summary_epoch,
                 summary_anchor_prev,
                 summary_anchor_last,
-                QrDiscriminant::from(discriminant),
+                discriminant,
                 QrProfile::ROOT,
                 summary_acc_commit,
             ),
@@ -165,8 +167,8 @@ impl Step for QrSummaryIntakeInit {
 ///
 /// # Soundness
 ///
-/// The entropy is the prover's choice and $R_1$ its digest, as at
-/// [`QrSummaryIntakeInit`]. `stamp_commit` is folded into `anchor_last`.
+/// `discriminant` is free, as at [`QrSummaryIntakeInit`]. `stamp_commit` is
+/// folded into `anchor_last`.
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
 
@@ -175,19 +177,18 @@ impl Step for QrStampIntakeSeed {
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    /// `(anchor_prev, epoch, discriminant_entropy, stamp_commit)`.
-    type Witness<'source> = (Anchor, EpochIndex, Fp, TachygramSetCommit);
+    /// `(anchor_prev, epoch, discriminant, stamp_commit)`.
+    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, TachygramSetCommit);
 
     const INDEX: Index = Index::new(27);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (anchor_prev, epoch, discriminant_entropy, stamp_commit): Self::Witness<'source>,
+        (anchor_prev, epoch, discriminant, stamp_commit): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let discriminant = poseidon::qr_discriminant(discriminant_entropy);
         let anchor_last = anchor_prev
             .next_stamp(epoch, &stamp_commit)
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
@@ -196,7 +197,7 @@ impl Step for QrStampIntakeSeed {
                 epoch,
                 anchor_prev,
                 anchor_last,
-                QrDiscriminant::from(discriminant),
+                discriminant,
                 QrProfile::ROOT,
                 stamp_commit,
             ),
@@ -385,11 +386,10 @@ impl Step for QrIntakeSplit {
 /// The child needs completeness, not purity: a consumer opens it nonzero at
 /// a value of the child's own profile, and a stray member of the other class
 /// only tightens that opening. The sibling is pinned to the header by
-/// commit-equality and the challenge absorbs all three commitments and $R_1$
-/// as $G_0 \cdot R_1$. $R_1$ is the digest of the entropy, so a prover cannot
-/// choose it to satisfy the identity at a $z$ it already knows; absorbing it
-/// makes the identity independent of that argument. The child's commitment is
-/// read off the header. Both header
+/// commit-equality and the challenge absorbs all three commitments. $R_1$ is
+/// threaded from the header and pinned at [`QrBucketSeal`], so a descend
+/// proved at an $R$ solved for the identity emits a header nothing seals.
+/// The child's commitment is read off the header. Both header
 /// commitments are selected by point arithmetic on `bit`, and the class
 /// multiplier is linear in `bit`, so no constraint branches on the witness. The
 /// parent's depth is checked below [`QrProfile::MAX_DEPTH`], so `bits` stays
@@ -422,15 +422,6 @@ impl Step for QrSideDescend {
             ));
         }
 
-        let discriminant_commit = {
-            #[expect(clippy::expect_used, reason = "constant size")]
-            let &g0 = Pasta::host_generators(Pasta::baked())
-                .g()
-                .first()
-                .expect("at least one generator");
-            g0 * discriminant.0
-        };
-
         // TODO: a real circuit must constrain `bit` boolean; the type carries it
         // under mock ragu.
         let sibling_commit = sibling_contents.commit();
@@ -447,7 +438,6 @@ impl Step for QrSideDescend {
         let interpolant_commit = interpolant.commit();
         let quotient_commit = quotient.commit();
         let z = ctx.derive_challenge(&[
-            discriminant_commit,
             sibling_commit.into(),
             interpolant_commit.into(),
             quotient_commit.into(),
@@ -521,11 +511,12 @@ impl Header for QrBucket {
 }
 
 /// Seal a routed [`QrIntake`] into a [`QrBucket`], by pinning the span's
-/// opening to an epoch boundary:
+/// opening to an epoch boundary and its discriminant to its closing tick:
 ///
 /// $$
 ///   \mathsf{anchor\_prev} = H_\mathsf{ep}(\mathsf{prev\_last},
-///   \mathsf{epoch}).
+///   \mathsf{epoch}), \qquad \mathsf{discriminant} =
+///   H_\mathsf{ep}(\mathsf{anchor\_last}, \mathsf{epoch} + 1).
 /// $$
 ///
 /// Committed polynomials: none.
@@ -538,12 +529,15 @@ impl Header for QrBucket {
 /// segment binds it. Epoch zero's opening anchor, [`Anchor::default`], is this
 /// rule at $\mathsf{prev\_last} = 0$.
 ///
-/// That `anchor_last` is the epoch's terminal anchor is a claim about what
-/// was published, and closes through the consuming lineage: the crossing
-/// after the segment folds `anchor_last` to a boundary anchor that the next
-/// segment must open on, and that chain reaches the spend anchor consensus
-/// checks. A bucket sealed short of the epoch ticks to an anchor nobody
-/// published.
+/// Every split in the intake's history classified at $R_1 + \mathsf{depth}$
+/// read off the header, so pinning `discriminant` here pins every
+/// discriminant the routing used to the span the bucket carries. That
+/// `anchor_last` is the epoch's terminal anchor is a claim about what was
+/// published, and closes through the consuming lineage: the crossing after
+/// the segment folds `anchor_last` to the same boundary anchor, the next
+/// segment must open on it, and that chain reaches the spend anchor
+/// consensus checks. A bucket sealed short of the epoch ticks to an anchor
+/// nobody published.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
@@ -568,6 +562,14 @@ impl Step for QrBucketSeal {
             Fp::from(anchor_prev)
                 - poseidon::anchor_next_epoch(Fp::from(prev_last), Fp::from(u64::from(epoch.0))),
             "QrBucketSeal: intake does not begin at the epoch boundary",
+        )?;
+        enforce_zero(
+            Fp::from(discriminant)
+                - poseidon::anchor_next_epoch(
+                    Fp::from(anchor_last),
+                    Fp::from(u64::from(epoch.next().0)),
+                ),
+            "QrBucketSeal: discriminant is not the span's closing tick",
         )?;
 
         Ok((
@@ -631,7 +633,8 @@ impl Step for QrBucketSeal {
 /// the two sums force the mask to be that prefix and bound `depth` by
 /// [`QrProfile::MAX_DEPTH`] in circuit. Positions past `depth` are tested but
 /// compared to nothing. $R_1$ is the bucket's own
-/// `discriminant`, the one its routing classified at. `value` is absorbed as
+/// `discriminant`, the closing anchor its seal pinned and its routing
+/// classified at. `value` is absorbed as
 /// $G_0 \cdot \mathsf{value}$ into the sequence challenge, so the sequence
 /// names the emitted member.
 #[derive(Debug)]

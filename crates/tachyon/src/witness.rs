@@ -15,8 +15,8 @@ use crate::{
     note::Note,
     nullifier::Nullifier,
     primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, QrClassRoot, Tachygram,
-        TachygramSetPoly,
+        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant,
+        Tachygram, TachygramSetPoly,
     },
     stamp::proof::{
         delegation::{NfDerive, NfMasterSeed, NullifierFuse},
@@ -353,32 +353,32 @@ pub fn qr_spendable_init(
     (bucket_members.iter().copied().collect(),)
 }
 
-/// Prepare the witness for [`QrSummaryIntakeInit`]: `(discriminant_entropy)`.
+/// Prepare the witness for [`QrSummaryIntakeInit`]: `(discriminant)`.
 #[must_use]
 pub const fn qr_summary_intake_init(
     (_left, _right): (
         StepLeft<QrSummaryIntakeInit>,
         StepRight<QrSummaryIntakeInit>,
     ),
-    discriminant_entropy: Fp,
+    discriminant: QrDiscriminant,
 ) -> StepWitness<'static, QrSummaryIntakeInit> {
-    (discriminant_entropy,)
+    (discriminant,)
 }
 
 /// Prepare the witness for [`QrStampIntakeSeed`]: `(anchor_prev, epoch,
-/// discriminant_entropy, stamp_commit)`.
+/// discriminant, stamp_commit)`.
 #[must_use]
 pub fn qr_stamp_intake_seed(
     (_left, _right): (StepLeft<QrStampIntakeSeed>, StepRight<QrStampIntakeSeed>),
     anchor_prev: Anchor,
     epoch: EpochIndex,
-    discriminant_entropy: Fp,
+    discriminant: QrDiscriminant,
     tgs: &[Tachygram],
 ) -> StepWitness<'static, QrStampIntakeSeed> {
     (
         anchor_prev,
         epoch,
-        discriminant_entropy,
+        discriminant,
         tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
     )
 }

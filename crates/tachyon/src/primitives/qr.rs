@@ -7,22 +7,24 @@ use ragu_arithmetic::Cycle as _;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_pasta::Pasta;
 
-use crate::{collections::qr, digest::poseidon};
+use super::Anchor;
+use crate::collections::qr;
 
-/// An epoch's first discriminant $R_1$, the digest of entropy the routing
-/// prover chooses.
+/// An epoch's first discriminant $R_1$: the closing boundary anchor
+/// $H_\mathsf{ep}(\mathsf{anchor\_last}, \mathsf{epoch} + 1)$ that the
+/// epoch's terminal anchor ticks to, pinned at `QrBucketSeal`.
 ///
 /// Depth $j$ classifies at $R_{j+1} = R_1 + j$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(pub Fp);
 
-impl QrDiscriminant {
-    /// Derive $R_1$ from an arbitrary value.
-    #[must_use]
-    pub fn derive(entropy: Fp) -> Self {
-        Self(poseidon::qr_discriminant(entropy))
+impl From<Anchor> for QrDiscriminant {
+    fn from(anchor: Anchor) -> Self {
+        Self(anchor.0)
     }
+}
 
+impl QrDiscriminant {
     /// The discriminant a split at `depth` classifies at.
     #[must_use]
     pub fn at(self, depth: u32) -> Fp {

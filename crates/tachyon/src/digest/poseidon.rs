@@ -184,17 +184,6 @@ pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
     ])
 }
 
-const QR_DISCRIMINANT_DOMAIN: &[u8; 16] = b"Tachyon-QrDiscrm";
-
-/// Derives an epoch's first QR discriminant from prover-chosen entropy.
-#[must_use]
-pub fn qr_discriminant(entropy: Fp) -> Fp {
-    hash::<2>([
-        Fp::from_u128(u128::from_le_bytes(*QR_DISCRIMINANT_DOMAIN)),
-        entropy,
-    ])
-}
-
 const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 
 /// Advances the terminal anchor of an epoch into a new epoch's initial state.

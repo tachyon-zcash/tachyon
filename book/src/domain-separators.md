@@ -68,7 +68,6 @@ These are all Tachyon-specific digests, performed in-circuit.
 | Payment key derivation | `Tachyon-PkDerive` |
 | Anchor stamp step | `Tachyon-AnchorSt` |
 | Anchor epoch step | `Tachyon-AnchorEp` |
-| Quadratic residue discriminant | `Tachyon-QrDiscrm` |
 
 ## Hash-to-curve
 
