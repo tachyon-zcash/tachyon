@@ -7,18 +7,18 @@
 //!
 //! ## Class decomposition
 //!
-//! With $q$ one side's values as roots and $g$ interpolating their roots
+//! With $q$ one side's values as roots and $u$ interpolating their roots
 //! $y_i$, at that side's class multiplier $c$,
 //!
 //! $$
-//!   g(X)^2 - c\,(X + R) = q(X)\, h(X),
+//!   u(X)^2 - c\,(X + R) = q(X)\, h(X),
 //! $$
 //!
 //! so every root of $q$ takes that side. The exceptional value $-R$ has root
 //! $0$ under either class; $q_\mathsf{non}(-R) \neq 0$ files it residue-side.
 //!
 //! The identity also reads over one value against many discriminants: with
-//! the $R_j$ as the roots of $q$ and $x$ as the shift, $g(R_j)^2 = c\,(x +
+//! the $R_j$ as the roots of $q$ and $x$ as the shift, $u(R_j)^2 = c\,(x +
 //! R_j)$ at each.
 
 extern crate alloc;
@@ -98,15 +98,15 @@ fn divide_by_root(coeffs: &mut Vec<Fp>, root: Fp) -> Option<()> {
     Some(())
 }
 
-/// Class decomposition $(g, h)$ of `points` at class multiplier $c$ and shift
+/// Class decomposition $(u, h)$ of `points` at class multiplier $c$ and shift
 /// $s$:
 ///
 /// $$
-///   g(X)^2 - c\,(X + s) = q(X)\, h(X),
+///   u(X)^2 - c\,(X + s) = q(X)\, h(X),
 /// $$
 ///
-/// with $q$ the abscissas as roots and $g$ interpolating the points. An empty
-/// side takes $g = 1$ and an all-zero side takes $g = q$, so neither
+/// with $q$ the abscissas as roots and $u$ interpolating the points. An empty
+/// side takes $u = 1$ and an all-zero side takes $u = q$, so neither
 /// polynomial is zero.
 ///
 /// Returns `None` when two abscissas coincide or a point lies off the side.
@@ -119,19 +119,19 @@ pub(crate) fn decomposition(
     Polynomial<Fp, ProductionRank>,
     Polynomial<Fp, ProductionRank>,
 )> {
-    let mut g_coeffs = if points.is_empty() {
+    let mut interpolant_coeffs = if points.is_empty() {
         [Fp::ONE].to_vec()
     } else {
         super::interpolate(points)?
     };
-    if g_coeffs.iter().all(|coeff| coeff == &Fp::ZERO) {
+    if interpolant_coeffs.iter().all(|coeff| coeff == &Fp::ZERO) {
         let abscissas: Vec<Fp> = points.iter().map(|&(abscissa, _)| abscissa).collect();
-        g_coeffs = arithmetic::poly_with_roots(&abscissas);
+        interpolant_coeffs = arithmetic::poly_with_roots(&abscissas);
     }
 
     let translate = [class * shift, class];
     let mut h_coeffs = Vec::new();
-    arithmetic::poly_mul(&g_coeffs, &g_coeffs, &mut h_coeffs);
+    arithmetic::poly_mul(&interpolant_coeffs, &interpolant_coeffs, &mut h_coeffs);
     if h_coeffs.len() < translate.len() {
         h_coeffs.resize(translate.len(), Fp::ZERO);
     }
@@ -143,7 +143,7 @@ pub(crate) fn decomposition(
     }
 
     Some((
-        Polynomial::from_coeffs(g_coeffs),
+        Polynomial::from_coeffs(interpolant_coeffs),
         Polynomial::from_coeffs(h_coeffs),
     ))
 }
@@ -259,17 +259,17 @@ mod tests {
         points.iter().map(|&(abscissa, _)| abscissa).collect()
     }
 
-    /// Verifies $g^2 - c\,(X + s) = q\,h$ coefficient by coefficient for one
+    /// Verifies $u^2 - c\,(X + s) = q\,h$ coefficient by coefficient for one
     /// side.
     fn verify_side(
         points: &[(Fp, Fp)],
         class: Fp,
         shift: Fp,
-        g: &Polynomial<Fp, ProductionRank>,
+        u: &Polynomial<Fp, ProductionRank>,
         h: &Polynomial<Fp, ProductionRank>,
     ) {
         let q = multiset::encode(abscissas_of(points));
-        let mut lhs = dense(&super::super::poly_mul(g, g));
+        let mut lhs = dense(&super::super::poly_mul(u, u));
         if lhs.len() < 2 {
             lhs.resize(2, Fp::ZERO);
         }
@@ -278,7 +278,7 @@ mod tests {
         let rhs = dense(&super::super::poly_mul(&q, h));
         assert_eq!(dense(&Polynomial::from_coeffs(lhs)), rhs);
         for &(abscissa, root) in points {
-            assert_eq!(g.eval(abscissa), root);
+            assert_eq!(u.eval(abscissa), root);
         }
     }
 
@@ -304,15 +304,15 @@ mod tests {
                 .take((2 * count) + 2)
                 .collect();
             let (residue, non_residue) = split(values, discriminant);
-            let (g1, h1) = decomposition(&residue, class_multiplier(true), discriminant).unwrap();
-            let (g2, h2) =
+            let (u1, h1) = decomposition(&residue, class_multiplier(true), discriminant).unwrap();
+            let (u2, h2) =
                 decomposition(&non_residue, class_multiplier(false), discriminant).unwrap();
-            verify_side(&residue, class_multiplier(true), discriminant, &g1, &h1);
+            verify_side(&residue, class_multiplier(true), discriminant, &u1, &h1);
             verify_side(
                 &non_residue,
                 class_multiplier(false),
                 discriminant,
-                &g2,
+                &u2,
                 &h2,
             );
         }
@@ -330,14 +330,14 @@ mod tests {
             (&residue, class_multiplier(true)),
             (&non_residue, class_multiplier(false)),
         ] {
-            let (g, h) = decomposition(points, class, discriminant).unwrap();
+            let (u, h) = decomposition(points, class, discriminant).unwrap();
             let q = multiset::encode(abscissas_of(points));
             // The full coefficient compare is quadratic in B; evaluation at
             // random points verifies the identity in linear time instead.
             for _ in 0..4 {
                 let z = Fp::random(&mut *rng);
                 assert_eq!(
-                    g.eval(z).square() - (class * (z + discriminant)),
+                    u.eval(z).square() - (class * (z + discriminant)),
                     q.eval(z) * h.eval(z)
                 );
             }
@@ -391,14 +391,14 @@ mod tests {
             Fp::ZERO,
             "the non-residue side must open nonzero at -R"
         );
-        let (g1, h1) = decomposition(&residue, class_multiplier(true), discriminant).unwrap();
-        let (g2, h2) = decomposition(&non_residue, class_multiplier(false), discriminant).unwrap();
-        verify_side(&residue, class_multiplier(true), discriminant, &g1, &h1);
+        let (u1, h1) = decomposition(&residue, class_multiplier(true), discriminant).unwrap();
+        let (u2, h2) = decomposition(&non_residue, class_multiplier(false), discriminant).unwrap();
+        verify_side(&residue, class_multiplier(true), discriminant, &u1, &h1);
         verify_side(
             &non_residue,
             class_multiplier(false),
             discriminant,
-            &g2,
+            &u2,
             &h2,
         );
     }
@@ -408,9 +408,9 @@ mod tests {
         let rng = &mut StdRng::seed_from_u64(35);
         let discriminant = Fp::random(&mut *rng);
         let points = [(-discriminant, Fp::ZERO)];
-        let (g, h) = decomposition(&points, class_multiplier(true), discriminant).unwrap();
-        assert_eq!(dense(&g), [discriminant, Fp::ONE]);
-        verify_side(&points, class_multiplier(true), discriminant, &g, &h);
+        let (u, h) = decomposition(&points, class_multiplier(true), discriminant).unwrap();
+        assert_eq!(dense(&u), [discriminant, Fp::ONE]);
+        verify_side(&points, class_multiplier(true), discriminant, &u, &h);
     }
 
     #[test]
@@ -430,16 +430,16 @@ mod tests {
                 non_residue.push((discriminant, root));
             }
         }
-        let (g1, h1) = decomposition(&residue, class_multiplier(true), value).unwrap();
-        let (g2, h2) = decomposition(&non_residue, class_multiplier(false), value).unwrap();
-        verify_side(&residue, class_multiplier(true), value, &g1, &h1);
-        verify_side(&non_residue, class_multiplier(false), value, &g2, &h2);
+        let (u1, h1) = decomposition(&residue, class_multiplier(true), value).unwrap();
+        let (u2, h2) = decomposition(&non_residue, class_multiplier(false), value).unwrap();
+        verify_side(&residue, class_multiplier(true), value, &u1, &h1);
+        verify_side(&non_residue, class_multiplier(false), value, &u2, &h2);
         for &(discriminant, _) in &residue {
-            assert_eq!(g1.eval(discriminant).square(), value + discriminant);
+            assert_eq!(u1.eval(discriminant).square(), value + discriminant);
         }
         for &(discriminant, _) in &non_residue {
             assert_eq!(
-                g2.eval(discriminant).square(),
+                u2.eval(discriminant).square(),
                 QUADRATIC_NON_RESIDUE * (value + discriminant)
             );
         }

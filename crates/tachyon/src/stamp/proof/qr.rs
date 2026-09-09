@@ -367,14 +367,14 @@ impl Step for QrIntakeSplit {
 /// Extract one side of a partition and carry it down one level, attesting
 /// the other side's class.
 ///
-/// With $s$ the sibling, $g$ its interpolant and $h$ the quotient,
+/// With $s$ the sibling, $u$ its interpolant and $h$ the quotient,
 ///
 /// $$
-///   g(X)^2 - c\,(X + R) = s(X)\, h(X)
+///   u(X)^2 - c\,(X + R) = s(X)\, h(X)
 /// $$
 ///
 /// at the sibling's class $c$ holds only if every root of $s$ takes that
-/// side at $R$, since each root leaves $g(x)^2 = c\,(x + R)$. With the
+/// side at $R$, since each root leaves $u(x)^2 = c\,(x + R)$. With the
 /// split's product, every member of the extracted class is then in the
 /// child.
 ///
@@ -383,17 +383,15 @@ impl Step for QrIntakeSplit {
 ///
 /// # Soundness
 ///
-/// The child needs completeness, not purity: a consumer opens it nonzero at
-/// a value of the child's own profile, and a stray member of the other class
-/// only tightens that opening. The sibling is pinned to the header by
-/// commit-equality and the challenge absorbs all three commitments. $R_1$ is
-/// threaded from the header and pinned at [`QrBucketSeal`], so a descend
-/// proved at an $R$ solved for the identity emits a header nothing seals.
-/// The child's commitment is read off the header. Both header
-/// commitments are selected by point arithmetic on `bit`, and the class
-/// multiplier is linear in `bit`, so no constraint branches on the witness. The
-/// parent's depth is checked below [`QrProfile::MAX_DEPTH`], so `bits` stays
-/// below $2^{32} < p$ and distinct paths of one depth never share a profile.
+/// The sibling is pinned to its header commitment; the challenge absorbs the
+/// sibling, interpolant and quotient commitments. Every root of the sibling
+/// then satisfies $u(x)^2 = c\,(x + R)$ at the sibling's class $c$, and the
+/// split's product places every member of the other class in the child. The
+/// child may hold a stray member of the sibling's class; consumers open it
+/// nonzero, so a stray member cannot pass a value that is present. $R$ is read
+/// off the header and pinned at [`QrBucketSeal`]. The parent's depth is
+/// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
+/// one depth's paths have distinct profiles.
 #[derive(Debug)]
 pub struct QrSideDescend;
 
@@ -623,20 +621,16 @@ impl Step for QrBucketSeal {
 ///
 /// # Soundness
 ///
-/// $c$ is a non-residue, so when $s_j \neq 0$ exactly one of $s_j$, $c\,s_j$
-/// is a square and $b_j$ is the value's true side there; when $s_j = 0$
-/// both sides have root zero and the nonzero rule forces the residue side,
-/// where [`QrIntakeSplit`] files the exceptional value. Every side is
-/// therefore the value's own, independent of the header, and the masked fold
-/// compares the bucket's prefix against them. Among boolean vectors of weight
-/// `depth` the index sum is minimised exactly by the leading positions, so
-/// the two sums force the mask to be that prefix and bound `depth` by
-/// [`QrProfile::MAX_DEPTH`] in circuit. Positions past `depth` are tested but
-/// compared to nothing. $R_1$ is the bucket's own
-/// `discriminant`, the closing anchor its seal pinned and its routing
-/// classified at. `value` is absorbed as
-/// $G_0 \cdot \mathsf{value}$ into the sequence challenge, so the sequence
-/// names the emitted member.
+/// $c$ is a non-residue, so for $s_j \neq 0$ exactly one of $s_j$, $c\,s_j$
+/// is a square and $b_j$ is the value's side. For $s_j = 0$ the nonzero rule
+/// forces the residue side, where [`QrIntakeSplit`] files the exceptional
+/// value. Among boolean vectors of weight `depth` only the leading positions
+/// attain index sum $\mathsf{depth}(\mathsf{depth} - 1)/2$, so the mask is
+/// that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold then
+/// equals `bits` iff the bucket's sides are the value's first `depth` sides.
+/// Positions past `depth` are tested but compared to nothing. $R_1$ is the
+/// bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` enters the
+/// sequence challenge as $G_0 \cdot \mathsf{value}$.
 #[derive(Debug)]
 pub struct QrUnspentInit;
 

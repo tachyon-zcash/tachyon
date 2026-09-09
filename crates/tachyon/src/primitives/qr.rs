@@ -32,7 +32,7 @@ impl QrDiscriminant {
     }
 }
 
-/// Witness polynomial interpolating one class's roots: $g(x_i) = y_i$ with
+/// Witness polynomial interpolating one class's roots: $u(x_i) = y_i$ with
 /// $y_i^2 = c\,(x_i + s)$ at that class's multiplier $c$ and shift $s$.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, ProductionRank>);
@@ -55,7 +55,7 @@ impl QrInterpolantPoly {
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrInterpolantCommit(Eq);
 
-/// Witness polynomial for one class decomposition's quotient: $h$ in $g^2 -
+/// Witness polynomial for one class decomposition's quotient: $h$ in $u^2 -
 /// c\,(X + s) = q\,h$.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, ProductionRank>);

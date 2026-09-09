@@ -672,6 +672,64 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
     }
 }
 
+/// The quotient of the other side does not complete the sibling's own
+/// interpolant, on either side.
+#[test]
+fn qr_side_descend_rejects_a_foreign_quotient() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch = EpochIndex(3);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
+
+    let (summary, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            summary::SummarySeed,
+            witness::summary_seed(((), ()), start, epoch, &members),
+        )
+        .expect("SummarySeed");
+    let (root, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrSummaryIntakeInit,
+            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            summary,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("QrSummaryIntakeInit");
+    let (split, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrIntakeSplit,
+            witness::qr_intake_split((*root.data(), ()), &members),
+            root,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("QrIntakeSplit");
+
+    for bit in [true, false] {
+        let (_, sibling_contents, interpolant, _quotient) =
+            witness::qr_side_descend((*split.data(), ()), &members, bit);
+        let (_, _, _, foreign_quotient) =
+            witness::qr_side_descend((*split.data(), ()), &members, !bit);
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSideDescend,
+                (bit, sibling_contents, interpolant, foreign_quotient),
+                split.clone(),
+                Proof::trivial().carry::<()>(()),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(
+            invalid_witness(err),
+            "QrSideDescend: the sibling fails its class decomposition"
+        );
+    }
+}
+
 #[test]
 fn qr_side_descend_rejects_a_child_short_of_a_member() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1713,6 +1771,138 @@ fn qr_spendable_init_rejects_a_bucket_whose_span_differs_from_the_segment() {
     );
 }
 
+/// A bucket of the following epoch cannot pair with a segment over the
+/// creation epoch.
+#[test]
+fn qr_spendable_init_rejects_a_bucket_of_another_epoch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let epoch0 = EpochIndex(0);
+    let epoch1 = epoch0.next();
+    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
+    pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
+    let terminal0 = pool.block(epoch0.last_block()).anchor();
+    let terminal1 = pool.block(epoch1.last_block()).anchor();
+
+    let nf_bucket = qr_bucket_for(
+        rng,
+        &pool,
+        (Anchor::default(), terminal0),
+        EPOCH_MEMBERS,
+        0,
+        Fp::from(user.nf_at(&note, epoch0)),
+        Anchor::from(Fp::ZERO),
+    );
+    let unspent = qr_epoch_unspent(rng, &user, &note, &nf_bucket);
+    let later = qr_bucket_for(
+        rng,
+        &pool,
+        (
+            terminal0.next_epoch(epoch1).expect("epoch one is nonzero"),
+            terminal1,
+        ),
+        EPOCH_MEMBERS,
+        0,
+        Fp::from(Tachygram::from(note.commitment())),
+        terminal0,
+    );
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::QrSpendableInit,
+            witness::qr_spendable_init((*unspent.data(), *later.pcd.data()), &later.members),
+            unspent,
+            later.pcd,
+        )
+        .err()
+        .unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrSpendableInit: segment does not start in the bucket's epoch"
+    );
+}
+
+/// A bucket sealed over an invented boundary of the same epoch opens
+/// elsewhere than the note's segment.
+#[test]
+fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let epoch0 = EpochIndex(0);
+    let epoch1 = epoch0.next();
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+    pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
+    let terminal0 = pool.block(epoch0.last_block()).anchor();
+    let terminal1 = pool.block(epoch1.last_block()).anchor();
+
+    let nf_bucket = qr_bucket_for(
+        rng,
+        &pool,
+        (
+            terminal0.next_epoch(epoch1).expect("epoch one is nonzero"),
+            terminal1,
+        ),
+        EPOCH_MEMBERS,
+        0,
+        Fp::from(user.nf_at(&note, epoch1)),
+        terminal0,
+    );
+    let unspent = qr_epoch_unspent(rng, &user, &note, &nf_bucket);
+
+    // The invented preceding anchor gives an epoch-one boundary the chain never
+    // produced; the seal accepts it because the opening matches `prev_last`.
+    let fake_prev_last = Anchor::from(Fp::ONE);
+    let fake_prev = fake_prev_last
+        .next_epoch(epoch1)
+        .expect("epoch one is nonzero");
+    let members = [Tachygram::from(note.commitment())];
+    let commit = members.iter().copied().collect::<TachygramSetPoly>().commit();
+    let fake_last = fake_prev
+        .next_stamp(epoch1, &commit)
+        .expect("one member");
+    let discriminant = QrDiscriminant::from(
+        fake_last
+            .next_epoch(epoch1.next())
+            .expect("epoch two is nonzero"),
+    );
+    let (intake, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            qr::QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(((), ()), fake_prev, epoch1, discriminant, &members),
+        )
+        .expect("QrStampIntakeSeed");
+    let elsewhere = seal_qr_intake(
+        rng,
+        QrIntakeEntry {
+            pcd: intake,
+            members: members.to_vec(),
+        },
+        fake_prev_last,
+    );
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::QrSpendableInit,
+            witness::qr_spendable_init(
+                (*unspent.data(), *elsewhere.pcd.data()),
+                &elsewhere.members,
+            ),
+            unspent,
+            elsewhere.pcd,
+        )
+        .err()
+        .unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrSpendableInit: segment does not open where the bucket does"
+    );
+}
+
 #[test]
 fn qr_unspent_init_rejects_a_published_nullifier() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2190,6 +2380,57 @@ fn qr_intake_merge_rejects_different_discriminants() {
     assert_eq!(
         invalid_witness(err),
         "QrIntakeMerge: inputs derive from different discriminants"
+    );
+}
+
+#[test]
+fn qr_intake_merge_rejects_different_epochs() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch = EpochIndex(3);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let left_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
+    let right_members: [Tachygram; 4] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
+
+    let (left_summary, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            summary::SummarySeed,
+            witness::summary_seed(((), ()), start, epoch, &left_members),
+        )
+        .expect("SummarySeed");
+    let (_, _, junction, _) = *left_summary.data();
+    let (right_summary, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            summary::SummarySeed,
+            witness::summary_seed(((), ()), junction, epoch.next(), &right_members),
+        )
+        .expect("SummarySeed");
+
+    let [left, right] = [left_summary, right_summary].map(|summary| {
+        let (root, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrSummaryIntakeInit,
+                witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+                summary,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("QrSummaryIntakeInit");
+        root
+    });
+    assert_ne!(left.data().0, right.data().0);
+
+    let witness =
+        witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members);
+    let err = PROOF_SYSTEM
+        .fuse(rng, qr::QrIntakeMerge, witness, left, right)
+        .err()
+        .unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrIntakeMerge: inputs cover different epochs"
     );
 }
 
