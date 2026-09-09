@@ -26,8 +26,8 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_qr_branch, build_qr_partition,
-    build_summary_pcd, qr_discriminant_of, qr_profile_of, random_block, seal_qr_intake,
-    seed_qr_stamp_intake, shared_sk, split_qr_intake,
+    build_summary_pcd, build_unspent_pcd_between_anchors, qr_discriminant_of, qr_profile_of,
+    random_block, seal_qr_intake, seed_qr_stamp_intake, shared_sk, split_qr_intake,
 };
 
 /// The witness of [`qr::QrUnspentInit`].
@@ -1409,9 +1409,9 @@ fn qr_bucket_seal_rejects_a_discriminant_off_the_span() {
 }
 
 /// The seal does not know the epoch's terminal anchor: a short span routed at
-/// the tick of its own last anchor seals. That the span reaches the terminal
-/// closes through the lineage that consumes the segment, whose crossing folds
-/// to an anchor nobody published.
+/// the tick of its own last anchor seals. An immediate crossing would leave the
+/// published chain, but a consumer can first cover the remaining stamps with
+/// ordinary same-epoch evidence.
 #[test]
 fn qr_bucket_seal_accepts_a_short_span_at_its_own_tick() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1680,6 +1680,96 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     );
 }
 
+/// A short bucket can reach a real pool anchor through ordinary suffix
+/// evidence. Consuming the bucket does not force its own endpoint to be
+/// epoch-terminal.
+#[test]
+fn qr_short_bucket_reaches_spend_bind_through_a_same_epoch_suffix() {
+    let rng = &mut StdRng::seed_from_u64(196);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let epoch = EpochIndex(0);
+    let nf = user.nf_at(&note, epoch);
+    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
+    let short_anchor = pool.anchor();
+    pool.mine(random_block(rng, 2, 1));
+    let tip_anchor = pool.anchor();
+    assert_ne!(short_anchor, tip_anchor, "the bucket omits later stamps");
+    assert_eq!(
+        pool.height().epoch(),
+        epoch,
+        "no epoch boundary was crossed"
+    );
+
+    let bucket = qr_bucket_for(
+        rng,
+        &pool,
+        (Anchor::default(), short_anchor),
+        1,
+        0,
+        Fp::from(Tachygram::from(note.commitment())),
+        Anchor::from(Fp::ZERO),
+    );
+    assert_eq!(bucket.pcd.data().2, short_anchor);
+    assert_eq!(
+        bucket.pcd.data().3,
+        QrDiscriminant::from(short_anchor.next_epoch(epoch.next()).unwrap()),
+        "the seal uses the short span's hypothetical closing tick"
+    );
+    assert_ne!(bucket.pcd.data().3, qr_discriminant_of(&pool, tip_anchor));
+    let unspent = qr_epoch_unspent(rng, &user, &note, &bucket);
+    let (spendable, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::QrSpendableInit,
+            witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members),
+            unspent,
+            bucket.pcd,
+        )
+        .expect("QrSpendableInit over the short span");
+    assert_eq!(
+        *spendable.data(),
+        (note.commitment(), (epoch, nf), short_anchor)
+    );
+
+    let suffix = build_unspent_pcd_between_anchors(rng, &pool, &[nf], (short_anchor, tip_anchor));
+    assert_eq!(
+        *suffix.data(),
+        (
+            short_anchor,
+            (epoch, nf),
+            NfSeqPoly::new(epoch, &[nf]).commit(),
+            (epoch, nf),
+            tip_anchor,
+        ),
+        "the suffix covers only the same epoch, without a boundary crossing"
+    );
+    let lifted = user.lift(rng, spendable, suffix, &note);
+    let derived = user.derivation_pcd(rng, note, epoch, epoch.next().next());
+    let (bind, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spend::SpendBind,
+            witness::spend_bind(
+                (*lifted.data(), *derived.data()),
+                &user.covering_window(&note, &derived),
+            ),
+            lifted,
+            derived,
+        )
+        .expect("SpendBind after the same-epoch suffix");
+    assert_eq!(
+        *bind.data(),
+        (
+            note.commitment(),
+            nf,
+            user.nf_at(&note, epoch.next()),
+            tip_anchor
+        ),
+        "the spend reaches the pool tip without crossing at the bucket's endpoint"
+    );
+}
+
 #[test]
 fn qr_spendable_init_rejects_an_absent_commitment() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1859,10 +1949,12 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
         .next_epoch(epoch1)
         .expect("epoch one is nonzero");
     let members = [Tachygram::from(note.commitment())];
-    let commit = members.iter().copied().collect::<TachygramSetPoly>().commit();
-    let fake_last = fake_prev
-        .next_stamp(epoch1, &commit)
-        .expect("one member");
+    let commit = members
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>()
+        .commit();
+    let fake_last = fake_prev.next_stamp(epoch1, &commit).expect("one member");
     let discriminant = QrDiscriminant::from(
         fake_last
             .next_epoch(epoch1.next())
