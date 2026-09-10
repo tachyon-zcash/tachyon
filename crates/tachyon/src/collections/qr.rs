@@ -249,8 +249,12 @@ mod tests {
     /// Collects a polynomial's coefficients with the sparse capacity padding
     /// trimmed; the zero polynomial densifies to `[0]`.
     fn dense(poly: &Polynomial<Fp, ProductionRank>) -> Vec<Fp> {
-        let mut coeffs = Vec::from_iter(poly.iter_coeffs());
+        let mut coeffs: Vec<_> = poly.iter_coeffs().collect();
         let last_nonzero = coeffs.iter().rposition(|coeff| coeff != &Fp::ZERO);
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "rposition returns an index below len"
+        )]
         coeffs.truncate(last_nonzero.map_or(1, |idx| idx + 1));
         coeffs
     }

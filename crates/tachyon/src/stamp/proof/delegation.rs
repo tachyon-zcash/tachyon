@@ -198,7 +198,7 @@ impl Step for NfDerive {
                 .0
                 .checked_add(NF_DERIVATION_WIDTH as u32)
                 .ok_or_else(|| {
-                    ragu::Error::InvalidWitness("NfDerive: window exceeds the epoch range".into())
+                    ragu_core::Error::InvalidWitness("NfDerive: window exceeds the epoch range".into())
                 })?,
         );
 
