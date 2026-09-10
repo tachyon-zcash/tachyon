@@ -14,7 +14,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
     ActionSetPoly, Anchor, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram, TachygramSetPoly,
-    constants::EPOCH_SIZE,
+    constants::{EPOCH_MAX, EPOCH_SIZE},
     digest::poseidon,
     effect,
     entropy::ActionEntropy,
@@ -1412,6 +1412,41 @@ fn unspent_bind_rejects_tip_mismatch() {
         inner.to_string(),
         "UnspentBind: sequence does not match the derivation"
     );
+}
+
+#[test]
+fn unspent_bind_window_may_end_at_the_final_epoch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+
+    // The epoch space's last derivation window: the unspent span covers all
+    // of it, ending at the final epoch, which has no successor.
+    let epoch_start = EpochIndex(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
+    let epoch_last = EpochIndex(EPOCH_MAX);
+    let range = user.derivation_pcd(rng, note, epoch_start, epoch_last);
+
+    let elapsed: Vec<Nullifier> = (epoch_start.0..=epoch_last.0)
+        .map(|epoch| user.nf_at(&note, EpochIndex(epoch)))
+        .collect();
+    let synthetic_unspent = (
+        Anchor::from(Fp::ZERO),
+        (epoch_start, elapsed[0]),
+        NfSeqPoly::new(epoch_start, &elapsed).commit(),
+        (epoch_last, elapsed[elapsed.len() - 1]),
+        Anchor::from(Fp::ZERO),
+    );
+
+    let (elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(
+        (synthetic_unspent, *range.data()),
+        &user.covering_window(&note, &range),
+        &elapsed,
+    );
+
+    // The span covers the whole window, so the complement is empty on both
+    // sides: the multiplicative identity.
+    assert_eq!(complement_seq.commit(), NfSeqPoly::default().commit());
+    assert_eq!(elapsed_seq.commit(), nf_seq.commit());
 }
 
 #[test]

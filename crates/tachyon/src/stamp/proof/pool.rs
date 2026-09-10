@@ -379,7 +379,11 @@ impl Step for EndEpochUnspentSeed {
             "EndEpochUnspentSeed: incoming nullifier is zero",
         )?;
 
-        let epoch = epoch_prev.next();
+        let epoch = epoch_prev.checked_next().ok_or_else(|| {
+            ragu_core::Error::InvalidWitness(
+                "EndEpochUnspentSeed: crossing past the final epoch".into(),
+            )
+        })?;
         let anchor = anchor_prev
             .next_epoch(epoch)
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;

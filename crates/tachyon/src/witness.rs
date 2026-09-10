@@ -151,6 +151,19 @@ pub fn unspent_fuse(
     )
 }
 
+/// The complement's run after the covered span: the window members past
+/// `span_last`, positioned one epoch after it.
+///
+/// An empty run is the multiplicative identity and needs no position, so
+/// the span may end at the final epoch, which has no successor.
+fn complement_tail(span_last: EpochIndex, tail: &[Nullifier]) -> NfSeqPoly {
+    if tail.is_empty() {
+        NfSeqPoly::default()
+    } else {
+        NfSeqPoly::new(span_last.next(), tail)
+    }
+}
+
 /// Prepare the witness for [`UnspentBind`]:
 /// `(elapsed_seq, nf_seq, complement_seq)`.
 ///
@@ -173,9 +186,9 @@ pub fn unspent_bind(
     let (_, (epoch_start, _), _, (epoch_last, _), _) = unspent;
     let (_, deriv_start, ..) = deriv;
     let lo = (epoch_start.0 - deriv_start.0) as usize;
-    let hi = (epoch_last.next().0 - deriv_start.0) as usize;
-    let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
-        * NfSeqPoly::new(epoch_last.next(), &window[hi..]);
+    let hi = (epoch_last.0 - deriv_start.0) as usize + 1;
+    let complement_seq =
+        NfSeqPoly::new(deriv_start, &window[..lo]) * complement_tail(epoch_last, &window[hi..]);
     (
         NfSeqPoly::new(epoch_start, elapsed),
         NfSeqPoly::new(deriv_start, window),
@@ -208,7 +221,7 @@ pub fn spendable_init(
     let (_, deriv_start, ..) = deriv;
     let lo = (creation_epoch.0 - deriv_start.0) as usize;
     let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
-        * NfSeqPoly::new(creation_epoch.next(), &window[lo + 1..]);
+        * complement_tail(creation_epoch, &window[lo + 1..]);
     (
         pre_cm_anchor,
         creation_tgs.iter().copied().collect::<TachygramSetPoly>(),
@@ -242,7 +255,7 @@ pub fn spend_bind(
     let (_, deriv_start, ..) = deriv;
     let lo = (epoch.0 - deriv_start.0) as usize;
     let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
-        * NfSeqPoly::new(epoch.next().next(), &window[lo + 2..]);
+        * complement_tail(epoch.next(), &window[lo + 2..]);
     (
         NfSeqPoly::new(deriv_start, window),
         complement_seq,
@@ -321,6 +334,7 @@ pub fn summary_unspent_init(
 /// [`spendable_init`].
 #[must_use]
 #[expect(
+    clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
     clippy::as_conversions,
     reason = "the derivation header's range covers the window"
@@ -337,7 +351,7 @@ pub fn summary_spendable_init(
     let (_, deriv_start, ..) = deriv;
     let lo = (creation_epoch.0 - deriv_start.0) as usize;
     let complement_seq = NfSeqPoly::new(deriv_start, &window[..lo])
-        * NfSeqPoly::new(creation_epoch.next(), &window[lo + 1..]);
+        * complement_tail(creation_epoch, &window[lo + 1..]);
     (
         creation_epoch,
         window[lo],
@@ -532,4 +546,23 @@ pub fn merge_stamp(
             right_tgs.iter().copied().collect::<TachygramSetPoly>(),
         ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constants::EPOCH_MAX;
+
+    #[test]
+    fn complement_tail_may_end_at_the_final_epoch() {
+        let empty = complement_tail(EpochIndex(EPOCH_MAX), &[]);
+        assert_eq!(empty.commit(), NfSeqPoly::default().commit());
+    }
+
+    #[test]
+    fn complement_tail_positions_members_after_the_span() {
+        let nf = Nullifier::from(Fp::from(7u64));
+        let tail = complement_tail(EpochIndex(41), &[nf]);
+        assert_eq!(tail.commit(), NfSeqPoly::new(EpochIndex(42), &[nf]).commit());
+    }
 }

@@ -564,12 +564,16 @@ impl Step for QrBucketSeal {
                 - poseidon::anchor_next_epoch(Fp::from(prev_last), Fp::from(u64::from(epoch.0))),
             "QrBucketSeal: intake does not begin at the epoch boundary",
         )?;
+        // Computed in the widened domain: a bucket sealed at the final epoch
+        // has a closing tick even though that epoch has no successor.
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "a u32 widened to u64 cannot overflow on increment"
+        )]
+        let closing_tick = Fp::from(u64::from(epoch.0) + 1);
         enforce_zero(
             Fp::from(discriminant)
-                - poseidon::anchor_next_epoch(
-                    Fp::from(anchor_last),
-                    Fp::from(u64::from(epoch.next().0)),
-                ),
+                - poseidon::anchor_next_epoch(Fp::from(anchor_last), closing_tick),
             "QrBucketSeal: discriminant is not the span's closing tick",
         )?;
 

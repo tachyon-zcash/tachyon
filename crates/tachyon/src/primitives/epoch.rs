@@ -23,18 +23,38 @@ pub struct EpochIndex(pub u32);
 pub struct EpochDiff(u32);
 
 impl EpochIndex {
+    /// Returns the next epoch index, or `None` for the final epoch.
+    ///
+    /// Indexes past [`EPOCH_MAX`] map to no block height in the protocol's
+    /// range, so the final epoch has no successor.
+    #[must_use]
+    pub const fn checked_next(self) -> Option<Self> {
+        #[expect(
+            clippy::if_then_some_else_none,
+            reason = "bool::then takes a closure, which is not const"
+        )]
+        if self.0 < EPOCH_MAX {
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "the branch condition bounds the index below EPOCH_MAX"
+            )]
+            Some(Self(self.0 + 1))
+        } else {
+            None
+        }
+    }
+
     /// Returns the next epoch index.
     ///
-    /// Panics rather than step past [`EPOCH_MAX`]: indexes beyond it map to
-    /// no block height in the protocol's range.
+    /// Panics rather than step past [`EPOCH_MAX`]; callers for which the
+    /// final epoch is ordinary input use [`Self::checked_next`] instead.
     #[must_use]
     pub const fn next(self) -> Self {
-        assert!(self.0 < EPOCH_MAX, "epoch index past EPOCH_MAX");
         #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "the assert above bounds the index below EPOCH_MAX"
+            clippy::expect_used,
+            reason = "stepping past the final epoch is a caller bug"
         )]
-        Self(self.0 + 1)
+        self.checked_next().expect("epoch index past EPOCH_MAX")
     }
 
     /// Returns the first block height of the epoch.
@@ -115,6 +135,15 @@ mod tests {
         assert_eq!(EpochIndex(EPOCH_MAX).last_block(), BlockHeight(BLOCK_MAX));
         assert_eq!(EpochIndex(EPOCH_MAX - 1).next(), EpochIndex(EPOCH_MAX));
         assert_eq!(BlockHeight(BLOCK_MAX).epoch(), EpochIndex(EPOCH_MAX));
+    }
+
+    #[test]
+    fn checked_next_stops_at_the_final_epoch() {
+        assert_eq!(
+            EpochIndex(EPOCH_MAX - 1).checked_next(),
+            Some(EpochIndex(EPOCH_MAX))
+        );
+        assert_eq!(EpochIndex(EPOCH_MAX).checked_next(), None);
     }
 
     #[test]
