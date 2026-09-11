@@ -16,7 +16,7 @@ use ragu::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action,
-    bundle::{Plan, PlanError, Signature},
+    bundle::{Plan, PlanError, Signature, StateByte},
     constants::{EPOCH_SIZE, MAX_MONEY},
     digest::blake2b::{COMMIT_NO_BUNDLE, action_descriptor_digest, bundle_commitment, memo_digest},
     effect,
@@ -1369,6 +1369,25 @@ fn wire_state_byte_dispatch() {
             stamped_on_adjunct.to_string(),
             "unexpected tachyonBundleState"
         );
+    }
+}
+
+#[test]
+fn read_rejects_noncanonical_action_count() {
+    // 5 fits in CompactSize's one-byte form, so the two-byte encoding is
+    // non-canonical. The reader must reject it before consuming an action.
+    let mut buf = alloc::vec![u8::from(StateByte::ProofStamped)];
+    buf.extend_from_slice(&0i64.to_le_bytes());
+    buf.extend_from_slice(&[0xFD, 0x05, 0x00]);
+
+    for err in [
+        Bundle::<ProofStamp>::read(&*buf)
+            .expect_err("proof-stamped reader must reject a non-canonical action count"),
+        TachyonBundle::read(&*buf)
+            .expect_err("bundle dispatcher must reject a non-canonical action count"),
+    ] {
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(err.to_string(), "non-canonical compact size");
     }
 }
 
