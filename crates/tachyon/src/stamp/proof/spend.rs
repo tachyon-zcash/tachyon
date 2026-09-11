@@ -11,10 +11,10 @@ use ragu_pasta::Pasta;
 
 use super::{delegation::NullifierDerivation, spendable::SpendableHeader};
 use crate::{
-    collections::indexed_multiset,
+    collections::indexed_multiset::IndexedMultiset,
     note,
     nullifier::Nullifier,
-    primitives::{Anchor, NfSeqPoly},
+    primitives::{Anchor, FactoredPoly as _, NfSeqPoly},
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
@@ -127,13 +127,13 @@ impl Step for SpendBind {
         let next_epoch = spendable_epoch.next().ok_or_else(|| {
             ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
         })?;
-        let pair_at_z = indexed_multiset::direct_eval(
-            [
-                (spendable_epoch.into(), present_nf.into()),
-                (next_epoch.into(), nf_next.into()),
-            ],
-            z,
-        );
+        let pair_at_z = [
+            (spendable_epoch.into(), present_nf.into()),
+            (next_epoch.into(), nf_next.into()),
+        ]
+        .into_iter()
+        .collect::<IndexedMultiset>()
+        .eval(z);
         enforce_zero(
             nf_seq_at_z - pair_at_z * complement_at_z,
             "SpendBind: nullifier pair does not match the derivation",

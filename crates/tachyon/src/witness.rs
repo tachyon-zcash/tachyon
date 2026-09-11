@@ -78,12 +78,10 @@ pub fn nullifier_fuse(
 ) -> StepWitness<'static, NullifierFuse> {
     let (_, left_epoch_start, ..) = left;
     let (_, right_epoch_start, ..) = right;
-    let merged = [left_nfs, right_nfs].concat();
-    (
-        NfSeqPoly::new(left_epoch_start, left_nfs),
-        NfSeqPoly::new(left_epoch_start, &merged),
-        NfSeqPoly::new(right_epoch_start, right_nfs),
-    )
+    let left_seq = NfSeqPoly::new(left_epoch_start, left_nfs);
+    let right_seq = NfSeqPoly::new(right_epoch_start, right_nfs);
+    let merged_seq = &left_seq * &right_seq;
+    (left_seq, merged_seq, right_seq)
 }
 
 /// Prepare the witness for [`UnspentSeed`]: `(anchor_prev, (epoch, nf),
@@ -131,24 +129,21 @@ pub fn end_epoch_unspent_seed(
 /// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
 /// covered epoch. Both include the junction epoch's member, which the
 /// combined sequence keeps once.
+///
+/// The dedup is the step's own identity run in set form: the product of the
+/// halves, divided by the junction member the left header names.
 #[must_use]
 pub fn unspent_fuse(
     (left, right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
     left_elapsed: &[Nullifier],
     right_elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentFuse> {
-    let (_, (left_epoch_start, _), ..) = left;
+    let (_, (left_epoch_start, _), _, (junction_epoch, junction_nf), _) = left;
     let (_, (right_epoch_start, _), ..) = right;
-    #[expect(clippy::expect_used, reason = "member lists are nonempty")]
-    let (_junction, right_tail) = right_elapsed
-        .split_first()
-        .expect("right members include the junction");
-    let combined = [left_elapsed, right_tail].concat();
-    (
-        NfSeqPoly::new(left_epoch_start, left_elapsed),
-        NfSeqPoly::new(left_epoch_start, &combined),
-        NfSeqPoly::new(right_epoch_start, right_elapsed),
-    )
+    let left_seq = NfSeqPoly::new(left_epoch_start, left_elapsed);
+    let right_seq = NfSeqPoly::new(right_epoch_start, right_elapsed);
+    let combined_seq = &(&left_seq * &right_seq) / &NfSeqPoly::new(junction_epoch, &[junction_nf]);
+    (left_seq, combined_seq, right_seq)
 }
 
 /// Prepare the witness for [`UnspentBind`]:
@@ -156,36 +151,21 @@ pub fn unspent_fuse(
 ///
 /// `elapsed` is the unspent's member list, one per covered epoch. `window`
 /// is the complete covering sequence, one member per epoch of the
-/// derivation header's range; the complement is the window's runs on both
-/// sides of the unspent's span, multiplied.
+/// derivation header's range; the complement is what the window holds
+/// outside the unspent's span, divided out rather than reassembled from the
+/// runs on either side.
 #[must_use]
-#[expect(
-    clippy::as_conversions,
-    reason = "the derivation header's range covers the window"
-)]
 pub fn unspent_bind(
     (unspent, deriv): (StepLeft<UnspentBind>, StepRight<UnspentBind>),
     window: &[Nullifier],
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentBind> {
-    let (_, (epoch_start, _), _, (epoch_last, _), _) = unspent;
+    let (_, (epoch_start, _), ..) = unspent;
     let (_, deriv_start, ..) = deriv;
-    let lo = u32::from(epoch_start - deriv_start) as usize;
-    let (head, from_span) = window.split_at(lo);
-    let (_span, tail) = from_span.split_at(elapsed.len());
-    let complement_seq = NfSeqPoly::new(deriv_start, head)
-        * epoch_last.next().map_or_else(
-            || {
-                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
-                NfSeqPoly::default()
-            },
-            |tail_start| NfSeqPoly::new(tail_start, tail),
-        );
-    (
-        NfSeqPoly::new(epoch_start, elapsed),
-        NfSeqPoly::new(deriv_start, window),
-        complement_seq,
-    )
+    let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
+    let nf_seq = NfSeqPoly::new(deriv_start, window);
+    let complement_seq = &nf_seq / &elapsed_seq;
+    (elapsed_seq, nf_seq, complement_seq)
 }
 
 /// Prepare the witness for [`SpendableInit`]:
@@ -194,8 +174,7 @@ pub fn unspent_bind(
 ///
 /// `window` is the complete covering sequence, one member per epoch of the
 /// derivation header's range; `present_nf` is the member the read forces,
-/// and the complement is the window's runs on both sides of the creation
-/// epoch, multiplied.
+/// and the complement is what the window holds outside the creation epoch.
 #[must_use]
 #[expect(
     clippy::as_conversions,
@@ -210,24 +189,17 @@ pub fn spendable_init(
 ) -> StepWitness<'static, SpendableInit> {
     let (_, deriv_start, ..) = deriv;
     let lo = u32::from(creation_epoch - deriv_start) as usize;
-    let (head, from_creation) = window.split_at(lo);
-    let Some((present_nf, tail)) = from_creation.split_first() else {
+    let Some(&present_nf) = window.get(lo) else {
         unreachable!("the creation epoch's member is in the window");
     };
-    let complement_seq = NfSeqPoly::new(deriv_start, head)
-        * creation_epoch.next().map_or_else(
-            || {
-                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
-                NfSeqPoly::default()
-            },
-            |tail_start| NfSeqPoly::new(tail_start, tail),
-        );
+    let nf_seq = NfSeqPoly::new(deriv_start, window);
+    let complement_seq = &nf_seq / &NfSeqPoly::new(creation_epoch, &[present_nf]);
     (
         pre_cm_anchor,
         creation_tgs.iter().copied().collect::<TachygramSetPoly>(),
         creation_epoch,
-        *present_nf,
-        NfSeqPoly::new(deriv_start, window),
+        present_nf,
+        nf_seq,
         complement_seq,
     )
 }
@@ -237,10 +209,10 @@ pub fn spendable_init(
 ///
 /// `window` is the complete covering sequence, one member per epoch of the
 /// derivation header's range; `nf_next` is the next epoch's member, and the
-/// complement is the window's runs on both sides of the read pair,
-/// multiplied. The pair read requires the derivation range to extend at
-/// least one epoch past the spendable's epoch, which bounds the spendable
-/// epoch at `EPOCH_MAX - 1`: the final epoch has no member to pair with.
+/// complement is what the window holds outside the read pair. The pair read
+/// requires the derivation range to extend at least one epoch past the
+/// spendable's epoch, which bounds the spendable epoch at `EPOCH_MAX - 1`:
+/// the final epoch has no member to pair with.
 #[must_use]
 #[expect(
     clippy::as_conversions,
@@ -253,24 +225,12 @@ pub fn spend_bind(
     let (_, (epoch, _), _) = spendable;
     let (_, deriv_start, ..) = deriv;
     let lo = u32::from(epoch - deriv_start) as usize;
-    let (head, from_spend) = window.split_at(lo);
-    let (pair, tail) = from_spend.split_at(2);
-    let Some(nf_next) = pair.last() else {
+    let Some(&[present_nf, nf_next]) = window.get(lo..lo + 2) else {
         unreachable!("the read pair is in the window");
     };
-    let complement_seq = NfSeqPoly::new(deriv_start, head)
-        * epoch.next().and_then(EpochIndex::next).map_or_else(
-            || {
-                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
-                NfSeqPoly::default()
-            },
-            |tail_start| NfSeqPoly::new(tail_start, tail),
-        );
-    (
-        NfSeqPoly::new(deriv_start, window),
-        complement_seq,
-        *nf_next,
-    )
+    let nf_seq = NfSeqPoly::new(deriv_start, window);
+    let complement_seq = &nf_seq / &NfSeqPoly::new(epoch, &[present_nf, nf_next]);
+    (nf_seq, complement_seq, nf_next)
 }
 
 /// Prepare the witness for [`AnchorSeed`]: `(start, epoch, stamp_commit)`.
@@ -305,22 +265,19 @@ pub fn summary_seed(
 }
 
 /// Prepare the witness for [`SummaryAdvance`]: `(acc, extended, stamp)`.
+///
+/// The extended accumulator is the product of the two, the identity the
+/// step checks -- the accumulator is never re-encoded from its members.
 #[must_use]
 pub fn summary_advance(
     (_left, _right): (StepLeft<SummaryAdvance>, StepRight<SummaryAdvance>),
     acc_tgs: &[Tachygram],
     stamp_tgs: &[Tachygram],
 ) -> StepWitness<'static, SummaryAdvance> {
-    let extended = acc_tgs
-        .iter()
-        .chain(stamp_tgs.iter())
-        .copied()
-        .collect::<TachygramSetPoly>();
-    (
-        acc_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        extended,
-        stamp_tgs.iter().copied().collect::<TachygramSetPoly>(),
-    )
+    let acc = acc_tgs.iter().copied().collect::<TachygramSetPoly>();
+    let stamp = stamp_tgs.iter().copied().collect::<TachygramSetPoly>();
+    let extended = &acc * &stamp;
+    (acc, extended, stamp)
 }
 
 /// Prepare the witness for [`SummaryUnspentInit`]:
@@ -358,22 +315,15 @@ pub fn summary_spendable_init(
 ) -> StepWitness<'static, SummarySpendableInit> {
     let (_, deriv_start, ..) = deriv;
     let lo = u32::from(creation_epoch - deriv_start) as usize;
-    let (head, from_creation) = window.split_at(lo);
-    let Some((present_nf, tail)) = from_creation.split_first() else {
+    let Some(&present_nf) = window.get(lo) else {
         unreachable!("the creation epoch's member is in the window");
     };
-    let complement_seq = NfSeqPoly::new(deriv_start, head)
-        * creation_epoch.next().map_or_else(
-            || {
-                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
-                NfSeqPoly::default()
-            },
-            |tail_start| NfSeqPoly::new(tail_start, tail),
-        );
+    let nf_seq = NfSeqPoly::new(deriv_start, window);
+    let complement_seq = &nf_seq / &NfSeqPoly::new(creation_epoch, &[present_nf]);
     (
         creation_epoch,
-        *present_nf,
-        NfSeqPoly::new(deriv_start, window),
+        present_nf,
+        nf_seq,
         complement_seq,
         summary_tgs.iter().copied().collect::<TachygramSetPoly>(),
     )
@@ -420,46 +370,45 @@ pub fn qr_stamp_intake_seed(
 
 /// Prepare the witness for [`QrIntakeMerge`]: `(left_contents,
 /// right_contents, merged)`.
+///
+/// The merged contents are the halves' product, the identity the step
+/// checks; building the bucket tree never convolves coefficients.
 #[must_use]
 pub fn qr_intake_merge(
     (_left, _right): (StepLeft<QrIntakeMerge>, StepRight<QrIntakeMerge>),
     left_tgs: &[Tachygram],
     right_tgs: &[Tachygram],
 ) -> StepWitness<'static, QrIntakeMerge> {
-    (
-        left_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        right_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        left_tgs
-            .iter()
-            .chain(right_tgs)
-            .copied()
-            .collect::<TachygramSetPoly>(),
-    )
+    let left_contents = left_tgs.iter().copied().collect::<TachygramSetPoly>();
+    let right_contents = right_tgs.iter().copied().collect::<TachygramSetPoly>();
+    let merged = &left_contents * &right_contents;
+    (left_contents, right_contents, merged)
 }
 
 /// Prepare the witness for [`QrIntakeSplit`]: `(contents, residue,
 /// non_residue)`.
+///
+/// The contents are recovered as the product of the two sides, the
+/// factorization the step checks, rather than re-encoded from `members`.
 #[must_use]
 pub fn qr_intake_split(
     (intake, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
     members: &[Tachygram],
 ) -> StepWitness<'static, QrIntakeSplit> {
     let (_epoch, _anchor_prev, _anchor_last, discriminant, profile, _contents) = intake;
-    let (residue, non_residue) = collections::qr::split(
+    let (residue_points, non_residue_points) = collections::qr::split(
         members.iter().copied().map(Fp::from),
         discriminant.at(profile.depth),
     );
-    (
-        members.iter().copied().collect::<TachygramSetPoly>(),
-        residue
-            .iter()
-            .map(|&(member, _root)| Tachygram::from(member))
-            .collect(),
-        non_residue
-            .iter()
-            .map(|&(member, _root)| Tachygram::from(member))
-            .collect(),
-    )
+    let residue = residue_points
+        .iter()
+        .map(|&(member, _root)| Tachygram::from(member))
+        .collect::<TachygramSetPoly>();
+    let non_residue = non_residue_points
+        .iter()
+        .map(|&(member, _root)| Tachygram::from(member))
+        .collect::<TachygramSetPoly>();
+    (&residue * &non_residue, residue, non_residue)
 }
 
 /// Prepare the witness for [`QrSideDescend`]: `(bit, sibling_contents,
@@ -543,25 +492,16 @@ pub fn merge_stamp(
     right_actions: &[ActionDigest],
     right_tgs: &[Tachygram],
 ) -> StepWitness<'static, MergeStamp> {
-    let merged_action_set = left_actions
-        .iter()
-        .copied()
-        .chain(right_actions.iter().copied())
-        .collect::<ActionSetPoly>();
-    let merged_tg_set = left_tgs
-        .iter()
-        .copied()
-        .chain(right_tgs.iter().copied())
-        .collect::<TachygramSetPoly>();
+    let left_action_set = left_actions.iter().copied().collect::<ActionSetPoly>();
+    let left_tg_set = left_tgs.iter().copied().collect::<TachygramSetPoly>();
+    let right_action_set = right_actions.iter().copied().collect::<ActionSetPoly>();
+    let right_tg_set = right_tgs.iter().copied().collect::<TachygramSetPoly>();
     (
+        (left_action_set.clone(), left_tg_set.clone()),
         (
-            left_actions.iter().copied().collect::<ActionSetPoly>(),
-            left_tgs.iter().copied().collect::<TachygramSetPoly>(),
+            &left_action_set * &right_action_set,
+            &left_tg_set * &right_tg_set,
         ),
-        (merged_action_set, merged_tg_set),
-        (
-            right_actions.iter().copied().collect::<ActionSetPoly>(),
-            right_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        ),
+        (right_action_set, right_tg_set),
     )
 }

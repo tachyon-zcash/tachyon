@@ -3,6 +3,7 @@ mod anchor;
 mod block_height;
 pub mod effect;
 mod epoch;
+mod factored;
 mod qr;
 mod seq;
 mod sets;
@@ -13,6 +14,7 @@ pub use anchor::{Anchor, AnchorError};
 pub use block_height::BlockHeight;
 pub use effect::Effect;
 pub use epoch::{EpochDiff, EpochIndex};
+pub use factored::FactoredPoly;
 pub use qr::{
     QrClassRoot, QrDiscriminant, QrInterpolantCommit, QrInterpolantPoly, QrProfile,
     QrQuotientCommit, QrQuotientPoly,

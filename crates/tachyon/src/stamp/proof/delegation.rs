@@ -18,12 +18,12 @@ use ragu_arithmetic::PoseidonPermutation as _;
 use ragu_pasta::PoseidonFp;
 
 use crate::{
-    collections::indexed_multiset,
+    collections::indexed_multiset::IndexedMultiset,
     constants::EPOCH_MAX,
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
     nullifier::NF_DERIVATION_WIDTH,
-    primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
+    primitives::{EpochIndex, FactoredPoly as _, NfSeqCommit, NfSeqPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::enforce_poly_product,
 };
@@ -216,8 +216,10 @@ impl Step for NfDerive {
 
         // The window's members at `z`, encoded natively from the
         // sponge-derived nullifiers and their epochs.
-        let window_at_z =
-            indexed_multiset::direct_eval((epoch_start.into()..).zip(nullifiers.map(Fp::from)), z);
+        let window_at_z = (epoch_start.into()..)
+            .zip(nullifiers.map(Fp::from))
+            .collect::<IndexedMultiset>()
+            .eval(z);
 
         enforce_zero(
             seq_at_z - window_at_z,
@@ -287,9 +289,9 @@ impl Step for NullifierFuse {
         let merged_nf_commit = merged_seq.commit();
         enforce_poly_product(
             ctx,
-            left_seq.as_ref(),
-            right_seq.as_ref(),
-            merged_seq.as_ref(),
+            &left_seq,
+            &right_seq,
+            &merged_seq,
             "NullifierFuse: merged is not the concat of the halves",
         )?;
         Ok((

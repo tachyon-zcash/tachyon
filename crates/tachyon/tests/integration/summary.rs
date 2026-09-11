@@ -11,7 +11,7 @@ use pasta_curves::Fp;
 use ragu::Proof;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, NfSeqPoly, Tachygram, TachygramSetPoly,
+    Anchor, BlockHeight, EpochIndex, FactoredPoly as _, NfSeqPoly, Tachygram, TachygramSetPoly,
     nullifier::Nullifier,
     stamp::proof::{PROOF_SYSTEM, pool, spendable, summary},
     witness,

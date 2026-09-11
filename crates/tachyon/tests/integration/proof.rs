@@ -2438,8 +2438,8 @@ fn spend_bind_rejects_a_forged_next_over_a_garbage_complement() {
         .collect();
     assert!(!older_members.is_empty(), "lower run must carry members");
     assert!(!newer_members.is_empty(), "upper run must carry members");
-    let complement_seq = NfSeqPoly::new(deriv_start, &older_members)
-        * NfSeqPoly::new(EpochIndex::new(u32::from(epoch) + 2), &newer_members);
+    let complement_seq = &NfSeqPoly::new(deriv_start, &older_members)
+        * &NfSeqPoly::new(EpochIndex::new(u32::from(epoch) + 2), &newer_members);
 
     let forged = Nullifier::from(Fp::random(&mut *rng));
     expect_invalid(

@@ -112,9 +112,9 @@ impl Step for SummaryAdvance {
         )?;
         enforce_poly_product(
             ctx,
-            acc.as_ref(),
-            stamp.as_ref(),
-            extended.as_ref(),
+            &acc,
+            &stamp,
+            &extended,
             "SummaryAdvance: extended accumulator must fold the stamp",
         )?;
         let anchor_last = summary_anchor_last

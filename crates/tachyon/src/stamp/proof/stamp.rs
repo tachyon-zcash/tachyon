@@ -272,16 +272,16 @@ impl Step for MergeStamp {
         // Confirm union via product-opening relation.
         enforce_poly_product(
             ctx,
-            left_action_set.as_ref(),
-            right_action_set.as_ref(),
-            merged_action_set.as_ref(),
+            &left_action_set,
+            &right_action_set,
+            &merged_action_set,
             "MergeStamp: merged action set must be the product of left and right action sets",
         )?;
         enforce_poly_product(
             ctx,
-            left_tachygram_set.as_ref(),
-            right_tachygram_set.as_ref(),
-            merged_tachygram_set.as_ref(),
+            &left_tachygram_set,
+            &right_tachygram_set,
+            &merged_tachygram_set,
             "MergeStamp: merged tachygram set must be the product of left and right tachygram sets",
         )?;
 

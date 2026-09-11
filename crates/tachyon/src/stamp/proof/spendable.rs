@@ -12,6 +12,7 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
+use core::iter;
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
@@ -20,10 +21,10 @@ use ragu_pasta::Pasta;
 
 use super::{delegation::NullifierDerivation, pool::Unspent, qr::QrBucket, summary::Summary};
 use crate::{
-    collections::indexed_multiset,
+    collections::indexed_multiset::IndexedMultiset,
     note,
     nullifier::Nullifier,
-    primitives::{Anchor, EpochIndex, NfSeqPoly, TachygramSetPoly},
+    primitives::{Anchor, EpochIndex, FactoredPoly as _, NfSeqPoly, TachygramSetPoly},
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
 };
 
@@ -142,8 +143,9 @@ impl Step for SpendableInit {
         let nf_seq_at_z = nf_seq.eval(z);
         let complement_at_z = complement_seq.eval(z);
 
-        let read_at_z =
-            indexed_multiset::direct_eval([(creation_epoch.into(), present_nf.into())], z);
+        let read_at_z = iter::once((creation_epoch.into(), present_nf.into()))
+            .collect::<IndexedMultiset>()
+            .eval(z);
         enforce_zero(
             nf_seq_at_z - read_at_z * complement_at_z,
             "SpendableInit: nullifier does not match the derivation",
@@ -241,8 +243,9 @@ impl Step for SummarySpendableInit {
         let nf_seq_at_z = nf_seq.eval(z);
         let complement_at_z = complement_seq.eval(z);
 
-        let read_at_z =
-            indexed_multiset::direct_eval([(creation_epoch.into(), present_nf.into())], z);
+        let read_at_z = iter::once((creation_epoch.into(), present_nf.into()))
+            .collect::<IndexedMultiset>()
+            .eval(z);
         enforce_zero(
             nf_seq_at_z - read_at_z * complement_at_z,
             "SummarySpendableInit: nullifier does not match the derivation",

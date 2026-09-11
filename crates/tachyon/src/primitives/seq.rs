@@ -1,67 +1,43 @@
-extern crate alloc;
+use core::ops::{Div, DivAssign, Mul, MulAssign};
 
-use core::ops::Mul;
-
-use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::Field as _;
+use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 use pasta_curves::{Eq, Fp};
-use ragu_arithmetic::Cycle as _;
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_pasta::Pasta;
 
-use crate::{
-    collections::{indexed_multiset, poly_mul},
-    nullifier::Nullifier,
-    primitives::EpochIndex,
-};
+use super::{EpochIndex, FactoredPoly, factored::impl_factored_poly};
+use crate::{collections::indexed_multiset::IndexedMultiset, nullifier::Nullifier};
 
 /// Pedersen commitment to a nullifier sequence.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct NfSeqCommit(Eq);
 
-/// Witness polynomial for a nullifier sequence: the product of its members'
-/// encodings, one per member.
-#[derive(AsRef, Clone, Debug, From, Into)]
-pub struct NfSeqPoly(Polynomial<Fp, ProductionRank>);
+/// Witness for a nullifier sequence, held in indexed-multiset form.
+///
+/// The sequence polynomial is the product of its members' encodings, one per
+/// member, realized into coefficient form lazily and memoized alongside its
+/// commitment. Coefficients stay internal: a step reaches the sequence
+/// through [`commit`](Self::commit) and [`FactoredPoly`], whose `*` and `/`
+/// concatenate and excise runs without polynomial arithmetic.
+#[derive(Clone, Debug, Default, PartialEq, TotalEq)]
+pub struct NfSeqPoly(IndexedMultiset);
 
 impl NfSeqPoly {
-    /// Build the sequence polynomial for one contiguous run: the members of
-    /// the consecutive epochs starting at `epoch_start`.
+    /// Build the sequence for one contiguous run: the members of the
+    /// consecutive epochs starting at `epoch_start`.
     #[must_use]
     pub fn new(epoch_start: EpochIndex, nfs: &[Nullifier]) -> Self {
-        Self(indexed_multiset::encode(
-            (epoch_start.into()..).zip(nfs.iter().copied().map(Fp::from)),
-        ))
+        Self(
+            (epoch_start.into()..)
+                .zip(nfs.iter().copied().map(Fp::from))
+                .collect(),
+        )
     }
 
-    /// Deterministic (untrapdoored) commitment to the sequence polynomial.
+    /// Deterministic (untrapdoored) commitment to the sequence polynomial,
+    /// memoized until the sequence changes.
     #[must_use]
     pub fn commit(&self) -> NfSeqCommit {
-        NfSeqCommit(self.0.commit(Pasta::host_generators(Pasta::baked())))
-    }
-
-    /// Evaluate the sequence polynomial at a given point.
-    #[must_use]
-    pub fn eval(&self, x: Fp) -> Fp {
-        self.0.eval(x)
+        NfSeqCommit(self.0.commit())
     }
 }
 
-impl Default for NfSeqPoly {
-    fn default() -> Self {
-        Self(Polynomial::from_coeffs(alloc::vec![Fp::ONE]))
-    }
-}
-
-impl Mul for NfSeqPoly {
-    type Output = Self;
-
-    /// Multiset union: the product of two sequences' member multisets.
-    ///
-    /// # Panics
-    ///
-    /// If the product exceeds the polynomial coefficient cap.
-    fn mul(self, rhs: Self) -> Self {
-        Self(poly_mul(&self.0, &rhs.0))
-    }
-}
+impl_factored_poly!(NfSeqPoly);

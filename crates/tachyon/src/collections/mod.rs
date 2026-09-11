@@ -11,12 +11,17 @@ pub(crate) mod indexed_multiset;
 pub(crate) mod multiset;
 pub(crate) mod qr;
 
+#[cfg(test)]
 fn trim(coeffs: &mut Vec<Fp>) {
     if let Some(last_nonzero_idx) = coeffs.iter().rposition(|co| co != &Fp::ZERO) {
         coeffs.truncate(last_nonzero_idx + 1);
     }
 }
 
+/// Realized polynomial product, kept as a test-only reference implementation:
+/// production multiset composition happens in set form
+/// ([`indexed_multiset::IndexedMultiset::union`]).
+#[cfg(test)]
 pub(super) fn poly_mul(
     input_a: &Polynomial<Fp, ProductionRank>,
     input_b: &Polynomial<Fp, ProductionRank>,

@@ -656,6 +656,9 @@ impl ProofStamp {
         let tachygrams: BTreeSet<Tachygram> =
             left_tachygrams.union(&right_tachygrams).copied().collect();
 
+        // Deliberately collected from the deduplicated sets, not a multiset
+        // union: on intersecting inputs the deduplicated witness cannot match
+        // the product, so the fuse below rejects the merge.
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             MergeStamp,
