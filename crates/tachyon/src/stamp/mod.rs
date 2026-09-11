@@ -32,7 +32,7 @@ use crate::{
     digest::blake2b,
     effect,
     entropy::ActionRandomizer,
-    keys::ProofAuthorizingKey,
+    keys::{ProofAuthorizingKey, private},
     nullifier::Nullifier,
     primitives::{
         ActionDigest, ActionDigestError, Anchor, EpochIndex, Tachygram, TachygramSetCommit,
@@ -551,8 +551,9 @@ impl ProofStamp {
     /// `(tachygrams, anchor, proof)`.
     ///
     /// [`output::OutputBind`] settles the tachygram pair, then [`OutputStamp`]
-    /// proves the action over it. Both tachygrams are derived inside the
-    /// circuit and placed on the stamp for data availability.
+    /// proves the action over it and enforces the stamp accumulator. Both
+    /// tachygrams are derived inside the circuit and placed on the stamp for
+    /// data availability.
     pub fn prove_output<RNG: CryptoRng>(
         rng: &mut RNG,
         rcv: value::Trapdoor,
@@ -561,13 +562,25 @@ impl ProofStamp {
         anchor: Anchor,
     ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu_core::Error> {
         let (bind_pcd, ()) = PROOF_SYSTEM.seed(rng, output::OutputBind, (note,))?;
-        let tgs = *bind_pcd.data();
-        let tachygrams = BTreeSet::from_iter(<[Tachygram; 2]>::from(tgs));
+        let (cm, pad) = *bind_pcd.data();
+        let tachygrams = BTreeSet::from_iter([cm, pad]);
+
+        let action_set = {
+            let cv = rcv.commit(-note.value);
+            let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
+            let digest = ActionDigest::new(cv, rk).map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "prove_output: action digest construction failed".into(),
+                )
+            })?;
+            ActionSetPoly::from_iter([digest])
+        };
+        let tachygram_set = TachygramSetPoly::from_iter([cm, pad]);
 
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             OutputStamp,
-            (rcv, alpha, note, anchor),
+            (rcv, alpha, note, anchor, action_set, tachygram_set),
             bind_pcd,
             ragu::Proof::trivial().carry::<()>(()),
         )?;
@@ -582,8 +595,9 @@ impl ProofStamp {
     /// The nullifier pair `{present_nf, nf_next}` published for data
     /// availability is read straight off the bind header (already confirmed
     /// against the derivation at [`SpendBind`](spend::SpendBind)); this step
-    /// only proves the action `(cv, rk)`. The spend's `anchor` is taken as the
-    /// stamp's anchor; chain validation lives inside the spendable lineage.
+    /// proves the action `(cv, rk)` and enforces the stamp accumulator over
+    /// the pair. The spend's `anchor` is taken as the stamp's anchor; chain
+    /// validation lives inside the spendable lineage.
     pub fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
@@ -596,10 +610,22 @@ impl ProofStamp {
         let tachygrams =
             BTreeSet::from_iter([Tachygram::from(present_nf), Tachygram::from(nf_next)]);
 
+        let action_set = {
+            let cv = rcv.commit(note.value);
+            let rk = pak.ak.derive_action_public(&alpha);
+            let digest = ActionDigest::new(cv, rk).map_err(|_err| {
+                ragu_core::Error::InvalidWitness(
+                    "prove_spend: action digest construction failed".into(),
+                )
+            })?;
+            ActionSetPoly::from_iter([digest])
+        };
+        let tachygram_set = tachygrams.iter().copied().collect::<TachygramSetPoly>();
+
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             SpendStamp,
-            (note, rcv, alpha, pak),
+            (note, rcv, alpha, pak, action_set, tachygram_set),
             bind_pcd,
             ragu::Proof::trivial().carry::<()>(()),
         )?;
@@ -831,6 +857,19 @@ impl ProofStamp {
     /// the circuit witnessed, not to the published list; without this check a
     /// stamp could publish a list omitting a nullifier the accumulator
     /// contains, which is what the two-epoch duplicate scan reads.
+    ///
+    /// TODO: this recomputes the commitment by realization and MSM. The
+    /// cheaper batched alternative -- derive `r` by Fiat-Shamir from
+    /// `tachygram_set` *and the published list*, compute `y_r = ∏ (r - tg_i)`
+    /// over the list in field operations only, and verify the evaluation
+    /// claim `(tachygram_set, r, y_r)` against the proof -- requires the
+    /// proof system to verify evaluation claims at `verify` time, which mock
+    /// ragu does not yet do (the claims steps record via `enforce_poly_query`
+    /// are discarded at fuse time). The challenge must absorb the published
+    /// list, and no claim recorded inside a step can substitute: a step
+    /// challenge predates the list, and once `(z, f(z))` is public a forger
+    /// can fit a fake list satisfying the product identity by solving for a
+    /// single element.
     #[must_use]
     fn is_accumulating(&self) -> bool {
         self.tachygrams

@@ -83,3 +83,43 @@ pub(crate) fn enforce_poly_product(
 
     Ok(())
 }
+
+/// Faithful root accumulator: confirm `accumulator = ∏ᵢ (X − rootᵢ)` over the
+/// given roots by opening the accumulator at a Fiat-Shamir challenge and
+/// comparing against the product of the root factors, computed in cheap field
+/// operations.
+///
+/// `accumulator` is prover-supplied and the relation works only from its
+/// commitment and opening at `z` -- it does not interpolate the roots. The
+/// point-wise identity `accumulator(z) = ∏ᵢ (z − rootᵢ)` at a random `z`
+/// confirms the relation: with the accumulator committed and absorbed into
+/// `z`, the difference `accumulator − ∏ᵢ (X − rootᵢ)` is a fixed polynomial
+/// pinned to zero by Schwartz-Zippel.
+///
+/// # Caller obligation (soundness)
+///
+/// Only the accumulator is committed and absorbed into `z`; the module-level
+/// binding obligation applies to it. The roots are raw scalars and are *not*
+/// absorbed: each must already be pinned before this relation contributes
+/// anything -- a header-bound value, a value derived in-circuit from bound
+/// values, or a free scalar bound by one of the step's other challenges. The
+/// call site states each root's pin.
+pub(crate) fn enforce_poly_roots(
+    ctx: &mut StepCtx<'_>,
+    accumulator: &Polynomial<Fp, ProductionRank>,
+    roots: &[Fp],
+    err: &'static str,
+) -> Result<()> {
+    let accumulator_com = accumulator.commit(Pasta::host_generators(Pasta::baked()));
+    let z = ctx.derive_challenge(&[accumulator_com])?;
+
+    let accumulator_at_z = accumulator.eval(z);
+    let factors_at_z: Fp = roots.iter().map(|&root| z - root).product();
+    if accumulator_at_z != factors_at_z {
+        return Err(Error::InvalidWitness(err.into()));
+    }
+
+    ctx.enforce_poly_query(accumulator_com, z, accumulator_at_z)?;
+
+    Ok(())
+}

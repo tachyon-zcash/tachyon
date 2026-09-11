@@ -6,8 +6,6 @@ use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_pasta::Pasta;
 
 use super::{output::OutputHeader, pool::AnchorChain, spend::SpendHeader};
 use crate::{
@@ -18,7 +16,7 @@ use crate::{
     note::Note,
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
     ragu_constraint::{enforce_equal_point, enforce_zero},
-    relations::enforce::enforce_poly_product,
+    relations::enforce::{enforce_poly_product, enforce_poly_roots},
     value,
 };
 
@@ -26,8 +24,13 @@ use crate::{
 /// transactions.
 ///
 /// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
-/// the action-digest and tachygram sets. Each producing step computes
-/// them from the actions and tachygrams the step witnesses.
+/// the action-digest and tachygram sets. Each leaf step
+/// ([`OutputStamp`], [`SpendStamp`]) witnesses both set polynomials
+/// and enforces them against statement-fixed roots at a Fiat-Shamir
+/// challenge — the action set against the action the step derives,
+/// the tachygram set against the pair bound on the left bind header.
+/// [`MergeStamp`] binds its witnessed input sets to the child headers
+/// and enforces each output commitment as the product of its inputs.
 ///
 /// `anchor` is freely witnessed at [`OutputStamp`]; at [`SpendStamp`]
 /// it threads from the left [`SpendHeader`]; at [`MergeStamp`]
@@ -39,8 +42,9 @@ pub struct StampHeader;
 
 impl Header for StampHeader {
     /// `(action_commit, stamp_tg_commit, anchor)`. The two commitments
-    /// are computed at each producing step from the actions and
-    /// tachygrams that step witnesses. `anchor` is freely witnessed at
+    /// are enforced at each producing step against that step's action
+    /// and the left bind header's tachygram pair. `anchor` is freely
+    /// witnessed at
     /// [`OutputStamp`], threaded from the left [`SpendHeader`] at
     /// [`SpendStamp`], equality-constrained at [`MergeStamp`], or
     /// advanced over an [`AnchorChain`] at [`StampLift`].
@@ -62,8 +66,8 @@ impl Header for StampHeader {
 ///
 /// Mirrors [`SpendStamp`]: re-witnesses the note (bound to the
 /// [`OutputHeader`]'s `cm`), derives the value commitment `cv` and the
-/// randomized action key `rk`, and commits the one-action set plus the
-/// two-element tachygram set `{cm, pad}` that
+/// randomized action key `rk`, and enforces the one-action set plus the
+/// stamp accumulator over the two-element tachygram set `{cm, pad}` that
 /// [`OutputBind`](super::output::OutputBind) already settled.
 #[derive(Debug)]
 pub struct OutputStamp;
@@ -73,30 +77,25 @@ impl Step for OutputStamp {
     type Left = OutputHeader;
     type Output = StampHeader;
     type Right = ();
-    /// `(rcv, alpha, note, anchor)`.
+    /// `(rcv, alpha, note, anchor, action_set, tachygram_set)`.
     type Witness<'source> = (
         value::Trapdoor,
         ActionRandomizer<effect::Output>,
         Note,
         Anchor,
+        ActionSetPoly,
+        TachygramSetPoly,
     );
 
     const INDEX: Index = Index::new(11);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (rcv, alpha, note, anchor): Self::Witness<'source>,
+        ctx: &mut ragu::StepCtx<'_>,
+        (rcv, alpha, note, anchor, action_set, tachygram_set): Self::Witness<'source>,
         (cm, pad): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &[g0, g1, g2] = Pasta::host_generators(Pasta::baked())
-            .g()
-            .split_first_chunk::<3>()
-            .expect("at least three generators")
-            .0;
-
         if u64::from(note.value) > MAX_MONEY {
             return Err(ragu_core::Error::InvalidWitness(
                 "OutputStamp: note value exceeds maximum".into(),
@@ -115,32 +114,37 @@ impl Step for OutputStamp {
             )
         })?;
 
-        // Set commitment to one action.
-        let action_commit = {
-            let a0 = Fp::from(action_digest);
-            ActionSetCommit::from(g0 * (-a0) + g1)
-        };
+        // The action-set commitment commits to exactly the one action this
+        // step derives; the root is in-circuit from the witnessed note above.
+        enforce_poly_roots(
+            ctx,
+            action_set.as_ref(),
+            &[Fp::from(action_digest)],
+            "OutputStamp: action set does not commit to the action",
+        )?;
 
-        // Set commitment to the commitment and its padding tachygram.
-        let tachygram_commit = {
-            let t0 = Fp::from(cm);
-            let t1 = Fp::from(pad);
+        // The stamp accumulator commits to exactly the tachygram pair on the
+        // bind header, both roots fixed by the recursive verification of the
+        // left PCD.
+        enforce_poly_roots(
+            ctx,
+            tachygram_set.as_ref(),
+            &[Fp::from(cm), Fp::from(pad)],
+            "OutputStamp: tachygram set does not commit to the bound pair",
+        )?;
 
-            TachygramSetCommit::from(g0 * (t0 * t1) + g1 * (-(t0 + t1)) + g2)
-        };
-
-        Ok(((action_commit, tachygram_commit, anchor), ()))
+        Ok(((action_set.commit(), tachygram_set.commit(), anchor), ()))
     }
 }
 
 /// Proves a spend's action and publishes its stamp.
 ///
 /// Focused like [`OutputStamp`] on the action: re-witnesses the spent note
-/// (bound to the [`SpendHeader`]'s `cm`), derives the value commitment `cv` and
-/// the randomized action key `rk`, and commits the one-action set plus the
-/// two-element tachygram set `{present_nf, nf_next}` (the pair
-/// [`SpendBind`](super::spend::SpendBind) already confirmed against the
-/// covering derivation).
+/// (bound to the [`SpendHeader`]'s `cm`), derives the value commitment `cv`
+/// and the randomized action key `rk`, and enforces the one-action set plus
+/// the stamp accumulator over the two-element tachygram set
+/// `{present_nf, nf_next}` (the pair [`SpendBind`](super::spend::SpendBind)
+/// already confirmed against the covering derivation).
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -149,30 +153,25 @@ impl Step for SpendStamp {
     type Left = SpendHeader;
     type Output = StampHeader;
     type Right = ();
-    /// `(note, rcv, alpha, pak)`.
+    /// `(note, rcv, alpha, pak, action_set, tachygram_set)`.
     type Witness<'source> = (
         Note,
         value::Trapdoor,
         ActionRandomizer<effect::Spend>,
         ProofAuthorizingKey,
+        ActionSetPoly,
+        TachygramSetPoly,
     );
 
     const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (note, rcv, alpha, pak): Self::Witness<'source>,
+        ctx: &mut ragu::StepCtx<'_>,
+        (note, rcv, alpha, pak, action_set, tachygram_set): Self::Witness<'source>,
         (cm, present_nf, nf_next, anchor): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &[g0, g1, g2] = Pasta::host_generators(Pasta::baked())
-            .g()
-            .split_first_chunk::<3>()
-            .expect("at least three generators")
-            .0;
-
         if u64::from(note.value) > MAX_MONEY {
             return Err(ragu_core::Error::InvalidWitness(
                 "SpendStamp: note value exceeds maximum".into(),
@@ -193,21 +192,26 @@ impl Step for SpendStamp {
             ragu_core::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
         })?;
 
-        // Set commitment to one action.
-        let action_commit = {
-            let a0 = Fp::from(action_digest);
-            ActionSetCommit::from(g0 * (-a0) + g1)
-        };
+        // The action-set commitment commits to exactly the one action this
+        // step derives; the root is in-circuit from the witnessed note above.
+        enforce_poly_roots(
+            ctx,
+            action_set.as_ref(),
+            &[Fp::from(action_digest)],
+            "SpendStamp: action set does not commit to the action",
+        )?;
 
-        // Set commitment to two nullifiers.
-        let tachygram_commit = {
-            let t0 = Fp::from(present_nf);
-            let t1 = Fp::from(nf_next);
+        // The stamp accumulator commits to exactly the nullifier pair on the
+        // bind header, both roots fixed by the recursive verification of the
+        // left PCD.
+        enforce_poly_roots(
+            ctx,
+            tachygram_set.as_ref(),
+            &[Fp::from(present_nf), Fp::from(nf_next)],
+            "SpendStamp: tachygram set does not commit to the nullifier pair",
+        )?;
 
-            TachygramSetCommit::from(g0 * (t0 * t1) + g1 * (-(t0 + t1)) + g2)
-        };
-
-        Ok(((action_commit, tachygram_commit, anchor), ()))
+        Ok(((action_set.commit(), tachygram_set.commit(), anchor), ()))
     }
 }
 
