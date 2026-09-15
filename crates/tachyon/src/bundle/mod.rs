@@ -245,6 +245,17 @@ pub enum SignatureError {
     Action(#[error(not(source))] action::Signature),
 }
 
+/// Error during proof verification.
+#[derive(Debug, Display, Error)]
+pub enum VerifyProofError {
+    /// An action's cv or rk is the identity point.
+    #[display("action digest error: {_0}")]
+    ActionDigest(ActionDigestError),
+    /// The proof system returned an error.
+    #[display("proof system error: {_0}")]
+    ProofSystem(ragu_core::Error),
+}
+
 /// Errors during coverage verification.
 #[derive(Debug, Display, Error)]
 pub enum VerifyCoverageError {
@@ -265,17 +276,6 @@ pub enum VerifyTachygramsError {
     /// The stamp's tachygrams do not reproduce the stamp's set commitment.
     #[display("tachygrams do not reproduce the set commitment")]
     WrongTachygrams,
-}
-
-/// Error during proof verification.
-#[derive(Debug, Display, Error)]
-pub enum VerifyProofError {
-    /// An action's cv or rk is the identity point.
-    #[display("action digest error: {_0}")]
-    ActionDigest(ActionDigestError),
-    /// The proof system returned an error.
-    #[display("proof system error: {_0}")]
-    ProofSystem(ragu_core::Error),
 }
 
 /// Errors during adjunct pointer verification.
