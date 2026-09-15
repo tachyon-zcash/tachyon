@@ -469,7 +469,7 @@ fn double_spend_obvious() {
     let doubled = -2 * i64::try_from(u64::from(note.value)).expect("note value fits i64");
     let value_balance = value::Balance::try_from(doubled).expect("doubled balance stays in range");
     let sighash = mock_sighash(blake2b::bundle_commitment(
-        &blake2b::action_descriptor_digest(&[descriptor.into(), descriptor.into()]),
+        &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter([descriptor, descriptor])),
         doubled,
         &blake2b::memo_digest(&[]),
     ));
@@ -482,7 +482,7 @@ fn double_spend_obvious() {
     let (tachygrams, stamp_anchor, proof) =
         ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
     let output_stamp = ProofStamp {
-        coverage: blake2b::action_descriptor_digest(&[descriptor.into()]),
+        coverage: blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter([descriptor])),
         anchor: stamp_anchor,
         tachygram_set: tachygrams
             .iter()
@@ -498,10 +498,7 @@ fn double_spend_obvious() {
         (&output_stamp, &vec![descriptor]),
     );
     let coverage = {
-        let mut desc_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor]
-            .into_iter()
-            .map(<[u8; 64]>::from)
-            .collect();
+        let mut desc_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
@@ -625,10 +622,7 @@ fn duplicated_spend_cannot_inflate() {
     // the doubled action set.
     let doubled = 2 * i64::try_from(u64::from(note.value)).expect("note value fits i64");
     let value_balance = value::Balance::try_from(doubled).expect("doubled balance in range");
-    let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor]
-        .into_iter()
-        .map(<[u8; 64]>::from)
-        .collect();
+    let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
     let sighash = mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&action_bytes),
         doubled,
@@ -643,8 +637,7 @@ fn duplicated_spend_cannot_inflate() {
     let action = Action::from((descriptor, sig));
     let binding_sig = private::BindingSigningKey::from([rcv, rcv]).sign(rng, &sighash);
     let coverage = {
-        let mut desc_bytes =
-            Vec::<[u8; 64]>::from_iter([descriptor, descriptor].map(<[u8; 64]>::from));
+        let mut desc_bytes = Vec::<[u8; 64]>::from_iter([descriptor, descriptor]);
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
@@ -1212,7 +1205,7 @@ fn read_preserves_action_order() {
     // Sign for this exact order: the commitment, and hence the sighash, depends
     // on it.
     let value_balance = value::Balance::try_from(-500i64).expect("in range");
-    let descriptors: Vec<[u8; 64]> = items.iter().map(|item| item.0.into()).collect();
+    let descriptors: Vec<[u8; 64]> = items.iter().map(|item| item.0).collect();
     let sighash = mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&descriptors),
         value_balance.into(),

@@ -1,5 +1,6 @@
 //! Tachyon Action descriptions.
 
+use alloc::vec::Vec;
 use core::{cmp, cmp::Ord, marker::PhantomData};
 
 use corez::io::{self, Read, Write};
@@ -263,17 +264,23 @@ impl Signature {
     }
 }
 
-impl From<Descriptor> for [u8; 64] {
-    fn from(desc: Descriptor) -> Self {
-        let mut desc_bytes = [0u8; 64];
-        desc_bytes[0..32].copy_from_slice(&EpAffine::from(desc.cv).to_bytes());
-        desc_bytes[32..64].copy_from_slice(&EpAffine::from(desc.rk).to_bytes());
-        desc_bytes
+impl FromIterator<Descriptor> for Vec<[u8; 64]> {
+    fn from_iter<I: IntoIterator<Item = Descriptor>>(iter: I) -> Self {
+        iter.into_iter()
+            .map(|desc| {
+                let mut desc_bytes = [0u8; 64];
+                desc_bytes[0..32].copy_from_slice(&EpAffine::from(desc.cv).to_bytes());
+                desc_bytes[32..64].copy_from_slice(&EpAffine::from(desc.rk).to_bytes());
+                desc_bytes
+            })
+            .collect()
     }
 }
 
-impl From<Signature> for [u8; 64] {
-    fn from(sig: Signature) -> Self {
-        <[u8; 64]>::from(sig.0)
+impl FromIterator<Signature> for Vec<[u8; 64]> {
+    fn from_iter<I: IntoIterator<Item = Signature>>(iter: I) -> Self {
+        iter.into_iter()
+            .map(|sig| <[u8; 64]>::from(sig.0))
+            .collect()
     }
 }

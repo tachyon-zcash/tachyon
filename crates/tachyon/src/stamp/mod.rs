@@ -219,8 +219,8 @@ impl ProofStamp {
     /// Read a stamp from the consensus wire format. The proof blob has a
     /// known constant size.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let mut coverage = [0u8; 32];
-        reader.read_exact(&mut coverage)?;
+        let mut covered_actions = [0u8; 32];
+        reader.read_exact(&mut covered_actions)?;
 
         let anchor = Anchor::read(&mut reader)?;
 
@@ -279,7 +279,7 @@ impl ProofStamp {
         };
 
         Ok(Self {
-            coverage,
+            coverage: covered_actions,
             anchor,
             tachygram_set,
             tachygrams,
@@ -487,12 +487,7 @@ impl Plan {
                 "no proof for no planned actions".into(),
             ))?;
 
-        let coverage = blake2b::action_descriptor_digest(
-            &descriptors
-                .into_iter()
-                .map(<[u8; 64]>::from)
-                .collect::<Vec<[u8; 64]>>(),
-        );
+        let coverage = blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors));
         let tachygram_set = tachygrams
             .iter()
             .copied()
@@ -808,7 +803,6 @@ impl ProofStamp {
             &left_desc
                 .union(&right_desc)
                 .copied()
-                .map(<[u8; 64]>::from)
                 .collect::<Vec<[u8; 64]>>(),
         );
 
@@ -834,8 +828,7 @@ impl ProofStamp {
     /// The parameter is a multiset: order does not matter, multiplicity does.
     #[must_use]
     pub fn is_covering(&self, action_descs: impl IntoIterator<Item = action::Descriptor>) -> bool {
-        let mut desc_bytes: Vec<[u8; 64]> =
-            action_descs.into_iter().map(<[u8; 64]>::from).collect();
+        let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
         desc_bytes.sort_unstable();
 
         self.coverage == blake2b::action_descriptor_digest(&desc_bytes)

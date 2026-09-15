@@ -204,7 +204,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     /// their ordering.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
-        let descriptors: Vec<[u8; 64]> = self.descriptors().map(<[u8; 64]>::from).collect();
+        let descriptors: Vec<[u8; 64]> = self.descriptors().collect();
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
             self.value_balance.into(),
@@ -417,11 +417,7 @@ impl Plan {
     ///
     /// Fails if the value balance overflows the representable range.
     pub fn commitment(&self) -> Result<[u8; 32], value::OutOfRange> {
-        let desc_bytes: Vec<[u8; 64]> = self
-            .descriptors()
-            .into_iter()
-            .map(<[u8; 64]>::from)
-            .collect();
+        let desc_bytes: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
 
         Ok(blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&desc_bytes),
@@ -890,11 +886,7 @@ impl<S: StampState> Bundle<S> {
     /// because it is effecting data, committed by [`Self::commitment`].
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 32] {
-        let action_sigs: Vec<[u8; 64]> = self
-            .actions
-            .iter()
-            .map(|act| <[u8; 64]>::from(act.sig))
-            .collect();
+        let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig).collect();
         let binding_sig: [u8; 64] = self.binding_sig.0.into();
 
         blake2b::bundle_auth_digest(

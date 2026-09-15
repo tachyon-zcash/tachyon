@@ -137,7 +137,9 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     let (tachygrams, stamp_anchor, proof) =
         ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
     let stamp = ProofStamp {
-        coverage: blake2b::action_descriptor_digest(&[plan.descriptor().into()]),
+        coverage: blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(iter::once(
+            plan.descriptor(),
+        ))),
         anchor: stamp_anchor,
         tachygram_set: tachygrams
             .iter()
