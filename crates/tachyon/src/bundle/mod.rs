@@ -92,16 +92,13 @@ use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, Partial
 use rand_core::CryptoRng;
 
 use crate::{
-    ActionDigest, ActionDigestError, ActionSetPoly, TachygramSetCommit, TachygramSetPoly,
+    ActionDigest, ActionDigestError, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
     primitives::{Anchor, AnchorError, EpochIndex, effect},
     reddsa, serialization,
-    stamp::{
-        self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven,
-        proof::{PROOF_SYSTEM, stamp::StampHeader},
-    },
+    stamp::{self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven},
     value,
 };
 
@@ -689,8 +686,7 @@ impl Bundle<ProofStamp> {
         Ok(adjuncts.iter().flat_map(|&adj| adj.descriptors()).collect())
     }
 
-    /// Reconstruct the PCD header from the given action digests and verify the
-    /// stamp's proof against it.
+    /// Verify the stamp's proof against the given action digests.
     ///
     /// # Soundness
     ///
@@ -700,15 +696,7 @@ impl Bundle<ProofStamp> {
         rng: &mut RNG,
         action_digests: &[ActionDigest],
     ) -> Result<bool, ragu_core::Error> {
-        let action_set = ActionSetPoly::from_iter(action_digests.iter().copied());
-
-        let pcd = self.stamp.proof.clone().carry::<StampHeader>((
-            action_set.commit(),
-            self.stamp.tachygram_set,
-            self.stamp.anchor,
-        ));
-
-        PROOF_SYSTEM.verify(&pcd, rng)
+        self.stamp.verify_proof(rng, action_digests.iter().copied())
     }
 
     /// Verify everything about this bundle. Does not verify any details about
