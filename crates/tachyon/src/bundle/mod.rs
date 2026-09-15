@@ -298,6 +298,7 @@ pub enum LiftError {
 
 /// Errors during bundle verification.
 #[derive(Debug, Display, Error)]
+#[non_exhaustive]
 pub enum VerificationError {
     /// The bundle signatures did not verify.
     #[display("signature verification error: {_0}")]
