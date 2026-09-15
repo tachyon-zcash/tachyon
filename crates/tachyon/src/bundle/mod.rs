@@ -191,9 +191,9 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     /// Multiplicity is significant to both the bundle commitment and proof
     /// verification, so callers must not deduplicate these.
     #[must_use]
-    pub fn descriptors(&self) -> Vec<action::Descriptor> {
+    pub fn descriptors(&self) -> impl ExactSizeIterator<Item = action::Descriptor> {
         // Do NOT sort here: maintain order as constructed.
-        self.actions.iter().map(Action::descriptor).collect()
+        self.actions.iter().map(Action::descriptor)
     }
 
     /// Digest the bundle's effecting data.
@@ -207,7 +207,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     /// their ordering.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
-        let descriptors: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
+        let descriptors: Vec<[u8; 64]> = self.descriptors().map(<[u8; 64]>::from).collect();
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
             self.value_balance.into(),
@@ -419,7 +419,11 @@ impl Plan {
     ///
     /// Fails if the value balance overflows the representable range.
     pub fn commitment(&self) -> Result<[u8; 32], value::OutOfRange> {
-        let desc_bytes: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
+        let desc_bytes: Vec<[u8; 64]> = self
+            .descriptors()
+            .into_iter()
+            .map(<[u8; 64]>::from)
+            .collect();
 
         Ok(blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&desc_bytes),
@@ -585,7 +589,6 @@ impl Bundle<ProofStamp> {
 
         let descriptors: BTreeSet<action::Descriptor> = self
             .descriptors()
-            .into_iter()
             .chain(adjuncts.iter().flat_map(|&adj| adj.descriptors()))
             .collect();
 
@@ -631,7 +634,7 @@ impl Bundle<ProofStamp> {
         let n_descs = own_descs.len() + adjunct_descs.len();
 
         let unique_descs: BTreeSet<action::Descriptor> =
-            own_descs.iter().chain(adjunct_descs).copied().collect();
+            own_descs.chain(adjunct_descs.iter().copied()).collect();
 
         if unique_descs.len() != n_descs {
             return Err(VerifyCoverageError::DuplicateActions);
@@ -669,18 +672,20 @@ impl Bundle<ProofStamp> {
     pub fn verify_pointers(
         &self,
         wtxid: &[u8; 64],
-        adjuncts: &[Bundle<PointerStamp>],
+        adjuncts: &[&Bundle<PointerStamp>],
     ) -> Result<Vec<action::Descriptor>, VerifyPointersError> {
-        PointerStamp::try_from(*wtxid).map_err(VerifyPointersError::AdjunctPointerInvalid)?;
+        if let Err(agg_id_err) = PointerStamp::try_from(*wtxid) {
+            return Err(VerifyPointersError::AdjunctPointerInvalid(agg_id_err));
+        }
 
         if adjuncts
             .iter()
-            .all(|adj| &adj.stamp.stamp_digest() == wtxid)
+            .any(|&adj| adj.stamp.stamp_digest() != *wtxid)
         {
-            Ok(adjuncts.iter().flat_map(Bundle::descriptors).collect())
-        } else {
-            Err(VerifyPointersError::AdjunctPointerMismatch)
+            return Err(VerifyPointersError::AdjunctPointerMismatch);
         }
+
+        Ok(adjuncts.iter().flat_map(|&adj| adj.descriptors()).collect())
     }
 
     /// Reconstruct the PCD header from the given action digests and verify the
@@ -719,7 +724,7 @@ impl Bundle<ProofStamp> {
         rng: &mut RNG,
         sighash: &[u8; 32],
         wtxid: &[u8; 64],
-        adjuncts: &[Bundle<PointerStamp>],
+        adjuncts: &[&Bundle<PointerStamp>],
     ) -> Result<(), VerificationError> {
         self.verify_signatures(sighash)
             .map_err(VerificationError::Signatures)?;
@@ -896,7 +901,11 @@ impl<S: StampState> Bundle<S> {
     /// because it is effecting data, committed by [`Self::commitment`].
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 32] {
-        let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig).collect();
+        let action_sigs: Vec<[u8; 64]> = self
+            .actions
+            .iter()
+            .map(|act| <[u8; 64]>::from(act.sig))
+            .collect();
         let binding_sig: [u8; 64] = self.binding_sig.0.into();
 
         blake2b::bundle_auth_digest(

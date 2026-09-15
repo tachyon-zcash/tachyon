@@ -19,7 +19,7 @@ use zcash_tachyon::{
     BlockHeight, Tachygram, TachygramSetPoly, VerifySignaturesError, action,
     bundle::{Plan, PlanError, Signature},
     constants::{EPOCH_SIZE, MAX_MONEY},
-    digest::blake2b::{COMMIT_NO_BUNDLE, action_descriptor_digest, bundle_commitment, memo_digest},
+    digest::blake2b,
     effect,
     entropy::ActionEntropy,
     keys::private,
@@ -396,7 +396,7 @@ fn sign_and_apply_signatures_handle_one_sided_and_empty_plans() {
 fn no_bundle_commitment_differs_from_empty_bundle() {
     let empty_plan = Plan::new(alloc::vec![], alloc::vec![]);
     assert_ne!(
-        *COMMIT_NO_BUNDLE,
+        *blake2b::COMMIT_NO_BUNDLE,
         empty_plan.commitment().unwrap(),
         "absent bundle must differ from empty bundle"
     );
@@ -468,11 +468,10 @@ fn double_spend_obvious() {
     // shared because the actions are byte-identical.
     let doubled = -2 * i64::try_from(u64::from(note.value)).expect("note value fits i64");
     let value_balance = value::Balance::try_from(doubled).expect("doubled balance stays in range");
-    let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
-    let sighash = mock_sighash(bundle_commitment(
-        &action_descriptor_digest(&action_bytes),
+    let sighash = mock_sighash(blake2b::bundle_commitment(
+        &blake2b::action_descriptor_digest(&[descriptor.into(), descriptor.into()]),
         doubled,
-        &memo_digest(&[]),
+        &blake2b::memo_digest(&[]),
     ));
     let sig = private::ActionSigningKey::new(&alpha).sign(rng, &sighash);
     let action = Action::from((descriptor, sig));
@@ -483,9 +482,7 @@ fn double_spend_obvious() {
     let (tachygrams, stamp_anchor, proof) =
         ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
     let output_stamp = ProofStamp {
-        coverage: action_descriptor_digest(
-            &vec![descriptor].into_iter().collect::<Vec<[u8; 64]>>(),
-        ),
+        coverage: blake2b::action_descriptor_digest(&[descriptor.into()]),
         anchor: stamp_anchor,
         tachygram_set: tachygrams
             .iter()
@@ -501,9 +498,12 @@ fn double_spend_obvious() {
         (&output_stamp, &vec![descriptor]),
     );
     let coverage = {
-        let mut desc_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
+        let mut desc_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor]
+            .into_iter()
+            .map(<[u8; 64]>::from)
+            .collect();
         desc_bytes.sort_unstable();
-        action_descriptor_digest(&desc_bytes)
+        blake2b::action_descriptor_digest(&desc_bytes)
     };
 
     // A tachygram set with duplicated elements wouldn't be accepted by
@@ -566,7 +566,6 @@ fn double_spend_obvious() {
     // whose (x-cm) cannot reconstruct the doubled tachygram the proof commits to.
     let digests: Vec<ActionDigest> = decoded
         .descriptors()
-        .iter()
         .map(|desc| desc.digest().expect("action digest"))
         .collect();
     assert!(
@@ -626,11 +625,14 @@ fn duplicated_spend_cannot_inflate() {
     // the doubled action set.
     let doubled = 2 * i64::try_from(u64::from(note.value)).expect("note value fits i64");
     let value_balance = value::Balance::try_from(doubled).expect("doubled balance in range");
-    let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
-    let sighash = mock_sighash(bundle_commitment(
-        &action_descriptor_digest(&action_bytes),
+    let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor]
+        .into_iter()
+        .map(<[u8; 64]>::from)
+        .collect();
+    let sighash = mock_sighash(blake2b::bundle_commitment(
+        &blake2b::action_descriptor_digest(&action_bytes),
         doubled,
-        &memo_digest(&[]),
+        &blake2b::memo_digest(&[]),
     ));
     let alpha = theta.randomizer::<effect::Spend>(note.commitment());
     let sig = wallet
@@ -641,9 +643,10 @@ fn duplicated_spend_cannot_inflate() {
     let action = Action::from((descriptor, sig));
     let binding_sig = private::BindingSigningKey::from([rcv, rcv]).sign(rng, &sighash);
     let coverage = {
-        let mut desc_bytes = Vec::<[u8; 64]>::from_iter([descriptor, descriptor]);
+        let mut desc_bytes =
+            Vec::<[u8; 64]>::from_iter([descriptor, descriptor].map(<[u8; 64]>::from));
         desc_bytes.sort_unstable();
-        action_descriptor_digest(&desc_bytes)
+        blake2b::action_descriptor_digest(&desc_bytes)
     };
     let bundle = Bundle {
         actions: vec![action, action],
@@ -696,7 +699,6 @@ fn duplicated_spend_cannot_inflate() {
     // to.
     let digests: Vec<ActionDigest> = decoded
         .descriptors()
-        .iter()
         .map(|desc| desc.digest().expect("action digest"))
         .collect();
     assert!(
@@ -733,8 +735,9 @@ fn verify_proof_rejects_action_shared_with_adjunct() {
     // repeats every descriptor. The pointer is irrelevant to coverage.
     let adjunct = bundle.clone().strip(mock_wtxid(&bundle));
 
+    let adjunct_descs: Vec<action::Descriptor> = adjunct.descriptors().collect();
     let err = bundle
-        .verify_coverage(&adjunct.descriptors())
+        .verify_coverage(&adjunct_descs)
         .expect_err("an action shared across self and adjunct must be rejected");
     let VerifyCoverageError::DuplicateActions = err else {
         panic!("expected DuplicateActions, got {err:?}");
@@ -742,7 +745,6 @@ fn verify_proof_rejects_action_shared_with_adjunct() {
 
     let digests: Vec<ActionDigest> = bundle
         .descriptors()
-        .into_iter()
         .chain(adjunct.descriptors())
         .map(|desc| desc.digest().expect("action digest"))
         .collect();
@@ -770,7 +772,6 @@ fn verify_proof_disproves_uncovered_adjunct() {
 
     let digests: Vec<ActionDigest> = bundle
         .descriptors()
-        .into_iter()
         .chain(adjunct.descriptors())
         .map(|desc| desc.digest().expect("action digest"))
         .collect();
@@ -1036,14 +1037,16 @@ fn based_aggregate_with_two_adjuncts() {
 
     let wtxid = mock_wtxid(&becomes_based);
     let wtxid_bytes: [u8; 64] = wtxid.into();
-    let adjuncts = [autonome_a.strip(wtxid), autonome_b.strip(wtxid)];
+    let adjunct_a = autonome_a.strip(wtxid);
+    let adjunct_b = autonome_b.strip(wtxid);
+    let adjuncts = [&adjunct_a, &adjunct_b];
 
     becomes_based
         .verify_signatures(&sighash)
         .expect("based aggregate binding sig should verify");
 
     let adjunct_descs: Vec<action::Descriptor> =
-        adjuncts.iter().flat_map(Bundle::descriptors).collect();
+        adjuncts.iter().flat_map(|adj| adj.descriptors()).collect();
     let digests: Vec<ActionDigest> = becomes_based
         .verify_coverage(&adjunct_descs)
         .expect("the based aggregate covers itself and its adjuncts")
@@ -1209,11 +1212,11 @@ fn read_preserves_action_order() {
     // Sign for this exact order: the commitment, and hence the sighash, depends
     // on it.
     let value_balance = value::Balance::try_from(-500i64).expect("in range");
-    let descriptors: Vec<[u8; 64]> = items.iter().map(|item| item.0).collect();
-    let sighash = mock_sighash(bundle_commitment(
-        &action_descriptor_digest(&descriptors),
+    let descriptors: Vec<[u8; 64]> = items.iter().map(|item| item.0.into()).collect();
+    let sighash = mock_sighash(blake2b::bundle_commitment(
+        &blake2b::action_descriptor_digest(&descriptors),
         value_balance.into(),
-        &memo_digest(&[]),
+        &blake2b::memo_digest(&[]),
     ));
     let actions: Vec<Action> = items
         .iter()

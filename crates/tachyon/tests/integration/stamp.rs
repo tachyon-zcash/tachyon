@@ -177,7 +177,8 @@ fn merge_populates_covered_actions() {
     let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note_a);
     let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note_b);
 
-    let mut descriptors = Vec::<[u8; 64]>::from_iter([plan_a.descriptor(), plan_b.descriptor()]);
+    let mut descriptors =
+        Vec::<[u8; 64]>::from_iter([plan_a.descriptor().into(), plan_b.descriptor().into()]);
     descriptors.sort_unstable();
     let expected = blake2b::action_descriptor_digest(&descriptors);
 
@@ -252,7 +253,11 @@ fn double_output_cannot_aggregate() {
     // and the covered-actions digest over the merged descriptors, so `covers`
     // accepts it and only proof verification rejects it.
     let coverage = {
-        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
+        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors
+            .iter()
+            .copied()
+            .map(<[u8; 64]>::from)
+            .collect();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
@@ -396,7 +401,11 @@ fn double_spend_cannot_aggregate() {
     // the merged descriptors, and the canonical deduplicated nullifier set that
     // cannot reconstruct the doubled multiset the proof commits to.
     let coverage = {
-        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
+        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors
+            .iter()
+            .copied()
+            .map(<[u8; 64]>::from)
+            .collect();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
@@ -488,7 +497,11 @@ fn cannot_forge_stamp_covering_duplicated_action() {
     // the duplicated action, and the canonical deduplicated tachygram set that
     // cannot reconstruct the doubled multiset the proof commits to.
     let coverage = {
-        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
+        let mut desc_bytes: Vec<[u8; 64]> = all_descriptors
+            .iter()
+            .copied()
+            .map(<[u8; 64]>::from)
+            .collect();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
