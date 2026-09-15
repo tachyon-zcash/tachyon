@@ -570,7 +570,8 @@ fn double_spend_obvious() {
         .collect();
     assert!(
         !decoded
-            .verify_proof(rng, &digests)
+            .stamp
+            .verify_proof(rng, digests)
             .expect("proof system verification"),
         "the deduplicated tachygram set cannot reconstruct the doubled proof"
     );
