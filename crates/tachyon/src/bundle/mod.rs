@@ -705,8 +705,15 @@ impl Bundle<ProofStamp> {
         PROOF_SYSTEM.verify(&pcd, rng)
     }
 
-    /// Verify the bundle against the given adjuncts: signatures, adjunct
-    /// pointers, coverage, the tachygram set, and the proof, in that order.
+    /// Verify everything about this bundle. Does not verify any details about
+    /// the provided adjuncts.
+    ///
+    /// - Signatures are valid
+    /// - Adjuncts are covered
+    /// - Tachygrams are consistent
+    /// - Proof is correct
+    ///
+    /// If you need more control, call each verify method directly.
     pub fn verify<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
