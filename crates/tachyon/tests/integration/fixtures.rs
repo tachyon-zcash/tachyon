@@ -137,9 +137,9 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     let (tachygrams, stamp_anchor, proof) =
         ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
     let stamp = ProofStamp {
-        coverage: blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(iter::once(
-            plan.descriptor(),
-        ))),
+        coverage: blake2b::action_descriptor_digest(
+            &iter::once(plan.descriptor()).collect::<Vec<[u8; 64]>>(),
+        ),
         anchor: stamp_anchor,
         tachygram_set: tachygrams
             .iter()
@@ -527,7 +527,7 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
     let entries = pool.stamps_between(start, end);
     let members: usize = entries.iter().map(|entry| entry.1.len()).sum();
     assert!(
-        members < ProductionRank::num_coeffs(),
+        members < (1 << ProductionRank::RANK),
         "span exceeds one summary"
     );
     let epoch = pool.anchor_index[&start].0.epoch();

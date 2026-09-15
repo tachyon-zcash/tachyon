@@ -507,7 +507,7 @@ fn cannot_forge_stamp_covering_duplicated_action() {
     );
 }
 
-/// The proof is checked against exactly the multiset its header is built from:
+/// `verify_proof` checks the proof against exactly the multiset it is handed:
 /// the deduplicated `{d}` matches the single-action proof, while the true
 /// `[d, d]` reconstructs `(x−d)²` and does not. Detecting a duplicate is the
 /// caller's obligation.
@@ -540,8 +540,8 @@ fn verify_cannot_distinguish_a_deduplicated_duplicate() {
     );
 }
 
-/// The action polynomial is reconstructed from the action digests the header is
-/// built from, as a multiset: the exact covered actions verify (in any order),
+/// `verify_proof` reconstructs the action polynomial from the action digests it
+/// is given, as a multiset: the exact covered actions verify (in any order),
 /// and any deviation — a dropped, duplicated, extra, or substituted action —
 /// reconstructs a different polynomial and does not verify.
 #[test]

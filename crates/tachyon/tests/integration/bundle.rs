@@ -468,8 +468,9 @@ fn double_spend_obvious() {
     // shared because the actions are byte-identical.
     let doubled = -2 * i64::try_from(u64::from(note.value)).expect("note value fits i64");
     let value_balance = value::Balance::try_from(doubled).expect("doubled balance stays in range");
+    let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
     let sighash = mock_sighash(blake2b::bundle_commitment(
-        &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter([descriptor, descriptor])),
+        &blake2b::action_descriptor_digest(&action_bytes),
         doubled,
         &blake2b::memo_digest(&[]),
     ));
@@ -482,7 +483,9 @@ fn double_spend_obvious() {
     let (tachygrams, stamp_anchor, proof) =
         ProofStamp::prove_output(rng, rcv, alpha, note, anchor).expect("prove_output");
     let output_stamp = ProofStamp {
-        coverage: blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter([descriptor])),
+        coverage: blake2b::action_descriptor_digest(
+            &vec![descriptor].into_iter().collect::<Vec<[u8; 64]>>(),
+        ),
         anchor: stamp_anchor,
         tachygram_set: tachygrams
             .iter()
