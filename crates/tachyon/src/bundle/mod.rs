@@ -92,7 +92,7 @@ use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, Partial
 use rand_core::CryptoRng;
 
 use crate::{
-    ActionDigest, ActionDigestError, TachygramSetCommit,
+    ActionDigest, ActionDigestError, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
@@ -245,17 +245,6 @@ pub enum SignatureError {
     Action(#[error(not(source))] action::Signature),
 }
 
-/// Error during proof verification.
-#[derive(Debug, Display, Error)]
-pub enum VerifyProofError {
-    /// An action's cv or rk is the identity point.
-    #[display("action digest error: {_0}")]
-    ActionDigest(ActionDigestError),
-    /// The proof system returned an error.
-    #[display("proof system error: {_0}")]
-    ProofSystem(ragu_core::Error),
-}
-
 /// Errors during coverage verification.
 #[derive(Debug, Display, Error)]
 pub enum VerifyCoverageError {
@@ -268,6 +257,25 @@ pub enum VerifyCoverageError {
     /// The stamp publishes a number of tachygrams other than two per action.
     #[display("stamp does not publish two tachygrams per covered action")]
     TachygramArityMismatch,
+}
+
+/// Errors during tachygram set commitment verification.
+#[derive(Debug, Display, Error)]
+pub enum VerifyTachygramsError {
+    /// The stamp's tachygrams do not reproduce the stamp's set commitment.
+    #[display("tachygrams do not reproduce the set commitment")]
+    WrongTachygrams,
+}
+
+/// Error during proof verification.
+#[derive(Debug, Display, Error)]
+pub enum VerifyProofError {
+    /// An action's cv or rk is the identity point.
+    #[display("action digest error: {_0}")]
+    ActionDigest(ActionDigestError),
+    /// The proof system returned an error.
+    #[display("proof system error: {_0}")]
+    ProofSystem(ragu_core::Error),
 }
 
 /// Errors during adjunct pointer verification.
@@ -302,6 +310,9 @@ pub enum VerificationError {
     /// An error occurred while verifying the coverage.
     #[display("coverage verification error: {_0}")]
     Coverage(VerifyCoverageError),
+    /// An error occurred while verifying the tachygram set.
+    #[display("tachygrams verification error: {_0}")]
+    Tachygrams(VerifyTachygramsError),
     /// An error occurred while verifying the proof.
     #[display("proof verification error: {_0}")]
     Proof(VerifyProofError),
@@ -631,14 +642,23 @@ impl Bundle<ProofStamp> {
             return Err(VerifyCoverageError::StampActionsMismatch);
         }
 
-        // Every action publishes two tachygrams: a spend its nullifier pair, an
-        // output its commitment and pad. The set collapses duplicates, so a
-        // tachygram reused across actions also shows up as a short count.
         if self.stamp.tachygrams.len() != 2 * unique_descs.len() {
             return Err(VerifyCoverageError::TachygramArityMismatch);
         }
 
         Ok(unique_descs)
+    }
+
+    /// Verify the stamp's tachygram set commitment against the actual
+    /// tachygrams on this bundle.
+    pub fn verify_tachygrams(&self) -> Result<TachygramSetCommit, VerifyTachygramsError> {
+        let tg_set = TachygramSetPoly::from_iter(self.stamp.tachygrams.iter().copied());
+
+        if self.stamp.tachygram_set != tg_set.commit() {
+            return Err(VerifyTachygramsError::WrongTachygrams);
+        }
+
+        Ok(self.stamp.tachygram_set)
     }
 
     /// Verify the pointers of the adjuncts against the expected wtxid.
@@ -699,6 +719,9 @@ impl Bundle<ProofStamp> {
 
         self.verify_coverage(&adjuncts_dyn)
             .map_err(VerificationError::Coverage)?;
+
+        self.verify_tachygrams()
+            .map_err(VerificationError::Tachygrams)?;
 
         if self
             .verify_proof(rng, &adjuncts_dyn)

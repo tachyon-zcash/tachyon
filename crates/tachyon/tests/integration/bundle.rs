@@ -10,6 +10,7 @@ use alloc::{
 use core::cmp::Reverse;
 
 use corez::io;
+use ff::Field as _;
 use group::Group as _;
 use pasta_curves::{Eq, Fp};
 use ragu::PROOF_SIZE_COMPRESSED;
@@ -1923,6 +1924,46 @@ fn verify_coverage_rejects_wrong_tachygram_arity() {
     let VerifyCoverageError::TachygramArityMismatch = err else {
         panic!("expected TachygramArityMismatch, got {err:?}");
     };
+}
+
+/// A tampered list of the right length satisfies the arity rule, so the set
+/// commitment is what rejects it.
+#[test]
+fn verify_tachygrams_rejects_a_tampered_list() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let ask = wallet.sk.derive_auth_private();
+    let note = wallet.random_note(200);
+    let pool = PoolSim::genesis(rng);
+    let (stamp, output_plan) = build_output_stamp(rng, pool.anchor(), note);
+
+    // Swap one tachygram for another, keeping the count and the carried
+    // commitment, so coverage has nothing to say about it.
+    let mut tampered = stamp;
+    let dropped = *tampered.tachygrams.iter().next().expect("nonempty");
+    tampered.tachygrams.remove(&dropped);
+    tampered
+        .tachygrams
+        .insert(Tachygram::from(Fp::random(&mut *rng)));
+
+    let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
+    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+    let bundle = bundle_plan
+        .sign(rng, &sighash, &ask)
+        .expect("sign output bundle")
+        .stamp(tampered);
+
+    bundle
+        .verify_coverage(&[])
+        .expect("two tachygrams for one action");
+
+    let err = bundle
+        .verify_tachygrams()
+        .expect_err("a tampered list must be rejected");
+    assert_eq!(
+        err.to_string(),
+        "tachygrams do not reproduce the set commitment"
+    );
 }
 
 /// The length prefix bounds the memo read: the stamp trailer parses after it,

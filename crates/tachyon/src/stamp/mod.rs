@@ -24,6 +24,7 @@ use proof::{
     stamp::{MergeStamp, OutputStamp, SpendStamp, StampHeader, StampLift},
 };
 use ragu::PROOF_SIZE_COMPRESSED;
+use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand_core::CryptoRng;
 
 use crate::{
@@ -218,23 +219,31 @@ impl ProofStamp {
     /// Read a stamp from the consensus wire format. The proof blob has a
     /// known constant size.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let mut covered_actions = [0u8; 32];
-        reader.read_exact(&mut covered_actions)?;
+        let mut coverage = [0u8; 32];
+        reader.read_exact(&mut coverage)?;
 
         let anchor = Anchor::read(&mut reader)?;
 
-        // Parsing does not confirm this against the tachygrams below: an MSM
-        // over attacker-supplied bytes is a denial-of-service vector. See
-        // `ProofStamp::is_accumulating`.
+        // Parsing does not confirm this against the tachygrams below.
         let tachygram_set =
             TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
 
-        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so
-        // do not pre-allocate vector capacity. vector reads are ASSUMED to hit
-        // invalid data or EOF before significant problems occur.
-        // TODO: assert a reasonable maximum, to allow pre-allocation?
+        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
         let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+        // proof stamp should never have an empty set
+        if n_tachygrams == 0 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
+        }
+
+        // the polynomial multiset includes a constant term
+        if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "too many tachygrams",
+            ));
+        }
 
         let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
         for _ in 0..n_tachygrams {
@@ -247,7 +256,7 @@ impl ProofStamp {
                 ));
             }
 
-            if tachygrams.last().is_none_or(|&last| last != tg) {
+            if tachygrams.last() != Some(&tg) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "tachygrams are not canonically sorted",
@@ -270,7 +279,7 @@ impl ProofStamp {
         };
 
         Ok(Self {
-            coverage: covered_actions,
+            coverage,
             anchor,
             tachygram_set,
             tachygrams,
@@ -526,10 +535,12 @@ pub struct ProofStamp {
     /// The historic pool state for which this stamp is valid.
     pub anchor: Anchor,
 
-    /// The commitment to this stamp's tachygram set.
+    /// The commitment to this stamp's tachygram set, which may not be
+    /// consistent with [`Self::tachygrams`].
     pub tachygram_set: TachygramSetCommit,
 
-    /// This stamp's tachygram set.
+    /// The contents of this stamp's tachygram set, which may not be consistent
+    /// with [`Self::tachygram_set`].
     pub tachygrams: BTreeSet<Tachygram>,
 
     /// The Ragu proof bytes.
@@ -822,25 +833,6 @@ impl ProofStamp {
         blake2b::action_descriptor_digest(&desc_bytes) == self.coverage
     }
 
-    /// Confirm `tachygram_set` commits to the published tachygrams.
-    ///
-    /// # Soundness
-    ///
-    /// Required for full validation, at mempool admission or when validating
-    /// the containing block. The proof binds the accumulator to the tachygrams
-    /// the circuit witnessed, not to the published list; without this check a
-    /// stamp could publish a list omitting a nullifier the accumulator
-    /// contains, which is what the two-epoch duplicate scan reads.
-    #[must_use]
-    fn is_accumulating(&self) -> bool {
-        self.tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>()
-            .commit()
-            == self.tachygram_set
-    }
-
     /// Reconstruct the PCD header and verify the proof. Call
     /// [`ProofStamp::is_covering`] first to cheaply predict a mismatch.
     ///
@@ -852,11 +844,7 @@ impl ProofStamp {
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,
     ) -> Result<bool, ragu_core::Error> {
-        if !self.is_accumulating() {
-            return Ok(false);
-        }
-
-        let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
+        let action_set = ActionSetPoly::from_iter(action_digests);
 
         let pcd = self.proof.clone().carry::<StampHeader>((
             action_set.commit(),

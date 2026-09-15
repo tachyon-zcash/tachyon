@@ -4,10 +4,11 @@ use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::
 
 use ff::Field as _;
 use pasta_curves::Fp;
+use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     ActionDigest, Anchor, BlockHeight, CompactSize, EpochIndex, ProofStamp, Tachygram,
-    TachygramSetPoly, action,
+    TachygramSetCommit, TachygramSetPoly, action,
     constants::EPOCH_SIZE,
     digest::blake2b,
     stamp::{Plan, ProveError},
@@ -658,6 +659,58 @@ fn read_rejects_duplicate_tachygrams() {
     assert_eq!(err.to_string(), "tachygrams are not unique");
 }
 
+/// Every covered action publishes tachygrams, so a proof stamp never carries
+/// an empty set. `read` rejects the count before reading any member.
+#[test]
+fn read_rejects_empty_tachygrams() {
+    let rng = &mut StdRng::seed_from_u64(0);
+
+    let anchor = Anchor::from(Fp::random(&mut *rng));
+
+    let mut buf = Vec::new();
+    {
+        buf.extend_from_slice(&[0u8; 32]); // dummy actions digest
+        anchor.write(&mut buf).expect("write anchor");
+        TachygramSetCommit::default()
+            .write(&mut buf)
+            .expect("write tachygram set commitment");
+
+        CompactSize::from(0u64)
+            .write(&mut buf)
+            .expect("write tachygram count");
+    }
+
+    let err = ProofStamp::read(&*buf).expect_err("an empty tachygram set must be rejected");
+    assert_eq!(err.to_string(), "no tachygrams");
+}
+
+/// The set polynomial carries a constant term alongside its roots, so the
+/// members must number fewer than the rank's coefficients. `read` rejects the
+/// count before reading any member, so the oversized set is never allocated.
+#[test]
+fn read_rejects_too_many_tachygrams() {
+    let rng = &mut StdRng::seed_from_u64(0);
+
+    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let n_tachygrams = u64::try_from(ProductionRank::num_coeffs()).expect("rank fits u64");
+
+    let mut buf = Vec::new();
+    {
+        buf.extend_from_slice(&[0u8; 32]); // dummy actions digest
+        anchor.write(&mut buf).expect("write anchor");
+        TachygramSetCommit::default()
+            .write(&mut buf)
+            .expect("write tachygram set commitment");
+
+        CompactSize::from(n_tachygrams)
+            .write(&mut buf)
+            .expect("write tachygram count");
+    }
+
+    let err = ProofStamp::read(&*buf).expect_err("an oversized tachygram set must be rejected");
+    assert_eq!(err.to_string(), "too many tachygrams");
+}
+
 /// A strictly increasing tachygram sequence is unaffected by the
 /// distinctness check.
 #[test]
@@ -694,7 +747,7 @@ fn covered_actions_round_trip() {
 
 /// An honest stamp's carried commitment matches its published tachygrams.
 #[test]
-fn accumulating_accepts_honest_stamp() {
+fn honest_stamp_commits_to_its_tachygrams() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
@@ -710,7 +763,7 @@ fn accumulating_accepts_honest_stamp() {
 /// A carried commitment over the wrong tachygrams is rejected, and the
 /// rejection reaches proof verification.
 #[test]
-fn accumulating_rejects_mismatched_commitment() {
+fn verify_proof_rejects_mismatched_commitment() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
@@ -733,6 +786,44 @@ fn accumulating_rejects_mismatched_commitment() {
             .verify_proof(rng, [plan.digest().expect("valid plan")])
             .expect("verify"),
         "verification must reject an unconfirmed commitment"
+    );
+}
+
+/// The proof binds `tachygram_set`, not the published `tachygrams`. A stamp
+/// publishing a tampered list under its honest commitment verifies, which is
+/// what `Bundle::verify_tachygrams` is for.
+#[test]
+fn proof_alone_does_not_bind_the_published_list() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let note = wallet.random_note(200);
+    let (honest, plan) = build_output_stamp(rng, pool.anchor(), note);
+
+    // Swap one published tachygram for another, keeping the count and the
+    // carried commitment untouched.
+    let mut tampered_list = honest.tachygrams.clone();
+    let dropped = *tampered_list.iter().next().expect("a published tachygram");
+    tampered_list.remove(&dropped);
+    tampered_list.insert(Tachygram::from(Fp::random(&mut *rng)));
+
+    assert_eq!(tampered_list.len(), honest.tachygrams.len());
+
+    let tampered = ProofStamp {
+        tachygrams: tampered_list,
+        ..honest
+    };
+
+    assert_ne!(
+        TachygramSetPoly::from_iter(tampered.tachygrams.clone()).commit(),
+        tampered.tachygram_set.clone()
+    );
+
+    assert!(
+        tampered
+            .verify_proof(rng, [plan.digest().expect("valid plan")],)
+            .expect("verify"),
+        "the proof is over the carried commitment, which is untouched here"
     );
 }
 

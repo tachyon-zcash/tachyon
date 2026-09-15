@@ -527,7 +527,7 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
     let entries = pool.stamps_between(start, end);
     let members: usize = entries.iter().map(|entry| entry.1.len()).sum();
     assert!(
-        members < (1 << ProductionRank::RANK),
+        members < ProductionRank::num_coeffs(),
         "span exceeds one summary"
     );
     let epoch = pool.anchor_index[&start].0.epoch();

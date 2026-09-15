@@ -33,7 +33,7 @@ mod serialization;
 pub use action::{Action, Plan as ActionPlan};
 pub use bundle::{
     Bundle, LiftError, Plan as BundlePlan, SignatureError, TachyonBundle, VerificationError,
-    VerifyCoverageError, VerifyPointersError, VerifyProofError,
+    VerifyCoverageError, VerifyPointersError, VerifyProofError, VerifyTachygramsError,
 };
 pub use note::Note;
 pub use primitives::*;

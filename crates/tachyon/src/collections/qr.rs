@@ -323,7 +323,7 @@ mod tests {
         let rng = &mut StdRng::seed_from_u64(26);
         let discriminant = Fp::random(&mut *rng);
         let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-            .take((1 << ProductionRank::RANK) - 1)
+            .take(ProductionRank::num_coeffs() - 1)
             .collect();
         let (residue, non_residue) = split(values, discriminant);
         for (points, class) in [
