@@ -832,26 +832,4 @@ impl ProofStamp {
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes) == self.coverage
     }
-
-    /// Reconstruct the PCD header and verify the proof. Call
-    /// [`ProofStamp::is_covering`] first to cheaply predict a mismatch.
-    ///
-    /// # Soundness
-    ///
-    /// The parameter is a multiset: order does not matter, multiplicity does.
-    pub fn verify_proof<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        action_digests: impl IntoIterator<Item = ActionDigest>,
-    ) -> Result<bool, ragu_core::Error> {
-        let action_set = ActionSetPoly::from_iter(action_digests);
-
-        let pcd = self.proof.clone().carry::<StampHeader>((
-            action_set.commit(),
-            self.tachygram_set,
-            self.anchor,
-        ));
-
-        PROOF_SYSTEM.verify(&pcd, rng)
-    }
 }

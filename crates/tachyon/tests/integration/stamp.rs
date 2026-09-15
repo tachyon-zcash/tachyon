@@ -7,11 +7,14 @@ use pasta_curves::Fp;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, Anchor, BlockHeight, CompactSize, EpochIndex, ProofStamp, Tachygram,
-    TachygramSetCommit, TachygramSetPoly, action,
+    ActionDigest, ActionSetPoly, Anchor, BlockHeight, CompactSize, EpochIndex, ProofStamp,
+    Tachygram, TachygramSetCommit, TachygramSetPoly, action,
     constants::EPOCH_SIZE,
     digest::blake2b,
-    stamp::{Plan, ProveError},
+    stamp::{
+        Plan, ProveError,
+        proof::{PROOF_SYSTEM, stamp::StampHeader},
+    },
 };
 
 use crate::fixtures::{
@@ -273,9 +276,14 @@ fn double_output_cannot_aggregate() {
         .iter()
         .map(|desc| desc.digest().expect("action digest"))
         .collect();
+    let pcd = stamp.proof.clone().carry::<StampHeader>((
+        ActionSetPoly::from_iter(digests).commit(),
+        stamp.tachygram_set,
+        stamp.anchor,
+    ));
     assert!(
-        !stamp
-            .verify_proof(rng, digests)
+        !PROOF_SYSTEM
+            .verify(&pcd, &mut *rng)
             .expect("proof system verification"),
         "multiset-backed proof must not verify against the deduplicated set"
     );
@@ -413,9 +421,14 @@ fn double_spend_cannot_aggregate() {
         .iter()
         .map(|desc| desc.digest().expect("action digest"))
         .collect();
+    let pcd = stamp.proof.clone().carry::<StampHeader>((
+        ActionSetPoly::from_iter(digests).commit(),
+        stamp.tachygram_set,
+        stamp.anchor,
+    ));
     assert!(
-        !stamp
-            .verify_proof(rng, digests)
+        !PROOF_SYSTEM
+            .verify(&pcd, &mut *rng)
             .expect("proof system verification"),
         "doubled-nullifier proof must not verify"
     );
@@ -499,15 +512,20 @@ fn cannot_forge_stamp_covering_duplicated_action() {
         .iter()
         .map(|desc| desc.digest().expect("action digest"))
         .collect();
+    let pcd = stamp.proof.clone().carry::<StampHeader>((
+        ActionSetPoly::from_iter(digests).commit(),
+        stamp.tachygram_set,
+        stamp.anchor,
+    ));
     assert!(
-        !stamp
-            .verify_proof(rng, digests)
+        !PROOF_SYSTEM
+            .verify(&pcd, &mut *rng)
             .expect("proof system verification"),
         "a stamp covering a duplicated action must not verify"
     );
 }
 
-/// `verify_proof` checks the proof against exactly the multiset it is handed:
+/// The proof is checked against exactly the multiset its header is built from:
 /// the deduplicated `{d}` matches the single-action proof, while the true
 /// `[d, d]` reconstructs `(x−d)²` and does not. Detecting a duplicate is the
 /// caller's obligation.
@@ -524,24 +542,34 @@ fn verify_cannot_distinguish_a_deduplicated_duplicate() {
 
     // Deduplicated to one action, it matches the single-action proof.
     let single = descriptor.digest().expect("action digest");
+    let deduplicated = stamp.proof.clone().carry::<StampHeader>((
+        ActionSetPoly::from_iter([single]).commit(),
+        stamp.tachygram_set,
+        stamp.anchor,
+    ));
     assert!(
-        stamp
-            .verify_proof(rng, [single])
+        PROOF_SYSTEM
+            .verify(&deduplicated, &mut *rng)
             .expect("proof system verification"),
         "the single covered action verifies"
     );
 
     // The true multiset is a different action polynomial: (x−d)² ≠ (x−d).
+    let doubled = stamp.proof.clone().carry::<StampHeader>((
+        ActionSetPoly::from_iter([single, single]).commit(),
+        stamp.tachygram_set,
+        stamp.anchor,
+    ));
     assert!(
-        !stamp
-            .verify_proof(rng, [single, single])
+        !PROOF_SYSTEM
+            .verify(&doubled, &mut *rng)
             .expect("proof system verification"),
         "the doubled action must not verify"
     );
 }
 
-/// `verify_proof` reconstructs the action polynomial from the action digests it
-/// is given, as a multiset: the exact covered actions verify (in any order),
+/// The action polynomial is reconstructed from the action digests the header is
+/// built from, as a multiset: the exact covered actions verify (in any order),
 /// and any deviation — a dropped, duplicated, extra, or substituted action —
 /// reconstructs a different polynomial and does not verify.
 #[test]
@@ -557,10 +585,14 @@ fn verify_proof_action_multiset_invariants() {
         .collect();
 
     // Permutation accepts.
+    let permuted = stamped.stamp.proof.clone().carry::<StampHeader>((
+        ActionSetPoly::from_iter([digests[1], digests[0]]).commit(),
+        stamped.stamp.tachygram_set,
+        stamped.stamp.anchor,
+    ));
     assert!(
-        stamped
-            .stamp
-            .verify_proof(rng, [digests[1], digests[0]])
+        PROOF_SYSTEM
+            .verify(&permuted, &mut *rng)
             .expect("proof system verification"),
         "permuted actions must verify"
     );
@@ -569,10 +601,14 @@ fn verify_proof_action_multiset_invariants() {
     {
         let mut dropped = digests.clone();
         dropped.pop();
+        let pcd = stamped.stamp.proof.clone().carry::<StampHeader>((
+            ActionSetPoly::from_iter(dropped).commit(),
+            stamped.stamp.tachygram_set,
+            stamped.stamp.anchor,
+        ));
         assert!(
-            !stamped
-                .stamp
-                .verify_proof(rng, dropped)
+            !PROOF_SYSTEM
+                .verify(&pcd, &mut *rng)
                 .expect("proof system verification"),
             "dropped action must not verify"
         );
@@ -582,10 +618,14 @@ fn verify_proof_action_multiset_invariants() {
     {
         let mut duplicated = digests.clone();
         duplicated.push(digests[0]);
+        let pcd = stamped.stamp.proof.clone().carry::<StampHeader>((
+            ActionSetPoly::from_iter(duplicated).commit(),
+            stamped.stamp.tachygram_set,
+            stamped.stamp.anchor,
+        ));
         assert!(
-            !stamped
-                .stamp
-                .verify_proof(rng, duplicated)
+            !PROOF_SYSTEM
+                .verify(&pcd, &mut *rng)
                 .expect("proof system verification"),
             "duplicated action must not verify"
         );
@@ -600,10 +640,14 @@ fn verify_proof_action_multiset_invariants() {
                 .digest()
                 .expect("action digest"),
         );
+        let pcd = stamped.stamp.proof.clone().carry::<StampHeader>((
+            ActionSetPoly::from_iter(extended).commit(),
+            stamped.stamp.tachygram_set,
+            stamped.stamp.anchor,
+        ));
         assert!(
-            !stamped
-                .stamp
-                .verify_proof(rng, extended)
+            !PROOF_SYSTEM
+                .verify(&pcd, &mut *rng)
                 .expect("proof system verification"),
             "extra action must not verify"
         );
@@ -616,10 +660,14 @@ fn verify_proof_action_multiset_invariants() {
             .descriptor()
             .digest()
             .expect("action digest");
+        let pcd = stamped.stamp.proof.clone().carry::<StampHeader>((
+            ActionSetPoly::from_iter(replaced).commit(),
+            stamped.stamp.tachygram_set,
+            stamped.stamp.anchor,
+        ));
         assert!(
-            !stamped
-                .stamp
-                .verify_proof(rng, replaced)
+            !PROOF_SYSTEM
+                .verify(&pcd, &mut *rng)
                 .expect("proof system verification"),
             "replaced action must not verify"
         );
@@ -781,10 +829,13 @@ fn verify_proof_rejects_mismatched_commitment() {
         TachygramSetPoly::from_iter(forged.tachygrams.clone()).commit(),
         forged.tachygram_set.clone()
     );
+    let pcd = forged.proof.clone().carry::<StampHeader>((
+        ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit(),
+        forged.tachygram_set,
+        forged.anchor,
+    ));
     assert!(
-        !forged
-            .verify_proof(rng, [plan.digest().expect("valid plan")])
-            .expect("verify"),
+        !PROOF_SYSTEM.verify(&pcd, &mut *rng).expect("verify"),
         "verification must reject an unconfirmed commitment"
     );
 }
@@ -819,10 +870,13 @@ fn proof_alone_does_not_bind_the_published_list() {
         tampered.tachygram_set.clone()
     );
 
+    let pcd = tampered.proof.clone().carry::<StampHeader>((
+        ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit(),
+        tampered.tachygram_set,
+        tampered.anchor,
+    ));
     assert!(
-        tampered
-            .verify_proof(rng, [plan.digest().expect("valid plan")],)
-            .expect("verify"),
+        PROOF_SYSTEM.verify(&pcd, &mut *rng).expect("verify"),
         "the proof is over the carried commitment, which is untouched here"
     );
 }
@@ -874,8 +928,13 @@ fn lift_then_verify() {
 
     let lifted = stamp.prove_lift(rng, [digest], chain).expect("lift");
 
+    let pcd = lifted.proof.clone().carry::<StampHeader>((
+        ActionSetPoly::from_iter([digest]).commit(),
+        lifted.tachygram_set,
+        lifted.anchor,
+    ));
     assert!(
-        lifted.verify_proof(rng, [digest]).expect("verify"),
+        PROOF_SYSTEM.verify(&pcd, &mut *rng).expect("verify"),
         "a lifted stamp must verify against the actions it covers"
     );
 }
@@ -912,10 +971,13 @@ fn lift_over_descriptors_then_verify() {
         .lift(rng, &covered_descriptors, following_stamps)
         .expect("lift over the covered descriptors");
 
+    let pcd = lifted.proof.clone().carry::<StampHeader>((
+        ActionSetPoly::from_iter([covered_plan.digest().expect("valid plan")]).commit(),
+        lifted.tachygram_set,
+        lifted.anchor,
+    ));
     assert!(
-        lifted
-            .verify_proof(rng, [covered_plan.digest().expect("valid plan")])
-            .expect("verify"),
+        PROOF_SYSTEM.verify(&pcd, &mut *rng).expect("verify"),
         "a lifted stamp must verify against the actions it covers"
     );
 }
@@ -962,8 +1024,13 @@ fn lift_rejects_wrong_digests() {
         .prove_lift(rng, [foreign_digest], chain)
         .expect("the lift itself cannot see the wrong action set");
 
+    let pcd = lifted.proof.clone().carry::<StampHeader>((
+        ActionSetPoly::from_iter([digest]).commit(),
+        lifted.tachygram_set,
+        lifted.anchor,
+    ));
     assert!(
-        !lifted.verify_proof(rng, [digest]).expect("verify"),
+        !PROOF_SYSTEM.verify(&pcd, &mut *rng).expect("verify"),
         "a stamp lifted under a forged action set must not verify"
     );
 }

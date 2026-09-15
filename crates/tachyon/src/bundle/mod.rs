@@ -92,13 +92,16 @@ use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, Partial
 use rand_core::CryptoRng;
 
 use crate::{
-    ActionDigest, ActionDigestError, TachygramSetCommit, TachygramSetPoly,
+    ActionDigest, ActionDigestError, ActionSetPoly, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
     primitives::{Anchor, AnchorError, EpochIndex, effect},
     reddsa, serialization,
-    stamp::{self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven},
+    stamp::{
+        self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven,
+        proof::{PROOF_SYSTEM, stamp::StampHeader},
+    },
     value,
 };
 
@@ -245,17 +248,6 @@ pub enum SignatureError {
     Action(#[error(not(source))] action::Signature),
 }
 
-/// Error during proof verification.
-#[derive(Debug, Display, Error)]
-pub enum VerifyProofError {
-    /// An action's cv or rk is the identity point.
-    #[display("action digest error: {_0}")]
-    ActionDigest(ActionDigestError),
-    /// The proof system returned an error.
-    #[display("proof system error: {_0}")]
-    ProofSystem(ragu_core::Error),
-}
-
 /// Errors during coverage verification.
 #[derive(Debug, Display, Error)]
 pub enum VerifyCoverageError {
@@ -265,17 +257,17 @@ pub enum VerifyCoverageError {
     /// The stamp on this bundle does not claim to cover these actions.
     #[display("stamp on this bundle does not claim to cover these actions")]
     StampActionsMismatch,
-    /// The stamp publishes a number of tachygrams other than two per action.
-    #[display("stamp does not publish two tachygrams per covered action")]
-    TachygramArityMismatch,
 }
 
 /// Errors during tachygram set commitment verification.
 #[derive(Debug, Display, Error)]
 pub enum VerifyTachygramsError {
+    /// The stamp publishes a number of tachygrams other than two per action.
+    #[display("stamp does not publish two tachygrams per covered action")]
+    WrongArity,
     /// The stamp's tachygrams do not reproduce the stamp's set commitment.
     #[display("tachygrams do not reproduce the set commitment")]
-    WrongTachygrams,
+    WrongSet,
 }
 
 /// Errors during adjunct pointer verification.
@@ -304,18 +296,24 @@ pub enum LiftError {
 /// Errors during bundle verification.
 #[derive(Debug, Display, Error)]
 pub enum VerificationError {
+    /// The bundle signatures did not verify.
+    #[display("signature verification error: {_0}")]
+    Signature(SignatureError),
     /// The pointer of an adjunct is not the expected aggregate id.
-    #[display("stamp on an adjunct does not match the expected aggregate id")]
+    #[display("adjunct pointer verification error: {_0}")]
     Pointers(VerifyPointersError),
     /// An error occurred while verifying the coverage.
     #[display("coverage verification error: {_0}")]
     Coverage(VerifyCoverageError),
+    /// An error occurred while collecting the action digest set.
+    #[display("action verification error: {_0}")]
+    Actions(ActionDigestError),
     /// An error occurred while verifying the tachygram set.
     #[display("tachygrams verification error: {_0}")]
     Tachygrams(VerifyTachygramsError),
     /// An error occurred while verifying the proof.
     #[display("proof verification error: {_0}")]
-    Proof(VerifyProofError),
+    Proof(ragu_core::Error),
     /// The proof did not verify.
     #[display("proof did not verify")]
     Disproved,
@@ -623,16 +621,14 @@ impl Bundle<ProofStamp> {
     /// bundle and the provided bundles.
     pub fn verify_coverage(
         &self,
-        adjuncts: &[&Bundle<dyn StampState>],
+        adjunct_descs: &[action::Descriptor],
     ) -> Result<BTreeSet<action::Descriptor>, VerifyCoverageError> {
         let own_descs = self.descriptors();
-        let other_descs: Vec<action::Descriptor> =
-            adjuncts.iter().flat_map(|&adj| adj.descriptors()).collect();
 
-        let n_descs = own_descs.len() + other_descs.len();
+        let n_descs = own_descs.len() + adjunct_descs.len();
 
         let unique_descs: BTreeSet<action::Descriptor> =
-            own_descs.into_iter().chain(other_descs).collect();
+            own_descs.iter().chain(adjunct_descs).copied().collect();
 
         if unique_descs.len() != n_descs {
             return Err(VerifyCoverageError::DuplicateActions);
@@ -642,20 +638,23 @@ impl Bundle<ProofStamp> {
             return Err(VerifyCoverageError::StampActionsMismatch);
         }
 
-        if self.stamp.tachygrams.len() != 2 * unique_descs.len() {
-            return Err(VerifyCoverageError::TachygramArityMismatch);
-        }
-
         Ok(unique_descs)
     }
 
     /// Verify the stamp's tachygram set commitment against the actual
     /// tachygrams on this bundle.
-    pub fn verify_tachygrams(&self) -> Result<TachygramSetCommit, VerifyTachygramsError> {
+    pub fn verify_tachygrams(
+        &self,
+        action_count: usize,
+    ) -> Result<TachygramSetCommit, VerifyTachygramsError> {
+        if self.stamp.tachygrams.len() != 2 * action_count {
+            return Err(VerifyTachygramsError::WrongArity);
+        }
+
         let tg_set = TachygramSetPoly::from_iter(self.stamp.tachygrams.iter().copied());
 
         if self.stamp.tachygram_set != tg_set.commit() {
-            return Err(VerifyTachygramsError::WrongTachygrams);
+            return Err(VerifyTachygramsError::WrongSet);
         }
 
         Ok(self.stamp.tachygram_set)
@@ -665,15 +664,15 @@ impl Bundle<ProofStamp> {
     pub fn verify_pointers(
         &self,
         wtxid: &[u8; 64],
-        adjuncts: &[&Bundle<dyn StampState>],
-    ) -> Result<(), VerifyPointersError> {
+        adjuncts: &[Bundle<PointerStamp>],
+    ) -> Result<Vec<action::Descriptor>, VerifyPointersError> {
         PointerStamp::try_from(*wtxid).map_err(VerifyPointersError::AdjunctPointerInvalid)?;
 
         if adjuncts
             .iter()
-            .all(|&adj| &adj.stamp.stamp_digest() == wtxid)
+            .all(|adj| &adj.stamp.stamp_digest() == wtxid)
         {
-            Ok(())
+            Ok(adjuncts.iter().flat_map(Bundle::descriptors).collect())
         } else {
             Err(VerifyPointersError::AdjunctPointerMismatch)
         }
@@ -684,47 +683,50 @@ impl Bundle<ProofStamp> {
     pub fn verify_proof<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        adjuncts: &[&Bundle<dyn StampState>],
-    ) -> Result<bool, VerifyProofError> {
-        let own_digests = self.actions.iter().map(|&action| action.digest());
+        action_digests: &[ActionDigest],
+    ) -> Result<bool, ragu_core::Error> {
+        let action_set = ActionSetPoly::from_iter(action_digests.iter().copied());
 
-        let other_digests = adjuncts
-            .iter()
-            .flat_map(|&adj| adj.actions.iter().map(|&action| action.digest()));
+        let pcd = self.stamp.proof.clone().carry::<StampHeader>((
+            action_set.commit(),
+            self.stamp.tachygram_set,
+            self.stamp.anchor,
+        ));
 
-        let action_digests = own_digests
-            .chain(other_digests)
-            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
-            .map_err(VerifyProofError::ActionDigest)?;
-
-        self.stamp
-            .verify_proof(rng, action_digests)
-            .map_err(VerifyProofError::ProofSystem)
+        PROOF_SYSTEM.verify(&pcd, rng)
     }
 
-    /// Verify the proof stamp with given adjuncts.
-    ///
-    /// Verification of signatures remains the responsibility of the caller.
+    /// Verify the bundle against the given adjuncts: signatures, adjunct
+    /// pointers, coverage, the tachygram set, and the proof, in that order.
     pub fn verify<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
+        sighash: &[u8; 32],
         wtxid: &[u8; 64],
-        adjuncts: &[&Bundle<PointerStamp>],
+        adjuncts: &[Bundle<PointerStamp>],
     ) -> Result<(), VerificationError> {
-        let adjuncts_dyn: Vec<&Bundle<dyn StampState>> =
-            adjuncts.iter().map(|&adj| adj.as_dyn()).collect();
+        self.verify_signatures(sighash)
+            .map_err(VerificationError::Signature)?;
 
-        self.verify_pointers(wtxid, &adjuncts_dyn)
+        let adjunct_descs = self
+            .verify_pointers(wtxid, adjuncts)
             .map_err(VerificationError::Pointers)?;
 
-        self.verify_coverage(&adjuncts_dyn)
+        let covered_descs = self
+            .verify_coverage(&adjunct_descs)
             .map_err(VerificationError::Coverage)?;
 
-        self.verify_tachygrams()
+        self.verify_tachygrams(covered_descs.len())
             .map_err(VerificationError::Tachygrams)?;
 
+        let covered_digests = covered_descs
+            .iter()
+            .map(action::Descriptor::digest)
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
+            .map_err(VerificationError::Actions)?;
+
         if self
-            .verify_proof(rng, &adjuncts_dyn)
+            .verify_proof(rng, &covered_digests)
             .map_err(VerificationError::Proof)?
         {
             Ok(())
