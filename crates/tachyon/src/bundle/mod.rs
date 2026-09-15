@@ -213,20 +213,20 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     }
 
     /// Verify the bundle's binding signature and all action signatures.
-    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), VerifySignaturesError> {
+    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
         // 1. Derive bvk from public data
         let bvk = public::BindingVerificationKey::derive(&self.actions, self.value_balance);
 
         // 2. Verify binding signature
         bvk.verify(sighash, &self.binding_sig)
-            .map_err(|_err| VerifySignaturesError::Binding(self.binding_sig))?;
+            .map_err(|_err| SignatureError::Binding(self.binding_sig))?;
 
         // 3. Verify each action signature
         for action in &self.actions {
             action
                 .rk
                 .verify(sighash, &action.sig)
-                .map_err(|_err| VerifySignaturesError::Action(action.sig))?;
+                .map_err(|_err| SignatureError::Action(action.sig))?;
         }
 
         Ok(())
@@ -236,7 +236,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
 /// Errors from bundle signature verification.
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
-pub enum VerifySignaturesError {
+pub enum SignatureError {
     /// The binding signature is invalid.
     #[display("invalid binding signature {_0:?}")]
     Binding(#[error(not(source))] Signature),
@@ -299,7 +299,7 @@ pub enum LiftError {
 pub enum VerificationError {
     /// The bundle signatures did not verify.
     #[display("signature verification error: {_0}")]
-    Signatures(VerifySignaturesError),
+    Signatures(SignatureError),
     /// An error occurred while verifying the adjunct pointers.
     #[display("adjunct pointer verification error: {_0}")]
     Pointers(VerifyPointersError),
