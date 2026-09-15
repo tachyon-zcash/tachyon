@@ -562,8 +562,9 @@ impl ProofStamp {
     /// `(tachygrams, anchor, proof)`.
     ///
     /// [`output::OutputBind`] settles the tachygram pair, then [`OutputStamp`]
-    /// proves the action over it. Both tachygrams are derived inside the
-    /// circuit and placed on the stamp for data availability.
+    /// proves the action over it and enforces the stamp accumulator. Both
+    /// tachygrams are derived inside the circuit and placed on the stamp for
+    /// data availability.
     pub fn prove_output<RNG: CryptoRng>(
         rng: &mut RNG,
         rcv: value::Trapdoor,
@@ -572,13 +573,14 @@ impl ProofStamp {
         anchor: Anchor,
     ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu_core::Error> {
         let (bind_pcd, ()) = PROOF_SYSTEM.seed(rng, output::OutputBind, (note,))?;
-        let tgs = *bind_pcd.data();
-        let tachygrams = BTreeSet::from_iter(<[Tachygram; 2]>::from(tgs));
+        let (cm, pad) = *bind_pcd.data();
+        #[expect(clippy::tuple_array_conversions, reason = "required")]
+        let tachygrams = BTreeSet::from_iter([cm, pad]);
 
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             OutputStamp,
-            (rcv, alpha, note, anchor),
+            witness::output_stamp((*bind_pcd.data(), ()), rcv, alpha, note, anchor),
             bind_pcd,
             ragu::Proof::trivial().carry::<()>(()),
         )?;
@@ -593,8 +595,9 @@ impl ProofStamp {
     /// The nullifier pair `{present_nf, nf_next}` published for data
     /// availability is read straight off the bind header (already confirmed
     /// against the derivation at [`SpendBind`](spend::SpendBind)); this step
-    /// only proves the action `(cv, rk)`. The spend's `anchor` is taken as the
-    /// stamp's anchor; chain validation lives inside the spendable lineage.
+    /// proves the action `(cv, rk)` and enforces the stamp accumulator over
+    /// the pair. The spend's `anchor` is taken as the stamp's anchor; chain
+    /// validation lives inside the spendable lineage.
     pub fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
@@ -610,7 +613,7 @@ impl ProofStamp {
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             SpendStamp,
-            (note, rcv, alpha, pak),
+            witness::spend_stamp((*bind_pcd.data(), ()), note, rcv, alpha, pak),
             bind_pcd,
             ragu::Proof::trivial().carry::<()>(()),
         )?;

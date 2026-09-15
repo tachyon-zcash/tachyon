@@ -11,12 +11,13 @@ use ragu::{Header, Step};
 
 use crate::{
     collections,
-    keys::ProofAuthorizingKey,
+    entropy::ActionRandomizer,
+    keys::{ProofAuthorizingKey, private},
     note::Note,
     nullifier::Nullifier,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant,
-        Tachygram, TachygramSetPoly,
+        Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NfDerive, NfMasterSeed, NullifierFuse},
@@ -30,9 +31,10 @@ use crate::{
         },
         spend::SpendBind,
         spendable::{QrSpendableInit, SpendableInit, SummarySpendableInit},
-        stamp::MergeStamp,
+        stamp::{OutputStamp, SpendStamp},
         summary::{SummaryAdvance, SummarySeed},
     },
+    value,
 };
 
 type StepLeft<S> = <<S as Step>::Left as Header>::Data;
@@ -533,35 +535,80 @@ pub fn qr_unspent_init(
     )
 }
 
-/// Prepare the witness for [`MergeStamp`]: `((left_action_set, left_tg_set),
-/// (merged_action_set, merged_tg_set), (right_action_set, right_tg_set))`.
+/// Prepare the witness for [`OutputStamp`]: `(rcv, alpha, note, anchor,
+/// action_set, tachygram_set)`.
+///
+/// Reads the tachygram pair off the bind header and derives the action from
+/// the note's negated value and `alpha`.
+///
+/// # Panics
+///
+/// Panics when `rcv` or `alpha` yields an identity point, leaving the action
+/// undigestible.
 #[must_use]
-pub fn merge_stamp(
-    (_left, _right): (StepLeft<MergeStamp>, StepRight<MergeStamp>),
-    left_actions: &[ActionDigest],
-    left_tgs: &[Tachygram],
-    right_actions: &[ActionDigest],
-    right_tgs: &[Tachygram],
-) -> StepWitness<'static, MergeStamp> {
-    let merged_action_set = left_actions
-        .iter()
-        .copied()
-        .chain(right_actions.iter().copied())
-        .collect::<ActionSetPoly>();
-    let merged_tg_set = left_tgs
-        .iter()
-        .copied()
-        .chain(right_tgs.iter().copied())
-        .collect::<TachygramSetPoly>();
+pub fn output_stamp(
+    (left, _right): (StepLeft<OutputStamp>, StepRight<OutputStamp>),
+    rcv: value::Trapdoor,
+    alpha: ActionRandomizer<effect::Output>,
+    note: Note,
+    anchor: Anchor,
+) -> StepWitness<'static, OutputStamp> {
+    let (cm, pad) = left;
+
+    #[expect(
+        clippy::expect_used,
+        reason = "identity cv or rk is a degenerate input"
+    )]
+    let digest = ActionDigest::new(
+        rcv.commit(-note.value),
+        private::ActionSigningKey::new(&alpha).derive_action_public(),
+    )
+    .expect("action digest");
+
+    #[expect(clippy::tuple_array_conversions, reason = "required")]
     (
-        (
-            left_actions.iter().copied().collect::<ActionSetPoly>(),
-            left_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        ),
-        (merged_action_set, merged_tg_set),
-        (
-            right_actions.iter().copied().collect::<ActionSetPoly>(),
-            right_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        ),
+        rcv,
+        alpha,
+        note,
+        anchor,
+        ActionSetPoly::from_iter([digest]),
+        TachygramSetPoly::from_iter([cm, pad]),
+    )
+}
+
+/// Prepare the witness for [`SpendStamp`]: `(note, rcv, alpha, pak,
+/// action_set, tachygram_set)`.
+///
+/// Reads the nullifier pair off the bind header and derives the action from
+/// the note's value and `pak` randomized by `alpha`.
+///
+/// # Panics
+///
+/// Panics when `rcv` or `alpha` yields an identity point, leaving the action
+/// undigestible.
+#[must_use]
+pub fn spend_stamp(
+    (left, _right): (StepLeft<SpendStamp>, StepRight<SpendStamp>),
+    note: Note,
+    rcv: value::Trapdoor,
+    alpha: ActionRandomizer<effect::Spend>,
+    pak: ProofAuthorizingKey,
+) -> StepWitness<'static, SpendStamp> {
+    let (_cm, present_nf, nf_next, _anchor) = left;
+
+    #[expect(
+        clippy::expect_used,
+        reason = "identity cv or rk is a degenerate input"
+    )]
+    let digest = ActionDigest::new(rcv.commit(note.value), pak.ak.derive_action_public(&alpha))
+        .expect("action digest");
+
+    (
+        note,
+        rcv,
+        alpha,
+        pak,
+        ActionSetPoly::from_iter([digest]),
+        TachygramSetPoly::from_iter([Tachygram::from(present_nf), Tachygram::from(nf_next)]),
     )
 }
