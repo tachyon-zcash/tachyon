@@ -16,7 +16,7 @@ use pasta_curves::{Eq, Fp};
 use ragu::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action,
+    BlockHeight, Tachygram, TachygramSetPoly, VerifySignaturesError, action,
     bundle::{Plan, PlanError, Signature},
     constants::{EPOCH_SIZE, MAX_MONEY},
     digest::blake2b::{COMMIT_NO_BUNDLE, action_descriptor_digest, bundle_commitment, memo_digest},
@@ -58,8 +58,8 @@ fn wrong_value_balance_fails_verification() {
 
     bundle.value_balance = value::Balance::try_from(999).unwrap();
     let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Binding(_) = err else {
-        panic!("expected SignatureError::Binding, got {err:?}");
+    let VerifySignaturesError::Binding(_) = err else {
+        panic!("expected VerifySignaturesError::Binding, got {err:?}");
     };
 }
 
@@ -139,8 +139,8 @@ fn actions_signed_despite_wrong_rk_fail_verification() {
     let err = bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap_err();
-    let SignatureError::Action(_) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
+    let VerifySignaturesError::Action(_) = err else {
+        panic!("expected VerifySignaturesError::Action, got {err:?}");
     };
 }
 
@@ -182,8 +182,8 @@ fn actions_signed_by_wrong_rsk_fail_verification() {
     let err = bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap_err();
-    let SignatureError::Action(_) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
+    let VerifySignaturesError::Action(_) = err else {
+        panic!("expected VerifySignaturesError::Action, got {err:?}");
     };
 }
 
@@ -276,8 +276,8 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
     let err = bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap_err();
-    let SignatureError::Action(_) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
+    let VerifySignaturesError::Action(_) = err else {
+        panic!("expected VerifySignaturesError::Action, got {err:?}");
     };
 }
 
@@ -309,8 +309,8 @@ fn permuted_actions_change_commitment() {
     let sig_err = permuted
         .verify_signatures(&mock_sighash(permuted.commitment()))
         .unwrap_err();
-    let SignatureError::Binding(_) = sig_err else {
-        panic!("expected SignatureError::Binding, got {sig_err:?}");
+    let VerifySignaturesError::Binding(_) = sig_err else {
+        panic!("expected VerifySignaturesError::Binding, got {sig_err:?}");
     };
 }
 
@@ -334,16 +334,16 @@ fn tampered_value_balance_fails_verification() {
     let bind_err = tampered
         .verify_signatures(&mock_sighash(tampered.commitment()))
         .unwrap_err();
-    let SignatureError::Binding(_) = bind_err else {
-        panic!("expected SignatureError::Binding, got {bind_err:?}");
+    let VerifySignaturesError::Binding(_) = bind_err else {
+        panic!("expected VerifySignaturesError::Binding, got {bind_err:?}");
     };
 
     // and it no longer verifies against the original sighash.
     let also_err = tampered
         .verify_signatures(&mock_sighash(original.commitment()))
         .unwrap_err();
-    let SignatureError::Binding(_) = also_err else {
-        panic!("expected SignatureError::Binding, got {also_err:?}");
+    let VerifySignaturesError::Binding(_) = also_err else {
+        panic!("expected VerifySignaturesError::Binding, got {also_err:?}");
     };
 }
 
@@ -1104,8 +1104,8 @@ fn based_aggregate_with_two_adjuncts() {
         let err = tampered
             .verify_signatures(&sighash)
             .expect_err("a corrupted action signature must fail signature verification");
-        let SignatureError::Action(_) = err else {
-            panic!("expected SignatureError::Action, got {err:?}");
+        let VerifySignaturesError::Action(_) = err else {
+            panic!("expected VerifySignaturesError::Action, got {err:?}");
         };
     }
 }
@@ -1137,8 +1137,8 @@ fn autonome_verify_composes_all_checks() {
     let err = tampered
         .verify_signatures(&sighash)
         .expect_err("a corrupted binding signature must fail signature verification");
-    let SignatureError::Binding(_) = err else {
-        panic!("expected SignatureError::Binding, got {err:?}");
+    let VerifySignaturesError::Binding(_) = err else {
+        panic!("expected VerifySignaturesError::Binding, got {err:?}");
     };
 }
 
@@ -1156,8 +1156,8 @@ fn invalid_action_sig_fails_verification() {
     bundle.actions[0].sig = bad_sig;
 
     let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Action(sig) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
+    let VerifySignaturesError::Action(sig) = err else {
+        panic!("expected VerifySignaturesError::Action, got {err:?}");
     };
     assert_eq!(sig, bad_sig);
 }
@@ -1920,8 +1920,8 @@ fn zero_action_bundle_rejects_nonzero_balance() {
     };
 
     let err = bundle.verify_signatures(&sighash).unwrap_err();
-    let SignatureError::Binding(_) = err else {
-        panic!("expected SignatureError::Binding, got {err:?}");
+    let VerifySignaturesError::Binding(_) = err else {
+        panic!("expected VerifySignaturesError::Binding, got {err:?}");
     };
 }
 

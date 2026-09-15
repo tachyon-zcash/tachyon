@@ -216,20 +216,20 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     }
 
     /// Verify the bundle's binding signature and all action signatures.
-    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
+    pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), VerifySignaturesError> {
         // 1. Derive bvk from public data
         let bvk = public::BindingVerificationKey::derive(&self.actions, self.value_balance);
 
         // 2. Verify binding signature
         bvk.verify(sighash, &self.binding_sig)
-            .map_err(|_err| SignatureError::Binding(self.binding_sig))?;
+            .map_err(|_err| VerifySignaturesError::Binding(self.binding_sig))?;
 
         // 3. Verify each action signature
         for action in &self.actions {
             action
                 .rk
                 .verify(sighash, &action.sig)
-                .map_err(|_err| SignatureError::Action(action.sig))?;
+                .map_err(|_err| VerifySignaturesError::Action(action.sig))?;
         }
 
         Ok(())
@@ -239,7 +239,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
 /// Errors from bundle signature verification.
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
-pub enum SignatureError {
+pub enum VerifySignaturesError {
     /// The binding signature is invalid.
     #[display("invalid binding signature {_0:?}")]
     Binding(#[error(not(source))] Signature),
@@ -249,7 +249,8 @@ pub enum SignatureError {
 }
 
 /// Errors during coverage verification.
-#[derive(Debug, Display, Error)]
+#[derive(Clone, Copy, Debug, Display, Error)]
+#[non_exhaustive]
 pub enum VerifyCoverageError {
     /// The actions are not unique.
     #[display("actions are not unique")]
@@ -259,8 +260,9 @@ pub enum VerifyCoverageError {
     StampActionsMismatch,
 }
 
-/// Errors during tachygram set commitment verification.
-#[derive(Debug, Display, Error)]
+/// Errors during tachygram verification.
+#[derive(Clone, Copy, Debug, Display, Error)]
+#[non_exhaustive]
 pub enum VerifyTachygramsError {
     /// The stamp publishes a number of tachygrams other than two per action.
     #[display("stamp does not publish two tachygrams per covered action")]
@@ -271,7 +273,8 @@ pub enum VerifyTachygramsError {
 }
 
 /// Errors during adjunct pointer verification.
-#[derive(Debug, Display, Error)]
+#[derive(Clone, Copy, Debug, Display, Error)]
+#[non_exhaustive]
 pub enum VerifyPointersError {
     /// The pointer of an adjunct is not the expected aggregate id.
     #[display("stamp on an adjunct does not match the expected aggregate id")]
@@ -298,8 +301,8 @@ pub enum LiftError {
 pub enum VerificationError {
     /// The bundle signatures did not verify.
     #[display("signature verification error: {_0}")]
-    Signature(SignatureError),
-    /// The pointer of an adjunct is not the expected aggregate id.
+    Signatures(VerifySignaturesError),
+    /// An error occurred while verifying the adjunct pointers.
     #[display("adjunct pointer verification error: {_0}")]
     Pointers(VerifyPointersError),
     /// An error occurred while verifying the coverage.
@@ -617,8 +620,8 @@ impl Bundle<ProofStamp> {
         !self.is_covering(&[])
     }
 
-    /// Verify the stamp's coverage against the combined unique actions of this
-    /// bundle and the provided bundles.
+    /// Verify the stamp's coverage against this bundle's own actions combined
+    /// with the given adjunct descriptors, returning the descriptors covered.
     pub fn verify_coverage(
         &self,
         adjunct_descs: &[action::Descriptor],
@@ -641,8 +644,9 @@ impl Bundle<ProofStamp> {
         Ok(unique_descs)
     }
 
-    /// Verify the stamp's tachygram set commitment against the actual
-    /// tachygrams on this bundle.
+    /// Verify the stamp's published tachygrams: two per covered action, and
+    /// reproducing the carried set commitment. `action_count` is the size of
+    /// the covered set returned by [`Self::verify_coverage`].
     pub fn verify_tachygrams(
         &self,
         action_count: usize,
@@ -660,7 +664,8 @@ impl Bundle<ProofStamp> {
         Ok(self.stamp.tachygram_set)
     }
 
-    /// Verify the pointers of the adjuncts against the expected wtxid.
+    /// Verify the pointers of the adjuncts against the expected wtxid,
+    /// returning the action descriptors they carry.
     pub fn verify_pointers(
         &self,
         wtxid: &[u8; 64],
@@ -678,8 +683,12 @@ impl Bundle<ProofStamp> {
         }
     }
 
-    /// Verify the stamp's proof against the combined actions of this bundle and
-    /// the provided bundles.
+    /// Reconstruct the PCD header from the given action digests and verify the
+    /// stamp's proof against it.
+    ///
+    /// # Soundness
+    ///
+    /// The parameter is a multiset: order does not matter, multiplicity does.
     pub fn verify_proof<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -706,7 +715,7 @@ impl Bundle<ProofStamp> {
         adjuncts: &[Bundle<PointerStamp>],
     ) -> Result<(), VerificationError> {
         self.verify_signatures(sighash)
-            .map_err(VerificationError::Signature)?;
+            .map_err(VerificationError::Signatures)?;
 
         let adjunct_descs = self
             .verify_pointers(wtxid, adjuncts)
