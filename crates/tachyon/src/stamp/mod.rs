@@ -834,11 +834,10 @@ impl ProofStamp {
     /// The parameter is a multiset: order does not matter, multiplicity does.
     #[must_use]
     pub fn is_covering(&self, action_descs: impl IntoIterator<Item = action::Descriptor>) -> bool {
-        self.coverage == {
-            let mut desc_bytes: Vec<[u8; 64]> =
-                action_descs.into_iter().map(<[u8; 64]>::from).collect();
-            desc_bytes.sort_unstable();
-            blake2b::action_descriptor_digest(&desc_bytes)
-        }
+        let mut desc_bytes: Vec<[u8; 64]> =
+            action_descs.into_iter().map(<[u8; 64]>::from).collect();
+        desc_bytes.sort_unstable();
+
+        self.coverage == blake2b::action_descriptor_digest(&desc_bytes)
     }
 }
