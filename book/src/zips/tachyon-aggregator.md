@@ -93,7 +93,7 @@ Aggregator
 *Adjunct*
 :   An abbreviated transaction that only appears within a block.
     An *adjunct*'s bundle has been stripped of its original stamp and now bears a pointer stamp.
-    *Adjuncts* retain action data, action signatures, binding signature, and `valueBalanceTachyon`.
+    *Adjuncts* retain action data, action signatures, binding signature, `valueBalanceTachyon`, and `vMemoTachyon`.
 
 ## Abstract
 
@@ -103,7 +103,7 @@ This recursion admits a new participant role, the aggregator, without creating a
 
 This ZIP specifies the aggregator protocol: an 8-step lifecycle from transaction authorization, through the mempool, to block layout and final validation.
 It comprises a block-layout discipline under which miners replace a covered bundle's proof with a reference to a covering transaction, the effecting-data and authorizing-data semantics that make stripping safe, and P2P rules extending ZIP 239 to Tachyon's authorization-form malleability.
-Aggregation affects only the authorization-proof mechanism: every bundle's effecting data (actions, value balances, action signatures, and binding signatures) remains present when its proof is stripped, and the binding-signature balance check and transaction authorization remain unchanged and per-bundle.
+Aggregation affects only the authorization-proof mechanism: every bundle's effecting data (actions, value balances, action signatures, and binding signatures) and its memo remain present when its proof is stripped, and the binding-signature balance check and transaction authorization remain unchanged and per-bundle.
 
 ## Motivation
 
@@ -121,7 +121,7 @@ Miners remain free to include non-aggregated Tachyon transactions; any *aggregat
 ## Requirements
 
 * Reduce per-block stamp-verification cost by allowing multiple transactions' stamps to be merged into one *aggregate* stamp.
-* Confine aggregation to the authorization-proof mechanism: the binding-signature balance check and transaction authorization remain unchanged and per-bundle, and every transaction's effecting data (action digests, value balances, action signatures, and binding signatures) remains present when its proof is stripped.
+* Confine aggregation to the authorization-proof mechanism: the binding-signature balance check and transaction authorization remain unchanged and per-bundle, and every transaction's effecting data (action digests, value balances, action signatures, and binding signatures) and its memo remain present when its proof is stripped.
 * Preserve transaction-identifier stability: a transaction's `txid` is invariant across stamping, merging, and stripping.
 * Allow any participant to act as aggregator; no protocol-level exclusivity.
 * Enable a validator or miner to confirm they hold all necessary data before attempting proof verification.
@@ -221,7 +221,7 @@ These semantics underpin publication (Step 5), observation (Steps 2 and 6), and 
 A Tachyon transaction is identified by `wtxid = txid || auth_digest` (ZIP 239 [^zip-0239], ZIP 244 [^zip-0244]).
 The digest inputs (which fields each contribution commits to) are defined normatively by the [Tachyon Bundle / Aggregate Transaction Format](tachyon-bundle.md) ZIP, and the digest algorithm by the [ZIP 244 update](zip-244.md); this section summarizes them non-normatively.
 
-* Tachyon's contribution to `txid` commits only to effecting data (`hActionsTachyon || valueBalanceTachyon`).
+* Tachyon's contribution to `txid` commits to `hActionsTachyon || valueBalanceTachyon || hMemoTachyon`, and excludes the stamp.
 It is stable across stamping, merging, stripping, and re-stamping, so a transaction's logical identity is invariant across the aggregation lifecycle.
 * `auth_digest` commits to action signatures, the binding signature, and the stamp.
 A proof stamp contributes a `byte[64]` stamp digest; a pointer stamp contributes the `byte[64]` covering `wtxid`.
@@ -332,7 +332,7 @@ A malicious miner can mis-assign *adjuncts* or omit covered transactions, but th
 ### Data availability
 
 Aggregation removes redundant proof bytes only.
-Every *adjunct* retains its action data, action signatures, binding signature, and `valueBalanceTachyon`; validators reconstruct the *aggregate* header from this public data.
+Every *adjunct* retains its action data, action signatures, binding signature, `valueBalanceTachyon`, and `vMemoTachyon`; validators reconstruct the *aggregate* header from the action data.
 An *aggregate* proof alone is insufficient: the covered effecting data is present in the block as *adjuncts*, and [Block validity](tachyon-bundle.md#block-validity) rejects any block where it is not.
 
 ### Circuit/consensus boundary
