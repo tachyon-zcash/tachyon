@@ -27,8 +27,6 @@ use alloc::{vec, vec::Vec};
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_pasta::Pasta;
 
 use super::{pool::ArbitraryUnspent, summary::Summary};
 pub use crate::collections::qr::classify;
@@ -619,8 +617,7 @@ impl Step for QrBucketSeal {
 /// [`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed) between them.
 ///
 /// Committed polynomials: the sequence, the contents; two oracles. Gate cost
-/// is one scalar multiplication binding the value into the challenge and
-/// about seven multiplications per position.
+/// is about seven multiplications per position.
 ///
 /// # Soundness
 ///
@@ -632,8 +629,8 @@ impl Step for QrBucketSeal {
 /// that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold then
 /// equals `bits` iff the bucket's sides are the value's first `depth` sides.
 /// Positions past `depth` are tested but compared to nothing. $R_1$ is the
-/// bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` enters the
-/// sequence challenge as $G_0 \cdot \mathsf{value}$.
+/// bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` is free, its
+/// profile fixed by the fold and its sequence membership by the identity.
 #[derive(Debug)]
 pub struct QrUnspentInit;
 
@@ -706,20 +703,16 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: value does not take the bucket's profile",
         )?;
 
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
         let sequence_commit = sequence.commit();
-        let z = ctx.derive_challenge(&[sequence_commit.into(), g0 * Fp::from(value)])?;
+        let z = ctx.derive_challenge(&[sequence_commit.into()])?;
         let sequence_at_z = sequence.eval(z);
+        ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
+
         let member_at_z = indexed_multiset::direct_eval([(u64::from(epoch), value.into())], z);
         enforce_zero(
             sequence_at_z - member_at_z,
             "QrUnspentInit: sequence does not match the tested value",
         )?;
-        ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
 
         let contents_at_value = contents.eval(value.into());
         ctx.enforce_poly_query(contents_commit.into(), value.into(), contents_at_value)?;
