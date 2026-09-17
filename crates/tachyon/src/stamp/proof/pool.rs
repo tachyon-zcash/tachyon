@@ -322,10 +322,9 @@ impl Step for UnspentSeed {
 /// Seed spanning one epoch boundary link, from an epoch's terminal anchor to
 /// the next epoch's opening boundary anchor.
 ///
-/// The segment covers exactly the tick `anchor_prev.next_epoch(epoch_prev +
-/// 1)`, so it covers two epochs and its `elapsed` is the two-member sequence
-/// `[nf_prev, nf]`: the nullifier tested in the epoch being left, and the one
-/// that opens the epoch being entered.
+/// The segment covers only the epoch transition `anchor_prev` to
+/// `anchor_prev.next_epoch(epoch_prev + 1)`, so its `elapsed` is a two-member
+/// indexed multisequence.
 ///
 /// # Soundness
 ///
@@ -615,8 +614,6 @@ impl Step for UnspentBind {
 
 /// Start an [`ArbitraryUnspent`] from a [`Summary`]: [`UnspentSeed`] with one
 /// exclusion query over the whole run.
-///
-/// Committed polynomials: `summary_set`, `elapsed_seq`; two oracles.
 ///
 /// # Soundness
 ///

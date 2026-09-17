@@ -206,8 +206,6 @@ impl Step for QrStampIntakeSeed {
 
 /// Join two same-profile intakes whose spans meet.
 ///
-/// Committed polynomials: both contents, the merged contents; three oracles.
-///
 /// # Soundness
 ///
 /// Both contents are pinned to their headers by commit-equality. Consensus
@@ -294,8 +292,6 @@ impl Step for QrIntakeMerge {
 
 /// Partition an intake's members at its own discriminant.
 ///
-/// Committed polynomials: contents, both sides; three oracles.
-///
 /// # Soundness
 ///
 /// The product pins the two sides to a factorization of the contents;
@@ -375,9 +371,6 @@ impl Step for QrIntakeSplit {
 /// side at $R$, since each root leaves $u(x)^2 = c\,(x + R)$. With the
 /// split's product, every member of the extracted class is then in the
 /// child.
-///
-/// Committed polynomials: the sibling, its interpolant, its quotient; three
-/// oracles.
 ///
 /// # Soundness
 ///
@@ -518,8 +511,6 @@ impl Header for QrBucket {
 ///   H_\mathsf{ep}(\mathsf{anchor\_last}, \mathsf{epoch} + 1).
 /// $$
 ///
-/// Committed polynomials: none.
-///
 /// # Soundness
 ///
 /// Only an epoch transition produces an anchor in the epoch domain, so an
@@ -615,9 +606,6 @@ impl Step for QrBucketSeal {
 /// emitted segment reads the value as a nullifier and covers the bucket's
 /// own span, one epoch, so consecutive epochs' segments need an
 /// [`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed) between them.
-///
-/// Committed polynomials: the sequence, the contents; two oracles. Gate cost
-/// is about seven multiplications per position.
 ///
 /// # Soundness
 ///

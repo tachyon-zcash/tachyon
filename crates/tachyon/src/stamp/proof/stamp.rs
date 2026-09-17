@@ -63,8 +63,6 @@ impl Header for StampHeader {
 /// randomized action key `rk`, and enforces the one-action set plus the
 /// stamp accumulator over the two-element tachygram set `{cm, pad}` that
 /// [`OutputBind`](super::output::OutputBind) already settled.
-///
-/// Committed polynomials: `action_set`, `tachygram_set`; two oracles.
 #[derive(Debug)]
 pub struct OutputStamp;
 
@@ -142,8 +140,6 @@ impl Step for OutputStamp {
 /// the stamp accumulator over the two-element tachygram set
 /// `{present_nf, nf_next}` (the pair [`SpendBind`](super::spend::SpendBind)
 /// already confirmed against the covering derivation).
-///
-/// Committed polynomials: `action_set`, `tachygram_set`; two oracles.
 #[derive(Debug)]
 pub struct SpendStamp;
 

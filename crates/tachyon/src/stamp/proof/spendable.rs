@@ -165,9 +165,6 @@ impl Step for SpendableInit {
 /// the spendable emits at `anchor_last`. The same divisibility read forces
 /// `present_nf` to the window's member at the creation epoch.
 ///
-/// Committed polynomials: `nf_seq`, `complement_seq`, `summary_set`; three
-/// oracles.
-///
 /// # Soundness
 ///
 /// The summary's `epoch` is absorbed into every anchor link, so a wrong epoch
@@ -262,8 +259,6 @@ impl Step for SummarySpendableInit {
 /// membership $\mathsf{contents}(\mathsf{cm}) = 0$ and emits the spendable at
 /// the segment's tip, the epoch's terminal anchor, which
 /// [`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed) lifts across.
-///
-/// Committed polynomials: `contents`; one oracle.
 ///
 /// # Soundness
 ///

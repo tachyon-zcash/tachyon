@@ -83,8 +83,6 @@ impl Step for SummarySeed {
 
 /// Fold the next stamp into the accumulator while the anchor absorbs the same
 /// commitment.
-///
-/// Committed polynomials: `acc`, `stamp`, `extended`; three oracles.
 #[derive(Debug)]
 pub struct SummaryAdvance;
 
