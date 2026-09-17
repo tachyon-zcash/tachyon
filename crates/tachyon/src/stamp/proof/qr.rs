@@ -27,8 +27,6 @@ use alloc::{vec, vec::Vec};
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_pasta::Pasta;
 
 use super::{pool::ArbitraryUnspent, summary::Summary};
 pub use crate::collections::qr::classify;
@@ -208,8 +206,6 @@ impl Step for QrStampIntakeSeed {
 
 /// Join two same-profile intakes whose spans meet.
 ///
-/// Committed polynomials: both contents, the merged contents; three oracles.
-///
 /// # Soundness
 ///
 /// Both contents are pinned to their headers by commit-equality. Consensus
@@ -296,8 +292,6 @@ impl Step for QrIntakeMerge {
 
 /// Partition an intake's members at its own discriminant.
 ///
-/// Committed polynomials: contents, both sides; three oracles.
-///
 /// # Soundness
 ///
 /// The product pins the two sides to a factorization of the contents;
@@ -377,9 +371,6 @@ impl Step for QrIntakeSplit {
 /// side at $R$, since each root leaves $u(x)^2 = c\,(x + R)$. With the
 /// split's product, every member of the extracted class is then in the
 /// child.
-///
-/// Committed polynomials: the sibling, its interpolant, its quotient; three
-/// oracles.
 ///
 /// # Soundness
 ///
@@ -520,8 +511,6 @@ impl Header for QrBucket {
 ///   H_\mathsf{ep}(\mathsf{anchor\_last}, \mathsf{epoch} + 1).
 /// $$
 ///
-/// Committed polynomials: none.
-///
 /// # Soundness
 ///
 /// Only an epoch transition produces an anchor in the epoch domain, so an
@@ -618,10 +607,6 @@ impl Step for QrBucketSeal {
 /// own span, one epoch, so consecutive epochs' segments need an
 /// [`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed) between them.
 ///
-/// Committed polynomials: the sequence, the contents; two oracles. Gate cost
-/// is one scalar multiplication binding the value into the challenge and
-/// about seven multiplications per position.
-///
 /// # Soundness
 ///
 /// $c$ is a non-residue, so for $s_j \neq 0$ exactly one of $s_j$, $c\,s_j$
@@ -632,8 +617,8 @@ impl Step for QrBucketSeal {
 /// that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold then
 /// equals `bits` iff the bucket's sides are the value's first `depth` sides.
 /// Positions past `depth` are tested but compared to nothing. $R_1$ is the
-/// bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` enters the
-/// sequence challenge as $G_0 \cdot \mathsf{value}$.
+/// bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` is free, its
+/// profile fixed by the fold and its sequence membership by the identity.
 #[derive(Debug)]
 pub struct QrUnspentInit;
 
@@ -706,20 +691,16 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: value does not take the bucket's profile",
         )?;
 
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
         let sequence_commit = sequence.commit();
-        let z = ctx.derive_challenge(&[sequence_commit.into(), g0 * Fp::from(value)])?;
+        let z = ctx.derive_challenge(&[sequence_commit.into()])?;
         let sequence_at_z = sequence.eval(z);
+        ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
+
         let member_at_z = indexed_multiset::direct_eval([(u64::from(epoch), value.into())], z);
         enforce_zero(
             sequence_at_z - member_at_z,
             "QrUnspentInit: sequence does not match the tested value",
         )?;
-        ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
 
         let contents_at_value = contents.eval(value.into());
         ctx.enforce_poly_query(contents_commit.into(), value.into(), contents_at_value)?;

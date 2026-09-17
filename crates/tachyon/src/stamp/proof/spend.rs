@@ -6,8 +6,6 @@ use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_pasta::Pasta;
 
 use super::{delegation::NullifierDerivation, spendable::SpendableHeader};
 use crate::{
@@ -68,10 +66,9 @@ impl Header for SpendHeader {
 /// # Soundness
 ///
 /// Neither epoch index is free. The present member's scalars are left-header
-/// fields, fixed by the recursive verification of the spendable PCD before
-/// the challenge, and adjacency is the pair's own epochs `e` and `e + 1`.
-/// The free `nf_next` is the only scalar needing a pin, and gets one from
-/// $G_0 \cdot \mathsf{nf\_next}$.
+/// fields, fixed by the recursive verification of the spendable PCD, and
+/// adjacency is the pair's own epochs `e` and `e + 1`. `nf_next` is free, the
+/// divisibility forcing it to the range's member at `e + 1`.
 ///
 /// The step compares no bounds against the derivation's range, the
 /// divisibility concluding coverage.
@@ -107,21 +104,15 @@ impl Step for SpendBind {
 
         // The 2-wide read at the lineage's epoch: the divisibility
         // `nf_seq = present · next · complement` at a challenge absorbing the
-        // witnessed commitments and the scalar-binding point of the free
-        // `nf_next`; the present member is native from the spendable header,
-        // pinned by the recursive verification of the left PCD.
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
-        let z = ctx.derive_challenge(&[
-            nf_seq.commit().into(),
-            complement_seq.commit().into(),
-            g0 * Fp::from(nf_next),
-        ])?;
+        // witnessed commitments; the present member is native from the
+        // spendable header, pinned by the recursive verification of the left
+        // PCD.
+        let z = ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into()])?;
         let nf_seq_at_z = nf_seq.eval(z);
+        ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
+
         let complement_at_z = complement_seq.eval(z);
+        ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
 
         // The pair read needs a following epoch; the final epoch has none.
         let next_epoch = spendable_epoch.next().ok_or_else(|| {
@@ -138,8 +129,6 @@ impl Step for SpendBind {
             nf_seq_at_z - pair_at_z * complement_at_z,
             "SpendBind: nullifier pair does not match the derivation",
         )?;
-        ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
-        ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
 
         // A zero nullifier would collide with the note's own cm tachygram.
         enforce_nonzero(

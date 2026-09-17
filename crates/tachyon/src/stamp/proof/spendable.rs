@@ -15,8 +15,6 @@ use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_pasta::Pasta;
 
 use super::{delegation::NullifierDerivation, pool::Unspent, qr::QrBucket, summary::Summary};
 use crate::{
@@ -79,8 +77,7 @@ impl Header for SpendableHeader {
 /// preimage resistance forces all three once the eventual spend's anchor is
 /// consensus-checked, a wrong epoch landing off the published sequence.
 ///
-/// `present_nf` closes through the read, pinned by absorbing
-/// $G_0 \cdot \mathsf{present\_nf}$, so the identity forces the read to the
+/// `present_nf` closes through the read, the identity forcing it to the
 /// emitted pair.
 ///
 /// `creation_epoch` needs no bound check against the derivation's range. The
@@ -128,19 +125,13 @@ impl Step for SpendableInit {
 
         // The 1-wide read at the creation epoch: the divisibility
         // `nf_seq = read · complement` at a challenge absorbing the witnessed
-        // commitments and the scalar-binding point of the free `present_nf`.
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
-        let z = ctx.derive_challenge(&[
-            nf_seq.commit().into(),
-            complement_seq.commit().into(),
-            g0 * Fp::from(present_nf),
-        ])?;
+        // commitments.
+        let z = ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into()])?;
         let nf_seq_at_z = nf_seq.eval(z);
+        ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
+
         let complement_at_z = complement_seq.eval(z);
+        ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
 
         let read_at_z =
             indexed_multiset::direct_eval([(creation_epoch.into(), present_nf.into())], z);
@@ -148,8 +139,6 @@ impl Step for SpendableInit {
             nf_seq_at_z - read_at_z * complement_at_z,
             "SpendableInit: nullifier does not match the derivation",
         )?;
-        ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
-        ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
 
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_in_set = creation_set.eval(cm.into());
@@ -175,9 +164,6 @@ impl Step for SpendableInit {
 /// proven among the summarized tachygrams, `present_nf` absent from them, and
 /// the spendable emits at `anchor_last`. The same divisibility read forces
 /// `present_nf` to the window's member at the creation epoch.
-///
-/// Committed polynomials: `nf_seq`, `complement_seq`, `summary_set`; three
-/// oracles.
 ///
 /// # Soundness
 ///
@@ -228,18 +214,12 @@ impl Step for SummarySpendableInit {
         )?;
 
         // The 1-wide read at the creation epoch, as at `SpendableInit`.
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
-        let z = ctx.derive_challenge(&[
-            nf_seq.commit().into(),
-            complement_seq.commit().into(),
-            g0 * Fp::from(present_nf),
-        ])?;
+        let z = ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into()])?;
         let nf_seq_at_z = nf_seq.eval(z);
+        ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
+
         let complement_at_z = complement_seq.eval(z);
+        ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
 
         let read_at_z =
             indexed_multiset::direct_eval([(creation_epoch.into(), present_nf.into())], z);
@@ -247,8 +227,6 @@ impl Step for SummarySpendableInit {
             nf_seq_at_z - read_at_z * complement_at_z,
             "SummarySpendableInit: nullifier does not match the derivation",
         )?;
-        ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
-        ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
 
         // Inclusion: cm ∈ summary ⇔ the accumulator vanishes at cm.
         let cm_in_summary = summary_set.eval(cm.into());
@@ -281,8 +259,6 @@ impl Step for SummarySpendableInit {
 /// membership $\mathsf{contents}(\mathsf{cm}) = 0$ and emits the spendable at
 /// the segment's tip, the epoch's terminal anchor, which
 /// [`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed) lifts across.
-///
-/// Committed polynomials: `contents`; one oracle.
 ///
 /// # Soundness
 ///

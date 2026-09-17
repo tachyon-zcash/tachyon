@@ -20,8 +20,6 @@ use alloc::{vec, vec::Vec};
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_pasta::Pasta;
 
 use super::{delegation::NullifierDerivation, summary::Summary};
 use crate::{
@@ -95,9 +93,7 @@ impl Header for AnchorChain {
 /// same epoch scalar they fold into the anchor. Each epoch carries exactly
 /// one member: the seeds pin their member counts by their challenge
 /// identities, and [`UnspentFuse`]'s identity determines the combined
-/// polynomial exactly, so the property composes by induction. The boundary
-/// caches name members the sequence holds, pinned at each seed and inherited
-/// through the fuse.
+/// polynomial exactly, so the property composes by induction.
 ///
 /// Member count tracks span size structurally: [`UnspentSeed`] spans one
 /// epoch, [`EndEpochUnspentSeed`] two, and [`UnspentFuse`] requires
@@ -257,8 +253,8 @@ impl Step for AnchorFuse {
 ///
 /// # Soundness
 ///
-/// `nf` is free, pinned by absorbing $G_0 \cdot \mathsf{nf}$, so the identity
-/// forces the witnessed one-member `elapsed` to the emitted pair.
+/// `nf` is free, and the identity forces the witnessed one-member `elapsed`
+/// to the emitted pair.
 ///
 /// `epoch` needs no pin of its own, being one variable entering the member
 /// encoding, the emitted header and the anchor fold alike. A solved value
@@ -297,16 +293,11 @@ impl Step for UnspentSeed {
         enforce_nonzero(Fp::from(nf), "UnspentSeed: tested nullifier is zero")?;
 
         // One-member elapsed: bind the witnessed sequence to the emitted
-        // pair's encoding at a challenge absorbing the commitment and the
-        // scalar-binding point.
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
+        // pair's encoding at a challenge absorbing the commitment.
         let elapsed_commit = elapsed_seq.commit();
-        let z = ctx.derive_challenge(&[elapsed_commit.into(), g0 * Fp::from(nf)])?;
+        let z = ctx.derive_challenge(&[elapsed_commit.into()])?;
         let elapsed_at_z = elapsed_seq.eval(z);
+        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
 
         let member_at_z = indexed_multiset::direct_eval([(epoch.into(), nf.into())], z);
 
@@ -314,7 +305,6 @@ impl Step for UnspentSeed {
             elapsed_at_z - member_at_z,
             "UnspentSeed: elapsed does not match the tested pair",
         )?;
-        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
 
         Ok((
             (
@@ -332,18 +322,15 @@ impl Step for UnspentSeed {
 /// Seed spanning one epoch boundary link, from an epoch's terminal anchor to
 /// the next epoch's opening boundary anchor.
 ///
-/// The segment covers exactly the tick `anchor_prev.next_epoch(epoch_prev +
-/// 1)`, so it covers two epochs and its `elapsed` is the two-member sequence
-/// `[nf_prev, nf]`: the nullifier tested in the epoch being left, and the one
-/// that opens the epoch being entered.
+/// The segment covers only the epoch transition `anchor_prev` to
+/// `anchor_prev.next_epoch(epoch_prev + 1)`, so its `elapsed` is a two-member
+/// indexed multisequence.
 ///
 /// # Soundness
 ///
 /// `nf_prev` and `nf` are unconstrained here, as at every seed;
 /// [`UnspentBind`] forces every `elapsed` member against the note's genuine
-/// derivation. Both are pinned against the header scalars by absorbing
-/// $G_0 \cdot \mathsf{nf\_prev} + G_1 \cdot \mathsf{nf}$, so the identity
-/// forces the sequence to the two crossing members.
+/// derivation. The identity forces the sequence to the two crossing members.
 ///
 /// `anchor_prev` is likewise unconstrained, and nothing here requires it to be
 /// its epoch's terminal anchor. A tick folded from a short anchor is rejected
@@ -389,20 +376,11 @@ impl Step for EndEpochUnspentSeed {
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
         // Two-member elapsed: bind the witnessed sequence to the two
-        // crossing members at a challenge absorbing the commitment and the
-        // two-scalar binding point.
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let (&g0, &g1) = {
-            let generators = Pasta::host_generators(Pasta::baked());
-            (
-                generators.g().first().expect("at least one generator"),
-                generators.g().get(1).expect("at least two generators"),
-            )
-        };
+        // crossing members at a challenge absorbing the commitment.
         let elapsed_commit = elapsed_seq.commit();
-        let binding = g0 * Fp::from(nf_prev) + g1 * Fp::from(nf);
-        let z = ctx.derive_challenge(&[elapsed_commit.into(), binding])?;
+        let z = ctx.derive_challenge(&[elapsed_commit.into()])?;
         let elapsed_at_z = elapsed_seq.eval(z);
+        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
 
         let epoch_prev_idx = u64::from(u32::from(epoch_prev));
         let crossing_at_z = indexed_multiset::direct_eval(
@@ -417,7 +395,6 @@ impl Step for EndEpochUnspentSeed {
             elapsed_at_z - crossing_at_z,
             "EndEpochUnspentSeed: elapsed does not match the crossing pairs",
         )?;
-        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
 
         Ok((
             (
@@ -638,13 +615,11 @@ impl Step for UnspentBind {
 /// Start an [`ArbitraryUnspent`] from a [`Summary`]: [`UnspentSeed`] with one
 /// exclusion query over the whole run.
 ///
-/// Committed polynomials: `summary_set`, `elapsed_seq`; two oracles.
-///
 /// # Soundness
 ///
 /// `summary_set` is pinned to the header by commit-equality; epoch and anchors
-/// are threaded. `nf` is free, pinned by absorbing $G_0 \cdot \mathsf{nf}$, so
-/// the identity forces the one-member `elapsed` to the emitted pair.
+/// are threaded. `nf` is free, and the identity forces the one-member
+/// `elapsed` to the emitted pair.
 #[derive(Debug)]
 pub struct SummaryUnspentInit;
 
@@ -676,14 +651,10 @@ impl Step for SummaryUnspentInit {
         enforce_nonzero(eval, "SummaryUnspentInit: found nullifier in summary")?;
         enforce_nonzero(Fp::from(nf), "SummaryUnspentInit: tested nullifier is zero")?;
 
-        #[expect(clippy::expect_used, reason = "constant size")]
-        let &g0 = Pasta::host_generators(Pasta::baked())
-            .g()
-            .first()
-            .expect("at least one generator");
         let elapsed_commit = elapsed_seq.commit();
-        let z = ctx.derive_challenge(&[elapsed_commit.into(), g0 * Fp::from(nf)])?;
+        let z = ctx.derive_challenge(&[elapsed_commit.into()])?;
         let elapsed_at_z = elapsed_seq.eval(z);
+        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
 
         let member_at_z = indexed_multiset::direct_eval([(summary_epoch.into(), Fp::from(nf))], z);
 
@@ -691,7 +662,6 @@ impl Step for SummaryUnspentInit {
             elapsed_at_z - member_at_z,
             "SummaryUnspentInit: elapsed does not match the tested pair",
         )?;
-        ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
 
         Ok((
             (
