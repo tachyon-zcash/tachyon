@@ -57,7 +57,11 @@ derive_more = { version = "~2.1", default-features = false, features = [
 ] }
 ff = { version = "0.14", default-features = false }
 group = { version = "0.14", default-features = false }
-lazy_static = "1.5.0"
+# `spin_no_std` swaps `std::sync::Once` for a spin lock, which is what lets
+# this crate and `ragu_pasta`'s baked parameters reach a bare-metal target.
+lazy_static = { version = "1.5.0", default-features = false, features = [
+    "spin_no_std",
+] }
 pasta_curves = { package = "zakura-pasta-curves", version = "1.0.1", features = [
     "deferred",
 ] }
