@@ -33,6 +33,10 @@ unused_qualifications = "warn"
 variant_size_differences = "warn"
 
 [workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+redundant_explicit_links = "deny"
+
+# docs are always built with --document-private-items
 private_intra_doc_links = "allow"
 
 [workspace.lints.clippy]

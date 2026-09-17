@@ -5,6 +5,8 @@ default:
 # `fmt` job checks against
 _nightly := "nightly-2026-05-23"
 
+_katex := "--html-in-header " + justfile_directory() / "crates/tachyon/katex-header.html"
+
 fmt:
     cargo +{{_nightly}} fmt --all
 
@@ -16,7 +18,7 @@ test *ARGS:
     cargo test --workspace --all-features {{ARGS}}
 
 doc *ARGS:
-    cargo doc --workspace --no-deps --document-private-items {{ARGS}}
+    RUSTDOCFLAGS="{{_katex}}" cargo doc --workspace --no-deps --document-private-items {{ARGS}}
 
 check:
     cargo check --workspace --lib --no-default-features # no_std
@@ -39,4 +41,4 @@ ci_local:
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
     cargo test --release --all --locked --lib
     cargo test --release --all --locked --all-features
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all --locked --document-private-items
+    RUSTDOCFLAGS="-D warnings {{_katex}}" cargo doc --no-deps --all --locked --document-private-items

@@ -61,10 +61,9 @@ impl Header for SpendableHeader {
 ///
 /// Wallet-only, one-child over any [`NullifierDerivation`] covering the
 /// creation epoch, so one derived window feeds init, bind, and spend alike.
-/// The divisibility
-/// $\mathsf{nf\_seq} = F_{\mathsf{creation\_epoch},\mathsf{present\_nf}}
-/// \cdot \mathsf{complement}$ forces `present_nf` to the window's genuine
-/// member at the creation epoch, the complement absorbing the remaining span.
+/// The divisibility of `nf_seq` by the `present_nf` factor at
+/// `creation_epoch` times the complement forces `present_nf` to the window's
+/// genuine member there, the complement absorbing the remaining span.
 /// `cm` is proven among the creation stamp's tachygrams, and the post-cm
 /// anchor folds from a free-witnessed predecessor.
 ///
@@ -81,7 +80,7 @@ impl Header for SpendableHeader {
 /// emitted pair.
 ///
 /// `creation_epoch` needs no bound check against the derivation's range. The
-/// divisibility forces $F_{\mathsf{creation\_epoch},\mathsf{present\_nf}}$ to
+/// divisibility forces the `present_nf` factor to
 /// be one of the derivation's own members, so the epoch is one the derivation
 /// holds a member for.
 ///

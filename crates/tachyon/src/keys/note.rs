@@ -12,7 +12,7 @@ use crate::{digest::poseidon, nullifier};
 /// Tachyon simplifies Orchard's nullifier construction
 /// ("Tachyaction at a Distance", Bowe 2025):
 ///
-/// $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \| e)$$
+/// $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \Vert e)$$
 ///
 /// where $F$ is a keyed PRF (Poseidon), $\Psi$ is the note's nullifier
 /// trapdoor, and $e$ is the epoch index. This replaces Orchard's more
@@ -23,9 +23,8 @@ use crate::{digest::poseidon, nullifier};
 ///
 /// - **Nullifier derivation**: detecting when a note has been spent
 /// - **Oblivious sync delegation**: a delegate receives proven value windows.
-///   The master key $\mathsf{mk} =
-///   \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \Psi, \mathsf{nk})$
-///   evaluates every epoch.
+///   The master key $\mathsf{mk} = \mathsf{Poseidon}(\texttt{Tachyon-NfMaster},
+///   \Psi, \mathsf{nk})$ evaluates every epoch.
 ///
 /// `nk` alone does NOT confer spend authority — combined with `ak` it
 /// forms the proof authorizing key `pak`, enabling proof construction
@@ -55,7 +54,7 @@ impl NullifierKey {
 ///
 /// Derived from the proof authorizing key components:
 ///
-/// $$\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
+/// $$\mathsf{pk} = \text{Poseidon}(\texttt{Tachyon-PkDerive}, \mathsf{ak}_x,
 /// \mathsf{ak}_y, \mathsf{nk})$$
 ///
 /// where $(\mathsf{ak}_x, \mathsf{ak}_y)$ are the affine coordinates of the
@@ -83,7 +82,7 @@ pub struct PaymentKey(#[debug(skip)] Fp);
 
 impl PaymentKey {
     /// Derive the payment key from `ak` and `nk`:
-    /// $\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x,
+    /// $\mathsf{pk} = \text{Poseidon}(\texttt{Tachyon-PkDerive}, \mathsf{ak}_x,
     /// \mathsf{ak}_y, \mathsf{nk})$.
     ///
     /// # Panics

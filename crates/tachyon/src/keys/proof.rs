@@ -44,7 +44,7 @@ impl ProofAuthorizingKey {
     }
 }
 
-/// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\,\mathcal{G}$ — the
+/// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\mathcal{G}$ — the
 /// long-lived counterpart of [`public::ActionVerificationKey`].
 ///
 /// Corresponds to the "spend validating key" in Orchard (§4.2.3).
@@ -62,7 +62,7 @@ pub struct SpendValidatingKey(
 
 impl SpendValidatingKey {
     /// Derive the per-action public (verification) key: $\mathsf{rk} =
-    /// \mathsf{ak} + [\alpha]\,\mathcal{G}$.
+    /// \mathsf{ak} + [\alpha]\mathcal{G}$.
     ///
     /// Only accepts [`ActionRandomizer<Spend>`] — output actions derive `rk`
     /// via

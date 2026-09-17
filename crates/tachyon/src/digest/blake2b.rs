@@ -48,7 +48,7 @@ const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
 ///
 /// $$
 ///   \text{BLAKE2b-512}_\texttt{Tachyon-Spend}(
-///     \theta \| cm
+///     \theta \Vert cm
 ///   )
 /// $$
 ///
@@ -65,7 +65,7 @@ pub fn alpha_spend(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
 ///
 /// $$
 ///   \text{BLAKE2b-512}_\texttt{Tachyon-Output}(
-///     \theta \| cm
+///     \theta \Vert cm
 ///   )
 /// $$
 #[must_use]
@@ -84,8 +84,8 @@ const PRF_EXPAND_DOMAIN_NK: u8 = 0x22;
 /// PRF-expand to derive `ask` from a spending key. Performs no normalization.
 ///
 /// $$
-///   \text{BLAKE2b-512}_\texttt{Zcash\_ExpandSeed}(
-///     sk \| \text{ASK_DOMAIN_BYTE}
+///   \text{BLAKE2b-512}_\texttt{Zcash\\_ExpandSeed}(
+///     sk \Vert \texttt{0x21}
 ///   )
 /// $$
 ///
@@ -103,8 +103,8 @@ pub fn prf_expand_ask(sk: &[u8; 32]) -> [u8; 64] {
 /// PRF-expand to derive `nk` from a spending key. Performs no normalization.
 ///
 /// $$
-///   \text{BLAKE2b-512}_\texttt{Zcash\_ExpandSeed}(
-///     sk \| \text{NK_DOMAIN_BYTE}
+///   \text{BLAKE2b-512}_\texttt{Zcash\\_ExpandSeed}(
+///     sk \Vert \texttt{0x22}
 ///   )
 /// $$
 ///
@@ -126,7 +126,7 @@ const ACTION_DESCRIPTOR_PERSONALIZATION: &[u8; 15] = b"Tachyon-Actions";
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Actions}(
-///     \mathsf{cv}_i \| \mathsf{rk}_i
+///     \mathsf{cv}_i \Vert \mathsf{rk}_i
 ///   )
 /// $$
 ///
@@ -171,7 +171,7 @@ const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxIdTachyonHash}(
-///     \mathsf{hActionsTachyon} \| \mathsf{vBalanceTachyon} \|
+///     \mathsf{hActionsTachyon} \Vert \mathsf{vBalanceTachyon} \Vert
 ///     \mathsf{hMemoTachyon}
 ///   )
 /// $$
@@ -217,9 +217,9 @@ pub fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Stamp}(
-///     \mathsf{hStampProofTachyon} \|
-///     \mathsf{anchorTachyon} \|
-///     \mathsf{cTachygrams} \|
+///     \mathsf{hStampProofTachyon} \Vert
+///     \mathsf{anchorTachyon} \Vert
+///     \mathsf{cTachygrams} \Vert
 ///     \mathsf{vTachygrams}
 ///   )
 /// $$
@@ -246,8 +246,8 @@ pub fn stamp_data_digest(
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxAuthTachyHash}(
-///     \mathsf{tachyonBundleState} \| \mathsf{vActionSigs} \|
-///     \mathsf{bindingSigTachyon} \| \mathsf{tachyonStampState}
+///     \mathsf{tachyonBundleState} \Vert \mathsf{vActionSigs} \Vert
+///     \mathsf{bindingSigTachyon} \Vert \mathsf{tachyonStampState}
 ///   )
 /// $$
 ///
@@ -256,7 +256,7 @@ pub fn stamp_data_digest(
 ///
 /// | $\mathsf{tachyonBundleState}$ | Impl | $\mathsf{tachyonStampState}$ |
 /// | ----------------------------- | ---- | ---------------------------- |
-/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{hStampActionsTachyon} \| \mathsf{hStampDataTachyon} $ |
+/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{hStampActionsTachyon} \Vert \mathsf{hStampDataTachyon} $ |
 /// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | aggregate's `wtxid` |
 #[must_use]
 pub fn bundle_auth_digest(

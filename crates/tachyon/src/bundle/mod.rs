@@ -392,10 +392,9 @@ impl Plan {
             .collect()
     }
 
-    /// Derive value_balance from note values.
+    /// Derive `value_balance` from note values.
     ///
-    /// $\mathsf{v\_balance} = \sum_i v_{\text{spend},i} - \sum_j
-    /// v_{\text{output},j}$
+    /// $$\sum_i v_{\text{spend},i} - \sum_j v_{\text{output},j}$$
     ///
     /// # Errors
     ///
@@ -1054,9 +1053,9 @@ impl TachyonBundle {
 /// Proves the signer knew the opening $\mathsf{bsk}$ of the Pedersen
 /// commitment $\mathsf{bvk}$ to value 0. By the **binding property**
 /// of the commitment scheme, it is infeasible to find
-/// $(v^*, \mathsf{bsk}')$ such that
-/// $\mathsf{bvk} = \text{ValueCommit}_{\mathsf{bsk}'}(v^*)$ for
-/// $v^* \neq 0$ — so value balance is enforced.
+/// $(v^\ast, \mathsf{bsk}^\prime)$ such that
+/// $\mathsf{bvk} = \text{ValueCommit}_{\mathsf{bsk}^\prime}(v^\ast)$ for
+/// $v^\ast \neq 0$ — so value balance is enforced.
 ///
 /// The signed message is the transaction sighash — a transaction-wide
 /// digest computed at the transaction layer. The validator checks:

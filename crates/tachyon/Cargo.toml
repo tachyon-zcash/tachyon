@@ -20,6 +20,13 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[package.metadata.docs.rs]
+rustdoc-args = [
+    "--document-private-items",
+    "--html-in-header",
+    "katex-header.html",
+]
+
 [features]
 default = [
     "std",

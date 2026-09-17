@@ -104,7 +104,7 @@ const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 
 /// Derives a note's master key from its trapdoor and the wallet nullifier key.
 ///
-/// $\mathsf{mk} = \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi,
+/// $\mathsf{mk} = \mathsf{Poseidon}(\texttt{Tachyon-NfMaster}, \psi,
 /// \mathsf{nk})$
 #[must_use]
 pub fn nf_master(psi: Fp, nk: Fp) -> Fp {

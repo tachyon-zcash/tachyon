@@ -41,6 +41,8 @@ jobs:
               - 'rust-toolchain.toml'
               - 'rustfmt.toml'
               - 'clippy.toml'
+              - '.cargo/config.toml'
+              - 'crates/tachyon/katex-header.html'
               - '.github/workflows/rust.yml'
               - '.github/actions/**'
 
@@ -145,7 +147,7 @@ jobs:
       - name: Check intra-doc links
         run: cargo doc --no-deps --all --locked --document-private-items
         env:
-          RUSTDOCFLAGS: "-D warnings"
+          RUSTDOCFLAGS: "-D warnings --html-in-header crates/tachyon/katex-header.html"
 
   # Aggregate gate: a single, stable required status check. It always runs —
   # even on non-Rust PRs where every job below is skipped — and fails only if a

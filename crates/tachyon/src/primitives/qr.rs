@@ -10,9 +10,10 @@ use ragu_pasta::Pasta;
 use super::Anchor;
 use crate::collections::qr;
 
-/// An epoch's first discriminant $R_1$: the closing boundary anchor
-/// $H_\mathsf{ep}(\mathsf{anchor\_last}, \mathsf{epoch} + 1)$ that the
-/// epoch's terminal anchor ticks to, pinned at `QrBucketSeal`.
+/// An epoch's first discriminant $R_1$.
+///
+/// The closing boundary anchor that the epoch's terminal `anchor_last`
+/// ticks to under the epoch-boundary domain, pinned at `QrBucketSeal`.
 ///
 /// Depth $j$ classifies at $R_{j+1} = R_1 + j$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
@@ -33,7 +34,7 @@ impl QrDiscriminant {
 }
 
 /// Witness polynomial interpolating one class's roots: $u(x_i) = y_i$ with
-/// $y_i^2 = c\,(x_i + s)$ at that class's multiplier $c$ and shift $s$.
+/// $y_i^2 = c(x_i + s)$ at that class's multiplier $c$ and shift $s$.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, ProductionRank>);
 
@@ -56,7 +57,7 @@ impl QrInterpolantPoly {
 pub struct QrInterpolantCommit(Eq);
 
 /// Witness polynomial for one class decomposition's quotient: $h$ in $u^2 -
-/// c\,(X + s) = q\,h$.
+/// c(X + s) = qh$.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, ProductionRank>);
 
@@ -131,7 +132,7 @@ impl QrProfile {
 }
 
 /// A value's side and square root at one discriminant: `(true, r)` with
-/// $r^2 = s$, or `(false, r)` with $r^2 = c\,s$, for $s$ the shifted value.
+/// $r^2 = s$, or `(false, r)` with $r^2 = cs$, for $s$ the shifted value.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrClassRoot(pub bool, pub Fp);
 
