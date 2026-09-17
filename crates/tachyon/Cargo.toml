@@ -12,6 +12,8 @@ keywords = [
 name = "zcash_tachyon"
 version = "0.0.0"
 
+publish = false
+
 documentation = "https://docs.rs/zcash_tachyon"
 readme = "README.md"
 repository = "https://github.com/tachyon-zcash/tachyon"
@@ -20,17 +22,32 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[package.metadata.docs.rs]
+rustdoc-args = [
+    "--document-private-items",
+    "--html-in-header",
+    "katex-header.html",
+]
+
 [features]
 default = [
     "std",
 ]
 std = [
     "blake2b_simd/std",
-    "ragu/std",
-    "reddsa/std",
     "corez/std",
+    "derive_more/std",
+    "ff/std",
     "ragu/multicore",
+    "ragu/std",
+    "ragu_arithmetic/multicore",
+    "ragu_arithmetic/std",
     "ragu_circuits/multicore",
+    "ragu_circuits/std",
+    "ragu_core/std",
+    "ragu_pasta/std",
+    "ragu_primitives/std",
+    "reddsa/std",
 ]
 test-epoch-size = [
 ]
@@ -48,7 +65,11 @@ derive_more = { version = "~2.1", default-features = false, features = [
 ] }
 ff = { version = "0.14", default-features = false }
 group = { version = "0.14", default-features = false }
-lazy_static = "1.5.0"
+# `spin_no_std` swaps `std::sync::Once` for a spin lock, which is what lets
+# this crate and `ragu_pasta`'s baked parameters reach a bare-metal target.
+lazy_static = { version = "1.5.0", default-features = false, features = [
+    "spin_no_std",
+] }
 pasta_curves = { package = "zakura-pasta-curves", version = "1.0.1", features = [
     "deferred",
 ] }
@@ -72,7 +93,7 @@ ragu_primitives = { git = "https://github.com/tachyon-zcash/ragu", rev = "088165
     "alloc",
 ] }
 rand_core = { version = "0.10", default-features = false }
-reddsa = { version = "1.0.1", package = "zakura-reddsa" }
+reddsa = { version = "1.0.1", package = "zakura-reddsa", default-features = false }
 
 [dev-dependencies]
 rand = { version = "0.10", default-features = false, features = [

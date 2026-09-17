@@ -13,7 +13,7 @@ pub const NF_DERIVATION_WIDTH: usize = 16;
 /// A Tachyon nullifier.
 ///
 /// Derived from the note's master key $\mathsf{mk} =
-/// \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi, \mathsf{nk})$ as one
+/// \mathsf{Poseidon}(\texttt{Tachyon-NfMaster}, \psi, \mathsf{nk})$ as one
 /// squeeze of the sponge keyed on $\mathsf{mk}$ and the epoch's group start.
 /// Published when a note is spent.
 ///
@@ -29,7 +29,7 @@ pub struct Nullifier(Tachygram);
 /// Nullifier trapdoor ($\psi$), per-note randomness for nullifier derivation.
 ///
 /// Used to derive the note's master key $\mathsf{mk} =
-/// \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi, \mathsf{nk})$, which
+/// \mathsf{Poseidon}(\texttt{Tachyon-NfMaster}, \psi, \mathsf{nk})$, which
 /// evaluates every epoch. Delegation carries proven value windows.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct Trapdoor(#[debug(skip)] Fp);

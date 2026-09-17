@@ -33,6 +33,10 @@ unused_qualifications = "warn"
 variant_size_differences = "warn"
 
 [workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+redundant_explicit_links = "deny"
+
+# docs are always built with --document-private-items
 private_intra_doc_links = "allow"
 
 [workspace.lints.clippy]
@@ -169,6 +173,8 @@ map_with_unused_argument_over_ranges = "deny"
 min_ident_chars = "deny"
 missing_assert_message = "deny"
 missing_asserts_for_indexing = "deny"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
 mixed_read_write_in_expression = "deny"
 module_name_repetitions = "deny"
 modulo_arithmetic = "deny"
@@ -210,9 +216,7 @@ arbitrary_source_item_ordering = "allow"
 arithmetic_side_effects = "allow"
 exhaustive_enums = "allow"
 exhaustive_structs = "allow"
-missing_errors_doc = "allow"
 missing_inline_in_public_items = "allow"
-missing_panics_doc = "allow"
 todo = "allow"
 unimplemented = "allow"
 

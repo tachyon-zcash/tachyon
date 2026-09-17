@@ -1,8 +1,14 @@
 default:
     @just --list
 
+# keep in step with .github/actions/rust-nightly-setup/action.yml, the pin the
+# `fmt` job checks against
+_nightly := "nightly-2026-05-23"
+
+_katex := "--html-in-header " + justfile_directory() / "crates/tachyon/katex-header.html"
+
 fmt:
-    cargo +nightly fmt --all
+    cargo +{{_nightly}} fmt --all
 
 lint: doc
     cargo clippy --workspace --lib --no-default-features # no_std
@@ -11,8 +17,8 @@ lint: doc
 test *ARGS:
     cargo test --workspace --all-features {{ARGS}}
 
-doc:
-    cargo doc --workspace --no-deps --document-private-items
+doc *ARGS:
+    RUSTDOCFLAGS="{{_katex}}" cargo doc --workspace --no-deps --document-private-items {{ARGS}}
 
 check:
     cargo check --workspace --lib --no-default-features # no_std
@@ -27,3 +33,12 @@ _book_setup: _install_binstall
 # locally [build | serve | watch] the Tachyon book
 book COMMAND *ARGS: _book_setup
     mdbook {{COMMAND}} ./book {{ARGS}}
+
+# the gates in .github/workflows/rust.yml, minus the os and 32-bit matrix
+ci_local:
+    cargo +{{_nightly}} fmt --all -- --check
+    cargo clippy --workspace --lib --no-default-features --locked -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+    cargo test --release --all --locked --lib
+    cargo test --release --all --locked --all-features
+    RUSTDOCFLAGS="-D warnings {{_katex}}" cargo doc --no-deps --all --locked --document-private-items

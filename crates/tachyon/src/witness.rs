@@ -133,6 +133,11 @@ pub fn end_epoch_unspent_seed(
 /// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
 /// covered epoch. Both include the junction epoch's member, which the
 /// combined sequence keeps once.
+///
+/// # Panics
+///
+/// Panics if `right_elapsed` is empty. Every segment covers at least its
+/// junction epoch, so a caller holding a [`StepRight`] has a member for it.
 #[must_use]
 pub fn unspent_fuse(
     (left, right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
@@ -470,6 +475,12 @@ pub fn qr_intake_split(
 /// `members` is the whole membership [`qr_intake_split`] partitioned; `side`
 /// is the residue side when set. The decomposition is the sibling's, at the
 /// sibling's class multiplier.
+///
+/// # Panics
+///
+/// Panics if the sibling's decomposition does not exist, which needs a
+/// repeated member. A split partitions distinct tachygrams, so this is
+/// unreachable.
 #[must_use]
 pub fn qr_side_descend(
     (sides, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),

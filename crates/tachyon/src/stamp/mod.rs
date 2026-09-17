@@ -121,11 +121,20 @@ pub trait StampState: BundleState {
         Self: Sized;
 
     /// Read the stamp trailer from the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the trailer is not a canonical
+    /// encoding of this state.
     fn read<R: Read>(reader: &mut R) -> io::Result<Self>
     where
         Self: Sized;
 
     /// Write the stamp trailer in the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     fn write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     where
         Self: Sized;
@@ -151,6 +160,11 @@ impl StampState for PointerStamp {
 
 impl PointerStamp {
     /// Read an aggregate id from the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the wtxid is all-zero, which
+    /// refers to no aggregate.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut wtxid = [0u8; 64];
         reader.read_exact(&mut wtxid)?;
@@ -163,6 +177,11 @@ impl PointerStamp {
     }
 
     /// Write an aggregate id to the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails or the wtxid is all-zero, which
+    /// refers to no aggregate.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         if self.0 == [0u8; 64] {
             return Err(io::Error::new(
@@ -218,6 +237,11 @@ impl StampState for ProofStamp {
 impl ProofStamp {
     /// Read a stamp from the consensus wire format. The proof blob has a
     /// known constant size.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or any component is not a canonical
+    /// encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut covered_actions = [0u8; 32];
         reader.read_exact(&mut covered_actions)?;
@@ -289,6 +313,10 @@ impl ProofStamp {
 
     /// Write a stamp to the consensus wire format. The proof blob has a
     /// known constant size.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         writer.write_all(&self.coverage)?;
         self.anchor.write(&mut writer)?;
@@ -374,6 +402,12 @@ impl Plan {
     /// order.
     ///
     /// TODO: provide a way to lift spend stamps when necessary to merge
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError`] if the number of spend PCDs does not match the
+    /// planned spends, an action digest cannot be computed, or a proof-system
+    /// step fails.
     pub fn prove<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -565,6 +599,10 @@ impl ProofStamp {
     /// proves the action over it and enforces the stamp accumulator. Both
     /// tachygrams are derived inside the circuit and placed on the stamp for
     /// data availability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu_core::Error`] if a proof-system step fails.
     pub fn prove_output<RNG: CryptoRng>(
         rng: &mut RNG,
         rcv: value::Trapdoor,
@@ -598,6 +636,10 @@ impl ProofStamp {
     /// proves the action `(cv, rk)` and enforces the stamp accumulator over
     /// the pair. The spend's `anchor` is taken as the stamp's anchor; chain
     /// validation lives inside the spendable lineage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu_core::Error`] if a proof-system step fails.
     pub fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
@@ -627,12 +669,16 @@ impl ProofStamp {
     ///
     /// Both stamps must share the same anchor (use StampLift to align first).
     ///
-    /// Each side is `(digests, tachygrams, anchor, proof)` — the digest list
-    /// reconstructs the `ActionCommit` multiset that `MergeStamp` verifies via
-    /// Schwartz-Zippel. Digests are derived from public action data by the
-    /// caller and are never stored on the stamp; the merged (concatenated)
-    /// digest list is returned so a fold can carry it forward without
-    /// re-deriving.
+    /// Each side is `(digests, tachygrams, anchor, proof)`, where the digest
+    /// list reconstructs the `ActionCommit` multiset that `MergeStamp`
+    /// verifies via Schwartz-Zippel. Digests are derived from public action
+    /// data by the caller and are never stored on the stamp; the merged
+    /// (concatenated) digest list is returned so a fold can carry it
+    /// forward without re-deriving.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu_core::Error`] if a proof-system step fails.
     pub fn prove_merge<RNG: CryptoRng>(
         rng: &mut RNG,
         (left_digests, left_tachygrams, left_anchor, left_proof): StampComponents,
@@ -696,6 +742,10 @@ impl ProofStamp {
     }
 
     /// Advances the stamp's anchor with the provided anchor chain proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu_core::Error`] if a proof-system step fails.
     pub fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -721,6 +771,11 @@ impl ProofStamp {
     }
 
     /// Advances the stamp's anchor with a proof of the provided sequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError`] if an action digest cannot be computed or a
+    /// proof-system step fails.
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -769,6 +824,11 @@ impl ProofStamp {
     ///
     /// TODO: confirm desc list against stamp? it's forbidden by the proof
     /// system, but we might want to fail early.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError`] if an action digest cannot be computed or a
+    /// proof-system step fails.
     pub fn merge<RNG: CryptoRng>(
         rng: &mut RNG,
         (left_stamp, left_desc): (Self, BTreeSet<action::Descriptor>),
@@ -845,6 +905,11 @@ impl ProofStamp {
     /// The parameter is a multiset: order does not matter, multiplicity does.
     /// The header is built from [`Self::tachygram_set`], so the published
     /// [`Self::tachygrams`] are not read here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu_core::Error`] if the proof system fails. A disproved
+    /// proof is reported as `Ok(false)`, not an error.
     pub fn verify_proof<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,

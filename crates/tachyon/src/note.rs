@@ -40,7 +40,7 @@ use rand_core::CryptoRng;
 
 use crate::{digest::poseidon, keys::PaymentKey, nullifier, primitives::Tachygram, value};
 
-/// Note commitment trapdoor ($rcm$) — randomness that blinds the note
+/// Note commitment trapdoor ($rcm$): randomness that blinds the note
 /// commitment.
 ///
 /// Can be derived from a shared secret negotiated out-of-band.

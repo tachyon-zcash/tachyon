@@ -57,8 +57,8 @@ impl Header for SpendHeader {
 /// [`SpendableInit`](super::spendable::SpendableInit) respectively), so no
 /// note witness is needed here. Any range covering the lineage's epoch and
 /// the next serves: the divisibility
-/// $\mathsf{nf\_seq} = F_{e,\mathsf{present\_nf}} \cdot
-/// F_{e+1,\mathsf{nf\_next}} \cdot \mathsf{complement}$ confirms the pair
+/// of `nf_seq` by the product of the `present_nf` factor at $e$, the
+/// `nf_next` factor at $e+1$, and the complement confirms the pair
 /// at adjacent epochs, with `present_nf` pinned against the spendable. Both
 /// nullifiers are emitted on the [`SpendHeader`] for the action-producing
 /// step to publish.

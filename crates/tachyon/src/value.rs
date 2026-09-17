@@ -40,7 +40,7 @@ lazy_static! {
 /// Entropy for a value commitment.
 ///
 /// Each action gets a fresh trapdoor, to commit its value secretly.
-/// $\mathsf{cv} = \[v\]\,\mathcal{V} + \[\mathsf{rcv}\]\,\mathcal{R}$.
+/// $\mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
 ///
 /// The bundle's binding signing key is the scalar sum of trapdoors:
 /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i$
@@ -60,7 +60,9 @@ impl Trapdoor {
 
     /// Commit to a given value with this trapdoor.
     ///
-    /// $$\mathsf{cv} = \[v\]\,\mathcal{V} + \[\mathsf{rcv}\]\,\mathcal{R}$$
+    /// $$
+    ///   \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}
+    /// $$
     ///
     /// where $\mathcal{V}$, $\mathcal{R}$ are generator points shared with
     /// Orchard (§5.4.8.3).
@@ -74,7 +76,9 @@ impl Trapdoor {
 
 /// A value commitment for Tachyon.
 ///
-/// $$\mathsf{cv} = \[v\]\,\mathcal{V} + \[\mathsf{rcv}\]\,\mathcal{R}$$
+/// $$
+///   \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}
+/// $$
 ///
 /// where $\mathcal{V}$, $\mathcal{R}$ are generator points
 /// shared with Orchard (§5.4.8.3).

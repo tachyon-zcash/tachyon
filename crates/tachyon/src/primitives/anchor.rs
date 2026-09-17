@@ -71,11 +71,20 @@ impl Anchor {
     }
 
     /// Read a 32-byte anchor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the bytes are not a canonical
+    /// field element.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         serialization::read_fp(&mut reader).map(Self)
     }
 
     /// Write a 32-byte anchor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_fp(&mut writer, &self.0)
     }

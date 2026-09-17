@@ -18,8 +18,13 @@ use crate::{
 /// The simple fields of an action, without the signature.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Descriptor {
-    /// Value commitment $\mathsf{cv} = \lbrack v \rbrack\,\mathcal{V}
-    /// + [\mathsf{rcv}]\,\mathcal{R}$ (EpAffine).
+    /// Value commitment (EpAffine).
+    ///
+    /// $$
+    ///   \mathsf{cv} =
+    ///     \lbrack v \rbrack\mathcal{V}
+    ///     + \lbrack \mathsf{rcv} \rbrack\mathcal{R}
+    /// $$
     pub cv: value::Commitment,
 
     /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
@@ -28,11 +33,20 @@ pub struct Descriptor {
 
 impl Descriptor {
     /// Derive the action digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
         ActionDigest::new(self.cv, self.rk)
     }
 
     /// Read an action descriptor from the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or either component is not a
+    /// canonical encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let cv = value::Commitment::from(serialization::read_ep_affine(&mut reader)?);
         let rk = public::ActionVerificationKey(serialization::read_action_vk(&mut reader)?);
@@ -40,6 +54,10 @@ impl Descriptor {
     }
 
     /// Write an action descriptor in the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_ep_affine(&mut writer, &self.cv.into())?;
         serialization::write_action_vk(&mut writer, &self.rk.0)?;
@@ -98,7 +116,7 @@ impl<E: Effect> PartialOrd for Plan<E> {
 impl Plan<effect::Spend> {
     /// Assemble a spend action plan.
     ///
-    /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$
+    /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$
     #[must_use]
     pub fn spend(
         note: Note,
@@ -122,7 +140,7 @@ impl Plan<effect::Spend> {
 impl Plan<effect::Output> {
     /// Assemble an output action plan.
     ///
-    /// $\mathsf{rk} = [\alpha]\,\mathcal{G}$.
+    /// $\mathsf{rk} = [\alpha]\mathcal{G}$.
     #[must_use]
     pub fn output(note: Note, theta: ActionEntropy, rcv: value::Trapdoor) -> Self {
         let cm = note.commitment();
@@ -142,13 +160,19 @@ impl Plan<effect::Output> {
 impl<E: Effect> Plan<E> {
     /// Derive the value commitment of this action plan.
     ///
-    /// $$\mathsf{cv} = [\pm v]\,\mathcal{V} + [\mathsf{rcv}]\,\mathcal{R}$$
+    /// $$
+    ///   \mathsf{cv} = [\pm v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}
+    /// $$
     #[must_use]
     pub fn cv(&self) -> value::Commitment {
         E::commit_value(self.rcv, self.note.value)
     }
 
     /// Derive the action digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
         ActionDigest::new(self.cv(), self.rk)
     }
@@ -172,7 +196,9 @@ impl<E: Effect> Plan<E> {
 pub struct Action {
     /// Value commitment.
     ///
-    /// $$ \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R} $$
+    /// $$
+    ///   \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}
+    /// $$
     pub cv: value::Commitment,
 
     /// Randomized action verification key $\mathsf{rk}$.
@@ -194,6 +220,10 @@ impl From<(Descriptor, Signature)> for Action {
 
 impl Action {
     /// Derive the action digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
         ActionDigest::new(self.cv, self.rk)
     }
@@ -252,12 +282,20 @@ impl Ord for Signature {
 
 impl Signature {
     /// Read an action signature from the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let sig = serialization::read_action_sig(&mut reader)?;
         Ok(Self(sig))
     }
 
     /// Write an action signature in the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_action_sig(&mut writer, &self.0)?;
         Ok(())

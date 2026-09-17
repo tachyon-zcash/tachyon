@@ -135,8 +135,8 @@ impl Step for NfMasterSeed {
 /// `Left = NfMasterSeed`. Witnesses the window's start epoch (constrained
 /// group-aligned, $w \bmod r = 0$ for $r$ the sponge rate `PoseidonFp::RATE`)
 /// and the window sequence. Runs one sponge per group over
-/// $(\mathtt{NF\_DOMAIN}, \mathsf{mk}, w)$, each absorbing three elements and
-/// squeezing $r$ nullifiers for one permutation, then binds the sequence to
+/// $(\texttt{Tachyon-NfDerive}, \mathsf{mk}, w)$, each absorbing three elements
+/// and squeezing $r$ nullifiers for one permutation, then binds the sequence to
 /// the window's members by a single opening at a free $z$ against their
 /// natively encoded product.
 ///
@@ -235,7 +235,9 @@ impl Step for NfDerive {
 /// concatenation, binds each by commit-equality, and proves the concat as the
 /// product
 ///
-/// $$\mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X)$$
+/// $$
+///   \mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X)
+/// $$
 ///
 /// since concatenation of disjoint ranges is exactly multiplication.
 ///

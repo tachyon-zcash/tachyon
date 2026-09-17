@@ -216,7 +216,7 @@ impl Step for AnchorSeed {
     }
 }
 
-/// Compose two adjacent [`AnchorChain`] segments — `left.end ==
+/// Compose two adjacent [`AnchorChain`] segments, with `left.end ==
 /// right.start`.
 #[derive(Debug)]
 pub struct AnchorFuse;
@@ -247,7 +247,7 @@ impl Step for AnchorFuse {
 
 /// Per-stamp exclusion seed.
 ///
-/// Verify $\mathsf{nf} \notin \mathsf{stamp\_tg\_set}$ and use the stamp's
+/// Verify $\mathsf{nf}$ is absent from the stamp's tachygram set, and use its
 /// commit to produce the appropriate anchor. The `elapsed` sequence is the
 /// single member $\mathsf{nf}$ at the epoch under test.
 ///
@@ -520,7 +520,11 @@ impl Step for UnspentFuse {
 /// Consumes any [`NullifierDerivation`], `elapsed` covering
 /// `[epoch_start, epoch_last]` inclusive, one member per epoch:
 ///
-/// $$\mathsf{nf\_seq}(X) = \mathsf{elapsed}(X) \cdot \mathsf{complement}(X)$$
+/// `nf_seq` factors as
+///
+/// $$
+///   \mathsf{elapsed}(X) \cdot \mathsf{complement}(X)
+/// $$
 ///
 /// The complement holds the derivation's members outside the lineage: epochs
 /// below it, and the epochs it runs ahead of the exclusion evidence, since a

@@ -34,12 +34,21 @@ impl Tachygram {
     }
 
     /// Read as a field element from the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the bytes are not a canonical
+    /// field element.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let tg = serialization::read_fp(&mut reader)?;
         Ok(Self(tg))
     }
 
     /// Write as a field element to the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_fp(&mut writer, &self.0)?;
         Ok(())

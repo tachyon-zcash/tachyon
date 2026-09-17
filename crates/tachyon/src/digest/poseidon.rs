@@ -104,8 +104,11 @@ const NULLIFIER_MASTER_DOMAIN: &[u8; 16] = b"Tachyon-NfMaster";
 
 /// Derives a note's master key from its trapdoor and the wallet nullifier key.
 ///
-/// $\mathsf{mk} = \mathsf{Poseidon}(\mathtt{NF\_MASTER\_DOMAIN}, \psi,
-/// \mathsf{nk})$
+/// $$
+///   \mathsf{mk} = \mathsf{Poseidon}(
+///     \texttt{Tachyon-NfMaster},\ \psi,\ \mathsf{nk}
+///   )
+/// $$
 #[must_use]
 pub fn nf_master(psi: Fp, nk: Fp) -> Fp {
     hash::<3>([
@@ -119,6 +122,11 @@ const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 
 /// Derives the group of consecutive epoch nullifiers starting at the
 /// group-aligned epoch `epoch_start` from the note's master key.
+///
+/// # Panics
+///
+/// Panics if the sponge rejects an absorb or a squeeze. The emulator is
+/// native and the element count is fixed at `RATE`, so this is unreachable.
 #[expect(
     clippy::expect_used,
     reason = "sponge absorb/squeeze cannot fail in wireless `Always` mode"

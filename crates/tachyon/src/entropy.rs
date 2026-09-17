@@ -64,7 +64,7 @@ mod sealed {
 /// Per-action randomizer $\alpha$, parameterized by effect state.
 ///
 /// - [`ActionRandomizer<Spend>`]: $\mathsf{rsk} = \mathsf{ask} + \alpha$,
-///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G}$.
+///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$.
 /// - [`ActionRandomizer<Output>`]: $\mathsf{rsk} = \alpha$.
 #[derive(Clone, Copy, Debug, Into)]
 #[debug("ActionRandomizer<{}>", type_name::<S>())]
