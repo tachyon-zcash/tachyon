@@ -12,6 +12,8 @@ keywords = [
 name = "zcash_tachyon"
 version = "0.0.0"
 
+publish = false
+
 documentation = "https://docs.rs/zcash_tachyon"
 readme = "README.md"
 repository = "https://github.com/tachyon-zcash/tachyon"
