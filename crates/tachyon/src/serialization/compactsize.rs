@@ -79,6 +79,11 @@ pub enum CompactSize {
 
 impl CompactSize {
     /// Construct a canonical single-byte [`CompactSize`] value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompactSizeError::NonCanonical`] if the value belongs in a
+    /// shorter or longer form.
     pub fn one_byte(value: u8) -> Result<Self, CompactSizeError> {
         if !VALID_ONE_BYTE.contains(&value.into()) {
             return Err(CompactSizeError::NonCanonical(Self::from(value)));
@@ -87,6 +92,11 @@ impl CompactSize {
     }
 
     /// Construct a canonical two-byte [`CompactSize`] value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompactSizeError::NonCanonical`] if the value belongs in a
+    /// shorter or longer form.
     pub fn two_bytes(value: u16) -> Result<Self, CompactSizeError> {
         if !VALID_TWO_BYTES.contains(&value.into()) {
             return Err(CompactSizeError::NonCanonical(Self::from(value)));
@@ -95,6 +105,11 @@ impl CompactSize {
     }
 
     /// Construct a canonical four-byte [`CompactSize`] value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompactSizeError::NonCanonical`] if the value belongs in a
+    /// shorter or longer form.
     pub fn four_bytes(value: u32) -> Result<Self, CompactSizeError> {
         if !VALID_FOUR_BYTES.contains(&value.into()) {
             return Err(CompactSizeError::NonCanonical(Self::from(value)));
@@ -103,6 +118,11 @@ impl CompactSize {
     }
 
     /// Construct a canonical eight-byte [`CompactSize`] value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompactSizeError::NonCanonical`] if the value belongs in a
+    /// shorter form.
     pub fn eight_bytes(value: u64) -> Result<Self, CompactSizeError> {
         if !VALID_EIGHT_BYTES.contains(&value) {
             return Err(CompactSizeError::NonCanonical(Self::from(value)));
@@ -111,6 +131,11 @@ impl CompactSize {
     }
 
     /// Enforce canonical form.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompactSizeError::NonCanonical`] if the value is not encoded
+    /// in the shortest form that holds it.
     pub fn enforce_canon(self) -> Result<Self, CompactSizeError> {
         match self {
             Self::OneByte(inner_u8) => {
@@ -154,6 +179,12 @@ impl CompactSize {
     }
 
     /// Enforce canonical form and consensus bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompactSizeError::NonCanonical`] if the form is not the
+    /// shortest that holds the value, or [`CompactSizeError::ExceedsMaximum`]
+    /// if it is above [`MAX_COMPACT_SIZE`].
     pub fn enforce_valid(self) -> Result<Self, CompactSizeError> {
         self.enforce_canon()?.enforce_max()
     }
@@ -162,6 +193,11 @@ impl CompactSize {
     /// consensus-bound checks; callers are responsible for invoking
     /// [`Self::enforce_canon`], [`Self::enforce_max`], or
     /// [`Self::enforce_valid`] as appropriate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails, including a flag byte whose
+    /// payload is short.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut flag = [0u8; 1];
         reader.read_exact(&mut flag)?;
@@ -187,6 +223,10 @@ impl CompactSize {
     }
 
     /// Write this [`CompactSize`] to `writer`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(self, mut writer: W) -> io::Result<()> {
         match self {
             Self::OneByte(value) => writer.write_all(&[value]),

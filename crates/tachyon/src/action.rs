@@ -33,11 +33,20 @@ pub struct Descriptor {
 
 impl Descriptor {
     /// Derive the action digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
         ActionDigest::new(self.cv, self.rk)
     }
 
     /// Read an action descriptor from the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or either component is not a
+    /// canonical encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let cv = value::Commitment::from(serialization::read_ep_affine(&mut reader)?);
         let rk = public::ActionVerificationKey(serialization::read_action_vk(&mut reader)?);
@@ -45,6 +54,10 @@ impl Descriptor {
     }
 
     /// Write an action descriptor in the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_ep_affine(&mut writer, &self.cv.into())?;
         serialization::write_action_vk(&mut writer, &self.rk.0)?;
@@ -156,6 +169,10 @@ impl<E: Effect> Plan<E> {
     }
 
     /// Derive the action digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
         ActionDigest::new(self.cv(), self.rk)
     }
@@ -203,6 +220,10 @@ impl From<(Descriptor, Signature)> for Action {
 
 impl Action {
     /// Derive the action digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
         ActionDigest::new(self.cv, self.rk)
     }
@@ -261,12 +282,20 @@ impl Ord for Signature {
 
 impl Signature {
     /// Read an action signature from the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let sig = serialization::read_action_sig(&mut reader)?;
         Ok(Self(sig))
     }
 
     /// Write an action signature in the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_action_sig(&mut writer, &self.0)?;
         Ok(())

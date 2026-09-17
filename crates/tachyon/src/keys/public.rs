@@ -41,6 +41,11 @@ impl PartialEq for ActionVerificationKey {
 
 impl ActionVerificationKey {
     /// Verify an action signature against a transaction sighash.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`reddsa::Error`] if the signature does not verify under this
+    /// key for that sighash.
     pub fn verify(&self, sighash: &[u8; 32], sig: &action::Signature) -> Result<(), reddsa::Error> {
         self.0.verify(sighash, &sig.0)
     }
@@ -126,6 +131,11 @@ impl BindingVerificationKey {
     }
 
     /// Verify a binding signature against a transaction sighash.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`reddsa::Error`] if the signature does not verify under this
+    /// key for that sighash, which means the bundle does not balance.
     pub fn verify(&self, sighash: &[u8; 32], sig: &bundle::Signature) -> Result<(), reddsa::Error> {
         self.0.verify(sighash, &sig.0)
     }

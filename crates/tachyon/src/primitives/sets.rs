@@ -17,12 +17,21 @@ pub struct TachygramSetCommit(Eq);
 
 impl TachygramSetCommit {
     /// Read as an affine point from the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the bytes are not a canonical
+    /// curve point.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let commit = serialization::read_eq_affine(&mut reader)?;
         Ok(Self(commit.into()))
     }
 
     /// Write as an affine point to the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_eq_affine(&mut writer, &self.0.to_affine())?;
         Ok(())
@@ -42,12 +51,21 @@ pub struct ActionSetCommit(Eq);
 
 impl ActionSetCommit {
     /// Read as an affine point from the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails or the bytes are not a canonical
+    /// curve point.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let commit = serialization::read_eq_affine(&mut reader)?;
         Ok(Self(commit.into()))
     }
 
     /// Write as an affine point to the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_eq_affine(&mut writer, &self.0.to_affine())?;
         Ok(())

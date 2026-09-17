@@ -213,6 +213,11 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     }
 
     /// Verify the bundle's binding signature and all action signatures.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SignatureError`] if the binding signature does not verify,
+    /// or if any action signature does not verify under its own `rk`.
     pub fn verify_signatures(&self, sighash: &[u8; 32]) -> Result<(), SignatureError> {
         // 1. Derive bvk from public data
         let bvk = public::BindingVerificationKey::derive(&self.actions, self.value_balance);
@@ -469,6 +474,11 @@ impl Plan {
     ///
     /// To confirm correct application, call [`Bundle::verify_signatures`] on
     /// the return value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError`] if the planned actions do not balance or an
+    /// action cannot be signed.
     pub fn sign<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -499,6 +509,11 @@ impl Plan {
     ///
     /// To confirm correct application, call [`Bundle::verify_signatures`] on
     /// the return value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError`] if the planned actions do not balance or a
+    /// descriptor has no supplied signature.
     pub fn apply_signatures<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -560,6 +575,11 @@ impl Bundle<ProofStamp> {
     ///
     /// If you fail to use the correct sequence according to consensus, you will
     /// succesesfully lift to an anchor that consensus does not recognize.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LiftError`] if the adjuncts do not cover the stamp, an
+    /// anchor step is invalid, or a proof-system step fails.
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -620,6 +640,12 @@ impl Bundle<ProofStamp> {
 
     /// Verify the stamp's coverage against this bundle's own actions combined
     /// with the given adjunct descriptors, returning the descriptors covered.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyCoverageError`] if a descriptor repeats, an action
+    /// digest cannot be computed, or the recomputed coverage disagrees with
+    /// the one the stamp carries.
     pub fn verify_coverage(
         &self,
         adjunct_descs: &[action::Descriptor],
@@ -645,6 +671,12 @@ impl Bundle<ProofStamp> {
     /// Verify the stamp's published tachygrams: two per covered action, and
     /// reproducing the carried set commitment. `action_count` is the size of
     /// the covered set returned by [`Self::verify_coverage`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyTachygramsError`] if the published count is not two
+    /// per covered action, or if they do not reproduce the carried set
+    /// commitment.
     pub fn verify_tachygrams(
         &self,
         action_count: usize,
@@ -664,6 +696,11 @@ impl Bundle<ProofStamp> {
 
     /// Verify the pointers of the adjuncts against the expected wtxid,
     /// returning the action descriptors they carry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyPointersError`] if the wtxid is all-zero or an adjunct
+    /// points at a different aggregate.
     pub fn verify_pointers(
         &self,
         wtxid: &[u8; 64],
@@ -688,6 +725,11 @@ impl Bundle<ProofStamp> {
     /// # Soundness
     ///
     /// The parameter is a multiset: order does not matter, multiplicity does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu_core::Error`] if the proof system fails. A disproved
+    /// proof is reported as `Ok(false)`, not an error.
     pub fn verify_proof<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -705,6 +747,11 @@ impl Bundle<ProofStamp> {
     /// - Proof is correct
     ///
     /// If you need more control, call each verify method directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerificationError`] if any of those checks fails, or if the
+    /// proof is disproved.
     pub fn verify<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -756,6 +803,11 @@ impl<S: StampState> Bundle<S> {
     /// Read a stamped bundle in state `S` from the consensus wire format.
     ///
     /// See the module-level wire format documentation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails, the state byte does not match `S`,
+    /// or any component is not a canonical encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let head = StateByte::read(&mut reader)?;
 
@@ -847,6 +899,11 @@ impl<S: StampState> Bundle<S> {
 
     /// Write the bundle in the consensus wire format: the
     /// `tachyonBundleState` byte for `S`, the bundle body, and the stamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails or a count exceeds what a
+    /// compactsize can hold.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         S::state_byte().write(&mut writer)?;
 
@@ -961,6 +1018,11 @@ impl TachyonBundle {
     /// Decodes `0x00` (non-tachyon) as [`Self::NoBundle`], `0x01` as a
     /// proof-stamped bundle, and `0x02` as a pointer-stamped bundle;
     /// rejects any other byte.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails, the state byte is none of those
+    /// three, or any component is not a canonical encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let state = StateByte::read(&mut reader)?;
 
@@ -973,6 +1035,10 @@ impl TachyonBundle {
 
     /// Write any Tachyon bundle in the consensus wire format, dispatching on
     /// the variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, writer: W) -> io::Result<()> {
         #[expect(clippy::ref_patterns, reason = "match needs explicit ref")]
         match *self {
@@ -1067,12 +1133,20 @@ pub struct Signature(pub(crate) reddsa::Signature<reddsa::BindingAuth>);
 
 impl Signature {
     /// Read a binding signature from the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading fails.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let sig = serialization::read_binding_sig(&mut reader)?;
         Ok(Self(sig))
     }
 
     /// Write a binding signature to the consensus wire format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_binding_sig(&mut writer, &self.0)?;
         Ok(())

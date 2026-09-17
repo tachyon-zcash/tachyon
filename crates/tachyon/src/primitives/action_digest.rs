@@ -24,6 +24,11 @@ pub enum ActionDigestError {
 
 impl ActionDigest {
     /// Digest a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ActionDigestError`] if either point is the identity, which
+    /// has no affine coordinates to absorb.
     pub fn new(
         cv: value::Commitment,
         rk: public::ActionVerificationKey,
