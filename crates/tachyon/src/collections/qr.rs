@@ -43,6 +43,12 @@ pub(crate) const fn class_multiplier(side: bool) -> Fp {
 /// Classify $v$ at the discriminant $R$: the residue-side bit, set iff $v +
 /// R$ is a square or zero, and a root with $\mathsf{root}^2 = c \cdot (v + R)$
 /// at that side's [`class_multiplier`].
+///
+/// # Panics
+///
+/// Panics if neither character branch has a root. The character is
+/// multiplicative and the multiplier is a non-residue, so exactly one branch
+/// always does, and this is unreachable.
 #[must_use]
 pub fn classify(value: Fp, discriminant: Fp) -> (bool, Fp) {
     let shifted = value + discriminant;
