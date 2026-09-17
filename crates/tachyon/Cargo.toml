@@ -81,7 +81,7 @@ ragu_primitives = { git = "https://github.com/tachyon-zcash/ragu", rev = "088165
     "alloc",
 ] }
 rand_core = { version = "0.10", default-features = false }
-reddsa = { version = "1.0.1", package = "zakura-reddsa" }
+reddsa = { version = "1.0.1", package = "zakura-reddsa", default-features = false }
 
 [dev-dependencies]
 rand = { version = "0.10", default-features = false, features = [
