@@ -35,11 +35,19 @@ default = [
 ]
 std = [
     "blake2b_simd/std",
-    "ragu/std",
-    "reddsa/std",
     "corez/std",
+    "derive_more/std",
+    "ff/std",
     "ragu/multicore",
+    "ragu/std",
+    "ragu_arithmetic/multicore",
+    "ragu_arithmetic/std",
     "ragu_circuits/multicore",
+    "ragu_circuits/std",
+    "ragu_core/std",
+    "ragu_pasta/std",
+    "ragu_primitives/std",
+    "reddsa/std",
 ]
 test-epoch-size = [
 ]
