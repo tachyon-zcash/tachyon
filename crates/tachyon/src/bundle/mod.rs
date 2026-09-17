@@ -3,10 +3,10 @@
 //! A bundle is parameterized by bundle state `S: BundleState`.
 //! Actions are constant through state transitions; only the stamp changes.
 //!
-//! - `Bundle<ProofStamp>` — self-contained bundle with a proof stamp
-//! - `Bundle<PointerStamp>` — proof stamp replaced by a pointer stamp naming
-//!   the covering aggregate
-//! - [`TachyonBundle`] — enum of the on-wire forms for mixed contexts
+//! - `Bundle<ProofStamp>`: self-contained bundle with a proof stamp
+//! - `Bundle<PointerStamp>`: proof stamp replaced by a pointer stamp naming the
+//!   covering aggregate
+//! - [`TachyonBundle`]: enum of the on-wire forms for mixed contexts
 //!
 //! # Consensus wire format
 //!
@@ -394,7 +394,9 @@ impl Plan {
 
     /// Derive `value_balance` from note values.
     ///
-    /// $$\sum_i v_{\text{spend},i} - \sum_j v_{\text{output},j}$$
+    /// $$
+    ///   \sum_i v_{\text{spend},i} - \sum_j v_{\text{output},j}
+    /// $$
     ///
     /// # Errors
     ///
@@ -1055,12 +1057,11 @@ impl TachyonBundle {
 /// of the commitment scheme, it is infeasible to find
 /// $(v^\ast, \mathsf{bsk}^\prime)$ such that
 /// $\mathsf{bvk} = \text{ValueCommit}_{\mathsf{bsk}^\prime}(v^\ast)$ for
-/// $v^\ast \neq 0$ — so value balance is enforced.
+/// $v^\ast \neq 0$, so value balance is enforced.
 ///
-/// The signed message is the transaction sighash — a transaction-wide
-/// digest computed at the transaction layer. The validator checks:
-/// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\mathsf{sighash},
-///   \text{bindingSig}) = 1$
+/// The signed message is the transaction sighash, a transaction-wide
+/// digest computed at the transaction layer. The validator verifies
+/// `binding_sig` against it under $\mathsf{bvk}$.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Signature(pub(crate) reddsa::Signature<reddsa::BindingAuth>);
 

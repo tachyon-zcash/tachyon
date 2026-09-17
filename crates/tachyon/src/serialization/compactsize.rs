@@ -159,7 +159,7 @@ impl CompactSize {
     }
 
     /// Parse a [`CompactSize`] from `reader`. Performs no canonical-form or
-    /// consensus-bound checks — callers are responsible for invoking
+    /// consensus-bound checks; callers are responsible for invoking
     /// [`Self::enforce_canon`], [`Self::enforce_max`], or
     /// [`Self::enforce_valid`] as appropriate.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {

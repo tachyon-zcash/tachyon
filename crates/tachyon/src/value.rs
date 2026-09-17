@@ -60,7 +60,9 @@ impl Trapdoor {
 
     /// Commit to a given value with this trapdoor.
     ///
-    /// $$\mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$$
+    /// $$
+    ///   \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}
+    /// $$
     ///
     /// where $\mathcal{V}$, $\mathcal{R}$ are generator points shared with
     /// Orchard (§5.4.8.3).
@@ -74,7 +76,9 @@ impl Trapdoor {
 
 /// A value commitment for Tachyon.
 ///
-/// $$\mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$$
+/// $$
+///   \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}
+/// $$
 ///
 /// where $\mathcal{V}$, $\mathcal{R}$ are generator points
 /// shared with Orchard (§5.4.8.3).

@@ -235,7 +235,9 @@ impl Step for NfDerive {
 /// concatenation, binds each by commit-equality, and proves the concat as the
 /// product
 ///
-/// $$\mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X)$$
+/// $$
+///   \mathsf{merged}(X) = \mathsf{left}(X) \cdot \mathsf{right}(X)
+/// $$
 ///
 /// since concatenation of disjoint ranges is exactly multiplication.
 ///

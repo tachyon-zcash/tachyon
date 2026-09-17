@@ -19,8 +19,8 @@ use crate::{entropy::ActionRandomizer, primitives::effect, reddsa};
 ///
 /// ## Status
 ///
-/// Currently a data holder — no proof-construction methods yet. These will be
-/// added once the Ragu PCD circuit is integrated and proof delegation is
+/// Currently a data holder, with no proof-construction methods yet. These will
+/// be added once the Ragu PCD circuit is integrated and proof delegation is
 /// specified.
 // TODO: add proof-construction methods (e.g., create_action_proof, create_merge_proof)
 // once the Ragu circuit API is available.
@@ -44,14 +44,14 @@ impl ProofAuthorizingKey {
     }
 }
 
-/// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\mathcal{G}$ — the
+/// The spend validating key $\mathsf{ak} = [\mathsf{ask}]\mathcal{G}$, the
 /// long-lived counterpart of [`public::ActionVerificationKey`].
 ///
 /// Corresponds to the "spend validating key" in Orchard (§4.2.3).
 /// Constrains per-action `rk` in the proof, tying accumulator activity
 /// to the holder of `ask`.
 ///
-/// `ak` **cannot verify action signatures directly** — the prover uses
+/// `ak` **cannot verify action signatures directly**; the prover uses
 /// [`derive_action_public`](Self::derive_action_public) to compute the
 /// per-action `rk` for the proof witness. Component of
 /// [`ProofAuthorizingKey`] for proof authorization without spend authority.
@@ -64,7 +64,7 @@ impl SpendValidatingKey {
     /// Derive the per-action public (verification) key: $\mathsf{rk} =
     /// \mathsf{ak} + [\alpha]\mathcal{G}$.
     ///
-    /// Only accepts [`ActionRandomizer<Spend>`] — output actions derive `rk`
+    /// Only accepts [`ActionRandomizer<Spend>`]; output actions derive `rk`
     /// via
     /// [`ActionSigningKey<Output>::derive_action_public`](super::private::ActionSigningKey::derive_action_public)
     /// instead.

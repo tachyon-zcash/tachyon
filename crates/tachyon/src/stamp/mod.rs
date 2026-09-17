@@ -627,12 +627,12 @@ impl ProofStamp {
     ///
     /// Both stamps must share the same anchor (use StampLift to align first).
     ///
-    /// Each side is `(digests, tachygrams, anchor, proof)` — the digest list
-    /// reconstructs the `ActionCommit` multiset that `MergeStamp` verifies via
-    /// Schwartz-Zippel. Digests are derived from public action data by the
-    /// caller and are never stored on the stamp; the merged (concatenated)
-    /// digest list is returned so a fold can carry it forward without
-    /// re-deriving.
+    /// Each side is `(digests, tachygrams, anchor, proof)`, where the digest
+    /// list reconstructs the `ActionCommit` multiset that `MergeStamp`
+    /// verifies via Schwartz-Zippel. Digests are derived from public action
+    /// data by the caller and are never stored on the stamp; the merged
+    /// (concatenated) digest list is returned so a fold can carry it
+    /// forward without re-deriving.
     pub fn prove_merge<RNG: CryptoRng>(
         rng: &mut RNG,
         (left_digests, left_tachygrams, left_anchor, left_proof): StampComponents,

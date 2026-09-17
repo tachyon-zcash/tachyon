@@ -364,11 +364,11 @@ impl Step for QrIntakeSplit {
 /// With $s$ the sibling, $u$ its interpolant and $h$ the quotient,
 ///
 /// $$
-///   u(X)^2 - c(X + R) = s(X) h(X)
+///   u(X)^2 - c \cdot (X + R) = s(X) \cdot h(X)
 /// $$
 ///
 /// at the sibling's class $c$ holds only if every root of $s$ takes that
-/// side at $R$, since each root leaves $u(x)^2 = c(x + R)$. With the
+/// side at $R$, since each root leaves $u(x)^2 = c \cdot (x + R)$. With the
 /// split's product, every member of the extracted class is then in the
 /// child.
 ///
@@ -376,8 +376,8 @@ impl Step for QrIntakeSplit {
 ///
 /// The sibling is pinned to its header commitment; the challenge absorbs the
 /// sibling, interpolant and quotient commitments. Every root of the sibling
-/// then satisfies $u(x)^2 = c(x + R)$ at the sibling's class $c$, and the
-/// split's product places every member of the other class in the child. The
+/// then satisfies $u(x)^2 = c \cdot (x + R)$ at the sibling's class $c$, and
+/// the split's product places every member of the other class in the child. The
 /// child may hold a stray member of the sibling's class; consumers open it
 /// nonzero, so a stray member cannot pass a value that is present. $R$ is read
 /// off the header and pinned at [`QrBucketSeal`]. The parent's depth is
@@ -583,7 +583,7 @@ impl Step for QrBucketSeal {
 /// R_1 + j$, each position witnesses a side $b_j$ and a root $r_j$ with
 ///
 /// $$
-///   r_j^2 = \bigl(c - (c - 1)b_j\bigr) s_j,
+///   r_j^2 = \bigl(c - (c - 1) \cdot b_j\bigr) \cdot s_j,
 ///   \qquad
 ///   b_j = 0 \implies s_j \neq 0.
 /// $$
@@ -593,9 +593,9 @@ impl Step for QrBucketSeal {
 /// $$
 ///   \sum_j m_j = \mathsf{depth},
 ///   \qquad
-///   \sum_j j m_j = \frac{\mathsf{depth}(\mathsf{depth} - 1)}{2},
+///   \sum_j j \cdot m_j = \frac{\mathsf{depth} \cdot (\mathsf{depth} - 1)}{2},
 ///   \qquad
-///   a_{j+1} = a_j + m_j(a_j + b_j),
+///   a_{j+1} = a_j + m_j \cdot (a_j + b_j),
 /// $$
 ///
 /// with $a_0 = 0$; the fold ends at $\mathsf{bits}$ exactly when the
@@ -606,16 +606,16 @@ impl Step for QrBucketSeal {
 ///
 /// # Soundness
 ///
-/// $c$ is a non-residue, so for $s_j \neq 0$ exactly one of $s_j$, $cs_j$
-/// is a square and $b_j$ is the value's side. For $s_j = 0$ the nonzero rule
-/// forces the residue side, where [`QrIntakeSplit`] files the exceptional
+/// $c$ is a non-residue, so for $s_j \neq 0$ exactly one of $s_j$, $c \cdot
+/// s_j$ is a square and $b_j$ is the value's side. For $s_j = 0$ the nonzero
+/// rule forces the residue side, where [`QrIntakeSplit`] files the exceptional
 /// value. Among boolean vectors of weight `depth` only the leading positions
-/// attain index sum $\mathsf{depth}(\mathsf{depth} - 1)/2$, so the mask is
-/// that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold then
-/// equals `bits` iff the bucket's sides are the value's first `depth` sides.
-/// Positions past `depth` are tested but compared to nothing. $R_1$ is the
-/// bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` is free, its
-/// profile fixed by the fold and its sequence membership by the identity.
+/// attain index sum $\mathsf{depth} \cdot (\mathsf{depth} - 1)/2$, so the mask
+/// is that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold
+/// then equals `bits` iff the bucket's sides are the value's first `depth`
+/// sides. Positions past `depth` are tested but compared to nothing. $R_1$ is
+/// the bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` is free,
+/// its profile fixed by the fold and its sequence membership by the identity.
 #[derive(Debug)]
 pub struct QrUnspentInit;
 

@@ -18,8 +18,13 @@ use crate::{
 /// The simple fields of an action, without the signature.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Descriptor {
-    /// Value commitment $\mathsf{cv} = \lbrack v \rbrack\mathcal{V}
-    /// + [\mathsf{rcv}]\mathcal{R}$ (EpAffine).
+    /// Value commitment (EpAffine).
+    ///
+    /// $$
+    ///   \mathsf{cv} =
+    ///     \lbrack v \rbrack\mathcal{V}
+    ///     + \lbrack \mathsf{rcv} \rbrack\mathcal{R}
+    /// $$
     pub cv: value::Commitment,
 
     /// Randomized action verification key $\mathsf{rk}$ (EpAffine).
@@ -142,7 +147,9 @@ impl Plan<effect::Output> {
 impl<E: Effect> Plan<E> {
     /// Derive the value commitment of this action plan.
     ///
-    /// $$\mathsf{cv} = [\pm v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$$
+    /// $$
+    ///   \mathsf{cv} = [\pm v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}
+    /// $$
     #[must_use]
     pub fn cv(&self) -> value::Commitment {
         E::commit_value(self.rcv, self.note.value)
@@ -172,7 +179,9 @@ impl<E: Effect> Plan<E> {
 pub struct Action {
     /// Value commitment.
     ///
-    /// $$ \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R} $$
+    /// $$
+    ///   \mathsf{cv} = \[v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}
+    /// $$
     pub cv: value::Commitment,
 
     /// Randomized action verification key $\mathsf{rk}$.

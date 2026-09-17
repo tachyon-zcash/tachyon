@@ -12,11 +12,13 @@ use crate::{digest::poseidon, nullifier};
 /// Tachyon simplifies Orchard's nullifier construction
 /// ("Tachyaction at a Distance", Bowe 2025):
 ///
-/// $$\mathsf{nf} = F_{\mathsf{nk}}(\Psi \Vert e)$$
+/// $$
+///   \mathsf{nf} = F_{\mathsf{nk}}(\Psi \Vert e)
+/// $$
 ///
 /// where $F$ is a keyed PRF (Poseidon), $\Psi$ is the note's nullifier
 /// trapdoor, and $e$ is the epoch index. This replaces Orchard's more
-/// complex construction that defended against faerie gold attacks — which
+/// complex construction that defended against faerie gold attacks, which
 /// are moot under out-of-band payments.
 ///
 /// ## Capabilities
@@ -26,7 +28,7 @@ use crate::{digest::poseidon, nullifier};
 ///   The master key $\mathsf{mk} = \mathsf{Poseidon}(\texttt{Tachyon-NfMaster},
 ///   \Psi, \mathsf{nk})$ evaluates every epoch.
 ///
-/// `nk` alone does NOT confer spend authority — combined with `ak` it
+/// `nk` alone does NOT confer spend authority; combined with `ak` it
 /// forms the proof authorizing key `pak`, enabling proof construction
 /// and nullifier derivation without signing capability.
 #[derive(Clone, Copy, Debug)]
@@ -54,8 +56,11 @@ impl NullifierKey {
 ///
 /// Derived from the proof authorizing key components:
 ///
-/// $$\mathsf{pk} = \text{Poseidon}(\texttt{Tachyon-PkDerive}, \mathsf{ak}_x,
-/// \mathsf{ak}_y, \mathsf{nk})$$
+/// $$
+///   \mathsf{pk} = \text{Poseidon}(
+///     \texttt{Tachyon-PkDerive},\ \mathsf{ak}_x,\ \mathsf{ak}_y,\ \mathsf{nk}
+///   )
+/// $$
 ///
 /// where $(\mathsf{ak}_x, \mathsf{ak}_y)$ are the affine coordinates of the
 /// spend validating key.
@@ -82,8 +87,13 @@ pub struct PaymentKey(#[debug(skip)] Fp);
 
 impl PaymentKey {
     /// Derive the payment key from `ak` and `nk`:
-    /// $\mathsf{pk} = \text{Poseidon}(\texttt{Tachyon-PkDerive}, \mathsf{ak}_x,
-    /// \mathsf{ak}_y, \mathsf{nk})$.
+    ///
+    /// $$
+    ///   \mathsf{pk} = \text{Poseidon}(
+    ///     \texttt{Tachyon-PkDerive},
+    ///     \mathsf{ak}_x,\ \mathsf{ak}_y,\ \mathsf{nk}
+    ///   )
+    /// $$
     ///
     /// # Panics
     ///

@@ -34,7 +34,7 @@ impl QrDiscriminant {
 }
 
 /// Witness polynomial interpolating one class's roots: $u(x_i) = y_i$ with
-/// $y_i^2 = c(x_i + s)$ at that class's multiplier $c$ and shift $s$.
+/// $y_i^2 = c \cdot (x_i + s)$ at that class's multiplier $c$ and shift $s$.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrInterpolantPoly(Polynomial<Fp, ProductionRank>);
 
@@ -57,7 +57,7 @@ impl QrInterpolantPoly {
 pub struct QrInterpolantCommit(Eq);
 
 /// Witness polynomial for one class decomposition's quotient: $h$ in $u^2 -
-/// c(X + s) = qh$.
+/// c \cdot (X + s) = q \cdot h$.
 #[derive(AsRef, Clone, Debug, From, Into)]
 pub struct QrQuotientPoly(Polynomial<Fp, ProductionRank>);
 
@@ -132,7 +132,8 @@ impl QrProfile {
 }
 
 /// A value's side and square root at one discriminant: `(true, r)` with
-/// $r^2 = s$, or `(false, r)` with $r^2 = cs$, for $s$ the shifted value.
+/// $r^2 = s$, or `(false, r)` with $r^2 = c \cdot s$, for $s$ the shifted
+/// value.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrClassRoot(pub bool, pub Fp);
 

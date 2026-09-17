@@ -216,7 +216,7 @@ impl Step for AnchorSeed {
     }
 }
 
-/// Compose two adjacent [`AnchorChain`] segments — `left.end ==
+/// Compose two adjacent [`AnchorChain`] segments, with `left.end ==
 /// right.start`.
 #[derive(Debug)]
 pub struct AnchorFuse;
@@ -521,7 +521,10 @@ impl Step for UnspentFuse {
 /// `[epoch_start, epoch_last]` inclusive, one member per epoch:
 ///
 /// `nf_seq` factors as
-/// $$\mathsf{elapsed}(X) \cdot \mathsf{complement}(X)$$
+///
+/// $$
+///   \mathsf{elapsed}(X) \cdot \mathsf{complement}(X)
+/// $$
 ///
 /// The complement holds the derivation's members outside the lineage: epochs
 /// below it, and the epochs it runs ahead of the exclusion evidence, since a

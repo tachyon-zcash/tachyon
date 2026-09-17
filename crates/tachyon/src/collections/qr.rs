@@ -2,8 +2,8 @@
 //!
 //! A value $x$ takes the residue side at a discriminant $R$ iff $x + R$ is a
 //! square or zero, and the non-residue side otherwise. A root $y$ attests
-//! either side: $y^2 = x + R$ on the residue side, $y^2 = n(x + R)$ for a
-//! fixed non-residue $n$ on the other.
+//! either side: $y^2 = x + R$ on the residue side, $y^2 = n \cdot (x + R)$ for
+//! a fixed non-residue $n$ on the other.
 //!
 //! ## Class decomposition
 //!
@@ -11,7 +11,7 @@
 //! $y_i$, at that side's class multiplier $c$,
 //!
 //! $$
-//!   u(X)^2 - c(X + R) = q(X) h(X),
+//!   u(X)^2 - c \cdot (X + R) = q(X) \cdot h(X),
 //! $$
 //!
 //! so every root of $q$ takes that side. The exceptional value $-R$ has root
@@ -41,8 +41,8 @@ pub(crate) const fn class_multiplier(side: bool) -> Fp {
 }
 
 /// Classify $v$ at the discriminant $R$: the residue-side bit, set iff $v +
-/// R$ is a square or zero, and a root with $\mathsf{root}^2 = c(v + R)$ at
-/// that side's [`class_multiplier`].
+/// R$ is a square or zero, and a root with $\mathsf{root}^2 = c \cdot (v + R)$
+/// at that side's [`class_multiplier`].
 #[must_use]
 pub fn classify(value: Fp, discriminant: Fp) -> (bool, Fp) {
     let shifted = value + discriminant;
@@ -102,7 +102,7 @@ fn divide_by_root(coeffs: &mut Vec<Fp>, root: Fp) -> Option<()> {
 /// $s$:
 ///
 /// $$
-///   u(X)^2 - c(X + s) = q(X) h(X),
+///   u(X)^2 - c \cdot (X + s) = q(X) \cdot h(X),
 /// $$
 ///
 /// with $q$ the abscissas as roots and $u$ interpolating the points. An empty
@@ -259,8 +259,8 @@ mod tests {
         points.iter().map(|&(abscissa, _)| abscissa).collect()
     }
 
-    /// Verifies $u^2 - c(X + s) = qh$ coefficient by coefficient for one
-    /// side.
+    /// Verifies $u^2 - c \cdot (X + s) = q \cdot h$ coefficient by coefficient
+    /// for one side.
     fn verify_side(
         points: &[(Fp, Fp)],
         class: Fp,

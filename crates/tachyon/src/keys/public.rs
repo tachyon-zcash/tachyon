@@ -10,19 +10,19 @@ use crate::{
     bundle, reddsa, value,
 };
 
-/// The randomized action verification key `rk` — per-action, public.
+/// The randomized action verification key `rk`: per-action, public.
 ///
 /// This is the only key type that **can verify** action signatures.
-/// Goes into [`Action`]. Terminal type — no further
+/// Goes into [`Action`]. Terminal type, with no further
 /// derivation.
 ///
 /// Both spend and output actions produce an `rk`
 /// ("Tachyaction at a Distance", Bowe 2025):
 ///
-/// - **Spend**: $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$ — requires
+/// - **Spend**: $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$, requiring
 ///   knowledge of $\mathsf{ask}$
-/// - **Output**: $\mathsf{rk} = [\alpha]\mathcal{G}$ — no spending authority
-///   needed
+/// - **Output**: $\mathsf{rk} = [\alpha]\mathcal{G}$, with no spending
+///   authority needed
 ///
 /// This unification lets consensus treat all actions identically while
 /// the type system enforces the authority boundary at construction time.
@@ -65,16 +65,19 @@ impl From<ActionVerificationKey> for EpAffine {
     }
 }
 
-/// Binding verification key $\mathsf{bvk}$ — derived from value
+/// Binding verification key $\mathsf{bvk}$, derived from value
 /// commitments.
 ///
-/// $$\mathsf{bvk} := \left(\bigoplus_i \mathsf{cv}_i\right) \ominus
-///   \text{ValueCommit}_0\left(\mathsf{vBalanceTachyon}\right)$$
+/// $$
+///   \mathsf{bvk} :=
+///     \left(\bigoplus_i \mathsf{cv}_i\right)
+///     \ominus \text{ValueCommit}_0\left(\mathsf{vBalanceTachyon}\right)
+/// $$
 ///
 /// That is: sum all action value commitments (Pallas curve points),
 /// then subtract the deterministic commitment to the value balance
 /// with zero randomness. This key is **not encoded in the
-/// transaction** — validators recompute it from public data (§4.14).
+/// transaction**; validators recompute it from public data (§4.14).
 ///
 /// When the transaction is correctly constructed,
 /// $\mathsf{bvk} = [\mathsf{bsk}]\mathcal{R}$ because the
@@ -83,9 +86,8 @@ impl From<ActionVerificationKey> for EpAffine {
 /// $\mathcal{R}$-component
 /// $[\sum_i \mathsf{rcv}_i]\mathcal{R} = [\mathsf{bsk}]\mathcal{R}$.
 ///
-/// A validator checks balance by verifying:
-/// $\text{BindingSig.Validate}_{\mathsf{bvk}}(\mathsf{sighash},
-///   \text{bindingSig}) = 1$
+/// A validator checks balance by verifying the bundle's `binding_sig`
+/// against the transaction sighash under $\mathsf{bvk}$.
 ///
 /// ## Type representation
 ///
@@ -107,8 +109,11 @@ impl PartialEq for BindingVerificationKey {
 impl BindingVerificationKey {
     /// Derive the binding verification key from public action data.
     ///
-    /// $$\mathsf{bvk} = \left(\bigoplus_i \mathsf{cv}_i\right) \ominus
-    ///   \text{ValueCommit}_0\left(\mathsf{vBalanceTachyon}\right)$$
+    /// $$
+    ///   \mathsf{bvk} =
+    ///     \left(\bigoplus_i \mathsf{cv}_i\right)
+    ///     \ominus \text{ValueCommit}_0\left(\mathsf{vBalanceTachyon}\right)
+    /// $$
     ///
     /// This is the validator-side derivation similar to Orchard. (§4.14). The
     /// result should equal $[\mathsf{bsk}]\mathcal{R}$ when the signer

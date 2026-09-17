@@ -60,11 +60,17 @@
 //! keyed on the note's master key and the epoch's group start
 //! $w = e - (e \bmod \mathsf{RATE})$:
 //!
-//! $$\mathsf{mk} = \mathsf{Poseidon}(\texttt{Tachyon-NfMaster}, \psi,
-//! \mathsf{nk})$$
-//! $$\mathsf{nf}_e =
-//! \mathsf{squeeze} _{e - w}\big(
-//!     \mathsf{absorb}(\texttt{Tachyon-NfDerive},\ \mathsf{mk},\ w)\big)$$
+//! $$
+//!   \mathsf{mk} = \mathsf{Poseidon}(
+//!     \texttt{Tachyon-NfMaster},\ \psi,\ \mathsf{nk}
+//!   )
+//! $$
+//!
+//! $$
+//!   \mathsf{nf}_e = \mathsf{squeeze} _{e - w}\big(
+//!     \mathsf{absorb}(\texttt{Tachyon-NfDerive},\ \mathsf{mk},\ w)
+//!   \big)
+//! $$
 //!
 //! where $\psi$ is the note's nullifier trapdoor, $\mathsf{nk}$ is the
 //! nullifier key, and $e$ is the epoch index. Each group re-absorbs $w$, so

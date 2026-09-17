@@ -6,7 +6,7 @@ use pasta_curves::Fp;
 use super::BlockHeight;
 use crate::constants::{EPOCH_MAX, EPOCH_SIZE};
 
-/// A tachyon epoch — a point in the accumulator's history.
+/// A tachyon epoch: a point in the accumulator's history.
 ///
 /// The tachyon accumulator evolves as tachygrams are included. Each
 /// epoch identifies a specific pool accumulator state.
