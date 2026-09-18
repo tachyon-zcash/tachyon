@@ -20,7 +20,7 @@ use crate::{
         Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
-        delegation::{NfDerive, NfMasterSeed, NullifierFuse},
+        delegation::{NfDerive, NoteSeed, NullifierFuse},
         pool::{
             AnchorSeed, EndEpochUnspentSeed, SummaryUnspentInit, UnspentBind, UnspentFuse,
             UnspentSeed,
@@ -43,13 +43,13 @@ type StepRight<S> = <<S as Step>::Right as Header>::Data;
 
 type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 
-/// Prepare the witness for [`NfMasterSeed`]: `(note, pak)`.
+/// Prepare the witness for [`NoteSeed`]: `(note, pak)`.
 #[must_use]
-pub const fn nf_master_seed(
-    (_left, _right): (StepLeft<NfMasterSeed>, StepRight<NfMasterSeed>),
+pub const fn note_seed(
+    (_left, _right): (StepLeft<NoteSeed>, StepRight<NoteSeed>),
     note: Note,
     pak: ProofAuthorizingKey,
-) -> StepWitness<'static, NfMasterSeed> {
+) -> StepWitness<'static, NoteSeed> {
     (note, pak)
 }
 

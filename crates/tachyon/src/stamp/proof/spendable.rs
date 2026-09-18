@@ -6,8 +6,8 @@
 //! lifts. [`SpendableInit`] bootstraps it from a minted note,
 //! [`SummarySpendableInit`] from a [`Summary`] covering the creation, and
 //! [`QrSpendableInit`] from a [`QrBucket`] holding the creation over the
-//! note's own [`Unspent`] for that epoch; [`SpendableLift`] advances it over
-//! [`Unspent`] segments.
+//! note's own [`NoteUnspent`] for that epoch; [`SpendableLift`] advances it
+//! over [`NoteUnspent`] segments.
 
 extern crate alloc;
 
@@ -16,7 +16,7 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use super::{delegation::NullifierDerivation, pool::Unspent, qr::QrBucket, summary::Summary};
+use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket, summary::Summary};
 use crate::{
     collections::indexed_multiset,
     note,
@@ -31,12 +31,12 @@ use crate::{
 /// (all advanced per lift) and the minted-note commitment, threaded unchanged
 /// so the spent value cannot drift to a different same-`mk` note.
 #[derive(Clone, Debug)]
-pub struct SpendableHeader;
+pub struct NoteSpendable;
 
-impl Header for SpendableHeader {
+impl Header for NoteSpendable {
     /// `(cm, (epoch, present_nf), anchor)`. `cm` threads unchanged; the rest
     /// advances per lift. The boundary pairing matches
-    /// [`Unspent`]'s, which is what a lift checks continuity against.
+    /// [`NoteUnspent`]'s, which is what a lift checks continuity against.
     type Data = (note::Commitment, (EpochIndex, Nullifier), Anchor);
 
     const SUFFIX: Suffix = Suffix::new(7);
@@ -59,7 +59,7 @@ impl Header for SpendableHeader {
 
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
-/// Wallet-only, one-child over any [`NullifierDerivation`] covering the
+/// Wallet-only, one-child over any [`NoteNullifiers`] covering the
 /// creation epoch, so one derived window feeds init, bind, and spend alike.
 /// The divisibility of `nf_seq` by the `present_nf` factor at
 /// `creation_epoch` times the complement forces `present_nf` to the window's
@@ -91,8 +91,8 @@ pub struct SpendableInit;
 
 impl Step for SpendableInit {
     type Aux<'source> = ();
-    type Left = NullifierDerivation;
-    type Output = SpendableHeader;
+    type Left = NoteNullifiers;
+    type Output = NoteSpendable;
     type Right = ();
     /// `(pre_cm_anchor, creation_set, creation_epoch, present_nf, nf_seq,
     /// complement_seq)`.
@@ -176,8 +176,8 @@ pub struct SummarySpendableInit;
 
 impl Step for SummarySpendableInit {
     type Aux<'source> = ();
-    type Left = NullifierDerivation;
-    type Output = SpendableHeader;
+    type Left = NoteNullifiers;
+    type Output = NoteSpendable;
     type Right = Summary;
     /// `(creation_epoch, present_nf, nf_seq, complement_seq, summary_set)`.
     type Witness<'source> = (
@@ -249,9 +249,9 @@ impl Step for SummarySpendableInit {
 }
 
 /// Bootstrap a spendable from a [`QrBucket`] holding the note's creation,
-/// over the note's [`Unspent`] for that epoch.
+/// over the note's [`NoteUnspent`] for that epoch.
 ///
-/// The `Unspent` is the epoch's QR segment bound to the note
+/// The `NoteUnspent` is the epoch's QR segment bound to the note
 /// ([`QrUnspentInit`](super::qr::QrUnspentInit) then
 /// [`UnspentBind`](super::pool::UnspentBind)), so `cm` and the whole-epoch
 /// absence of the note's nullifier arrive on its header. This step adds the
@@ -273,8 +273,8 @@ pub struct QrSpendableInit;
 
 impl Step for QrSpendableInit {
     type Aux<'source> = ();
-    type Left = Unspent;
-    type Output = SpendableHeader;
+    type Left = NoteUnspent;
+    type Output = NoteSpendable;
     type Right = QrBucket;
     /// `(contents)`.
     type Witness<'source> = (TachygramSetPoly,);
@@ -328,7 +328,7 @@ impl Step for QrSpendableInit {
     }
 }
 
-/// Advance the spendable over one [`Unspent`] segment.
+/// Advance the spendable over one [`NoteUnspent`] segment.
 ///
 /// Wallet-only, witness-free. Checks `cm`, the boundary pair `(epoch_start,
 /// nf_start) == (epoch, present_nf)`, and anchor adjacency, then advances to
@@ -342,9 +342,9 @@ pub struct SpendableLift;
 
 impl Step for SpendableLift {
     type Aux<'source> = ();
-    type Left = SpendableHeader;
-    type Output = SpendableHeader;
-    type Right = Unspent;
+    type Left = NoteSpendable;
+    type Output = NoteSpendable;
+    type Right = NoteUnspent;
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(9);

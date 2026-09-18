@@ -29,18 +29,18 @@ use crate::{
 /// and enforces them against their roots at a Fiat-Shamir challenge.
 /// The action set is enforced against the action the step derives,
 /// the tachygram set against the pair bound on the left bind header.
-/// [`MergeStamp`] binds its witnessed input sets to the child headers
+/// [`StampMerge`] binds its witnessed input sets to the child headers
 /// and enforces each output commitment as the product of its inputs.
 ///
 /// `anchor` is freely witnessed at [`OutputStamp`]; at [`SpendStamp`]
-/// it threads from the left [`SpendHeader`]; at [`MergeStamp`]
+/// it threads from the left [`SpendHeader`]; at [`StampMerge`]
 /// the step constrains `left.anchor == right.anchor`; at
 /// [`StampLift`] it advances to the right [`AnchorChain`] segment's
 /// `end` after constraining `segment.start == old_anchor`.
 #[derive(Debug)]
-pub struct StampHeader;
+pub struct Stamp;
 
-impl Header for StampHeader {
+impl Header for Stamp {
     /// `(action_commit, stamp_tg_commit, anchor)`
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
 
@@ -69,7 +69,7 @@ pub struct OutputStamp;
 impl Step for OutputStamp {
     type Aux<'source> = ();
     type Left = OutputHeader;
-    type Output = StampHeader;
+    type Output = Stamp;
     type Right = ();
     /// `(rcv, alpha, note, anchor, action_set, tachygram_set)`.
     type Witness<'source> = (
@@ -146,7 +146,7 @@ pub struct SpendStamp;
 impl Step for SpendStamp {
     type Aux<'source> = ();
     type Left = SpendHeader;
-    type Output = StampHeader;
+    type Output = Stamp;
     type Right = ();
     /// `(note, rcv, alpha, pak, action_set, tachygram_set)`
     type Witness<'source> = (
@@ -184,7 +184,9 @@ impl Step for SpendStamp {
         let cv = rcv.commit(note.value);
         let rk = pak.ak.derive_action_public(&alpha);
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
+            ragu_core::Error::InvalidWitness(
+                "SpendStamp: action digest construction failed".into(),
+            )
         })?;
 
         // The action-set commitment commits to exactly the one action this
@@ -212,13 +214,13 @@ impl Step for SpendStamp {
 
 /// Transaction assembly and aggregation.
 #[derive(Debug)]
-pub struct MergeStamp;
+pub struct StampMerge;
 
-impl Step for MergeStamp {
+impl Step for StampMerge {
     type Aux<'source> = ();
-    type Left = StampHeader;
-    type Output = StampHeader;
-    type Right = StampHeader;
+    type Left = Stamp;
+    type Output = Stamp;
+    type Right = Stamp;
     /// `(left, merged, right)`, each an `(action_set, tachygram_set)` pair.
     type Witness<'source> = (
         (ActionSetPoly, TachygramSetPoly),
@@ -242,7 +244,7 @@ impl Step for MergeStamp {
         // Same-anchor constraint.
         enforce_zero(
             Fp::from(left_anchor) - Fp::from(right_anchor),
-            "MergeStamp: anchors must match",
+            "StampMerge: anchors must match",
         )?;
 
         // Bind the witnessed left/right input sets to the public commitments on
@@ -250,22 +252,22 @@ impl Step for MergeStamp {
         enforce_equal_point(
             Eq::from(left_action_set.commit()),
             Eq::from(left_action_commit),
-            "MergeStamp: left action accumulator must commit to header commit",
+            "StampMerge: left action accumulator must commit to header commit",
         )?;
         enforce_equal_point(
             Eq::from(right_action_set.commit()),
             Eq::from(right_action_commit),
-            "MergeStamp: right action accumulator must commit to header commit",
+            "StampMerge: right action accumulator must commit to header commit",
         )?;
         enforce_equal_point(
             Eq::from(left_tachygram_set.commit()),
             Eq::from(left_tachygram_commit),
-            "MergeStamp: left tachygram accumulator must commit to header commit",
+            "StampMerge: left tachygram accumulator must commit to header commit",
         )?;
         enforce_equal_point(
             Eq::from(right_tachygram_set.commit()),
             Eq::from(right_tachygram_commit),
-            "MergeStamp: right tachygram accumulator must commit to header commit",
+            "StampMerge: right tachygram accumulator must commit to header commit",
         )?;
 
         // Confirm union via product-opening relation.
@@ -274,14 +276,14 @@ impl Step for MergeStamp {
             left_action_set.as_ref(),
             right_action_set.as_ref(),
             merged_action_set.as_ref(),
-            "MergeStamp: merged action set must be the product of left and right action sets",
+            "StampMerge: merged action set must be the product of left and right action sets",
         )?;
         enforce_poly_product(
             ctx,
             left_tachygram_set.as_ref(),
             right_tachygram_set.as_ref(),
             merged_tachygram_set.as_ref(),
-            "MergeStamp: merged tachygram set must be the product of left and right tachygram sets",
+            "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
         )?;
 
         Ok((
@@ -303,8 +305,8 @@ pub struct StampLift;
 
 impl Step for StampLift {
     type Aux<'source> = ();
-    type Left = StampHeader;
-    type Output = StampHeader;
+    type Left = Stamp;
+    type Output = Stamp;
     type Right = AnchorChain;
     type Witness<'source> = ();
 

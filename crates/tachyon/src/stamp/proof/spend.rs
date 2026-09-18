@@ -7,7 +7,7 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use super::{delegation::NullifierDerivation, spendable::SpendableHeader};
+use super::{delegation::NoteNullifiers, spendable::NoteSpendable};
 use crate::{
     collections::indexed_multiset,
     note,
@@ -50,7 +50,7 @@ impl Header for SpendHeader {
 }
 
 /// Confirms a spend's epoch nullifier pair against a covering
-/// [`NullifierDerivation`] and binds it to the spendable lineage.
+/// [`NoteNullifiers`] and binds it to the spendable lineage.
 ///
 /// The range is tied to the lineage's note by `nf_cm == spendable_cm` (both
 /// are the note commitment, bound where the range was derived and at
@@ -77,9 +77,9 @@ pub struct SpendBind;
 
 impl Step for SpendBind {
     type Aux<'source> = ();
-    type Left = SpendableHeader;
+    type Left = NoteSpendable;
     type Output = SpendHeader;
-    type Right = NullifierDerivation;
+    type Right = NoteNullifiers;
     /// `(nf_seq, complement_seq, nf_next)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, Nullifier);
 

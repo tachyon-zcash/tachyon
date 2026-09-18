@@ -26,7 +26,7 @@ use zcash_tachyon::{
         PointerStamp, ProofStamp, StampState,
         proof::{
             PROOF_SYSTEM, delegation, pool, qr, spendable,
-            stamp::{MergeStamp, StampHeader},
+            stamp::{Stamp, StampMerge},
             summary,
         },
     },
@@ -177,17 +177,17 @@ pub fn build_autonome<RNG: CryptoRng>(
 
 /// An honest prover will not merge intersecting stamps.
 ///
-/// However, `MergeStamp` actually handles a commitment scheme that represents a
+/// However, `StampMerge` actually handles a commitment scheme that represents a
 /// multiset, and proves a relationship equivalent to a multiset union. So, a
 /// dishonest prover can feasibly prove a merge that violates consensus rules.
 ///
 /// Normal tools in this crate don't allow you to carry out such operations, so
-/// this utility will fuse a `MergeStamp` without checking for intersection.
+/// this utility will fuse a `StampMerge` without checking for intersection.
 pub fn forge_overlapping_merge<RNG: CryptoRng>(
     rng: &mut RNG,
     (stamp_a, descriptors_a): (&ProofStamp, &Vec<action::Descriptor>),
     (stamp_b, descriptors_b): (&ProofStamp, &Vec<action::Descriptor>),
-) -> Pcd<StampHeader> {
+) -> Pcd<Stamp> {
     let left_acts = descriptors_a
         .iter()
         .map(|desc| desc.digest().expect("action digest"))
@@ -207,12 +207,12 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .copied()
         .collect::<TachygramSetPoly>();
 
-    let left_pcd = stamp_a.proof.clone().carry::<StampHeader>((
+    let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
         left_acts.commit(),
         left_tg.commit(),
         stamp_a.anchor,
     ));
-    let right_pcd = stamp_b.proof.clone().carry::<StampHeader>((
+    let right_pcd = stamp_b.proof.clone().carry::<Stamp>((
         right_acts.commit(),
         right_tg.commit(),
         stamp_b.anchor,
@@ -233,7 +233,7 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            MergeStamp,
+            StampMerge,
             (
                 (left_acts, left_tg),
                 (merged_acts, merged_tg),
@@ -1051,11 +1051,11 @@ pub struct WalletSim {
     /// draws of other values never shift a stream's position.
     pub notes: RefCell<BTreeMap<u64, StdRng>>,
     /// Per-note master seed PCDs, keyed by the note's `cm` tachygram.
-    pub masters: RefCell<BTreeMap<Tachygram, Pcd<delegation::NfMasterHeader>>>,
+    pub masters: RefCell<BTreeMap<Tachygram, Pcd<delegation::NoteMaster>>>,
     /// Per-(note, range) derivation PCDs, keyed by `(cm, epoch_start,
     /// epoch_last)`: repeated derivations of the same exact range share the
     /// proof.
-    pub derivations: RefCell<BTreeMap<(Tachygram, u32, u32), Pcd<delegation::NullifierDerivation>>>,
+    pub derivations: RefCell<BTreeMap<(Tachygram, u32, u32), Pcd<delegation::NoteNullifiers>>>,
 }
 
 impl WalletSim {
@@ -1103,7 +1103,7 @@ impl WalletSim {
     pub fn covering_window(
         &self,
         note: &Note,
-        range: &Pcd<delegation::NullifierDerivation>,
+        range: &Pcd<delegation::NoteNullifiers>,
     ) -> Vec<Nullifier> {
         let (_, start, _, last) = *range.data();
         (u32::from(start)..=u32::from(last))
@@ -1121,7 +1121,7 @@ impl WalletSim {
         &self,
         rng: &mut RNG,
         note: Note,
-    ) -> Pcd<delegation::NfMasterHeader> {
+    ) -> Pcd<delegation::NoteMaster> {
         let cm = Tachygram::from(note.commitment());
         if let Some(pcd) = self.masters.borrow().get(&cm) {
             return pcd.clone();
@@ -1129,10 +1129,10 @@ impl WalletSim {
         let (pcd, ()) = PROOF_SYSTEM
             .seed(
                 rng,
-                delegation::NfMasterSeed,
-                witness::nf_master_seed(((), ()), note, self.pak),
+                delegation::NoteSeed,
+                witness::note_seed(((), ()), note, self.pak),
             )
-            .expect("NfMasterSeed");
+            .expect("NoteSeed");
 
         self.masters.borrow_mut().insert(cm, pcd.clone());
         pcd
@@ -1151,7 +1151,7 @@ impl WalletSim {
         note: Note,
         epoch_start: EpochIndex,
         epoch_last: EpochIndex,
-    ) -> Pcd<delegation::NullifierDerivation> {
+    ) -> Pcd<delegation::NoteNullifiers> {
         let base = u32::from(epoch_start) - u32::from(epoch_start) % PoseidonFp::RATE as u32;
         let windows = (u32::from(epoch_last) - base + 1).div_ceil(NF_DERIVATION_WIDTH as u32);
         let cover_last = base + windows * NF_DERIVATION_WIDTH as u32 - 1;
@@ -1161,7 +1161,7 @@ impl WalletSim {
         }
         let master = self.master_pcd(rng, note);
 
-        let mut merged: Option<Pcd<delegation::NullifierDerivation>> = None;
+        let mut merged: Option<Pcd<delegation::NoteNullifiers>> = None;
         for window in 0..windows {
             let chunk_start = EpochIndex::new(base + window * NF_DERIVATION_WIDTH as u32);
             let chunk_last =
@@ -1214,7 +1214,7 @@ impl WalletSim {
         note: &Note,
         pool: &PoolSim,
         init_height: BlockHeight,
-    ) -> Pcd<spendable::SpendableHeader> {
+    ) -> Pcd<spendable::NoteSpendable> {
         let cm = note.commitment();
         let epoch = init_height.epoch();
         let (pre_cm_anchor, creation_tgs) = {
@@ -1260,7 +1260,7 @@ impl WalletSim {
         pool: &PoolSim,
         height: BlockHeight,
         spend_note: &Note,
-    ) -> Pcd<spendable::SpendableHeader> {
+    ) -> Pcd<spendable::NoteSpendable> {
         self.spendable_init(rng, spend_note, pool, height)
     }
 
@@ -1271,7 +1271,7 @@ impl WalletSim {
         rng: &mut RNG,
         arbitrary: Pcd<pool::ArbitraryUnspent>,
         note: &Note,
-    ) -> Pcd<pool::Unspent> {
+    ) -> Pcd<pool::NoteUnspent> {
         let (_, (epoch_start, _), _, (present_epoch, _), _) = *arbitrary.data();
         let range = self.derivation_pcd(rng, *note, epoch_start, present_epoch);
         let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..=u32::from(present_epoch))
@@ -1296,10 +1296,10 @@ impl WalletSim {
     pub fn lift<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        spendable: Pcd<spendable::SpendableHeader>,
+        spendable: Pcd<spendable::NoteSpendable>,
         arbitrary: Pcd<pool::ArbitraryUnspent>,
         note: &Note,
-    ) -> Pcd<spendable::SpendableHeader> {
+    ) -> Pcd<spendable::NoteSpendable> {
         let unspent = self.unspent_bind(rng, arbitrary, note);
         let (lifted, ()) = PROOF_SYSTEM
             .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
@@ -1317,9 +1317,9 @@ impl WalletSim {
         rng: &mut RNG,
         pool: &PoolSim,
         note: &Note,
-        spendable: Pcd<spendable::SpendableHeader>,
+        spendable: Pcd<spendable::NoteSpendable>,
         target: EpochIndex,
-    ) -> Pcd<spendable::SpendableHeader> {
+    ) -> Pcd<spendable::NoteSpendable> {
         let (_, (epoch, _), start_anchor) = *spendable.data();
         let elapsed: Vec<Nullifier> = (u32::from(epoch)..=u32::from(target))
             .map(|index| self.nf_at(note, EpochIndex::new(index)))
@@ -1337,7 +1337,7 @@ impl WalletSim {
         &self,
         rng: &mut RNG,
         anchor: Anchor,
-        spends: Vec<(Note, Pcd<spendable::SpendableHeader>, EpochIndex)>,
+        spends: Vec<(Note, Pcd<spendable::NoteSpendable>, EpochIndex)>,
         output_notes: Vec<Note>,
     ) -> Bundle<ProofStamp> {
         let ask = self.sk.derive_auth_private();

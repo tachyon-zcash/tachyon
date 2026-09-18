@@ -1,11 +1,11 @@
 //! Prove a fusable range of a note's per-epoch nullifiers.
 //!
-//! Three steps. [`NfMasterSeed`] certifies the note's commitment and master
+//! Three steps. [`NoteSeed`] certifies the note's commitment and master
 //! key; [`NfDerive`] consumes that seed and exports one whole window; and
 //! [`NullifierFuse`] concatenates adjacent windows.
 //!
 //! All headers are wallet-only, and no key material rides the exported
-//! [`NullifierDerivation`].
+//! [`NoteNullifiers`].
 
 extern crate alloc;
 
@@ -35,9 +35,9 @@ use crate::{
 /// re-witnessing the note. `cm` rides along for the derivation's consumers to
 /// bind against.
 #[derive(Clone, Debug)]
-pub struct NfMasterHeader;
+pub struct NoteMaster;
 
-impl Header for NfMasterHeader {
+impl Header for NoteMaster {
     /// `(cm, mk)`.
     type Data = (note::Commitment, NoteMasterKey);
 
@@ -66,9 +66,9 @@ impl Header for NfMasterHeader {
 ///
 /// Masking is the consuming step's responsibility.
 #[derive(Clone, Debug)]
-pub struct NullifierDerivation;
+pub struct NoteNullifiers;
 
-impl Header for NullifierDerivation {
+impl Header for NoteNullifiers {
     /// `(cm, epoch_start, nf_commit, epoch_last)`. `epoch_last` is inclusive.
     type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
 
@@ -100,12 +100,12 @@ impl Header for NullifierDerivation {
 /// [`SpendStamp`](super::stamp::SpendStamp). What this step establishes is
 /// the pairing: `mk` is *this* `cm`'s master key.
 #[derive(Debug)]
-pub struct NfMasterSeed;
+pub struct NoteSeed;
 
-impl Step for NfMasterSeed {
+impl Step for NoteSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = NfMasterHeader;
+    type Output = NoteMaster;
     type Right = ();
     /// `(note, pak)`.
     type Witness<'source> = (Note, ProofAuthorizingKey);
@@ -121,7 +121,7 @@ impl Step for NfMasterSeed {
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(note.pk) - Fp::from(pak.derive_payment_key()),
-            "NfMasterSeed: pak not related to note",
+            "NoteSeed: pak not related to note",
         )?;
         let mk = pak.nk.derive_note_private(note.psi);
         let cm = note.commitment();
@@ -130,9 +130,9 @@ impl Step for NfMasterSeed {
 }
 
 /// Derive one window of nullifiers and export it as a
-/// [`NullifierDerivation`].
+/// [`NoteNullifiers`].
 ///
-/// `Left = NfMasterSeed`. Witnesses the window's start epoch (constrained
+/// `Left = NoteSeed`. Witnesses the window's start epoch (constrained
 /// group-aligned, $w \bmod r = 0$ for $r$ the sponge rate `PoseidonFp::RATE`)
 /// and the window sequence. Runs one sponge per group over
 /// $(\texttt{Tachyon-NfDerive}, \mathsf{mk}, w)$, each absorbing three elements
@@ -162,8 +162,8 @@ pub struct NfDerive;
 
 impl Step for NfDerive {
     type Aux<'source> = ();
-    type Left = NfMasterHeader;
-    type Output = NullifierDerivation;
+    type Left = NoteMaster;
+    type Output = NoteNullifiers;
     type Right = ();
     /// `(epoch_start, seq)`.
     type Witness<'source> = (EpochIndex, NfSeqPoly);
@@ -253,9 +253,9 @@ pub struct NullifierFuse;
 
 impl Step for NullifierFuse {
     type Aux<'source> = ();
-    type Left = NullifierDerivation;
-    type Output = NullifierDerivation;
-    type Right = NullifierDerivation;
+    type Left = NoteNullifiers;
+    type Output = NoteNullifiers;
+    type Right = NoteNullifiers;
     /// `(left_seq, merged_seq, right_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 

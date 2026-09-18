@@ -18,7 +18,7 @@ use zcash_tachyon::{
     nullifier::Nullifier,
     stamp::proof::{
         PROOF_SYSTEM,
-        pool::{ArbitraryUnspent, EndEpochUnspentSeed, Unspent, UnspentFuse},
+        pool::{ArbitraryUnspent, EndEpochUnspentSeed, NoteUnspent, UnspentFuse},
         qr, spend, spendable, summary,
     },
     witness,
@@ -109,7 +109,7 @@ fn qr_epoch_unspent(
     user: &WalletSim,
     note: &Note,
     bucket: &QrBucketEntry,
-) -> Pcd<Unspent> {
+) -> Pcd<NoteUnspent> {
     let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init(
         (*bucket.pcd.data(), ()),

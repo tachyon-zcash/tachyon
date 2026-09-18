@@ -58,7 +58,7 @@ fn honest_spend_bind(
     rng: &mut StdRng,
     user: &WalletSim,
     note: &Note,
-    spendable: Pcd<spendable::SpendableHeader>,
+    spendable: Pcd<spendable::NoteSpendable>,
     spend_epoch: EpochIndex,
 ) -> Pcd<spend::SpendHeader> {
     let derived = user.derivation_pcd(
@@ -82,7 +82,7 @@ fn honest_spend_stamp(
     user: &WalletSim,
     note: &Note,
     bind_pcd: Pcd<spend::SpendHeader>,
-) -> Pcd<stamp::StampHeader> {
+) -> Pcd<stamp::Stamp> {
     let (rcv, _theta, alpha) = spend_witness(rng, note);
     let (stamp, ()) = PROOF_SYSTEM
         .fuse(
@@ -1752,18 +1752,14 @@ fn expect_invalid<H: ragu::Header, S>(
 }
 
 /// An honest master seed for a note.
-fn honest_master(
-    rng: &mut StdRng,
-    user: &WalletSim,
-    note: Note,
-) -> Pcd<delegation::NfMasterHeader> {
+fn honest_master(rng: &mut StdRng, user: &WalletSim, note: Note) -> Pcd<delegation::NoteMaster> {
     let (master, ()) = PROOF_SYSTEM
         .seed(
             rng,
-            delegation::NfMasterSeed,
-            witness::nf_master_seed(((), ()), note, user.pak),
+            delegation::NoteSeed,
+            witness::note_seed(((), ()), note, user.pak),
         )
-        .expect("NfMasterSeed");
+        .expect("NoteSeed");
     master
 }
 
@@ -1778,11 +1774,11 @@ fn master_seed_rejects_unrelated_pak() {
 
     expect_invalid(
         rng,
-        delegation::NfMasterSeed,
+        delegation::NoteSeed,
         (note, stranger.pak),
         Proof::trivial().carry::<()>(()),
         Proof::trivial().carry::<()>(()),
-        "NfMasterSeed: pak not related to note",
+        "NoteSeed: pak not related to note",
     );
 }
 
@@ -1985,8 +1981,8 @@ fn spend_bind_parts(
     user: &WalletSim,
     note: &Note,
 ) -> (
-    Pcd<spendable::SpendableHeader>,
-    Pcd<delegation::NullifierDerivation>,
+    Pcd<spendable::NoteSpendable>,
+    Pcd<delegation::NoteNullifiers>,
     EpochIndex,
 ) {
     let mut pool = PoolSim::genesis(rng);
@@ -2418,7 +2414,8 @@ fn output_stamp_rejects_note_not_matching_the_bind() {
     );
 }
 
-/// `OutputStamp` rejects an action set not committing to the action it derives.
+/// `OutputStamp` rejects an action set not committing to the action it
+/// derives.
 #[test]
 fn output_stamp_rejects_a_foreign_action_set() {
     let rng = &mut StdRng::seed_from_u64(0);
