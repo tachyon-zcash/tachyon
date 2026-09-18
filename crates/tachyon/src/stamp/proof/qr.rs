@@ -12,7 +12,7 @@
 //! j$, and a value takes the residue side there iff $x + R_{j+1}$ is a
 //! square or zero.
 //!
-//! [`QrSummaryIntakeInit`] starts a [`QrIntake`] from a [`Summary`], and
+//! [`QrSummaryIntake`] starts a [`QrIntake`] from a [`Summary`], and
 //! [`QrStampIntakeSeed`] from one unsummarized stamp. [`QrIntakeSplit`]
 //! partitions an intake at its discriminant into [`QrIntakeSides`],
 //! [`QrSideDescend`] carries one side down a level, and [`QrIntakeMerge`]
@@ -127,14 +127,14 @@ impl Header for QrIntakeSides {
 /// `discriminant` is free here, as every seed witness is; [`QrBucketSeal`]
 /// pins it to the span's closing tick.
 #[derive(Debug)]
-pub struct QrSummaryIntakeInit;
+pub struct QrSummaryIntake;
 
-impl Step for QrSummaryIntakeInit {
+impl Step for QrSummaryIntake {
     type Aux<'source> = ();
     type Left = Summary;
     type Output = QrIntake;
     type Right = ();
-    /// `(discriminant)`.
+    /// `(discriminant)`
     type Witness<'source> = (QrDiscriminant,);
 
     const INDEX: Index = Index::new(21);
@@ -165,8 +165,8 @@ impl Step for QrSummaryIntakeInit {
 ///
 /// # Soundness
 ///
-/// `discriminant` is free, as at [`QrSummaryIntakeInit`]. `stamp_commit` is
-/// folded into `anchor_last`.
+/// `discriminant` is a free witness; see [`QrDiscriminant`]. `stamp_commit`
+/// is folded into `anchor_last`.
 #[derive(Debug)]
 pub struct QrStampIntakeSeed;
 
@@ -175,7 +175,7 @@ impl Step for QrStampIntakeSeed {
     type Left = ();
     type Output = QrIntake;
     type Right = ();
-    /// `(anchor_prev, epoch, discriminant, stamp_commit)`.
+    /// `(anchor_prev, epoch, discriminant, stamp_commit)`
     type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, TachygramSetCommit);
 
     const INDEX: Index = Index::new(27);
@@ -219,7 +219,7 @@ impl Step for QrIntakeMerge {
     type Left = QrIntake;
     type Output = QrIntake;
     type Right = QrIntake;
-    /// `(left_contents, right_contents, merged)`.
+    /// `(left_contents, right_contents, merged)`
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(22);
@@ -391,7 +391,7 @@ impl Step for QrSideDescend {
     type Left = QrIntakeSides;
     type Output = QrIntake;
     type Right = ();
-    /// `(bit, sibling_contents, interpolant, quotient)`.
+    /// `(bit, sibling_contents, interpolant, quotient)`
     type Witness<'source> = (bool, TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
 
     const INDEX: Index = Index::new(24);
@@ -472,7 +472,7 @@ impl Step for QrSideDescend {
 pub struct QrBucket;
 
 impl Header for QrBucket {
-    /// `(epoch, anchor_prev, anchor_last, discriminant, profile, contents)`.
+    /// `(epoch, anchor_prev, anchor_last, discriminant, profile, contents)`
     type Data = (
         EpochIndex,
         Anchor,

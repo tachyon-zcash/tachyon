@@ -62,7 +62,7 @@ impl Step for SummarySeed {
     type Left = ();
     type Output = Summary;
     type Right = ();
-    /// `(anchor_prev, epoch, stamp_commit)`.
+    /// `(anchor_prev, epoch, stamp_commit)`
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
 
     const INDEX: Index = Index::new(17);
@@ -91,7 +91,7 @@ impl Step for SummaryAdvance {
     type Left = Summary;
     type Output = Summary;
     type Right = ();
-    /// `(acc, extended, stamp)`.
+    /// `(acc, extended, stamp)`
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(18);

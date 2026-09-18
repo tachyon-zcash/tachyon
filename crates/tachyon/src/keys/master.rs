@@ -46,9 +46,9 @@ impl NoteMasterKey {
     /// `[epoch_start, … + NF_DERIVATION_WIDTH)`.
     ///
     /// `epoch_start` must be group-aligned;
-    /// [`NfDerive`](crate::stamp::proof::delegation::NfDerive) constrains its
-    /// witnessed start epoch accordingly. Group alignment makes the sponge
-    /// count a compile-time constant inside the step:
+    /// [`NullifierDerive`](crate::stamp::proof::delegation::NullifierDerive)
+    /// constrains its witnessed start epoch accordingly. Group alignment
+    /// makes the sponge count a compile-time constant inside the step:
     /// `NF_DERIVATION_WIDTH / PoseidonFp::RATE` permutations each way.
     ///
     /// # Panics

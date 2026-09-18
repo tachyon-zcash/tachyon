@@ -58,7 +58,7 @@ fn honest_spend_bind(
     rng: &mut StdRng,
     user: &WalletSim,
     note: &Note,
-    spendable: Pcd<spendable::SpendableHeader>,
+    spendable: Pcd<spendable::NoteSpendable>,
     spend_epoch: EpochIndex,
 ) -> Pcd<spend::SpendHeader> {
     let derived = user.derivation_pcd(
@@ -82,7 +82,7 @@ fn honest_spend_stamp(
     user: &WalletSim,
     note: &Note,
     bind_pcd: Pcd<spend::SpendHeader>,
-) -> Pcd<stamp::StampHeader> {
+) -> Pcd<stamp::Stamp> {
     let (rcv, _theta, alpha) = spend_witness(rng, note);
     let (stamp, ()) = PROOF_SYSTEM
         .fuse(
@@ -1752,18 +1752,14 @@ fn expect_invalid<H: ragu::Header, S>(
 }
 
 /// An honest master seed for a note.
-fn honest_master(
-    rng: &mut StdRng,
-    user: &WalletSim,
-    note: Note,
-) -> Pcd<delegation::NfMasterHeader> {
+fn honest_master(rng: &mut StdRng, user: &WalletSim, note: Note) -> Pcd<delegation::NoteMaster> {
     let (master, ()) = PROOF_SYSTEM
         .seed(
             rng,
-            delegation::NfMasterSeed,
-            witness::nf_master_seed(((), ()), note, user.pak),
+            delegation::NoteSeed,
+            witness::note_seed(((), ()), note, user.pak),
         )
-        .expect("NfMasterSeed");
+        .expect("NoteSeed");
     master
 }
 
@@ -1778,11 +1774,11 @@ fn master_seed_rejects_unrelated_pak() {
 
     expect_invalid(
         rng,
-        delegation::NfMasterSeed,
+        delegation::NoteSeed,
         (note, stranger.pak),
         Proof::trivial().carry::<()>(()),
         Proof::trivial().carry::<()>(()),
-        "NfMasterSeed: pak not related to note",
+        "NoteSeed: pak not related to note",
     );
 }
 
@@ -1790,7 +1786,7 @@ fn master_seed_rejects_unrelated_pak() {
 /// opening: `mk` is threaded off the seed header, so the step derives the
 /// real note's nullifiers no matter what polynomial is offered.
 #[test]
-fn nf_derive_rejects_a_foreign_sequence() {
+fn nullifier_derive_rejects_a_foreign_sequence() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note_a = user.random_note(500);
@@ -1799,45 +1795,45 @@ fn nf_derive_rejects_a_foreign_sequence() {
     let master_a = honest_master(rng, &user, note_a);
     let (cm_a, _) = *master_a.data();
     let (epoch_start, foreign_seq) =
-        witness::nf_derive(((cm_a, user.mk(&note_b)), ()), EpochIndex::new(16));
+        witness::nullifier_derive(((cm_a, user.mk(&note_b)), ()), EpochIndex::new(16));
     expect_invalid(
         rng,
-        delegation::NfDerive,
+        delegation::NullifierDerive,
         (epoch_start, foreign_seq),
         master_a,
         Proof::trivial().carry::<()>(()),
-        "NfDerive: sequence does not match the derived window",
+        "NullifierDerive: sequence does not match the derived window",
     );
 }
 
 /// A start epoch off the group alignment is rejected before any derivation.
 #[test]
-fn nf_derive_rejects_a_misaligned_epoch_start() {
+fn nullifier_derive_rejects_a_misaligned_epoch_start() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
     let master = honest_master(rng, &user, note);
-    let (_, seq) = witness::nf_derive((*master.data(), ()), EpochIndex::new(12));
+    let (_, seq) = witness::nullifier_derive((*master.data(), ()), EpochIndex::new(12));
     expect_invalid(
         rng,
-        delegation::NfDerive,
+        delegation::NullifierDerive,
         (EpochIndex::new(14), seq),
         master,
         Proof::trivial().carry::<()>(()),
-        "NfDerive: epoch_start is not group-aligned",
+        "NullifierDerive: epoch_start is not group-aligned",
     );
 }
 
 /// A window has to land inside the epoch range: an index past `EPOCH_MAX`
 /// maps to no block height, so it labels no reachable epoch.
 ///
-/// The witness is assembled here rather than through [`witness::nf_derive`],
-/// which derives the window prover-side and so trips the same bound before the
-/// step runs. The sequence is empty for the same reason: the range check
-/// precedes every use of it.
+/// The witness is assembled here rather than through
+/// [`witness::nullifier_derive`], which derives the window prover-side and so
+/// trips the same bound before the step runs. The sequence is empty for the
+/// same reason: the range check precedes every use of it.
 #[test]
-fn nf_derive_rejects_a_window_past_the_final_epoch() {
+fn nullifier_derive_rejects_a_window_past_the_final_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
@@ -1850,7 +1846,7 @@ fn nf_derive_rejects_a_window_past_the_final_epoch() {
     let err = PROOF_SYSTEM
         .fuse(
             rng,
-            delegation::NfDerive,
+            delegation::NullifierDerive,
             (epoch_start, NfSeqPoly::new(epoch_start, &[])),
             master,
             Proof::trivial().carry::<()>(()),
@@ -1862,7 +1858,7 @@ fn nf_derive_rejects_a_window_past_the_final_epoch() {
     };
     assert_eq!(
         inner.to_string(),
-        "NfDerive: window exceeds the epoch range"
+        "NullifierDerive: window exceeds the epoch range"
     );
 }
 
@@ -1985,8 +1981,8 @@ fn spend_bind_parts(
     user: &WalletSim,
     note: &Note,
 ) -> (
-    Pcd<spendable::SpendableHeader>,
-    Pcd<delegation::NullifierDerivation>,
+    Pcd<spendable::NoteSpendable>,
+    Pcd<delegation::NoteNullifiers>,
     EpochIndex,
 ) {
     let mut pool = PoolSim::genesis(rng);
@@ -2418,7 +2414,8 @@ fn output_stamp_rejects_note_not_matching_the_bind() {
     );
 }
 
-/// `OutputStamp` rejects an action set not committing to the action it derives.
+/// `OutputStamp` rejects an action set not committing to the action it
+/// derives.
 #[test]
 fn output_stamp_rejects_a_foreign_action_set() {
     let rng = &mut StdRng::seed_from_u64(0);

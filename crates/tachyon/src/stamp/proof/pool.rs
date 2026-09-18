@@ -21,7 +21,7 @@ use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use super::{delegation::NullifierDerivation, summary::Summary};
+use super::{delegation::NoteNullifiers, summary::Summary};
 use crate::{
     collections::indexed_multiset,
     note::{self},
@@ -143,9 +143,9 @@ impl Header for ArbitraryUnspent {
 /// [`UnspentBind`] has attributed to the note's genuine derivation, collapsed
 /// to boundary scalars.
 #[derive(Clone, Debug)]
-pub struct Unspent;
+pub struct NoteUnspent;
 
-impl Header for Unspent {
+impl Header for NoteUnspent {
     /// `(cm, anchor_prev, (epoch_start, nf_start), (epoch_last, nf_last),
     /// anchor_last)`. `cm` leads; the rest mirrors the [`ArbitraryUnspent`]
     /// boundaries collapsed to scalars (no `elapsed` poly).
@@ -269,7 +269,7 @@ impl Step for UnspentSeed {
     type Left = ();
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(anchor_prev, (epoch, nf), stamp_tg_set, elapsed_seq)`.
+    /// `(anchor_prev, (epoch, nf), stamp_tg_set, elapsed_seq)`
     type Witness<'source> = (Anchor, (EpochIndex, Nullifier), TachygramSetPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(4);
@@ -427,7 +427,7 @@ impl Step for UnspentFuse {
     type Left = ArbitraryUnspent;
     type Output = ArbitraryUnspent;
     type Right = ArbitraryUnspent;
-    /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
+    /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(6);
@@ -517,7 +517,7 @@ impl Step for UnspentFuse {
 /// Bind an [`ArbitraryUnspent`]'s free-witness nullifiers to a note's genuine
 /// nullifiers, by divisibility into the derivation's sequence.
 ///
-/// Consumes any [`NullifierDerivation`], `elapsed` covering
+/// Consumes any [`NoteNullifiers`], `elapsed` covering
 /// `[epoch_start, epoch_last]` inclusive, one member per epoch:
 ///
 /// `nf_seq` factors as
@@ -546,16 +546,16 @@ impl Step for UnspentFuse {
 /// makes them genuine, which [`super::spendable::SpendableLift`] relies on.
 ///
 /// The lineage is note-blind, so the bind stamps the derivation's `cm` onto
-/// the validated [`Unspent`].
+/// the validated [`NoteUnspent`].
 #[derive(Debug)]
 pub struct UnspentBind;
 
 impl Step for UnspentBind {
     type Aux<'source> = ();
     type Left = ArbitraryUnspent;
-    type Output = Unspent;
-    type Right = NullifierDerivation;
-    /// `(elapsed_seq, nf_seq, complement_seq)`.
+    type Output = NoteUnspent;
+    type Right = NoteNullifiers;
+    /// `(elapsed_seq, nf_seq, complement_seq)`
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(7);
@@ -632,7 +632,7 @@ impl Step for SummaryUnspentInit {
     type Left = Summary;
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(nf, summary_set, elapsed_seq)`.
+    /// `(nf, summary_set, elapsed_seq)`
     type Witness<'source> = (Nullifier, TachygramSetPoly, NfSeqPoly);
 
     const INDEX: Index = Index::new(19);

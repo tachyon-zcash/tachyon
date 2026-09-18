@@ -18,7 +18,7 @@ use zcash_tachyon::{
     nullifier::Nullifier,
     stamp::proof::{
         PROOF_SYSTEM,
-        pool::{ArbitraryUnspent, EndEpochUnspentSeed, Unspent, UnspentFuse},
+        pool::{ArbitraryUnspent, EndEpochUnspentSeed, NoteUnspent, UnspentFuse},
         qr, spend, spendable, summary,
     },
     witness,
@@ -109,7 +109,7 @@ fn qr_epoch_unspent(
     user: &WalletSim,
     note: &Note,
     bucket: &QrBucketEntry,
-) -> Pcd<Unspent> {
+) -> Pcd<NoteUnspent> {
     let (epoch, ..) = *bucket.pcd.data();
     let witness = witness::qr_unspent_init(
         (*bucket.pcd.data(), ()),
@@ -121,7 +121,7 @@ fn qr_epoch_unspent(
 }
 
 #[test]
-fn qr_summary_intake_init_starts_a_root_from_a_summary() {
+fn qr_summary_intake_starts_a_root_from_a_summary() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch = EpochIndex::new(3);
     let start = Anchor::from(Fp::random(&mut *rng));
@@ -139,12 +139,12 @@ fn qr_summary_intake_init_starts_a_root_from_a_summary() {
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
 
     assert_eq!(
         *root.data(),
@@ -188,12 +188,12 @@ fn qr_stamp_intake_seed_roots_an_intake_on_one_stamp() {
     let (summary_root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
     assert_eq!(
         *stamp_root.pcd.data(),
         *summary_root.data(),
@@ -244,12 +244,12 @@ fn qr_intake_split_partitions_the_contents_by_class() {
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
 
     let (residue, non_residue): (Vec<Tachygram>, Vec<Tachygram>) = members
         .iter()
@@ -320,12 +320,12 @@ fn qr_intake_split_rejects_a_forged_partition() {
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
 
     let (contents, residue, _non_residue) = witness::qr_intake_split((*root.data(), ()), &members);
     let err = PROOF_SYSTEM
@@ -369,12 +369,12 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
 
     // Moving one member across the partition leaves the product intact, so
     // only the opening at -R separates the two filings.
@@ -437,12 +437,12 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
         let (root, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                qr::QrSummaryIntakeInit,
-                witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+                qr::QrSummaryIntake,
+                witness::qr_summary_intake((*summary.data(), ()), discriminant),
                 summary,
                 Proof::trivial().carry::<()>(()),
             )
-            .expect("QrSummaryIntakeInit");
+            .expect("QrSummaryIntake");
 
         // Reach the selected depth through honest splits and descents, keeping
         // the branch containing x rather than fabricating a deeper profile.
@@ -513,12 +513,12 @@ fn qr_side_descend_carries_each_side_one_level_down() {
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
     let (_, _, anchor_last, ..) = *root.data();
     let (split, ()) = PROOF_SYSTEM
         .fuse(
@@ -582,12 +582,12 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
     let (split, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -640,12 +640,12 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
     let (split, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -698,12 +698,12 @@ fn qr_side_descend_rejects_a_foreign_quotient() {
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
     let (split, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -754,12 +754,12 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
 
     // File one residue-class member on the non-residue side. The product
     // still holds, so the split accepts the misfiled partition.
@@ -858,12 +858,12 @@ fn qr_side_descend_refuses_a_full_register() {
     let (root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
 
     let mut intake = QrIntakeEntry {
         pcd: root,
@@ -942,21 +942,21 @@ fn qr_intake_merge_joins_two_spans() {
     let (left, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*left_summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*left_summary.data(), ()), discriminant),
             left_summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
     let (right, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*right_summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*right_summary.data(), ()), discriminant),
             right_summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
 
     let witness =
         witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members);
@@ -1011,21 +1011,21 @@ fn qr_intake_merge_rejects_a_gap() {
     let (left, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*left_summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*left_summary.data(), ()), discriminant),
             left_summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
     let (right, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*right_summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*right_summary.data(), ()), discriminant),
             right_summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
 
     let witness =
         witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members);
@@ -1070,21 +1070,21 @@ fn qr_intake_merge_rejects_different_profiles() {
     let (left_root, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*left_summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*left_summary.data(), ()), discriminant),
             left_summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
     let (right, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            qr::QrSummaryIntakeInit,
-            witness::qr_summary_intake_init((*right_summary.data(), ()), discriminant),
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*right_summary.data(), ()), discriminant),
             right_summary,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("QrSummaryIntakeInit");
+        .expect("QrSummaryIntake");
 
     let (split, ()) = PROOF_SYSTEM
         .fuse(
@@ -2459,12 +2459,12 @@ fn qr_intake_merge_rejects_different_discriminants() {
         let (root, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                qr::QrSummaryIntakeInit,
-                witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+                qr::QrSummaryIntake,
+                witness::qr_summary_intake((*summary.data(), ()), discriminant),
                 summary,
                 Proof::trivial().carry::<()>(()),
             )
-            .expect("QrSummaryIntakeInit");
+            .expect("QrSummaryIntake");
         root
     });
     assert_ne!(left.data().3, right.data().3);
@@ -2510,12 +2510,12 @@ fn qr_intake_merge_rejects_different_epochs() {
         let (root, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
-                qr::QrSummaryIntakeInit,
-                witness::qr_summary_intake_init((*summary.data(), ()), discriminant),
+                qr::QrSummaryIntake,
+                witness::qr_summary_intake((*summary.data(), ()), discriminant),
                 summary,
                 Proof::trivial().carry::<()>(()),
             )
-            .expect("QrSummaryIntakeInit");
+            .expect("QrSummaryIntake");
         root
     });
     assert_ne!(left.data().0, right.data().0);

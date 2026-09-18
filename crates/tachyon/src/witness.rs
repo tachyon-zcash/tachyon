@@ -20,14 +20,14 @@ use crate::{
         Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
-        delegation::{NfDerive, NfMasterSeed, NullifierFuse},
+        delegation::{NoteSeed, NullifierDerive, NullifierFuse},
         pool::{
             AnchorSeed, EndEpochUnspentSeed, SummaryUnspentInit, UnspentBind, UnspentFuse,
             UnspentSeed,
         },
         qr::{
             QrBucketSeal, QrIntakeMerge, QrIntakeSplit, QrSideDescend, QrStampIntakeSeed,
-            QrSummaryIntakeInit, QrUnspentInit,
+            QrSummaryIntake, QrUnspentInit,
         },
         spend::SpendBind,
         spendable::{QrSpendableInit, SpendableInit, SummarySpendableInit},
@@ -43,26 +43,26 @@ type StepRight<S> = <<S as Step>::Right as Header>::Data;
 
 type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 
-/// Prepare the witness for [`NfMasterSeed`]: `(note, pak)`.
+/// Prepare the witness for [`NoteSeed`]: `(note, pak)`.
 #[must_use]
-pub const fn nf_master_seed(
-    (_left, _right): (StepLeft<NfMasterSeed>, StepRight<NfMasterSeed>),
+pub const fn note_seed(
+    (_left, _right): (StepLeft<NoteSeed>, StepRight<NoteSeed>),
     note: Note,
     pak: ProofAuthorizingKey,
-) -> StepWitness<'static, NfMasterSeed> {
+) -> StepWitness<'static, NoteSeed> {
     (note, pak)
 }
 
-/// Prepare the witness for [`NfDerive`]: `(epoch_start, seq)`.
+/// Prepare the witness for [`NullifierDerive`]: `(epoch_start, seq)`.
 ///
 /// Reads `mk` off the seed header and lays the whole window out as the
 /// sequence. `epoch_start` must be group-aligned. A longer span fuses
 /// windows via [`NullifierFuse`].
 #[must_use]
-pub fn nf_derive(
-    (left, _right): (StepLeft<NfDerive>, StepRight<NfDerive>),
+pub fn nullifier_derive(
+    (left, _right): (StepLeft<NullifierDerive>, StepRight<NullifierDerive>),
     epoch_start: EpochIndex,
-) -> StepWitness<'static, NfDerive> {
+) -> StepWitness<'static, NullifierDerive> {
     let (_cm, mk) = left;
     (
         epoch_start,
@@ -395,15 +395,12 @@ pub fn qr_spendable_init(
     (bucket_members.iter().copied().collect(),)
 }
 
-/// Prepare the witness for [`QrSummaryIntakeInit`]: `(discriminant)`.
+/// Prepare the witness for [`QrSummaryIntake`]: `(discriminant)`.
 #[must_use]
-pub const fn qr_summary_intake_init(
-    (_left, _right): (
-        StepLeft<QrSummaryIntakeInit>,
-        StepRight<QrSummaryIntakeInit>,
-    ),
+pub const fn qr_summary_intake(
+    (_left, _right): (StepLeft<QrSummaryIntake>, StepRight<QrSummaryIntake>),
     discriminant: QrDiscriminant,
-) -> StepWitness<'static, QrSummaryIntakeInit> {
+) -> StepWitness<'static, QrSummaryIntake> {
     (discriminant,)
 }
 

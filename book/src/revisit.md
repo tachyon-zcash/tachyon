@@ -1559,8 +1559,8 @@ decomposition into a tree of sub-statements sound.
 > $\mathtt{left}.\cm$.
 >
 > Naming: steps use "noun + verb" with verbs like "seed, fuse, lift, merge"
-> and the noun is usually a header name, whereas headers use "adj + noun"
-> like "Spendable, Unspent, VerifiedUnspent".
+> and the noun is usually a header name, whereas headers use a qualified noun
+> like "NoteSpendable, ArbitraryUnspent, NoteUnspent".
 >
 > Color: User scope is blue ($\Uc$), OSS scope is red ($\Oc$), and shared
 > headers are green ($\Sc$). OSS-generated shared-evidence steps are red.
@@ -1644,7 +1644,7 @@ flowchart LR
 ```
 
 **Streaming QR routing.** During epoch $e$, an OSS privately samples $R_0$ and
-$\mathsf{QrSummaryIntakeInit}$ turns each completed summary into
+$\mathsf{QrSummaryIntake}$ turns each completed summary into
 
 $$
 \mathtt{QrIntake}\{e,\anchor_\mathsf{prev},\anchor_\mathsf{last},
@@ -1660,7 +1660,7 @@ closes, so they do not reveal $R_0$ while users can still choose tachygrams.
 The root profile has $(j,b)=(0,0)$ and the OSS's chosen $R_0$. A stamp not yet
 included in a summary can enter through $\mathsf{QrStampIntakeSeed}$. This has
 the same root shape and binds its one stamp transition directly.
-$\mathsf{QrSummaryIntakeInit}$ equality-constrains $(e,\anchor_\mathsf{prev},
+$\mathsf{QrSummaryIntake}$ equality-constrains $(e,\anchor_\mathsf{prev},
 \anchor_\mathsf{last},\mathsf{Com}(p))$ to the consumed summary and fixes the
 root fields above; $(j,b)=(0,0)$ here encodes the empty profile. The single-stamp
 seed likewise carries exactly the stamp accumulator absorbed by its anchor
@@ -1763,7 +1763,7 @@ flowchart TB
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
   summary["$$\mathtt{Summary}\\ \{e,\anchor_L,\anchor_R,\mathsf{Com}(p)\}$$"]:::s
-  QrSummaryIntakeInit(["$$\mathsf{QrSummaryIntakeInit}$$"]):::o
+  QrSummaryIntake(["$$\mathsf{QrSummaryIntake}$$"]):::o
   QrStampIntakeSeed(["$$\mathsf{QrStampIntakeSeed}$$"]):::o
   QrEmptyIntakeSeed(["$$\mathsf{QrEmptyIntakeSeed}$$"]):::o
   root["$$\mathtt{QrIntake}\\ \{e,\anchor_L,\anchor_R,0,0,R_0,\mathsf{Com}(p)\}$$"]:::s
@@ -1787,7 +1787,7 @@ flowchart TB
   bucket0["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},j+1,2b,R_{j+1},\mathsf{Com}(q_{2b})\}$$"]:::s
   bucket1["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},j+1,2b+1,R_{j+1},\mathsf{Com}(q_{2b+1})\}$$"]:::s
 
-  summary --> QrSummaryIntakeInit --> root
+  summary --> QrSummaryIntake --> root
   QrStampIntakeSeed --> root
   QrEmptyIntakeSeed --> root
   root --> QrIntakeSplit --> sides
@@ -1885,7 +1885,7 @@ flowchart TB
   classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
-  spendable["$$\mathtt{Spendable}\\ \{\cm, e, \anchor\}$$"]:::u
+  spendable["$$\mathtt{NoteSpendable}\\ \{\cm, e, \anchor\}$$"]:::u
   spendstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
   outputstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
   stamp["$$\mathtt{Stamp}\\ \{\actacc',\tgacc',\anchor\}$$"]:::u
@@ -1913,7 +1913,7 @@ $\actacc$ commits to the single root $\mathsf{Poseidon}(\rk,\cv)$ and whose
 $\tgacc$ commits to that action's two tachygrams. $\mathsf{StampMerge}$
 multiplies both input multiset polynomials and emits their two commitments.
 
-$\mathtt{Spendable}$ always means, relative to its carried anchor lineage, that
+$\mathtt{NoteSpendable}$ always means, relative to its carried anchor lineage, that
 its $\cm$ is included and every required past nullifier is excluded before its
 epoch; $\cm$ is not checked against a note opening until $\mathsf{SpendBind}$.
 $\mathsf{SpendableInit}$ takes the creation stamp data as private witness, proves
@@ -1923,7 +1923,7 @@ $\mathsf{StampLift}$ connects this seed-rooted lineage through
 $\mathtt{AnchorChain}$ evidence to a target checked against canonical history. A
 same-epoch spend requires no past exclusion because the note did not exist before
 that stamp, so this base case satisfies the same conditional
-$\mathtt{Spendable}$ invariant.
+$\mathtt{NoteSpendable}$ invariant.
 For $\mathsf{StampLift}$, the input stamp anchor must equal
 $\mathtt{AnchorChain}.\anchor_L$ and the output stamp anchor equals
 $\mathtt{AnchorChain}.\anchor_R$. The chain contains only authenticated stamp
@@ -1934,7 +1934,7 @@ $\mathsf{SpendBind}$ requires the target anchor and carried spending epoch to
 remain aligned. Consensus later checks that the target anchor occurs in
 canonical history in that epoch.
 
-Users may cache the $\mathtt{Spendable}$ immediately after note inclusion and
+Users may cache the $\mathtt{NoteSpendable}$ immediately after note inclusion and
 send it to a hardware wallet for spend-time signing in parallel with
 $\mathsf{SpendBind}$ and the later steps.
 
@@ -1960,7 +1960,7 @@ The inclusion branch and exclusion branch remain independent. Each first opens
 its selected bucket from the epoch's $\mathtt{QrBucketTree}$. A membership opening
 against the resulting $\mathtt{QrBucketOpening}$ proves that $\cm$ occurred in
 epoch $e_\incl$. Separately, the user-owned
-$\mathsf{VerifiedUnspentInit}$ consumes only the $\mathtt{QrBucketOpening}$
+$\mathsf{NoteUnspentInit}$ consumes only the $\mathtt{QrBucketOpening}$
 selected by $\nf_{e_\incl}$'s profile. It privately witnesses the note opening
 and $(\ak,\nk)$, then enforces
 
@@ -1980,17 +1980,17 @@ the same note, while the QR query proves absence from the whole epoch.
 The step emits
 
 $$
-\mathtt{VerifiedUnspent}\{\cm,e_\incl,e_\incl+1,
+\mathtt{NoteUnspent}\{\cm,e_\incl,e_\incl+1,
   \sntl_{e_\incl},\sntl_{e_\incl+1}\}.
 $$
 
-This direct singleton path replaces both the ranged $\mathtt{Nullifiers}$ proof
+This direct singleton path replaces both the ranged $\mathtt{NoteNullifiers}$ proof
 and
 $\mathsf{UnspentSeed}\rightarrow\mathsf{UnspentLift}\rightarrow
 \mathsf{UnspentBind}$ for the inclusion epoch. Those general steps remain useful
 for delegated, extensible later ranges.
 
-$\mathsf{SpendableReinit}$ consumes the singleton $\mathtt{VerifiedUnspent}$ and
+$\mathsf{SpendableReinit}$ consumes the singleton $\mathtt{NoteUnspent}$ and
 the independent $\cm$ bucket opening. It requires the same epoch and sentinel
 endpoints, carries $\cm$ from the verified header, and proves
 $q_{b'}(\cm)=0$ without deriving or checking $\cm$'s profile. It does not reopen
@@ -1998,7 +1998,7 @@ the note, derive or test a nullifier, or consume anchor-chain evidence. It emits
 the fully established
 
 $$
-\mathtt{Spendable}\{\cm,e_\incl+1,\sntl_{e_\incl+1}\}.
+\mathtt{NoteSpendable}\{\cm,e_\incl+1,\sntl_{e_\incl+1}\}.
 $$
 
 ```mermaid
@@ -2007,25 +2007,25 @@ flowchart TB
   classDef u fill:#e8eeff,stroke:#4169E1,color:#1a1a1a;
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
-  vfyincl["$$\mathtt{VerifiedUnspent}\\ \{\cm,e_\incl,e_\incl+1,\sntl_{e_\incl},\sntl_{e_\incl+1}\}$$"]:::u
+  vfyincl["$$\mathtt{NoteUnspent}\\ \{\cm,e_\incl,e_\incl+1,\sntl_{e_\incl},\sntl_{e_\incl+1}\}$$"]:::u
   inclTree["$$\mathtt{QrBucketTree}_{e_\incl}$$"]:::s
   inclNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_{e_\incl}$$"]:::s
   cmBucket["$$\mathtt{QrBucketOpening}\text{ for }\cm$$"]:::s
-  spendable["$$\mathtt{Spendable}\\ \{\cm,e_\incl+1,\sntl_{e_\incl+1}\}$$"]:::u
+  spendable["$$\mathtt{NoteSpendable}\\ \{\cm,e_\incl+1,\sntl_{e_\incl+1}\}$$"]:::u
 
-  VerifiedUnspentInit(["$$\mathsf{VerifiedUnspentInit}$$"]):::u
+  NoteUnspentInit(["$$\mathsf{NoteUnspentInit}$$"]):::u
   SpendableReinit(["$$\mathsf{SpendableReinit}$$"]):::u
   OpenInclNf(["$$\mathsf{QrBucketTreeOpen}$$"]):::u
   OpenCm(["$$\mathsf{QrBucketTreeOpen}$$"]):::u
 
   inclTree --> OpenInclNf --> inclNfBucket
   inclTree --> OpenCm --> cmBucket
-  inclNfBucket --> VerifiedUnspentInit --> vfyincl
+  inclNfBucket --> NoteUnspentInit --> vfyincl
   vfyincl --> SpendableReinit --> spendable
   cmBucket --> SpendableReinit
 ```
 
-Later exclusion ranges extend that reinitialized $\mathtt{Spendable}$:
+Later exclusion ranges extend that reinitialized $\mathtt{NoteSpendable}$:
 
 ```mermaid
 %%{init: {"flowchart": {"nodeSpacing": 20, "rankSpacing": 25, "padding": 5}}}%%
@@ -2034,22 +2034,22 @@ flowchart TB
   classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
-  spendable["$$\mathtt{Spendable}\\ \{\cm,e_\incl+1,\sntl_{e_\incl+1}\}$$"]:::u
-  nfmaster["$$\mathtt{NfMaster}\\ \{\cm,\mk\}$$"]:::u
-  nfwindowA["$$\mathtt{Nullifiers}_A$$"]:::u
-  nfwindowB["$$\mathtt{Nullifiers}_B$$"]:::u
-  nf["$$\mathtt{Nullifiers}\\ \{\cm,r_L,r_R,\mathsf{Com}(g_{r_L,r_R}(X))\}$$"]:::u
-  unspent["$$\mathtt{Unspent}\\ \{s_L,s_L,\sntl_{s_L},\sntl_{s_L},\mathsf{Com}(1)\}$$"]:::o
-  unspentprime["$$\mathtt{Unspent}\\ \{s_L,s_R,\sntl_{s_L},\sntl_{s_R},\mathsf{Com}(g_{s_L,s_R})\}$$"]:::o
+  spendable["$$\mathtt{NoteSpendable}\\ \{\cm,e_\incl+1,\sntl_{e_\incl+1}\}$$"]:::u
+  nfmaster["$$\mathtt{NoteMaster}\\ \{\cm,\mk\}$$"]:::u
+  nfwindowA["$$\mathtt{NoteNullifiers}_A$$"]:::u
+  nfwindowB["$$\mathtt{NoteNullifiers}_B$$"]:::u
+  nf["$$\mathtt{NoteNullifiers}\\ \{\cm,r_L,r_R,\mathsf{Com}(g_{r_L,r_R}(X))\}$$"]:::u
+  unspent["$$\mathtt{ArbitraryUnspent}\\ \{s_L,s_L,\sntl_{s_L},\sntl_{s_L},\mathsf{Com}(1)\}$$"]:::o
+  unspentprime["$$\mathtt{ArbitraryUnspent}\\ \{s_L,s_R,\sntl_{s_L},\sntl_{s_R},\mathsf{Com}(g_{s_L,s_R})\}$$"]:::o
   laterTree["$$\mathtt{QrBucketTree}_i$$"]:::s
   laterNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_i$$"]:::s
-  vfylater["$$\mathtt{VerifiedUnspent}\\ \{\cm,s_L,s_R,\sntl_{s_L},\sntl_{s_R}\}$$"]:::u
-  spendableprime["$$\mathtt{Spendable}\\ \{\cm,s_R,\sntl_{s_R}\}$$"]:::u
+  vfylater["$$\mathtt{NoteUnspent}\\ \{\cm,s_L,s_R,\sntl_{s_L},\sntl_{s_R}\}$$"]:::u
+  spendableprime["$$\mathtt{NoteSpendable}\\ \{\cm,s_R,\sntl_{s_R}\}$$"]:::u
   spendstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
 
   UnspentSeed(["$$\mathsf{UnspentSeed}$$"]):::o
   UnspentLift(["$$\mathsf{UnspentLift}$$"]):::o
-  NfMasterSeed(["$$\mathsf{NfMasterSeed}$$"]):::u
+  NoteSeed(["$$\mathsf{NoteSeed}$$"]):::u
   NullifierDeriveA(["$$\mathsf{NullifierDerive}$$"]):::u
   NullifierDeriveB(["$$\mathsf{NullifierDerive}$$"]):::u
   NullifierFuse(["$$\mathsf{NullifierFuse}$$"]):::u
@@ -2058,7 +2058,7 @@ flowchart TB
   SpendableLift(["$$\mathsf{SpendableLift}$$"]):::u
   SpendBind(["$$\mathsf{SpendBind}$$"]):::u
 
-  NfMasterSeed --> nfmaster
+  NoteSeed --> nfmaster
   nfmaster --> NullifierDeriveA --> nfwindowA --> NullifierFuse
   nfmaster --> NullifierDeriveB --> nfwindowB --> NullifierFuse
   NullifierFuse --> nf
@@ -2070,14 +2070,14 @@ flowchart TB
   spendableprime --> SpendBind --> spendstamp
 ```
 
-$\mathsf{NfMasterSeed}$ reopens one note, enforces
+$\mathsf{NoteSeed}$ reopens one note, enforces
 $\pk=\mathsf{Com}(\ak,\nk)$, and recomputes
 $\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$ and
 $\mk=\mathsf{Poseidon}^{\mk}(\nk,\psi)$. It emits the
 reusable wallet-local header
 
 $$
-\mathtt{NfMaster}\{\cm,\mk\}.
+\mathtt{NoteMaster}\{\cm,\mk\}.
 $$
 
 Each $\mathsf{NullifierDerive}$ consumes that header and derives one bounded
@@ -2095,7 +2095,7 @@ checked against the same product evaluated directly from the in-circuit batched
 outputs. The step emits
 
 $$
-\mathtt{Nullifiers}\{\cm,r_L,r_R,\mathsf{Com}(g_{r_L,r_R})\}.
+\mathtt{NoteNullifiers}\{\cm,r_L,r_R,\mathsf{Com}(g_{r_L,r_R})\}.
 $$
 
 $G$ is an implementation parameter rather than part of the nullifier
@@ -2117,10 +2117,10 @@ Later past exclusion is built independently. $\mathsf{NullifierDerive}$ derives
 bounded local windows from the note and $\mathsf{NullifierFuse}$ combines them
 into a [ranged nullifier commitment](#nf-flow). The wallet may give the OSS the
 relevant opaque pairs $(i,\nf_i)$, but no note-opening data. An
-$\mathtt{Unspent}$ header has the form
+$\mathtt{ArbitraryUnspent}$ header has the form
 
 $$
-\mathtt{Unspent}\{s_L,s_R,\sntl_{s_L},\sntl_{s_R},
+\mathtt{ArbitraryUnspent}\{s_L,s_R,\sntl_{s_L},\sntl_{s_R},
   \mathsf{Com}(g_{s_L,s_R}(X))\},
 $$
 
@@ -2151,14 +2151,14 @@ requires $s_L<s_R$ and
 $[s_L,s_R)\subseteq[r_L,r_R)$, and checks that the OSS commitment is an
 indexed subset of the wallet's locally derived commitment using the
 [quotient relation](#nf-flow). It carries the local $\cm$ into
-$\mathtt{VerifiedUnspent}$ while retaining $(s_L,s_R)$ and their sentinels.
+$\mathtt{NoteUnspent}$ while retaining $(s_L,s_R)$ and their sentinels.
 Because each commitment factor binds both its epoch and value, this proves that
 every nullifier tested by the OSS is the actual nullifier derived for that note
 and epoch.
 
 The inclusion-epoch singleton bypasses these general steps through
-$\mathsf{VerifiedUnspentInit}$ and is consumed by $\mathsf{SpendableReinit}$.
-Every later $\mathtt{VerifiedUnspent}$ instead feeds $\mathsf{SpendableLift}$,
+$\mathsf{NoteUnspentInit}$ and is consumed by $\mathsf{SpendableReinit}$.
+Every later $\mathtt{NoteUnspent}$ instead feeds $\mathsf{SpendableLift}$,
 which requires both children to carry the same $\cm$ and enforces the ordinary
 forward seam
 
@@ -2178,7 +2178,7 @@ $\mathtt{Stamp}$. Output construction, stamp merging, and any final
 in-epoch stamp lift are unchanged and therefore omitted from the diagram.
 
 #### Delegation Extension and Multiple OSSs {#extend-range}
-The singleton inclusion-epoch $\mathtt{VerifiedUnspent}$ is built and consumed
+The singleton inclusion-epoch $\mathtt{NoteUnspent}$ is built and consumed
 separately at reinitialization. Beyond it, both branches remain extendable. The
 wallet derives another local window and combines it with
 $\mathsf{NullifierFuse}$;
@@ -2191,9 +2191,9 @@ adjacent results, $\mathsf{UnspentMerge}$ takes
 
 $$
 \begin{aligned}
-A&=\mathtt{Unspent}\{s_L,s_M,\sntl_{s_L},\sntl_{s_M},
+A&=\mathtt{ArbitraryUnspent}\{s_L,s_M,\sntl_{s_L},\sntl_{s_M},
     \mathsf{Com}(g_{s_L,s_M})\},\\
-B&=\mathtt{Unspent}\{s_M,s_R,\sntl_{s_M},\sntl_{s_R},
+B&=\mathtt{ArbitraryUnspent}\{s_M,s_R,\sntl_{s_M},\sntl_{s_R},
     \mathsf{Com}(g_{s_M,s_R})\}.
 \end{aligned}
 $$
@@ -2203,7 +2203,7 @@ starting sentinel. These checks establish order and exclude gaps or overlaps. It
 then emits
 
 $$
-\mathtt{Unspent}\{s_L,s_R,\sntl_{s_L},\sntl_{s_R},
+\mathtt{ArbitraryUnspent}\{s_L,s_R,\sntl_{s_L},\sntl_{s_R},
   \mathsf{Com}(g_{s_L,s_R})\},
 $$
 
@@ -2220,11 +2220,11 @@ flowchart TB
   classDef u fill:#e8eeff,stroke:#4169E1,color:#1a1a1a;
   classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
 
-  left["$$A:\ \mathtt{Unspent}\\ \{s_L,s_M,\sntl_{s_L},\sntl_{s_M},\mathsf{Com}(g_{s_L,s_M})\}$$"]:::o
-  right["$$B:\ \mathtt{Unspent}\\ \{s_M,s_R,\sntl_{s_M},\sntl_{s_R},\mathsf{Com}(g_{s_M,s_R})\}$$"]:::o
-  merged["$$\mathtt{Unspent}\\ \{s_L,s_R,\sntl_{s_L},\sntl_{s_R},\mathsf{Com}(g_{s_L,s_R})\}$$"]:::o
-  nf["$$\mathtt{Nullifiers}\\ \{\cm,r_L,r_R,\mathsf{Com}(g_{r_L,r_R})\}$$"]:::u
-  verified["$$\mathtt{VerifiedUnspent}\\ \{\cm,s_L,s_R,\sntl_{s_L},\sntl_{s_R}\}$$"]:::u
+  left["$$A:\ \mathtt{ArbitraryUnspent}\\ \{s_L,s_M,\sntl_{s_L},\sntl_{s_M},\mathsf{Com}(g_{s_L,s_M})\}$$"]:::o
+  right["$$B:\ \mathtt{ArbitraryUnspent}\\ \{s_M,s_R,\sntl_{s_M},\sntl_{s_R},\mathsf{Com}(g_{s_M,s_R})\}$$"]:::o
+  merged["$$\mathtt{ArbitraryUnspent}\\ \{s_L,s_R,\sntl_{s_L},\sntl_{s_R},\mathsf{Com}(g_{s_L,s_R})\}$$"]:::o
+  nf["$$\mathtt{NoteNullifiers}\\ \{\cm,r_L,r_R,\mathsf{Com}(g_{r_L,r_R})\}$$"]:::u
+  verified["$$\mathtt{NoteUnspent}\\ \{\cm,s_L,s_R,\sntl_{s_L},\sntl_{s_R}\}$$"]:::u
 
   UnspentMerge(["$$\mathsf{UnspentMerge}$$"]):::u
   UnspentBind(["$$\mathsf{UnspentBind}$$"]):::u
@@ -2597,12 +2597,12 @@ protocol's [transaction life cycle](#txflow). Having discovered and validated it
 notes, a wallet:
 
 1. uses creation-stamp data from the [epoched tachygram DB](#pirdb) to build and
-   cache an active-epoch `Spendable` proof as soon as the creation block finalizes;
-2. independently extends one local $\mathtt{Nullifiers}$ header and delegates
+   cache an active-epoch `NoteSpendable` proof as soon as the creation block finalizes;
+2. independently extends one local $\mathtt{NoteNullifiers}$ header and delegates
    opaque nullifiers and sentinel-bounded epoch ranges to one or more OSSs;
 3. after the inclusion epoch closes, directly binds its derived
    $\nf_{e_\incl}$ to one $\mathtt{QrBucketOpening}$ through
-   $\mathsf{VerifiedUnspentInit}$, then joins that singleton exclusion with the
+   $\mathsf{NoteUnspentInit}$, then joins that singleton exclusion with the
    separate $\cm$ bucket opening at $\mathsf{SpendableReinit}$; later lifts
    consume ranges beginning at $e_\incl+1$; and
 4. folds the updated spends and spend-time outputs into a fresh
