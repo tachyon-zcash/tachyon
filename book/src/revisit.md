@@ -1176,14 +1176,14 @@ $6.1\times10^7$ root buckets at $8{,}000$ entries each.  Thus 32 bits is ample
 for $k=\log_2(6.1\times10^7)\leq 26$. This leaves room for an unlikely unbalanced
 profile while keeping the complete profile derivation and QR checks compact.
 
-#### QR Bucket Tree {#qr-bucket-tree}
+#### Evidence Tree {#evidence-tree}
 
 The routing network above produces one proof per final bucket. Retaining and
 serving every proof is unnecessary: as an orthogonal post-processing step, the
 OSS folds any chosen set of final-bucket proofs into one proof committing to a
-**QR bucket tree**.
+**evidence tree**.
 
-The QR bucket tree is a Poseidon Merkle tree over any chosen set of final
+The evidence tree is a Poseidon Merkle tree over any chosen set of final
 buckets. A leaf binds the epoch, its sentinel endpoints, $R_0$, the profile
 depth $j$, the encoded profile $b$, and the bucket's tachygram-set commitment
 $\mathsf{Com}(q_\v{b}(X))$. The folded proof attests that every included leaf
@@ -1567,15 +1567,15 @@ decomposition into a tree of sub-statements sound.
 
 As previewed in the [Tachyon transaction flow](#txflow),
 the wallet proves note-specific facts, the OSS proves absence
-of nullifiers over past epochs, and shared evidence supplies closed-epoch QR
-bucket trees, authenticated bucket openings, and active anchor-chain segments.
+of nullifiers over past epochs, and shared evidence supplies closed-epoch
+evidence trees, authenticated bucket openings, and active anchor-chain segments.
 The wallet bridges those branches only after the OSS proof returns.
 
-#### Shared Evidence: Anchor Chains and QR Bucket Trees {#shared-headers}
+#### Shared Evidence: Anchor Chains and Evidence Trees {#shared-headers}
 
 Shared evidence has two durable final forms. Ordinary $\mathtt{AnchorChain}$
 evidence advances stamps within the active epoch. Closed-epoch
-$\mathtt{QrBucketTree}$ evidence authenticates a set of final QR buckets under
+$\mathtt{EvidenceTree}$ evidence authenticates a set of final QR buckets under
 one Merkle root. $\mathtt{Summary}$ and $\mathtt{QrBucket}$ are
 intermediate shared headers used to construct that tree. A query opens one
 tree leaf into a $\mathtt{QrBucketOpening}$; anchor chains do not use QR
@@ -1799,7 +1799,7 @@ flowchart TB
   peer1 --> Merge1 --> merged1 -->|full epoch| Seal1 --> bucket1
 ```
 
-**QR bucket tree.** $\mathsf{QrBucketTreeSeed}$ consumes one
+**Evidence tree.** $\mathsf{EvidenceTreeLeaf}$ consumes one
 $\mathtt{QrBucket}$ proof and hashes the leaf payload
 
 $$
@@ -1810,19 +1810,19 @@ with domain-separated Poseidon. It derives $R_0=R_j-j$ from the bucket's next
 discriminant and emits
 
 $$
-\mathtt{QrBucketTree}\{e,\sntl_e,\sntl_{e+1},R_0,\mathsf{root}^\QR\}.
+\mathtt{EvidenceTree}\{e,\sntl_e,\sntl_{e+1},R_0,\mathsf{root}^\QR\}.
 $$
 
-$\mathsf{QrBucketTreeFuse}$ recursively folds two tree proofs, requires their
+$\mathsf{EvidenceTreeFuse}$ recursively folds two tree proofs, requires their
 headers to agree on $(e,\sntl_e,\sntl_{e+1},R_0)$, and hashes their roots into a
 new rate-$4$ Poseidon Merkle node. Every seed or fuse output is already a valid
-$\mathtt{QrBucketTree}$; there is no sealing step or coverage requirement. A
+$\mathtt{EvidenceTree}$; there is no sealing step or coverage requirement. A
 single seed is a valid one-leaf tree. Since every leaf proof is a sound
 full-epoch $\mathtt{QrBucket}$ proof, the tree only needs to preserve common
 epoch metadata and authenticate whichever leaves it contains. The OSS may
 discard the individual bucket proofs after folding them.
 
-$\mathsf{QrBucketTreeOpen}$ consumes $\mathtt{QrBucketTree}$ and privately
+$\mathsf{EvidenceTreeOpen}$ consumes $\mathtt{EvidenceTree}$ and privately
 witnesses one leaf payload and its quaternary Merkle path. It verifies the path
 against $\mathsf{root}^\QR$ and emits
 
@@ -1847,13 +1847,13 @@ flowchart TB
 
   bucket0["$$\mathtt{QrBucket}_0$$"]:::s
   bucket1["$$\mathtt{QrBucket}_1$$"]:::s
-  seed0(["$$\mathsf{QrBucketTreeSeed}$$"]):::o
-  seed1(["$$\mathsf{QrBucketTreeSeed}$$"]):::o
-  tree0["$$\mathtt{QrBucketTree}_0$$"]:::s
-  tree1["$$\mathtt{QrBucketTree}_1$$"]:::s
-  fuse(["$$\mathsf{QrBucketTreeFuse}$$"]):::o
-  tree["$$\mathtt{QrBucketTree}\\ \{e,\sntl_e,\sntl_{e+1},R_0,\mathsf{root}^\QR\}$$"]:::s
-  open(["$$\mathsf{QrBucketTreeOpen}$$"]):::o
+  seed0(["$$\mathsf{EvidenceTreeLeaf}$$"]):::o
+  seed1(["$$\mathsf{EvidenceTreeLeaf}$$"]):::o
+  tree0["$$\mathtt{EvidenceTree}_0$$"]:::s
+  tree1["$$\mathtt{EvidenceTree}_1$$"]:::s
+  fuse(["$$\mathsf{EvidenceTreeFuse}$$"]):::o
+  tree["$$\mathtt{EvidenceTree}\\ \{e,\sntl_e,\sntl_{e+1},R_0,\mathsf{root}^\QR\}$$"]:::s
+  open(["$$\mathsf{EvidenceTreeOpen}$$"]):::o
   opening["$$\mathtt{QrBucketOpening}\\ \{e,\sntl_e,\sntl_{e+1},R_0,j,b,\mathsf{Com}(q_b)\}$$"]:::s
 
   bucket0 --> seed0 --> tree0 --> fuse
@@ -1863,7 +1863,7 @@ flowchart TB
 
 The diagram below summarizes the active anchor-chain and closed-epoch QR
 headers. $\mathtt{AnchorChain}$ may end at the active tip;
-$\mathtt{QrBucketTree}$ and its bucket openings are available only for complete
+$\mathtt{EvidenceTree}$ and its bucket openings are available only for complete
 past epochs.
 
 <p align="center">
@@ -1957,7 +1957,7 @@ When a wallet comes back online, it may rebuild or refresh spendability proofs
 for all its unspent notes. Once a note's inclusion epoch $e_\incl$ is in the
 past, spending it requires proving exclusion across every intervening epoch.
 The inclusion branch and exclusion branch remain independent. Each first opens
-its selected bucket from the epoch's $\mathtt{QrBucketTree}$. A membership opening
+its selected bucket from the epoch's $\mathtt{EvidenceTree}$. A membership opening
 against the resulting $\mathtt{QrBucketOpening}$ proves that $\cm$ occurred in
 epoch $e_\incl$. Separately, the user-owned
 $\mathsf{NoteUnspentInit}$ consumes only the $\mathtt{QrBucketOpening}$
@@ -2008,15 +2008,15 @@ flowchart TB
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
   vfyincl["$$\mathtt{NoteUnspent}\\ \{\cm,e_\incl,e_\incl+1,\sntl_{e_\incl},\sntl_{e_\incl+1}\}$$"]:::u
-  inclTree["$$\mathtt{QrBucketTree}_{e_\incl}$$"]:::s
+  inclTree["$$\mathtt{EvidenceTree}_{e_\incl}$$"]:::s
   inclNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_{e_\incl}$$"]:::s
   cmBucket["$$\mathtt{QrBucketOpening}\text{ for }\cm$$"]:::s
   spendable["$$\mathtt{NoteSpendable}\\ \{\cm,e_\incl+1,\sntl_{e_\incl+1}\}$$"]:::u
 
   NoteUnspentInit(["$$\mathsf{NoteUnspentInit}$$"]):::u
   SpendableReinit(["$$\mathsf{SpendableReinit}$$"]):::u
-  OpenInclNf(["$$\mathsf{QrBucketTreeOpen}$$"]):::u
-  OpenCm(["$$\mathsf{QrBucketTreeOpen}$$"]):::u
+  OpenInclNf(["$$\mathsf{EvidenceTreeOpen}$$"]):::u
+  OpenCm(["$$\mathsf{EvidenceTreeOpen}$$"]):::u
 
   inclTree --> OpenInclNf --> inclNfBucket
   inclTree --> OpenCm --> cmBucket
@@ -2041,7 +2041,7 @@ flowchart TB
   nf["$$\mathtt{NoteNullifiers}\\ \{\cm,r_L,r_R,\mathsf{Com}(g_{r_L,r_R}(X))\}$$"]:::u
   unspent["$$\mathtt{ArbitraryUnspent}\\ \{s_L,s_L,\sntl_{s_L},\sntl_{s_L},\mathsf{Com}(1)\}$$"]:::o
   unspentprime["$$\mathtt{ArbitraryUnspent}\\ \{s_L,s_R,\sntl_{s_L},\sntl_{s_R},\mathsf{Com}(g_{s_L,s_R})\}$$"]:::o
-  laterTree["$$\mathtt{QrBucketTree}_i$$"]:::s
+  laterTree["$$\mathtt{EvidenceTree}_i$$"]:::s
   laterNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_i$$"]:::s
   vfylater["$$\mathtt{NoteUnspent}\\ \{\cm,s_L,s_R,\sntl_{s_L},\sntl_{s_R}\}$$"]:::u
   spendableprime["$$\mathtt{NoteSpendable}\\ \{\cm,s_R,\sntl_{s_R}\}$$"]:::u
@@ -2054,7 +2054,7 @@ flowchart TB
   NullifierDeriveB(["$$\mathsf{NullifierDerive}$$"]):::u
   NullifierFuse(["$$\mathsf{NullifierFuse}$$"]):::u
   UnspentBind(["$$\mathsf{UnspentBind}$$"]):::u
-  OpenLaterNf(["$$\mathsf{QrBucketTreeOpen}$$"]):::o
+  OpenLaterNf(["$$\mathsf{EvidenceTreeOpen}$$"]):::o
   SpendableLift(["$$\mathsf{SpendableLift}$$"]):::u
   SpendBind(["$$\mathsf{SpendBind}$$"]):::u
 
@@ -2183,7 +2183,7 @@ separately at reinitialization. Beyond it, both branches remain extendable. The
 wallet derives another local window and combines it with
 $\mathsf{NullifierFuse}$;
 an OSS extends a range beginning no earlier than $e_\incl+1$ by applying
-$\mathsf{QrBucketTreeOpen}$ and $\mathsf{UnspentLift}$ to the next full-epoch tree.
+$\mathsf{EvidenceTreeOpen}$ and $\mathsf{UnspentLift}$ to the next full-epoch tree.
 That later range need not fix its final endpoint in advance.
 
 A wallet may also delegate different ranges to different OSSs. To combine two

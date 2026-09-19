@@ -1,0 +1,565 @@
+//! Evidence trees: one proof for a Poseidon Merkle root over a network's
+//! sealed [`QrBucket`]s.
+//!
+//! [`EvidenceTreeLeaf`] and [`EvidenceTreeLeafPair`] admit buckets,
+//! [`EvidenceTreePairFuse`] and [`EvidenceTreeFuse`] assemble a node from
+//! four subtrees, and [`EvidenceTreeCap`] raises a root to the depth a descent
+//! needs. [`EvidenceTreeDescend`] walks a path, and [`EvidenceTreeOpen`]
+//! replays the bucket a leaf holds.
+
+extern crate alloc;
+
+use alloc::{vec, vec::Vec};
+
+use group::Curve as _;
+use pasta_curves::{Ep, Eq, Fp, Fq};
+use ragu::{Header, Index, Step, Suffix};
+
+use super::qr::QrBucket;
+use crate::{
+    constants::EVIDENCE_TREE_ARITY,
+    digest::poseidon,
+    primitives::{
+        Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetCommit,
+    },
+    ragu_constraint::enforce_zero,
+};
+
+/// A Poseidon Merkle root over one network's sealed buckets.
+///
+/// Every leaf under `root` is the [`poseidon::evidence_tree_leaf`] of a bucket
+/// whose own `(epoch, anchor_prev, anchor_end, discriminant)` are the four
+/// this header carries. A one-leaf tree's root is that leaf's digest.
+///
+/// The tree claims nothing about which buckets it holds. A tree over one
+/// bucket is as valid as a tree over a whole network, and a builder that omits
+/// a bucket can only fail to answer for it. Each bucket's exclusion claim
+/// already covers the whole epoch.
+#[derive(Clone, Debug)]
+pub struct EvidenceTree;
+
+impl Header for EvidenceTree {
+    /// `(epoch, anchor_prev, anchor_end, discriminant, root)`
+    type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
+
+    const SUFFIX: Suffix = Suffix::new(13);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (epoch, anchor_prev, anchor_end, discriminant, root) = *data;
+        (
+            vec![
+                Fp::from(epoch),
+                Fp::from(anchor_prev),
+                Fp::from(anchor_end),
+                Fp::from(discriminant),
+                Fp::from(root),
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+}
+
+/// Two sibling subtree roots of one network: half of a node.
+///
+/// A [`EVIDENCE_TREE_ARITY`]-child node reaches one hash through two steps,
+/// since a [`Step`] takes at most two predecessor proofs. This header is a node
+/// half-assembled: the left and right children of one side, under the four
+/// network fields both already agree on.
+#[derive(Clone, Debug)]
+pub struct EvidenceTreePair;
+
+impl Header for EvidenceTreePair {
+    /// `(epoch, anchor_prev, anchor_end, discriminant, first, second)`
+    type Data = (
+        EpochIndex,
+        Anchor,
+        Anchor,
+        QrDiscriminant,
+        EvidenceTreeRoot,
+        EvidenceTreeRoot,
+    );
+
+    const SUFFIX: Suffix = Suffix::new(14);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (epoch, anchor_prev, anchor_end, discriminant, first, second) = *data;
+        (
+            vec![
+                Fp::from(epoch),
+                Fp::from(anchor_prev),
+                Fp::from(anchor_end),
+                Fp::from(discriminant),
+                Fp::from(first),
+                Fp::from(second),
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+}
+
+/// Admit one sealed [`QrBucket`] as a one-leaf [`EvidenceTree`].
+///
+/// # Soundness
+///
+/// Every element of the digest is threaded from a bucket PCD, so the emitted
+/// root is the digest of a bucket [`QrBucketSeal`](super::qr::QrBucketSeal)
+/// produced and the four network fields are that bucket's.
+#[derive(Debug)]
+pub struct EvidenceTreeLeaf;
+
+impl Step for EvidenceTreeLeaf {
+    type Aux<'source> = ();
+    type Left = QrBucket;
+    type Output = EvidenceTree;
+    type Right = ();
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(26);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (): Self::Witness<'source>,
+        (epoch, anchor_prev, anchor_end, discriminant, profile, contents): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        let root = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
+            Fp::from(epoch),
+            Fp::from(anchor_prev),
+            Fp::from(anchor_end),
+            Fp::from(discriminant),
+            Fp::from(u64::from(profile.depth)),
+            Fp::from(u64::from(profile.bits)),
+            Eq::from(contents).to_affine(),
+        ));
+
+        Ok(((epoch, anchor_prev, anchor_end, discriminant, root), ()))
+    }
+}
+
+/// Admit two sealed [`QrBucket`]s as one half of a node.
+///
+/// Two leaf digests cost six of about seven permutations, more than any other
+/// step in this module. The two sponges absorb the same four network fields and
+/// share nothing, so this is the first step to drop if a real circuit's budget
+/// is exceeded.
+///
+/// # Soundness
+///
+/// Each digest is derived from one threaded bucket header, and the four
+/// equalities carry the network fields as [`EvidenceTreePairFuse`] does. The
+/// claim is exactly that of two [`EvidenceTreeLeaf`]s and one pair fuse.
+#[derive(Debug)]
+pub struct EvidenceTreeLeafPair;
+
+impl Step for EvidenceTreeLeafPair {
+    type Aux<'source> = ();
+    type Left = QrBucket;
+    type Output = EvidenceTreePair;
+    type Right = QrBucket;
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(32);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (): Self::Witness<'source>,
+        (
+            left_epoch,
+            left_anchor_prev,
+            left_anchor_end,
+            left_discriminant,
+            left_profile,
+            left_contents,
+        ): <Self::Left as Header>::Data,
+        (
+            right_epoch,
+            right_anchor_prev,
+            right_anchor_end,
+            right_discriminant,
+            right_profile,
+            right_contents,
+        ): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(left_epoch) - Fp::from(right_epoch),
+            "EvidenceTreeLeafPair: inputs cover different epochs",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_prev) - Fp::from(right_anchor_prev),
+            "EvidenceTreeLeafPair: inputs open at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_end) - Fp::from(right_anchor_end),
+            "EvidenceTreeLeafPair: inputs close at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_discriminant) - Fp::from(right_discriminant),
+            "EvidenceTreeLeafPair: inputs derive from different discriminants",
+        )?;
+
+        let first = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
+            Fp::from(left_epoch),
+            Fp::from(left_anchor_prev),
+            Fp::from(left_anchor_end),
+            Fp::from(left_discriminant),
+            Fp::from(u64::from(left_profile.depth)),
+            Fp::from(u64::from(left_profile.bits)),
+            Eq::from(left_contents).to_affine(),
+        ));
+        let second = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
+            Fp::from(right_epoch),
+            Fp::from(right_anchor_prev),
+            Fp::from(right_anchor_end),
+            Fp::from(right_discriminant),
+            Fp::from(u64::from(right_profile.depth)),
+            Fp::from(u64::from(right_profile.bits)),
+            Eq::from(right_contents).to_affine(),
+        ));
+
+        Ok((
+            (
+                left_epoch,
+                left_anchor_prev,
+                left_anchor_end,
+                left_discriminant,
+                first,
+                second,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Pair two [`EvidenceTree`]s of one network as half a node.
+///
+/// # Soundness
+///
+/// Both roots are threaded, and the four equalities make the emitted header's
+/// network fields true of every leaf beneath either input. The fields are
+/// checked equal because a consumer reads the extent off the tree, so a tree
+/// spanning more than its leaves do would let a bucket's exclusion cover folds
+/// the bucket never held.
+///
+/// Nothing is hashed here. The pair asserts only that two subtrees belong to
+/// one network; [`EvidenceTreeFuse`] is what turns four of them into a node.
+#[derive(Debug)]
+pub struct EvidenceTreePairFuse;
+
+impl Step for EvidenceTreePairFuse {
+    type Aux<'source> = ();
+    type Left = EvidenceTree;
+    type Output = EvidenceTreePair;
+    type Right = EvidenceTree;
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(27);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (): Self::Witness<'source>,
+        (left_epoch, left_anchor_prev, left_anchor_end, left_discriminant, left_root): <Self::Left as Header>::Data,
+        (right_epoch, right_anchor_prev, right_anchor_end, right_discriminant, right_root): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(left_epoch) - Fp::from(right_epoch),
+            "EvidenceTreePairFuse: inputs cover different epochs",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_prev) - Fp::from(right_anchor_prev),
+            "EvidenceTreePairFuse: inputs open at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_end) - Fp::from(right_anchor_end),
+            "EvidenceTreePairFuse: inputs close at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_discriminant) - Fp::from(right_discriminant),
+            "EvidenceTreePairFuse: inputs derive from different discriminants",
+        )?;
+
+        Ok((
+            (
+                left_epoch,
+                left_anchor_prev,
+                left_anchor_end,
+                left_discriminant,
+                left_root,
+                right_root,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Hash two [`EvidenceTreePair`]s of one network into a node.
+///
+/// The children are ordered `(left.0, left.1, right.0, right.1)`, which is the
+/// order [`EvidenceTreeDescend`] witnesses them in.
+///
+/// # Soundness
+///
+/// All four roots are threaded, and the four equalities carry the network
+/// fields as [`EvidenceTreePairFuse`] does. Every leaf beneath the emitted root
+/// was beneath one of the four inputs, so the claim carries by induction.
+#[derive(Debug)]
+pub struct EvidenceTreeFuse;
+
+impl Step for EvidenceTreeFuse {
+    type Aux<'source> = ();
+    type Left = EvidenceTreePair;
+    type Output = EvidenceTree;
+    type Right = EvidenceTreePair;
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(28);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (): Self::Witness<'source>,
+        (
+            left_epoch,
+            left_anchor_prev,
+            left_anchor_end,
+            left_discriminant,
+            left_first,
+            left_second,
+        ): <Self::Left as Header>::Data,
+        (
+            right_epoch,
+            right_anchor_prev,
+            right_anchor_end,
+            right_discriminant,
+            right_first,
+            right_second,
+        ): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(left_epoch) - Fp::from(right_epoch),
+            "EvidenceTreeFuse: inputs cover different epochs",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_prev) - Fp::from(right_anchor_prev),
+            "EvidenceTreeFuse: inputs open at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_end) - Fp::from(right_anchor_end),
+            "EvidenceTreeFuse: inputs close at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_discriminant) - Fp::from(right_discriminant),
+            "EvidenceTreeFuse: inputs derive from different discriminants",
+        )?;
+
+        let root = EvidenceTreeRoot(poseidon::evidence_tree_node([
+            Fp::from(left_first),
+            Fp::from(left_second),
+            Fp::from(right_first),
+            Fp::from(right_second),
+        ]));
+
+        Ok((
+            (
+                left_epoch,
+                left_anchor_prev,
+                left_anchor_end,
+                left_discriminant,
+                root,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Raise a [`EvidenceTree`] one level by making its root the only child of a
+/// new root.
+///
+/// [`EvidenceTreeDescend`] walks [`EvidenceTreeDescend::LEVELS`] levels at a
+/// time. A builder caps a tree at most `LEVELS - 1` times, until its depth is a
+/// multiple of that.
+///
+/// # Soundness
+///
+/// The root is threaded and repeated into every child slot, so the input tree
+/// is the only subtree beneath the emitted root and raising a tree cannot admit
+/// a leaf. A descent through such a node selects the same child whichever side
+/// bits it reads.
+#[derive(Debug)]
+pub struct EvidenceTreeCap;
+
+impl Step for EvidenceTreeCap {
+    type Aux<'source> = ();
+    type Left = EvidenceTree;
+    type Output = EvidenceTree;
+    type Right = ();
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(29);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (): Self::Witness<'source>,
+        (epoch, anchor_prev, anchor_end, discriminant, root): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        let raised = EvidenceTreeRoot(poseidon::evidence_tree_node(
+            [Fp::from(root); EVIDENCE_TREE_ARITY],
+        ));
+
+        Ok(((epoch, anchor_prev, anchor_end, discriminant, raised), ()))
+    }
+}
+
+/// Walk [`LEVELS`](Self::LEVELS) levels of a Merkle path, emitting the subtree
+/// the path reaches.
+///
+/// Each level is a node's children, ordered as the node hashes them, and two
+/// side bits, outer first: the outer bit selects a half and the inner bit
+/// selects within it.
+///
+/// # Soundness
+///
+/// `node` starts threaded, each level's children are pinned to it by the node
+/// hash, and the emitted root is one of the four children of a node reached
+/// that way. Every leaf beneath a subtree of a valid tree is a leaf of that
+/// tree, so the claim survives the descent. A leaf digest absorbs nine
+/// elements and a node four, so a path cannot stop one level short and present
+/// a node as a bucket.
+#[derive(Debug)]
+pub struct EvidenceTreeDescend;
+
+impl EvidenceTreeDescend {
+    /// The levels one descent covers.
+    ///
+    /// A path of `depth` levels takes `⌈depth / LEVELS⌉` descents, so a
+    /// builder pads its tree to a multiple of this. A profile addresses at
+    /// most $\mathsf{MAX\_DEPTH} / 2$ quaternary levels, which is a multiple of
+    /// `LEVELS`, so the deepest reachable tree needs no padding.
+    pub const LEVELS: usize = 4;
+}
+
+const _: () = assert!(
+    QrProfile::MAX_DEPTH.is_multiple_of(2 * EvidenceTreeDescend::LEVELS),
+    "a descent's levels must divide the quaternary levels a profile can address"
+);
+
+impl Step for EvidenceTreeDescend {
+    type Aux<'source> = ();
+    type Left = EvidenceTree;
+    type Output = EvidenceTree;
+    type Right = ();
+    /// `(path)`
+    type Witness<'source> = ([([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY]); Self::LEVELS],);
+
+    const INDEX: Index = Index::new(30);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (path,): Self::Witness<'source>,
+        (epoch, anchor_prev, anchor_end, discriminant, root): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        // TODO: a real circuit must constrain each side bit to a boolean. The
+        // selection below is exact for boolean bits and is the bilinear surface
+        // through the four children otherwise, so free field elements would
+        // reach values that are no child of the node.
+        let mut node = Fp::from(root);
+        for ([outer, inner], children) in path {
+            let [first, second, third, fourth] = children.map(Fp::from);
+            enforce_zero(
+                node - poseidon::evidence_tree_node([first, second, third, fourth]),
+                "EvidenceTreeDescend: children do not hash to the node",
+            )?;
+
+            let outer_side = Fp::from(u64::from(outer));
+            let inner_side = Fp::from(u64::from(inner));
+            let lower = first + inner_side * (second - first);
+            let upper = third + inner_side * (fourth - third);
+            node = lower + outer_side * (upper - lower);
+        }
+
+        Ok((
+            (
+                epoch,
+                anchor_prev,
+                anchor_end,
+                discriminant,
+                EvidenceTreeRoot(node),
+            ),
+            (),
+        ))
+    }
+}
+
+/// Replay the [`QrBucket`] a one-leaf [`EvidenceTree`] holds.
+///
+/// # Soundness
+///
+/// The witnessed profile and contents commitment are pinned jointly to `root`
+/// by the leaf digest. `root` is a leaf digest and not a node: a leaf absorbs
+/// nine elements and a node four, so the two digests never coincide, and a
+/// descent stopped short leaves a node no preimage opens. Preimage resistance
+/// then makes the emitted header one [`QrBucketSeal`](super::qr::QrBucketSeal)
+/// emitted, so this second producer of [`QrBucket`] establishes nothing the
+/// seal did not.
+///
+/// Binding the profile stops this forgery: a real bucket's
+/// contents presented under the tested value's own profile would pass
+/// [`QrUnspentInit`](super::qr::QrUnspentInit)'s fold and open nonzero, proving
+/// exclusion for a value published in a different bucket.
+#[derive(Debug)]
+pub struct EvidenceTreeOpen;
+
+impl Step for EvidenceTreeOpen {
+    type Aux<'source> = ();
+    type Left = EvidenceTree;
+    type Output = QrBucket;
+    type Right = ();
+    /// `(profile, contents)`
+    type Witness<'source> = (QrProfile, TachygramSetCommit);
+
+    const INDEX: Index = Index::new(31);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (profile, contents): Self::Witness<'source>,
+        (epoch, anchor_prev, anchor_end, discriminant, root): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(root)
+                - poseidon::evidence_tree_leaf(
+                    Fp::from(epoch),
+                    Fp::from(anchor_prev),
+                    Fp::from(anchor_end),
+                    Fp::from(discriminant),
+                    Fp::from(u64::from(profile.depth)),
+                    Fp::from(u64::from(profile.bits)),
+                    Eq::from(contents).to_affine(),
+                ),
+            "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
+        )?;
+
+        Ok((
+            (
+                epoch,
+                anchor_prev,
+                anchor_end,
+                discriminant,
+                profile,
+                contents,
+            ),
+            (),
+        ))
+    }
+}

@@ -15,9 +15,9 @@
 //! [`QrEmptyIntakeSeed`] over an epoch with no stamps. [`QrIntakeSplit`]
 //! partitions an intake at its discriminant into [`QrIntakeSides`],
 //! [`QrSideDescend`] carries one side down a level, and [`QrIntakeMerge`]
-//! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] is the
-//! only step that produces a [`QrBucket`], and [`QrUnspentInit`] tests a
-//! value's profile against a bucket and opens the bucket at it.
+//! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] admits a
+//! routed intake as a [`QrBucket`], and [`QrUnspentInit`] tests a value's
+//! profile against a bucket and opens the bucket at it.
 
 extern crate alloc;
 

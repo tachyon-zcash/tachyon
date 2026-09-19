@@ -10,6 +10,7 @@
 extern crate alloc;
 
 pub mod delegation;
+pub mod evidence;
 pub mod output;
 pub mod pool;
 pub mod qr;
@@ -50,6 +51,13 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(qr::QrStampIntakeSeed)?
         .register(spendable::QrSpendableInit)?
         .register(qr::QrEmptyIntakeSeed)?
+        .register(evidence::EvidenceTreeLeaf)?
+        .register(evidence::EvidenceTreePairFuse)?
+        .register(evidence::EvidenceTreeFuse)?
+        .register(evidence::EvidenceTreeCap)?
+        .register(evidence::EvidenceTreeDescend)?
+        .register(evidence::EvidenceTreeOpen)?
+        .register(evidence::EvidenceTreeLeafPair)?
         .finalize()
 }
 

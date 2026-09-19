@@ -11,16 +11,18 @@ use ragu::{Header, Step};
 
 use crate::{
     collections,
+    constants::EVIDENCE_TREE_ARITY,
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, private},
     note::Note,
     nullifier::Nullifier,
     primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant,
-        Tachygram, TachygramSetPoly, effect,
+        ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
+        QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
+        evidence::{EvidenceTreeDescend, EvidenceTreeOpen},
         pool::{AnchorSeed, UnspentBind, UnspentFuse},
         qr::{
             QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
@@ -372,6 +374,32 @@ pub fn qr_unspent_init(
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
         bucket_members.iter().copied().collect(),
     )
+}
+
+/// Prepare the witness for [`EvidenceTreeDescend`]: `(path)`.
+///
+/// `path` runs outermost level first, one `(sides, children)` per level.
+#[must_use]
+pub const fn evidence_tree_descend(
+    (_tree, _right): (
+        StepLeft<EvidenceTreeDescend>,
+        StepRight<EvidenceTreeDescend>,
+    ),
+    path: [([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY]); EvidenceTreeDescend::LEVELS],
+) -> StepWitness<'static, EvidenceTreeDescend> {
+    (path,)
+}
+
+/// Prepare the witness for [`EvidenceTreeOpen`]: `(profile, contents)`.
+///
+/// The pair is the preimage of the leaf the tree has descended to.
+#[must_use]
+pub const fn evidence_tree_open(
+    (_tree, _right): (StepLeft<EvidenceTreeOpen>, StepRight<EvidenceTreeOpen>),
+    profile: QrProfile,
+    contents: TachygramSetCommit,
+) -> StepWitness<'static, EvidenceTreeOpen> {
+    (profile, contents)
 }
 
 /// Prepare the witness for [`OutputStamp`]: `(rcv, alpha, anchor,

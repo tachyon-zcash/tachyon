@@ -13,10 +13,11 @@ use ragu_pasta::PoseidonFp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, BlockHeight, EpochIndex, QrDiscriminant, QrProfile, Tachygram,
-    TachygramSetCommit, TachygramSetPoly,
+    ActionSetPoly, Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile,
+    Tachygram, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     bundle::{self, Bundle},
+    constants::EVIDENCE_TREE_ARITY,
     digest::blake2b,
     effect,
     entropy::{ActionEntropy, ActionRandomizer},
@@ -26,7 +27,7 @@ use zcash_tachyon::{
     stamp::{
         PointerStamp, ProofStamp, StampState,
         proof::{
-            PROOF_SYSTEM, delegation, pool, qr, spendable,
+            PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
             stamp::{Stamp, StampMerge},
             summary,
         },
@@ -840,6 +841,227 @@ pub(crate) fn build_qr_branch<RNG: CryptoRng>(
         layer = merge_qr_run(rng, kept, capacity);
     }
     layer
+}
+
+/// One bucket a [`EvidenceTreeEntry`] holds, with the leaf's preimage and the
+/// path from the tree's root down to it.
+pub(crate) struct EvidenceLeaf {
+    pub profile: QrProfile,
+    pub contents: TachygramSetCommit,
+    pub members: Vec<Tachygram>,
+    pub path: Vec<([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY])>,
+}
+
+/// A tree over sealed buckets, with a path to each of them.
+pub(crate) struct EvidenceTreeEntry {
+    pub pcd: Pcd<evidence::EvidenceTree>,
+    pub leaves: Vec<EvidenceLeaf>,
+}
+
+/// Fold `buckets` into one tree whose uniform depth is a multiple of
+/// [`evidence::EvidenceTreeDescend::LEVELS`], so a chain of descents lands on a
+/// leaf.
+///
+/// Leaves repeat the last bucket up to the depth's width. A duplicate leaf is
+/// a bucket the tree holds twice; no step forbids it.
+///
+/// Buckets are admitted two at a time through
+/// [`evidence::EvidenceTreeLeafPair`]. A lone bucket becomes a one-leaf tree
+/// through [`evidence::EvidenceTreeLeaf`].
+pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
+    rng: &mut RNG,
+    mut buckets: Vec<QrBucketEntry>,
+) -> EvidenceTreeEntry {
+    assert!(!buckets.is_empty(), "a tree holds at least one bucket");
+
+    let mut width = 1;
+    let mut depth = 0;
+    while width < buckets.len() {
+        width *= EVIDENCE_TREE_ARITY;
+        depth += 1;
+    }
+    while buckets.len() < width {
+        let last = buckets.last().expect("nonempty tree");
+        buckets.push(QrBucketEntry {
+            pcd: last.pcd.clone(),
+            members: last.members.clone(),
+        });
+    }
+
+    let held = buckets
+        .iter()
+        .map(|bucket| {
+            let (_epoch, _anchor_prev, _anchor_end, _discriminant, profile, contents) =
+                *bucket.pcd.data();
+            (profile, contents, bucket.members.clone())
+        })
+        .collect::<Vec<_>>();
+
+    if buckets.len() == 1 {
+        let only = buckets.first().expect("one bucket");
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                evidence::EvidenceTreeLeaf,
+                (),
+                only.pcd.clone(),
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("EvidenceTreeLeaf");
+        let (profile, contents, members) = held.into_iter().next().expect("one leaf");
+        return EvidenceTreeEntry {
+            pcd,
+            leaves: vec![EvidenceLeaf {
+                profile,
+                contents,
+                members,
+                path: Vec::new(),
+            }],
+        };
+    }
+
+    let mut pairs = Vec::with_capacity(width / 2);
+    let mut admitted = buckets.into_iter();
+    while let (Some(first), Some(second)) = (admitted.next(), admitted.next()) {
+        let (pair, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                evidence::EvidenceTreeLeafPair,
+                (),
+                first.pcd,
+                second.pcd,
+            )
+            .expect("EvidenceTreeLeafPair");
+        pairs.push(pair);
+    }
+
+    let mut levels = vec![
+        pairs
+            .iter()
+            .flat_map(|pair| [pair.data().4, pair.data().5])
+            .collect::<Vec<_>>(),
+    ];
+    let mut layer = Vec::with_capacity(pairs.len() / 2);
+    let mut halves = pairs.into_iter();
+    while let (Some(left), Some(right)) = (halves.next(), halves.next()) {
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
+            .expect("EvidenceTreeFuse");
+        layer.push(pcd);
+    }
+    levels.push(layer.iter().map(|pcd| pcd.data().4).collect());
+
+    while layer.len() > 1 {
+        let mut parents = Vec::with_capacity(layer.len() / EVIDENCE_TREE_ARITY);
+        let mut children = layer.into_iter();
+        while let (Some(first), Some(second), Some(third), Some(fourth)) = (
+            children.next(),
+            children.next(),
+            children.next(),
+            children.next(),
+        ) {
+            let (left, ()) = PROOF_SYSTEM
+                .fuse(rng, evidence::EvidenceTreePairFuse, (), first, second)
+                .expect("EvidenceTreePairFuse");
+            let (right, ()) = PROOF_SYSTEM
+                .fuse(rng, evidence::EvidenceTreePairFuse, (), third, fourth)
+                .expect("EvidenceTreePairFuse");
+            let (pcd, ()) = PROOF_SYSTEM
+                .fuse(rng, evidence::EvidenceTreeFuse, (), left, right)
+                .expect("EvidenceTreeFuse");
+            parents.push(pcd);
+        }
+        levels.push(parents.iter().map(|pcd| pcd.data().4).collect());
+        layer = parents;
+    }
+
+    let mut root = layer.pop().expect("one root");
+    let mut caps = Vec::new();
+    while (depth + caps.len()) % evidence::EvidenceTreeDescend::LEVELS != 0 {
+        caps.push(root.data().4);
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                evidence::EvidenceTreeCap,
+                (),
+                root,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("EvidenceTreeCap");
+        root = pcd;
+    }
+
+    let leaves = held
+        .into_iter()
+        .enumerate()
+        .map(|(index, (profile, contents, members))| {
+            let mut path: Vec<_> = caps
+                .iter()
+                .rev()
+                .map(|child| ([false, false], [*child; EVIDENCE_TREE_ARITY]))
+                .collect();
+            path.extend((0..depth).rev().map(|level| {
+                let base = EVIDENCE_TREE_ARITY * (index >> (2 * (level + 1)));
+                let digit = (index >> (2 * level)) & 3;
+                (
+                    [digit & 2 != 0, digit & 1 != 0],
+                    [
+                        levels[level][base],
+                        levels[level][base + 1],
+                        levels[level][base + 2],
+                        levels[level][base + 3],
+                    ],
+                )
+            }));
+            EvidenceLeaf {
+                profile,
+                contents,
+                members,
+                path,
+            }
+        })
+        .collect();
+
+    EvidenceTreeEntry { pcd: root, leaves }
+}
+
+/// Descend `tree` along one leaf's path and replay the bucket it holds.
+pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
+    rng: &mut RNG,
+    tree: Pcd<evidence::EvidenceTree>,
+    leaf: &EvidenceLeaf,
+) -> QrBucketEntry {
+    let mut node = tree;
+    for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
+        let path =
+            <[_; evidence::EvidenceTreeDescend::LEVELS]>::try_from(chunk).expect("a full descent");
+        let witness = witness::evidence_tree_descend((*node.data(), ()), path);
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                evidence::EvidenceTreeDescend,
+                witness,
+                node,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("EvidenceTreeDescend");
+        node = pcd;
+    }
+
+    let witness = witness::evidence_tree_open((*node.data(), ()), leaf.profile, leaf.contents);
+    let (pcd, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            evidence::EvidenceTreeOpen,
+            witness,
+            node,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("EvidenceTreeOpen");
+    QrBucketEntry {
+        pcd,
+        members: leaf.members.clone(),
+    }
 }
 
 /// The profile a value takes at `depth` levels of the progression from

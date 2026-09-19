@@ -15,6 +15,8 @@ use ragu_core::{
 use ragu_pasta::{Pasta, PoseidonFp};
 use ragu_primitives::{Element, poseidon::Sponge};
 
+use crate::constants::EVIDENCE_TREE_ARITY;
+
 /// The wireless emulator that evaluates the real in-circuit sponge natively:
 /// witness values are always present and no wires are tracked, so absorb and
 /// squeeze compute field values without building constraints.
@@ -190,6 +192,49 @@ pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
         tgs_lo,
         tgs_hi,
     ])
+}
+
+const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
+
+/// Digests a sealed bucket into the leaf of a evidence tree.
+///
+/// # Panics
+///
+/// Panics if `contents` is the identity point.
+#[must_use]
+pub fn evidence_tree_leaf(
+    epoch: Fp,
+    anchor_prev: Fp,
+    anchor_end: Fp,
+    discriminant: Fp,
+    depth: Fp,
+    bits: Fp,
+    contents: EqAffine,
+) -> Fp {
+    let (contents_lo, contents_hi) = point_limbs(contents);
+    hash::<9>([
+        Fp::from_u128(u128::from_le_bytes(*QR_BUCKET_DOMAIN)),
+        epoch,
+        anchor_prev,
+        anchor_end,
+        discriminant,
+        depth,
+        bits,
+        contents_lo,
+        contents_hi,
+    ])
+}
+
+/// Folds four subtree roots into their parent node of a evidence tree.
+///
+/// The children fill the sponge rate exactly, so the node takes no domain
+/// constant. Separation from [`evidence_tree_leaf`] is by absorbed length: a
+/// leaf absorbs nine elements and a node four, and absorption carries no length
+/// encoding, so a node must always absorb all four children. A tree short of a
+/// full level pads by repeating a child, never by omitting one.
+#[must_use]
+pub fn evidence_tree_node(children: [Fp; EVIDENCE_TREE_ARITY]) -> Fp {
+    hash::<EVIDENCE_TREE_ARITY>(children)
 }
 
 const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";

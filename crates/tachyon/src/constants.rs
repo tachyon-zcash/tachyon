@@ -21,3 +21,6 @@ pub const EPOCH_SIZE: u32 = if cfg!(feature = "test-epoch-size") {
     reason = "the trailing epoch is partial; flooring is the intended index"
 )]
 pub const EPOCH_MAX: u32 = BLOCK_MAX / EPOCH_SIZE;
+
+/// Children of one node of the evidence tree.
+pub const EVIDENCE_TREE_ARITY: usize = 4;

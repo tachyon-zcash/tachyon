@@ -39,6 +39,7 @@ A segment's `elapsed` holds one member per epoch in `[epoch_start, epoch_end)`: 
 `UnspentFuse` composes two segments meeting at an entry anchor and concatenates their `elapsed` histories.
 An epoch that published nothing seals an empty bucket, so its segment is as cheap as any other.
 `QrSpendableInit` starts a wallet's spendable from the bucket holding its note's creation, over the note's own QR segment for that epoch.
+A builder that keeps an epoch's buckets folds them into one `EvidenceTree` and retains a single proof for its root, replaying a bucket on demand from a quaternary Merkle path (`EvidenceTreeLeaf`, `EvidenceTreeLeafPair`, `EvidenceTreePairFuse`, `EvidenceTreeFuse`, `EvidenceTreeCap`, `EvidenceTreeDescend`, `EvidenceTreeOpen`).
 The evidence is note-independent and rebuildable from public data alone.
 
 `UnspentBind` is wallet-side. It consumes the sync-built `ArbitraryUnspent` and a `NoteNullifiers`, and divides `elapsed` out of the derivation's sequence, so every factor of `elapsed` is a genuine nullifier of the note at its own epoch.
@@ -84,7 +85,7 @@ The wallet runs every step that touches the note's commitment or master key.
 It derives its nullifier windows (`NoteSeed`, `NullifierDerive`, `NullifierFuse`), derives spendable status from its own derivation (`SpendableInit`, `QrSpendableInit`), binds and lifts over sync-built segments (`UnspentBind`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `SpendStamp`, `OutputBind`, `OutputStamp`).
 
 The sync service holds the per-epoch nullifier values the wallet shared and pool history.
-It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket, `UnspentFuse` across epochs), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
+It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), folds the sealed buckets into one tree and opens it per query (`EvidenceTreeLeaf`, `EvidenceTreeLeafPair`, `EvidenceTreePairFuse`, `EvidenceTreeFuse`, `EvidenceTreeCap`, `EvidenceTreeDescend`, `EvidenceTreeOpen`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket, `UnspentFuse` across epochs), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
 
 The aggregator works only with published `Stamp`s.
 It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `AnchorFuse`) and fuses with `StampMerge`.
@@ -101,6 +102,13 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `A
 | QrIntakeMerge | possible | yes | no |
 | QrIntakeSplit | possible | yes | no |
 | QrBucketSeal | possible | yes | no |
+| EvidenceTreeLeaf | possible | yes | no |
+| EvidenceTreeLeafPair | possible | yes | no |
+| EvidenceTreePairFuse | possible | yes | no |
+| EvidenceTreeFuse | possible | yes | no |
+| EvidenceTreeCap | possible | yes | no |
+| EvidenceTreeDescend | possible | yes | no |
+| EvidenceTreeOpen | possible | yes | no |
 | QrSideDescend | possible | yes | no |
 | QrUnspentInit | possible | yes | no |
 | UnspentFuse | possible | yes | no |
@@ -181,7 +189,7 @@ $$\mathsf{anchor\_prev} = H_\mathsf{ep}(\mathsf{anchor\_final\_prev}, \mathsf{ep
 Epoch zero's entry anchor is the first rule at $\mathsf{anchor\_final\_prev} = 0$. The bucket carries $\mathsf{anchor\_end}'$.
 It checks nothing about the discriminant. That is the builder's own $R_0$; every step threads it unchanged and every merge requires it equal.
 The crossing is what makes the bucket's whole-epoch claim true. In the accepted chain, the only anchor of epoch-link form absorbing $\mathsf{epoch} + 1$ is the one folded from $\mathsf{final}(\mathsf{epoch})$. An intake sealed short folds to a value nobody published, and by preimage resistance no fold downstream of it rejoins the chain, so its bucket never reaches a consensus-checked spend.
-`QrBucketSeal` is the only step that produces a `QrBucket`, and `QrUnspentInit` consumes nothing else.
+The seal admits every bucket; `EvidenceTreeOpen` only replays one a tree already holds.
 
 `QrUnspentInit` witnesses a nonzero value $x$, a side $b_j$ and root $r_j$ at each of the 32 positions, a mask $m_j$, the sequence naming $x$, and the bucket's contents.
 With $s_j = x + R_0 + j$ and $c$ the non-residue,
@@ -201,6 +209,35 @@ The sequence's one member is checked at a challenge absorbing $G_0 \cdot x$; the
 `QrSpendableInit` bootstraps a spendable from the bucket holding the note's creation.
 Its left input is the note's `NoteUnspent` over that epoch, the QR segment bound by `UnspentBind`, so `cm` and the whole-epoch absence of the nullifier arrive on the header; the step opens the bucket at $\mathsf{cm}$ for zero, requires the segment's extent to equal the bucket's, and emits the spendable at the segment's `anchor_end`. That anchor is the next epoch's entry anchor.
 Membership needs no profile: every bucket divides the epoch's stamp polynomials, so a root of any bucket is a tachygram published in its span, and the span equality closes the bucket's anchors through the lineage the segment already joins.
+
+### Evidence trees
+
+A bucket is complete evidence on its own, so a builder needs every bucket's proof only until it has something that vouches for them all at once.
+`EvidenceTreeLeaf` admits one sealed bucket as a one-leaf `EvidenceTree`, hashing the whole bucket header into a leaf digest,
+
+$$\mathsf{root} = H_\mathsf{bkt}(e, \mathsf{anchor_{prev}}, \mathsf{anchor_{end}}, R_0, \mathsf{depth}, \mathsf{bits}, \mathsf{contents}).$$
+
+`EvidenceTreeLeafPair` admits two buckets at once, as two leaf digests under one half-assembled node.
+
+A node has four children, so it fills the sponge rate and takes no domain constant of its own.
+Four children reach one hash through two steps, since a step takes at most two predecessor proofs: `EvidenceTreePairFuse` carries two trees into a half-assembled node, and `EvidenceTreeFuse` hashes two of those halves,
+
+$$\mathsf{root} = H(\ell_0, \ell_1, r_0, r_1).$$
+
+Both require their inputs to agree on `epoch`, `anchor_prev`, `anchor_end` and `discriminant`.
+Those four are checked equal because a consumer reads the extent off the tree: a tree spanning further than its leaves do would let a bucket's exclusion cover folds the bucket never held.
+Every bucket of one network shares all four.
+`EvidenceTreeCap` raises a root by repeating it into all four slots. A builder runs it until the depth is a multiple of the levels one descent covers.
+The builder keeps the buckets' polynomials, the tree, and one proof for the root, and drops the per-bucket proofs.
+
+A query walks back down. `EvidenceTreeDescend` witnesses one node's four children per level, checks they hash to the node it holds, and selects among them on two side bits; the levels per step are fixed, so a deeper tree takes a longer chain of descents.
+`EvidenceTreeOpen` then witnesses the leaf's preimage, checks the leaf digest against the root it has reached, and emits the `QrBucket` the leaf stands for. `QrUnspentInit` and `QrSpendableInit` consume it unchanged.
+Binding the profile into the leaf is what makes the replay safe: a real bucket's contents presented under the tested value's own profile would pass the fold and open nonzero, proving exclusion for a value published in a different bucket.
+A leaf absorbs nine elements and a node four, so no path can stop one level short and present a node as a bucket.
+
+The tree claims nothing about which buckets it holds, and nothing asks it to.
+A tree over one bucket is as valid as a tree over a whole network; a builder that omits a bucket can only fail to answer for it, never answer wrongly, since the bucket it does serve carries its own whole-epoch claim.
+Two builders, or one builder at two times, may therefore publish different trees for one epoch.
 
 ### Derivation window
 
@@ -408,6 +445,8 @@ flowchart LR
 | QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile, contents) |
 | QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue) |
 | QrBucket | (epoch, anchor_prev, anchor_end, discriminant, profile, contents) |
+| EvidenceTree | (epoch, anchor_prev, anchor_end, discriminant, root) |
+| EvidenceTreePair | (epoch, anchor_prev, anchor_end, discriminant, first, second) |
 | ArbitraryUnspent | (anchor_prev, epoch_start, elapsed, epoch_end, anchor_end) |
 | NoteUnspent | (cm, anchor_prev, epoch_start, epoch_end, anchor_end) |
 | NoteMaster | (cm, note, mk) |
@@ -434,6 +473,13 @@ flowchart LR
 | QrSideDescend | QrIntakeSides | — | bit, sibling_contents, interpolant, quotient | QrIntake |
 | QrBucketSeal | QrIntake | — | anchor_final_prev | QrBucket |
 | QrUnspentInit | QrBucket | — | value, classes, mask, sequence, contents | ArbitraryUnspent |
+| EvidenceTreeLeaf | QrBucket | — | — | EvidenceTree |
+| EvidenceTreeLeafPair | QrBucket | QrBucket | — | EvidenceTreePair |
+| EvidenceTreePairFuse | EvidenceTree | EvidenceTree | — | EvidenceTreePair |
+| EvidenceTreeFuse | EvidenceTreePair | EvidenceTreePair | — | EvidenceTree |
+| EvidenceTreeCap | EvidenceTree | — | — | EvidenceTree |
+| EvidenceTreeDescend | EvidenceTree | — | path | EvidenceTree |
+| EvidenceTreeOpen | EvidenceTree | — | profile, contents | QrBucket |
 | UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | ArbitraryUnspent |
 | UnspentBind | ArbitraryUnspent | NoteNullifiers | elapsed_seq, nf_seq, complement_seq | NoteUnspent |
 | NoteSeed | — | — | value, psi, rcm, pak | NoteMaster |

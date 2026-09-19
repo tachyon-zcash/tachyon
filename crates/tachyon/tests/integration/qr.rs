@@ -52,7 +52,7 @@ fn fuse_unspent_init(
 }
 
 /// The message of an `InvalidWitness` error.
-fn invalid_witness(err: ragu_core::Error) -> String {
+pub(crate) fn invalid_witness(err: ragu_core::Error) -> String {
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -61,7 +61,7 @@ fn invalid_witness(err: ragu_core::Error) -> String {
 
 /// Four blocks of epoch zero, two actions of three tachygrams each; with the
 /// final anchor.
-fn small_epoch(rng: &mut StdRng) -> (PoolSim, Anchor) {
+pub(crate) fn small_epoch(rng: &mut StdRng) -> (PoolSim, Anchor) {
     let mut pool = PoolSim::genesis_with(random_block(rng, 2, 3));
     for _ in 0..3 {
         pool.mine(random_block(rng, 2, 3));
@@ -73,10 +73,10 @@ fn small_epoch(rng: &mut StdRng) -> (PoolSim, Anchor) {
 /// The members an epoch holds in the pools these tests build: one tachygram
 /// per stamp and one stamp per block, so the whole epoch fits one polynomial
 /// and its partition reaches a bucket spanning it.
-const EPOCH_MEMBERS: usize = EPOCH_SIZE as usize;
+pub(crate) const EPOCH_MEMBERS: usize = EPOCH_SIZE as usize;
 
 /// [`qr_bucket_at`] with a freshly sampled first discriminant.
-fn qr_bucket_for(
+pub(crate) fn qr_bucket_for(
     rng: &mut StdRng,
     pool: &PoolSim,
     span: (Anchor, Anchor),
@@ -102,7 +102,7 @@ fn qr_bucket_for(
 /// `(start, final_anchor)`, routed at `discriminant` and sealed on
 /// `anchor_final_prev`.
 #[expect(clippy::too_many_arguments, reason = "a fixture assembling one bucket")]
-fn qr_bucket_at(
+pub(crate) fn qr_bucket_at(
     rng: &mut StdRng,
     pool: &PoolSim,
     (start, final_anchor): (Anchor, Anchor),
@@ -130,7 +130,7 @@ fn qr_bucket_at(
 
 /// The note's QR segment across a bucket's epoch and out over the crossing,
 /// bound to the note.
-fn qr_epoch_unspent(
+pub(crate) fn qr_epoch_unspent(
     rng: &mut StdRng,
     user: &WalletSim,
     note: &Note,
