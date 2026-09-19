@@ -41,7 +41,7 @@ impl Header for NoteMaster {
     /// `(cm, mk)`.
     type Data = (note::Commitment, NoteMasterKey);
 
-    const SUFFIX: Suffix = Suffix::new(13);
+    const SUFFIX: Suffix = Suffix::new(9);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, mk) = *data;
@@ -72,7 +72,7 @@ impl Header for NoteNullifiers {
     /// `(cm, epoch_first, nf_commit, epoch_last)`. `epoch_last` is inclusive.
     type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
 
-    const SUFFIX: Suffix = Suffix::new(3);
+    const SUFFIX: Suffix = Suffix::new(0);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, epoch_first, nf_commit, epoch_last) = *data;

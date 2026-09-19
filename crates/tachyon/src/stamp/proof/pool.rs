@@ -76,7 +76,7 @@ impl Header for AnchorChain {
     /// `anchor_first.next_stamp(epoch, ...)`.
     type Data = (Anchor, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(5);
+    const SUFFIX: Suffix = Suffix::new(1);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         (
@@ -128,7 +128,7 @@ impl Header for ArbitraryUnspent {
         Anchor,
     );
 
-    const SUFFIX: Suffix = Suffix::new(6);
+    const SUFFIX: Suffix = Suffix::new(2);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (anchor_prev, (epoch_first, nf_first), elapsed, (epoch_last, nf_last), anchor_last) =
@@ -167,7 +167,7 @@ impl Header for NoteUnspent {
         Anchor,
     );
 
-    const SUFFIX: Suffix = Suffix::new(8);
+    const SUFFIX: Suffix = Suffix::new(4);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, anchor_prev, (epoch_first, nf_first), (epoch_last, nf_last), anchor_last) = *data;

@@ -2,6 +2,11 @@
 //!
 //! Registers all PCD step types and provides accumulator helpers for
 //! stamp construction and verification.
+//!
+//! `Step::INDEX` runs from zero without gaps, and [`make_app`] registers the
+//! steps in that order; `ApplicationBuilder` rejects any other sequence.
+//! `Header::SUFFIX` runs from zero without gaps too. Adding or removing
+//! either renumbers the tail.
 
 extern crate alloc;
 

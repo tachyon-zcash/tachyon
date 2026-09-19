@@ -41,7 +41,7 @@ impl Header for NoteSpendable {
     /// point with a [`NoteUnspent`] segment's near end.
     type Data = (note::Commitment, (EpochIndex, Nullifier), Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(7);
+    const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, (epoch_current, nf_current), anchor) = *data;

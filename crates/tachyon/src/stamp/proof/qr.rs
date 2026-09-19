@@ -60,7 +60,7 @@ impl Header for QrIntake {
         TachygramSetCommit,
     );
 
-    const SUFFIX: Suffix = Suffix::new(9);
+    const SUFFIX: Suffix = Suffix::new(5);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_last, discriminant, profile, contents) = *data;
@@ -100,7 +100,7 @@ impl Header for QrIntakeSides {
         TachygramSetCommit,
     );
 
-    const SUFFIX: Suffix = Suffix::new(15);
+    const SUFFIX: Suffix = Suffix::new(11);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_last, discriminant, profile, non_residue, residue) = *data;
@@ -490,7 +490,7 @@ impl Header for QrBucket {
         TachygramSetCommit,
     );
 
-    const SUFFIX: Suffix = Suffix::new(18);
+    const SUFFIX: Suffix = Suffix::new(12);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_last, discriminant, profile, contents) = *data;
