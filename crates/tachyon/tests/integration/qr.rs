@@ -11,8 +11,8 @@ use pasta_curves::Fp;
 use ragu::{Pcd, Proof, Step};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
-    TachygramSetPoly,
+    Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, QrTreeFork,
+    QrTreeRoot, Tachygram, TachygramSetCommit, TachygramSetPoly,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     note::Note,
     nullifier::Nullifier,
@@ -25,9 +25,10 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_qr_branch, build_qr_partition,
-    build_summary_pcd, build_unspent_pcd_between_anchors, qr_discriminant, qr_profile_of,
-    random_block, seal_qr_intake, seed_qr_stamp_intake, shared_sk, split_qr_intake,
+    PoolSim, QrBucketEntry, QrBucketLeaf, QrIntakeEntry, WalletSim, build_qr_branch,
+    build_qr_bucket_tree, build_qr_partition, build_summary_pcd, build_unspent_pcd_between_anchors,
+    open_qr_bucket_tree, qr_discriminant, qr_profile_of, random_block, seal_qr_intake,
+    seed_qr_stamp_intake, shared_sk, split_qr_intake,
 };
 
 /// The witness of [`qr::QrUnspentInit`].
@@ -2695,4 +2696,479 @@ fn qr_partition_routes_consecutive_values_by_profile() {
     let mut expected = members;
     expected.sort_by_key(|member| Fp::from(*member).to_repr());
     assert_eq!(routed, expected, "every value reaches exactly one leaf");
+}
+
+/// One sealed bucket as a one-leaf [`qr::QrBucketTree`].
+fn tree_of(rng: &mut StdRng, bucket: QrBucketEntry) -> Pcd<qr::QrBucketTree> {
+    let (pcd, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrBucketTreeInit,
+            (),
+            bucket.pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("QrBucketTreeInit");
+    pcd
+}
+
+/// Join two trees under a fresh node.
+fn fuse_trees(
+    rng: &mut StdRng,
+    left: Pcd<qr::QrBucketTree>,
+    right: Pcd<qr::QrBucketTree>,
+) -> ragu_core::Result<Pcd<qr::QrBucketTree>> {
+    PROOF_SYSTEM
+        .fuse(rng, qr::QrBucketTreeFuse, (), left, right)
+        .map(|(tree, ())| tree)
+}
+
+/// Descend `tree` along one leaf's path, stopping on the leaf itself.
+fn descend_to_leaf(
+    rng: &mut StdRng,
+    tree: Pcd<qr::QrBucketTree>,
+    leaf: &QrBucketLeaf,
+) -> Pcd<qr::QrBucketTree> {
+    let mut node = tree;
+    for chunk in leaf.path.chunks(QrTreeFork::LEVELS) {
+        let path = <[QrTreeFork; QrTreeFork::LEVELS]>::try_from(chunk).expect("a full descent");
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrBucketTreeDescend,
+                witness::qr_bucket_tree_descend((*node.data(), ()), path),
+                node,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("QrBucketTreeDescend");
+        node = pcd;
+    }
+    node
+}
+
+/// Replay one leaf of `tree` under a witnessed preimage, whatever the tree
+/// actually holds there.
+fn open_leaf(
+    rng: &mut StdRng,
+    tree: Pcd<qr::QrBucketTree>,
+    leaf: &QrBucketLeaf,
+    profile: QrProfile,
+    contents: TachygramSetCommit,
+) -> ragu_core::Result<Pcd<qr::QrBucket>> {
+    let node = descend_to_leaf(rng, tree, leaf);
+    PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrBucketTreeOpen,
+            witness::qr_bucket_tree_open((*node.data(), ()), profile, contents),
+            node,
+            Proof::trivial().carry::<()>(()),
+        )
+        .map(|(bucket, ())| bucket)
+}
+
+#[test]
+fn qr_bucket_tree_replays_the_bucket_each_leaf_holds() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, terminal) = small_epoch(rng);
+    let discriminant = qr_discriminant(rng);
+
+    let routed = build_qr_partition(
+        rng,
+        &pool,
+        (Anchor::default(), terminal),
+        discriminant,
+        24,
+        2,
+    );
+    assert_eq!(routed.len(), 4, "two layers leave one intake per profile");
+    let sealed = routed
+        .into_iter()
+        .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
+        .collect::<Vec<_>>();
+    let expected = sealed
+        .iter()
+        .map(|bucket| *bucket.pcd.data())
+        .collect::<Vec<_>>();
+
+    let tree = build_qr_bucket_tree(rng, sealed);
+    let (epoch, anchor_prev, anchor_last, root_discriminant, _) = *tree.pcd.data();
+    assert_eq!(
+        (epoch, anchor_prev, anchor_last, root_discriminant),
+        (
+            EpochIndex::new(0),
+            Anchor::default(),
+            terminal,
+            discriminant
+        ),
+        "the root carries the network every leaf belongs to"
+    );
+
+    for (leaf, bucket) in tree.leaves.iter().zip(&expected) {
+        let replayed = open_qr_bucket_tree(rng, tree.pcd.clone(), leaf);
+        assert_eq!(
+            *replayed.pcd.data(),
+            *bucket,
+            "the leaf replays its bucket field for field"
+        );
+    }
+}
+
+/// The tree is transparent to everything downstream: a replayed bucket starts
+/// the same segment the sealed one does, and the wallet binds it.
+#[test]
+fn a_replayed_bucket_starts_a_segment_that_binds_to_the_note() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let epoch0 = EpochIndex::new(0);
+    let epoch1 = epoch0.next().unwrap();
+    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
+    pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
+
+    let bucket = qr_bucket_for(
+        rng,
+        &pool,
+        (Anchor::default(), pool.block(epoch0.last_block()).anchor()),
+        EPOCH_MEMBERS,
+        2,
+        Fp::from(user.nf_at(&note, epoch0)),
+        Anchor::from(Fp::ZERO),
+    );
+    let sealed = *bucket.pcd.data();
+    let direct = qr_epoch_unspent(rng, &user, &note, &bucket);
+
+    let tree = build_qr_bucket_tree(rng, vec![bucket]);
+    let leaf = tree.leaves.first().expect("one leaf");
+    let replayed = open_qr_bucket_tree(rng, tree.pcd.clone(), leaf);
+    assert_eq!(*replayed.pcd.data(), sealed);
+
+    let bound = qr_epoch_unspent(rng, &user, &note, &replayed);
+    assert_eq!(
+        *bound.data(),
+        *direct.data(),
+        "the segment is the one the sealed bucket starts"
+    );
+    let (cm, _, (epoch_first, _), (epoch_last, _), _) = *bound.data();
+    assert_eq!(cm, note.commitment());
+    assert_eq!((epoch_first, epoch_last), (epoch0, epoch1));
+}
+
+#[test]
+fn qr_bucket_tree_fuse_rejects_a_bucket_of_another_epoch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch0 = EpochIndex::new(0);
+    let epoch1 = epoch0.next().unwrap();
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+    pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
+    let terminal0 = pool.block(epoch0.last_block()).anchor();
+    let terminal1 = pool.block(epoch1.last_block()).anchor();
+    let value = Fp::random(&mut *rng);
+
+    let first = qr_bucket_for(
+        rng,
+        &pool,
+        (Anchor::default(), terminal0),
+        EPOCH_MEMBERS,
+        0,
+        value,
+        Anchor::from(Fp::ZERO),
+    );
+    let second = qr_bucket_for(
+        rng,
+        &pool,
+        (
+            terminal0.next_epoch(epoch1).expect("epoch one is nonzero"),
+            terminal1,
+        ),
+        EPOCH_MEMBERS,
+        0,
+        value,
+        terminal0,
+    );
+
+    let (left, right) = (tree_of(rng, first), tree_of(rng, second));
+    assert_eq!(
+        invalid_witness(fuse_trees(rng, left, right).err().unwrap()),
+        "QrBucketTreeFuse: inputs cover different epochs"
+    );
+}
+
+/// Two routing networks over one epoch are two trees. Their buckets share
+/// every field but the base they classified at, which the fuse separates.
+#[test]
+fn qr_bucket_tree_fuse_rejects_a_bucket_of_another_network() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, terminal) = small_epoch(rng);
+    let value = Fp::random(&mut *rng);
+    let span = (Anchor::default(), terminal);
+
+    let first = qr_bucket_for(
+        rng,
+        &pool,
+        span,
+        EPOCH_MEMBERS,
+        0,
+        value,
+        Anchor::from(Fp::ZERO),
+    );
+    let second = qr_bucket_for(
+        rng,
+        &pool,
+        span,
+        EPOCH_MEMBERS,
+        0,
+        value,
+        Anchor::from(Fp::ZERO),
+    );
+    assert_ne!(
+        first.pcd.data().3,
+        second.pcd.data().3,
+        "the two networks sampled different bases"
+    );
+
+    let (left, right) = (tree_of(rng, first), tree_of(rng, second));
+    assert_eq!(
+        invalid_witness(fuse_trees(rng, left, right).err().unwrap()),
+        "QrBucketTreeFuse: inputs derive from different discriminants"
+    );
+}
+
+/// Chaining is not fusing. A bucket over a prefix of the epoch shares its
+/// opening anchor and nothing else, and the tree refuses to span both.
+#[test]
+fn qr_bucket_tree_fuse_rejects_an_extent_that_closes_elsewhere() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, terminal) = small_epoch(rng);
+    let discriminant = qr_discriminant(rng);
+    let value = Fp::random(&mut *rng);
+
+    let whole = qr_bucket_at(
+        rng,
+        &pool,
+        (Anchor::default(), terminal),
+        discriminant,
+        EPOCH_MEMBERS,
+        0,
+        value,
+        Anchor::from(Fp::ZERO),
+    );
+    let short = qr_bucket_at(
+        rng,
+        &pool,
+        (Anchor::default(), pool.block(BlockHeight(1)).anchor()),
+        discriminant,
+        EPOCH_MEMBERS,
+        0,
+        value,
+        Anchor::from(Fp::ZERO),
+    );
+
+    let (left, right) = (tree_of(rng, whole), tree_of(rng, short));
+    assert_eq!(
+        invalid_witness(fuse_trees(rng, left, right).err().unwrap()),
+        "QrBucketTreeFuse: inputs close at different anchors"
+    );
+}
+
+#[test]
+fn qr_bucket_tree_fuse_rejects_an_extent_that_opens_elsewhere() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch0 = EpochIndex::new(0);
+    let epoch1 = epoch0.next().unwrap();
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+    pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
+    let terminal0 = pool.block(epoch0.last_block()).anchor();
+    let terminal1 = pool.block(epoch1.last_block()).anchor();
+    let discriminant = qr_discriminant(rng);
+    let value = Fp::random(&mut *rng);
+
+    let genuine = qr_bucket_at(
+        rng,
+        &pool,
+        (
+            terminal0.next_epoch(epoch1).expect("epoch one is nonzero"),
+            terminal1,
+        ),
+        discriminant,
+        EPOCH_MEMBERS,
+        0,
+        value,
+        terminal0,
+    );
+
+    // An invented preceding anchor gives an epoch-one opening the chain never
+    // produced; the seal takes it, since the opening matches its witness.
+    let fake_anchor_prev_prev = Anchor::from(Fp::ONE);
+    let fake_prev = fake_anchor_prev_prev
+        .next_epoch(epoch1)
+        .expect("epoch one is nonzero");
+    let members = [Tachygram::from(Fp::random(&mut *rng))];
+    let (intake, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            qr::QrStampIntakeSeed,
+            witness::qr_stamp_intake_seed(((), ()), fake_prev, epoch1, discriminant, &members),
+        )
+        .expect("QrStampIntakeSeed");
+    let elsewhere = seal_qr_intake(
+        rng,
+        QrIntakeEntry {
+            pcd: intake,
+            members: members.to_vec(),
+        },
+        fake_anchor_prev_prev,
+    );
+
+    let (left, right) = (tree_of(rng, genuine), tree_of(rng, elsewhere));
+    assert_eq!(
+        invalid_witness(fuse_trees(rng, left, right).err().unwrap()),
+        "QrBucketTreeFuse: inputs open at different anchors"
+    );
+}
+
+/// The leaf binds the profile alongside the contents, so a real bucket cannot
+/// be replayed under another profile. That is the forgery the binding exists
+/// for: under the tested value's own profile the class fold would pass and the
+/// opening would find nothing.
+#[test]
+fn qr_bucket_tree_open_rejects_a_forged_leaf() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, terminal) = small_epoch(rng);
+    let discriminant = qr_discriminant(rng);
+
+    let routed = build_qr_partition(
+        rng,
+        &pool,
+        (Anchor::default(), terminal),
+        discriminant,
+        24,
+        2,
+    );
+    let sealed = routed
+        .into_iter()
+        .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
+        .collect::<Vec<_>>();
+    let other_contents = sealed.get(1).expect("a second bucket").pcd.data().5;
+
+    let tree = build_qr_bucket_tree(rng, sealed);
+    let leaf = tree.leaves.first().expect("one leaf");
+    let QrProfile { depth, bits } = leaf.profile;
+
+    let forgeries = [
+        (
+            QrProfile {
+                depth: depth + 1,
+                bits,
+            },
+            leaf.contents,
+        ),
+        (
+            QrProfile {
+                depth,
+                bits: bits ^ 1,
+            },
+            leaf.contents,
+        ),
+        (leaf.profile, other_contents),
+    ];
+    for (profile, contents) in forgeries {
+        let err = open_leaf(rng, tree.pcd.clone(), leaf, profile, contents)
+            .err()
+            .unwrap();
+        assert_eq!(
+            invalid_witness(err),
+            "QrBucketTreeOpen: witnessed bucket is not the tree's leaf"
+        );
+    }
+
+    open_leaf(rng, tree.pcd.clone(), leaf, leaf.profile, leaf.contents)
+        .expect("the genuine preimage opens");
+}
+
+#[test]
+fn qr_bucket_tree_descend_rejects_children_that_miss_the_node() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, terminal) = small_epoch(rng);
+    let discriminant = qr_discriminant(rng);
+
+    let routed = build_qr_partition(
+        rng,
+        &pool,
+        (Anchor::default(), terminal),
+        discriminant,
+        24,
+        2,
+    );
+    let sealed = routed
+        .into_iter()
+        .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
+        .collect::<Vec<_>>();
+    let tree = build_qr_bucket_tree(rng, sealed);
+    let leaf = tree.leaves.first().expect("one leaf");
+
+    let mut path = <[QrTreeFork; QrTreeFork::LEVELS]>::try_from(
+        leaf.path.get(..QrTreeFork::LEVELS).expect("a full descent"),
+    )
+    .expect("a full descent");
+    let QrTreeFork(side, left_child, right_child) = path[0];
+    path[0] = QrTreeFork(
+        side,
+        left_child,
+        QrTreeRoot(Fp::from(right_child) + Fp::ONE),
+    );
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrBucketTreeDescend,
+            witness::qr_bucket_tree_descend((*tree.pcd.data(), ()), path),
+            tree.pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .err()
+        .unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrBucketTreeDescend: children do not hash to the node"
+    );
+}
+
+/// A node is not a leaf. Stopping a descent one level short leaves an interior
+/// node on the header, and the leaf domain refuses to match it.
+#[test]
+fn qr_bucket_tree_open_rejects_a_node_presented_as_a_leaf() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, terminal) = small_epoch(rng);
+    let discriminant = qr_discriminant(rng);
+
+    let routed = build_qr_partition(
+        rng,
+        &pool,
+        (Anchor::default(), terminal),
+        discriminant,
+        24,
+        2,
+    );
+    let sealed = routed
+        .into_iter()
+        .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
+        .collect::<Vec<_>>();
+    let tree = build_qr_bucket_tree(rng, sealed);
+    let leaf = tree.leaves.first().expect("one leaf");
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrBucketTreeOpen,
+            witness::qr_bucket_tree_open((*tree.pcd.data(), ()), leaf.profile, leaf.contents),
+            tree.pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .err()
+        .unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrBucketTreeOpen: witnessed bucket is not the tree's leaf"
+    );
 }

@@ -68,6 +68,8 @@ These are all Tachyon-specific digests, performed in-circuit.
 | Payment key derivation | `Tachyon-PkDerive` |
 | Anchor stamp step | `Tachyon-AnchorSt` |
 | Anchor epoch step | `Tachyon-AnchorEp` |
+| QR bucket tree leaf | `Tachyon-QrBucket` |
+| QR bucket tree node | `Tachyon-QrTreeNd` |
 
 ## Hash-to-curve
 

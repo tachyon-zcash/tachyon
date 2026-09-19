@@ -15,15 +15,22 @@
 //! [`QrStampIntakeSeed`] from one unsummarized stamp. [`QrIntakeSplit`]
 //! partitions an intake at its discriminant into [`QrIntakeSides`],
 //! [`QrSideDescend`] carries one side down a level, and [`QrIntakeMerge`]
-//! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] is the
-//! only step that produces a [`QrBucket`], and [`QrUnspentInit`] tests a
-//! value's profile against a bucket and opens the bucket at it.
+//! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] admits a
+//! routed intake as a [`QrBucket`], and [`QrUnspentInit`] tests a value's
+//! profile against a bucket and opens the bucket at it.
+//!
+//! A builder that keeps a network's buckets folds them into one
+//! [`QrBucketTree`] and retains a single proof for its root:
+//! [`QrBucketTreeInit`] admits one bucket, [`QrBucketTreeFuse`] joins two
+//! trees of one network, [`QrBucketTreeDescend`] walks a path down to a
+//! subtree, and [`QrBucketTreeOpen`] replays the bucket a leaf holds.
 
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
 use ff::Field as _;
+use group::Curve as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
@@ -35,7 +42,7 @@ use crate::{
     nullifier::Nullifier,
     primitives::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
-        QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
+        QrQuotientPoly, QrTreeFork, QrTreeRoot, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::enforce_poly_product,
@@ -766,6 +773,255 @@ impl Step for QrUnspentInit {
                 sequence_commit,
                 (epoch_next, nf_next),
                 anchor_last,
+            ),
+            (),
+        ))
+    }
+}
+
+/// A Poseidon Merkle root over one network's sealed buckets.
+///
+/// Every leaf under `root` is the [`poseidon::qr_bucket_digest`] of a bucket
+/// whose own `(epoch, anchor_prev, anchor_last, discriminant)` are the four
+/// this header carries. A one-leaf tree's root is that leaf's digest.
+///
+/// The tree claims nothing about which buckets it holds. A tree over one
+/// bucket is as valid as a tree over a whole network, and a builder that omits
+/// a bucket can only fail to answer for it. A bucket's own exclusion claim is
+/// whole-epoch without the tree, so completeness has nothing to add.
+#[derive(Clone, Debug)]
+pub struct QrBucketTree;
+
+impl Header for QrBucketTree {
+    /// `(epoch, anchor_prev, anchor_last, discriminant, root)`.
+    type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, QrTreeRoot);
+
+    const SUFFIX: Suffix = Suffix::new(12);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (epoch, anchor_prev, anchor_last, discriminant, root) = *data;
+        (
+            vec![
+                Fp::from(epoch),
+                Fp::from(anchor_prev),
+                Fp::from(anchor_last),
+                Fp::from(discriminant),
+                Fp::from(root),
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+}
+
+/// Admit one sealed [`QrBucket`] as a one-leaf [`QrBucketTree`].
+///
+/// # Soundness
+///
+/// Every field is threaded from a bucket PCD, and the leaf digest is derived
+/// from three of them, so the emitted root is the digest of a bucket
+/// [`QrBucketSeal`] produced and the four network fields are that bucket's.
+#[derive(Debug)]
+pub struct QrBucketTreeInit;
+
+impl Step for QrBucketTreeInit {
+    type Aux<'source> = ();
+    type Left = QrBucket;
+    type Output = QrBucketTree;
+    type Right = ();
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(28);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (): Self::Witness<'source>,
+        (epoch, anchor_prev, anchor_last, discriminant, profile, contents): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        let root = QrTreeRoot(poseidon::qr_bucket_digest(
+            Fp::from(u64::from(profile.depth)),
+            Fp::from(u64::from(profile.bits)),
+            Eq::from(contents).to_affine(),
+        ));
+
+        Ok(((epoch, anchor_prev, anchor_last, discriminant, root), ()))
+    }
+}
+
+/// Join two [`QrBucketTree`]s of one network under a fresh node.
+///
+/// # Soundness
+///
+/// Both roots are threaded, and the four equalities make the emitted header's
+/// network fields true of every leaf beneath either input. The fields are
+/// *equal*, not chained as [`QrIntakeMerge`] chains a span: a consumer reads
+/// the extent off the tree, so a tree spanning more than its leaves do would
+/// let a bucket's exclusion cover folds the bucket never held. Every bucket of
+/// one network shares all four, so equality costs a builder nothing.
+#[derive(Debug)]
+pub struct QrBucketTreeFuse;
+
+impl Step for QrBucketTreeFuse {
+    type Aux<'source> = ();
+    type Left = QrBucketTree;
+    type Output = QrBucketTree;
+    type Right = QrBucketTree;
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(29);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (): Self::Witness<'source>,
+        (left_epoch, left_anchor_prev, left_anchor_last, left_discriminant, left_root): <Self::Left as Header>::Data,
+        (right_epoch, right_anchor_prev, right_anchor_last, right_discriminant, right_root): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(left_epoch) - Fp::from(right_epoch),
+            "QrBucketTreeFuse: inputs cover different epochs",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_prev) - Fp::from(right_anchor_prev),
+            "QrBucketTreeFuse: inputs open at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_last) - Fp::from(right_anchor_last),
+            "QrBucketTreeFuse: inputs close at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_discriminant) - Fp::from(right_discriminant),
+            "QrBucketTreeFuse: inputs derive from different discriminants",
+        )?;
+
+        let root = QrTreeRoot(poseidon::qr_tree_node(
+            Fp::from(left_root),
+            Fp::from(right_root),
+        ));
+
+        Ok((
+            (
+                left_epoch,
+                left_anchor_prev,
+                left_anchor_last,
+                left_discriminant,
+                root,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Walk [`QrTreeFork::LEVELS`] levels of a Merkle path, emitting the subtree
+/// the path reaches.
+///
+/// A path of `depth` levels takes `⌈depth / LEVELS⌉` of these in a chain, so
+/// the depth a builder serves is its own choice and never a loop bound here.
+/// Padding a tree to a multiple of `LEVELS` by fusing a subtree with itself
+/// leaves duplicate leaves, which are harmless.
+///
+/// # Soundness
+///
+/// `node` starts threaded, each level's children are pinned to it by the node
+/// hash, and the emitted root is one of the two children of a node reached
+/// that way. Every leaf beneath a subtree of a valid tree is a leaf of that
+/// tree, so the claim survives the descent. The domains separate leaf digests
+/// from node values, so a path cannot stop one level short and present a node
+/// as a bucket.
+#[derive(Debug)]
+pub struct QrBucketTreeDescend;
+
+impl Step for QrBucketTreeDescend {
+    type Aux<'source> = ();
+    type Left = QrBucketTree;
+    type Output = QrBucketTree;
+    type Right = ();
+    /// `(path)`, outermost level first.
+    type Witness<'source> = ([QrTreeFork; QrTreeFork::LEVELS],);
+
+    const INDEX: Index = Index::new(30);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (path,): Self::Witness<'source>,
+        (epoch, anchor_prev, anchor_last, discriminant, root): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        // TODO: a real circuit must constrain each fork's side boolean and
+        // select between the children in-circuit; the type carries the first
+        // and the native branch the second under mock ragu.
+        let mut node = root;
+        for fork in path {
+            let QrTreeFork(_side, left_child, right_child) = fork;
+            enforce_zero(
+                Fp::from(node)
+                    - poseidon::qr_tree_node(Fp::from(left_child), Fp::from(right_child)),
+                "QrBucketTreeDescend: children do not hash to the node",
+            )?;
+            node = fork.descend();
+        }
+
+        Ok(((epoch, anchor_prev, anchor_last, discriminant, node), ()))
+    }
+}
+
+/// Replay the [`QrBucket`] a one-leaf [`QrBucketTree`] holds.
+///
+/// # Soundness
+///
+/// The witnessed profile and contents commitment are pinned jointly to `root`
+/// by the leaf digest, and `root` is a leaf digest by the lineage: a
+/// [`QrBucketTreeInit`] derived it from a bucket header, and neither the fuse
+/// nor the descent reads it. Preimage resistance then makes the emitted header
+/// one [`QrBucketSeal`] emitted, so this second producer of [`QrBucket`]
+/// establishes nothing the seal did not.
+///
+/// Binding the profile is what stops the interesting forgery: a real bucket's
+/// contents presented under the tested value's own profile would pass
+/// [`QrUnspentInit`]'s fold and open nonzero, proving exclusion for a value
+/// published in a different bucket.
+#[derive(Debug)]
+pub struct QrBucketTreeOpen;
+
+impl Step for QrBucketTreeOpen {
+    type Aux<'source> = ();
+    type Left = QrBucketTree;
+    type Output = QrBucket;
+    type Right = ();
+    /// `(profile, contents)`, the leaf's preimage.
+    type Witness<'source> = (QrProfile, TachygramSetCommit);
+
+    const INDEX: Index = Index::new(31);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (profile, contents): Self::Witness<'source>,
+        (epoch, anchor_prev, anchor_last, discriminant, root): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(root)
+                - poseidon::qr_bucket_digest(
+                    Fp::from(u64::from(profile.depth)),
+                    Fp::from(u64::from(profile.bits)),
+                    Eq::from(contents).to_affine(),
+                ),
+            "QrBucketTreeOpen: witnessed bucket is not the tree's leaf",
+        )?;
+
+        Ok((
+            (
+                epoch,
+                anchor_prev,
+                anchor_last,
+                discriminant,
+                profile,
+                contents,
             ),
             (),
         ))

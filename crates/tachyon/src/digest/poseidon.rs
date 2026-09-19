@@ -192,6 +192,44 @@ pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
     ])
 }
 
+const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
+
+/// Digests a sealed bucket's profile and contents commitment into the leaf of
+/// a QR bucket tree.
+///
+/// The network fields the bucket also carries sit on the tree's header, equal
+/// across every fuse, so the leaf need not repeat them.
+///
+/// # Panics
+///
+/// Panics if `contents` is the identity point.
+#[must_use]
+pub fn qr_bucket_digest(depth: Fp, bits: Fp, contents: EqAffine) -> Fp {
+    let (contents_lo, contents_hi) = point_limbs(contents);
+    hash::<5>([
+        Fp::from_u128(u128::from_le_bytes(*QR_BUCKET_DOMAIN)),
+        depth,
+        bits,
+        contents_lo,
+        contents_hi,
+    ])
+}
+
+const QR_TREE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-QrTreeNd";
+
+/// Folds two subtree roots into their parent node of a QR bucket tree.
+///
+/// Its domain differs from [`qr_bucket_digest`]'s, so no node value is also a
+/// leaf digest.
+#[must_use]
+pub fn qr_tree_node(left: Fp, right: Fp) -> Fp {
+    hash::<3>([
+        Fp::from_u128(u128::from_le_bytes(*QR_TREE_NODE_DOMAIN)),
+        left,
+        right,
+    ])
+}
+
 const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 
 /// Folds `anchor_prev` into `epoch` under the epoch-link domain.

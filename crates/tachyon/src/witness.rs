@@ -18,7 +18,7 @@ use crate::{
     nullifier::Nullifier,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant,
-        Tachygram, TachygramSetPoly, effect,
+        QrProfile, QrTreeFork, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -27,8 +27,8 @@ use crate::{
             UnspentSeed,
         },
         qr::{
-            QrBucketSeal, QrIntakeMerge, QrIntakeSplit, QrSideDescend, QrStampIntakeSeed,
-            QrSummaryIntakeInit, QrUnspentInit,
+            QrBucketSeal, QrBucketTreeDescend, QrBucketTreeOpen, QrIntakeMerge, QrIntakeSplit,
+            QrSideDescend, QrStampIntakeSeed, QrSummaryIntakeInit, QrUnspentInit,
         },
         spend::SpendBind,
         spendable::{QrSpendableInit, SpendableInit, SummarySpendableInit},
@@ -552,6 +552,31 @@ pub fn qr_unspent_init(
         NfSeqPoly::new(epoch, &[Nullifier::from(value), nf_next]),
         bucket_members.iter().copied().collect(),
     )
+}
+
+/// Prepare the witness for [`QrBucketTreeDescend`]: `(path)`.
+///
+/// `path` runs outermost level first, one fork per level.
+#[must_use]
+pub const fn qr_bucket_tree_descend(
+    (_tree, _right): (
+        StepLeft<QrBucketTreeDescend>,
+        StepRight<QrBucketTreeDescend>,
+    ),
+    path: [QrTreeFork; QrTreeFork::LEVELS],
+) -> StepWitness<'static, QrBucketTreeDescend> {
+    (path,)
+}
+
+/// Prepare the witness for [`QrBucketTreeOpen`]: `(profile, contents)`, the
+/// preimage of the leaf the tree has descended to.
+#[must_use]
+pub const fn qr_bucket_tree_open(
+    (_tree, _right): (StepLeft<QrBucketTreeOpen>, StepRight<QrBucketTreeOpen>),
+    profile: QrProfile,
+    contents: TachygramSetCommit,
+) -> StepWitness<'static, QrBucketTreeOpen> {
+    (profile, contents)
 }
 
 /// Prepare the witness for [`OutputAction`]: `(rcv, alpha, note, anchor,
