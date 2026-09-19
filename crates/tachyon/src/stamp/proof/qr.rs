@@ -3,14 +3,13 @@
 //! Each depth classifies at a discriminant of the progression
 //!
 //! $$
-//!   R_1 = H_\mathsf{ep}(\mathsf{anchor}, \mathsf{epoch} + 1),
-//!   \qquad R_{j+1} = R_j + 1,
+//!   R_{j+1} = R_1 + j,
 //! $$
 //!
-//! from the closing boundary anchor the epoch's terminal anchor ticks to.
-//! Every header carries $R_1$, so depth $j$ classifies at $R_{j+1} = R_1 +
-//! j$, and a value takes the residue side there iff $x + R_{j+1}$ is a
-//! square or zero.
+//! whose base $R_1$ the builder samples privately, so a network can be routed
+//! while its epoch is still in flight. Every header carries $R_1$, so depth
+//! $j$ classifies at $R_{j+1}$, and a value takes the residue side there iff
+//! $x + R_{j+1}$ is a square or zero.
 //!
 //! [`QrSummaryIntakeInit`] starts a [`QrIntake`] from a [`Summary`], and
 //! [`QrStampIntakeSeed`] from one unsummarized stamp. [`QrIntakeSplit`]
@@ -49,9 +48,9 @@ pub struct QrIntake;
 
 impl Header for QrIntake {
     /// `(epoch, anchor_prev, anchor_last, discriminant, profile, contents)`.
-    /// `anchor_prev` and `anchor_last` bracket the anchor links the contents
-    /// were drawn from; `discriminant` is the epoch's $R_1$, its closing
-    /// boundary anchor, free until [`QrBucketSeal`].
+    /// The contents were drawn from the folds the coverage extent
+    /// `(anchor_prev, anchor_last]` certifies; `discriminant` is the network's
+    /// $R_1$, prover-chosen and threaded unchanged.
     type Data = (
         EpochIndex,
         Anchor,
@@ -61,7 +60,7 @@ impl Header for QrIntake {
         TachygramSetCommit,
     );
 
-    const SUFFIX: Suffix = Suffix::new(9);
+    const SUFFIX: Suffix = Suffix::new(5);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_last, discriminant, profile, contents) = *data;
@@ -87,9 +86,10 @@ impl Header for QrIntake {
 pub struct QrIntakeSides;
 
 impl Header for QrIntakeSides {
-    /// `(epoch, anchor_prev, anchor_last, discriminant, profile, residue,
-    /// non_residue)`, the fields of the intake that was split with its two
-    /// sides in place of its contents.
+    /// `(epoch, anchor_prev, anchor_last, discriminant, profile, non_residue,
+    /// residue)`, the fields of the intake that was split with its two sides
+    /// in place of its contents. The sides are ordered by the bit that selects
+    /// them: `0 = NQR, 1 = QR`.
     type Data = (
         EpochIndex,
         Anchor,
@@ -100,10 +100,10 @@ impl Header for QrIntakeSides {
         TachygramSetCommit,
     );
 
-    const SUFFIX: Suffix = Suffix::new(15);
+    const SUFFIX: Suffix = Suffix::new(10);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (epoch, anchor_prev, anchor_last, discriminant, profile, residue, non_residue) = *data;
+        let (epoch, anchor_prev, anchor_last, discriminant, profile, non_residue, residue) = *data;
         (
             vec![
                 Fp::from(epoch),
@@ -115,7 +115,7 @@ impl Header for QrIntakeSides {
             ],
             Vec::new(),
             Vec::new(),
-            vec![Eq::from(residue), Eq::from(non_residue)],
+            vec![Eq::from(non_residue), Eq::from(residue)],
         )
     }
 }
@@ -124,8 +124,9 @@ impl Header for QrIntakeSides {
 ///
 /// # Soundness
 ///
-/// `discriminant` is free here, as every seed witness is; [`QrBucketSeal`]
-/// pins it to the span's closing tick.
+/// `discriminant` is free here, as every seed witness is, and stays free: it
+/// is the builder's own routing base. [`QrIntakeMerge`] requires the two
+/// halves to agree on it, so one network classifies at one progression.
 #[derive(Debug)]
 pub struct QrSummaryIntakeInit;
 
@@ -137,7 +138,7 @@ impl Step for QrSummaryIntakeInit {
     /// `(discriminant)`.
     type Witness<'source> = (QrDiscriminant,);
 
-    const INDEX: Index = Index::new(21);
+    const INDEX: Index = Index::new(20);
 
     fn witness<'source>(
         &self,
@@ -178,7 +179,7 @@ impl Step for QrStampIntakeSeed {
     /// `(anchor_prev, epoch, discriminant, stamp_commit)`.
     type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(27);
+    const INDEX: Index = Index::new(26);
 
     fn witness<'source>(
         &self,
@@ -222,41 +223,48 @@ impl Step for QrIntakeMerge {
     /// `(left_contents, right_contents, merged)`.
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
-    const INDEX: Index = Index::new(22);
+    const INDEX: Index = Index::new(21);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (left_contents, right_contents, merged): Self::Witness<'source>,
-        (epoch, anchor_prev, junction, discriminant, profile, left_commit): <Self::Left as Header>::Data,
+        (
+            left_epoch,
+            left_anchor_prev,
+            left_anchor_last,
+            left_discriminant,
+            left_profile,
+            left_commit,
+        ): <Self::Left as Header>::Data,
         (
             right_epoch,
             right_anchor_prev,
-            anchor_last,
+            right_anchor_last,
             right_discriminant,
             right_profile,
             right_commit,
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(epoch) - Fp::from(right_epoch),
+            Fp::from(left_epoch) - Fp::from(right_epoch),
             "QrIntakeMerge: inputs cover different epochs",
         )?;
         enforce_zero(
-            Fp::from(discriminant) - Fp::from(right_discriminant),
+            Fp::from(left_discriminant) - Fp::from(right_discriminant),
             "QrIntakeMerge: inputs derive from different discriminants",
         )?;
         enforce_zero(
-            Fp::from(u64::from(profile.depth)) - Fp::from(u64::from(right_profile.depth)),
+            Fp::from(u64::from(left_profile.depth)) - Fp::from(u64::from(right_profile.depth)),
             "QrIntakeMerge: inputs sit at different depths",
         )?;
         enforce_zero(
-            Fp::from(u64::from(profile.bits)) - Fp::from(u64::from(right_profile.bits)),
+            Fp::from(u64::from(left_profile.bits)) - Fp::from(u64::from(right_profile.bits)),
             "QrIntakeMerge: inputs sit at different profiles",
         )?;
         enforce_zero(
-            Fp::from(junction) - Fp::from(right_anchor_prev),
-            "QrIntakeMerge: right input does not continue the left span",
+            Fp::from(left_anchor_last) - Fp::from(right_anchor_prev),
+            "QrIntakeMerge: left.anchor_last must equal right.anchor_prev",
         )?;
         enforce_equal_point(
             Eq::from(left_contents.commit()),
@@ -278,11 +286,11 @@ impl Step for QrIntakeMerge {
 
         Ok((
             (
-                epoch,
-                anchor_prev,
-                anchor_last,
-                discriminant,
-                profile,
+                left_epoch,
+                left_anchor_prev,
+                right_anchor_last,
+                left_discriminant,
+                left_profile,
                 merged.commit(),
             ),
             (),
@@ -306,15 +314,15 @@ impl Step for QrIntakeSplit {
     type Left = QrIntake;
     type Output = QrIntakeSides;
     type Right = ();
-    /// `(contents, residue, non_residue)`.
+    /// `(contents, non_residue, residue)`.
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
-    const INDEX: Index = Index::new(23);
+    const INDEX: Index = Index::new(22);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (contents, residue, non_residue): Self::Witness<'source>,
+        (contents, non_residue, residue): Self::Witness<'source>,
         (epoch, anchor_prev, anchor_last, discriminant, profile, contents_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -325,8 +333,8 @@ impl Step for QrIntakeSplit {
         )?;
         enforce_poly_product(
             ctx,
-            residue.as_ref(),
             non_residue.as_ref(),
+            residue.as_ref(),
             contents.as_ref(),
             "QrIntakeSplit: the sides do not partition the contents",
         )?;
@@ -350,8 +358,8 @@ impl Step for QrIntakeSplit {
                 anchor_last,
                 discriminant,
                 profile,
-                residue.commit(),
                 non_residue.commit(),
+                residue.commit(),
             ),
             (),
         ))
@@ -380,7 +388,8 @@ impl Step for QrIntakeSplit {
 /// the split's product places every member of the other class in the child. The
 /// child may hold a stray member of the sibling's class; consumers open it
 /// nonzero, so a stray member cannot pass a value that is present. $R$ is read
-/// off the header and pinned at [`QrBucketSeal`]. The parent's depth is
+/// off the header, so a descent classifies at the same base as every other
+/// step of the network. The parent's depth is
 /// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
 /// one depth's paths have distinct profiles.
 #[derive(Debug)]
@@ -394,13 +403,13 @@ impl Step for QrSideDescend {
     /// `(bit, sibling_contents, interpolant, quotient)`.
     type Witness<'source> = (bool, TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
 
-    const INDEX: Index = Index::new(24);
+    const INDEX: Index = Index::new(23);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (bit, sibling_contents, interpolant, quotient): Self::Witness<'source>,
-        (epoch, anchor_prev, anchor_last, discriminant, profile, residue, non_residue): <Self::Left as Header>::Data,
+        (epoch, anchor_prev, anchor_last, discriminant, profile, non_residue, residue): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // TODO: a real circuit needs a bit decomposition of `depth` here; mock
@@ -465,9 +474,10 @@ impl Step for QrSideDescend {
 
 /// One profile's members over a whole epoch.
 ///
-/// `anchor_prev` is the epoch's opening boundary anchor and `anchor_last` its
-/// terminal anchor. The bucket spans `[anchor_prev, anchor_last]`, so it
-/// never leaves its epoch.
+/// `anchor_prev` has epoch-link form absorbing `epoch`, which
+/// [`QrBucketSeal`] checks. `anchor_last` is the output of the bucket's last
+/// fold; whether it is the epoch's terminal anchor is not checked here. The
+/// bucket covers `(anchor_prev, anchor_last]`, so it never leaves its epoch.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
@@ -482,7 +492,7 @@ impl Header for QrBucket {
         TachygramSetCommit,
     );
 
-    const SUFFIX: Suffix = Suffix::new(18);
+    const SUFFIX: Suffix = Suffix::new(11);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_last, discriminant, profile, contents) = *data;
@@ -502,29 +512,32 @@ impl Header for QrBucket {
     }
 }
 
-/// Seal a routed [`QrIntake`] into a [`QrBucket`], by pinning the span's
-/// opening to an epoch boundary and its discriminant to its closing tick:
-///
-/// `anchor_prev` is the boundary link of `prev_last` into `epoch`, and
-/// `discriminant` the boundary link of `anchor_last` into `epoch + 1`.
+/// Seal a routed [`QrIntake`] into a [`QrBucket`], by pinning the extent's
+/// `anchor_prev` to epoch-link form: it is the epoch link of
+/// `anchor_prev_prev` into `epoch`.
 ///
 /// # Soundness
 ///
-/// Only an epoch transition produces an anchor in the epoch domain, so an
-/// `anchor_prev` of this form is an epoch's opening boundary anchor.
-/// `prev_last` is free, as at every seed; the lineage that consumes the
-/// segment binds it. Epoch zero's opening anchor, [`Anchor::default`], is this
-/// rule at a `prev_last` of zero.
+/// Only an epoch link produces an anchor in the epoch domain, so an
+/// `anchor_prev` of this form absorbs `epoch`. That it is the *entry anchor*
+/// of `epoch`, the first anchor of `epoch` in the accepted chain, is a claim
+/// about what was published and not one this step makes:
+/// `anchor_prev_prev` is free, as at every seed, and the lineage that consumes
+/// the segment binds it. Epoch zero's entry anchor, [`Anchor::default`], is
+/// this rule at an `anchor_prev_prev` of zero.
 ///
-/// Every split in the intake's history classified at $R_1 + \mathsf{depth}$
-/// read off the header, so pinning `discriminant` here pins every
-/// discriminant the routing used to the span the bucket carries. That
-/// `anchor_last` is the epoch's terminal anchor is a claim about what was
-/// published, and closes through the consuming lineage: the crossing after
-/// the segment folds `anchor_last` to the same boundary anchor, the next
-/// segment must open on it, and that chain reaches the spend anchor
-/// consensus checks. A bucket sealed short of the epoch ticks to an anchor
-/// nobody published.
+/// `discriminant` is not checked here. It is a prover-chosen routing base,
+/// threaded unchanged from the root intake and required equal across
+/// [`QrIntakeMerge`], so every split in the intake's history classified at
+/// $R_1 + \mathsf{depth}$ under the same $R_1$ the bucket carries, which is
+/// the progression [`QrUnspentInit`] walks. $R_1$ moves how members
+/// distribute across buckets, never which bucket holds a given value under
+/// that $R_1$, so a biased or prematurely revealed choice is one prover's
+/// network and a wallet uses any valid one.
+///
+/// That `anchor_last` is the epoch's *terminal anchor*, its last anchor, is
+/// likewise a claim about what was published, and this step does not check
+/// it; [`QrUnspentInit`]'s crossing forces it through the lineage.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
@@ -533,30 +546,22 @@ impl Step for QrBucketSeal {
     type Left = QrIntake;
     type Output = QrBucket;
     type Right = ();
-    /// `(prev_last)`, the terminal anchor of the preceding epoch.
+    /// `(anchor_prev_prev)`, the fold input of `anchor_prev`. Zero at genesis.
     type Witness<'source> = (Anchor,);
 
-    const INDEX: Index = Index::new(26);
+    const INDEX: Index = Index::new(25);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (prev_last,): Self::Witness<'source>,
+        (anchor_prev_prev,): Self::Witness<'source>,
         (epoch, anchor_prev, anchor_last, discriminant, profile, contents): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(anchor_prev)
-                - poseidon::anchor_next_epoch(Fp::from(prev_last), Fp::from(epoch)),
-            "QrBucketSeal: intake does not begin at the epoch boundary",
-        )?;
-        // Computed in the widened domain: a bucket sealed at the final epoch
-        // has a closing tick even though that epoch has no successor.
-        let closing_tick = Fp::from(epoch) + Fp::ONE;
-        enforce_zero(
-            Fp::from(discriminant)
-                - poseidon::anchor_next_epoch(Fp::from(anchor_last), closing_tick),
-            "QrBucketSeal: discriminant is not the span's closing tick",
+                - poseidon::anchor_next_epoch(Fp::from(anchor_prev_prev), Fp::from(epoch)),
+            "QrBucketSeal: intake's first anchor is not an epoch link into its epoch",
         )?;
 
         Ok((
@@ -599,10 +604,14 @@ impl Step for QrBucketSeal {
 /// $$
 ///
 /// with $a_0 = 0$; the fold ends at $\mathsf{bits}$ exactly when the
-/// bucket's sides are the value's. The
-/// emitted segment reads the value as a nullifier and covers the bucket's
-/// own span, one epoch, so consecutive epochs' segments need an
-/// [`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed) between them.
+/// bucket's sides are the value's.
+///
+/// The emitted segment reads the value as a nullifier and crosses the epoch
+/// boundary: it witnesses the next epoch's nullifier as well, folds the
+/// crossing from the bucket's `anchor_last`, and covers `[epoch, epoch + 1]`
+/// in epoch space and `(anchor_prev, H_epoch(anchor_last, epoch + 1)]` in
+/// anchor space. Consecutive epochs' segments therefore meet at the entry
+/// anchor and fuse directly.
 ///
 /// # Soundness
 ///
@@ -614,8 +623,24 @@ impl Step for QrBucketSeal {
 /// is that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold
 /// then equals `bits` iff the bucket's sides are the value's first `depth`
 /// sides. Positions past `depth` are tested but compared to nothing. $R_1$ is
-/// the bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` is free,
-/// its profile fixed by the fold and its sequence membership by the identity.
+/// the bucket's own `discriminant`, the base its routing classified at, so
+/// the exclusion holds for the network the bucket belongs to whatever base
+/// that network chose. `value` and
+/// `nf_next` are free, the profile fold fixing the first and the sequence
+/// identity both;
+/// [`UnspentBind`](super::pool::UnspentBind) forces each against the note's
+/// genuine derivation.
+///
+/// The crossing is what makes the bucket's whole-epoch claim true. The
+/// accepted chain holds exactly one anchor of epoch-link form absorbing
+/// `epoch + 1`, the entry anchor of that epoch, folded from
+/// `terminal(epoch)`. This step emits `H_epoch(a, epoch + 1)` for the
+/// bucket's own `a`, so if `a` is not `terminal(epoch)` the result is on no
+/// chain, and by preimage resistance neither is any fold downstream of it.
+/// A bucket sealed short of the epoch therefore yields evidence no lineage
+/// can carry to a consensus-checked spend. [`QrBucketSeal`] still proves form
+/// alone; whole-epoch coverage is established here and preserved by every
+/// fuse and lift.
 #[derive(Debug)]
 pub struct QrUnspentInit;
 
@@ -624,22 +649,30 @@ impl Step for QrUnspentInit {
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(value, classes, mask, sequence, contents)`.
+    /// `(value, nf_next, classes, mask, sequence, contents)`.
     type Witness<'source> = (
         Tachygram,
+        Nullifier,
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
         TachygramSetPoly,
     );
 
-    const INDEX: Index = Index::new(25);
+    const INDEX: Index = Index::new(24);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (value, classes, mask, sequence, contents): Self::Witness<'source>,
-        (epoch, anchor_prev, anchor_last, discriminant, profile, contents_commit): <Self::Left as Header>::Data,
+        (value, nf_next, classes, mask, sequence, contents): Self::Witness<'source>,
+        (
+            bucket_epoch,
+            bucket_anchor_prev,
+            bucket_anchor_last,
+            discriminant,
+            profile,
+            contents_commit,
+        ): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
@@ -648,6 +681,10 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: contents do not match the bucket",
         )?;
         enforce_nonzero(Fp::from(value), "QrUnspentInit: tested value is zero")?;
+        enforce_nonzero(
+            Fp::from(nf_next),
+            "QrUnspentInit: next-epoch nullifier is zero",
+        )?;
 
         // TODO: a real circuit must constrain every side and mask bit boolean;
         // the types carry it under mock ragu.
@@ -688,15 +725,31 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: value does not take the bucket's profile",
         )?;
 
+        // The crossing out of the bucket's epoch, folded here rather than read
+        // off `discriminant`, which is prover-chosen.
+        let epoch_next = bucket_epoch.next().ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("QrUnspentInit: crossing past the final epoch".into())
+        })?;
+        let anchor_last = bucket_anchor_last
+            .next_epoch(epoch_next)
+            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+
         let sequence_commit = sequence.commit();
         let z = ctx.derive_challenge(&[sequence_commit.into()])?;
         let sequence_at_z = sequence.eval(z);
         ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
 
-        let member_at_z = indexed_multiset::direct_eval([(u64::from(epoch), value.into())], z);
+        let epoch_idx = u64::from(bucket_epoch);
+        let crossing_at_z = indexed_multiset::direct_eval(
+            [
+                (epoch_idx, value.into()),
+                (epoch_idx + 1, Fp::from(nf_next)),
+            ],
+            z,
+        );
         enforce_zero(
-            sequence_at_z - member_at_z,
-            "QrUnspentInit: sequence does not match the tested value",
+            sequence_at_z - crossing_at_z,
+            "QrUnspentInit: sequence does not match the crossing pairs",
         )?;
 
         let contents_at_value = contents.eval(value.into());
@@ -706,13 +759,12 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: found nullifier in the bucket",
         )?;
 
-        let nf = Nullifier::from(value);
         Ok((
             (
-                anchor_prev,
-                (epoch, nf),
+                bucket_anchor_prev,
+                (bucket_epoch, Nullifier::from(value)),
                 sequence_commit,
-                (epoch, nf),
+                (epoch_next, nf_next),
                 anchor_last,
             ),
             (),

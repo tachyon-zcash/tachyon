@@ -19,19 +19,21 @@ use crate::{
     relations::enforce::enforce_poly_product,
 };
 
-/// One summarized run of an epoch's stamps. `acc_commit` commits the root
-/// polynomial of every tachygram in the run; `anchor_prev` and `anchor_last`
-/// bracket exactly those stamps' anchor links.
+/// One summarized run of an epoch's stamps.
+///
+/// `acc_commit` commits the root polynomial of every tachygram in the run,
+/// which is exactly the set of stamps folded over the coverage extent
+/// `(anchor_prev, anchor_last]`.
 #[derive(Clone, Debug)]
 pub struct Summary;
 
 impl Header for Summary {
     /// `(epoch, anchor_prev, anchor_last, acc_commit)`. `anchor_prev` is an
     /// unbound seed witness, as [`AnchorChain`](super::pool::AnchorChain)'s
-    /// `start`.
+    /// `anchor_first`.
     type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
 
-    const SUFFIX: Suffix = Suffix::new(14);
+    const SUFFIX: Suffix = Suffix::new(9);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_last, acc_commit) = *data;
@@ -65,7 +67,7 @@ impl Step for SummarySeed {
     /// `(anchor_prev, epoch, stamp_commit)`.
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(17);
+    const INDEX: Index = Index::new(16);
 
     fn witness<'source>(
         &self,
@@ -94,7 +96,7 @@ impl Step for SummaryAdvance {
     /// `(acc, extended, stamp)`.
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
-    const INDEX: Index = Index::new(18);
+    const INDEX: Index = Index::new(17);
 
     fn witness<'source>(
         &self,
