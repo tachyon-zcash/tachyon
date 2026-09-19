@@ -28,7 +28,7 @@ const WITHIN_EPOCH_ANCHOR_PAIRS: &[(BlockHeight, BlockHeight)] = &[
 ];
 
 #[test]
-fn merge_stamp_iff_matching_anchors() {
+fn stamp_merge_iff_matching_anchors() {
     for &(anchor_height_a, anchor_height_b) in WITHIN_EPOCH_ANCHOR_PAIRS {
         let rng = &mut StdRng::seed_from_u64(0);
         let user_a = WalletSim::random(rng);
@@ -110,8 +110,10 @@ fn plan_prove_rejects_invalid_inputs() {
         assert_eq!(reason.to_string(), "no proof for no planned actions");
     }
 
-    let bundle_a = || (range_a.clone(), sp_a.clone());
-    let bundle_b = || (range_b.clone(), sp_b.clone());
+    let master_a = user.master_pcd(rng, note_a);
+    let master_b = user.master_pcd(rng, note_b);
+    let bundle_a = || (master_a.clone(), range_a.clone(), sp_a.clone());
+    let bundle_b = || (master_b.clone(), range_b.clone(), sp_b.clone());
 
     // Too few PCDs: 2 spends, 1 PCD.
     {
@@ -232,7 +234,7 @@ fn double_output_cannot_aggregate() {
         };
         assert_eq!(
             inner.to_string(),
-            "MergeStamp: merged tachygram set must be the product of left and right tachygram sets"
+            "StampMerge: merged tachygram set must be the product of left and right tachygram sets"
         );
     }
 
@@ -371,7 +373,7 @@ fn double_spend_cannot_aggregate() {
         };
         assert_eq!(
             inner.to_string(),
-            "MergeStamp: merged tachygram set must be the product of left and right tachygram sets"
+            "StampMerge: merged tachygram set must be the product of left and right tachygram sets"
         );
     }
 
@@ -455,7 +457,7 @@ fn cannot_forge_stamp_covering_duplicated_action() {
         };
         assert_eq!(
             inner.to_string(),
-            "MergeStamp: merged action set must be the product of left and right action sets"
+            "StampMerge: merged action set must be the product of left and right action sets"
         );
     }
 

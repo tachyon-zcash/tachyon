@@ -7,23 +7,18 @@ use ragu_arithmetic::Cycle as _;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_pasta::Pasta;
 
-use super::Anchor;
 use crate::collections::qr;
 
-/// An epoch's first discriminant $R_1$.
+/// A routing network's first discriminant $R_1$.
 ///
-/// The closing boundary anchor that the epoch's terminal `anchor_last`
-/// ticks to under the epoch-boundary domain, pinned at `QrBucketSeal`.
+/// Prover-chosen and sampled privately, so a network can be routed while its
+/// epoch is still in flight. It is threaded unchanged from the root intake and
+/// required equal across `QrIntakeMerge`, so one network classifies at one
+/// progression throughout.
 ///
 /// Depth $j$ classifies at $R_{j+1} = R_1 + j$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(pub Fp);
-
-impl From<Anchor> for QrDiscriminant {
-    fn from(anchor: Anchor) -> Self {
-        Self(anchor.0)
-    }
-}
 
 impl QrDiscriminant {
     /// The discriminant a split at `depth` classifies at.
@@ -157,9 +152,43 @@ impl QrClassRoot {
     }
 }
 
+/// The root of a Poseidon Merkle tree over sealed bucket digests.
+///
+/// A one-leaf tree's root is the leaf digest itself, so every subtree root
+/// along a path has this type.
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct QrTreeRoot(pub Fp);
+
+/// One level of a Merkle path: the node's two children, and `true` when the
+/// path descends into the right one.
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct QrTreeFork(pub bool, pub QrTreeRoot, pub QrTreeRoot);
+
+impl QrTreeFork {
+    /// The levels one descent covers.
+    ///
+    /// A path of `depth` levels takes `⌈depth / LEVELS⌉` descents, so a
+    /// builder pads its tree to a multiple of this.
+    pub const LEVELS: usize = 4;
+
+    /// The child the path descends into.
+    #[must_use]
+    pub const fn descend(self) -> QrTreeRoot {
+        let Self(right, left_child, right_child) = self;
+        if right { right_child } else { left_child }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fork_descends_into_the_side_it_names() {
+        let (left, right) = (QrTreeRoot(Fp::from(7)), QrTreeRoot(Fp::from(11)));
+        assert_eq!(QrTreeFork(false, left, right).descend(), left);
+        assert_eq!(QrTreeFork(true, left, right).descend(), right);
+    }
 
     #[test]
     fn the_root_profile_has_no_bits() {

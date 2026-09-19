@@ -616,9 +616,10 @@ fn duplicated_spend_cannot_inflate() {
         wallet.pak.ak.derive_action_public(&alpha)
     });
     let descriptor = plan.descriptor();
+    let master = wallet.master_pcd(rng, note);
     let honest_stamp = Plan::new(alloc::vec![plan], alloc::vec![])
         .stamp_plan(anchor)
-        .prove(rng, &wallet.pak, alloc::vec![(range, spendable)])
+        .prove(rng, &wallet.pak, alloc::vec![(master, range, spendable)])
         .expect("prove the honest single spend");
 
     // Assemble the duplicated-spend bundle by hand: two identical spend actions,
