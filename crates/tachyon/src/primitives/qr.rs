@@ -12,8 +12,10 @@ use crate::collections::qr;
 
 /// An epoch's first discriminant $R_1$.
 ///
-/// The closing boundary anchor that the epoch's terminal `anchor_last`
-/// ticks to under the epoch-boundary domain, pinned at `QrBucketSeal`.
+/// The epoch-link image of the bucket's `anchor_last` into `epoch + 1`,
+/// pinned at `QrBucketSeal`. It coincides with the entry anchor of
+/// `epoch + 1` only if `anchor_last` is the epoch's terminal anchor, which the
+/// seal does not check; at `EPOCH_MAX` it absorbs an index that is no epoch.
 ///
 /// Depth $j$ classifies at $R_{j+1} = R_1 + j$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]

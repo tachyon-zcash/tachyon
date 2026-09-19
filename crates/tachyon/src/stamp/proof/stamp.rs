@@ -35,8 +35,8 @@ use crate::{
 /// `anchor` is freely witnessed at [`OutputStamp`]; at [`SpendStamp`]
 /// it threads from the left [`SpendHeader`]; at [`StampMerge`]
 /// the step constrains `left.anchor == right.anchor`; at
-/// [`StampLift`] it advances to the right [`AnchorChain`] segment's
-/// `end` after constraining `segment.start == old_anchor`.
+/// [`StampLift`] it advances to the right [`AnchorChain`] path's
+/// `anchor_last` after constraining `chain.anchor_first == stamp.anchor`.
 #[derive(Debug)]
 pub struct Stamp;
 
@@ -138,7 +138,7 @@ impl Step for OutputStamp {
 /// (bound to the [`SpendHeader`]'s `cm`), derives the value commitment `cv`
 /// and the randomized action key `rk`, and enforces the one-action set plus
 /// the stamp accumulator over the two-element tachygram set
-/// `{present_nf, nf_next}` (the pair [`SpendBind`](super::spend::SpendBind)
+/// `{nf_current, nf_next}` (the pair [`SpendBind`](super::spend::SpendBind)
 /// already confirmed against the covering derivation).
 #[derive(Debug)]
 pub struct SpendStamp;
@@ -164,7 +164,7 @@ impl Step for SpendStamp {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (note, rcv, alpha, pak, action_set, tachygram_set): Self::Witness<'source>,
-        (cm, present_nf, nf_next, anchor): <Self::Left as Header>::Data,
+        (cm, nf_current, nf_next, anchor): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if u64::from(note.value) > MAX_MONEY {
@@ -204,7 +204,7 @@ impl Step for SpendStamp {
         enforce_poly_roots(
             ctx,
             tachygram_set.as_ref(),
-            &[Fp::from(present_nf), Fp::from(nf_next)],
+            &[Fp::from(nf_current), Fp::from(nf_next)],
             "SpendStamp: tachygram set does not commit to the nullifier pair",
         )?;
 
@@ -297,9 +297,9 @@ impl Step for StampMerge {
     }
 }
 
-/// Advance a stamp's anchor by absorbing an [`AnchorChain`]: the
-/// segment's `start` must equal the stamp's `old_anchor`, and the new
-/// anchor is the segment's `end`.
+/// Advance a stamp's anchor by absorbing an [`AnchorChain`]: the path's
+/// `anchor_first` must equal the stamp's `anchor`, and the new anchor is the
+/// path's `anchor_last`.
 #[derive(Debug)]
 pub struct StampLift;
 
@@ -316,16 +316,16 @@ impl Step for StampLift {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (): Self::Witness<'source>,
-        (left_action_commit, left_tachygram_commit, old_anchor): <Self::Left as Header>::Data,
-        (segment_start, segment_end): <Self::Right as Header>::Data,
+        (left_action_commit, left_tachygram_commit, stamp_anchor): <Self::Left as Header>::Data,
+        (chain_anchor_first, chain_anchor_last): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // The anchor segment must root at the stamp's old anchor.
+        // The path must start at the position the stamp already holds.
         enforce_zero(
-            Fp::from(segment_start) - Fp::from(old_anchor),
-            "StampLift: segment start must equal stamp old_anchor",
+            Fp::from(chain_anchor_first) - Fp::from(stamp_anchor),
+            "StampLift: chain's first anchor must equal stamp anchor",
         )?;
 
-        let data = (left_action_commit, left_tachygram_commit, segment_end);
+        let data = (left_action_commit, left_tachygram_commit, chain_anchor_last);
         Ok((data, ()))
     }
 }

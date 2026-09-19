@@ -20,15 +20,15 @@ use crate::{
 };
 
 /// One summarized run of an epoch's stamps. `acc_commit` commits the root
-/// polynomial of every tachygram in the run; `anchor_prev` and `anchor_last`
-/// bracket exactly those stamps' anchor links.
+/// polynomial of every tachygram in the run, which is exactly the set of
+/// stamps folded over the coverage extent `(anchor_prev, anchor_last]`.
 #[derive(Clone, Debug)]
 pub struct Summary;
 
 impl Header for Summary {
     /// `(epoch, anchor_prev, anchor_last, acc_commit)`. `anchor_prev` is an
     /// unbound seed witness, as [`AnchorChain`](super::pool::AnchorChain)'s
-    /// `start`.
+    /// `anchor_first`.
     type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
 
     const SUFFIX: Suffix = Suffix::new(14);

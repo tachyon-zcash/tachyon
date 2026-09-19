@@ -443,8 +443,9 @@ impl Plan {
             // note's master key (the succinct header carries only the
             // commitment); the witness segments its read and complement.
             let mk = pak.nk.derive_note_private(note.psi);
-            let (_, deriv_start, _, deriv_last) = *range_pcd.data();
-            let window: Vec<Nullifier> = (u32::from(deriv_start)..=u32::from(deriv_last))
+            let (_, nullifiers_epoch_first, _, nullifiers_epoch_last) = *range_pcd.data();
+            let window: Vec<Nullifier> = (u32::from(nullifiers_epoch_first)
+                ..=u32::from(nullifiers_epoch_last))
                 .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
                 .collect();
             let bind_witness =
@@ -630,7 +631,7 @@ impl ProofStamp {
     /// Creates a stamp for a spend action from a bound
     /// [`SpendHeader`](spend::SpendHeader) PCD.
     ///
-    /// The nullifier pair `{present_nf, nf_next}` published for data
+    /// The nullifier pair `{nf_current, nf_next}` published for data
     /// availability is read straight off the bind header (already confirmed
     /// against the derivation at [`SpendBind`](spend::SpendBind)); this step
     /// proves the action `(cv, rk)` and enforces the stamp accumulator over
@@ -648,9 +649,9 @@ impl ProofStamp {
         alpha: ActionRandomizer<effect::Spend>,
         pak: ProofAuthorizingKey,
     ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu_core::Error> {
-        let (_cm, present_nf, nf_next, anchor) = *bind_pcd.data();
+        let (_cm, nf_current, nf_next, anchor) = *bind_pcd.data();
         let tachygrams =
-            BTreeSet::from_iter([Tachygram::from(present_nf), Tachygram::from(nf_next)]);
+            BTreeSet::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]);
 
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,

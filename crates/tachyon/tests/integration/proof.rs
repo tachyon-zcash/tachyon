@@ -289,12 +289,12 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
-        assert_eq!(inner.to_string(), "AnchorFuse: segments not adjacent");
+        assert_eq!(inner.to_string(), "AnchorFuse: paths do not share a vertex");
     }
 
     // cross-epoch: left segment ends at epoch_0_final's anchor, right segment
-    // over the first block of epoch_1 starts at the boundary anchor.
-    // Adjacency fails because the boundary anchor (via Anchor::next_epoch)
+    // over the first block of epoch_1 starts at the entry anchor.
+    // Adjacency fails because the entry anchor (via Anchor::next_epoch)
     // sits between them, and no AnchorChain step ever emits it.
     {
         let rng = &mut StdRng::seed_from_u64(0);
@@ -315,7 +315,7 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
-        assert_eq!(inner.to_string(), "AnchorFuse: segments not adjacent");
+        assert_eq!(inner.to_string(), "AnchorFuse: paths do not share a vertex");
     }
 }
 
@@ -374,8 +374,8 @@ fn spend_bind_honest() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd, spend_epoch);
-    let (_cm, present_nf, nf_next, _anchor) = *bind_pcd.data();
-    assert_eq!(present_nf, user.nf_at(&note, spend_epoch));
+    let (_cm, nf_current, nf_next, _anchor) = *bind_pcd.data();
+    assert_eq!(nf_current, user.nf_at(&note, spend_epoch));
     assert_eq!(nf_next, user.nf_at(&note, spend_epoch.next().unwrap()));
 }
 
@@ -540,14 +540,14 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let lifted = user.lift(rng, spendable, unspent, &note);
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, lifted, EpochIndex::new(1));
-    let (_cm, present_nf, _nf_next, _anchor) = *bind_pcd.data();
+    let (_cm, nf_current, _nf_next, _anchor) = *bind_pcd.data();
     assert_eq!(
-        present_nf,
+        nf_current,
         user.nf_at(&note, EpochIndex::new(1)),
         "publishes the epoch-1 nf"
     );
     assert_ne!(
-        present_nf,
+        nf_current,
         user.nf_at(&note, EpochIndex::new(0)),
         "nf_0 was consumed by the lift"
     );
@@ -618,7 +618,7 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
     assert_eq!(
         lifted.data().1,
         (EpochIndex::new(1), user.nf_at(&note, EpochIndex::new(1))),
-        "tip advanced to nf_1"
+        "lineage advanced to nf_1"
     );
     assert_eq!(
         lifted.data().2,
@@ -680,7 +680,7 @@ fn unspent_lift_spans_partial_and_whole_epochs() {
     assert_eq!(
         lifted.data().1,
         (EpochIndex::new(3), user.nf_at(&note, EpochIndex::new(3))),
-        "tip advanced to nf_3 across partial first/last and whole interior epochs"
+        "lineage advanced to nf_3 across partial first/last and whole interior epochs"
     );
     assert_eq!(
         lifted.data().2,
@@ -765,7 +765,7 @@ fn unspent_fuse_composes() {
         )
         .expect("UnspentFuse mid-epoch with multi-epoch halves");
 
-    let (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_last, nf_last), anchor_last) =
+    let (anchor_prev, (epoch_first, nf_first), elapsed, (epoch_last, nf_last), anchor_last) =
         *fused.data();
     assert_eq!(anchor_prev, start);
     assert_eq!(anchor_last, end);
@@ -774,9 +774,12 @@ fn unspent_fuse_composes() {
         NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]).commit(),
         "the junction member appears once in the combined sequence"
     );
-    assert_eq!(nf_start, nf0);
-    assert_eq!(nf_last, nf3, "tip advances to the right half's present nf");
-    assert_eq!(u32::from(epoch_start), 0);
+    assert_eq!(nf_first, nf0);
+    assert_eq!(
+        nf_last, nf3,
+        "lineage advances to the right half's current nf"
+    );
+    assert_eq!(u32::from(epoch_first), 0);
     assert_eq!(
         u32::from(epoch_last),
         3,
@@ -942,7 +945,7 @@ fn unspent_fuse_rejects_epoch_boundary_crossing() {
     };
     assert_eq!(
         inner.to_string(),
-        "UnspentFuse: forwards half must sit in left's tip epoch"
+        "UnspentFuse: forwards half must sit in left's last epoch"
     );
 }
 
@@ -997,8 +1000,8 @@ fn epoch_fuse_setup(
 }
 
 /// Two halves meeting at a boundary compose through a crossing seed: the seam
-/// nullifier the left half was still holding as its tip lands in the merged
-/// history, and the merged segment spans both halves' outer endpoints.
+/// nullifier the left half was still holding as its last member lands in the
+/// merged history, and the merged segment spans both halves' outer endpoints.
 #[test]
 fn end_epoch_unspent_seed_composes_across_a_boundary() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1007,7 +1010,7 @@ fn end_epoch_unspent_seed_composes_across_a_boundary() {
     let end = right.data().4;
 
     // Seed the crossing on left's terminal anchor and fuse it on, so left's
-    // tip nullifier stops being in progress and joins the history.
+    // last nullifier stops being in progress and joins the history.
     let (seed, ()) = PROOF_SYSTEM
         .seed(
             rng,
@@ -1039,14 +1042,14 @@ fn end_epoch_unspent_seed_composes_across_a_boundary() {
         )
         .expect("UnspentFuse onto the right half");
 
-    let (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_last, nf_last), anchor_last) =
+    let (anchor_prev, (epoch_first, nf_first), elapsed, (epoch_last, nf_last), anchor_last) =
         *fused.data();
     assert_eq!(anchor_prev, start);
     assert_eq!(anchor_last, end);
-    assert_eq!(u32::from(epoch_start), 0);
-    assert_eq!(nf_start, nf0);
+    assert_eq!(u32::from(epoch_first), 0);
+    assert_eq!(nf_first, nf0);
     assert_eq!(u32::from(epoch_last), 4);
-    assert_eq!(nf_last, nf4, "tip is the right half's present nf");
+    assert_eq!(nf_last, nf4, "lineage rests at the right half's current nf");
     assert_eq!(
         elapsed,
         NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3, nf4]).commit(),
@@ -1104,17 +1107,17 @@ fn end_epoch_unspent_seed_spans_one_boundary_link() {
         )
         .expect("EndEpochUnspentSeed");
 
-    let (anchor_prev, (epoch_start, seed_nf_start), elapsed, (epoch_last, nf_last), anchor_last) =
+    let (anchor_prev, (epoch_first, seed_nf_first), elapsed, (epoch_last, nf_last), anchor_last) =
         *seed.data();
     assert_eq!(anchor_prev, epoch_tip);
     assert_eq!(
         anchor_last,
         epoch_tip.next_epoch(EpochIndex::new(5)).unwrap(),
-        "the segment covers the boundary tick"
+        "the segment covers the crossing"
     );
-    assert_eq!(epoch_start, EpochIndex::new(4));
+    assert_eq!(epoch_first, EpochIndex::new(4));
     assert_eq!(epoch_last, EpochIndex::new(5), "one boundary crossed");
-    assert_eq!(seed_nf_start, nf_prev);
+    assert_eq!(seed_nf_first, nf_prev);
     assert_eq!(nf_last, nf);
     assert_eq!(
         elapsed,
@@ -1124,7 +1127,7 @@ fn end_epoch_unspent_seed_spans_one_boundary_link() {
 }
 
 /// A lineage on its epoch's terminal anchor lifts over the crossing seed like
-/// any other segment, and the next segment opens on the boundary anchor it
+/// any other segment, and the next segment opens on the entry anchor it
 /// lands on.
 #[test]
 fn spendable_lift_advances_from_an_epoch_tip() {
@@ -1144,7 +1147,7 @@ fn spendable_lift_advances_from_an_epoch_tip() {
     assert_eq!(
         epoch0_tip,
         pool.block(EpochIndex::new(0).last_block()).anchor(),
-        "the lineage sits on the epoch tip"
+        "the lineage sits on the epoch's terminal anchor"
     );
 
     pool.advance(1, |_| random_block(rng, 1, 2));
@@ -1174,10 +1177,10 @@ fn spendable_lift_advances_from_an_epoch_tip() {
             (EpochIndex::new(1), user.nf_at(&note, EpochIndex::new(1))),
             epoch0_tip.next_epoch(EpochIndex::new(1)).unwrap()
         ),
-        "the tick advances epoch, nullifier and anchor together"
+        "the crossing advances epoch, nullifier and anchor together"
     );
 
-    // The lineage now rests on epoch 1's boundary anchor.
+    // The lineage now rests on epoch 1's entry anchor.
     let arbitrary = build_unspent_pcd_between_anchors(
         rng,
         &pool,
@@ -1193,7 +1196,7 @@ fn spendable_lift_advances_from_an_epoch_tip() {
     assert_eq!(lifted.data().2, pool.block(target_height).anchor());
 }
 
-/// A span opening on a boundary anchor covers the crossings after it, not the
+/// A span opening on an entry anchor covers the crossings after it, not the
 /// one that produced it: the lineage already paid for that crossing to arrive.
 #[test]
 fn unspent_span_starting_on_a_boundary_anchor() {
@@ -1225,7 +1228,7 @@ fn unspent_span_starting_on_a_boundary_anchor() {
         .expect("EndEpochUnspentSeed");
     let at_boundary = user.lift(rng, spendable, crossing, &note);
 
-    // Epoch 1 publishes nothing, so the span starts on a boundary anchor whose
+    // Epoch 1 publishes nothing, so the span starts on an entry anchor whose
     // own epoch is silent; epoch 2 resumes.
     while pool.height().0 + 1 < 2 * EPOCH_SIZE {
         pool.advance(1, |_| Vec::new());
@@ -1248,8 +1251,8 @@ fn unspent_span_starting_on_a_boundary_anchor() {
         ],
         (start_anchor, pool.block(target_height).anchor()),
     );
-    let (_, (epoch_start, _), elapsed, (epoch_last, _), _) = *arbitrary.data();
-    assert_eq!(epoch_start, EpochIndex::new(1));
+    let (_, (epoch_first, _), elapsed, (epoch_last, _), _) = *arbitrary.data();
+    assert_eq!(epoch_first, EpochIndex::new(1));
     assert_eq!(epoch_last, EpochIndex::new(2));
     assert_eq!(
         elapsed,
@@ -1272,7 +1275,7 @@ fn unspent_span_starting_on_a_boundary_anchor() {
     assert_eq!(lifted.data().2, pool.block(target_height).anchor());
 }
 
-/// A span may end on a boundary anchor: an epoch that has published nothing
+/// A span may end on an entry anchor: an epoch that has published nothing
 /// yet has no post anchor for its blocks to resolve against, so the end
 /// resolves to the boundary and the span stops on the crossing.
 #[test]
@@ -1295,7 +1298,7 @@ fn unspent_span_ending_on_a_boundary_anchor() {
     assert_eq!(
         pool.block(target_height).anchor(),
         pool.block(EpochIndex::new(1).first_block()).anchor(),
-        "a silent epoch-first block rests on the boundary anchor"
+        "a silent epoch-first block rests on the entry anchor"
     );
 
     let arbitrary = build_unspent_pcd_between_anchors(
@@ -1307,8 +1310,8 @@ fn unspent_span_ending_on_a_boundary_anchor() {
         ],
         (spendable.data().2, pool.block(target_height).anchor()),
     );
-    let (_, (epoch_start, _), elapsed, (epoch_last, _), anchor_last) = *arbitrary.data();
-    assert_eq!(epoch_start, EpochIndex::new(0));
+    let (_, (epoch_first, _), elapsed, (epoch_last, _), anchor_last) = *arbitrary.data();
+    assert_eq!(epoch_first, EpochIndex::new(0));
     assert_eq!(
         epoch_last,
         EpochIndex::new(1),
@@ -1346,8 +1349,8 @@ fn end_epoch_unspent_seed_crosses_a_stampless_epoch() {
     let cm_height = mine_cm_block(rng, &mut pool, note.commitment());
     let spendable = user.spendable_init(rng, &note, &pool, cm_height);
 
-    // Epoch 0 keeps publishing after the cm, so the lineage is not on its tip.
-    // Epoch 1 then publishes nothing at all; epoch 2 resumes.
+    // Epoch 0 keeps publishing after the cm, so the lineage is not on the epoch's
+    // terminal anchor. Epoch 1 then publishes nothing at all; epoch 2 resumes.
     while pool.height().0 + 1 < EPOCH_SIZE {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
@@ -1368,8 +1371,8 @@ fn end_epoch_unspent_seed_crosses_a_stampless_epoch() {
         ],
         (spendable.data().2, pool.block(target_height).anchor()),
     );
-    let (_, (epoch_start, _), elapsed, (epoch_last, _), _) = *arbitrary.data();
-    assert_eq!(epoch_start, EpochIndex::new(0));
+    let (_, (epoch_first, _), elapsed, (epoch_last, _), _) = *arbitrary.data();
+    assert_eq!(epoch_first, EpochIndex::new(0));
     assert_eq!(epoch_last, EpochIndex::new(2));
     assert_eq!(
         elapsed,
@@ -1417,7 +1420,7 @@ fn unspent_bind_rejects_tip_mismatch() {
     }
     let unspent = sync.build_next_unspent(rng, 0, &pool, target_height);
 
-    // The witnessed sequence matches the header, with the forged tip as its
+    // The witnessed sequence matches the header, with the forged member as its
     // final member, so the poly bind passes; the divisibility read then
     // finds no such member in the genuine sequence and rejects it.
     let (_, _, _, (unspent_last, _), _) = *unspent.data();
@@ -1449,17 +1452,17 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
 
     // The epoch space's last derivation window: the unspent span covers all
     // of it, ending at the final epoch, which has no successor.
-    let epoch_start = EpochIndex::new(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
+    let epoch_first = EpochIndex::new(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
     let epoch_last = EpochIndex::new(EPOCH_MAX);
-    let range = user.derivation_pcd(rng, note, epoch_start, epoch_last);
+    let range = user.derivation_pcd(rng, note, epoch_first, epoch_last);
 
-    let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..=u32::from(epoch_last))
+    let elapsed: Vec<Nullifier> = (u32::from(epoch_first)..=u32::from(epoch_last))
         .map(|epoch| user.nf_at(&note, EpochIndex::new(epoch)))
         .collect();
     let synthetic_unspent = (
         Anchor::from(Fp::ZERO),
-        (epoch_start, elapsed[0]),
-        NfSeqPoly::new(epoch_start, &elapsed).commit(),
+        (epoch_first, elapsed[0]),
+        NfSeqPoly::new(epoch_first, &elapsed).commit(),
         (epoch_last, elapsed[elapsed.len() - 1]),
         Anchor::from(Fp::ZERO),
     );
@@ -1485,9 +1488,9 @@ fn spend_bind_reads_the_last_pair_in_the_epoch_space() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let epoch_start = EpochIndex::new(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
+    let epoch_first = EpochIndex::new(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
     let spend_epoch = EpochIndex::new(EPOCH_MAX - 1);
-    let range = user.derivation_pcd(rng, note, epoch_start, EpochIndex::new(EPOCH_MAX));
+    let range = user.derivation_pcd(rng, note, epoch_first, EpochIndex::new(EPOCH_MAX));
     let window = user.covering_window(&note, &range);
 
     let synthetic_spendable = (
@@ -1505,11 +1508,11 @@ fn spend_bind_reads_the_last_pair_in_the_epoch_space() {
     );
     assert_eq!(
         nf_seq.commit(),
-        NfSeqPoly::new(epoch_start, &window).commit()
+        NfSeqPoly::new(epoch_first, &window).commit()
     );
     assert_eq!(
         complement_seq.commit(),
-        NfSeqPoly::new(epoch_start, &window[..window.len() - 2]).commit(),
+        NfSeqPoly::new(epoch_first, &window[..window.len() - 2]).commit(),
         "the read pair ends the window, so the complement is its lower run alone"
     );
 }
@@ -1599,14 +1602,14 @@ fn unspent_bind_rejects_uncovered_start() {
     );
 }
 
-/// The bind needs the tip as well as the crossings, so a derivation
+/// The bind needs the last member as well as the crossings, so a derivation
 /// stopping at the unspent's own end epoch does not cover it.
 #[test]
 fn unspent_bind_rejects_uncovered_end() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
-    // A crossing out of the window's last epoch: its tip sits at the first
+    // A crossing out of the window's last epoch: its last member sits at the first
     // epoch the derivation does not reach.
     let last = EpochIndex::new(NF_DERIVATION_WIDTH as u32 - 1);
     let anchor = Anchor::from(Fp::random(&mut *rng));
@@ -1794,12 +1797,12 @@ fn nf_derive_rejects_a_foreign_sequence() {
 
     let master_a = honest_master(rng, &user, note_a);
     let (cm_a, _) = *master_a.data();
-    let (epoch_start, foreign_seq) =
+    let (epoch_first, foreign_seq) =
         witness::nf_derive(((cm_a, user.mk(&note_b)), ()), EpochIndex::new(16));
     expect_invalid(
         rng,
         delegation::NfDerive,
-        (epoch_start, foreign_seq),
+        (epoch_first, foreign_seq),
         master_a,
         Proof::trivial().carry::<()>(()),
         "NfDerive: sequence does not match the derived window",
@@ -1808,7 +1811,7 @@ fn nf_derive_rejects_a_foreign_sequence() {
 
 /// A start epoch off the group alignment is rejected before any derivation.
 #[test]
-fn nf_derive_rejects_a_misaligned_epoch_start() {
+fn nf_derive_rejects_a_misaligned_epoch_first() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
@@ -1821,7 +1824,7 @@ fn nf_derive_rejects_a_misaligned_epoch_start() {
         (EpochIndex::new(14), seq),
         master,
         Proof::trivial().carry::<()>(()),
-        "NfDerive: epoch_start is not group-aligned",
+        "NfDerive: epoch_first is not group-aligned",
     );
 }
 
@@ -1840,14 +1843,14 @@ fn nf_derive_rejects_a_window_past_the_final_epoch() {
 
     // Group-aligned for any EPOCH_MAX of the form `2^k - 1`, and short of a
     // whole window by three epochs.
-    let epoch_start = EpochIndex::new(EPOCH_MAX - 3);
+    let epoch_first = EpochIndex::new(EPOCH_MAX - 3);
     let master = honest_master(rng, &user, note);
 
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NfDerive,
-            (epoch_start, NfSeqPoly::new(epoch_start, &[])),
+            (epoch_first, NfSeqPoly::new(epoch_first, &[])),
             master,
             Proof::trivial().carry::<()>(()),
         )
@@ -1870,15 +1873,15 @@ fn derivation_exports_the_whole_window() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let epoch_start = EpochIndex::new(12);
-    let epoch_last = EpochIndex::new(u32::from(epoch_start) + NF_DERIVATION_WIDTH as u32 - 1);
-    let range = user.derivation_pcd(rng, note, epoch_start, epoch_last);
+    let epoch_first = EpochIndex::new(12);
+    let epoch_last = EpochIndex::new(u32::from(epoch_first) + NF_DERIVATION_WIDTH as u32 - 1);
+    let range = user.derivation_pcd(rng, note, epoch_first, epoch_last);
     let (cm, start, commit, range_last) = *range.data();
 
-    assert_eq!(start, epoch_start, "starts at the witnessed epoch");
+    assert_eq!(start, epoch_first, "starts at the witnessed epoch");
     assert_eq!(range_last, epoch_last, "spans the whole window");
     let members = user.covering_window(&note, &range);
-    let seq = NfSeqPoly::new(epoch_start, &members);
+    let seq = NfSeqPoly::new(epoch_first, &members);
     assert_eq!(commit, seq.commit(), "header commits the window sequence");
 
     let far = user.derivation_pcd(
@@ -2307,7 +2310,7 @@ fn multi_chunk_lift_uses_per_chunk_windows() {
     assert_eq!(
         lifted_two.data().1,
         (EpochIndex::new(2), user.nf_at(&note, EpochIndex::new(2))),
-        "tip advanced across two chunks"
+        "lineage advanced across two chunks"
     );
     assert_eq!(
         lifted_two.data().2,
@@ -2553,17 +2556,17 @@ fn spend_bind_rejects_a_forged_next_over_a_garbage_complement() {
     );
 
     // Garbage complement: another note's members in place of this note's.
-    let (_, deriv_start, _, deriv_last) = *derived.data();
+    let (_, nullifiers_epoch_first, _, nullifiers_epoch_last) = *derived.data();
     let stranger_mk = user.mk(&stranger);
-    let older_members: Vec<Nullifier> = (u32::from(deriv_start)..u32::from(epoch))
+    let older_members: Vec<Nullifier> = (u32::from(nullifiers_epoch_first)..u32::from(epoch))
         .map(|epoch_idx| stranger_mk.derive_nullifier(EpochIndex::new(epoch_idx)))
         .collect();
-    let newer_members: Vec<Nullifier> = (u32::from(epoch) + 2..=u32::from(deriv_last))
+    let newer_members: Vec<Nullifier> = (u32::from(epoch) + 2..=u32::from(nullifiers_epoch_last))
         .map(|epoch_idx| stranger_mk.derive_nullifier(EpochIndex::new(epoch_idx)))
         .collect();
     assert!(!older_members.is_empty(), "lower run must carry members");
     assert!(!newer_members.is_empty(), "upper run must carry members");
-    let complement_seq = NfSeqPoly::new(deriv_start, &older_members)
+    let complement_seq = NfSeqPoly::new(nullifiers_epoch_first, &older_members)
         * NfSeqPoly::new(EpochIndex::new(u32::from(epoch) + 2), &newer_members);
 
     let forged = Nullifier::from(Fp::random(&mut *rng));
@@ -2633,7 +2636,7 @@ fn unspent_walk_from_an_epoch_tip_opens_on_the_tip() {
     assert_eq!(
         epoch0_tip,
         pool.block(EpochIndex::new(0).last_block()).anchor(),
-        "the lineage sits on the epoch tip"
+        "the lineage sits on the epoch's terminal anchor"
     );
 
     pool.advance(1, |_| random_block(rng, 1, 2));
@@ -2690,10 +2693,10 @@ fn crossing_seed_carries_a_terminal_anchor_to_a_spend() {
     assert_eq!(
         epoch0_tip,
         pool.block(EpochIndex::new(0).last_block()).anchor(),
-        "the lineage sits on the epoch tip"
+        "the lineage sits on the epoch's terminal anchor"
     );
 
-    // The tick's bookkeeping: epoch and nullifier advance by one, and the
+    // The crossing's bookkeeping: epoch and nullifier advance by one, and the
     // anchor folds the domain-separated boundary in the crossing segment.
     let (crossing, ()) = PROOF_SYSTEM
         .seed(
@@ -2716,10 +2719,10 @@ fn crossing_seed_carries_a_terminal_anchor_to_a_spend() {
             (EpochIndex::new(1), user.nf_at(&note, EpochIndex::new(1))),
             epoch0_tip.next_epoch(EpochIndex::new(1)).unwrap(),
         ),
-        "the lift crosses to the boundary anchor"
+        "the lift crosses to the entry anchor"
     );
 
-    // Walk through epoch 1 from the boundary anchor the lift landed on.
+    // Walk through epoch 1 from the entry anchor the lift landed on.
     pool.advance(1, |_| random_block(rng, 1, 2));
     let end_height = pool.height();
     assert_eq!(end_height.epoch(), EpochIndex::new(1));
