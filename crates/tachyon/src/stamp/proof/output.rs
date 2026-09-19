@@ -21,7 +21,7 @@ impl Header for OutputHeader {
     /// `(cm, pad)`, the two tachygrams the output publishes.
     type Data = (Tachygram, Tachygram);
 
-    const SUFFIX: Suffix = Suffix::new(12);
+    const SUFFIX: Suffix = Suffix::new(8);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, pad) = *data;

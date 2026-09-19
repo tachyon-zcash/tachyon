@@ -33,7 +33,7 @@ impl Header for Summary {
     /// `anchor_start`.
     type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
 
-    const SUFFIX: Suffix = Suffix::new(14);
+    const SUFFIX: Suffix = Suffix::new(10);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_end, acc_commit) = *data;

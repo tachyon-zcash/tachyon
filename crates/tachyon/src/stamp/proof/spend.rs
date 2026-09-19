@@ -34,7 +34,7 @@ impl Header for SpendHeader {
     /// epoch on; `anchor` threads the spendable lineage's pool position.
     type Data = (note::Commitment, Nullifier, Nullifier, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(10);
+    const SUFFIX: Suffix = Suffix::new(6);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, nf_current, nf_next, anchor) = *data;
