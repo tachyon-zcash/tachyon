@@ -73,14 +73,14 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .copied()
         .collect::<TachygramSetPoly>()
         .commit();
-    let expected_last = start
+    let expected_end = start
         .next_stamp(epoch, &commit_a)
         .unwrap()
         .next_stamp(epoch, &commit_b)
         .unwrap();
     assert_eq!(
         *advanced.data(),
-        (epoch, start, expected_last, union),
+        (epoch, start, expected_end, union),
         "the product accumulator is the union's root polynomial"
     );
 }
@@ -93,7 +93,7 @@ fn summary_over_an_anchor_span_matches_the_pool() {
     pool.mine(random_block(rng, 2, 2));
 
     let (pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
-    let (epoch, anchor_prev, anchor_last, acc_commit) = *pcd.data();
+    let (epoch, anchor_prev, anchor_end, acc_commit) = *pcd.data();
 
     assert_eq!(epoch, EpochIndex::new(0));
     assert_eq!(
@@ -102,7 +102,7 @@ fn summary_over_an_anchor_span_matches_the_pool() {
         "the summary opens at the span's start anchor"
     );
     assert_eq!(
-        anchor_last,
+        anchor_end,
         pool.anchor(),
         "the summary closes at the span's end anchor"
     );
@@ -231,13 +231,13 @@ fn summary_seed_on_a_foreign_epoch_leaves_the_chain() {
             witness::summary_seed(((), ()), first.prev, EpochIndex::new(1), &first.stamps[0].1),
         )
         .expect("SummarySeed");
-    let (_, _, anchor_last, _) = *seeded.data();
+    let (_, _, anchor_end, _) = *seeded.data();
 
     for height in 0..=pool.height().0 {
         let block = pool.block(BlockHeight(height));
-        assert_ne!(anchor_last, block.prev);
+        assert_ne!(anchor_end, block.prev);
         for &(_, _, _, anchor) in &block.stamps {
-            assert_ne!(anchor_last, anchor, "the fold left the published chain");
+            assert_ne!(anchor_end, anchor, "the fold left the published chain");
         }
     }
 }
@@ -249,7 +249,7 @@ fn summary_unspent_init_clears_the_whole_run() {
     pool.mine(random_block(rng, 2, 2));
     pool.mine(random_block(rng, 2, 2));
     let (pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
-    let (epoch, anchor_prev, anchor_last, _) = *pcd.data();
+    let (epoch, anchor_prev, anchor_end, _) = *pcd.data();
     let nf = Nullifier::from(Fp::random(&mut *rng));
 
     let (unspent, ()) = PROOF_SYSTEM
@@ -269,9 +269,9 @@ fn summary_unspent_init_clears_the_whole_run() {
             (epoch, nf),
             NfSeqPoly::new(epoch, &[nf]).commit(),
             (epoch, nf),
-            anchor_last
+            anchor_end
         ),
-        "one query spans the summary's whole bracket"
+        "one query spans the summary's whole extent"
     );
 }
 
@@ -341,7 +341,7 @@ fn summary_unspent_init_fuses_with_a_per_stamp_segment() {
     pool.mine(random_block(rng, 2, 2));
     let end = pool.block(pool.height().prev().unwrap()).anchor();
     let (pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), end));
-    let (epoch, anchor_prev, anchor_last, _) = *pcd.data();
+    let (epoch, anchor_prev, anchor_end, _) = *pcd.data();
     let nf = Nullifier::from(Fp::random(&mut *rng));
 
     let (started, ()) = PROOF_SYSTEM
@@ -356,7 +356,7 @@ fn summary_unspent_init_fuses_with_a_per_stamp_segment() {
 
     let next = &pool.block(pool.height()).stamps[0];
     assert_eq!(
-        anchor_last, next.0,
+        anchor_end, next.0,
         "the next stamp opens where the summary closed"
     );
     let per_stamp = build_unspent_seed_pcd(rng, next.0, epoch, &next.1, nf);
@@ -392,7 +392,7 @@ fn summary_spendable_init_starts_a_spendable_from_a_summary() {
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     pool.mine(random_block(rng, 2, 2));
     let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
-    let (epoch, _, anchor_last, _) = *summary_pcd.data();
+    let (epoch, _, anchor_end, _) = *summary_pcd.data();
     let deriv = user.derivation_pcd(rng, note, epoch, epoch);
 
     let (spendable, ()) = PROOF_SYSTEM
@@ -415,14 +415,14 @@ fn summary_spendable_init_starts_a_spendable_from_a_summary() {
         (
             note.commitment(),
             (epoch, user.nf_at(&note, epoch)),
-            anchor_last
+            anchor_end
         ),
-        "the spendable rests at the summary's terminal anchor"
+        "the spendable rests at the summary's final anchor"
     );
     assert_ne!(
-        anchor_last,
+        anchor_end,
         pool.block(BlockHeight(0)).stamps[0].3,
-        "the summary's terminal anchor lies past the creating stamp"
+        "the summary's final anchor lies past the creating stamp"
     );
 }
 

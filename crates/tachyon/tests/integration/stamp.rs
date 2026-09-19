@@ -78,9 +78,9 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
-    let spend_last = EpochIndex::new(u32::from(spend_epoch) + 1);
-    let range_a = user.derivation_pcd(rng, note_a, spend_epoch, spend_last);
-    let range_b = user.derivation_pcd(rng, note_b, spend_epoch, spend_last);
+    let spend_end = EpochIndex::new(u32::from(spend_epoch) + 1);
+    let range_a = user.derivation_pcd(rng, note_a, spend_epoch, spend_end);
+    let range_b = user.derivation_pcd(rng, note_b, spend_epoch, spend_end);
 
     let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {

@@ -1610,12 +1610,12 @@ flowchart LR
 summarizes its stamps in bounded headers
 
 $$
-\mathtt{Summary}\{e,\anchor_\mathsf{prev},\anchor_\mathsf{last},
+\mathtt{Summary}\{e,\anchor_\mathsf{prev},\anchor_\mathsf{end},
   \mathsf{Com}(p(X))\}.
 $$
 
 $\mathsf{SummarySeed}$ starts from one stamp with accumulator $a_T$: it sets
-$p=a_T$ and computes $\anchor_\mathsf{last}$ by absorbing
+$p=a_T$ and computes $\anchor_\mathsf{end}$ by absorbing
 $\mathsf{Com}(a_T)$ into $\anchor_\mathsf{prev}$ under epoch $e$.
 $\mathsf{SummaryAdvance}$ fixes the old accumulator, next stamp accumulator, and
 product before its challenge, checks
@@ -1624,7 +1624,7 @@ $$
 p'(r)\iseq p(r)\cdot a_T(r),
 $$
 
-and advances $\anchor_\mathsf{last}$ by absorbing the same commitment
+and advances $\anchor_\mathsf{end}$ by absorbing the same commitment
 $\mathsf{Com}(a_T)$. A summary closes before another stamp would exceed the
 polynomial capacity. Thus its anchors bracket exactly the stamp transitions
 whose tachygrams are roots of $p$; summaries cannot cross a sentinel transition.
@@ -1647,7 +1647,7 @@ flowchart LR
 $\mathsf{QrSummaryIntake}$ turns each completed summary into
 
 $$
-\mathtt{QrIntake}\{e,\anchor_\mathsf{prev},\anchor_\mathsf{last},
+\mathtt{QrIntake}\{e,\anchor_\mathsf{prev},\anchor_\mathsf{end},
   j,b,R_j,\mathsf{Com}(q_b(X))\}.
 $$
 
@@ -1661,7 +1661,7 @@ The root profile has $(j,b)=(0,0)$ and the OSS's chosen $R_0$. A stamp not yet
 included in a summary can enter through $\mathsf{QrStampIntakeSeed}$. This has
 the same root shape and binds its one stamp transition directly.
 $\mathsf{QrSummaryIntake}$ equality-constrains $(e,\anchor_\mathsf{prev},
-\anchor_\mathsf{last},\mathsf{Com}(p))$ to the consumed summary and fixes the
+\anchor_\mathsf{end},\mathsf{Com}(p))$ to the consumed summary and fixes the
 root fields above; $(j,b)=(0,0)$ here encodes the empty profile. The single-stamp
 seed likewise carries exactly the stamp accumulator absorbed by its anchor
 transition.

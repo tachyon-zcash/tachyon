@@ -2126,7 +2126,7 @@ fn bundle_lift_preserves_coverage() {
     let output_note = wallet.random_note(700);
     let mut pool = PoolSim::genesis(rng);
     // One stamp in the block, so the spendable's anchor is that block's
-    // terminal anchor and the lift's segment starts at the next block.
+    // final anchor and the lift's segment starts at the next block.
     pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 1));
     let cm_height = pool.height();
     let spendable_pcd = wallet.fresh_spend(rng, &pool, cm_height, &spend_note);
@@ -2304,7 +2304,7 @@ fn bundle_lift_over_an_aggregate() {
     let adjunct_b = autonome_b.strip(mock_wtxid(&innocent));
     let adjuncts = [adjunct_a.as_dyn(), adjunct_b.as_dyn()];
 
-    // The aggregate's anchor is the epoch's terminal one, so the segment it
+    // The aggregate's anchor is the epoch's final one, so the segment it
     // lifts over must start in the next epoch's first block.
     pool.advance(1, |_| alloc::vec![]);
     let next = build_autonome(rng, &wallet, 400, 300);

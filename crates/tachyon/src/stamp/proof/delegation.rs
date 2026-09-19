@@ -51,8 +51,8 @@ impl Header for NoteMaster {
 
 /// A proven contiguous range of derived nullifiers (wallet-only).
 ///
-/// `(cm, epoch_start, nf_commit, epoch_last)`: covers epochs
-/// `[epoch_start, epoch_last]`; `nf_commit` commits the range's nullifier
+/// `(cm, epoch_start, nf_commit, epoch_end)`: covers epochs
+/// `[epoch_start, epoch_end]`; `nf_commit` commits the range's nullifier
 /// sequence as an [`NfSeqPoly`], exactly one member per covered epoch. That
 /// invariant is established at [`NullifierDerive`], preserved by
 /// [`NullifierFuse`]'s contiguity check, and what the divisibility binds
@@ -69,15 +69,15 @@ impl Header for NoteMaster {
 pub struct NoteNullifiers;
 
 impl Header for NoteNullifiers {
-    /// `(cm, epoch_start, nf_commit, epoch_last)`. `epoch_last` is inclusive.
+    /// `(cm, epoch_start, nf_commit, epoch_end)`. `epoch_end` is inclusive.
     type Data = (note::Commitment, EpochIndex, NfSeqCommit, EpochIndex);
 
     const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, epoch_start, nf_commit, epoch_last) = *data;
+        let (cm, epoch_start, nf_commit, epoch_end) = *data;
         (
-            vec![Fp::from(cm), Fp::from(epoch_start), Fp::from(epoch_last)],
+            vec![Fp::from(cm), Fp::from(epoch_start), Fp::from(epoch_end)],
             Vec::new(),
             Vec::new(),
             vec![Eq::from(nf_commit)],
@@ -165,7 +165,7 @@ impl Step for NullifierDerive {
     type Left = NoteMaster;
     type Output = NoteNullifiers;
     type Right = ();
-    /// `(epoch_start, seq)`.
+    /// `(epoch_start, seq)`
     type Witness<'source> = (EpochIndex, NfSeqPoly);
 
     const INDEX: Index = Index::new(1);
@@ -196,7 +196,7 @@ impl Step for NullifierDerive {
             clippy::cast_possible_truncation,
             reason = "the window width is a small constant"
         )]
-        let epoch_last = u32::from(epoch_start)
+        let epoch_end = u32::from(epoch_start)
             .checked_add(NF_DERIVATION_WIDTH as u32 - 1)
             .filter(|last| *last <= EPOCH_MAX)
             .map(EpochIndex::new)
@@ -226,14 +226,14 @@ impl Step for NullifierDerive {
             "NullifierDerive: sequence does not match the derived window",
         )?;
 
-        Ok(((cm, epoch_start, seq.commit(), epoch_last), ()))
+        Ok(((cm, epoch_start, seq.commit(), epoch_end), ()))
     }
 }
 
 /// Merge two adjacent derived ranges into one (`left ++ right`).
 ///
 /// Requires the same `cm` and contiguity (`right.epoch_start ==
-/// left.epoch_last + 1`). Witnesses the two range polynomials and their
+/// left.epoch_end + 1`). Witnesses the two range polynomials and their
 /// concatenation, binds each by commit-equality, and proves the concat as the
 /// product
 ///
@@ -248,7 +248,7 @@ impl Step for NullifierDerive {
 /// All three operands are committed and absorbed into the challenge, so the
 /// product identity pins `merged`'s member multiset to the union of the
 /// halves'. The contiguity check preserves the header invariant established
-/// at the leaf: exactly one member per epoch in `[epoch_start, epoch_last]`,
+/// at the leaf: exactly one member per epoch in `[epoch_start, epoch_end]`,
 /// so the announced range labels the member multiset truthfully.
 #[derive(Debug)]
 pub struct NullifierFuse;
@@ -267,15 +267,15 @@ impl Step for NullifierFuse {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (left_seq, merged_seq, right_seq): Self::Witness<'source>,
-        (left_cm, left_epoch_start, left_nf_commit, left_epoch_last): <Self::Left as Header>::Data,
-        (right_cm, right_epoch_start, right_nf_commit, right_epoch_last): <Self::Right as Header>::Data,
+        (left_cm, left_epoch_start, left_nf_commit, left_epoch_end): <Self::Left as Header>::Data,
+        (right_cm, right_epoch_start, right_nf_commit, right_epoch_end): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(left_cm) - Fp::from(right_cm),
             "NullifierFuse: note commitments differ",
         )?;
         enforce_zero(
-            Fp::from(right_epoch_start) - Fp::from(left_epoch_last) - Fp::ONE,
+            Fp::from(right_epoch_start) - Fp::from(left_epoch_end) - Fp::ONE,
             "NullifierFuse: ranges not contiguous",
         )?;
         enforce_equal_point(
@@ -297,12 +297,7 @@ impl Step for NullifierFuse {
             "NullifierFuse: merged is not the concat of the halves",
         )?;
         Ok((
-            (
-                left_cm,
-                left_epoch_start,
-                merged_nf_commit,
-                right_epoch_last,
-            ),
+            (left_cm, left_epoch_start, merged_nf_commit, right_epoch_end),
             (),
         ))
     }

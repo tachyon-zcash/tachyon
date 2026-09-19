@@ -19,28 +19,26 @@ use crate::{
     relations::enforce::enforce_poly_product,
 };
 
-/// One summarized run of an epoch's stamps. `acc_commit` commits the root
-/// polynomial of every tachygram in the run; `anchor_prev` and `anchor_last`
-/// bracket exactly those stamps' anchor links.
+/// One summarized run of an epoch's stamps.
+///
+/// `acc_commit` commits the root polynomial of every tachygram in the run,
+/// which is exactly the set of stamps folded over the coverage extent
+/// `(anchor_prev, anchor_end]`.
 #[derive(Clone, Debug)]
 pub struct Summary;
 
 impl Header for Summary {
-    /// `(epoch, anchor_prev, anchor_last, acc_commit)`. `anchor_prev` is an
+    /// `(epoch, anchor_prev, anchor_end, acc_commit)`. `anchor_prev` is an
     /// unbound seed witness, as [`AnchorChain`](super::pool::AnchorChain)'s
-    /// `start`.
+    /// `anchor_start`.
     type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
 
     const SUFFIX: Suffix = Suffix::new(14);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (epoch, anchor_prev, anchor_last, acc_commit) = *data;
+        let (epoch, anchor_prev, anchor_end, acc_commit) = *data;
         (
-            vec![
-                Fp::from(epoch),
-                Fp::from(anchor_prev),
-                Fp::from(anchor_last),
-            ],
+            vec![Fp::from(epoch), Fp::from(anchor_prev), Fp::from(anchor_end)],
             Vec::new(),
             Vec::new(),
             vec![Eq::from(acc_commit)],
@@ -74,10 +72,10 @@ impl Step for SummarySeed {
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let anchor_last = anchor_prev
+        let anchor_end = anchor_prev
             .next_stamp(epoch, &stamp_commit)
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-        Ok(((epoch, anchor_prev, anchor_last, stamp_commit), ()))
+        Ok(((epoch, anchor_prev, anchor_end, stamp_commit), ()))
     }
 }
 
@@ -100,7 +98,7 @@ impl Step for SummaryAdvance {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (acc, extended, stamp): Self::Witness<'source>,
-        (summary_epoch, summary_anchor_prev, summary_anchor_last, summary_acc_commit): <Self::Left as Header>::Data,
+        (summary_epoch, summary_anchor_prev, summary_anchor_end, summary_acc_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
@@ -115,14 +113,14 @@ impl Step for SummaryAdvance {
             extended.as_ref(),
             "SummaryAdvance: extended accumulator must fold the stamp",
         )?;
-        let anchor_last = summary_anchor_last
+        let anchor_end = summary_anchor_end
             .next_stamp(summary_epoch, &stamp.commit())
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         Ok((
             (
                 summary_epoch,
                 summary_anchor_prev,
-                anchor_last,
+                anchor_end,
                 extended.commit(),
             ),
             (),

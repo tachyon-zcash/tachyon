@@ -30,7 +30,11 @@ $$
 \mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorEp}(\mathsf{anchor},\ e+1)
 $$
 
-Both link types absorb an epoch, so the epoch index alone does not distinguish them. What distinguishes this one is that it absorbs the epoch being *entered* rather than the epoch it sits inside, under its own domain. Reaching a boundary anchor by a stamp link would therefore be a cross-domain collision, which is what lets a proof pin a lineage to a real epoch boundary.
+Both link types absorb an epoch, so the epoch index alone does not distinguish them. What distinguishes this one is that it absorbs the epoch being *entered* rather than the epoch it sits inside, under its own domain. Reaching an entry anchor by a stamp link would therefore be a cross-domain collision, which is what lets a proof pin a lineage to a real epoch boundary.
+
+Two positions at the boundary have names. The **entry anchor** of $e$ is the first anchor of $e$ in the accepted chain: $H_\mathsf{ep}(\mathsf{final}(e-1), e)$ for $e \geq 1$, and $H_\mathsf{ep}(0, 0)$ for $e = 0$. The **final anchor** of $e$ is the last anchor inside $e$, which equals the entry anchor when $e$ published no stamp. The **crossing** is the single fold $\mathsf{final}(e) \to \mathsf{entry}(e+1)$ joining them.
+
+Every $H_\mathsf{ep}(x, e)$ has epoch-link form, whatever $x$ is, and only the one folded from $\mathsf{final}(e-1)$ is the entry anchor. A step that checks the form has not checked the position.
 
 ## Intra-block state vs end-of-block anchor
 
