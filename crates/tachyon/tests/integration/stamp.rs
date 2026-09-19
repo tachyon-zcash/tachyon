@@ -28,7 +28,7 @@ const WITHIN_EPOCH_ANCHOR_PAIRS: &[(BlockHeight, BlockHeight)] = &[
 ];
 
 #[test]
-fn merge_stamp_iff_matching_anchors() {
+fn stamp_merge_iff_matching_anchors() {
     for &(anchor_height_a, anchor_height_b) in WITHIN_EPOCH_ANCHOR_PAIRS {
         let rng = &mut StdRng::seed_from_u64(0);
         let user_a = WalletSim::random(rng);
@@ -232,7 +232,7 @@ fn double_output_cannot_aggregate() {
         };
         assert_eq!(
             inner.to_string(),
-            "MergeStamp: merged tachygram set must be the product of left and right tachygram sets"
+            "StampMerge: merged tachygram set must be the product of left and right tachygram sets"
         );
     }
 
@@ -371,7 +371,7 @@ fn double_spend_cannot_aggregate() {
         };
         assert_eq!(
             inner.to_string(),
-            "MergeStamp: merged tachygram set must be the product of left and right tachygram sets"
+            "StampMerge: merged tachygram set must be the product of left and right tachygram sets"
         );
     }
 
@@ -455,7 +455,7 @@ fn cannot_forge_stamp_covering_duplicated_action() {
         };
         assert_eq!(
             inner.to_string(),
-            "MergeStamp: merged action set must be the product of left and right action sets"
+            "StampMerge: merged action set must be the product of left and right action sets"
         );
     }
 

@@ -7,23 +7,18 @@ use ragu_arithmetic::Cycle as _;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_pasta::Pasta;
 
-use super::Anchor;
 use crate::collections::qr;
 
-/// An epoch's first discriminant $R_1$.
+/// A routing network's first discriminant $R_1$.
 ///
-/// The closing boundary anchor that the epoch's terminal `anchor_last`
-/// ticks to under the epoch-boundary domain, pinned at `QrBucketSeal`.
+/// Prover-chosen and sampled privately, so a network can be routed while its
+/// epoch is still in flight. It is threaded unchanged from the root intake and
+/// required equal across `QrIntakeMerge`, so one network classifies at one
+/// progression throughout.
 ///
 /// Depth $j$ classifies at $R_{j+1} = R_1 + j$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(pub Fp);
-
-impl From<Anchor> for QrDiscriminant {
-    fn from(anchor: Anchor) -> Self {
-        Self(anchor.0)
-    }
-}
 
 impl QrDiscriminant {
     /// The discriminant a split at `depth` classifies at.

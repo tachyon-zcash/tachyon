@@ -7,7 +7,7 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use super::{delegation::NullifierDerivation, spendable::SpendableHeader};
+use super::{delegation::NoteNullifiers, spendable::NoteSpendable};
 use crate::{
     collections::indexed_multiset,
     note,
@@ -18,27 +18,30 @@ use crate::{
 
 /// Header binding a spend to its lineage note and epoch nullifier pair.
 ///
-/// Carries the note commitment `cm`, the present and next nullifiers
-/// `(present_nf, nf_next)` confirmed against the covering range, and the pool
-/// `anchor`. The action pair `(cv, rk)` is produced downstream at
+/// Carries the note commitment `cm`, the lineage's nullifier and its
+/// neighbour `(nf_current, nf_next)` confirmed against the covering range, and
+/// the pool `anchor`. `nf_next` is the member at `epoch_current + 1`;
+/// [`SpendStamp`](super::stamp::SpendStamp) publishes the pair unordered,
+/// and `_next` records how [`SpendBind`] established it. The action pair
+/// `(cv, rk)` is produced downstream at
 /// [`SpendStamp`](super::stamp::SpendStamp).
 #[derive(Debug)]
 pub struct SpendHeader;
 
 impl Header for SpendHeader {
-    /// `(cm, present_nf, nf_next, anchor)`. `cm` binds the spent note;
-    /// `present_nf`/`nf_next` are the confirmed epoch pair; `anchor` threads
-    /// the spendable lineage's pool position.
+    /// `(cm, nf_current, nf_next, anchor)`. `cm` binds the spent note;
+    /// `nf_current` is the lineage's member and `nf_next` its neighbour one
+    /// epoch on; `anchor` threads the spendable lineage's pool position.
     type Data = (note::Commitment, Nullifier, Nullifier, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(10);
+    const SUFFIX: Suffix = Suffix::new(6);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, present_nf, nf_next, anchor) = *data;
+        let (cm, nf_current, nf_next, anchor) = *data;
         (
             vec![
                 Fp::from(cm),
-                Fp::from(present_nf),
+                Fp::from(nf_current),
                 Fp::from(nf_next),
                 Fp::from(anchor),
             ],
@@ -50,22 +53,22 @@ impl Header for SpendHeader {
 }
 
 /// Confirms a spend's epoch nullifier pair against a covering
-/// [`NullifierDerivation`] and binds it to the spendable lineage.
+/// [`NoteNullifiers`] and binds it to the spendable lineage.
 ///
-/// The range is tied to the lineage's note by `nf_cm == spendable_cm` (both
-/// are the note commitment, bound where the range was derived and at
+/// The range is tied to the lineage's note by `nullifiers_cm == spendable_cm`
+/// (both are the note commitment, bound where the range was derived and at
 /// [`SpendableInit`](super::spendable::SpendableInit) respectively), so no
 /// note witness is needed here. Any range covering the lineage's epoch and
 /// the next serves: the divisibility
-/// of `nf_seq` by the product of the `present_nf` factor at $e$, the
+/// of `nf_seq` by the product of the `nf_current` factor at $e$, the
 /// `nf_next` factor at $e+1$, and the complement confirms the pair
-/// at adjacent epochs, with `present_nf` pinned against the spendable. Both
+/// at adjacent epochs, with `nf_current` pinned against the spendable. Both
 /// nullifiers are emitted on the [`SpendHeader`] for the action-producing
 /// step to publish.
 ///
 /// # Soundness
 ///
-/// Neither epoch index is free. The present member's scalars are left-header
+/// Neither epoch index is free. The current member's scalars are left-header
 /// fields, fixed by the recursive verification of the spendable PCD, and
 /// adjacency is the pair's own epochs `e` and `e + 1`. `nf_next` is free, the
 /// divisibility forcing it to the range's member at `e + 1`.
@@ -77,9 +80,9 @@ pub struct SpendBind;
 
 impl Step for SpendBind {
     type Aux<'source> = ();
-    type Left = SpendableHeader;
+    type Left = NoteSpendable;
     type Output = SpendHeader;
-    type Right = NullifierDerivation;
+    type Right = NoteNullifiers;
     /// `(nf_seq, complement_seq, nf_next)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, Nullifier);
 
@@ -89,11 +92,11 @@ impl Step for SpendBind {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (nf_seq, complement_seq, nf_next): Self::Witness<'source>,
-        (spendable_cm, (spendable_epoch, present_nf), anchor): <Self::Left as Header>::Data,
-        (nf_cm, _, nf_commit, _): <Self::Right as Header>::Data,
+        (spendable_cm, (spendable_epoch_current, nf_current), anchor): <Self::Left as Header>::Data,
+        (nullifiers_cm, _, nf_commit, _): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(nf_cm) - Fp::from(spendable_cm),
+            Fp::from(nullifiers_cm) - Fp::from(spendable_cm),
             "SpendBind: derived range does not match note",
         )?;
         enforce_equal_point(
@@ -103,8 +106,8 @@ impl Step for SpendBind {
         )?;
 
         // The 2-wide read at the lineage's epoch: the divisibility
-        // `nf_seq = present · next · complement` at a challenge absorbing the
-        // witnessed commitments; the present member is native from the
+        // `nf_seq = current · next · complement` at a challenge absorbing the
+        // witnessed commitments; the current member is native from the
         // spendable header, pinned by the recursive verification of the left
         // PCD.
         let z = ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into()])?;
@@ -115,13 +118,13 @@ impl Step for SpendBind {
         ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
 
         // The pair read needs a following epoch; the final epoch has none.
-        let next_epoch = spendable_epoch.next().ok_or_else(|| {
+        let epoch_next = spendable_epoch_current.next().ok_or_else(|| {
             ragu_core::Error::InvalidWitness("SpendBind: no epoch follows the spend epoch".into())
         })?;
         let pair_at_z = indexed_multiset::direct_eval(
             [
-                (spendable_epoch.into(), present_nf.into()),
-                (next_epoch.into(), nf_next.into()),
+                (spendable_epoch_current.into(), nf_current.into()),
+                (epoch_next.into(), nf_next.into()),
             ],
             z,
         );
@@ -132,11 +135,11 @@ impl Step for SpendBind {
 
         // A zero nullifier would collide with the note's own cm tachygram.
         enforce_nonzero(
-            Fp::from(present_nf),
-            "SpendBind: present-epoch nullifier is zero",
+            Fp::from(nf_current),
+            "SpendBind: current-epoch nullifier is zero",
         )?;
         enforce_nonzero(Fp::from(nf_next), "SpendBind: next-epoch nullifier is zero")?;
 
-        Ok(((spendable_cm, present_nf, nf_next, anchor), ()))
+        Ok(((spendable_cm, nf_current, nf_next, anchor), ()))
     }
 }
