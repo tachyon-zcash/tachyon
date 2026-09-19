@@ -28,24 +28,42 @@ use crate::{
     relations::enforce::enforce_poly_product,
 };
 
-/// A note's certified commitment and master key (wallet-only).
+/// A note's certified record: its commitment, its opening, and its master key
+/// (wallet-only).
 ///
 /// `mk` is derived natively from the note's secrets and certified here, so
 /// every consuming [`NullifierDerive`] threads a genuine master key without
-/// re-witnessing the note. `cm` rides along for the derivation's consumers to
-/// bind against.
+/// re-witnessing the note. `note` is the opening `cm` commits to, carried so
+/// [`SpendAction`](super::stamp::SpendAction) binds by one field equality
+/// instead of recomputing the commitment.
+///
+/// Wallet-only, as every delegation header is: the opening must not reach the
+/// published [`Stamp`](super::stamp::Stamp), and does not, since the action
+/// steps emit only set commitments and an anchor.
 #[derive(Clone, Debug)]
 pub struct NoteMaster;
 
 impl Header for NoteMaster {
-    /// `(cm, mk)`.
-    type Data = (note::Commitment, NoteMasterKey);
+    /// `(cm, note, mk)`.
+    type Data = (note::Commitment, Note, NoteMasterKey);
 
-    const SUFFIX: Suffix = Suffix::new(9);
+    const SUFFIX: Suffix = Suffix::new(8);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, mk) = *data;
-        (vec![Fp::from(cm), mk.0], Vec::new(), Vec::new(), Vec::new())
+        let (cm, note, mk) = *data;
+        (
+            vec![
+                Fp::from(cm),
+                Fp::from(note.rcm),
+                Fp::from(note.pk),
+                Fp::from(u64::from(note.value)),
+                Fp::from(note.psi),
+                mk.0,
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
     }
 }
 
@@ -97,7 +115,7 @@ impl Header for NoteNullifiers {
 ///
 /// A seed can invent a note, so `cm` closes downstream, at
 /// [`SpendableInit`](super::spendable::SpendableInit) and
-/// [`SpendStamp`](super::stamp::SpendStamp). What this step establishes is
+/// [`SpendAction`](super::stamp::SpendAction). What this step establishes is
 /// the pairing: `mk` is *this* `cm`'s master key.
 #[derive(Debug)]
 pub struct NoteSeed;
@@ -125,7 +143,7 @@ impl Step for NoteSeed {
         )?;
         let mk = pak.nk.derive_note_private(note.psi);
         let cm = note.commitment();
-        Ok(((cm, mk), ()))
+        Ok(((cm, note, mk), ()))
     }
 }
 
@@ -174,7 +192,7 @@ impl Step for NullifierDerive {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (epoch_first, seq): Self::Witness<'source>,
-        (cm, mk): <Self::Left as Header>::Data,
+        (cm, _note, mk): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(
@@ -261,7 +279,7 @@ impl Step for NullifierFuse {
     /// `(left_seq, merged_seq, right_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(16);
+    const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,

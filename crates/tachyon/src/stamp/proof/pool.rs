@@ -652,7 +652,7 @@ impl Step for SummaryUnspentInit {
     /// `(nf, summary_set, elapsed_seq)`.
     type Witness<'source> = (Nullifier, TachygramSetPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(19);
+    const INDEX: Index = Index::new(18);
 
     fn witness<'source>(
         &self,

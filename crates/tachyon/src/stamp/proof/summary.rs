@@ -33,7 +33,7 @@ impl Header for Summary {
     /// `anchor_first`.
     type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
 
-    const SUFFIX: Suffix = Suffix::new(10);
+    const SUFFIX: Suffix = Suffix::new(9);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_last, acc_commit) = *data;
@@ -67,7 +67,7 @@ impl Step for SummarySeed {
     /// `(anchor_prev, epoch, stamp_commit)`.
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(17);
+    const INDEX: Index = Index::new(16);
 
     fn witness<'source>(
         &self,
@@ -96,7 +96,7 @@ impl Step for SummaryAdvance {
     /// `(acc, extended, stamp)`.
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
-    const INDEX: Index = Index::new(18);
+    const INDEX: Index = Index::new(17);
 
     fn witness<'source>(
         &self,

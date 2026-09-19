@@ -11,7 +11,6 @@
 extern crate alloc;
 
 pub mod delegation;
-pub mod output;
 pub mod pool;
 pub mod qr;
 pub mod spend;
@@ -35,10 +34,9 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(pool::UnspentBind)?
         .register(spendable::SpendableInit)?
         .register(spendable::SpendableLift)?
-        .register(output::OutputBind)?
-        .register(stamp::OutputStamp)?
+        .register(stamp::OutputAction)?
         .register(spend::SpendBind)?
-        .register(stamp::SpendStamp)?
+        .register(stamp::SpendAction)?
         .register(stamp::StampMerge)?
         .register(stamp::StampLift)?
         .register(delegation::NullifierFuse)?

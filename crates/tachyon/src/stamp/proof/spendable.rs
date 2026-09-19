@@ -190,7 +190,7 @@ impl Step for SummarySpendableInit {
         TachygramSetPoly,
     );
 
-    const INDEX: Index = Index::new(20);
+    const INDEX: Index = Index::new(19);
 
     fn witness<'source>(
         &self,
@@ -283,7 +283,7 @@ impl Step for QrSpendableInit {
     /// `(contents)`.
     type Witness<'source> = (TachygramSetPoly,);
 
-    const INDEX: Index = Index::new(28);
+    const INDEX: Index = Index::new(27);
 
     fn witness<'source>(
         &self,

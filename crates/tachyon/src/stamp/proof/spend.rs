@@ -21,10 +21,10 @@ use crate::{
 /// Carries the note commitment `cm`, the lineage's nullifier and its
 /// neighbour `(nf_current, nf_next)` confirmed against the covering range, and
 /// the pool `anchor`. `nf_next` is the member at `epoch_current + 1`;
-/// [`SpendStamp`](super::stamp::SpendStamp) publishes the pair unordered,
+/// [`SpendAction`](super::stamp::SpendAction) publishes the pair unordered,
 /// and `_next` records how [`SpendBind`] established it. The action pair
 /// `(cv, rk)` is produced downstream at
-/// [`SpendStamp`](super::stamp::SpendStamp).
+/// [`SpendAction`](super::stamp::SpendAction).
 #[derive(Debug)]
 pub struct SpendHeader;
 
@@ -86,7 +86,7 @@ impl Step for SpendBind {
     /// `(nf_seq, complement_seq, nf_next)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, Nullifier);
 
-    const INDEX: Index = Index::new(12);
+    const INDEX: Index = Index::new(11);
 
     fn witness<'source>(
         &self,

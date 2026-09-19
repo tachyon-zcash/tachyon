@@ -11,6 +11,7 @@ use ragu::{Header, Step};
 
 use crate::{
     collections,
+    digest::poseidon,
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, private},
     note::Note,
@@ -31,7 +32,7 @@ use crate::{
         },
         spend::SpendBind,
         spendable::{QrSpendableInit, SpendableInit, SummarySpendableInit},
-        stamp::{OutputStamp, SpendStamp},
+        stamp::{OutputAction, SpendAction},
         summary::{SummaryAdvance, SummarySeed},
     },
     value,
@@ -63,7 +64,7 @@ pub fn nullifier_derive(
     (left, _right): (StepLeft<NullifierDerive>, StepRight<NullifierDerive>),
     epoch_first: EpochIndex,
 ) -> StepWitness<'static, NullifierDerive> {
-    let (_cm, mk) = left;
+    let (_cm, _note, mk) = left;
     (
         epoch_first,
         NfSeqPoly::new(epoch_first, &mk.derive_window(epoch_first)),
@@ -553,26 +554,24 @@ pub fn qr_unspent_init(
     )
 }
 
-/// Prepare the witness for [`OutputStamp`]: `(rcv, alpha, note, anchor,
+/// Prepare the witness for [`OutputAction`]: `(rcv, alpha, note, anchor,
 /// action_set, tachygram_set)`.
 ///
-/// Reads the tachygram pair off the bind header and derives the action from
-/// the note's negated value and `alpha`.
+/// Derives the note's tachygram pair natively, as the step does, and the
+/// action from the note's negated value and `alpha`.
 ///
 /// # Panics
 ///
 /// Panics when `rcv` or `alpha` yields an identity point, leaving the action
 /// undigestible.
 #[must_use]
-pub fn output_stamp(
-    (left, _right): (StepLeft<OutputStamp>, StepRight<OutputStamp>),
+pub fn output_action(
+    (_left, _right): (StepLeft<OutputAction>, StepRight<OutputAction>),
     rcv: value::Trapdoor,
     alpha: ActionRandomizer<effect::Output>,
     note: Note,
     anchor: Anchor,
-) -> StepWitness<'static, OutputStamp> {
-    let (cm, pad) = left;
-
+) -> StepWitness<'static, OutputAction> {
     #[expect(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
@@ -583,36 +582,52 @@ pub fn output_stamp(
     )
     .expect("action digest");
 
-    #[expect(clippy::tuple_array_conversions, reason = "required")]
     (
         rcv,
         alpha,
         note,
         anchor,
         ActionSetPoly::from_iter([digest]),
-        TachygramSetPoly::from_iter([cm, pad]),
+        TachygramSetPoly::from_iter(output_tachygrams(&note)),
     )
 }
 
-/// Prepare the witness for [`SpendStamp`]: `(note, rcv, alpha, pak,
-/// action_set, tachygram_set)`.
+/// The tachygram pair an output publishes: the note's commitment and its
+/// padding tachygram, the two hashes [`OutputAction`] derives in-circuit.
+#[must_use]
+pub fn output_tachygrams(note: &Note) -> [Tachygram; 2] {
+    let (rcm, pk, value, psi) = (
+        Fp::from(note.rcm),
+        Fp::from(note.pk),
+        u64::from(note.value),
+        Fp::from(note.psi),
+    );
+    [
+        Tachygram::from(poseidon::note_commitment(rcm, pk, value, psi)),
+        Tachygram::from(poseidon::pad_tachygram(rcm, pk, value, psi)),
+    ]
+}
+
+/// Prepare the witness for [`SpendAction`]: `(rcv, alpha, pak, action_set,
+/// tachygram_set)`.
 ///
-/// Reads the nullifier pair off the bind header and derives the action from
-/// the note's value and `pak` randomized by `alpha`.
+/// Reads the nullifier pair off the bind header and the note off the right
+/// [`NoteMaster`](crate::stamp::proof::delegation::NoteMaster), and derives
+/// the action from the note's value and `pak` randomized by `alpha`.
 ///
 /// # Panics
 ///
 /// Panics when `rcv` or `alpha` yields an identity point, leaving the action
 /// undigestible.
 #[must_use]
-pub fn spend_stamp(
-    (left, _right): (StepLeft<SpendStamp>, StepRight<SpendStamp>),
-    note: Note,
+pub fn spend_action(
+    (left, right): (StepLeft<SpendAction>, StepRight<SpendAction>),
     rcv: value::Trapdoor,
     alpha: ActionRandomizer<effect::Spend>,
     pak: ProofAuthorizingKey,
-) -> StepWitness<'static, SpendStamp> {
+) -> StepWitness<'static, SpendAction> {
     let (_cm, nf_current, nf_next, _anchor) = left;
+    let (_master_cm, note, _mk) = right;
 
     #[expect(
         clippy::expect_used,
@@ -622,7 +637,6 @@ pub fn spend_stamp(
         .expect("action digest");
 
     (
-        note,
         rcv,
         alpha,
         pak,
