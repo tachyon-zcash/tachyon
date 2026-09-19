@@ -20,7 +20,7 @@ use crate::{
         Tachygram, TachygramSetPoly, effect,
     },
     stamp::proof::{
-        delegation::{NfDerive, NoteSeed, NullifierFuse},
+        delegation::{NoteSeed, NullifierDerive, NullifierFuse},
         pool::{
             AnchorSeed, EndEpochUnspentSeed, SummaryUnspentInit, UnspentBind, UnspentFuse,
             UnspentSeed,
@@ -53,16 +53,16 @@ pub const fn note_seed(
     (note, pak)
 }
 
-/// Prepare the witness for [`NfDerive`]: `(epoch_first, seq)`.
+/// Prepare the witness for [`NullifierDerive`]: `(epoch_first, seq)`.
 ///
 /// Reads `mk` off the seed header and lays the whole window out as the
 /// sequence. `epoch_first` must be group-aligned. A longer span fuses
 /// windows via [`NullifierFuse`].
 #[must_use]
-pub fn nf_derive(
-    (left, _right): (StepLeft<NfDerive>, StepRight<NfDerive>),
+pub fn nullifier_derive(
+    (left, _right): (StepLeft<NullifierDerive>, StepRight<NullifierDerive>),
     epoch_first: EpochIndex,
-) -> StepWitness<'static, NfDerive> {
+) -> StepWitness<'static, NullifierDerive> {
     let (_cm, mk) = left;
     (
         epoch_first,

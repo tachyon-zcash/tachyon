@@ -1,8 +1,8 @@
 //! Prove a fusable range of a note's per-epoch nullifiers.
 //!
 //! Three steps. [`NoteSeed`] certifies the note's commitment and master
-//! key; [`NfDerive`] consumes that seed and exports one whole window; and
-//! [`NullifierFuse`] concatenates adjacent windows.
+//! key; [`NullifierDerive`] consumes that seed and exports one whole window;
+//! and [`NullifierFuse`] concatenates adjacent windows.
 //!
 //! All headers are wallet-only, and no key material rides the exported
 //! [`NoteNullifiers`].
@@ -31,7 +31,7 @@ use crate::{
 /// A note's certified commitment and master key (wallet-only).
 ///
 /// `mk` is derived natively from the note's secrets and certified here, so
-/// every consuming [`NfDerive`] threads a genuine master key without
+/// every consuming [`NullifierDerive`] threads a genuine master key without
 /// re-witnessing the note. `cm` rides along for the derivation's consumers to
 /// bind against.
 #[derive(Clone, Debug)]
@@ -54,7 +54,7 @@ impl Header for NoteMaster {
 /// `(cm, epoch_first, nf_commit, epoch_last)`: covers epochs
 /// `[epoch_first, epoch_last]`; `nf_commit` commits the range's nullifier
 /// sequence as an [`NfSeqPoly`], exactly one member per covered epoch. That
-/// invariant is established at [`NfDerive`], preserved by
+/// invariant is established at [`NullifierDerive`], preserved by
 /// [`NullifierFuse`]'s contiguity check, and what the divisibility binds
 /// lean on for per-epoch completeness. `cm` binds the range to the real
 /// note.
@@ -158,9 +158,9 @@ impl Step for NoteSeed {
 /// threaded `mk`, pinned in-circuit, so the product identity alone forces
 /// every member.
 #[derive(Debug)]
-pub struct NfDerive;
+pub struct NullifierDerive;
 
-impl Step for NfDerive {
+impl Step for NullifierDerive {
     type Aux<'source> = ();
     type Left = NoteMaster;
     type Output = NoteNullifiers;
@@ -184,7 +184,7 @@ impl Step for NfDerive {
         )]
         enforce_zero(
             Fp::from(u64::from(epoch_first) % (PoseidonFp::RATE as u64)),
-            "NfDerive: epoch_first is not group-aligned",
+            "NullifierDerive: epoch_first is not group-aligned",
         )?;
 
         // The whole window must land inside the epoch range: an index past
@@ -201,7 +201,9 @@ impl Step for NfDerive {
             .filter(|last| *last <= EPOCH_MAX)
             .map(EpochIndex::new)
             .ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("NfDerive: window exceeds the epoch range".into())
+                ragu_core::Error::InvalidWitness(
+                    "NullifierDerive: window exceeds the epoch range".into(),
+                )
             })?;
 
         // NF_DERIVATION_WIDTH nullifiers, PoseidonFp::RATE per sponge.
@@ -221,7 +223,7 @@ impl Step for NfDerive {
 
         enforce_zero(
             seq_at_z - window_at_z,
-            "NfDerive: sequence does not match the derived window",
+            "NullifierDerive: sequence does not match the derived window",
         )?;
 
         Ok(((cm, epoch_first, seq.commit(), epoch_last), ()))

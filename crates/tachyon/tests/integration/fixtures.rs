@@ -1170,12 +1170,12 @@ impl WalletSim {
             let (leaf, ()) = PROOF_SYSTEM
                 .fuse(
                     rng,
-                    delegation::NfDerive,
-                    witness::nf_derive((*master.data(), ()), chunk_start),
+                    delegation::NullifierDerive,
+                    witness::nullifier_derive((*master.data(), ()), chunk_start),
                     master.clone(),
                     Proof::trivial().carry::<()>(()),
                 )
-                .expect("NfDerive");
+                .expect("NullifierDerive");
             merged = Some(match merged {
                 None => leaf,
                 Some(left) => {

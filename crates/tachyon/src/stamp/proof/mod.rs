@@ -26,7 +26,7 @@ use ragu::{Application, ApplicationBuilder};
 fn make_app() -> Result<Application, ragu_core::Error> {
     ApplicationBuilder::new()
         .register(delegation::NoteSeed)?
-        .register(delegation::NfDerive)?
+        .register(delegation::NullifierDerive)?
         .register(pool::AnchorSeed)?
         .register(pool::AnchorFuse)?
         .register(pool::UnspentSeed)?
