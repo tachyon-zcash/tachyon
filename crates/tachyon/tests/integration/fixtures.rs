@@ -598,13 +598,9 @@ pub(crate) fn seal_qr_intake<RNG: CryptoRng>(
     }
 }
 
-/// The discriminant an epoch's buckets carry: the epoch link of its terminal
-/// anchor `terminal` into the next epoch.
-pub(crate) fn qr_discriminant_of(pool: &PoolSim, terminal: Anchor) -> QrDiscriminant {
-    terminal
-        .next_epoch(pool.epoch_at(terminal).next().unwrap())
-        .expect("epoch after the terminal is nonzero")
-        .into()
+/// Sample a routing base, as a builder does when it opens a network.
+pub(crate) fn qr_discriminant<RNG: CryptoRng>(rng: &mut RNG) -> QrDiscriminant {
+    QrDiscriminant::from(Fp::random(rng))
 }
 
 /// Root an intake on one published stamp, which a summary need not be able to

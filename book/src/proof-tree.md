@@ -165,13 +165,13 @@ Summaries root unbound like every seed. A consuming lineage closes at its own sp
 ### QR epoch evidence
 
 An epoch's evidence partitions its tachygrams by a sequence of quadratic tests.
-The first discriminant is the epoch link of the extent's `anchor_last` into the next epoch; every QR header carries it, and the discriminants progress by one from it,
+The first discriminant $R_1$ is a routing base the builder samples privately; every QR header carries it, and the discriminants progress by one from it,
 
-$$R_1 = H_\mathsf{ep}(\mathsf{anchor\_last}, \mathsf{epoch} + 1), \qquad R_{j+1} = R_1 + j \quad (j = 0, \ldots, 31).$$
+$$R_{j+1} = R_1 + j \quad (j = 0, \ldots, 31).$$
 
 A value takes the residue side at depth $j$ when $x + R_{j+1}$ is a square or zero.
-$R_1$ is unknown until the epoch closes, when every tachygram of the epoch is already published, so no value can be aimed at a bucket and evidence is built only for closed epochs.
-The one lever on $R_1$ is the epoch's last stamp, and steering even a few thousand published values into one bucket by choosing it costs $2^{d}$ tries per value at depth $d$, all at once.
+A private $R_1$ is what lets a network be routed while its epoch is still in flight: a builder opens one, keeps the base secret until the epoch closes, and publishes the sealed buckets after.
+Choosing $R_1$ moves how members distribute across buckets, never which bucket holds a given value under that base, so a biased or prematurely revealed base is one builder's network and a wallet uses any valid one.
 Honest depth is $\log_2$ of the bucket count and stays below 26 at any proposed throughput; the 32-position register is a width, not a security parameter[^balance].
 A profile is the string of sides on the path to a bucket.
 
@@ -183,17 +183,17 @@ $$u(X)^2 - c\,(X + R) = s(X)\, h(X)$$
 holds only when every root of the sibling $s$ takes its side at $R$, since each root leaves $u(x)^2 = c\,(x + R)$; with the split's product, every member of the extracted class is then in the child.
 A child may carry a stray member of the other class, which only tightens the openings its consumers make, but it cannot lack a member of its own.
 The exceptional value $-R$ has root $0$ under either class, so the split also opens the non-residue side nonzero at $-R$.
-The descent's challenge absorbs the three commitments; $R_1$ is read off the header and pinned later by the seal, so a descent at a solved $R$ emits a header nothing seals.
+The descent's challenge absorbs the three commitments; $R_1$ is read off the header, so every step of one network classifies at the same progression.
 Each descend requires the parent's depth below 32, so $\mathsf{bits} < 2^{32} < p$ and two paths never share a profile.
 A layer splits every intake over capacity, then merges same-profile neighbours while the product fits one polynomial; sibling buckets need not stop at the same depth.
 
-`QrBucketSeal` turns a routed intake into a `QrBucket` by pinning the extent's `anchor_prev` to epoch-link form and its discriminant to the epoch link of `anchor_last`,
+`QrBucketSeal` turns a routed intake into a `QrBucket` by pinning the extent's `anchor_prev` to epoch-link form,
 
-$$\mathsf{anchor\_prev} = H_\mathsf{ep}(\mathsf{anchor\_prev\_prev}, \mathsf{epoch}), \qquad \mathsf{discriminant} = H_\mathsf{ep}(\mathsf{anchor\_last}, \mathsf{epoch} + 1),$$
+$$\mathsf{anchor\_prev} = H_\mathsf{ep}(\mathsf{anchor\_prev\_prev}, \mathsf{epoch}),$$
 
-epoch zero's entry anchor being the first rule at $\mathsf{anchor\_prev\_prev} = 0$.
-Every split in the intake's history classified at $R_1 + \mathsf{depth}$ read off the header, so the second rule pins every discriminant the routing used to the span the bucket carries.
-That `anchor_last` is the epoch's terminal anchor is a claim about what was published, and the seal does not check it.
+epoch zero's entry anchor being that rule at $\mathsf{anchor\_prev\_prev} = 0$.
+It checks nothing about the discriminant, which is the builder's own base, threaded unchanged and required equal across every merge.
+That `anchor_last` is the epoch's terminal anchor is a claim about what was published, and the seal does not check it either; `QrUnspentInit`'s crossing forces it through the lineage.
 `QrBucketSeal` is the only step that produces a `QrBucket`, and `QrUnspentInit` consumes nothing else.
 
 `QrUnspentInit` witnesses a nonzero value $x$, a side $b_j$ and root $r_j$ at each of the 32 positions, a mask $m_j$, the sequence naming $x$, and the bucket's contents.

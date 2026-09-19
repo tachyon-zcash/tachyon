@@ -3,13 +3,13 @@
 //! Each depth classifies at a discriminant of the progression
 //!
 //! $$
-//!   R_1 = H_\mathsf{ep}(\mathsf{anchor\_last}, \mathsf{epoch} + 1),
-//!   \qquad R_{j+1} = R_j + 1,
+//!   R_{j+1} = R_1 + j,
 //! $$
 //!
-//! the epoch link of the extent's last anchor. Every header carries $R_1$, so
-//! depth $j$ classifies at $R_{j+1} = R_1 + j$, and a value takes the residue
-//! side there iff $x + R_{j+1}$ is a square or zero.
+//! whose base $R_1$ the builder samples privately, so a network can be routed
+//! while its epoch is still in flight. Every header carries $R_1$, so depth
+//! $j$ classifies at $R_{j+1}$, and a value takes the residue side there iff
+//! $x + R_{j+1}$ is a square or zero.
 //!
 //! [`QrSummaryIntakeInit`] starts a [`QrIntake`] from a [`Summary`], and
 //! [`QrStampIntakeSeed`] from one unsummarized stamp. [`QrIntakeSplit`]
@@ -49,8 +49,8 @@ pub struct QrIntake;
 impl Header for QrIntake {
     /// `(epoch, anchor_prev, anchor_last, discriminant, profile, contents)`.
     /// The contents were drawn from the folds the coverage extent
-    /// `(anchor_prev, anchor_last]` certifies; `discriminant` is the epoch's
-    /// $R_1$, free until [`QrBucketSeal`].
+    /// `(anchor_prev, anchor_last]` certifies; `discriminant` is the network's
+    /// $R_1$, prover-chosen and threaded unchanged.
     type Data = (
         EpochIndex,
         Anchor,
@@ -124,8 +124,9 @@ impl Header for QrIntakeSides {
 ///
 /// # Soundness
 ///
-/// `discriminant` is free here, as every seed witness is; [`QrBucketSeal`]
-/// pins it to the epoch-link image of the span's `anchor_last`.
+/// `discriminant` is free here, as every seed witness is, and stays free: it
+/// is the builder's own routing base. [`QrIntakeMerge`] requires the two
+/// halves to agree on it, so one network classifies at one progression.
 #[derive(Debug)]
 pub struct QrSummaryIntakeInit;
 
@@ -387,7 +388,8 @@ impl Step for QrIntakeSplit {
 /// the split's product places every member of the other class in the child. The
 /// child may hold a stray member of the sibling's class; consumers open it
 /// nonzero, so a stray member cannot pass a value that is present. $R$ is read
-/// off the header and pinned at [`QrBucketSeal`]. The parent's depth is
+/// off the header, so a descent classifies at the same base as every other
+/// step of the network. The parent's depth is
 /// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
 /// one depth's paths have distinct profiles.
 #[derive(Debug)]
@@ -511,11 +513,8 @@ impl Header for QrBucket {
 }
 
 /// Seal a routed [`QrIntake`] into a [`QrBucket`], by pinning the extent's
-/// `anchor_prev` to epoch-link form and its discriminant to the epoch-link
-/// image of `anchor_last`:
-///
-/// `anchor_prev` is the epoch link of `anchor_prev_prev` into `epoch`, and
-/// `discriminant` the epoch link of `anchor_last` into `epoch + 1`.
+/// `anchor_prev` to epoch-link form: it is the epoch link of
+/// `anchor_prev_prev` into `epoch`.
 ///
 /// # Soundness
 ///
@@ -527,11 +526,18 @@ impl Header for QrBucket {
 /// the segment binds it. Epoch zero's entry anchor, [`Anchor::default`], is
 /// this rule at an `anchor_prev_prev` of zero.
 ///
-/// Every split in the intake's history classified at $R_1 + \mathsf{depth}$
-/// read off the header, so pinning `discriminant` here pins every
-/// discriminant the routing used to the extent the bucket carries. That
-/// `anchor_last` is the epoch's *terminal anchor*, its last anchor, is
-/// likewise a claim about what was published, and this step does not check it.
+/// `discriminant` is not checked here. It is a prover-chosen routing base,
+/// threaded unchanged from the root intake and required equal across
+/// [`QrIntakeMerge`], so every split in the intake's history classified at
+/// $R_1 + \mathsf{depth}$ under the same $R_1$ the bucket carries, which is
+/// the progression [`QrUnspentInit`] walks. $R_1$ moves how members
+/// distribute across buckets, never which bucket holds a given value under
+/// that $R_1$, so a biased or prematurely revealed choice is one prover's
+/// network and a wallet uses any valid one.
+///
+/// That `anchor_last` is the epoch's *terminal anchor*, its last anchor, is
+/// likewise a claim about what was published, and this step does not check
+/// it; [`QrUnspentInit`]'s crossing forces it through the lineage.
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
@@ -556,13 +562,6 @@ impl Step for QrBucketSeal {
             Fp::from(anchor_prev)
                 - poseidon::anchor_next_epoch(Fp::from(anchor_prev_prev), Fp::from(epoch)),
             "QrBucketSeal: intake's first anchor is not an epoch link into its epoch",
-        )?;
-        // An index rather than an `EpochIndex`: a bucket sealed at the final
-        // epoch still has a discriminant, though `epoch + 1` is no epoch.
-        let epoch_next = Fp::from(epoch) + Fp::ONE;
-        enforce_zero(
-            Fp::from(discriminant) - poseidon::anchor_next_epoch(Fp::from(anchor_last), epoch_next),
-            "QrBucketSeal: discriminant is not the epoch link of anchor_last",
         )?;
 
         Ok((
@@ -624,7 +623,9 @@ impl Step for QrBucketSeal {
 /// is that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold
 /// then equals `bits` iff the bucket's sides are the value's first `depth`
 /// sides. Positions past `depth` are tested but compared to nothing. $R_1$ is
-/// the bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` and
+/// the bucket's own `discriminant`, the base its routing classified at, so
+/// the exclusion holds for the network the bucket belongs to whatever base
+/// that network chose. `value` and
 /// `nf_next` are free, the profile fold fixing the first and the sequence
 /// identity both;
 /// [`UnspentBind`](super::pool::UnspentBind) forces each against the note's
