@@ -521,8 +521,10 @@ pub const fn qr_bucket_seal(
     (anchor_final_prev,)
 }
 
-/// Prepare the witness for [`QrUnspentInit`]: `(value, classes, mask,
+/// Prepare the witness for [`QrUnspentInit`]: `(value, nf_next, classes, mask,
 /// sequence, contents)`.
+///
+/// `nf_next` is the tested note's nullifier for the epoch after the bucket's.
 ///
 /// # Panics
 ///
@@ -532,14 +534,16 @@ pub const fn qr_bucket_seal(
 pub fn qr_unspent_init(
     (bucket, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
     value: Tachygram,
+    nf_next: Nullifier,
     bucket_members: &[Tachygram],
 ) -> StepWitness<'static, QrUnspentInit> {
     let (epoch, _anchor_prev, _anchor_end, discriminant, profile, _contents) = bucket;
     (
         value,
+        nf_next,
         QrClassRoot::along(Fp::from(value), discriminant),
         profile.depth_mask(),
-        NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
+        NfSeqPoly::new(epoch, &[Nullifier::from(value), nf_next]),
         bucket_members.iter().copied().collect(),
     )
 }

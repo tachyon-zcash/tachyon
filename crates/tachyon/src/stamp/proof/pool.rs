@@ -329,9 +329,9 @@ impl Step for UnspentSeed {
 /// indexed multisequence: closed `[epoch, epoch + 1]` in epoch space and
 /// `(anchor_prev, anchor_end]` in anchor space.
 ///
-/// The witness reads a member at `epoch` and its neighbour at `epoch + 1`, as
-/// [`SpendBind`](super::spend::SpendBind) does; the emitted header relabels
-/// the pair as the extent's `start` and `end`.
+/// [`QrBucketSeal`](super::qr::QrBucketSeal) performs a QR bucket's boundary
+/// digest, so this seed serves crossings
+/// out of stamp-level and summary evidence.
 ///
 /// # Soundness
 ///

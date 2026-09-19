@@ -255,15 +255,16 @@ impl Step for SummarySpendableInit {
 /// [`UnspentBind`](super::pool::UnspentBind)), so `cm` and the whole-epoch
 /// absence of the note's nullifier arrive on its header. This step adds the
 /// membership $\mathsf{contents}(\mathsf{cm}) = 0$ and emits the spendable at
-/// the segment's `anchor_end`, which
-/// [`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed) crosses.
+/// the segment's `anchor_end`. [`QrBucketSeal`](super::qr::QrBucketSeal)
+/// performs the boundary digest, so that anchor is the entry anchor of the
+/// epoch after the bucket's and the lineage is already across.
 ///
 /// # Soundness
 ///
 /// Membership needs no profile. Every bucket divides the epoch's stamp
 /// polynomials, root through split and merge, so a root of any bucket is a
 /// tachygram published in the bucket's span. The two extents coincide by
-/// equality on both endpoints: `anchor_end` is emitted and reaches consensus
+/// equality at both ends: `anchor_end` is emitted and reaches consensus
 /// through the lineage, so the stamp commitments absorbed across the span are
 /// the published ones. Without that equality a bucket over invented stamps
 /// onto the real entry anchor would pass the opening.
@@ -309,6 +310,14 @@ impl Step for QrSpendableInit {
         enforce_zero(
             Fp::from(unspent_anchor_end) - Fp::from(bucket_anchor_end),
             "QrSpendableInit: segment does not close where the bucket does",
+        )?;
+        let bucket_epoch_next = bucket_epoch.next().ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
+        })?;
+        // Defensive: the anchor equality already rejects a wrong epoch label.
+        enforce_zero(
+            Fp::from(unspent_epoch_end) - Fp::from(bucket_epoch_next),
+            "QrSpendableInit: segment does not end in the epoch after the bucket's",
         )?;
 
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.

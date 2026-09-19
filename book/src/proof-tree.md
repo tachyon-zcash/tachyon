@@ -32,7 +32,7 @@ The sync service produces `ArbitraryUnspent` segments without ever holding the n
 `UnspentSeed` absorbs one stamp at a given absolute epoch and proves a wallet-supplied nullifier was absent from that stamp's tachygram set; the resulting `ArbitraryUnspent` crosses no epoch boundary, so `epoch_start == epoch_end` and the tested nullifier is its single `elapsed` member.
 A block that publishes no stamp advances no anchor, so a stampless span needs no segment and no proof work.
 `UnspentFuse` composes two contiguous ranges that share a junction epoch (`right.epoch_start == left.epoch_end`): it concatenates their `elapsed` histories, keeping the junction member once, at adjacent anchors.
-`EndEpochUnspentSeed` is the segment for the boundary itself: it performs the boundary digest of a witnessed final anchor, its two `elapsed` members being the epochs it leaves and enters, so `epoch_end == epoch_start + 1`.
+`EndEpochUnspentSeed` is the boundary segment for stamp-level and summary evidence: it performs the boundary digest of a witnessed final anchor, its two `elapsed` members being the epochs it leaves and enters, so `epoch_end == epoch_start + 1`.
 A crossing is therefore a fold like any other, and `UnspentFuse` composes it with its neighbours on both sides; an epoch that published nothing is simply two crossings with no stamp segment between them.
 
 A `Summary` folds a run of one epoch's stamps into one accumulator alongside the anchor (`SummarySeed`, `SummaryAdvance`); summaries are note-independent, so anyone can build them.
@@ -187,13 +187,13 @@ The descent's challenge absorbs the three commitments; $R_1$ is read off the hea
 Each descend requires the parent's depth below 32, so $\mathsf{bits} < 2^{32} < p$ and two paths never share a profile.
 A layer splits every intake over capacity, then merges same-profile neighbours while the product fits one polynomial; sibling buckets need not stop at the same depth.
 
-`QrBucketSeal` turns a routed intake into a `QrBucket` by pinning the extent's `anchor_prev` to epoch-link form and its discriminant to the epoch link of `anchor_end`,
+`QrBucketSeal` turns a routed intake into a `QrBucket` that runs boundary to boundary. It pins the extent's `anchor_prev` to epoch-link form, folds the crossing out of the intake's `anchor_end`, and pins the discriminant to that crossing,
 
-$$\mathsf{anchor\_prev} = H_\mathsf{ep}(\mathsf{anchor\_prev\_prev}, \mathsf{epoch}), \qquad \mathsf{discriminant} = H_\mathsf{ep}(\mathsf{anchor\_end}, \mathsf{epoch} + 1),$$
+$$\mathsf{anchor\_prev} = H_\mathsf{ep}(\mathsf{anchor\_prev\_prev}, \mathsf{epoch}), \qquad \mathsf{anchor\_end}' = \mathsf{discriminant} = H_\mathsf{ep}(\mathsf{anchor\_end}, \mathsf{epoch} + 1),$$
 
-epoch zero's entry anchor being the first rule at $\mathsf{anchor\_prev\_prev} = 0$.
+epoch zero's entry anchor being the first rule at $\mathsf{anchor\_prev\_prev} = 0$. The bucket carries $\mathsf{anchor\_end}'$.
 Every split in the intake's history classified at $R_1 + \mathsf{depth}$ read off the header, so the second rule pins every discriminant the routing used to the span the bucket carries.
-That `anchor_end` is the epoch's final anchor is a claim about what was published, and the seal does not check it.
+The crossing is what makes the bucket's whole-epoch claim true. In the accepted chain, the only anchor of epoch-link form absorbing $\mathsf{epoch} + 1$ is the one folded from $\mathsf{final}(\mathsf{epoch})$. An intake sealed short folds to a value nobody published, and by preimage resistance no fold downstream of it rejoins the chain, so its bucket never reaches a consensus-checked spend. Sub-epoch coverage is summary evidence's job; QR buckets are the whole-epoch archive.
 `QrBucketSeal` is the only step that produces a `QrBucket`, and `QrUnspentInit` consumes nothing else.
 
 `QrUnspentInit` witnesses a nonzero value $x$, a side $b_j$ and root $r_j$ at each of the 32 positions, a mask $m_j$, the sequence naming $x$, and the bucket's contents.
@@ -209,10 +209,10 @@ $$\sum_j m_j = d, \qquad 2 \sum_j j\, m_j = d\,(d - 1), \qquad a_{j+1} = a_j + m
 since among boolean vectors of weight $d$ only the leading positions attain the minimum index sum; positions past $d$ are tested but compared to nothing.
 A bucket matching $x$'s profile contains every occurrence of $x$ in its span, so opening its contents nonzero at $x$ proves absence over that span.
 The sequence's single member $(\mathsf{epoch}, x)$ is checked at a challenge absorbing $G_0 \cdot x$; the sequence and the contents are the step's two oracles.
-The emitted segment is the bucket's span, one epoch, so `EndEpochUnspentSeed` supplies the link between consecutive epochs' segments.
+The emitted segment takes the bucket's extent, which ends on the boundary into $\mathsf{epoch} + 1$. Stepping onto that boundary enters a new epoch, so the step also witnesses that epoch's nullifier, and the segment covers `[epoch, epoch + 1]` in epoch space. Consecutive epochs' segments therefore abut at the entry anchor and `UnspentFuse` composes them directly.
 
 `QrSpendableInit` bootstraps a spendable from the bucket holding the note's creation.
-Its left input is the note's `NoteUnspent` over that epoch, the QR segment bound by `UnspentBind`, so `cm` and the whole-epoch absence of the nullifier arrive on the header; the step opens the bucket at $\mathsf{cm}$ for zero, requires the segment's extent to equal the bucket's, and emits the spendable at the segment's `anchor_end`.
+Its left input is the note's `NoteUnspent` over that epoch, the QR segment bound by `UnspentBind`, so `cm` and the whole-epoch absence of the nullifier arrive on the header; the step opens the bucket at $\mathsf{cm}$ for zero, requires the segment's extent to equal the bucket's, and emits the spendable at the segment's `anchor_end`. That anchor is the next epoch's entry anchor.
 Membership needs no profile: every bucket divides the epoch's stamp polynomials, so a root of any bucket is a tachygram published in its span, and the span equality closes the bucket's anchors through the lineage the segment already joins.
 
 ### Derivation window
@@ -456,7 +456,7 @@ flowchart LR
 | QrIntakeSplit | QrIntake | — | contents, non_residue, residue | QrIntakeSides |
 | QrSideDescend | QrIntakeSides | — | bit, sibling_contents, interpolant, quotient | QrIntake |
 | QrBucketSeal | QrIntake | — | anchor_final_prev | QrBucket |
-| QrUnspentInit | QrBucket | — | value, classes, mask, sequence, contents | ArbitraryUnspent |
+| QrUnspentInit | QrBucket | — | value, nf_next, classes, mask, sequence, contents | ArbitraryUnspent |
 | UnspentSeed | — | — | anchor_prev, (epoch, nf), stamp_tg_set, elapsed_seq | ArbitraryUnspent |
 | EndEpochUnspentSeed | — | — | anchor_prev, (epoch, nf), nf_next, elapsed_seq | ArbitraryUnspent |
 | UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | ArbitraryUnspent |
