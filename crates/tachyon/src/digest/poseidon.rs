@@ -194,12 +194,15 @@ pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
 
 const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 
-/// Advances the terminal anchor of an epoch into a new epoch's initial state.
+/// Folds `anchor_prev` into `epoch` under the epoch-link domain.
+///
+/// Produces the entry anchor of `epoch` when `anchor_prev` is the terminal
+/// anchor of the epoch before; a digest of the same form otherwise.
 #[must_use]
-pub fn anchor_next_epoch(anchor_prev: Fp, new_epoch: Fp) -> Fp {
+pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
     hash::<3>([
         Fp::from_u128(u128::from_le_bytes(*ANCHOR_EPOCH_DOMAIN)),
         anchor_prev,
-        new_epoch,
+        epoch,
     ])
 }

@@ -31,9 +31,9 @@ pub enum AnchorError {
 pub struct Anchor(pub Fp);
 
 impl Anchor {
-    /// Advance the anchor to the next stamp in the present epoch.
+    /// Advance the anchor by one stamp link, absorbing the containing epoch.
     ///
-    /// The present epoch index may be zero, within the genesis epoch.
+    /// The containing epoch index may be zero, within the genesis epoch.
     ///
     /// # Errors
     ///
@@ -41,7 +41,7 @@ impl Anchor {
     /// empty set.
     pub fn next_stamp(
         self,
-        present_epoch: EpochIndex,
+        epoch: EpochIndex,
         &stamp_commit: &TachygramSetCommit,
     ) -> Result<Self, AnchorError> {
         if *stamp_commit.as_ref() == Eq::identity() {
@@ -51,22 +51,22 @@ impl Anchor {
         } else {
             Ok(Self(poseidon::anchor_next_stamp(
                 self.0,
-                present_epoch.into(),
+                epoch.into(),
                 stamp_commit.as_ref().to_affine(),
             )))
         }
     }
 
-    /// Advance the anchor to the next epoch boundary.
+    /// Advance the anchor by one epoch link, absorbing `epoch`.
     ///
     /// # Errors
     ///
-    /// Fails if `next_epoch` is zero.
-    pub fn next_epoch(self, next_epoch: EpochIndex) -> Result<Self, AnchorError> {
-        if next_epoch == EpochIndex::new(0) {
+    /// Fails if `epoch` is zero.
+    pub fn next_epoch(self, epoch: EpochIndex) -> Result<Self, AnchorError> {
+        if epoch == EpochIndex::new(0) {
             Err(AnchorError::NextEpochZero)
         } else {
-            Ok(Self(poseidon::anchor_next_epoch(self.0, next_epoch.into())))
+            Ok(Self(poseidon::anchor_next_epoch(self.0, epoch.into())))
         }
     }
 
@@ -91,7 +91,9 @@ impl Anchor {
 }
 
 impl Default for Anchor {
-    /// The leading epoch boundary for epoch zero.
+    /// The entry anchor of epoch zero, `H_epoch(0, 0)`. Its fold input is
+    /// zero, which is no chain vertex; [`Anchor::next_epoch`] rejects index
+    /// zero, so no crossing produces it.
     fn default() -> Self {
         Self(*ANCHOR_GENESIS)
     }
