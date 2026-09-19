@@ -605,10 +605,14 @@ impl Step for QrBucketSeal {
 /// $$
 ///
 /// with $a_0 = 0$; the fold ends at $\mathsf{bits}$ exactly when the
-/// bucket's sides are the value's. The
-/// emitted segment reads the value as a nullifier and covers the bucket's
-/// own span, one epoch, so consecutive epochs' segments need an
-/// [`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed) between them.
+/// bucket's sides are the value's.
+///
+/// The emitted segment reads the value as a nullifier and crosses the epoch
+/// boundary: it witnesses the next epoch's nullifier as well, folds the
+/// crossing from the bucket's `anchor_last`, and covers `[epoch, epoch + 1]`
+/// in epoch space and `(anchor_prev, H_epoch(anchor_last, epoch + 1)]` in
+/// anchor space. Consecutive epochs' segments therefore meet at the entry
+/// anchor and fuse directly.
 ///
 /// # Soundness
 ///
@@ -620,8 +624,22 @@ impl Step for QrBucketSeal {
 /// is that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold
 /// then equals `bits` iff the bucket's sides are the value's first `depth`
 /// sides. Positions past `depth` are tested but compared to nothing. $R_1$ is
-/// the bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` is free,
-/// its profile fixed by the fold and its sequence membership by the identity.
+/// the bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` and
+/// `nf_next` are free, the profile fold fixing the first and the sequence
+/// identity both;
+/// [`UnspentBind`](super::pool::UnspentBind) forces each against the note's
+/// genuine derivation.
+///
+/// The crossing is what makes the bucket's whole-epoch claim true. The
+/// accepted chain holds exactly one anchor of epoch-link form absorbing
+/// `epoch + 1`, the entry anchor of that epoch, folded from
+/// `terminal(epoch)`. This step emits `H_epoch(a, epoch + 1)` for the
+/// bucket's own `a`, so if `a` is not `terminal(epoch)` the result is on no
+/// chain, and by preimage resistance neither is any fold downstream of it.
+/// A bucket sealed short of the epoch therefore yields evidence no lineage
+/// can carry to a consensus-checked spend. [`QrBucketSeal`] still proves form
+/// alone; whole-epoch coverage is established here and preserved by every
+/// fuse and lift.
 #[derive(Debug)]
 pub struct QrUnspentInit;
 
@@ -630,9 +648,10 @@ impl Step for QrUnspentInit {
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(value, classes, mask, sequence, contents)`.
+    /// `(value, nf_next, classes, mask, sequence, contents)`.
     type Witness<'source> = (
         Tachygram,
+        Nullifier,
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
@@ -644,8 +663,15 @@ impl Step for QrUnspentInit {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (value, classes, mask, sequence, contents): Self::Witness<'source>,
-        (epoch, anchor_prev, anchor_last, discriminant, profile, contents_commit): <Self::Left as Header>::Data,
+        (value, nf_next, classes, mask, sequence, contents): Self::Witness<'source>,
+        (
+            bucket_epoch,
+            bucket_anchor_prev,
+            bucket_anchor_last,
+            discriminant,
+            profile,
+            contents_commit,
+        ): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
@@ -654,6 +680,10 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: contents do not match the bucket",
         )?;
         enforce_nonzero(Fp::from(value), "QrUnspentInit: tested value is zero")?;
+        enforce_nonzero(
+            Fp::from(nf_next),
+            "QrUnspentInit: next-epoch nullifier is zero",
+        )?;
 
         // TODO: a real circuit must constrain every side and mask bit boolean;
         // the types carry it under mock ragu.
@@ -694,15 +724,31 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: value does not take the bucket's profile",
         )?;
 
+        // The crossing out of the bucket's epoch, folded here rather than read
+        // off `discriminant`, which is prover-chosen.
+        let epoch_next = bucket_epoch.next().ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("QrUnspentInit: crossing past the final epoch".into())
+        })?;
+        let anchor_last = bucket_anchor_last
+            .next_epoch(epoch_next)
+            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+
         let sequence_commit = sequence.commit();
         let z = ctx.derive_challenge(&[sequence_commit.into()])?;
         let sequence_at_z = sequence.eval(z);
         ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
 
-        let member_at_z = indexed_multiset::direct_eval([(u64::from(epoch), value.into())], z);
+        let epoch_idx = u64::from(bucket_epoch);
+        let crossing_at_z = indexed_multiset::direct_eval(
+            [
+                (epoch_idx, value.into()),
+                (epoch_idx + 1, Fp::from(nf_next)),
+            ],
+            z,
+        );
         enforce_zero(
-            sequence_at_z - member_at_z,
-            "QrUnspentInit: sequence does not match the tested value",
+            sequence_at_z - crossing_at_z,
+            "QrUnspentInit: sequence does not match the crossing pairs",
         )?;
 
         let contents_at_value = contents.eval(value.into());
@@ -712,13 +758,12 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: found nullifier in the bucket",
         )?;
 
-        let nf = Nullifier::from(value);
         Ok((
             (
-                anchor_prev,
-                (epoch, nf),
+                bucket_anchor_prev,
+                (bucket_epoch, Nullifier::from(value)),
                 sequence_commit,
-                (epoch, nf),
+                (epoch_next, nf_next),
                 anchor_last,
             ),
             (),

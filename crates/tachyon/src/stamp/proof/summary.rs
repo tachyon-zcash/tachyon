@@ -19,9 +19,11 @@ use crate::{
     relations::enforce::enforce_poly_product,
 };
 
-/// One summarized run of an epoch's stamps. `acc_commit` commits the root
-/// polynomial of every tachygram in the run, which is exactly the set of
-/// stamps folded over the coverage extent `(anchor_prev, anchor_last]`.
+/// One summarized run of an epoch's stamps.
+///
+/// `acc_commit` commits the root polynomial of every tachygram in the run,
+/// which is exactly the set of stamps folded over the coverage extent
+/// `(anchor_prev, anchor_last]`.
 #[derive(Clone, Debug)]
 pub struct Summary;
 

@@ -342,6 +342,10 @@ impl Step for UnspentSeed {
 /// [`SpendBind`](super::spend::SpendBind) does; the emitted header relabels
 /// the pair as the extent's `first` and `last`.
 ///
+/// QR evidence folds its own crossing at
+/// [`QrUnspentInit`](super::qr::QrUnspentInit), so this seed serves crossings
+/// out of stamp-level and summary evidence.
+///
 /// # Soundness
 ///
 /// `nf` and `nf_next` are unconstrained here, as at every seed;
