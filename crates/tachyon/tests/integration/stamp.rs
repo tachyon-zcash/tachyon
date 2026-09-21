@@ -1008,3 +1008,93 @@ fn merge_after_lift() {
     ProofStamp::merge(rng, (lifted_a, desc_a), (stamp_b, desc_b))
         .expect("a lifted stamp merges with one at the anchor it was lifted to");
 }
+
+/// `merge` requires each side's descriptor list to match the actions its
+/// stamp attests, but deliberately performs no pre-check.
+/// `Bundle::verify_coverage` is the caller's check and returns the descriptor
+/// set to pass to `merge`. This test models a caller that skips it, spends the
+/// merge compute, and produces a stamp that does not verify against the true
+/// covered actions.
+///
+/// The foreign descriptor changes the merged union. A simple left/right swap
+/// preserves that union, which mock ragu cannot distinguish because it does
+/// not validate child proofs against their carried headers.
+#[test]
+fn mismatched_merge_descriptors_fail_verification() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user_a = WalletSim::random(rng);
+    let user_b = WalletSim::random(rng);
+    let pool = PoolSim::genesis(rng);
+    let anchor = pool.anchor();
+
+    let bundle_a = user_a.autonome(
+        rng,
+        anchor,
+        alloc::vec![],
+        alloc::vec![user_a.random_note(200)],
+    );
+    let bundle_b = user_b.autonome(
+        rng,
+        anchor,
+        alloc::vec![],
+        alloc::vec![user_b.random_note(300)],
+    );
+    let descriptors_a = bundle_a
+        .verify_coverage(&[])
+        .expect("first bundle coverage");
+    let descriptors_b = bundle_b
+        .verify_coverage(&[])
+        .expect("second bundle coverage");
+    let foreign = random_action(rng).descriptor();
+
+    let digests: Vec<ActionDigest> = descriptors_a
+        .iter()
+        .chain(&descriptors_b)
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect();
+
+    // `Bundle::verify_coverage` returned the attested input. A caller that
+    // ignores it can instead assemble this mismatched descriptor set.
+    let foreign_descriptors = BTreeSet::from_iter([foreign]);
+    assert!(
+        descriptors_a.is_disjoint(&foreign_descriptors),
+        "the foreign descriptor must not overlap the other merge input"
+    );
+    assert!(
+        !bundle_b.stamp.is_covering(foreign_descriptors.clone()),
+        "the foreign descriptor must not be covered by the second stamp"
+    );
+
+    // The merge itself does not pre-check, and the mismatch violates no step
+    // relation: proving succeeds and the compute is spent.
+    let merged = ProofStamp::merge(
+        rng,
+        (bundle_a.stamp.clone(), descriptors_a.clone()),
+        (bundle_b.stamp.clone(), foreign_descriptors),
+    )
+    .expect("merge performs no coverage pre-check");
+
+    // An honest verifier reconstructs the header from the true covered
+    // actions, which the mismatched proof does not attest.
+    assert!(
+        !merged
+            .verify_proof(rng, digests.clone())
+            .expect("proof system verification"),
+        "a merge fed descriptors its stamp does not attest must be disproved"
+    );
+
+    // Control: the same stamps merged under their attested descriptors
+    // produce a stamp the same verifier accepts.
+    let honest = ProofStamp::merge(
+        rng,
+        (bundle_a.stamp, descriptors_a),
+        (bundle_b.stamp, descriptors_b),
+    )
+    .expect("merge");
+    assert!(
+        honest
+            .verify_proof(rng, digests)
+            .expect("proof system verification"),
+        "the attested descriptor lists produce a verifying merge"
+    );
+}
