@@ -875,19 +875,32 @@ pub(crate) fn build_qr_bucket_tree<RNG: CryptoRng>(
         layer.push(pcd);
     }
 
-    let mut depth = QrTreeFork::LEVELS;
-    while (1usize << depth) < layer.len() {
-        depth += QrTreeFork::LEVELS;
+    let mut width = 1;
+    let mut depth = 0;
+    while width < layer.len() {
+        width *= QrTreeFork::ARITY;
+        depth += 1;
     }
-    while layer.len() < (1usize << depth) {
+    while layer.len() < width {
         layer.push(layer.last().expect("nonempty tree").clone());
     }
 
     let mut levels = vec![layer.iter().map(|pcd| pcd.data().4).collect::<Vec<_>>()];
     while layer.len() > 1 {
-        let mut parents = Vec::with_capacity(layer.len());
+        let mut parents = Vec::with_capacity(layer.len() / QrTreeFork::ARITY);
         let mut children = layer.into_iter();
-        while let (Some(left), Some(right)) = (children.next(), children.next()) {
+        while let (Some(first), Some(second), Some(third), Some(fourth)) = (
+            children.next(),
+            children.next(),
+            children.next(),
+            children.next(),
+        ) {
+            let (left, ()) = PROOF_SYSTEM
+                .fuse(rng, qr::QrBucketTreePairFuse, (), first, second)
+                .expect("QrBucketTreePairFuse");
+            let (right, ()) = PROOF_SYSTEM
+                .fuse(rng, qr::QrBucketTreePairFuse, (), third, fourth)
+                .expect("QrBucketTreePairFuse");
             let (pcd, ()) = PROOF_SYSTEM
                 .fuse(rng, qr::QrBucketTreeFuse, (), left, right)
                 .expect("QrBucketTreeFuse");
@@ -897,21 +910,44 @@ pub(crate) fn build_qr_bucket_tree<RNG: CryptoRng>(
         layer = parents;
     }
 
+    let mut root = layer.pop().expect("one root");
+    let mut caps = Vec::new();
+    while (depth + caps.len()) % QrTreeFork::LEVELS != 0 {
+        caps.push(root.data().4);
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                qr::QrBucketTreeCap,
+                (),
+                root,
+                Proof::trivial().carry::<()>(()),
+            )
+            .expect("QrBucketTreeCap");
+        root = pcd;
+    }
+
     let leaves = held
         .into_iter()
         .enumerate()
         .map(|(index, (profile, contents, members))| {
-            let path = (0..depth)
+            let mut path: Vec<_> = caps
+                .iter()
                 .rev()
-                .map(|level| {
-                    let parent = index >> (level + 1);
-                    QrTreeFork(
-                        (index >> level) & 1 == 1,
-                        levels[level][2 * parent],
-                        levels[level][(2 * parent) + 1],
-                    )
-                })
+                .map(|child| QrTreeFork([false, false], [*child; QrTreeFork::ARITY]))
                 .collect();
+            path.extend((0..depth).rev().map(|level| {
+                let base = QrTreeFork::ARITY * (index >> (2 * (level + 1)));
+                let digit = (index >> (2 * level)) & 3;
+                QrTreeFork(
+                    [digit & 2 != 0, digit & 1 != 0],
+                    [
+                        levels[level][base],
+                        levels[level][base + 1],
+                        levels[level][base + 2],
+                        levels[level][base + 3],
+                    ],
+                )
+            }));
             QrBucketLeaf {
                 profile,
                 contents,
@@ -921,10 +957,7 @@ pub(crate) fn build_qr_bucket_tree<RNG: CryptoRng>(
         })
         .collect();
 
-    QrBucketTreeEntry {
-        pcd: layer.pop().expect("one root"),
-        leaves,
-    }
+    QrBucketTreeEntry { pcd: root, leaves }
 }
 
 /// Descend `tree` along one leaf's path and replay the bucket it holds.

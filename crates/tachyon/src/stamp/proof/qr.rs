@@ -21,9 +21,12 @@
 //!
 //! A builder that keeps a network's buckets folds them into one
 //! [`QrBucketTree`] and retains a single proof for its root:
-//! [`QrBucketTreeInit`] admits one bucket, [`QrBucketTreeFuse`] joins two
-//! trees of one network, [`QrBucketTreeDescend`] walks a path down to a
-//! subtree, and [`QrBucketTreeOpen`] replays the bucket a leaf holds.
+//! [`QrBucketTreeInit`] admits one bucket, [`QrBucketTreePairFuse`] and
+//! [`QrBucketTreeFuse`] assemble a four-child node from two proofs apiece,
+//! [`QrBucketTreeCap`] raises a root to the depth a descent expects,
+//! [`QrBucketTreeDescend`] walks a path down to a subtree, and
+//! [`QrBucketTreeOpen`] replays the bucket a leaf holds. The seal admits every
+//! bucket; the open only replays one a tree already holds.
 
 extern crate alloc;
 
@@ -815,13 +818,54 @@ impl Header for QrBucketTree {
     }
 }
 
+/// Two sibling subtree roots of one network, awaiting the other half of their
+/// node.
+///
+/// A [`QrTreeFork::ARITY`]-child node reaches one hash through two steps,
+/// since a [`Step`] takes at most two predecessor proofs. This header is a node
+/// half-assembled: the left and right children of one side, under the four
+/// network fields both already agree on.
+#[derive(Clone, Debug)]
+pub struct QrBucketTreePair;
+
+impl Header for QrBucketTreePair {
+    /// `(epoch, anchor_prev, anchor_last, discriminant, first, second)`.
+    type Data = (
+        EpochIndex,
+        Anchor,
+        Anchor,
+        QrDiscriminant,
+        QrTreeRoot,
+        QrTreeRoot,
+    );
+
+    const SUFFIX: Suffix = Suffix::new(13);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (epoch, anchor_prev, anchor_last, discriminant, first, second) = *data;
+        (
+            vec![
+                Fp::from(epoch),
+                Fp::from(anchor_prev),
+                Fp::from(anchor_last),
+                Fp::from(discriminant),
+                Fp::from(first),
+                Fp::from(second),
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+}
+
 /// Admit one sealed [`QrBucket`] as a one-leaf [`QrBucketTree`].
 ///
 /// # Soundness
 ///
-/// Every field is threaded from a bucket PCD, and the leaf digest is derived
-/// from three of them, so the emitted root is the digest of a bucket
-/// [`QrBucketSeal`] produced and the four network fields are that bucket's.
+/// Every element of the digest is threaded from a bucket PCD, so the emitted
+/// root is the digest of a bucket [`QrBucketSeal`] produced and the four
+/// network fields are that bucket's.
 #[derive(Debug)]
 pub struct QrBucketTreeInit;
 
@@ -842,6 +886,10 @@ impl Step for QrBucketTreeInit {
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let root = QrTreeRoot(poseidon::qr_bucket_digest(
+            Fp::from(epoch),
+            Fp::from(anchor_prev),
+            Fp::from(anchor_last),
+            Fp::from(discriminant),
             Fp::from(u64::from(profile.depth)),
             Fp::from(u64::from(profile.bits)),
             Eq::from(contents).to_affine(),
@@ -851,7 +899,7 @@ impl Step for QrBucketTreeInit {
     }
 }
 
-/// Join two [`QrBucketTree`]s of one network under a fresh node.
+/// Pair two [`QrBucketTree`]s of one network as half a node.
 ///
 /// # Soundness
 ///
@@ -861,13 +909,16 @@ impl Step for QrBucketTreeInit {
 /// the extent off the tree, so a tree spanning more than its leaves do would
 /// let a bucket's exclusion cover folds the bucket never held. Every bucket of
 /// one network shares all four, so equality costs a builder nothing.
+///
+/// Nothing is hashed here. The pair asserts only that two subtrees belong to
+/// one network; [`QrBucketTreeFuse`] is what turns four of them into a node.
 #[derive(Debug)]
-pub struct QrBucketTreeFuse;
+pub struct QrBucketTreePairFuse;
 
-impl Step for QrBucketTreeFuse {
+impl Step for QrBucketTreePairFuse {
     type Aux<'source> = ();
     type Left = QrBucketTree;
-    type Output = QrBucketTree;
+    type Output = QrBucketTreePair;
     type Right = QrBucketTree;
     type Witness<'source> = ();
 
@@ -879,6 +930,81 @@ impl Step for QrBucketTreeFuse {
         (): Self::Witness<'source>,
         (left_epoch, left_anchor_prev, left_anchor_last, left_discriminant, left_root): <Self::Left as Header>::Data,
         (right_epoch, right_anchor_prev, right_anchor_last, right_discriminant, right_root): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(left_epoch) - Fp::from(right_epoch),
+            "QrBucketTreePairFuse: inputs cover different epochs",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_prev) - Fp::from(right_anchor_prev),
+            "QrBucketTreePairFuse: inputs open at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_last) - Fp::from(right_anchor_last),
+            "QrBucketTreePairFuse: inputs close at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_discriminant) - Fp::from(right_discriminant),
+            "QrBucketTreePairFuse: inputs derive from different discriminants",
+        )?;
+
+        Ok((
+            (
+                left_epoch,
+                left_anchor_prev,
+                left_anchor_last,
+                left_discriminant,
+                left_root,
+                right_root,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Hash two [`QrBucketTreePair`]s of one network into a node.
+///
+/// The children are ordered `(left.0, left.1, right.0, right.1)`, which is the
+/// order [`QrBucketTreeDescend`] witnesses them in.
+///
+/// # Soundness
+///
+/// All four roots are threaded, and the four equalities carry the network
+/// fields as [`QrBucketTreePairFuse`] does. Every leaf beneath the emitted root
+/// was beneath one of the four inputs, so the claim carries by induction: the
+/// arity of the node is the arity of the induction.
+#[derive(Debug)]
+pub struct QrBucketTreeFuse;
+
+impl Step for QrBucketTreeFuse {
+    type Aux<'source> = ();
+    type Left = QrBucketTreePair;
+    type Output = QrBucketTree;
+    type Right = QrBucketTreePair;
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(30);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (): Self::Witness<'source>,
+        (
+            left_epoch,
+            left_anchor_prev,
+            left_anchor_last,
+            left_discriminant,
+            left_first,
+            left_second,
+        ): <Self::Left as Header>::Data,
+        (
+            right_epoch,
+            right_anchor_prev,
+            right_anchor_last,
+            right_discriminant,
+            right_first,
+            right_second,
+        ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(left_epoch) - Fp::from(right_epoch),
@@ -897,10 +1023,12 @@ impl Step for QrBucketTreeFuse {
             "QrBucketTreeFuse: inputs derive from different discriminants",
         )?;
 
-        let root = QrTreeRoot(poseidon::qr_tree_node(
-            Fp::from(left_root),
-            Fp::from(right_root),
-        ));
+        let root = QrTreeRoot(poseidon::qr_tree_node([
+            Fp::from(left_first),
+            Fp::from(left_second),
+            Fp::from(right_first),
+            Fp::from(right_second),
+        ]));
 
         Ok((
             (
@@ -915,22 +1043,60 @@ impl Step for QrBucketTreeFuse {
     }
 }
 
+/// Raise a [`QrBucketTree`] one level, its root the only child of the new one.
+///
+/// [`QrBucketTreeDescend`] walks [`QrTreeFork::LEVELS`] levels at a time, so a
+/// builder caps a tree until its depth is a multiple of that, at most
+/// `LEVELS - 1` times for a tree of any size.
+///
+/// # Soundness
+///
+/// The root is threaded and repeated into every child slot, so the input tree
+/// is the only subtree beneath the emitted root and raising a tree cannot admit
+/// a leaf. A descent through such a node selects the same child whichever side
+/// bits it reads.
+#[derive(Debug)]
+pub struct QrBucketTreeCap;
+
+impl Step for QrBucketTreeCap {
+    type Aux<'source> = ();
+    type Left = QrBucketTree;
+    type Output = QrBucketTree;
+    type Right = ();
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(31);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (): Self::Witness<'source>,
+        (epoch, anchor_prev, anchor_last, discriminant, root): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        let raised = QrTreeRoot(poseidon::qr_tree_node([Fp::from(root); QrTreeFork::ARITY]));
+
+        Ok(((epoch, anchor_prev, anchor_last, discriminant, raised), ()))
+    }
+}
+
 /// Walk [`QrTreeFork::LEVELS`] levels of a Merkle path, emitting the subtree
 /// the path reaches.
 ///
 /// A path of `depth` levels takes `⌈depth / LEVELS⌉` of these in a chain, so
 /// the depth a builder serves is its own choice and never a loop bound here.
-/// Padding a tree to a multiple of `LEVELS` by fusing a subtree with itself
-/// leaves duplicate leaves, which are harmless.
+/// [`QrBucketTreeCap`] is what reaches a multiple of `LEVELS`; a leaf count
+/// short of a power of [`QrTreeFork::ARITY`] pads by repeating a leaf, which is
+/// a bucket the tree holds twice and is harmless.
 ///
 /// # Soundness
 ///
 /// `node` starts threaded, each level's children are pinned to it by the node
-/// hash, and the emitted root is one of the two children of a node reached
+/// hash, and the emitted root is one of the four children of a node reached
 /// that way. Every leaf beneath a subtree of a valid tree is a leaf of that
-/// tree, so the claim survives the descent. The domains separate leaf digests
-/// from node values, so a path cannot stop one level short and present a node
-/// as a bucket.
+/// tree, so the claim survives the descent. A leaf digest absorbs nine
+/// elements and a node four, so a path cannot stop one level short and present
+/// a node as a bucket.
 #[derive(Debug)]
 pub struct QrBucketTreeDescend;
 
@@ -942,7 +1108,7 @@ impl Step for QrBucketTreeDescend {
     /// `(path)`, outermost level first.
     type Witness<'source> = ([QrTreeFork; QrTreeFork::LEVELS],);
 
-    const INDEX: Index = Index::new(30);
+    const INDEX: Index = Index::new(32);
 
     fn witness<'source>(
         &self,
@@ -951,21 +1117,35 @@ impl Step for QrBucketTreeDescend {
         (epoch, anchor_prev, anchor_last, discriminant, root): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // TODO: a real circuit must constrain each fork's side boolean and
-        // select between the children in-circuit; the type carries the first
-        // and the native branch the second under mock ragu.
-        let mut node = root;
-        for fork in path {
-            let QrTreeFork(_side, left_child, right_child) = fork;
+        // TODO: a real circuit must constrain each side bit to a boolean. The
+        // selection below is exact for boolean bits and is the bilinear surface
+        // through the four children otherwise, so free field elements would
+        // reach values that are no child of the node.
+        let mut node = Fp::from(root);
+        for QrTreeFork([outer, inner], children) in path {
+            let [first, second, third, fourth] = children.map(Fp::from);
             enforce_zero(
-                Fp::from(node)
-                    - poseidon::qr_tree_node(Fp::from(left_child), Fp::from(right_child)),
+                node - poseidon::qr_tree_node([first, second, third, fourth]),
                 "QrBucketTreeDescend: children do not hash to the node",
             )?;
-            node = fork.descend();
+
+            let outer_side = Fp::from(u64::from(outer));
+            let inner_side = Fp::from(u64::from(inner));
+            let lower = first + inner_side * (second - first);
+            let upper = third + inner_side * (fourth - third);
+            node = lower + outer_side * (upper - lower);
         }
 
-        Ok(((epoch, anchor_prev, anchor_last, discriminant, node), ()))
+        Ok((
+            (
+                epoch,
+                anchor_prev,
+                anchor_last,
+                discriminant,
+                QrTreeRoot(node),
+            ),
+            (),
+        ))
     }
 }
 
@@ -995,7 +1175,7 @@ impl Step for QrBucketTreeOpen {
     /// `(profile, contents)`, the leaf's preimage.
     type Witness<'source> = (QrProfile, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(31);
+    const INDEX: Index = Index::new(33);
 
     fn witness<'source>(
         &self,
@@ -1007,6 +1187,10 @@ impl Step for QrBucketTreeOpen {
         enforce_zero(
             Fp::from(root)
                 - poseidon::qr_bucket_digest(
+                    Fp::from(epoch),
+                    Fp::from(anchor_prev),
+                    Fp::from(anchor_last),
+                    Fp::from(discriminant),
                     Fp::from(u64::from(profile.depth)),
                     Fp::from(u64::from(profile.bits)),
                     Eq::from(contents).to_affine(),

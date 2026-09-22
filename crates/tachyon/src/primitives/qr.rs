@@ -159,35 +159,74 @@ impl QrClassRoot {
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrTreeRoot(pub Fp);
 
-/// One level of a Merkle path: the node's two children, and `true` when the
-/// path descends into the right one.
+/// One level of a Merkle path: the node's children, and the two side bits the
+/// path takes through them, outer first.
+///
+/// The children are ordered as the node hashes them, so the outer bit selects
+/// a half and the inner bit selects within it.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct QrTreeFork(pub bool, pub QrTreeRoot, pub QrTreeRoot);
+#[expect(
+    clippy::use_self,
+    reason = "`Self` does not resolve in a struct's own definition"
+)]
+pub struct QrTreeFork(pub [bool; 2], pub [QrTreeRoot; QrTreeFork::ARITY]);
 
 impl QrTreeFork {
+    /// The children of one node.
+    pub const ARITY: usize = 4;
     /// The levels one descent covers.
     ///
     /// A path of `depth` levels takes `⌈depth / LEVELS⌉` descents, so a
-    /// builder pads its tree to a multiple of this.
+    /// builder pads its tree to a multiple of this. It divides
+    /// $\mathsf{MAX\_DEPTH} / 2$, the greatest number of quaternary levels a
+    /// profile can address, so the deepest reachable tree needs no padding.
     pub const LEVELS: usize = 4;
 
     /// The child the path descends into.
     #[must_use]
     pub const fn descend(self) -> QrTreeRoot {
-        let Self(right, left_child, right_child) = self;
-        if right { right_child } else { left_child }
+        let Self([outer, inner], [first, second, third, fourth]) = self;
+        match (outer, inner) {
+            (false, false) => first,
+            (false, true) => second,
+            (true, false) => third,
+            (true, true) => fourth,
+        }
     }
 }
+
+const _: () = assert!(
+    QrProfile::MAX_DEPTH.is_multiple_of(2 * QrTreeFork::LEVELS),
+    "a descent's levels must divide the quaternary levels a profile can address"
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn a_fork_descends_into_the_side_it_names() {
-        let (left, right) = (QrTreeRoot(Fp::from(7)), QrTreeRoot(Fp::from(11)));
-        assert_eq!(QrTreeFork(false, left, right).descend(), left);
-        assert_eq!(QrTreeFork(true, left, right).descend(), right);
+    fn a_fork_descends_into_the_side_its_bits_name() {
+        let children = [7, 11, 13, 17].map(|value| QrTreeRoot(Fp::from(value)));
+        for (index, child) in children.into_iter().enumerate() {
+            let sides = [index & 2 != 0, index & 1 != 0];
+            assert_eq!(QrTreeFork(sides, children).descend(), child);
+        }
+    }
+
+    #[test]
+    fn the_nested_select_agrees_with_the_indexing() {
+        let children = [7, 11, 13, 17].map(|value| QrTreeRoot(Fp::from(value)));
+        let [first, second, third, fourth] = children.map(Fp::from);
+        for sides @ [outer, inner] in [[false, false], [false, true], [true, false], [true, true]] {
+            let outer_side = Fp::from(u64::from(outer));
+            let inner_side = Fp::from(u64::from(inner));
+            let lower = first + inner_side * (second - first);
+            let upper = third + inner_side * (fourth - third);
+            assert_eq!(
+                QrTreeFork(sides, children).descend(),
+                QrTreeRoot(lower + outer_side * (upper - lower))
+            );
+        }
     }
 
     #[test]

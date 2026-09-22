@@ -194,20 +194,28 @@ pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
 
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
 
-/// Digests a sealed bucket's profile and contents commitment into the leaf of
-/// a QR bucket tree.
-///
-/// The network fields the bucket also carries sit on the tree's header, equal
-/// across every fuse, so the leaf need not repeat them.
+/// Digests a sealed bucket into the leaf of a QR bucket tree.
 ///
 /// # Panics
 ///
 /// Panics if `contents` is the identity point.
 #[must_use]
-pub fn qr_bucket_digest(depth: Fp, bits: Fp, contents: EqAffine) -> Fp {
+pub fn qr_bucket_digest(
+    epoch: Fp,
+    anchor_prev: Fp,
+    anchor_last: Fp,
+    discriminant: Fp,
+    depth: Fp,
+    bits: Fp,
+    contents: EqAffine,
+) -> Fp {
     let (contents_lo, contents_hi) = point_limbs(contents);
-    hash::<5>([
+    hash::<9>([
         Fp::from_u128(u128::from_le_bytes(*QR_BUCKET_DOMAIN)),
+        epoch,
+        anchor_prev,
+        anchor_last,
+        discriminant,
         depth,
         bits,
         contents_lo,
@@ -215,19 +223,16 @@ pub fn qr_bucket_digest(depth: Fp, bits: Fp, contents: EqAffine) -> Fp {
     ])
 }
 
-const QR_TREE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-QrTreeNd";
-
-/// Folds two subtree roots into their parent node of a QR bucket tree.
+/// Folds four subtree roots into their parent node of a QR bucket tree.
 ///
-/// Its domain differs from [`qr_bucket_digest`]'s, so no node value is also a
-/// leaf digest.
+/// The children fill the sponge rate exactly, so the node takes no domain
+/// constant. Separation from [`qr_bucket_digest`] is by absorbed length: a leaf
+/// absorbs nine elements and a node four, and absorption carries no length
+/// encoding, so a node must always absorb all four children. A tree short of a
+/// full level pads by repeating a child, never by omitting one.
 #[must_use]
-pub fn qr_tree_node(left: Fp, right: Fp) -> Fp {
-    hash::<3>([
-        Fp::from_u128(u128::from_le_bytes(*QR_TREE_NODE_DOMAIN)),
-        left,
-        right,
-    ])
+pub fn qr_tree_node(children: [Fp; 4]) -> Fp {
+    hash::<4>(children)
 }
 
 const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
