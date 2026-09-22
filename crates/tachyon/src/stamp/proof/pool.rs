@@ -1,11 +1,19 @@
 //! Anchor-bound primitives over consensus state.
 //!
-//! Hosts the nf-free anchor segment ([`AnchorChain`]) used by
+//! Hosts the nf-free anchor path ([`AnchorChain`]) used by
 //! [`super::stamp::StampLift`] to advance a stamp's anchor, and the
 //! multi-stamp / multi-epoch exclusion proof ([`ArbitraryUnspent`]) used by
 //! [`super::spendable::SpendableLift`] to advance a spendable.
 //!
-//! Anchor advances are single-level: every link absorbs the containing
+//! The two shapes differ in what they cover. A coverage segment
+//! `(anchor_prev, anchor_last]` certifies the folds strictly after
+//! `anchor_prev` through `anchor_last`; `anchor_prev` is the input to the
+//! first of them, and the fold that produced it belongs to whatever came
+//! before. An [`AnchorChain`] `[anchor_first, anchor_last]` is a path between
+//! two positions and certifies nothing about its folds, so both endpoints are
+//! members.
+//!
+//! Anchor advances are single-level: every fold absorbs the containing
 //! block's epoch and one stamp's tachygram-set commitment into the running
 //! [`Anchor`] via [`Anchor::next_stamp`]. There is no per-block hash domain;
 //! block alignment is a consensus convention, with validators checking that
@@ -21,7 +29,7 @@ use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use super::{delegation::NullifierDerivation, summary::Summary};
+use super::{delegation::NoteNullifiers, summary::Summary};
 use crate::{
     collections::indexed_multiset,
     note::{self},
@@ -35,38 +43,40 @@ use crate::{
     relations::enforce::enforce_poly_product,
 };
 
-/// Anchor segment between two endpoints. Composable via [`AnchorFuse`].
+/// Anchor path between two positions. Composable via [`AnchorFuse`].
 ///
-/// Direction-agnostic: `start` and `end` are both anchors. Sole consumer:
+/// The path certifies that a run of stamp folds joins `anchor_first` to
+/// `anchor_last` and certifies nothing about the folds themselves, so both
+/// endpoints are members of the path. Sole consumer:
 /// [`super::stamp::StampLift`] advances a stamp's anchor. Extending a
 /// spendable's anchor must instead go through [`ArbitraryUnspent`] so each
 /// step proves nf-exclusion.
 ///
 /// Structurally intra-epoch: the sole builder ([`AnchorSeed`]) invokes only
 /// [`Anchor::next_stamp`], which binds an epoch. The [`Anchor::next_epoch`]
-/// boundary domain is distinct and never a chain link; it is folded at a
+/// epoch-link domain is distinct and never a stamp link; it is folded at a
 /// crossing by [`EndEpochUnspentSeed`].
 ///
 /// The within-epoch property pairs with a consensus-side two-epoch
 /// tachygram scan that catches any tachygram already published earlier
 /// in the epoch a stamp is lifted across. See the Tachygrams book chapter.
 ///
-/// `start` at [`AnchorSeed`] has
-/// PCD lineage rooted in an unbound `start: Anchor` witness, so a
-/// standalone segment proves nothing about real coverage. Final binding
-/// closes through a consensus-published stamp's anchor membership at
-/// [`super::stamp::StampLift`]'s emitted stamp.
+/// `anchor_first` at [`AnchorSeed`] has PCD lineage rooted in an unbound
+/// `anchor_first: Anchor` witness, so a standalone path proves nothing about
+/// real chain history. Final binding closes through a consensus-published
+/// stamp's anchor membership at [`super::stamp::StampLift`]'s emitted stamp.
 #[derive(Clone, Debug)]
 pub struct AnchorChain;
 
 impl Header for AnchorChain {
-    /// `(start, end)`. `start` roots in an unbound witness at [`AnchorSeed`]
-    /// and flows to [`super::stamp::StampLift`] which must ultimately be
-    /// checked by consensus. `end` is always computed in-circuit as
-    /// `start.next_stamp(epoch, ...)`.
+    /// `(anchor_first, anchor_last)`. Both are vertices of the path;
+    /// `anchor_first` roots in an unbound witness at [`AnchorSeed`] and flows
+    /// to [`super::stamp::StampLift`] which must ultimately be checked by
+    /// consensus. `anchor_last` is always computed in-circuit as
+    /// `anchor_first.next_stamp(epoch, ...)`.
     type Data = (Anchor, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(5);
+    const SUFFIX: Suffix = Suffix::new(1);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         (
@@ -85,11 +95,11 @@ impl Header for AnchorChain {
 /// note, `cm`, or `mk`, so the segment is safe to delegate.
 ///
 /// An `elapsed` [`NfSeqPoly`] holds one tested nullifier per covered epoch
-/// over `[epoch_start, epoch_last]`.
+/// over `[epoch_first, epoch_last]`.
 ///
 /// Every producer maintains the provenance [`UnspentBind`]'s completeness
 /// argument leans on. Each member's epoch lies in
-/// `[epoch_start, epoch_last]`, because the seeds encode each member from the
+/// `[epoch_first, epoch_last]`, because the seeds encode each member from the
 /// same epoch scalar they fold into the anchor. Each epoch carries exactly
 /// one member: the seeds pin their member counts by their challenge
 /// identities, and [`UnspentFuse`]'s identity determines the combined
@@ -97,10 +107,10 @@ impl Header for AnchorChain {
 ///
 /// Member count tracks span size structurally: [`UnspentSeed`] spans one
 /// epoch, [`EndEpochUnspentSeed`] two, and [`UnspentFuse`] requires
-/// `right.epoch_start == left.epoch_last`, so each composition adds the same
+/// `right.epoch_first == left.epoch_last`, so each composition adds the same
 /// to the count as to the span.
 ///
-/// `nf_start` and `nf_last` are scalar caches of the sequence's boundary
+/// `nf_first` and `nf_last` are scalar caches of the sequence's boundary
 /// members, consumed by [`UnspentFuse`]'s junction check and
 /// [`super::spendable::SpendableLift`]'s seam. [`UnspentBind`] binds every
 /// member, boundaries included, to the note's genuine derivation nullifiers.
@@ -108,7 +118,7 @@ impl Header for AnchorChain {
 pub struct ArbitraryUnspent;
 
 impl Header for ArbitraryUnspent {
-    /// `(anchor_prev, (epoch_start, nf_start), elapsed,
+    /// `(anchor_prev, (epoch_first, nf_first), elapsed,
     /// (epoch_last, nf_last), anchor_last)`.
     type Data = (
         Anchor,
@@ -118,16 +128,16 @@ impl Header for ArbitraryUnspent {
         Anchor,
     );
 
-    const SUFFIX: Suffix = Suffix::new(6);
+    const SUFFIX: Suffix = Suffix::new(2);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_last, nf_last), anchor_last) =
+        let (anchor_prev, (epoch_first, nf_first), elapsed, (epoch_last, nf_last), anchor_last) =
             *data;
         (
             vec![
                 Fp::from(anchor_prev),
-                Fp::from(epoch_start),
-                Fp::from(nf_start),
+                Fp::from(epoch_first),
+                Fp::from(nf_first),
                 Fp::from(epoch_last),
                 Fp::from(nf_last),
                 Fp::from(anchor_last),
@@ -143,10 +153,10 @@ impl Header for ArbitraryUnspent {
 /// [`UnspentBind`] has attributed to the note's genuine derivation, collapsed
 /// to boundary scalars.
 #[derive(Clone, Debug)]
-pub struct Unspent;
+pub struct NoteUnspent;
 
-impl Header for Unspent {
-    /// `(cm, anchor_prev, (epoch_start, nf_start), (epoch_last, nf_last),
+impl Header for NoteUnspent {
+    /// `(cm, anchor_prev, (epoch_first, nf_first), (epoch_last, nf_last),
     /// anchor_last)`. `cm` leads; the rest mirrors the [`ArbitraryUnspent`]
     /// boundaries collapsed to scalars (no `elapsed` poly).
     type Data = (
@@ -157,16 +167,16 @@ impl Header for Unspent {
         Anchor,
     );
 
-    const SUFFIX: Suffix = Suffix::new(8);
+    const SUFFIX: Suffix = Suffix::new(4);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, anchor_prev, (epoch_start, nf_start), (epoch_last, nf_last), anchor_last) = *data;
+        let (cm, anchor_prev, (epoch_first, nf_first), (epoch_last, nf_last), anchor_last) = *data;
         (
             vec![
                 Fp::from(cm),
                 Fp::from(anchor_prev),
-                Fp::from(epoch_start),
-                Fp::from(nf_start),
+                Fp::from(epoch_first),
+                Fp::from(nf_first),
                 Fp::from(epoch_last),
                 Fp::from(nf_last),
                 Fp::from(anchor_last),
@@ -178,8 +188,9 @@ impl Header for Unspent {
     }
 }
 
-/// Single-stamp [`AnchorChain`] seed. Witness `(start, epoch, stamp_commit)`;
-/// emit `(start, start.next_stamp(epoch, &stamp_commit))`.
+/// Single-stamp [`AnchorChain`] seed. Witness
+/// `(anchor_first, epoch, stamp_commit)`; emit
+/// `(anchor_first, anchor_first.next_stamp(epoch, &stamp_commit))`.
 ///
 /// Used for forward extension (consumed by `StampLift`'s span builder).
 ///
@@ -196,7 +207,7 @@ impl Step for AnchorSeed {
     type Left = ();
     type Output = AnchorChain;
     type Right = ();
-    /// `(start, epoch, stamp_commit)`.
+    /// `(anchor_first, epoch, stamp_commit)`.
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
 
     const INDEX: Index = Index::new(2);
@@ -204,20 +215,20 @@ impl Step for AnchorSeed {
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (start, epoch, stamp_commit): Self::Witness<'source>,
+        (anchor_first, epoch, stamp_commit): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let end = start
+        let anchor_last = anchor_first
             .next_stamp(epoch, &stamp_commit)
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
-        Ok(((start, end), ()))
+        Ok(((anchor_first, anchor_last), ()))
     }
 }
 
-/// Compose two adjacent [`AnchorChain`] segments, with `left.end ==
-/// right.start`.
+/// Concatenate two [`AnchorChain`] paths that share a vertex, with
+/// `left.anchor_last == right.anchor_first`.
 #[derive(Debug)]
 pub struct AnchorFuse;
 
@@ -234,14 +245,14 @@ impl Step for AnchorFuse {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (left_start, left_end): <Self::Left as Header>::Data,
-        (right_start, right_end): <Self::Right as Header>::Data,
+        (left_anchor_first, left_anchor_last): <Self::Left as Header>::Data,
+        (right_anchor_first, right_anchor_last): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(left_end) - Fp::from(right_start),
-            "AnchorFuse: segments not adjacent",
+            Fp::from(left_anchor_last) - Fp::from(right_anchor_first),
+            "AnchorFuse: paths do not share a vertex",
         )?;
-        Ok(((left_start, right_end), ()))
+        Ok(((left_anchor_first, right_anchor_last), ()))
     }
 }
 
@@ -286,7 +297,7 @@ impl Step for UnspentSeed {
         ctx.enforce_poly_query(stamp_tg_set.commit().into(), Fp::from(nf), eval)?;
         enforce_nonzero(eval, "UnspentSeed: found nullifier in set")?;
         let stamp_commit = stamp_tg_set.commit();
-        let tested_anchor = anchor_prev
+        let anchor_last = anchor_prev
             .next_stamp(epoch, &stamp_commit)
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
         // Nonzero guard, defensive: zero is reserved.
@@ -312,30 +323,39 @@ impl Step for UnspentSeed {
                 (epoch, nf),
                 elapsed_commit,
                 (epoch, nf),
-                tested_anchor,
+                anchor_last,
             ),
             (),
         ))
     }
 }
 
-/// Seed spanning one epoch boundary link, from an epoch's terminal anchor to
-/// the next epoch's opening boundary anchor.
+/// Seed spanning one crossing, from an epoch's terminal anchor to the next
+/// epoch's entry anchor.
 ///
-/// The segment covers only the epoch transition `anchor_prev` to
-/// `anchor_prev.next_epoch(epoch_prev + 1)`, so its `elapsed` is a two-member
-/// indexed multisequence.
+/// The segment covers only that one fold, `anchor_prev` to
+/// `anchor_prev.next_epoch(epoch + 1)`, so its `elapsed` is a two-member
+/// indexed multisequence: closed `[epoch, epoch + 1]` in epoch space and
+/// `(anchor_prev, anchor_last]` in anchor space.
+///
+/// The witness reads a member at `epoch` and its neighbour at `epoch + 1`, as
+/// [`SpendBind`](super::spend::SpendBind) does; the emitted header relabels
+/// the pair as the extent's `first` and `last`.
+///
+/// QR evidence folds its own crossing at
+/// [`QrUnspentInit`](super::qr::QrUnspentInit), so this seed serves crossings
+/// out of stamp-level and summary evidence.
 ///
 /// # Soundness
 ///
-/// `nf_prev` and `nf` are unconstrained here, as at every seed;
+/// `nf` and `nf_next` are unconstrained here, as at every seed;
 /// [`UnspentBind`] forces every `elapsed` member against the note's genuine
 /// derivation. The identity forces the sequence to the two crossing members.
 ///
 /// `anchor_prev` is likewise unconstrained, and nothing here requires it to be
-/// its epoch's terminal anchor. A tick folded from a short anchor is rejected
-/// by adjacency at the consuming fuses and by consensus membership of the
-/// eventual spend's anchor.
+/// its epoch's terminal anchor. A crossing folded from a short anchor is
+/// rejected by adjacency at the consuming fuses and by consensus membership of
+/// the eventual spend's anchor.
 #[derive(Debug)]
 pub struct EndEpochUnspentSeed;
 
@@ -344,7 +364,7 @@ impl Step for EndEpochUnspentSeed {
     type Left = ();
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(anchor_prev, (epoch_prev, nf_prev), nf, elapsed_seq)`.
+    /// `(anchor_prev, (epoch, nf), nf_next, elapsed_seq)`.
     type Witness<'source> = (Anchor, (EpochIndex, Nullifier), Nullifier, NfSeqPoly);
 
     const INDEX: Index = Index::new(5);
@@ -352,27 +372,27 @@ impl Step for EndEpochUnspentSeed {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (anchor_prev, (epoch_prev, nf_prev), nf, elapsed_seq): Self::Witness<'source>,
+        (anchor_prev, (epoch, nf), nf_next, elapsed_seq): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Nonzero guards, defensive: zero is reserved.
         enforce_nonzero(
-            Fp::from(nf_prev),
+            Fp::from(nf),
             "EndEpochUnspentSeed: outgoing nullifier is zero",
         )?;
         enforce_nonzero(
-            Fp::from(nf),
+            Fp::from(nf_next),
             "EndEpochUnspentSeed: incoming nullifier is zero",
         )?;
 
-        let epoch = epoch_prev.next().ok_or_else(|| {
+        let epoch_next = epoch.next().ok_or_else(|| {
             ragu_core::Error::InvalidWitness(
                 "EndEpochUnspentSeed: crossing past the final epoch".into(),
             )
         })?;
-        let anchor = anchor_prev
-            .next_epoch(epoch)
+        let anchor_last = anchor_prev
+            .next_epoch(epoch_next)
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
         // Two-member elapsed: bind the witnessed sequence to the two
@@ -382,12 +402,9 @@ impl Step for EndEpochUnspentSeed {
         let elapsed_at_z = elapsed_seq.eval(z);
         ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
 
-        let epoch_prev_idx = u64::from(u32::from(epoch_prev));
+        let epoch_idx = u64::from(u32::from(epoch));
         let crossing_at_z = indexed_multiset::direct_eval(
-            [
-                (epoch_prev_idx, nf_prev.into()),
-                (epoch_prev_idx + 1, nf.into()),
-            ],
+            [(epoch_idx, nf.into()), (epoch_idx + 1, nf_next.into())],
             z,
         );
 
@@ -399,10 +416,10 @@ impl Step for EndEpochUnspentSeed {
         Ok((
             (
                 anchor_prev,
-                (epoch_prev, nf_prev),
-                elapsed_commit,
                 (epoch, nf),
-                anchor,
+                elapsed_commit,
+                (epoch_next, nf_next),
+                anchor_last,
             ),
             (),
         ))
@@ -411,9 +428,9 @@ impl Step for EndEpochUnspentSeed {
 
 /// Compose two [`ArbitraryUnspent`] lineages sharing a mid-epoch junction.
 ///
-/// The halves meet inside one epoch (`right.epoch_start == left.epoch_last`),
+/// The halves meet inside one epoch (`right.epoch_first == left.epoch_last`),
 /// at adjacent anchors (`left.anchor_last == right.anchor_prev`), and agree on
-/// the junction nullifier (`left.nf_last == right.nf_start`). The junction
+/// the junction nullifier (`left.nf_last == right.nf_first`). The junction
 /// epoch's member appears in both sequences, so the concatenation keeps it once
 /// (`combined = left ++ right[1..]`).
 ///
@@ -438,14 +455,14 @@ impl Step for UnspentFuse {
         (left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq): Self::Witness<'source>,
         (
             left_anchor_prev,
-            (left_epoch_start, left_nf_start),
+            (left_epoch_first, left_nf_first),
             left_elapsed,
             (left_epoch_last, left_nf_last),
             left_anchor_last,
         ): <Self::Left as Header>::Data,
         (
             right_anchor_prev,
-            (right_epoch_start, right_nf_start),
+            (right_epoch_first, right_nf_first),
             right_elapsed,
             (right_epoch_last, right_nf_last),
             right_anchor_last,
@@ -466,13 +483,13 @@ impl Step for UnspentFuse {
             "UnspentFuse: left.anchor_last must equal right.anchor_prev",
         )?;
         enforce_zero(
-            Fp::from(right_epoch_start) - Fp::from(left_epoch_last),
-            "UnspentFuse: forwards half must sit in left's tip epoch",
+            Fp::from(right_epoch_first) - Fp::from(left_epoch_last),
+            "UnspentFuse: forwards half must sit in left's last epoch",
         )?;
         // Seam bind: both halves tested the junction epoch at the same nf, so the
         // merged history's view of it is unambiguous.
         enforce_zero(
-            Fp::from(left_nf_last) - Fp::from(right_nf_start),
+            Fp::from(left_nf_last) - Fp::from(right_nf_first),
             "UnspentFuse: halves disagree on the junction nullifier",
         )?;
         let combined_commit = combined_elapsed_seq.commit();
@@ -504,7 +521,7 @@ impl Step for UnspentFuse {
         Ok((
             (
                 left_anchor_prev,
-                (left_epoch_start, left_nf_start),
+                (left_epoch_first, left_nf_first),
                 combined_commit,
                 (right_epoch_last, right_nf_last),
                 right_anchor_last,
@@ -517,8 +534,8 @@ impl Step for UnspentFuse {
 /// Bind an [`ArbitraryUnspent`]'s free-witness nullifiers to a note's genuine
 /// nullifiers, by divisibility into the derivation's sequence.
 ///
-/// Consumes any [`NullifierDerivation`], `elapsed` covering
-/// `[epoch_start, epoch_last]` inclusive, one member per epoch:
+/// Consumes any [`NoteNullifiers`], `elapsed` covering
+/// `[epoch_first, epoch_last]` inclusive, one member per epoch:
 ///
 /// `nf_seq` factors as
 ///
@@ -546,15 +563,15 @@ impl Step for UnspentFuse {
 /// makes them genuine, which [`super::spendable::SpendableLift`] relies on.
 ///
 /// The lineage is note-blind, so the bind stamps the derivation's `cm` onto
-/// the validated [`Unspent`].
+/// the validated [`NoteUnspent`].
 #[derive(Debug)]
 pub struct UnspentBind;
 
 impl Step for UnspentBind {
     type Aux<'source> = ();
     type Left = ArbitraryUnspent;
-    type Output = Unspent;
-    type Right = NullifierDerivation;
+    type Output = NoteUnspent;
+    type Right = NoteNullifiers;
     /// `(elapsed_seq, nf_seq, complement_seq)`.
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
@@ -566,12 +583,12 @@ impl Step for UnspentBind {
         (elapsed_seq, nf_seq, complement_seq): Self::Witness<'source>,
         (
             unspent_anchor_prev,
-            (unspent_epoch_start, unspent_nf_start),
+            (unspent_epoch_first, unspent_nf_first),
             unspent_elapsed,
             (unspent_epoch_last, unspent_nf_last),
             unspent_anchor_last,
         ): <Self::Left as Header>::Data,
-        (deriv_cm, _, nf_commit, _): <Self::Right as Header>::Data,
+        (nullifiers_cm, _, nf_commit, _): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             elapsed_seq.commit().into(),
@@ -595,19 +612,19 @@ impl Step for UnspentBind {
         )?;
 
         // Defensive: a single-epoch segment's boundary caches coincide.
-        let span = Fp::from(unspent_epoch_last) - Fp::from(unspent_epoch_start);
+        let span = Fp::from(unspent_epoch_last) - Fp::from(unspent_epoch_first);
         conditional_enforce_equal(
             bool::from(span.is_zero()),
-            Fp::from(unspent_nf_start),
+            Fp::from(unspent_nf_first),
             Fp::from(unspent_nf_last),
             "UnspentBind: single-epoch segment boundary nullifiers differ",
         )?;
 
         Ok((
             (
-                deriv_cm,
+                nullifiers_cm,
                 unspent_anchor_prev,
-                (unspent_epoch_start, unspent_nf_start),
+                (unspent_epoch_first, unspent_nf_first),
                 (unspent_epoch_last, unspent_nf_last),
                 unspent_anchor_last,
             ),
