@@ -899,6 +899,107 @@ impl Step for QrBucketTreeInit {
     }
 }
 
+/// Admit two sealed [`QrBucket`]s as one half of a node.
+///
+/// Not in the #209 spec, which admits one bucket per step. Two per step puts
+/// the build on its floor: a step consumes at most two proofs and produces one,
+/// so the live proof count falls by at most one per step and folding `n`
+/// buckets cannot take fewer than `n - 1`. Admitting singly spends `n` more.
+/// [`QrBucketTreeInit`] stays, because a bucket not yet folded is queried as a
+/// one-leaf tree.
+///
+/// Two leaf digests is six of about seven permutations, the widest step in this
+/// module. The two sponges absorb the same four network fields and share
+/// nothing, so this is the first step to give up if a real circuit says no.
+///
+/// # Soundness
+///
+/// Each digest is derived from one threaded bucket header, and the four
+/// equalities carry the network fields as [`QrBucketTreePairFuse`] does. The
+/// claim is exactly that of two [`QrBucketTreeInit`]s and one pair fuse.
+#[derive(Debug)]
+pub struct QrBucketTreePairInit;
+
+impl Step for QrBucketTreePairInit {
+    type Aux<'source> = ();
+    type Left = QrBucket;
+    type Output = QrBucketTreePair;
+    type Right = QrBucket;
+    type Witness<'source> = ();
+
+    const INDEX: Index = Index::new(34);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (): Self::Witness<'source>,
+        (
+            left_epoch,
+            left_anchor_prev,
+            left_anchor_last,
+            left_discriminant,
+            left_profile,
+            left_contents,
+        ): <Self::Left as Header>::Data,
+        (
+            right_epoch,
+            right_anchor_prev,
+            right_anchor_last,
+            right_discriminant,
+            right_profile,
+            right_contents,
+        ): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(left_epoch) - Fp::from(right_epoch),
+            "QrBucketTreePairInit: inputs cover different epochs",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_prev) - Fp::from(right_anchor_prev),
+            "QrBucketTreePairInit: inputs open at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_anchor_last) - Fp::from(right_anchor_last),
+            "QrBucketTreePairInit: inputs close at different anchors",
+        )?;
+        enforce_zero(
+            Fp::from(left_discriminant) - Fp::from(right_discriminant),
+            "QrBucketTreePairInit: inputs derive from different discriminants",
+        )?;
+
+        let first = QrTreeRoot(poseidon::qr_bucket_digest(
+            Fp::from(left_epoch),
+            Fp::from(left_anchor_prev),
+            Fp::from(left_anchor_last),
+            Fp::from(left_discriminant),
+            Fp::from(u64::from(left_profile.depth)),
+            Fp::from(u64::from(left_profile.bits)),
+            Eq::from(left_contents).to_affine(),
+        ));
+        let second = QrTreeRoot(poseidon::qr_bucket_digest(
+            Fp::from(right_epoch),
+            Fp::from(right_anchor_prev),
+            Fp::from(right_anchor_last),
+            Fp::from(right_discriminant),
+            Fp::from(u64::from(right_profile.depth)),
+            Fp::from(u64::from(right_profile.bits)),
+            Eq::from(right_contents).to_affine(),
+        ));
+
+        Ok((
+            (
+                left_epoch,
+                left_anchor_prev,
+                left_anchor_last,
+                left_discriminant,
+                first,
+                second,
+            ),
+            (),
+        ))
+    }
+}
+
 /// Pair two [`QrBucketTree`]s of one network as half a node.
 ///
 /// # Soundness

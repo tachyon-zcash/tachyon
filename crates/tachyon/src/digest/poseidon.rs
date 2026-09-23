@@ -249,3 +249,45 @@ pub fn anchor_next_epoch(anchor_prev: Fp, epoch: Fp) -> Fp {
         epoch,
     ])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The leaf over one bucket's seven fields, all distinct so a digest that
+    /// dropped one would still move when another changed.
+    fn leaf(fields: [u64; 6]) -> Fp {
+        let [epoch, anchor_prev, anchor_last, discriminant, depth, bits] = fields.map(Fp::from);
+        qr_bucket_digest(
+            epoch,
+            anchor_prev,
+            anchor_last,
+            discriminant,
+            depth,
+            bits,
+            EqAffine::generator(),
+        )
+    }
+
+    /// The four network fields are also on the tree header, so no PCD lineage
+    /// can disagree with itself about them and no step test reaches this. The
+    /// leaf binds them so that it stands alone.
+    #[test]
+    fn a_bucket_leaf_binds_every_field_it_absorbs() {
+        let fields = [1, 2, 3, 4, 5, 6];
+        let base = leaf(fields);
+        for position in 0..fields.len() {
+            let mut moved = fields;
+            moved[position] += 1;
+            assert_ne!(base, leaf(moved), "field {position} is not bound");
+        }
+    }
+
+    /// A node absorbs four elements and a leaf nine, so a descent cannot stop
+    /// one level short and present a node where the open expects a leaf.
+    #[test]
+    fn a_node_is_not_a_leaf() {
+        let child = Fp::from(7);
+        assert_ne!(qr_tree_node([child; 4]), leaf([7, 7, 7, 7, 7, 7]));
+    }
+}

@@ -58,6 +58,7 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(qr::QrBucketTreeCap)?
         .register(qr::QrBucketTreeDescend)?
         .register(qr::QrBucketTreeOpen)?
+        .register(qr::QrBucketTreePairInit)?
         .finalize()
 }
 

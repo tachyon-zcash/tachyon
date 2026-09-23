@@ -2734,6 +2734,28 @@ fn fuse_trees(
         .map(|(tree, ())| tree)
 }
 
+/// Both joins check the same four fields, so a network mismatch is rejected
+/// whether the two trees meet at a pair or one level up at a node.
+fn assert_both_joins_reject(
+    rng: &mut StdRng,
+    left: Pcd<qr::QrBucketTree>,
+    right: Pcd<qr::QrBucketTree>,
+    complaint: &str,
+) {
+    let left_pair = pair_trees(rng, left.clone(), left.clone()).expect("one tree twice is a pair");
+    let right_pair =
+        pair_trees(rng, right.clone(), right.clone()).expect("one tree twice is a pair");
+
+    assert_eq!(
+        invalid_witness(pair_trees(rng, left, right).err().unwrap()),
+        format!("QrBucketTreePairFuse: {complaint}")
+    );
+    assert_eq!(
+        invalid_witness(fuse_trees(rng, left_pair, right_pair).err().unwrap()),
+        format!("QrBucketTreeFuse: {complaint}")
+    );
+}
+
 /// Descend `tree` along one leaf's path, stopping on the leaf itself.
 fn descend_to_leaf(
     rng: &mut StdRng,
@@ -2899,10 +2921,7 @@ fn qr_bucket_tree_pair_fuse_rejects_a_bucket_of_another_epoch() {
     );
 
     let (left, right) = (tree_of(rng, first), tree_of(rng, second));
-    assert_eq!(
-        invalid_witness(pair_trees(rng, left, right).err().unwrap()),
-        "QrBucketTreePairFuse: inputs cover different epochs"
-    );
+    assert_both_joins_reject(rng, left, right, "inputs cover different epochs");
 }
 
 /// Two routing networks over one epoch are two trees. Their buckets share
@@ -2939,9 +2958,11 @@ fn qr_bucket_tree_pair_fuse_rejects_a_bucket_of_another_network() {
     );
 
     let (left, right) = (tree_of(rng, first), tree_of(rng, second));
-    assert_eq!(
-        invalid_witness(pair_trees(rng, left, right).err().unwrap()),
-        "QrBucketTreePairFuse: inputs derive from different discriminants"
+    assert_both_joins_reject(
+        rng,
+        left,
+        right,
+        "inputs derive from different discriminants",
     );
 }
 
@@ -2976,10 +2997,7 @@ fn qr_bucket_tree_pair_fuse_rejects_an_extent_that_closes_elsewhere() {
     );
 
     let (left, right) = (tree_of(rng, whole), tree_of(rng, short));
-    assert_eq!(
-        invalid_witness(pair_trees(rng, left, right).err().unwrap()),
-        "QrBucketTreePairFuse: inputs close at different anchors"
-    );
+    assert_both_joins_reject(rng, left, right, "inputs close at different anchors");
 }
 
 #[test]
@@ -3032,16 +3050,13 @@ fn qr_bucket_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
     );
 
     let (left, right) = (tree_of(rng, genuine), tree_of(rng, elsewhere));
-    assert_eq!(
-        invalid_witness(pair_trees(rng, left, right).err().unwrap()),
-        "QrBucketTreePairFuse: inputs open at different anchors"
-    );
+    assert_both_joins_reject(rng, left, right, "inputs open at different anchors");
 }
 
-/// The node fuse repeats the pair fuse's four equalities one level up, so a
-/// mismatch that survived into two pairs is caught there instead.
+/// Admitting two buckets at once checks the same four fields the pair fuse
+/// does, since it stands for two inits and a pair fuse in one step.
 #[test]
-fn qr_bucket_tree_fuse_rejects_pairs_of_another_epoch() {
+fn qr_bucket_tree_pair_init_rejects_a_bucket_of_another_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
@@ -3072,15 +3087,57 @@ fn qr_bucket_tree_fuse_rejects_pairs_of_another_epoch() {
         value,
         terminal0,
     );
-    let first = tree_of(rng, bucket0);
-    let second = tree_of(rng, bucket1);
-
-    let left = pair_trees(rng, first.clone(), first).expect("one tree twice is a pair");
-    let right = pair_trees(rng, second.clone(), second).expect("one tree twice is a pair");
+    let err = PROOF_SYSTEM
+        .fuse(rng, qr::QrBucketTreePairInit, (), bucket0.pcd, bucket1.pcd)
+        .err()
+        .unwrap();
     assert_eq!(
-        invalid_witness(fuse_trees(rng, left, right).err().unwrap()),
-        "QrBucketTreeFuse: inputs cover different epochs"
+        invalid_witness(err),
+        "QrBucketTreePairInit: inputs cover different epochs"
     );
+}
+
+/// Folding `n` leaves cannot take fewer than `n - 1` steps: a step consumes at
+/// most two proofs and produces one, so the live count falls by at most one
+/// each time. Admitting two buckets per step reaches that floor exactly, and
+/// the caps that follow are bounded by `LEVELS - 1` however large the tree is.
+#[test]
+fn a_tree_folds_its_leaves_in_one_step_short_of_their_count() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, terminal) = small_epoch(rng);
+    let discriminant = qr_discriminant(rng);
+
+    let routed = build_qr_partition(
+        rng,
+        &pool,
+        (Anchor::default(), terminal),
+        discriminant,
+        24,
+        2,
+    );
+    let sealed = routed
+        .into_iter()
+        .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
+        .collect::<Vec<_>>();
+
+    let tree = build_qr_bucket_tree(rng, sealed);
+    let leaves = tree.leaves.len();
+    let mut depth = 0;
+    let mut width = 1;
+    while width < leaves {
+        width *= QrTreeFork::ARITY;
+        depth += 1;
+    }
+
+    let path = tree.leaves.first().expect("one leaf").path.len();
+    assert_eq!(path, QrTreeFork::LEVELS, "one descent lands on a leaf");
+
+    // The caps are what carried the tree from its own depth to the multiple a
+    // descent needs. Padding the leaf layer to reach it would cost a fusion per
+    // slot, which is exponential in the shortfall.
+    let caps = path - depth;
+    assert!(caps < QrTreeFork::LEVELS, "a cap per level short, at most");
+    assert_eq!(tree.steps, (leaves - 1) + caps);
 }
 
 /// A cap raises the root and leaves every other field alone, and a tree capped
