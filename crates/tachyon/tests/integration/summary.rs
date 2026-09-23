@@ -271,7 +271,7 @@ fn summary_unspent_init_clears_the_whole_run() {
             (epoch, nf),
             anchor_last
         ),
-        "one query spans the summary's whole bracket"
+        "one query spans the summary's whole extent"
     );
 }
 

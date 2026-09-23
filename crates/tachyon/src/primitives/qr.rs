@@ -7,23 +7,18 @@ use ragu_arithmetic::Cycle as _;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_pasta::Pasta;
 
-use super::Anchor;
 use crate::collections::qr;
 
-/// An epoch's first discriminant $R_1$.
+/// A routing network's first discriminant $R_1$.
 ///
-/// The closing boundary anchor that the epoch's terminal `anchor_last`
-/// ticks to under the epoch-boundary domain, pinned at `QrBucketSeal`.
+/// Prover-chosen and sampled privately, so a network can be routed while its
+/// epoch is still in flight. It is threaded unchanged from the root intake and
+/// required equal across `QrIntakeMerge`, so one network classifies at one
+/// progression throughout.
 ///
 /// Depth $j$ classifies at $R_{j+1} = R_1 + j$.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
 pub struct QrDiscriminant(pub Fp);
-
-impl From<Anchor> for QrDiscriminant {
-    fn from(anchor: Anchor) -> Self {
-        Self(anchor.0)
-    }
-}
 
 impl QrDiscriminant {
     /// The discriminant a split at `depth` classifies at.
@@ -157,9 +152,82 @@ impl QrClassRoot {
     }
 }
 
+/// The root of a Poseidon Merkle tree over sealed bucket digests.
+///
+/// A one-leaf tree's root is the leaf digest itself, so every subtree root
+/// along a path has this type.
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+pub struct QrTreeRoot(pub Fp);
+
+/// One level of a Merkle path: the node's children, and the two side bits the
+/// path takes through them, outer first.
+///
+/// The children are ordered as the node hashes them, so the outer bit selects
+/// a half and the inner bit selects within it.
+#[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
+#[expect(
+    clippy::use_self,
+    reason = "`Self` does not resolve in a struct's own definition"
+)]
+pub struct QrTreeFork(pub [bool; 2], pub [QrTreeRoot; QrTreeFork::ARITY]);
+
+impl QrTreeFork {
+    /// The children of one node.
+    pub const ARITY: usize = 4;
+    /// The levels one descent covers.
+    ///
+    /// A path of `depth` levels takes `⌈depth / LEVELS⌉` descents, so a
+    /// builder pads its tree to a multiple of this. It divides
+    /// $\mathsf{MAX\_DEPTH} / 2$, the greatest number of quaternary levels a
+    /// profile can address, so the deepest reachable tree needs no padding.
+    pub const LEVELS: usize = 4;
+
+    /// The child the path descends into.
+    #[must_use]
+    pub const fn descend(self) -> QrTreeRoot {
+        let Self([outer, inner], [first, second, third, fourth]) = self;
+        match (outer, inner) {
+            (false, false) => first,
+            (false, true) => second,
+            (true, false) => third,
+            (true, true) => fourth,
+        }
+    }
+}
+
+const _: () = assert!(
+    QrProfile::MAX_DEPTH.is_multiple_of(2 * QrTreeFork::LEVELS),
+    "a descent's levels must divide the quaternary levels a profile can address"
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fork_descends_into_the_side_its_bits_name() {
+        let children = [7, 11, 13, 17].map(|value| QrTreeRoot(Fp::from(value)));
+        for (index, child) in children.into_iter().enumerate() {
+            let sides = [index & 2 != 0, index & 1 != 0];
+            assert_eq!(QrTreeFork(sides, children).descend(), child);
+        }
+    }
+
+    #[test]
+    fn the_nested_select_agrees_with_the_indexing() {
+        let children = [7, 11, 13, 17].map(|value| QrTreeRoot(Fp::from(value)));
+        let [first, second, third, fourth] = children.map(Fp::from);
+        for sides @ [outer, inner] in [[false, false], [false, true], [true, false], [true, true]] {
+            let outer_side = Fp::from(u64::from(outer));
+            let inner_side = Fp::from(u64::from(inner));
+            let lower = first + inner_side * (second - first);
+            let upper = third + inner_side * (fourth - third);
+            assert_eq!(
+                QrTreeFork(sides, children).descend(),
+                QrTreeRoot(lower + outer_side * (upper - lower))
+            );
+        }
+    }
 
     #[test]
     fn the_root_profile_has_no_bits() {

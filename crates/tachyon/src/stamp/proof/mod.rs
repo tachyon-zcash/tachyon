@@ -2,11 +2,15 @@
 //!
 //! Registers all PCD step types and provides accumulator helpers for
 //! stamp construction and verification.
+//!
+//! `Step::INDEX` runs from zero without gaps, and [`make_app`] registers the
+//! steps in that order; `ApplicationBuilder` rejects any other sequence.
+//! `Header::SUFFIX` runs from zero without gaps too. Adding or removing
+//! either renumbers the tail.
 
 extern crate alloc;
 
 pub mod delegation;
-pub mod output;
 pub mod pool;
 pub mod qr;
 pub mod spend;
@@ -20,8 +24,8 @@ use ragu::{Application, ApplicationBuilder};
 
 fn make_app() -> Result<Application, ragu_core::Error> {
     ApplicationBuilder::new()
-        .register(delegation::NfMasterSeed)?
-        .register(delegation::NfDerive)?
+        .register(delegation::NoteSeed)?
+        .register(delegation::NullifierDerive)?
         .register(pool::AnchorSeed)?
         .register(pool::AnchorFuse)?
         .register(pool::UnspentSeed)?
@@ -30,11 +34,10 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(pool::UnspentBind)?
         .register(spendable::SpendableInit)?
         .register(spendable::SpendableLift)?
-        .register(output::OutputBind)?
-        .register(stamp::OutputStamp)?
+        .register(stamp::OutputAction)?
         .register(spend::SpendBind)?
-        .register(stamp::SpendStamp)?
-        .register(stamp::MergeStamp)?
+        .register(stamp::SpendAction)?
+        .register(stamp::StampMerge)?
         .register(stamp::StampLift)?
         .register(delegation::NullifierFuse)?
         .register(summary::SummarySeed)?
@@ -49,6 +52,13 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(qr::QrBucketSeal)?
         .register(qr::QrStampIntakeSeed)?
         .register(spendable::QrSpendableInit)?
+        .register(qr::QrBucketTreeInit)?
+        .register(qr::QrBucketTreePairFuse)?
+        .register(qr::QrBucketTreeFuse)?
+        .register(qr::QrBucketTreeCap)?
+        .register(qr::QrBucketTreeDescend)?
+        .register(qr::QrBucketTreeOpen)?
+        .register(qr::QrBucketTreePairInit)?
         .finalize()
 }
 

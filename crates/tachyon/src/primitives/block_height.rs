@@ -54,13 +54,13 @@ impl BlockHeight {
 
     /// Whether this is the last block of its epoch.
     #[must_use]
-    pub const fn is_epoch_final(self) -> bool {
+    pub const fn is_last_in_epoch(self) -> bool {
         self.0 & (EPOCH_SIZE - 1) == EPOCH_SIZE - 1
     }
 
     /// Whether this is the first block of a new epoch.
     #[must_use]
-    pub const fn is_epoch_first(self) -> bool {
+    pub const fn is_first_in_epoch(self) -> bool {
         self.0 & (EPOCH_SIZE - 1) == 0
     }
 }

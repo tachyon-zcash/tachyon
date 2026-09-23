@@ -20,8 +20,8 @@ use ff::PrimeField as _;
 use group::{Curve as _, GroupEncoding as _};
 use pasta_curves::{Eq, Fp};
 use proof::{
-    PROOF_SYSTEM, output,
-    stamp::{MergeStamp, OutputStamp, SpendStamp, StampHeader, StampLift},
+    PROOF_SYSTEM,
+    stamp::{OutputAction, SpendAction, Stamp, StampLift, StampMerge},
 };
 use ragu::PROOF_SIZE_COMPRESSED;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
@@ -392,11 +392,11 @@ impl Plan {
     /// Prove a single [`ProofStamp`] for this plan.
     ///
     /// For each **spend**, uses [`spend::SpendBind`] to prepare PCD inputs,
-    /// then runs [`SpendStamp`] to attach the live nullifier pair.
+    /// then runs [`SpendAction`] to attach the live nullifier pair.
     ///
-    /// For each **output**, runs [`OutputStamp`] with no PCD inputs.
+    /// For each **output**, runs [`OutputAction`] with no PCD inputs.
     ///
-    /// Stamps are recursively merged via [`MergeStamp`] into a single stamp.
+    /// Stamps are recursively merged via [`StampMerge`] into a single stamp.
     ///
     /// `spend_pcds` items must correspond to each planned spend, in
     /// order.
@@ -413,8 +413,9 @@ impl Plan {
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<delegation::NullifierDerivation>,
-            ragu::Pcd<spendable::SpendableHeader>,
+            ragu::Pcd<delegation::NoteMaster>,
+            ragu::Pcd<delegation::NoteNullifiers>,
+            ragu::Pcd<spendable::NoteSpendable>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
         // Each entry pairs leaf stamp components with the descriptor and
@@ -435,7 +436,7 @@ impl Plan {
             ));
         }
 
-        for ((desc, alpha, note, rcv), (range_pcd, spendable_pcd)) in
+        for ((desc, alpha, note, rcv), (master_pcd, range_pcd, spendable_pcd)) in
             self.spends.into_iter().zip(spend_pcds)
         {
             // SpendBind: confirm the live pair against the covering
@@ -443,8 +444,9 @@ impl Plan {
             // note's master key (the succinct header carries only the
             // commitment); the witness segments its read and complement.
             let mk = pak.nk.derive_note_private(note.psi);
-            let (_, deriv_start, _, deriv_last) = *range_pcd.data();
-            let window: Vec<Nullifier> = (u32::from(deriv_start)..=u32::from(deriv_last))
+            let (_, nullifiers_epoch_first, _, nullifiers_epoch_last) = *range_pcd.data();
+            let window: Vec<Nullifier> = (u32::from(nullifiers_epoch_first)
+                ..=u32::from(nullifiers_epoch_last))
                 .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
                 .collect();
             let bind_witness =
@@ -459,10 +461,10 @@ impl Plan {
                 )
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: prove the action and publish. The tachygram pair is
-            // read straight off the bind header.
+            // SpendAction: prove the action and publish. The tachygram pair is
+            // read straight off the bind header, the note off the master.
             let (tachygrams, anchor, proof) =
-                ProofStamp::prove_spend(rng, bind_pcd, note, rcv, alpha, *pak)
+                ProofStamp::prove_spend(rng, bind_pcd, master_pcd, rcv, alpha, *pak)
                     .map_err(ProveError::ProofFailed)?;
 
             let digest = desc.digest().map_err(ProveError::ActionDigest)?;
@@ -595,10 +597,10 @@ impl ProofStamp {
     /// Proves a single output action, returning the stamp components
     /// `(tachygrams, anchor, proof)`.
     ///
-    /// [`output::OutputBind`] settles the tachygram pair, then [`OutputStamp`]
-    /// proves the action over it and enforces the stamp accumulator. Both
-    /// tachygrams are derived inside the circuit and placed on the stamp for
-    /// data availability.
+    /// [`OutputAction`] is a seed: it derives the tachygram pair, proves the
+    /// action over it and enforces the stamp accumulator. Both tachygrams are
+    /// derived inside the circuit and placed on the stamp for data
+    /// availability.
     ///
     /// # Errors
     ///
@@ -610,17 +612,12 @@ impl ProofStamp {
         note: Note,
         anchor: Anchor,
     ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu_core::Error> {
-        let (bind_pcd, ()) = PROOF_SYSTEM.seed(rng, output::OutputBind, (note,))?;
-        let (cm, pad) = *bind_pcd.data();
-        #[expect(clippy::tuple_array_conversions, reason = "required")]
-        let tachygrams = BTreeSet::from_iter([cm, pad]);
+        let tachygrams = BTreeSet::from_iter(witness::output_tachygrams(&note));
 
-        let (pcd, ()) = PROOF_SYSTEM.fuse(
+        let (pcd, ()) = PROOF_SYSTEM.seed(
             rng,
-            OutputStamp,
-            witness::output_stamp((*bind_pcd.data(), ()), rcv, alpha, note, anchor),
-            bind_pcd,
-            ragu::Proof::trivial().carry::<()>(()),
+            OutputAction,
+            witness::output_action(((), ()), rcv, alpha, note, anchor),
         )?;
         let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
 
@@ -630,7 +627,7 @@ impl ProofStamp {
     /// Creates a stamp for a spend action from a bound
     /// [`SpendHeader`](spend::SpendHeader) PCD.
     ///
-    /// The nullifier pair `{present_nf, nf_next}` published for data
+    /// The nullifier pair `{nf_current, nf_next}` published for data
     /// availability is read straight off the bind header (already confirmed
     /// against the derivation at [`SpendBind`](spend::SpendBind)); this step
     /// proves the action `(cv, rk)` and enforces the stamp accumulator over
@@ -643,21 +640,21 @@ impl ProofStamp {
     pub fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
-        note: Note,
+        master_pcd: ragu::Pcd<delegation::NoteMaster>,
         rcv: value::Trapdoor,
         alpha: ActionRandomizer<effect::Spend>,
         pak: ProofAuthorizingKey,
     ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu_core::Error> {
-        let (_cm, present_nf, nf_next, anchor) = *bind_pcd.data();
+        let (_cm, nf_current, nf_next, anchor) = *bind_pcd.data();
         let tachygrams =
-            BTreeSet::from_iter([Tachygram::from(present_nf), Tachygram::from(nf_next)]);
+            BTreeSet::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]);
 
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
-            SpendStamp,
-            witness::spend_stamp((*bind_pcd.data(), ()), note, rcv, alpha, pak),
+            SpendAction,
+            witness::spend_action((*bind_pcd.data(), *master_pcd.data()), rcv, alpha, pak),
             bind_pcd,
-            ragu::Proof::trivial().carry::<()>(()),
+            master_pcd,
         )?;
         let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
 
@@ -670,7 +667,7 @@ impl ProofStamp {
     /// Both stamps must share the same anchor (use StampLift to align first).
     ///
     /// Each side is `(digests, tachygrams, anchor, proof)`, where the digest
-    /// list reconstructs the `ActionCommit` multiset that `MergeStamp`
+    /// list reconstructs the `ActionCommit` multiset that `StampMerge`
     /// verifies via Schwartz-Zippel. Digests are derived from public action
     /// data by the caller and are never stored on the stamp; the merged
     /// (concatenated) digest list is returned so a fold can carry it
@@ -700,12 +697,12 @@ impl ProofStamp {
                 .collect::<TachygramSetPoly>(),
         );
 
-        let left_pcd = left_proof.carry::<StampHeader>((
+        let left_pcd = left_proof.carry::<Stamp>((
             left_acts_poly.commit(),
             left_tg_poly.commit(),
             left_anchor,
         ));
-        let right_pcd = right_proof.carry::<StampHeader>((
+        let right_pcd = right_proof.carry::<Stamp>((
             right_acts_poly.commit(),
             right_tg_poly.commit(),
             right_anchor,
@@ -718,7 +715,7 @@ impl ProofStamp {
 
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
-            MergeStamp,
+            StampMerge,
             (
                 (left_acts_poly, left_tg_poly),
                 (
@@ -755,7 +752,7 @@ impl ProofStamp {
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
         let stamp_pcd =
             self.proof
-                .carry::<StampHeader>((action_set.commit(), self.tachygram_set, self.anchor));
+                .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
 
         let (pcd, ()) = PROOF_SYSTEM.fuse(rng, StampLift, (), stamp_pcd, anchor_chain)?;
         let anchor = pcd.data().2;
@@ -917,7 +914,7 @@ impl ProofStamp {
     ) -> Result<bool, ragu_core::Error> {
         let action_set = ActionSetPoly::from_iter(action_digests);
 
-        let pcd = self.proof.clone().carry::<StampHeader>((
+        let pcd = self.proof.clone().carry::<Stamp>((
             action_set.commit(),
             self.tachygram_set,
             self.anchor,
