@@ -1214,22 +1214,33 @@ fn spend_stamp_rejects_a_master_for_another_note() {
     );
 }
 
-/// A note paired with an unrelated proof authorizing key fails the
-/// payment-key pin before any master derivation.
+/// The seed derives the note's payment key from `pak`, so a note addressed to
+/// another key yields the master of a different note.
 #[test]
-fn master_seed_rejects_unrelated_pak() {
+fn master_seed_derives_the_payment_key_from_pak() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let stranger = WalletSim::random(rng);
     let note = user.random_note(500);
 
-    expect_invalid(
-        rng,
-        delegation::NoteSeed,
-        (note, stranger.pak),
-        Proof::trivial().carry::<()>(()),
-        Proof::trivial().carry::<()>(()),
-        "NoteSeed: pak not related to note",
+    let (master, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            delegation::NoteSeed,
+            witness::note_seed(((), ()), note, stranger.pak),
+        )
+        .expect("NoteSeed");
+
+    let (cm, opening, _) = *master.data();
+    assert_eq!(
+        Fp::from(opening.pk),
+        Fp::from(stranger.pak.derive_payment_key()),
+        "the opening carries the payment key of the witnessed pak"
+    );
+    assert_ne!(
+        cm,
+        note.commitment(),
+        "the master is not for the supplied note"
     );
 }
 

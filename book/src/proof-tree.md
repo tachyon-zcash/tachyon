@@ -14,7 +14,7 @@ Multiple parties execute the proof tree.
 ### Deriving nullifiers
 
 A wallet proves a window of its note's nullifiers were correctly derived[^nullifiers].
-`NoteSeed` witnesses the note and the proof-authorizing key `pak`, checks `note.pk == pak.derive_payment_key()` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits a `NoteMaster` carrying `(cm, note, mk)`. `nk` never leaves the step.
+`NoteSeed` witnesses the note's value and trapdoors and the proof-authorizing key `pak`, derives the note's payment key from `pak` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits a `NoteMaster` carrying `(cm, note, mk)`. `nk` never leaves the step.
 `NullifierDerive` consumes that seed. It witnesses the window's start epoch (constrained group-aligned) and its sequence, runs four sponges over $(\texttt{Tachyon-NfDerive}, \mathsf{mk}, w)$ to squeeze the window's 16 nullifiers natively, and binds the sequence to them with one opening at a free challenge (below). It exports the whole window, so the range it announces is derived rather than witnessed.
 `NullifierFuse` concatenates two adjacent nullifier sequences into one, requiring the same `cm` and contiguity (`right.epoch_start == left.epoch_end + 1`).
 The result is a `NoteNullifiers` proving the range `[epoch_start, epoch_end]` commits to the genuine nullifiers of the note identified by `cm`, one factor per covered epoch.
@@ -205,7 +205,7 @@ Membership needs no profile: every bucket divides the epoch's stamp polynomials,
 
 ### Derivation window
 
-`NoteSeed` is the only seed. It binds the master key to the note: `note.pk == pak.derive_payment_key()` pins `nk`, and the note commitment digests `nk` (through `pk`) and `psi`, so the derived `mk = Poseidon(psi, nk)` is consistent with the `cm` the seed threads forward.
+`NoteSeed` is the only seed. It binds the master key to the note: deriving `pk` from `pak` pins `nk`, and the note commitment digests `nk` (through `pk`) and `psi`, so the derived `mk = Poseidon(psi, nk)` is consistent with the `cm` the seed threads forward.
 `NullifierDerive` threads `mk` from that header, squeezes the window's nullifiers natively, and binds the witnessed sequence to them at a fresh challenge $z$:
 
 $$g(z) = \prod_{j < K} F_{\texttt{base}+j,\ \mathsf{nf}_{\texttt{base}+j}}(z)$$
@@ -289,7 +289,7 @@ A transaction with one spend and one output, where the spendable was bootstrappe
 ```mermaid
 flowchart TB
   subgraph derive [nullifier derivation]
-    w_seed[/note, pak/]
+    w_seed[/value, psi, rcm, pak/]
     s_seed[NoteSeed]
     w_window[/epoch_start, seq/]
     s_window[NullifierDerive]
@@ -440,7 +440,7 @@ flowchart LR
 | QrUnspentInit | QrBucket | — | value, classes, mask, sequence, contents | ArbitraryUnspent |
 | UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | ArbitraryUnspent |
 | UnspentBind | ArbitraryUnspent | NoteNullifiers | elapsed_seq, nf_seq, complement_seq | NoteUnspent |
-| NoteSeed | — | — | note, pak | NoteMaster |
+| NoteSeed | — | — | value, psi, rcm, pak | NoteMaster |
 | NullifierDerive | NoteMaster | — | epoch_start, seq | NoteNullifiers |
 | NullifierFuse | NoteNullifiers | NoteNullifiers | left_seq, merged_seq, right_seq | NoteNullifiers |
 | SpendableInit | NoteNullifiers | — | anchor_prev, creation_set, creation_epoch | NoteSpendable |

@@ -22,10 +22,11 @@ use crate::{
     constants::EPOCH_MAX,
     keys::{NoteMasterKey, ProofAuthorizingKey},
     note::{self, Note},
-    nullifier::NF_DERIVATION_WIDTH,
+    nullifier::{self, NF_DERIVATION_WIDTH},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::enforce_poly_product,
+    value,
 };
 
 /// A note's certified record: its commitment, its opening, and its master key
@@ -100,11 +101,11 @@ impl Header for NoteNullifiers {
 
 /// Certify a note's commitment and master key.
 ///
-/// Seed step. Witnesses the note and its proof authorizing key, proves the
-/// key belongs to the note (`note.pk == pak.derive_payment_key()`, which pins
-/// `nk`), derives `mk` from `nk` and the note's trapdoor, and computes `cm`.
-/// `nk` never leaves the step; only `pk`, which preimage-hides it, enters
-/// `cm`.
+/// Seed step. Witnesses the note's value and trapdoors and its proof
+/// authorizing key. The note's payment key is derived from `pak`, which pins
+/// `nk`; `mk` is derived from `nk` and `psi`; and `cm` commits to the
+/// assembled note. `nk` never leaves the step; only `pk`, which
+/// preimage-hides it, enters `cm`.
 ///
 /// # Soundness
 ///
@@ -120,22 +121,29 @@ impl Step for NoteSeed {
     type Left = ();
     type Output = NoteMaster;
     type Right = ();
-    /// `(note, pak)`
-    type Witness<'source> = (Note, ProofAuthorizingKey);
+    /// `(value, psi, rcm, pak)`
+    type Witness<'source> = (
+        value::Positive,
+        nullifier::Trapdoor,
+        note::CommitmentTrapdoor,
+        ProofAuthorizingKey,
+    );
 
     const INDEX: Index = Index::new(0);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (note, pak): Self::Witness<'source>,
+        (value, psi, rcm, pak): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(note.pk) - Fp::from(pak.derive_payment_key()),
-            "NoteSeed: pak not related to note",
-        )?;
+        let note = Note {
+            pk: pak.derive_payment_key(),
+            value,
+            psi,
+            rcm,
+        };
         let mk = pak.nk.derive_note_private(note.psi);
         let cm = note.commitment();
         Ok(((cm, note, mk), ()))

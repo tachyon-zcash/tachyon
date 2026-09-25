@@ -40,14 +40,16 @@ type StepRight<S> = <<S as Step>::Right as Header>::Data;
 
 type StepWitness<'src, S> = <S as Step>::Witness<'src>;
 
-/// Prepare the witness for [`NoteSeed`]: `(note, pak)`.
+/// Prepare the witness for [`NoteSeed`]: `(value, psi, rcm, pak)`.
+///
+/// `note.pk` is not read; the step derives the payment key from `pak`.
 #[must_use]
 pub const fn note_seed(
     (_left, _right): (StepLeft<NoteSeed>, StepRight<NoteSeed>),
     note: Note,
     pak: ProofAuthorizingKey,
 ) -> StepWitness<'static, NoteSeed> {
-    (note, pak)
+    (note.value, note.psi, note.rcm, pak)
 }
 
 /// Prepare the witness for [`NullifierDerive`]: `(epoch_start, seq)`.
