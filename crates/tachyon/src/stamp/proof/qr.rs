@@ -3,13 +3,12 @@
 //! Each depth classifies at a discriminant of the progression
 //!
 //! $$
-//!   R_1 = H_\mathsf{ep}(\mathsf{anchor\_end}, \mathsf{epoch} + 1),
-//!   \qquad R_{j+1} = R_j + 1,
+//!   R_j = R_0 + j,
 //! $$
 //!
-//! the epoch link of the extent's last anchor. Every header carries $R_1$, so
-//! depth $j$ classifies at $R_{j+1} = R_1 + j$, and a value takes the residue
-//! side there iff $x + R_{j+1}$ is a square or zero.
+//! from a first discriminant $R_0$. Every header carries $R_0$, so depth $j$
+//! classifies at $R_j$, and a value takes the residue side there iff $x + R_j$
+//! is a square or zero.
 //!
 //! [`QrSummaryIntake`] starts a [`QrIntake`] from a [`Summary`], and
 //! [`QrStampIntakeSeed`] from one unsummarized stamp. [`QrIntakeSplit`]
@@ -42,15 +41,16 @@ use crate::{
 };
 
 /// Tachygrams under routing. Every member of `contents` takes `profile`, and
-/// a split classifies at `discriminant.at(profile.depth)`.
+/// a split classifies at `discriminant.at(profile.depth)`. A builder keeps its
+/// intake headers unpublished until the epoch closes.
 #[derive(Clone, Debug)]
 pub struct QrIntake;
 
 impl Header for QrIntake {
     /// `(epoch, anchor_prev, anchor_end, discriminant, profile, contents)`.
     /// The contents were drawn from the folds the coverage extent
-    /// `(anchor_prev, anchor_end]` certifies; `discriminant` is the epoch's
-    /// $R_1$, free until [`QrBucketSeal`].
+    /// `(anchor_prev, anchor_end]` certifies; `discriminant` is the network's
+    /// $R_0$.
     type Data = (
         EpochIndex,
         Anchor,
@@ -124,8 +124,7 @@ impl Header for QrIntakeSides {
 ///
 /// # Soundness
 ///
-/// `discriminant` is free here, as every seed witness is; [`QrBucketSeal`]
-/// pins it to the epoch-link image of the span's `anchor_end`.
+/// `discriminant` is a free witness; see [`QrDiscriminant`].
 #[derive(Debug)]
 pub struct QrSummaryIntake;
 
@@ -387,7 +386,8 @@ impl Step for QrIntakeSplit {
 /// the split's product places every member of the other class in the child. The
 /// child may hold a stray member of the sibling's class; consumers open it
 /// nonzero, so a stray member cannot pass a value that is present. $R$ is read
-/// off the header and pinned at [`QrBucketSeal`]. The parent's depth is
+/// off the header, so a descent classifies at the same $R_0$ as every other
+/// step of the network. The parent's depth is
 /// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
 /// one depth's paths have distinct profiles.
 #[derive(Debug)]
@@ -516,7 +516,7 @@ impl Header for QrBucket {
 /// The extent's `anchor_prev` must be the epoch link of `anchor_final_prev`
 /// into `epoch`, and the step performs the boundary digest of the intake's
 /// `anchor_end` into `epoch + 1`, emitting that as the bucket's
-/// `anchor_end`. `discriminant` must equal the same crossing.
+/// `anchor_end`.
 ///
 /// # Soundness
 ///
@@ -535,9 +535,7 @@ impl Header for QrBucket {
 /// neither is any fold downstream of it. A bucket sealed short of the epoch
 /// therefore yields evidence no lineage can carry to a consensus-checked spend.
 ///
-/// Every split in the intake's history classified at $R_1 + \mathsf{depth}$
-/// read off the header, so pinning `discriminant` here pins every
-/// discriminant the routing used to the extent the bucket carries.
+/// `discriminant` is prover-chosen and unchecked here; see [`QrDiscriminant`].
 #[derive(Debug)]
 pub struct QrBucketSeal;
 
@@ -569,10 +567,6 @@ impl Step for QrBucketSeal {
         let crossing = anchor_end
             .next_epoch(epoch_next)
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-        enforce_zero(
-            Fp::from(discriminant) - Fp::from(crossing),
-            "QrBucketSeal: discriminant is not the epoch link of anchor_end",
-        )?;
 
         Ok((
             (
@@ -594,8 +588,8 @@ impl Step for QrBucketSeal {
 /// the bucket's profile against the first `depth` of them, and opens the
 /// bucket at the value for nonzero. The `MAX_DEPTH` positions
 /// $j = 0, 1, \dots$ index the progression, so position $j$
-/// classifies at $R_{j+1} = R_1 + j$. With $x$ the value and $s_j = x +
-/// R_1 + j$, each position witnesses a side $b_j$ and a root $r_j$ with
+/// classifies at $R_j = R_0 + j$. With $x$ the value and $s_j = x +
+/// R_0 + j$, each position witnesses a side $b_j$ and a root $r_j$ with
 ///
 /// $$
 ///   r_j^2 = \bigl(c - (c - 1) \cdot b_j\bigr) \cdot s_j,
@@ -632,8 +626,9 @@ impl Step for QrBucketSeal {
 /// attain index sum $\mathsf{depth} \cdot (\mathsf{depth} - 1)/2$, so the mask
 /// is that prefix and `depth` is at most [`QrProfile::MAX_DEPTH`]. The fold
 /// then equals `bits` iff the bucket's sides are the value's first `depth`
-/// sides. Positions past `depth` are tested but compared to nothing. $R_1$ is
-/// the bucket's `discriminant`, pinned at [`QrBucketSeal`]. `value` and
+/// sides. Positions past `depth` are tested but compared to nothing. $R_0$ is
+/// the bucket's own `discriminant`, so the exclusion holds for the network
+/// the bucket belongs to. `value` and
 /// `nf_next` are free witnesses. The profile fold fixes `value`, and the
 /// sequence identity fixes both;
 /// [`UnspentBind`](super::pool::UnspentBind) forces each against the note's

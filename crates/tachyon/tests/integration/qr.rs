@@ -26,8 +26,8 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_qr_branch, build_qr_partition,
-    build_summary_pcd, build_unspent_pcd_between_anchors, qr_discriminant_of, qr_profile_of,
-    random_block, seal_qr_intake, seed_qr_stamp_intake, shared_sk, split_qr_intake,
+    build_summary_pcd, build_unspent_pcd_between_anchors, qr_profile_of, random_block,
+    seal_qr_intake, seed_qr_stamp_intake, shared_sk, split_qr_intake,
 };
 
 /// The witness of [`qr::QrUnspentInit`].
@@ -74,19 +74,43 @@ fn small_epoch(rng: &mut StdRng) -> (PoolSim, Anchor) {
 /// and its partition reaches a bucket spanning it.
 const EPOCH_MEMBERS: usize = EPOCH_SIZE as usize;
 
-/// The sealed bucket holding `value` at `depth` levels over the anchor span
-/// `(start, final_anchor)`, at the epoch link of `final`, sealed on
-/// `anchor_final_prev`.
+/// [`qr_bucket_at`] with a freshly sampled first discriminant.
 fn qr_bucket_for(
     rng: &mut StdRng,
     pool: &PoolSim,
-    (start, final_anchor): (Anchor, Anchor),
+    span: (Anchor, Anchor),
     capacity: usize,
     depth: u32,
     value: Fp,
     anchor_final_prev: Anchor,
 ) -> QrBucketEntry {
-    let discriminant = qr_discriminant_of(pool, final_anchor);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    qr_bucket_at(
+        rng,
+        pool,
+        span,
+        discriminant,
+        capacity,
+        depth,
+        value,
+        anchor_final_prev,
+    )
+}
+
+/// The sealed bucket holding `value` at `depth` levels over the anchor span
+/// `(start, final_anchor)`, routed at `discriminant` and sealed on
+/// `anchor_final_prev`.
+#[expect(clippy::too_many_arguments, reason = "a fixture assembling one bucket")]
+fn qr_bucket_at(
+    rng: &mut StdRng,
+    pool: &PoolSim,
+    (start, final_anchor): (Anchor, Anchor),
+    discriminant: QrDiscriminant,
+    capacity: usize,
+    depth: u32,
+    value: Fp,
+    anchor_final_prev: Anchor,
+) -> QrBucketEntry {
     let profile = qr_profile_of(value, discriminant, depth);
     let mut branch = build_qr_branch(
         rng,
@@ -416,7 +440,7 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
         let epoch = EpochIndex::new(3);
         let start = Anchor::from(Fp::random(&mut *rng));
         let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
-        // Choose x from R_1 and the selected split depth.
+        // Choose x from R_0 and the selected split depth.
         let value = -Fp::from(discriminant) - Fp::from(u64::from(depth));
         assert_ne!(value, Fp::ZERO);
         let exceptional = Tachygram::from(value);
@@ -1138,7 +1162,7 @@ fn qr_partition_covers_the_epoch_by_profile() {
         pool.mine(random_block(rng, 2, 3));
     }
     let final_anchor = pool.block(pool.height()).anchor();
-    let discriminant = qr_discriminant_of(&pool, final_anchor);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let published: Vec<Tachygram> = (0..=3)
         .flat_map(|height| pool.block(BlockHeight(height)).tachygrams())
         .flatten()
@@ -1220,7 +1244,7 @@ fn qr_partition_chunks_a_span_past_the_polynomial_capacity() {
         pool.mine(random_block(rng, 2, 3));
     }
     let final_anchor = pool.block(pool.height()).anchor();
-    let discriminant = qr_discriminant_of(&pool, final_anchor);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let published: Vec<Tachygram> = (0..=3)
         .flat_map(|height| pool.block(BlockHeight(height)).tachygrams())
         .flatten()
@@ -1293,7 +1317,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
         pool.mine(random_block(rng, 2, 3));
     }
     let final_anchor = pool.block(pool.height()).anchor();
-    let discriminant = qr_discriminant_of(&pool, final_anchor);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
 
     let routed = build_qr_partition(
         rng,
@@ -1335,7 +1359,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
 }
 
 #[test]
-fn qr_bucket_seal_rejects_an_intake_short_of_the_epoch_boundary() {
+fn qr_bucket_seal_rejects_an_intake_not_opening_on_an_epoch_link() {
     let rng = &mut StdRng::seed_from_u64(0);
     let mut pool = PoolSim::genesis_with(random_block(rng, 2, 3));
     for _ in 0..3 {
@@ -1344,7 +1368,7 @@ fn qr_bucket_seal_rejects_an_intake_short_of_the_epoch_boundary() {
     // Opening the span past the epoch's first stamp leaves it rooted on a stamp
     // anchor, which the epoch domain cannot produce.
     let final_anchor = pool.block(BlockHeight(2)).anchor();
-    let discriminant = qr_discriminant_of(&pool, final_anchor);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let start = pool.block(BlockHeight(0)).anchor();
 
     let routed = build_qr_partition(rng, &pool, (start, final_anchor), discriminant, 12, 1);
@@ -1369,19 +1393,18 @@ fn qr_bucket_seal_rejects_an_intake_short_of_the_epoch_boundary() {
     );
 }
 
-/// The first root of an epoch chunked into several: it opens at the epoch
-/// boundary and stops well short of the final anchor, carrying the
-/// discriminant it was routed at.
-fn short_first_root(
-    rng: &mut StdRng,
-    discriminant_of: impl Fn(&PoolSim, Anchor) -> QrDiscriminant,
-) -> QrIntakeEntry {
+/// The seal does not know the epoch's final anchor: an intake that stops
+/// well short of it still seals, and the bucket ends on the crossing out of
+/// the intake's own endpoint, which the pool never published.
+#[test]
+fn qr_bucket_seal_accepts_an_extent_short_of_the_epoch() {
+    let rng = &mut StdRng::seed_from_u64(0);
     let mut pool = PoolSim::genesis_with(random_block(rng, 2, 3));
     for _ in 0..3 {
         pool.mine(random_block(rng, 2, 3));
     }
     let final_anchor = pool.block(pool.height()).anchor();
-    let discriminant = discriminant_of(&pool, final_anchor);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
 
     // A six-member capacity chunks the epoch into four roots.
     let routed = build_qr_partition(
@@ -1399,64 +1422,55 @@ fn short_first_root(
         anchor_end, final_anchor,
         "the first root stops inside the epoch"
     );
-    intake
-}
-
-/// An intake routed at the epoch's discriminant but stopping short of the
-/// final anchor carries a discriminant its own extent does not fold to.
-#[test]
-fn qr_bucket_seal_rejects_a_discriminant_off_the_span() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let intake = short_first_root(rng, qr_discriminant_of);
-
-    let witness = witness::qr_bucket_seal((*intake.pcd.data(), ()), Anchor::from(Fp::ZERO));
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            qr::QrBucketSeal,
-            witness,
-            intake.pcd,
-            Proof::trivial().carry::<()>(()),
-        )
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
-        "QrBucketSeal: discriminant is not the epoch link of anchor_end"
-    );
-}
-
-/// The seal does not know the epoch's final anchor: a short extent routed at
-/// the epoch link of its own last anchor seals, and the bucket ends on that
-/// crossing, which leaves the published chain.
-#[test]
-fn qr_bucket_seal_accepts_a_short_extent_at_its_own_epoch_link() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    // Route at the epoch link of the first root's own last anchor, the stamp
-    // that carries the epoch's members to the six-member capacity.
-    let intake = short_first_root(rng, |pool, final_anchor| {
-        let mut held = 0;
-        let short_last = pool
-            .stamps_between(Anchor::default(), final_anchor)
-            .into_iter()
-            .find(|entry| {
-                held += entry.1.len();
-                held >= 6
-            })
-            .expect("the epoch reaches the capacity")
-            .3;
-        qr_discriminant_of(pool, short_last)
-    });
-    let (_, _, anchor_end, discriminant, ..) = *intake.pcd.data();
-    let crossing = anchor_end.next_epoch(EpochIndex::new(1)).unwrap();
-    assert_eq!(discriminant, QrDiscriminant::from(crossing));
 
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
     assert_eq!(
-        bucket.pcd.data().2,
-        crossing,
-        "the seal folds the crossing out of the short span"
+        (bucket.pcd.data().2, bucket.pcd.data().3),
+        (
+            anchor_end.next_epoch(EpochIndex::new(1)).unwrap(),
+            discriminant
+        ),
+        "the seal performs the boundary digest of the short extent and keeps its first discriminant"
     );
+}
+
+/// The first discriminant moves how members distribute, not which bucket
+/// holds a value under it: two networks over the same epoch at different first
+/// discriminants each admit the same absent nullifier.
+#[test]
+fn qr_unspent_init_accepts_a_nullifier_under_either_first_discriminant() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, final_anchor) = small_epoch(rng);
+    let epoch = BlockHeight(0).epoch();
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let nf_next = Nullifier::from(Fp::random(&mut *rng));
+
+    let first = QrDiscriminant::from(Fp::random(&mut *rng));
+    let second = QrDiscriminant::from(Fp::random(&mut *rng));
+    assert_ne!(first, second);
+
+    for discriminant in [first, second] {
+        let bucket = qr_bucket_at(
+            rng,
+            &pool,
+            (Anchor::default(), final_anchor),
+            discriminant,
+            24,
+            2,
+            Fp::from(nf),
+            Anchor::from(Fp::ZERO),
+        );
+        assert_eq!(bucket.pcd.data().3, discriminant);
+
+        let witness = witness::qr_unspent_init(
+            (*bucket.pcd.data(), ()),
+            nf.into(),
+            nf_next,
+            &bucket.members,
+        );
+        let unspent = fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit");
+        assert_eq!(unspent.data().1, (epoch, nf));
+    }
 }
 
 #[test]
@@ -1467,7 +1481,7 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
         pool.mine(random_block(rng, 2, 3));
     }
     let final_anchor = pool.block(pool.height()).anchor();
-    let discriminant = qr_discriminant_of(&pool, final_anchor);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let epoch = BlockHeight(0).epoch();
     let epoch_next = epoch.next().unwrap();
     let [nf, nf_next] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
@@ -1735,8 +1749,6 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
         unpublished,
         "the seal performs the boundary digest of the short extent's own last anchor"
     );
-    assert_eq!(bucket.pcd.data().3, QrDiscriminant::from(unpublished));
-    assert_ne!(bucket.pcd.data().3, qr_discriminant_of(&pool, tip_anchor));
     let unspent = qr_epoch_unspent(rng, &user, &note, &bucket);
     let (spendable, ()) = PROOF_SYSTEM
         .fuse(
@@ -2006,17 +2018,7 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
         .next_epoch(epoch1)
         .expect("epoch one is nonzero");
     let members = [Tachygram::from(note.commitment())];
-    let commit = members
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>()
-        .commit();
-    let fake_last = fake_prev.next_stamp(epoch1, &commit).expect("one member");
-    let discriminant = QrDiscriminant::from(
-        fake_last
-            .next_epoch(epoch1.next().unwrap())
-            .expect("epoch two is nonzero"),
-    );
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let (intake, ()) = PROOF_SYSTEM
         .seed(
             rng,
@@ -2060,7 +2062,7 @@ fn qr_unspent_init_rejects_a_published_nullifier() {
         pool.mine(random_block(rng, 2, 3));
     }
     let final_anchor = pool.block(pool.height()).anchor();
-    let discriminant = qr_discriminant_of(&pool, final_anchor);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
 
     let routed = build_qr_partition(
         rng,
@@ -2099,7 +2101,7 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
         pool.mine(random_block(rng, 2, 3));
     }
     let final_anchor = pool.block(pool.height()).anchor();
-    let discriminant = qr_discriminant_of(&pool, final_anchor);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let nf = Nullifier::from(Fp::random(&mut *rng));
 
     let routed = build_qr_partition(
@@ -2201,16 +2203,17 @@ fn qr_unspent_init_tests_sides_past_the_bucket_depth() {
 fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
-    let discriminant = qr_discriminant_of(&pool, final_anchor);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let position = 1;
     let value = -discriminant.at(position);
     assert_ne!(value, Fp::ZERO);
     let nf = Nullifier::from(value);
 
-    let bucket = qr_bucket_for(
+    let bucket = qr_bucket_at(
         rng,
         &pool,
         (Anchor::default(), final_anchor),
+        discriminant,
         24,
         2,
         value,
@@ -2295,7 +2298,19 @@ fn recarry_bucket(
 #[test]
 fn qr_bucket_seal_refuses_the_final_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let intake = short_first_root(rng, qr_discriminant_of);
+    let pool = PoolSim::genesis_with(random_block(rng, 2, 3));
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let intake = build_qr_partition(
+        rng,
+        &pool,
+        (Anchor::default(), pool.anchor()),
+        discriminant,
+        24,
+        0,
+    )
+    .into_iter()
+    .next()
+    .expect("one intake");
     let final_epoch = EpochIndex::new(EPOCH_MAX);
     let anchor_final_prev = Anchor::from(Fp::ONE);
 
@@ -2481,7 +2496,7 @@ fn qr_unspent_init_accepts_ragged_depths() {
     let (pool, final_anchor) = small_epoch(rng);
     let epoch = BlockHeight(0).epoch();
     let epoch_next = epoch.next().unwrap();
-    let discriminant = qr_discriminant_of(&pool, final_anchor);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let shallow_value = Fp::random(&mut *rng);
     let shallow_side = qr::classify(shallow_value, discriminant.at(0)).0;
     let deep_value = iter::repeat_with(|| Fp::random(&mut *rng))

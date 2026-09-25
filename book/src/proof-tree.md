@@ -165,39 +165,39 @@ Summaries root unbound like every seed. A consuming lineage closes at its own sp
 ### QR epoch evidence
 
 An epoch's evidence partitions its tachygrams by a sequence of quadratic tests.
-The first discriminant is the epoch link of the extent's `anchor_end` into the next epoch; every QR header carries it, and the discriminants progress by one from it,
+The builder samples the first discriminant $R_0$ privately; every QR header carries it, and the discriminants progress by one from it,
 
-$$R_1 = H_\mathsf{ep}(\mathsf{anchor\_end}, \mathsf{epoch} + 1), \qquad R_{j+1} = R_1 + j \quad (j = 0, \ldots, 31).$$
+$$R_j = R_0 + j \quad (j = 0, \ldots, 31).$$
 
-A value takes the residue side at depth $j$ when $x + R_{j+1}$ is a square or zero.
-$R_1$ is unknown until the epoch closes, when every tachygram of the epoch is already published, so no value can be aimed at a bucket and evidence is built only for closed epochs.
-The one lever on $R_1$ is the epoch's last stamp, and steering even a few thousand published values into one bucket by choosing it costs $2^{d}$ tries per value at depth $d$, all at once.
+A value takes the residue side at depth $j$ when $x + R_j$ is a square or zero.
+A private $R_0$ is what lets a network be routed while its epoch is still in flight: a builder opens one, keeps $R_0$ and its intake headers unpublished until the epoch closes, and publishes the sealed buckets after.
+Choosing $R_0$ moves how members distribute across buckets, never which bucket holds a given value under that $R_0$, so a biased or prematurely revealed $R_0$ affects only that builder's buckets, and a wallet can use any valid network.
 Honest depth is $\log_2$ of the bucket count and stays below 26 at any proposed throughput; the 32-position register is a width, not a security parameter[^balance].
 A profile is the string of sides on the path to a bucket.
 
 `QrSummaryIntake` starts a `QrIntake` from a `Summary` at depth zero, `QrStampIntakeSeed` starts one from a single stamp directly, and `QrIntakeMerge` joins two intakes of one epoch, discriminant and profile whose spans meet, so spans compose as anchor segments do.
-`QrIntakeSplit` factors an intake's contents into two sides at $R = R_1 + \mathsf{depth}$ as `QrIntakeSides`, and `QrSideDescend` extracts one side while attesting the other at its class multiplier $c$:
+`QrIntakeSplit` factors an intake's contents into two sides at $R = R_0 + \mathsf{depth}$ as `QrIntakeSides`, and `QrSideDescend` extracts one side while attesting the other at its class multiplier $c$:
 
 $$u(X)^2 - c\,(X + R) = s(X)\, h(X)$$
 
 holds only when every root of the sibling $s$ takes its side at $R$, since each root leaves $u(x)^2 = c\,(x + R)$; with the split's product, every member of the extracted class is then in the child.
 A child may carry a stray member of the other class, which only tightens the openings its consumers make, but it cannot lack a member of its own.
 The exceptional value $-R$ has root $0$ under either class, so the split also opens the non-residue side nonzero at $-R$.
-The descent's challenge absorbs the three commitments; $R_1$ is read off the header and pinned later by the seal, so a descent at a solved $R$ emits a header nothing seals.
+The descent's challenge absorbs the three commitments; $R_0$ is read off the header, so every step of one network classifies at the same progression.
 Each descend requires the parent's depth below 32, so $\mathsf{bits} < 2^{32} < p$ and two paths never share a profile.
 A layer splits every intake over capacity, then merges same-profile neighbours while the product fits one polynomial; sibling buckets need not stop at the same depth.
 
-`QrBucketSeal` turns a routed intake into a `QrBucket` that runs boundary to boundary. It pins the extent's `anchor_prev` to epoch-link form, folds the crossing out of the intake's `anchor_end`, and pins the discriminant to that crossing,
+`QrBucketSeal` turns a routed intake into a `QrBucket` that runs boundary to boundary. It pins the extent's `anchor_prev` to epoch-link form and performs the boundary digest of the intake's `anchor_end`,
 
-$$\mathsf{anchor\_prev} = H_\mathsf{ep}(\mathsf{anchor\_prev\_prev}, \mathsf{epoch}), \qquad \mathsf{anchor\_end}' = \mathsf{discriminant} = H_\mathsf{ep}(\mathsf{anchor\_end}, \mathsf{epoch} + 1),$$
+$$\mathsf{anchor\_prev} = H_\mathsf{ep}(\mathsf{anchor\_final\_prev}, \mathsf{epoch}), \qquad \mathsf{anchor\_end}' = H_\mathsf{ep}(\mathsf{anchor\_end}, \mathsf{epoch} + 1).$$
 
-epoch zero's entry anchor being the first rule at $\mathsf{anchor\_prev\_prev} = 0$. The bucket carries $\mathsf{anchor\_end}'$.
-Every split in the intake's history classified at $R_1 + \mathsf{depth}$ read off the header, so the second rule pins every discriminant the routing used to the span the bucket carries.
+Epoch zero's entry anchor is the first rule at $\mathsf{anchor\_final\_prev} = 0$. The bucket carries $\mathsf{anchor\_end}'$.
+It checks nothing about the discriminant. That is the builder's own $R_0$; every step threads it unchanged and every merge requires it equal.
 The crossing is what makes the bucket's whole-epoch claim true. In the accepted chain, the only anchor of epoch-link form absorbing $\mathsf{epoch} + 1$ is the one folded from $\mathsf{final}(\mathsf{epoch})$. An intake sealed short folds to a value nobody published, and by preimage resistance no fold downstream of it rejoins the chain, so its bucket never reaches a consensus-checked spend. Sub-epoch coverage is summary evidence's job; QR buckets are the whole-epoch archive.
 `QrBucketSeal` is the only step that produces a `QrBucket`, and `QrUnspentInit` consumes nothing else.
 
 `QrUnspentInit` witnesses a nonzero value $x$, a side $b_j$ and root $r_j$ at each of the 32 positions, a mask $m_j$, the sequence naming $x$, and the bucket's contents.
-With $s_j = x + R_1 + j$ and $c$ the non-residue,
+With $s_j = x + R_0 + j$ and $c$ the non-residue,
 
 $$r_j^2 = \bigl(c - (c - 1)\, b_j\bigr)\, s_j, \qquad b_j = 0 \implies s_j \neq 0,$$
 

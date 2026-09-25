@@ -598,15 +598,6 @@ pub(crate) fn seal_qr_intake<RNG: CryptoRng>(
     }
 }
 
-/// The discriminant an epoch's buckets carry: the epoch link of its final
-/// anchor `final` into the next epoch.
-pub(crate) fn qr_discriminant_of(pool: &PoolSim, final_anchor: Anchor) -> QrDiscriminant {
-    final_anchor
-        .next_epoch(pool.epoch_at(final_anchor).next().unwrap())
-        .expect("epoch after the final is nonzero")
-        .into()
-}
-
 /// Root an intake on one published stamp, which a summary need not be able to
 /// hold.
 pub(crate) fn seed_qr_stamp_intake<RNG: CryptoRng>(
