@@ -21,8 +21,8 @@ The result is a `NoteNullifiers` proving the range `[epoch_start, epoch_end]` co
 
 ### Bootstrapping a spendable
 
-A spendable starts when `SpendableInit` consumes a `NoteNullifiers` covering the creation epoch.
-It witnesses `(anchor_prev, creation_set, creation_epoch, nf_current)` along with the derivation's sequence and a complement: dividing the creation epoch's factor out of the sequence forces `nf_current` to the range's genuine member there. It takes `cm` from the range header, checks `cm` is among the creation stamp's tachygrams[^tachygrams], and emits a `NoteSpendable` carrying `(cm, (creation_epoch, nf_current), anchor)` with `anchor = anchor_prev.next_stamp(creation_epoch, creation_commit)`, the position immediately after the creation stamp, advanced by each lift.
+A spendable starts when `SpendableInit` consumes a `NoteNullifiers`.
+It witnesses `(anchor_prev, creation_set, creation_epoch)`. It takes `cm` from the range header, checks `cm` is among the creation stamp's tachygrams[^tachygrams], and emits a `NoteSpendable` carrying `(cm, creation_epoch, anchor)` with `anchor = anchor_prev.next_stamp(creation_epoch, creation_commit)`, the position immediately after the creation stamp, advanced by each lift.
 `anchor_prev` is a free witness, so the anchor binds only downstream: lift adjacency threads it to the eventual spend anchor, which consensus checks for chain membership, and a chain node's preimage fixes the real predecessor, the real creation epoch, and the real cm-stamp.
 
 ### Maintaining a spendable
@@ -48,17 +48,17 @@ The evidence is note-independent and rebuildable from public data alone.
 It emits a `NoteUnspent` carrying the span's boundary nullifiers, anchors and epochs, and the note's `cm`.
 
 `SpendableLift` is wallet-side and witness-free: it consumes a `NoteSpendable` and a `NoteUnspent`.
-It checks the verified segment's `cm` equals the spendable's (so the absence-proven nullifiers are this note's, and the value cannot drift), the segment's `nf_start` equals the spendable's `nf_current` (continuity), and the segment's `anchor_prev` equals the spendable's anchor (adjacency).
-It advances to the segment's `nf_end` and `anchor_end`, threading `cm` unchanged.
+It checks the verified segment's `cm` equals the spendable's (so the absence-proven nullifiers are this note's, and the value cannot drift), the segment's `epoch_start` equals the spendable's `epoch_current` (continuity), and the segment's `anchor_prev` equals the spendable's anchor (adjacency).
+It advances to the segment's `epoch_end` and `anchor_end`, threading `cm` unchanged.
 A single lift can consume an arbitrarily long composed `ArbitraryUnspent`, including one that crosses many epoch boundaries.
 A lineage resting on its epoch's final anchor lifts the same way: the crossing is a fold like any other, so a segment can begin with it.
 
 ### Spending
 
 To spend, the wallet runs `SpendBind`.
-It consumes the `NoteSpendable` and a `NoteNullifiers` covering the current and next epochs, and witnesses the next-epoch nullifier `nf_next`.
+It consumes the `NoteSpendable` and a `NoteNullifiers` covering the current and next epochs, and witnesses the pair `(nf_current, nf_next)`.
 It requires `range.cm == spendable.cm`, then confirms the published pair by dividing two adjacent factors out of the derivation's sequence, one indexed at the lineage's epoch and one at the next.
-Because `nf_current` is threaded from the lineage, its factor is fixed before the challenge, and `nf_next` is forced to the genuine nullifier of the epoch after it.
+The challenge absorbs both nullifiers, so they are forced to the genuine nullifiers of the lineage's epoch and the epoch after it.
 Nonzero guards close the `nf == 0` degenerate.
 The output `SpendHeader` carries `cm`, the confirmed pair `(nf_current, nf_next)`, and the threaded anchor; it carries no curve points.
 
@@ -158,7 +158,7 @@ The product of two root polynomials is the root polynomial of the multiset union
 Where a summary starts and stops is prover-chosen: a consumer splices summaries by anchor equality and passes through every stamp link regardless.
 
 `SummaryUnspentInit` starts an `ArbitraryUnspent` from a summary with one exclusion opening on the accumulator; the summary's extent becomes the segment's, and its one-member `elapsed` is pinned as at `UnspentSeed`.
-`SummarySpendableInit` starts a spendable from a summary covering the note's creation: `cm` opens to zero on the accumulator, `nf_current` opens nonzero, the read at the creation epoch is `SpendableInit`'s, and the spendable emits at the summary's final anchor.
+`SummarySpendableInit` starts a spendable from a summary covering the note's creation: `cm` opens to zero on the accumulator, and the creation epoch's nullifier `nf_current`, read off the derivation at a challenge absorbing it, opens nonzero. The spendable emits at the summary's final anchor.
 
 Summaries root unbound like every seed. A consuming lineage closes at its own spend, where consensus anchor membership forces every spliced link.
 
@@ -239,31 +239,30 @@ The derivation's `cm` is stamped onto the `NoteUnspent`.
 ### Spendable lineage
 
 `SpendableInit` is the lineage's only seed and is wallet-only.
-It witnesses the creation stamp's tachygrams, the anchor running into the creation stamp, the creation epoch, and the starting-epoch nullifier `nf_current`.
+It witnesses the creation stamp's tachygrams, the anchor running into the creation stamp, and the creation epoch.
 It takes `cm` from the range header and binds the note to the pool (`cm` in `creation_set`), which pins the whole note to the real minted note.
-It emits `NoteSpendable(cm, (creation_epoch, nf_current), anchor)`, where `anchor` folds the creation epoch onto the free-witnessed `anchor_prev`; a wrong epoch or predecessor lands the anchor off the published sequence, so consensus anchor membership of the eventual spend forces both.
-`nf_current` is forced to the range's member at the creation epoch by dividing its factor out of the derivation's sequence; each lift then requires a `NoteUnspent`'s `nf_start` to equal it, keeping the lineage on the note's derived nullifiers.
-`creation_epoch` needs no bound check, since divisibility forces its factor to be one the derivation actually holds.
+It emits `NoteSpendable(cm, creation_epoch, anchor)`, where `anchor` folds the creation epoch onto the free-witnessed `anchor_prev`; a wrong epoch or predecessor lands the anchor off the published sequence, so consensus anchor membership of the eventual spend forces both.
+It tests no exclusion: the only stamp its position covers is the creating one, and a spend inside that stamp would need an anchor folding in the stamp's own tachygrams.
 
 `SpendableLift` advances the lineage over a `NoteUnspent`.
 It threads `cm` by equality (`unspent.cm == spendable.cm`), so every consumed segment belongs to the lineage's one note and the spent value cannot drift to a different same-`mk` note.
 Every `NoteUnspent` factor is genuine by `UnspentBind`, so a lineage cannot skip an epoch or splice in another note.
 
-Continuity holds through the boundary pair: `unspent.nf_start == spendable.nf_current` and `unspent.epoch_start == spendable.epoch_current`.
-Both nullifiers are PRF outputs of the note's sponge, so value-equality alone forces the same note and epoch. Carrying the epoch makes that a checked equality per lift, and lets the lineage state its position without a derivation in hand.
+Continuity holds through the epoch: `unspent.epoch_start == spendable.epoch_current`.
+`UnspentBind` made every member of the segment the genuine nullifier of `cm` at its epoch, so equal `cm` and epoch fix the member the segment starts on without comparing nullifiers.
 The anchor adjacency check (`unspent.anchor_prev == spendable.anchor`) welds the segment to the lineage's current position.
 
 A lineage resting on its epoch's final anchor is not a special position: the segment it lifts over begins with the crossing, so adjacency holds against the anchor it already sits on.
 
 That the anchor a crossing folds from really is its epoch's final anchor is not checked and cannot be, being a negative claim about what was published.
 An epoch link from a mid-epoch anchor lands off the published sequence, which no later link rejoins, so consensus anchor membership of the eventual spend rejects it.
-No coverage is skipped: the crossing leaves the epoch at its final anchor, and `nf_current`'s absence up to that anchor was proven by whatever placed the lineage there.
+No coverage is skipped: the crossing leaves the epoch at its final anchor, and the current epoch's nullifier was proven absent up to that anchor by whatever placed the lineage there.
 
 ### Spend binding
 
 Spending a note publishes two nullifiers, one for the current epoch and one for the next, both pinned to the note's genuine derivation.
-`SpendBind` consumes the `NoteSpendable` and a `NoteNullifiers` covering the current and next epochs, witnesses `nf_next`, and requires `range.cm == spendable.cm`.
-Dividing two adjacent factors out of the derivation's sequence confirms the pair. `nf_current`'s factor is native from left-header scalars, fixed before the challenge; the free `nf_next` is pinned by its scalar-binding point, absorbed into the challenge. Adjacency is the factor indices $e$ and $e+1$.
+`SpendBind` consumes the `NoteSpendable` and a `NoteNullifiers` covering the current and next epochs, witnesses `nf_current` and `nf_next`, and requires `range.cm == spendable.cm`.
+Dividing two adjacent factors out of the derivation's sequence confirms the pair. Both nullifiers are free and pinned by their scalar-binding points, absorbed into the challenge. Adjacency is the factor indices $e$ and $e+1$, with $e$ the lineage's epoch.
 Each published nullifier must be nonzero, or it would collide with the note's own `cm` in the tachygram scan.
 No note witness is needed here: the range and the lineage are already tied to the same note by their two `cm` fields, bound where the range was derived and at `SpendableInit` respectively.
 The output `SpendHeader` threads `cm`, the confirmed pair, and the anchor, and carries no curve points.
@@ -316,7 +315,7 @@ flowchart TB
   end
 
   subgraph spendable [spendable advance]
-    w_init[/anchor_prev, creation_set, creation_epoch, nf_current/]
+    w_init[/anchor_prev, creation_set, creation_epoch/]
     s_init[SpendableInit]
     unspent_in((ArbitraryUnspent))
     s_unspentbind[UnspentBind]
@@ -324,7 +323,7 @@ flowchart TB
   end
 
   subgraph spend_stamp [spend action]
-    w_bind[/nf_next/]
+    w_bind[/nf_current, nf_next/]
     s_bind[SpendBind]
   end
 
@@ -434,7 +433,7 @@ flowchart LR
 | NoteUnspent | (cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end), anchor_end) |
 | NoteMaster | (cm, mk) |
 | NoteNullifiers | (cm, epoch_start, nf_commit, epoch_end) |
-| NoteSpendable | (cm, (epoch_current, nf_current), anchor) |
+| NoteSpendable | (cm, epoch_current, anchor) |
 | OutputHeader | (cm, pad) |
 | SpendHeader | (cm, nf_current, nf_next, anchor) |
 | Stamp | (action_commit, stamp_tg_commit, anchor) |
@@ -464,9 +463,9 @@ flowchart LR
 | NoteSeed | — | — | note, pak | NoteMaster |
 | NullifierDerive | NoteMaster | — | epoch_start, seq | NoteNullifiers |
 | NullifierFuse | NoteNullifiers | NoteNullifiers | left_seq, merged_seq, right_seq | NoteNullifiers |
-| SpendableInit | NoteNullifiers | — | anchor_prev, creation_set, creation_epoch, nf_current, nf_seq, complement_seq | NoteSpendable |
+| SpendableInit | NoteNullifiers | — | anchor_prev, creation_set, creation_epoch | NoteSpendable |
 | SpendableLift | NoteSpendable | NoteUnspent | — | NoteSpendable |
-| SpendBind | NoteSpendable | NoteNullifiers | nf_seq, complement_seq, nf_next | SpendHeader |
+| SpendBind | NoteSpendable | NoteNullifiers | nf_seq, complement_seq, nf_current, nf_next | SpendHeader |
 | OutputBind | — | — | note | OutputHeader |
 | OutputStamp | OutputHeader | — | rcv, alpha, note, anchor, action_set, tachygram_set | Stamp |
 | SpendStamp | SpendHeader | — | note, rcv, alpha, pak, action_set, tachygram_set | Stamp |

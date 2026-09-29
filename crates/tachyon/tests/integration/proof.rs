@@ -27,8 +27,8 @@ use zcash_tachyon::{
 use crate::fixtures::{
     PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_plan, build_output_stamp,
     build_summary_pcd, build_unspent_pcd_between_anchors, build_unspent_pcd_between_blocks,
-    build_unspent_seed_pcd, cube_root_twin, indexed_factor, random_block, random_block_with,
-    shared_sk, spend_witness, unpinned_challenge,
+    build_unspent_seed_pcd, cube_root_twin, indexed_factor, pinned_point, random_block,
+    random_block_with, shared_sk, spend_witness, unpinned_challenge,
 };
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
@@ -170,7 +170,6 @@ fn spendable_init_rejects_tg_absent() {
                 Anchor::default(),
                 &[absent_tg],
                 EpochIndex::new(0),
-                &user.covering_window(&note, &nf_header),
             ),
             nf_header,
             Proof::trivial().carry::<()>(()),
@@ -660,8 +659,8 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
 
     assert_eq!(
         lifted.data().1,
-        (EpochIndex::new(1), user.nf_at(&note, EpochIndex::new(1))),
-        "lineage advanced to nf_1"
+        EpochIndex::new(1),
+        "lineage advanced to epoch 1"
     );
     assert_eq!(
         lifted.data().2,
@@ -722,8 +721,8 @@ fn unspent_lift_spans_partial_and_whole_epochs() {
     let lifted = user.lift(rng, spendable, unspent, &note);
     assert_eq!(
         lifted.data().1,
-        (EpochIndex::new(3), user.nf_at(&note, EpochIndex::new(3))),
-        "lineage advanced to nf_3 across partial first/last and whole interior epochs"
+        EpochIndex::new(3),
+        "lineage advanced to epoch 3 across partial first/last and whole interior epochs"
     );
     assert_eq!(
         lifted.data().2,
@@ -1265,10 +1264,10 @@ fn spendable_lift_advances_from_an_epoch_tip() {
         *at_boundary.data(),
         (
             note.commitment(),
-            (EpochIndex::new(1), user.nf_at(&note, EpochIndex::new(1))),
+            EpochIndex::new(1),
             epoch0_tip.next_epoch(EpochIndex::new(1)).unwrap()
         ),
-        "the crossing advances epoch, nullifier and anchor together"
+        "the crossing advances epoch and anchor together"
     );
 
     // The lineage now rests on epoch 1's entry anchor.
@@ -1280,10 +1279,7 @@ fn spendable_lift_advances_from_an_epoch_tip() {
     );
     let lifted = user.lift(rng, at_boundary, arbitrary, &note);
 
-    assert_eq!(
-        lifted.data().1,
-        (EpochIndex::new(1), user.nf_at(&note, EpochIndex::new(1)))
-    );
+    assert_eq!(lifted.data().1, EpochIndex::new(1));
     assert_eq!(lifted.data().2, pool.block(target_height).anchor());
 }
 
@@ -1359,10 +1355,7 @@ fn unspent_span_starting_on_a_boundary_anchor() {
     );
 
     let lifted = user.lift(rng, at_boundary, arbitrary, &note);
-    assert_eq!(
-        lifted.data().1,
-        (EpochIndex::new(2), user.nf_at(&note, EpochIndex::new(2)))
-    );
+    assert_eq!(lifted.data().1, EpochIndex::new(2));
     assert_eq!(lifted.data().2, pool.block(target_height).anchor());
 }
 
@@ -1422,10 +1415,7 @@ fn unspent_span_ending_on_a_boundary_anchor() {
     );
 
     let lifted = user.lift(rng, spendable, arbitrary, &note);
-    assert_eq!(
-        lifted.data().1,
-        (EpochIndex::new(1), user.nf_at(&note, EpochIndex::new(1)))
-    );
+    assert_eq!(lifted.data().1, EpochIndex::new(1));
     assert_eq!(lifted.data().2, pool.block(target_height).anchor());
 }
 
@@ -1480,10 +1470,7 @@ fn end_epoch_unspent_seed_crosses_a_stampless_epoch() {
     );
 
     let lifted = user.lift(rng, spendable, arbitrary, &note);
-    assert_eq!(
-        lifted.data().1,
-        (EpochIndex::new(2), user.nf_at(&note, EpochIndex::new(2)))
-    );
+    assert_eq!(lifted.data().1, EpochIndex::new(2));
     assert_eq!(lifted.data().2, pool.block(target_height).anchor());
 }
 
@@ -1584,14 +1571,11 @@ fn spend_bind_reads_the_last_pair_in_the_epoch_space() {
     let range = user.derivation_pcd(rng, note, epoch_start, EpochIndex::new(EPOCH_MAX));
     let window = user.covering_window(&note, &range);
 
-    let synthetic_spendable = (
-        note.commitment(),
-        (spend_epoch, user.nf_at(&note, spend_epoch)),
-        Anchor::from(Fp::ZERO),
-    );
-    let (nf_seq, complement_seq, nf_next) =
+    let synthetic_spendable = (note.commitment(), spend_epoch, Anchor::from(Fp::ZERO));
+    let (nf_seq, complement_seq, nf_current, nf_next) =
         witness::spend_bind((synthetic_spendable, *range.data()), &window);
 
+    assert_eq!(nf_current, user.nf_at(&note, spend_epoch));
     assert_eq!(
         nf_next,
         user.nf_at(&note, EpochIndex::new(EPOCH_MAX)),
@@ -2095,7 +2079,7 @@ fn spend_bind_rejects_forged_next() {
     let note = user.random_note(500);
 
     let (spendable, derived, _epoch) = spend_bind_parts(rng, &user, &note);
-    let (nf_seq, complement_seq, _nf_next) = witness::spend_bind(
+    let (nf_seq, complement_seq, nf_current, _nf_next) = witness::spend_bind(
         (*spendable.data(), *derived.data()),
         &user.covering_window(&note, &derived),
     );
@@ -2103,10 +2087,44 @@ fn spend_bind_rejects_forged_next() {
     expect_invalid(
         rng,
         spend::SpendBind,
-        (nf_seq, complement_seq, forged),
+        (nf_seq, complement_seq, nf_current, forged),
         spendable,
         derived,
         "SpendBind: nullifier pair does not match the derivation",
+    );
+}
+
+/// A forged current nullifier fails the divisibility read: the spendable
+/// carries no nullifier, so the read is what pins the pair's first half.
+#[test]
+fn spend_bind_rejects_a_forged_current() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+
+    let (spendable, derived, _epoch) = spend_bind_parts(rng, &user, &note);
+    let (nf_seq, complement_seq, _nf_current, nf_next) = witness::spend_bind(
+        (*spendable.data(), *derived.data()),
+        &user.covering_window(&note, &derived),
+    );
+    let forged = Nullifier::from(Fp::random(&mut *rng));
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spend::SpendBind,
+            (nf_seq, complement_seq, forged, nf_next),
+            spendable,
+            derived,
+        )
+        .err()
+        .unwrap();
+    let ragu_core::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "SpendBind: nullifier pair does not match the derivation"
     );
 }
 
@@ -2120,7 +2138,7 @@ fn spend_bind_rejects_a_twin_of_the_next_nullifier() {
     let note = user.random_note(500);
 
     let (spendable, derived, epoch) = spend_bind_parts(rng, &user, &note);
-    let (nf_seq, complement_seq, nf_next) = witness::spend_bind(
+    let (nf_seq, complement_seq, nf_current, nf_next) = witness::spend_bind(
         (*spendable.data(), *derived.data()),
         &user.covering_window(&note, &derived),
     );
@@ -2138,7 +2156,53 @@ fn spend_bind_rejects_a_twin_of_the_next_nullifier() {
         .fuse(
             rng,
             spend::SpendBind,
-            (nf_seq, complement_seq, Nullifier::from(twin)),
+            (nf_seq, complement_seq, nf_current, Nullifier::from(twin)),
+            spendable,
+            derived,
+        )
+        .err()
+        .unwrap();
+    let ragu_core::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "SpendBind: nullifier pair does not match the derivation"
+    );
+}
+
+/// A cube-root twin of the current nullifier shares its factor at the
+/// challenge that absorbs every other input, but the challenge absorbs
+/// `nf_current` too, so the twin fails the read and cannot be published.
+#[test]
+fn spend_bind_rejects_a_twin_of_the_current_nullifier() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+
+    let (spendable, derived, epoch) = spend_bind_parts(rng, &user, &note);
+    let (nf_seq, complement_seq, nf_current, nf_next) = witness::spend_bind(
+        (*spendable.data(), *derived.data()),
+        &user.covering_window(&note, &derived),
+    );
+    let z = unpinned_challenge(&[
+        nf_seq.commit().into(),
+        complement_seq.commit().into(),
+        pinned_point(nf_next.into()),
+    ]);
+    let twin = cube_root_twin(epoch, nf_current.into(), z);
+    assert_ne!(twin, Fp::from(nf_current));
+    assert_eq!(
+        indexed_factor(epoch, twin, z),
+        indexed_factor(epoch, nf_current.into(), z),
+        "the twin passes a read that does not absorb it"
+    );
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spend::SpendBind,
+            (nf_seq, complement_seq, Nullifier::from(twin), nf_next),
             spendable,
             derived,
         )
@@ -2171,6 +2235,7 @@ fn spend_bind_rejects_uncovering_range() {
     let witness = (
         NfSeqPoly::new(ahead, &window),
         NfSeqPoly::new(ahead, &[]),
+        user.nf_at(&note, epoch),
         user.nf_at(&note, epoch.next().unwrap()),
     );
     expect_invalid(
@@ -2293,74 +2358,6 @@ fn spend_stamp_rejects_a_foreign_action_set() {
     );
 }
 
-/// A forged present nullifier fails the divisibility read at
-/// `SpendableInit`.
-#[test]
-fn spendable_init_rejects_a_forged_nullifier() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let nf_header = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let dummy_tg = Tachygram::from(Fp::random(&mut *rng));
-    let (_, _, _, _, nf_seq, complement_seq) = witness::spendable_init(
-        (*nf_header.data(), ()),
-        Anchor::default(),
-        &[dummy_tg],
-        EpochIndex::new(0),
-        &user.covering_window(&note, &nf_header),
-    );
-    let forged = Nullifier::from(Fp::random(&mut *rng));
-    expect_invalid(
-        rng,
-        spendable::SpendableInit,
-        (
-            Anchor::default(),
-            TachygramSetPoly::from_iter([dummy_tg]),
-            EpochIndex::new(0),
-            forged,
-            nf_seq,
-            complement_seq,
-        ),
-        nf_header,
-        Proof::trivial().carry::<()>(()),
-        "SpendableInit: nullifier does not match the derivation",
-    );
-}
-
-/// A range that does not cover the creation epoch is rejected at
-/// `SpendableInit`.
-#[test]
-fn spendable_init_rejects_an_uncovering_range() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let nf_header = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
-    let past = EpochIndex::new(NF_DERIVATION_WIDTH as u32);
-    let dummy_tg = Tachygram::from(Fp::random(&mut *rng));
-    // The builder would segment out of range, so the witness is assembled
-    // by hand: the genuine covering sequence, the whole window as the
-    // complement.
-    let window = user.covering_window(&note, &nf_header);
-    let witness = (
-        Anchor::default(),
-        TachygramSetPoly::from_iter([dummy_tg]),
-        past,
-        user.nf_at(&note, past),
-        NfSeqPoly::new(EpochIndex::new(0), &window),
-        NfSeqPoly::new(EpochIndex::new(0), &window),
-    );
-    expect_invalid(
-        rng,
-        spendable::SpendableInit,
-        witness,
-        nf_header,
-        Proof::trivial().carry::<()>(()),
-        "SpendableInit: nullifier does not match the derivation",
-    );
-}
-
 /// A covering sequence built from a different note does not match the
 /// derivation header's commitment at `UnspentBind`.
 #[test]
@@ -2427,10 +2424,7 @@ fn multi_chunk_lift_uses_per_chunk_windows() {
     }
     let unspent_one = sync.build_next_unspent(rng, 0, &pool, target_one);
     let lifted_one = user.lift(rng, spendable, unspent_one, &note);
-    assert_eq!(
-        lifted_one.data().1,
-        (EpochIndex::new(1), user.nf_at(&note, EpochIndex::new(1)))
-    );
+    assert_eq!(lifted_one.data().1, EpochIndex::new(1));
 
     // Second chunk: epochs 1 to 2, bound against a fresh window based at
     // epoch 1 (the chunk boundary needs no alignment between windows).
@@ -2443,7 +2437,7 @@ fn multi_chunk_lift_uses_per_chunk_windows() {
 
     assert_eq!(
         lifted_two.data().1,
-        (EpochIndex::new(2), user.nf_at(&note, EpochIndex::new(2))),
+        EpochIndex::new(2),
         "lineage advanced across two chunks"
     );
     assert_eq!(
@@ -2684,7 +2678,7 @@ fn spend_bind_rejects_a_forged_next_over_a_garbage_complement() {
         EpochIndex::new(u32::from(epoch) + 1),
     );
 
-    let (nf_seq, _complement_seq, _nf_next) = witness::spend_bind(
+    let (nf_seq, _complement_seq, nf_current, _nf_next) = witness::spend_bind(
         (*spendable.data(), *derived.data()),
         &user.covering_window(&note, &derived),
     );
@@ -2707,15 +2701,15 @@ fn spend_bind_rejects_a_forged_next_over_a_garbage_complement() {
     expect_invalid(
         rng,
         spend::SpendBind,
-        (nf_seq, complement_seq, forged),
+        (nf_seq, complement_seq, nf_current, forged),
         spendable,
         derived,
         "SpendBind: nullifier pair does not match the derivation",
     );
 }
 
-/// A segment beginning past the spendable's position does not lift it: its
-/// first member is not the lineage nullifier.
+/// A segment beginning past the spendable's position does not lift it: it
+/// starts in a later epoch than the lineage's.
 #[test]
 fn spendable_lift_rejects_a_wrong_start() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2744,7 +2738,7 @@ fn spendable_lift_rejects_a_wrong_start() {
         (),
         spendable,
         unspent,
-        "SpendableLift: segment does not start at the lineage nullifier",
+        "SpendableLift: segment does not start at the lineage epoch",
     );
 }
 
@@ -2850,7 +2844,7 @@ fn crossing_seed_carries_a_final_anchor_to_a_spend() {
         *lifted.data(),
         (
             note.commitment(),
-            (EpochIndex::new(1), user.nf_at(&note, EpochIndex::new(1))),
+            EpochIndex::new(1),
             epoch0_tip.next_epoch(EpochIndex::new(1)).unwrap(),
         ),
         "the lift crosses to the entry anchor"

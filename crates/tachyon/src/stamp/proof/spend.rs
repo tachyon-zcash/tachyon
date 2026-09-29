@@ -61,20 +61,18 @@ impl Header for SpendHeader {
 /// (both are the note commitment, bound where the range was derived and at
 /// [`SpendableInit`](super::spendable::SpendableInit) respectively), so no
 /// note witness is needed here. Any range covering the lineage's epoch and
-/// the next serves: the divisibility
-/// of `nf_seq` by the product of the `nf_current` factor at $e$, the
-/// `nf_next` factor at $e+1$, and the complement confirms the pair
-/// at adjacent epochs, with `nf_current` pinned against the spendable. Both
-/// nullifiers are emitted on the [`SpendHeader`] for the action-producing
-/// step to publish.
+/// the next serves: the divisibility of `nf_seq` by the product of the
+/// `nf_current` factor at $e$, the `nf_next` factor at $e+1$, and the
+/// complement confirms the pair at adjacent epochs. Both nullifiers are
+/// emitted on the [`SpendHeader`] for the action-producing step to publish.
 ///
 /// # Soundness
 ///
-/// Neither epoch index is free. The current member's scalars are left-header
-/// fields, fixed by the recursive verification of the spendable PCD, and
-/// adjacency is the pair's own epochs `e` and `e + 1`. `nf_next` is free and
-/// absorbed into the challenge, so the divisibility forces it to the range's
-/// member at `e + 1`.
+/// Neither epoch index is free. `epoch_current` is a left-header field, fixed
+/// by the recursive verification of the spendable PCD, and adjacency is the
+/// pair's own epochs `e` and `e + 1`. `nf_current` and `nf_next` are free and
+/// absorbed into the challenge, so the divisibility forces them to the range's
+/// members at `e` and `e + 1`.
 ///
 /// The step compares no bounds against the derivation's range, the
 /// divisibility concluding coverage.
@@ -86,16 +84,16 @@ impl Step for SpendBind {
     type Left = NoteSpendable;
     type Output = SpendHeader;
     type Right = NoteNullifiers;
-    /// `(nf_seq, complement_seq, nf_next)`
-    type Witness<'source> = (NfSeqPoly, NfSeqPoly, Nullifier);
+    /// `(nf_seq, complement_seq, nf_current, nf_next)`
+    type Witness<'source> = (NfSeqPoly, NfSeqPoly, Nullifier, Nullifier);
 
     const INDEX: Index = Index::new(12);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (nf_seq, complement_seq, nf_next): Self::Witness<'source>,
-        (spendable_cm, (spendable_epoch_current, nf_current), anchor): <Self::Left as Header>::Data,
+        (nf_seq, complement_seq, nf_current, nf_next): Self::Witness<'source>,
+        (spendable_cm, spendable_epoch_current, anchor): <Self::Left as Header>::Data,
         (nullifiers_cm, _, nf_commit, _): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
@@ -110,11 +108,20 @@ impl Step for SpendBind {
 
         // The 2-wide read at the lineage's epoch: the divisibility
         // `nf_seq = current · next · complement` at a challenge absorbing the
-        // witnessed commitments and `nf_next`; the current member is native from the
-        // spendable header, pinned by the recursive verification of the left
-        // PCD.
-        let z =
-            ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into(), {
+        // witnessed commitments and both free nullifiers.
+        let z = ctx.derive_challenge(&[
+            nf_seq.commit().into(),
+            complement_seq.commit().into(),
+            {
+                // The mock absorbs only points, so absorb `[nf_current]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(Pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * Fp::from(nf_current)
+            },
+            {
                 // The mock absorbs only points, so absorb `[nf_next]·G_0`.
                 #[expect(clippy::expect_used, reason = "constant size")]
                 let &g0 = Pasta::host_generators(Pasta::baked())
@@ -122,7 +129,8 @@ impl Step for SpendBind {
                     .first()
                     .expect("at least one generator");
                 g0 * Fp::from(nf_next)
-            }])?;
+            },
+        ])?;
         let nf_seq_at_z = nf_seq.eval(z);
         ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
 

@@ -456,11 +456,7 @@ fn summary_spendable_init_starts_a_spendable_from_a_summary() {
 
     assert_eq!(
         *spendable.data(),
-        (
-            note.commitment(),
-            (epoch, user.nf_at(&note, epoch)),
-            anchor_end
-        ),
+        (note.commitment(), epoch, anchor_end),
         "the spendable rests at the summary's final anchor"
     );
     assert_ne!(

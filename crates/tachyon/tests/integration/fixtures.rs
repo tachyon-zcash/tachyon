@@ -1232,13 +1232,7 @@ impl WalletSim {
             .fuse(
                 rng,
                 spendable::SpendableInit,
-                witness::spendable_init(
-                    (*deriv.data(), ()),
-                    anchor_prev,
-                    &creation_tgs,
-                    epoch,
-                    &self.covering_window(note, &deriv),
-                ),
+                witness::spendable_init((*deriv.data(), ()), anchor_prev, &creation_tgs, epoch),
                 deriv,
                 Proof::trivial().carry::<()>(()),
             )
@@ -1312,7 +1306,7 @@ impl WalletSim {
         spendable: Pcd<spendable::NoteSpendable>,
         target: EpochIndex,
     ) -> Pcd<spendable::NoteSpendable> {
-        let (_, (epoch, _), start_anchor) = *spendable.data();
+        let (_, epoch, start_anchor) = *spendable.data();
         let elapsed: Vec<Nullifier> = (u32::from(epoch)..=u32::from(target))
             .map(|index| self.nf_at(note, EpochIndex::new(index)))
             .collect();

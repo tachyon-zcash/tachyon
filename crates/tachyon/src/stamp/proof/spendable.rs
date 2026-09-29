@@ -1,13 +1,12 @@
 //! Spendable bootstrap and lift.
 //!
-//! The spendable carries `(cm, (epoch_current, nf_current), anchor)`: the
-//! note's current epoch and its nullifier `F_mk(epoch_current)` there, its
-//! pool position, and the minted-note commitment binding the lineage (and its
-//! value) across lifts. [`SpendableInit`] bootstraps it from a minted note,
-//! [`SummarySpendableInit`] from a [`Summary`] covering the creation, and
-//! [`QrSpendableInit`] from a [`QrBucket`] holding the creation over the
-//! note's own [`NoteUnspent`] for that epoch; [`SpendableLift`] advances it
-//! over [`NoteUnspent`] segments.
+//! The spendable carries `(cm, epoch_current, anchor)`: the note's current
+//! epoch, its pool position, and the minted-note commitment binding the
+//! lineage (and its value) across lifts. [`SpendableInit`] bootstraps it from a
+//! minted note, [`SummarySpendableInit`] from a [`Summary`] covering the
+//! creation, and [`QrSpendableInit`] from a [`QrBucket`] holding the creation
+//! over the note's own [`NoteUnspent`] for that epoch; [`SpendableLift`]
+//! advances it over [`NoteUnspent`] segments.
 
 extern crate alloc;
 
@@ -35,22 +34,17 @@ use crate::{
 pub struct NoteSpendable;
 
 impl Header for NoteSpendable {
-    /// `(cm, (epoch_current, nf_current), anchor)`. `cm` threads unchanged;
-    /// the rest advances per lift. A lift checks continuity by meeting this
-    /// point with a [`NoteUnspent`] segment's near end.
-    type Data = (note::Commitment, (EpochIndex, Nullifier), Anchor);
+    /// `(cm, epoch_current, anchor)`. `cm` threads unchanged; the rest
+    /// advances per lift. A lift checks continuity by meeting this point with
+    /// a [`NoteUnspent`] segment's near end.
+    type Data = (note::Commitment, EpochIndex, Anchor);
 
     const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, (epoch_current, nf_current), anchor) = *data;
+        let (cm, epoch_current, anchor) = *data;
         (
-            vec![
-                Fp::from(cm),
-                Fp::from(epoch_current),
-                Fp::from(nf_current),
-                Fp::from(anchor),
-            ],
+            vec![Fp::from(cm), Fp::from(epoch_current), Fp::from(anchor)],
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -60,33 +54,23 @@ impl Header for NoteSpendable {
 
 /// Bootstrap a spendable from a minted note, pinned to the creation epoch.
 ///
-/// Wallet-only, one-child over any [`NoteNullifiers`] covering the
-/// creation epoch, so one derived window feeds init, bind, and spend alike.
-/// The divisibility of `nf_seq` by the `nf_current` factor at
-/// `creation_epoch` times the complement forces `nf_current` to the window's
-/// genuine member there, the complement absorbing the remaining span.
+/// Wallet-only, one-child over any [`NoteNullifiers`], which supplies `cm`.
 /// `cm` is proven among the creation stamp's tachygrams, and the post-cm
 /// anchor folds from a free-witnessed predecessor.
 ///
 /// # Soundness
 ///
-/// Every free witness closes through consensus or the read. `anchor_prev`,
-/// `creation_epoch` and the creation set close through consensus anchor
-/// membership: the fold absorbs the epoch and the set commit, a genuine
-/// chain node is `H(prev || epoch || commit)` under the stamp domain, and
-/// preimage resistance forces all three once the eventual spend's anchor is
-/// consensus-checked, a wrong epoch landing off the published sequence.
+/// `anchor_prev`, `creation_epoch` and the creation set close through
+/// consensus anchor membership: the fold absorbs the epoch and the set commit,
+/// a genuine chain node is `H(prev || epoch || commit)` under the stamp
+/// domain, and preimage resistance forces all three once the eventual spend's
+/// anchor is consensus-checked, a wrong epoch landing off the published
+/// sequence.
 ///
-/// `nf_current` closes through the read, the identity forcing it to the
-/// emitted pair.
-///
-/// `creation_epoch` needs no bound check against the derivation's range. The
-/// divisibility forces the `nf_current` factor to
-/// be one of the derivation's own members, so the epoch is one the derivation
-/// holds a member for.
-///
-/// Nothing ties this window to the one the spend later reads; `cm` equality
-/// binds every window of the same note.
+/// The step tests no exclusion. The spendable sits immediately after the
+/// creation stamp, so the only stamp it covers is the one creating the note,
+/// and a spend inside that stamp would need an anchor folding in the stamp's
+/// own tachygrams.
 #[derive(Debug)]
 pub struct SpendableInit;
 
@@ -95,51 +79,18 @@ impl Step for SpendableInit {
     type Left = NoteNullifiers;
     type Output = NoteSpendable;
     type Right = ();
-    /// `(anchor_prev, creation_set, creation_epoch, nf_current, nf_seq,
-    /// complement_seq)`.
-    type Witness<'source> = (
-        Anchor,
-        TachygramSetPoly,
-        EpochIndex,
-        Nullifier,
-        NfSeqPoly,
-        NfSeqPoly,
-    );
+    /// `(anchor_prev, creation_set, creation_epoch)`
+    type Witness<'source> = (Anchor, TachygramSetPoly, EpochIndex);
 
     const INDEX: Index = Index::new(8);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (anchor_prev, creation_set, creation_epoch, nf_current, nf_seq, complement_seq): Self::Witness<
-            'source,
-        >,
-        (cm, _, nf_commit, _): <Self::Left as Header>::Data,
+        (anchor_prev, creation_set, creation_epoch): Self::Witness<'source>,
+        (cm, ..): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
-            Eq::from(nf_seq.commit()),
-            Eq::from(nf_commit),
-            "SpendableInit: covering sequence does not match header",
-        )?;
-
-        // The 1-wide read at the creation epoch: the divisibility
-        // `nf_seq = read · complement` at a challenge absorbing the witnessed
-        // commitments.
-        let z = ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into()])?;
-        let nf_seq_at_z = nf_seq.eval(z);
-        ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
-
-        let complement_at_z = complement_seq.eval(z);
-        ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
-
-        let read_at_z =
-            indexed_multiset::direct_eval([(creation_epoch.into(), nf_current.into())], z);
-        enforce_zero(
-            nf_seq_at_z - read_at_z * complement_at_z,
-            "SpendableInit: nullifier does not match the derivation",
-        )?;
-
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_in_set = creation_set.eval(cm.into());
         ctx.enforce_poly_query(creation_set.commit().into(), cm.into(), cm_in_set)?;
@@ -154,17 +105,18 @@ impl Step for SpendableInit {
             .next_stamp(creation_epoch, &creation_commit)
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
-        Ok(((cm, (creation_epoch, nf_current), anchor), ()))
+        Ok(((cm, creation_epoch, anchor), ()))
     }
 }
 
 /// Bootstrap a spendable from a [`Summary`] covering the note's creation.
 ///
-/// [`SpendableInit`] with the summary in place of the creating stamp: `cm` is
-/// proven among the summarized tachygrams, `nf_current` absent from them, and
-/// the spendable emits at `anchor_end`. The same divisibility read, at a
-/// challenge absorbing `nf_current`, forces it to the window's member at the
-/// creation epoch.
+/// `cm` is proven among the summarized tachygrams, `nf_current` absent from
+/// them, and the spendable emits at `anchor_end`. The summary spans stamps
+/// after the creation, so unlike [`SpendableInit`] the step tests exclusion.
+/// The divisibility of `nf_seq` by the `nf_current` factor at `creation_epoch`
+/// times the complement, at a challenge absorbing `nf_current`, forces it to
+/// the window's member there.
 ///
 /// # Soundness
 ///
@@ -214,7 +166,9 @@ impl Step for SummarySpendableInit {
             "SummarySpendableInit: summary epoch must match the creation epoch",
         )?;
 
-        // The 1-wide read at the creation epoch, as at `SpendableInit`.
+        // The 1-wide read at the creation epoch: the divisibility
+        // `nf_seq = read · complement` at a challenge absorbing the witnessed
+        // commitments and `nf_current`.
         let z =
             ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into(), {
                 // The mock absorbs only points, so absorb `[nf_current]·G_0`.
@@ -255,7 +209,7 @@ impl Step for SummarySpendableInit {
             "SummarySpendableInit: found nullifier in summary",
         )?;
 
-        Ok(((cm, (creation_epoch, nf_current), summary_anchor_end), ()))
+        Ok(((cm, creation_epoch, summary_anchor_end), ()))
     }
 }
 
@@ -301,7 +255,7 @@ impl Step for QrSpendableInit {
             cm,
             unspent_anchor_prev,
             (unspent_epoch_start, _),
-            (unspent_epoch_end, unspent_nf_end),
+            (unspent_epoch_end, _),
             unspent_anchor_end,
         ): <Self::Left as Header>::Data,
         (bucket_epoch, bucket_anchor_prev, bucket_anchor_end, _, _, bucket_commit): <Self::Right as Header>::Data,
@@ -337,25 +291,27 @@ impl Step for QrSpendableInit {
         ctx.enforce_poly_query(bucket_commit.into(), cm.into(), cm_in_bucket)?;
         enforce_zero(cm_in_bucket, "QrSpendableInit: commitment not in bucket")?;
 
-        Ok((
-            (cm, (unspent_epoch_end, unspent_nf_end), unspent_anchor_end),
-            (),
-        ))
+        Ok(((cm, unspent_epoch_end, unspent_anchor_end), ()))
     }
 }
 
 /// Advance the spendable over one [`NoteUnspent`] segment.
 ///
 /// Wallet-only, witness-free. The segment's near end must share the
-/// lineage's member in epoch space (`unspent.{epoch,nf}_start ==
-/// spendable.{epoch,nf}_current`) and hand off in anchor space
-/// (`unspent.anchor_prev == spendable.anchor`). `cm` threads through, and the
-/// lineage moves to the segment's far end at
-/// `(epoch_end, nf_end, anchor_end)`.
+/// lineage's epoch (`unspent.epoch_start == spendable.epoch_current`) and hand
+/// off in anchor space (`unspent.anchor_prev == spendable.anchor`). `cm`
+/// threads through, and the lineage moves to the segment's far end at
+/// `(epoch_end, anchor_end)`.
 ///
 /// The segment may span any number of epochs. A lineage resting on its epoch's
 /// final anchor advances the same way, over a segment whose first fold is
 /// the crossing ([`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed)).
+///
+/// # Soundness
+///
+/// [`UnspentBind`](super::pool::UnspentBind) makes every member of the segment
+/// the genuine nullifier of `cm` at its epoch, so equal `cm` and `epoch_start`
+/// fix the member the segment starts on. No nullifier needs comparing.
 #[derive(Debug)]
 pub struct SpendableLift;
 
@@ -372,22 +328,18 @@ impl Step for SpendableLift {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         _witness: Self::Witness<'source>,
-        (spendable_cm, (spendable_epoch_current, nf_current), spendable_anchor): <Self::Left as Header>::Data,
+        (spendable_cm, spendable_epoch_current, spendable_anchor): <Self::Left as Header>::Data,
         (
             unspent_cm,
             unspent_anchor_prev,
-            (unspent_epoch_start, unspent_nf_start),
-            (unspent_epoch_end, unspent_nf_end),
+            (unspent_epoch_start, _),
+            (unspent_epoch_end, _),
             unspent_anchor_end,
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(unspent_cm) - Fp::from(spendable_cm),
             "SpendableLift: unspent cm does not match spendable",
-        )?;
-        enforce_zero(
-            Fp::from(unspent_nf_start) - Fp::from(nf_current),
-            "SpendableLift: segment does not start at the lineage nullifier",
         )?;
         enforce_zero(
             Fp::from(unspent_epoch_start) - Fp::from(spendable_epoch_current),
@@ -397,13 +349,6 @@ impl Step for SpendableLift {
             Fp::from(unspent_anchor_prev) - Fp::from(spendable_anchor),
             "SpendableLift: unspent not adjacent to spendable",
         )?;
-        Ok((
-            (
-                spendable_cm,
-                (unspent_epoch_end, unspent_nf_end),
-                unspent_anchor_end,
-            ),
-            (),
-        ))
+        Ok(((spendable_cm, unspent_epoch_end, unspent_anchor_end), ()))
     }
 }

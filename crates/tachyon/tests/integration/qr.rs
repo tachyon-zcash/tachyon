@@ -1783,12 +1783,8 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         .expect("QrSpendableInit");
     assert_eq!(
         *spendable.data(),
-        (
-            note.commitment(),
-            (epoch1, user.nf_at(&note, epoch1)),
-            anchor_end
-        ),
-        "the spendable rests on epoch one's entry anchor with that epoch's nullifier"
+        (note.commitment(), epoch1, anchor_end),
+        "the spendable rests on epoch one's entry anchor"
     );
 
     let lifted = user.lift_to_epoch(rng, &pool, &note, spendable, epoch2);
@@ -1866,11 +1862,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
         .expect("QrSpendableInit over the short extent");
     assert_eq!(
         *spendable.data(),
-        (
-            note.commitment(),
-            (epoch_next, user.nf_at(&note, epoch_next)),
-            unpublished
-        ),
+        (note.commitment(), epoch_next, unpublished),
         "the spendable rests on an epoch link the pool never published"
     );
     assert!(
@@ -1895,7 +1887,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
         .unwrap();
     assert_eq!(
         invalid_witness(err),
-        "SpendableLift: segment does not start at the lineage nullifier",
+        "SpendableLift: segment does not start at the lineage epoch",
         "the lift rejects it; a same-epoch suffix cannot reopen the crossed epoch"
     );
 }

@@ -106,11 +106,10 @@ impl Header for AnchorChain {
 /// to the count as to the span.
 ///
 /// `nf_start` and `nf_end` are scalar caches of the sequence's boundary
-/// members, consumed by [`UnspentFuse`]'s junction check and
-/// [`super::spendable::SpendableLift`]'s seam. Every seed absorbs the scalars
-/// it emits into the challenge that pins its sequence, so each cache is the
-/// member the sequence holds. [`UnspentBind`] binds every member, boundaries
-/// included, to the note's genuine derivation nullifiers.
+/// members, consumed by [`UnspentFuse`]'s junction check. Every seed absorbs
+/// the scalars it emits into the challenge that pins its sequence, so each
+/// cache is the member the sequence holds. [`UnspentBind`] binds every member,
+/// boundaries included, to the note's genuine derivation nullifiers.
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
@@ -584,8 +583,7 @@ impl Step for UnspentFuse {
 /// The boundary scalars need no check here. Every seed pins its boundary
 /// members into `elapsed` at a challenge absorbing them, [`UnspentFuse`]
 /// inherits boundaries whose members survive into `combined = left · right /
-/// F_junction`, and this identity makes them genuine, which
-/// [`super::spendable::SpendableLift`] relies on.
+/// F_junction`, and this identity makes them genuine.
 ///
 /// The lineage is note-blind, so the bind stamps the derivation's `cm` onto
 /// the validated [`NoteUnspent`].
