@@ -14,7 +14,8 @@ use crate::collections::qr;
 /// Prover-chosen and sampled privately, so a network can be routed while its
 /// epoch is still in flight. It is threaded unchanged from the root intake and
 /// required equal across `QrIntakeMerge`, so one network classifies at one
-/// progression throughout. No step checks it. It moves how members distribute
+/// progression throughout. No step checks it, and every descent absorbs it
+/// into its challenge. It moves how members distribute
 /// across buckets, never which bucket holds a given value under it, so a
 /// biased or prematurely revealed choice affects only that builder's buckets,
 /// and a wallet can use any valid network.

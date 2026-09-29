@@ -15,6 +15,8 @@ use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
+use ragu_pasta::Pasta;
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket, summary::Summary};
 use crate::{
@@ -160,8 +162,9 @@ impl Step for SpendableInit {
 ///
 /// [`SpendableInit`] with the summary in place of the creating stamp: `cm` is
 /// proven among the summarized tachygrams, `nf_current` absent from them, and
-/// the spendable emits at `anchor_end`. The same divisibility read forces
-/// `nf_current` to the window's member at the creation epoch.
+/// the spendable emits at `anchor_end`. The same divisibility read, at a
+/// challenge absorbing `nf_current`, forces it to the window's member at the
+/// creation epoch.
 ///
 /// # Soundness
 ///
@@ -212,7 +215,16 @@ impl Step for SummarySpendableInit {
         )?;
 
         // The 1-wide read at the creation epoch, as at `SpendableInit`.
-        let z = ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into()])?;
+        let z =
+            ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into(), {
+                // The mock absorbs only points, so absorb `[nf_current]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(Pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * Fp::from(nf_current)
+            }])?;
         let nf_seq_at_z = nf_seq.eval(z);
         ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
 

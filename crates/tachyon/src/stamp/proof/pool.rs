@@ -25,6 +25,8 @@ use alloc::{vec, vec::Vec};
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
+use ragu_pasta::Pasta;
 
 use super::{delegation::NoteNullifiers, summary::Summary};
 use crate::{
@@ -105,8 +107,10 @@ impl Header for AnchorChain {
 ///
 /// `nf_start` and `nf_end` are scalar caches of the sequence's boundary
 /// members, consumed by [`UnspentFuse`]'s junction check and
-/// [`super::spendable::SpendableLift`]'s seam. [`UnspentBind`] binds every
-/// member, boundaries included, to the note's genuine derivation nullifiers.
+/// [`super::spendable::SpendableLift`]'s seam. Every seed absorbs the scalars
+/// it emits into the challenge that pins its sequence, so each cache is the
+/// member the sequence holds. [`UnspentBind`] binds every member, boundaries
+/// included, to the note's genuine derivation nullifiers.
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
 
@@ -255,8 +259,8 @@ impl Step for AnchorFuse {
 ///
 /// # Soundness
 ///
-/// `nf` is free, and the identity forces the witnessed one-member `elapsed`
-/// to the emitted pair.
+/// `nf` is free and absorbed into the challenge, so the identity forces the
+/// witnessed one-member `elapsed` to the emitted pair.
 ///
 /// `epoch` needs no pin of its own, being one variable entering the member
 /// encoding, the emitted header and the anchor fold alike. A solved value
@@ -295,9 +299,17 @@ impl Step for UnspentSeed {
         enforce_nonzero(Fp::from(nf), "UnspentSeed: tested nullifier is zero")?;
 
         // One-member elapsed: bind the witnessed sequence to the emitted
-        // pair's encoding at a challenge absorbing the commitment.
+        // pair's encoding at a challenge absorbing the commitment and `nf`.
         let elapsed_commit = elapsed_seq.commit();
-        let z = ctx.derive_challenge(&[elapsed_commit.into()])?;
+        let z = ctx.derive_challenge(&[elapsed_commit.into(), {
+            // The mock absorbs only points, so absorb `[nf]·G_0`.
+            #[expect(clippy::expect_used, reason = "constant size")]
+            let &g0 = Pasta::host_generators(Pasta::baked())
+                .g()
+                .first()
+                .expect("at least one generator");
+            g0 * Fp::from(nf)
+        }])?;
         let elapsed_at_z = elapsed_seq.eval(z);
         ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
 
@@ -335,9 +347,11 @@ impl Step for UnspentSeed {
 ///
 /// # Soundness
 ///
-/// `nf` and `nf_next` are unconstrained here, as at every seed;
+/// `nf` and `nf_next` are free witnesses, as at every seed. The challenge
+/// absorbs both, so the identity forces the sequence to the two crossing
+/// members and the emitted boundary pairs are its own;
 /// [`UnspentBind`] forces every `elapsed` member against the note's genuine
-/// derivation. The identity forces the sequence to the two crossing members.
+/// derivation.
 ///
 /// `anchor_prev` is likewise unconstrained, and nothing here requires it to be
 /// its epoch's final anchor. A crossing folded from a short anchor is
@@ -383,9 +397,30 @@ impl Step for EndEpochUnspentSeed {
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
         // Two-member elapsed: bind the witnessed sequence to the two
-        // crossing members at a challenge absorbing the commitment.
+        // crossing members at a challenge absorbing the commitment and both
+        // members.
         let elapsed_commit = elapsed_seq.commit();
-        let z = ctx.derive_challenge(&[elapsed_commit.into()])?;
+        let z = ctx.derive_challenge(&[
+            elapsed_commit.into(),
+            {
+                // The mock absorbs only points, so absorb `[nf]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(Pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * Fp::from(nf)
+            },
+            {
+                // The mock absorbs only points, so absorb `[nf_next]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(Pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * Fp::from(nf_next)
+            },
+        ])?;
         let elapsed_at_z = elapsed_seq.eval(z);
         ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
 
@@ -546,10 +581,11 @@ impl Step for UnspentFuse {
 /// the span was tested with its own genuine nullifier, and [`UnspentFuse`]'s
 /// junction check is well-formedness only.
 ///
-/// The boundary scalars need no check here. Both seeds pin their boundary
-/// members into `elapsed`, [`UnspentFuse`] inherits boundaries whose members
-/// survive into `combined = left · right / F_junction`, and this identity
-/// makes them genuine, which [`super::spendable::SpendableLift`] relies on.
+/// The boundary scalars need no check here. Every seed pins its boundary
+/// members into `elapsed` at a challenge absorbing them, [`UnspentFuse`]
+/// inherits boundaries whose members survive into `combined = left · right /
+/// F_junction`, and this identity makes them genuine, which
+/// [`super::spendable::SpendableLift`] relies on.
 ///
 /// The lineage is note-blind, so the bind stamps the derivation's `cm` onto
 /// the validated [`NoteUnspent`].
@@ -628,8 +664,8 @@ impl Step for UnspentBind {
 /// # Soundness
 ///
 /// `summary_set` is pinned to the header by commit-equality; epoch and anchors
-/// are threaded. `nf` is free, and the identity forces the one-member
-/// `elapsed` to the emitted pair.
+/// are threaded. `nf` is free and absorbed into the challenge, so the identity
+/// forces the one-member `elapsed` to the emitted pair.
 #[derive(Debug)]
 pub struct SummaryUnspentInit;
 
@@ -662,7 +698,15 @@ impl Step for SummaryUnspentInit {
         enforce_nonzero(Fp::from(nf), "SummaryUnspentInit: tested nullifier is zero")?;
 
         let elapsed_commit = elapsed_seq.commit();
-        let z = ctx.derive_challenge(&[elapsed_commit.into()])?;
+        let z = ctx.derive_challenge(&[elapsed_commit.into(), {
+            // The mock absorbs only points, so absorb `[nf]·G_0`.
+            #[expect(clippy::expect_used, reason = "constant size")]
+            let &g0 = Pasta::host_generators(Pasta::baked())
+                .g()
+                .first()
+                .expect("at least one generator");
+            g0 * Fp::from(nf)
+        }])?;
         let elapsed_at_z = elapsed_seq.eval(z);
         ctx.enforce_poly_query(elapsed_commit.into(), z, elapsed_at_z)?;
 

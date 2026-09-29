@@ -26,8 +26,9 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_qr_branch, build_qr_partition,
-    build_summary_pcd, build_unspent_pcd_between_anchors, qr_profile_of, random_block,
-    seal_qr_intake, seed_qr_stamp_intake, shared_sk, split_qr_intake,
+    build_summary_pcd, build_unspent_pcd_between_anchors, cube_root_twin, indexed_factor,
+    pinned_point, qr_profile_of, random_block, seal_qr_intake, seed_qr_stamp_intake, shared_sk,
+    split_qr_intake, unpinned_challenge,
 };
 
 /// The witness of [`qr::QrUnspentInit`].
@@ -863,6 +864,110 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             .collect::<TachygramSetPoly>()
             .commit(),
         "the impure child carries the stray member"
+    );
+}
+
+/// A discriminant solved after the challenge. The prover files members on the
+/// residue side arbitrarily, takes any interpolant and quotient, and solves
+/// $u(z)^2 - s(z) \cdot h(z) = z + R$ for $R$ at the challenge the three
+/// commitments alone would give. Only the challenge absorbing $R$ rejects it.
+#[test]
+fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch = EpochIndex::new(3);
+    let start = Anchor::from(Fp::random(&mut *rng));
+    let members: [Tachygram; 12] = array::from_fn(|_| Tachygram::from(Fp::random(&mut *rng)));
+    let (misfiled, non_residue) = members.split_at(6);
+
+    let (honest_summary, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            summary::SummarySeed,
+            witness::summary_seed(((), ()), start, epoch, &members),
+        )
+        .expect("SummarySeed");
+    let honest_discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let (honest_root, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*honest_summary.data(), ()), honest_discriminant),
+            honest_summary,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("QrSummaryIntake");
+    let (honest_split, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrIntakeSplit,
+            witness::qr_intake_split((*honest_root.data(), ()), &members),
+            honest_root,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("QrIntakeSplit");
+    let (_, _, interpolant, quotient) =
+        witness::qr_side_descend((*honest_split.data(), ()), &members, false);
+
+    let sibling = misfiled.iter().copied().collect::<TachygramSetPoly>();
+    let z = unpinned_challenge(&[
+        sibling.commit().into(),
+        interpolant.commit().into(),
+        quotient.commit().into(),
+    ]);
+    let solved = QrDiscriminant::from(
+        interpolant.eval(z).square() - (sibling.eval(z) * quotient.eval(z)) - z,
+    );
+    assert!(
+        misfiled
+            .iter()
+            .any(|&member| !qr::classify(Fp::from(member), solved.at(0)).0),
+        "a non-residue member is filed on the residue side"
+    );
+
+    let (summary, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            summary::SummarySeed,
+            witness::summary_seed(((), ()), start, epoch, &members),
+        )
+        .expect("SummarySeed");
+    let (root, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrSummaryIntake,
+            witness::qr_summary_intake((*summary.data(), ()), solved),
+            summary,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("QrSummaryIntake");
+    let (contents, ..) = witness::qr_intake_split((*root.data(), ()), &members);
+    let (sides, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrIntakeSplit,
+            (
+                contents,
+                non_residue.iter().copied().collect(),
+                sibling.clone(),
+            ),
+            root,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("the split's product does not read the discriminant");
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrSideDescend,
+            (false, sibling, interpolant, quotient),
+            sides,
+            Proof::trivial().carry::<()>(()),
+        )
+        .err()
+        .unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrSideDescend: the sibling fails its class decomposition"
     );
 }
 
@@ -2449,6 +2554,36 @@ fn qr_unspent_init_rejects_a_zero_next_nullifier() {
     );
 }
 
+/// A cube-root twin of the next nullifier shares its factor at the challenge
+/// that absorbs only the sequence and `value`, while the sequence still commits
+/// the genuine member. The twin would reach the header as `nf_end`, where
+/// `UnspentFuse`'s junction reads it; the challenge absorbing `nf_next` rejects
+/// it.
+#[test]
+fn qr_unspent_init_rejects_a_twin_next_nullifier() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (nf, bucket, mut witness) = honest_unspent_init(rng);
+    let (epoch, ..) = *bucket.pcd.data();
+    let epoch_next = epoch.next().unwrap();
+    let nf_next = Fp::from(witness.1);
+
+    let z = unpinned_challenge(&[witness.4.commit().into(), pinned_point(Fp::from(nf))]);
+    let twin = cube_root_twin(epoch_next, nf_next, z);
+    assert_ne!(twin, nf_next);
+    assert_eq!(
+        indexed_factor(epoch_next, twin, z),
+        indexed_factor(epoch_next, nf_next, z),
+        "the twin passes an identity that does not absorb it"
+    );
+    witness.1 = Nullifier::from(twin);
+
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrUnspentInit: sequence does not match the crossing pairs"
+    );
+}
+
 #[test]
 fn qr_unspent_init_rejects_a_sequence_naming_another_value() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2460,6 +2595,49 @@ fn qr_unspent_init_rejects_a_sequence_naming_another_value() {
     let nf_next = witness.1;
     let (_, _, _, _, ref mut sequence, _) = witness;
     *sequence = NfSeqPoly::new(epoch, &[other, nf_next]);
+
+    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    assert_eq!(
+        invalid_witness(err),
+        "QrUnspentInit: sequence does not match the crossing pairs"
+    );
+}
+
+/// A cube-root twin of the tested value shares its factor at the challenge the
+/// sequence alone would give. At the root profile the twin passes every
+/// routing check, so only the challenge absorbing `value` rejects it.
+#[test]
+fn qr_unspent_init_rejects_a_twin_value() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, final_anchor) = small_epoch(rng);
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let bucket = qr_bucket_for(
+        rng,
+        &pool,
+        (Anchor::default(), final_anchor),
+        24,
+        0,
+        Fp::from(nf),
+        Anchor::from(Fp::ZERO),
+    );
+    let (epoch, _, _, discriminant, ..) = *bucket.pcd.data();
+    let mut witness = witness::qr_unspent_init(
+        (*bucket.pcd.data(), ()),
+        nf.into(),
+        Nullifier::from(Fp::random(&mut *rng)),
+        &bucket.members,
+    );
+
+    let z = unpinned_challenge(&[witness.4.commit().into()]);
+    let twin = cube_root_twin(epoch, nf.into(), z);
+    assert_ne!(twin, Fp::from(nf));
+    assert_eq!(
+        indexed_factor(epoch, twin, z),
+        indexed_factor(epoch, nf.into(), z),
+        "the twin passes an unpinned identity"
+    );
+    witness.0 = Tachygram::from(twin);
+    witness.2 = QrClassRoot::along(twin, discriminant);
 
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
     assert_eq!(

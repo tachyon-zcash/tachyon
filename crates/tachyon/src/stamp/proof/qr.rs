@@ -25,6 +25,8 @@ use alloc::{vec, vec::Vec};
 use ff::Field as _;
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
+use ragu_pasta::Pasta;
 
 use super::{pool::ArbitraryUnspent, summary::Summary};
 pub use crate::collections::qr::classify;
@@ -381,13 +383,14 @@ impl Step for QrIntakeSplit {
 /// # Soundness
 ///
 /// The sibling is pinned to its header commitment; the challenge absorbs the
-/// sibling, interpolant and quotient commitments. Every root of the sibling
-/// then satisfies $u(x)^2 = c \cdot (x + R)$ at the sibling's class $c$, and
-/// the split's product places every member of the other class in the child. The
-/// child may hold a stray member of the sibling's class; consumers open it
-/// nonzero, so a stray member cannot pass a value that is present. $R$ is read
-/// off the header, so a descent classifies at the same $R_0$ as every other
-/// step of the network. The parent's depth is
+/// sibling, interpolant and quotient commitments and $R$. $R$ is prover-chosen,
+/// so without it a prover could solve the identity for $R$ after $z$. Every
+/// root of the sibling then satisfies $u(x)^2 = c \cdot (x + R)$ at the
+/// sibling's class $c$, and the split's product places every member of the
+/// other class in the child. The child may hold a stray member of the
+/// sibling's class; consumers open it nonzero, so a stray member cannot pass a
+/// value that is present. $R$ is read off the header, so a descent classifies
+/// at the same $R_0$ as every other step of the network. The parent's depth is
 /// checked below [`QrProfile::MAX_DEPTH`], so `bits` stays below $2^{32}$ and
 /// one depth's paths have distinct profiles.
 #[derive(Debug)]
@@ -440,6 +443,15 @@ impl Step for QrSideDescend {
             sibling_commit.into(),
             interpolant_commit.into(),
             quotient_commit.into(),
+            {
+                // The mock absorbs only points, so absorb `[R]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(Pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * discriminant.at(profile.depth)
+            },
         ])?;
         let sibling_at_z = sibling_contents.eval(z);
         let interpolant_at_z = interpolant.eval(z);
@@ -628,9 +640,9 @@ impl Step for QrBucketSeal {
 /// then equals `bits` iff the bucket's sides are the value's first `depth`
 /// sides. Positions past `depth` are tested but compared to nothing. $R_0$ is
 /// the bucket's own `discriminant`, so the exclusion holds for the network
-/// the bucket belongs to. `value` and
-/// `nf_next` are free witnesses. The profile fold fixes `value`, and the
-/// sequence identity fixes both;
+/// the bucket belongs to. `value` and `nf_next` are free witnesses. The
+/// challenge absorbs both, so the sequence identity fixes both, and the
+/// emitted boundary pairs are the sequence's own members;
 /// [`UnspentBind`](super::pool::UnspentBind) forces each against the note's
 /// genuine derivation.
 ///
@@ -725,7 +737,27 @@ impl Step for QrUnspentInit {
         })?;
 
         let sequence_commit = sequence.commit();
-        let z = ctx.derive_challenge(&[sequence_commit.into()])?;
+        let z = ctx.derive_challenge(&[
+            sequence_commit.into(),
+            {
+                // The mock absorbs only points, so absorb `[value]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(Pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * Fp::from(value)
+            },
+            {
+                // The mock absorbs only points, so absorb `[nf_next]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(Pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * Fp::from(nf_next)
+            },
+        ])?;
         let sequence_at_z = sequence.eval(z);
         ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
 

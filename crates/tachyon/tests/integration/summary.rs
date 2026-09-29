@@ -18,7 +18,8 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, build_summary_pcd, build_unspent_seed_pcd, random_block, shared_sk,
+    PoolSim, WalletSim, build_summary_pcd, build_unspent_seed_pcd, cube_root_twin, indexed_factor,
+    random_block, shared_sk, unpinned_challenge,
 };
 
 #[test]
@@ -304,6 +305,49 @@ fn summary_unspent_init_rejects_a_published_nullifier() {
     );
 }
 
+/// A summarized nullifier cannot be excluded under a cube-root twin sharing
+/// its factor at the challenge the sequence alone would give, because the
+/// challenge absorbs the tested nullifier.
+#[test]
+fn summary_unspent_init_rejects_a_twin_of_a_published_nullifier() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis_with(random_block(rng, 2, 2));
+    pool.mine(random_block(rng, 2, 2));
+    pool.mine(random_block(rng, 2, 2));
+    let (pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
+    let (epoch, ..) = *pcd.data();
+    let nf = Nullifier::from(Fp::from(members[7]));
+    let (_, summary_set, elapsed_seq) =
+        witness::summary_unspent_init((*pcd.data(), ()), &members, nf);
+
+    let z = unpinned_challenge(&[elapsed_seq.commit().into()]);
+    let twin = cube_root_twin(epoch, nf.into(), z);
+    assert_ne!(twin, Fp::from(nf));
+    assert_eq!(
+        indexed_factor(epoch, twin, z),
+        indexed_factor(epoch, nf.into(), z),
+        "the twin passes an unpinned identity"
+    );
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::SummaryUnspentInit,
+            (Nullifier::from(twin), summary_set, elapsed_seq),
+            pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .err()
+        .unwrap();
+    let ragu_core::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "SummaryUnspentInit: elapsed does not match the tested pair"
+    );
+}
+
 #[test]
 fn summary_unspent_init_rejects_a_foreign_accumulator() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -560,6 +604,61 @@ fn summary_spendable_init_rejects_a_forged_nullifier() {
             rng,
             spendable::SummarySpendableInit,
             (creation_epoch, forged, nf_seq, complement_seq, summary_set),
+            deriv,
+            summary_pcd,
+        )
+        .err()
+        .unwrap();
+    let ragu_core::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "SummarySpendableInit: nullifier does not match the derivation"
+    );
+}
+
+/// A cube-root twin of the creation nullifier shares its factor at the
+/// challenge the commitments alone would give, but the challenge absorbs
+/// `nf_current`, so the twin fails the read.
+#[test]
+fn summary_spendable_init_rejects_a_twin_nullifier() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(300);
+    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
+    pool.mine(random_block(rng, 2, 2));
+    let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
+    let (epoch, ..) = *summary_pcd.data();
+    let deriv = user.derivation_pcd(rng, note, epoch, epoch);
+    let (creation_epoch, nf_current, nf_seq, complement_seq, summary_set) =
+        witness::summary_spendable_init(
+            (*deriv.data(), *summary_pcd.data()),
+            &members,
+            epoch,
+            &user.covering_window(&note, &deriv),
+        );
+
+    let z = unpinned_challenge(&[nf_seq.commit().into(), complement_seq.commit().into()]);
+    let twin = cube_root_twin(creation_epoch, nf_current.into(), z);
+    assert_ne!(twin, Fp::from(nf_current));
+    assert_eq!(
+        indexed_factor(creation_epoch, twin, z),
+        indexed_factor(creation_epoch, nf_current.into(), z),
+        "the twin passes an unpinned read"
+    );
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spendable::SummarySpendableInit,
+            (
+                creation_epoch,
+                Nullifier::from(twin),
+                nf_seq,
+                complement_seq,
+                summary_set,
+            ),
             deriv,
             summary_pcd,
         )

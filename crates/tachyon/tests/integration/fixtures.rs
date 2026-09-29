@@ -3,12 +3,13 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
 
-use ff::{Field as _, PrimeField as _};
-use pasta_curves::Fp;
+use ff::{Field as _, FromUniformBytes as _, PrimeField as _, WithSmallOrderMulGroup as _};
+use group::GroupEncoding as _;
+use pasta_curves::{Eq, Fp};
 use ragu::{Pcd, Proof};
-use ragu_arithmetic::PoseidonPermutation as _;
+use ragu_arithmetic::{Cycle as _, FixedGenerators as _, PoseidonPermutation as _};
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use ragu_pasta::PoseidonFp;
+use ragu_pasta::{Pasta, PoseidonFp};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
@@ -1468,4 +1469,41 @@ impl Default for SyncSim {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The mock's Fiat-Shamir challenge over `commitments` alone: the `z` a
+/// prover knows before choosing a free scalar the challenge does not absorb.
+pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
+    let mut state = blake2b_simd::Params::new()
+        .hash_length(64)
+        .personal(b"MkRagu_Challng_\0")
+        .to_state();
+    for com in commitments {
+        state.update(com.to_bytes().as_ref());
+    }
+    let mut wide = [0u8; 64];
+    wide.copy_from_slice(state.finalize().as_bytes());
+    Fp::from_uniform_bytes(&wide)
+}
+
+/// The point $[x] \cdot G_0$ a step absorbs for a pinned scalar.
+pub fn pinned_point(x: Fp) -> Eq {
+    let &g0 = Pasta::host_generators(Pasta::baked())
+        .g()
+        .first()
+        .expect("at least one generator");
+    g0 * x
+}
+
+/// Another member at `epoch` whose indexed factor
+/// $(m + (i+1)X)^3 - 2$ agrees with `member`'s at `z`.
+pub fn cube_root_twin(epoch: EpochIndex, member: Fp, z: Fp) -> Fp {
+    let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
+    (Fp::ZETA * (member + shift)) - shift
+}
+
+/// The indexed factor of `member` at `epoch`, evaluated at `z`.
+pub fn indexed_factor(epoch: EpochIndex, member: Fp, z: Fp) -> Fp {
+    let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
+    (member + shift).pow([3]) - Fp::from(2)
 }

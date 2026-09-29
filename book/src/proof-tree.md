@@ -141,13 +141,13 @@ An `ArbitraryUnspent` is a coverage extent `(anchor_prev, anchor_end]`, with bou
 Each factor carries its own epoch, so the product is a multiset of `(epoch, nullifier)` pairs and needs no degree pin. Every producer holds three properties that `UnspentBind` relies on: each factor's epoch lies inside the span, each epoch has exactly one factor, and the boundary caches name factors the product holds.
 `UnspentSeed` produces a within-epoch `ArbitraryUnspent` for one stamp's worth of anchor advance: `epoch_start == epoch_end`, and the nullifier it just non-membership-checked is the single factor, hence both `nf_start` and `nf_end`.
 `EndEpochUnspentSeed` produces the other base case, the epoch boundary itself. It folds a witnessed final anchor through the cross-epoch domain and emits the crossing's output as `anchor_end`, with `epoch_end == epoch_start + 1` and two factors, the epoch being left and the epoch entered. There is no exclusion to prove; that the witnessed predecessor really is its epoch's final anchor rests on consensus anchor membership of the eventual spend, since the epoch link of a short anchor is not a value consensus recomputes.
-Each seed pins its own product against the pair it emits. The challenge absorbs the sequence commitment and a scalar-binding point of the free nullifiers, so a witnessed sequence cannot disagree with the header scalars.
+Each seed pins its own product against the pairs it emits. The challenge absorbs the sequence commitment and a scalar-binding point of every nullifier the seed emits, so each boundary cache and each tested nullifier is the member the sequence holds.
 `UnspentFuse` composes two contiguous ranges sharing a junction epoch (`right.epoch_start == left.epoch_end`) at adjacent anchors (`left.anchor_end == right.anchor_prev`), confirming
 
 $$C(X) \cdot F_{\text{junction}}(X) = L(X) \cdot R(X)$$
 
 for the witnessed `combined` $C$, left $L$, and right $R$. Both halves hold the junction epoch's factor, and dividing it out leaves each epoch represented once. The recursive verification of the two input PCDs binds $L$ and $R$ before the challenge.
-The junction agreement (`left.nf_end == right.nf_start`) is well-formedness only, since a consistent pair of lies yields a wrong `elapsed` that `UnspentBind` rejects.
+The junction agreement (`left.nf_end == right.nf_start`) is well-formedness only. The junction factor is built from the header cache, and every producer pins its caches to its own sequence, so a lie in the caches yields a wrong `elapsed` that `UnspentBind` rejects.
 
 ### Summaries
 
@@ -183,7 +183,7 @@ $$u(X)^2 - c\,(X + R) = s(X)\, h(X)$$
 holds only when every root of the sibling $s$ takes its side at $R$, since each root leaves $u(x)^2 = c\,(x + R)$; with the split's product, every member of the extracted class is then in the child.
 A child may carry a stray member of the other class, which only tightens the openings its consumers make, but it cannot lack a member of its own.
 The exceptional value $-R$ has root $0$ under either class, so the split also opens the non-residue side nonzero at $-R$.
-The descent's challenge absorbs the three commitments; $R_0$ is read off the header, so every step of one network classifies at the same progression.
+The descent's challenge absorbs the three commitments and a scalar-binding point of $R$. $R_0$ is prover-chosen, so without it a prover could solve the identity for $R$ after $z$. $R_0$ is read off the header, so every step of one network classifies at the same progression.
 Each descend requires the parent's depth below 32, so $\mathsf{bits} < 2^{32} < p$ and two paths never share a profile.
 A layer splits every intake over capacity, then merges same-profile neighbours while the product fits one polynomial; sibling buckets need not stop at the same depth.
 
@@ -208,8 +208,8 @@ $$\sum_j m_j = d, \qquad 2 \sum_j j\, m_j = d\,(d - 1), \qquad a_{j+1} = a_j + m
 
 since among boolean vectors of weight $d$ only the leading positions attain the minimum index sum; positions past $d$ are tested but compared to nothing.
 A bucket matching $x$'s profile contains every occurrence of $x$ in its span, so opening its contents nonzero at $x$ proves absence over that span.
-The sequence's single member $(\mathsf{epoch}, x)$ is checked at a challenge absorbing $G_0 \cdot x$; the sequence and the contents are the step's two oracles.
-The emitted segment takes the bucket's extent, which ends on the boundary into $\mathsf{epoch} + 1$. Stepping onto that boundary enters a new epoch, so the step also witnesses that epoch's nullifier, and the segment covers `[epoch, epoch + 1]` in epoch space. Consecutive epochs' segments therefore abut at the entry anchor and `UnspentFuse` composes them directly.
+The emitted segment takes the bucket's extent, which ends on the boundary into $\mathsf{epoch} + 1$. Stepping onto that boundary enters a new epoch, so the step also witnesses that epoch's nullifier $y$, and the segment covers `[epoch, epoch + 1]` in epoch space. Consecutive epochs' segments therefore abut at the entry anchor and `UnspentFuse` composes them directly.
+The sequence's two members $(\mathsf{epoch}, x)$ and $(\mathsf{epoch} + 1, y)$ are checked at a challenge absorbing $G_0 \cdot x$ and $G_0 \cdot y$; the sequence and the contents are the step's two oracles.
 
 `QrSpendableInit` bootstraps a spendable from the bucket holding the note's creation.
 Its left input is the note's `NoteUnspent` over that epoch, the QR segment bound by `UnspentBind`, so `cm` and the whole-epoch absence of the nullifier arrive on the header; the step opens the bucket at $\mathsf{cm}$ for zero, requires the segment's extent to equal the bucket's, and emits the spendable at the segment's `anchor_end`. That anchor is the next epoch's entry anchor.
@@ -242,7 +242,7 @@ The derivation's `cm` is stamped onto the `NoteUnspent`.
 It witnesses the creation stamp's tachygrams, the anchor running into the creation stamp, the creation epoch, and the starting-epoch nullifier `nf_current`.
 It takes `cm` from the range header and binds the note to the pool (`cm` in `creation_set`), which pins the whole note to the real minted note.
 It emits `NoteSpendable(cm, (creation_epoch, nf_current), anchor)`, where `anchor` folds the creation epoch onto the free-witnessed `anchor_prev`; a wrong epoch or predecessor lands the anchor off the published sequence, so consensus anchor membership of the eventual spend forces both.
-`nf_current` is forced to the range's member at the creation epoch by dividing its factor out of the derivation's sequence, the challenge absorbing a scalar-binding point of the free nullifier; each lift then requires a `NoteUnspent`'s `nf_start` to equal it, keeping the lineage on the note's derived nullifiers.
+`nf_current` is forced to the range's member at the creation epoch by dividing its factor out of the derivation's sequence; each lift then requires a `NoteUnspent`'s `nf_start` to equal it, keeping the lineage on the note's derived nullifiers.
 `creation_epoch` needs no bound check, since divisibility forces its factor to be one the derivation actually holds.
 
 `SpendableLift` advances the lineage over a `NoteUnspent`.

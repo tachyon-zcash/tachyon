@@ -6,6 +6,8 @@ use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
+use ragu_pasta::Pasta;
 
 use super::{delegation::NoteNullifiers, spendable::NoteSpendable};
 use crate::{
@@ -70,8 +72,9 @@ impl Header for SpendHeader {
 ///
 /// Neither epoch index is free. The current member's scalars are left-header
 /// fields, fixed by the recursive verification of the spendable PCD, and
-/// adjacency is the pair's own epochs `e` and `e + 1`. `nf_next` is free, the
-/// divisibility forcing it to the range's member at `e + 1`.
+/// adjacency is the pair's own epochs `e` and `e + 1`. `nf_next` is free and
+/// absorbed into the challenge, so the divisibility forces it to the range's
+/// member at `e + 1`.
 ///
 /// The step compares no bounds against the derivation's range, the
 /// divisibility concluding coverage.
@@ -107,10 +110,19 @@ impl Step for SpendBind {
 
         // The 2-wide read at the lineage's epoch: the divisibility
         // `nf_seq = current · next · complement` at a challenge absorbing the
-        // witnessed commitments; the current member is native from the
+        // witnessed commitments and `nf_next`; the current member is native from the
         // spendable header, pinned by the recursive verification of the left
         // PCD.
-        let z = ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into()])?;
+        let z =
+            ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into(), {
+                // The mock absorbs only points, so absorb `[nf_next]·G_0`.
+                #[expect(clippy::expect_used, reason = "constant size")]
+                let &g0 = Pasta::host_generators(Pasta::baked())
+                    .g()
+                    .first()
+                    .expect("at least one generator");
+                g0 * Fp::from(nf_next)
+            }])?;
         let nf_seq_at_z = nf_seq.eval(z);
         ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
 

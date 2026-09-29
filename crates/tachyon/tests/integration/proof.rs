@@ -27,7 +27,8 @@ use zcash_tachyon::{
 use crate::fixtures::{
     PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_plan, build_output_stamp,
     build_summary_pcd, build_unspent_pcd_between_anchors, build_unspent_pcd_between_blocks,
-    build_unspent_seed_pcd, random_block, random_block_with, shared_sk, spend_witness,
+    build_unspent_seed_pcd, cube_root_twin, indexed_factor, random_block, random_block_with,
+    shared_sk, spend_witness, unpinned_challenge,
 };
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
@@ -204,6 +205,48 @@ fn unspent_seed_rejects_tg_present() {
         panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(inner.to_string(), "UnspentSeed: found nullifier in set");
+}
+
+/// A stamp publishing the nullifier cannot be excluded under a cube-root twin
+/// that shares the genuine member's factor at the challenge the sequence alone
+/// would give, because the challenge absorbs the tested nullifier.
+#[test]
+fn unspent_seed_rejects_a_twin_of_a_published_nullifier() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch = EpochIndex::new(0);
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let (anchor_prev, _, stamp_tg_set, elapsed_seq) =
+        witness::unspent_seed(((), ()), Anchor::default(), epoch, &[nf.into()], nf);
+
+    let z = unpinned_challenge(&[elapsed_seq.commit().into()]);
+    let twin = cube_root_twin(epoch, nf.into(), z);
+    assert_ne!(twin, Fp::from(nf));
+    assert_eq!(
+        indexed_factor(epoch, twin, z),
+        indexed_factor(epoch, nf.into(), z),
+        "the twin passes an unpinned identity"
+    );
+
+    let err = PROOF_SYSTEM
+        .seed(
+            rng,
+            pool::UnspentSeed,
+            (
+                anchor_prev,
+                (epoch, Nullifier::from(twin)),
+                stamp_tg_set,
+                elapsed_seq,
+            ),
+        )
+        .err()
+        .unwrap();
+    let ragu_core::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "UnspentSeed: elapsed does not match the tested pair"
+    );
 }
 
 #[test]
@@ -1087,6 +1130,55 @@ fn end_epoch_unspent_seed_rejects_a_zero_member() {
             panic!("expected InvalidWitness for {expected}, got {err:?}");
         };
         assert_eq!(inner.to_string(), expected);
+    }
+}
+
+/// A cube-root twin of either member shares its factor at the challenge the
+/// sequence alone would give, while `elapsed` still commits the genuine
+/// member. The twin would reach the header, where `UnspentFuse`'s junction
+/// reads it; the challenge absorbing both members rejects it.
+#[test]
+fn end_epoch_unspent_seed_rejects_a_twin_member() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let anchor = Anchor::from(Fp::random(&mut *rng));
+    let epoch = EpochIndex::new(4);
+    let epoch_next = epoch.next().unwrap();
+    let nf = Nullifier::from(Fp::random(&mut *rng));
+    let nf_next = Nullifier::from(Fp::random(&mut *rng));
+    let honest = witness::end_epoch_unspent_seed(((), ()), anchor, epoch, nf, nf_next);
+    let z = unpinned_challenge(&[honest.3.commit().into()]);
+
+    for twin_next in [false, true] {
+        let mut forged = honest.clone();
+        let (twin_epoch, member) = if twin_next {
+            (epoch_next, Fp::from(nf_next))
+        } else {
+            (epoch, Fp::from(nf))
+        };
+        let twin = cube_root_twin(twin_epoch, member, z);
+        assert_ne!(twin, member);
+        assert_eq!(
+            indexed_factor(twin_epoch, twin, z),
+            indexed_factor(twin_epoch, member, z),
+            "the twin passes an unpinned identity"
+        );
+        if twin_next {
+            forged.2 = Nullifier::from(twin);
+        } else {
+            forged.1.1 = Nullifier::from(twin);
+        }
+
+        let err = PROOF_SYSTEM
+            .seed(rng, pool::EndEpochUnspentSeed, forged)
+            .err()
+            .unwrap_or_else(|| panic!("EndEpochUnspentSeed accepted a twin (next: {twin_next})"));
+        let ragu_core::Error::InvalidWitness(inner) = err else {
+            panic!("expected InvalidWitness, got {err:?}");
+        };
+        assert_eq!(
+            inner.to_string(),
+            "EndEpochUnspentSeed: elapsed does not match the crossing pairs"
+        );
     }
 }
 
@@ -2015,6 +2107,49 @@ fn spend_bind_rejects_forged_next() {
         spendable,
         derived,
         "SpendBind: nullifier pair does not match the derivation",
+    );
+}
+
+/// A cube-root twin of the genuine next nullifier shares its factor at the
+/// challenge the commitments alone would give, but the challenge absorbs
+/// `nf_next`, so the twin fails the read and cannot be published.
+#[test]
+fn spend_bind_rejects_a_twin_of_the_next_nullifier() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+
+    let (spendable, derived, epoch) = spend_bind_parts(rng, &user, &note);
+    let (nf_seq, complement_seq, nf_next) = witness::spend_bind(
+        (*spendable.data(), *derived.data()),
+        &user.covering_window(&note, &derived),
+    );
+    let epoch_next = epoch.next().unwrap();
+    let z = unpinned_challenge(&[nf_seq.commit().into(), complement_seq.commit().into()]);
+    let twin = cube_root_twin(epoch_next, nf_next.into(), z);
+    assert_ne!(twin, Fp::from(nf_next));
+    assert_eq!(
+        indexed_factor(epoch_next, twin, z),
+        indexed_factor(epoch_next, nf_next.into(), z),
+        "the twin passes an unpinned read"
+    );
+
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            spend::SpendBind,
+            (nf_seq, complement_seq, Nullifier::from(twin)),
+            spendable,
+            derived,
+        )
+        .err()
+        .unwrap();
+    let ragu_core::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "SpendBind: nullifier pair does not match the derivation"
     );
 }
 
