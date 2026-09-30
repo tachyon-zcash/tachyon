@@ -434,13 +434,12 @@ fn payment_bundle_verifies() {
     let mut pool = PoolSim::genesis(rng);
     pool.mine(random_block_with(rng, &[vec![input_note.commitment()]], 50));
     let height = pool.height();
-    let spend_epoch = height.epoch();
     let spendable_pcd = sender.fresh_spend(rng, &pool, height, &input_note);
     let anchor = spendable_pcd.data().2;
     let stamped = sender.autonome(
         rng,
         anchor,
-        alloc::vec![(input_note, spendable_pcd, spend_epoch)],
+        alloc::vec![(input_note, spendable_pcd)],
         alloc::vec![output_note, change_note],
     );
     let sighash = mock_sighash(stamped.commitment());
@@ -598,16 +597,9 @@ fn duplicated_spend_cannot_inflate() {
     }
     let spendable = wallet.spendable_at(rng, &pool, &note, cm_height.epoch().next().unwrap());
     let anchor = spendable.data().2;
-    let spend_epoch = cm_height.epoch().next().unwrap();
 
     // Build one honest spend with a trapdoor and randomizer we control, so the
     // duplicated bundle's binding and action signatures can be reproduced.
-    let range = wallet.derivation_pcd(
-        rng,
-        note,
-        spend_epoch,
-        EpochIndex::new(u32::from(spend_epoch) + 1),
-    );
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
     let plan = action::Plan::spend(note, theta, rcv, |alpha| {
@@ -617,7 +609,7 @@ fn duplicated_spend_cannot_inflate() {
     let master = wallet.master_pcd(rng, note);
     let honest_stamp = Plan::new(alloc::vec![plan], alloc::vec![])
         .stamp_plan(anchor)
-        .prove(rng, &wallet.pak, alloc::vec![(master, range, spendable)])
+        .prove(rng, &wallet.pak, alloc::vec![(master, spendable)])
         .expect("prove the honest single spend");
 
     // Assemble the duplicated-spend bundle by hand: two identical spend actions,
@@ -849,17 +841,16 @@ fn innocent_aggregate_from_two_autonomes() {
     let anchor_b = sp_b.data().2;
     assert_eq!(anchor_a, anchor_b, "lifts land on a common anchor");
 
-    let spend_epoch = cm_height.epoch().next().unwrap();
     let autonome_a = wallet.autonome(
         rng,
         anchor_a,
-        alloc::vec![(spend_a, sp_a, spend_epoch)],
+        alloc::vec![(spend_a, sp_a)],
         alloc::vec![output_a],
     );
     let autonome_b = wallet.autonome(
         rng,
         anchor_b,
-        alloc::vec![(spend_b, sp_b, spend_epoch)],
+        alloc::vec![(spend_b, sp_b)],
         alloc::vec![output_b],
     );
 
@@ -951,19 +942,19 @@ fn based_aggregate_with_two_adjuncts() {
     let mut becomes_based = wallet.autonome(
         rng,
         anchor,
-        alloc::vec![(based_spend, based_sp, spend_epoch)],
+        alloc::vec![(based_spend, based_sp)],
         alloc::vec![based_output],
     );
     let autonome_a = wallet.autonome(
         rng,
         anchor,
-        alloc::vec![(a_spend, a_sp, spend_epoch)],
+        alloc::vec![(a_spend, a_sp)],
         alloc::vec![a_output],
     );
     let autonome_b = wallet.autonome(
         rng,
         anchor,
-        alloc::vec![(b_spend, b_sp, spend_epoch)],
+        alloc::vec![(b_spend, b_sp)],
         alloc::vec![b_output],
     );
 
@@ -1577,19 +1568,19 @@ fn coverage_check_matches_stamp_actions() {
     let mut becomes_based = wallet.autonome(
         rng,
         anchor,
-        alloc::vec![(based_spend, based_sp, spend_epoch)],
+        alloc::vec![(based_spend, based_sp)],
         alloc::vec![based_output],
     );
     let autonome_a = wallet.autonome(
         rng,
         anchor,
-        alloc::vec![(a_spend, a_sp, spend_epoch)],
+        alloc::vec![(a_spend, a_sp)],
         alloc::vec![a_output],
     );
     let autonome_b = wallet.autonome(
         rng,
         anchor,
-        alloc::vec![(b_spend, b_sp, spend_epoch)],
+        alloc::vec![(b_spend, b_sp)],
         alloc::vec![b_output],
     );
 
@@ -2076,7 +2067,7 @@ fn bundle_lift_preserves_coverage() {
     let bundle = wallet.autonome(
         rng,
         spendable_pcd.data().2,
-        vec![(spend_note, spendable_pcd, cm_height.epoch())],
+        vec![(spend_note, spendable_pcd)],
         vec![output_note],
     );
 
@@ -2116,7 +2107,7 @@ fn bundle_lift_rejects_invalid_anchor_inputs() {
     let bundle = wallet.autonome(
         rng,
         spendable_pcd.data().2,
-        vec![(spend_note, spendable_pcd, cm_height.epoch())],
+        vec![(spend_note, spendable_pcd)],
         vec![output_note],
     );
 
@@ -2194,19 +2185,8 @@ fn bundle_lift_over_an_aggregate() {
     let sp_b = wallet.spendable_at(rng, &pool, &spend_b, cm_height.epoch().next().unwrap());
     let anchor = sp_a.data().2;
 
-    let spend_epoch = cm_height.epoch().next().unwrap();
-    let autonome_a = wallet.autonome(
-        rng,
-        anchor,
-        vec![(spend_a, sp_a, spend_epoch)],
-        vec![output_a],
-    );
-    let autonome_b = wallet.autonome(
-        rng,
-        anchor,
-        vec![(spend_b, sp_b, spend_epoch)],
-        vec![output_b],
-    );
+    let autonome_a = wallet.autonome(rng, anchor, vec![(spend_a, sp_a)], vec![output_a]);
+    let autonome_b = wallet.autonome(rng, anchor, vec![(spend_b, sp_b)], vec![output_b]);
 
     let descriptors_a: BTreeSet<action::Descriptor> =
         autonome_a.actions.iter().map(Action::descriptor).collect();

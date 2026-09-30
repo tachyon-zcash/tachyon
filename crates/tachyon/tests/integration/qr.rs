@@ -1886,18 +1886,9 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     );
 
     let lifted = user.lift_to_epoch(rng, &pool, &note, spendable, epoch2);
-    let derived = user.derivation_pcd(rng, note, epoch2, EpochIndex::new(u32::from(epoch2) + 1));
+    let master = user.master_pcd(rng, note);
     let (bind, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spend::SpendBind,
-            witness::spend_bind(
-                (*lifted.data(), *derived.data()),
-                &user.covering_window(&note, &derived),
-            ),
-            lifted,
-            derived,
-        )
+        .fuse(rng, spend::SpendBind, (), lifted, master)
         .expect("SpendBind");
     let (bind_cm, nf_current, nf_next, _) = *bind.data();
     assert_eq!(bind_cm, note.commitment());

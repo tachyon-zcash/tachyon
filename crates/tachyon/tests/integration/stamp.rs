@@ -7,8 +7,8 @@ use pasta_curves::Fp;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, Anchor, BlockHeight, CompactSize, EpochIndex, ProofStamp, Tachygram,
-    TachygramSetCommit, TachygramSetPoly, action,
+    ActionDigest, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetCommit,
+    TachygramSetPoly, action,
     constants::EPOCH_SIZE,
     digest::blake2b,
     stamp::{Plan, ProveError},
@@ -74,13 +74,9 @@ fn plan_prove_rejects_invalid_inputs() {
     ));
     let height = pool.height();
     let anchor = pool.block(height).anchor();
-    let spend_epoch = height.epoch();
 
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
-    let spend_end = EpochIndex::new(u32::from(spend_epoch) + 1);
-    let range_a = user.derivation_pcd(rng, note_a, spend_epoch, spend_end);
-    let range_b = user.derivation_pcd(rng, note_b, spend_epoch, spend_end);
 
     let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
@@ -112,8 +108,8 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let master_a = user.master_pcd(rng, note_a);
     let master_b = user.master_pcd(rng, note_b);
-    let bundle_a = || (master_a.clone(), range_a.clone(), sp_a.clone());
-    let bundle_b = || (master_b.clone(), range_b.clone(), sp_b.clone());
+    let bundle_a = || (master_a.clone(), sp_a.clone());
+    let bundle_b = || (master_b.clone(), sp_b.clone());
 
     // Too few PCDs: 2 spends, 1 PCD.
     {
@@ -145,19 +141,18 @@ fn plan_prove_rejects_invalid_inputs() {
         );
     }
 
-    // Correspondence swap: lengths match, pairing is wrong. The spend's note
-    // key rebuilds a covering sequence that cannot match the mispaired
-    // derivation's commitment, so SpendBind rejects.
+    // Correspondence swap: lengths match, pairing is wrong. Each spend's master
+    // carries another planned note.
     {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
-        let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(reason)) = err else {
-            panic!("expected ProofFailed(InvalidWitness), got {err:?}");
+        let ProveError::MissingPcd(reason) = err else {
+            panic!("expected MissingPcd, got {err:?}");
         };
         assert_eq!(
             reason.to_string(),
-            "SpendBind: covering sequence does not match header"
+            "spend pcds do not match the planned note"
         );
     }
 }
@@ -310,19 +305,8 @@ fn double_spend_cannot_aggregate() {
     let anchor = sp_a.data().2;
     assert_eq!(anchor, sp_b.data().2, "same-note lifts share an anchor");
 
-    let spend_epoch = cm_height.epoch().next().unwrap();
-    let autonome_a = wallet.autonome(
-        rng,
-        anchor,
-        vec![(spend, sp_a, spend_epoch)],
-        vec![output_a],
-    );
-    let autonome_b = wallet.autonome(
-        rng,
-        anchor,
-        vec![(spend, sp_b, spend_epoch)],
-        vec![output_b],
-    );
+    let autonome_a = wallet.autonome(rng, anchor, vec![(spend, sp_a)], vec![output_a]);
+    let autonome_b = wallet.autonome(rng, anchor, vec![(spend, sp_b)], vec![output_b]);
 
     let stamp_a = autonome_a.stamp.clone();
     let stamp_b = autonome_b.stamp.clone();

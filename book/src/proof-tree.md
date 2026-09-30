@@ -52,11 +52,10 @@ A single lift can consume an arbitrarily long composed `ArbitraryUnspent`, inclu
 ### Spending
 
 To spend, the wallet runs `SpendBind`.
-It consumes the `NoteSpendable` and a `NoteNullifiers` covering the current and next epochs, and witnesses the pair `(nf_current, nf_next)`.
-It requires `range.cm == spendable.cm`, then confirms the published pair by dividing two adjacent factors out of the derivation's sequence, one indexed at the lineage's epoch and one at the next.
-The challenge absorbs both nullifiers, so they are forced to the genuine nullifiers of the lineage's epoch and the epoch after it.
+It consumes the `NoteSpendable` and the note's `NoteMaster`, and requires `master.cm == spendable.cm`.
+It derives the pair `(nf_current, nf_next)` from the master's `mk`, at the lineage's epoch and the epoch after it.
 Nonzero guards close the `nf == 0` degenerate.
-The output `SpendHeader` carries `cm`, the confirmed pair `(nf_current, nf_next)`, and the threaded anchor; it carries no curve points.
+The output `SpendHeader` carries `cm`, the derived pair `(nf_current, nf_next)`, and the threaded anchor; it carries no curve points.
 
 `SpendStamp` consumes that `SpendHeader` on the left and the note's `NoteMaster` on the right, witnessing only the action fields.
 It requires `master.cm == cm`, so the note on the master header is the spendable lineage's note: the value commitment `cv` then commits to the minted value[^notes].
@@ -244,11 +243,10 @@ Every segment opens on an entry anchor, so only a lineage resting on one lifts: 
 ### Spend binding
 
 Spending a note publishes two nullifiers, one for the current epoch and one for the next, both pinned to the note's genuine derivation.
-`SpendBind` consumes the `NoteSpendable` and a `NoteNullifiers` covering the current and next epochs, witnesses `nf_current` and `nf_next`, and requires `range.cm == spendable.cm`.
-Dividing two adjacent factors out of the derivation's sequence confirms the pair. Both nullifiers are free and pinned by their scalar-binding points, absorbed into the challenge. Adjacency is the factor indices $e$ and $e+1$, with $e$ the lineage's epoch.
+`SpendBind` consumes the `NoteSpendable` and the note's `NoteMaster`, and requires `master.cm == spendable.cm`.
+It derives both nullifiers from the master's `mk`, one group sponge each, at $e$ and $e+1$ with $e$ the lineage's epoch. Nothing in the pair is witnessed: `mk` and `cm` were bound together at `NoteSeed`, and $e$ is threaded on the spendable.
 Each published nullifier must be nonzero, or it would collide with the note's own `cm` in the tachygram scan.
-No note witness is needed here: the range and the lineage are already tied to the same note by their two `cm` fields, bound where the range was derived and at `SpendableInit` respectively.
-The output `SpendHeader` threads `cm`, the confirmed pair, and the anchor, and carries no curve points.
+The output `SpendHeader` threads `cm`, the derived pair, and the anchor, and carries no curve points.
 
 `SpendStamp` completes the publication: it takes the note on a `NoteMaster`, requires the master's `cm` to equal the header's, derives the value commitment `cv` and the randomized action key `rk`, and commits the one-action set alongside the two-element tachygram set.
 `NoteSeed` computed the master's `cm` from that note, so the equality rejects a phantom note reusing the same `psi`, and so the same nullifiers, while carrying a different value and hence a different `cm`.
@@ -263,7 +261,7 @@ The note's age never becomes public. The lineage carries only a single current n
 A stamp commits to two multisets, an action-digest set and a tachygram set[^tachygrams].
 `OutputBind` derives the output's tachygram pair from one note, the commitment `cm` and the padding tachygram `pad`, so both are fixed before any action material exists, and carries the note's value beside them. Each tachygram is nonzero-guarded, and the pad's preimage is the note opening rather than `cm`, which is what stops an observer pairing the two off in the published set[^tachygrams].
 `OutputStamp` then derives a value commitment, action verification key, and action digest from the header's value, value-randomness, and action-randomness, and rejects over-range values. No key material is witnessed: an output's `rk` is a fresh randomizer's public key, and the recipient's payment key rides inside `cm` where the sender cannot be asked to prove anything about it[^keys].
-`SpendStamp` mirrors it on the spend side: it takes the note on a `NoteMaster` bound to the `SpendHeader`'s `cm`, derives the value commitment, action verification key, and action digest, and emits a stamp whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was already confirmed against the covering range at `SpendBind`.
+`SpendStamp` mirrors it on the spend side: it takes the note on a `NoteMaster` bound to the `SpendHeader`'s `cm`, derives the value commitment, action verification key, and action digest, and emits a stamp whose one-action digest set, two-nullifier tachygram set, and threaded anchor follow. The nullifier pair it publishes was derived from the master key at `SpendBind`.
 `StampMerge` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 
 ### Stamp anchor
@@ -308,7 +306,6 @@ flowchart TB
   end
 
   subgraph spend_stamp [spend action]
-    w_bind[/nf_current, nf_next/]
     s_bind[SpendBind]
   end
 
@@ -339,8 +336,7 @@ flowchart TB
   s_unspentbind -->|NoteUnspent| s_lift
   s_lift -->|NoteSpendable| s_bind
 
-  w_bind --> s_bind
-  nf_range -->|NoteNullifiers| s_bind
+  s_seed -->|NoteMaster| s_bind
   s_bind -->|SpendHeader| s_spendstamp
   s_seed -->|NoteMaster| s_spendstamp
   w_stamp --> s_spendstamp
@@ -445,7 +441,7 @@ flowchart LR
 | NullifierFuse | NoteNullifiers | NoteNullifiers | left_seq, merged_seq, right_seq | NoteNullifiers |
 | SpendableInit | NoteNullifiers | — | anchor_prev, creation_set, creation_epoch | NoteSpendable |
 | SpendableLift | NoteSpendable | NoteUnspent | — | NoteSpendable |
-| SpendBind | NoteSpendable | NoteNullifiers | nf_seq, complement_seq, nf_current, nf_next | SpendHeader |
+| SpendBind | NoteSpendable | NoteMaster | — | SpendHeader |
 | OutputBind | — | — | note | OutputHeader |
 | OutputStamp | OutputHeader | — | rcv, alpha, anchor, action_set, tachygram_set | Stamp |
 | SpendStamp | SpendHeader | NoteMaster | rcv, alpha, pak, action_set, tachygram_set | Stamp |

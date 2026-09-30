@@ -133,7 +133,7 @@ impl Step for OutputStamp {
 /// commitment `cv` and the randomized action key `rk`, and enforces the
 /// one-action set plus the stamp accumulator over the two-element tachygram set
 /// `{nf_current, nf_next}` (the pair [`SpendBind`](super::spend::SpendBind)
-/// already confirmed against the covering derivation).
+/// derived from the master key).
 ///
 /// `pk = payment_key(ak, nk)` is the only thing tying `ak`, and so `rk`, to
 /// the note.

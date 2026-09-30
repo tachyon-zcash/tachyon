@@ -26,7 +26,6 @@ use crate::{
             QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
             QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
-        spend::SpendBind,
         spendable::{QrSpendableInit, SpendableInit},
         stamp::{OutputStamp, SpendStamp},
         summary::{SummaryAdvance, SummarySeed},
@@ -152,48 +151,6 @@ pub fn spendable_init(
         anchor_prev,
         creation_tgs.iter().copied().collect::<TachygramSetPoly>(),
         creation_epoch,
-    )
-}
-
-/// Prepare the witness for [`SpendBind`]:
-/// `(nf_seq, complement_seq, nf_current, nf_next)`.
-///
-/// `window` is the complete covering sequence, one member per epoch of the
-/// derivation header's range; `(nf_current, nf_next)` is the pair at the
-/// spendable's epoch, and the complement is the window's runs on both sides of
-/// the pair, multiplied. The pair read requires the derivation range to extend
-/// at least one epoch past the spendable's epoch, which bounds the spendable
-/// epoch at `EPOCH_MAX - 1`: the final epoch has no member to pair with.
-#[must_use]
-#[expect(
-    clippy::as_conversions,
-    reason = "the derivation header's range covers the window"
-)]
-pub fn spend_bind(
-    (spendable, deriv): (StepLeft<SpendBind>, StepRight<SpendBind>),
-    window: &[Nullifier],
-) -> StepWitness<'static, SpendBind> {
-    let (_, epoch, _) = spendable;
-    let (_, nullifiers_epoch_start, ..) = deriv;
-    let lo = u32::from(epoch - nullifiers_epoch_start) as usize;
-    let (head, from_spend) = window.split_at(lo);
-    let (pair, tail) = from_spend.split_at(2);
-    let &[nf_current, nf_next] = pair else {
-        unreachable!("the read pair is in the window");
-    };
-    let complement_seq = NfSeqPoly::new(nullifiers_epoch_start, head)
-        * epoch.next().and_then(EpochIndex::next).map_or_else(
-            || {
-                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
-                NfSeqPoly::default()
-            },
-            |tail_start| NfSeqPoly::new(tail_start, tail),
-        );
-    (
-        NfSeqPoly::new(nullifiers_epoch_start, window),
-        complement_seq,
-        nf_current,
-        nf_next,
     )
 }
 

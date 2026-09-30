@@ -26,9 +26,8 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_plan, build_output_stamp,
-    build_unspent_pcd_over_epochs, cube_root_twin, indexed_factor, pinned_point, qr_bucket_segment,
-    random_block, random_block_with, seal_qr_intake, seed_qr_empty_intake, shared_sk,
-    spend_witness, unpinned_challenge,
+    build_unspent_pcd_over_epochs, qr_bucket_segment, random_block, random_block_with,
+    seal_qr_intake, seed_qr_empty_intake, shared_sk, spend_witness,
 };
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
@@ -110,20 +109,10 @@ fn honest_spend_bind(
     user: &WalletSim,
     note: &Note,
     spendable: Pcd<spendable::NoteSpendable>,
-    spend_epoch: EpochIndex,
 ) -> Pcd<spend::SpendHeader> {
-    let derived = user.derivation_pcd(
-        rng,
-        *note,
-        spend_epoch,
-        EpochIndex::new(u32::from(spend_epoch) + 1),
-    );
-    let witness = witness::spend_bind(
-        (*spendable.data(), *derived.data()),
-        &user.covering_window(note, &derived),
-    );
+    let master_pcd = honest_master(rng, user, *note);
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, spend::SpendBind, witness, spendable, derived)
+        .fuse(rng, spend::SpendBind, (), spendable, master_pcd)
         .expect("SpendBind honest");
     bind_pcd
 }
@@ -158,7 +147,7 @@ fn same_epoch_honest_spend_accepted() {
     let epoch = cm_height.epoch();
 
     let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable, epoch);
+    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable);
     let stamp = honest_spend_stamp(rng, &user, &note, bind_pcd);
 
     let expected = TachygramSetPoly::from_iter([
@@ -371,7 +360,7 @@ fn spend_bind_honest() {
     let spend_epoch = height.epoch();
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd, spend_epoch);
+    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let (_cm, nf_current, nf_next, _anchor) = *bind_pcd.data();
     assert_eq!(nf_current, user.nf_at(&note, spend_epoch));
     assert_eq!(nf_next, user.nf_at(&note, spend_epoch.next().unwrap()));
@@ -386,7 +375,6 @@ fn spend_stamp_rejects_invalid_note() {
     let note = user.random_note(500);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
-    let spend_epoch = height.epoch();
 
     let phantom = Note {
         value: value::Positive::try_from(999_999u64).expect("test value in range"),
@@ -402,7 +390,7 @@ fn spend_stamp_rejects_invalid_note() {
     // The nullifier pair binds honestly at SpendBind; the note-level checks
     // (value, pak, cm) live at SpendStamp, which proves the action.
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd, spend_epoch);
+    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
     let cases = [
         (
@@ -489,9 +477,8 @@ fn step_accepts_zero_value_note() {
         let note = user.random_note(0);
         pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
         let height = pool.height();
-        let spend_epoch = height.epoch();
         let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
-        let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd, spend_epoch);
+        let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
         let (rcv, _theta, alpha) = spend_witness(rng, &note);
         let master_pcd = honest_master(rng, &user, note);
@@ -528,7 +515,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let unspent = sync.build_next_unspent(rng, 0, &pool, epoch2);
     let lifted = user.lift(rng, spendable, unspent, &note);
 
-    let bind_pcd = honest_spend_bind(rng, &user, &note, lifted, epoch2);
+    let bind_pcd = honest_spend_bind(rng, &user, &note, lifted);
     let (_cm, nf_current, _nf_next, _anchor) = *bind_pcd.data();
     assert_eq!(
         nf_current,
@@ -561,7 +548,7 @@ fn spend_stamp_assembles_tachygrams() {
     let spend_epoch = height.epoch();
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd, spend_epoch);
+    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let stamp_pcd = honest_spend_stamp(rng, &user, &note, bind_pcd);
     let (_actions, tg_commit, _anchor) = *stamp_pcd.data();
     let expected = TachygramSetPoly::from_iter([
@@ -910,41 +897,6 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
     );
 }
 
-/// The largest spendable epoch is `EPOCH_MAX - 1`: the pair read needs a
-/// following epoch's member, so the final epoch's own window is the last one
-/// that can serve a spend. Its complement has a lower run and no tail.
-#[test]
-fn spend_bind_reads_the_last_pair_in_the_epoch_space() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let epoch_start = EpochIndex::new(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
-    let spend_epoch = EpochIndex::new(EPOCH_MAX - 1);
-    let range = user.derivation_pcd(rng, note, epoch_start, EpochIndex::new(EPOCH_MAX));
-    let window = user.covering_window(&note, &range);
-
-    let synthetic_spendable = (note.commitment(), spend_epoch, Anchor::from(Fp::ZERO));
-    let (nf_seq, complement_seq, nf_current, nf_next) =
-        witness::spend_bind((synthetic_spendable, *range.data()), &window);
-
-    assert_eq!(nf_current, user.nf_at(&note, spend_epoch));
-    assert_eq!(
-        nf_next,
-        user.nf_at(&note, EpochIndex::new(EPOCH_MAX)),
-        "the pair's second half is the final epoch's member"
-    );
-    assert_eq!(
-        nf_seq.commit(),
-        NfSeqPoly::new(epoch_start, &window).commit()
-    );
-    assert_eq!(
-        complement_seq.commit(),
-        NfSeqPoly::new(epoch_start, &window[..window.len() - 2]).commit(),
-        "the read pair ends the window, so the complement is its lower run alone"
-    );
-}
-
 #[test]
 fn unspent_bind_rejects_elapsed_mismatch() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1191,7 +1143,7 @@ fn spend_stamp_rejects_a_master_for_another_note() {
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd, height.epoch());
+    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
     let (rcv, _theta, alpha) = spend_witness(rng, &other);
     let master_pcd = honest_master(rng, &user, other);
@@ -1436,247 +1388,61 @@ fn nullifier_fuse_rejects_wrong_cm() {
     assert_eq!(inner.to_string(), "NullifierFuse: note commitments differ");
 }
 
-/// An honest spendable and covering derivation for `SpendBind` witness
-/// substitution tests, at the cm-block's epoch.
-fn spend_bind_parts(
-    rng: &mut StdRng,
-    user: &WalletSim,
-    note: &Note,
-) -> (
-    Pcd<spendable::NoteSpendable>,
-    Pcd<delegation::NoteNullifiers>,
-    EpochIndex,
-) {
+/// A master for a different note does not match the lineage's `cm`.
+#[test]
+fn spend_bind_rejects_a_master_for_another_note() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+    let other = user.random_note(700);
+
     let mut pool = PoolSim::genesis(rng);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
+    let spendable = user.spendable_init(rng, &note, &pool, init_height);
+    let foreign = honest_master(rng, &user, other);
+
+    let err = PROOF_SYSTEM
+        .fuse(rng, spend::SpendBind, (), spendable, foreign)
+        .err()
+        .unwrap();
+    let ragu_core::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(inner.to_string(), "SpendBind: master does not match note");
+}
+
+/// At an epoch ending its sponge group, the pair's second half comes from the
+/// next group's sponge.
+#[test]
+fn spend_bind_derives_a_pair_across_a_group_boundary() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let note = user.random_note(500);
+
+    let mut pool = PoolSim::genesis(rng);
+    while pool.height().0 < 3 * EPOCH_SIZE {
+        pool.mine(random_block(rng, 1, 2));
+    }
+    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let epoch = init_height.epoch();
-    let spendable = user.spendable_init(rng, note, &pool, init_height);
-    let derived = user.derivation_pcd(rng, *note, epoch, EpochIndex::new(u32::from(epoch) + 1));
-    (spendable, derived, epoch)
-}
-
-/// A forged next nullifier fails the divisibility read.
-#[test]
-fn spend_bind_rejects_forged_next() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let (spendable, derived, _epoch) = spend_bind_parts(rng, &user, &note);
-    let (nf_seq, complement_seq, nf_current, _nf_next) = witness::spend_bind(
-        (*spendable.data(), *derived.data()),
-        &user.covering_window(&note, &derived),
+    assert_eq!(
+        epoch,
+        EpochIndex::new(3),
+        "the last epoch of the first group"
     );
-    let forged = Nullifier::from(Fp::random(&mut *rng));
-    expect_invalid(
-        rng,
-        spend::SpendBind,
-        (nf_seq, complement_seq, nf_current, forged),
-        spendable,
-        derived,
-        "SpendBind: nullifier pair does not match the derivation",
-    );
-}
+    let spendable = user.spendable_init(rng, &note, &pool, init_height);
+    let anchor = spendable.data().2;
 
-/// A forged current nullifier fails the divisibility read: the spendable
-/// carries no nullifier, so the read is what pins the pair's first half.
-#[test]
-fn spend_bind_rejects_a_forged_current() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
+    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable);
 
-    let (spendable, derived, _epoch) = spend_bind_parts(rng, &user, &note);
-    let (nf_seq, complement_seq, _nf_current, nf_next) = witness::spend_bind(
-        (*spendable.data(), *derived.data()),
-        &user.covering_window(&note, &derived),
-    );
-    let forged = Nullifier::from(Fp::random(&mut *rng));
-
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spend::SpendBind,
-            (nf_seq, complement_seq, forged, nf_next),
-            spendable,
-            derived,
+    assert_eq!(
+        *bind_pcd.data(),
+        (
+            note.commitment(),
+            user.nf_at(&note, epoch),
+            user.nf_at(&note, EpochIndex::new(4)),
+            anchor,
         )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "SpendBind: nullifier pair does not match the derivation"
-    );
-}
-
-/// A cube-root twin of the genuine next nullifier shares its factor at the
-/// challenge the commitments alone would give, but the challenge absorbs
-/// `nf_next`, so the twin fails the read and cannot be published.
-#[test]
-fn spend_bind_rejects_a_twin_of_the_next_nullifier() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let (spendable, derived, epoch) = spend_bind_parts(rng, &user, &note);
-    let (nf_seq, complement_seq, nf_current, nf_next) = witness::spend_bind(
-        (*spendable.data(), *derived.data()),
-        &user.covering_window(&note, &derived),
-    );
-    let epoch_next = epoch.next().unwrap();
-    let z = unpinned_challenge(&[nf_seq.commit().into(), complement_seq.commit().into()]);
-    let twin = cube_root_twin(epoch_next, nf_next.into(), z);
-    assert_ne!(twin, Fp::from(nf_next));
-    assert_eq!(
-        indexed_factor(epoch_next, twin, z),
-        indexed_factor(epoch_next, nf_next.into(), z),
-        "the twin passes an unpinned read"
-    );
-
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spend::SpendBind,
-            (nf_seq, complement_seq, nf_current, Nullifier::from(twin)),
-            spendable,
-            derived,
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "SpendBind: nullifier pair does not match the derivation"
-    );
-}
-
-/// A cube-root twin of the current nullifier shares its factor at the
-/// challenge that absorbs every other input, but the challenge absorbs
-/// `nf_current` too, so the twin fails the read and cannot be published.
-#[test]
-fn spend_bind_rejects_a_twin_of_the_current_nullifier() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let (spendable, derived, epoch) = spend_bind_parts(rng, &user, &note);
-    let (nf_seq, complement_seq, nf_current, nf_next) = witness::spend_bind(
-        (*spendable.data(), *derived.data()),
-        &user.covering_window(&note, &derived),
-    );
-    let z = unpinned_challenge(&[
-        nf_seq.commit().into(),
-        complement_seq.commit().into(),
-        pinned_point(nf_next.into()),
-    ]);
-    let twin = cube_root_twin(epoch, nf_current.into(), z);
-    assert_ne!(twin, Fp::from(nf_current));
-    assert_eq!(
-        indexed_factor(epoch, twin, z),
-        indexed_factor(epoch, nf_current.into(), z),
-        "the twin passes a read that does not absorb it"
-    );
-
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spend::SpendBind,
-            (nf_seq, complement_seq, Nullifier::from(twin), nf_next),
-            spendable,
-            derived,
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "SpendBind: nullifier pair does not match the derivation"
-    );
-}
-
-/// A range that does not cover the lineage epoch is rejected, however
-/// internally consistent it is.
-#[test]
-fn spend_bind_rejects_uncovering_range() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-
-    let (spendable, _derived, epoch) = spend_bind_parts(rng, &user, &note);
-    let ahead = EpochIndex::new(u32::from(epoch) + NF_DERIVATION_WIDTH as u32);
-    let derived_ahead =
-        user.derivation_pcd(rng, note, ahead, EpochIndex::new(u32::from(ahead) + 1));
-    // The builder would segment out of range, so the witness is assembled
-    // by hand: the genuine covering sequence, an empty complement.
-    let window = user.covering_window(&note, &derived_ahead);
-    let witness = (
-        NfSeqPoly::new(ahead, &window),
-        NfSeqPoly::new(ahead, &[]),
-        user.nf_at(&note, epoch),
-        user.nf_at(&note, epoch.next().unwrap()),
-    );
-    expect_invalid(
-        rng,
-        spend::SpendBind,
-        witness,
-        spendable,
-        derived_ahead,
-        "SpendBind: nullifier pair does not match the derivation",
-    );
-}
-
-/// A different note's range does not match the lineage's `cm`.
-#[test]
-fn spend_bind_rejects_a_foreign_range() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-    let other = user.random_note(700);
-
-    let (spendable, _derived, epoch) = spend_bind_parts(rng, &user, &note);
-    let foreign = user.derivation_pcd(rng, other, epoch, EpochIndex::new(u32::from(epoch) + 1));
-    let witness = witness::spend_bind(
-        (*spendable.data(), *foreign.data()),
-        &user.covering_window(&other, &foreign),
-    );
-    expect_invalid(
-        rng,
-        spend::SpendBind,
-        witness,
-        spendable,
-        foreign,
-        "SpendBind: derived range does not match note",
-    );
-}
-
-/// A sequence built from a different note does not match the derivation
-/// header's commitment.
-#[test]
-fn spend_bind_rejects_a_foreign_sequence() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-    let other = user.random_note(700);
-
-    let (spendable, derived, _epoch) = spend_bind_parts(rng, &user, &note);
-    let witness = witness::spend_bind(
-        (*spendable.data(), *derived.data()),
-        &user.covering_window(&other, &derived),
-    );
-    expect_invalid(
-        rng,
-        spend::SpendBind,
-        witness,
-        spendable,
-        derived,
-        "SpendBind: covering sequence does not match header",
     );
 }
 
@@ -1691,7 +1457,7 @@ fn spend_stamp_rejects_a_mismatched_stamp_accumulator() {
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd, height.epoch());
+    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
     let (rcv, _theta, alpha) = spend_witness(rng, &note);
     let master_pcd = honest_master(rng, &user, note);
@@ -1720,7 +1486,7 @@ fn spend_stamp_rejects_a_foreign_action_set() {
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd, height.epoch());
+    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
     let (rcv, _theta, alpha) = spend_witness(rng, &note);
     let master_pcd = honest_master(rng, &user, note);
@@ -2020,66 +1786,6 @@ fn nullifier_fuse_rejects_a_wrong_merged() {
     );
 }
 
-/// A forged next-epoch nullifier cannot be compensated by choosing the
-/// complement: the identity pins the whole factorization, so no complement
-/// content absorbs a wrong read.
-///
-/// The derivation starts below the pair's epoch so that the complement
-/// carries runs on *both* sides of the read. `spend_bind_parts` mints at
-/// genesis, which leaves the lower run empty and reduces this to
-/// `spend_bind_rejects_forged_next` with a garbled complement.
-#[test]
-fn spend_bind_rejects_a_forged_next_over_a_garbage_complement() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-
-    // Mint into a later epoch, so the window can start below the pair.
-    while pool.height() < BlockHeight(EPOCH_SIZE) {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-    let note = user.random_note(500);
-    let stranger = user.random_note(900);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let epoch = init_height.epoch();
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let derived = user.derivation_pcd(
-        rng,
-        note,
-        EpochIndex::new(0),
-        EpochIndex::new(u32::from(epoch) + 1),
-    );
-
-    let (nf_seq, _complement_seq, nf_current, _nf_next) = witness::spend_bind(
-        (*spendable.data(), *derived.data()),
-        &user.covering_window(&note, &derived),
-    );
-
-    // Garbage complement: another note's members in place of this note's.
-    let (_, nullifiers_epoch_start, _, nullifiers_epoch_end) = *derived.data();
-    let stranger_mk = user.mk(&stranger);
-    let older_members: Vec<Nullifier> = (u32::from(nullifiers_epoch_start)..u32::from(epoch))
-        .map(|epoch_idx| stranger_mk.derive_nullifier(EpochIndex::new(epoch_idx)))
-        .collect();
-    let newer_members: Vec<Nullifier> = (u32::from(epoch) + 2..=u32::from(nullifiers_epoch_end))
-        .map(|epoch_idx| stranger_mk.derive_nullifier(EpochIndex::new(epoch_idx)))
-        .collect();
-    assert!(!older_members.is_empty(), "lower run must carry members");
-    assert!(!newer_members.is_empty(), "upper run must carry members");
-    let complement_seq = NfSeqPoly::new(nullifiers_epoch_start, &older_members)
-        * NfSeqPoly::new(EpochIndex::new(u32::from(epoch) + 2), &newer_members);
-
-    let forged = Nullifier::from(Fp::random(&mut *rng));
-    expect_invalid(
-        rng,
-        spend::SpendBind,
-        (nf_seq, complement_seq, nf_current, forged),
-        spendable,
-        derived,
-        "SpendBind: nullifier pair does not match the derivation",
-    );
-}
-
 /// A segment beginning past the spendable's position does not lift it: it
 /// starts in a later epoch than the lineage's.
 #[test]
@@ -2242,11 +1948,10 @@ fn multi_window_span_binds_once() {
     );
 }
 
-/// One covering derivation serves init, epoch bookkeeping, and spend: the
-/// fixture's memoized covering window is the same PCD at every consumer, and
-/// the whole spend flow closes against it.
+/// One covering derivation serves every request inside it, and the pair the
+/// spend's bind derives from `mk` is the window's pair.
 #[test]
-fn one_window_serves_init_bind_and_spend() {
+fn one_window_serves_init_and_matches_the_bind() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
@@ -2263,7 +1968,7 @@ fn one_window_serves_init_bind_and_spend() {
         "the memoized covering window is one PCD for every request inside it"
     );
 
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable, epoch);
+    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable);
     assert_eq!(bind_pcd.data().1, user.nf_at(&note, epoch));
     assert_eq!(bind_pcd.data().2, user.nf_at(&note, epoch.next().unwrap()));
 }
@@ -2279,7 +1984,7 @@ fn bucket_spendable_syncs_to_a_spend() {
     mine_through(rng, &mut pool, epoch2.first_block());
 
     let lifted = user.spendable_at(rng, &pool, &note, epoch2);
-    let bind_pcd = honest_spend_bind(rng, &user, &note, lifted, epoch2);
+    let bind_pcd = honest_spend_bind(rng, &user, &note, lifted);
 
     assert_eq!(bind_pcd.data().1, user.nf_at(&note, epoch2));
     assert_eq!(bind_pcd.data().2, user.nf_at(&note, EpochIndex::new(3)));

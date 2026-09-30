@@ -34,7 +34,6 @@ use crate::{
     effect,
     entropy::ActionRandomizer,
     keys::ProofAuthorizingKey,
-    nullifier::Nullifier,
     primitives::{
         ActionDigest, ActionDigestError, Anchor, EpochIndex, Tachygram, TachygramSetCommit,
     },
@@ -391,8 +390,8 @@ impl Plan {
 
     /// Prove a single [`ProofStamp`] for this plan.
     ///
-    /// For each **spend**, uses [`spend::SpendBind`] to prepare PCD inputs,
-    /// then runs [`SpendStamp`] to attach the live nullifier pair.
+    /// For each **spend**, runs [`spend::SpendBind`] to derive the live
+    /// nullifier pair, then [`SpendStamp`] to publish it.
     ///
     /// For each **output**, runs [`OutputStamp`] with no PCD inputs.
     ///
@@ -406,15 +405,14 @@ impl Plan {
     /// # Errors
     ///
     /// Returns [`ProveError`] if the number of spend PCDs does not match the
-    /// planned spends, an action digest cannot be computed, or a proof-system
-    /// step fails.
+    /// planned spends, a spend's master is for another note, an action digest
+    /// cannot be computed, or a proof-system step fails.
     pub fn prove<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
             ragu::Pcd<delegation::NoteMaster>,
-            ragu::Pcd<delegation::NoteNullifiers>,
             ragu::Pcd<spendable::NoteSpendable>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
@@ -436,29 +434,18 @@ impl Plan {
             ));
         }
 
-        for ((desc, alpha, note, rcv), (master_pcd, range_pcd, spendable_pcd)) in
+        for ((desc, alpha, note, rcv), (master_pcd, spendable_pcd)) in
             self.spends.into_iter().zip(spend_pcds)
         {
-            // SpendBind: confirm the live pair against the covering
-            // derivation. The covering sequence is rebuilt natively from the
-            // note's master key (the succinct header carries only the
-            // commitment); the witness segments its read and complement.
-            let mk = pak.nk.derive_note_private(note.psi);
-            let (_, nullifiers_epoch_start, _, nullifiers_epoch_end) = *range_pcd.data();
-            let window: Vec<Nullifier> = (u32::from(nullifiers_epoch_start)
-                ..=u32::from(nullifiers_epoch_end))
-                .map(|epoch| mk.derive_nullifier(EpochIndex::new(epoch)))
-                .collect();
-            let bind_witness =
-                witness::spend_bind((*spendable_pcd.data(), *range_pcd.data()), &window);
+            if master_pcd.data().0 != note.commitment() {
+                return Err(ProveError::MissingPcd(
+                    "spend pcds do not match the planned note".into(),
+                ));
+            }
+
+            // SpendBind: derive the live pair from the note's master key.
             let (bind_pcd, ()) = PROOF_SYSTEM
-                .fuse(
-                    rng,
-                    spend::SpendBind,
-                    bind_witness,
-                    spendable_pcd,
-                    range_pcd,
-                )
+                .fuse(rng, spend::SpendBind, (), spendable_pcd, master_pcd.clone())
                 .map_err(ProveError::ProofFailed)?;
 
             // SpendStamp: prove the action and publish.
@@ -631,8 +618,8 @@ impl ProofStamp {
     /// [`SpendHeader`](spend::SpendHeader) PCD.
     ///
     /// The nullifier pair `{nf_current, nf_next}` published for data
-    /// availability is read straight off the bind header (already confirmed
-    /// against the derivation at [`SpendBind`](spend::SpendBind)); this step
+    /// availability is read straight off the bind header (derived from the
+    /// master key at [`SpendBind`](spend::SpendBind)); this step
     /// proves the action `(cv, rk)` and enforces the stamp accumulator over
     /// the pair. The spend's `anchor` is taken as the stamp's anchor; chain
     /// validation lives inside the spendable lineage.

@@ -7,9 +7,9 @@ use ff::{Field as _, FromUniformBytes as _, PrimeField as _, WithSmallOrderMulGr
 use group::GroupEncoding as _;
 use pasta_curves::{Eq, Fp};
 use ragu::{Pcd, Proof};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _, PoseidonPermutation as _};
+use ragu_arithmetic::PoseidonPermutation as _;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use ragu_pasta::{Pasta, PoseidonFp};
+use ragu_pasta::PoseidonFp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
@@ -166,12 +166,11 @@ pub fn build_autonome<RNG: CryptoRng>(
     pool.mine(random_block_with(rng, &stamps_cms, 50));
     let height = pool.height();
     let spendable_pcd = wallet.fresh_spend(rng, &pool, height, &spend_note);
-    let spend_epoch = height.epoch();
     let anchor = spendable_pcd.data().2;
     wallet.autonome(
         rng,
         anchor,
-        alloc::vec![(spend_note, spendable_pcd, spend_epoch)],
+        alloc::vec![(spend_note, spendable_pcd)],
         alloc::vec![output_note],
     )
 }
@@ -1331,27 +1330,21 @@ impl WalletSim {
         &self,
         rng: &mut RNG,
         anchor: Anchor,
-        spends: Vec<(Note, Pcd<spendable::NoteSpendable>, EpochIndex)>,
+        spends: Vec<(Note, Pcd<spendable::NoteSpendable>)>,
         output_notes: Vec<Note>,
     ) -> Bundle<ProofStamp> {
         let ask = self.sk.derive_auth_private();
 
         let mut spend_plans = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
-        for (note, spendable_pcd, spend_epoch) in spends {
-            let range_pcd = self.derivation_pcd(
-                rng,
-                note,
-                spend_epoch,
-                EpochIndex::new(u32::from(spend_epoch) + 1),
-            );
+        for (note, spendable_pcd) in spends {
             let rcv = value::Trapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
             let plan = action::Plan::spend(note, theta, rcv, |alpha| {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((self.master_pcd(rng, note), range_pcd, spendable_pcd));
+            spend_pcds.push((self.master_pcd(rng, note), spendable_pcd));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
@@ -1481,15 +1474,6 @@ pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
     let mut wide = [0u8; 64];
     wide.copy_from_slice(state.finalize().as_bytes());
     Fp::from_uniform_bytes(&wide)
-}
-
-/// The point $[x] \cdot G_0$ a step absorbs for a pinned scalar.
-pub fn pinned_point(x: Fp) -> Eq {
-    let &g0 = Pasta::host_generators(Pasta::baked())
-        .g()
-        .first()
-        .expect("at least one generator");
-    g0 * x
 }
 
 /// Another member at `epoch` whose indexed factor
