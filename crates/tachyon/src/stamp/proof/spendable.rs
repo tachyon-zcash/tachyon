@@ -3,10 +3,10 @@
 //! The spendable carries `(cm, epoch_current, anchor)`: the note's current
 //! epoch, its pool position, and the minted-note commitment binding the
 //! lineage (and its value) across lifts. [`SpendableInit`] bootstraps it from a
-//! minted note, [`SummarySpendableInit`] from a [`Summary`] covering the
-//! creation, and [`QrSpendableInit`] from a [`QrBucket`] holding the creation
-//! over the note's own [`NoteUnspent`] for that epoch; [`SpendableLift`]
-//! advances it over [`NoteUnspent`] segments.
+//! minted note for a spend in the creation epoch, and [`QrSpendableInit`] from
+//! a [`QrBucket`] holding the creation over the note's own [`NoteUnspent`] for
+//! that epoch; [`SpendableLift`] advances the latter over [`NoteUnspent`]
+//! segments.
 
 extern crate alloc;
 
@@ -14,16 +14,12 @@ use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_pasta::Pasta;
 
-use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket, summary::Summary};
+use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
-    collections::indexed_multiset,
     note,
-    nullifier::Nullifier,
-    primitives::{Anchor, EpochIndex, NfSeqPoly, TachygramSetPoly},
-    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
+    primitives::{Anchor, EpochIndex, TachygramSetPoly},
+    ragu_constraint::{enforce_equal_point, enforce_zero},
 };
 
 /// Wallet's spendable position, certified up to this point in every
@@ -82,7 +78,7 @@ impl Step for SpendableInit {
     /// `(anchor_prev, creation_set, creation_epoch)`
     type Witness<'source> = (Anchor, TachygramSetPoly, EpochIndex);
 
-    const INDEX: Index = Index::new(8);
+    const INDEX: Index = Index::new(6);
 
     fn witness<'source>(
         &self,
@@ -106,110 +102,6 @@ impl Step for SpendableInit {
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
         Ok(((cm, creation_epoch, anchor), ()))
-    }
-}
-
-/// Bootstrap a spendable from a [`Summary`] covering the note's creation.
-///
-/// `cm` is proven among the summarized tachygrams, `nf_current` absent from
-/// them, and the spendable emits at `anchor_end`. The summary spans stamps
-/// after the creation, so unlike [`SpendableInit`] the step tests exclusion.
-/// The divisibility of `nf_seq` by the `nf_current` factor at `creation_epoch`
-/// times the complement, at a challenge absorbing `nf_current`, forces it to
-/// the window's member there.
-///
-/// # Soundness
-///
-/// The summary's `epoch` is absorbed into every anchor link, so a wrong epoch
-/// lands the summary off the published anchor sequence, and
-/// `summary_epoch == creation_epoch` carries that binding into the read.
-/// Stamps before the creation exclude `nf_current` vacuously, so one
-/// accumulator serves both openings.
-#[derive(Debug)]
-pub struct SummarySpendableInit;
-
-impl Step for SummarySpendableInit {
-    type Aux<'source> = ();
-    type Left = NoteNullifiers;
-    type Output = NoteSpendable;
-    type Right = Summary;
-    /// `(creation_epoch, nf_current, nf_seq, complement_seq, summary_set)`
-    type Witness<'source> = (
-        EpochIndex,
-        Nullifier,
-        NfSeqPoly,
-        NfSeqPoly,
-        TachygramSetPoly,
-    );
-
-    const INDEX: Index = Index::new(20);
-
-    fn witness<'source>(
-        &self,
-        ctx: &mut ragu::StepCtx<'_>,
-        (creation_epoch, nf_current, nf_seq, complement_seq, summary_set): Self::Witness<'source>,
-        (cm, _, nf_commit, _): <Self::Left as Header>::Data,
-        (summary_epoch, _summary_anchor_prev, summary_anchor_end, summary_acc_commit): <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
-            Eq::from(nf_seq.commit()),
-            Eq::from(nf_commit),
-            "SummarySpendableInit: covering sequence does not match header",
-        )?;
-        enforce_equal_point(
-            Eq::from(summary_set.commit()),
-            Eq::from(summary_acc_commit),
-            "SummarySpendableInit: accumulator does not match header",
-        )?;
-        enforce_zero(
-            Fp::from(summary_epoch) - Fp::from(creation_epoch),
-            "SummarySpendableInit: summary epoch must match the creation epoch",
-        )?;
-
-        // The 1-wide read at the creation epoch: the divisibility
-        // `nf_seq = read · complement` at a challenge absorbing the witnessed
-        // commitments and `nf_current`.
-        let z =
-            ctx.derive_challenge(&[nf_seq.commit().into(), complement_seq.commit().into(), {
-                // The mock absorbs only points, so absorb `[nf_current]·G_0`.
-                #[expect(clippy::expect_used, reason = "constant size")]
-                let &g0 = Pasta::host_generators(Pasta::baked())
-                    .g()
-                    .first()
-                    .expect("at least one generator");
-                g0 * Fp::from(nf_current)
-            }])?;
-        let nf_seq_at_z = nf_seq.eval(z);
-        ctx.enforce_poly_query(nf_seq.commit().into(), z, nf_seq_at_z)?;
-
-        let complement_at_z = complement_seq.eval(z);
-        ctx.enforce_poly_query(complement_seq.commit().into(), z, complement_at_z)?;
-
-        let read_at_z =
-            indexed_multiset::direct_eval([(creation_epoch.into(), nf_current.into())], z);
-        enforce_zero(
-            nf_seq_at_z - read_at_z * complement_at_z,
-            "SummarySpendableInit: nullifier does not match the derivation",
-        )?;
-
-        // Inclusion: cm ∈ summary ⇔ the accumulator vanishes at cm.
-        let cm_in_summary = summary_set.eval(cm.into());
-        ctx.enforce_poly_query(summary_set.commit().into(), cm.into(), cm_in_summary)?;
-        enforce_zero(
-            cm_in_summary,
-            "SummarySpendableInit: commitment not in summary",
-        )?;
-
-        // Exclusion: nf ∉ summary ⇔ the accumulator is nonzero at nf.
-        let nf_point = Fp::from(nf_current);
-        let nf_in_summary = summary_set.eval(nf_point);
-        ctx.enforce_poly_query(summary_set.commit().into(), nf_point, nf_in_summary)?;
-        enforce_nonzero(
-            nf_in_summary,
-            "SummarySpendableInit: found nullifier in summary",
-        )?;
-
-        Ok(((cm, creation_epoch, summary_anchor_end), ()))
     }
 }
 
@@ -245,7 +137,7 @@ impl Step for QrSpendableInit {
     /// `(contents)`
     type Witness<'source> = (TachygramSetPoly,);
 
-    const INDEX: Index = Index::new(28);
+    const INDEX: Index = Index::new(24);
 
     fn witness<'source>(
         &self,
@@ -303,9 +195,10 @@ impl Step for QrSpendableInit {
 /// threads through, and the lineage moves to the segment's far end at
 /// `(epoch_end, anchor_end)`.
 ///
-/// The segment may span any number of epochs. A lineage resting on its epoch's
-/// final anchor advances the same way, over a segment whose first fold is
-/// the crossing ([`EndEpochUnspentSeed`](super::pool::EndEpochUnspentSeed)).
+/// The segment may span any number of epochs. Every segment opens on an entry
+/// anchor, so only a lineage resting on one can lift: a [`QrSpendableInit`]
+/// spendable, or one already lifted. A [`SpendableInit`] spendable spends in
+/// its creation epoch.
 ///
 /// # Soundness
 ///
@@ -322,7 +215,7 @@ impl Step for SpendableLift {
     type Right = NoteUnspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(9);
+    const INDEX: Index = Index::new(7);
 
     fn witness<'source>(
         &self,

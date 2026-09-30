@@ -81,7 +81,7 @@ impl Step for OutputStamp {
         TachygramSetPoly,
     );
 
-    const INDEX: Index = Index::new(11);
+    const INDEX: Index = Index::new(9);
 
     fn witness<'source>(
         &self,
@@ -158,7 +158,7 @@ impl Step for SpendStamp {
         TachygramSetPoly,
     );
 
-    const INDEX: Index = Index::new(13);
+    const INDEX: Index = Index::new(11);
 
     fn witness<'source>(
         &self,
@@ -226,7 +226,7 @@ impl Step for StampMerge {
         (ActionSetPoly, TachygramSetPoly),
     );
 
-    const INDEX: Index = Index::new(14);
+    const INDEX: Index = Index::new(12);
 
     fn witness<'source>(
         &self,
@@ -308,7 +308,7 @@ impl Step for StampLift {
     type Right = AnchorChain;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(15);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,

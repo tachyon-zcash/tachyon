@@ -87,7 +87,7 @@ impl Step for SpendBind {
     /// `(nf_seq, complement_seq, nf_current, nf_next)`
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, Nullifier, Nullifier);
 
-    const INDEX: Index = Index::new(12);
+    const INDEX: Index = Index::new(10);
 
     fn witness<'source>(
         &self,

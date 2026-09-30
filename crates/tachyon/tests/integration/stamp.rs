@@ -303,22 +303,8 @@ fn double_spend_cannot_aggregate() {
     }
 
     // Two spendable lineages for the SAME note produce identical nullifiers.
-    let init_a = wallet.spendable_init(rng, &spend, &pool, cm_height);
-    let sp_a = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &spend,
-        init_a,
-        cm_height.epoch().next().unwrap(),
-    );
-    let init_b = wallet.spendable_init(rng, &spend, &pool, cm_height);
-    let sp_b = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &spend,
-        init_b,
-        cm_height.epoch().next().unwrap(),
-    );
+    let sp_a = wallet.spendable_at(rng, &pool, &spend, cm_height.epoch().next().unwrap());
+    let sp_b = wallet.spendable_at(rng, &pool, &spend, cm_height.epoch().next().unwrap());
     let anchor = sp_a.data().2;
     assert_eq!(anchor, sp_b.data().2, "same-note lifts share an anchor");
 

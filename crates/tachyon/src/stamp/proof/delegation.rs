@@ -261,7 +261,7 @@ impl Step for NullifierFuse {
     /// `(left_seq, merged_seq, right_seq)`
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(16);
+    const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,

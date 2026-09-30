@@ -26,9 +26,9 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_qr_branch, build_qr_partition,
-    build_summary_pcd, build_unspent_pcd_between_anchors, cube_root_twin, indexed_factor,
-    pinned_point, qr_profile_of, random_block, seal_qr_intake, seed_qr_stamp_intake, shared_sk,
-    split_qr_intake, unpinned_challenge,
+    build_summary_pcd, build_unspent_pcd_over_epochs, cube_root_twin, indexed_factor, pinned_point,
+    qr_profile_of, random_block, seal_qr_intake, seed_qr_empty_intake, seed_qr_stamp_intake,
+    shared_sk, split_qr_intake, unpinned_challenge,
 };
 
 /// The witness of [`qr::QrUnspentInit`].
@@ -1643,7 +1643,7 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
 
 /// Every QR bucket ends on the boundary into the next epoch, so two
 /// consecutive epochs' segments abut at the entry anchor and `UnspentFuse`
-/// composes them directly, with no `EndEpochUnspentSeed` in between.
+/// composes them directly.
 #[test]
 fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1730,21 +1730,8 @@ fn empty_bucket(
     anchor_final_prev: Anchor,
 ) -> QrBucketEntry {
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
-    let (pcd, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            qr::QrEmptyIntakeSeed,
-            witness::qr_empty_intake_seed(((), ()), anchor, epoch, discriminant),
-        )
-        .expect("QrEmptyIntakeSeed");
-    seal_qr_intake(
-        rng,
-        QrIntakeEntry {
-            pcd,
-            members: Vec::new(),
-        },
-        anchor_final_prev,
-    )
+    let intake = seed_qr_empty_intake(rng, anchor, epoch, discriminant);
+    seal_qr_intake(rng, intake, anchor_final_prev)
 }
 
 /// An epoch that published no stamp seals an empty bucket from its entry
@@ -1933,15 +1920,15 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
 
 /// A short bucket's evidence is unconsumable. The seal performs the boundary
 /// digest of the intake's own last anchor, and for an intake that stopped
-/// inside its epoch that lands on an anchor the pool never published, so no
-/// same-epoch suffix is adjacent to the spendable it bootstraps.
+/// inside its epoch that lands on an anchor the pool never published, so the
+/// next epoch's segment, which opens on the published entry anchor, is not
+/// adjacent to the spendable it bootstraps.
 #[test]
 fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     let rng = &mut StdRng::seed_from_u64(196);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let epoch = EpochIndex::new(0);
-    let nf = user.nf_at(&note, epoch);
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     let short_anchor = pool.anchor();
     pool.mine(random_block(rng, 2, 1));
@@ -1991,23 +1978,31 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
         "no published anchor equals the short extent's crossing"
     );
 
-    // The same-epoch suffix opens on the intake's own last anchor, which the
-    // crossing has already left behind, so the lift finds nothing adjacent.
-    let suffix = build_unspent_pcd_between_anchors(rng, &pool, &[nf], (short_anchor, tip_anchor));
-    let bound_suffix = user.unspent_bind(rng, suffix, &note);
+    // The next epoch's segment opens on the published entry anchor, which the
+    // short crossing never reaches, so the lift finds nothing adjacent.
+    pool.advance(epoch_next.last_block().0 - pool.height().0, |_| {
+        random_block(rng, 1, 1)
+    });
+    let next = build_unspent_pcd_over_epochs(
+        rng,
+        &pool,
+        |covered| user.nf_at(&note, covered),
+        (epoch_next, epoch_next.next().unwrap()),
+    );
+    let bound_next = user.unspent_bind(rng, next, &note);
     assert_ne!(
-        bound_suffix.data().1,
+        bound_next.data().1,
         unpublished,
-        "the suffix opens on the intake's own last anchor, not the crossing"
+        "the next segment opens on the published entry anchor"
     );
     let err = PROOF_SYSTEM
-        .fuse(rng, spendable::SpendableLift, (), spendable, bound_suffix)
+        .fuse(rng, spendable::SpendableLift, (), spendable, bound_next)
         .err()
         .unwrap();
     assert_eq!(
         invalid_witness(err),
-        "SpendableLift: segment does not start at the lineage epoch",
-        "the lift rejects it; a same-epoch suffix cannot reopen the crossed epoch"
+        "SpendableLift: unspent not adjacent to spendable",
+        "the lift rejects it"
     );
 }
 
@@ -2098,49 +2093,6 @@ fn qr_spendable_init_rejects_a_bucket_whose_span_differs_from_the_segment() {
     };
     assert_eq!(
         inner.to_string(),
-        "QrSpendableInit: segment does not close where the bucket does"
-    );
-}
-
-/// Same-epoch evidence over the intake's extent, ending before the crossing,
-/// does not pair with the bucket.
-#[test]
-fn qr_spendable_init_rejects_a_segment_that_stops_inside_the_epoch() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(300);
-    let epoch0 = EpochIndex::new(0);
-    let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
-    pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
-    let final0 = pool.block(epoch0.last_block()).anchor();
-
-    let bucket = qr_bucket_for(
-        rng,
-        &pool,
-        (Anchor::default(), final0),
-        EPOCH_MEMBERS,
-        0,
-        Fp::from(Tachygram::from(note.commitment())),
-        Anchor::from(Fp::ZERO),
-    );
-    let nf = user.nf_at(&note, epoch0);
-    let arbitrary =
-        build_unspent_pcd_between_anchors(rng, &pool, &[nf], (Anchor::default(), final0));
-    let unspent = user.unspent_bind(rng, arbitrary, &note);
-    assert_eq!(unspent.data().4, final0);
-
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::QrSpendableInit,
-            witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members),
-            unspent,
-            bucket.pcd,
-        )
-        .err()
-        .unwrap();
-    assert_eq!(
-        invalid_witness(err),
         "QrSpendableInit: segment does not close where the bucket does"
     );
 }

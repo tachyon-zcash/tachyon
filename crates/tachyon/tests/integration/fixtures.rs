@@ -426,6 +426,21 @@ impl PoolSim {
         entries
     }
 
+    /// The epoch of the block that published `tachygram`.
+    pub fn epoch_of(&self, tachygram: Tachygram) -> EpochIndex {
+        let height = self
+            .history
+            .iter()
+            .position(|block| {
+                block
+                    .stamps
+                    .iter()
+                    .any(|stamp| stamp.1.contains(&tachygram))
+            })
+            .expect("the tachygram was published");
+        BlockHeight::from(height).epoch()
+    }
+
     /// The epoch a stamp entered at `anchor` belongs to.
     pub fn epoch_at(&self, anchor: Anchor) -> EpochIndex {
         self.anchor_index[&anchor].0.epoch()
@@ -837,134 +852,107 @@ pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32)
     profile
 }
 
-pub(crate) fn build_unspent_seed_pcd<RNG: CryptoRng>(
+/// Root an empty intake over a stampless epoch at its entry anchor.
+pub(crate) fn seed_qr_empty_intake<RNG: CryptoRng>(
     rng: &mut RNG,
-    start: Anchor,
+    anchor: Anchor,
     epoch: EpochIndex,
-    tgs: &[Tachygram],
-    nf: Nullifier,
-) -> Pcd<pool::ArbitraryUnspent> {
+    discriminant: QrDiscriminant,
+) -> QrIntakeEntry {
     let (pcd, ()) = PROOF_SYSTEM
         .seed(
             rng,
-            pool::UnspentSeed,
-            witness::unspent_seed(((), ()), start, epoch, tgs, nf),
+            qr::QrEmptyIntakeSeed,
+            witness::qr_empty_intake_seed(((), ()), anchor, epoch, discriminant),
         )
-        .expect("UnspentSeed");
-    pcd
+        .expect("QrEmptyIntakeSeed");
+    QrIntakeEntry {
+        pcd,
+        members: Vec::new(),
+    }
 }
 
-/// Block-range wrapper over [`build_unspent_pcd_between_anchors`]: spans the
-/// block-entry anchor of `range.start()` to the block anchor of `range.end()`.
-/// `nf` holds one nullifier per epoch the range spans (`nf[0]` for
-/// `range.start().epoch()`).
-pub(crate) fn build_unspent_pcd_between_blocks<RNG: CryptoRng>(
+/// The depth-zero bucket of `epoch`: every tachygram the epoch published, or
+/// nothing for a stampless epoch, sealed across the boundary into the next
+/// epoch. The epoch must be closed.
+pub(crate) fn epoch_bucket<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
-    nf: &[Nullifier],
-    range: RangeInclusive<BlockHeight>,
+    epoch: EpochIndex,
+) -> QrBucketEntry {
+    let entry = pool.block(epoch.first_block()).prev;
+    let final_anchor = pool.block(epoch.last_block()).anchor();
+    let anchor_final_prev = u32::from(epoch).checked_sub(1).map_or_else(
+        || Anchor::from(Fp::ZERO),
+        |prev| pool.block(EpochIndex::new(prev).last_block()).anchor(),
+    );
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let intake = if entry == final_anchor {
+        seed_qr_empty_intake(rng, entry, epoch, discriminant)
+    } else {
+        let mut roots = build_qr_partition(
+            rng,
+            pool,
+            (entry, final_anchor),
+            discriminant,
+            (1 << ProductionRank::RANK) - 1,
+            0,
+        );
+        assert_eq!(roots.len(), 1, "the epoch fits one polynomial");
+        roots.pop().expect("one root")
+    };
+    seal_qr_intake(rng, intake, anchor_final_prev)
+}
+
+/// The [`ArbitraryUnspent`](pool::ArbitraryUnspent) segment of one bucket,
+/// testing `nf` at the bucket's epoch.
+pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
+    rng: &mut RNG,
+    bucket: &QrBucketEntry,
+    nf: impl Fn(EpochIndex) -> Nullifier,
 ) -> Pcd<pool::ArbitraryUnspent> {
-    build_unspent_pcd_between_anchors(
-        rng,
-        pool,
-        nf,
-        (
-            pool.block(*range.start()).prev,
-            pool.block(*range.end()).anchor(),
-        ),
-    )
+    let (epoch, ..) = *bucket.pcd.data();
+    let witness = witness::qr_unspent_init(
+        (*bucket.pcd.data(), ()),
+        nf(epoch).into(),
+        nf(epoch.next().expect("an epoch follows the bucket's")),
+        &bucket.members,
+    );
+    let (segment, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            qr::QrUnspentInit,
+            witness,
+            bucket.pcd.clone(),
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("QrUnspentInit");
+    segment
 }
 
-/// The nullifier a span's `nf` holds for `epoch`, indexed from `base`, the
-/// epoch the span starts in.
-fn nf_at(nf: &[Nullifier], base: EpochIndex, epoch: EpochIndex) -> Nullifier {
-    nf[usize::try_from(u64::from(epoch - base)).expect("epoch within span")]
-}
-
-/// Build an [`ArbitraryUnspent`] for the anchor span `(start_anchor,
-/// end_anchor)`, covering every stamp that advances the anchor between them;
-/// either endpoint may sit mid-block. `nf` holds one nullifier per epoch
-/// spanned, `nf[0]` for the span's starting epoch. Seeds one leaf per stamp
-/// and fuses them as a binary tree via [`fuse_unspent_tree`].
-///
-/// Every epoch boundary the span crosses gets an
-/// [`EndEpochUnspentSeed`](pool::EndEpochUnspentSeed) leaf spanning the
-/// crossing, seeded from the leaving epoch's final anchor.
-pub(crate) fn build_unspent_pcd_between_anchors<RNG: CryptoRng>(
+/// Build an [`ArbitraryUnspent`](pool::ArbitraryUnspent) over the whole
+/// epochs from `epoch_start` up to `epoch_end`, which it lands on: one bucket
+/// segment per epoch, fused as a binary tree via [`fuse_unspent_tree`]. `nf`
+/// gives the tested nullifier at each epoch.
+pub(crate) fn build_unspent_pcd_over_epochs<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
-    nf: &[Nullifier],
-    (start_anchor, end_anchor): (Anchor, Anchor),
+    nf: impl Fn(EpochIndex) -> Nullifier,
+    (epoch_start, epoch_end): (EpochIndex, EpochIndex),
 ) -> Pcd<pool::ArbitraryUnspent> {
-    // The cursor an endpoint opens: its block, and that block's first stamp
-    // the endpoint does not already cover. Either endpoint may be a boundary
-    // anchor, which no stamp produced and which opens its epoch's first block.
-    let (start_height, start_inner) = pool.anchor_index[&start_anchor];
-    let (end_height, end_inner) = pool.anchor_index[&end_anchor];
-
-    // The span is that half-open interval of stamp slots, ordered by block and
-    // then by position within the block.
-    let span = (start_height, start_inner)..(end_height, end_inner);
-
-    // `nf` is indexed from the epoch `start_anchor` sits in.
-    let base_epoch = start_height.epoch();
-
-    // A span between two anchors is an interval of stamps. Cut that interval by
-    // epoch. Each epoch after the first segment begins with a crossing out of
-    // the one before it.
-    let leaves: Vec<Pcd<pool::ArbitraryUnspent>> = (u32::from(base_epoch)
-        ..=u32::from(end_height.epoch()))
-        .map(EpochIndex::new)
-        .map(|epoch| {
-            let crossing = (epoch != base_epoch).then(|| {
-                let leaving = EpochIndex::new(u32::from(epoch) - 1);
-                (leaving, pool.block(leaving.last_block()).anchor())
-            });
-            let stamps: Vec<_> = (start_height.0.max(epoch.first_block().0)
-                ..=end_height.0.min(epoch.last_block().0))
-                .map(BlockHeight)
-                .flat_map(|height| {
-                    pool.block(height)
-                        .stamps
-                        .iter()
-                        .enumerate()
-                        .map(move |(position, stamp)| ((height, position), stamp))
-                })
-                .filter(|&(slot, _)| span.contains(&slot))
-                .map(|(_, stamp)| (stamp.0, stamp.1.as_slice()))
-                .collect();
-            (epoch, crossing, stamps)
-        })
-        .flat_map(|(epoch, crossing, stamps)| {
-            let epoch_nf = nf_at(nf, base_epoch, epoch);
-            let crossing_leaf = crossing.map(|(leaving, final_anchor)| {
-                let witness = witness::end_epoch_unspent_seed(
-                    ((), ()),
-                    final_anchor,
-                    leaving,
-                    nf_at(nf, base_epoch, leaving),
-                    epoch_nf,
-                );
-                PROOF_SYSTEM
-                    .seed(rng, pool::EndEpochUnspentSeed, witness)
-                    .expect("EndEpochUnspentSeed")
-                    .0
-            });
-            let seeded: Vec<_> = stamps
-                .into_iter()
-                .map(|(entry, tgs)| {
-                    let witness = witness::unspent_seed(((), ()), entry, epoch, tgs, epoch_nf);
-                    PROOF_SYSTEM
-                        .seed(rng, pool::UnspentSeed, witness)
-                        .expect("UnspentSeed")
-                        .0
-                })
-                .collect();
-            crossing_leaf.into_iter().chain(seeded)
-        })
+    assert!(
+        u32::from(epoch_start) < u32::from(epoch_end),
+        "a segment covers at least one epoch"
+    );
+    let mut segments = Vec::new();
+    for epoch in (u32::from(epoch_start)..u32::from(epoch_end)).map(EpochIndex::new) {
+        let bucket = epoch_bucket(rng, pool, epoch);
+        segments.push(qr_bucket_segment(rng, &bucket, &nf));
+    }
+    let members: Vec<Nullifier> = (u32::from(epoch_start)..=u32::from(epoch_end))
+        .map(|epoch| nf(EpochIndex::new(epoch)))
         .collect();
-
-    fuse_unspent_tree(rng, nf, base_epoch, leaves)
+    fuse_unspent_tree(rng, &members, epoch_start, segments)
 }
 
 /// Fuse contiguous [`ArbitraryUnspent`] chains as a binary tree: split at the
@@ -1293,11 +1281,8 @@ impl WalletSim {
         lifted
     }
 
-    /// Advance `spendable` from wherever it rests to `target`, over a segment
-    /// this builds: from its current anchor to `target`'s first block, so the
-    /// span carries every crossing on the way plus a tested nullifier in
-    /// `target`. The starting epoch comes off the header, so the caller needs
-    /// no height.
+    /// Advance `spendable` from the entry anchor it rests on to `target`'s,
+    /// over the whole epochs between. The starting epoch comes off the header.
     pub fn lift_to_epoch<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -1306,17 +1291,45 @@ impl WalletSim {
         spendable: Pcd<spendable::NoteSpendable>,
         target: EpochIndex,
     ) -> Pcd<spendable::NoteSpendable> {
-        let (_, epoch, start_anchor) = *spendable.data();
-        let elapsed: Vec<Nullifier> = (u32::from(epoch)..=u32::from(target))
-            .map(|index| self.nf_at(note, EpochIndex::new(index)))
-            .collect();
-        let unspent = build_unspent_pcd_between_anchors(
+        let (_, epoch, _) = *spendable.data();
+        if epoch == target {
+            return spendable;
+        }
+        let unspent = build_unspent_pcd_over_epochs(
             rng,
             pool,
-            &elapsed,
-            (start_anchor, pool.block(target.first_block()).anchor()),
+            |covered| self.nf_at(note, covered),
+            (epoch, target),
         );
         self.lift(rng, spendable, unspent, note)
+    }
+
+    /// A spendable resting on `target`'s entry anchor: bootstrapped from the
+    /// creation epoch's bucket by [`spendable::QrSpendableInit`], then lifted
+    /// over the whole epochs between.
+    pub fn spendable_at<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        pool: &PoolSim,
+        note: &Note,
+        target: EpochIndex,
+    ) -> Pcd<spendable::NoteSpendable> {
+        let creation = pool.epoch_of(Tachygram::from(note.commitment()));
+        let bucket = epoch_bucket(rng, pool, creation);
+        let arbitrary = qr_bucket_segment(rng, &bucket, |epoch| self.nf_at(note, epoch));
+        let unspent = self.unspent_bind(rng, arbitrary, note);
+        let witness =
+            witness::qr_spendable_init((*unspent.data(), *bucket.pcd.data()), &bucket.members);
+        let (spendable, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                spendable::QrSpendableInit,
+                witness,
+                unspent,
+                bucket.pcd,
+            )
+            .expect("QrSpendableInit");
+        self.lift_to_epoch(rng, pool, note, spendable, target)
     }
 
     pub fn autonome<RNG: CryptoRng>(
@@ -1374,12 +1387,13 @@ pub struct SyncSim {
     entries: Vec<SyncEntry>,
 }
 
+/// A delegation: one nullifier per epoch from `epoch_start`, and the epoch the
+/// next segment opens on.
 struct SyncEntry {
     handle: usize,
     nfs: Vec<Nullifier>,
-    consumed: u32,
-    next_height: BlockHeight,
-    cursor_anchor: Anchor,
+    epoch_start: EpochIndex,
+    epoch_cursor: EpochIndex,
 }
 
 impl SyncSim {
@@ -1390,19 +1404,19 @@ impl SyncSim {
         }
     }
 
+    /// Accept `nfs`, one nullifier per epoch from `epoch_start`, the epoch a
+    /// spendable rests in.
     pub fn accept_delegation(
         &mut self,
         handle: usize,
         nfs: Vec<Nullifier>,
-        cm_height: BlockHeight,
-        start_anchor: Anchor,
+        epoch_start: EpochIndex,
     ) {
         let entry = SyncEntry {
             handle,
             nfs,
-            consumed: 0,
-            next_height: cm_height,
-            cursor_anchor: start_anchor,
+            epoch_start,
+            epoch_cursor: epoch_start,
         };
         if let Some(slot) = self
             .entries
@@ -1415,16 +1429,20 @@ impl SyncSim {
         }
     }
 
+    /// The epochs the delegation has covered so far.
     pub fn consumed(&self, handle: usize) -> u32 {
-        self.entry(handle).consumed
+        let entry = self.entry(handle);
+        u32::from(entry.epoch_cursor) - u32::from(entry.epoch_start)
     }
 
+    /// The next segment, over the whole epochs from the cursor up to
+    /// `epoch_end`, which it lands on.
     pub fn build_next_unspent<RNG: CryptoRng>(
         &mut self,
         rng: &mut RNG,
         handle: usize,
         pool: &PoolSim,
-        target_height: BlockHeight,
+        epoch_end: EpochIndex,
     ) -> Pcd<pool::ArbitraryUnspent> {
         let idx = self
             .entries
@@ -1432,22 +1450,12 @@ impl SyncSim {
             .position(|entry| entry.handle == handle)
             .expect("no delegation for handle");
         let entry = &self.entries[idx];
-        assert!(
-            target_height >= entry.next_height,
-            "target_height must be at least the next uncovered height"
-        );
-        let nfs_from = usize::try_from(entry.consumed).expect("fits usize");
-        let unspent = build_unspent_pcd_between_anchors(
-            rng,
-            pool,
-            &entry.nfs[nfs_from..],
-            (entry.cursor_anchor, pool.block(target_height).anchor()),
-        );
-        let new_consumed =
-            entry.consumed + u32::from(target_height.epoch() - entry.next_height.epoch());
-        self.entries[idx].consumed = new_consumed;
-        self.entries[idx].next_height = BlockHeight(target_height.0 + 1);
-        self.entries[idx].cursor_anchor = pool.block(target_height).anchor();
+        let nf = |epoch: EpochIndex| {
+            entry.nfs[usize::try_from(u32::from(epoch) - u32::from(entry.epoch_start))
+                .expect("fits usize")]
+        };
+        let unspent = build_unspent_pcd_over_epochs(rng, pool, nf, (entry.epoch_cursor, epoch_end));
+        self.entries[idx].epoch_cursor = epoch_end;
         unspent
     }
 

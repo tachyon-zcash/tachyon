@@ -596,9 +596,7 @@ fn duplicated_spend_cannot_inflate() {
     while pool.height() < BlockHeight(EPOCH_SIZE) {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
-    let init = wallet.spendable_init(rng, &note, &pool, cm_height);
-    let spendable =
-        wallet.lift_to_epoch(rng, &pool, &note, init, cm_height.epoch().next().unwrap());
+    let spendable = wallet.spendable_at(rng, &pool, &note, cm_height.epoch().next().unwrap());
     let anchor = spendable.data().2;
     let spend_epoch = cm_height.epoch().next().unwrap();
 
@@ -844,22 +842,8 @@ fn innocent_aggregate_from_two_autonomes() {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
 
-    let init_a = wallet.spendable_init(rng, &spend_a, &pool, cm_height);
-    let sp_a = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &spend_a,
-        init_a,
-        cm_height.epoch().next().unwrap(),
-    );
-    let init_b = wallet.spendable_init(rng, &spend_b, &pool, cm_height);
-    let sp_b = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &spend_b,
-        init_b,
-        cm_height.epoch().next().unwrap(),
-    );
+    let sp_a = wallet.spendable_at(rng, &pool, &spend_a, cm_height.epoch().next().unwrap());
+    let sp_b = wallet.spendable_at(rng, &pool, &spend_b, cm_height.epoch().next().unwrap());
     let anchor_a = sp_a.data().2;
     let anchor_b = sp_b.data().2;
     assert_eq!(anchor_a, anchor_b, "lifts land on a common anchor");
@@ -955,35 +939,14 @@ fn based_aggregate_with_two_adjuncts() {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
 
-    let based_init = wallet.spendable_init(rng, &based_spend, &pool, cm_height);
-    let based_sp = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &based_spend,
-        based_init,
-        cm_height.epoch().next().unwrap(),
-    );
-    let a_init = wallet.spendable_init(rng, &a_spend, &pool, cm_height);
-    let a_sp = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &a_spend,
-        a_init,
-        cm_height.epoch().next().unwrap(),
-    );
-    let b_init = wallet.spendable_init(rng, &b_spend, &pool, cm_height);
-    let b_sp = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &b_spend,
-        b_init,
-        cm_height.epoch().next().unwrap(),
-    );
+    let spend_epoch = cm_height.epoch().next().unwrap();
+    let based_sp = wallet.spendable_at(rng, &pool, &based_spend, spend_epoch);
+    let a_sp = wallet.spendable_at(rng, &pool, &a_spend, spend_epoch);
+    let b_sp = wallet.spendable_at(rng, &pool, &b_spend, spend_epoch);
     let anchor = based_sp.data().2;
     assert_eq!(anchor, a_sp.data().2, "lifts land on a common anchor");
     assert_eq!(anchor, b_sp.data().2, "lifts land on a common anchor");
 
-    let spend_epoch = cm_height.epoch().next().unwrap();
     let mut becomes_based = wallet.autonome(
         rng,
         anchor,
@@ -1604,33 +1567,12 @@ fn coverage_check_matches_stamp_actions() {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
 
-    let based_init = wallet.spendable_init(rng, &based_spend, &pool, cm_height);
-    let based_sp = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &based_spend,
-        based_init,
-        cm_height.epoch().next().unwrap(),
-    );
-    let a_init = wallet.spendable_init(rng, &a_spend, &pool, cm_height);
-    let a_sp = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &a_spend,
-        a_init,
-        cm_height.epoch().next().unwrap(),
-    );
-    let b_init = wallet.spendable_init(rng, &b_spend, &pool, cm_height);
-    let b_sp = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &b_spend,
-        b_init,
-        cm_height.epoch().next().unwrap(),
-    );
+    let spend_epoch = cm_height.epoch().next().unwrap();
+    let based_sp = wallet.spendable_at(rng, &pool, &based_spend, spend_epoch);
+    let a_sp = wallet.spendable_at(rng, &pool, &a_spend, spend_epoch);
+    let b_sp = wallet.spendable_at(rng, &pool, &b_spend, spend_epoch);
     let anchor = based_sp.data().2;
 
-    let spend_epoch = cm_height.epoch().next().unwrap();
     let mut becomes_based = wallet.autonome(
         rng,
         anchor,
@@ -2243,26 +2185,12 @@ fn bundle_lift_over_an_aggregate() {
         50,
     ));
     let cm_height = pool.height();
-    while pool.height() < BlockHeight(EPOCH_SIZE) {
+    while pool.height() < BlockHeight(EPOCH_SIZE - 1) {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
 
-    let init_a = wallet.spendable_init(rng, &spend_a, &pool, cm_height);
-    let sp_a = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &spend_a,
-        init_a,
-        cm_height.epoch().next().unwrap(),
-    );
-    let init_b = wallet.spendable_init(rng, &spend_b, &pool, cm_height);
-    let sp_b = wallet.lift_to_epoch(
-        rng,
-        &pool,
-        &spend_b,
-        init_b,
-        cm_height.epoch().next().unwrap(),
-    );
+    let sp_a = wallet.spendable_at(rng, &pool, &spend_a, cm_height.epoch().next().unwrap());
+    let sp_b = wallet.spendable_at(rng, &pool, &spend_b, cm_height.epoch().next().unwrap());
     let anchor = sp_a.data().2;
 
     let spend_epoch = cm_height.epoch().next().unwrap();
@@ -2304,8 +2232,8 @@ fn bundle_lift_over_an_aggregate() {
     let adjunct_b = autonome_b.strip(mock_wtxid(&innocent));
     let adjuncts = [adjunct_a.as_dyn(), adjunct_b.as_dyn()];
 
-    // The aggregate's anchor is the epoch's final one, so the segment it
-    // lifts over must start in the next epoch's first block.
+    // The aggregate's anchor is epoch 1's entry anchor, and epoch 1's first
+    // block publishes nothing, so the stamps it lifts over are `next`'s.
     pool.advance(1, |_| alloc::vec![]);
     let next = build_autonome(rng, &wallet, 400, 300);
     pool.mine_bundles(&[&next]);

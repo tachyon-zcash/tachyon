@@ -26,14 +26,67 @@ use zcash_tachyon::{
 
 use crate::fixtures::{
     PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_plan, build_output_stamp,
-    build_summary_pcd, build_unspent_pcd_between_anchors, build_unspent_pcd_between_blocks,
-    build_unspent_seed_pcd, cube_root_twin, indexed_factor, pinned_point, random_block,
-    random_block_with, shared_sk, spend_witness, unpinned_challenge,
+    build_unspent_pcd_over_epochs, cube_root_twin, indexed_factor, pinned_point, qr_bucket_segment,
+    random_block, random_block_with, seal_qr_intake, seed_qr_empty_intake, shared_sk,
+    spend_witness, unpinned_challenge,
 };
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
     pool.mine(random_block_with(rng, &[alloc::vec![cm]], 4));
     pool.height()
+}
+
+/// Mine blocks of two stamps each until `height` exists.
+fn mine_through(rng: &mut StdRng, pool: &mut PoolSim, height: BlockHeight) {
+    while pool.height() < height {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
+}
+
+/// A pool whose epoch zero publishes `note` and then closes, with the entry
+/// block of epoch one mined.
+fn pool_closing_epoch_zero(rng: &mut StdRng, note: &Note) -> PoolSim {
+    let mut pool = PoolSim::genesis(rng);
+    mine_cm_block(rng, &mut pool, note.commitment());
+    mine_through(rng, &mut pool, EpochIndex::new(1).first_block());
+    pool
+}
+
+/// The note's segment over the whole of epoch zero, with the members its
+/// `elapsed` holds.
+fn epoch_zero_unspent(
+    rng: &mut StdRng,
+    pool: &PoolSim,
+    user: &WalletSim,
+    note: &Note,
+) -> (Pcd<pool::ArbitraryUnspent>, Vec<Nullifier>) {
+    let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
+    let unspent =
+        build_unspent_pcd_over_epochs(rng, pool, |epoch| user.nf_at(note, epoch), (epoch0, epoch1));
+    (
+        unspent,
+        vec![user.nf_at(note, epoch0), user.nf_at(note, epoch1)],
+    )
+}
+
+/// The segment of an empty bucket for `epoch`, sealed on a random predecessor
+/// no pool published: an [`ArbitraryUnspent`](pool::ArbitraryUnspent) at an
+/// arbitrary epoch without building the epochs before it.
+fn detached_segment(
+    rng: &mut StdRng,
+    epoch: EpochIndex,
+    nf: impl Fn(EpochIndex) -> Nullifier,
+) -> Pcd<pool::ArbitraryUnspent> {
+    let anchor_final_prev = Anchor::from(Fp::random(&mut *rng));
+    let discriminant = zcash_tachyon::QrDiscriminant::from(Fp::random(&mut *rng));
+    let intake = seed_qr_empty_intake(
+        rng,
+        anchor_final_prev.next_epoch(epoch).unwrap(),
+        epoch,
+        discriminant,
+    );
+    let bucket = seal_qr_intake(rng, intake, anchor_final_prev);
+    qr_bucket_segment(rng, &bucket, nf)
 }
 
 fn mine_cm_in_epoch_one<RNG: CryptoRng>(
@@ -183,95 +236,33 @@ fn spendable_init_rejects_tg_absent() {
 }
 
 #[test]
-fn unspent_seed_rejects_tg_present() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let note = user.random_note(500);
-    let mk = user.pak.nk.derive_note_private(note.psi);
-    let nf = mk.derive_nullifier(EpochIndex::new(0));
-
-    let start = Anchor::default();
-
-    let err = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::UnspentSeed,
-            witness::unspent_seed(((), ()), start, EpochIndex::new(0), &[nf.into()], nf),
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(inner.to_string(), "UnspentSeed: found nullifier in set");
-}
-
-/// A stamp publishing the nullifier cannot be excluded under a cube-root twin
-/// that shares the genuine member's factor at the challenge the sequence alone
-/// would give, because the challenge absorbs the tested nullifier.
-#[test]
-fn unspent_seed_rejects_a_twin_of_a_published_nullifier() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch = EpochIndex::new(0);
-    let nf = Nullifier::from(Fp::random(&mut *rng));
-    let (anchor_prev, _, stamp_tg_set, elapsed_seq) =
-        witness::unspent_seed(((), ()), Anchor::default(), epoch, &[nf.into()], nf);
-
-    let z = unpinned_challenge(&[elapsed_seq.commit().into()]);
-    let twin = cube_root_twin(epoch, nf.into(), z);
-    assert_ne!(twin, Fp::from(nf));
-    assert_eq!(
-        indexed_factor(epoch, twin, z),
-        indexed_factor(epoch, nf.into(), z),
-        "the twin passes an unpinned identity"
-    );
-
-    let err = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::UnspentSeed,
-            (
-                anchor_prev,
-                (epoch, Nullifier::from(twin)),
-                stamp_tg_set,
-                elapsed_seq,
-            ),
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "UnspentSeed: elapsed does not match the tested pair"
-    );
-}
-
-#[test]
 fn unspent_fuse_rejects_invalid_compositions() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let stamps_left = vec![Tachygram::from(Fp::random(&mut *rng))];
-    let stamps_right = vec![Tachygram::from(Fp::random(&mut *rng))];
-    let start = Anchor::default();
-    let mid = start
-        .next_stamp(
-            EpochIndex::new(0),
-            &TachygramSetPoly::from_iter(stamps_left.clone()).commit(),
-        )
-        .unwrap();
+    let mut pool = PoolSim::genesis(rng);
+    mine_through(rng, &mut pool, EpochIndex::new(2).last_block());
+    let nf: [Nullifier; 4] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
+    let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
 
-    // nf mismatch: contiguous states but different nfs.
+    // nf mismatch: adjacent segments testing different junction nullifiers.
     {
-        let nf_a = Nullifier::from(Fp::random(&mut *rng));
-        let nf_b = Nullifier::from(Fp::random(&mut *rng));
-        let shard_a =
-            build_unspent_seed_pcd(rng, start, EpochIndex::new(0), &stamps_left.clone(), nf_a);
-        let shard_b =
-            build_unspent_seed_pcd(rng, mid, EpochIndex::new(0), &stamps_right.clone(), nf_b);
-        let w = witness::unspent_fuse((*shard_a.data(), *shard_b.data()), &[nf_a], &[nf_b]);
+        let forged = Nullifier::from(Fp::random(&mut *rng));
+        let left = build_unspent_pcd_over_epochs(
+            rng,
+            &pool,
+            |epoch| {
+                if epoch == EpochIndex::new(1) {
+                    forged
+                } else {
+                    at(epoch)
+                }
+            },
+            (EpochIndex::new(0), EpochIndex::new(1)),
+        );
+        let right =
+            build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(1), EpochIndex::new(2)));
+        let w = witness::unspent_fuse((*left.data(), *right.data()), &[nf[0], forged], &nf[1..3]);
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, w, shard_a, shard_b)
+            .fuse(rng, pool::UnspentFuse, w, left, right)
             .err()
             .unwrap();
         let ragu_core::Error::InvalidWitness(inner) = err else {
@@ -283,15 +274,15 @@ fn unspent_fuse_rejects_invalid_compositions() {
         );
     }
 
-    // state discontinuity: same nf, but right's start matches `start`
-    // instead of `left.end`.
+    // anchor discontinuity: the right segment skips epoch one.
     {
-        let nf = Nullifier::from(Fp::random(&mut *rng));
-        let shard_a = build_unspent_seed_pcd(rng, start, EpochIndex::new(0), &stamps_left, nf);
-        let shard_b = build_unspent_seed_pcd(rng, start, EpochIndex::new(0), &stamps_right, nf);
-        let w = witness::unspent_fuse((*shard_a.data(), *shard_b.data()), &[nf], &[nf]);
+        let left =
+            build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(0), EpochIndex::new(1)));
+        let right =
+            build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(2), EpochIndex::new(3)));
+        let w = witness::unspent_fuse((*left.data(), *right.data()), &nf[0..2], &nf[2..4]);
         let err = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, w, shard_a, shard_b)
+            .fuse(rng, pool::UnspentFuse, w, left, right)
             .err()
             .unwrap();
         let ragu_core::Error::InvalidWitness(inner) = err else {
@@ -559,45 +550,38 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let cm_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let target_height = BlockHeight(EPOCH_SIZE);
-    while pool.height() < target_height {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
+    mine_cm_block(rng, &mut pool, note.commitment());
+    let epoch1 = EpochIndex::new(1);
+    let epoch2 = EpochIndex::new(2);
+    mine_through(rng, &mut pool, epoch2.first_block());
 
-    let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let start_anchor = spendable.data().2;
-
+    let spendable = user.spendable_at(rng, &pool, &note, epoch1);
     let mut sync = SyncSim::new();
     sync.accept_delegation(
         0,
-        alloc::vec![
-            user.nf_at(&note, EpochIndex::new(0)),
-            user.nf_at(&note, EpochIndex::new(1))
-        ],
-        cm_height,
-        start_anchor,
+        alloc::vec![user.nf_at(&note, epoch1), user.nf_at(&note, epoch2)],
+        epoch1,
     );
-    let unspent = sync.build_next_unspent(rng, 0, &pool, target_height);
+    let unspent = sync.build_next_unspent(rng, 0, &pool, epoch2);
     let lifted = user.lift(rng, spendable, unspent, &note);
 
-    let bind_pcd = honest_spend_bind(rng, &user, &note, lifted, EpochIndex::new(1));
+    let bind_pcd = honest_spend_bind(rng, &user, &note, lifted, epoch2);
     let (_cm, nf_current, _nf_next, _anchor) = *bind_pcd.data();
     assert_eq!(
         nf_current,
-        user.nf_at(&note, EpochIndex::new(1)),
-        "publishes the epoch-1 nf"
+        user.nf_at(&note, epoch2),
+        "publishes the epoch-2 nf"
     );
     assert_ne!(
         nf_current,
-        user.nf_at(&note, EpochIndex::new(0)),
-        "nf_0 was consumed by the lift"
+        user.nf_at(&note, epoch1),
+        "nf_1 was consumed by the lift"
     );
 
     let stamp = honest_spend_stamp(rng, &user, &note, bind_pcd);
     let expected = TachygramSetPoly::from_iter([
-        user.nf_at(&note, EpochIndex::new(1)).into(),
-        user.nf_at(&note, EpochIndex::new(2)).into(),
+        user.nf_at(&note, epoch2).into(),
+        user.nf_at(&note, EpochIndex::new(3)).into(),
     ])
     .commit();
     assert_eq!(stamp.data().1, expected);
@@ -631,79 +615,46 @@ fn sync_sim_builds_unspent_for_wallet_lift_across_epochs() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
+    mine_cm_block(rng, &mut pool, note.commitment());
+    let epoch1 = EpochIndex::new(1);
+    let epoch2 = EpochIndex::new(2);
+    mine_through(rng, &mut pool, epoch2.first_block());
 
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().2;
-
+    let spendable = user.spendable_at(rng, &pool, &note, epoch1);
     let mut sync = SyncSim::new();
     sync.accept_delegation(
         0,
-        alloc::vec![
-            user.nf_at(&note, EpochIndex::new(0)),
-            user.nf_at(&note, EpochIndex::new(1))
-        ],
-        init_height,
-        start_anchor,
+        alloc::vec![user.nf_at(&note, epoch1), user.nf_at(&note, epoch2)],
+        epoch1,
     );
 
-    let target_height = BlockHeight(EPOCH_SIZE);
-    while pool.height() < target_height {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-
-    let unspent = sync.build_next_unspent(rng, 0, &pool, target_height);
+    let unspent = sync.build_next_unspent(rng, 0, &pool, epoch2);
     assert_eq!(sync.consumed(0), 1);
 
     let lifted = user.lift(rng, spendable, unspent, &note);
 
-    assert_eq!(
-        lifted.data().1,
-        EpochIndex::new(1),
-        "lineage advanced to epoch 1"
-    );
+    assert_eq!(lifted.data().1, epoch2, "lineage advanced to epoch 2");
     assert_eq!(
         lifted.data().2,
-        pool.block(target_height).anchor(),
-        "anchor advanced"
+        pool.block(epoch2.first_block()).prev,
+        "anchor advanced to epoch 2's entry anchor"
     );
     assert_eq!(lifted.data().0, note.commitment(), "cm threaded unchanged");
 }
 
 #[test]
-fn unspent_lift_spans_partial_and_whole_epochs() {
+fn unspent_lift_spans_several_whole_epochs() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    // cm in a multi-stamp block mid-epoch 0: the spendable anchor sits mid-block,
-    // so the lineage's first epoch is partial (the post-cm prefix).
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    assert_eq!(init_height.epoch(), EpochIndex::new(0), "cm in epoch 0");
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().2;
+    mine_cm_block(rng, &mut pool, note.commitment());
+    let epoch1 = EpochIndex::new(1);
+    let epoch4 = EpochIndex::new(4);
 
-    let mut sync = SyncSim::new();
-    sync.accept_delegation(
-        0,
-        alloc::vec![
-            user.nf_at(&note, EpochIndex::new(0)),
-            user.nf_at(&note, EpochIndex::new(1)),
-            user.nf_at(&note, EpochIndex::new(2)),
-            user.nf_at(&note, EpochIndex::new(3)),
-        ],
-        init_height,
-        start_anchor,
-    );
-
-    // Advance to a mid-epoch-3 block (neither first nor last) so the last epoch is
-    // also partial; epochs 1 and 2 are covered whole. The block-granular tree
-    // therefore mixes stamp leaves (incl. multi-epoch right at upper
-    // merges) with boundary crossing leaves. One interior empty block sits in
-    // the walk, contributing no leaf.
+    // One interior empty block sits in epoch 1 and contributes nothing.
     let empty_height = BlockHeight(EPOCH_SIZE + 4);
-    let target_height = BlockHeight(3 * EPOCH_SIZE + 7);
-    while pool.height() < target_height {
+    while pool.height() < epoch4.first_block() {
         if pool.height().0 + 1 == empty_height.0 {
             pool.advance(1, |_| Vec::new());
         } else {
@@ -711,89 +662,59 @@ fn unspent_lift_spans_partial_and_whole_epochs() {
         }
     }
 
-    let unspent = sync.build_next_unspent(rng, 0, &pool, target_height);
-    assert_eq!(
-        sync.consumed(0),
-        3,
-        "three epoch crossings (0 -> 1 -> 2 -> 3)"
+    let spendable = user.spendable_at(rng, &pool, &note, epoch1);
+    let mut sync = SyncSim::new();
+    sync.accept_delegation(
+        0,
+        (1..=4)
+            .map(|epoch| user.nf_at(&note, EpochIndex::new(epoch)))
+            .collect(),
+        epoch1,
     );
 
+    let unspent = sync.build_next_unspent(rng, 0, &pool, epoch4);
+    assert_eq!(sync.consumed(0), 3, "epochs 1, 2 and 3");
+
     let lifted = user.lift(rng, spendable, unspent, &note);
-    assert_eq!(
-        lifted.data().1,
-        EpochIndex::new(3),
-        "lineage advanced to epoch 3 across partial first/last and whole interior epochs"
-    );
+    assert_eq!(lifted.data().1, epoch4, "lineage advanced to epoch 4");
     assert_eq!(
         lifted.data().2,
-        pool.block(target_height).anchor(),
-        "anchor advanced to the mid-epoch-3 target"
+        pool.block(epoch4.first_block()).prev,
+        "anchor advanced to epoch 4's entry anchor"
     );
     assert_eq!(lifted.data().0, note.commitment(), "cm threaded unchanged");
 }
 
-/// Two [`pool::ArbitraryUnspent`] halves meeting at a sub-block, mid-epoch
-/// junction. Every anchor involved is off-boundary: the range runs from inside
-/// a block of epoch 0, through a junction inside a block of epoch 2, to inside
-/// a block of epoch 3 (every `random_block(rng, 1, 2)` block carries two
-/// stamps, so its first stamp's anchor is sub-block). The left half carries
-/// two crossings (the fuse runs at offset 2), the right half one.
+/// Two [`pool::ArbitraryUnspent`] halves meeting at epoch 2's entry anchor:
+/// the left over epochs 0 and 1, the right over epochs 2 and 3.
 fn multi_epoch_fuse_setup(
     rng: &mut StdRng,
 ) -> (
-    Nullifier,
-    Nullifier,
-    Nullifier,
-    Nullifier,
+    [Nullifier; 5],
     Pcd<pool::ArbitraryUnspent>,
     Pcd<pool::ArbitraryUnspent>,
 ) {
     let mut pool = PoolSim::genesis(rng);
-    pool.advance(3 * EPOCH_SIZE + 3, |_| random_block(rng, 1, 2));
-    let nf0 = Nullifier::from(Fp::random(&mut *rng));
-    let nf1 = Nullifier::from(Fp::random(&mut *rng));
-    let nf2 = Nullifier::from(Fp::random(&mut *rng));
-    let nf3 = Nullifier::from(Fp::random(&mut *rng));
-    let start_height = BlockHeight(2);
-    let junction_height = BlockHeight(2 * EPOCH_SIZE + 2);
-    let end_height = BlockHeight(3 * EPOCH_SIZE + 2);
-    let start = pool
-        .block(start_height)
-        .prev
-        .next_stamp(
-            start_height.epoch(),
-            &pool.block(start_height).stamp_commits()[0],
-        )
-        .unwrap();
-    let junction = pool
-        .block(junction_height)
-        .prev
-        .next_stamp(
-            junction_height.epoch(),
-            &pool.block(junction_height).stamp_commits()[0],
-        )
-        .unwrap();
-    let end = pool
-        .block(end_height)
-        .prev
-        .next_stamp(
-            end_height.epoch(),
-            &pool.block(end_height).stamp_commits()[0],
-        )
-        .unwrap();
-    let left = build_unspent_pcd_between_anchors(rng, &pool, &[nf0, nf1, nf2], (start, junction));
-    let right = build_unspent_pcd_between_anchors(rng, &pool, &[nf2, nf3], (junction, end));
-    assert_eq!(left.data().0, start, "left rooted at the sub-block start");
-    assert_eq!(left.data().4, junction, "left ends at the junction");
-    assert_eq!(right.data().0, junction, "right rooted at the junction");
-    assert_eq!(right.data().4, end, "right ends at the sub-block end");
-    (nf0, nf1, nf2, nf3, left, right)
+    mine_through(rng, &mut pool, EpochIndex::new(3).last_block());
+    let nf: [Nullifier; 5] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
+    let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
+    let left =
+        build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(0), EpochIndex::new(2)));
+    let right =
+        build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(2), EpochIndex::new(4)));
+    assert_eq!(left.data().0, Anchor::default(), "left opens on genesis");
+    assert_eq!(
+        left.data().4,
+        right.data().0,
+        "the halves meet at epoch 2's entry anchor"
+    );
+    (nf, left, right)
 }
 
 #[test]
 fn unspent_fuse_composes() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (nf0, nf1, nf2, nf3, left, right) = multi_epoch_fuse_setup(rng);
+    let ([nf0, nf1, nf2, nf3, nf4], left, right) = multi_epoch_fuse_setup(rng);
     let start = left.data().0;
     let end = right.data().4;
 
@@ -801,11 +722,15 @@ fn unspent_fuse_composes() {
         .fuse(
             rng,
             pool::UnspentFuse,
-            witness::unspent_fuse((*left.data(), *right.data()), &[nf0, nf1, nf2], &[nf2, nf3]),
+            witness::unspent_fuse(
+                (*left.data(), *right.data()),
+                &[nf0, nf1, nf2],
+                &[nf2, nf3, nf4],
+            ),
             left,
             right,
         )
-        .expect("UnspentFuse mid-epoch with multi-epoch halves");
+        .expect("UnspentFuse at an entry anchor");
 
     let (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), anchor_end) =
         *fused.data();
@@ -813,34 +738,27 @@ fn unspent_fuse_composes() {
     assert_eq!(anchor_end, end);
     assert_eq!(
         elapsed,
-        NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]).commit(),
+        NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3, nf4]).commit(),
         "the junction member appears once in the combined sequence"
     );
     assert_eq!(nf_start, nf0);
-    assert_eq!(
-        nf_end, nf3,
-        "lineage advances to the right half's current nf"
-    );
+    assert_eq!(nf_end, nf4, "lineage advances to the right half's last nf");
     assert_eq!(u32::from(epoch_start), 0);
-    assert_eq!(
-        u32::from(epoch_end),
-        3,
-        "merged range spans the boundary the right half crossed"
-    );
+    assert_eq!(u32::from(epoch_end), 4);
 }
 
 #[test]
 fn unspent_fuse_rejects_wrong_left_seq() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (nf0, nf1, nf2, nf3, left, right) = multi_epoch_fuse_setup(rng);
+    let ([nf0, nf1, nf2, nf3, nf4], left, right) = multi_epoch_fuse_setup(rng);
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             pool::UnspentFuse,
             (
                 NfSeqPoly::new(EpochIndex::new(0), &[nf1, nf0, nf2]),
-                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3, nf4]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3, nf4]),
             ),
             left,
             right,
@@ -859,15 +777,15 @@ fn unspent_fuse_rejects_wrong_left_seq() {
 #[test]
 fn unspent_fuse_rejects_wrong_right_seq() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (nf0, nf1, nf2, nf3, left, right) = multi_epoch_fuse_setup(rng);
+    let ([nf0, nf1, nf2, nf3, nf4], left, right) = multi_epoch_fuse_setup(rng);
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             pool::UnspentFuse,
             (
                 NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2]),
-                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf3, nf2]),
+                NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3, nf4]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf3, nf2, nf4]),
             ),
             left,
             right,
@@ -886,18 +804,16 @@ fn unspent_fuse_rejects_wrong_right_seq() {
 #[test]
 fn unspent_fuse_rejects_wrong_combined() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let (nf0, nf1, nf2, nf3, left, right) = multi_epoch_fuse_setup(rng);
-    // Both halves honest; `combined` forged as the right half alone. The
-    // right half carries two members, so the dedup identity is
-    // non-degenerate and the forgery must fail here.
+    let ([nf0, nf1, nf2, nf3, nf4], left, right) = multi_epoch_fuse_setup(rng);
+    // Both halves honest; `combined` forged as the right half alone.
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             pool::UnspentFuse,
             (
                 NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2]),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
-                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3, nf4]),
+                NfSeqPoly::new(EpochIndex::new(2), &[nf2, nf3, nf4]),
             ),
             left,
             right,
@@ -913,556 +829,44 @@ fn unspent_fuse_rejects_wrong_combined() {
     );
 }
 
-/// A same-epoch fuse with a one-member right half adds stamps, not members:
-/// the dedup identity degenerates to `combined = left`, and that combined
-/// sequence is the honest one. Contrast
-/// [`unspent_fuse_rejects_wrong_combined`], where a multi-member right half
-/// makes the same shape a forgery.
+/// A stampless epoch lifts through its empty bucket, and the span still
+/// records its nullifier.
 #[test]
-fn unspent_fuse_accepts_left_as_combined_for_one_member_right() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let stamps_left = vec![Tachygram::from(Fp::random(&mut *rng))];
-    let stamps_right = vec![Tachygram::from(Fp::random(&mut *rng))];
-    let start = Anchor::default();
-    let mid = start
-        .next_stamp(
-            EpochIndex::new(0),
-            &TachygramSetPoly::from_iter(stamps_left.clone()).commit(),
-        )
-        .unwrap();
-    let nf = Nullifier::from(Fp::random(&mut *rng));
-    let left = build_unspent_seed_pcd(rng, start, EpochIndex::new(0), &stamps_left, nf);
-    let right = build_unspent_seed_pcd(rng, mid, EpochIndex::new(0), &stamps_right, nf);
-
-    let (fused, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            witness::unspent_fuse((*left.data(), *right.data()), &[nf], &[nf]),
-            left,
-            right,
-        )
-        .expect("one-member halves fuse");
-    assert_eq!(
-        fused.data().2,
-        NfSeqPoly::new(EpochIndex::new(0), &[nf]).commit(),
-        "combined equals the left sequence"
-    );
-}
-
-#[test]
-fn unspent_fuse_rejects_epoch_boundary_crossing() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let mut pool = PoolSim::genesis(rng);
-    pool.advance(EPOCH_SIZE + 1, |_| random_block(rng, 1, 2));
-
-    let nf0 = Nullifier::from(Fp::random(&mut *rng));
-    let nf1 = Nullifier::from(Fp::random(&mut *rng));
-    // Left half spans all of epoch 0; `left.end` is epoch 0's final anchor.
-    let left = build_unspent_pcd_between_blocks(
-        rng,
-        &pool,
-        &[nf0],
-        BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1),
-    );
-    let left_end = left.data().4;
-    // A forged epoch-1 right half rooted directly at `left.anchor_end` (no
-    // `next_epoch` fold). The anchors line up, but the epoch labels reveal a
-    // boundary the fuse refuses to cross: a crossing needs its own segment.
-    let stamp = [Tachygram::from(Fp::random(&mut *rng))];
-    let forged_right = build_unspent_seed_pcd(rng, left_end, EpochIndex::new(1), &stamp, nf1);
-
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            witness::unspent_fuse((*left.data(), *forged_right.data()), &[nf0], &[nf1]),
-            left,
-            forged_right,
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "UnspentFuse: forwards half must sit in left's last epoch"
-    );
-}
-
-/// Two [`pool::ArbitraryUnspent`] halves meeting at the epoch 2/3 boundary,
-/// together crossing four boundaries. The junction is boundary-pinned by the
-/// step's design, but both outer endpoints are off-boundary, sub-block anchors:
-/// the left half runs from inside a block of epoch 0 to epoch 2's final
-/// anchor, the right half from the boundary to inside a block of epoch 4.
-fn epoch_fuse_setup(
-    rng: &mut StdRng,
-) -> (
-    [Nullifier; 5],
-    Pcd<pool::ArbitraryUnspent>,
-    Pcd<pool::ArbitraryUnspent>,
-) {
-    let mut pool = PoolSim::genesis(rng);
-    pool.advance(4 * EPOCH_SIZE + 3, |_| random_block(rng, 1, 2));
-    let nf: [Nullifier; 5] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
-    let start_height = BlockHeight(2);
-    let end_height = BlockHeight(4 * EPOCH_SIZE + 2);
-    let start = pool
-        .block(start_height)
-        .prev
-        .next_stamp(
-            start_height.epoch(),
-            &pool.block(start_height).stamp_commits()[0],
-        )
-        .unwrap();
-    let end = pool
-        .block(end_height)
-        .prev
-        .next_stamp(
-            end_height.epoch(),
-            &pool.block(end_height).stamp_commits()[0],
-        )
-        .unwrap();
-    let left = build_unspent_pcd_between_anchors(
-        rng,
-        &pool,
-        &nf[..3],
-        (start, pool.block(BlockHeight(3 * EPOCH_SIZE - 1)).anchor()),
-    );
-    let right = build_unspent_pcd_between_anchors(
-        rng,
-        &pool,
-        &nf[3..],
-        (pool.block(BlockHeight(3 * EPOCH_SIZE)).prev, end),
-    );
-    assert_eq!(left.data().0, start, "left rooted at the sub-block start");
-    assert_eq!(right.data().4, end, "right ends at the sub-block end");
-    (nf, left, right)
-}
-
-/// Two halves meeting at a boundary compose through a crossing seed: the
-/// merged segment keeps the left half's last member and spans both halves'
-/// outer endpoints.
-#[test]
-fn end_epoch_unspent_seed_composes_across_a_boundary() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let ([nf0, nf1, nf2, nf3, nf4], left, right) = epoch_fuse_setup(rng);
-    let start = left.data().0;
-    let end = right.data().4;
-
-    // Seed the crossing on left's final anchor and fuse it on.
-    let (seed, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EndEpochUnspentSeed,
-            witness::end_epoch_unspent_seed(((), ()), left.data().4, EpochIndex::new(2), nf2, nf3),
-        )
-        .expect("EndEpochUnspentSeed");
-    let (crossed, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            witness::unspent_fuse((*left.data(), *seed.data()), &[nf0, nf1, nf2], &[nf2, nf3]),
-            left,
-            seed,
-        )
-        .expect("UnspentFuse over the crossing");
-
-    let (fused, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::UnspentFuse,
-            witness::unspent_fuse(
-                (*crossed.data(), *right.data()),
-                &[nf0, nf1, nf2, nf3],
-                &[nf3, nf4],
-            ),
-            crossed,
-            right,
-        )
-        .expect("UnspentFuse onto the right half");
-
-    let (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), anchor_end) =
-        *fused.data();
-    assert_eq!(anchor_prev, start);
-    assert_eq!(anchor_end, end);
-    assert_eq!(u32::from(epoch_start), 0);
-    assert_eq!(nf_start, nf0);
-    assert_eq!(u32::from(epoch_end), 4);
-    assert_eq!(nf_end, nf4, "lineage rests at the right half's current nf");
-    assert_eq!(
-        elapsed,
-        NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3, nf4]).commit(),
-        "the crossing seed shares a member with each half it joins"
-    );
-}
-
-/// Zero is reserved and never a genuine member; the crossing seed's guards
-/// reject it outright.
-#[test]
-fn end_epoch_unspent_seed_rejects_a_zero_member() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let anchor = Anchor::from(Fp::random(&mut *rng));
-    let nf = Nullifier::from(Fp::random(&mut *rng));
-    let zero = Nullifier::from(Fp::ZERO);
-
-    for (nf_prev, incoming, expected) in [
-        (zero, nf, "EndEpochUnspentSeed: outgoing nullifier is zero"),
-        (nf, zero, "EndEpochUnspentSeed: incoming nullifier is zero"),
-    ] {
-        let err = PROOF_SYSTEM
-            .seed(
-                rng,
-                pool::EndEpochUnspentSeed,
-                witness::end_epoch_unspent_seed(
-                    ((), ()),
-                    anchor,
-                    EpochIndex::new(4),
-                    nf_prev,
-                    incoming,
-                ),
-            )
-            .err()
-            .unwrap_or_else(|| panic!("EndEpochUnspentSeed accepted {expected}"));
-        let ragu_core::Error::InvalidWitness(inner) = err else {
-            panic!("expected InvalidWitness for {expected}, got {err:?}");
-        };
-        assert_eq!(inner.to_string(), expected);
-    }
-}
-
-/// A cube-root twin of either member shares its factor at the challenge the
-/// sequence alone would give, while `elapsed` still commits the genuine
-/// member. The twin would reach the header, where `UnspentFuse`'s junction
-/// reads it; the challenge absorbing both members rejects it.
-#[test]
-fn end_epoch_unspent_seed_rejects_a_twin_member() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let anchor = Anchor::from(Fp::random(&mut *rng));
-    let epoch = EpochIndex::new(4);
-    let epoch_next = epoch.next().unwrap();
-    let nf = Nullifier::from(Fp::random(&mut *rng));
-    let nf_next = Nullifier::from(Fp::random(&mut *rng));
-    let honest = witness::end_epoch_unspent_seed(((), ()), anchor, epoch, nf, nf_next);
-    let z = unpinned_challenge(&[honest.3.commit().into()]);
-
-    for twin_next in [false, true] {
-        let mut forged = honest.clone();
-        let (twin_epoch, member) = if twin_next {
-            (epoch_next, Fp::from(nf_next))
-        } else {
-            (epoch, Fp::from(nf))
-        };
-        let twin = cube_root_twin(twin_epoch, member, z);
-        assert_ne!(twin, member);
-        assert_eq!(
-            indexed_factor(twin_epoch, twin, z),
-            indexed_factor(twin_epoch, member, z),
-            "the twin passes an unpinned identity"
-        );
-        if twin_next {
-            forged.2 = Nullifier::from(twin);
-        } else {
-            forged.1.1 = Nullifier::from(twin);
-        }
-
-        let err = PROOF_SYSTEM
-            .seed(rng, pool::EndEpochUnspentSeed, forged)
-            .err()
-            .unwrap_or_else(|| panic!("EndEpochUnspentSeed accepted a twin (next: {twin_next})"));
-        let ragu_core::Error::InvalidWitness(inner) = err else {
-            panic!("expected InvalidWitness, got {err:?}");
-        };
-        assert_eq!(
-            inner.to_string(),
-            "EndEpochUnspentSeed: elapsed does not match the crossing pairs"
-        );
-    }
-}
-
-/// The seed spans exactly one boundary link, recording the epoch it leaves.
-#[test]
-fn end_epoch_unspent_seed_spans_one_boundary_link() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let epoch_tip = Anchor::from(Fp::random(&mut *rng));
-    let nf_prev = Nullifier::from(Fp::random(&mut *rng));
-    let nf = Nullifier::from(Fp::random(&mut *rng));
-
-    let (seed, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EndEpochUnspentSeed,
-            witness::end_epoch_unspent_seed(((), ()), epoch_tip, EpochIndex::new(4), nf_prev, nf),
-        )
-        .expect("EndEpochUnspentSeed");
-
-    let (anchor_prev, (epoch_start, seed_nf_start), elapsed, (epoch_end, nf_end), anchor_end) =
-        *seed.data();
-    assert_eq!(anchor_prev, epoch_tip);
-    assert_eq!(
-        anchor_end,
-        epoch_tip.next_epoch(EpochIndex::new(5)).unwrap(),
-        "the segment covers the crossing"
-    );
-    assert_eq!(epoch_start, EpochIndex::new(4));
-    assert_eq!(epoch_end, EpochIndex::new(5), "one boundary crossed");
-    assert_eq!(seed_nf_start, nf_prev);
-    assert_eq!(nf_end, nf);
-    assert_eq!(
-        elapsed,
-        NfSeqPoly::new(EpochIndex::new(4), &[nf_prev, nf]).commit(),
-        "the crossing records the epoch it leaves and the one it enters"
-    );
-}
-
-/// A lineage on its epoch's final anchor lifts over the crossing seed like
-/// any other segment, and the next segment opens on the entry anchor it
-/// lands on.
-#[test]
-fn spendable_lift_advances_from_an_epoch_tip() {
+fn lift_crosses_a_stampless_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(300);
-    // A lone cm-stamp, then a silent rest-of-epoch, leaves the spendable's
-    // anchor sitting on epoch 0's final anchor.
-    pool.mine(vec![vec![note.commitment().into()]]);
-    let cm_height = pool.height();
-    while pool.height().0 + 1 < EPOCH_SIZE {
-        pool.advance(1, |_| Vec::new());
-    }
-    let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let epoch0_tip = spendable.data().2;
-    assert_eq!(
-        epoch0_tip,
-        pool.block(EpochIndex::new(0).last_block()).anchor(),
-        "the lineage sits on the epoch's final anchor"
-    );
+    mine_cm_block(rng, &mut pool, note.commitment());
+    let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
 
-    pool.advance(1, |_| random_block(rng, 1, 2));
-    let target_height = pool.height();
-    assert_eq!(target_height.epoch(), EpochIndex::new(1));
-
-    // The crossing is an ordinary segment, so an ordinary lift carries the
-    // lineage over it.
-    let (crossing, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EndEpochUnspentSeed,
-            witness::end_epoch_unspent_seed(
-                ((), ()),
-                epoch0_tip,
-                EpochIndex::new(0),
-                user.nf_at(&note, EpochIndex::new(0)),
-                user.nf_at(&note, EpochIndex::new(1)),
-            ),
-        )
-        .expect("EndEpochUnspentSeed");
-    let at_boundary = user.lift(rng, spendable, crossing, &note);
-    assert_eq!(
-        *at_boundary.data(),
-        (
-            note.commitment(),
-            EpochIndex::new(1),
-            epoch0_tip.next_epoch(EpochIndex::new(1)).unwrap()
-        ),
-        "the crossing advances epoch and anchor together"
-    );
-
-    // The lineage now rests on epoch 1's entry anchor.
-    let arbitrary = build_unspent_pcd_between_anchors(
-        rng,
-        &pool,
-        &[user.nf_at(&note, EpochIndex::new(1))],
-        (at_boundary.data().2, pool.block(target_height).anchor()),
-    );
-    let lifted = user.lift(rng, at_boundary, arbitrary, &note);
-
-    assert_eq!(lifted.data().1, EpochIndex::new(1));
-    assert_eq!(lifted.data().2, pool.block(target_height).anchor());
-}
-
-/// A span opening on an entry anchor covers the crossings after it, not the
-/// one that produced it: the lineage already paid for that crossing to arrive.
-#[test]
-fn unspent_span_starting_on_a_boundary_anchor() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(300);
-    // A lone cm-stamp, then silence to the end of epoch 0, so the lineage ends
-    // up on epoch 0's final anchor and crosses to `B_1` by a bare lift.
-    pool.mine(vec![vec![note.commitment().into()]]);
-    let cm_height = pool.height();
-    while pool.height().0 + 1 < EPOCH_SIZE {
-        pool.advance(1, |_| Vec::new());
-    }
-    let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let epoch0_tip = spendable.data().2;
-    let (crossing, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EndEpochUnspentSeed,
-            witness::end_epoch_unspent_seed(
-                ((), ()),
-                epoch0_tip,
-                EpochIndex::new(0),
-                user.nf_at(&note, EpochIndex::new(0)),
-                user.nf_at(&note, EpochIndex::new(1)),
-            ),
-        )
-        .expect("EndEpochUnspentSeed");
-    let at_boundary = user.lift(rng, spendable, crossing, &note);
-
-    // Epoch 1 publishes nothing, so the span starts on an entry anchor whose
-    // own epoch is silent; epoch 2 resumes.
-    while pool.height().0 + 1 < 2 * EPOCH_SIZE {
+    // Epoch 1 publishes after the bootstrap; epoch 2 publishes nothing at
+    // all; epoch 3 resumes.
+    mine_through(rng, &mut pool, epoch1.last_block());
+    while pool.height() < epoch2.last_block() {
         pool.advance(1, |_| Vec::new());
     }
     pool.advance(1, |_| random_block(rng, 1, 2));
-    let target_height = pool.height();
-    assert_eq!(target_height.epoch(), EpochIndex::new(2));
+    assert_eq!(pool.height(), epoch3.first_block());
 
-    let start_anchor = at_boundary.data().2;
-    assert_eq!(
-        start_anchor,
-        pool.block(EpochIndex::new(1).last_block()).anchor()
-    );
-    let arbitrary = build_unspent_pcd_between_anchors(
+    let spendable = user.spendable_at(rng, &pool, &note, epoch1);
+    let arbitrary = build_unspent_pcd_over_epochs(
         rng,
         &pool,
-        &[
-            user.nf_at(&note, EpochIndex::new(1)),
-            user.nf_at(&note, EpochIndex::new(2)),
-        ],
-        (start_anchor, pool.block(target_height).anchor()),
+        |epoch| user.nf_at(&note, epoch),
+        (epoch1, epoch3),
     );
     let (_, (epoch_start, _), elapsed, (epoch_end, _), _) = *arbitrary.data();
-    assert_eq!(epoch_start, EpochIndex::new(1));
-    assert_eq!(epoch_end, EpochIndex::new(2));
+    assert_eq!(epoch_start, epoch1);
+    assert_eq!(epoch_end, epoch3);
     assert_eq!(
         elapsed,
         NfSeqPoly::new(
-            EpochIndex::new(1),
+            epoch1,
             &[
-                user.nf_at(&note, EpochIndex::new(1)),
-                user.nf_at(&note, EpochIndex::new(2)),
-            ],
-        )
-        .commit(),
-        "only the crossing out of the silent epoch, not the one into it"
-    );
-
-    let lifted = user.lift(rng, at_boundary, arbitrary, &note);
-    assert_eq!(lifted.data().1, EpochIndex::new(2));
-    assert_eq!(lifted.data().2, pool.block(target_height).anchor());
-}
-
-/// A span may end on an entry anchor: an epoch that has published nothing
-/// yet has no post anchor for its blocks to resolve against, so the end
-/// resolves to the boundary and the span stops on the crossing.
-#[test]
-fn unspent_span_ending_on_a_boundary_anchor() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(300);
-    let cm_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-
-    // Epoch 0 publishes after the cm; epoch 1 opens with a stampless block, so
-    // that block's anchor is `B_1` itself.
-    while pool.height().0 + 1 < EPOCH_SIZE {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-    pool.advance(1, |_| Vec::new());
-    let target_height = pool.height();
-    assert_eq!(target_height.epoch(), EpochIndex::new(1));
-    assert_eq!(
-        pool.block(target_height).anchor(),
-        pool.block(EpochIndex::new(1).first_block()).anchor(),
-        "a silent epoch-first block rests on the entry anchor"
-    );
-
-    let arbitrary = build_unspent_pcd_between_anchors(
-        rng,
-        &pool,
-        &[
-            user.nf_at(&note, EpochIndex::new(0)),
-            user.nf_at(&note, EpochIndex::new(1)),
-        ],
-        (spendable.data().2, pool.block(target_height).anchor()),
-    );
-    let (_, (epoch_start, _), elapsed, (epoch_end, _), anchor_end) = *arbitrary.data();
-    assert_eq!(epoch_start, EpochIndex::new(0));
-    assert_eq!(
-        epoch_end,
-        EpochIndex::new(1),
-        "the span stops on the crossing"
-    );
-    assert_eq!(anchor_end, pool.block(target_height).anchor());
-    assert_eq!(
-        elapsed,
-        NfSeqPoly::new(
-            EpochIndex::new(0),
-            &[
-                user.nf_at(&note, EpochIndex::new(0)),
-                user.nf_at(&note, EpochIndex::new(1)),
-            ],
-        )
-        .commit()
-    );
-
-    let lifted = user.lift(rng, spendable, arbitrary, &note);
-    assert_eq!(lifted.data().1, EpochIndex::new(1));
-    assert_eq!(lifted.data().2, pool.block(target_height).anchor());
-}
-
-/// A stampless epoch is two crossings with nothing between them, so the span
-/// still records its nullifier.
-#[test]
-fn end_epoch_unspent_seed_crosses_a_stampless_epoch() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(300);
-    let cm_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-
-    // Epoch 0 keeps publishing after the cm, so the lineage is not on the epoch's
-    // final anchor. Epoch 1 then publishes nothing at all; epoch 2 resumes.
-    while pool.height().0 + 1 < EPOCH_SIZE {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-    while pool.height().0 + 1 < 2 * EPOCH_SIZE {
-        pool.advance(1, |_| Vec::new());
-    }
-    pool.advance(1, |_| random_block(rng, 1, 2));
-    let target_height = pool.height();
-    assert_eq!(target_height.epoch(), EpochIndex::new(2));
-
-    let arbitrary = build_unspent_pcd_between_anchors(
-        rng,
-        &pool,
-        &[
-            user.nf_at(&note, EpochIndex::new(0)),
-            user.nf_at(&note, EpochIndex::new(1)),
-            user.nf_at(&note, EpochIndex::new(2)),
-        ],
-        (spendable.data().2, pool.block(target_height).anchor()),
-    );
-    let (_, (epoch_start, _), elapsed, (epoch_end, _), _) = *arbitrary.data();
-    assert_eq!(epoch_start, EpochIndex::new(0));
-    assert_eq!(epoch_end, EpochIndex::new(2));
-    assert_eq!(
-        elapsed,
-        NfSeqPoly::new(
-            EpochIndex::new(0),
-            &[
-                user.nf_at(&note, EpochIndex::new(0)),
-                user.nf_at(&note, EpochIndex::new(1)),
-                user.nf_at(&note, EpochIndex::new(2)),
+                user.nf_at(&note, epoch1),
+                user.nf_at(&note, epoch2),
+                user.nf_at(&note, epoch3),
             ],
         )
         .commit(),
@@ -1470,43 +874,37 @@ fn end_epoch_unspent_seed_crosses_a_stampless_epoch() {
     );
 
     let lifted = user.lift(rng, spendable, arbitrary, &note);
-    assert_eq!(lifted.data().1, EpochIndex::new(2));
-    assert_eq!(lifted.data().2, pool.block(target_height).anchor());
+    assert_eq!(lifted.data().1, epoch3);
+    assert_eq!(lifted.data().2, pool.block(epoch3.first_block()).prev);
 }
 
 #[test]
-fn unspent_bind_rejects_tip_mismatch() {
+fn unspent_bind_rejects_a_forged_member() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().2;
+    let pool = pool_closing_epoch_zero(rng, &note);
 
-    let wrong_tip = Nullifier::from(Fp::random(&mut *rng));
-    let mut sync = SyncSim::new();
-    sync.accept_delegation(
-        0,
-        alloc::vec![user.nf_at(&note, EpochIndex::new(0)), wrong_tip],
-        init_height,
-        start_anchor,
-    );
-    let target_height = BlockHeight(EPOCH_SIZE);
-    while pool.height() < target_height {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-    let unspent = sync.build_next_unspent(rng, 0, &pool, target_height);
+    let forged = Nullifier::from(Fp::random(&mut *rng));
+    let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
+    let nf = |epoch: EpochIndex| {
+        if epoch == epoch0 {
+            forged
+        } else {
+            user.nf_at(&note, epoch)
+        }
+    };
+    let unspent = build_unspent_pcd_over_epochs(rng, &pool, nf, (epoch0, epoch1));
 
-    // The witnessed sequence matches the header, with the forged member as its
-    // final member, so the poly bind passes; the divisibility read then
-    // finds no such member in the genuine sequence and rejects it.
+    // The witnessed sequence matches the header, with the forged member in
+    // it, so the poly bind passes; the divisibility read then finds no such
+    // member in the genuine sequence and rejects it.
     let (_, _, _, (unspent_end, _), _) = *unspent.data();
-    let range = user.derivation_pcd(rng, note, EpochIndex::new(0), unspent_end);
+    let range = user.derivation_pcd(rng, note, epoch0, unspent_end);
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
-        &[user.nf_at(&note, EpochIndex::new(0)), wrong_tip],
+        &[forged, user.nf_at(&note, epoch1)],
     );
 
     let err = PROOF_SYSTEM
@@ -1596,22 +994,15 @@ fn spend_bind_reads_the_last_pair_in_the_epoch_space() {
 fn unspent_bind_rejects_elapsed_mismatch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    pool.advance(1, |_| random_block(rng, 1, 2));
+    let pool = pool_closing_epoch_zero(rng, &note);
 
-    let unspent = build_unspent_pcd_between_blocks(
-        rng,
-        &pool,
-        &[user.nf_at(&note, EpochIndex::new(0))],
-        BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
-    );
+    let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
     let (_honest_elapsed_seq, nf_seq, complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
-        &[user.nf_at(&note, EpochIndex::new(0))],
+        &elapsed,
     );
     let bogus_elapsed = NfSeqPoly::new(
         EpochIndex::new(0),
@@ -1641,17 +1032,10 @@ fn unspent_bind_rejects_elapsed_mismatch() {
 fn unspent_bind_rejects_uncovered_start() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    pool.advance(1, |_| random_block(rng, 1, 2));
+    let pool = pool_closing_epoch_zero(rng, &note);
 
-    let unspent = build_unspent_pcd_between_blocks(
-        rng,
-        &pool,
-        &[user.nf_at(&note, EpochIndex::new(0))],
-        BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
-    );
+    let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
     // A derivation whose coverage begins after the unspent's start epoch (a
     // later window) cannot cover it.
     // The builder would segment out of range, so the witness is assembled
@@ -1659,7 +1043,7 @@ fn unspent_bind_rejects_uncovered_start() {
     let range = user.derivation_pcd(rng, note, EpochIndex::new(64), EpochIndex::new(64));
     let window = user.covering_window(&note, &range);
     let witness = (
-        NfSeqPoly::new(EpochIndex::new(0), &[user.nf_at(&note, EpochIndex::new(0))]),
+        NfSeqPoly::new(EpochIndex::new(0), &elapsed),
         NfSeqPoly::new(EpochIndex::new(64), &window),
         NfSeqPoly::new(EpochIndex::new(64), &[]),
     );
@@ -1677,30 +1061,17 @@ fn unspent_bind_rejects_uncovered_start() {
     );
 }
 
-/// The bind needs the last member as well as the crossings, so a derivation
-/// stopping at the unspent's own end epoch does not cover it.
+/// A derivation stopping short of the unspent's last member does not cover
+/// it.
 #[test]
 fn unspent_bind_rejects_uncovered_end() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
-    // A crossing out of the window's last epoch: its last member sits at the first
-    // epoch the derivation does not reach.
+    // A segment over the window's last epoch: its last member sits at the
+    // first epoch the derivation does not reach.
     let last = EpochIndex::new(NF_DERIVATION_WIDTH as u32 - 1);
-    let anchor = Anchor::from(Fp::random(&mut *rng));
-    let (unspent, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EndEpochUnspentSeed,
-            witness::end_epoch_unspent_seed(
-                ((), ()),
-                anchor,
-                last,
-                user.nf_at(&note, last),
-                user.nf_at(&note, last.next().unwrap()),
-            ),
-        )
-        .expect("EndEpochUnspentSeed");
+    let unspent = detached_segment(rng, last, |epoch| user.nf_at(&note, epoch));
 
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
     let window = user.covering_window(&note, &range);
@@ -1743,25 +1114,17 @@ fn spendable_lift_rejects_wrong_cm() {
         rcm: note::CommitmentTrapdoor::random(rng),
         ..note
     };
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().2;
+    mine_cm_block(rng, &mut pool, note.commitment());
+    let (epoch1, epoch2) = (EpochIndex::new(1), EpochIndex::new(2));
+    mine_through(rng, &mut pool, epoch2.first_block());
+    let spendable = user.spendable_at(rng, &pool, &note, epoch1);
 
-    let mut sync = SyncSim::new();
-    sync.accept_delegation(
-        0,
-        alloc::vec![
-            user.nf_at(&note, EpochIndex::new(0)),
-            user.nf_at(&note, EpochIndex::new(1))
-        ],
-        init_height,
-        start_anchor,
+    let arbitrary = build_unspent_pcd_over_epochs(
+        rng,
+        &pool,
+        |epoch| user.nf_at(&note, epoch),
+        (epoch1, epoch2),
     );
-    let target_height = BlockHeight(EPOCH_SIZE);
-    while pool.height() < target_height {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-    let arbitrary = sync.build_next_unspent(rng, 0, &pool, target_height);
     let unspent = user.unspent_bind(rng, arbitrary, &phantom);
 
     let err = PROOF_SYSTEM
@@ -1781,18 +1144,14 @@ fn spendable_lift_rejects_wrong_cm() {
 fn spendable_lift_rejects_non_adjacent_unspent() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    pool.advance(1, |_| random_block(rng, 1, 2));
+    let pool = pool_closing_epoch_zero(rng, &note);
+    let epoch1 = EpochIndex::new(1);
+    let spendable = user.spendable_at(rng, &pool, &note, epoch1);
 
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let arbitrary = build_unspent_pcd_between_blocks(
-        rng,
-        &pool,
-        &[user.nf_at(&note, EpochIndex::new(0))],
-        init_height..=init_height,
-    );
+    // A segment of the lineage's epoch, opening on an entry anchor no pool
+    // published.
+    let arbitrary = detached_segment(rng, epoch1, |epoch| user.nf_at(&note, epoch));
     let unspent = user.unspent_bind(rng, arbitrary, &note);
 
     let err = PROOF_SYSTEM
@@ -2364,23 +1723,16 @@ fn spend_stamp_rejects_a_foreign_action_set() {
 fn unspent_bind_rejects_a_foreign_sequence() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
     let other = user.random_note(700);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    pool.advance(1, |_| random_block(rng, 1, 2));
+    let pool = pool_closing_epoch_zero(rng, &note);
 
-    let unspent = build_unspent_pcd_between_blocks(
-        rng,
-        &pool,
-        &[user.nf_at(&note, EpochIndex::new(0))],
-        BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
-    );
+    let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
     let witness = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&other, &range),
-        &[user.nf_at(&note, EpochIndex::new(0))],
+        &elapsed,
     );
     expect_invalid(
         rng,
@@ -2400,49 +1752,41 @@ fn multi_chunk_lift_uses_per_chunk_windows() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
+    mine_cm_block(rng, &mut pool, note.commitment());
+    let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
+    mine_through(rng, &mut pool, epoch2.first_block());
 
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().2;
-
+    let spendable = user.spendable_at(rng, &pool, &note, epoch1);
     let mut sync = SyncSim::new();
     sync.accept_delegation(
         0,
         alloc::vec![
-            user.nf_at(&note, EpochIndex::new(0)),
-            user.nf_at(&note, EpochIndex::new(1)),
-            user.nf_at(&note, EpochIndex::new(2)),
+            user.nf_at(&note, epoch1),
+            user.nf_at(&note, epoch2),
+            user.nf_at(&note, epoch3),
         ],
-        init_height,
-        start_anchor,
+        epoch1,
     );
 
-    // First chunk: epochs 0 to 1, bound against the window based at epoch 0.
-    let target_one = BlockHeight(EPOCH_SIZE);
-    while pool.height() < target_one {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-    let unspent_one = sync.build_next_unspent(rng, 0, &pool, target_one);
+    // First chunk: epoch 1, bound against the window based at epoch 0.
+    let unspent_one = sync.build_next_unspent(rng, 0, &pool, epoch2);
     let lifted_one = user.lift(rng, spendable, unspent_one, &note);
-    assert_eq!(lifted_one.data().1, EpochIndex::new(1));
+    assert_eq!(lifted_one.data().1, epoch2);
 
-    // Second chunk: epochs 1 to 2, bound against a fresh window based at
-    // epoch 1 (the chunk boundary needs no alignment between windows).
-    let target_two = BlockHeight(2 * EPOCH_SIZE);
-    while pool.height() < target_two {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-    let unspent_two = sync.build_next_unspent(rng, 0, &pool, target_two);
+    // Second chunk: epoch 2, bound against a fresh window (the chunk boundary
+    // needs no alignment between windows).
+    mine_through(rng, &mut pool, epoch3.first_block());
+    let unspent_two = sync.build_next_unspent(rng, 0, &pool, epoch3);
     let lifted_two = user.lift(rng, lifted_one, unspent_two, &note);
 
     assert_eq!(
         lifted_two.data().1,
-        EpochIndex::new(2),
+        epoch3,
         "lineage advanced across two chunks"
     );
     assert_eq!(
         lifted_two.data().2,
-        pool.block(target_two).anchor(),
+        pool.block(epoch3.first_block()).prev,
         "anchor advanced across two chunks"
     );
     assert_eq!(lifted_two.data().0, note.commitment(), "cm threaded");
@@ -2716,19 +2060,17 @@ fn spendable_lift_rejects_a_wrong_start() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
+    mine_cm_block(rng, &mut pool, note.commitment());
+    let (epoch1, epoch2, epoch3) = (EpochIndex::new(1), EpochIndex::new(2), EpochIndex::new(3));
+    mine_through(rng, &mut pool, epoch2.last_block());
+    let spendable = user.spendable_at(rng, &pool, &note, epoch1);
 
-    // A segment covering only epoch 1, one epoch past the spendable.
-    while pool.height().0 < EPOCH_SIZE {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
-    let epoch1_height = pool.height();
-    let arbitrary = build_unspent_pcd_between_blocks(
+    // A segment covering only epoch 2, one epoch past the spendable.
+    let arbitrary = build_unspent_pcd_over_epochs(
         rng,
         &pool,
-        &[user.nf_at(&note, EpochIndex::new(1))],
-        epoch1_height..=epoch1_height,
+        |epoch| user.nf_at(&note, epoch),
+        (epoch2, epoch3),
     );
     let unspent = user.unspent_bind(rng, arbitrary, &note);
 
@@ -2742,160 +2084,21 @@ fn spendable_lift_rejects_a_wrong_start() {
     );
 }
 
-/// The per-stamp walk from an epoch's final anchor opens *on* that anchor:
-/// the boundary is a segment of its own, so the walk seeds the crossing and
-/// the span starts in the outgoing epoch rather than past it. A spendable
-/// resting on the final anchor is therefore adjacent to what it lifts over.
-#[test]
-fn unspent_walk_from_an_epoch_tip_opens_on_the_tip() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(300);
-    // A lone cm-stamp, then a silent rest-of-epoch, leaves the spendable's
-    // anchor sitting on epoch 0's final anchor.
-    pool.mine(vec![vec![note.commitment().into()]]);
-    let cm_height = pool.height();
-    while pool.height().0 + 1 < EPOCH_SIZE {
-        pool.advance(1, |_| Vec::new());
-    }
-    let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let epoch0_tip = spendable.data().2;
-    assert_eq!(
-        epoch0_tip,
-        pool.block(EpochIndex::new(0).last_block()).anchor(),
-        "the lineage sits on the epoch's final anchor"
-    );
-
-    pool.advance(1, |_| random_block(rng, 1, 2));
-    let target_height = pool.height();
-    assert_eq!(target_height.epoch(), EpochIndex::new(1));
-
-    let arbitrary = build_unspent_pcd_between_anchors(
-        rng,
-        &pool,
-        &[
-            user.nf_at(&note, EpochIndex::new(0)),
-            user.nf_at(&note, EpochIndex::new(1)),
-        ],
-        (epoch0_tip, pool.block(target_height).anchor()),
-    );
-    let unspent = user.unspent_bind(rng, arbitrary, &note);
-
-    assert_eq!(
-        unspent.data().1,
-        epoch0_tip,
-        "the segment opens on the spendable's own anchor, not past it"
-    );
-    assert_eq!(
-        unspent.data().2,
-        (EpochIndex::new(0), user.nf_at(&note, EpochIndex::new(0))),
-        "the span begins in the epoch being left"
-    );
-    assert_eq!(
-        unspent.data().3,
-        (EpochIndex::new(1), user.nf_at(&note, EpochIndex::new(1)))
-    );
-    assert_eq!(unspent.data().4, pool.block(target_height).anchor());
-}
-
-/// The final-anchor composition end to end: a note whose cm-stamp closes
-/// its epoch lifts over a crossing seed, then binds and spends in the next
-/// epoch.
-#[test]
-fn crossing_seed_carries_a_final_anchor_to_a_spend() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(300);
-
-    // A lone cm-stamp, then a silent rest-of-epoch, leaves the spendable's
-    // anchor sitting on epoch 0's final anchor.
-    pool.mine(vec![vec![note.commitment().into()]]);
-    let cm_height = pool.height();
-    while pool.height().0 + 1 < EPOCH_SIZE {
-        pool.advance(1, |_| Vec::new());
-    }
-    let spendable = user.spendable_init(rng, &note, &pool, cm_height);
-    let epoch0_tip = spendable.data().2;
-    assert_eq!(
-        epoch0_tip,
-        pool.block(EpochIndex::new(0).last_block()).anchor(),
-        "the lineage sits on the epoch's final anchor"
-    );
-
-    // The crossing's bookkeeping: epoch and nullifier advance by one, and the
-    // anchor folds the domain-separated boundary in the crossing segment.
-    let (crossing, ()) = PROOF_SYSTEM
-        .seed(
-            rng,
-            pool::EndEpochUnspentSeed,
-            witness::end_epoch_unspent_seed(
-                ((), ()),
-                epoch0_tip,
-                EpochIndex::new(0),
-                user.nf_at(&note, EpochIndex::new(0)),
-                user.nf_at(&note, EpochIndex::new(1)),
-            ),
-        )
-        .expect("EndEpochUnspentSeed");
-    let lifted = user.lift(rng, spendable, crossing, &note);
-    assert_eq!(
-        *lifted.data(),
-        (
-            note.commitment(),
-            EpochIndex::new(1),
-            epoch0_tip.next_epoch(EpochIndex::new(1)).unwrap(),
-        ),
-        "the lift crosses to the entry anchor"
-    );
-
-    // Walk through epoch 1 from the entry anchor the lift landed on.
-    pool.advance(1, |_| random_block(rng, 1, 2));
-    let end_height = pool.height();
-    assert_eq!(end_height.epoch(), EpochIndex::new(1));
-    let arbitrary = build_unspent_pcd_between_anchors(
-        rng,
-        &pool,
-        &[user.nf_at(&note, EpochIndex::new(1))],
-        (lifted.data().2, pool.block(end_height).anchor()),
-    );
-    let walked = user.lift(rng, lifted, arbitrary, &note);
-    let bind_pcd = honest_spend_bind(rng, &user, &note, walked, EpochIndex::new(1));
-    let stamp = honest_spend_stamp(rng, &user, &note, bind_pcd);
-
-    let expected = TachygramSetPoly::from_iter([
-        user.nf_at(&note, EpochIndex::new(1)).into(),
-        user.nf_at(&note, EpochIndex::new(2)).into(),
-    ])
-    .commit();
-    assert_eq!(stamp.data().1, expected, "publishes {{N_1, N_2}}");
-}
-
 /// A forged complement cannot compensate the identity: the divisibility
 /// pins the whole factorization, so junk in the complement fails the bind.
 #[test]
 fn unspent_bind_rejects_a_forged_complement() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    pool.advance(1, |_| random_block(rng, 1, 2));
+    let pool = pool_closing_epoch_zero(rng, &note);
 
-    let unspent = build_unspent_pcd_between_blocks(
-        rng,
-        &pool,
-        &[user.nf_at(&note, EpochIndex::new(0))],
-        BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
-    );
-    // A two-epoch derivation, so the honest complement is nonempty and the
-    // forgery cannot hide behind the constant 1.
+    let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(1));
     let (elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
-        &[user.nf_at(&note, EpochIndex::new(0))],
+        &elapsed,
     );
     let forged = NfSeqPoly::new(
         EpochIndex::new(1),
@@ -2919,22 +2122,16 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let _init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    while pool.height().0 < EPOCH_SIZE {
-        pool.advance(1, |_| random_block(rng, 1, 2));
-    }
+    mine_cm_block(rng, &mut pool, note.commitment());
+    let (epoch0, epoch1) = (EpochIndex::new(0), EpochIndex::new(1));
+    mine_through(rng, &mut pool, epoch1.last_block());
 
-    // A lineage over epoch 1 testing epoch 0's genuine nullifier: the value
+    // A segment over epoch 1 testing epoch 0's genuine nullifier: the value
     // is genuine, the epoch is not.
-    let epoch1_height = pool.height();
-    let unspent = build_unspent_pcd_between_blocks(
-        rng,
-        &pool,
-        &[user.nf_at(&note, EpochIndex::new(0))],
-        epoch1_height..=epoch1_height,
-    );
-    let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(1));
-    let elapsed_seq = NfSeqPoly::new(EpochIndex::new(1), &[user.nf_at(&note, EpochIndex::new(0))]);
+    let nf = |epoch: EpochIndex| user.nf_at(&note, if epoch == epoch1 { epoch0 } else { epoch });
+    let unspent = build_unspent_pcd_over_epochs(rng, &pool, nf, (epoch1, EpochIndex::new(2)));
+    let range = user.derivation_pcd(rng, note, epoch0, epoch1);
+    let elapsed_seq = NfSeqPoly::new(epoch1, &[nf(epoch1), nf(EpochIndex::new(2))]);
     let complement_seq =
         NfSeqPoly::new(EpochIndex::new(0), &[user.nf_at(&note, EpochIndex::new(0))]);
     let nf_seq = NfSeqPoly::new(EpochIndex::new(0), &user.covering_window(&note, &range));
@@ -2955,25 +2152,18 @@ fn unspent_bind_rejects_a_wrong_epoch_member() {
 fn unspent_bind_rejects_a_duplicating_complement() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    pool.advance(1, |_| random_block(rng, 1, 2));
+    let pool = pool_closing_epoch_zero(rng, &note);
 
-    let unspent = build_unspent_pcd_between_blocks(
-        rng,
-        &pool,
-        &[user.nf_at(&note, EpochIndex::new(0))],
-        BlockHeight(init_height.0 + 1)..=BlockHeight(init_height.0 + 1),
-    );
+    let (unspent, elapsed) = epoch_zero_unspent(rng, &pool, &user, &note);
     let range = user.derivation_pcd(rng, note, EpochIndex::new(0), EpochIndex::new(0));
     let (elapsed_seq, nf_seq, _complement_seq) = witness::unspent_bind(
         (*unspent.data(), *range.data()),
         &user.covering_window(&note, &range),
-        &[user.nf_at(&note, EpochIndex::new(0))],
+        &elapsed,
     );
-    // The honest complement is empty; duplicating the tested member squares
-    // its encoding, and the squarefree derivation rejects it.
+    // Duplicating the tested member squares its encoding, and the squarefree
+    // derivation rejects it.
     let duplicating = NfSeqPoly::new(EpochIndex::new(0), &[user.nf_at(&note, EpochIndex::new(0))]);
     expect_invalid(
         rng,
@@ -2993,13 +2183,11 @@ fn multi_window_span_binds_once() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let init_height = mine_cm_block(rng, &mut pool, note.commitment());
-    let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let start_anchor = spendable.data().2;
+    mine_cm_block(rng, &mut pool, note.commitment());
 
     // Publish one block per epoch (each epoch's first block) through epoch
-    // NF_DERIVATION_WIDTH, so the lineage spans one epoch more than a single
-    // window covers and the span's end anchor is a stamped block's.
+    // NF_DERIVATION_WIDTH, so the span covers one epoch more than a single
+    // window.
     let last_epoch = NF_DERIVATION_WIDTH as u32;
     let target_height = BlockHeight(last_epoch * EPOCH_SIZE);
     while pool.height() < target_height {
@@ -3011,14 +2199,11 @@ fn multi_window_span_binds_once() {
         }
     }
 
-    let nfs: Vec<Nullifier> = (0..=last_epoch)
-        .map(|epoch| user.nf_at(&note, EpochIndex::new(epoch)))
-        .collect();
-    let arbitrary = build_unspent_pcd_between_anchors(
+    let arbitrary = build_unspent_pcd_over_epochs(
         rng,
         &pool,
-        &nfs,
-        (start_anchor, pool.block(target_height).anchor()),
+        |epoch| user.nf_at(&note, epoch),
+        (EpochIndex::new(0), EpochIndex::new(last_epoch)),
     );
     let unspent = user.unspent_bind(rng, arbitrary, &note);
 
@@ -3058,42 +2243,19 @@ fn one_window_serves_init_bind_and_spend() {
     assert_eq!(bind_pcd.data().2, user.nf_at(&note, epoch.next().unwrap()));
 }
 
-/// A summary-started spendable lifts across the epoch boundary and binds to a
-/// spend like any other.
+/// A bucket-started spendable lifts across an epoch and binds to a spend.
 #[test]
-fn summary_spendable_syncs_to_a_spend() {
+fn bucket_spendable_syncs_to_a_spend() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
-    pool.mine(random_block(rng, 1, 2));
-    pool.mine(random_block(rng, 1, 2));
-    let (summary_pcd, members) = build_summary_pcd(rng, &pool, (Anchor::default(), pool.anchor()));
-    let (epoch, _, anchor_end, _) = *summary_pcd.data();
-    let deriv = user.derivation_pcd(rng, note, epoch, epoch);
+    let epoch2 = EpochIndex::new(2);
+    mine_through(rng, &mut pool, epoch2.first_block());
 
-    let (spendable, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            spendable::SummarySpendableInit,
-            witness::summary_spendable_init(
-                (*deriv.data(), *summary_pcd.data()),
-                &members,
-                epoch,
-                &user.covering_window(&note, &deriv),
-            ),
-            deriv,
-            summary_pcd,
-        )
-        .expect("SummarySpendableInit");
-    assert_eq!(spendable.data().2, anchor_end);
+    let lifted = user.spendable_at(rng, &pool, &note, epoch2);
+    let bind_pcd = honest_spend_bind(rng, &user, &note, lifted, epoch2);
 
-    while pool.height().0 < EPOCH_SIZE {
-        pool.mine(random_block(rng, 1, 2));
-    }
-    let lifted = user.lift_to_epoch(rng, &pool, &note, spendable, EpochIndex::new(1));
-    let bind_pcd = honest_spend_bind(rng, &user, &note, lifted, EpochIndex::new(1));
-
-    assert_eq!(bind_pcd.data().1, user.nf_at(&note, EpochIndex::new(1)));
-    assert_eq!(bind_pcd.data().2, user.nf_at(&note, EpochIndex::new(2)));
+    assert_eq!(bind_pcd.data().1, user.nf_at(&note, epoch2));
+    assert_eq!(bind_pcd.data().2, user.nf_at(&note, EpochIndex::new(3)));
 }

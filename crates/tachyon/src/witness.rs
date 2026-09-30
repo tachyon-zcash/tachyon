@@ -21,16 +21,13 @@ use crate::{
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
-        pool::{
-            AnchorSeed, EndEpochUnspentSeed, SummaryUnspentInit, UnspentBind, UnspentFuse,
-            UnspentSeed,
-        },
+        pool::{AnchorSeed, UnspentBind, UnspentFuse},
         qr::{
             QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
             QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
         spend::SpendBind,
-        spendable::{QrSpendableInit, SpendableInit, SummarySpendableInit},
+        spendable::{QrSpendableInit, SpendableInit},
         stamp::{OutputStamp, SpendStamp},
         summary::{SummaryAdvance, SummarySeed},
     },
@@ -85,45 +82,6 @@ pub fn nullifier_fuse(
         NfSeqPoly::new(left_epoch_start, left_nfs),
         NfSeqPoly::new(left_epoch_start, &merged),
         NfSeqPoly::new(right_epoch_start, right_nfs),
-    )
-}
-
-/// Prepare the witness for [`UnspentSeed`]: `(anchor_prev, (epoch, nf),
-/// tg_set, elapsed_seq)`.
-#[must_use]
-pub fn unspent_seed(
-    (_left, _right): (StepLeft<UnspentSeed>, StepRight<UnspentSeed>),
-    anchor_prev: Anchor,
-    epoch: EpochIndex,
-    tgs: &[Tachygram],
-    nf: Nullifier,
-) -> StepWitness<'static, UnspentSeed> {
-    (
-        anchor_prev,
-        (epoch, nf),
-        tgs.iter().copied().collect::<TachygramSetPoly>(),
-        NfSeqPoly::new(epoch, &[nf]),
-    )
-}
-
-/// Prepare the witness for [`EndEpochUnspentSeed`]:
-/// `(anchor_prev, (epoch, nf), nf_next, elapsed_seq)`.
-#[must_use]
-pub fn end_epoch_unspent_seed(
-    (_left, _right): (
-        StepLeft<EndEpochUnspentSeed>,
-        StepRight<EndEpochUnspentSeed>,
-    ),
-    anchor_prev: Anchor,
-    epoch: EpochIndex,
-    nf: Nullifier,
-    nf_next: Nullifier,
-) -> StepWitness<'static, EndEpochUnspentSeed> {
-    (
-        anchor_prev,
-        (epoch, nf),
-        nf_next,
-        NfSeqPoly::new(epoch, &[nf, nf_next]),
     )
 }
 
@@ -301,62 +259,6 @@ pub fn summary_advance(
         acc_tgs.iter().copied().collect::<TachygramSetPoly>(),
         extended,
         stamp_tgs.iter().copied().collect::<TachygramSetPoly>(),
-    )
-}
-
-/// Prepare the witness for [`SummaryUnspentInit`]:
-/// `(nf, summary_set, elapsed_seq)`.
-#[must_use]
-pub fn summary_unspent_init(
-    (summary, _right): (StepLeft<SummaryUnspentInit>, StepRight<SummaryUnspentInit>),
-    summary_tgs: &[Tachygram],
-    nf: Nullifier,
-) -> StepWitness<'static, SummaryUnspentInit> {
-    let (summary_epoch, ..) = summary;
-    (
-        nf,
-        summary_tgs.iter().copied().collect::<TachygramSetPoly>(),
-        NfSeqPoly::new(summary_epoch, &[nf]),
-    )
-}
-
-/// Prepare the witness for [`SummarySpendableInit`]: `(creation_epoch,
-/// nf_current, nf_seq, complement_seq, summary_set)`. `window` as at
-/// [`spendable_init`].
-#[must_use]
-#[expect(
-    clippy::as_conversions,
-    reason = "the derivation header's range covers the window"
-)]
-pub fn summary_spendable_init(
-    (deriv, _summary): (
-        StepLeft<SummarySpendableInit>,
-        StepRight<SummarySpendableInit>,
-    ),
-    summary_tgs: &[Tachygram],
-    creation_epoch: EpochIndex,
-    window: &[Nullifier],
-) -> StepWitness<'static, SummarySpendableInit> {
-    let (_, nullifiers_epoch_start, ..) = deriv;
-    let lo = u32::from(creation_epoch - nullifiers_epoch_start) as usize;
-    let (head, from_creation) = window.split_at(lo);
-    let Some((nf_current, tail)) = from_creation.split_first() else {
-        unreachable!("the creation epoch's member is in the window");
-    };
-    let complement_seq = NfSeqPoly::new(nullifiers_epoch_start, head)
-        * creation_epoch.next().map_or_else(
-            || {
-                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
-                NfSeqPoly::default()
-            },
-            |tail_start| NfSeqPoly::new(tail_start, tail),
-        );
-    (
-        creation_epoch,
-        *nf_current,
-        NfSeqPoly::new(nullifiers_epoch_start, window),
-        complement_seq,
-        summary_tgs.iter().copied().collect::<TachygramSetPoly>(),
     )
 }
 

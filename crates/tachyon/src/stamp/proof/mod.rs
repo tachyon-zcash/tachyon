@@ -28,8 +28,6 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(delegation::NullifierDerive)?
         .register(pool::AnchorSeed)?
         .register(pool::AnchorFuse)?
-        .register(pool::UnspentSeed)?
-        .register(pool::EndEpochUnspentSeed)?
         .register(pool::UnspentFuse)?
         .register(pool::UnspentBind)?
         .register(spendable::SpendableInit)?
@@ -43,8 +41,6 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(delegation::NullifierFuse)?
         .register(summary::SummarySeed)?
         .register(summary::SummaryAdvance)?
-        .register(pool::SummaryUnspentInit)?
-        .register(spendable::SummarySpendableInit)?
         .register(qr::QrSummaryIntake)?
         .register(qr::QrIntakeMerge)?
         .register(qr::QrIntakeSplit)?
