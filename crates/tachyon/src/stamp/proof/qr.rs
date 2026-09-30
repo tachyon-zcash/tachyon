@@ -10,8 +10,9 @@
 //! classifies at $R_j$, and a value takes the residue side there iff $x + R_j$
 //! is a square or zero.
 //!
-//! [`QrSummaryIntake`] starts a [`QrIntake`] from a [`Summary`], and
-//! [`QrStampIntakeSeed`] from one unsummarized stamp. [`QrIntakeSplit`]
+//! [`QrSummaryIntake`] starts a [`QrIntake`] from a [`Summary`],
+//! [`QrStampIntakeSeed`] from one unsummarized stamp, and
+//! [`QrEmptyIntakeSeed`] over an epoch with no stamps. [`QrIntakeSplit`]
 //! partitions an intake at its discriminant into [`QrIntakeSides`],
 //! [`QrSideDescend`] carries one side down a level, and [`QrIntakeMerge`]
 //! joins two same-profile intakes whose spans meet. [`QrBucketSeal`] is the
@@ -199,6 +200,52 @@ impl Step for QrStampIntakeSeed {
                 discriminant,
                 QrProfile::ROOT,
                 stamp_commit,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Start a root intake over an epoch that published no stamp.
+///
+/// The intake runs from `anchor` to itself and holds nothing.
+///
+/// # Soundness
+///
+/// `anchor` and `epoch` are free witnesses. [`QrBucketSeal`] requires `anchor`
+/// to have epoch-link form into `epoch` and crosses from it, so the sealed
+/// bucket ends on the published entry anchor of `epoch + 1` only if `anchor`
+/// is both the entry and the final anchor of `epoch`: only if the epoch
+/// published no stamp. `discriminant` is a free witness; see
+/// [`QrDiscriminant`].
+#[derive(Debug)]
+pub struct QrEmptyIntakeSeed;
+
+impl Step for QrEmptyIntakeSeed {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = QrIntake;
+    type Right = ();
+    /// `(anchor, epoch, discriminant)`
+    type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant);
+
+    const INDEX: Index = Index::new(29);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (anchor, epoch, discriminant): Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        Ok((
+            (
+                epoch,
+                anchor,
+                anchor,
+                discriminant,
+                QrProfile::ROOT,
+                TachygramSetCommit::default(),
             ),
             (),
         ))

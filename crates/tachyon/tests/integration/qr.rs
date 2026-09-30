@@ -1721,6 +1721,125 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     );
 }
 
+/// The empty bucket of `epoch`, rooted at `anchor` and sealed on
+/// `anchor_final_prev`.
+fn empty_bucket(
+    rng: &mut StdRng,
+    anchor: Anchor,
+    epoch: EpochIndex,
+    anchor_final_prev: Anchor,
+) -> QrBucketEntry {
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let (pcd, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            qr::QrEmptyIntakeSeed,
+            witness::qr_empty_intake_seed(((), ()), anchor, epoch, discriminant),
+        )
+        .expect("QrEmptyIntakeSeed");
+    seal_qr_intake(
+        rng,
+        QrIntakeEntry {
+            pcd,
+            members: Vec::new(),
+        },
+        anchor_final_prev,
+    )
+}
+
+/// An epoch that published no stamp seals an empty bucket from its entry
+/// anchor, which is also its final anchor. The bucket ends on the next
+/// epoch's entry anchor, so its segment fuses between its neighbours'.
+#[test]
+fn qr_empty_intake_seed_spans_a_stampless_epoch() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let epoch0 = EpochIndex::new(0);
+    let epoch1 = epoch0.next().unwrap();
+    let epoch2 = epoch1.next().unwrap();
+    let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+    // Fill epoch zero, leave epoch one empty, and open epoch two.
+    pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
+    pool.advance(EPOCH_SIZE, |_| Vec::new());
+    pool.mine(random_block(rng, 1, 1));
+    let [nf0, nf1, nf2] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
+
+    let final0 = pool.block(epoch0.last_block()).anchor();
+    let entry1 = pool.block(epoch1.first_block()).prev;
+    let entry2 = pool.block(epoch2.first_block()).prev;
+    assert_eq!(
+        pool.block(epoch1.last_block()).anchor(),
+        entry1,
+        "a stampless epoch's final anchor is its entry anchor"
+    );
+
+    let bucket = empty_bucket(rng, entry1, epoch1, final0);
+    let (epoch, anchor_prev, anchor_end, _, profile, contents) = *bucket.pcd.data();
+    assert_eq!(
+        (epoch, anchor_prev, anchor_end),
+        (epoch1, entry1, entry2),
+        "the empty bucket runs from epoch one's entry anchor to epoch two's"
+    );
+    assert_eq!(
+        (profile, contents),
+        (
+            QrProfile::ROOT,
+            TachygramSetPoly::from_iter(iter::empty()).commit()
+        ),
+        "and holds nothing"
+    );
+
+    let left = {
+        let bucket0 = qr_bucket_for(
+            rng,
+            &pool,
+            (Anchor::default(), final0),
+            EPOCH_MEMBERS,
+            0,
+            Fp::from(nf0),
+            Anchor::from(Fp::ZERO),
+        );
+        let witness =
+            witness::qr_unspent_init((*bucket0.pcd.data(), ()), nf0.into(), nf1, &bucket0.members);
+        fuse_unspent_init(rng, bucket0.pcd, witness).expect("QrUnspentInit")
+    };
+    let right = {
+        let witness =
+            witness::qr_unspent_init((*bucket.pcd.data(), ()), nf1.into(), nf2, &bucket.members);
+        fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit on the empty bucket")
+    };
+
+    let (fused, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            UnspentFuse,
+            witness::unspent_fuse((*left.data(), *right.data()), &[nf0, nf1], &[nf1, nf2]),
+            left,
+            right,
+        )
+        .expect("UnspentFuse across the stampless epoch");
+    let (fused_anchor_prev, _, _, last, fused_anchor_end) = *fused.data();
+    assert_eq!(fused_anchor_prev, Anchor::default());
+    assert_eq!(last, (epoch2, nf2));
+    assert_eq!(fused_anchor_end, entry2);
+}
+
+/// An empty intake over an epoch that published stamps seals to a crossing
+/// off the published chain: the stamps' folds lie between the epoch's entry
+/// and final anchors, so the crossing from the entry anchor is not the one
+/// the pool made.
+#[test]
+fn qr_empty_intake_seed_over_a_stamped_epoch_leaves_the_chain() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (_pool, final_anchor) = small_epoch(rng);
+    let epoch = EpochIndex::new(0);
+    let bucket = empty_bucket(rng, Anchor::default(), epoch, Anchor::from(Fp::ZERO));
+    assert_ne!(
+        bucket.pcd.data().2,
+        final_anchor.next_epoch(epoch.next().unwrap()).unwrap(),
+        "the bucket ends on a crossing the pool never published"
+    );
+}
+
 /// A note created in epoch zero bootstraps from the bucket holding its `cm`
 /// over its own QR segment, rests at epoch one's entry anchor because the
 /// segment already crossed, lifts through epoch one on ordinary segments, and

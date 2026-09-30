@@ -53,6 +53,7 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(qr::QrBucketSeal)?
         .register(qr::QrStampIntakeSeed)?
         .register(spendable::QrSpendableInit)?
+        .register(qr::QrEmptyIntakeSeed)?
         .finalize()
 }
 

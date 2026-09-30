@@ -39,7 +39,7 @@ A `Summary` folds a run of one epoch's stamps into one accumulator alongside the
 `SummaryUnspentInit` starts an `ArbitraryUnspent` from one with a single exclusion query, and `SummarySpendableInit` starts a wallet's spendable from one covering its note's creation.
 
 Summaries and single stamps also root an epoch's QR evidence.
-Once per epoch a builder routes every published tachygram into buckets by quadratic-residue profile (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`).
+Once per epoch a builder routes every published tachygram into buckets by quadratic-residue profile (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`).
 A nullifier has one profile, so it can have been published in only one bucket, and one exclusion opening on that bucket proves it absent from the epoch (`QrUnspentInit`).
 `QrSpendableInit` starts a wallet's spendable from the bucket holding its note's creation, over the note's own QR segment for that epoch.
 The evidence is note-independent and rebuildable from public data alone.
@@ -89,7 +89,7 @@ The wallet runs every step that touches the note's commitment or master key.
 It derives its nullifier windows (`NoteSeed`, `NullifierDerive`, `NullifierFuse`), derives spendable status from its own derivation (`SpendableInit`, `SummarySpendableInit`, `QrSpendableInit`), binds and lifts over sync-built segments (`UnspentBind`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `SpendStamp`, `OutputBind`, `OutputStamp`).
 
 The sync service holds the per-epoch nullifier values the wallet shared and pool history.
-It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket; `SummaryUnspentInit` over a summary; `UnspentSeed`, `EndEpochUnspentSeed`, `UnspentFuse` per stamp), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
+It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket; `SummaryUnspentInit` over a summary; `UnspentSeed`, `EndEpochUnspentSeed`, `UnspentFuse` per stamp), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
 
 The aggregator works only with published `Stamp`s.
 It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `AnchorFuse`) and fuses with `StampMerge`.
@@ -103,6 +103,7 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `A
 | SummaryUnspentInit | possible | yes | no |
 | QrSummaryIntake | possible | yes | no |
 | QrStampIntakeSeed | possible | yes | no |
+| QrEmptyIntakeSeed | possible | yes | no |
 | QrIntakeMerge | possible | yes | no |
 | QrIntakeSplit | possible | yes | no |
 | QrBucketSeal | possible | yes | no |
@@ -175,7 +176,7 @@ Choosing $R_0$ moves how members distribute across buckets, never which bucket h
 Honest depth is $\log_2$ of the bucket count and stays below 26 at any proposed throughput; the 32-position register is a width, not a security parameter[^balance].
 A profile is the string of sides on the path to a bucket.
 
-`QrSummaryIntake` starts a `QrIntake` from a `Summary` at depth zero, `QrStampIntakeSeed` starts one from a single stamp directly, and `QrIntakeMerge` joins two intakes of one epoch, discriminant and profile whose spans meet, so spans compose as anchor segments do.
+`QrSummaryIntake` starts a `QrIntake` from a `Summary` at depth zero, `QrStampIntakeSeed` starts one from a single stamp directly, `QrEmptyIntakeSeed` starts an empty one over an epoch that published no stamp, and `QrIntakeMerge` joins two intakes of one epoch, discriminant and profile whose spans meet, so spans compose as anchor segments do.
 `QrIntakeSplit` factors an intake's contents into two sides at $R = R_0 + \mathsf{depth}$ as `QrIntakeSides`, and `QrSideDescend` extracts one side while attesting the other at its class multiplier $c$:
 
 $$u(X)^2 - c\,(X + R) = s(X)\, h(X)$$
@@ -451,6 +452,7 @@ flowchart LR
 | QrSpendableInit | NoteUnspent | QrBucket | contents | NoteSpendable |
 | QrSummaryIntake | Summary | — | discriminant | QrIntake |
 | QrStampIntakeSeed | — | — | anchor_prev, epoch, discriminant, stamp_commit | QrIntake |
+| QrEmptyIntakeSeed | — | — | anchor, epoch, discriminant | QrIntake |
 | QrIntakeMerge | QrIntake | QrIntake | left_contents, right_contents, merged | QrIntake |
 | QrIntakeSplit | QrIntake | — | contents, non_residue, residue | QrIntakeSides |
 | QrSideDescend | QrIntakeSides | — | bit, sibling_contents, interpolant, quotient | QrIntake |

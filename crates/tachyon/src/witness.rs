@@ -26,8 +26,8 @@ use crate::{
             UnspentSeed,
         },
         qr::{
-            QrBucketSeal, QrIntakeMerge, QrIntakeSplit, QrSideDescend, QrStampIntakeSeed,
-            QrSummaryIntake, QrUnspentInit,
+            QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
+            QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
         spend::SpendBind,
         spendable::{QrSpendableInit, SpendableInit, SummarySpendableInit},
@@ -394,6 +394,18 @@ pub fn qr_stamp_intake_seed(
         discriminant,
         tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
     )
+}
+
+/// Prepare the witness for [`QrEmptyIntakeSeed`]: `(anchor, epoch,
+/// discriminant)`.
+#[must_use]
+pub const fn qr_empty_intake_seed(
+    (_left, _right): (StepLeft<QrEmptyIntakeSeed>, StepRight<QrEmptyIntakeSeed>),
+    anchor: Anchor,
+    epoch: EpochIndex,
+    discriminant: QrDiscriminant,
+) -> StepWitness<'static, QrEmptyIntakeSeed> {
+    (anchor, epoch, discriminant)
 }
 
 /// Prepare the witness for [`QrIntakeMerge`]: `(left_contents,
