@@ -912,12 +912,8 @@ pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
     nf: impl Fn(EpochIndex) -> Nullifier,
 ) -> Pcd<pool::ArbitraryUnspent> {
     let (epoch, ..) = *bucket.pcd.data();
-    let witness = witness::qr_unspent_init(
-        (*bucket.pcd.data(), ()),
-        nf(epoch).into(),
-        nf(epoch.next().expect("an epoch follows the bucket's")),
-        &bucket.members,
-    );
+    let witness =
+        witness::qr_unspent_init((*bucket.pcd.data(), ()), nf(epoch).into(), &bucket.members);
     let (segment, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -949,18 +945,17 @@ pub(crate) fn build_unspent_pcd_over_epochs<RNG: CryptoRng>(
         let bucket = epoch_bucket(rng, pool, epoch);
         segments.push(qr_bucket_segment(rng, &bucket, &nf));
     }
-    let members: Vec<Nullifier> = (u32::from(epoch_start)..=u32::from(epoch_end))
+    let members: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_end))
         .map(|epoch| nf(EpochIndex::new(epoch)))
         .collect();
     fuse_unspent_tree(rng, &members, epoch_start, segments)
 }
 
 /// Fuse contiguous [`ArbitraryUnspent`] chains as a binary tree: split at the
-/// midpoint, fuse each half, then concatenate the halves at their shared epoch
-/// ([`UnspentFuse`]). Every seam is a shared junction, since a boundary is
-/// itself a chain link. Everything a seam needs is read off the halves'
-/// headers; a chain's member slice is
-/// `nf[epoch_start - base..=epoch_end - base]` (one nullifier per covered
+/// midpoint, fuse each half, then concatenate the halves at the entry anchor
+/// they share ([`UnspentFuse`]). Everything a seam needs is read off the
+/// halves' headers; a chain's member slice is
+/// `nf[epoch_start - base..epoch_end - base]` (one nullifier per covered
 /// epoch).
 fn fuse_unspent_tree<RNG: CryptoRng>(
     rng: &mut RNG,
@@ -979,16 +974,16 @@ fn fuse_unspent_tree<RNG: CryptoRng>(
     let elapsed_slice = |lo: EpochIndex, hi: EpochIndex| -> &[Nullifier] {
         let from = usize::try_from(u64::from(lo - base)).expect("epoch within span");
         let to = usize::try_from(u64::from(hi - base)).expect("epoch within span");
-        &nf[from..=to]
+        &nf[from..to]
     };
-    let (_, (left_epoch_start, _), _, (left_epoch_end, _), _) = *left.data();
-    let (_, (right_epoch_start, _), _, (right_epoch_end, _), _) = *right.data();
+    let (_, left_epoch_start, _, left_epoch_end, _) = *left.data();
+    let (_, right_epoch_start, _, right_epoch_end, _) = *right.data();
     let left_el = elapsed_slice(left_epoch_start, left_epoch_end);
     let right_el = elapsed_slice(right_epoch_start, right_epoch_end);
     assert_eq!(
         u32::from(right_epoch_start),
         u32::from(left_epoch_end),
-        "fused chains must meet inside one epoch"
+        "fused chains must meet at one epoch"
     );
     let witness = witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
     let (fused, ()) = PROOF_SYSTEM
@@ -1246,9 +1241,9 @@ impl WalletSim {
         arbitrary: Pcd<pool::ArbitraryUnspent>,
         note: &Note,
     ) -> Pcd<pool::NoteUnspent> {
-        let (_, (epoch_start, _), _, (epoch_end, _), _) = *arbitrary.data();
+        let (_, epoch_start, _, epoch_end, _) = *arbitrary.data();
         let range = self.derivation_pcd(rng, *note, epoch_start, epoch_end);
-        let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..=u32::from(epoch_end))
+        let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_end))
             .map(|epoch| self.nf_at(note, EpochIndex::new(epoch)))
             .collect();
         let (unspent, ()) = PROOF_SYSTEM

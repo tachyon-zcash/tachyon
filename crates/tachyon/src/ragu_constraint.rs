@@ -7,8 +7,8 @@
 
 use group::Curve as _;
 use pasta_curves::{Eq, EqAffine, Fp, Fq};
-use ragu_core::{Error, Result, drivers::Driver as _};
-use ragu_primitives::{Boolean, Element, GadgetExt as _, Point, Simulator};
+use ragu_core::{Error, Result};
+use ragu_primitives::{Element, GadgetExt as _, Point, Simulator};
 
 /// Enforces `value == 0`.
 pub(crate) fn enforce_zero(value: Fp, err: &'static str) -> Result<()> {
@@ -28,23 +28,6 @@ pub(crate) fn enforce_nonzero(value: Fp, err: &'static str) -> Result<Fp> {
     element
         .enforce_nonzero(&mut driver)
         .map(|_nonzero| value)
-        .map_err(|_e| Error::InvalidWitness(err.into()))
-}
-
-/// Enforces `left == right` when `cond` holds, and nothing otherwise.
-pub(crate) fn conditional_enforce_equal(
-    cond: bool,
-    left: Fp,
-    right: Fp,
-    err: &'static str,
-) -> Result<()> {
-    let mut driver = Simulator::<Fp>::new();
-    let condition = Boolean::alloc(&mut driver, &mut (), Simulator::<Fp>::just(|| cond))?;
-    let left_element = Element::constant(&mut driver, left);
-    let right_element = Element::constant(&mut driver, right);
-
-    condition
-        .conditional_enforce_equal(&mut driver, &mut (), &left_element, &right_element)
         .map_err(|_e| Error::InvalidWitness(err.into()))
 }
 

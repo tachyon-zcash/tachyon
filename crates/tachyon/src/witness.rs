@@ -89,26 +89,16 @@ pub fn nullifier_fuse(
 /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`.
 ///
 /// `left_elapsed` and `right_elapsed` are the halves' member lists, one per
-/// covered epoch. Both include the junction epoch's member, which the
-/// combined sequence keeps once.
-///
-/// # Panics
-///
-/// Panics if `right_elapsed` is empty. Every segment covers at least its
-/// junction epoch, so a caller holding a [`StepRight`] has a member for it.
+/// covered epoch.
 #[must_use]
 pub fn unspent_fuse(
     (left, right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
     left_elapsed: &[Nullifier],
     right_elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentFuse> {
-    let (_, (left_epoch_start, _), ..) = left;
-    let (_, (right_epoch_start, _), ..) = right;
-    #[expect(clippy::expect_used, reason = "member lists are nonempty")]
-    let (_junction, right_tail) = right_elapsed
-        .split_first()
-        .expect("right members include the junction");
-    let combined = [left_elapsed, right_tail].concat();
+    let (_, left_epoch_start, ..) = left;
+    let (_, right_epoch_start, ..) = right;
+    let combined = [left_elapsed, right_elapsed].concat();
     (
         NfSeqPoly::new(left_epoch_start, left_elapsed),
         NfSeqPoly::new(left_epoch_start, &combined),
@@ -133,19 +123,13 @@ pub fn unspent_bind(
     window: &[Nullifier],
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentBind> {
-    let (_, (epoch_start, _), _, (epoch_end, _), _) = unspent;
+    let (_, epoch_start, _, epoch_end, _) = unspent;
     let (_, nullifiers_epoch_start, ..) = deriv;
     let lo = u32::from(epoch_start - nullifiers_epoch_start) as usize;
     let (head, from_span) = window.split_at(lo);
     let (_span, tail) = from_span.split_at(elapsed.len());
-    let complement_seq = NfSeqPoly::new(nullifiers_epoch_start, head)
-        * epoch_end.next().map_or_else(
-            || {
-                debug_assert!(tail.is_empty(), "no tail can follow the final epoch");
-                NfSeqPoly::default()
-            },
-            |tail_start| NfSeqPoly::new(tail_start, tail),
-        );
+    let complement_seq =
+        NfSeqPoly::new(nullifiers_epoch_start, head) * NfSeqPoly::new(epoch_end, tail);
     (
         NfSeqPoly::new(epoch_start, elapsed),
         NfSeqPoly::new(nullifiers_epoch_start, window),
@@ -408,10 +392,8 @@ pub const fn qr_bucket_seal(
     (anchor_final_prev,)
 }
 
-/// Prepare the witness for [`QrUnspentInit`]: `(value, nf_next, classes, mask,
+/// Prepare the witness for [`QrUnspentInit`]: `(value, classes, mask,
 /// sequence, contents)`.
-///
-/// `nf_next` is the tested note's nullifier for the epoch after the bucket's.
 ///
 /// # Panics
 ///
@@ -421,16 +403,14 @@ pub const fn qr_bucket_seal(
 pub fn qr_unspent_init(
     (bucket, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
     value: Tachygram,
-    nf_next: Nullifier,
     bucket_members: &[Tachygram],
 ) -> StepWitness<'static, QrUnspentInit> {
     let (epoch, _anchor_prev, _anchor_end, discriminant, profile, _contents) = bucket;
     (
         value,
-        nf_next,
         QrClassRoot::along(Fp::from(value), discriminant),
         profile.depth_mask(),
-        NfSeqPoly::new(epoch, &[Nullifier::from(value), nf_next]),
+        NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
         bucket_members.iter().copied().collect(),
     )
 }

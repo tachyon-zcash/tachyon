@@ -146,8 +146,8 @@ impl Step for QrSpendableInit {
         (
             cm,
             unspent_anchor_prev,
-            (unspent_epoch_start, _),
-            (unspent_epoch_end, _),
+            unspent_epoch_start,
+            unspent_epoch_end,
             unspent_anchor_end,
         ): <Self::Left as Header>::Data,
         (bucket_epoch, bucket_anchor_prev, bucket_anchor_end, _, _, bucket_commit): <Self::Right as Header>::Data,
@@ -205,6 +205,9 @@ impl Step for QrSpendableInit {
 /// [`UnspentBind`](super::pool::UnspentBind) makes every member of the segment
 /// the genuine nullifier of `cm` at its epoch, so equal `cm` and `epoch_start`
 /// fix the member the segment starts on. No nullifier needs comparing.
+///
+/// The lineage then rests on `epoch_end`'s entry anchor, certified for every
+/// epoch before `epoch_end`. The spend's anchor epoch is consensus's to scan.
 #[derive(Debug)]
 pub struct SpendableLift;
 
@@ -225,8 +228,8 @@ impl Step for SpendableLift {
         (
             unspent_cm,
             unspent_anchor_prev,
-            (unspent_epoch_start, _),
-            (unspent_epoch_end, _),
+            unspent_epoch_start,
+            unspent_epoch_end,
             unspent_anchor_end,
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {

@@ -34,7 +34,6 @@ pub use crate::collections::qr::classify;
 use crate::{
     collections::{indexed_multiset, qr::QUADRATIC_NON_RESIDUE},
     digest::poseidon,
-    nullifier::Nullifier,
     primitives::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
         QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
@@ -670,11 +669,10 @@ impl Step for QrBucketSeal {
 /// bucket's sides are the value's.
 ///
 /// The emitted segment reads the value as a nullifier and takes the bucket's
-/// extent, which ends on the boundary into `epoch + 1`. Stepping onto that
-/// boundary enters a new epoch, so the step also witnesses the next epoch's
-/// nullifier, and the segment covers `[epoch, epoch + 1]` in epoch space.
-/// Consecutive epochs' segments therefore meet at the entry anchor and fuse
-/// directly.
+/// extent, which ends on the entry anchor of `epoch + 1`. Its one member is
+/// the value at `epoch`: the crossing into `epoch + 1` absorbs no tachygrams,
+/// so the next epoch's nullifier is the next segment's to test. Consecutive
+/// epochs' segments meet at the entry anchor and fuse directly.
 ///
 /// # Soundness
 ///
@@ -687,11 +685,10 @@ impl Step for QrBucketSeal {
 /// then equals `bits` iff the bucket's sides are the value's first `depth`
 /// sides. Positions past `depth` are tested but compared to nothing. $R_0$ is
 /// the bucket's own `discriminant`, so the exclusion holds for the network
-/// the bucket belongs to. `value` and `nf_next` are free witnesses. The
-/// challenge absorbs both, so the sequence identity fixes both, and the
-/// emitted boundary pairs are the sequence's own members;
-/// [`UnspentBind`](super::pool::UnspentBind) forces each against the note's
-/// genuine derivation.
+/// the bucket belongs to. `value` is a free witness. The challenge absorbs
+/// it, so the sequence identity fixes the one member to it;
+/// [`UnspentBind`](super::pool::UnspentBind) forces that member against the
+/// note's genuine derivation.
 ///
 /// [`QrBucketSeal`] performs the boundary digest, and so establishes
 /// whole-epoch coverage. This step and every fuse and lift preserve it.
@@ -703,10 +700,9 @@ impl Step for QrUnspentInit {
     type Left = QrBucket;
     type Output = ArbitraryUnspent;
     type Right = ();
-    /// `(value, nf_next, classes, mask, sequence, contents)`
+    /// `(value, classes, mask, sequence, contents)`
     type Witness<'source> = (
         Tachygram,
-        Nullifier,
         [QrClassRoot; QrProfile::MAX_DEPTH],
         [bool; QrProfile::MAX_DEPTH],
         NfSeqPoly,
@@ -718,7 +714,7 @@ impl Step for QrUnspentInit {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (value, nf_next, classes, mask, sequence, contents): Self::Witness<'source>,
+        (value, classes, mask, sequence, contents): Self::Witness<'source>,
         (
             bucket_epoch,
             bucket_anchor_prev,
@@ -735,10 +731,6 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: contents do not match the bucket",
         )?;
         enforce_nonzero(Fp::from(value), "QrUnspentInit: tested value is zero")?;
-        enforce_nonzero(
-            Fp::from(nf_next),
-            "QrUnspentInit: next-epoch nullifier is zero",
-        )?;
 
         // TODO: a real circuit must constrain every side and mask bit boolean;
         // the types carry it under mock ragu.
@@ -784,40 +776,23 @@ impl Step for QrUnspentInit {
         })?;
 
         let sequence_commit = sequence.commit();
-        let z = ctx.derive_challenge(&[
-            sequence_commit.into(),
-            {
-                // The mock absorbs only points, so absorb `[value]·G_0`.
-                #[expect(clippy::expect_used, reason = "constant size")]
-                let &g0 = Pasta::host_generators(Pasta::baked())
-                    .g()
-                    .first()
-                    .expect("at least one generator");
-                g0 * Fp::from(value)
-            },
-            {
-                // The mock absorbs only points, so absorb `[nf_next]·G_0`.
-                #[expect(clippy::expect_used, reason = "constant size")]
-                let &g0 = Pasta::host_generators(Pasta::baked())
-                    .g()
-                    .first()
-                    .expect("at least one generator");
-                g0 * Fp::from(nf_next)
-            },
-        ])?;
+        let z = ctx.derive_challenge(&[sequence_commit.into(), {
+            // The mock absorbs only points, so absorb `[value]·G_0`.
+            #[expect(clippy::expect_used, reason = "constant size")]
+            let &g0 = Pasta::host_generators(Pasta::baked())
+                .g()
+                .first()
+                .expect("at least one generator");
+            g0 * Fp::from(value)
+        }])?;
         let sequence_at_z = sequence.eval(z);
         ctx.enforce_poly_query(sequence_commit.into(), z, sequence_at_z)?;
 
-        let crossing_at_z = indexed_multiset::direct_eval(
-            [
-                (u64::from(bucket_epoch), value.into()),
-                (u64::from(epoch_next), Fp::from(nf_next)),
-            ],
-            z,
-        );
+        let member_at_z =
+            indexed_multiset::direct_eval([(u64::from(bucket_epoch), value.into())], z);
         enforce_zero(
-            sequence_at_z - crossing_at_z,
-            "QrUnspentInit: sequence does not match the crossing pairs",
+            sequence_at_z - member_at_z,
+            "QrUnspentInit: sequence does not match the tested pair",
         )?;
 
         let contents_at_value = contents.eval(value.into());
@@ -830,9 +805,9 @@ impl Step for QrUnspentInit {
         Ok((
             (
                 bucket_anchor_prev,
-                (bucket_epoch, Nullifier::from(value)),
+                bucket_epoch,
                 sequence_commit,
-                (epoch_next, nf_next),
+                epoch_next,
                 bucket_anchor_end,
             ),
             (),

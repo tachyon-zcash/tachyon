@@ -35,13 +35,14 @@ Summaries and single stamps root an epoch's QR evidence.
 Once per epoch a builder routes every published tachygram into buckets by quadratic-residue profile (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`).
 A nullifier has one profile, so it can have been published in only one bucket, and one exclusion opening on that bucket proves it absent from the epoch (`QrUnspentInit`).
 Every `ArbitraryUnspent` starts that way, and runs from one entry anchor to the next.
-`UnspentFuse` composes two segments meeting at an entry anchor, whose shared epoch label names the junction: it concatenates their `elapsed` histories, keeping the junction member once.
+A segment's `elapsed` holds one member per epoch in `[epoch_start, epoch_end)`: its only fold in `epoch_end` is the crossing into it, which absorbs no tachygrams, so that epoch's nullifier is the next segment's to test.
+`UnspentFuse` composes two segments meeting at an entry anchor and concatenates their `elapsed` histories.
 An epoch that published nothing seals an empty bucket, so its segment is as cheap as any other.
 `QrSpendableInit` starts a wallet's spendable from the bucket holding its note's creation, over the note's own QR segment for that epoch.
 The evidence is note-independent and rebuildable from public data alone.
 
 `UnspentBind` is wallet-side. It consumes the sync-built `ArbitraryUnspent` and a `NoteNullifiers`, and divides `elapsed` out of the derivation's sequence, so every factor of `elapsed` is a genuine nullifier of the note at its own epoch.
-It emits a `NoteUnspent` carrying the span's boundary nullifiers, anchors and epochs, and the note's `cm`.
+It emits a `NoteUnspent` carrying the span's anchors and epochs, and the note's `cm`.
 
 `SpendableLift` is wallet-side and witness-free: it consumes a `NoteSpendable` and a `NoteUnspent`.
 It checks the verified segment's `cm` equals the spendable's (so the absence-proven nullifiers are this note's, and the value cannot drift), the segment's `epoch_start` equals the spendable's `epoch_current` (continuity), and the segment's `anchor_prev` equals the spendable's anchor (adjacency).
@@ -129,15 +130,15 @@ A segment ties to real chain history only through a consensus-published stamp wh
 
 ### ArbitraryUnspent composition
 
-An `ArbitraryUnspent` is a coverage extent `(anchor_prev, anchor_end]`, with boundary pairs `(epoch_start, nf_start)` and `(epoch_end, nf_end)`, plus `elapsed`: the product of one indexed cubic factor per epoch covered over `[epoch_start, epoch_end]`[^nullifiers].
-Each factor carries its own epoch, so the product is a multiset of `(epoch, nullifier)` pairs and needs no degree pin. Every producer holds three properties that `UnspentBind` relies on: each factor's epoch lies inside the span, each epoch has exactly one factor, and the boundary caches name factors the product holds.
-`QrUnspentInit` is the only seed. Its segment runs from one entry anchor to the next, and it pins its product against the pairs it emits: the challenge absorbs the sequence commitment and a scalar-binding point of every nullifier it emits, so each boundary cache and each tested nullifier is the member the sequence holds.
-`UnspentFuse` composes two contiguous ranges sharing a junction epoch (`right.epoch_start == left.epoch_end`) at adjacent anchors (`left.anchor_end == right.anchor_prev`), confirming
+An `ArbitraryUnspent` is a coverage extent `(anchor_prev, anchor_end]` between two entry anchors, labelled `epoch_start` and `epoch_end`, plus `elapsed`: the product of one indexed cubic factor per epoch in `[epoch_start, epoch_end)`[^nullifiers].
+The segment's only fold in `epoch_end` is the crossing into it, which absorbs no tachygrams, so that epoch has nothing to test.
+Each factor carries its own epoch, so the product is a multiset of `(epoch, nullifier)` pairs and needs no degree pin. Every producer holds the two properties that `UnspentBind` relies on: each factor's epoch lies in `[epoch_start, epoch_end)`, and each such epoch has exactly one factor.
+`QrUnspentInit` is the only seed. It pins its one-factor product against the value it tests, at a challenge absorbing the sequence commitment and a scalar-binding point of the value.
+`UnspentFuse` composes two segments at one entry anchor (`left.anchor_end == right.anchor_prev`), labelled with one epoch (`right.epoch_start == left.epoch_end`), confirming
 
-$$C(X) \cdot F_{\text{junction}}(X) = L(X) \cdot R(X)$$
+$$C(X) = L(X) \cdot R(X)$$
 
-for the witnessed `combined` $C$, left $L$, and right $R$. Both halves hold the junction epoch's factor, and dividing it out leaves each epoch represented once. The recursive verification of the two input PCDs binds $L$ and $R$ before the challenge.
-The junction agreement (`left.nf_end == right.nf_start`) is well-formedness only. The junction factor is built from the header cache, and every producer pins its caches to its own sequence, so a lie in the caches yields a wrong `elapsed` that `UnspentBind` rejects.
+for the witnessed `combined` $C$, left $L$, and right $R$. The halves hold disjoint epochs, so their product holds each epoch once. The recursive verification of the two input PCDs binds $L$ and $R$ before the challenge.
 
 ### Summaries
 
@@ -195,8 +196,8 @@ $$\sum_j m_j = d, \qquad 2 \sum_j j\, m_j = d\,(d - 1), \qquad a_{j+1} = a_j + m
 
 since among boolean vectors of weight $d$ only the leading positions attain the minimum index sum; positions past $d$ are tested but compared to nothing.
 A bucket matching $x$'s profile contains every occurrence of $x$ in its span, so opening its contents nonzero at $x$ proves absence over that span.
-The emitted segment takes the bucket's extent, which ends on the boundary into $\mathsf{epoch} + 1$. Stepping onto that boundary enters a new epoch, so the step also witnesses that epoch's nullifier $y$, and the segment covers `[epoch, epoch + 1]` in epoch space. Consecutive epochs' segments therefore abut at the entry anchor and `UnspentFuse` composes them directly.
-The sequence's two members $(\mathsf{epoch}, x)$ and $(\mathsf{epoch} + 1, y)$ are checked at a challenge absorbing $G_0 \cdot x$ and $G_0 \cdot y$; the sequence and the contents are the step's two oracles.
+The emitted segment takes the bucket's extent, which ends on the entry anchor of $\mathsf{epoch} + 1$, and its one member is $(\mathsf{epoch}, x)$. Consecutive epochs' segments abut at the entry anchor and `UnspentFuse` composes them directly.
+The sequence's one member is checked at a challenge absorbing $G_0 \cdot x$; the sequence and the contents are the step's two oracles.
 
 `QrSpendableInit` bootstraps a spendable from the bucket holding the note's creation.
 Its left input is the note's `NoteUnspent` over that epoch, the QR segment bound by `UnspentBind`, so `cm` and the whole-epoch absence of the nullifier arrive on the header; the step opens the bucket at $\mathsf{cm}$ for zero, requires the segment's extent to equal the bucket's, and emits the spendable at the segment's `anchor_end`. That anchor is the next epoch's entry anchor.
@@ -220,7 +221,7 @@ It binds `elapsed` and the derivation's sequence $g$ to their headers by commit-
 $$g(X) = \texttt{elapsed}(X) \cdot \texttt{complement}(X)$$
 
 where the witnessed complement holds the derivation's factors outside the lineage. Every factor is irreducible, so divisibility is multiset containment: each `elapsed` factor, its epoch included, is a genuine derived pair, and an epoch the derivation lacks has no factor to divide out.
-With the provenance properties above, every epoch of the span was therefore tested with its own genuine nullifier. The boundary caches inherit their genuineness from the same identity, so they need no separate check.
+With the provenance properties above, every epoch of the span was therefore tested with its own genuine nullifier.
 The derivation's `cm` is stamped onto the `NoteUnspent`.
 
 ### Spendable lineage
@@ -382,10 +383,10 @@ flowchart LR
 ```mermaid
 flowchart LR
   bucket_e((QrBucket))
-  w_init[/value, nf_next, classes, mask, sequence, contents/]
+  w_init[/value, classes, mask, sequence, contents/]
   s_init[QrUnspentInit]
   bucket_next((QrBucket))
-  w_next[/value, nf_next, classes, mask, sequence, contents/]
+  w_next[/value, classes, mask, sequence, contents/]
   s_next[QrUnspentInit]
   w_ufuse[/left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq/]
   s_ufuse[UnspentFuse]
@@ -410,8 +411,8 @@ flowchart LR
 | QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile, contents) |
 | QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue) |
 | QrBucket | (epoch, anchor_prev, anchor_end, discriminant, profile, contents) |
-| ArbitraryUnspent | (anchor_prev, (epoch_start, nf_start), elapsed, (epoch_end, nf_end), anchor_end) |
-| NoteUnspent | (cm, anchor_prev, (epoch_start, nf_start), (epoch_end, nf_end), anchor_end) |
+| ArbitraryUnspent | (anchor_prev, epoch_start, elapsed, epoch_end, anchor_end) |
+| NoteUnspent | (cm, anchor_prev, epoch_start, epoch_end, anchor_end) |
 | NoteMaster | (cm, mk) |
 | NoteNullifiers | (cm, epoch_start, nf_commit, epoch_end) |
 | NoteSpendable | (cm, epoch_current, anchor) |
@@ -435,7 +436,7 @@ flowchart LR
 | QrIntakeSplit | QrIntake | — | contents, non_residue, residue | QrIntakeSides |
 | QrSideDescend | QrIntakeSides | — | bit, sibling_contents, interpolant, quotient | QrIntake |
 | QrBucketSeal | QrIntake | — | anchor_final_prev | QrBucket |
-| QrUnspentInit | QrBucket | — | value, nf_next, classes, mask, sequence, contents | ArbitraryUnspent |
+| QrUnspentInit | QrBucket | — | value, classes, mask, sequence, contents | ArbitraryUnspent |
 | UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | ArbitraryUnspent |
 | UnspentBind | ArbitraryUnspent | NoteNullifiers | elapsed_seq, nf_seq, complement_seq | NoteUnspent |
 | NoteSeed | — | — | note, pak | NoteMaster |
