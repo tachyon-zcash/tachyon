@@ -118,6 +118,38 @@ pub fn nf_master(psi: Fp, nk: Fp) -> Fp {
     ])
 }
 
+const SPEND_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Spend\0\0\0";
+
+/// Derives a spend's $\alpha$ preimage from its entropy and note commitment.
+///
+/// $$
+///   \mathsf{Poseidon}(\texttt{Tachyon-Spend},\ \theta,\ \mathsf{cm})
+/// $$
+#[must_use]
+pub fn alpha_spend(theta: Fp, cm: Fp) -> Fp {
+    hash::<3>([
+        Fp::from_u128(u128::from_le_bytes(*SPEND_ALPHA_DOMAIN)),
+        theta,
+        cm,
+    ])
+}
+
+const OUTPUT_ALPHA_DOMAIN: &[u8; 16] = b"Tachyon-Output\0\0";
+
+/// Derives an output's $\alpha$ preimage from its entropy and note commitment.
+///
+/// $$
+///   \mathsf{Poseidon}(\texttt{Tachyon-Output},\ \theta,\ \mathsf{cm})
+/// $$
+#[must_use]
+pub fn alpha_output(theta: Fp, cm: Fp) -> Fp {
+    hash::<3>([
+        Fp::from_u128(u128::from_le_bytes(*OUTPUT_ALPHA_DOMAIN)),
+        theta,
+        cm,
+    ])
+}
+
 const NULLIFIER_DOMAIN: &[u8; 16] = b"Tachyon-NfDerive";
 
 /// Derives the group of consecutive epoch nullifiers starting at the

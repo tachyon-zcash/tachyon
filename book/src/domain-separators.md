@@ -29,17 +29,6 @@ Digests over bundle contents, feeding the two above. These are Tachyon-specific 
 
 ## BLAKE2b-512
 
-### Action alpha
-
-Deterministic action randomizer for Tachyon, privately handled by transaction author and custody device.
-
-<!-- todo: consider poseidon or other curve-native derivation? -->
-
-| Purpose | Value |
-| ------- | ----- |
-| Spend alpha | `Tachyon-Spend` |
-| Output alpha | `Tachyon-Output` |
-
 ### PRF expansion
 
 Domain string and personalization bytes for `sk` expansion.
@@ -66,8 +55,12 @@ These are all Tachyon-specific digests, performed in-circuit.
 | Output padding tachygram | `Tachyon-CmOutPad` |
 | Action digest | `Tachyon-ActionDg` |
 | Payment key derivation | `Tachyon-PkDerive` |
+| Spend alpha | `Tachyon-Spend` |
+| Output alpha | `Tachyon-Output` |
 | Anchor stamp step | `Tachyon-AnchorSt` |
 | Anchor epoch step | `Tachyon-AnchorEp` |
+
+The two alpha domains are zero-padded to sixteen bytes.
 
 ## Hash-to-curve
 

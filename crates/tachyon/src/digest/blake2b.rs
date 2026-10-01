@@ -23,7 +23,7 @@ fn hasher_256(personalization: &[u8], updater: impl FnOnce(&mut blake2b_simd::St
         .expect("hash length is 32")
 }
 
-/// BLAKE2b-512 digest for key and entropy derivation preimages.
+/// BLAKE2b-512 digest for key derivation preimages.
 ///
 /// `updater` feeds the preimage into the personalized state.
 fn hasher_512(personalization: &[u8], updater: impl FnOnce(&mut blake2b_simd::State)) -> [u8; 64] {
@@ -39,41 +39,6 @@ fn hasher_512(personalization: &[u8], updater: impl FnOnce(&mut blake2b_simd::St
         .as_bytes()
         .try_into()
         .expect("hash length is 64")
-}
-
-const SPEND_ALPHA_PERSONALIZATION: &[u8; 13] = b"Tachyon-Spend";
-const OUTPUT_ALPHA_PERSONALIZATION: &[u8; 14] = b"Tachyon-Output";
-
-/// Spend-side $\alpha$ pre-image.
-///
-/// $$
-///   \text{BLAKE2b-512}_\texttt{Tachyon-Spend}(
-///     \theta \Vert cm
-///   )
-/// $$
-///
-/// Caller reduces to scalar via `Fq::from_uniform_bytes`.
-#[must_use]
-pub fn alpha_spend(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
-    hasher_512(SPEND_ALPHA_PERSONALIZATION, |state| {
-        state.update(theta);
-        state.update(cm);
-    })
-}
-
-/// Output-side $\alpha$ pre-image.
-///
-/// $$
-///   \text{BLAKE2b-512}_\texttt{Tachyon-Output}(
-///     \theta \Vert cm
-///   )
-/// $$
-#[must_use]
-pub fn alpha_output(theta: &[u8; 32], cm: &[u8; 32]) -> [u8; 64] {
-    hasher_512(OUTPUT_ALPHA_PERSONALIZATION, |state| {
-        state.update(theta);
-        state.update(cm);
-    })
 }
 
 // See https://github.com/zcash/zcash_spec/blob/main/src/prf_expand.rs
