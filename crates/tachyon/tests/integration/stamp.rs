@@ -63,35 +63,49 @@ fn stamp_merge_iff_matching_anchors() {
 fn plan_prove_rejects_invalid_inputs() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
+    let other = WalletSim::random(rng);
     let mut pool = PoolSim::genesis(rng);
 
+    // Same value, so swapped notes differ only in their commitments.
     let note_a = user.random_note(500);
-    let note_b = user.random_note(700);
+    let note_b = user.random_note(500);
     pool.mine(random_block_with(
         rng,
-        &[vec![note_a.commitment()], vec![note_b.commitment()]],
+        &[vec![note_a.commitment(), note_b.commitment()]],
         50,
     ));
     let height = pool.height();
-    let anchor = pool.block(height).anchor();
 
     let sp_a = user.fresh_spend(rng, &pool, height, &note_a);
     let sp_b = user.fresh_spend(rng, &pool, height, &note_b);
+    let anchor = sp_a.data().2;
+    assert_eq!(
+        anchor,
+        sp_b.data().2,
+        "same-stamp spendables share an anchor"
+    );
 
-    let (rcv_a, theta_a, alpha_a) = spend_witness(rng, &note_a);
+    pool.mine(random_block(rng, 1, 50));
+    let later_anchor = pool.anchor();
+
+    let (rcv_a, theta_a, _alpha_a) = spend_witness(rng, &note_a);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
-    let (rcv_b, theta_b, alpha_b) = spend_witness(rng, &note_b);
+    let (rcv_b, theta_b, _alpha_b) = spend_witness(rng, &note_b);
     let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
+    let foreign_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
+        other.pak.ak.derive_action_public(&alpha)
+    });
+
     let two_spends = || {
         alloc::vec![
-            (plan_a.descriptor(), alpha_a, note_a, rcv_a),
-            (plan_b.descriptor(), alpha_b, note_b, rcv_b),
+            (plan_a.descriptor(), theta_a, rcv_a),
+            (plan_b.descriptor(), theta_b, rcv_b),
         ]
     };
 
@@ -142,18 +156,48 @@ fn plan_prove_rejects_invalid_inputs() {
     }
 
     // Correspondence swap: lengths match, pairing is wrong. Each spend's master
-    // carries another planned note.
+    // carries another note of the same value, so only `alpha` tells them apart.
     {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
-        let ProveError::MissingPcd(reason) = err else {
-            panic!("expected MissingPcd, got {err:?}");
+        let ProveError::DescriptorMismatch(descriptor) = err else {
+            panic!("expected DescriptorMismatch, got {err:?}");
         };
-        assert_eq!(
-            reason.to_string(),
-            "spend pcds do not match the planned note"
+        assert_eq!(*descriptor, plan_a.descriptor());
+    }
+
+    // Foreign descriptor: a single spend whose planned `rk` is under another
+    // wallet's `ak`.
+    {
+        let plan = Plan::new(
+            alloc::vec![(foreign_a.descriptor(), theta_a, rcv_a)],
+            alloc::vec![],
+            anchor,
         );
+        let err = plan
+            .prove(rng, &user.pak, alloc::vec![bundle_a()])
+            .unwrap_err();
+        let ProveError::DescriptorMismatch(descriptor) = err else {
+            panic!("expected DescriptorMismatch, got {err:?}");
+        };
+        assert_eq!(*descriptor, foreign_a.descriptor());
+    }
+
+    // Anchor: a spend-only plan at an anchor its spendable is not at.
+    {
+        let plan = Plan::new(
+            alloc::vec![(plan_a.descriptor(), theta_a, rcv_a)],
+            alloc::vec![],
+            later_anchor,
+        );
+        let err = plan
+            .prove(rng, &user.pak, alloc::vec![bundle_a()])
+            .unwrap_err();
+        let ProveError::AnchorMismatch(descriptor) = err else {
+            panic!("expected AnchorMismatch, got {err:?}");
+        };
+        assert_eq!(*descriptor, plan_a.descriptor());
     }
 }
 

@@ -434,27 +434,20 @@ impl Plan {
 
     /// Build a [`stamp::Plan`] from this bundle plan.
     ///
-    /// Derives alpha from theta for each action and collects the proof
-    /// witnesses. The returned plan is ready to prove with
-    /// [`stamp::Plan::prove`].
+    /// Collects each action's descriptor and proof witnesses. The returned
+    /// plan is ready to prove with [`stamp::Plan::prove`].
     #[must_use]
     pub fn stamp_plan(&self, anchor: Anchor) -> stamp::Plan {
         let spends = self
             .spends
             .iter()
-            .map(|plan| {
-                let alpha = plan.theta.randomizer(plan.note.commitment());
-                (plan.descriptor(), alpha, plan.note, plan.rcv)
-            })
+            .map(|plan| (plan.descriptor(), plan.theta, plan.rcv))
             .collect();
 
         let outputs = self
             .outputs
             .iter()
-            .map(|plan| {
-                let alpha = plan.theta.randomizer(plan.note.commitment());
-                (plan.descriptor(), alpha, plan.note, plan.rcv)
-            })
+            .map(|plan| (plan.descriptor(), plan.theta, plan.note, plan.rcv))
             .collect();
 
         stamp::Plan::new(spends, outputs, anchor)
