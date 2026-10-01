@@ -187,7 +187,6 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     ///
     /// Multiplicity is significant to both the bundle commitment and proof
     /// verification, so callers must not deduplicate these.
-    #[must_use]
     pub fn descriptors(&self) -> impl ExactSizeIterator<Item = action::Descriptor> {
         // Do NOT sort here: maintain order as constructed.
         self.actions.iter().map(Action::descriptor)

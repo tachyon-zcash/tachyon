@@ -1374,7 +1374,7 @@ fn read_rejects_zero_wtxid() {
     // Adjunct (non-empty actions) and innocent (empty actions) both reject.
     let adjunct = {
         let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(wtxid);
-        assert!(!adjunct.actions.is_empty());
+        assert_ne!(adjunct.actions, []);
         adjunct
     };
 
@@ -1388,7 +1388,7 @@ fn read_rejects_zero_wtxid() {
             memo: Vec::new(),
             stamp: wtxid,
         };
-        assert!(bundle.actions.is_empty());
+        assert_eq!(bundle.actions, []);
         bundle
     };
 
