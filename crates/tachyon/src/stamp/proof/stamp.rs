@@ -7,13 +7,12 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use super::{output::OutputHeader, pool::AnchorChain, spend::SpendHeader};
+use super::{delegation::NoteMaster, output::OutputHeader, pool::AnchorChain, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
     constants::MAX_MONEY,
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, private},
-    note::Note,
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
@@ -58,11 +57,11 @@ impl Header for Stamp {
 
 /// Proves an output's action and publishes its stamp.
 ///
-/// Mirrors [`SpendStamp`]: re-witnesses the note (bound to the
-/// [`OutputHeader`]'s `cm`), derives the value commitment `cv` and the
-/// randomized action key `rk`, and enforces the one-action set plus the
-/// stamp accumulator over the two-element tachygram set `{cm, pad}` that
-/// [`OutputBind`](super::output::OutputBind) already settled.
+/// Mirrors [`SpendStamp`]: reads `cm`, `pad` and the value off the
+/// [`OutputHeader`] [`OutputBind`](super::output::OutputBind) derived,
+/// derives the value commitment `cv` and the randomized action key `rk`, and
+/// enforces the one-action set plus the stamp accumulator over the
+/// two-element tachygram set `{cm, pad}`.
 #[derive(Debug)]
 pub struct OutputStamp;
 
@@ -71,11 +70,10 @@ impl Step for OutputStamp {
     type Left = OutputHeader;
     type Output = Stamp;
     type Right = ();
-    /// `(rcv, alpha, note, anchor, action_set, tachygram_set)`
+    /// `(rcv, alpha, anchor, action_set, tachygram_set)`
     type Witness<'source> = (
         value::Trapdoor,
         ActionRandomizer<effect::Output>,
-        Note,
         Anchor,
         ActionSetPoly,
         TachygramSetPoly,
@@ -86,21 +84,17 @@ impl Step for OutputStamp {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (rcv, alpha, note, anchor, action_set, tachygram_set): Self::Witness<'source>,
-        (cm, pad): <Self::Left as Header>::Data,
+        (rcv, alpha, anchor, action_set, tachygram_set): Self::Witness<'source>,
+        (cm, pad, value): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if u64::from(note.value) > MAX_MONEY {
+        if u64::from(value) > MAX_MONEY {
             return Err(ragu_core::Error::InvalidWitness(
                 "OutputStamp: note value exceeds maximum".into(),
             ));
         }
-        enforce_zero(
-            Fp::from(note.commitment()) - Fp::from(cm),
-            "OutputStamp: note does not match the bound output",
-        )?;
 
-        let cv = rcv.commit(-note.value);
+        let cv = rcv.commit(-value);
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
@@ -134,12 +128,15 @@ impl Step for OutputStamp {
 
 /// Proves a spend's action and publishes its stamp.
 ///
-/// Focused like [`OutputStamp`] on the action: re-witnesses the spent note
-/// (bound to the [`SpendHeader`]'s `cm`), derives the value commitment `cv`
-/// and the randomized action key `rk`, and enforces the one-action set plus
-/// the stamp accumulator over the two-element tachygram set
+/// The spent note arrives certified on the right [`NoteMaster`], and `cm`
+/// equality binds it to the [`SpendHeader`]. The step derives the value
+/// commitment `cv` and the randomized action key `rk`, and enforces the
+/// one-action set plus the stamp accumulator over the two-element tachygram set
 /// `{nf_current, nf_next}` (the pair [`SpendBind`](super::spend::SpendBind)
 /// already confirmed against the covering derivation).
+///
+/// `pk = payment_key(ak, nk)` is the only thing tying `ak`, and so `rk`, to
+/// the note.
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -147,10 +144,9 @@ impl Step for SpendStamp {
     type Aux<'source> = ();
     type Left = SpendHeader;
     type Output = Stamp;
-    type Right = ();
-    /// `(note, rcv, alpha, pak, action_set, tachygram_set)`
+    type Right = NoteMaster;
+    /// `(rcv, alpha, pak, action_set, tachygram_set)`
     type Witness<'source> = (
-        Note,
         value::Trapdoor,
         ActionRandomizer<effect::Spend>,
         ProofAuthorizingKey,
@@ -163,9 +159,9 @@ impl Step for SpendStamp {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (note, rcv, alpha, pak, action_set, tachygram_set): Self::Witness<'source>,
+        (rcv, alpha, pak, action_set, tachygram_set): Self::Witness<'source>,
         (cm, nf_current, nf_next, anchor): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
+        (master_cm, note, _mk): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         if u64::from(note.value) > MAX_MONEY {
             return Err(ragu_core::Error::InvalidWitness(
@@ -177,7 +173,7 @@ impl Step for SpendStamp {
             "SpendStamp: pak not related to note",
         )?;
         enforce_zero(
-            Fp::from(note.commitment()) - Fp::from(cm),
+            Fp::from(master_cm) - Fp::from(cm),
             "SpendStamp: note does not match the spend",
         )?;
 
@@ -188,7 +184,7 @@ impl Step for SpendStamp {
         })?;
 
         // The action-set commitment commits to exactly the one action this
-        // step derives; the root is in-circuit from the witnessed note above.
+        // step derives; the root is in-circuit from the certified note.
         enforce_poly_roots(
             ctx,
             action_set.as_ref(),

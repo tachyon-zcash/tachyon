@@ -28,24 +28,37 @@ use crate::{
     relations::enforce::enforce_poly_product,
 };
 
-/// A note's certified commitment and master key (wallet-only).
+/// A note's certified record: its commitment, its opening, and its master key
+/// (wallet-only).
 ///
 /// `mk` is derived natively from the note's secrets and certified here, so
 /// every consuming [`NullifierDerive`] threads a genuine master key without
-/// re-witnessing the note. `cm` rides along for the derivation's consumers to
-/// bind against.
+/// re-witnessing the note. `note` is the opening `cm` commits to.
+/// [`SpendStamp`](super::stamp::SpendStamp) reads it.
 #[derive(Clone, Debug)]
 pub struct NoteMaster;
 
 impl Header for NoteMaster {
-    /// `(cm, mk)`.
-    type Data = (note::Commitment, NoteMasterKey);
+    /// `(cm, note, mk)`
+    type Data = (note::Commitment, Note, NoteMasterKey);
 
     const SUFFIX: Suffix = Suffix::new(9);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, mk) = *data;
-        (vec![Fp::from(cm), mk.0], Vec::new(), Vec::new(), Vec::new())
+        let (cm, note, mk) = *data;
+        (
+            vec![
+                Fp::from(cm),
+                Fp::from(note.rcm),
+                Fp::from(note.pk),
+                Fp::from(u64::from(note.value)),
+                Fp::from(note.psi),
+                mk.0,
+            ],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
     }
 }
 
@@ -125,7 +138,7 @@ impl Step for NoteSeed {
         )?;
         let mk = pak.nk.derive_note_private(note.psi);
         let cm = note.commitment();
-        Ok(((cm, mk), ()))
+        Ok(((cm, note, mk), ()))
     }
 }
 
@@ -174,7 +187,7 @@ impl Step for NullifierDerive {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (epoch_start, seq): Self::Witness<'source>,
-        (cm, mk): <Self::Left as Header>::Data,
+        (cm, _note, mk): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         #[expect(

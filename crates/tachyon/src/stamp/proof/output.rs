@@ -7,26 +7,28 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use crate::{Tachygram, digest::poseidon, note::Note, ragu_constraint::enforce_nonzero};
+use crate::{Tachygram, digest::poseidon, note::Note, ragu_constraint::enforce_nonzero, value};
 
-/// Header binding an output's tachygram pair to one note.
+/// Header binding an output's tachygram pair and value to one note
+/// (wallet-only).
 ///
-/// Carries the note commitment `cm` and the padding tachygram `pad`, both
-/// derived from the same note. The action pair `(cv, rk)` is produced
-/// downstream at [`OutputStamp`](super::stamp::OutputStamp).
+/// Carries the note commitment `cm`, the padding tachygram `pad` and the
+/// note's `value`, all derived from the same note. The action pair
+/// `(cv, rk)` is produced downstream at
+/// [`OutputStamp`](super::stamp::OutputStamp).
 #[derive(Debug)]
 pub struct OutputHeader;
 
 impl Header for OutputHeader {
-    /// `(cm, pad)`, the two tachygrams the output publishes.
-    type Data = (Tachygram, Tachygram);
+    /// `(cm, pad, value)`
+    type Data = (Tachygram, Tachygram, value::Positive);
 
     const SUFFIX: Suffix = Suffix::new(8);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, pad) = *data;
+        let (cm, pad, value) = *data;
         (
-            vec![Fp::from(cm), Fp::from(pad)],
+            vec![Fp::from(cm), Fp::from(pad), Fp::from(u64::from(value))],
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -34,10 +36,8 @@ impl Header for OutputHeader {
     }
 }
 
-/// Derives an output's tachygram pair from one note.
-///
-/// Later, [`super::stamp::OutputStamp`] re-witnesses the note and opens its
-/// commitment, which ties the action to this pair.
+/// Derives an output's tachygram pair from one note, and carries its value
+/// to [`OutputStamp`](super::stamp::OutputStamp).
 #[derive(Debug)]
 pub struct OutputBind;
 
@@ -76,6 +76,6 @@ impl Step for OutputBind {
         enforce_nonzero(Fp::from(cm), "OutputBind: note commitment is zero")?;
         enforce_nonzero(Fp::from(pad), "OutputBind: padding tachygram is zero")?;
 
-        Ok(((cm, pad), ()))
+        Ok(((cm, pad, note.value), ()))
     }
 }

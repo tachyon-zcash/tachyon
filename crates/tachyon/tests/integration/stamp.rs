@@ -110,8 +110,10 @@ fn plan_prove_rejects_invalid_inputs() {
         assert_eq!(reason.to_string(), "no proof for no planned actions");
     }
 
-    let bundle_a = || (range_a.clone(), sp_a.clone());
-    let bundle_b = || (range_b.clone(), sp_b.clone());
+    let master_a = user.master_pcd(rng, note_a);
+    let master_b = user.master_pcd(rng, note_b);
+    let bundle_a = || (master_a.clone(), range_a.clone(), sp_a.clone());
+    let bundle_b = || (master_b.clone(), range_b.clone(), sp_b.clone());
 
     // Too few PCDs: 2 spends, 1 PCD.
     {

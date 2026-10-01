@@ -413,6 +413,7 @@ impl Plan {
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
+            ragu::Pcd<delegation::NoteMaster>,
             ragu::Pcd<delegation::NoteNullifiers>,
             ragu::Pcd<spendable::NoteSpendable>,
         )>,
@@ -435,7 +436,7 @@ impl Plan {
             ));
         }
 
-        for ((desc, alpha, note, rcv), (range_pcd, spendable_pcd)) in
+        for ((desc, alpha, note, rcv), (master_pcd, range_pcd, spendable_pcd)) in
             self.spends.into_iter().zip(spend_pcds)
         {
             // SpendBind: confirm the live pair against the covering
@@ -460,10 +461,9 @@ impl Plan {
                 )
                 .map_err(ProveError::ProofFailed)?;
 
-            // SpendStamp: prove the action and publish. The tachygram pair is
-            // read straight off the bind header.
+            // SpendStamp: prove the action and publish.
             let (tachygrams, anchor, proof) =
-                ProofStamp::prove_spend(rng, bind_pcd, note, rcv, alpha, *pak)
+                ProofStamp::prove_spend(rng, bind_pcd, master_pcd, rcv, alpha, *pak)
                     .map_err(ProveError::ProofFailed)?;
 
             let digest = desc.digest().map_err(ProveError::ActionDigest)?;
@@ -612,14 +612,13 @@ impl ProofStamp {
         anchor: Anchor,
     ) -> Result<(BTreeSet<Tachygram>, Anchor, Box<ragu::Proof>), ragu_core::Error> {
         let (bind_pcd, ()) = PROOF_SYSTEM.seed(rng, output::OutputBind, (note,))?;
-        let (cm, pad) = *bind_pcd.data();
-        #[expect(clippy::tuple_array_conversions, reason = "required")]
+        let (cm, pad, _value) = *bind_pcd.data();
         let tachygrams = BTreeSet::from_iter([cm, pad]);
 
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             OutputStamp,
-            witness::output_stamp((*bind_pcd.data(), ()), rcv, alpha, note, anchor),
+            witness::output_stamp((*bind_pcd.data(), ()), rcv, alpha, anchor),
             bind_pcd,
             ragu::Proof::trivial().carry::<()>(()),
         )?;
@@ -644,7 +643,7 @@ impl ProofStamp {
     pub fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
-        note: Note,
+        master_pcd: ragu::Pcd<delegation::NoteMaster>,
         rcv: value::Trapdoor,
         alpha: ActionRandomizer<effect::Spend>,
         pak: ProofAuthorizingKey,
@@ -656,9 +655,9 @@ impl ProofStamp {
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
             SpendStamp,
-            witness::spend_stamp((*bind_pcd.data(), ()), note, rcv, alpha, pak),
+            witness::spend_stamp((*bind_pcd.data(), *master_pcd.data()), rcv, alpha, pak),
             bind_pcd,
-            ragu::Proof::trivial().carry::<()>(()),
+            master_pcd,
         )?;
         let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
 

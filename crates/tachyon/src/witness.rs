@@ -60,7 +60,7 @@ pub fn nullifier_derive(
     (left, _right): (StepLeft<NullifierDerive>, StepRight<NullifierDerive>),
     epoch_start: EpochIndex,
 ) -> StepWitness<'static, NullifierDerive> {
-    let (_cm, mk) = left;
+    let (_cm, _note, mk) = left;
     (
         epoch_start,
         NfSeqPoly::new(epoch_start, &mk.derive_window(epoch_start)),
@@ -415,11 +415,11 @@ pub fn qr_unspent_init(
     )
 }
 
-/// Prepare the witness for [`OutputStamp`]: `(rcv, alpha, note, anchor,
+/// Prepare the witness for [`OutputStamp`]: `(rcv, alpha, anchor,
 /// action_set, tachygram_set)`.
 ///
-/// Reads the tachygram pair off the bind header and derives the action from
-/// the note's negated value and `alpha`.
+/// Reads the tachygram pair and the value off the bind header and derives the
+/// action from the negated value and `alpha`.
 ///
 /// # Panics
 ///
@@ -430,37 +430,35 @@ pub fn output_stamp(
     (left, _right): (StepLeft<OutputStamp>, StepRight<OutputStamp>),
     rcv: value::Trapdoor,
     alpha: ActionRandomizer<effect::Output>,
-    note: Note,
     anchor: Anchor,
 ) -> StepWitness<'static, OutputStamp> {
-    let (cm, pad) = left;
+    let (cm, pad, value) = left;
 
     #[expect(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
     )]
     let digest = ActionDigest::new(
-        rcv.commit(-note.value),
+        rcv.commit(-value),
         private::ActionSigningKey::new(&alpha).derive_action_public(),
     )
     .expect("action digest");
 
-    #[expect(clippy::tuple_array_conversions, reason = "required")]
     (
         rcv,
         alpha,
-        note,
         anchor,
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([cm, pad]),
     )
 }
 
-/// Prepare the witness for [`SpendStamp`]: `(note, rcv, alpha, pak,
-/// action_set, tachygram_set)`.
+/// Prepare the witness for [`SpendStamp`]: `(rcv, alpha, pak, action_set,
+/// tachygram_set)`.
 ///
-/// Reads the nullifier pair off the bind header and derives the action from
-/// the note's value and `pak` randomized by `alpha`.
+/// Reads the nullifier pair off the bind header and the note off the right
+/// [`NoteMaster`](crate::stamp::proof::delegation::NoteMaster), and derives
+/// the action from the note's value and `pak` randomized by `alpha`.
 ///
 /// # Panics
 ///
@@ -468,13 +466,13 @@ pub fn output_stamp(
 /// undigestible.
 #[must_use]
 pub fn spend_stamp(
-    (left, _right): (StepLeft<SpendStamp>, StepRight<SpendStamp>),
-    note: Note,
+    (left, right): (StepLeft<SpendStamp>, StepRight<SpendStamp>),
     rcv: value::Trapdoor,
     alpha: ActionRandomizer<effect::Spend>,
     pak: ProofAuthorizingKey,
 ) -> StepWitness<'static, SpendStamp> {
     let (_cm, nf_current, nf_next, _anchor) = left;
+    let (_master_cm, note, _mk) = right;
 
     #[expect(
         clippy::expect_used,
@@ -484,7 +482,6 @@ pub fn spend_stamp(
         .expect("action digest");
 
     (
-        note,
         rcv,
         alpha,
         pak,
