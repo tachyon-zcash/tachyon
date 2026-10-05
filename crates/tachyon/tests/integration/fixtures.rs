@@ -927,25 +927,25 @@ pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
 }
 
 /// Build an [`ArbitraryUnspent`](pool::ArbitraryUnspent) over the whole
-/// epochs from `epoch_start` up to `epoch_end`, which it lands on: one bucket
-/// segment per epoch, fused as a binary tree via [`fuse_unspent_tree`]. `nf`
-/// gives the tested nullifier at each epoch.
+/// epochs `[epoch_start, epoch_next)`, resting on `epoch_next`'s entry
+/// anchor: one bucket segment per epoch, fused as a binary tree via
+/// [`fuse_unspent_tree`]. `nf` gives the tested nullifier at each epoch.
 pub(crate) fn build_unspent_pcd_over_epochs<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     nf: impl Fn(EpochIndex) -> Nullifier,
-    (epoch_start, epoch_end): (EpochIndex, EpochIndex),
+    (epoch_start, epoch_next): (EpochIndex, EpochIndex),
 ) -> Pcd<pool::ArbitraryUnspent> {
     assert!(
-        u32::from(epoch_start) < u32::from(epoch_end),
+        u32::from(epoch_start) < u32::from(epoch_next),
         "a segment covers at least one epoch"
     );
     let mut segments = Vec::new();
-    for epoch in (u32::from(epoch_start)..u32::from(epoch_end)).map(EpochIndex::new) {
+    for epoch in (u32::from(epoch_start)..u32::from(epoch_next)).map(EpochIndex::new) {
         let bucket = epoch_bucket(rng, pool, epoch);
         segments.push(qr_bucket_segment(rng, &bucket, &nf));
     }
-    let members: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_end))
+    let members: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_next))
         .map(|epoch| nf(EpochIndex::new(epoch)))
         .collect();
     fuse_unspent_tree(rng, &members, epoch_start, segments)
@@ -955,7 +955,7 @@ pub(crate) fn build_unspent_pcd_over_epochs<RNG: CryptoRng>(
 /// midpoint, fuse each half, then concatenate the halves at the entry anchor
 /// they share ([`UnspentFuse`]). Everything a seam needs is read off the
 /// halves' headers; a chain's member slice is
-/// `nf[epoch_start - base..epoch_end - base]` (one nullifier per covered
+/// `nf[epoch_start - base..epoch_next - base]` (one nullifier per covered
 /// epoch).
 fn fuse_unspent_tree<RNG: CryptoRng>(
     rng: &mut RNG,
@@ -976,13 +976,13 @@ fn fuse_unspent_tree<RNG: CryptoRng>(
         let to = usize::try_from(u64::from(hi - base)).expect("epoch within span");
         &nf[from..to]
     };
-    let (_, left_epoch_start, _, left_epoch_end, _) = *left.data();
-    let (_, right_epoch_start, _, right_epoch_end, _) = *right.data();
-    let left_el = elapsed_slice(left_epoch_start, left_epoch_end);
-    let right_el = elapsed_slice(right_epoch_start, right_epoch_end);
+    let (_, left_epoch_start, _, left_epoch_next, _) = *left.data();
+    let (_, right_epoch_start, _, right_epoch_next, _) = *right.data();
+    let left_el = elapsed_slice(left_epoch_start, left_epoch_next);
+    let right_el = elapsed_slice(right_epoch_start, right_epoch_next);
     assert_eq!(
         u32::from(right_epoch_start),
-        u32::from(left_epoch_end),
+        u32::from(left_epoch_next),
         "fused chains must meet at one epoch"
     );
     let witness = witness::unspent_fuse((*left.data(), *right.data()), left_el, right_el);
@@ -1241,9 +1241,9 @@ impl WalletSim {
         arbitrary: Pcd<pool::ArbitraryUnspent>,
         note: &Note,
     ) -> Pcd<pool::NoteUnspent> {
-        let (_, epoch_start, _, epoch_end, _) = *arbitrary.data();
-        let range = self.derivation_pcd(rng, *note, epoch_start, epoch_end);
-        let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_end))
+        let (_, epoch_start, _, epoch_next, _) = *arbitrary.data();
+        let range = self.derivation_pcd(rng, *note, epoch_start, epoch_next);
+        let elapsed: Vec<Nullifier> = (u32::from(epoch_start)..u32::from(epoch_next))
             .map(|epoch| self.nf_at(note, EpochIndex::new(epoch)))
             .collect();
         let (unspent, ()) = PROOF_SYSTEM
@@ -1424,14 +1424,13 @@ impl SyncSim {
         u32::from(entry.epoch_cursor) - u32::from(entry.epoch_start)
     }
 
-    /// The next segment, over the whole epochs from the cursor up to
-    /// `epoch_end`, which it lands on.
+    /// The next segment, over the whole epochs `[cursor, epoch_next)`.
     pub fn build_next_unspent<RNG: CryptoRng>(
         &mut self,
         rng: &mut RNG,
         handle: usize,
         pool: &PoolSim,
-        epoch_end: EpochIndex,
+        epoch_next: EpochIndex,
     ) -> Pcd<pool::ArbitraryUnspent> {
         let idx = self
             .entries
@@ -1443,8 +1442,9 @@ impl SyncSim {
             entry.nfs[usize::try_from(u32::from(epoch) - u32::from(entry.epoch_start))
                 .expect("fits usize")]
         };
-        let unspent = build_unspent_pcd_over_epochs(rng, pool, nf, (entry.epoch_cursor, epoch_end));
-        self.entries[idx].epoch_cursor = epoch_end;
+        let unspent =
+            build_unspent_pcd_over_epochs(rng, pool, nf, (entry.epoch_cursor, epoch_next));
+        self.entries[idx].epoch_cursor = epoch_next;
         unspent
     }
 

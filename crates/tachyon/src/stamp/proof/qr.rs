@@ -530,15 +530,16 @@ impl Step for QrSideDescend {
 
 /// One profile's members over a whole epoch.
 ///
-/// [`QrBucketSeal`] gives both ends epoch-link form. `anchor_prev` absorbs
-/// `epoch`, and `anchor_end` absorbs `epoch + 1`; the seal folds it from the
-/// output of the bucket's last stamp fold. The bucket covers
-/// `(anchor_prev, anchor_end]`, boundary to boundary.
+/// The bucket covers `[anchor_start, anchor_next)`: `anchor_start` is the
+/// entry anchor of `epoch`, and `anchor_next` is the entry anchor of
+/// `epoch + 1`, which belongs to that epoch and is excluded. [`QrBucketSeal`]
+/// gives both bounds epoch-link form, folding `anchor_next` from the output of
+/// the bucket's last stamp fold.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
 impl Header for QrBucket {
-    /// `(epoch, anchor_prev, anchor_end, discriminant, profile, contents)`
+    /// `(epoch, anchor_start, anchor_next, discriminant, profile, contents)`
     type Data = (
         EpochIndex,
         Anchor,
@@ -551,12 +552,12 @@ impl Header for QrBucket {
     const SUFFIX: Suffix = Suffix::new(12);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (epoch, anchor_prev, anchor_end, discriminant, profile, contents) = *data;
+        let (epoch, anchor_start, anchor_next, discriminant, profile, contents) = *data;
         (
             vec![
                 Fp::from(epoch),
-                Fp::from(anchor_prev),
-                Fp::from(anchor_end),
+                Fp::from(anchor_start),
+                Fp::from(anchor_next),
                 Fp::from(discriminant),
                 Fp::from(u64::from(profile.depth)),
                 Fp::from(u64::from(profile.bits)),
@@ -571,10 +572,16 @@ impl Header for QrBucket {
 /// Seal a routed [`QrIntake`] into a [`QrBucket`] that runs boundary to
 /// boundary.
 ///
-/// The extent's `anchor_prev` must be the epoch link of `anchor_final_prev`
-/// into `epoch`, and the step performs the boundary digest of the intake's
-/// `anchor_end` into `epoch + 1`, emitting that as the bucket's
-/// `anchor_end`.
+/// The intake's `anchor_prev` must be the epoch link of `anchor_final_prev`
+/// into `epoch`, and becomes the bucket's `anchor_start`. The step performs
+/// the boundary digest of the intake's `anchor_end` into `epoch + 1`, and
+/// emits that as the bucket's `anchor_next`.
+///
+/// The intake covers `(anchor_prev, anchor_end]`, the stamp folds of `epoch`.
+/// The bucket covers `[anchor_start, anchor_next)`: the same folds plus the
+/// entry anchor, which belongs to `epoch` and absorbs no tachygrams. Both
+/// bucket bounds are epoch links, the only anchors that certify an epoch
+/// boundary.
 ///
 /// # Soundness
 ///
@@ -592,6 +599,8 @@ impl Header for QrBucket {
 /// `final(epoch)` the result is on no chain, and by preimage resistance
 /// neither is any fold downstream of it. A bucket sealed short of the epoch
 /// therefore yields evidence no lineage can carry to a consensus-checked spend.
+/// A final anchor cannot carry this guarantee: consensus acknowledges every
+/// end-of-block anchor, so a bucket ending on one could stop short.
 ///
 /// `discriminant` is prover-chosen and unchecked here; see [`QrDiscriminant`].
 #[derive(Debug)]
@@ -669,10 +678,11 @@ impl Step for QrBucketSeal {
 /// bucket's sides are the value's.
 ///
 /// The emitted segment reads the value as a nullifier and takes the bucket's
-/// extent, which ends on the entry anchor of `epoch + 1`. Its one member is
-/// the value at `epoch`: the crossing into `epoch + 1` absorbs no tachygrams,
-/// so the next epoch's nullifier is the next segment's to test. Consecutive
-/// epochs' segments meet at the entry anchor and fuse directly.
+/// extent, `[anchor_start, anchor_next)`, with epochs `[epoch, epoch + 1)`.
+/// Its one member is the value at `epoch`. `anchor_next` is the entry anchor
+/// of `epoch + 1`, excluded, so that epoch's nullifier is the next segment's
+/// to test. Consecutive epochs' segments meet on that boundary and fuse
+/// directly.
 ///
 /// # Soundness
 ///
@@ -717,8 +727,8 @@ impl Step for QrUnspentInit {
         (value, classes, mask, sequence, contents): Self::Witness<'source>,
         (
             bucket_epoch,
-            bucket_anchor_prev,
-            bucket_anchor_end,
+            bucket_anchor_start,
+            bucket_anchor_next,
             discriminant,
             profile,
             contents_commit,
@@ -804,11 +814,11 @@ impl Step for QrUnspentInit {
 
         Ok((
             (
-                bucket_anchor_prev,
+                bucket_anchor_start,
                 bucket_epoch,
                 sequence_commit,
                 epoch_next,
-                bucket_anchor_end,
+                bucket_anchor_next,
             ),
             (),
         ))

@@ -124,13 +124,13 @@ pub fn unspent_bind(
     window: &[Nullifier],
     elapsed: &[Nullifier],
 ) -> StepWitness<'static, UnspentBind> {
-    let (_, epoch_start, _, epoch_end, _) = unspent;
+    let (_, epoch_start, _, epoch_next, _) = unspent;
     let (_, nullifiers_epoch_start, ..) = deriv;
     let lo = u32::from(epoch_start - nullifiers_epoch_start) as usize;
     let (head, from_span) = window.split_at(lo);
     let (_span, tail) = from_span.split_at(elapsed.len());
     let complement_seq =
-        NfSeqPoly::new(nullifiers_epoch_start, head) * NfSeqPoly::new(epoch_end, tail);
+        NfSeqPoly::new(nullifiers_epoch_start, head) * NfSeqPoly::new(epoch_next, tail);
     (
         NfSeqPoly::new(epoch_start, elapsed),
         NfSeqPoly::new(nullifiers_epoch_start, window),
@@ -364,7 +364,7 @@ pub fn qr_unspent_init(
     value: Tachygram,
     bucket_members: &[Tachygram],
 ) -> StepWitness<'static, QrUnspentInit> {
-    let (epoch, _anchor_prev, _anchor_end, discriminant, profile, _contents) = bucket;
+    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
     (
         value,
         QrClassRoot::along(Fp::from(value), discriminant),

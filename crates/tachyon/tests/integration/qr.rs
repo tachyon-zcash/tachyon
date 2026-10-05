@@ -1449,16 +1449,12 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
             profile,
             contents
         ),
-        "sealing keeps every field but performs the boundary digest of the far end"
+        "the intake's anchor_prev becomes anchor_start, and anchor_next is the boundary digest of its last fold"
     );
     assert_eq!(
         anchor_prev,
         Anchor::default(),
         "epoch zero's opening anchor is the general rule at anchor_final_prev = 0"
-    );
-    assert_eq!(
-        anchor_end, final_anchor,
-        "and the bucket closes on the epoch's final anchor, not past it"
     );
 }
 
@@ -1610,21 +1606,21 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
     let unspent = fuse_unspent_init(rng, bucket.pcd, witness).expect("QrUnspentInit");
 
-    let (anchor_prev, epoch_start, elapsed, epoch_end, anchor_end) = *unspent.data();
+    let (anchor_start, epoch_start, elapsed, segment_epoch_next, anchor_next) = *unspent.data();
     assert_eq!(
-        anchor_prev,
+        anchor_start,
         Anchor::default(),
-        "the segment opens where the partition's span does"
+        "the segment opens on the epoch's entry anchor"
     );
     assert_eq!(
-        anchor_end,
+        anchor_next,
         final_anchor.next_epoch(epoch_next).unwrap(),
-        "and closes on the crossing out of the epoch"
+        "and stops before the next epoch's entry anchor"
     );
     assert_eq!(
-        (epoch_start, epoch_end),
+        (epoch_start, segment_epoch_next),
         (epoch, epoch_next),
-        "the labels name both entry anchors"
+        "each epoch bound is the epoch of its anchor bound"
     );
     assert_eq!(
         elapsed,
@@ -1697,10 +1693,10 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
         )
         .expect("UnspentFuse straight across the boundary");
 
-    let (anchor_prev, epoch_start, elapsed, epoch_end, anchor_end) = *fused.data();
-    assert_eq!(anchor_prev, Anchor::default());
-    assert_eq!((epoch_start, epoch_end), (epoch0, epoch2));
-    assert_eq!(anchor_end, final1.next_epoch(epoch2).unwrap());
+    let (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) = *fused.data();
+    assert_eq!(anchor_start, Anchor::default());
+    assert_eq!((epoch_start, epoch_next), (epoch0, epoch2));
+    assert_eq!(anchor_next, final1.next_epoch(epoch2).unwrap());
     assert_eq!(
         elapsed,
         NfSeqPoly::new(epoch0, &[nf0, nf1]).commit(),
@@ -1747,9 +1743,9 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     );
 
     let bucket = empty_bucket(rng, entry1, epoch1, final0);
-    let (epoch, anchor_prev, anchor_end, _, profile, contents) = *bucket.pcd.data();
+    let (epoch, anchor_start, anchor_next, _, profile, contents) = *bucket.pcd.data();
     assert_eq!(
-        (epoch, anchor_prev, anchor_end),
+        (epoch, anchor_start, anchor_next),
         (epoch1, entry1, entry2),
         "the empty bucket runs from epoch one's entry anchor to epoch two's"
     );
@@ -1791,10 +1787,10 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
             right,
         )
         .expect("UnspentFuse across the stampless epoch");
-    let (fused_anchor_prev, _, elapsed, epoch_end, fused_anchor_end) = *fused.data();
-    assert_eq!(fused_anchor_prev, Anchor::default());
-    assert_eq!(epoch_end, epoch2);
-    assert_eq!(fused_anchor_end, entry2);
+    let (fused_anchor_start, _, elapsed, fused_epoch_next, fused_anchor_next) = *fused.data();
+    assert_eq!(fused_anchor_start, Anchor::default());
+    assert_eq!(fused_epoch_next, epoch2);
+    assert_eq!(fused_anchor_next, entry2);
     assert_eq!(
         elapsed,
         NfSeqPoly::new(epoch0, &[nf0, nf1]).commit(),
@@ -1862,11 +1858,11 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         nf_bucket.pcd.data().4,
         "the commitment and the nullifier route to different buckets"
     );
-    let (_, _, anchor_end, ..) = *bucket.pcd.data();
+    let (_, _, anchor_next, ..) = *bucket.pcd.data();
     assert_eq!(
-        anchor_end,
+        anchor_next,
         span.1.next_epoch(epoch1).unwrap(),
-        "the bucket ends on epoch one's entry anchor"
+        "the bucket stops before epoch one's entry anchor"
     );
     let unspent = qr_epoch_unspent(rng, &user, &note, &nf_bucket);
 
@@ -1881,7 +1877,7 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
         .expect("QrSpendableInit");
     assert_eq!(
         *spendable.data(),
-        (note.commitment(), epoch1, anchor_end),
+        (note.commitment(), epoch1, anchor_next),
         "the spendable rests on epoch one's entry anchor"
     );
 
