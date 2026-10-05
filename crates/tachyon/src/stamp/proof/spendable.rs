@@ -112,17 +112,17 @@ impl Step for SpendableInit {
 /// ([`QrUnspentInit`](super::qr::QrUnspentInit) then
 /// [`UnspentBind`](super::pool::UnspentBind)), so `cm` and the whole-epoch
 /// absence of the note's nullifier arrive on its header. This step adds the
-/// membership $\mathsf{contents}(\mathsf{cm}) = 0$ and emits the spendable at
-/// the segment's `anchor_end`. [`QrBucketSeal`](super::qr::QrBucketSeal)
-/// performs the boundary digest, so that anchor is the entry anchor of the
-/// epoch after the bucket's and the lineage is already across.
+/// membership $\mathsf{contents}(\mathsf{cm}) = 0$ and emits the spendable on
+/// the segment's `(epoch_next, anchor_next)`: the entry anchor of the epoch
+/// after the bucket's, which [`QrBucketSeal`](super::qr::QrBucketSeal)
+/// computed.
 ///
 /// # Soundness
 ///
 /// Membership needs no profile. Every bucket divides the epoch's stamp
 /// polynomials, root through split and merge, so a root of any bucket is a
 /// tachygram published in the bucket's span. The two extents coincide by
-/// equality at both ends: `anchor_end` is emitted and reaches consensus
+/// equality at both ends: `anchor_next` is emitted and reaches consensus
 /// through the lineage, so the stamp commitments absorbed across the span are
 /// the published ones. Without that equality a bucket over invented stamps
 /// onto the real entry anchor would pass the opening.
@@ -145,12 +145,12 @@ impl Step for QrSpendableInit {
         (contents,): Self::Witness<'source>,
         (
             cm,
-            unspent_anchor_prev,
+            unspent_anchor_start,
             unspent_epoch_start,
-            unspent_epoch_end,
-            unspent_anchor_end,
+            unspent_epoch_next,
+            unspent_anchor_next,
         ): <Self::Left as Header>::Data,
-        (bucket_epoch, bucket_anchor_prev, bucket_anchor_end, _, _, bucket_commit): <Self::Right as Header>::Data,
+        (bucket_epoch, bucket_anchor_start, bucket_anchor_next, _, _, bucket_commit): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_equal_point(
             Eq::from(contents.commit()),
@@ -162,11 +162,11 @@ impl Step for QrSpendableInit {
             "QrSpendableInit: segment does not start in the bucket's epoch",
         )?;
         enforce_zero(
-            Fp::from(unspent_anchor_prev) - Fp::from(bucket_anchor_prev),
+            Fp::from(unspent_anchor_start) - Fp::from(bucket_anchor_start),
             "QrSpendableInit: segment does not open where the bucket does",
         )?;
         enforce_zero(
-            Fp::from(unspent_anchor_end) - Fp::from(bucket_anchor_end),
+            Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_next),
             "QrSpendableInit: segment does not close where the bucket does",
         )?;
         let bucket_epoch_next = bucket_epoch.next().ok_or_else(|| {
@@ -174,7 +174,7 @@ impl Step for QrSpendableInit {
         })?;
         // Defensive: the anchor equality already rejects a wrong epoch label.
         enforce_zero(
-            Fp::from(unspent_epoch_end) - Fp::from(bucket_epoch_next),
+            Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch_next),
             "QrSpendableInit: segment does not end in the epoch after the bucket's",
         )?;
 
@@ -183,7 +183,7 @@ impl Step for QrSpendableInit {
         ctx.enforce_poly_query(bucket_commit.into(), cm.into(), cm_in_bucket)?;
         enforce_zero(cm_in_bucket, "QrSpendableInit: commitment not in bucket")?;
 
-        Ok(((cm, unspent_epoch_end, unspent_anchor_end), ()))
+        Ok(((cm, unspent_epoch_next, unspent_anchor_next), ()))
     }
 }
 
@@ -191,9 +191,9 @@ impl Step for QrSpendableInit {
 ///
 /// Wallet-only, witness-free. The segment's near end must share the
 /// lineage's epoch (`unspent.epoch_start == spendable.epoch_current`) and hand
-/// off in anchor space (`unspent.anchor_prev == spendable.anchor`). `cm`
-/// threads through, and the lineage moves to the segment's far end at
-/// `(epoch_end, anchor_end)`.
+/// off in anchor space (`unspent.anchor_start == spendable.anchor`). `cm`
+/// threads through, and the lineage moves to the segment's far boundary
+/// `(epoch_next, anchor_next)`.
 ///
 /// The segment may span any number of epochs. Every segment opens on an entry
 /// anchor, so only a lineage resting on one can lift: a [`QrSpendableInit`]
@@ -206,8 +206,8 @@ impl Step for QrSpendableInit {
 /// the genuine nullifier of `cm` at its epoch, so equal `cm` and `epoch_start`
 /// fix the member the segment starts on. No nullifier needs comparing.
 ///
-/// The lineage then rests on `epoch_end`'s entry anchor, certified for every
-/// epoch before `epoch_end`. The spend's anchor epoch is consensus's to scan.
+/// The lineage then rests on the entry anchor of `epoch_next`, certified for
+/// every epoch before it. The spend's anchor epoch is consensus's to scan.
 #[derive(Debug)]
 pub struct SpendableLift;
 
@@ -227,10 +227,10 @@ impl Step for SpendableLift {
         (spendable_cm, spendable_epoch_current, spendable_anchor): <Self::Left as Header>::Data,
         (
             unspent_cm,
-            unspent_anchor_prev,
+            unspent_anchor_start,
             unspent_epoch_start,
-            unspent_epoch_end,
-            unspent_anchor_end,
+            unspent_epoch_next,
+            unspent_anchor_next,
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
@@ -242,9 +242,9 @@ impl Step for SpendableLift {
             "SpendableLift: segment does not start at the lineage epoch",
         )?;
         enforce_zero(
-            Fp::from(unspent_anchor_prev) - Fp::from(spendable_anchor),
+            Fp::from(unspent_anchor_start) - Fp::from(spendable_anchor),
             "SpendableLift: unspent not adjacent to spendable",
         )?;
-        Ok(((spendable_cm, unspent_epoch_end, unspent_anchor_end), ()))
+        Ok(((spendable_cm, unspent_epoch_next, unspent_anchor_next), ()))
     }
 }

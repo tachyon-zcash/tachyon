@@ -255,7 +255,7 @@ fn unspent_fuse_rejects_invalid_compositions() {
     };
     assert_eq!(
         inner.to_string(),
-        "UnspentFuse: left.anchor_end must equal right.anchor_prev"
+        "UnspentFuse: left.anchor_next must equal right.anchor_start"
     );
 }
 
@@ -692,16 +692,16 @@ fn unspent_fuse_composes() {
         )
         .expect("UnspentFuse at an entry anchor");
 
-    let (anchor_prev, epoch_start, elapsed, epoch_end, anchor_end) = *fused.data();
-    assert_eq!(anchor_prev, start);
-    assert_eq!(anchor_end, end);
+    let (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) = *fused.data();
+    assert_eq!(anchor_start, start);
+    assert_eq!(anchor_next, end);
     assert_eq!(
         elapsed,
         NfSeqPoly::new(EpochIndex::new(0), &[nf0, nf1, nf2, nf3]).commit(),
         "each covered epoch's member appears once"
     );
     assert_eq!(u32::from(epoch_start), 0);
-    assert_eq!(u32::from(epoch_end), 4);
+    assert_eq!(u32::from(epoch_next), 4);
 }
 
 #[test]
@@ -813,9 +813,9 @@ fn lift_crosses_a_stampless_epoch() {
         |epoch| user.nf_at(&note, epoch),
         (epoch1, epoch3),
     );
-    let (_, epoch_start, elapsed, epoch_end, _) = *arbitrary.data();
+    let (_, epoch_start, elapsed, epoch_next, _) = *arbitrary.data();
     assert_eq!(epoch_start, epoch1);
-    assert_eq!(epoch_end, epoch3);
+    assert_eq!(epoch_next, epoch3);
     assert_eq!(
         elapsed,
         NfSeqPoly::new(
@@ -880,8 +880,8 @@ fn unspent_bind_window_may_end_at_the_final_epoch() {
     let note = user.random_note(500);
 
     // The epoch space's last derivation window: the unspent span covers all
-    // of it up to the final epoch, which it lands on. No crossing leaves the
-    // final epoch, so no segment covers it.
+    // of it before the final epoch, `[epoch_start, EPOCH_MAX)`. No crossing
+    // leaves the final epoch, so no segment covers it.
     let epoch_start = EpochIndex::new(EPOCH_MAX + 1 - NF_DERIVATION_WIDTH as u32);
     let epoch_end = EpochIndex::new(EPOCH_MAX);
     let range = user.derivation_pcd(rng, note, epoch_start, epoch_end);
