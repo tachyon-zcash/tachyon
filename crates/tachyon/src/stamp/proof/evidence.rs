@@ -28,7 +28,7 @@ use crate::{
 /// A Poseidon Merkle root over one network's sealed buckets.
 ///
 /// Every leaf under `root` is the [`poseidon::evidence_tree_leaf`] of a bucket
-/// whose own `(epoch, anchor_prev, anchor_end, discriminant)` are the four
+/// whose own `(epoch, anchor_start, anchor_next, discriminant)` are the four
 /// this header carries. A one-leaf tree's root is that leaf's digest.
 ///
 /// The tree claims nothing about which buckets it holds. A tree over one
@@ -39,18 +39,18 @@ use crate::{
 pub struct EvidenceTree;
 
 impl Header for EvidenceTree {
-    /// `(epoch, anchor_prev, anchor_end, discriminant, root)`
+    /// `(epoch, anchor_start, anchor_next, discriminant, root)`
     type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
 
     const SUFFIX: Suffix = Suffix::new(13);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (epoch, anchor_prev, anchor_end, discriminant, root) = *data;
+        let (epoch, anchor_start, anchor_next, discriminant, root) = *data;
         (
             vec![
                 Fp::from(epoch),
-                Fp::from(anchor_prev),
-                Fp::from(anchor_end),
+                Fp::from(anchor_start),
+                Fp::from(anchor_next),
                 Fp::from(discriminant),
                 Fp::from(root),
             ],
@@ -71,7 +71,7 @@ impl Header for EvidenceTree {
 pub struct EvidenceTreePair;
 
 impl Header for EvidenceTreePair {
-    /// `(epoch, anchor_prev, anchor_end, discriminant, first, second)`
+    /// `(epoch, anchor_start, anchor_next, discriminant, first, second)`
     type Data = (
         EpochIndex,
         Anchor,
@@ -84,12 +84,12 @@ impl Header for EvidenceTreePair {
     const SUFFIX: Suffix = Suffix::new(14);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (epoch, anchor_prev, anchor_end, discriminant, first, second) = *data;
+        let (epoch, anchor_start, anchor_next, discriminant, first, second) = *data;
         (
             vec![
                 Fp::from(epoch),
-                Fp::from(anchor_prev),
-                Fp::from(anchor_end),
+                Fp::from(anchor_start),
+                Fp::from(anchor_next),
                 Fp::from(discriminant),
                 Fp::from(first),
                 Fp::from(second),
@@ -124,20 +124,20 @@ impl Step for EvidenceTreeLeaf {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (): Self::Witness<'source>,
-        (epoch, anchor_prev, anchor_end, discriminant, profile, contents): <Self::Left as Header>::Data,
+        (epoch, anchor_start, anchor_next, discriminant, profile, contents): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let root = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
             Fp::from(epoch),
-            Fp::from(anchor_prev),
-            Fp::from(anchor_end),
+            Fp::from(anchor_start),
+            Fp::from(anchor_next),
             Fp::from(discriminant),
             Fp::from(u64::from(profile.depth)),
             Fp::from(u64::from(profile.bits)),
             Eq::from(contents).to_affine(),
         ));
 
-        Ok(((epoch, anchor_prev, anchor_end, discriminant, root), ()))
+        Ok(((epoch, anchor_start, anchor_next, discriminant, root), ()))
     }
 }
 
@@ -171,16 +171,16 @@ impl Step for EvidenceTreeLeafPair {
         (): Self::Witness<'source>,
         (
             left_epoch,
-            left_anchor_prev,
-            left_anchor_end,
+            left_anchor_start,
+            left_anchor_next,
             left_discriminant,
             left_profile,
             left_contents,
         ): <Self::Left as Header>::Data,
         (
             right_epoch,
-            right_anchor_prev,
-            right_anchor_end,
+            right_anchor_start,
+            right_anchor_next,
             right_discriminant,
             right_profile,
             right_contents,
@@ -191,11 +191,11 @@ impl Step for EvidenceTreeLeafPair {
             "EvidenceTreeLeafPair: inputs cover different epochs",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_prev) - Fp::from(right_anchor_prev),
+            Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
             "EvidenceTreeLeafPair: inputs open at different anchors",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_end) - Fp::from(right_anchor_end),
+            Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
             "EvidenceTreeLeafPair: inputs close at different anchors",
         )?;
         enforce_zero(
@@ -205,8 +205,8 @@ impl Step for EvidenceTreeLeafPair {
 
         let first = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
             Fp::from(left_epoch),
-            Fp::from(left_anchor_prev),
-            Fp::from(left_anchor_end),
+            Fp::from(left_anchor_start),
+            Fp::from(left_anchor_next),
             Fp::from(left_discriminant),
             Fp::from(u64::from(left_profile.depth)),
             Fp::from(u64::from(left_profile.bits)),
@@ -214,8 +214,8 @@ impl Step for EvidenceTreeLeafPair {
         ));
         let second = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
             Fp::from(right_epoch),
-            Fp::from(right_anchor_prev),
-            Fp::from(right_anchor_end),
+            Fp::from(right_anchor_start),
+            Fp::from(right_anchor_next),
             Fp::from(right_discriminant),
             Fp::from(u64::from(right_profile.depth)),
             Fp::from(u64::from(right_profile.bits)),
@@ -225,8 +225,8 @@ impl Step for EvidenceTreeLeafPair {
         Ok((
             (
                 left_epoch,
-                left_anchor_prev,
-                left_anchor_end,
+                left_anchor_start,
+                left_anchor_next,
                 left_discriminant,
                 first,
                 second,
@@ -264,19 +264,19 @@ impl Step for EvidenceTreePairFuse {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (): Self::Witness<'source>,
-        (left_epoch, left_anchor_prev, left_anchor_end, left_discriminant, left_root): <Self::Left as Header>::Data,
-        (right_epoch, right_anchor_prev, right_anchor_end, right_discriminant, right_root): <Self::Right as Header>::Data,
+        (left_epoch, left_anchor_start, left_anchor_next, left_discriminant, left_root): <Self::Left as Header>::Data,
+        (right_epoch, right_anchor_start, right_anchor_next, right_discriminant, right_root): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(left_epoch) - Fp::from(right_epoch),
             "EvidenceTreePairFuse: inputs cover different epochs",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_prev) - Fp::from(right_anchor_prev),
+            Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
             "EvidenceTreePairFuse: inputs open at different anchors",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_end) - Fp::from(right_anchor_end),
+            Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
             "EvidenceTreePairFuse: inputs close at different anchors",
         )?;
         enforce_zero(
@@ -287,8 +287,8 @@ impl Step for EvidenceTreePairFuse {
         Ok((
             (
                 left_epoch,
-                left_anchor_prev,
-                left_anchor_end,
+                left_anchor_start,
+                left_anchor_next,
                 left_discriminant,
                 left_root,
                 right_root,
@@ -326,16 +326,16 @@ impl Step for EvidenceTreeFuse {
         (): Self::Witness<'source>,
         (
             left_epoch,
-            left_anchor_prev,
-            left_anchor_end,
+            left_anchor_start,
+            left_anchor_next,
             left_discriminant,
             left_first,
             left_second,
         ): <Self::Left as Header>::Data,
         (
             right_epoch,
-            right_anchor_prev,
-            right_anchor_end,
+            right_anchor_start,
+            right_anchor_next,
             right_discriminant,
             right_first,
             right_second,
@@ -346,11 +346,11 @@ impl Step for EvidenceTreeFuse {
             "EvidenceTreeFuse: inputs cover different epochs",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_prev) - Fp::from(right_anchor_prev),
+            Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
             "EvidenceTreeFuse: inputs open at different anchors",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_end) - Fp::from(right_anchor_end),
+            Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
             "EvidenceTreeFuse: inputs close at different anchors",
         )?;
         enforce_zero(
@@ -368,8 +368,8 @@ impl Step for EvidenceTreeFuse {
         Ok((
             (
                 left_epoch,
-                left_anchor_prev,
-                left_anchor_end,
+                left_anchor_start,
+                left_anchor_next,
                 left_discriminant,
                 root,
             ),
@@ -407,14 +407,14 @@ impl Step for EvidenceTreeCap {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (): Self::Witness<'source>,
-        (epoch, anchor_prev, anchor_end, discriminant, root): <Self::Left as Header>::Data,
+        (epoch, anchor_start, anchor_next, discriminant, root): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         let raised = EvidenceTreeRoot(poseidon::evidence_tree_node(
             [Fp::from(root); EVIDENCE_TREE_ARITY],
         ));
 
-        Ok(((epoch, anchor_prev, anchor_end, discriminant, raised), ()))
+        Ok(((epoch, anchor_start, anchor_next, discriminant, raised), ()))
     }
 }
 
@@ -465,7 +465,7 @@ impl Step for EvidenceTreeDescend {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (path,): Self::Witness<'source>,
-        (epoch, anchor_prev, anchor_end, discriminant, root): <Self::Left as Header>::Data,
+        (epoch, anchor_start, anchor_next, discriminant, root): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // TODO: a real circuit must constrain each side bit to a boolean. The
@@ -490,8 +490,8 @@ impl Step for EvidenceTreeDescend {
         Ok((
             (
                 epoch,
-                anchor_prev,
-                anchor_end,
+                anchor_start,
+                anchor_next,
                 discriminant,
                 EvidenceTreeRoot(node),
             ),
@@ -533,15 +533,15 @@ impl Step for EvidenceTreeOpen {
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
         (profile, contents): Self::Witness<'source>,
-        (epoch, anchor_prev, anchor_end, discriminant, root): <Self::Left as Header>::Data,
+        (epoch, anchor_start, anchor_next, discriminant, root): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(root)
                 - poseidon::evidence_tree_leaf(
                     Fp::from(epoch),
-                    Fp::from(anchor_prev),
-                    Fp::from(anchor_end),
+                    Fp::from(anchor_start),
+                    Fp::from(anchor_next),
                     Fp::from(discriminant),
                     Fp::from(u64::from(profile.depth)),
                     Fp::from(u64::from(profile.bits)),
@@ -553,8 +553,8 @@ impl Step for EvidenceTreeOpen {
         Ok((
             (
                 epoch,
-                anchor_prev,
-                anchor_end,
+                anchor_start,
+                anchor_next,
                 discriminant,
                 profile,
                 contents,

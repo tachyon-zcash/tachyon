@@ -150,9 +150,9 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
         .collect::<Vec<_>>();
 
     let tree = build_evidence_tree(rng, sealed);
-    let (epoch, anchor_prev, anchor_end, root_discriminant, _) = *tree.pcd.data();
+    let (epoch, anchor_start, anchor_next, root_discriminant, _) = *tree.pcd.data();
     assert_eq!(
-        (epoch, anchor_prev, anchor_end, root_discriminant),
+        (epoch, anchor_start, anchor_next, root_discriminant),
         (
             EpochIndex::new(0),
             Anchor::default(),
@@ -449,7 +449,7 @@ fn evidence_tree_cap_is_transparent_to_a_descent() {
         .collect::<Vec<_>>();
     let tree = build_evidence_tree(rng, sealed);
 
-    let (epoch, anchor_prev, anchor_end, network, root) = *tree.pcd.data();
+    let (epoch, anchor_start, anchor_next, network, root) = *tree.pcd.data();
     let (capped, ()) = PROOF_SYSTEM
         .fuse(
             rng,
@@ -462,7 +462,7 @@ fn evidence_tree_cap_is_transparent_to_a_descent() {
     let raised = *capped.data();
     assert_eq!(
         (raised.0, raised.1, raised.2, raised.3),
-        (epoch, anchor_prev, anchor_end, network)
+        (epoch, anchor_start, anchor_next, network)
     );
     assert_ne!(raised.4, root);
 }

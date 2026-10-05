@@ -204,8 +204,8 @@ const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
 #[must_use]
 pub fn evidence_tree_leaf(
     epoch: Fp,
-    anchor_prev: Fp,
-    anchor_end: Fp,
+    anchor_start: Fp,
+    anchor_next: Fp,
     discriminant: Fp,
     depth: Fp,
     bits: Fp,
@@ -215,8 +215,8 @@ pub fn evidence_tree_leaf(
     hash::<9>([
         Fp::from_u128(u128::from_le_bytes(*QR_BUCKET_DOMAIN)),
         epoch,
-        anchor_prev,
-        anchor_end,
+        anchor_start,
+        anchor_next,
         discriminant,
         depth,
         bits,

@@ -217,7 +217,7 @@ Membership needs no profile: every bucket divides the epoch's stamp polynomials,
 A bucket is complete evidence on its own, so a builder needs every bucket's proof only until it has something that vouches for them all at once.
 `EvidenceTreeLeaf` admits one sealed bucket as a one-leaf `EvidenceTree`, hashing the whole bucket header into a leaf digest,
 
-$$\mathsf{root} = H_\mathsf{bkt}(e, \mathsf{anchor_{prev}}, \mathsf{anchor_{end}}, R_0, \mathsf{depth}, \mathsf{bits}, \mathsf{contents}).$$
+$$\mathsf{root} = H_\mathsf{bkt}(e, \mathsf{anchor_{start}}, \mathsf{anchor_{next}}, R_0, \mathsf{depth}, \mathsf{bits}, \mathsf{contents}).$$
 
 `EvidenceTreeLeafPair` admits two buckets at once, as two leaf digests under one half-assembled node.
 
@@ -226,7 +226,7 @@ Four children reach one hash through two steps, since a step takes at most two p
 
 $$\mathsf{root} = H(\ell_0, \ell_1, r_0, r_1).$$
 
-Both require their inputs to agree on `epoch`, `anchor_prev`, `anchor_end` and `discriminant`.
+Both require their inputs to agree on `epoch`, `anchor_start`, `anchor_next` and `discriminant`.
 Those four are checked equal because a consumer reads the extent off the tree: a tree spanning further than its leaves do would let a bucket's exclusion cover folds the bucket never held.
 Every bucket of one network shares all four.
 `EvidenceTreeCap` raises a root by repeating it into all four slots. A builder runs it until the depth is a multiple of the levels one descent covers.
@@ -447,8 +447,8 @@ flowchart LR
 | QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile, contents) |
 | QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue) |
 | QrBucket | (epoch, anchor_start, anchor_next, discriminant, profile, contents) |
-| EvidenceTree | (epoch, anchor_prev, anchor_end, discriminant, root) |
-| EvidenceTreePair | (epoch, anchor_prev, anchor_end, discriminant, first, second) |
+| EvidenceTree | (epoch, anchor_start, anchor_next, discriminant, root) |
+| EvidenceTreePair | (epoch, anchor_start, anchor_next, discriminant, first, second) |
 | ArbitraryUnspent | (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) |
 | NoteUnspent | (cm, anchor_start, epoch_start, epoch_next, anchor_next) |
 | NoteMaster | (cm, note, mk) |
