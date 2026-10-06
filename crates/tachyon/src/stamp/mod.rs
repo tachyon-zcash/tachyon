@@ -33,7 +33,7 @@ use crate::{
     digest::blake2b,
     effect,
     entropy::ActionEntropy,
-    keys::ProofAuthorizingKey,
+    keys::{ProofAuthorizingKey, private},
     primitives::{
         ActionDigest, ActionDigestError, Anchor, EpochIndex, Tachygram, TachygramSetCommit,
     },
@@ -369,16 +369,15 @@ impl Plan {
         }
     }
 
-    /// Prove a single [`ProofStamp`] of exactly this plan.
+    /// Prove a single [`ProofStamp`] for this plan.
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
-    /// **spend**, the spendable's anchor must be the plan's; then
-    /// [`spend::SpendBind`] derives the live nullifier pair and
-    /// [`ProofStamp::prove_spend`] proves the planned descriptor. For each
-    /// **output**, [`ProofStamp::prove_output`] proves the planned
-    /// descriptor at the plan's anchor.
+    /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
+    /// [`ProofStamp::prove_spend`] proves the action. For each **output**,
+    /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
     ///
-    /// Stamps are recursively merged via [`StampMerge`] into a single stamp.
+    /// Stamps are recursively merged via [`StampMerge`] into a single stamp,
+    /// whose coverage is the planned descriptors.
     ///
     /// TODO: provide a way to lift spend stamps when necessary to merge
     ///
@@ -386,11 +385,7 @@ impl Plan {
     ///
     /// - [`ProveError::MissingPcd`] if the plan has no actions, or the number
     ///   of spend PCDs does not match the planned spends.
-    /// - [`ProveError::AnchorMismatch`] if a spendable is not at the plan's
-    ///   anchor.
-    /// - [`ProveError::DescriptorMismatch`] if a leaf proves an action other
-    ///   than its planned descriptor.
-    /// - [`ProveError::ActionDigest`] if a planned descriptor has no digest.
+    /// - [`ProveError::ActionDigest`] if a proved action has no digest.
     /// - [`ProveError::ProofFailed`] if a proof-system step fails.
     pub fn prove<RNG: CryptoRng>(
         self,
@@ -420,17 +415,13 @@ impl Plan {
         for ((desc, theta, rcv), (master_pcd, spendable_pcd)) in
             self.spends.into_iter().zip(spend_pcds)
         {
-            if spendable_pcd.data().2 != self.anchor {
-                return Err(ProveError::AnchorMismatch(Box::new(desc)));
-            }
-
             // SpendBind: derive the live pair from the note's master key.
             let (bind_pcd, ()) = PROOF_SYSTEM
                 .fuse(rng, spend::SpendBind, (), spendable_pcd, master_pcd.clone())
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, anchor, proof) =
-                ProofStamp::prove_spend(rng, desc, theta, rcv, bind_pcd, master_pcd, *pak)?;
+                ProofStamp::prove_spend(rng, theta, rcv, bind_pcd, master_pcd, *pak)?;
             entries.push((
                 BTreeSet::from_iter([desc]),
                 digests,
@@ -442,7 +433,7 @@ impl Plan {
 
         for (desc, theta, note, rcv) in self.outputs {
             let (digests, tachygrams, anchor, proof) =
-                ProofStamp::prove_output(rng, desc, theta, rcv, note, self.anchor)?;
+                ProofStamp::prove_output(rng, theta, rcv, note, self.anchor)?;
             entries.push((
                 BTreeSet::from_iter([desc]),
                 digests,
@@ -510,12 +501,6 @@ pub enum ProveError {
     /// Action digest construction failed (cv or rk was the identity point).
     #[display("action digest failed: {_0}")]
     ActionDigest(ActionDigestError),
-    /// A spendable is not at the plan's anchor.
-    #[display("spendable anchor is not the plan's: {_0:?}")]
-    AnchorMismatch(#[error(not(source))] Box<action::Descriptor>),
-    /// A leaf proves an action other than its planned descriptor.
-    #[display("proved action is not the planned descriptor: {_0:?}")]
-    DescriptorMismatch(#[error(not(source))] Box<action::Descriptor>),
     /// Proof creation failed; carries the underlying step-level error.
     #[display("proof failed: {_0}")]
     ProofFailed(ragu_core::Error),
@@ -560,31 +545,32 @@ type StampComponents = (
 );
 
 impl ProofStamp {
-    /// Proves a single output action of the planned `descriptor`, returning
-    /// the stamp components `(digests, tachygrams, anchor, proof)`.
+    /// Proves a single output action, returning the stamp components
+    /// `(digests, tachygrams, anchor, proof)`.
     ///
     /// [`output::OutputBind`] settles the tachygram pair, then [`OutputStamp`]
     /// proves the action over it with `alpha` derived from `theta` and the
     /// note's commitment, and enforces the stamp accumulator. Both tachygrams
     /// are derived inside the circuit and placed on the stamp for data
-    /// availability.
+    /// availability. `digests` holds the proved action's digest.
     ///
     /// # Errors
     ///
-    /// - [`ProveError::ActionDigest`] if `descriptor` has no digest.
-    /// - [`ProveError::DescriptorMismatch`] if the proved action is not
-    ///   `descriptor`.
+    /// - [`ProveError::ActionDigest`] if the proved action has no digest.
     /// - [`ProveError::ProofFailed`] if a proof-system step fails.
     pub fn prove_output<RNG: CryptoRng>(
         rng: &mut RNG,
-        descriptor: action::Descriptor,
         theta: ActionEntropy,
         rcv: value::Trapdoor,
         note: Note,
         anchor: Anchor,
     ) -> Result<StampComponents, ProveError> {
-        let digest = descriptor.digest().map_err(ProveError::ActionDigest)?;
         let alpha = theta.randomizer::<effect::Output>(note.commitment());
+        let digest = ActionDigest::new(
+            rcv.commit(-note.value),
+            private::ActionSigningKey::new(&alpha).derive_action_public(),
+        )
+        .map_err(ProveError::ActionDigest)?;
 
         let (bind_pcd, ()) = PROOF_SYSTEM
             .seed(rng, output::OutputBind, (note,))
@@ -601,9 +587,6 @@ impl ProofStamp {
                 ragu::Proof::trivial().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
-        if pcd.data().0 != ActionSetPoly::from_iter([digest]).commit() {
-            return Err(ProveError::DescriptorMismatch(Box::new(descriptor)));
-        }
         let rerand = PROOF_SYSTEM
             .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?;
@@ -616,7 +599,7 @@ impl ProofStamp {
         ))
     }
 
-    /// Proves a single spend action of the planned `descriptor` from a bound
+    /// Proves a single spend action from a bound
     /// [`SpendHeader`](spend::SpendHeader) PCD, returning the stamp
     /// components `(digests, tachygrams, anchor, proof)`.
     ///
@@ -626,25 +609,25 @@ impl ProofStamp {
     /// the action `(cv, rk)` with `alpha` derived from `theta` and the
     /// master's note commitment, and enforces the stamp accumulator over the
     /// pair. The spend's `anchor` is taken as the stamp's anchor; chain
-    /// validation lives inside the spendable lineage.
+    /// validation lives inside the spendable lineage. `digests` holds the
+    /// proved action's digest.
     ///
     /// # Errors
     ///
-    /// - [`ProveError::ActionDigest`] if `descriptor` has no digest.
-    /// - [`ProveError::DescriptorMismatch`] if the proved action is not
-    ///   `descriptor`.
+    /// - [`ProveError::ActionDigest`] if the proved action has no digest.
     /// - [`ProveError::ProofFailed`] if a proof-system step fails.
     pub fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
-        descriptor: action::Descriptor,
         theta: ActionEntropy,
         rcv: value::Trapdoor,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
         master_pcd: ragu::Pcd<delegation::NoteMaster>,
         pak: ProofAuthorizingKey,
     ) -> Result<StampComponents, ProveError> {
-        let digest = descriptor.digest().map_err(ProveError::ActionDigest)?;
-        let alpha = theta.randomizer::<effect::Spend>(master_pcd.data().0);
+        let (master_cm, note, _mk) = *master_pcd.data();
+        let alpha = theta.randomizer::<effect::Spend>(master_cm);
+        let digest = ActionDigest::new(rcv.commit(note.value), pak.ak.derive_action_public(&alpha))
+            .map_err(ProveError::ActionDigest)?;
 
         let (_cm, nf_current, nf_next, anchor) = *bind_pcd.data();
         let tachygrams =
@@ -659,9 +642,6 @@ impl ProofStamp {
                 master_pcd,
             )
             .map_err(ProveError::ProofFailed)?;
-        if pcd.data().0 != ActionSetPoly::from_iter([digest]).commit() {
-            return Err(ProveError::DescriptorMismatch(Box::new(descriptor)));
-        }
         let rerand = PROOF_SYSTEM
             .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?;

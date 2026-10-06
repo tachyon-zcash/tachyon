@@ -649,6 +649,59 @@ impl Step for QrBucketSeal {
     }
 }
 
+/// Fix `value`'s side at every discriminant of the progression from
+/// `discriminant`, and check `profile` is the value's first `depth` sides.
+///
+/// The relations and their soundness are on [`QrUnspentInit`].
+/// [`UnspentLift`](super::pool::UnspentLift) runs the same checks.
+pub(super) fn enforce_value_profile(
+    value: Tachygram,
+    discriminant: QrDiscriminant,
+    profile: QrProfile,
+    classes: &[QrClassRoot; QrProfile::MAX_DEPTH],
+    mask: &[bool; QrProfile::MAX_DEPTH],
+) -> ragu_core::Result<()> {
+    // TODO: a real circuit must constrain every side and mask bit boolean;
+    // the types carry it under mock ragu.
+    let mut shifted = Fp::from(value) + Fp::from(discriminant);
+    let mut position_fp = Fp::ZERO;
+    let mut depth_acc = Fp::ZERO;
+    let mut index_acc = Fp::ZERO;
+    let mut bits_acc = Fp::ZERO;
+    for (&QrClassRoot(side, root), &selected) in classes.iter().zip(mask) {
+        let side_fp = Fp::from(u64::from(side));
+        let multiplier = QUADRATIC_NON_RESIDUE - ((QUADRATIC_NON_RESIDUE - Fp::ONE) * side_fp);
+        enforce_zero(
+            root.square() - (multiplier * shifted),
+            "QR profile: root does not square to the claimed class",
+        )?;
+        enforce_nonzero(
+            (shifted * (Fp::ONE - side_fp)) + side_fp,
+            "QR profile: exceptional discriminant claimed the non-residue class",
+        )?;
+
+        let selected_fp = Fp::from(selected);
+        depth_acc += selected_fp;
+        index_acc += selected_fp * position_fp;
+        bits_acc += selected_fp * (bits_acc + side_fp);
+        shifted += Fp::ONE;
+        position_fp += Fp::ONE;
+    }
+    enforce_zero(
+        depth_acc - Fp::from(u64::from(profile.depth)),
+        "QR profile: depth mask does not match the bucket's depth",
+    )?;
+    enforce_zero(
+        index_acc.double() - (depth_acc * (depth_acc - Fp::ONE)),
+        "QR profile: depth mask is not a prefix",
+    )?;
+    enforce_zero(
+        bits_acc - Fp::from(u64::from(profile.bits)),
+        "QR profile: value does not take the bucket's profile",
+    )?;
+    Ok(())
+}
+
 /// Start an [`ArbitraryUnspent`] from a [`QrBucket`].
 ///
 /// The step fixes the value's side at every discriminant of the epoch, matches
@@ -682,7 +735,8 @@ impl Step for QrBucketSeal {
 /// Its one member is the value at `epoch`. `anchor_next` is the entry anchor
 /// of `epoch + 1`, excluded, so that epoch's nullifier is the next segment's
 /// to test. Consecutive epochs' segments meet on that boundary and fuse
-/// directly.
+/// directly, or [`UnspentLift`](super::pool::UnspentLift) appends the next
+/// epoch's bucket in one step.
 ///
 /// # Soundness
 ///
@@ -741,45 +795,7 @@ impl Step for QrUnspentInit {
             "QrUnspentInit: contents do not match the bucket",
         )?;
         enforce_nonzero(Fp::from(value), "QrUnspentInit: tested value is zero")?;
-
-        // TODO: a real circuit must constrain every side and mask bit boolean;
-        // the types carry it under mock ragu.
-        let mut shifted = Fp::from(value) + Fp::from(discriminant);
-        let mut position_fp = Fp::ZERO;
-        let mut depth_acc = Fp::ZERO;
-        let mut index_acc = Fp::ZERO;
-        let mut bits_acc = Fp::ZERO;
-        for (&QrClassRoot(side, root), &selected) in classes.iter().zip(&mask) {
-            let side_fp = Fp::from(u64::from(side));
-            let multiplier = QUADRATIC_NON_RESIDUE - ((QUADRATIC_NON_RESIDUE - Fp::ONE) * side_fp);
-            enforce_zero(
-                root.square() - (multiplier * shifted),
-                "QrUnspentInit: root does not square to the claimed class",
-            )?;
-            enforce_nonzero(
-                (shifted * (Fp::ONE - side_fp)) + side_fp,
-                "QrUnspentInit: exceptional discriminant claimed the non-residue class",
-            )?;
-
-            let selected_fp = Fp::from(selected);
-            depth_acc += selected_fp;
-            index_acc += selected_fp * position_fp;
-            bits_acc += selected_fp * (bits_acc + side_fp);
-            shifted += Fp::ONE;
-            position_fp += Fp::ONE;
-        }
-        enforce_zero(
-            depth_acc - Fp::from(u64::from(profile.depth)),
-            "QrUnspentInit: depth mask does not match the bucket's depth",
-        )?;
-        enforce_zero(
-            index_acc.double() - (depth_acc * (depth_acc - Fp::ONE)),
-            "QrUnspentInit: depth mask is not a prefix",
-        )?;
-        enforce_zero(
-            bits_acc - Fp::from(u64::from(profile.bits)),
-            "QrUnspentInit: value does not take the bucket's profile",
-        )?;
+        enforce_value_profile(value, discriminant, profile, &classes, &mask)?;
 
         let epoch_next = bucket_epoch.next().ok_or_else(|| {
             ragu_core::Error::InvalidWitness("QrUnspentInit: bucket has no next epoch".into())

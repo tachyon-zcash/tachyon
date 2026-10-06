@@ -24,12 +24,21 @@ use alloc::{vec, vec::Vec};
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
+use ragu_pasta::Pasta;
 
-use super::delegation::NoteNullifiers;
+use super::{
+    delegation::NoteNullifiers,
+    qr::{QrBucket, enforce_value_profile},
+};
 use crate::{
+    collections::indexed_multiset,
     note::{self},
-    primitives::{Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, TachygramSetCommit},
-    ragu_constraint::{enforce_equal_point, enforce_zero},
+    primitives::{
+        Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
+        TachygramSetCommit, TachygramSetPoly,
+    },
+    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::enforce_poly_product,
 };
 
@@ -83,9 +92,12 @@ impl Header for AnchorChain {
 /// A segment covers whole epochs, half-open on both axes:
 /// `[anchor_start, anchor_next)` and `[epoch_start, epoch_next)`.
 /// `anchor_start` is the entry anchor of `epoch_start`, and `anchor_next` is
-/// the entry anchor of `epoch_next`. Each producer takes an anchor bound and
-/// its epoch from the same [`QrBucket`](super::qr::QrBucket) or the same half,
-/// and [`QrBucketSeal`](super::qr::QrBucketSeal) gives every bucket that form.
+/// the entry anchor of `epoch_next`. It starts at
+/// [`QrUnspentInit`](super::qr::QrUnspentInit) over one epoch's [`QrBucket`],
+/// [`UnspentLift`] appends the next epoch's bucket, and [`UnspentFuse`] joins
+/// segments on a shared boundary. Each producer takes an anchor bound and its
+/// epoch from the same bucket or the same half, and
+/// [`QrBucketSeal`](super::qr::QrBucketSeal) gives every bucket that form.
 ///
 /// An `elapsed` [`NfSeqPoly`] holds one tested nullifier per epoch in
 /// `[epoch_start, epoch_next)`. `epoch_next`'s nullifier is the next segment's
@@ -94,9 +106,10 @@ impl Header for AnchorChain {
 ///
 /// Every producer maintains the provenance [`UnspentBind`]'s completeness
 /// argument leans on. Each member's epoch lies in `[epoch_start, epoch_next)`,
-/// because `QrUnspentInit` encodes its member from the bucket's own epoch.
-/// Each epoch carries exactly one member: `QrUnspentInit` pins its one member
-/// by its challenge identity, and [`UnspentFuse`]'s identity determines the
+/// because `QrUnspentInit` and [`UnspentLift`] encode their member from the
+/// bucket's own epoch. Each epoch carries exactly one member: `QrUnspentInit`
+/// pins its one member by its challenge identity, `UnspentLift` adds exactly
+/// one at `epoch_next` by its, and [`UnspentFuse`]'s identity determines the
 /// combined polynomial exactly, so the property composes by induction.
 #[derive(Clone, Debug)]
 pub struct ArbitraryUnspent;
@@ -276,6 +289,136 @@ impl Step for UnspentFuse {
                 combined_elapsed_seq.commit(),
                 right_epoch_next,
                 right_anchor_next,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Append one epoch to an [`ArbitraryUnspent`] from that epoch's
+/// [`QrBucket`].
+///
+/// The bucket starts on the segment's excluded bound: `anchor_next` and
+/// `epoch_next` are the bucket's `anchor_start` and `epoch`. The step tests one
+/// value against the bucket as [`QrUnspentInit`](super::qr::QrUnspentInit)
+/// does, appends it to `elapsed` as the member at `epoch_next`, and moves the
+/// segment's bound to the bucket's `anchor_next`. One step per epoch, where
+/// [`QrUnspentInit`](super::qr::QrUnspentInit) then [`UnspentFuse`] takes two.
+///
+/// # Soundness
+///
+/// `elapsed_seq` is bound to the header by commit-equality and `contents` to
+/// the bucket. The challenge absorbs both sequences and `[value]·G_0`, so the
+/// identity $\mathsf{extended}(z) = \mathsf{elapsed}(z) \cdot F(z)$, with $F$
+/// the one indexed member `(epoch_next, value)`, fixes `extended` to `elapsed`
+/// plus exactly that member. The member's epoch is `epoch_next`, which
+/// advances by one, so `extended` keeps one member per epoch in
+/// `[epoch_start, epoch_next)`. `value` is free until
+/// [`UnspentBind`] forces it against the note's derivation.
+///
+/// Three committed polynomials, each opened once.
+#[derive(Debug)]
+pub struct UnspentLift;
+
+impl Step for UnspentLift {
+    type Aux<'source> = ();
+    type Left = ArbitraryUnspent;
+    type Output = ArbitraryUnspent;
+    type Right = QrBucket;
+    /// `(value, classes, mask, elapsed_seq, extended_seq, contents)`
+    type Witness<'source> = (
+        Tachygram,
+        [QrClassRoot; QrProfile::MAX_DEPTH],
+        [bool; QrProfile::MAX_DEPTH],
+        NfSeqPoly,
+        NfSeqPoly,
+        TachygramSetPoly,
+    );
+
+    const INDEX: Index = Index::new(26);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (value, classes, mask, elapsed_seq, extended_seq, contents): Self::Witness<'source>,
+        (
+            unspent_anchor_start,
+            unspent_epoch_start,
+            unspent_elapsed,
+            unspent_epoch_next,
+            unspent_anchor_next,
+        ): <Self::Left as Header>::Data,
+        (
+            bucket_epoch,
+            bucket_anchor_start,
+            bucket_anchor_next,
+            discriminant,
+            profile,
+            contents_commit,
+        ): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_start),
+            "UnspentLift: the bucket does not start where the segment ends",
+        )?;
+        enforce_zero(
+            Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch),
+            "UnspentLift: the bucket is not the segment's next epoch",
+        )?;
+        enforce_equal_point(
+            Eq::from(contents.commit()),
+            Eq::from(contents_commit),
+            "UnspentLift: contents do not match the bucket",
+        )?;
+        enforce_equal_point(
+            Eq::from(elapsed_seq.commit()),
+            Eq::from(unspent_elapsed),
+            "UnspentLift: elapsed does not match header",
+        )?;
+        enforce_nonzero(Fp::from(value), "UnspentLift: tested value is zero")?;
+        enforce_value_profile(value, discriminant, profile, &classes, &mask)?;
+
+        let epoch_next = bucket_epoch.next().ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
+        })?;
+
+        let z =
+            ctx.derive_challenge(
+                &[elapsed_seq.commit().into(), extended_seq.commit().into(), {
+                    // The mock absorbs only points, so absorb `[value]·G_0`.
+                    #[expect(clippy::expect_used, reason = "constant size")]
+                    let &g0 = Pasta::host_generators(Pasta::baked())
+                        .g()
+                        .first()
+                        .expect("at least one generator");
+                    g0 * Fp::from(value)
+                }],
+            )?;
+        let elapsed_at_z = elapsed_seq.eval(z);
+        let extended_at_z = extended_seq.eval(z);
+        ctx.enforce_poly_query(elapsed_seq.commit().into(), z, elapsed_at_z)?;
+        ctx.enforce_poly_query(extended_seq.commit().into(), z, extended_at_z)?;
+        enforce_zero(
+            extended_at_z
+                - (elapsed_at_z
+                    * indexed_multiset::direct_eval([(u64::from(bucket_epoch), value.into())], z)),
+            "UnspentLift: extended is not elapsed with the tested pair",
+        )?;
+
+        let contents_at_value = contents.eval(value.into());
+        ctx.enforce_poly_query(contents_commit.into(), value.into(), contents_at_value)?;
+        enforce_nonzero(
+            contents_at_value,
+            "UnspentLift: found nullifier in the bucket",
+        )?;
+
+        Ok((
+            (
+                unspent_anchor_start,
+                unspent_epoch_start,
+                extended_seq.commit(),
+                epoch_next,
+                bucket_anchor_next,
             ),
             (),
         ))

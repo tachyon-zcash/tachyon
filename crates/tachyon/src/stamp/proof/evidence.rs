@@ -118,7 +118,7 @@ impl Step for EvidenceTreeLeaf {
     type Right = ();
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(26);
+    const INDEX: Index = Index::new(27);
 
     fn witness<'source>(
         &self,
@@ -163,7 +163,7 @@ impl Step for EvidenceTreeLeafPair {
     type Right = QrBucket;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(32);
+    const INDEX: Index = Index::new(33);
 
     fn witness<'source>(
         &self,
@@ -258,7 +258,7 @@ impl Step for EvidenceTreePairFuse {
     type Right = EvidenceTree;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(27);
+    const INDEX: Index = Index::new(28);
 
     fn witness<'source>(
         &self,
@@ -318,7 +318,7 @@ impl Step for EvidenceTreeFuse {
     type Right = EvidenceTreePair;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(28);
+    const INDEX: Index = Index::new(29);
 
     fn witness<'source>(
         &self,
@@ -401,7 +401,7 @@ impl Step for EvidenceTreeCap {
     type Right = ();
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(29);
+    const INDEX: Index = Index::new(30);
 
     fn witness<'source>(
         &self,
@@ -459,7 +459,7 @@ impl Step for EvidenceTreeDescend {
     /// `(path)`
     type Witness<'source> = ([([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY]); Self::LEVELS],);
 
-    const INDEX: Index = Index::new(30);
+    const INDEX: Index = Index::new(31);
 
     fn witness<'source>(
         &self,
@@ -527,7 +527,7 @@ impl Step for EvidenceTreeOpen {
     /// `(profile, contents)`
     type Witness<'source> = (QrProfile, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(31);
+    const INDEX: Index = Index::new(32);
 
     fn witness<'source>(
         &self,
