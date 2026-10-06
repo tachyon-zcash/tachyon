@@ -21,7 +21,7 @@ use crate::{
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
-        pool::{AnchorSeed, UnspentBind, UnspentFuse},
+        pool::{AnchorSeed, UnspentBind, UnspentFuse, UnspentLift},
         qr::{
             QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
             QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
@@ -411,6 +411,31 @@ pub fn qr_unspent_init(
         QrClassRoot::along(Fp::from(value), discriminant),
         profile.depth_mask(),
         NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
+        bucket_members.iter().copied().collect(),
+    )
+}
+
+/// Prepare the witness for [`UnspentLift`]: `(value, classes, mask,
+/// elapsed_seq, extended_seq, contents)`.
+///
+/// `elapsed` is the segment's member list, one per covered epoch; `value`
+/// becomes the member at the bucket's epoch.
+#[must_use]
+pub fn unspent_lift(
+    (unspent, bucket): (StepLeft<UnspentLift>, StepRight<UnspentLift>),
+    value: Tachygram,
+    elapsed: &[Nullifier],
+    bucket_members: &[Tachygram],
+) -> StepWitness<'static, UnspentLift> {
+    let (_, epoch_start, ..) = unspent;
+    let (epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
+    let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
+    (
+        value,
+        QrClassRoot::along(Fp::from(value), discriminant),
+        profile.depth_mask(),
+        elapsed_seq.clone(),
+        elapsed_seq * NfSeqPoly::new(epoch, &[Nullifier::from(value)]),
         bucket_members.iter().copied().collect(),
     )
 }

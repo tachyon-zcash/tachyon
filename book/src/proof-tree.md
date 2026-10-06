@@ -86,7 +86,7 @@ The wallet runs every step that touches the note's commitment or master key.
 It derives its nullifier windows (`NoteSeed`, `NullifierDerive`, `NullifierFuse`), derives spendable status from its own derivation (`SpendableInit`, `QrSpendableInit`), binds and lifts over sync-built segments (`UnspentBind`, `SpendableLift`), and produces spend and output stamps (`SpendBind`, `SpendStamp`, `OutputBind`, `OutputStamp`).
 
 The sync service holds the per-epoch nullifier values the wallet shared and pool history.
-It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket, `UnspentFuse` across epochs), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
+It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket, `UnspentLift` one epoch at a time, `UnspentFuse` across segments), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
 
 The aggregator works only with published `Stamp`s.
 It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `AnchorFuse`) and fuses with `StampMerge`.
@@ -106,6 +106,7 @@ It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `A
 | QrSideDescend | possible | yes | no |
 | QrUnspentInit | possible | yes | no |
 | UnspentFuse | possible | yes | no |
+| UnspentLift | possible | yes | no |
 | NoteSeed | yes | no | no |
 | NullifierDerive | yes | no | no |
 | NullifierFuse | yes | no | no |
@@ -140,6 +141,10 @@ Each factor carries its own epoch, so the product is a multiset of `(epoch, null
 $$C(X) = L(X) \cdot R(X)$$
 
 for the witnessed `combined` $C$, left $L$, and right $R$. The halves hold disjoint epochs, so their product holds each epoch once. The recursive verification of the two input PCDs binds $L$ and $R$ before the challenge.
+
+`UnspentLift` appends one epoch in one step. Its bucket starts on the segment's excluded bound (`unspent.anchor_next == bucket.anchor_start`, `unspent.epoch_next == bucket.epoch`), it tests a value against the bucket exactly as `QrUnspentInit` does, and it confirms
+$$E(X) = P(X) \cdot F_{(\mathsf{epoch\_next},\, x)}(X)$$
+for the witnessed `extended` $E$, the header-bound `elapsed` $P$, and the one factor of the tested pair, at a challenge absorbing both sequences and the value's scalar-binding point. The new factor's epoch is `epoch_next`, which the step advances by one, so both properties hold.
 
 ### Summaries
 
@@ -392,6 +397,9 @@ flowchart LR
   s_next[QrUnspentInit]
   w_ufuse[/left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq/]
   s_ufuse[UnspentFuse]
+  bucket_after((QrBucket))
+  w_ulift[/value, classes, mask, elapsed_seq, extended_seq, contents/]
+  s_ulift[UnspentLift]
   unspent_out((ArbitraryUnspent))
 
   bucket_e --> s_init
@@ -401,7 +409,10 @@ flowchart LR
   s_init -->|ArbitraryUnspent| s_ufuse
   s_next -->|ArbitraryUnspent| s_ufuse
   w_ufuse --> s_ufuse
-  s_ufuse --> unspent_out
+  s_ufuse -->|ArbitraryUnspent| s_ulift
+  bucket_after --> s_ulift
+  w_ulift --> s_ulift
+  s_ulift --> unspent_out
 ```
 
 ## Headers
@@ -440,6 +451,7 @@ flowchart LR
 | QrBucketSeal | QrIntake | — | anchor_final_prev | QrBucket |
 | QrUnspentInit | QrBucket | — | value, classes, mask, sequence, contents | ArbitraryUnspent |
 | UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | ArbitraryUnspent |
+| UnspentLift | ArbitraryUnspent | QrBucket | value, classes, mask, elapsed_seq, extended_seq, contents | ArbitraryUnspent |
 | UnspentBind | ArbitraryUnspent | NoteNullifiers | elapsed_seq, nf_seq, complement_seq | NoteUnspent |
 | NoteSeed | — | — | note, pak | NoteMaster |
 | NullifierDerive | NoteMaster | — | epoch_start, seq | NoteNullifiers |
