@@ -24,6 +24,7 @@ Digests over bundle contents, feeding the two above. These are Tachyon-specific 
 | ------- | ----- |
 | Action descriptors | `Tachyon-Actions` |
 | Memo payload | `Tachyon-Memo` |
+| Tachygram chain | `Tachyon-TgChain` |
 | Stamp proof | `Tachyon-Proof` |
 | Stamp data | `Tachyon-Stamp` |
 

@@ -161,6 +161,27 @@ pub fn memo_digest(memo: &[u8]) -> [u8; 32] {
     })
 }
 
+const TACHYGRAM_CHAIN_PERSONALIZATION: &[u8; 15] = b"Tachyon-TgChain";
+
+/// One step of a tachygram list's chain digest.
+///
+/// $$
+///   d_{i+1} = \text{BLAKE2b-256}_\texttt{Tachyon-TgChain}(
+///     d_i \Vert \mathsf{tg}_i
+///   )
+/// $$
+///
+/// $d_0$ is 32 zero bytes, so the empty list digests to $d_0$. A list's
+/// digest folds this step over its tachygrams in order. Over a bundle's
+/// tachygrams this is `hTachygramsTachyon`.
+#[must_use]
+pub fn tachygram_chain(digest: &[u8; 32], tachygram: &[u8; 32]) -> [u8; 32] {
+    hasher_256(TACHYGRAM_CHAIN_PERSONALIZATION, |state| {
+        state.update(digest);
+        state.update(tachygram);
+    })
+}
+
 // See https://github.com/zcash/orchard/blob/main/src/bundle/commitments.rs
 const BUNDLE_COMMITMENT_PERSONALIZATION: &[u8; 16] = b"ZTxIdTachyonHash";
 const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
@@ -298,4 +319,77 @@ lazy_static! {
     pub static ref AUTH_DIGEST_NO_BUNDLE: [u8; 32] = {
         hasher_256(AUTH_DIGEST_PERSONALIZATION, |_| {})
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use ff::PrimeField as _;
+    use pasta_curves::Fp;
+
+    use super::*;
+
+    /// Canonical little-endian encoding of a small field element.
+    fn tg(n: u64) -> [u8; 32] {
+        Fp::from(n).to_repr()
+    }
+
+    fn fold(tachygrams: &[[u8; 32]]) -> [u8; 32] {
+        tachygrams.iter().fold([0u8; 32], |digest, tachygram| {
+            tachygram_chain(&digest, tachygram)
+        })
+    }
+
+    /// Vectors from an independent Python reference (`hashlib.blake2b`).
+    #[test]
+    fn tachygram_chain_vectors() {
+        assert_eq!(
+            fold(&[tg(1)]),
+            [
+                0x59, 0xc8, 0xe3, 0x4f, 0x28, 0x29, 0xec, 0x2e, //
+                0xfd, 0xfc, 0xf5, 0xb7, 0x76, 0xa8, 0xd9, 0x35, //
+                0xa0, 0xf8, 0x89, 0xe7, 0x20, 0x9b, 0xd0, 0x91, //
+                0x1c, 0xf2, 0xc7, 0x99, 0x67, 0x14, 0xae, 0xcd, //
+            ]
+        );
+        assert_eq!(
+            fold(&[tg(1), tg(2), tg(3)]),
+            [
+                0x4d, 0xa8, 0xe6, 0x98, 0x18, 0x93, 0x7a, 0x9f, //
+                0xa9, 0x10, 0x62, 0x57, 0x73, 0xc7, 0xe9, 0x42, //
+                0xd8, 0x76, 0x97, 0x4a, 0x38, 0x47, 0x0c, 0x0f, //
+                0xa2, 0x3f, 0xcb, 0x96, 0x9f, 0x7d, 0xc7, 0x52, //
+            ]
+        );
+        assert_eq!(
+            fold(&[tg(3), tg(2), tg(1)]),
+            [
+                0x3f, 0x99, 0x17, 0xe7, 0x49, 0x93, 0x48, 0x0a, //
+                0xb1, 0xf8, 0x08, 0x27, 0xbc, 0xcd, 0xad, 0xe7, //
+                0xc1, 0x71, 0xa0, 0xb0, 0x73, 0xb4, 0x04, 0x99, //
+                0x75, 0xb1, 0x34, 0x6e, 0x54, 0xcc, 0xdc, 0x60, //
+            ]
+        );
+    }
+
+    /// The empty list digests to $d_0$.
+    #[test]
+    fn tachygram_chain_empty_is_zero() {
+        assert_eq!(fold(&[]), [0u8; 32]);
+    }
+
+    /// Reordering a list changes its digest.
+    #[test]
+    fn tachygram_chain_commits_to_order() {
+        assert_ne!(fold(&[tg(1), tg(2)]), fold(&[tg(2), tg(1)]));
+    }
+
+    /// A proper prefix digests differently from the whole list.
+    #[test]
+    fn tachygram_chain_prefix_differs() {
+        let list = [tg(1), tg(2), tg(3)];
+        let whole = fold(&list);
+        for len in 0..list.len() {
+            assert_ne!(fold(&list[..len]), whole);
+        }
+    }
 }
