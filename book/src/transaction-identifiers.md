@@ -4,7 +4,7 @@ A Tachyon bundle's authorization form changes as it moves through aggregation: s
 
 Tachyon routes the mutable parts through `auth_digest`, leaving `txid` stable:
 
-- `txid` commits to [effecting data](./authorization.md#bundle-commitment) only: the actions, the value balance, and the memo. Stripping, merging, and re-stamping leave `txid` unchanged.
+- `txid` commits to [effecting data](./authorization.md#bundle-commitment) only: the actions, the value balance, the memo, and the tachygram digest. Stripping, merging, and re-stamping leave `txid` unchanged.
 - `auth_digest` commits to sigs plus the stamp trailer. Each physical auth form yields a distinct `auth_digest` and therefore a distinct `wtxid`.
 
 ## `auth_digest` contribution
@@ -13,7 +13,7 @@ Zcash's transaction-level `auth_digest` commits to authorization data — the ha
 
 Tachyon's bundle contributes on both sides:
 
-- **Effecting data → `txid`.** Tachyon's contribution is the bundle commitment over $\mathsf{hActionsTachyon} \,\|\, \mathsf{valueBalanceTachyon} \,\|\, \mathsf{hMemoTachyon}$.
+- **Effecting data → `txid`.** Tachyon's contribution is the bundle commitment over $\mathsf{hActionsTachyon} \,\|\, \mathsf{valueBalanceTachyon} \,\|\, \mathsf{hMemoTachyon} \,\|\, \mathsf{hTachygramsTachyon}$.
 - **Authorization data → `auth_digest`.** Tachyon's contribution hashes the bundle state byte, the action signatures, the binding signature, and a fixed-width summary of whichever stamp the bundle carries:
 
 $$

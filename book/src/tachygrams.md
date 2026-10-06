@@ -40,6 +40,8 @@ A stamp's covered actions may be few (a single action, so two tachygrams) or
 many (aggregated actions, two apiece). Ideally, the consensus chain will
 contain aggregated[^aggregation] bundles[^bundle].
 
+A stamp publishes its tachygrams as a list: each covered bundle's signed list, concatenated, each contiguous and verbatim. Each bundle signs the chain digest of its own list, so the signatures fix which tachygrams its actions publish.
+
 The covering proof in a stamp has witnessed a commitment to an unordered set of those tachygrams.
 
 $$

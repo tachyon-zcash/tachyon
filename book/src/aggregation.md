@@ -48,13 +48,18 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 2. Deserialize and validate stamps
 3. Match/update anchors
 4. Merge stamps
-   - Merge tachygrams (exclusive sets)
+   - Concatenate tachygram lists
    - Merge proofs
 5. Serialize and compress the merged stamp
 6. Publish aggregate transaction
 
+A merge's `vTachygrams` is its inputs' lists concatenated, each verbatim, so an aggregate's list holds every covered bundle's signed list as one contiguous run. The order of the runs is free, and within a run the bundle's signature fixes the order. A wallet sorts its own list, which hides which tachygrams share an action.
+
+Validation checks the tachygrams are distinct, then scans the list with the chain that produces `hTachygramsTachyon`. From $d_0$, it absorbs one tachygram at a time and looks the digest up among the covered bundles not yet matched. On a match, the run must hold $2 \cdot \mathtt{nActionsTachyon}$ of that bundle's tachygrams, the bundle is matched, and the digest resets to $d_0$. The scan must end at $d_0$ with every covered bundle matched; a bundle with no actions carries $d_0$ and has no run. Distinct tachygrams leave at most one bundle matching at each position. `cTachygrams` must still commit to the whole list.
+
+An aggregate that splits or reorders a bundle's list fails the scan. Merging inputs that share a tachygram proves, since the concatenated multiset satisfies the merge, and validation rejects the repeat.
+
 <!-- TODO
-- Explain tachygram set union validation algorithm
 - Define aggregation limits
 -->
 
@@ -143,7 +148,7 @@ To make that recognition cheap, the stamp trailer carries `hStampActionsTachyon`
 
 The indicator is authorization data, not effecting data: it rides on the strippable stamp trailer, contributes to `auth_digest`, and is absent from adjuncts. It is not a soundness mechanism. The proof binds the action set regardless; a wrong indicator only harms its author, since mempool actors decline to handle a transaction whose indicator they cannot satisfy, and a subset, superset, or partial overlap simply fails to validate.
 
-Coverage verification uses it as the first of two fast-fail gates. It recomputes the digest over the candidate collection's actions and, on disagreement with the carried `hStampActionsTachyon`, fails before attempting the expensive proof verification. It then checks the tachygram arity, `nTachygrams == 2 * covered actions`, which the fixed per-action ratio makes an exact test: a stamp short of the arity has reused a tachygram across actions, since the published tachygrams are a set.
+Coverage verification uses it as the first of two fast-fail gates. It recomputes the digest over the candidate collection's actions and, on disagreement with the carried `hStampActionsTachyon`, fails before attempting the expensive proof verification. It then scans the tachygrams, checking each covered bundle's run holds two tachygrams per action, which the fixed per-action ratio makes an exact test.
 
 <!-- TODO
 p2p aggregation gossip is a secondary objective and aggregation has some complex constraints.

@@ -198,7 +198,7 @@ impl StampState for ProofStamp {
             let proof = self.proof.serialize();
             let anchor: [u8; 32] = self.anchor.0.into();
 
-            // Do NOT sort here: a constructed stamp should already be canonical.
+            // The list is hashed in published order.
             let tachygrams: Vec<[u8; 32]> = self
                 .tachygrams
                 .iter()
@@ -277,13 +277,6 @@ impl ProofStamp {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "tachygrams are not unique",
-                ));
-            }
-
-            if seen.last() != Some(&tg) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygrams are not canonically sorted",
                 ));
             }
 
@@ -380,7 +373,8 @@ impl Plan {
     /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
     ///
     /// Stamps are recursively merged via [`StampMerge`] into a single stamp,
-    /// whose coverage is the planned descriptors.
+    /// whose coverage is the planned descriptors and whose tachygram list is
+    /// sorted.
     ///
     /// TODO: provide a way to lift spend stamps when necessary to merge
     ///
@@ -446,7 +440,7 @@ impl Plan {
             ));
         }
 
-        let (descriptors, _digests, tachygrams, anchor, proof) = entries
+        let (descriptors, _digests, mut tachygrams, anchor, proof) = entries
             .into_iter()
             .map(Ok)
             .reduce(|acc, next| {
@@ -478,6 +472,8 @@ impl Plan {
             ))?;
 
         let coverage = blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors));
+        // The order `bundle::Plan::tachygrams` signs.
+        tachygrams.sort();
         let tachygram_set = tachygrams
             .iter()
             .copied()
@@ -529,7 +525,8 @@ pub struct ProofStamp {
     /// consistent with [`Self::tachygrams`].
     pub tachygram_set: TachygramSetCommit,
 
-    /// The list of this stamp's tachygrams, which may not be consistent with
+    /// The list of this stamp's tachygrams: each covered bundle's signed list,
+    /// contiguous and verbatim. It may not be consistent with
     /// [`Self::tachygram_set`].
     pub tachygrams: Vec<Tachygram>,
 
@@ -668,7 +665,8 @@ impl ProofStamp {
     /// verifies via Schwartz-Zippel. Digests are derived from public action
     /// data by the caller and are never stored on the stamp; the merged
     /// (concatenated) digest list is returned so a fold can carry it
-    /// forward without re-deriving.
+    /// forward without re-deriving. The merged tachygram list is the left
+    /// list followed by the right, each verbatim.
     ///
     /// # Errors
     ///
@@ -711,8 +709,6 @@ impl ProofStamp {
             .iter()
             .chain(&right_tachygrams)
             .copied()
-            .collect::<BTreeSet<Tachygram>>()
-            .into_iter()
             .collect();
 
         let (pcd, ()) = PROOF_SYSTEM.fuse(
@@ -819,7 +815,8 @@ impl ProofStamp {
     ///
     /// Each side pairs a stamp with the descriptors of its covered actions.
     /// The action digests for the merge proof and the merged
-    /// `covered_actions` are both derived from the descriptor lists.
+    /// `covered_actions` are both derived from the descriptor lists. The
+    /// merged stamp publishes the left tachygram list followed by the right.
     ///
     /// TODO: confirm desc list against stamp? it's forbidden by the proof
     /// system, but we might want to fail early.

@@ -164,6 +164,15 @@ When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundl
 | `bindingSigTachyon` | 64 bytes | binding signature over the tx sighash |
 | `nMemoTachyon` | compactsize | memo length, `0` when absent |
 | `vMemoTachyon` | nMemoTachyon bytes | opaque recipient-directed payload |
+| `hTachygramsTachyon` | 32 bytes | chain digest of the bundle's tachygram list |
+
+`hTachygramsTachyon` is effecting data, so the transaction sighash covers it and every signature binds the tachygrams the bundle's actions publish, as Orchard's `txid` covers `cmx`. The proof does not tie `alpha` to the published `cm`; this digest ties the signed actions to their tachygrams. It is in the body, so stripping keeps it. The digest is a chain over the list, from 32 zero bytes $d_0$:
+
+$$
+d_{i+1} = \text{BLAKE2b-256}_\text{Tachyon-TgChain}(d_i \| \mathsf{tg}_i)
+$$
+
+A bundle with no actions carries $d_0$.
 
 The memo is effecting data, so the transaction sighash covers it and `auth_digest` does not. A relayer rewrites `auth_digest` while aggregating, so a memo held there could be stripped while the block still committed to the same transaction.
 
@@ -179,18 +188,20 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 | `anchorTachyon` | 32 bytes | pool state reference |
 | `cTachygrams` | 32 bytes | commitment to the tachygrams below |
 | `nTachygrams` | compactsize | number of tachygrams |
-| `vTachygrams` | 32 * nTachygrams | tachygrams for this proof |
+| `vTachygrams` | 32 * nTachygrams | each covered bundle's tachygram list, contiguous and verbatim |
 | `proofTachyon` | PROOF_SIZE blob | serialized proof of fixed size |
 
 `cTachygrams` is carried rather than derived, so full validation recomputes it from `vTachygrams` and rejects a mismatch. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
 
-Every action contributes exactly two tachygrams, so a well-formed stamp has
+`vTachygrams` holds each covered bundle's signed list as one run, the runs in any order. Validation scans the list with the `hTachygramsTachyon` chain and matches each run to its bundle; see [Aggregation](./aggregation.md#merge-to-produce-aggregate).
+
+Every action contributes exactly two tachygrams, so each covered bundle's run has
 
 $$
-\mathtt{nTachygrams} = 2 \cdot \mathtt{nActionsTachyon}
+2 \cdot \mathtt{nActionsTachyon}
 $$
 
-for its own actions, and the sum over covered actions once stamps are merged. A spend publishes its present and next nullifier; an output publishes its note commitment and a padding tachygram. Uniform arity is what keeps the two action kinds indistinguishable in the published set.
+tachygrams. A spend publishes its present and next nullifier; an output publishes its note commitment and a padding tachygram. Uniform arity is what keeps the two action kinds indistinguishable in the published set.
 
 `hStampActionsTachyon` is an assistive indicator: a BLAKE2b-256 digest, under the `Tachyon-Actions` personalization, over the sorted `cv || rk` descriptors of every action the stamp covers. It is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. The proof binds the same actions by a different construction, a Pedersen commitment to their Poseidon digests, so the trailer field is a second digest of one action set rather than a copy of the proof's. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
 

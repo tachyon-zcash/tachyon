@@ -10,10 +10,10 @@ use alloc::{
 use core::cmp::Reverse;
 
 use corez::io;
-use ff::Field as _;
+use ff::{Field as _, PrimeField as _};
 use group::Group as _;
 use pasta_curves::{Eq, Fp};
-use ragu::PROOF_SIZE_COMPRESSED;
+use ragu::{PROOF_SIZE_COMPRESSED, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action,
@@ -23,8 +23,11 @@ use zcash_tachyon::{
     effect,
     entropy::ActionEntropy,
     keys::private,
-    stamp::{PointerStamp, ProofStamp, ProveError},
-    value, *,
+    stamp::{
+        PointerStamp, ProofStamp, ProveError,
+        proof::{PROOF_SYSTEM, output, stamp::OutputStamp},
+    },
+    value, witness, *,
 };
 
 use crate::fixtures::{
@@ -416,6 +419,7 @@ fn zero_action_bundle_is_valid() {
         value_balance: value::Balance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
+        tachygram_digest: plan.tachygram_digest(),
         stamp: mock_wtxid(&covering),
     };
 
@@ -468,10 +472,12 @@ fn double_spend_obvious() {
     let doubled = -2 * i64::try_from(u64::from(note.value)).expect("note value fits i64");
     let value_balance = value::Balance::try_from(doubled).expect("doubled balance stays in range");
     let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
+    let tachygram_digest = Plan::new(vec![], vec![plan]).tachygram_digest();
     let sighash = mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&action_bytes),
         doubled,
         &blake2b::memo_digest(&[]),
+        &tachygram_digest,
     ));
     let sig = private::ActionSigningKey::new(&alpha).sign(rng, &sighash);
     let action = Action::from((descriptor, sig));
@@ -525,6 +531,7 @@ fn double_spend_obvious() {
         value_balance,
         binding_sig,
         memo: Vec::new(),
+        tachygram_digest,
         stamp,
     };
 
@@ -602,9 +609,13 @@ fn duplicated_spend_cannot_inflate() {
     // duplicated bundle's binding and action signatures can be reproduced.
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
-    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
-        wallet.pak.ak.derive_action_public(&alpha)
-    });
+    let plan = action::Plan::spend(
+        note,
+        theta,
+        rcv,
+        wallet.nf_pair(&note, spendable.data().1),
+        |alpha| wallet.pak.ak.derive_action_public(&alpha),
+    );
     let descriptor = plan.descriptor();
     let master = wallet.master_pcd(rng, note);
     let honest_stamp = Plan::new(alloc::vec![plan], alloc::vec![])
@@ -618,10 +629,12 @@ fn duplicated_spend_cannot_inflate() {
     let doubled = 2 * i64::try_from(u64::from(note.value)).expect("note value fits i64");
     let value_balance = value::Balance::try_from(doubled).expect("doubled balance in range");
     let action_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
+    let tachygram_digest = Plan::new(vec![plan], vec![]).tachygram_digest();
     let sighash = mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&action_bytes),
         doubled,
         &blake2b::memo_digest(&[]),
+        &tachygram_digest,
     ));
     let alpha = theta.randomizer::<effect::Spend>(note.commitment());
     let sig = wallet
@@ -641,6 +654,7 @@ fn duplicated_spend_cannot_inflate() {
         value_balance,
         binding_sig,
         memo: Vec::new(),
+        tachygram_digest,
         stamp: ProofStamp {
             coverage,
             anchor: honest_stamp.anchor,
@@ -781,17 +795,20 @@ fn double_spend_secret() {
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(200);
+    let nullifiers = wallet.nf_pair(&note, EpochIndex::new(0));
 
     let spend_a = action::Plan::spend(
         note,
         ActionEntropy::random(rng),
         value::Trapdoor::random(rng),
+        nullifiers,
         |alpha| ask.derive_action_private(&alpha).derive_action_public(),
     );
     let spend_b = action::Plan::spend(
         note,
         ActionEntropy::random(rng),
         value::Trapdoor::random(rng),
+        nullifiers,
         |alpha| ask.derive_action_private(&alpha).derive_action_public(),
     );
     assert_ne!(
@@ -875,6 +892,7 @@ fn innocent_aggregate_from_two_autonomes() {
                 .derive_bsk_private()
                 .sign(rng, &innocent_sighash),
             memo: Vec::new(),
+            tachygram_digest: innocent_plan.tachygram_digest(),
             stamp,
         }
     };
@@ -1130,6 +1148,7 @@ fn stamped_read_write_round_trip() {
     assert_eq!(original.value_balance, deserialized.value_balance);
     assert_eq!(original.stamp.tachygrams, deserialized.stamp.tachygrams);
     assert_eq!(original.stamp.anchor, deserialized.stamp.anchor);
+    assert_eq!(original.tachygram_digest, deserialized.tachygram_digest);
 
     let sighash = mock_sighash(deserialized.commitment());
     deserialized
@@ -1165,10 +1184,12 @@ fn read_preserves_action_order() {
     // on it.
     let value_balance = value::Balance::try_from(-500i64).expect("in range");
     let descriptors: Vec<[u8; 64]> = items.iter().map(|item| item.0).collect();
+    let tachygram_digest = Plan::new(vec![], vec![plan_a, plan_b]).tachygram_digest();
     let sighash = mock_sighash(blake2b::bundle_commitment(
         &blake2b::action_descriptor_digest(&descriptors),
         value_balance.into(),
         &blake2b::memo_digest(&[]),
+        &tachygram_digest,
     ));
     let actions: Vec<Action> = items
         .iter()
@@ -1187,6 +1208,7 @@ fn read_preserves_action_order() {
         value_balance,
         binding_sig,
         memo: Vec::new(),
+        tachygram_digest,
         stamp: PointerStamp::try_from([0x11u8; 64]).expect("nonzero wtxid"),
     };
 
@@ -1217,6 +1239,8 @@ fn stripped_read_write_round_trip() {
 
     assert_eq!(stripped.commitment(), deserialized.commitment());
     assert_eq!(stripped.auth_digest(), deserialized.auth_digest());
+    assert_eq!(stripped.tachygram_digest, deserialized.tachygram_digest);
+    assert_ne!(deserialized.tachygram_digest, [0u8; 32]);
     assert_eq!(deserialized.stamp, wtxid);
 }
 
@@ -1385,6 +1409,7 @@ fn read_rejects_zero_wtxid() {
             value_balance: value::Balance::ZERO,
             binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
             memo: Vec::new(),
+            tachygram_digest: plan.tachygram_digest(),
             stamp: wtxid,
         };
         assert_eq!(bundle.actions, []);
@@ -1434,6 +1459,7 @@ fn innocent_round_trips_with_nonzero_wtxid() {
         value_balance: value::Balance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
+        tachygram_digest: plan.tachygram_digest(),
         stamp: mock_wtxid(&covering),
     };
 
@@ -1518,13 +1544,10 @@ fn auth_digest_invariants() {
         assert_ne!(baseline, altered_actions.auth_digest());
 
         let mut extra_tachygram = stamped;
-        let extra = Tachygram::from(Fp::from(7u64));
-        let position = extra_tachygram
+        extra_tachygram
             .stamp
             .tachygrams
-            .partition_point(|&tg| tg < extra);
-        extra_tachygram.stamp.tachygrams.insert(position, extra);
-        // Tachygrams must stay canonically sorted for the stamp digest.
+            .push(Tachygram::from(Fp::from(7u64)));
         assert_eq!(baseline_commitment, extra_tachygram.commitment());
         assert_ne!(baseline, extra_tachygram.auth_digest());
     }
@@ -1635,10 +1658,10 @@ fn coverage_check_matches_stamp_actions() {
     );
 }
 
-/// A stamp whose tachygrams are not in canonical order is rejected on read,
-/// matching the order the stamp digest commits to.
+/// Tachygram order is the covered bundles' signed lists, not a canonical sort,
+/// so `read` accepts any order and reproduces it.
 #[test]
-fn read_rejects_noncanonical_tachygrams() {
+fn read_accepts_unsorted_tachygrams() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let bundle = build_autonome(rng, &wallet, 1000, 700);
@@ -1649,19 +1672,19 @@ fn read_rejects_noncanonical_tachygrams() {
     bundle.write(&mut buf).expect("write");
 
     // The stamp's proof is the constant-size trailer; the n 32-byte tachygrams
-    // sit immediately before it. A BTreeSet always serializes canonically, so
-    // forge a non-canonical encoding by swapping the first and last tachygram
-    // blocks directly in the buffer.
+    // sit immediately before it. Swap the first and last tachygram blocks
+    // directly in the buffer.
     let end = buf.len() - PROOF_SIZE_COMPRESSED;
     let first = end - n * 32;
     let last = end - 32;
     let (head, tail) = buf.split_at_mut(last);
     head[first..first + 32].swap_with_slice(&mut tail[..32]);
 
-    let err =
-        Bundle::<ProofStamp>::read(&*buf).expect_err("non-canonical tachygrams must be rejected");
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert_eq!(err.to_string(), "tachygrams are not canonically sorted");
+    let decoded = Bundle::<ProofStamp>::read(&*buf).expect("unsorted tachygrams are wire-valid");
+
+    let mut swapped = bundle.stamp.tachygrams.clone();
+    swapped.swap(0, n - 1);
+    assert_eq!(decoded.stamp.tachygrams, swapped);
 }
 
 /// Build a spend action plan without a pool/anchor: `Plan::spend`'s
@@ -1675,9 +1698,13 @@ fn spend_plan_at(
 ) -> action::Plan<effect::Spend> {
     let note = wallet.random_note(value);
     let (rcv, theta, _alpha) = spend_witness(rng, &note);
-    action::Plan::spend(note, theta, rcv, |alpha| {
-        ask.derive_action_private(&alpha).derive_action_public()
-    })
+    action::Plan::spend(
+        note,
+        theta,
+        rcv,
+        wallet.nf_pair(&note, EpochIndex::new(0)),
+        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
+    )
 }
 
 #[test]
@@ -1812,6 +1839,7 @@ fn read_rejects_zero_actions_with_nonzero_balance() {
         value_balance: value::Balance::try_from(1).unwrap(),
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
+        tachygram_digest: plan.tachygram_digest(),
         stamp: PointerStamp::try_from([0x42u8; 64]).expect("nonzero id"),
     };
 
@@ -1852,6 +1880,7 @@ fn zero_action_bundle_rejects_nonzero_balance() {
         value_balance: value::Balance::try_from(1).unwrap(),
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
+        tachygram_digest: plan.tachygram_digest(),
         stamp: PointerStamp::try_from([1u8; 64]).expect("nonzero id"),
     };
 
@@ -1861,9 +1890,10 @@ fn zero_action_bundle_rejects_nonzero_balance() {
     };
 }
 
-/// Every action publishes two tachygrams, so a stamp carrying any other count
-/// is rejected before its set commitment is recomputed. Dropping one from an
-/// otherwise honest stamp stands in for a stamp that withheld a nullifier.
+/// Every action publishes two tachygrams, so a run matching a bundle's signed
+/// digest must hold two per action. A bundle signing one tachygram for its one
+/// output, over a stamp publishing that one, stands in for a withheld
+/// nullifier.
 #[test]
 fn verify_tachygrams_rejects_wrong_arity() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1880,22 +1910,24 @@ fn verify_tachygrams_rejects_wrong_arity() {
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-    let bundle = bundle_plan
+    let mut bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
         .stamp(short);
+    bundle.tachygram_digest = chain_digest(&bundle.stamp.tachygrams);
 
     let covered = bundle
         .verify_coverage(&[])
         .expect("the arity rule is not coverage's business");
+    assert_eq!(covered.len(), 1);
 
-    let err = bundle.verify_tachygrams(covered.len()).unwrap_err();
+    let err = bundle.verify_tachygrams(&[]).unwrap_err();
     let VerifyTachygramsError::WrongArity = err else {
         panic!("expected WrongArity, got {err:?}");
     };
 }
 
-/// A tampered list of the right length satisfies the arity rule, so the set
+/// A tampered list that its bundle signed passes the scan, so the set
 /// commitment is what rejects it.
 #[test]
 fn verify_tachygrams_rejects_a_tampered_list() {
@@ -1913,17 +1945,18 @@ fn verify_tachygrams_rejects_a_tampered_list() {
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-    let bundle = bundle_plan
+    let mut bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
         .stamp(tampered);
+    bundle.tachygram_digest = chain_digest(&bundle.stamp.tachygrams);
 
-    let covered = bundle
+    bundle
         .verify_coverage(&[])
         .expect("coverage over the one output action");
 
     let err = bundle
-        .verify_tachygrams(covered.len())
+        .verify_tachygrams(&[])
         .expect_err("a tampered list must be rejected");
     assert_eq!(
         err.to_string(),
@@ -1958,11 +1991,11 @@ fn verify_tachygrams_rejects_a_repeated_tachygram() {
         .expect("sign output bundle")
         .stamp(repeated);
 
-    let covered = bundle
+    bundle
         .verify_coverage(&[])
         .expect("coverage over the one output action");
 
-    let err = bundle.verify_tachygrams(covered.len()).unwrap_err();
+    let err = bundle.verify_tachygrams(&[]).unwrap_err();
     let VerifyTachygramsError::Duplicate = err else {
         panic!("expected Duplicate, got {err:?}");
     };
@@ -2235,6 +2268,7 @@ fn bundle_lift_over_an_aggregate() {
             .derive_bsk_private()
             .sign(rng, &mock_sighash(innocent_plan.commitment().unwrap())),
         memo: Vec::new(),
+        tachygram_digest: innocent_plan.tachygram_digest(),
         stamp: ProofStamp::merge(
             rng,
             (autonome_a.stamp.clone(), descriptors_a),
@@ -2273,4 +2307,299 @@ fn bundle_lift_over_an_aggregate() {
             .expect("a lifted aggregate verifies against its adjuncts"),
         "a lifted aggregate must verify against its adjuncts"
     );
+}
+
+/// The chain digest of `tachygrams`, in the order given.
+fn chain_digest(tachygrams: &[Tachygram]) -> [u8; 32] {
+    tachygrams.iter().fold([0u8; 32], |digest, &tachygram| {
+        blake2b::tachygram_chain(&digest, &Fp::from(tachygram).to_repr())
+    })
+}
+
+/// An outputs-only autonome at `anchor`, one output per value. With
+/// `reverse`, it signs and publishes its tachygram list in descending order.
+fn output_autonome(
+    rng: &mut StdRng,
+    wallet: &WalletSim,
+    anchor: Anchor,
+    values: &[u64],
+    reverse: bool,
+) -> Bundle<ProofStamp> {
+    let ask = wallet.sk.derive_auth_private();
+    let mut outputs = Vec::with_capacity(values.len());
+    for &value in values {
+        let (_rcv, _alpha, output) = build_output_plan(rng, wallet.random_note(value));
+        outputs.push(output);
+    }
+    let plan = Plan::new(vec![], outputs);
+
+    let mut tachygrams = plan.tachygrams();
+    if reverse {
+        tachygrams.reverse();
+    }
+    let tachygram_digest = chain_digest(&tachygrams);
+    let descriptors: Vec<[u8; 64]> = plan.descriptors().into_iter().collect();
+    let sighash = mock_sighash(blake2b::bundle_commitment(
+        &blake2b::action_descriptor_digest(&descriptors),
+        plan.value_balance().expect("in range").into(),
+        &blake2b::memo_digest(&[]),
+        &tachygram_digest,
+    ));
+
+    let mut unproven = plan.sign(rng, &sighash, &ask).expect("sign outputs");
+    unproven.tachygram_digest = tachygram_digest;
+
+    let mut stamp = plan
+        .stamp_plan(anchor)
+        .prove(rng, &wallet.pak, vec![])
+        .expect("prove outputs");
+    stamp.tachygrams = tachygrams;
+
+    unproven.stamp(stamp)
+}
+
+/// An innocent aggregate publishing `bundles`' stamps merged left to right.
+fn innocent_over(rng: &mut StdRng, bundles: &[&Bundle<ProofStamp>]) -> Bundle<ProofStamp> {
+    let (stamp, _descriptors) = bundles
+        .iter()
+        .map(|&bundle| {
+            (
+                bundle.stamp.clone(),
+                bundle
+                    .descriptors()
+                    .collect::<BTreeSet<action::Descriptor>>(),
+            )
+        })
+        .reduce(|(left_stamp, left_desc), (right_stamp, right_desc)| {
+            let descriptors = left_desc.union(&right_desc).copied().collect();
+            let stamp = ProofStamp::merge(rng, (left_stamp, left_desc), (right_stamp, right_desc))
+                .expect("merge");
+            (stamp, descriptors)
+        })
+        .expect("bundles to merge");
+
+    let plan = Plan::new(vec![], vec![]);
+    let sighash = mock_sighash(plan.commitment().unwrap());
+    Bundle {
+        actions: vec![],
+        value_balance: value::Balance::ZERO,
+        binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
+        memo: Vec::new(),
+        tachygram_digest: plan.tachygram_digest(),
+        stamp,
+    }
+}
+
+/// The scan locates each covered bundle's signed list as a contiguous run of
+/// an aggregate's tachygrams, in any run order.
+#[test]
+fn verify_tachygrams_scans_an_aggregate() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let anchor = PoolSim::genesis(rng).anchor();
+
+    let autonome_a = output_autonome(rng, &wallet, anchor, &[200, 300], false);
+    let autonome_b = output_autonome(rng, &wallet, anchor, &[400, 500], false);
+    let autonome_c = output_autonome(rng, &wallet, anchor, &[600, 700], true);
+
+    // The empty-action aggregate signs d_0 and has no run. Runs pass in
+    // either order.
+    for order in [[&autonome_a, &autonome_b], [&autonome_b, &autonome_a]] {
+        let innocent = innocent_over(rng, &order);
+        assert_eq!(innocent.tachygram_digest, [0u8; 32]);
+
+        let wtxid = mock_wtxid(&innocent);
+        let adjunct_a = autonome_a.clone().strip(wtxid);
+        let adjunct_b = autonome_b.clone().strip(wtxid);
+        innocent
+            .verify(
+                rng,
+                &mock_sighash(innocent.commitment()),
+                &wtxid.into(),
+                &[&adjunct_a, &adjunct_b],
+            )
+            .expect("an aggregate verifies with its runs in either order");
+    }
+
+    // A bundle signed over an unsorted list.
+    {
+        let mut sorted = autonome_c.stamp.tachygrams.clone();
+        sorted.sort();
+        assert_ne!(autonome_c.stamp.tachygrams, sorted);
+
+        let innocent = innocent_over(rng, &[&autonome_a, &autonome_c]);
+        let wtxid = mock_wtxid(&innocent);
+        let adjunct_a = autonome_a.clone().strip(wtxid);
+        let adjunct_c = autonome_c.clone().strip(wtxid);
+        innocent
+            .verify(
+                rng,
+                &mock_sighash(innocent.commitment()),
+                &wtxid.into(),
+                &[&adjunct_a, &adjunct_c],
+            )
+            .expect("an unsorted signed list verifies");
+    }
+
+    let innocent = innocent_over(rng, &[&autonome_a, &autonome_b]);
+    let wtxid = mock_wtxid(&innocent);
+    let adjunct_a = autonome_a.clone().strip(wtxid);
+    let adjunct_b = autonome_b.clone().strip(wtxid);
+    let adjunct_c = autonome_c.clone().strip(wtxid);
+
+    // A covered bundle whose list the stamp does not publish.
+    {
+        let err = innocent
+            .verify_tachygrams(&[&adjunct_a, &adjunct_b, &adjunct_c])
+            .unwrap_err();
+        let VerifyTachygramsError::UnmatchedBundle = err else {
+            panic!("expected UnmatchedBundle, got {err:?}");
+        };
+    }
+
+    // Tachygrams no covered bundle signed.
+    {
+        let err = innocent.verify_tachygrams(&[&adjunct_a]).unwrap_err();
+        let VerifyTachygramsError::UnmatchedRun = err else {
+            panic!("expected UnmatchedRun, got {err:?}");
+        };
+    }
+
+    // A bundle whose signed list is short of two per action.
+    {
+        let mut short = autonome_b.clone().strip(wtxid);
+        short.tachygram_digest = chain_digest(&autonome_b.stamp.tachygrams[..2]);
+        let err = innocent
+            .verify_tachygrams(&[&adjunct_a, &short])
+            .unwrap_err();
+        let VerifyTachygramsError::WrongArity = err else {
+            panic!("expected WrongArity, got {err:?}");
+        };
+    }
+
+    // One bundle's list split by another's run.
+    {
+        let list_a = &autonome_a.stamp.tachygrams;
+        let mut split = innocent;
+        split.stamp.tachygrams = list_a[..2]
+            .iter()
+            .chain(&autonome_b.stamp.tachygrams)
+            .chain(&list_a[2..])
+            .copied()
+            .collect();
+        let err = split
+            .verify_tachygrams(&[&adjunct_a, &adjunct_b])
+            .unwrap_err();
+        let VerifyTachygramsError::UnmatchedRun = err else {
+            panic!("expected UnmatchedRun, got {err:?}");
+        };
+    }
+}
+
+/// Under a signed output's `alpha` and `rcv`, a prover can prove the signed
+/// action over another note of the same value. The proof accepts it, and the
+/// scan rejects the tachygrams it publishes.
+#[test]
+fn swapped_output_note_fails_the_scan() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let recipient = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let anchor = PoolSim::genesis(rng).anchor();
+
+    let note = wallet.random_note(200);
+    let (rcv, alpha, output_plan) = build_output_plan(rng, note);
+    let bundle_plan = Plan::new(vec![], vec![output_plan]);
+    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+    let unproven = bundle_plan
+        .sign(rng, &sighash, &ask)
+        .expect("sign output bundle");
+
+    // The plan's alpha and rcv over another recipient's note of equal value.
+    let other = recipient.random_note(200);
+    let (bind_pcd, ()) = PROOF_SYSTEM
+        .seed(rng, output::OutputBind, (other,))
+        .expect("OutputBind");
+    let (cm, pad, _value) = *bind_pcd.data();
+    let (pcd, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            OutputStamp,
+            witness::output_stamp((*bind_pcd.data(), ()), rcv, alpha, anchor),
+            bind_pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("OutputStamp");
+    let rerand = PROOF_SYSTEM.rerandomize(pcd, rng).expect("rerandomize");
+
+    let mut tachygrams = vec![cm, pad];
+    tachygrams.sort();
+    let bundle = unproven.stamp(ProofStamp {
+        coverage: blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter([
+            output_plan.descriptor()
+        ])),
+        anchor,
+        tachygram_set: tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit(),
+        tachygrams,
+        proof: Box::new(rerand.proof().clone()),
+    });
+
+    assert!(
+        bundle
+            .verify_proof(rng, &[output_plan.digest().expect("action digest")])
+            .expect("proof system verification"),
+        "the proof admits the swapped note"
+    );
+
+    let err = bundle
+        .verify(rng, &sighash, &mock_wtxid(&bundle).into(), &[])
+        .unwrap_err();
+    let VerificationError::Tachygrams(VerifyTachygramsError::UnmatchedRun) = err else {
+        panic!("expected Tachygrams(UnmatchedRun), got {err:?}");
+    };
+}
+
+/// The commitment binds every tachygram a planned action publishes, and a
+/// bundle's commitment binds its `tachygram_digest`.
+#[test]
+fn commitment_binds_every_tachygram() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let ask = wallet.sk.derive_auth_private();
+
+    let spend = spend_plan_at(rng, &wallet, &ask, 300);
+    let (_rcv, _alpha, output) = build_output_plan(rng, wallet.random_note(200));
+    let plan = Plan::new(vec![spend], vec![output]);
+    let baseline = plan.commitment().unwrap();
+
+    for index in 0..2 {
+        let mut altered_spend = spend;
+        altered_spend.tachygrams[index] = Tachygram::from(Fp::random(&mut *rng));
+        assert_ne!(
+            Plan::new(vec![altered_spend], vec![output])
+                .commitment()
+                .unwrap(),
+            baseline
+        );
+
+        let mut altered_output = output;
+        altered_output.tachygrams[index] = Tachygram::from(Fp::random(&mut *rng));
+        assert_ne!(
+            Plan::new(vec![spend], vec![altered_output])
+                .commitment()
+                .unwrap(),
+            baseline
+        );
+    }
+
+    let bundle = plan.sign(rng, &mock_sighash(baseline), &ask).expect("sign");
+    assert_eq!(bundle.commitment(), baseline);
+
+    let mut altered = bundle;
+    altered.tachygram_digest[0] ^= 0x01;
+    assert_ne!(altered.commitment(), baseline);
 }

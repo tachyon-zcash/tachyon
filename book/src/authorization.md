@@ -84,12 +84,19 @@ $$
 $$
 
 $$
+\mathsf{hTachygramsTachyon} = d_n, \quad
+d_0 = 0^{32}, \quad
+d_{i+1} = \text{BLAKE2b-256}_\text{Tachyon-TgChain}( d_i \| \mathsf{tg}_i )
+$$
+
+$$
 \text{BLAKE2b-256}_\text{ZTxIdTachyonHash}\bigl(
     \mathsf{hActionsTachyon} \| \mathsf{valueBalanceTachyon} \| \mathsf{hMemoTachyon}
+    \| \mathsf{hTachygramsTachyon}
 \bigr)
 $$
 
-The action digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire order, so the commitment fixes the actions and their order. Hashing the memo to a fixed width is what lets the outer digest absorb a variable-length payload without a length prefix.
+The action digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire order, so the commitment fixes the actions and their order. Hashing the memo to a fixed width is what lets the outer digest absorb a variable-length payload without a length prefix. The tachygram digest chains over the bundle's tachygrams, two per action, which the planner sorts.
 
 The stamp proof binds the same action set by a different construction: a Pedersen commitment to the polynomial whose roots are the Poseidon action digests,
 
@@ -107,7 +114,7 @@ The sighash is computed at the transaction layer, incorporating the bundle commi
 The tachyon crate contributes its bundle commitment; a transaction-level crate computes the sighash and passes it in as opaque bytes.
 
 This binds every signature to the complete set of effecting data across all pools.
-Since `rk` is itself a commitment to `cm` (via `alpha`'s derivation from `theta` and `cm`), the signature transitively binds each action to its tachygram without the tachygram appearing in the action.
+The signed list binds each bundle's actions to the tachygrams they publish: consensus matches each bundle's list to a run of the stamp's tachygrams, and the proof commits to the same tachygrams.
 
 Tachyon also contributes to the transaction-level `auth_digest` that backs `wtxid`. See [Transaction Identifiers](./transaction-identifiers.md) for the formula and how aggregation changes the authorization form.
 
@@ -299,7 +306,7 @@ par Authorizing
             note over Custody: action_digest_i = Poseidon(cv || rk)
         end
         note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
-        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon)
+        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon || hTachygramsTachyon)
         note over Custody: compute sighash
 
         break
@@ -372,8 +379,9 @@ User ->> Consensus: transaction
 break
     note over Consensus: action_digest_i = Poseidon(cv_i || rk_i)
     note over Consensus: hActionsTachyon = Blake2b(cv_i || rk_i)
-    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon)
+    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon || hTachygramsTachyon)
     note over Consensus: compute sighash
+    note over Consensus: scan tachygrams for each bundle's hTachygramsTachyon
     note over Consensus: check action sigs against sighash
     note over Consensus: check binding sig against sighash
     note over Consensus: action_acc = Commit(poly from action roots)

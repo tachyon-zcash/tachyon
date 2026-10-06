@@ -1090,6 +1090,14 @@ impl WalletSim {
         self.mk(note).derive_nullifier(epoch)
     }
 
+    /// The nullifier pair a spend at `epoch` publishes.
+    pub fn nf_pair(&self, note: &Note, epoch: EpochIndex) -> [Nullifier; 2] {
+        [
+            self.nf_at(note, epoch),
+            self.nf_at(note, epoch.next().expect("a following epoch")),
+        ]
+    }
+
     /// The certified master-key seed PCD for this note, cached by `cm`. The
     /// note is witnessed once; every window fuses against the same seed.
     pub fn master_pcd<RNG: CryptoRng>(
@@ -1340,9 +1348,13 @@ impl WalletSim {
         for (note, spendable_pcd) in spends {
             let rcv = value::Trapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
-            let plan = action::Plan::spend(note, theta, rcv, |alpha| {
-                self.pak.ak.derive_action_public(&alpha)
-            });
+            let plan = action::Plan::spend(
+                note,
+                theta,
+                rcv,
+                self.nf_pair(&note, spendable_pcd.data().1),
+                |alpha| self.pak.ak.derive_action_public(&alpha),
+            );
             spend_plans.push(plan);
             spend_pcds.push((self.master_pcd(rng, note), spendable_pcd));
         }

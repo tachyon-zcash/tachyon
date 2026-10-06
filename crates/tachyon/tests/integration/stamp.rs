@@ -7,17 +7,19 @@ use pasta_curves::Fp;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetCommit,
-    TachygramSetPoly, action,
+    ActionDigest, Anchor, BlockHeight, Bundle, CompactSize, ProofStamp, Tachygram,
+    TachygramSetCommit, TachygramSetPoly, action,
+    bundle::{self, VerifyTachygramsError},
     constants::EPOCH_SIZE,
     digest::blake2b,
-    stamp::{Plan, ProveError},
+    stamp::{Plan, PointerStamp, ProveError},
+    value,
 };
 
 use crate::fixtures::{
     PoolSim, WalletSim, build_anchor_chain_pcd, build_autonome, build_output_stamp,
-    forge_overlapping_merge, random_action, random_block, random_block_with, shared_sk,
-    spend_witness,
+    forge_overlapping_merge, mock_sighash, mock_wtxid, random_action, random_block,
+    random_block_with, shared_sk, spend_witness,
 };
 
 const WITHIN_EPOCH_ANCHOR_PAIRS: &[(BlockHeight, BlockHeight)] = &[
@@ -85,17 +87,20 @@ fn plan_prove_rejects_invalid_inputs() {
         "same-stamp spendables share an anchor"
     );
 
+    let nfs_a = user.nf_pair(&note_a, sp_a.data().1);
+    let nfs_b = user.nf_pair(&note_b, sp_b.data().1);
+
     let (rcv_a, theta_a, _alpha_a) = spend_witness(rng, &note_a);
-    let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
+    let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, nfs_a, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
     let (rcv_b, theta_b, _alpha_b) = spend_witness(rng, &note_b);
-    let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, |alpha| {
+    let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, nfs_b, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
-    let foreign_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
+    let foreign_a = action::Plan::spend(note_a, theta_a, rcv_a, nfs_a, |alpha| {
         other.pak.ak.derive_action_public(&alpha)
     });
 
@@ -223,6 +228,37 @@ fn merge_populates_covered_actions() {
     assert_eq!(merged.coverage, expected);
 }
 
+/// Consensus rejects a stamp repeating a tachygram twice over: published by an
+/// innocent aggregate covering `adjuncts`, `verify_tachygrams` fails with
+/// `Duplicate`, and its written bytes fail `read`.
+fn reject_repeated_tachygram(
+    rng: &mut StdRng,
+    stamp: ProofStamp,
+    adjuncts: &[&Bundle<PointerStamp>],
+) {
+    let innocent_plan = bundle::Plan::new(vec![], vec![]);
+    let innocent = Bundle {
+        actions: vec![],
+        value_balance: value::Balance::ZERO,
+        binding_sig: innocent_plan
+            .derive_bsk_private()
+            .sign(rng, &mock_sighash(innocent_plan.commitment().unwrap())),
+        memo: Vec::new(),
+        tachygram_digest: innocent_plan.tachygram_digest(),
+        stamp,
+    };
+
+    let err = innocent.verify_tachygrams(adjuncts).unwrap_err();
+    let VerifyTachygramsError::Duplicate = err else {
+        panic!("expected Duplicate, got {err:?}");
+    };
+
+    let mut buf = Vec::new();
+    innocent.stamp.write(&mut buf).expect("write");
+    let read_err = ProofStamp::read(&*buf).expect_err("a repeated tachygram must not parse");
+    assert_eq!(read_err.to_string(), "tachygrams are not unique");
+}
+
 /// Reusing a note as an output collides on both of its tachygrams, since the
 /// commitment and the pad are each derived from the note's fields. The
 /// nullifier-side analog is [`double_spend_cannot_aggregate`]; both reuse modes
@@ -253,21 +289,26 @@ fn double_output_cannot_aggregate() {
     let descriptors_a = BTreeSet::from_iter([plan_a.descriptor()]);
     let descriptors_b = BTreeSet::from_iter([plan_b.descriptor()]);
 
-    // The honest merge refuses the overlap on the tachygram-set product relation.
+    // The honest merge concatenates the lists, so the product relation holds
+    // and the overlap proves. Consensus rejects the repeated tachygram.
     {
-        let merge_err = ProofStamp::merge(
+        let merged = ProofStamp::merge(
             rng,
             (stamp_a.clone(), descriptors_a.clone()),
             (stamp_b.clone(), descriptors_b.clone()),
         )
-        .expect_err("overlapping tachygrams must not merge");
-        let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
-            panic!("expected ProofFailed(InvalidWitness), got {merge_err:?}");
-        };
-        assert_eq!(
-            inner.to_string(),
-            "StampMerge: merged tachygram set must be the product of left and right tachygram sets"
+        .expect("overlapping tachygrams prove");
+        let digests = [
+            plan_a.digest().expect("action digest"),
+            plan_b.digest().expect("action digest"),
+        ];
+        assert!(
+            merged
+                .verify_proof(rng, digests)
+                .expect("proof system verification"),
+            "the concatenated merge proves both actions"
         );
+        reject_repeated_tachygram(rng, merged, &[]);
     }
 
     let evil_pcd = forge_overlapping_merge(
@@ -373,21 +414,29 @@ fn double_spend_cannot_aggregate() {
         "same-note spends share their nullifiers"
     );
 
-    // The honest merge refuses the overlap on the tachygram-set product relation.
+    // The honest merge concatenates the lists, so the product relation holds
+    // and the shared nullifiers prove. Consensus rejects the repeat.
     {
-        let merge_err = ProofStamp::merge(
+        let merged = ProofStamp::merge(
             rng,
             (stamp_a.clone(), descriptors_a.clone()),
             (stamp_b.clone(), descriptors_b.clone()),
         )
-        .expect_err("shared nullifiers must not merge");
-        let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
-            panic!("expected ProofFailed(InvalidWitness), got {merge_err:?}");
-        };
-        assert_eq!(
-            inner.to_string(),
-            "StampMerge: merged tachygram set must be the product of left and right tachygram sets"
+        .expect("shared nullifiers prove");
+        let digests: Vec<ActionDigest> = descriptors_a
+            .iter()
+            .chain(&descriptors_b)
+            .map(|desc| desc.digest().expect("action digest"))
+            .collect();
+        assert!(
+            merged
+                .verify_proof(rng, digests)
+                .expect("proof system verification"),
+            "the concatenated merge proves both bundles' actions"
         );
+        let adjunct_a = autonome_a.clone().strip(mock_wtxid(&autonome_a));
+        let adjunct_b = autonome_b.strip(mock_wtxid(&autonome_a));
+        reject_repeated_tachygram(rng, merged, &[&adjunct_a, &adjunct_b]);
     }
 
     let evil_pcd = forge_overlapping_merge(

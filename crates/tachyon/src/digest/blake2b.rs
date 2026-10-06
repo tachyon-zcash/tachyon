@@ -193,23 +193,27 @@ const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxIdTachyonHash}(
 ///     \mathsf{hActionsTachyon} \Vert \mathsf{vBalanceTachyon} \Vert
-///     \mathsf{hMemoTachyon}
+///     \mathsf{hMemoTachyon} \Vert \mathsf{hTachygramsTachyon}
 ///   )
 /// $$
 ///
 /// The stamp is excluded because it is mutable auth data. The memo is included
 /// because it is effecting: relayers rewrite `auth_digest` during aggregation,
-/// so only the sighash can hold a payload a miner must not strip.
+/// so only the sighash can hold a payload a miner must not strip. The
+/// tachygram digest is included so that signatures bind the tachygrams each
+/// action publishes.
 #[must_use]
 pub fn bundle_commitment(
     action_commit: &[u8; 32],
     value_balance: i64,
     memo_digest: &[u8; 32],
+    tachygram_digest: &[u8; 32],
 ) -> [u8; 32] {
     hasher_256(BUNDLE_COMMITMENT_PERSONALIZATION, |state| {
         state.update(action_commit);
         state.update(&value_balance.to_le_bytes());
         state.update(memo_digest);
+        state.update(tachygram_digest);
     })
 }
 
