@@ -461,7 +461,7 @@ impl PoolSim {
         self.mine(
             bundles
                 .iter()
-                .map(|&bundle| bundle.stamp.tachygrams.iter().copied().collect())
+                .map(|&bundle| bundle.stamp.tachygrams.clone())
                 .collect(),
         );
     }

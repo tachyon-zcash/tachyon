@@ -96,7 +96,7 @@ use crate::{
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
-    primitives::{Anchor, AnchorError, EpochIndex, effect},
+    primitives::{Anchor, AnchorError, EpochIndex, Tachygram, effect},
     reddsa, serialization,
     stamp::{self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven},
     value,
@@ -265,6 +265,9 @@ pub enum VerifyCoverageError {
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
 pub enum VerifyTachygramsError {
+    /// The stamp publishes a tachygram more than once.
+    #[display("stamp publishes a tachygram more than once")]
+    Duplicate,
     /// The stamp publishes a number of tachygrams other than two per action.
     #[display("stamp does not publish two tachygrams per covered action")]
     WrongArity,
@@ -660,19 +663,24 @@ impl Bundle<ProofStamp> {
         Ok(unique_descs)
     }
 
-    /// Verify the stamp's published tachygrams: two per covered action, and
-    /// reproducing the carried set commitment. `action_count` is the size of
-    /// the covered set returned by [`Self::verify_coverage`].
+    /// Verify the stamp's published tachygrams: distinct, two per covered
+    /// action, and reproducing the carried set commitment. `action_count` is
+    /// the size of the covered set returned by [`Self::verify_coverage`].
     ///
     /// # Errors
     ///
-    /// Returns [`VerifyTachygramsError`] if the published count is not two
-    /// per covered action, or if they do not reproduce the carried set
-    /// commitment.
+    /// Returns [`VerifyTachygramsError`] if a tachygram repeats, the
+    /// published count is not two per covered action, or they do not
+    /// reproduce the carried set commitment.
     pub fn verify_tachygrams(
         &self,
         action_count: usize,
     ) -> Result<TachygramSetCommit, VerifyTachygramsError> {
+        let unique: BTreeSet<Tachygram> = self.stamp.tachygrams.iter().copied().collect();
+        if unique.len() != self.stamp.tachygrams.len() {
+            return Err(VerifyTachygramsError::Duplicate);
+        }
+
         if self.stamp.tachygrams.len() != 2 * action_count {
             return Err(VerifyTachygramsError::WrongArity);
         }

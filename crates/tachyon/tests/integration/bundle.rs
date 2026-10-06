@@ -516,7 +516,7 @@ fn double_spend_obvious() {
             .copied()
             .collect::<TachygramSetPoly>()
             .commit(),
-        tachygrams: output_stamp.tachygrams.iter().copied().collect(),
+        tachygrams: output_stamp.tachygrams.clone(),
         proof: Box::new(evil_pcd.proof().clone()),
     };
 
@@ -1518,10 +1518,12 @@ fn auth_digest_invariants() {
         assert_ne!(baseline, altered_actions.auth_digest());
 
         let mut extra_tachygram = stamped;
-        extra_tachygram
+        let extra = Tachygram::from(Fp::from(7u64));
+        let position = extra_tachygram
             .stamp
             .tachygrams
-            .insert(Tachygram::from(Fp::from(7u64)));
+            .partition_point(|&tg| tg < extra);
+        extra_tachygram.stamp.tachygrams.insert(position, extra);
         // Tachygrams must stay canonically sorted for the stamp digest.
         assert_eq!(baseline_commitment, extra_tachygram.commitment());
         assert_ne!(baseline, extra_tachygram.auth_digest());
@@ -1874,8 +1876,7 @@ fn verify_tachygrams_rejects_wrong_arity() {
     assert_eq!(stamp.tachygrams.len(), 2, "an output publishes cm and pad");
 
     let mut short = stamp;
-    let dropped = *short.tachygrams.iter().next().expect("nonempty");
-    short.tachygrams.remove(&dropped);
+    short.tachygrams.remove(0);
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
@@ -1908,11 +1909,7 @@ fn verify_tachygrams_rejects_a_tampered_list() {
     // Swap one tachygram for another, keeping the count and the carried
     // commitment, so coverage has nothing to say about it.
     let mut tampered = stamp;
-    let dropped = *tampered.tachygrams.iter().next().expect("nonempty");
-    tampered.tachygrams.remove(&dropped);
-    tampered
-        .tachygrams
-        .insert(Tachygram::from(Fp::random(&mut *rng)));
+    tampered.tachygrams[0] = Tachygram::from(Fp::random(&mut *rng));
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
@@ -1932,6 +1929,43 @@ fn verify_tachygrams_rejects_a_tampered_list() {
         err.to_string(),
         "tachygrams do not reproduce the set commitment"
     );
+}
+
+/// A list repeating a tachygram is rejected, whatever its length and carried
+/// commitment.
+#[test]
+fn verify_tachygrams_rejects_a_repeated_tachygram() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let ask = wallet.sk.derive_auth_private();
+    let note = wallet.random_note(200);
+    let pool = PoolSim::genesis(rng);
+    let (stamp, output_plan) = build_output_stamp(rng, pool.anchor(), note);
+
+    let mut repeated = stamp;
+    repeated.tachygrams[1] = repeated.tachygrams[0];
+    repeated.tachygram_set = repeated
+        .tachygrams
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>()
+        .commit();
+
+    let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
+    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+    let bundle = bundle_plan
+        .sign(rng, &sighash, &ask)
+        .expect("sign output bundle")
+        .stamp(repeated);
+
+    let covered = bundle
+        .verify_coverage(&[])
+        .expect("coverage over the one output action");
+
+    let err = bundle.verify_tachygrams(covered.len()).unwrap_err();
+    let VerifyTachygramsError::Duplicate = err else {
+        panic!("expected Duplicate, got {err:?}");
+    };
 }
 
 /// The length prefix bounds the memo read: the stamp trailer parses after it,

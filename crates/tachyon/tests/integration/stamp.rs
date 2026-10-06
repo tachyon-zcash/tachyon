@@ -287,10 +287,13 @@ fn double_output_cannot_aggregate() {
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
-    let tachygrams: BTreeSet<Tachygram> = stamp_a
+    let tachygrams: Vec<Tachygram> = stamp_a
         .tachygrams
-        .union(&stamp_b.tachygrams)
+        .iter()
+        .chain(&stamp_b.tachygrams)
         .copied()
+        .collect::<BTreeSet<Tachygram>>()
+        .into_iter()
         .collect();
     let stamp = ProofStamp {
         coverage,
@@ -363,7 +366,10 @@ fn double_spend_cannot_aggregate() {
         "independent randomization gives distinct descriptors"
     );
     assert!(
-        !stamp_a.tachygrams.is_disjoint(&stamp_b.tachygrams),
+        stamp_a
+            .tachygrams
+            .iter()
+            .any(|tg| stamp_b.tachygrams.contains(tg)),
         "same-note spends share their nullifiers"
     );
 
@@ -401,10 +407,13 @@ fn double_spend_cannot_aggregate() {
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
-    let tachygrams: BTreeSet<Tachygram> = stamp_a
+    let tachygrams: Vec<Tachygram> = stamp_a
         .tachygrams
-        .union(&stamp_b.tachygrams)
+        .iter()
+        .chain(&stamp_b.tachygrams)
         .copied()
+        .collect::<BTreeSet<Tachygram>>()
+        .into_iter()
         .collect();
     let stamp = ProofStamp {
         coverage,
@@ -488,7 +497,7 @@ fn cannot_forge_stamp_covering_duplicated_action() {
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
-    let tachygrams: BTreeSet<Tachygram> = output_stamp.tachygrams.iter().copied().collect();
+    let tachygrams: Vec<Tachygram> = output_stamp.tachygrams.clone();
     let stamp = ProofStamp {
         coverage,
         anchor: evil_pcd.data().2,
@@ -812,9 +821,7 @@ fn proof_alone_does_not_bind_the_published_list() {
     // Swap one published tachygram for another, keeping the count and the
     // carried commitment untouched.
     let mut tampered_list = honest.tachygrams.clone();
-    let dropped = *tampered_list.iter().next().expect("a published tachygram");
-    tampered_list.remove(&dropped);
-    tampered_list.insert(Tachygram::from(Fp::random(&mut *rng)));
+    tampered_list[0] = Tachygram::from(Fp::random(&mut *rng));
 
     assert_eq!(tampered_list.len(), honest.tachygrams.len());
 

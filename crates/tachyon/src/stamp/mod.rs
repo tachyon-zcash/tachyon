@@ -268,23 +268,26 @@ impl ProofStamp {
             ));
         }
 
-        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
+        let mut seen: BTreeSet<Tachygram> = BTreeSet::new();
+        let mut tachygrams: Vec<Tachygram> = Vec::new();
         for _ in 0..n_tachygrams {
             let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
 
-            if !tachygrams.insert(tg) {
+            if !seen.insert(tg) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "tachygrams are not unique",
                 ));
             }
 
-            if tachygrams.last() != Some(&tg) {
+            if seen.last() != Some(&tg) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "tachygrams are not canonically sorted",
                 ));
             }
+
+            tachygrams.push(tg);
         }
 
         let proof = {
@@ -526,9 +529,9 @@ pub struct ProofStamp {
     /// consistent with [`Self::tachygrams`].
     pub tachygram_set: TachygramSetCommit,
 
-    /// The contents of this stamp's tachygram set, which may not be consistent
-    /// with [`Self::tachygram_set`].
-    pub tachygrams: BTreeSet<Tachygram>,
+    /// The list of this stamp's tachygrams, which may not be consistent with
+    /// [`Self::tachygram_set`].
+    pub tachygrams: Vec<Tachygram>,
 
     /// The Ragu proof bytes.
     #[debug(skip)]
@@ -539,7 +542,7 @@ pub struct ProofStamp {
 /// digests, the tachygrams, the shared anchor, and the proof.
 type StampComponents = (
     BTreeSet<ActionDigest>,
-    BTreeSet<Tachygram>,
+    Vec<Tachygram>,
     Anchor,
     Box<ragu::Proof>,
 );
@@ -576,7 +579,8 @@ impl ProofStamp {
             .seed(rng, output::OutputBind, (note,))
             .map_err(ProveError::ProofFailed)?;
         let (cm, pad, _value) = *bind_pcd.data();
-        let tachygrams = BTreeSet::from_iter([cm, pad]);
+        let mut tachygrams = vec![cm, pad];
+        tachygrams.sort();
 
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
@@ -630,8 +634,8 @@ impl ProofStamp {
             .map_err(ProveError::ActionDigest)?;
 
         let (_cm, nf_current, nf_next, anchor) = *bind_pcd.data();
-        let tachygrams =
-            BTreeSet::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]);
+        let mut tachygrams = vec![Tachygram::from(nf_current), Tachygram::from(nf_next)];
+        tachygrams.sort();
 
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
@@ -703,8 +707,13 @@ impl ProofStamp {
 
         let merged_digests: BTreeSet<ActionDigest> =
             left_digests.union(&right_digests).copied().collect();
-        let tachygrams: BTreeSet<Tachygram> =
-            left_tachygrams.union(&right_tachygrams).copied().collect();
+        let tachygrams: Vec<Tachygram> = left_tachygrams
+            .iter()
+            .chain(&right_tachygrams)
+            .copied()
+            .collect::<BTreeSet<Tachygram>>()
+            .into_iter()
+            .collect();
 
         let (pcd, ()) = PROOF_SYSTEM.fuse(
             rng,
