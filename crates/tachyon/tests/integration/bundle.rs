@@ -40,7 +40,7 @@ fn plan_value_balance_sums_spends_and_outputs() {
     let ask = wallet.sk.derive_auth_private();
     let spend = spend_plan_at(rng, &wallet, &ask, 300);
     let note = wallet.random_note(200);
-    let (_rcv, _alpha, output) = build_output_plan(rng, note);
+    let (_rcv, _theta, output) = build_output_plan(rng, note);
     let bundle_plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
 
     assert_eq!(
@@ -157,7 +157,7 @@ fn actions_signed_by_wrong_rsk_fail_verification() {
 
     let spend = spend_plan_at(rng, &wallet, &ask, 200);
     let note = wallet.random_note(100);
-    let (_rcv, _alpha, output) = build_output_plan(rng, note);
+    let (_rcv, _theta, output) = build_output_plan(rng, note);
 
     let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
 
@@ -367,7 +367,7 @@ fn sign_and_apply_signatures_handle_one_sided_and_empty_plans() {
         .expect("spends-only bundle verifies");
 
     let note = wallet.random_note(200);
-    let (_rcv, _alpha, output) = build_output_plan(rng, note);
+    let (_rcv, _theta, output) = build_output_plan(rng, note);
     let output_plan = Plan::new(alloc::vec![], alloc::vec![output]);
     output_plan
         .sign(rng, &mock_sighash(output_plan.commitment().unwrap()), &ask)
@@ -459,7 +459,8 @@ fn double_spend_obvious() {
 
     // The Plan API keys actions by descriptor and cannot express a duplicate, so
     // this bundle is assembled by hand from a single output action.
-    let (rcv, alpha, plan) = build_output_plan(rng, note);
+    let (rcv, theta, plan) = build_output_plan(rng, note);
+    let alpha = theta.randomizer::<effect::Output>(note.commitment());
     let descriptor = plan.descriptor();
 
     // Two identical output actions net to twice the single-output balance, and
@@ -480,7 +481,7 @@ fn double_spend_obvious() {
     // Forge the stamp by merging one output stamp with itself: the merge proof
     // commits to the doubled action and tachygram multisets.
     let (_digests, tachygrams, stamp_anchor, proof) =
-        ProofStamp::prove_output(rng, plan.theta, rcv, note, anchor).expect("prove_output");
+        ProofStamp::prove_output(rng, theta, rcv, note, anchor).expect("prove_output");
     let output_stamp = ProofStamp {
         coverage: blake2b::action_descriptor_digest(
             &vec![descriptor].into_iter().collect::<Vec<[u8; 64]>>(),
@@ -1149,8 +1150,12 @@ fn read_preserves_action_order() {
 
     // Two outputs, assembled in descending descriptor order — the opposite of
     // what the planner emits — so a canonicalizing read would be caught.
-    let (rcv_a, alpha_a, plan_a) = build_output_plan(rng, wallet.random_note(200));
-    let (rcv_b, alpha_b, plan_b) = build_output_plan(rng, wallet.random_note(300));
+    let note_a = wallet.random_note(200);
+    let note_b = wallet.random_note(300);
+    let (rcv_a, theta_a, plan_a) = build_output_plan(rng, note_a);
+    let (rcv_b, theta_b, plan_b) = build_output_plan(rng, note_b);
+    let alpha_a = theta_a.randomizer::<effect::Output>(note_a.commitment());
+    let alpha_b = theta_b.randomizer::<effect::Output>(note_b.commitment());
     let mut items = [
         (plan_a.descriptor(), alpha_a, rcv_a),
         (plan_b.descriptor(), alpha_b, rcv_b),
@@ -1672,7 +1677,7 @@ fn spend_plan_at(
     value: u64,
 ) -> action::Plan<effect::Spend> {
     let note = wallet.random_note(value);
-    let (rcv, theta, _alpha) = spend_witness(rng, &note);
+    let (rcv, theta) = spend_witness(rng);
     action::Plan::spend(note, theta, rcv, |alpha| {
         ask.derive_action_private(&alpha).derive_action_public()
     })
@@ -1697,7 +1702,7 @@ fn plan_value_balance_accepts_boundary_negative_max_money() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let note = wallet.random_note(MAX_MONEY);
-    let (_rcv, _alpha, output) = build_output_plan(rng, note);
+    let (_rcv, _theta, output) = build_output_plan(rng, note);
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output]);
 
     assert_eq!(

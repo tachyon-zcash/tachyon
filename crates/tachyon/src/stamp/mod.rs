@@ -549,8 +549,8 @@ impl ProofStamp {
     /// `(digests, tachygrams, anchor, proof)`.
     ///
     /// [`output::OutputBind`] settles the tachygram pair, then [`OutputStamp`]
-    /// proves the action over it with `alpha` derived from `theta` and the
-    /// note's commitment, and enforces the stamp accumulator. Both tachygrams
+    /// derives `alpha` from `theta` and the bound `cm`, proves the action over
+    /// the pair, and enforces the stamp accumulator. Both tachygrams
     /// are derived inside the circuit and placed on the stamp for data
     /// availability. `digests` holds the proved action's digest.
     ///
@@ -582,7 +582,7 @@ impl ProofStamp {
             .fuse(
                 rng,
                 OutputStamp,
-                witness::output_stamp((*bind_pcd.data(), ()), rcv, alpha, anchor),
+                witness::output_stamp((*bind_pcd.data(), ()), rcv, theta, anchor),
                 bind_pcd,
                 ragu::Proof::trivial().carry::<()>(()),
             )
@@ -605,12 +605,11 @@ impl ProofStamp {
     ///
     /// The nullifier pair `{nf_current, nf_next}` published for data
     /// availability is read straight off the bind header (derived from the
-    /// master key at [`SpendBind`](spend::SpendBind)). [`SpendStamp`] proves
-    /// the action `(cv, rk)` with `alpha` derived from `theta` and the
-    /// master's note commitment, and enforces the stamp accumulator over the
-    /// pair. The spend's `anchor` is taken as the stamp's anchor; chain
-    /// validation lives inside the spendable lineage. `digests` holds the
-    /// proved action's digest.
+    /// master key at [`SpendBind`](spend::SpendBind)). [`SpendStamp`] derives
+    /// `alpha` from `theta` and the bound `cm`, proves the action `(cv, rk)`,
+    /// and enforces the stamp accumulator over the pair. The spend's `anchor`
+    /// is taken as the stamp's anchor; chain validation lives inside the
+    /// spendable lineage. `digests` holds the proved action's digest.
     ///
     /// # Errors
     ///
@@ -637,7 +636,7 @@ impl ProofStamp {
             .fuse(
                 rng,
                 SpendStamp,
-                witness::spend_stamp((*bind_pcd.data(), *master_pcd.data()), rcv, alpha, pak),
+                witness::spend_stamp((*bind_pcd.data(), *master_pcd.data()), rcv, theta, pak),
                 bind_pcd,
                 master_pcd,
             )
