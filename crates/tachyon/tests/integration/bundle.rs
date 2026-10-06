@@ -480,8 +480,7 @@ fn double_spend_obvious() {
     // Forge the stamp by merging one output stamp with itself: the merge proof
     // commits to the doubled action and tachygram multisets.
     let (_digests, tachygrams, stamp_anchor, proof) =
-        ProofStamp::prove_output(rng, descriptor, plan.theta, rcv, note, anchor)
-            .expect("prove_output");
+        ProofStamp::prove_output(rng, plan.theta, rcv, note, anchor).expect("prove_output");
     let output_stamp = ProofStamp {
         coverage: blake2b::action_descriptor_digest(
             &vec![descriptor].into_iter().collect::<Vec<[u8; 64]>>(),

@@ -85,9 +85,6 @@ fn plan_prove_rejects_invalid_inputs() {
         "same-stamp spendables share an anchor"
     );
 
-    pool.mine(random_block(rng, 1, 50));
-    let later_anchor = pool.anchor();
-
     let (rcv_a, theta_a, _alpha_a) = spend_witness(rng, &note_a);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
@@ -157,47 +154,43 @@ fn plan_prove_rejects_invalid_inputs() {
 
     // Correspondence swap: lengths match, pairing is wrong. Each spend's master
     // carries another note of the same value, so only `alpha` tells them apart.
+    // The swapped actions prove, and the stamp does not verify as the plan's.
     {
         let plan = Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
-        let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
-        let ProveError::DescriptorMismatch(descriptor) = err else {
-            panic!("expected DescriptorMismatch, got {err:?}");
-        };
-        assert_eq!(*descriptor, plan_a.descriptor());
+        let stamp = plan
+            .prove(rng, &user.pak, pcds)
+            .expect("swapped spends prove");
+        let planned = [
+            plan_a.digest().expect("action digest"),
+            plan_b.digest().expect("action digest"),
+        ];
+        assert!(
+            !stamp
+                .verify_proof(rng, planned)
+                .expect("proof system verification"),
+            "a stamp of swapped notes must not verify as the planned actions"
+        );
     }
 
     // Foreign descriptor: a single spend whose planned `rk` is under another
-    // wallet's `ak`.
+    // wallet's `ak`. The spend proves under this wallet's `ak`, and the stamp
+    // does not verify as the plan's.
     {
         let plan = Plan::new(
             alloc::vec![(foreign_a.descriptor(), theta_a, rcv_a)],
             alloc::vec![],
             anchor,
         );
-        let err = plan
+        let stamp = plan
             .prove(rng, &user.pak, alloc::vec![bundle_a()])
-            .unwrap_err();
-        let ProveError::DescriptorMismatch(descriptor) = err else {
-            panic!("expected DescriptorMismatch, got {err:?}");
-        };
-        assert_eq!(*descriptor, foreign_a.descriptor());
-    }
-
-    // Anchor: a spend-only plan at an anchor its spendable is not at.
-    {
-        let plan = Plan::new(
-            alloc::vec![(plan_a.descriptor(), theta_a, rcv_a)],
-            alloc::vec![],
-            later_anchor,
+            .expect("foreign spend proves");
+        assert!(
+            !stamp
+                .verify_proof(rng, [foreign_a.digest().expect("action digest")])
+                .expect("proof system verification"),
+            "a stamp under another ak must not verify as the planned action"
         );
-        let err = plan
-            .prove(rng, &user.pak, alloc::vec![bundle_a()])
-            .unwrap_err();
-        let ProveError::AnchorMismatch(descriptor) = err else {
-            panic!("expected AnchorMismatch, got {err:?}");
-        };
-        assert_eq!(*descriptor, plan_a.descriptor());
     }
 }
 

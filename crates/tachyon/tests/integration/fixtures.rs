@@ -136,8 +136,7 @@ pub fn build_output_stamp<RNG: CryptoRng>(
 ) -> (ProofStamp, action::Plan<effect::Output>) {
     let (rcv, _alpha, plan) = build_output_plan(rng, note);
     let (_digests, tachygrams, stamp_anchor, proof) =
-        ProofStamp::prove_output(rng, plan.descriptor(), plan.theta, rcv, note, anchor)
-            .expect("prove_output");
+        ProofStamp::prove_output(rng, plan.theta, rcv, note, anchor).expect("prove_output");
     let stamp = ProofStamp {
         coverage: blake2b::action_descriptor_digest(
             &iter::once(plan.descriptor()).collect::<Vec<[u8; 64]>>(),
