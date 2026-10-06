@@ -891,7 +891,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
     let held = buckets
         .iter()
         .map(|bucket| {
-            let (_epoch, _anchor_prev, _anchor_end, _discriminant, profile, contents) =
+            let (_epoch, _anchor_start, _anchor_next, _discriminant, profile, contents) =
                 *bucket.pcd.data();
             (profile, contents, bucket.members.clone())
         })
