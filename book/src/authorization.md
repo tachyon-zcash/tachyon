@@ -299,13 +299,20 @@ par Authorizing
 
         loop per action
             alt spend
+                note over Custody: alpha = Blake2b(theta || planned cm)
+                Custody --> Custody: rk == ak + [alpha]G
                 note over Custody: cv = Pedersen(v, rcv)
             else output
+                note over Custody: cm = Poseidon(pk, psi, rcm, v)
+                Custody --> Custody: cm == planned cm == tg_0
+                note over Custody: alpha = Blake2b(theta || cm)
+                Custody --> Custody: rk == [alpha]G
                 note over Custody: cv = Pedersen(-v, rcv)
             end
-            note over Custody: action_digest_i = Poseidon(cv || rk)
         end
+        Custody --> Custody: no duplicate tachygrams
         note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
+        note over Custody: hTachygramsTachyon = Blake2b chain over sorted tachygrams
         note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon || hTachygramsTachyon)
         note over Custody: compute sighash
 
@@ -315,7 +322,6 @@ par Authorizing
         end
 
         loop per spend action
-            note over Custody: alpha = Blake2b(theta || cm)
             note over Custody: rsk = ask + alpha
             note over Custody: sig = Sign(rsk, sighash)
         end

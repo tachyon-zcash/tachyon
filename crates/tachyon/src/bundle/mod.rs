@@ -105,7 +105,7 @@ use crate::{
     ActionDigest, ActionDigestError, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     digest::blake2b,
-    keys::{private, public},
+    keys::{SpendValidatingKey, private, public},
     primitives::{Anchor, AnchorError, EpochIndex, Tachygram, effect},
     reddsa, serialization,
     stamp::{self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven},
@@ -359,6 +359,16 @@ pub enum PlanError {
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
     BalanceOverflow,
+    /// An output's planned `cm` is not its note's commitment, or not its
+    /// first tachygram.
+    #[display("planned output commitment does not match its note")]
+    CommitmentMismatch,
+    /// A planned `rk` does not derive from its `theta` and `cm`.
+    #[display("planned rk does not match its alpha")]
+    RkMismatch,
+    /// The planned actions publish a tachygram more than once.
+    #[display("planned tachygrams are not unique")]
+    DuplicateTachygrams,
 }
 
 /// A complete bundle plan, awaiting authorization.
@@ -512,34 +522,81 @@ impl Plan {
         private::BindingSigningKey::from(self.iter_actions(|plan| plan.rcv, |plan| plan.rcv))
     }
 
-    /// Sign actions with the provided [`private::SpendAuthorizingKey`] and then
-    /// sign the bundle with the [`private::BindingSigningKey`].
+    /// Check what custody signs, from the plan alone.
+    ///
+    /// - Each output: its note commits to the planned `cm`, which is its first
+    ///   tachygram, and $\mathsf{rk} = [\alpha]\mathcal{G}$.
+    /// - Each spend: $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$.
+    /// - The planned tachygrams are distinct.
+    ///
+    /// Each $\alpha$ derives from the action's `theta` and planned `cm`. The
+    /// only Poseidon is each output's `cm`. Pads and spend nullifiers are the
+    /// planner's and stay unchecked.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError::CommitmentMismatch`] for an output whose `cm` is
+    /// not its note's or its first tachygram, [`PlanError::RkMismatch`] for
+    /// an `rk` other than the one its `alpha` derives, and
+    /// [`PlanError::DuplicateTachygrams`] for a repeated tachygram.
+    pub fn verify(&self, ak: &SpendValidatingKey) -> Result<(), PlanError> {
+        for plan in &self.outputs {
+            if plan.note.commitment() != plan.cm || plan.tachygrams[0] != Tachygram::from(plan.cm) {
+                return Err(PlanError::CommitmentMismatch);
+            }
+            let alpha = plan.theta.randomizer::<effect::Output>(plan.cm);
+            if private::ActionSigningKey::new(&alpha).derive_action_public() != plan.rk {
+                return Err(PlanError::RkMismatch);
+            }
+        }
+
+        for plan in &self.spends {
+            let alpha = plan.theta.randomizer::<effect::Spend>(plan.cm);
+            if ak.derive_action_public(&alpha) != plan.rk {
+                return Err(PlanError::RkMismatch);
+            }
+        }
+
+        let tachygrams = self.tachygrams();
+        let unique: BTreeSet<Tachygram> = tachygrams.iter().copied().collect();
+        if unique.len() != tachygrams.len() {
+            return Err(PlanError::DuplicateTachygrams);
+        }
+
+        Ok(())
+    }
+
+    /// [`Self::verify`] the plan, sign actions with the provided
+    /// [`private::SpendAuthorizingKey`], and then sign the bundle with the
+    /// [`private::BindingSigningKey`].
+    ///
+    /// Each `alpha` derives from the action's `theta` and planned `cm`.
     ///
     /// To confirm correct application, call [`Bundle::verify_signatures`] on
     /// the return value.
     ///
     /// # Errors
     ///
-    /// Returns [`PlanError`] if the planned actions do not balance or an
-    /// action cannot be signed.
+    /// Returns [`PlanError`] if the plan fails [`Self::verify`] or the
+    /// planned actions do not balance.
     pub fn sign<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         sighash: &[u8; 32],
         ask: &private::SpendAuthorizingKey,
     ) -> Result<Bundle<Unproven>, PlanError> {
+        self.verify(&ask.derive_auth_public())?;
+
         let mut authorized: BTreeMap<action::Descriptor, action::Signature> = BTreeMap::new();
 
         for plan in &self.spends {
-            let cm = plan.note.commitment();
-            let alpha = plan.theta.randomizer::<effect::Spend>(cm);
+            let alpha = plan.theta.randomizer::<effect::Spend>(plan.cm);
             let rsk = ask.derive_action_private(&alpha);
             authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
         }
 
         for plan in &self.outputs {
-            let cm = plan.note.commitment();
-            let alpha = plan.theta.randomizer::<effect::Output>(cm);
+            let alpha = plan.theta.randomizer::<effect::Output>(plan.cm);
             let rsk = private::ActionSigningKey::new(&alpha);
             authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
         }
