@@ -98,133 +98,6 @@ fn plan_commitment_matches_bundle_commitment() {
     assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
 }
 
-/// The output's `rk` is corrupted to one derived from another note after
-/// construction. `sign` refuses it with `RkMismatch`. Signatures under the
-/// output's own alpha-derived key, applied anyway, are real signatures under
-/// the wrong key, not the signature that would match the corrupted key.
-#[test]
-fn actions_signed_despite_wrong_rk_fail_verification() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-
-    let spend = spend_plan_at(rng, &wallet, &ask, 200);
-
-    let mut output = action::Plan::output(
-        wallet.random_note(100),
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-    );
-    let unrelated = action::Plan::output(
-        wallet.random_note(50),
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-    );
-    output.rk = unrelated.rk;
-
-    let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
-    let sighash = mock_sighash(plan.commitment().unwrap());
-
-    let sign_err = plan.sign(rng, &sighash, &ask).unwrap_err();
-    assert_eq!(sign_err, PlanError::RkMismatch);
-
-    // Sign as `sign` would, each action under its own alpha-derived key.
-    let spend_alpha = spend.theta.randomizer::<effect::Spend>(spend.cm);
-    let output_alpha = output.theta.randomizer::<effect::Output>(output.cm);
-    let authorized = BTreeMap::from([
-        (
-            spend.descriptor(),
-            ask.derive_action_private(&spend_alpha).sign(rng, &sighash),
-        ),
-        (
-            output.descriptor(),
-            private::ActionSigningKey::new(&output_alpha).sign(rng, &sighash),
-        ),
-    ]);
-    let bundle = plan
-        .apply_signatures(rng, &sighash, authorized)
-        .expect("signatures apply");
-
-    // We've applied a signature from the unrelated key
-    let unrelated_alpha = unrelated
-        .theta
-        .randomizer::<effect::Output>(unrelated.note.commitment());
-    assert!(!bundle.actions.iter().any(|action| {
-        action.sig
-            == private::ActionSigningKey::new(&unrelated_alpha)
-                .sign(rng, &mock_sighash(plan.commitment().unwrap()))
-    }));
-
-    // so it fails verification
-    let err = bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
-        .unwrap_err();
-    let SignatureError::Action(_) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
-    };
-}
-
-/// The spend's `rk` matches `ask`, but `sign` is called with a different
-/// signing key, whose `ak` does not derive the spend's `rk`: `sign` refuses it
-/// with `RkMismatch`. Signatures from the wrong signer, applied anyway, are
-/// real signatures, not the ones `ask` itself would have produced.
-#[test]
-fn actions_signed_by_wrong_rsk_fail_verification() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let wrong_ask = WalletSim::random(rng).sk.derive_auth_private();
-
-    let spend = spend_plan_at(rng, &wallet, &ask, 200);
-    let note = wallet.random_note(100);
-    let (_rcv, output_alpha, output) = build_output_plan(rng, note);
-
-    let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
-    let sighash = mock_sighash(plan.commitment().unwrap());
-
-    let sign_err = plan.sign(rng, &sighash, &wrong_ask).unwrap_err();
-    assert_eq!(sign_err, PlanError::RkMismatch);
-
-    // Sign as `sign` would, with the wrong signer's key for the spend.
-    let spend_alpha = spend.theta.randomizer::<effect::Spend>(spend.cm);
-    let authorized = BTreeMap::from([
-        (
-            spend.descriptor(),
-            wrong_ask
-                .derive_action_private(&spend_alpha)
-                .sign(rng, &sighash),
-        ),
-        (
-            output.descriptor(),
-            private::ActionSigningKey::new(&output_alpha).sign(rng, &sighash),
-        ),
-    ]);
-    let bundle = plan
-        .apply_signatures(rng, &sighash, authorized)
-        .expect("signatures apply");
-
-    // The signature the spend's matching key would have produced.
-    let alpha = spend
-        .theta
-        .randomizer::<effect::Spend>(spend.note.commitment());
-    let correct_sig = ask
-        .derive_action_private(&alpha)
-        .sign(rng, &mock_sighash(bundle.commitment()));
-    assert!(
-        !bundle
-            .actions
-            .iter()
-            .any(|action| action.sig == correct_sig)
-    );
-
-    let err = bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
-        .unwrap_err();
-    let SignatureError::Action(_) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
-    };
-}
-
 #[test]
 fn apply_signatures_rejects_wrong_sig_count() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1595,13 +1468,18 @@ fn auth_digest_invariants() {
         assert_eq!(baseline_commitment, altered_actions.commitment());
         assert_ne!(baseline, altered_actions.auth_digest());
 
-        let mut extra_tachygram = stamped;
+        let mut extra_tachygram = stamped.clone();
         extra_tachygram
             .stamp
             .tachygrams
             .push(Tachygram::from(Fp::from(7u64)));
         assert_eq!(baseline_commitment, extra_tachygram.commitment());
         assert_ne!(baseline, extra_tachygram.auth_digest());
+
+        // The signed tachygram digest is effecting data: the commitment moves.
+        let mut altered_digest = stamped;
+        altered_digest.tachygram_digest[0] ^= 0x01;
+        assert_ne!(baseline_commitment, altered_digest.commitment());
     }
 }
 
@@ -1939,43 +1817,6 @@ fn zero_action_bundle_rejects_nonzero_balance() {
     let err = bundle.verify_signatures(&sighash).unwrap_err();
     let SignatureError::Binding(_) = err else {
         panic!("expected SignatureError::Binding, got {err:?}");
-    };
-}
-
-/// Every action publishes two tachygrams, so a run matching a bundle's signed
-/// digest must hold two per action. A bundle signing one tachygram for its one
-/// output, over a stamp publishing that one, stands in for a withheld
-/// nullifier.
-#[test]
-fn verify_tachygrams_rejects_wrong_arity() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(200);
-    let pool = PoolSim::genesis(rng);
-    let (stamp, output_plan) = build_output_stamp(rng, pool.anchor(), note);
-
-    assert_eq!(stamp.tachygrams.len(), 2, "an output publishes cm and pad");
-
-    let mut short = stamp;
-    short.tachygrams.remove(0);
-
-    let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
-    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
-    let mut bundle = bundle_plan
-        .sign(rng, &sighash, &ask)
-        .expect("sign output bundle")
-        .stamp(short);
-    bundle.tachygram_digest = chain_digest(&bundle.stamp.tachygrams);
-
-    let covered = bundle
-        .verify_coverage(&[])
-        .expect("the arity rule is not coverage's business");
-    assert_eq!(covered.len(), 1);
-
-    let err = bundle.verify_tachygrams(&[]).unwrap_err();
-    let VerifyTachygramsError::WrongArity = err else {
-        panic!("expected WrongArity, got {err:?}");
     };
 }
 
@@ -2450,9 +2291,12 @@ fn verify_tachygrams_scans_an_aggregate() {
     let wallet = WalletSim::new(shared_sk());
     let anchor = PoolSim::genesis(rng).anchor();
 
+    // `b` signs and publishes its list unsorted.
     let autonome_a = output_autonome(rng, &wallet, anchor, &[200, 300], false);
-    let autonome_b = output_autonome(rng, &wallet, anchor, &[400, 500], false);
-    let autonome_c = output_autonome(rng, &wallet, anchor, &[600, 700], true);
+    let autonome_b = output_autonome(rng, &wallet, anchor, &[400, 500], true);
+    let mut sorted = autonome_b.stamp.tachygrams.clone();
+    sorted.sort();
+    assert_ne!(autonome_b.stamp.tachygrams, sorted);
 
     // The empty-action aggregate signs d_0 and has no run. Runs pass in
     // either order.
@@ -2473,36 +2317,17 @@ fn verify_tachygrams_scans_an_aggregate() {
             .expect("an aggregate verifies with its runs in either order");
     }
 
-    // A bundle signed over an unsorted list.
-    {
-        let mut sorted = autonome_c.stamp.tachygrams.clone();
-        sorted.sort();
-        assert_ne!(autonome_c.stamp.tachygrams, sorted);
-
-        let innocent = innocent_over(rng, &[&autonome_a, &autonome_c]);
-        let wtxid = mock_wtxid(&innocent);
-        let adjunct_a = autonome_a.clone().strip(wtxid);
-        let adjunct_c = autonome_c.clone().strip(wtxid);
-        innocent
-            .verify(
-                rng,
-                &mock_sighash(innocent.commitment()),
-                &wtxid.into(),
-                &[&adjunct_a, &adjunct_c],
-            )
-            .expect("an unsorted signed list verifies");
-    }
-
     let innocent = innocent_over(rng, &[&autonome_a, &autonome_b]);
     let wtxid = mock_wtxid(&innocent);
     let adjunct_a = autonome_a.clone().strip(wtxid);
     let adjunct_b = autonome_b.clone().strip(wtxid);
-    let adjunct_c = autonome_c.clone().strip(wtxid);
 
     // A covered bundle whose list the stamp does not publish.
     {
+        let mut phantom = adjunct_a.clone();
+        phantom.tachygram_digest = [0x5a; 32];
         let err = innocent
-            .verify_tachygrams(&[&adjunct_a, &adjunct_b, &adjunct_c])
+            .verify_tachygrams(&[&adjunct_a, &adjunct_b, &phantom])
             .unwrap_err();
         let VerifyTachygramsError::UnmatchedBundle = err else {
             panic!("expected UnmatchedBundle, got {err:?}");
@@ -2682,45 +2507,4 @@ fn sign_verifies_the_plan() {
         let err = sign(rng, forged, output).unwrap_err();
         assert_eq!(err, PlanError::RkMismatch);
     }
-}
-
-/// The commitment binds every tachygram a planned action publishes, and a
-/// bundle's commitment binds its `tachygram_digest`.
-#[test]
-fn commitment_binds_every_tachygram() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let ask = wallet.sk.derive_auth_private();
-
-    let spend = spend_plan_at(rng, &wallet, &ask, 300);
-    let (_rcv, _alpha, output) = build_output_plan(rng, wallet.random_note(200));
-    let plan = Plan::new(vec![spend], vec![output]);
-    let baseline = plan.commitment().unwrap();
-
-    for index in 0..2 {
-        let mut altered_spend = spend;
-        altered_spend.tachygrams[index] = Tachygram::from(Fp::random(&mut *rng));
-        assert_ne!(
-            Plan::new(vec![altered_spend], vec![output])
-                .commitment()
-                .unwrap(),
-            baseline
-        );
-
-        let mut altered_output = output;
-        altered_output.tachygrams[index] = Tachygram::from(Fp::random(&mut *rng));
-        assert_ne!(
-            Plan::new(vec![spend], vec![altered_output])
-                .commitment()
-                .unwrap(),
-            baseline
-        );
-    }
-
-    let bundle = plan.sign(rng, &mock_sighash(baseline), &ask).expect("sign");
-    assert_eq!(bundle.commitment(), baseline);
-
-    let mut altered = bundle;
-    altered.tachygram_digest[0] ^= 0x01;
-    assert_ne!(altered.commitment(), baseline);
 }

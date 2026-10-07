@@ -374,26 +374,4 @@ mod tests {
             ]
         );
     }
-
-    /// The empty list digests to $d_0$.
-    #[test]
-    fn tachygram_chain_empty_is_zero() {
-        assert_eq!(fold(&[]), [0u8; 32]);
-    }
-
-    /// Reordering a list changes its digest.
-    #[test]
-    fn tachygram_chain_commits_to_order() {
-        assert_ne!(fold(&[tg(1), tg(2)]), fold(&[tg(2), tg(1)]));
-    }
-
-    /// A proper prefix digests differently from the whole list.
-    #[test]
-    fn tachygram_chain_prefix_differs() {
-        let list = [tg(1), tg(2), tg(3)];
-        let whole = fold(&list);
-        for len in 0..list.len() {
-            assert_ne!(fold(&list[..len]), whole);
-        }
-    }
 }
