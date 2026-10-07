@@ -7,14 +7,15 @@
 use core::{any::type_name, marker::PhantomData};
 
 use derive_more::{Debug, Into};
-use pasta_curves::Fq;
+use ff::{Field as _, PrimeField as _};
+use pasta_curves::{Fp, Fq};
 use rand_core::CryptoRng;
 
 use crate::{note, primitives::Effect};
 
 /// Per-action entropy $\theta$ chosen by the signer (e.g. hardware wallet).
 ///
-/// 32 bytes of randomness combined with a note commitment to
+/// A random field element combined with a note commitment to
 /// deterministically derive $\alpha$ via
 /// [`randomizer`](Self::randomizer).
 /// The signer picks $\theta$ once; any device with $\theta$ and the
@@ -28,26 +29,24 @@ use crate::{note, primitives::Effect};
 /// ("Tachyaction at a Distance", Bowe 2025).
 #[derive(Clone, Copy, Debug)]
 #[expect(clippy::module_name_repetitions, reason = "intentional name")]
-pub struct ActionEntropy(#[debug(skip)] pub(crate) [u8; 32]);
+pub struct ActionEntropy(#[debug(skip)] pub(crate) Fp);
 
 impl ActionEntropy {
-    /// Parse action entropy from 32 bytes.
+    /// Parse action entropy from its canonical 32-byte encoding.
     #[must_use]
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
+    pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
+        Option::from(Fp::from_repr(bytes)).map(Self)
     }
 
     /// Sample fresh per-action entropy.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        let mut bytes = [0u8; 32];
-        rng.fill_bytes(&mut bytes);
-        Self(bytes)
+        Self(Fp::random(rng))
     }
 
     /// Derive the action randomizer $\alpha$ for effect `E`.
     ///
-    /// Uses distinct BLAKE2b personalizations for spend vs output to
-    /// ensure the two randomizers are independent.
+    /// Spend and output use distinct Poseidon domains, so the two randomizers
+    /// are independent.
     #[must_use]
     pub fn randomizer<E: Effect>(&self, cm: note::Commitment) -> ActionRandomizer<E> {
         ActionRandomizer(E::derive_alpha(*self, cm), PhantomData)
@@ -75,15 +74,13 @@ pub struct ActionRandomizer<S: sealed::RandomizerState>(
 
 #[cfg(test)]
 mod tests {
-    use ff::Field as _;
-    use pasta_curves::{Fp, Fq};
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::{note, primitives::effect};
+    use crate::{digest::poseidon, note, primitives::effect};
 
-    /// Distinct BLAKE2b personalizations must yield distinct alpha scalars
-    /// for the same (theta, cm).
+    /// Distinct Poseidon domains must yield distinct alpha scalars for the
+    /// same (theta, cm).
     #[test]
     fn spend_and_output_randomizers_differ() {
         let mut rng = StdRng::seed_from_u64(100);
@@ -113,9 +110,48 @@ mod tests {
         assert_ne!(first, other);
     }
 
+    /// The scalar alpha has the same encoding as the Poseidon output, so the
+    /// circuit's base-field alpha is the signer's scalar.
+    #[test]
+    fn randomizer_embeds_the_poseidon_output() {
+        let mut rng = StdRng::seed_from_u64(102);
+        let theta = ActionEntropy::random(&mut rng);
+        let cm = note::Commitment::from(Fp::random(&mut rng));
+
+        let spend: Fq = theta.randomizer::<effect::Spend>(cm).into();
+        let output: Fq = theta.randomizer::<effect::Output>(cm).into();
+
+        assert_eq!(
+            spend.to_repr(),
+            poseidon::alpha_spend(theta.0, cm.into()).to_repr()
+        );
+        assert_eq!(
+            output.to_repr(),
+            poseidon::alpha_output(theta.0, cm.into()).to_repr()
+        );
+    }
+
+    #[test]
+    fn from_bytes_round_trips_canonical_encodings() {
+        let theta = ActionEntropy::random(&mut StdRng::seed_from_u64(103));
+        let Some(parsed) = ActionEntropy::from_bytes(theta.0.to_repr()) else {
+            panic!("canonical encoding must parse");
+        };
+        assert_eq!(parsed.0, theta.0);
+    }
+
+    #[test]
+    fn from_bytes_rejects_non_canonical_encodings() {
+        assert!(ActionEntropy::from_bytes([0xFF; 32]).is_none());
+    }
+
     #[test]
     fn debug_entropy_redacts_bytes() {
-        let theta = ActionEntropy::from_bytes([0xAB; 32]);
+        let mut bytes = [0xAB; 32];
+        bytes[31] = 0x2B;
+        let Some(theta) = ActionEntropy::from_bytes(bytes) else {
+            panic!("canonical encoding must parse");
+        };
         let dbg = alloc::format!("{theta:?}");
         assert!(dbg.contains("ActionEntropy"), "must name the type");
         assert!(!dbg.contains("AB"), "must not leak entropy bytes");

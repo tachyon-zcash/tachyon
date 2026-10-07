@@ -12,9 +12,9 @@ use ragu::{Header, Step};
 use crate::{
     collections,
     constants::EVIDENCE_TREE_ARITY,
-    entropy::ActionRandomizer,
+    entropy::ActionEntropy,
     keys::{ProofAuthorizingKey, private},
-    note::Note,
+    note::{self, Note},
     nullifier::Nullifier,
     primitives::{
         ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
@@ -427,11 +427,12 @@ pub fn unspent_lift(
     )
 }
 
-/// Prepare the witness for [`OutputStamp`]: `(rcv, alpha, anchor,
+/// Prepare the witness for [`OutputStamp`]: `(rcv, theta, anchor,
 /// action_set, tachygram_set)`.
 ///
-/// Reads the tachygram pair and the value off the bind header and derives the
-/// action from the negated value and `alpha`.
+/// Reads the tachygram pair and the value off the bind header, derives `alpha`
+/// from `theta` and `cm`, and derives the action from the negated value and
+/// `alpha`.
 ///
 /// # Panics
 ///
@@ -441,10 +442,11 @@ pub fn unspent_lift(
 pub fn output_stamp(
     (left, _right): (StepLeft<OutputStamp>, StepRight<OutputStamp>),
     rcv: value::Trapdoor,
-    alpha: ActionRandomizer<effect::Output>,
+    theta: ActionEntropy,
     anchor: Anchor,
 ) -> StepWitness<'static, OutputStamp> {
     let (cm, pad, value) = left;
+    let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
 
     #[expect(
         clippy::expect_used,
@@ -458,19 +460,20 @@ pub fn output_stamp(
 
     (
         rcv,
-        alpha,
+        theta,
         anchor,
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([cm, pad]),
     )
 }
 
-/// Prepare the witness for [`SpendStamp`]: `(rcv, alpha, pak, action_set,
+/// Prepare the witness for [`SpendStamp`]: `(rcv, theta, pak, action_set,
 /// tachygram_set)`.
 ///
-/// Reads the nullifier pair off the bind header and the note off the right
-/// [`NoteMaster`](crate::stamp::proof::delegation::NoteMaster), and derives
-/// the action from the note's value and `pak` randomized by `alpha`.
+/// Reads `cm` and the nullifier pair off the bind header and the note off the
+/// right [`NoteMaster`](crate::stamp::proof::delegation::NoteMaster), derives
+/// `alpha` from `theta` and `cm`, and derives the action from the note's value
+/// and `pak` randomized by `alpha`.
 ///
 /// # Panics
 ///
@@ -480,11 +483,12 @@ pub fn output_stamp(
 pub fn spend_stamp(
     (left, right): (StepLeft<SpendStamp>, StepRight<SpendStamp>),
     rcv: value::Trapdoor,
-    alpha: ActionRandomizer<effect::Spend>,
+    theta: ActionEntropy,
     pak: ProofAuthorizingKey,
 ) -> StepWitness<'static, SpendStamp> {
-    let (_cm, nf_current, nf_next, _anchor) = left;
+    let (cm, nf_current, nf_next, _anchor) = left;
     let (_master_cm, note, _mk) = right;
+    let alpha = theta.randomizer::<effect::Spend>(cm);
 
     #[expect(
         clippy::expect_used,
@@ -495,7 +499,7 @@ pub fn spend_stamp(
 
     (
         rcv,
-        alpha,
+        theta,
         pak,
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]),

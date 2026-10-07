@@ -20,7 +20,7 @@ use zcash_tachyon::{
     constants::EVIDENCE_TREE_ARITY,
     digest::blake2b,
     effect,
-    entropy::{ActionEntropy, ActionRandomizer},
+    entropy::ActionEntropy,
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
@@ -101,33 +101,20 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
     unproven.actions[0]
 }
 
-pub fn spend_witness<RNG: CryptoRng>(
-    rng: &mut RNG,
-    note: &Note,
-) -> (
-    value::Trapdoor,
-    ActionEntropy,
-    ActionRandomizer<effect::Spend>,
-) {
+pub fn spend_witness<RNG: CryptoRng>(rng: &mut RNG) -> (value::Trapdoor, ActionEntropy) {
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
-    let alpha = theta.randomizer::<effect::Spend>(note.commitment());
-    (rcv, theta, alpha)
+    (rcv, theta)
 }
 
 pub fn build_output_plan<RNG: CryptoRng>(
     rng: &mut RNG,
     note: Note,
-) -> (
-    value::Trapdoor,
-    ActionRandomizer<effect::Output>,
-    action::Plan<effect::Output>,
-) {
+) -> (value::Trapdoor, ActionEntropy, action::Plan<effect::Output>) {
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
     let plan = action::Plan::output(note, theta, rcv);
-    let alpha = theta.randomizer::<effect::Output>(note.commitment());
-    (rcv, alpha, plan)
+    (rcv, theta, plan)
 }
 
 pub fn build_output_stamp<RNG: CryptoRng>(
@@ -135,9 +122,9 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     anchor: Anchor,
     note: Note,
 ) -> (ProofStamp, action::Plan<effect::Output>) {
-    let (rcv, _alpha, plan) = build_output_plan(rng, note);
+    let (rcv, theta, plan) = build_output_plan(rng, note);
     let (_digests, tachygrams, stamp_anchor, proof) =
-        ProofStamp::prove_output(rng, plan.theta, rcv, note, anchor).expect("prove_output");
+        ProofStamp::prove_output(rng, theta, rcv, note, anchor).expect("prove_output");
     let stamp = ProofStamp {
         coverage: blake2b::action_descriptor_digest(
             &iter::once(plan.descriptor()).collect::<Vec<[u8; 64]>>(),

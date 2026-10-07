@@ -29,17 +29,6 @@ Digests over bundle contents, feeding the two above. These are Tachyon-specific 
 
 ## BLAKE2b-512
 
-### Action alpha
-
-Deterministic action randomizer for Tachyon, privately handled by transaction author and custody device.
-
-<!-- todo: consider poseidon or other curve-native derivation? -->
-
-| Purpose | Value |
-| ------- | ----- |
-| Spend alpha | `Tachyon-Spend` |
-| Output alpha | `Tachyon-Output` |
-
 ### PRF expansion
 
 Domain string and personalization bytes for `sk` expansion.
@@ -66,6 +55,8 @@ These are all Tachyon-specific digests, performed in-circuit.
 | Output padding tachygram | `Tachyon-CmOutPad` |
 | Action digest | `Tachyon-ActionDg` |
 | Payment key derivation | `Tachyon-PkDerive` |
+| Spend alpha | `Tachyon-Spend` |
+| Output alpha | `Tachyon-Output` |
 | Anchor stamp step | `Tachyon-AnchorSt` |
 | Anchor epoch step | `Tachyon-AnchorEp` |
 | evidence tree leaf | `Tachyon-QrBucket` |
@@ -73,6 +64,8 @@ These are all Tachyon-specific digests, performed in-circuit.
 An evidence tree node takes no domain constant.
 Its four children fill the sponge rate exactly, and a leaf absorbs nine elements against a node's four, so no node value can stand where a leaf digest is expected.
 A tree short of a full level therefore pads by repeating a child and never by omitting one.
+
+The two alpha domains are zero-padded to sixteen bytes.
 
 ## Hash-to-curve
 

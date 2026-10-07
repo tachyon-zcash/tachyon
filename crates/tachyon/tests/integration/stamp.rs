@@ -85,12 +85,12 @@ fn plan_prove_rejects_invalid_inputs() {
         "same-stamp spendables share an anchor"
     );
 
-    let (rcv_a, theta_a, _alpha_a) = spend_witness(rng, &note_a);
+    let (rcv_a, theta_a) = spend_witness(rng);
     let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
-    let (rcv_b, theta_b, _alpha_b) = spend_witness(rng, &note_b);
+    let (rcv_b, theta_b) = spend_witness(rng);
     let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });

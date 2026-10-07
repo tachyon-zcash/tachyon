@@ -6,10 +6,19 @@
 //! [`ActionSigningKey`](crate::keys::private::ActionSigningKey), and key types
 //! to enforce the spend/output distinction at compile time.
 
-use ff::{FromUniformBytes as _, PrimeField as _};
+use ff::PrimeField as _;
 use pasta_curves::{Fp, Fq};
 
-use crate::{digest::blake2b, entropy::ActionEntropy, note, value};
+use crate::{digest::poseidon, entropy::ActionEntropy, note, value};
+
+/// Embeds a base-field element in the scalar field, which is larger.
+#[expect(
+    clippy::expect_used,
+    reason = "p < q, so every Fp repr is canonical in Fq"
+)]
+fn embed(alpha: Fp) -> Fq {
+    Option::from(Fq::from_repr(alpha.to_repr())).expect("p < q")
+}
 
 mod sealed {
     pub trait Sealed: Copy {}
@@ -21,8 +30,6 @@ mod sealed {
 pub trait Effect: sealed::Sealed {
     /// Derive this effect's $\alpha$ scalar from per-action entropy and a note
     /// commitment.
-    ///
-    /// TODO: finalize alpha derivation spec. poseidon, or other native Fq?
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq;
 
     /// Commit to this effect's signed value contribution using the given
@@ -40,7 +47,7 @@ pub struct Output;
 
 impl Effect for Spend {
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        Fq::from_uniform_bytes(&blake2b::alpha_spend(&theta.0, &Fp::from(cm).to_repr()))
+        embed(poseidon::alpha_spend(theta.0, cm.into()))
     }
 
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment {
@@ -50,7 +57,7 @@ impl Effect for Spend {
 
 impl Effect for Output {
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        Fq::from_uniform_bytes(&blake2b::alpha_output(&theta.0, &Fp::from(cm).to_repr()))
+        embed(poseidon::alpha_output(theta.0, cm.into()))
     }
 
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment {

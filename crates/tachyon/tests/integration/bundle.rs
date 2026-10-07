@@ -40,7 +40,7 @@ fn plan_value_balance_sums_spends_and_outputs() {
     let ask = wallet.sk.derive_auth_private();
     let spend = spend_plan_at(rng, &wallet, &ask, 300);
     let note = wallet.random_note(200);
-    let (_rcv, _alpha, output) = build_output_plan(rng, note);
+    let (_rcv, _theta, output) = build_output_plan(rng, note);
     let bundle_plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
 
     assert_eq!(
@@ -95,96 +95,87 @@ fn plan_commitment_matches_bundle_commitment() {
     assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
 }
 
-/// The output's `rk` is corrupted to an unrelated (but known) key after
-/// construction. `sign` signs with the output's own alpha-derived key
-/// regardless, producing a real signature under the wrong key — not the
-/// signature that would actually match the corrupted key.
-#[test]
-fn actions_signed_despite_wrong_rk_fail_verification() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-
-    let spend = spend_plan_at(rng, &wallet, &ask, 200);
-
-    let mut output = action::Plan::output(
-        wallet.random_note(100),
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-    );
-    let unrelated = action::Plan::output(
-        wallet.random_note(50),
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-    );
-    output.rk = unrelated.rk;
-
-    let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
-
-    let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .expect("signing works");
-
-    // We've applied a signature from the unrelated key
-    let unrelated_alpha = unrelated
-        .theta
-        .randomizer::<effect::Output>(unrelated.note.commitment());
-    assert!(!bundle.actions.iter().any(|action| {
-        action.sig
-            == private::ActionSigningKey::new(&unrelated_alpha)
-                .sign(rng, &mock_sighash(plan.commitment().unwrap()))
-    }));
-
-    // so it fails verification
-    let err = bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
-        .unwrap_err();
-    let SignatureError::Action(_) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
-    };
+/// One spend and one output, planned honestly by `wallet`.
+fn honest_plan_actions(
+    rng: &mut StdRng,
+    wallet: &WalletSim,
+    ask: &private::SpendAuthorizingKey,
+) -> (action::Plan<effect::Spend>, action::Plan<effect::Output>) {
+    let spend = spend_plan_at(rng, wallet, ask, 200);
+    let (_rcv, _theta, output) = build_output_plan(rng, wallet.random_note(100));
+    (spend, output)
 }
 
-/// The spend's `rk` matches `ask`, but `sign` is called with a different
-/// signing key. It signs with whatever key it's given, producing a real
-/// signature from the wrong signer, not the one `ask` itself would have
-/// produced.
+/// `sign` verifies an honest plan and signs it.
 #[test]
-fn actions_signed_by_wrong_rsk_fail_verification() {
+fn sign_signs_an_honest_plan() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
-    let wrong_ask = WalletSim::random(rng).sk.derive_auth_private();
-
-    let spend = spend_plan_at(rng, &wallet, &ask, 200);
-    let note = wallet.random_note(100);
-    let (_rcv, _alpha, output) = build_output_plan(rng, note);
-
+    let (spend, output) = honest_plan_actions(rng, &wallet, &ask);
     let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
 
+    plan.verify(&ask.derive_auth_public()).expect("honest plan");
     let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &wrong_ask)
-        .expect("signing works");
-
-    // The signature the spend's matching key would have produced.
-    let alpha = spend
-        .theta
-        .randomizer::<effect::Spend>(spend.note.commitment());
-    let correct_sig = ask
-        .derive_action_private(&alpha)
-        .sign(rng, &mock_sighash(bundle.commitment()));
-    assert!(
-        !bundle
-            .actions
-            .iter()
-            .any(|action| action.sig == correct_sig)
-    );
-
-    let err = bundle
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .expect("honest plan signs");
+    bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
+        .expect("signatures verify");
+}
+
+/// `sign` rejects an output whose planned `cm` is not its note's.
+#[test]
+fn sign_rejects_an_output_cm_not_its_notes() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let (spend, mut output) = honest_plan_actions(rng, &wallet, &ask);
+    output.cm = wallet.random_note(100).commitment();
+    let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
+
+    let err = plan
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
         .unwrap_err();
-    let SignatureError::Action(_) = err else {
-        panic!("expected SignatureError::Action, got {err:?}");
-    };
+    assert_eq!(err, PlanError::CommitmentMismatch);
+}
+
+/// `sign` rejects an output whose `rk` derives from another note under the
+/// same `theta`.
+#[test]
+fn sign_rejects_an_output_rk_from_another_note() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let (spend, mut output) = honest_plan_actions(rng, &wallet, &ask);
+    let diverted = WalletSim::random(rng).random_note(100);
+    output.rk = action::Plan::output(diverted, output.theta, output.rcv).rk;
+    let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
+
+    let err = plan
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .unwrap_err();
+    assert_eq!(err, PlanError::RkMismatch);
+}
+
+/// `sign` rejects a spend whose `rk` derives from another `ak`.
+#[test]
+fn sign_rejects_a_spend_rk_from_another_ak() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::random(rng);
+    let ask = wallet.sk.derive_auth_private();
+    let other = WalletSim::random(rng);
+    let (mut spend, output) = honest_plan_actions(rng, &wallet, &ask);
+    spend.rk = action::Plan::spend(spend.note, spend.theta, spend.rcv, |alpha| {
+        other.pak.ak.derive_action_public(&alpha)
+    })
+    .rk;
+    let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
+
+    let err = plan
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .unwrap_err();
+    assert_eq!(err, PlanError::RkMismatch);
 }
 
 #[test]
@@ -367,7 +358,7 @@ fn sign_and_apply_signatures_handle_one_sided_and_empty_plans() {
         .expect("spends-only bundle verifies");
 
     let note = wallet.random_note(200);
-    let (_rcv, _alpha, output) = build_output_plan(rng, note);
+    let (_rcv, _theta, output) = build_output_plan(rng, note);
     let output_plan = Plan::new(alloc::vec![], alloc::vec![output]);
     output_plan
         .sign(rng, &mock_sighash(output_plan.commitment().unwrap()), &ask)
@@ -459,7 +450,8 @@ fn double_spend_obvious() {
 
     // The Plan API keys actions by descriptor and cannot express a duplicate, so
     // this bundle is assembled by hand from a single output action.
-    let (rcv, alpha, plan) = build_output_plan(rng, note);
+    let (rcv, theta, plan) = build_output_plan(rng, note);
+    let alpha = theta.randomizer::<effect::Output>(note.commitment());
     let descriptor = plan.descriptor();
 
     // Two identical output actions net to twice the single-output balance, and
@@ -480,7 +472,7 @@ fn double_spend_obvious() {
     // Forge the stamp by merging one output stamp with itself: the merge proof
     // commits to the doubled action and tachygram multisets.
     let (_digests, tachygrams, stamp_anchor, proof) =
-        ProofStamp::prove_output(rng, plan.theta, rcv, note, anchor).expect("prove_output");
+        ProofStamp::prove_output(rng, theta, rcv, note, anchor).expect("prove_output");
     let output_stamp = ProofStamp {
         coverage: blake2b::action_descriptor_digest(
             &vec![descriptor].into_iter().collect::<Vec<[u8; 64]>>(),
@@ -1149,8 +1141,12 @@ fn read_preserves_action_order() {
 
     // Two outputs, assembled in descending descriptor order — the opposite of
     // what the planner emits — so a canonicalizing read would be caught.
-    let (rcv_a, alpha_a, plan_a) = build_output_plan(rng, wallet.random_note(200));
-    let (rcv_b, alpha_b, plan_b) = build_output_plan(rng, wallet.random_note(300));
+    let note_a = wallet.random_note(200);
+    let note_b = wallet.random_note(300);
+    let (rcv_a, theta_a, plan_a) = build_output_plan(rng, note_a);
+    let (rcv_b, theta_b, plan_b) = build_output_plan(rng, note_b);
+    let alpha_a = theta_a.randomizer::<effect::Output>(note_a.commitment());
+    let alpha_b = theta_b.randomizer::<effect::Output>(note_b.commitment());
     let mut items = [
         (plan_a.descriptor(), alpha_a, rcv_a),
         (plan_b.descriptor(), alpha_b, rcv_b),
@@ -1672,7 +1668,7 @@ fn spend_plan_at(
     value: u64,
 ) -> action::Plan<effect::Spend> {
     let note = wallet.random_note(value);
-    let (rcv, theta, _alpha) = spend_witness(rng, &note);
+    let (rcv, theta) = spend_witness(rng);
     action::Plan::spend(note, theta, rcv, |alpha| {
         ask.derive_action_private(&alpha).derive_action_public()
     })
@@ -1697,7 +1693,7 @@ fn plan_value_balance_accepts_boundary_negative_max_money() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let note = wallet.random_note(MAX_MONEY);
-    let (_rcv, _alpha, output) = build_output_plan(rng, note);
+    let (_rcv, _theta, output) = build_output_plan(rng, note);
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output]);
 
     assert_eq!(

@@ -7,7 +7,7 @@ This chapter covers each layer, then shows the complete flow from action creatio
 
 Each tachyaction requires a fresh randomized key pair.
 
-The planner begins authorization by selecting arbitrary `theta` and a relevant note for each action. The custody device is provided each note and `theta` so it may independently confirm planning work.
+The planner begins authorization by selecting arbitrary `theta` and a relevant note for each action. The custody device is provided each note and `theta` so it may independently confirm planning work: it checks each output's `cm` against its note, derives each `alpha` from `theta` and the planned `cm`, and checks each `rk`.
 
 ```mermaid
 flowchart TB
@@ -23,7 +23,7 @@ flowchart TB
     spend_alpha -->|"rk = ak + [alpha]G"| plan
     output_alpha -->|"rk = [alpha]G"| plan
 
-    plan["action plan { rk, note, theta, rcv, effect }"]
+    plan["action plan { rk, note, cm, theta, rcv, effect }"]
     plan ===|"bundle digest"| sighash((sighash))
 
     spend_alpha -->|"rsk = ask + alpha"| sign
@@ -36,8 +36,10 @@ flowchart TB
 
 The arbitrary entropy `theta` which combines with note commitment `cm` to deterministically produce the randomizer `alpha`:
 
-$$ \alpha_{\text{spend}} = \text{BLAKE2b-512}_\text{Tachyon-Spend}(\theta \| \mathsf{cm}) $$
-$$ \alpha_{\text{output}} = \text{BLAKE2b-512}_\text{Tachyon-Output}(\theta \| \mathsf{cm}) $$
+$$ \alpha_{\text{spend}} = \text{Poseidon}_\text{Tachyon-Spend}(\theta, \mathsf{cm}) $$
+$$ \alpha_{\text{output}} = \text{Poseidon}_\text{Tachyon-Output}(\theta, \mathsf{cm}) $$
+
+`theta` and the Poseidon output are elements of $\mathbb{F}_p$, and `alpha` is that output read as a scalar in $\mathbb{F}_q$, which is larger.
 
 Actions are signed with a unique per-action `rsk` signing key.
 Spends and outputs have different relationships between `alpha` and `rsk`, but in both cases,
@@ -107,7 +109,7 @@ The sighash is computed at the transaction layer, incorporating the bundle commi
 The tachyon crate contributes its bundle commitment; a transaction-level crate computes the sighash and passes it in as opaque bytes.
 
 This binds every signature to the complete set of effecting data across all pools.
-Since `rk` is itself a commitment to `cm` (via `alpha`'s derivation from `theta` and `cm`), the signature transitively binds each action to its tachygram without the tachygram appearing in the action.
+The stamp steps derive `alpha` in-circuit from the witnessed `theta` and the `cm` their left header certifies, so `rk` is itself a commitment to `cm`, and the signature transitively binds each action to its tachygram without the tachygram appearing in the action.
 
 Tachyon also contributes to the transaction-level `auth_digest` that backs `wtxid`. See [Transaction Identifiers](./transaction-identifiers.md) for the formula and how aggregation changes the authorization form.
 
@@ -260,15 +262,15 @@ rect rgb(100, 149, 237, 0.1)
         note over User: random rcv
         note over User: cm = Poseidon(pk, psi, rcm, v)
         alt spend
-            note over User: alpha = Blake2b(theta || cm)
+            note over User: alpha = Poseidon(theta, cm)
             note over User: rk = ak + [alpha]G
             note over User: cv = Pedersen(v, rcv)
         else output
-            note over User: alpha = Blake2b(theta || cm)
+            note over User: alpha = Poseidon(theta, cm)
             note over User: rk = [alpha]G
             note over User: cv = Pedersen(-v, rcv)
         end
-        note over User: action_plan { rk, note, theta, rcv, effect }
+        note over User: action_plan { rk, note, cm, theta, rcv, effect }
     end
 
     note over User: bundle_plan { action_plan[], value_balance }
@@ -293,10 +295,14 @@ par Authorizing
         loop per action
             alt spend
                 note over Custody: cv = Pedersen(v, rcv)
+                note over Custody: alpha = Poseidon(theta, cm)
+                note over Custody: assert rk == ak + [alpha]G
             else output
                 note over Custody: cv = Pedersen(-v, rcv)
+                note over Custody: assert cm == Poseidon(pk, psi, rcm, v)
+                note over Custody: alpha = Poseidon(theta, cm)
+                note over Custody: assert rk == [alpha]G
             end
-            note over Custody: action_digest_i = Poseidon(cv || rk)
         end
         note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
         note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon)
@@ -308,7 +314,7 @@ par Authorizing
         end
 
         loop per spend action
-            note over Custody: alpha = Blake2b(theta || cm)
+            note over Custody: alpha = Poseidon(theta, cm)
             note over Custody: rsk = ask + alpha
             note over Custody: sig = Sign(rsk, sighash)
         end
@@ -322,7 +328,7 @@ and Proving
         note over User: select anchor
 
         loop per action
-        critical anchor, action plan { rk, note, theta, rcv, effect }, pak { ak, nk }
+        critical anchor, action plan { rk, note, cm, theta, rcv, effect }, pak { ak, nk }
                 alt effect == spend
                     User --> User: rk == ak + [alpha]G
                     note over User: mk = Poseidon(psi, nk)
