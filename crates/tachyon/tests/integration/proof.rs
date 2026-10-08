@@ -111,8 +111,9 @@ fn honest_spend_bind(
     spendable: Pcd<spendable::NoteSpendable>,
 ) -> Pcd<spend::SpendHeader> {
     let master_pcd = honest_master(rng, user, *note);
+    let rcv = value::Trapdoor::random(rng);
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, spend::SpendBind, (), spendable, master_pcd)
+        .fuse(rng, spend::SpendBind, (rcv,), spendable, master_pcd)
         .expect("SpendBind honest");
     bind_pcd
 }
@@ -120,18 +121,16 @@ fn honest_spend_bind(
 fn honest_spend_stamp(
     rng: &mut StdRng,
     user: &WalletSim,
-    note: &Note,
     bind_pcd: Pcd<spend::SpendHeader>,
 ) -> Pcd<stamp::Stamp> {
-    let (rcv, theta) = spend_witness(rng);
-    let master_pcd = honest_master(rng, user, *note);
+    let (_rcv, theta) = spend_witness(rng);
     let (stamp, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             stamp::SpendStamp,
-            witness::spend_stamp((*bind_pcd.data(), *master_pcd.data()), rcv, theta, user.pak),
+            witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
-            master_pcd,
+            Proof::trivial().carry::<()>(()),
         )
         .expect("SpendStamp honest");
     stamp
@@ -148,7 +147,7 @@ fn same_epoch_honest_spend_accepted() {
 
     let spendable = user.spendable_init(rng, &note, &pool, cm_height);
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable);
-    let stamp = honest_spend_stamp(rng, &user, &note, bind_pcd);
+    let stamp = honest_spend_stamp(rng, &user, bind_pcd);
 
     let expected = TachygramSetPoly::from_iter([
         user.nf_at(&note, epoch).into(),
@@ -361,13 +360,16 @@ fn spend_bind_honest() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let (_cm, nf_current, nf_next, _anchor) = *bind_pcd.data();
+    let (_cm, nf_current, nf_next, _anchor, _pk, _cv) = *bind_pcd.data();
     assert_eq!(nf_current, user.nf_at(&note, spend_epoch));
     assert_eq!(nf_next, user.nf_at(&note, spend_epoch.next().unwrap()));
 }
 
+/// A forged note reaches `SpendBind` only as the master of another
+/// commitment, and `SpendStamp` requires `pak` to derive the bound note's
+/// `pk`.
 #[test]
-fn spend_stamp_rejects_invalid_note() {
+fn spend_rejects_invalid_note() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::random(rng);
     let other = WalletSim::random(rng);
@@ -387,46 +389,29 @@ fn spend_stamp_rejects_invalid_note() {
     let wrong_value = value::Positive::try_from(999_999u64).expect("test value in range");
     assert_ne!(u64::from(wrong_value), u64::from(note.value));
 
-    // The nullifier pair binds honestly at SpendBind; the note-level checks
-    // (value, pak, cm) live at SpendStamp, which proves the action.
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
-    let cases = [
-        (
-            "value inflation",
-            phantom,
-            user.pak,
-            "SpendStamp: note does not match the spend",
-        ),
+    // `SpendBind` reads the value off a certified `NoteMaster`, so forging it
+    // means supplying a master for a different note.
+    let forgeries = [
+        ("value inflation", phantom),
         (
             "wrong value",
             Note {
                 value: wrong_value,
                 ..note
             },
-            user.pak,
-            "SpendStamp: note does not match the spend",
-        ),
-        (
-            "unrelated pak",
-            note,
-            other.pak,
-            "SpendStamp: pak not related to note",
         ),
     ];
-
-    for (label, spend_note, pak, expected) in cases {
-        let (rcv, theta) = spend_witness(rng);
-        // The note arrives on a certified `NoteMaster`, so forging the note
-        // means supplying a master for a different note.
-        let master_pcd = honest_master(rng, &user, spend_note);
+    for (label, forged) in forgeries {
+        let master_pcd = honest_master(rng, &user, forged);
+        let rcv = value::Trapdoor::random(rng);
         let err = PROOF_SYSTEM
             .fuse(
                 rng,
-                stamp::SpendStamp,
-                witness::spend_stamp((*bind_pcd.data(), *master_pcd.data()), rcv, theta, pak),
-                bind_pcd.clone(),
+                spend::SpendBind,
+                (rcv,),
+                spendable_pcd.clone(),
                 master_pcd,
             )
             .err()
@@ -434,8 +419,29 @@ fn spend_stamp_rejects_invalid_note() {
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
-        assert_eq!(inner.to_string(), expected, "{label}");
+        assert_eq!(
+            inner.to_string(),
+            "SpendBind: master does not match note",
+            "{label}"
+        );
     }
+
+    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
+    let (_rcv, theta) = spend_witness(rng);
+    let err = PROOF_SYSTEM
+        .fuse(
+            rng,
+            stamp::SpendStamp,
+            witness::spend_stamp((*bind_pcd.data(), ()), theta, other.pak),
+            bind_pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .err()
+        .unwrap();
+    let ragu_core::Error::InvalidWitness(inner) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(inner.to_string(), "SpendStamp: pak not related to note");
 }
 
 /// Zero-value notes are valid, so both stamping steps accept them: an output
@@ -479,15 +485,14 @@ fn step_accepts_zero_value_note() {
         let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
         let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
-        let (rcv, theta) = spend_witness(rng);
-        let master_pcd = honest_master(rng, &user, note);
+        let (_rcv, theta) = spend_witness(rng);
         PROOF_SYSTEM
             .fuse(
                 rng,
                 stamp::SpendStamp,
-                witness::spend_stamp((*bind_pcd.data(), *master_pcd.data()), rcv, theta, user.pak),
+                witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak),
                 bind_pcd,
-                master_pcd,
+                Proof::trivial().carry::<()>(()),
             )
             .expect("spend of a zero-value note");
     }
@@ -515,7 +520,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
     let lifted = user.lift(rng, spendable, unspent, &note);
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, lifted);
-    let (_cm, nf_current, _nf_next, _anchor) = *bind_pcd.data();
+    let (_cm, nf_current, _nf_next, _anchor, _pk, _cv) = *bind_pcd.data();
     assert_eq!(
         nf_current,
         user.nf_at(&note, epoch2),
@@ -527,7 +532,7 @@ fn spend_after_lift_publishes_anchor_epoch_nullifiers() {
         "nf_1 was consumed by the lift"
     );
 
-    let stamp = honest_spend_stamp(rng, &user, &note, bind_pcd);
+    let stamp = honest_spend_stamp(rng, &user, bind_pcd);
     let expected = TachygramSetPoly::from_iter([
         user.nf_at(&note, epoch2).into(),
         user.nf_at(&note, EpochIndex::new(3)).into(),
@@ -548,7 +553,7 @@ fn spend_stamp_assembles_tachygrams() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-    let stamp_pcd = honest_spend_stamp(rng, &user, &note, bind_pcd);
+    let stamp_pcd = honest_spend_stamp(rng, &user, bind_pcd);
     let (_actions, tg_commit, _anchor) = *stamp_pcd.data();
     let expected = TachygramSetPoly::from_iter([
         Tachygram::from(user.nf_at(&note, spend_epoch)),
@@ -1130,41 +1135,6 @@ fn master_seed_carries_the_note() {
     );
 }
 
-/// A master for one note cannot serve a spend of another: `SpendStamp`
-/// compares the two commitments.
-#[test]
-fn spend_stamp_rejects_a_master_for_another_note() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let user = WalletSim::new(shared_sk());
-    let mut pool = PoolSim::genesis(rng);
-    let note = user.random_note(500);
-    let other = user.random_note(700);
-    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
-    let height = pool.height();
-    let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
-    let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
-
-    let (rcv, theta) = spend_witness(rng);
-    let master_pcd = honest_master(rng, &user, other);
-    let err = PROOF_SYSTEM
-        .fuse(
-            rng,
-            stamp::SpendStamp,
-            witness::spend_stamp((*bind_pcd.data(), *master_pcd.data()), rcv, theta, user.pak),
-            bind_pcd,
-            master_pcd,
-        )
-        .err()
-        .unwrap();
-    let ragu_core::Error::InvalidWitness(inner) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "SpendStamp: note does not match the spend"
-    );
-}
-
 /// The seed derives the note's payment key from `pak`, so a note addressed to
 /// another key yields the master of a different note.
 #[test]
@@ -1399,9 +1369,10 @@ fn spend_bind_rejects_a_master_for_another_note() {
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
     let foreign = honest_master(rng, &user, other);
+    let rcv = value::Trapdoor::random(rng);
 
     let err = PROOF_SYSTEM
-        .fuse(rng, spend::SpendBind, (), spendable, foreign)
+        .fuse(rng, spend::SpendBind, (rcv,), spendable, foreign)
         .err()
         .unwrap();
     let ragu_core::Error::InvalidWitness(inner) = err else {
@@ -1434,8 +1405,9 @@ fn spend_bind_derives_a_pair_across_a_group_boundary() {
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable);
 
+    let (cm, nf_current, nf_next, bind_anchor, _pk, _cv) = *bind_pcd.data();
     assert_eq!(
-        *bind_pcd.data(),
+        (cm, nf_current, nf_next, bind_anchor),
         (
             note.commitment(),
             user.nf_at(&note, epoch),
@@ -1458,19 +1430,17 @@ fn spend_stamp_rejects_a_mismatched_stamp_accumulator() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
-    let (rcv, theta) = spend_witness(rng);
-    let master_pcd = honest_master(rng, &user, note);
-    let (.., action_set, _pair) =
-        witness::spend_stamp((*bind_pcd.data(), *master_pcd.data()), rcv, theta, user.pak);
+    let (_rcv, theta) = spend_witness(rng);
+    let (.., action_set, _pair) = witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak);
     // A foreign tachygram in place of the confirmed pair.
     let forged = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]);
 
     expect_invalid(
         rng,
         stamp::SpendStamp,
-        (rcv, theta, user.pak, action_set, forged),
+        (theta, user.pak, action_set, forged),
         bind_pcd,
-        master_pcd,
+        Proof::trivial().carry::<()>(()),
         "SpendStamp: tachygram set does not commit to the nullifier pair",
     );
 }
@@ -1487,23 +1457,20 @@ fn spend_stamp_rejects_a_foreign_action_set() {
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
-    let (rcv, theta) = spend_witness(rng);
-    let master_pcd = honest_master(rng, &user, note);
-    // A different trapdoor yields a different cv, so a different digest. The
-    // tachygram set comes off the bind header, so it is honest either way.
-    let (.., foreign, tachygram_set) = witness::spend_stamp(
-        (*bind_pcd.data(), *master_pcd.data()),
-        value::Trapdoor::random(rng),
-        theta,
-        user.pak,
-    );
+    let (_rcv, theta) = spend_witness(rng);
+    // A different entropy yields a different alpha and rk, so a different
+    // digest. The tachygram set comes off the bind header, so it is honest
+    // either way.
+    let (_, foreign_theta) = spend_witness(rng);
+    let (.., foreign, tachygram_set) =
+        witness::spend_stamp((*bind_pcd.data(), ()), foreign_theta, user.pak);
 
     expect_invalid(
         rng,
         stamp::SpendStamp,
-        (rcv, theta, user.pak, foreign, tachygram_set),
+        (theta, user.pak, foreign, tachygram_set),
         bind_pcd,
-        master_pcd,
+        Proof::trivial().carry::<()>(()),
         "SpendStamp: action set does not commit to the action",
     );
 }
@@ -1594,7 +1561,7 @@ fn expected_pad(note: &Note) -> Tachygram {
 }
 
 /// `OutputBind` emits the note's commitment and pad, both derived natively,
-/// and its value.
+/// and its negated value committed under the unit trapdoor.
 #[test]
 fn output_bind_publishes_the_note_pair() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1604,13 +1571,12 @@ fn output_bind_publishes_the_note_pair() {
         .seed(rng, output::OutputBind, (note,))
         .expect("OutputBind honest");
 
-    let (cm, pad, value) = *pcd.data();
     assert_eq!(
-        (cm, pad, u64::from(value)),
+        *pcd.data(),
         (
             Tachygram::from(note.commitment()),
             expected_pad(&note),
-            u64::from(note.value)
+            value::Trapdoor::ONE.commit(-note.value),
         )
     );
 }
@@ -1768,15 +1734,17 @@ fn spend_action_commit(
     theta: ActionEntropy,
     rcv: value::Trapdoor,
 ) -> ActionSetCommit {
-    let bind_pcd = honest_spend_bind(rng, user, &note, spendable);
     let master_pcd = honest_master(rng, user, note);
+    let (bind_pcd, ()) = PROOF_SYSTEM
+        .fuse(rng, spend::SpendBind, (rcv,), spendable, master_pcd)
+        .expect("SpendBind honest");
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             stamp::SpendStamp,
-            witness::spend_stamp((*bind_pcd.data(), *master_pcd.data()), rcv, theta, user.pak),
+            witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
-            master_pcd,
+            Proof::trivial().carry::<()>(()),
         )
         .expect("SpendStamp honest");
     pcd.data().0
