@@ -478,9 +478,11 @@ impl Step for UnspentBind {
         ): <Self::Left as Header>::Data,
         (nullifiers_cm, _, nf_commit, _): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // Defensive: every producer covers at least one epoch.
-        // TODO: a real circuit needs a range decomposition of the difference;
-        // mock ragu accepts the native comparison.
+        // Defensive. `QrUnspentInit` emits `epoch_next = epoch_start + 1`, and
+        // every other producer only raises `epoch_next`, so every
+        // `ArbitraryUnspent` covers at least one epoch.
+        // TODO: a real circuit needs a range decomposition of
+        // `epoch_next - epoch_start`; mock ragu accepts the native comparison.
         if unspent_epoch_next <= unspent_epoch_start {
             return Err(ragu_core::Error::InvalidWitness(
                 "UnspentBind: segment covers no epoch".into(),
