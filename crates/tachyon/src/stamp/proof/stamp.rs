@@ -16,7 +16,6 @@ use crate::{
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
-    value,
 };
 
 /// Header for a stamp, representing either a single action or many
@@ -57,19 +56,17 @@ impl Header for Stamp {
 
 /// Proves an output's action and publishes its stamp.
 ///
-/// Reads `cm`, `pad` and `unit_cv` off the [`OutputHeader`]
-/// [`OutputBind`](super::output::OutputBind) derived, re-randomizes `unit_cv`
-/// to the value commitment `cv` under `rcv`, derives the action randomizer
-/// `alpha` from the witnessed `theta` and `cm`, then the randomized action key
-/// `rk`, and enforces the one-action set plus the stamp accumulator over the
-/// two-element tachygram set `{cm, pad}`.
+/// Reads `cm`, `pad` and `cv` off the [`OutputHeader`]
+/// [`OutputBind`](super::output::OutputBind) derived, derives the action
+/// randomizer `alpha` from the witnessed `theta` and `cm`, then the randomized
+/// action key `rk`, and enforces the one-action set plus the stamp accumulator
+/// over the two-element tachygram set `{cm, pad}`.
 ///
 /// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
 /// `rk` planned over one note matches another only through a preimage.
 ///
-/// Three permutations (`alpha`, the action digest) and two scalar
-/// multiplications (`rk`, $\[\mathsf{rcv}\]\mathcal{R}$); opens the
-/// action-set and tachygram-set polynomials.
+/// Three permutations (`alpha`, the action digest) and one scalar
+/// multiplication (`rk`); opens the action-set and tachygram-set polynomials.
 #[derive(Debug)]
 pub struct OutputStamp;
 
@@ -78,29 +75,18 @@ impl Step for OutputStamp {
     type Left = OutputHeader;
     type Output = Stamp;
     type Right = ();
-    /// `(rcv, theta, anchor, action_set, tachygram_set)`
-    type Witness<'source> = (
-        value::Trapdoor,
-        ActionEntropy,
-        Anchor,
-        ActionSetPoly,
-        TachygramSetPoly,
-    );
+    /// `(theta, anchor, action_set, tachygram_set)`
+    type Witness<'source> = (ActionEntropy, Anchor, ActionSetPoly, TachygramSetPoly);
 
     const INDEX: Index = Index::new(9);
 
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (rcv, theta, anchor, action_set, tachygram_set): Self::Witness<'source>,
-        (cm, pad, unit_cv): <Self::Left as Header>::Data,
+        (theta, anchor, action_set, tachygram_set): Self::Witness<'source>,
+        (cm, pad, cv): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // Re-randomize from the unit trapdoor to `rcv`. Adding before
-        // subtracting keeps the intermediate off the identity.
-        let cv = unit_cv + rcv.commit(value::Balance::ZERO)
-            - value::Trapdoor::ONE.commit(value::Balance::ZERO);
-
         // TODO: a real circuit squeezes alpha in Fp and needs its bit
         // decomposition to use it as an Fq scalar (p < q, so no reduction);
         // mock ragu embeds it natively.

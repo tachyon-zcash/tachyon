@@ -15,36 +15,34 @@ use crate::{
 /// Header binding an output's tachygram pair and value to one note
 /// (wallet-only).
 ///
-/// Carries the note commitment `cm`, the padding tachygram `pad`, and
-/// `unit_cv`, the note's negated value committed under
-/// [`Trapdoor::ONE`](value::Trapdoor::ONE), all derived from the same note.
-/// The action pair `(cv, rk)` is produced downstream at
-/// [`OutputStamp`](super::stamp::OutputStamp).
+/// Carries the note commitment `cm`, the padding tachygram `pad`, and the
+/// value commitment `cv`, all derived from the same note. `rk` is produced
+/// downstream at [`OutputStamp`](super::stamp::OutputStamp).
 #[derive(Debug)]
 pub struct OutputHeader;
 
 impl Header for OutputHeader {
-    /// `(cm, pad, unit_cv)`
+    /// `(cm, pad, cv)`
     type Data = (Tachygram, Tachygram, value::Commitment);
 
     const SUFFIX: Suffix = Suffix::new(8);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (cm, pad, unit_cv) = *data;
+        let (cm, pad, cv) = *data;
         (
             vec![Fp::from(cm), Fp::from(pad)],
             Vec::new(),
-            vec![Ep::from(unit_cv)],
+            vec![Ep::from(cv)],
             Vec::new(),
         )
     }
 }
 
 /// Derives an output's tachygram pair from one note, and commits its negated
-/// value under the unit trapdoor for [`OutputStamp`](super::stamp::OutputStamp)
-/// to re-randomize.
+/// value as
+/// $\mathsf{cv} = \[-v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
 ///
-/// Four permutations (`cm`, `pad`) and one scalar multiplication (`unit_cv`).
+/// Four permutations (`cm`, `pad`) and two scalar multiplications (`cv`).
 #[derive(Debug)]
 pub struct OutputBind;
 
@@ -53,15 +51,15 @@ impl Step for OutputBind {
     type Left = ();
     type Output = OutputHeader;
     type Right = ();
-    /// `(note,)`.
-    type Witness<'source> = (Note,);
+    /// `(note, rcv)`.
+    type Witness<'source> = (Note, value::Trapdoor);
 
     const INDEX: Index = Index::new(8);
 
     fn witness<'source>(
         &self,
         _ctx: &mut ragu::StepCtx<'_>,
-        (note,): Self::Witness<'source>,
+        (note, rcv): Self::Witness<'source>,
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
@@ -89,6 +87,6 @@ impl Step for OutputBind {
         enforce_nonzero(Fp::from(cm), "OutputBind: note commitment is zero")?;
         enforce_nonzero(Fp::from(pad), "OutputBind: padding tachygram is zero")?;
 
-        Ok(((cm, pad, value::Trapdoor::ONE.commit(-note.value)), ()))
+        Ok(((cm, pad, rcv.commit(-note.value)), ()))
     }
 }

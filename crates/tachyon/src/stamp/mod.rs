@@ -574,16 +574,16 @@ impl ProofStamp {
         .map_err(ProveError::ActionDigest)?;
 
         let (bind_pcd, ()) = PROOF_SYSTEM
-            .seed(rng, output::OutputBind, (note,))
+            .seed(rng, output::OutputBind, (note, rcv))
             .map_err(ProveError::ProofFailed)?;
-        let (cm, pad, _value) = *bind_pcd.data();
+        let (cm, pad, _cv) = *bind_pcd.data();
         let tachygrams = BTreeSet::from_iter([cm, pad]);
 
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 OutputStamp,
-                witness::output_stamp((*bind_pcd.data(), ()), rcv, theta, anchor),
+                witness::output_stamp((*bind_pcd.data(), ()), theta, anchor),
                 bind_pcd,
                 ragu::Proof::trivial().carry::<()>(()),
             )

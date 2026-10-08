@@ -463,14 +463,14 @@ fn step_accepts_zero_value_note() {
         let out_anchor = PoolSim::genesis(rng).anchor();
 
         let (bind_pcd, ()) = PROOF_SYSTEM
-            .seed(rng, output::OutputBind, (zero_note,))
+            .seed(rng, output::OutputBind, (zero_note, out_rcv))
             .expect("bind of a zero-value note");
 
         PROOF_SYSTEM
             .fuse(
                 rng,
                 stamp::OutputStamp,
-                witness::output_stamp((*bind_pcd.data(), ()), out_rcv, out_theta, out_anchor),
+                witness::output_stamp((*bind_pcd.data(), ()), out_theta, out_anchor),
                 bind_pcd,
                 Proof::trivial().carry::<()>(()),
             )
@@ -1561,14 +1561,15 @@ fn expected_pad(note: &Note) -> Tachygram {
 }
 
 /// `OutputBind` emits the note's commitment and pad, both derived natively,
-/// and its negated value committed under the unit trapdoor.
+/// and its negated value committed under `rcv`.
 #[test]
 fn output_bind_publishes_the_note_pair() {
     let rng = &mut StdRng::seed_from_u64(0);
     let note = WalletSim::new(shared_sk()).random_note(200);
+    let rcv = value::Trapdoor::random(rng);
 
     let (pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note,))
+        .seed(rng, output::OutputBind, (note, rcv))
         .expect("OutputBind honest");
 
     assert_eq!(
@@ -1576,7 +1577,7 @@ fn output_bind_publishes_the_note_pair() {
         (
             Tachygram::from(note.commitment()),
             expected_pad(&note),
-            value::Trapdoor::ONE.commit(-note.value),
+            rcv.commit(-note.value),
         )
     );
 }
@@ -1591,13 +1592,13 @@ fn output_stamp_publishes_the_note_pair() {
     let anchor = PoolSim::genesis(rng).anchor();
 
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note,))
+        .seed(rng, output::OutputBind, (note, rcv))
         .expect("OutputBind honest");
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             stamp::OutputStamp,
-            witness::output_stamp((*bind_pcd.data(), ()), rcv, theta, anchor),
+            witness::output_stamp((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             Proof::trivial().carry::<()>(()),
         )
@@ -1620,20 +1621,20 @@ fn output_stamp_rejects_a_mismatched_stamp_accumulator() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(200);
 
+    let (rcv, theta, _plan) = build_output_plan(rng, note);
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note,))
+        .seed(rng, output::OutputBind, (note, rcv))
         .expect("OutputBind honest");
 
-    let (rcv, theta, _plan) = build_output_plan(rng, note);
     let anchor = PoolSim::genesis(rng).anchor();
-    let (.., action_set, _pair) = witness::output_stamp((*bind_pcd.data(), ()), rcv, theta, anchor);
+    let (.., action_set, _pair) = witness::output_stamp((*bind_pcd.data(), ()), theta, anchor);
     // A foreign tachygram in place of the bound pair.
     let forged = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]);
 
     expect_invalid(
         rng,
         stamp::OutputStamp,
-        (rcv, theta, anchor, action_set, forged),
+        (theta, anchor, action_set, forged),
         bind_pcd,
         Proof::trivial().carry::<()>(()),
         "OutputStamp: tachygram set does not commit to the bound pair",
@@ -1657,25 +1658,21 @@ fn output_stamp_rejects_a_foreign_action_set() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(200);
 
+    let (rcv, theta, _plan) = build_output_plan(rng, note);
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note,))
+        .seed(rng, output::OutputBind, (note, rcv))
         .expect("OutputBind honest");
 
-    let (rcv, theta, _plan) = build_output_plan(rng, note);
     let anchor = PoolSim::genesis(rng).anchor();
-    // A different trapdoor yields a different cv, so a different digest. The
+    // A different `theta` yields a different rk, so a different digest. The
     // tachygram set comes off the bind header, so it is honest either way.
-    let (.., foreign, tachygram_set) = witness::output_stamp(
-        (*bind_pcd.data(), ()),
-        value::Trapdoor::random(rng),
-        theta,
-        anchor,
-    );
+    let (.., foreign, tachygram_set) =
+        witness::output_stamp((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
 
     expect_invalid(
         rng,
         stamp::OutputStamp,
-        (rcv, theta, anchor, foreign, tachygram_set),
+        (theta, anchor, foreign, tachygram_set),
         bind_pcd,
         Proof::trivial().carry::<()>(()),
         "OutputStamp: action set does not commit to the action",
@@ -1691,14 +1688,14 @@ fn output_action_commit(
     rcv: value::Trapdoor,
 ) -> ActionSetCommit {
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note,))
+        .seed(rng, output::OutputBind, (note, rcv))
         .expect("OutputBind honest");
     let anchor = PoolSim::genesis(rng).anchor();
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
             stamp::OutputStamp,
-            witness::output_stamp((*bind_pcd.data(), ()), rcv, theta, anchor),
+            witness::output_stamp((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             Proof::trivial().carry::<()>(()),
         )
