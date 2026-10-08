@@ -172,6 +172,49 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
     }
 }
 
+/// Five buckets pad to sixteen leaves by repeating the last, so the tree has
+/// two levels of nodes and the padding slots hold clones. Every leaf replays a
+/// real bucket: its own, or the last for a padding slot.
+#[test]
+fn evidence_tree_padded_leaves_replay_the_last_bucket() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let (pool, final_anchor) = small_epoch(rng);
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+
+    let routed = build_qr_partition(
+        rng,
+        &pool,
+        (Anchor::default(), final_anchor),
+        discriminant,
+        24,
+        3,
+    );
+    assert_eq!(routed.len(), 8, "three layers leave one intake per profile");
+    let sealed = routed
+        .into_iter()
+        .take(5)
+        .map(|intake| seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO)))
+        .collect::<Vec<_>>();
+    let expected = sealed
+        .iter()
+        .map(|bucket| *bucket.pcd.data())
+        .collect::<Vec<_>>();
+    let last = *expected.last().expect("five buckets");
+
+    let tree = build_evidence_tree(rng, sealed);
+    assert_eq!(tree.leaves.len(), 16, "five buckets pad to two levels");
+
+    for (index, leaf) in tree.leaves.iter().enumerate() {
+        let replayed = open_evidence_tree(rng, tree.pcd.clone(), leaf);
+        let bucket = expected.get(index).copied().unwrap_or(last);
+        assert_eq!(
+            *replayed.pcd.data(),
+            bucket,
+            "leaf {index} replays its bucket, or the last for padding"
+        );
+    }
+}
+
 /// The tree is transparent to everything downstream: a replayed bucket starts
 /// the same segment the sealed one does, and the wallet binds it.
 #[test]

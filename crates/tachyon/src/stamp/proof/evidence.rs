@@ -103,6 +103,8 @@ impl Header for EvidenceTreePair {
 
 /// Admit one sealed [`QrBucket`] as a one-leaf [`EvidenceTree`].
 ///
+/// Three permutations (the leaf digest).
+///
 /// # Soundness
 ///
 /// Every element of the digest is threaded from a bucket PCD, so the emitted
@@ -143,10 +145,10 @@ impl Step for EvidenceTreeLeaf {
 
 /// Admit two sealed [`QrBucket`]s as one half of a node.
 ///
-/// Two leaf digests cost six of about seven permutations, more than any other
-/// step in this module. The two sponges absorb the same four network fields and
-/// share nothing, so this is the first step to drop if a real circuit's budget
-/// is exceeded.
+/// Six permutations (two leaf digests), more than any other step in this
+/// module. The two sponges absorb the same four network fields and share
+/// nothing, so this is the first step to drop if a real circuit's budget is
+/// exceeded.
 ///
 /// # Soundness
 ///
@@ -238,6 +240,8 @@ impl Step for EvidenceTreeLeafPair {
 
 /// Pair two [`EvidenceTree`]s of one network as half a node.
 ///
+/// No permutations.
+///
 /// # Soundness
 ///
 /// Both roots are threaded, and the four equalities make the emitted header's
@@ -302,6 +306,8 @@ impl Step for EvidenceTreePairFuse {
 ///
 /// The children are ordered `(left.0, left.1, right.0, right.1)`, which is the
 /// order [`EvidenceTreeDescend`] witnesses them in.
+///
+/// One permutation (the node).
 ///
 /// # Soundness
 ///
@@ -385,6 +391,8 @@ impl Step for EvidenceTreeFuse {
 /// time. A builder caps a tree at most `LEVELS - 1` times, until its depth is a
 /// multiple of that.
 ///
+/// One permutation (the node).
+///
 /// # Soundness
 ///
 /// The root is threaded and repeated into every child slot, so the input tree
@@ -424,6 +432,8 @@ impl Step for EvidenceTreeCap {
 /// Each level is a node's children, ordered as the node hashes them, and two
 /// side bits, outer first: the outer bit selects a half and the inner bit
 /// selects within it.
+///
+/// Four permutations (one node per level).
 ///
 /// # Soundness
 ///
@@ -501,6 +511,8 @@ impl Step for EvidenceTreeDescend {
 }
 
 /// Replay the [`QrBucket`] a one-leaf [`EvidenceTree`] holds.
+///
+/// Three permutations (the leaf digest).
 ///
 /// # Soundness
 ///

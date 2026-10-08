@@ -242,6 +242,19 @@ A query walks back down. `EvidenceTreeDescend` witnesses one node's four childre
 Binding the profile into the leaf is what makes the replay safe: a real bucket's contents presented under the tested value's own profile would pass the fold and open nonzero, proving exclusion for a value published in a different bucket.
 A leaf absorbs nine elements and a node four, so no path can stop one level short and present a node as a bucket.
 
+A leaf digest absorbs nine elements, three permutations at rate four; a node absorbs four, one permutation.
+No evidence step multiplies a point or opens a polynomial:
+
+| Step | Permutations |
+| ---- | ------------ |
+| EvidenceTreeLeaf | 3 (leaf digest) |
+| EvidenceTreeLeafPair | 6 (two leaf digests) |
+| EvidenceTreePairFuse | 0 |
+| EvidenceTreeFuse | 1 (node) |
+| EvidenceTreeCap | 1 (node) |
+| EvidenceTreeDescend | 4 (one node per level) |
+| EvidenceTreeOpen | 3 (leaf digest) |
+
 The tree claims nothing about which buckets it holds, and nothing asks it to.
 A tree over one bucket is as valid as a tree over a whole network; a builder that omits a bucket can only fail to answer for it, never answer wrongly, since the bucket it does serve carries its own whole-epoch claim.
 Two builders, or one builder at two times, may therefore publish different trees for one epoch.
