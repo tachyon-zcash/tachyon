@@ -7,10 +7,9 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use super::{delegation::NoteMaster, output::OutputHeader, pool::AnchorChain, spend::SpendHeader};
+use super::{output::OutputHeader, pool::AnchorChain, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
-    constants::MAX_MONEY,
     entropy::ActionRandomizer,
     keys::{ProofAuthorizingKey, private},
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
@@ -57,11 +56,15 @@ impl Header for Stamp {
 
 /// Proves an output's action and publishes its stamp.
 ///
-/// Mirrors [`SpendStamp`]: reads `cm`, `pad` and the value off the
-/// [`OutputHeader`] [`OutputBind`](super::output::OutputBind) derived,
-/// derives the value commitment `cv` and the randomized action key `rk`, and
-/// enforces the one-action set plus the stamp accumulator over the
+/// Reads `cm`, `pad` and `unit_cv` off the [`OutputHeader`]
+/// [`OutputBind`](super::output::OutputBind) derived, re-randomizes `unit_cv`
+/// to the value commitment `cv` under `rcv`, derives the randomized action key
+/// `rk`, and enforces the one-action set plus the stamp accumulator over the
 /// two-element tachygram set `{cm, pad}`.
+///
+/// Two permutations (the action digest) and two scalar multiplications (`rk`,
+/// $\[\mathsf{rcv}\]\mathcal{R}$); opens the action-set and tachygram-set
+/// polynomials.
 #[derive(Debug)]
 pub struct OutputStamp;
 
@@ -85,16 +88,13 @@ impl Step for OutputStamp {
         &self,
         ctx: &mut ragu::StepCtx<'_>,
         (rcv, alpha, anchor, action_set, tachygram_set): Self::Witness<'source>,
-        (cm, pad, value): <Self::Left as Header>::Data,
+        (cm, pad, unit_cv): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if u64::from(value) > MAX_MONEY {
-            return Err(ragu_core::Error::InvalidWitness(
-                "OutputStamp: note value exceeds maximum".into(),
-            ));
-        }
-
-        let cv = rcv.commit(-value);
+        // Re-randomize from the unit trapdoor to `rcv`. Adding before
+        // subtracting keeps the intermediate off the identity.
+        let cv = unit_cv + rcv.commit(value::Balance::ZERO)
+            - value::Trapdoor::ONE.commit(value::Balance::ZERO);
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
@@ -128,15 +128,19 @@ impl Step for OutputStamp {
 
 /// Proves a spend's action and publishes its stamp.
 ///
-/// The spent note arrives certified on the right [`NoteMaster`], and `cm`
-/// equality binds it to the [`SpendHeader`]. The step derives the value
-/// commitment `cv` and the randomized action key `rk`, and enforces the
-/// one-action set plus the stamp accumulator over the two-element tachygram set
-/// `{nf_current, nf_next}` (the pair [`SpendBind`](super::spend::SpendBind)
-/// derived from the master key).
+/// The spent note's `pk` and value commitment `cv` arrive on the
+/// [`SpendHeader`] [`SpendBind`](super::spend::SpendBind) derived. The step
+/// derives the randomized action key `rk`, and enforces the one-action set
+/// plus the stamp accumulator over the two-element tachygram set
+/// `{nf_current, nf_next}` (the pair `SpendBind` derived from the master
+/// key).
 ///
 /// `pk = payment_key(ak, nk)` is the only thing tying `ak`, and so `rk`, to
 /// the note.
+///
+/// Three permutations (`pk`, the action digest) and one scalar
+/// multiplication (`rk`); opens the action-set and tachygram-set
+/// polynomials.
 #[derive(Debug)]
 pub struct SpendStamp;
 
@@ -144,10 +148,9 @@ impl Step for SpendStamp {
     type Aux<'source> = ();
     type Left = SpendHeader;
     type Output = Stamp;
-    type Right = NoteMaster;
-    /// `(rcv, alpha, pak, action_set, tachygram_set)`
+    type Right = ();
+    /// `(alpha, pak, action_set, tachygram_set)`
     type Witness<'source> = (
-        value::Trapdoor,
         ActionRandomizer<effect::Spend>,
         ProofAuthorizingKey,
         ActionSetPoly,
@@ -159,25 +162,15 @@ impl Step for SpendStamp {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (rcv, alpha, pak, action_set, tachygram_set): Self::Witness<'source>,
-        (cm, nf_current, nf_next, anchor): <Self::Left as Header>::Data,
-        (master_cm, note, _mk): <Self::Right as Header>::Data,
+        (alpha, pak, action_set, tachygram_set): Self::Witness<'source>,
+        (_cm, nf_current, nf_next, anchor, pk, cv): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        if u64::from(note.value) > MAX_MONEY {
-            return Err(ragu_core::Error::InvalidWitness(
-                "SpendStamp: note value exceeds maximum".into(),
-            ));
-        }
         enforce_zero(
-            Fp::from(note.pk) - Fp::from(pak.derive_payment_key()),
+            Fp::from(pk) - Fp::from(pak.derive_payment_key()),
             "SpendStamp: pak not related to note",
         )?;
-        enforce_zero(
-            Fp::from(master_cm) - Fp::from(cm),
-            "SpendStamp: note does not match the spend",
-        )?;
 
-        let cv = rcv.commit(note.value);
         let rk = pak.ak.derive_action_public(&alpha);
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
             ragu_core::Error::InvalidWitness("SpendStamp: action digest construction failed".into())

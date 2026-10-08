@@ -402,8 +402,8 @@ pub fn unspent_lift(
 /// Prepare the witness for [`OutputStamp`]: `(rcv, alpha, anchor,
 /// action_set, tachygram_set)`.
 ///
-/// Reads the tachygram pair and the value off the bind header and derives the
-/// action from the negated value and `alpha`.
+/// Reads the tachygram pair and `unit_cv` off the bind header and derives the
+/// action from `unit_cv` re-randomized to `rcv` and from `alpha`.
 ///
 /// # Panics
 ///
@@ -416,14 +416,15 @@ pub fn output_stamp(
     alpha: ActionRandomizer<effect::Output>,
     anchor: Anchor,
 ) -> StepWitness<'static, OutputStamp> {
-    let (cm, pad, value) = left;
+    let (cm, pad, unit_cv) = left;
 
     #[expect(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
     )]
     let digest = ActionDigest::new(
-        rcv.commit(-value),
+        unit_cv + rcv.commit(value::Balance::ZERO)
+            - value::Trapdoor::ONE.commit(value::Balance::ZERO),
         private::ActionSigningKey::new(&alpha).derive_action_public(),
     )
     .expect("action digest");
@@ -437,36 +438,30 @@ pub fn output_stamp(
     )
 }
 
-/// Prepare the witness for [`SpendStamp`]: `(rcv, alpha, pak, action_set,
+/// Prepare the witness for [`SpendStamp`]: `(alpha, pak, action_set,
 /// tachygram_set)`.
 ///
-/// Reads the nullifier pair off the bind header and the note off the right
-/// [`NoteMaster`](crate::stamp::proof::delegation::NoteMaster), and derives
-/// the action from the note's value and `pak` randomized by `alpha`.
+/// Reads the nullifier pair and `cv` off the bind header, and derives the
+/// action from `cv` and `pak` randomized by `alpha`.
 ///
 /// # Panics
 ///
-/// Panics when `rcv` or `alpha` yields an identity point, leaving the action
-/// undigestible.
+/// Panics when `cv` or `rk` is the identity, leaving the action undigestible.
 #[must_use]
 pub fn spend_stamp(
-    (left, right): (StepLeft<SpendStamp>, StepRight<SpendStamp>),
-    rcv: value::Trapdoor,
+    (left, _right): (StepLeft<SpendStamp>, StepRight<SpendStamp>),
     alpha: ActionRandomizer<effect::Spend>,
     pak: ProofAuthorizingKey,
 ) -> StepWitness<'static, SpendStamp> {
-    let (_cm, nf_current, nf_next, _anchor) = left;
-    let (_master_cm, note, _mk) = right;
+    let (_cm, nf_current, nf_next, _anchor, _pk, cv) = left;
 
     #[expect(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
     )]
-    let digest = ActionDigest::new(rcv.commit(note.value), pak.ak.derive_action_public(&alpha))
-        .expect("action digest");
+    let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha)).expect("action digest");
 
     (
-        rcv,
         alpha,
         pak,
         ActionSetPoly::from_iter([digest]),

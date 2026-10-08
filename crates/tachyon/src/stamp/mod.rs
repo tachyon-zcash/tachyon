@@ -415,13 +415,14 @@ impl Plan {
         for ((desc, theta, rcv), (master_pcd, spendable_pcd)) in
             self.spends.into_iter().zip(spend_pcds)
         {
-            // SpendBind: derive the live pair from the note's master key.
+            // SpendBind: derive the live pair from the note's master key and
+            // commit the note's value.
             let (bind_pcd, ()) = PROOF_SYSTEM
-                .fuse(rng, spend::SpendBind, (), spendable_pcd, master_pcd.clone())
+                .fuse(rng, spend::SpendBind, (rcv,), spendable_pcd, master_pcd)
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, anchor, proof) =
-                ProofStamp::prove_spend(rng, theta, rcv, bind_pcd, master_pcd, *pak)?;
+                ProofStamp::prove_spend(rng, theta, bind_pcd, *pak)?;
             entries.push((
                 BTreeSet::from_iter([desc]),
                 digests,
@@ -604,13 +605,13 @@ impl ProofStamp {
     /// components `(digests, tachygrams, anchor, proof)`.
     ///
     /// The nullifier pair `{nf_current, nf_next}` published for data
-    /// availability is read straight off the bind header (derived from the
-    /// master key at [`SpendBind`](spend::SpendBind)). [`SpendStamp`] proves
-    /// the action `(cv, rk)` with `alpha` derived from `theta` and the
-    /// master's note commitment, and enforces the stamp accumulator over the
-    /// pair. The spend's `anchor` is taken as the stamp's anchor; chain
-    /// validation lives inside the spendable lineage. `digests` holds the
-    /// proved action's digest.
+    /// availability and the value commitment `cv` are read straight off the
+    /// bind header (both derived at [`SpendBind`](spend::SpendBind)).
+    /// [`SpendStamp`] proves the action `(cv, rk)` with `alpha` derived from
+    /// `theta` and the bound note commitment, and enforces the stamp
+    /// accumulator over the pair. The spend's `anchor` is taken as the stamp's
+    /// anchor; chain validation lives inside the spendable lineage. `digests`
+    /// holds the proved action's digest.
     ///
     /// # Errors
     ///
@@ -619,17 +620,14 @@ impl ProofStamp {
     pub fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
         theta: ActionEntropy,
-        rcv: value::Trapdoor,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
-        master_pcd: ragu::Pcd<delegation::NoteMaster>,
         pak: ProofAuthorizingKey,
     ) -> Result<StampComponents, ProveError> {
-        let (master_cm, note, _mk) = *master_pcd.data();
-        let alpha = theta.randomizer::<effect::Spend>(master_cm);
-        let digest = ActionDigest::new(rcv.commit(note.value), pak.ak.derive_action_public(&alpha))
+        let (cm, nf_current, nf_next, anchor, _pk, cv) = *bind_pcd.data();
+        let alpha = theta.randomizer::<effect::Spend>(cm);
+        let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha))
             .map_err(ProveError::ActionDigest)?;
 
-        let (_cm, nf_current, nf_next, anchor) = *bind_pcd.data();
         let tachygrams =
             BTreeSet::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]);
 
@@ -637,9 +635,9 @@ impl ProofStamp {
             .fuse(
                 rng,
                 SpendStamp,
-                witness::spend_stamp((*bind_pcd.data(), *master_pcd.data()), rcv, alpha, pak),
+                witness::spend_stamp((*bind_pcd.data(), ()), alpha, pak),
                 bind_pcd,
-                master_pcd,
+                ragu::Proof::trivial().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
         let rerand = PROOF_SYSTEM
