@@ -1709,18 +1709,36 @@ j'=j+1,\qquad b'=2b+\mathsf{bit},\qquad R_{j+1}=R_j+1.
 $$
 
 Checking the sibling proves the returned child is **complete** for its class:
-the product relation leaves nowhere else for a matching input root to go. The
-returned child need not itself be pure; an opposite-class extra root only makes
-a non-membership opening harder to satisfy. Creation membership is also safe,
-because splitting and merging never add roots and a zero opening does not depend
-on the bucket's class label. Across the pair of descents, both purity
-substatements are checked, so an honestly materialized pair satisfies all four
-decomposition substatements. The two child proofs are not recombined, however:
-each child individually carries the split checks and its sibling's purity check,
-which proves completeness but not its own purity. This weaker per-branch claim is
-sufficient for the membership and non-membership queries below. Applying the
-construction independently to all $m$ routing buckets produces the round's $2m$
-unmerged children.
+the product relation leaves nowhere else for a matching input root to go.
+Creation membership is also safe, because splitting and merging never add roots
+and a zero opening does not depend on the bucket's class label.
+
+Because a round descends both sides of every split, both purity substatements
+are checked and the split is **exact**: $q_0$ carries precisely the parent's
+$\NQR_{R_j}$ roots and $q_1$ precisely its $\QR_{R_j}$ roots, satisfying all four
+decomposition substatements. The two checks enforce each other, since a stray
+$\QR_{R_j}$ root left in $q_0$ makes the QR-side descent unprovable and a stray
+$\NQR_{R_j}$ root left in $q_1$ makes the NQR-side descent unprovable. The exact
+partition is therefore the only split from which both children can be emitted,
+and it is what routing an epoch means; impure sides are not an expected
+outcome.[^single-branch]
+
+What an individual child *carries* is weaker, because the two child proofs are
+not recombined: each child carries the split checks and its sibling's purity
+check, which proves completeness but not its own purity. This weaker per-branch
+claim is what the membership and non-membership queries below rely on. Applying
+the construction independently to all $m$ routing buckets produces the round's
+$2m$ unmerged children.
+
+[^single-branch]: A builder that wants only the bucket for one profile prefix
+    can descend along that path alone, constraining only the siblings it meets.
+    Such a chain does admit children that retain opposite-class roots, and the
+    resulting bucket is still sound: an extra is a genuine tachygram of the span
+    whose profile differs from the bucket's in a position the query checks, so
+    it can never equal a matching candidate and only makes a non-membership
+    opening stricter. The extras still consume the bucket's degree budget, and
+    every sibling branch is forfeited, so a builder serving arbitrary queries
+    covers all profiles and splits exactly.
 
 $\mathsf{QrIntakeMerge}$ joins two intakes only when they have the same epoch,
 profile, and next discriminant, their anchor ranges are contiguous, and the
