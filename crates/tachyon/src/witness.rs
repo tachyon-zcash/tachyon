@@ -30,7 +30,6 @@ use crate::{
         stamp::{OutputStamp, SpendStamp},
         summary::{SummaryAdvance, SummarySeed},
     },
-    value,
 };
 
 type StepLeft<S> = <<S as Step>::Left as Header>::Data;
@@ -399,38 +398,35 @@ pub fn unspent_lift(
     )
 }
 
-/// Prepare the witness for [`OutputStamp`]: `(rcv, alpha, anchor,
-/// action_set, tachygram_set)`.
+/// Prepare the witness for [`OutputStamp`]: `(alpha, anchor, action_set,
+/// tachygram_set)`.
 ///
-/// Reads the tachygram pair and `unit_cv` off the bind header and derives the
-/// action from `unit_cv` re-randomized to `rcv` and from `alpha`.
+/// Reads the tachygram pair and `cv` off the bind header and derives the
+/// action from `cv` and `alpha`.
 ///
 /// # Panics
 ///
-/// Panics when `rcv` or `alpha` yields an identity point, leaving the action
+/// Panics when `cv` or `alpha` yields an identity point, leaving the action
 /// undigestible.
 #[must_use]
 pub fn output_stamp(
     (left, _right): (StepLeft<OutputStamp>, StepRight<OutputStamp>),
-    rcv: value::Trapdoor,
     alpha: ActionRandomizer<effect::Output>,
     anchor: Anchor,
 ) -> StepWitness<'static, OutputStamp> {
-    let (cm, pad, unit_cv) = left;
+    let (cm, pad, cv) = left;
 
     #[expect(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
     )]
     let digest = ActionDigest::new(
-        unit_cv + rcv.commit(value::Balance::ZERO)
-            - value::Trapdoor::ONE.commit(value::Balance::ZERO),
+        cv,
         private::ActionSigningKey::new(&alpha).derive_action_public(),
     )
     .expect("action digest");
 
     (
-        rcv,
         alpha,
         anchor,
         ActionSetPoly::from_iter([digest]),

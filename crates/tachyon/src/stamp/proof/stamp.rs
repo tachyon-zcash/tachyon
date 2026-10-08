@@ -15,7 +15,6 @@ use crate::{
     primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
-    value,
 };
 
 /// Header for a stamp, representing either a single action or many
@@ -56,15 +55,13 @@ impl Header for Stamp {
 
 /// Proves an output's action and publishes its stamp.
 ///
-/// Reads `cm`, `pad` and `unit_cv` off the [`OutputHeader`]
-/// [`OutputBind`](super::output::OutputBind) derived, re-randomizes `unit_cv`
-/// to the value commitment `cv` under `rcv`, derives the randomized action key
-/// `rk`, and enforces the one-action set plus the stamp accumulator over the
-/// two-element tachygram set `{cm, pad}`.
+/// Reads `cm`, `pad` and `cv` off the [`OutputHeader`]
+/// [`OutputBind`](super::output::OutputBind) derived, derives the randomized
+/// action key `rk`, and enforces the one-action set plus the stamp accumulator
+/// over the two-element tachygram set `{cm, pad}`.
 ///
-/// Two permutations (the action digest) and two scalar multiplications (`rk`,
-/// $\[\mathsf{rcv}\]\mathcal{R}$); opens the action-set and tachygram-set
-/// polynomials.
+/// Two permutations (the action digest) and one scalar multiplication (`rk`);
+/// opens the action-set and tachygram-set polynomials.
 #[derive(Debug)]
 pub struct OutputStamp;
 
@@ -73,9 +70,8 @@ impl Step for OutputStamp {
     type Left = OutputHeader;
     type Output = Stamp;
     type Right = ();
-    /// `(rcv, alpha, anchor, action_set, tachygram_set)`
+    /// `(alpha, anchor, action_set, tachygram_set)`
     type Witness<'source> = (
-        value::Trapdoor,
         ActionRandomizer<effect::Output>,
         Anchor,
         ActionSetPoly,
@@ -87,14 +83,10 @@ impl Step for OutputStamp {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (rcv, alpha, anchor, action_set, tachygram_set): Self::Witness<'source>,
-        (cm, pad, unit_cv): <Self::Left as Header>::Data,
+        (alpha, anchor, action_set, tachygram_set): Self::Witness<'source>,
+        (cm, pad, cv): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // Re-randomize from the unit trapdoor to `rcv`. Adding before
-        // subtracting keeps the intermediate off the identity.
-        let cv = unit_cv + rcv.commit(value::Balance::ZERO)
-            - value::Trapdoor::ONE.commit(value::Balance::ZERO);
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
