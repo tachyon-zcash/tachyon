@@ -1025,8 +1025,8 @@ pub struct WalletSim {
     /// different values draw from disjoint field sequences, and interleaved
     /// draws of other values never shift a stream's position.
     pub notes: RefCell<BTreeMap<u64, StdRng>>,
-    /// Per-note master seed PCDs, keyed by the note's `cm` tachygram.
-    pub masters: RefCell<BTreeMap<Tachygram, Pcd<delegation::NoteMaster>>>,
+    /// Per-note `NoteSecret` PCDs, keyed by the note's `cm` tachygram.
+    pub secrets: RefCell<BTreeMap<Tachygram, Pcd<delegation::NoteSecret>>>,
     /// Per-(note, range) derivation PCDs, keyed by `(cm, epoch_start,
     /// epoch_end)`: repeated derivations of the same exact range share the
     /// proof.
@@ -1039,7 +1039,7 @@ impl WalletSim {
             sk,
             pak: sk.derive_proof_private(),
             notes: RefCell::new(BTreeMap::new()),
-            masters: RefCell::new(BTreeMap::new()),
+            secrets: RefCell::new(BTreeMap::new()),
             derivations: RefCell::new(BTreeMap::new()),
         }
     }
@@ -1090,15 +1090,15 @@ impl WalletSim {
         self.mk(note).derive_nullifier(epoch)
     }
 
-    /// The certified master-key seed PCD for this note, cached by `cm`. The
+    /// The certified `NoteSecret` PCD for this note, cached by `cm`. The
     /// note is witnessed once; every window fuses against the same seed.
-    pub fn master_pcd<RNG: CryptoRng>(
+    pub fn secret_pcd<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         note: Note,
-    ) -> Pcd<delegation::NoteMaster> {
+    ) -> Pcd<delegation::NoteSecret> {
         let cm = Tachygram::from(note.commitment());
-        if let Some(pcd) = self.masters.borrow().get(&cm) {
+        if let Some(pcd) = self.secrets.borrow().get(&cm) {
             return pcd.clone();
         }
         let (pcd, ()) = PROOF_SYSTEM
@@ -1109,7 +1109,7 @@ impl WalletSim {
             )
             .expect("NoteSeed");
 
-        self.masters.borrow_mut().insert(cm, pcd.clone());
+        self.secrets.borrow_mut().insert(cm, pcd.clone());
         pcd
     }
 
@@ -1134,7 +1134,7 @@ impl WalletSim {
         if let Some(pcd) = self.derivations.borrow().get(&key) {
             return pcd.clone();
         }
-        let master = self.master_pcd(rng, note);
+        let secret = self.secret_pcd(rng, note);
 
         let mut merged: Option<Pcd<delegation::NoteNullifiers>> = None;
         for window in 0..windows {
@@ -1145,8 +1145,8 @@ impl WalletSim {
                 .fuse(
                     rng,
                     delegation::NullifierDerive,
-                    witness::nullifier_derive((*master.data(), ()), chunk_start),
-                    master.clone(),
+                    witness::nullifier_derive((*secret.data(), ()), chunk_start),
+                    secret.clone(),
                     Proof::trivial().carry::<()>(()),
                 )
                 .expect("NullifierDerive");
@@ -1344,7 +1344,7 @@ impl WalletSim {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((self.master_pcd(rng, note), spendable_pcd));
+            spend_pcds.push((self.secret_pcd(rng, note), spendable_pcd));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes
