@@ -7,7 +7,7 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use super::{delegation::NoteMaster, spendable::NoteSpendable};
+use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
     constants::MAX_MONEY,
     keys::PaymentKey,
@@ -65,7 +65,7 @@ impl Header for SpendHeader {
 /// Derives a spend's epoch nullifier pair from the note's master key, commits
 /// the note's value, and binds both to the spendable lineage.
 ///
-/// The master is tied to the lineage's note by `master_cm == spendable_cm`.
+/// The secret is tied to the lineage's note by `secret_cm == spendable_cm`.
 /// The pair is `mk`'s nullifiers at the lineage's epoch $e$ and at $e + 1$,
 /// one group sponge each. Both are emitted on the [`SpendHeader`] for the
 /// action-producing step to publish, with the note's `pk` and
@@ -90,7 +90,7 @@ impl Step for SpendBind {
     type Aux<'source> = ();
     type Left = NoteSpendable;
     type Output = SpendHeader;
-    type Right = NoteMaster;
+    type Right = NoteSecret;
     /// `(rcv,)`
     type Witness<'source> = (value::Trapdoor,);
 
@@ -101,11 +101,11 @@ impl Step for SpendBind {
         _ctx: &mut ragu::StepCtx<'_>,
         (rcv,): Self::Witness<'source>,
         (spendable_cm, spendable_epoch_current, anchor): <Self::Left as Header>::Data,
-        (master_cm, note, mk): <Self::Right as Header>::Data,
+        (secret_cm, note, mk): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(master_cm) - Fp::from(spendable_cm),
-            "SpendBind: master does not match note",
+            Fp::from(secret_cm) - Fp::from(spendable_cm),
+            "SpendBind: secret does not match note",
         )?;
         if u64::from(note.value) > MAX_MONEY {
             return Err(ragu_core::Error::InvalidWitness(

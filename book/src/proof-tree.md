@@ -14,7 +14,7 @@ Multiple parties execute the proof tree.
 ### Deriving nullifiers
 
 A wallet proves a window of its note's nullifiers were correctly derived[^nullifiers].
-`NoteSeed` witnesses the note's value and trapdoors and the proof-authorizing key `pak`, derives the note's payment key from `pak` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits a `NoteMaster` carrying `(cm, note, mk)`. `nk` never leaves the step.
+`NoteSeed` witnesses the note's value and trapdoors and the proof-authorizing key `pak`, derives the note's payment key from `pak` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits a `NoteSecret` carrying `(cm, note, mk)`. `nk` never leaves the step.
 `NullifierDerive` consumes that seed. It witnesses the window's start epoch (constrained group-aligned) and its sequence, runs four sponges over $(\texttt{Tachyon-NfDerive}, \mathsf{mk}, w)$ to squeeze the window's 16 nullifiers natively, and binds the sequence to them with one opening at a free challenge (below). It exports the whole window, so the range it announces is derived rather than witnessed.
 `NullifierFuse` concatenates two adjacent nullifier sequences into one, requiring the same `cm` and contiguity (`right.epoch_start == left.epoch_end + 1`).
 The result is a `NoteNullifiers` proving the range `[epoch_start, epoch_end]` commits to the genuine nullifiers of the note identified by `cm`, one factor per covered epoch.
@@ -54,8 +54,8 @@ A single lift can consume an arbitrarily long composed `ArbitraryUnspent`, inclu
 ### Spending
 
 To spend, the wallet runs `SpendBind`.
-It consumes the `NoteSpendable` and the note's `NoteMaster`, and requires `master.cm == spendable.cm`.
-It derives the pair `(nf_current, nf_next)` from the master's `mk`, at the lineage's epoch and the epoch after it, and commits the note's value as `cv` under the witnessed value-randomness.
+It consumes the `NoteSpendable` and the note's `NoteSecret`, and requires `secret.cm == spendable.cm`.
+It derives the pair `(nf_current, nf_next)` from the secret's `mk`, at the lineage's epoch and the epoch after it, and commits the note's value as `cv` under the witnessed value-randomness.
 Nonzero guards close the `nf == 0` degenerate.
 The output `SpendHeader` carries `cm`, the derived pair `(nf_current, nf_next)`, the threaded anchor, the note's payment key `pk`, and `cv`.
 
@@ -287,14 +287,14 @@ Every segment opens on an entry anchor, so only a lineage resting on one lifts: 
 ### Spend binding
 
 Spending a note publishes two nullifiers, one for the current epoch and one for the next, both pinned to the note's genuine derivation.
-`SpendBind` consumes the `NoteSpendable` and the note's `NoteMaster`, and requires `master.cm == spendable.cm`.
-It derives both nullifiers from the master's `mk`, one group sponge each, at $e$ and $e+1$ with $e$ the lineage's epoch. Nothing in the pair is witnessed: `mk` and `cm` were bound together at `NoteSeed`, and $e$ is threaded on the spendable.
+`SpendBind` consumes the `NoteSpendable` and the note's `NoteSecret`, and requires `secret.cm == spendable.cm`.
+It derives both nullifiers from the secret's `mk`, one group sponge each, at $e$ and $e+1$ with $e$ the lineage's epoch. Nothing in the pair is witnessed: `mk` and `cm` were bound together at `NoteSeed`, and $e$ is threaded on the spendable.
 Each published nullifier must be nonzero, or it would collide with the note's own `cm` in the tachygram scan.
-`SpendBind` also commits the note's value as $\mathsf{cv} = [v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$, reading $v$ off the master.
+`SpendBind` also commits the note's value as $\mathsf{cv} = [v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}$, reading $v$ off the secret.
 The output `SpendHeader` threads `cm`, the derived pair, and the anchor, with the note's `pk` and `cv`.
 
-`NoteSeed` computed the master's `cm` from its note, so `master.cm == spendable.cm` rejects a phantom note reusing the same `psi`, and so the same nullifiers, while carrying a different value and hence a different `cm`.
-The note rides only on the wallet-private `NoteMaster`, so it never reaches a published header.
+`NoteSeed` computed the secret's `cm` from its note, so `secret.cm == spendable.cm` rejects a phantom note reusing the same `psi`, and so the same nullifiers, while carrying a different value and hence a different `cm`.
+The note rides only on the wallet-private `NoteSecret`, so it never reaches a published header.
 
 `SpendStamp` completes the publication: it requires the witnessed proof authorizing key to derive the header's `pk`, derives `alpha` from the witnessed `theta` and the header's `cm`, derives the randomized action key `rk`, and commits the one-action set alongside the two-element tachygram set.
 
@@ -381,7 +381,7 @@ flowchart TB
   stamp_out((Stamp))
 
   w_seed --> s_seed
-  s_seed -->|NoteMaster| s_window
+  s_seed -->|NoteSecret| s_window
   w_window --> s_window
   s_window -->|NoteNullifiers| s_dfuse
   s_dfuse --> nf_range
@@ -395,7 +395,7 @@ flowchart TB
   s_unspentbind -->|NoteUnspent| s_lift
   s_lift -->|NoteSpendable| s_bind
 
-  s_seed -->|NoteMaster| s_bind
+  s_seed -->|NoteSecret| s_bind
   w_bind --> s_bind
   s_bind -->|SpendHeader| s_spendstamp
   w_stamp --> s_spendstamp
@@ -477,7 +477,7 @@ flowchart LR
 | EvidenceTreePair | (epoch, anchor_start, anchor_next, discriminant, first, second) |
 | ArbitraryUnspent | (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) |
 | NoteUnspent | (cm, anchor_start, epoch_start, epoch_next, anchor_next) |
-| NoteMaster | (cm, note, mk) |
+| NoteSecret | (cm, note, mk) |
 | NoteNullifiers | (cm, epoch_start, nf_commit, epoch_end) |
 | NoteSpendable | (cm, epoch_current, anchor) |
 | OutputHeader | (cm, pad, unit_cv) |
@@ -511,12 +511,12 @@ flowchart LR
 | UnspentFuse | ArbitraryUnspent | ArbitraryUnspent | left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq | ArbitraryUnspent |
 | UnspentLift | ArbitraryUnspent | QrBucket | value, classes, mask, elapsed_seq, extended_seq, contents | ArbitraryUnspent |
 | UnspentBind | ArbitraryUnspent | NoteNullifiers | elapsed_seq, nf_seq, complement_seq | NoteUnspent |
-| NoteSeed | — | — | value, psi, rcm, pak | NoteMaster |
-| NullifierDerive | NoteMaster | — | epoch_start, seq | NoteNullifiers |
+| NoteSeed | — | — | value, psi, rcm, pak | NoteSecret |
+| NullifierDerive | NoteSecret | — | epoch_start, seq | NoteNullifiers |
 | NullifierFuse | NoteNullifiers | NoteNullifiers | left_seq, merged_seq, right_seq | NoteNullifiers |
 | SpendableInit | NoteNullifiers | — | anchor_prev, creation_set, creation_epoch | NoteSpendable |
 | SpendableLift | NoteSpendable | NoteUnspent | — | NoteSpendable |
-| SpendBind | NoteSpendable | NoteMaster | rcv | SpendHeader |
+| SpendBind | NoteSpendable | NoteSecret | rcv | SpendHeader |
 | OutputBind | — | — | note | OutputHeader |
 | OutputStamp | OutputHeader | — | rcv, theta, anchor, action_set, tachygram_set | Stamp |
 | SpendStamp | SpendHeader | — | theta, pak, action_set, tachygram_set | Stamp |

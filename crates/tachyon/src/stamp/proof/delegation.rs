@@ -37,9 +37,9 @@ use crate::{
 /// re-witnessing the note. `note` is the opening `cm` commits to.
 /// [`SpendBind`](super::spend::SpendBind) reads it.
 #[derive(Clone, Debug)]
-pub struct NoteMaster;
+pub struct NoteSecret;
 
-impl Header for NoteMaster {
+impl Header for NoteSecret {
     /// `(cm, note, mk)`
     type Data = (note::Commitment, Note, NoteMasterKey);
 
@@ -119,7 +119,7 @@ pub struct NoteSeed;
 impl Step for NoteSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = NoteMaster;
+    type Output = NoteSecret;
     type Right = ();
     /// `(value, psi, rcm, pak)`
     type Witness<'source> = (
@@ -183,7 +183,7 @@ pub struct NullifierDerive;
 
 impl Step for NullifierDerive {
     type Aux<'source> = ();
-    type Left = NoteMaster;
+    type Left = NoteSecret;
     type Output = NoteNullifiers;
     type Right = ();
     /// `(epoch_start, seq)`

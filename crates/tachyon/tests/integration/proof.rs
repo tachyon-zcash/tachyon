@@ -110,10 +110,10 @@ fn honest_spend_bind(
     note: &Note,
     spendable: Pcd<spendable::NoteSpendable>,
 ) -> Pcd<spend::SpendHeader> {
-    let master_pcd = honest_master(rng, user, *note);
+    let secret_pcd = honest_secret(rng, user, *note);
     let rcv = value::Trapdoor::random(rng);
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, spend::SpendBind, (rcv,), spendable, master_pcd)
+        .fuse(rng, spend::SpendBind, (rcv,), spendable, secret_pcd)
         .expect("SpendBind honest");
     bind_pcd
 }
@@ -365,7 +365,7 @@ fn spend_bind_honest() {
     assert_eq!(nf_next, user.nf_at(&note, spend_epoch.next().unwrap()));
 }
 
-/// A forged note reaches `SpendBind` only as the master of another
+/// A forged note reaches `SpendBind` only as the secret of another
 /// commitment, and `SpendStamp` requires `pak` to derive the bound note's
 /// `pk`.
 #[test]
@@ -391,8 +391,8 @@ fn spend_rejects_invalid_note() {
 
     let spendable_pcd = user.fresh_spend(rng, &pool, height, &note);
 
-    // `SpendBind` reads the value off a certified `NoteMaster`, so forging it
-    // means supplying a master for a different note.
+    // `SpendBind` reads the value off a certified `NoteSecret`, so forging it
+    // means supplying a secret for a different note.
     let forgeries = [
         ("value inflation", phantom),
         (
@@ -404,7 +404,7 @@ fn spend_rejects_invalid_note() {
         ),
     ];
     for (label, forged) in forgeries {
-        let master_pcd = honest_master(rng, &user, forged);
+        let secret_pcd = honest_secret(rng, &user, forged);
         let rcv = value::Trapdoor::random(rng);
         let err = PROOF_SYSTEM
             .fuse(
@@ -412,7 +412,7 @@ fn spend_rejects_invalid_note() {
                 spend::SpendBind,
                 (rcv,),
                 spendable_pcd.clone(),
-                master_pcd,
+                secret_pcd,
             )
             .err()
             .unwrap();
@@ -421,7 +421,7 @@ fn spend_rejects_invalid_note() {
         };
         assert_eq!(
             inner.to_string(),
-            "SpendBind: master does not match note",
+            "SpendBind: secret does not match note",
             "{label}"
         );
     }
@@ -1093,29 +1093,29 @@ fn expect_invalid<H: ragu::Header, S>(
     assert_eq!(inner.to_string(), message);
 }
 
-/// An honest master seed for a note.
-fn honest_master(rng: &mut StdRng, user: &WalletSim, note: Note) -> Pcd<delegation::NoteMaster> {
-    let (master, ()) = PROOF_SYSTEM
+/// An honest `NoteSecret` for a note.
+fn honest_secret(rng: &mut StdRng, user: &WalletSim, note: Note) -> Pcd<delegation::NoteSecret> {
+    let (secret, ()) = PROOF_SYSTEM
         .seed(
             rng,
             delegation::NoteSeed,
             witness::note_seed(((), ()), note, user.pak),
         )
         .expect("NoteSeed");
-    master
+    secret
 }
 
 /// `NoteSeed` certifies the note's opening alongside its commitment and
 /// master key.
 #[test]
-fn master_seed_carries_the_note() {
+fn note_seed_carries_the_note() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let master = honest_master(rng, &user, note);
+    let secret = honest_secret(rng, &user, note);
 
-    let (cm, opening, mk) = *master.data();
+    let (cm, opening, mk) = *secret.data();
     assert_eq!(cm, note.commitment());
     assert_eq!(mk, user.mk(&note));
     assert_eq!(
@@ -1136,15 +1136,15 @@ fn master_seed_carries_the_note() {
 }
 
 /// The seed derives the note's payment key from `pak`, so a note addressed to
-/// another key yields the master of a different note.
+/// another key yields the secret of a different note.
 #[test]
-fn master_seed_derives_the_payment_key_from_pak() {
+fn note_seed_derives_the_payment_key_from_pak() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let stranger = WalletSim::random(rng);
     let note = user.random_note(500);
 
-    let (master, ()) = PROOF_SYSTEM
+    let (secret, ()) = PROOF_SYSTEM
         .seed(
             rng,
             delegation::NoteSeed,
@@ -1152,7 +1152,7 @@ fn master_seed_derives_the_payment_key_from_pak() {
         )
         .expect("NoteSeed");
 
-    let (cm, opening, _) = *master.data();
+    let (cm, opening, _) = *secret.data();
     assert_eq!(
         Fp::from(opening.pk),
         Fp::from(stranger.pak.derive_payment_key()),
@@ -1161,7 +1161,7 @@ fn master_seed_derives_the_payment_key_from_pak() {
     assert_ne!(
         cm,
         note.commitment(),
-        "the master is not for the supplied note"
+        "the secret is not for the supplied note"
     );
 }
 
@@ -1175,15 +1175,15 @@ fn nullifier_derive_rejects_a_foreign_sequence() {
     let note_a = user.random_note(500);
     let note_b = user.random_note(700);
 
-    let master_a = honest_master(rng, &user, note_a);
-    let (cm_a, ..) = *master_a.data();
+    let secret_a = honest_secret(rng, &user, note_a);
+    let (cm_a, ..) = *secret_a.data();
     let (epoch_start, foreign_seq) =
         witness::nullifier_derive(((cm_a, note_a, user.mk(&note_b)), ()), EpochIndex::new(16));
     expect_invalid(
         rng,
         delegation::NullifierDerive,
         (epoch_start, foreign_seq),
-        master_a,
+        secret_a,
         Proof::trivial().carry::<()>(()),
         "NullifierDerive: sequence does not match the derived window",
     );
@@ -1196,13 +1196,13 @@ fn nullifier_derive_rejects_a_misaligned_epoch_start() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
 
-    let master = honest_master(rng, &user, note);
-    let (_, seq) = witness::nullifier_derive((*master.data(), ()), EpochIndex::new(12));
+    let secret = honest_secret(rng, &user, note);
+    let (_, seq) = witness::nullifier_derive((*secret.data(), ()), EpochIndex::new(12));
     expect_invalid(
         rng,
         delegation::NullifierDerive,
         (EpochIndex::new(14), seq),
-        master,
+        secret,
         Proof::trivial().carry::<()>(()),
         "NullifierDerive: epoch_start is not group-aligned",
     );
@@ -1224,14 +1224,14 @@ fn nullifier_derive_rejects_a_window_past_the_final_epoch() {
     // Group-aligned for any EPOCH_MAX of the form `2^k - 1`, and short of a
     // whole window by three epochs.
     let epoch_start = EpochIndex::new(EPOCH_MAX - 3);
-    let master = honest_master(rng, &user, note);
+    let secret = honest_secret(rng, &user, note);
 
     let err = PROOF_SYSTEM
         .fuse(
             rng,
             delegation::NullifierDerive,
             (epoch_start, NfSeqPoly::new(epoch_start, &[])),
-            master,
+            secret,
             Proof::trivial().carry::<()>(()),
         )
         .err()
@@ -1357,9 +1357,9 @@ fn nullifier_fuse_rejects_wrong_cm() {
     assert_eq!(inner.to_string(), "NullifierFuse: note commitments differ");
 }
 
-/// A master for a different note does not match the lineage's `cm`.
+/// A secret for a different note does not match the lineage's `cm`.
 #[test]
-fn spend_bind_rejects_a_master_for_another_note() {
+fn spend_bind_rejects_a_secret_for_another_note() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(500);
@@ -1368,7 +1368,7 @@ fn spend_bind_rejects_a_master_for_another_note() {
     let mut pool = PoolSim::genesis(rng);
     let init_height = mine_cm_block(rng, &mut pool, note.commitment());
     let spendable = user.spendable_init(rng, &note, &pool, init_height);
-    let foreign = honest_master(rng, &user, other);
+    let foreign = honest_secret(rng, &user, other);
     let rcv = value::Trapdoor::random(rng);
 
     let err = PROOF_SYSTEM
@@ -1378,7 +1378,7 @@ fn spend_bind_rejects_a_master_for_another_note() {
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
-    assert_eq!(inner.to_string(), "SpendBind: master does not match note");
+    assert_eq!(inner.to_string(), "SpendBind: secret does not match note");
 }
 
 /// At an epoch ending its sponge group, the pair's second half comes from the
@@ -1734,9 +1734,9 @@ fn spend_action_commit(
     theta: ActionEntropy,
     rcv: value::Trapdoor,
 ) -> ActionSetCommit {
-    let master_pcd = honest_master(rng, user, note);
+    let secret_pcd = honest_secret(rng, user, note);
     let (bind_pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, spend::SpendBind, (rcv,), spendable, master_pcd)
+        .fuse(rng, spend::SpendBind, (rcv,), spendable, secret_pcd)
         .expect("SpendBind honest");
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
