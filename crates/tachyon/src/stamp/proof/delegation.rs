@@ -35,7 +35,7 @@ use crate::{
 /// `mk` is derived natively from the note's secrets and certified here, so
 /// every consuming [`NullifierDerive`] threads a genuine master key without
 /// re-witnessing the note. `note` is the opening `cm` commits to.
-/// [`SpendStamp`](super::stamp::SpendStamp) reads it.
+/// [`SpendBind`](super::spend::SpendBind) reads it.
 #[derive(Clone, Debug)]
 pub struct NoteMaster;
 
@@ -111,7 +111,7 @@ impl Header for NoteNullifiers {
 ///
 /// A seed can invent a note, so `cm` closes downstream, at
 /// [`SpendableInit`](super::spendable::SpendableInit) and
-/// [`SpendStamp`](super::stamp::SpendStamp). What this step establishes is
+/// [`SpendBind`](super::spend::SpendBind). What this step establishes is
 /// the pairing: `mk` is *this* `cm`'s master key.
 #[derive(Debug)]
 pub struct NoteSeed;
