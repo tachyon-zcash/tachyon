@@ -1885,7 +1885,9 @@ flowchart TB
   classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
+  notesecret["$$\mathtt{NoteSecret}\\ \{\cm,\mathsf{Note},\mk\}$$"]:::u
   spendable["$$\mathtt{NoteSpendable}\\ \{\cm, e, \anchor\}$$"]:::u
+  spendheader["$$\mathtt{SpendHeader}\\ \{\cm,\nf_e,\nf_{e+1},\anchor\}$$"]:::u
   spendstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
   outputstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
   stamp["$$\mathtt{Stamp}\\ \{\actacc',\tgacc',\anchor\}$$"]:::u
@@ -1894,11 +1896,14 @@ flowchart TB
 
   SpendableInit(["$$\mathsf{SpendableInit}$$"]):::u
   SpendBind(["$$\mathsf{SpendBind}$$"]):::u
+  SpendStamp(["$$\mathsf{SpendStamp}$$"]):::u
   OutputSeed(["$$\mathsf{OutputSeed}$$"]):::u
   StampMerge(["$$\mathsf{StampMerge}$$"]):::u
   StampLift(["$$\mathsf{StampLift}$$"]):::u
 
-  SpendableInit --> spendable --> SpendBind --> spendstamp
+  SpendableInit --> spendable --> SpendBind --> spendheader --> SpendStamp --> spendstamp
+  notesecret --> SpendBind
+  notesecret --> SpendStamp
   OutputSeed --> outputstamp
   spendstamp --> StampMerge
   outputstamp --> StampMerge
@@ -1915,7 +1920,8 @@ multiplies both input multiset polynomials and emits their two commitments.
 
 $\mathtt{NoteSpendable}$ always means, relative to its carried anchor lineage, that
 its $\cm$ is included and every required past nullifier is excluded before its
-epoch; $\cm$ is not checked against a note opening until $\mathsf{SpendBind}$.
+epoch. The lineage does not contain a note opening. $\mathsf{SpendStamp}$
+compares the $\cm$ of the lineage with the $\cm$ on $\mathtt{NoteSecret}$.
 $\mathsf{SpendableInit}$ takes the creation stamp data as private witness, proves
 $\cm$ occurs among that stamp's tachygrams and is a root of its accumulator, then
 computes the stamp's resulting anchor from that same accumulator. The later
@@ -1936,7 +1942,7 @@ canonical history in that epoch.
 
 Users may cache the $\mathtt{NoteSpendable}$ immediately after note inclusion and
 send it to a hardware wallet for spend-time signing in parallel with
-$\mathsf{SpendBind}$ and the later steps.
+$\mathsf{SpendBind}$, $\mathsf{SpendStamp}$ and the later steps.
 
 To map back to the [monolithic action statement](#statement), our steps cover
 these sub-statements respectively:
@@ -1944,12 +1950,24 @@ these sub-statements respectively:
 - $\mathsf{OutputSeed}$: all of [output action statement](#output).
 - $\mathsf{SpendableInit}$: conditional creation-stamp commitment membership;
   past nullifier exclusion is unnecessary in the inclusion epoch.
-- $\mathsf{SpendBind}$: integrity of $\cv, \cm, \pk$, value range of $v$,
-  spend authority $\rk$, and spend-time nullifier integrity $\nf_e, \nf_{e+1}$.
+- $\mathsf{SpendBind}$: spend-time nullifier integrity. The step derives
+  $\nf_e$ and $\nf_{e+1}$ from the $\mk$ on $\mathtt{NoteSecret}$. It constrains
+  the two nullifiers to be nonzero. It puts the target $\anchor$ on
+  $\mathtt{SpendHeader}$.
+- $\mathsf{SpendStamp}$: integrity of $\cm$, $\pk$ and $\cv$, the value range of
+  $v$, and the spend authority $\rk$. The step compares the $\cm$ on
+  $\mathtt{NoteSecret}$ with the $\cm$ on $\mathtt{SpendHeader}$.
 - $\mathsf{StampMerge}$: ensures action and tachygram accumulator integrity at
   the bundle level.
 - $\mathsf{StampLift}$: proves same-epoch ancestry from the stamp's old anchor to
   its target $\anchor$.
+
+The division into $\mathsf{SpendBind}$ and $\mathsf{SpendStamp}$ is a
+consequence of the circuit budget. It is not a division of the statement. The
+two steps read the same $\mathtt{NoteSecret}$. If one circuit that contains both
+sets of conditions is not larger than the shared rank of the proof system, the
+two steps become one step. An implementation can divide $\mathsf{OutputSeed}$
+into a bind step and a stamp step for the same reason.
 
 #### Past-epoch Spend {#past-epoch-spend}
 
@@ -2035,7 +2053,7 @@ flowchart TB
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
   spendable["$$\mathtt{NoteSpendable}\\ \{\cm,e_\incl+1,\sntl_{e_\incl+1}\}$$"]:::u
-  nfmaster["$$\mathtt{NoteMaster}\\ \{\cm,\mk\}$$"]:::u
+  notesecret["$$\mathtt{NoteSecret}\\ \{\cm,\mathsf{Note},\mk\}$$"]:::u
   nfwindowA["$$\mathtt{NoteNullifiers}_A$$"]:::u
   nfwindowB["$$\mathtt{NoteNullifiers}_B$$"]:::u
   nf["$$\mathtt{NoteNullifiers}\\ \{\cm,r_L,r_R,\mathsf{Com}(g_{r_L,r_R}(X))\}$$"]:::u
@@ -2045,6 +2063,7 @@ flowchart TB
   laterNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_i$$"]:::s
   vfylater["$$\mathtt{NoteUnspent}\\ \{\cm,s_L,s_R,\sntl_{s_L},\sntl_{s_R}\}$$"]:::u
   spendableprime["$$\mathtt{NoteSpendable}\\ \{\cm,s_R,\sntl_{s_R}\}$$"]:::u
+  spendheader["$$\mathtt{SpendHeader}\\ \{\cm,\nf_e,\nf_{e+1},\anchor\}$$"]:::u
   spendstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
 
   UnspentSeed(["$$\mathsf{UnspentSeed}$$"]):::o
@@ -2057,27 +2076,30 @@ flowchart TB
   OpenLaterNf(["$$\mathsf{QrBucketTreeOpen}$$"]):::o
   SpendableLift(["$$\mathsf{SpendableLift}$$"]):::u
   SpendBind(["$$\mathsf{SpendBind}$$"]):::u
+  SpendStamp(["$$\mathsf{SpendStamp}$$"]):::u
 
-  NoteSeed --> nfmaster
-  nfmaster --> NullifierDeriveA --> nfwindowA --> NullifierFuse
-  nfmaster --> NullifierDeriveB --> nfwindowB --> NullifierFuse
+  NoteSeed --> notesecret
+  notesecret --> NullifierDeriveA --> nfwindowA --> NullifierFuse
+  notesecret --> NullifierDeriveB --> nfwindowB --> NullifierFuse
   NullifierFuse --> nf
   UnspentSeed --> unspent --> UnspentLift --> unspentprime --> UnspentBind --> vfylater
   laterTree --> OpenLaterNf --> laterNfBucket --> UnspentLift
   nf --> UnspentBind
   spendable --> SpendableLift --> spendableprime
   vfylater --> SpendableLift
-  spendableprime --> SpendBind --> spendstamp
+  spendableprime --> SpendBind --> spendheader --> SpendStamp --> spendstamp
+  notesecret --> SpendBind
+  notesecret --> SpendStamp
 ```
 
-$\mathsf{NoteSeed}$ reopens one note, enforces
-$\pk=\mathsf{Com}(\ak,\nk)$, and recomputes
-$\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$ and
-$\mk=\mathsf{Poseidon}^{\mk}(\nk,\psi)$. It emits the
-reusable wallet-local header
+$\mathsf{NoteSeed}$ witnesses the value and the trapdoors of one note with
+$(\ak,\nk)$. It derives $\pk=\mathsf{Com}(\ak,\nk)$. It computes
+$\cm=\mathsf{Com}(\pk,v,\psi;\rcm)$ and $\mk=\mathsf{Poseidon}^{\mk}(\nk,\psi)$.
+It is the only step that binds a note to its $\cm$. Each subsequent step reads
+note fields that this step bound. It emits the reusable wallet-local header
 
 $$
-\mathtt{NoteMaster}\{\cm,\mk\}.
+\mathtt{NoteSecret}\{\cm,\mathsf{Note},\mk\}.
 $$
 
 Each $\mathsf{NullifierDerive}$ consumes that header and derives one bounded
@@ -2170,12 +2192,12 @@ e_\mathsf{new}=s_R,\qquad
 $$
 
 For the first lift, $s_L=e_\incl+1$, so later exclusion begins exactly where
-the reinitialized spendable ends. $\mathsf{SpendBind}$ then
-recomputes the note relation, derives
-$(\nf_e,\nf_{e+1})$ for that epoch, and performs the same value and authority
-checks as in the [same-epoch case](#same-epoch-spend), emitting
-$\mathtt{Stamp}$. Output construction, stamp merging, and any final
-in-epoch stamp lift are unchanged and therefore omitted from the diagram.
+the reinitialized spendable ends. $\mathsf{SpendBind}$ then derives
+$(\nf_e,\nf_{e+1})$ for that epoch from the $\mk$ on $\mathtt{NoteSecret}$.
+$\mathsf{SpendStamp}$ then does the same value checks and authority checks as
+the [same-epoch case](#same-epoch-spend), and emits $\mathtt{Stamp}$. The
+diagram does not show output construction, stamp merge, or the final in-epoch
+stamp lift, because these steps do not change.
 
 #### Delegation Extension and Multiple OSSs {#extend-range}
 The singleton inclusion-epoch $\mathtt{NoteUnspent}$ is built and consumed
