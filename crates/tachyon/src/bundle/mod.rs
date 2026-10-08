@@ -95,7 +95,7 @@ use crate::{
     ActionDigest, ActionDigestError, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     digest::blake2b,
-    keys::{SpendValidatingKey, private, public},
+    keys::{private, public},
     primitives::{Anchor, AnchorError, EpochIndex, effect},
     reddsa, serialization,
     stamp::{self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven},
@@ -334,12 +334,6 @@ pub enum PlanError {
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
     BalanceOverflow,
-    /// An output's planned `cm` is not its note's commitment.
-    #[display("planned note commitment does not match the note")]
-    CommitmentMismatch,
-    /// An action's planned `rk` is not derived from its `theta` and `cm`.
-    #[display("planned rk does not match the derived rk")]
-    RkMismatch,
 }
 
 /// A complete bundle plan, awaiting authorization.
@@ -467,70 +461,37 @@ impl Plan {
         private::BindingSigningKey::from(self.iter_actions(|plan| plan.rcv, |plan| plan.rcv))
     }
 
-    /// Check each planned action against what custody signs for.
-    ///
-    /// Each output's `cm` must be its note's commitment, and its `rk` must be
-    /// $[\alpha]\mathcal{G}$. Each spend's `rk` must be
-    /// $\mathsf{ak} + [\alpha]\mathcal{G}$. Every $\alpha$ derives from the
-    /// action's `theta` and planned `cm`.
-    ///
-    /// # Errors
-    ///
-    /// - [`PlanError::CommitmentMismatch`] if an output's `cm` is not its
-    ///   note's.
-    /// - [`PlanError::RkMismatch`] if an action's `rk` is not the derived one.
-    pub fn verify(&self, ak: &SpendValidatingKey) -> Result<(), PlanError> {
-        for plan in &self.outputs {
-            if plan.note.commitment() != plan.cm {
-                return Err(PlanError::CommitmentMismatch);
-            }
-            let alpha = plan.theta.randomizer::<effect::Output>(plan.cm);
-            if private::ActionSigningKey::new(&alpha).derive_action_public() != plan.rk {
-                return Err(PlanError::RkMismatch);
-            }
-        }
-
-        for plan in &self.spends {
-            let alpha = plan.theta.randomizer::<effect::Spend>(plan.cm);
-            if ak.derive_action_public(&alpha) != plan.rk {
-                return Err(PlanError::RkMismatch);
-            }
-        }
-
-        Ok(())
-    }
-
     /// Sign actions with the provided [`private::SpendAuthorizingKey`] and then
     /// sign the bundle with the [`private::BindingSigningKey`].
     ///
-    /// Runs [`Self::verify`] first, then derives each `alpha` from the action's
-    /// `theta` and planned `cm`.
+    /// Derives each `alpha` from the action's `theta` and the commitment of
+    /// its note.
     ///
     /// To confirm correct application, call [`Bundle::verify_signatures`] on
     /// the return value.
     ///
     /// # Errors
     ///
-    /// Returns [`PlanError`] if the plan fails [`Self::verify`], the planned
-    /// actions do not balance, or an action cannot be signed.
+    /// Returns [`PlanError`] if the planned actions do not balance or an
+    /// action cannot be signed.
     pub fn sign<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         sighash: &[u8; 32],
         ask: &private::SpendAuthorizingKey,
     ) -> Result<Bundle<Unproven>, PlanError> {
-        self.verify(&ask.derive_auth_public())?;
-
         let mut authorized: BTreeMap<action::Descriptor, action::Signature> = BTreeMap::new();
 
         for plan in &self.spends {
-            let alpha = plan.theta.randomizer::<effect::Spend>(plan.cm);
+            let cm = plan.note.commitment();
+            let alpha = plan.theta.randomizer::<effect::Spend>(cm);
             let rsk = ask.derive_action_private(&alpha);
             authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
         }
 
         for plan in &self.outputs {
-            let alpha = plan.theta.randomizer::<effect::Output>(plan.cm);
+            let cm = plan.note.commitment();
+            let alpha = plan.theta.randomizer::<effect::Output>(cm);
             let rsk = private::ActionSigningKey::new(&alpha);
             authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
         }

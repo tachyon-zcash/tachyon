@@ -95,27 +95,16 @@ fn plan_commitment_matches_bundle_commitment() {
     assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
 }
 
-/// One spend and one output, planned honestly by `wallet`.
-fn honest_plan_actions(
-    rng: &mut StdRng,
-    wallet: &WalletSim,
-    ask: &private::SpendAuthorizingKey,
-) -> (action::Plan<effect::Spend>, action::Plan<effect::Output>) {
-    let spend = spend_plan_at(rng, wallet, ask, 200);
-    let (_rcv, _theta, output) = build_output_plan(rng, wallet.random_note(100));
-    (spend, output)
-}
-
-/// `sign` verifies an honest plan and signs it.
+/// `sign` signs an honest plan, and its signatures verify.
 #[test]
 fn sign_signs_an_honest_plan() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
-    let (spend, output) = honest_plan_actions(rng, &wallet, &ask);
+    let spend = spend_plan_at(rng, &wallet, &ask, 200);
+    let (_rcv, _theta, output) = build_output_plan(rng, wallet.random_note(100));
     let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
 
-    plan.verify(&ask.derive_auth_public()).expect("honest plan");
     let bundle = plan
         .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
         .expect("honest plan signs");
@@ -124,58 +113,96 @@ fn sign_signs_an_honest_plan() {
         .expect("signatures verify");
 }
 
-/// `sign` rejects an output whose planned `cm` is not its note's.
+/// The output's `rk` is corrupted to an unrelated (but known) key after
+/// construction. `sign` signs with the output's own alpha-derived key
+/// regardless, producing a real signature under the wrong key — not the
+/// signature that would actually match the corrupted key.
 #[test]
-fn sign_rejects_an_output_cm_not_its_notes() {
+fn actions_signed_despite_wrong_rk_fail_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
-    let (spend, mut output) = honest_plan_actions(rng, &wallet, &ask);
-    output.cm = wallet.random_note(100).commitment();
+
+    let spend = spend_plan_at(rng, &wallet, &ask, 200);
+
+    let mut output = action::Plan::output(
+        wallet.random_note(100),
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+    );
+    let unrelated = action::Plan::output(
+        wallet.random_note(50),
+        ActionEntropy::random(rng),
+        value::Trapdoor::random(rng),
+    );
+    output.rk = unrelated.rk;
+
     let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
 
-    let err = plan
+    let bundle = plan
         .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .expect("signing works");
+
+    // We've applied a signature from the unrelated key
+    let unrelated_alpha = unrelated
+        .theta
+        .randomizer::<effect::Output>(unrelated.note.commitment());
+    assert!(!bundle.actions.iter().any(|action| {
+        action.sig
+            == private::ActionSigningKey::new(&unrelated_alpha)
+                .sign(rng, &mock_sighash(plan.commitment().unwrap()))
+    }));
+
+    // so it fails verification
+    let err = bundle
+        .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap_err();
-    assert_eq!(err, PlanError::CommitmentMismatch);
+    let SignatureError::Action(_) = err else {
+        panic!("expected SignatureError::Action, got {err:?}");
+    };
 }
 
-/// `sign` rejects an output whose `rk` derives from another note under the
-/// same `theta`.
+/// The spend's `rk` matches `ask`, but `sign` is called with a different
+/// signing key. It signs with whatever key it's given, producing a real
+/// signature from the wrong signer, not the one `ask` itself would have
+/// produced.
 #[test]
-fn sign_rejects_an_output_rk_from_another_note() {
+fn actions_signed_by_wrong_rsk_fail_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
-    let (spend, mut output) = honest_plan_actions(rng, &wallet, &ask);
-    let diverted = WalletSim::random(rng).random_note(100);
-    output.rk = action::Plan::output(diverted, output.theta, output.rcv).rk;
+    let wrong_ask = WalletSim::random(rng).sk.derive_auth_private();
+
+    let spend = spend_plan_at(rng, &wallet, &ask, 200);
+    let note = wallet.random_note(100);
+    let (_rcv, _theta, output) = build_output_plan(rng, note);
+
     let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
 
-    let err = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .unwrap_err();
-    assert_eq!(err, PlanError::RkMismatch);
-}
+    let bundle = plan
+        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &wrong_ask)
+        .expect("signing works");
 
-/// `sign` rejects a spend whose `rk` derives from another `ak`.
-#[test]
-fn sign_rejects_a_spend_rk_from_another_ak() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let other = WalletSim::random(rng);
-    let (mut spend, output) = honest_plan_actions(rng, &wallet, &ask);
-    spend.rk = action::Plan::spend(spend.note, spend.theta, spend.rcv, |alpha| {
-        other.pak.ak.derive_action_public(&alpha)
-    })
-    .rk;
-    let plan = Plan::new(alloc::vec![spend], alloc::vec![output]);
+    // The signature the spend's matching key would have produced.
+    let alpha = spend
+        .theta
+        .randomizer::<effect::Spend>(spend.note.commitment());
+    let correct_sig = ask
+        .derive_action_private(&alpha)
+        .sign(rng, &mock_sighash(bundle.commitment()));
+    assert!(
+        !bundle
+            .actions
+            .iter()
+            .any(|action| action.sig == correct_sig)
+    );
 
-    let err = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+    let err = bundle
+        .verify_signatures(&mock_sighash(bundle.commitment()))
         .unwrap_err();
-    assert_eq!(err, PlanError::RkMismatch);
+    let SignatureError::Action(_) = err else {
+        panic!("expected SignatureError::Action, got {err:?}");
+    };
 }
 
 #[test]

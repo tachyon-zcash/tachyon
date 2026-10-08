@@ -10,7 +10,7 @@ use pasta_curves::{EpAffine, group::GroupEncoding as _};
 use crate::{
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{private, public},
-    note::{self, Note},
+    note::Note,
     primitives::{ActionDigest, ActionDigestError, Effect, effect},
     reddsa, serialization, value,
 };
@@ -93,8 +93,6 @@ pub struct Plan<E: Effect> {
     pub rk: public::ActionVerificationKey,
     /// The note being spent or created.
     pub note: Note,
-    /// The note's commitment, from which `alpha` derives.
-    pub cm: note::Commitment,
     /// Per-action entropy for alpha derivation.
     pub theta: ActionEntropy,
     /// Value commitment trapdoor.
@@ -132,7 +130,6 @@ impl Plan<effect::Spend> {
         Self {
             rk: derive_rk(alpha),
             note,
-            cm,
             theta,
             rcv,
             _effect: PhantomData,
@@ -153,7 +150,6 @@ impl Plan<effect::Output> {
         Self {
             rk: rsk.derive_action_public(),
             note,
-            cm,
             theta,
             rcv,
             _effect: PhantomData,
