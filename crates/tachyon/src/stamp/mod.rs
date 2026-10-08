@@ -341,7 +341,7 @@ impl ProofStamp {
 /// The statement is each action's descriptor `(cv, rk)` and the `anchor`.
 /// The planned witnesses are each action's `theta` and `rcv`, and each
 /// output's `note`. A spend's note comes from its
-/// [`NoteMaster`](delegation::NoteMaster) PCD at
+/// [`NoteSecret`](delegation::NoteSecret) PCD at
 /// [`prove`](Self::prove).
 ///
 /// Construct via [`Plan::new`], or via
@@ -392,7 +392,7 @@ impl Plan {
         rng: &mut RNG,
         pak: &ProofAuthorizingKey,
         spend_pcds: Vec<(
-            ragu::Pcd<delegation::NoteMaster>,
+            ragu::Pcd<delegation::NoteSecret>,
             ragu::Pcd<spendable::NoteSpendable>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
@@ -412,13 +412,13 @@ impl Plan {
             ));
         }
 
-        for ((desc, theta, rcv), (master_pcd, spendable_pcd)) in
+        for ((desc, theta, rcv), (secret_pcd, spendable_pcd)) in
             self.spends.into_iter().zip(spend_pcds)
         {
             // SpendBind: derive the live pair from the note's master key and
             // commit the note's value.
             let (bind_pcd, ()) = PROOF_SYSTEM
-                .fuse(rng, spend::SpendBind, (rcv,), spendable_pcd, master_pcd)
+                .fuse(rng, spend::SpendBind, (rcv,), spendable_pcd, secret_pcd)
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, anchor, proof) =
