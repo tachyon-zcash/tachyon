@@ -50,9 +50,6 @@ lazy_static! {
 pub struct ValueTrapdoor(#[debug(skip)] Fq);
 
 impl Trapdoor {
-    /// The unit trapdoor. A commitment under it, $\[v\]\mathcal{V} +
-    /// \mathcal{R}$, is never the identity, even at $v = 0$.
-    pub const ONE: Self = Self(Fq::ONE);
     /// The zero trapdoor.
     pub const ZERO: Self = Self(Fq::ZERO);
 
@@ -276,27 +273,6 @@ mod tests {
         let rcv_sum: Fq = Into::<Fq>::into(rcv_a) + Into::<Fq>::into(rcv_b);
 
         assert_eq!(remainder, ValueCommitment(*VALUE_COMMIT_R * rcv_sum));
-    }
-
-    /// A commitment under the unit trapdoor re-randomizes to any trapdoor
-    /// by adding `[rcv]R` and subtracting `R`, as `OutputStamp` does.
-    #[test]
-    fn unit_commitment_rerandomizes_to_any_trapdoor() {
-        let rng = &mut StdRng::seed_from_u64(1);
-        let rcv = Trapdoor::random(rng);
-        for raw in [0, 1, MAX_MONEY.cast_signed(), -MAX_MONEY.cast_signed()] {
-            let value = Balance::try_from(raw).unwrap();
-            assert_eq!(
-                Trapdoor::ONE.commit(value) + rcv.commit(Balance::ZERO)
-                    - Trapdoor::ONE.commit(Balance::ZERO),
-                rcv.commit(value),
-            );
-        }
-    }
-
-    #[test]
-    fn unit_commitment_to_zero_is_not_the_identity() {
-        assert_ne!(Trapdoor::ONE.commit(Balance::ZERO), Commitment::default(),);
     }
 
     #[test]
