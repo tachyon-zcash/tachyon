@@ -67,8 +67,6 @@ A tree short of a full level therefore pads by repeating a child and never by om
 
 The two alpha domains are zero-padded to sixteen bytes.
 
-The two alpha domains are zero-padded to sixteen bytes.
-
 ## Hash-to-curve
 
 Value commitments presently use the same generator as Orchard.
