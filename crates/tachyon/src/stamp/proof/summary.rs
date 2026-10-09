@@ -29,11 +29,11 @@ pub struct Summary;
 
 impl Header for Summary {
     /// `(epoch, anchor_prev, anchor_end, acc_commit)`. `anchor_prev` is an
-    /// unbound seed witness, as [`AnchorChain`](super::pool::AnchorChain)'s
+    /// unbound seed witness, as [`AnchorSpan`](super::pool::AnchorSpan)'s
     /// `anchor_start`.
     type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
 
-    const SUFFIX: Suffix = Suffix::new(10);
+    const SUFFIX: Suffix = Suffix::new(9);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_end, acc_commit) = *data;
@@ -46,12 +46,13 @@ impl Header for Summary {
     }
 }
 
-/// Start a summary from one stamp: [`AnchorSeed`](super::pool::AnchorSeed)
-/// with the stamp commitment carried on the header.
+/// Start a summary from one stamp: the fold of
+/// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed) with the stamp commitment
+/// carried on the header.
 ///
 /// # Soundness
 ///
-/// As at [`AnchorSeed`](super::pool::AnchorSeed).
+/// As at [`AnchorSpanSeed`](super::pool::AnchorSpanSeed).
 #[derive(Debug)]
 pub struct SummarySeed;
 
@@ -63,7 +64,7 @@ impl Step for SummarySeed {
     /// `(anchor_prev, epoch, stamp_commit)`
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(15);
+    const INDEX: Index = Index::new(13);
 
     fn witness<'source>(
         &self,
@@ -92,7 +93,7 @@ impl Step for SummaryAdvance {
     /// `(acc, extended, stamp)`
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
-    const INDEX: Index = Index::new(16);
+    const INDEX: Index = Index::new(14);
 
     fn witness<'source>(
         &self,

@@ -25,9 +25,9 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_anchor_span_pcd, build_output_plan,
-    build_output_stamp, build_unspent_pcd_over_epochs, qr_bucket_segment, random_block,
-    random_block_with, seal_qr_intake, seed_qr_empty_intake, shared_sk, spend_witness,
+    PoolSim, SyncSim, WalletSim, build_anchor_span_pcd, build_output_plan, build_output_stamp,
+    build_unspent_pcd_over_epochs, qr_bucket_segment, random_block, random_block_with,
+    seal_qr_intake, seed_qr_empty_intake, shared_sk, spend_witness,
 };
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
@@ -181,10 +181,16 @@ fn stamp_lift_within_epoch() {
     let stamp_pcd = stamp
         .proof
         .carry((action_commit, tachygram_commit, stamp_anchor));
-    let anchor_chain = build_anchor_chain_pcd(rng, &pool, BlockHeight(2)..=new_height);
+    let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(2)..=new_height);
 
     let (lifted_pcd, ()) = PROOF_SYSTEM
-        .fuse(rng, stamp::StampLift, (), stamp_pcd, anchor_chain)
+        .fuse(
+            rng,
+            stamp::StampLift,
+            witness::stamp_lift((*stamp_pcd.data(), *span.data()), &members),
+            stamp_pcd,
+            span,
+        )
         .expect("stamp lift");
     PROOF_SYSTEM
         .rerandomize(lifted_pcd, rng)
@@ -248,79 +254,113 @@ fn unspent_fuse_rejects_invalid_compositions() {
     );
 }
 
+/// Fuse two spans with their honest member lists.
+fn fuse_spans(
+    rng: &mut StdRng,
+    (left, left_members): (Pcd<pool::AnchorSpan>, &[Anchor]),
+    (right, right_members): (Pcd<pool::AnchorSpan>, &[Anchor]),
+) -> ragu_core::Result<Pcd<pool::AnchorSpan>> {
+    let fuse_witness =
+        witness::anchor_span_fuse((*left.data(), *right.data()), left_members, right_members);
+    PROOF_SYSTEM
+        .fuse(rng, pool::AnchorSpanFuse, fuse_witness, left, right)
+        .map(|(fused, ())| fused)
+}
+
 #[test]
-fn anchor_chain_fuse_rejects_invalid_compositions() {
-    // anchor break: synthetic right-segment seeded from a bogus start anchor.
+fn anchor_span_fuse_rejects_unjoined_spans() {
+    // anchor break: the right span is seeded from a bogus start anchor.
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let mut pool = PoolSim::genesis(rng);
         pool.advance(2, |_| random_block(rng, 1, 2));
 
-        let left = build_anchor_chain_pcd(rng, &pool, BlockHeight(0)..=BlockHeight(0));
+        let (left, left_members) =
+            build_anchor_span_pcd(rng, &pool, BlockHeight(0)..=BlockHeight(0));
 
         let bogus_start = Anchor(Fp::random(&mut *rng));
         let stamps = pool.block(BlockHeight(1)).tachygrams();
+        let seed_witness =
+            witness::anchor_span_seed(((), ()), bogus_start, BlockHeight(1).epoch(), &stamps[0]);
+        let right_members = [bogus_start
+            .next_stamp(seed_witness.1, &seed_witness.2)
+            .unwrap()];
         let (right, ()) = PROOF_SYSTEM
-            .seed(
-                rng,
-                pool::AnchorSeed,
-                witness::anchor_seed(((), ()), bogus_start, BlockHeight(1).epoch(), &stamps[0]),
-            )
-            .expect("AnchorSeed");
+            .seed(rng, pool::AnchorSpanSeed, seed_witness)
+            .expect("AnchorSpanSeed");
 
-        let err = PROOF_SYSTEM
-            .fuse(rng, pool::AnchorFuse, (), left, right)
+        let err = fuse_spans(rng, (left, &left_members), (right, &right_members))
             .err()
             .unwrap();
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
-        assert_eq!(inner.to_string(), "AnchorFuse: paths do not share a vertex");
+        assert_eq!(
+            inner.to_string(),
+            "AnchorSpanFuse: spans do not share a vertex"
+        );
     }
 
-    // cross-epoch: left segment ends at epoch_0_final's anchor, right segment
-    // over the first block of epoch_1 starts at the entry anchor.
-    // Adjacency fails because the entry anchor (via Anchor::next_epoch)
-    // sits between them, and no AnchorChain step ever emits it.
+    // cross-epoch: the left span ends at epoch 0's final anchor, and the right
+    // span over the first block of epoch 1 starts at its entry anchor. The
+    // entry anchor (via Anchor::next_epoch) sits between them, and no span
+    // step ever emits it.
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let mut pool = PoolSim::genesis(rng);
         pool.advance(EPOCH_SIZE + 1, |_| random_block(rng, 1, 2));
 
-        let left = build_anchor_chain_pcd(rng, &pool, BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1));
-        let right = build_anchor_chain_pcd(
+        let (left, left_members) =
+            build_anchor_span_pcd(rng, &pool, BlockHeight(0)..=BlockHeight(EPOCH_SIZE - 1));
+        let (right, right_members) = build_anchor_span_pcd(
             rng,
             &pool,
             BlockHeight(EPOCH_SIZE)..=BlockHeight(EPOCH_SIZE),
         );
 
-        let err = PROOF_SYSTEM
-            .fuse(rng, pool::AnchorFuse, (), left, right)
+        let err = fuse_spans(rng, (left, &left_members), (right, &right_members))
             .err()
             .unwrap();
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
-        assert_eq!(inner.to_string(), "AnchorFuse: paths do not share a vertex");
+        assert_eq!(
+            inner.to_string(),
+            "AnchorSpanFuse: spans do not share a vertex"
+        );
     }
 }
 
-fn cut_span(
+/// An output stamp anchored at `stamp_anchor`, carried on its header.
+fn output_stamp_pcd(rng: &mut StdRng, user: &WalletSim, stamp_anchor: Anchor) -> Pcd<stamp::Stamp> {
+    let (stamp, plan) = build_output_stamp(rng, stamp_anchor, user.random_note(200));
+    let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
+    let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
+    stamp
+        .proof
+        .carry((action_commit, tachygram_commit, stamp_anchor))
+}
+
+/// Lift an output stamp anchored at `stamp_anchor` along `span`, witnessing
+/// `members` as the span's members.
+fn lift_output_stamp(
     rng: &mut StdRng,
+    user: &WalletSim,
+    stamp_anchor: Anchor,
     span: &Pcd<pool::AnchorSpan>,
-    from: Anchor,
-    to: Anchor,
     members: &[Anchor],
-) -> ragu_core::Result<Pcd<pool::AnchorChain>> {
+) -> ragu_core::Result<Pcd<stamp::Stamp>> {
+    let stamp_pcd = output_stamp_pcd(rng, user, stamp_anchor);
+
     PROOF_SYSTEM
         .fuse(
             rng,
-            pool::AnchorSpanCut,
-            witness::anchor_span_cut((*span.data(), ()), from, to, members),
+            stamp::StampLift,
+            witness::stamp_lift((*stamp_pcd.data(), *span.data()), members),
+            stamp_pcd,
             span.clone(),
-            Proof::trivial().carry::<()>(()),
         )
-        .map(|(chain, ())| chain)
+        .map(|(lifted, ())| lifted)
 }
 
 /// A span's members are the anchors its folds produce: the end is one and the
@@ -342,104 +382,63 @@ fn anchor_span_holds_the_anchors_its_folds_produce() {
     assert_eq!(members_commit, AnchorSetPoly::from_iter(members).commit());
 }
 
+/// A stamp at a span's start, at a member, or at its end lifts to the span's
+/// end.
 #[test]
-fn anchor_span_cuts_from_its_start_or_to_its_end() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let mut pool = PoolSim::genesis(rng);
-    pool.advance(1, |_| random_block(rng, 1, 3));
-
-    let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
-    let (anchor_start, _, anchor_end) = *span.data();
-    let member = members[0];
-
-    for (from, to) in [
-        (anchor_start, member),
-        (member, anchor_end),
-        (anchor_start, anchor_end),
-    ] {
-        let chain = cut_span(rng, &span, from, to, &members).expect("honest cut");
-        assert_eq!(*chain.data(), (from, to));
-    }
-}
-
-/// A stamp at any anchor of a span lifts to the span's end through the cut
-/// chain and the existing `StampLift`.
-#[test]
-fn stamp_lifts_from_a_span_member() {
+fn stamp_lifts_from_the_start_a_member_or_the_end() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     pool.advance(1, |_| random_block(rng, 1, 3));
 
     let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
-    let (_, _, anchor_end) = *span.data();
-    let stamp_anchor = members[0];
+    let (anchor_start, _, anchor_end) = *span.data();
 
-    let (stamp, plan) = build_output_stamp(rng, stamp_anchor, user.random_note(200));
-    let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
-    let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
-    let stamp_pcd = stamp
-        .proof
-        .carry((action_commit, tachygram_commit, stamp_anchor));
-
-    let chain = cut_span(rng, &span, stamp_anchor, anchor_end, &members).expect("honest cut");
-    let (lifted, ()) = PROOF_SYSTEM
-        .fuse(rng, stamp::StampLift, (), stamp_pcd, chain)
-        .expect("stamp lift");
-    assert_eq!(lifted.data().2, anchor_end);
+    for (label, stamp_anchor) in [
+        ("start", anchor_start),
+        ("interior member", members[0]),
+        ("end", anchor_end),
+    ] {
+        let lifted = lift_output_stamp(rng, &user, stamp_anchor, &span, &members).expect(label);
+        assert_eq!(lifted.data().2, anchor_end, "{label}");
+    }
 }
 
 #[test]
-fn anchor_span_cut_rejects_invalid_cuts() {
+fn stamp_lift_rejects_invalid_lifts() {
     let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     pool.advance(1, |_| random_block(rng, 1, 3));
 
     let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
-    let (anchor_start, _, anchor_end) = *span.data();
-    let outside = Anchor(Fp::random(&mut *rng));
-    let foreign_members: Vec<Anchor> = members.iter().copied().chain([outside]).collect();
+    let (anchor_start, ..) = *span.data();
+    // A fork folds a stamp the published chain never carried.
+    let fork_set = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]).commit();
+    let fork = anchor_start
+        .next_stamp(BlockHeight(1).epoch(), &fork_set)
+        .unwrap();
+    let foreign_members: Vec<Anchor> = members.iter().copied().chain([fork]).collect();
 
     let cases = [
         (
-            "member to member",
-            members[0],
-            members[1],
+            "stamp anchored on a fork",
+            fork,
             members.clone(),
-            "AnchorSpanCut: the cut keeps neither endpoint",
-        ),
-        (
-            "from outside the span",
-            outside,
-            anchor_end,
-            members.clone(),
-            "AnchorSpanCut: from is neither the start nor a member",
-        ),
-        (
-            "to outside the span",
-            anchor_start,
-            outside,
-            members.clone(),
-            "AnchorSpanCut: to is not a member",
-        ),
-        (
-            "to the start",
-            anchor_start,
-            anchor_start,
-            members.clone(),
-            "AnchorSpanCut: to is not a member",
+            "StampLift: stamp anchor is neither the span's start nor a member",
         ),
         (
             "foreign members",
-            anchor_start,
-            outside,
+            members[0],
             foreign_members,
-            "AnchorSpanCut: members do not match header",
+            "StampLift: members do not match header",
         ),
     ];
 
-    for (label, from, to, witnessed, expected) in cases {
-        let err = cut_span(rng, &span, from, to, &witnessed).err().unwrap();
+    for (label, stamp_anchor, witnessed, expected) in cases {
+        let err = lift_output_stamp(rng, &user, stamp_anchor, &span, &witnessed)
+            .err()
+            .unwrap();
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("{label}: expected InvalidWitness, got {err:?}");
         };
@@ -461,6 +460,43 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
         let (left_poly, _combined, right_poly) =
             witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &right_members);
         let forged = AnchorSetPoly::from_iter(left_members.iter().copied());
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                pool::AnchorSpanFuse,
+                (left_poly, forged, right_poly),
+                left.clone(),
+                right.clone(),
+            )
+            .err()
+            .unwrap();
+        let ragu_core::Error::InvalidWitness(inner) = err else {
+            panic!("expected InvalidWitness, got {err:?}");
+        };
+        assert_eq!(
+            inner.to_string(),
+            "AnchorSpanFuse: combined is not the union of the halves"
+        );
+    }
+
+    // The combined set adds a fork anchor no fold of either half produced.
+    {
+        let (left_poly, _combined, right_poly) =
+            witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &right_members);
+        let fork_set =
+            TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]).commit();
+        let fork = left
+            .data()
+            .2
+            .next_stamp(BlockHeight(2).epoch(), &fork_set)
+            .unwrap();
+        let forged = AnchorSetPoly::from_iter(
+            left_members
+                .iter()
+                .chain(&right_members)
+                .copied()
+                .chain([fork]),
+        );
         let err = PROOF_SYSTEM
             .fuse(
                 rng,

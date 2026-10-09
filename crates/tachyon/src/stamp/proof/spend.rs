@@ -43,7 +43,7 @@ impl Header for SpendHeader {
         value::Commitment,
     );
 
-    const SUFFIX: Suffix = Suffix::new(6);
+    const SUFFIX: Suffix = Suffix::new(5);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, nf_current, nf_next, anchor, pk, cv) = *data;
@@ -94,7 +94,7 @@ impl Step for SpendBind {
     /// `(rcv,)`
     type Witness<'source> = (value::Trapdoor,);
 
-    const INDEX: Index = Index::new(10);
+    const INDEX: Index = Index::new(8);
 
     fn witness<'source>(
         &self,

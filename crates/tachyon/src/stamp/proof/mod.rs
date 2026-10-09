@@ -27,8 +27,6 @@ fn make_app() -> Result<Application, ragu_core::Error> {
     ApplicationBuilder::new()
         .register(delegation::NoteSeed)?
         .register(delegation::NullifierDerive)?
-        .register(pool::AnchorSeed)?
-        .register(pool::AnchorFuse)?
         .register(pool::UnspentFuse)?
         .register(pool::UnspentBind)?
         .register(spendable::SpendableInit)?
@@ -61,7 +59,6 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(evidence::EvidenceTreeLeafPair)?
         .register(pool::AnchorSpanSeed)?
         .register(pool::AnchorSpanFuse)?
-        .register(pool::AnchorSpanCut)?
         .finalize()
 }
 

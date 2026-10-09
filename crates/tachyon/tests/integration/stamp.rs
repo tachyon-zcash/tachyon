@@ -4,7 +4,6 @@ use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu::{Pcd, Proof};
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
@@ -12,17 +11,13 @@ use zcash_tachyon::{
     TachygramSetPoly, action,
     constants::EPOCH_SIZE,
     digest::blake2b,
-    stamp::{
-        self, ProveError,
-        proof::{PROOF_SYSTEM, pool},
-    },
-    witness,
+    stamp::{self, ProveError},
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, build_anchor_chain_pcd, build_anchor_span_pcd, build_autonome,
-    build_output_plan, build_output_stamp, forge_overlapping_merge, random_action, random_block,
-    random_block_with, shared_sk, spend_witness,
+    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan, build_output_stamp,
+    forge_overlapping_merge, random_action, random_block, random_block_with, shared_sk,
+    spend_witness,
 };
 
 const WITHIN_EPOCH_ANCHOR_PAIRS: &[(BlockHeight, BlockHeight)] = &[
@@ -124,8 +119,8 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let secret_a = user.secret_pcd(rng, note_a);
     let secret_b = user.secret_pcd(rng, note_b);
-    let bundle_a = || (secret_a.clone(), sp_a.clone(), None);
-    let bundle_b = || (secret_b.clone(), sp_b.clone(), None);
+    let bundle_a = || (secret_a.clone(), sp_a.clone(), vec![]);
+    let bundle_b = || (secret_b.clone(), sp_b.clone(), vec![]);
 
     // Too few PCDs: 2 spends, 1 PCD.
     {
@@ -199,32 +194,13 @@ fn plan_prove_rejects_invalid_inputs() {
     }
 }
 
-/// Cut `span` to the chain `(from, to)`.
-fn cut_span(
-    rng: &mut StdRng,
-    span: &Pcd<pool::AnchorSpan>,
-    from: Anchor,
-    to: Anchor,
-    members: &[Anchor],
-) -> Pcd<pool::AnchorChain> {
-    PROOF_SYSTEM
-        .fuse(
-            rng,
-            pool::AnchorSpanCut,
-            witness::anchor_span_cut((*span.data(), ()), from, to, members),
-            span.clone(),
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("AnchorSpanCut")
-        .0
-}
-
 /// A spend anchored before the plan's anchor, in the same epoch, lifts to it
-/// along a chain cut from an anchor span, and merges with an output proved at
-/// the plan's anchor. Without the chain, or with one that starts elsewhere,
-/// the spend does not reach the plan's anchor.
+/// along anchor spans and merges with an output proved at the plan's anchor.
+/// The spans may abut or overlap. Without spans, or with spans that end
+/// elsewhere, the spend does not reach the plan's anchor; spans with a gap
+/// between them do not lift.
 #[test]
-fn plan_prove_lifts_a_spend_to_the_plan_anchor() {
+fn plan_prove_lifts_a_spend_along_spans() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
@@ -235,13 +211,12 @@ fn plan_prove_lifts_a_spend_to_the_plan_anchor() {
     pool.advance(2, |_| random_block(rng, 1, 2));
     let plan_height = pool.height();
     assert_eq!(cm_height.epoch(), plan_height.epoch(), "one epoch");
+    let middle = cm_height.next().unwrap();
 
     let spendable = user.fresh_spend(rng, &pool, cm_height, &note);
     let spend_anchor = spendable.data().2;
-    let (span, members) = build_anchor_span_pcd(rng, &pool, cm_height..=plan_height);
-    let (span_start, _, plan_anchor) = *span.data();
+    let plan_anchor = pool.block(plan_height).anchor();
     assert_ne!(spend_anchor, plan_anchor, "the spend needs a lift");
-    assert!(members.contains(&spend_anchor), "the span holds the spend");
 
     let (rcv, theta) = spend_witness(rng);
     let spend = action::Plan::spend(note, theta, rcv, |alpha| {
@@ -249,61 +224,71 @@ fn plan_prove_lifts_a_spend_to_the_plan_anchor() {
     });
     let (out_rcv, out_theta, output) = build_output_plan(rng, user.random_note(200));
     let secret = user.secret_pcd(rng, note);
-    let plan = || {
+    let prove = |prove_rng: &mut StdRng, spans| {
         stamp::Plan::new(
             vec![(spend.descriptor(), theta, rcv)],
             vec![(output.descriptor(), out_theta, output.note, out_rcv)],
             plan_anchor,
         )
-    };
-
-    let chain = cut_span(rng, &span, spend_anchor, plan_anchor, &members);
-    let stamp = plan()
         .prove(
-            rng,
+            prove_rng,
             &user.pak,
-            vec![(secret.clone(), spendable.clone(), Some(chain))],
+            vec![(secret.clone(), spendable.clone(), spans)],
         )
-        .expect("the lifted spend merges with the output");
-    assert_eq!(stamp.anchor, plan_anchor);
-    assert!(
-        stamp
-            .verify_proof(
-                rng,
-                [
-                    spend.digest().expect("action digest"),
-                    output.digest().expect("action digest"),
-                ],
-            )
-            .expect("proof system verification"),
-        "the stamp proves the planned actions at the plan's anchor"
-    );
-
-    let unlifted = plan()
-        .prove(
-            rng,
-            &user.pak,
-            vec![(secret.clone(), spendable.clone(), None)],
-        )
-        .unwrap_err();
-    let ProveError::MissingPcd(reason) = unlifted else {
-        panic!("expected MissingPcd, got {unlifted:?}");
     };
-    assert_eq!(
-        reason.to_string(),
-        "spend 0 does not reach the plan's anchor"
-    );
+    let digests = [
+        spend.digest().expect("action digest"),
+        output.digest().expect("action digest"),
+    ];
 
-    let elsewhere = cut_span(rng, &span, span_start, spend_anchor, &members);
-    let misdirected = plan()
-        .prove(rng, &user.pak, vec![(secret, spendable, Some(elsewhere))])
-        .unwrap_err();
-    let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = misdirected else {
-        panic!("expected InvalidWitness, got {misdirected:?}");
+    let one = vec![build_lift_span(rng, &pool, cm_height..=plan_height)];
+    let abutting = vec![
+        build_lift_span(rng, &pool, cm_height..=cm_height),
+        build_lift_span(rng, &pool, middle..=plan_height),
+    ];
+    let overlapping = vec![
+        build_lift_span(rng, &pool, cm_height..=middle),
+        build_lift_span(rng, &pool, middle..=plan_height),
+    ];
+    for (label, spans) in [
+        ("one span", one),
+        ("abutting spans", abutting),
+        ("overlapping spans", overlapping),
+    ] {
+        let stamp = prove(rng, spans).expect(label);
+        assert_eq!(stamp.anchor, plan_anchor, "{label}");
+        assert!(
+            stamp
+                .verify_proof(rng, digests)
+                .expect("proof system verification"),
+            "{label}: the stamp proves the planned actions at the plan's anchor"
+        );
+    }
+
+    let short = vec![build_lift_span(rng, &pool, cm_height..=middle)];
+    for (label, spans) in [("no spans", vec![]), ("spans ending short", short)] {
+        let err = prove(rng, spans).unwrap_err();
+        let ProveError::MissingPcd(reason) = err else {
+            panic!("{label}: expected MissingPcd, got {err:?}");
+        };
+        assert_eq!(
+            reason.to_string(),
+            "spend 0 does not reach the plan's anchor",
+            "{label}"
+        );
+    }
+
+    let gapped = vec![
+        build_lift_span(rng, &pool, cm_height..=cm_height),
+        build_lift_span(rng, &pool, plan_height..=plan_height),
+    ];
+    let err = prove(rng, gapped).unwrap_err();
+    let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
     };
     assert_eq!(
         inner.to_string(),
-        "StampLift: chain's first anchor must equal stamp anchor"
+        "StampLift: stamp anchor is neither the span's start nor a member"
     );
 }
 
@@ -964,11 +949,11 @@ fn lift_advances_a_stamp_anchor() {
 
     pool.advance(2, |_| random_block(rng, 1, 4));
     let lifted_to = pool.height();
-    let chain = build_anchor_chain_pcd(rng, &pool, stamped_at.next().unwrap()..=lifted_to);
+    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=lifted_to);
 
     let before = stamp.clone();
     let lifted = stamp
-        .prove_lift(rng, [], chain)
+        .prove_lift(rng, [], vec![span])
         .expect("lift over a within-epoch segment");
 
     assert_eq!(lifted.anchor, pool.block(lifted_to).anchor());
@@ -992,9 +977,9 @@ fn lift_then_verify() {
     let digest = plan.digest().expect("valid plan");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
-    let chain = build_anchor_chain_pcd(rng, &pool, stamped_at.next().unwrap()..=pool.height());
+    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
-    let lifted = stamp.prove_lift(rng, [digest], chain).expect("lift");
+    let lifted = stamp.prove_lift(rng, [digest], vec![span]).expect("lift");
 
     assert!(
         lifted.verify_proof(rng, [digest]).expect("verify"),
@@ -1017,21 +1002,11 @@ fn lift_over_descriptors_then_verify() {
     let covered_descriptors = BTreeSet::from_iter([covered_plan.descriptor()]);
     let stamped_at = pool.height();
 
-    // The stamps published after this one, each paired with the anchor it
-    // absorbs into, which is what an `AnchorSeed` witnesses.
     pool.advance(2, |_| random_block(rng, 1, 4));
-    let epoch = pool.height().epoch();
-    let following_stamps = (stamped_at.0 + 1..=pool.height().0)
-        .flat_map(|height| pool.block(BlockHeight(height)).stamp_commits())
-        .scan(stamp.anchor, |anchor_before, tachygram_set| {
-            let witness = (*anchor_before, epoch, tachygram_set);
-            *anchor_before = anchor_before.next_stamp(epoch, &tachygram_set).unwrap();
-            Some(witness)
-        })
-        .collect();
+    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
     let lifted = stamp
-        .lift(rng, &covered_descriptors, following_stamps)
+        .lift(rng, &covered_descriptors, vec![span])
         .expect("lift over the covered descriptors");
 
     assert!(
@@ -1042,9 +1017,10 @@ fn lift_over_descriptors_then_verify() {
     );
 }
 
-/// A segment from an unrelated chain does not root at the stamp's anchor.
+/// A span from an unrelated chain neither starts at nor holds the stamp's
+/// anchor.
 #[test]
-fn lift_rejects_a_foreign_chain() {
+fn lift_rejects_a_foreign_span() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let mut pool = PoolSim::genesis(rng);
@@ -1055,11 +1031,16 @@ fn lift_rejects_a_foreign_chain() {
 
     let mut foreign = PoolSim::genesis(rng);
     foreign.advance(3, |_| random_block(rng, 1, 4));
-    let chain = build_anchor_chain_pcd(rng, &foreign, BlockHeight(1)..=foreign.height());
+    let span = build_lift_span(rng, &foreign, BlockHeight(1)..=foreign.height());
 
-    stamp
-        .prove_lift(rng, [], chain)
-        .expect_err("a segment from another chain must not lift a stamp");
+    let err = stamp.prove_lift(rng, [], vec![span]).unwrap_err();
+    let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = err else {
+        panic!("expected InvalidWitness, got {err:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "StampLift: stamp anchor is neither the span's start nor a member"
+    );
 }
 
 /// A lift takes the caller's word for the covered action set, so a wrong
@@ -1078,10 +1059,10 @@ fn lift_rejects_wrong_digests() {
     let foreign_digest = random_action(rng).digest().expect("valid action");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
-    let chain = build_anchor_chain_pcd(rng, &pool, stamped_at.next().unwrap()..=pool.height());
+    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
     let lifted = stamp
-        .prove_lift(rng, [foreign_digest], chain)
+        .prove_lift(rng, [foreign_digest], vec![span])
         .expect("the lift itself cannot see the wrong action set");
 
     assert!(
@@ -1121,9 +1102,9 @@ fn merge_after_lift() {
     )
     .expect_err("mismatched anchors must not merge");
 
-    let chain = build_anchor_chain_pcd(rng, &pool, height_a.next().unwrap()..=height_b);
+    let span = build_lift_span(rng, &pool, height_a.next().unwrap()..=height_b);
     let lifted_a = stamp_a
-        .prove_lift(rng, [plan_a.digest().expect("valid plan")], chain)
+        .prove_lift(rng, [plan_a.digest().expect("valid plan")], vec![span])
         .expect("lift onto the later anchor");
 
     assert_eq!(lifted_a.anchor, stamp_b.anchor);

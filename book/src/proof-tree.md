@@ -69,16 +69,17 @@ An output operation also takes two steps, `OutputBind` and `OutputStamp`.
 
 A transaction with multiple spend and output stamps composes them with `StampMerge`.
 The output is a single `Stamp` whose multisets are the union of the two inputs' at the shared anchor.
-A spend whose lineage sits at an earlier anchor of the same epoch first lifts its stamp to the transaction's anchor with `StampLift`, over an `AnchorChain` cut from an `AnchorSpan`.
+A spend whose lineage sits at an earlier anchor of the same epoch first lifts its stamp to the transaction's anchor with `StampLift`, along one or more `AnchorSpan`s.
 
-After the transaction stamp is fully composed, the wallet may run `StampLift` over an `AnchorChain` segment to advance the stamp's anchor toward the chain's latest anchor before publication.
-The segment need not be built for the stamp's own anchor: an `AnchorSpan` commits to every anchor its folds produce, and `AnchorSpanCut` cuts it into the `AnchorChain` from any of them to the span's end.
+After the transaction stamp is fully composed, the wallet may run `StampLift` along further spans to advance the stamp's anchor toward the chain's latest anchor before publication.
+A span need not be built for the stamp's own anchor: an `AnchorSpan` commits to every anchor its folds produce, and `StampLift` lifts a stamp anchored at any of them to the span's end.
+Consensus and sync services publish spans as an epoch progresses; a wallet lifts across the published spans to the latest one's end and covers the rest with a span it builds itself.
 
 On publication the bundle carries the action descriptors, tachygrams, anchor, and the stamp proof.
 Validators reconstruct the action-set and tachygram-set commitments from those published bundles, check the proof against the reconstructed values, and confirm the anchor against the consensus chain.
 
 After publication, an aggregator combines `Stamp`s from independently-proven bundles into a single **aggregate**[^aggregation] whose proof can stand in for many transactions' worth of stamps, cutting per-transaction verification cost downstream.
-Each input is anchored at whatever height its wallet chose, so the aggregator obtains an `AnchorChain` segment per input and runs `StampLift` to bring every input onto a common later anchor.
+Each input is anchored at whatever height its wallet chose, so the aggregator runs `StampLift` along spans holding each input's anchor to bring every input onto a common later anchor.
 `StampMerge` then fuses the aligned stamps pairwise into a single `Stamp` whose multisets are the union of all the inputs'.
 The aggregated stamp has the same shape as any other, so it is itself eligible for further aggregation; aggregators stack to fold many published transactions into one stamp, and miners typically integrate the aggregator role into block production.
 
@@ -91,15 +92,12 @@ The sync service holds the per-epoch nullifier values the wallet shared and pool
 It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), folds the sealed buckets into one tree and opens it per query (`EvidenceTreeLeaf`, `EvidenceTreeLeafPair`, `EvidenceTreePairFuse`, `EvidenceTreeFuse`, `EvidenceTreeCap`, `EvidenceTreeDescend`, `EvidenceTreeOpen`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket, `UnspentLift` one epoch at a time, `UnspentFuse` across segments), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
 
 The aggregator works only with published `Stamp`s.
-It aligns anchors with `StampLift` over `AnchorChain` segments, built directly (`AnchorSeed`, `AnchorFuse`) or cut from a shared span (`AnchorSpanSeed`, `AnchorSpanFuse`, `AnchorSpanCut`), and fuses with `StampMerge`.
+It aligns anchors with `StampLift` along spans (`AnchorSpanSeed`, `AnchorSpanFuse`), and fuses with `StampMerge`.
 
 | step | wallet | sync service | aggregator |
 | ---- | ------ | ------------ | ---------- |
-| AnchorSeed | possible | yes | yes |
-| AnchorFuse | possible | yes | yes |
 | AnchorSpanSeed | possible | yes | yes |
 | AnchorSpanFuse | possible | yes | yes |
-| AnchorSpanCut | possible | yes | yes |
 | SummarySeed | possible | yes | no |
 | SummaryAdvance | possible | yes | no |
 | QrSummaryIntake | possible | yes | no |
@@ -139,13 +137,14 @@ The subsections below walk each subtree bottom-up.
 
 ### Anchor segments
 
-`AnchorSeed`, `SummarySeed`, and `QrStampIntakeSeed` each witness a predecessor anchor and prove one anchor step from it, and the fuses compose adjacent segments by checking endpoint equality.
+`AnchorSpanSeed`, `SummarySeed`, and `QrStampIntakeSeed` each witness a predecessor anchor and prove one anchor step from it, and the fuses compose adjacent segments by checking endpoint equality.
 A segment ties to real chain history only through a consensus-published stamp whose anchor matches an end-of-block value, emitted at `StampLift`. `SpendableInit`'s anchor closes the same way without a segment: the private spendable's anchor reaches consensus once it is spent into a stamp.
 
-An `AnchorSpan` also carries `members`, a root set of the anchors its folds produce: the end is a member and the start is not.
+An `AnchorSpan` `[anchor_start, anchor_end]` also carries `members`, a root set of the anchors its folds produce, `(anchor_start, anchor_end]`: the end is a member and the start is not.
 `AnchorSpanSeed` commits to its one produced anchor from the fixed generators, and `AnchorSpanFuse` checks the shared vertex and proves the combined set the product of the halves', so the set holds exactly the span's anchors.
-`AnchorSpanCut` emits the `AnchorChain` from the start or a member to a member, keeping one of the span's endpoints, so every cut advances: a root set orders nothing between two members.
-Its openings at the witnessed anchors need no challenge, since the set is pinned to the header by commit-equality.
+`StampLift` takes a stamp anchored at the span's start or at a member, $M(\mathsf{anchor}) \cdot (\mathsf{anchor} - \mathsf{anchor\_start}) = 0$, to the span's end.
+The target is always the end, since a root set orders nothing between members.
+The opening at the stamp's anchor needs no challenge, since the set is pinned to the header by commit-equality.
 
 ### ArbitraryUnspent composition
 
@@ -166,7 +165,7 @@ for the witnessed `extended` $E$, the header-bound `elapsed` $P$, and the one fa
 ### Summaries
 
 A `Summary` carries `(epoch, anchor_prev, anchor_end, acc_commit)`: a run of one epoch's stamps whose tachygram sets fold into one accumulator while the anchor absorbs the same commitments.
-`SummarySeed` is `AnchorSeed` with the stamp's set commitment carried on the header.
+`SummarySeed` is the fold of `AnchorSpanSeed` with the stamp's set commitment carried on the header.
 `SummaryAdvance` binds the witnessed accumulator to the header by commit-equality, checks `extended = acc * stamp` at a challenge, and advances `anchor_end` by the same `stamp.commit()`.
 The product of two root polynomials is the root polynomial of the multiset union, and consensus forbids republishing a tachygram within two epochs, so the accumulator is square-free.
 Where a summary starts and stops is prover-chosen: a consumer splices summaries by anchor equality and passes through every stamp link regardless.
@@ -348,7 +347,7 @@ The work splits as follows, each stamp step also opening its action-set and tach
 ### Stamp anchor
 
 `OutputStamp` is the only stamp-producing step that takes an anchor as direct witness: an output operation has no prior chain state to thread from.
-The other stamp-producing steps thread the anchor from a validated spendable through `SpendBind`/`SpendStamp`, equality-constrain the two inputs' anchors (`StampMerge`), or advance over an `AnchorChain` path whose `anchor_start` matches the stamp's anchor (`StampLift`).
+The other stamp-producing steps thread the anchor from a validated spendable through `SpendBind`/`SpendStamp`, equality-constrain the two inputs' anchors (`StampMerge`), or advance along an `AnchorSpan` holding the stamp's anchor as its start or a member (`StampLift`).
 Consensus verifies the published anchor against the chain before accepting the stamp.
 
 ### Rerandomization at trust boundaries
@@ -440,30 +439,24 @@ The single `SpendableLift` consumes one composed `NoteUnspent` (potentially cros
 ```mermaid
 flowchart LR
   sh_in((Stamp))
-  w_seed[/anchor_start, epoch, stamp_commit/]
-  s_seed[AnchorSeed]
-  w_next[/anchor_start, epoch, stamp_commit/]
-  s_next[AnchorSeed]
-  s_fuse[AnchorFuse]
   w_span[/anchor_start, epoch, stamp_commit/]
   s_span[AnchorSpanSeed]
+  w_next[/anchor_start, epoch, stamp_commit/]
+  s_next[AnchorSpanSeed]
+  w_spanfuse[/left_members, combined, right_members/]
   s_spanfuse[AnchorSpanFuse]
-  w_cut[/from, to, members/]
-  s_cut[AnchorSpanCut]
+  w_lift[/members/]
   s_lift[StampLift]
   sh_out((Stamp))
 
-  w_seed --> s_seed
-  w_next --> s_next
-  s_seed -->|AnchorChain| s_fuse
-  s_next -->|AnchorChain| s_fuse
   w_span --> s_span
+  w_next --> s_next
   s_span -->|AnchorSpan| s_spanfuse
-  s_spanfuse -->|AnchorSpan| s_cut
-  w_cut --> s_cut
+  s_next -->|AnchorSpan| s_spanfuse
+  w_spanfuse --> s_spanfuse
   sh_in --> s_lift
-  s_fuse -->|AnchorChain| s_lift
-  s_cut -->|AnchorChain| s_lift
+  s_spanfuse -->|AnchorSpan| s_lift
+  w_lift --> s_lift
   s_lift --> sh_out
 ```
 
@@ -501,7 +494,6 @@ flowchart LR
 
 | Header | Fields |
 | ------ | ------ |
-| AnchorChain | (anchor_start, anchor_end) |
 | AnchorSpan | (anchor_start, members, anchor_end) |
 | Summary | (epoch, anchor_prev, anchor_end, acc_commit) |
 | QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile, contents) |
@@ -522,11 +514,8 @@ flowchart LR
 
 | Step | Left | Right | Witness | Output |
 | ---- | ---- | ----- | ------- | ------ |
-| AnchorSeed | — | — | anchor_start, epoch, stamp_commit | AnchorChain |
-| AnchorFuse | AnchorChain | AnchorChain | — | AnchorChain |
 | AnchorSpanSeed | — | — | anchor_start, epoch, stamp_commit | AnchorSpan |
 | AnchorSpanFuse | AnchorSpan | AnchorSpan | left_members, combined, right_members | AnchorSpan |
-| AnchorSpanCut | AnchorSpan | — | from, to, members | AnchorChain |
 | SummarySeed | — | — | anchor_prev, epoch, stamp_commit | Summary |
 | SummaryAdvance | Summary | — | acc, extended, stamp | Summary |
 | QrSpendableInit | NoteUnspent | QrBucket | contents | NoteSpendable |
@@ -558,7 +547,7 @@ flowchart LR
 | OutputStamp | OutputHeader | — | theta, anchor, action_set, tachygram_set | Stamp |
 | SpendStamp | SpendHeader | — | theta, pak, action_set, tachygram_set | Stamp |
 | StampMerge | Stamp | Stamp | (action_set, tachygram_set) × left, merged, right | Stamp |
-| StampLift | Stamp | AnchorChain | — | Stamp |
+| StampLift | Stamp | AnchorSpan | members | Stamp |
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the nullifier sponge, the scalar `psi` seed, and the delegated absence sequence.
 [^tachygrams]: See [Tachygrams](./tachygrams.md) for the per-stamp multiset polynomial and its Pedersen commitment.

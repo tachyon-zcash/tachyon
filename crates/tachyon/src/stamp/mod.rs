@@ -35,7 +35,7 @@ use crate::{
     entropy::ActionEntropy,
     keys::{ProofAuthorizingKey, private},
     primitives::{
-        ActionDigest, ActionDigestError, Anchor, EpochIndex, Tachygram, TachygramSetCommit,
+        ActionDigest, ActionDigestError, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
     },
     serialization,
     stamp::proof::{delegation, pool, spend, spendable},
@@ -374,11 +374,12 @@ impl Plan {
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
     /// [`ProofStamp::prove_spend`] proves the action at the spendable's
-    /// anchor. A spend whose anchor is not the plan's carries an
-    /// [`AnchorChain`](pool::AnchorChain) from its anchor to the plan's, cut
-    /// from an [`AnchorSpan`](pool::AnchorSpan), and [`StampLift`] lifts its
-    /// stamp along it. For each **output**, [`ProofStamp::prove_output`] proves
-    /// the action at the plan's anchor.
+    /// anchor. A spend whose anchor is not the plan's carries
+    /// [`AnchorSpan`](pool::AnchorSpan)s, each with its members polynomial,
+    /// and [`StampLift`] lifts its stamp along each in turn. Each span holds
+    /// the previous one's end as its start or a member, and the last ends
+    /// at the plan's anchor. For each **output**,
+    /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
     ///
     /// Stamps are recursively merged via [`StampMerge`] into a single stamp,
     /// whose coverage is the planned descriptors.
@@ -386,13 +387,18 @@ impl Plan {
     /// # Errors
     ///
     /// - [`ProveError::MissingPcd`] if the plan has no actions, the number of
-    ///   spend PCDs does not match the planned spends, or a spend does not
-    ///   reach the plan's anchor.
+    ///   spend PCDs does not match the planned spends, or a spend's last span
+    ///   (or, with none, its spendable) does not reach the plan's anchor.
     /// - [`ProveError::ActionDigest`] if a proved action has no digest.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
+    /// - [`ProveError::ProofFailed`] if a proof-system step fails, including a
+    ///   span that does not hold the anchor its stamp lifts from.
     #[expect(
         clippy::type_complexity,
-        reason = "each spend's secret, spendable and optional anchor chain"
+        reason = "each spend's secret, spendable and anchor spans"
+    )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "proves, lifts and merges every planned action"
     )]
     pub fn prove<RNG: CryptoRng>(
         self,
@@ -401,7 +407,7 @@ impl Plan {
         spend_pcds: Vec<(
             ragu::Pcd<delegation::NoteSecret>,
             ragu::Pcd<spendable::NoteSpendable>,
-            Option<ragu::Pcd<pool::AnchorChain>>,
+            Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
         // Each entry pairs leaf stamp components with the descriptor of its
@@ -420,9 +426,18 @@ impl Plan {
             ));
         }
 
-        for (index, ((desc, theta, rcv), (secret_pcd, spendable_pcd, anchor_chain))) in
+        for (index, ((desc, theta, rcv), (secret_pcd, spendable_pcd, spans))) in
             self.spends.into_iter().zip(spend_pcds).enumerate()
         {
+            let reached = spans
+                .last()
+                .map_or_else(|| spendable_pcd.data().2, |last| last.0.data().2);
+            if reached != self.anchor {
+                return Err(ProveError::MissingPcd(
+                    format!("spend {index} does not reach the plan's anchor").into(),
+                ));
+            }
+
             // SpendBind: derive the live pair from the note's master key and
             // commit the note's value.
             let (bind_pcd, ()) = PROOF_SYSTEM
@@ -440,20 +455,14 @@ impl Plan {
                     .commit(),
                 spend_anchor,
             ));
-            if let Some(chain) = anchor_chain {
+            for (span, members) in spans {
                 stamp_pcd = PROOF_SYSTEM
-                    .fuse(rng, StampLift, (), stamp_pcd, chain)
+                    .fuse(rng, StampLift, (members,), stamp_pcd, span)
                     .map_err(ProveError::ProofFailed)?
                     .0;
             }
 
             let (proof, (_, _, anchor)) = stamp_pcd.into_parts();
-            if anchor != self.anchor {
-                return Err(ProveError::MissingPcd(
-                    format!("spend {index} does not reach the plan's anchor").into(),
-                ));
-            }
-
             entries.push((
                 BTreeSet::from_iter([desc]),
                 digests,
@@ -686,7 +695,8 @@ impl ProofStamp {
     /// Proves the merge of two stamps, returning the merged stamp
     /// components `(digests, tachygrams, anchor, proof)`.
     ///
-    /// Both stamps must share the same anchor (use StampLift to align first).
+    /// Both stamps must share the same anchor (use [`StampLift`] to align
+    /// first).
     ///
     /// Each side is `(digests, tachygrams, anchor, proof)`, where the digest
     /// list reconstructs the `ActionCommit` multiset that `StampMerge`
@@ -760,25 +770,41 @@ impl ProofStamp {
         ))
     }
 
-    /// Advances the stamp's anchor with the provided anchor chain proof.
+    /// Advances the stamp's anchor along the provided anchor spans, each with
+    /// its members polynomial. Each span holds the previous one's end as its
+    /// start or a member.
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error`] if a proof-system step fails.
+    /// - [`ProveError::MissingPcd`] if no span is provided.
+    /// - [`ProveError::ProofFailed`] if a proof-system step fails, including a
+    ///   span that does not hold the anchor the stamp lifts from.
     pub fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,
-        anchor_chain: ragu::Pcd<pool::AnchorChain>,
-    ) -> Result<Self, ragu_core::Error> {
+        spans: Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+    ) -> Result<Self, ProveError> {
+        if spans.is_empty() {
+            return Err(ProveError::MissingPcd(
+                "no anchor span proof for no anchor advance".into(),
+            ));
+        }
+
         let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
-        let stamp_pcd =
+        let mut stamp_pcd =
             self.proof
                 .carry::<Stamp>((action_set.commit(), self.tachygram_set, self.anchor));
-
-        let (pcd, ()) = PROOF_SYSTEM.fuse(rng, StampLift, (), stamp_pcd, anchor_chain)?;
-        let anchor = pcd.data().2;
-        let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
+        for (span, members) in spans {
+            stamp_pcd = PROOF_SYSTEM
+                .fuse(rng, StampLift, (members,), stamp_pcd, span)
+                .map_err(ProveError::ProofFailed)?
+                .0;
+        }
+        let anchor = stamp_pcd.data().2;
+        let rerand = PROOF_SYSTEM
+            .rerandomize(stamp_pcd, rng)
+            .map_err(ProveError::ProofFailed)?;
 
         Ok(Self {
             coverage: self.coverage,
@@ -789,50 +815,26 @@ impl ProofStamp {
         })
     }
 
-    /// Advances the stamp's anchor with a proof of the provided sequence.
+    /// Advances the stamp's anchor along the provided anchor spans, computing
+    /// the action digests from the covered descriptors.
     ///
     /// # Errors
     ///
-    /// Returns [`ProveError`] if an action digest cannot be computed or a
-    /// proof-system step fails.
+    /// Returns [`ProveError`] if an action digest cannot be computed, no span
+    /// is provided, or a proof-system step fails.
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         descriptors: &BTreeSet<action::Descriptor>,
-        seed_witnesses: Vec<(Anchor, EpochIndex, TachygramSetCommit)>,
+        spans: Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
     ) -> Result<Self, ProveError> {
-        let anchor_seeds = seed_witnesses
-            .into_iter()
-            .map(|witness| {
-                PROOF_SYSTEM
-                    .seed(rng, pool::AnchorSeed, witness)
-                    .map(|(pcd, _aux)| pcd)
-                    .map_err(ProveError::ProofFailed)
-            })
-            .collect::<Result<Vec<_>, ProveError>>()?;
-
-        let anchor_chain = anchor_seeds
-            .into_iter()
-            .map(Ok)
-            .reduce(|left, right| {
-                PROOF_SYSTEM
-                    .fuse(rng, pool::AnchorFuse, (), left?, right?)
-                    .map(|(pcd, _aux)| pcd)
-                    .map_err(ProveError::ProofFailed)
-            })
-            .transpose()?
-            .ok_or(ProveError::MissingPcd(
-                "no anchor chain proof for no anchor advance".into(),
-            ))?;
-
         let action_digests = descriptors
             .iter()
             .map(action::Descriptor::digest)
             .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
 
-        self.prove_lift(rng, action_digests, anchor_chain)
-            .map_err(ProveError::ProofFailed)
+        self.prove_lift(rng, action_digests, spans)
     }
 
     /// Merges two stamps into one covering stamp.

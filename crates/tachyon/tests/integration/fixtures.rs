@@ -13,8 +13,8 @@ use ragu_pasta::PoseidonFp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile,
-    Tachygram, TachygramSetCommit, TachygramSetPoly,
+    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
+    QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
@@ -468,57 +468,12 @@ impl PoolSim {
     }
 }
 
-/// Build an [`AnchorChain`] covering blocks `range` in full, rooted at the
-/// block-start anchor of `*range.start()`.
-///
-/// One [`AnchorSeed`] per absorbed stamp, fused linearly via [`AnchorFuse`].
-/// A stampless block advances no anchor and so contributes no segment; the
-/// range must therefore cover at least one stamp.
-pub(crate) fn build_anchor_chain_pcd<RNG: CryptoRng>(
-    rng: &mut RNG,
-    pool: &PoolSim,
-    range: RangeInclusive<BlockHeight>,
-) -> Pcd<pool::AnchorChain> {
-    let start = *range.start();
-    let end = *range.end();
-    assert_eq!(start.epoch(), end.epoch(), "AnchorChain single-epoch range");
-    assert!(start <= end);
-
-    let mut state = pool.block(start).prev;
-    let mut chain: Option<Pcd<pool::AnchorChain>> = None;
-    let mut height = start;
-    loop {
-        for tgs in &pool.block(height).tachygrams() {
-            let witness = witness::anchor_seed(((), ()), state, height.epoch(), tgs);
-            let next_state = state.next_stamp(witness.1, &witness.2).unwrap();
-            let (seed, ()) = PROOF_SYSTEM
-                .seed(rng, pool::AnchorSeed, witness)
-                .expect("AnchorSeed");
-            chain = Some(match chain.take() {
-                None => seed,
-                Some(left) => {
-                    let (fused, ()) = PROOF_SYSTEM
-                        .fuse(rng, pool::AnchorFuse, (), left, seed)
-                        .expect("AnchorFuse");
-                    fused
-                },
-            });
-            state = next_state;
-        }
-        if height >= end {
-            break;
-        }
-        height = height.next().unwrap();
-    }
-
-    chain.expect("AnchorChain range must cover at least one stamp")
-}
-
 /// Build an [`AnchorSpan`] covering blocks `range` in full, rooted at the
 /// block-start anchor of `*range.start()`, with the anchors its folds produce.
 ///
 /// One [`AnchorSpanSeed`] per absorbed stamp, fused linearly via
-/// [`AnchorSpanFuse`]. The range must cover at least one stamp.
+/// [`AnchorSpanFuse`]. A stampless block advances no anchor and so contributes
+/// no fold; the range must therefore cover at least one stamp.
 pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
@@ -567,6 +522,17 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
         span.expect("AnchorSpan range must cover at least one stamp"),
         members,
     )
+}
+
+/// [`build_anchor_span_pcd`] in the form a lift takes: the span with its
+/// members polynomial.
+pub(crate) fn build_lift_span<RNG: CryptoRng>(
+    rng: &mut RNG,
+    pool: &PoolSim,
+    range: RangeInclusive<BlockHeight>,
+) -> (Pcd<pool::AnchorSpan>, AnchorSetPoly) {
+    let (span, members) = build_anchor_span_pcd(rng, pool, range);
+    (span, AnchorSetPoly::from_iter(members))
 }
 
 /// Build a [`Summary`](summary::Summary) over the anchor span `(start, end)`,
@@ -1608,7 +1574,7 @@ impl WalletSim {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((self.secret_pcd(rng, note), spendable_pcd, None));
+            spend_pcds.push((self.secret_pcd(rng, note), spendable_pcd, vec![]));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes

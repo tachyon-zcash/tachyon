@@ -23,16 +23,13 @@ use crate::{
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
         evidence::{EvidenceTreeDescend, EvidenceTreeOpen},
-        pool::{
-            AnchorSeed, AnchorSpanCut, AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse,
-            UnspentLift,
-        },
+        pool::{AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift},
         qr::{
             QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
             QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
         spendable::{QrSpendableInit, SpendableInit},
-        stamp::{OutputStamp, SpendStamp},
+        stamp::{OutputStamp, SpendStamp, StampLift},
         summary::{SummaryAdvance, SummarySeed},
     },
 };
@@ -158,22 +155,6 @@ pub fn spendable_init(
     )
 }
 
-/// Prepare the witness for [`AnchorSeed`]: `(anchor_start, epoch,
-/// stamp_commit)`.
-#[must_use]
-pub fn anchor_seed(
-    (_left, _right): (StepLeft<AnchorSeed>, StepRight<AnchorSeed>),
-    anchor_start: Anchor,
-    epoch: EpochIndex,
-    tgs: &[Tachygram],
-) -> StepWitness<'static, AnchorSeed> {
-    (
-        anchor_start,
-        epoch,
-        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
-    )
-}
-
 /// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
 /// stamp_commit)`.
 #[must_use]
@@ -208,17 +189,15 @@ pub fn anchor_span_fuse(
     )
 }
 
-/// Prepare the witness for [`AnchorSpanCut`]: `(from, to, members)`.
+/// Prepare the witness for [`StampLift`]: `(members)`.
 ///
 /// `members` are the anchors the span's folds produce.
 #[must_use]
-pub fn anchor_span_cut(
-    (_span, _right): (StepLeft<AnchorSpanCut>, StepRight<AnchorSpanCut>),
-    from: Anchor,
-    to: Anchor,
+pub fn stamp_lift(
+    (_stamp, _span): (StepLeft<StampLift>, StepRight<StampLift>),
     members: &[Anchor],
-) -> StepWitness<'static, AnchorSpanCut> {
-    (from, to, members.iter().copied().collect())
+) -> StepWitness<'static, StampLift> {
+    (members.iter().copied().collect(),)
 }
 
 /// Prepare the witness for [`SummarySeed`]:

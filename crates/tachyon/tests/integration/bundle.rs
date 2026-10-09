@@ -11,8 +11,7 @@ use core::cmp::Reverse;
 
 use corez::io;
 use ff::Field as _;
-use group::Group as _;
-use pasta_curves::{Eq, Fp};
+use pasta_curves::Fp;
 use ragu::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
@@ -28,7 +27,7 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, build_autonome, build_output_plan, build_output_stamp,
+    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan, build_output_stamp,
     forge_overlapping_merge, mock_sighash, mock_wtxid, random_block, random_block_with, shared_sk,
     spend_witness,
 };
@@ -628,7 +627,7 @@ fn duplicated_spend_cannot_inflate() {
     let secret = wallet.secret_pcd(rng, note);
     let honest_stamp = Plan::new(alloc::vec![plan], alloc::vec![])
         .stamp_plan(anchor)
-        .prove(rng, &wallet.pak, alloc::vec![(secret, spendable, None)])
+        .prove(rng, &wallet.pak, alloc::vec![(secret, spendable, vec![])])
         .expect("prove the honest single spend");
 
     // Assemble the duplicated-spend bundle by hand: two identical spend actions,
@@ -2096,14 +2095,15 @@ fn bundle_lift_preserves_coverage() {
 
     let descriptors = bundle.verify_coverage(&[]).expect("autonome coverage");
 
-    // Two following stamps, so the chain fuses rather than standing on one
+    // Two following stamps, so the span fuses rather than standing on one
     // seed.
     let next_a = build_autonome(rng, &wallet, 400, 300);
     let next_b = build_autonome(rng, &wallet, 500, 200);
     pool.mine_bundles(&[&next_a, &next_b]);
+    let span = build_lift_span(rng, &pool, pool.height()..=pool.height());
 
     let lifted = bundle
-        .lift(rng, &[], (cm_height.epoch(), &[&next_a, &next_b]))
+        .lift(rng, &[], vec![span])
         .expect("lift an autonome bundle");
 
     assert_eq!(lifted.stamp.anchor, pool.anchor());
@@ -2117,7 +2117,7 @@ fn bundle_lift_preserves_coverage() {
 }
 
 #[test]
-fn bundle_lift_rejects_invalid_anchor_inputs() {
+fn bundle_lift_rejects_no_spans() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
 
@@ -2134,51 +2134,14 @@ fn bundle_lift_rejects_invalid_anchor_inputs() {
         vec![output_note],
     );
 
-    let next = build_autonome(rng, &wallet, 400, 300);
-    pool.mine_bundles(&[&next]);
-
-    let forged_with = |tachygram_set| {
-        let mut forged = next.clone();
-        forged.stamp.tachygram_set = tachygram_set;
-        forged
+    let err = bundle.lift(rng, &[], vec![]).unwrap_err();
+    let ProveError::MissingPcd(reason) = err else {
+        panic!("expected a missing anchor span, got {err:?}");
     };
-
-    // The identity point is not a valid set.
-    {
-        let forged = forged_with(TachygramSetCommit::from(Eq::identity()));
-        let err = bundle
-            .clone()
-            .lift(rng, &[], (cm_height.epoch(), &[&forged]))
-            .unwrap_err();
-        let LiftError::AnchorError(AnchorError::NextStampZero) = err else {
-            panic!("expected NextStampZero, got {err:?}");
-        };
-    }
-
-    // An empty set is rejected.
-    {
-        let forged = forged_with(TachygramSetCommit::default());
-        let err = bundle
-            .clone()
-            .lift(rng, &[], (cm_height.epoch(), &[&forged]))
-            .unwrap_err();
-        let LiftError::AnchorError(AnchorError::NextStampEmpty) = err else {
-            panic!("expected NextStampEmpty, got {err:?}");
-        };
-    }
-
-    // Lifting over an empty sequence nonsensical.
-    {
-        let err = bundle.lift(rng, &[], (cm_height.epoch(), &[])).unwrap_err();
-
-        let LiftError::LiftFailed(ProveError::MissingPcd(reason)) = err else {
-            panic!("expected a missing anchor chain, got {err:?}");
-        };
-        assert_eq!(
-            reason.to_string(),
-            "no anchor chain proof for no anchor advance"
-        );
-    }
+    assert_eq!(
+        reason.to_string(),
+        "no anchor span proof for no anchor advance"
+    );
 }
 
 /// An aggregate's action commitment spans its adjuncts, so a lift that was
@@ -2241,9 +2204,10 @@ fn bundle_lift_over_an_aggregate() {
     pool.advance(1, |_| alloc::vec![]);
     let next = build_autonome(rng, &wallet, 400, 300);
     pool.mine_bundles(&[&next]);
+    let span = build_lift_span(rng, &pool, pool.height()..=pool.height());
 
     let lifted = innocent
-        .lift(rng, &adjuncts, (pool.height().epoch(), &[&next]))
+        .lift(rng, &adjuncts, vec![span])
         .expect("lift an aggregate over its adjuncts");
 
     assert_eq!(lifted.stamp.anchor, pool.anchor());
