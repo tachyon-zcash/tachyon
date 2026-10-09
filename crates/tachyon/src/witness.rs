@@ -174,8 +174,8 @@ pub fn anchor_span_seed(
 /// Prepare the witness for [`AnchorSpanFuse`]: `(left_members, combined,
 /// right_members)`.
 ///
-/// `left_members` and `right_members` are the anchors each half's folds
-/// produce.
+/// `left_members` and `right_members` are the members polynomials of the two
+/// halves.
 #[must_use]
 pub fn anchor_span_fuse(
     (_left, _right): (StepLeft<AnchorSpanFuse>, StepRight<AnchorSpanFuse>),
@@ -191,7 +191,7 @@ pub fn anchor_span_fuse(
 
 /// Prepare the witness for [`StampLift`]: `(members)`.
 ///
-/// `members` are the anchors the span's folds produce.
+/// `members` is the span's members polynomial.
 #[must_use]
 pub fn stamp_lift(
     (_stamp, _span): (StepLeft<StampLift>, StepRight<StampLift>),

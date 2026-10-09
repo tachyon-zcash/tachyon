@@ -32,11 +32,11 @@ use crate::{
 /// [`StampMerge`] binds its witnessed input sets to the child headers
 /// and enforces each output commitment as the product of its inputs.
 ///
-/// `anchor` is freely witnessed at [`OutputStamp`]; at [`SpendStamp`]
-/// it threads from the left [`SpendHeader`]; at [`StampMerge`]
-/// the step constrains `left.anchor == right.anchor`; at
-/// [`StampLift`] it advances to the right [`AnchorSpan`]'s `anchor_end`
-/// after constraining `stamp.anchor` to the span's start or a member.
+/// `anchor` is a free witness at [`OutputStamp`]. At [`SpendStamp`] it comes
+/// from the left [`SpendHeader`]. At [`StampMerge`] the step requires
+/// `left.anchor == right.anchor`. At [`StampLift`] the step checks that
+/// `stamp.anchor` is the right [`AnchorSpan`]'s `anchor_start` or a member,
+/// and moves it to the span's `anchor_end`.
 #[derive(Debug)]
 pub struct Stamp;
 
@@ -290,22 +290,24 @@ impl Step for StampMerge {
     }
 }
 
-/// Advance a stamp's anchor along an [`AnchorSpan`]: the stamp's `anchor` is
-/// the span's `anchor_start` or a member, and the new anchor is the span's
-/// `anchor_end`.
+/// Advance a stamp's anchor to the end of an [`AnchorSpan`].
+///
+/// The stamp's `anchor` must be the span's `anchor_start` or one of its
+/// members:
 ///
 /// $$
 ///   M(\mathsf{anchor}) \cdot (\mathsf{anchor} - \mathsf{anchor\_start}) = 0
 /// $$
 ///
-/// The target is always `anchor_end`: a root set orders nothing between
-/// members. A stamp at `anchor_end` lifts to itself.
+/// The output anchor is always `anchor_end`, because the members polynomial
+/// does not record the order of its members. A stamp already at `anchor_end`
+/// keeps its anchor.
 ///
 /// # Soundness
 ///
-/// $M$ is bound to the header by commit-equality, so its opening at the
-/// stamp's anchor needs no challenge. An anchor outside the span needs an
-/// anchor collision.
+/// The step opens $M$ at the stamp's anchor, and checks $M$'s commitment
+/// against the header's `members`. A stamp anchored outside the span passes
+/// only if its anchor collides with `anchor_start` or a member.
 #[derive(Debug)]
 pub struct StampLift;
 

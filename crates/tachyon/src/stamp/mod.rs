@@ -374,11 +374,12 @@ impl Plan {
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
     /// [`ProofStamp::prove_spend`] proves the action at the spendable's
-    /// anchor. A spend whose anchor is not the plan's carries
-    /// [`AnchorSpan`](pool::AnchorSpan)s, each with its members polynomial,
-    /// and [`StampLift`] lifts its stamp along each in turn. Each span holds
-    /// the previous one's end as its start or a member, and the last ends
-    /// at the plan's anchor. For each **output**,
+    /// anchor. If that anchor differs from the plan's anchor, the spend comes
+    /// with a list of [`AnchorSpan`](pool::AnchorSpan)s and their members
+    /// polynomials. [`StampLift`] moves the spend stamp along each span in
+    /// order. The first span must contain the spendable's anchor, each later
+    /// span must contain the previous span's `anchor_end`, and the last span
+    /// must end at the plan's anchor. For each **output**,
     /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
     ///
     /// Stamps are recursively merged via [`StampMerge`] into a single stamp,
@@ -386,12 +387,11 @@ impl Plan {
     ///
     /// # Errors
     ///
-    /// - [`ProveError::MissingPcd`] if the plan has no actions, the number of
-    ///   spend PCDs does not match the planned spends, or a spend's last span
-    ///   (or, with none, its spendable) does not reach the plan's anchor.
+    /// - [`ProveError::MissingPcd`] if the plan has no actions, the spend PCDs
+    ///   do not match the planned spends, or a spend does not reach the plan's
+    ///   anchor.
     /// - [`ProveError::ActionDigest`] if a proved action has no digest.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails, including a
-    ///   span that does not hold the anchor its stamp lifts from.
+    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
     #[expect(
         clippy::type_complexity,
         reason = "each spend's secret, spendable and anchor spans"
@@ -808,15 +808,14 @@ impl ProofStamp {
         ))
     }
 
-    /// Advances the stamp's anchor along the provided anchor spans, each with
-    /// its members polynomial. Each span holds the previous one's end as its
-    /// start or a member.
+    /// Advances the stamp's anchor along `spans`, each paired with its members
+    /// polynomial. The first span must contain the stamp's anchor, and each
+    /// later span must contain the previous span's `anchor_end`.
     ///
     /// # Errors
     ///
     /// - [`ProveError::MissingPcd`] if no span is provided.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails, including a
-    ///   span that does not hold the anchor the stamp lifts from.
+    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
     pub fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -855,8 +854,8 @@ impl ProofStamp {
         })
     }
 
-    /// Advances the stamp's anchor along the provided anchor spans, computing
-    /// the action digests from the covered descriptors.
+    /// Advances the stamp's anchor along `spans`, computing the action digests
+    /// from the covered descriptors.
     ///
     /// # Errors
     ///

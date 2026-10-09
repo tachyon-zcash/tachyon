@@ -28,9 +28,9 @@ use crate::{
 pub struct Summary;
 
 impl Header for Summary {
-    /// `(epoch, anchor_prev, anchor_end, acc_commit)`. `anchor_prev` is an
-    /// unbound seed witness, as [`AnchorSpan`](super::pool::AnchorSpan)'s
-    /// `anchor_start`.
+    /// `(epoch, anchor_prev, anchor_end, acc_commit)`. `anchor_prev` is a free
+    /// witness of the seed step, as `anchor_start` is for
+    /// [`AnchorSpan`](super::pool::AnchorSpan).
     type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
 
     const SUFFIX: Suffix = Suffix::new(9);
@@ -46,13 +46,14 @@ impl Header for Summary {
     }
 }
 
-/// Start a summary from one stamp: the fold of
-/// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed) with the stamp commitment
-/// carried on the header.
+/// Start a summary from one stamp. The step performs the same fold as
+/// [`AnchorSpanSeed`](super::pool::AnchorSpanSeed) and puts the stamp's
+/// commitment on the header.
 ///
 /// # Soundness
 ///
-/// As at [`AnchorSpanSeed`](super::pool::AnchorSpanSeed).
+/// `epoch` is a free witness. Consensus computes each fold with the epoch of
+/// the block that contains the stamp.
 #[derive(Debug)]
 pub struct SummarySeed;
 

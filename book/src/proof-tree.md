@@ -69,17 +69,21 @@ An output operation also takes two steps, `OutputBind` and `OutputStamp`.
 
 A transaction with multiple spend and output stamps composes them with `StampMerge`.
 The output is a single `Stamp` whose multisets are the union of the two inputs' at the shared anchor.
-A spend whose lineage sits at an earlier anchor of the same epoch first lifts its stamp to the transaction's anchor with `StampLift`, along one or more `AnchorSpan`s.
+If a spend's lineage is at an earlier anchor of the same epoch, the wallet first runs `StampLift` along one or more `AnchorSpan`s to move the spend stamp to the transaction's anchor.
 
-After the transaction stamp is fully composed, the wallet may run `StampLift` along further spans to advance the stamp's anchor toward the chain's latest anchor before publication.
-A span need not be built for the stamp's own anchor: an `AnchorSpan` commits to every anchor its folds produce, and `StampLift` lifts a stamp anchored at any of them to the span's end.
-Consensus and sync services publish spans as an epoch progresses; a wallet lifts across the published spans to the latest one's end and covers the rest with a span it builds itself.
+After the transaction stamp is composed, the wallet may run `StampLift` along more spans to move the stamp's anchor closer to the chain's latest anchor before publication.
+An `AnchorSpan` commits to every anchor produced inside it.
+`StampLift` moves a stamp from the span's start, or from any of those anchors, to the span's end.
+Consensus and sync services publish spans as an epoch progresses.
+A wallet lifts its stamp along the published spans to the end of the latest one.
+For the stamps published after that, it builds its own span.
 
 On publication the bundle carries the action descriptors, tachygrams, anchor, and the stamp proof.
 Validators reconstruct the action-set and tachygram-set commitments from those published bundles, check the proof against the reconstructed values, and confirm the anchor against the consensus chain.
 
 After publication, an aggregator combines `Stamp`s from independently-proven bundles into a single **aggregate**[^aggregation] whose proof can stand in for many transactions' worth of stamps, cutting per-transaction verification cost downstream.
-Each input is anchored at whatever height its wallet chose, so the aggregator runs `StampLift` along spans holding each input's anchor to bring every input onto a common later anchor.
+Each input is anchored at the height its wallet chose.
+The aggregator runs `StampLift` on each input, along spans that contain that input's anchor, to move every input to the same later anchor.
 `StampMerge` then fuses the aligned stamps pairwise into a single `Stamp` whose multisets are the union of all the inputs'.
 The aggregated stamp has the same shape as any other, so it is itself eligible for further aggregation; aggregators stack to fold many published transactions into one stamp, and miners typically integrate the aggregator role into block production.
 
@@ -140,11 +144,19 @@ The subsections below walk each subtree bottom-up.
 `AnchorSpanSeed`, `SummarySeed`, and `QrStampIntakeSeed` each witness a predecessor anchor and prove one anchor step from it, and the fuses compose adjacent segments by checking endpoint equality.
 A segment ties to real chain history only through a consensus-published stamp whose anchor matches an end-of-block value, emitted at `StampLift`. `SpendableInit`'s anchor closes the same way without a segment: the private spendable's anchor reaches consensus once it is spent into a stamp.
 
-An `AnchorSpan` `[anchor_start, anchor_end]` also carries `members`, a root set of the anchors its folds produce, `(anchor_start, anchor_end]`: the end is a member and the start is not.
-`AnchorSpanSeed` commits to its one produced anchor from the fixed generators, and `AnchorSpanFuse` checks the shared vertex and proves the combined set the product of the halves', so the set holds exactly the span's anchors.
-`StampLift` takes a stamp anchored at the span's start or at a member, $M(\mathsf{anchor}) \cdot (\mathsf{anchor} - \mathsf{anchor\_start}) = 0$, to the span's end.
-The target is always the end, since a root set orders nothing between members.
-The opening at the stamp's anchor needs no challenge, since the set is pinned to the header by commit-equality.
+An `AnchorSpan` covers `[anchor_start, anchor_end]`.
+Its header also carries `members`, a commitment to the polynomial whose roots are the anchors in `(anchor_start, anchor_end]`.
+Each stamp folded into the span adds one member.
+`anchor_end` is a member and `anchor_start` is not.
+`AnchorSpanSeed` folds one stamp and commits to the anchor it produces, using the fixed generators.
+`AnchorSpanFuse` requires the left span's `anchor_end` to equal the right span's `anchor_start`, and proves that the combined members polynomial is the product of the two halves' polynomials.
+
+`StampLift` moves a stamp from `anchor_start` or from any member to `anchor_end`.
+It checks $M(\mathsf{anchor}) \cdot (\mathsf{anchor} - \mathsf{anchor\_start}) = 0$, where $M$ is the members polynomial and $\mathsf{anchor}$ is the stamp's anchor.
+The members polynomial records which anchors are in the span and not their order.
+`StampLift` therefore always moves the stamp to `anchor_end`.
+`StampLift` evaluates $M$ at the stamp's anchor without a random challenge.
+It checks that the witnessed polynomial's commitment equals the header's `members`.
 
 ### ArbitraryUnspent composition
 
@@ -165,7 +177,7 @@ for the witnessed `extended` $E$, the header-bound `elapsed` $P$, and the one fa
 ### Summaries
 
 A `Summary` carries `(epoch, anchor_prev, anchor_end, acc_commit)`: a run of one epoch's stamps whose tachygram sets fold into one accumulator while the anchor absorbs the same commitments.
-`SummarySeed` is the fold of `AnchorSpanSeed` with the stamp's set commitment carried on the header.
+`SummarySeed` performs the same fold as `AnchorSpanSeed`, and also puts the stamp's tachygram-set commitment on its header.
 `SummaryAdvance` binds the witnessed accumulator to the header by commit-equality, checks `extended = acc * stamp` at a challenge, and advances `anchor_end` by the same `stamp.commit()`.
 The product of two root polynomials is the root polynomial of the multiset union, and consensus forbids republishing a tachygram within two epochs, so the accumulator is square-free.
 Where a summary starts and stops is prover-chosen: a consumer splices summaries by anchor equality and passes through every stamp link regardless.
@@ -347,7 +359,7 @@ The work splits as follows, each stamp step also opening its action-set and tach
 ### Stamp anchor
 
 `OutputStamp` is the only stamp-producing step that takes an anchor as direct witness: an output operation has no prior chain state to thread from.
-The other stamp-producing steps thread the anchor from a validated spendable through `SpendBind`/`SpendStamp`, equality-constrain the two inputs' anchors (`StampMerge`), or advance along an `AnchorSpan` holding the stamp's anchor as its start or a member (`StampLift`).
+The other stamp-producing steps thread the anchor from a validated spendable through `SpendBind`/`SpendStamp`, equality-constrain the two inputs' anchors (`StampMerge`), or move the stamp to the end of an `AnchorSpan` that contains the stamp's anchor (`StampLift`).
 Consensus verifies the published anchor against the chain before accepting the stamp.
 
 ### Rerandomization at trust boundaries

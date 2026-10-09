@@ -554,13 +554,11 @@ impl Bundle<ProofStamp> {
         }
     }
 
-    /// Advance the stamp's anchor along anchor spans, each with its members
-    /// polynomial. Each span holds the previous one's end as its start or a
-    /// member, and the first holds the stamp's anchor.
-    ///
-    /// The spans must fold the stamps consensus published after this bundle's
-    /// anchor. Spans over any other stamps lift to an anchor consensus does
-    /// not recognize.
+    /// Advance the stamp's anchor along `spans`. Each entry is an anchor span
+    /// and its members polynomial. The first span must contain the stamp's
+    /// anchor, and each later span must contain the previous span's
+    /// `anchor_end`. A span contains an anchor if the anchor is its
+    /// `anchor_start` or one of its members.
     ///
     /// # Errors
     ///

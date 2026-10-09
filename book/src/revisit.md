@@ -1589,13 +1589,14 @@ $$
 M(X)=\prod_{a\in(\anchor_L,\anchor_R]}(X-a),
 $$
 
-where $M$ has one root per anchor the span's folds produce: $\anchor_R$ is a
-root and $\anchor_L$ is not. $\mathsf{AnchorSpanSeed}$ witnesses one stamp
+where $M$ has one root for each anchor produced inside the span. $\anchor_R$
+is a root of $M$ and $\anchor_L$ is not. $\mathsf{AnchorSpanSeed}$ witnesses one stamp
 transition, including the epoch and the tachygram-accumulator commitment
 absorbed by that transition, and emits its two endpoint anchors with the
 commitment to $X-\anchor_R$. $\mathsf{AnchorSpanFuse}$ takes two headers,
 requires the left endpoint of the second to equal the right endpoint of the
-first, proves the combined $M$ is the product of the halves', and emits the
+first, proves that the combined $M$ is the product of the two halves'
+polynomials, and emits the
 outer endpoints. Since neither step admits a sentinel transition, a fused span
 cannot cross an epoch boundary. These headers are built only for the active
 epoch and are consumed only by $\mathsf{StampLift}$.
@@ -1941,8 +1942,9 @@ $$
 M(\anchor)\cdot(\anchor-\anchor_L)=0,
 $$
 
-and the output stamp anchor equals $\mathtt{AnchorSpan}.\anchor_R$. A root set
-orders nothing between its members, so the target is always $\anchor_R$. The
+and the output stamp anchor equals $\mathtt{AnchorSpan}.\anchor_R$. $M$
+records which anchors are in the span and not their order. The output anchor
+is therefore always $\anchor_R$. The
 span contains only authenticated stamp transitions and admits no sentinel
 transition, so the lift remains within the same spending epoch. Sufficient lift is needed to obfuscate the inclusion block
 for [spend unlinkability](#nf-sec).

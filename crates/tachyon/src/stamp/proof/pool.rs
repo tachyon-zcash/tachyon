@@ -7,8 +7,8 @@
 //!
 //! An [`ArbitraryUnspent`] covers whole epochs, `[anchor_start, anchor_next)`:
 //! both bounds are entry anchors, and `anchor_next` belongs to the epoch after
-//! the segment. An [`AnchorSpan`] `[anchor_start, anchor_end]` includes both
-//! endpoints and commits to the anchors its folds produce,
+//! the segment. An [`AnchorSpan`] covers `[anchor_start, anchor_end]`, both
+//! endpoints included. Its `members` commit to the anchors in
 //! `(anchor_start, anchor_end]`.
 //!
 //! Anchor advances are single-level: every fold absorbs the containing
@@ -125,25 +125,25 @@ impl Header for NoteUnspent {
     }
 }
 
-/// Anchor path that commits to the anchors its folds produce.
+/// An anchor path with a commitment to the anchors inside it.
 ///
-/// `members` holds the anchors the span's folds produce, one per fold: the end
-/// is a member and the start is not. [`super::stamp::StampLift`] is the sole
-/// consumer, advancing a stamp's anchor. Extending a spendable's anchor must
-/// instead go through [`ArbitraryUnspent`] so each step proves nf-exclusion.
+/// `members` commits to a polynomial with one root for each stamp folded into
+/// the span. The root is the anchor that fold produces. `anchor_end` is a
+/// member and `anchor_start` is not. [`super::stamp::StampLift`] uses spans to
+/// advance a stamp's anchor. A spendable's anchor advances through
+/// [`ArbitraryUnspent`], whose steps prove the note's nullifiers absent.
 ///
-/// Structurally intra-epoch: [`AnchorSpanSeed`] folds only with
-/// [`Anchor::next_stamp`], which binds an epoch. The [`Anchor::next_epoch`]
-/// epoch-link domain is distinct and never a stamp link; it is folded at a
-/// crossing by [`QrBucketSeal`](super::qr::QrBucketSeal). The within-epoch
-/// property pairs with a consensus-side two-epoch tachygram scan that catches
-/// any tachygram already published earlier in the epoch a stamp is lifted
-/// across.
+/// A span stays within one epoch. [`AnchorSpanSeed`] folds only with
+/// [`Anchor::next_stamp`], which hashes under the `Tachyon-AnchorSt` domain.
+/// Entering the next epoch takes [`Anchor::next_epoch`], which hashes under
+/// `Tachyon-AnchorEp`. Among the proof steps, only
+/// [`QrBucketSeal`](super::qr::QrBucketSeal) computes it. Consensus also
+/// rejects a tachygram published twice within two epochs. That check catches a
+/// tachygram already published earlier in the epoch a stamp is lifted across.
 ///
-/// `anchor_start` roots in an unbound witness at [`AnchorSpanSeed`], so a
-/// standalone span proves nothing about real chain history. Final binding
-/// closes through a consensus-published stamp's anchor membership at
-/// [`super::stamp::StampLift`]'s emitted stamp.
+/// [`AnchorSpanSeed`] takes `anchor_start` as a free witness. A span on its own
+/// is not tied to the published chain. Consensus ties it when it checks the
+/// anchor of the stamp that [`super::stamp::StampLift`] outputs.
 #[derive(Clone, Debug)]
 pub struct AnchorSpan;
 
@@ -164,17 +164,17 @@ impl Header for AnchorSpan {
     }
 }
 
-/// Single-stamp [`AnchorSpan`] seed.
+/// Start an [`AnchorSpan`] from one stamp.
 ///
-/// Folds one stamp into `anchor_start` with [`Anchor::next_stamp`]. The one
-/// member is the anchor the fold produces, committed from the fixed generators
-/// by [`AnchorSetCommit::singleton`].
+/// The step folds the stamp into `anchor_start` with [`Anchor::next_stamp`].
+/// The span's only member is the resulting anchor, committed with
+/// [`AnchorSetCommit::singleton`].
 ///
 /// # Soundness
 ///
-/// `epoch` is unconstrained here. Consensus recomputes the anchor chain with
-/// the containing block's epoch, so a span built on any other value holds
-/// anchors the published chain never reaches.
+/// `epoch` is a free witness. Consensus computes each fold with the epoch of
+/// the block that contains the stamp. A span built with a different epoch
+/// holds anchors that are not on the published chain.
 #[derive(Debug)]
 pub struct AnchorSpanSeed;
 
@@ -210,17 +210,18 @@ impl Step for AnchorSpanSeed {
     }
 }
 
-/// Concatenate two [`AnchorSpan`]s that share a vertex, with
+/// Concatenate two [`AnchorSpan`]s with
 /// `left.anchor_end == right.anchor_start`.
 ///
-/// The vertex is a left member and not a right one, so the halves' members are
-/// disjoint and the combined set is their product.
+/// The shared anchor is a member of the left span and not of the right span.
+/// The two member sets are therefore disjoint, and the combined members
+/// polynomial is the product of the two.
 ///
 /// # Soundness
 ///
-/// Both halves are bound to their headers by commit-equality, and all three
-/// operands are absorbed into the product challenge, so `combined` holds
-/// exactly the union of the halves' members.
+/// The step checks each half's witnessed polynomial against its header's
+/// `members`. The product check's challenge absorbs all three commitments.
+/// `combined` therefore holds exactly the members of both halves.
 #[derive(Debug)]
 pub struct AnchorSpanFuse;
 
