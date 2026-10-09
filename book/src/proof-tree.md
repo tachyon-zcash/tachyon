@@ -69,6 +69,7 @@ An output operation also takes two steps, `OutputBind` and `OutputStamp`.
 
 A transaction with multiple spend and output stamps composes them with `StampMerge`.
 The output is a single `Stamp` whose multisets are the union of the two inputs' at the shared anchor.
+A spend whose lineage sits at an earlier anchor of the same epoch first lifts its stamp to the transaction's anchor with `StampLift`, over an `AnchorChain` cut from an `AnchorSpan`.
 
 After the transaction stamp is fully composed, the wallet may run `StampLift` over an `AnchorChain` segment to advance the stamp's anchor toward the chain's latest anchor before publication.
 The segment need not be built for the stamp's own anchor: an `AnchorSpan` commits to every anchor its folds produce, and `AnchorSpanCut` cuts it into the `AnchorChain` from any of them to the span's end.

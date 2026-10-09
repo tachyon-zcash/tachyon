@@ -4,6 +4,7 @@ use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::
 
 use ff::Field as _;
 use pasta_curves::Fp;
+use ragu::{Pcd, Proof};
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
@@ -11,13 +12,17 @@ use zcash_tachyon::{
     TachygramSetPoly, action,
     constants::EPOCH_SIZE,
     digest::blake2b,
-    stamp::{Plan, ProveError},
+    stamp::{
+        self, ProveError,
+        proof::{PROOF_SYSTEM, pool},
+    },
+    witness,
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, build_anchor_chain_pcd, build_autonome, build_output_stamp,
-    forge_overlapping_merge, random_action, random_block, random_block_with, shared_sk,
-    spend_witness,
+    PoolSim, WalletSim, build_anchor_chain_pcd, build_anchor_span_pcd, build_autonome,
+    build_output_plan, build_output_stamp, forge_overlapping_merge, random_action, random_block,
+    random_block_with, shared_sk, spend_witness,
 };
 
 const WITHIN_EPOCH_ANCHOR_PAIRS: &[(BlockHeight, BlockHeight)] = &[
@@ -108,7 +113,7 @@ fn plan_prove_rejects_invalid_inputs() {
 
     // Empty plan: no actions at all.
     {
-        let plan = Plan::new(alloc::vec![], alloc::vec![], anchor);
+        let plan = stamp::Plan::new(alloc::vec![], alloc::vec![], anchor);
 
         let err = plan.prove(rng, &user.pak, alloc::vec![]).unwrap_err();
         let ProveError::MissingPcd(reason) = err else {
@@ -119,12 +124,12 @@ fn plan_prove_rejects_invalid_inputs() {
 
     let secret_a = user.secret_pcd(rng, note_a);
     let secret_b = user.secret_pcd(rng, note_b);
-    let bundle_a = || (secret_a.clone(), sp_a.clone());
-    let bundle_b = || (secret_b.clone(), sp_b.clone());
+    let bundle_a = || (secret_a.clone(), sp_a.clone(), None);
+    let bundle_b = || (secret_b.clone(), sp_b.clone(), None);
 
     // Too few PCDs: 2 spends, 1 PCD.
     {
-        let plan = Plan::new(two_spends(), alloc::vec![], anchor);
+        let plan = stamp::Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_a()];
 
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
@@ -139,7 +144,7 @@ fn plan_prove_rejects_invalid_inputs() {
 
     // Too many PCDs: 2 spends, 3 PCDs.
     {
-        let plan = Plan::new(two_spends(), alloc::vec![], anchor);
+        let plan = stamp::Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_a(), bundle_b(), bundle_a()];
 
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
@@ -156,7 +161,7 @@ fn plan_prove_rejects_invalid_inputs() {
     // carries another note of the same value, so only `alpha` tells them apart.
     // The swapped actions prove, and the stamp does not verify as the plan's.
     {
-        let plan = Plan::new(two_spends(), alloc::vec![], anchor);
+        let plan = stamp::Plan::new(two_spends(), alloc::vec![], anchor);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
         let stamp = plan
             .prove(rng, &user.pak, pcds)
@@ -177,7 +182,7 @@ fn plan_prove_rejects_invalid_inputs() {
     // wallet's `ak`. The spend proves under this wallet's `ak`, and the stamp
     // does not verify as the plan's.
     {
-        let plan = Plan::new(
+        let plan = stamp::Plan::new(
             alloc::vec![(foreign_a.descriptor(), theta_a, rcv_a)],
             alloc::vec![],
             anchor,
@@ -192,6 +197,114 @@ fn plan_prove_rejects_invalid_inputs() {
             "a stamp under another ak must not verify as the planned action"
         );
     }
+}
+
+/// Cut `span` to the chain `(from, to)`.
+fn cut_span(
+    rng: &mut StdRng,
+    span: &Pcd<pool::AnchorSpan>,
+    from: Anchor,
+    to: Anchor,
+    members: &[Anchor],
+) -> Pcd<pool::AnchorChain> {
+    PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::AnchorSpanCut,
+            witness::anchor_span_cut((*span.data(), ()), from, to, members),
+            span.clone(),
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("AnchorSpanCut")
+        .0
+}
+
+/// A spend anchored before the plan's anchor, in the same epoch, lifts to it
+/// along a chain cut from an anchor span, and merges with an output proved at
+/// the plan's anchor. Without the chain, or with one that starts elsewhere,
+/// the spend does not reach the plan's anchor.
+#[test]
+fn plan_prove_lifts_a_spend_to_the_plan_anchor() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let mut pool = PoolSim::genesis(rng);
+
+    let note = user.random_note(500);
+    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 3));
+    let cm_height = pool.height();
+    pool.advance(2, |_| random_block(rng, 1, 2));
+    let plan_height = pool.height();
+    assert_eq!(cm_height.epoch(), plan_height.epoch(), "one epoch");
+
+    let spendable = user.fresh_spend(rng, &pool, cm_height, &note);
+    let spend_anchor = spendable.data().2;
+    let (span, members) = build_anchor_span_pcd(rng, &pool, cm_height..=plan_height);
+    let (span_start, _, plan_anchor) = *span.data();
+    assert_ne!(spend_anchor, plan_anchor, "the spend needs a lift");
+    assert!(members.contains(&spend_anchor), "the span holds the spend");
+
+    let (rcv, theta) = spend_witness(rng);
+    let spend = action::Plan::spend(note, theta, rcv, |alpha| {
+        user.pak.ak.derive_action_public(&alpha)
+    });
+    let (out_rcv, out_theta, output) = build_output_plan(rng, user.random_note(200));
+    let secret = user.secret_pcd(rng, note);
+    let plan = || {
+        stamp::Plan::new(
+            vec![(spend.descriptor(), theta, rcv)],
+            vec![(output.descriptor(), out_theta, output.note, out_rcv)],
+            plan_anchor,
+        )
+    };
+
+    let chain = cut_span(rng, &span, spend_anchor, plan_anchor, &members);
+    let stamp = plan()
+        .prove(
+            rng,
+            &user.pak,
+            vec![(secret.clone(), spendable.clone(), Some(chain))],
+        )
+        .expect("the lifted spend merges with the output");
+    assert_eq!(stamp.anchor, plan_anchor);
+    assert!(
+        stamp
+            .verify_proof(
+                rng,
+                [
+                    spend.digest().expect("action digest"),
+                    output.digest().expect("action digest"),
+                ],
+            )
+            .expect("proof system verification"),
+        "the stamp proves the planned actions at the plan's anchor"
+    );
+
+    let unlifted = plan()
+        .prove(
+            rng,
+            &user.pak,
+            vec![(secret.clone(), spendable.clone(), None)],
+        )
+        .unwrap_err();
+    let ProveError::MissingPcd(reason) = unlifted else {
+        panic!("expected MissingPcd, got {unlifted:?}");
+    };
+    assert_eq!(
+        reason.to_string(),
+        "spend 0 does not reach the plan's anchor"
+    );
+
+    let elsewhere = cut_span(rng, &span, span_start, spend_anchor, &members);
+    let misdirected = plan()
+        .prove(rng, &user.pak, vec![(secret, spendable, Some(elsewhere))])
+        .unwrap_err();
+    let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = misdirected else {
+        panic!("expected InvalidWitness, got {misdirected:?}");
+    };
+    assert_eq!(
+        inner.to_string(),
+        "StampLift: chain's first anchor must equal stamp anchor"
+    );
 }
 
 /// `merge` populates `covered_actions` with the covered-actions digest of

@@ -1608,7 +1608,7 @@ impl WalletSim {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((self.secret_pcd(rng, note), spendable_pcd));
+            spend_pcds.push((self.secret_pcd(rng, note), spendable_pcd, None));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes

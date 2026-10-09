@@ -373,20 +373,27 @@ impl Plan {
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
-    /// [`ProofStamp::prove_spend`] proves the action. For each **output**,
-    /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
+    /// [`ProofStamp::prove_spend`] proves the action at the spendable's
+    /// anchor. A spend whose anchor is not the plan's carries an
+    /// [`AnchorChain`](pool::AnchorChain) from its anchor to the plan's, cut
+    /// from an [`AnchorSpan`](pool::AnchorSpan), and [`StampLift`] lifts its
+    /// stamp along it. For each **output**, [`ProofStamp::prove_output`] proves
+    /// the action at the plan's anchor.
     ///
     /// Stamps are recursively merged via [`StampMerge`] into a single stamp,
     /// whose coverage is the planned descriptors.
     ///
-    /// TODO: provide a way to lift spend stamps when necessary to merge
-    ///
     /// # Errors
     ///
-    /// - [`ProveError::MissingPcd`] if the plan has no actions, or the number
-    ///   of spend PCDs does not match the planned spends.
+    /// - [`ProveError::MissingPcd`] if the plan has no actions, the number of
+    ///   spend PCDs does not match the planned spends, or a spend does not
+    ///   reach the plan's anchor.
     /// - [`ProveError::ActionDigest`] if a proved action has no digest.
     /// - [`ProveError::ProofFailed`] if a proof-system step fails.
+    #[expect(
+        clippy::type_complexity,
+        reason = "each spend's secret, spendable and optional anchor chain"
+    )]
     pub fn prove<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
@@ -394,6 +401,7 @@ impl Plan {
         spend_pcds: Vec<(
             ragu::Pcd<delegation::NoteSecret>,
             ragu::Pcd<spendable::NoteSpendable>,
+            Option<ragu::Pcd<pool::AnchorChain>>,
         )>,
     ) -> Result<ProofStamp, ProveError> {
         // Each entry pairs leaf stamp components with the descriptor of its
@@ -412,8 +420,8 @@ impl Plan {
             ));
         }
 
-        for ((desc, theta, rcv), (secret_pcd, spendable_pcd)) in
-            self.spends.into_iter().zip(spend_pcds)
+        for (index, ((desc, theta, rcv), (secret_pcd, spendable_pcd, anchor_chain))) in
+            self.spends.into_iter().zip(spend_pcds).enumerate()
         {
             // SpendBind: derive the live pair from the note's master key and
             // commit the note's value.
@@ -421,14 +429,37 @@ impl Plan {
                 .fuse(rng, spend::SpendBind, (rcv,), spendable_pcd, secret_pcd)
                 .map_err(ProveError::ProofFailed)?;
 
-            let (digests, tachygrams, anchor, proof) =
+            let (digests, tachygrams, spend_anchor, spend_proof) =
                 ProofStamp::prove_spend(rng, theta, bind_pcd, *pak)?;
+            let mut stamp_pcd = spend_proof.carry::<Stamp>((
+                digests.iter().copied().collect::<ActionSetPoly>().commit(),
+                tachygrams
+                    .iter()
+                    .copied()
+                    .collect::<TachygramSetPoly>()
+                    .commit(),
+                spend_anchor,
+            ));
+            if let Some(chain) = anchor_chain {
+                stamp_pcd = PROOF_SYSTEM
+                    .fuse(rng, StampLift, (), stamp_pcd, chain)
+                    .map_err(ProveError::ProofFailed)?
+                    .0;
+            }
+
+            let (proof, (_, _, anchor)) = stamp_pcd.into_parts();
+            if anchor != self.anchor {
+                return Err(ProveError::MissingPcd(
+                    format!("spend {index} does not reach the plan's anchor").into(),
+                ));
+            }
+
             entries.push((
                 BTreeSet::from_iter([desc]),
                 digests,
                 tachygrams,
                 anchor,
-                proof,
+                Box::new(proof),
             ));
         }
 
