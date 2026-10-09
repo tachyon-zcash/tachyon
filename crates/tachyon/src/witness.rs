@@ -23,7 +23,10 @@ use crate::{
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
         evidence::{EvidenceTreeDescend, EvidenceTreeOpen},
-        pool::{AnchorSeed, UnspentBind, UnspentFuse, UnspentLift},
+        pool::{
+            AnchorSeed, AnchorSpanCut, AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse,
+            UnspentLift,
+        },
         qr::{
             QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
             QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
@@ -169,6 +172,53 @@ pub fn anchor_seed(
         epoch,
         tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
     )
+}
+
+/// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
+/// stamp_commit)`.
+#[must_use]
+pub fn anchor_span_seed(
+    (_left, _right): (StepLeft<AnchorSpanSeed>, StepRight<AnchorSpanSeed>),
+    anchor_start: Anchor,
+    epoch: EpochIndex,
+    tgs: &[Tachygram],
+) -> StepWitness<'static, AnchorSpanSeed> {
+    (
+        anchor_start,
+        epoch,
+        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
+    )
+}
+
+/// Prepare the witness for [`AnchorSpanFuse`]: `(left_members, combined,
+/// right_members)`.
+///
+/// `left_members` and `right_members` are the anchors each half's folds
+/// produce.
+#[must_use]
+pub fn anchor_span_fuse(
+    (_left, _right): (StepLeft<AnchorSpanFuse>, StepRight<AnchorSpanFuse>),
+    left_members: &[Anchor],
+    right_members: &[Anchor],
+) -> StepWitness<'static, AnchorSpanFuse> {
+    (
+        left_members.iter().copied().collect(),
+        left_members.iter().chain(right_members).copied().collect(),
+        right_members.iter().copied().collect(),
+    )
+}
+
+/// Prepare the witness for [`AnchorSpanCut`]: `(from, to, members)`.
+///
+/// `members` are the anchors the span's folds produce.
+#[must_use]
+pub fn anchor_span_cut(
+    (_span, _right): (StepLeft<AnchorSpanCut>, StepRight<AnchorSpanCut>),
+    from: Anchor,
+    to: Anchor,
+    members: &[Anchor],
+) -> StepWitness<'static, AnchorSpanCut> {
+    (from, to, members.iter().copied().collect())
 }
 
 /// Prepare the witness for [`SummarySeed`]:

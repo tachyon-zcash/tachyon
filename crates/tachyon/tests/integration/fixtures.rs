@@ -514,6 +514,61 @@ pub(crate) fn build_anchor_chain_pcd<RNG: CryptoRng>(
     chain.expect("AnchorChain range must cover at least one stamp")
 }
 
+/// Build an [`AnchorSpan`] covering blocks `range` in full, rooted at the
+/// block-start anchor of `*range.start()`, with the anchors its folds produce.
+///
+/// One [`AnchorSpanSeed`] per absorbed stamp, fused linearly via
+/// [`AnchorSpanFuse`]. The range must cover at least one stamp.
+pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
+    rng: &mut RNG,
+    pool: &PoolSim,
+    range: RangeInclusive<BlockHeight>,
+) -> (Pcd<pool::AnchorSpan>, Vec<Anchor>) {
+    let start = *range.start();
+    let end = *range.end();
+    assert_eq!(start.epoch(), end.epoch(), "AnchorSpan single-epoch range");
+    assert!(start <= end);
+
+    let mut state = pool.block(start).prev;
+    let mut span: Option<Pcd<pool::AnchorSpan>> = None;
+    let mut members = Vec::new();
+    let mut height = start;
+    loop {
+        for tgs in &pool.block(height).tachygrams() {
+            let witness = witness::anchor_span_seed(((), ()), state, height.epoch(), tgs);
+            let next_state = state.next_stamp(witness.1, &witness.2).unwrap();
+            let (seed, ()) = PROOF_SYSTEM
+                .seed(rng, pool::AnchorSpanSeed, witness)
+                .expect("AnchorSpanSeed");
+            span = Some(match span.take() {
+                None => seed,
+                Some(left) => {
+                    let fuse_witness = witness::anchor_span_fuse(
+                        (*left.data(), *seed.data()),
+                        &members,
+                        &[next_state],
+                    );
+                    let (fused, ()) = PROOF_SYSTEM
+                        .fuse(rng, pool::AnchorSpanFuse, fuse_witness, left, seed)
+                        .expect("AnchorSpanFuse");
+                    fused
+                },
+            });
+            members.push(next_state);
+            state = next_state;
+        }
+        if height >= end {
+            break;
+        }
+        height = height.next().unwrap();
+    }
+
+    (
+        span.expect("AnchorSpan range must cover at least one stamp"),
+        members,
+    )
+}
+
 /// Build a [`Summary`](summary::Summary) over the anchor span `(start, end)`,
 /// accumulating every stamp whose link falls inside it, and return the
 /// tachygrams it accumulates.

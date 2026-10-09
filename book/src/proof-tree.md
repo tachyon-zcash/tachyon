@@ -71,6 +71,7 @@ A transaction with multiple spend and output stamps composes them with `StampMer
 The output is a single `Stamp` whose multisets are the union of the two inputs' at the shared anchor.
 
 After the transaction stamp is fully composed, the wallet may run `StampLift` over an `AnchorChain` segment to advance the stamp's anchor toward the chain's latest anchor before publication.
+The segment need not be built for the stamp's own anchor: an `AnchorSpan` commits to every anchor its folds produce, and `AnchorSpanCut` cuts it into the `AnchorChain` from any of them to the span's end.
 
 On publication the bundle carries the action descriptors, tachygrams, anchor, and the stamp proof.
 Validators reconstruct the action-set and tachygram-set commitments from those published bundles, check the proof against the reconstructed values, and confirm the anchor against the consensus chain.
@@ -89,12 +90,15 @@ The sync service holds the per-epoch nullifier values the wallet shared and pool
 It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), folds the sealed buckets into one tree and opens it per query (`EvidenceTreeLeaf`, `EvidenceTreeLeafPair`, `EvidenceTreePairFuse`, `EvidenceTreeFuse`, `EvidenceTreeCap`, `EvidenceTreeDescend`, `EvidenceTreeOpen`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket, `UnspentLift` one epoch at a time, `UnspentFuse` across segments), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
 
 The aggregator works only with published `Stamp`s.
-It aligns anchors with `StampLift` over `AnchorChain` segments (`AnchorSeed`, `AnchorFuse`) and fuses with `StampMerge`.
+It aligns anchors with `StampLift` over `AnchorChain` segments, built directly (`AnchorSeed`, `AnchorFuse`) or cut from a shared span (`AnchorSpanSeed`, `AnchorSpanFuse`, `AnchorSpanCut`), and fuses with `StampMerge`.
 
 | step | wallet | sync service | aggregator |
 | ---- | ------ | ------------ | ---------- |
 | AnchorSeed | possible | yes | yes |
 | AnchorFuse | possible | yes | yes |
+| AnchorSpanSeed | possible | yes | yes |
+| AnchorSpanFuse | possible | yes | yes |
+| AnchorSpanCut | possible | yes | yes |
 | SummarySeed | possible | yes | no |
 | SummaryAdvance | possible | yes | no |
 | QrSummaryIntake | possible | yes | no |
@@ -136,6 +140,11 @@ The subsections below walk each subtree bottom-up.
 
 `AnchorSeed`, `SummarySeed`, and `QrStampIntakeSeed` each witness a predecessor anchor and prove one anchor step from it, and the fuses compose adjacent segments by checking endpoint equality.
 A segment ties to real chain history only through a consensus-published stamp whose anchor matches an end-of-block value, emitted at `StampLift`. `SpendableInit`'s anchor closes the same way without a segment: the private spendable's anchor reaches consensus once it is spent into a stamp.
+
+An `AnchorSpan` also carries `members`, a root set of the anchors its folds produce: the end is a member and the start is not.
+`AnchorSpanSeed` commits to its one produced anchor from the fixed generators, and `AnchorSpanFuse` checks the shared vertex and proves the combined set the product of the halves', so the set holds exactly the span's anchors.
+`AnchorSpanCut` emits the `AnchorChain` from the start or a member to a member, keeping one of the span's endpoints, so every cut advances: a root set orders nothing between two members.
+Its openings at the witnessed anchors need no challenge, since the set is pinned to the header by commit-equality.
 
 ### ArbitraryUnspent composition
 
@@ -435,6 +444,11 @@ flowchart LR
   w_next[/anchor_start, epoch, stamp_commit/]
   s_next[AnchorSeed]
   s_fuse[AnchorFuse]
+  w_span[/anchor_start, epoch, stamp_commit/]
+  s_span[AnchorSpanSeed]
+  s_spanfuse[AnchorSpanFuse]
+  w_cut[/from, to, members/]
+  s_cut[AnchorSpanCut]
   s_lift[StampLift]
   sh_out((Stamp))
 
@@ -442,8 +456,13 @@ flowchart LR
   w_next --> s_next
   s_seed -->|AnchorChain| s_fuse
   s_next -->|AnchorChain| s_fuse
+  w_span --> s_span
+  s_span -->|AnchorSpan| s_spanfuse
+  s_spanfuse -->|AnchorSpan| s_cut
+  w_cut --> s_cut
   sh_in --> s_lift
   s_fuse -->|AnchorChain| s_lift
+  s_cut -->|AnchorChain| s_lift
   s_lift --> sh_out
 ```
 
@@ -482,6 +501,7 @@ flowchart LR
 | Header | Fields |
 | ------ | ------ |
 | AnchorChain | (anchor_start, anchor_end) |
+| AnchorSpan | (anchor_start, members, anchor_end) |
 | Summary | (epoch, anchor_prev, anchor_end, acc_commit) |
 | QrIntake | (epoch, anchor_prev, anchor_end, discriminant, profile, contents) |
 | QrIntakeSides | (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue) |
@@ -503,6 +523,9 @@ flowchart LR
 | ---- | ---- | ----- | ------- | ------ |
 | AnchorSeed | — | — | anchor_start, epoch, stamp_commit | AnchorChain |
 | AnchorFuse | AnchorChain | AnchorChain | — | AnchorChain |
+| AnchorSpanSeed | — | — | anchor_start, epoch, stamp_commit | AnchorSpan |
+| AnchorSpanFuse | AnchorSpan | AnchorSpan | left_members, combined, right_members | AnchorSpan |
+| AnchorSpanCut | AnchorSpan | — | from, to, members | AnchorChain |
 | SummarySeed | — | — | anchor_prev, epoch, stamp_commit | Summary |
 | SummaryAdvance | Summary | — | acc, extended, stamp | Summary |
 | QrSpendableInit | NoteUnspent | QrBucket | contents | NoteSpendable |

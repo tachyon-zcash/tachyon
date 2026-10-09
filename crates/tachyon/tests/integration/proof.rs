@@ -13,8 +13,8 @@ use ragu::{Pcd, Proof};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    ActionSetCommit, ActionSetPoly, Anchor, BlockHeight, EpochIndex, NfSeqPoly, Note, Tachygram,
-    TachygramSetPoly, action,
+    ActionSetCommit, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly,
+    Note, Tachygram, TachygramSetPoly, action,
     constants::{EPOCH_MAX, EPOCH_SIZE},
     digest::poseidon,
     entropy::ActionEntropy,
@@ -25,9 +25,9 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_output_plan, build_output_stamp,
-    build_unspent_pcd_over_epochs, qr_bucket_segment, random_block, random_block_with,
-    seal_qr_intake, seed_qr_empty_intake, shared_sk, spend_witness,
+    PoolSim, SyncSim, WalletSim, build_anchor_chain_pcd, build_anchor_span_pcd, build_output_plan,
+    build_output_stamp, build_unspent_pcd_over_epochs, qr_bucket_segment, random_block,
+    random_block_with, seal_qr_intake, seed_qr_empty_intake, shared_sk, spend_witness,
 };
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
@@ -302,6 +302,207 @@ fn anchor_chain_fuse_rejects_invalid_compositions() {
             panic!("expected InvalidWitness, got {err:?}");
         };
         assert_eq!(inner.to_string(), "AnchorFuse: paths do not share a vertex");
+    }
+}
+
+fn cut_span(
+    rng: &mut StdRng,
+    span: &Pcd<pool::AnchorSpan>,
+    from: Anchor,
+    to: Anchor,
+    members: &[Anchor],
+) -> ragu_core::Result<Pcd<pool::AnchorChain>> {
+    PROOF_SYSTEM
+        .fuse(
+            rng,
+            pool::AnchorSpanCut,
+            witness::anchor_span_cut((*span.data(), ()), from, to, members),
+            span.clone(),
+            Proof::trivial().carry::<()>(()),
+        )
+        .map(|(chain, ())| chain)
+}
+
+/// A span's members are the anchors its folds produce: the end is one and the
+/// start is not.
+#[test]
+fn anchor_span_holds_the_anchors_its_folds_produce() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis(rng);
+    pool.advance(2, |_| random_block(rng, 1, 2));
+
+    let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(2));
+    let (anchor_start, members_commit, anchor_end) = *span.data();
+
+    assert_eq!(members.len(), 4, "one member per fold");
+    assert_eq!(anchor_start, pool.block(BlockHeight(1)).prev);
+    assert_eq!(anchor_end, pool.block(BlockHeight(2)).anchor());
+    assert_eq!(members.last(), Some(&anchor_end));
+    assert!(!members.contains(&anchor_start));
+    assert_eq!(members_commit, AnchorSetPoly::from_iter(members).commit());
+}
+
+#[test]
+fn anchor_span_cuts_from_its_start_or_to_its_end() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis(rng);
+    pool.advance(1, |_| random_block(rng, 1, 3));
+
+    let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
+    let (anchor_start, _, anchor_end) = *span.data();
+    let member = members[0];
+
+    for (from, to) in [
+        (anchor_start, member),
+        (member, anchor_end),
+        (anchor_start, anchor_end),
+    ] {
+        let chain = cut_span(rng, &span, from, to, &members).expect("honest cut");
+        assert_eq!(*chain.data(), (from, to));
+    }
+}
+
+/// A stamp at any anchor of a span lifts to the span's end through the cut
+/// chain and the existing `StampLift`.
+#[test]
+fn stamp_lifts_from_a_span_member() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let user = WalletSim::new(shared_sk());
+    let mut pool = PoolSim::genesis(rng);
+    pool.advance(1, |_| random_block(rng, 1, 3));
+
+    let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
+    let (_, _, anchor_end) = *span.data();
+    let stamp_anchor = members[0];
+
+    let (stamp, plan) = build_output_stamp(rng, stamp_anchor, user.random_note(200));
+    let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
+    let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
+    let stamp_pcd = stamp
+        .proof
+        .carry((action_commit, tachygram_commit, stamp_anchor));
+
+    let chain = cut_span(rng, &span, stamp_anchor, anchor_end, &members).expect("honest cut");
+    let (lifted, ()) = PROOF_SYSTEM
+        .fuse(rng, stamp::StampLift, (), stamp_pcd, chain)
+        .expect("stamp lift");
+    assert_eq!(lifted.data().2, anchor_end);
+}
+
+#[test]
+fn anchor_span_cut_rejects_invalid_cuts() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis(rng);
+    pool.advance(1, |_| random_block(rng, 1, 3));
+
+    let (span, members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
+    let (anchor_start, _, anchor_end) = *span.data();
+    let outside = Anchor(Fp::random(&mut *rng));
+    let foreign_members: Vec<Anchor> = members.iter().copied().chain([outside]).collect();
+
+    let cases = [
+        (
+            "member to member",
+            members[0],
+            members[1],
+            members.clone(),
+            "AnchorSpanCut: the cut keeps neither endpoint",
+        ),
+        (
+            "from outside the span",
+            outside,
+            anchor_end,
+            members.clone(),
+            "AnchorSpanCut: from is neither the start nor a member",
+        ),
+        (
+            "to outside the span",
+            anchor_start,
+            outside,
+            members.clone(),
+            "AnchorSpanCut: to is not a member",
+        ),
+        (
+            "to the start",
+            anchor_start,
+            anchor_start,
+            members.clone(),
+            "AnchorSpanCut: to is not a member",
+        ),
+        (
+            "foreign members",
+            anchor_start,
+            outside,
+            foreign_members,
+            "AnchorSpanCut: members do not match header",
+        ),
+    ];
+
+    for (label, from, to, witnessed, expected) in cases {
+        let err = cut_span(rng, &span, from, to, &witnessed).err().unwrap();
+        let ragu_core::Error::InvalidWitness(inner) = err else {
+            panic!("{label}: expected InvalidWitness, got {err:?}");
+        };
+        assert_eq!(inner.to_string(), expected, "{label}");
+    }
+}
+
+#[test]
+fn anchor_span_fuse_rejects_invalid_compositions() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let mut pool = PoolSim::genesis(rng);
+    pool.advance(2, |_| random_block(rng, 1, 1));
+
+    let (left, left_members) = build_anchor_span_pcd(rng, &pool, BlockHeight(1)..=BlockHeight(1));
+    let (right, right_members) = build_anchor_span_pcd(rng, &pool, BlockHeight(2)..=BlockHeight(2));
+
+    // The combined set drops the right half's members.
+    {
+        let (left_poly, _combined, right_poly) =
+            witness::anchor_span_fuse((*left.data(), *right.data()), &left_members, &right_members);
+        let forged = AnchorSetPoly::from_iter(left_members.iter().copied());
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                pool::AnchorSpanFuse,
+                (left_poly, forged, right_poly),
+                left.clone(),
+                right.clone(),
+            )
+            .err()
+            .unwrap();
+        let ragu_core::Error::InvalidWitness(inner) = err else {
+            panic!("expected InvalidWitness, got {err:?}");
+        };
+        assert_eq!(
+            inner.to_string(),
+            "AnchorSpanFuse: combined is not the union of the halves"
+        );
+    }
+
+    // Reversed halves share no vertex.
+    {
+        let err = PROOF_SYSTEM
+            .fuse(
+                rng,
+                pool::AnchorSpanFuse,
+                witness::anchor_span_fuse(
+                    (*right.data(), *left.data()),
+                    &right_members,
+                    &left_members,
+                ),
+                right,
+                left,
+            )
+            .err()
+            .unwrap();
+        let ragu_core::Error::InvalidWitness(inner) = err else {
+            panic!("expected InvalidWitness, got {err:?}");
+        };
+        assert_eq!(
+            inner.to_string(),
+            "AnchorSpanFuse: spans do not share a vertex"
+        );
     }
 }
 

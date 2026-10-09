@@ -8,7 +8,10 @@
 //! An [`ArbitraryUnspent`] covers whole epochs, `[anchor_start, anchor_next)`:
 //! both bounds are entry anchors, and `anchor_next` belongs to the epoch after
 //! the segment. An [`AnchorChain`] `[anchor_start, anchor_end]` certifies none
-//! of its folds, and both endpoints are members.
+//! of its folds, and includes both endpoints. An [`AnchorSpan`] is an anchor
+//! path that also commits to the anchors its folds produce, and
+//! [`AnchorSpanCut`] turns it into the [`AnchorChain`] from its start to any of
+//! them, or from any of them to its end.
 //!
 //! Anchor advances are single-level: every fold absorbs the containing
 //! block's epoch and one stamp's tachygram-set commitment into the running
@@ -35,8 +38,8 @@ use crate::{
     collections::indexed_multiset,
     note::{self},
     primitives::{
-        Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
-        TachygramSetCommit, TachygramSetPoly,
+        Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
+        QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::enforce_poly_product,
@@ -48,7 +51,8 @@ use crate::{
 /// Extending a spendable's anchor must instead go through
 /// [`ArbitraryUnspent`] so each step proves nf-exclusion.
 ///
-/// Structurally intra-epoch: the sole builder ([`AnchorSeed`]) invokes only
+/// Structurally intra-epoch: both builders, [`AnchorSeed`] and
+/// [`AnchorSpanCut`] over spans from [`AnchorSpanSeed`], fold only with
 /// [`Anchor::next_stamp`], which binds an epoch. The [`Anchor::next_epoch`]
 /// epoch-link domain is distinct and never a stamp link; it is folded at a
 /// crossing by [`QrBucketSeal`](super::qr::QrBucketSeal).
@@ -228,6 +232,204 @@ impl Step for AnchorFuse {
             "AnchorFuse: paths do not share a vertex",
         )?;
         Ok(((left_anchor_start, right_anchor_end), ()))
+    }
+}
+
+/// Anchor path that commits to the anchors its folds produce.
+///
+/// `members` holds the anchors the span's folds produce, one per fold: the end
+/// is a member and the start is not. [`AnchorSpanCut`] is the sole
+/// consumer.
+///
+/// Like [`AnchorChain`], a span stays within one epoch, and `anchor_start`
+/// roots in an unbound witness at [`AnchorSpanSeed`].
+#[derive(Clone, Debug)]
+pub struct AnchorSpan;
+
+impl Header for AnchorSpan {
+    /// `(anchor_start, members, anchor_end)`
+    type Data = (Anchor, AnchorSetCommit, Anchor);
+
+    const SUFFIX: Suffix = Suffix::new(15);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (anchor_start, members, anchor_end) = *data;
+        (
+            vec![Fp::from(anchor_start), Fp::from(anchor_end)],
+            Vec::new(),
+            Vec::new(),
+            vec![Eq::from(members)],
+        )
+    }
+}
+
+/// Single-stamp [`AnchorSpan`] seed.
+///
+/// Folds one stamp as [`AnchorSeed`] does. The one member is the anchor the
+/// fold produces, committed from the fixed generators by
+/// [`AnchorSetCommit::singleton`].
+///
+/// # Soundness
+///
+/// `epoch` is unconstrained here, as at [`AnchorSeed`]. Consensus recomputes
+/// the anchor chain with the containing block's epoch, so a span built on any
+/// other value holds anchors the published chain never reaches.
+#[derive(Debug)]
+pub struct AnchorSpanSeed;
+
+impl Step for AnchorSpanSeed {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = AnchorSpan;
+    type Right = ();
+    /// `(anchor_start, epoch, stamp_commit)`
+    type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
+
+    const INDEX: Index = Index::new(34);
+
+    fn witness<'source>(
+        &self,
+        _ctx: &mut ragu::StepCtx<'_>,
+        (anchor_start, epoch, stamp_commit): Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        let anchor_end = anchor_start
+            .next_stamp(epoch, &stamp_commit)
+            .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
+
+        Ok((
+            (
+                anchor_start,
+                AnchorSetCommit::singleton(anchor_end),
+                anchor_end,
+            ),
+            (),
+        ))
+    }
+}
+
+/// Concatenate two [`AnchorSpan`]s that share a vertex, with
+/// `left.anchor_end == right.anchor_start`.
+///
+/// The vertex is a left member and not a right one, so the halves' members are
+/// disjoint and the combined set is their product.
+///
+/// # Soundness
+///
+/// Both halves are bound to their headers by commit-equality, and all three
+/// operands are absorbed into the product challenge, so `combined` holds
+/// exactly the union of the halves' members.
+#[derive(Debug)]
+pub struct AnchorSpanFuse;
+
+impl Step for AnchorSpanFuse {
+    type Aux<'source> = ();
+    type Left = AnchorSpan;
+    type Output = AnchorSpan;
+    type Right = AnchorSpan;
+    /// `(left_members, combined, right_members)`
+    type Witness<'source> = (AnchorSetPoly, AnchorSetPoly, AnchorSetPoly);
+
+    const INDEX: Index = Index::new(35);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (left_members, combined, right_members): Self::Witness<'source>,
+        (left_anchor_start, left_members_commit, left_anchor_end): <Self::Left as Header>::Data,
+        (right_anchor_start, right_members_commit, right_anchor_end): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(left_anchor_end) - Fp::from(right_anchor_start),
+            "AnchorSpanFuse: spans do not share a vertex",
+        )?;
+        enforce_equal_point(
+            Eq::from(left_members.commit()),
+            Eq::from(left_members_commit),
+            "AnchorSpanFuse: left members do not match header",
+        )?;
+        enforce_equal_point(
+            Eq::from(right_members.commit()),
+            Eq::from(right_members_commit),
+            "AnchorSpanFuse: right members do not match header",
+        )?;
+        enforce_poly_product(
+            ctx,
+            left_members.as_ref(),
+            right_members.as_ref(),
+            combined.as_ref(),
+            "AnchorSpanFuse: combined is not the union of the halves",
+        )?;
+
+        Ok(((left_anchor_start, combined.commit(), right_anchor_end), ()))
+    }
+}
+
+/// Cut an [`AnchorSpan`] to the [`AnchorChain`] `(from, to)`, from its start
+/// to a member or from a member to its end.
+///
+/// - `from` is the start or a member: $M(\mathsf{from}) \cdot (\mathsf{from}
+///   - \mathsf{anchor\_start}) = 0$.
+/// - `to` is a member: $M(\mathsf{to}) = 0$.
+/// - The cut keeps one of the span's endpoints: $(\mathsf{from} -
+///   \mathsf{anchor\_start}) \cdot (\mathsf{to} - \mathsf{anchor\_end}) = 0$. A
+///   root set carries no order between members, so a cut between two members
+///   would have no direction.
+///
+/// Every cut advances: each member follows the start, and the end follows
+/// each member. The one degenerate cut is `(anchor_end, anchor_end)`, a chain
+/// that moves a stamp nowhere.
+///
+/// # Soundness
+///
+/// $M$ is bound to the header by commit-equality, so its openings at the
+/// witnessed `from` and `to` need no challenge. A member outside the span
+/// needs an anchor collision.
+///
+/// One committed polynomial, opened twice.
+#[derive(Debug)]
+pub struct AnchorSpanCut;
+
+impl Step for AnchorSpanCut {
+    type Aux<'source> = ();
+    type Left = AnchorSpan;
+    type Output = AnchorChain;
+    type Right = ();
+    /// `(from, to, members)`
+    type Witness<'source> = (Anchor, Anchor, AnchorSetPoly);
+
+    const INDEX: Index = Index::new(36);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (from, to, members): Self::Witness<'source>,
+        (span_anchor_start, span_members, span_anchor_end): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_equal_point(
+            Eq::from(members.commit()),
+            Eq::from(span_members),
+            "AnchorSpanCut: members do not match header",
+        )?;
+
+        let from_eval = members.eval(Fp::from(from));
+        let to_eval = members.eval(Fp::from(to));
+        enforce_zero(
+            from_eval * (Fp::from(from) - Fp::from(span_anchor_start)),
+            "AnchorSpanCut: from is neither the start nor a member",
+        )?;
+        enforce_zero(to_eval, "AnchorSpanCut: to is not a member")?;
+        enforce_zero(
+            (Fp::from(from) - Fp::from(span_anchor_start))
+                * (Fp::from(to) - Fp::from(span_anchor_end)),
+            "AnchorSpanCut: the cut keeps neither endpoint",
+        )?;
+        ctx.enforce_poly_query(Eq::from(span_members), Fp::from(from), from_eval)?;
+        ctx.enforce_poly_query(Eq::from(span_members), Fp::from(to), to_eval)?;
+
+        Ok(((from, to), ()))
     }
 }
 

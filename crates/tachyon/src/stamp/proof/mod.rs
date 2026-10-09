@@ -59,6 +59,9 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(evidence::EvidenceTreeDescend)?
         .register(evidence::EvidenceTreeOpen)?
         .register(evidence::EvidenceTreeLeafPair)?
+        .register(pool::AnchorSpanSeed)?
+        .register(pool::AnchorSpanFuse)?
+        .register(pool::AnchorSpanCut)?
         .finalize()
 }
 

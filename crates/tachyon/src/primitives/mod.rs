@@ -20,5 +20,8 @@ pub use qr::{
     QrQuotientCommit, QrQuotientPoly,
 };
 pub use seq::{NfSeqCommit, NfSeqPoly};
-pub use sets::{ActionSetCommit, ActionSetPoly, TachygramSetCommit, TachygramSetPoly};
+pub use sets::{
+    ActionSetCommit, ActionSetPoly, AnchorSetCommit, AnchorSetPoly, TachygramSetCommit,
+    TachygramSetPoly,
+};
 pub use tachygram::Tachygram;
