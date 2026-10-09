@@ -1,11 +1,16 @@
 //! Evidence trees: one proof for a Poseidon Merkle root over a network's
 //! sealed [`QrBucket`]s.
 //!
-//! [`EvidenceTreeLeaf`] and [`EvidenceTreeLeafPair`] admit buckets,
+//! [`EvidenceTreeLeafPair`] admits buckets two at a time,
 //! [`EvidenceTreePairFuse`] and [`EvidenceTreeFuse`] assemble a node from
 //! four subtrees, and [`EvidenceTreeCap`] raises a root to the depth a descent
 //! needs. [`EvidenceTreeDescend`] walks a path, and [`EvidenceTreeOpen`]
 //! replays the bucket a leaf holds.
+//!
+//! A tree starts at [`EVIDENCE_TREE_ARITY`] leaves. A builder short of that
+//! repeats a bucket. A builder holding one bucket needs no tree at all: it
+//! serves that bucket's own proof, which every consumer of a replayed bucket
+//! takes unchanged.
 
 extern crate alloc;
 
@@ -29,12 +34,13 @@ use crate::{
 ///
 /// Every leaf under `root` is the [`poseidon::evidence_tree_leaf`] of a bucket
 /// whose own `(epoch, anchor_start, anchor_next, discriminant)` are the four
-/// this header carries. A one-leaf tree's root is that leaf's digest.
+/// this header carries. A one-leaf tree's root is that leaf's digest, and
+/// [`EvidenceTreeDescend`] is what produces one.
 ///
-/// The tree claims nothing about which buckets it holds. A tree over one
-/// bucket is as valid as a tree over a whole network, and a builder that omits
-/// a bucket can only fail to answer for it. Each bucket's exclusion claim
-/// already covers the whole epoch.
+/// The tree claims nothing about which buckets it holds. A tree holding one
+/// bucket four times is as valid as a tree over a whole network, and a builder
+/// that omits a bucket can only fail to answer for it. Each bucket's exclusion
+/// claim already covers the whole epoch.
 #[derive(Clone, Debug)]
 pub struct EvidenceTree;
 
@@ -101,60 +107,20 @@ impl Header for EvidenceTreePair {
     }
 }
 
-/// Admit one sealed [`QrBucket`] as a one-leaf [`EvidenceTree`].
-///
-/// Three permutations (the leaf digest).
-///
-/// # Soundness
-///
-/// Every element of the digest is threaded from a bucket PCD, so the emitted
-/// root is the digest of a bucket [`QrBucketSeal`](super::qr::QrBucketSeal)
-/// produced and the four network fields are that bucket's.
-#[derive(Debug)]
-pub struct EvidenceTreeLeaf;
-
-impl Step for EvidenceTreeLeaf {
-    type Aux<'source> = ();
-    type Left = QrBucket;
-    type Output = EvidenceTree;
-    type Right = ();
-    type Witness<'source> = ();
-
-    const INDEX: Index = Index::new(27);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (): Self::Witness<'source>,
-        (epoch, anchor_start, anchor_next, discriminant, profile, contents): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let root = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
-            Fp::from(epoch),
-            Fp::from(anchor_start),
-            Fp::from(anchor_next),
-            Fp::from(discriminant),
-            Fp::from(u64::from(profile.depth)),
-            Fp::from(u64::from(profile.bits)),
-            Eq::from(contents).to_affine(),
-        ));
-
-        Ok(((epoch, anchor_start, anchor_next, discriminant, root), ()))
-    }
-}
-
 /// Admit two sealed [`QrBucket`]s as one half of a node.
 ///
 /// Six permutations (two leaf digests), more than any other step in this
 /// module. The two sponges absorb the same four network fields and share
-/// nothing, so this is the first step to drop if a real circuit's budget is
-/// exceeded.
+/// nothing. A circuit that cannot afford both would split this into a step per
+/// digest, at the cost of one more step per bucket: this step both admits a
+/// bucket and consumes two proofs, which is what holds a tree over `n` buckets
+/// to `n - 1` steps.
 ///
 /// # Soundness
 ///
 /// Each digest is derived from one threaded bucket header, and the four
 /// equalities carry the network fields as [`EvidenceTreePairFuse`] does. The
-/// claim is exactly that of two [`EvidenceTreeLeaf`]s and one pair fuse.
+/// emitted pair holds two sealed buckets as leaves and claims nothing more.
 #[derive(Debug)]
 pub struct EvidenceTreeLeafPair;
 
@@ -165,7 +131,7 @@ impl Step for EvidenceTreeLeafPair {
     type Right = QrBucket;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(33);
+    const INDEX: Index = Index::new(32);
 
     fn witness<'source>(
         &self,
@@ -262,7 +228,7 @@ impl Step for EvidenceTreePairFuse {
     type Right = EvidenceTree;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(28);
+    const INDEX: Index = Index::new(27);
 
     fn witness<'source>(
         &self,
@@ -324,7 +290,7 @@ impl Step for EvidenceTreeFuse {
     type Right = EvidenceTreePair;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(29);
+    const INDEX: Index = Index::new(28);
 
     fn witness<'source>(
         &self,
@@ -409,7 +375,7 @@ impl Step for EvidenceTreeCap {
     type Right = ();
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(30);
+    const INDEX: Index = Index::new(29);
 
     fn witness<'source>(
         &self,
@@ -469,7 +435,7 @@ impl Step for EvidenceTreeDescend {
     /// `(path)`
     type Witness<'source> = ([([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY]); Self::LEVELS],);
 
-    const INDEX: Index = Index::new(31);
+    const INDEX: Index = Index::new(30);
 
     fn witness<'source>(
         &self,
@@ -524,6 +490,9 @@ impl Step for EvidenceTreeDescend {
 /// emitted, so this second producer of [`QrBucket`] establishes nothing the
 /// seal did not.
 ///
+/// Only [`EvidenceTreeDescend`] emits a tree whose root is a leaf digest, so
+/// every open follows a descent.
+///
 /// Binding the profile stops this forgery: a real bucket's
 /// contents presented under the tested value's own profile would pass
 /// [`QrUnspentInit`](super::qr::QrUnspentInit)'s fold and open nonzero, proving
@@ -539,7 +508,7 @@ impl Step for EvidenceTreeOpen {
     /// `(profile, contents)`
     type Witness<'source> = (QrProfile, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(32);
+    const INDEX: Index = Index::new(31);
 
     fn witness<'source>(
         &self,

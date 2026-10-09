@@ -41,7 +41,7 @@ impl TachygramSetCommit {
 impl Default for TachygramSetCommit {
     /// A commitment to an empty set.
     fn default() -> Self {
-        TachygramSetPoly::from_iter(iter::empty()).commit()
+        iter::empty().collect::<TachygramSetPoly>().commit()
     }
 }
 
@@ -75,7 +75,7 @@ impl ActionSetCommit {
 impl Default for ActionSetCommit {
     /// A commitment to an empty set.
     fn default() -> Self {
-        ActionSetPoly::from_iter(iter::empty()).commit()
+        iter::empty().collect::<ActionSetPoly>().commit()
     }
 }
 

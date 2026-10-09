@@ -255,7 +255,7 @@ mod tests {
     /// Collects a polynomial's coefficients with the sparse capacity padding
     /// trimmed; the zero polynomial densifies to `[0]`.
     fn dense(poly: &Polynomial<Fp, ProductionRank>) -> Vec<Fp> {
-        let mut coeffs = Vec::from_iter(poly.iter_coeffs());
+        let mut coeffs = poly.iter_coeffs().collect::<Vec<_>>();
         let last_nonzero = coeffs.iter().rposition(|coeff| coeff != &Fp::ZERO);
         coeffs.truncate(last_nonzero.map_or(1, |idx| idx + 1));
         coeffs

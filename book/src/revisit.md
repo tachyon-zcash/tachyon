@@ -1196,16 +1196,21 @@ epoch metadata. Its public output is a single authenticated tree root.
   </a>
 </p>
 
-We use Poseidon's rate as the Merkle arity. With rate $4$, the tree is
-quaternary and has depth $\lceil\log_4 n\rceil$ for $n$ final buckets, half the
-depth of a binary tree. At the intended maximum of fewer than $2^{26}$ buckets,
-an opening requires at most $13$ Poseidon hashes.
+We use Poseidon's rate as the Merkle arity. One permutation absorbs four
+children and so resolves two bits of a leaf address, which is the most a rate-$4$
+sponge resolves per permutation. The tree is therefore quaternary, with depth
+$\lceil\log_4 n\rceil$ for $n$ final buckets, half the depth of a binary tree over
+the same buckets. A node absorbs its four children and nothing else, so it needs
+no domain constant, and a builder with fewer than four children to give repeats
+one. At the intended maximum of fewer than $2^{26}$ buckets, a path is at most
+$13$ levels deep. An opening costs one node hash per level and one leaf digest.
 
-The tree need not contain every final bucket: even a single-leaf tree is valid.
-It only needs to contain the bucket used by a query. The OSS retains its chosen
+The tree need not contain every final bucket. It only needs to contain the
+bucket a query uses, and a builder holding a single bucket needs no tree at all:
+a sealed bucket is complete evidence on its own. The OSS retains its chosen
 final buckets, their Merkle tree, and one proof for the root. A query supplies
-the selected leaf and its Merkle path rather than the bucket's original routing
-proof. After authenticating the leaf against the tree root, the consumer derives
+the selected leaf and its Merkle path, and the bucket's own routing proof can
+then be dropped. After authenticating the leaf against the tree root, the consumer derives
 and checks the claimed profile only for non-membership; membership directly
 checks that the queried value is a root. This layer does not replace or alter
 routing: it only compresses a set of already proven buckets into one reusable
@@ -1558,9 +1563,16 @@ decomposition into a tree of sub-statements sound.
 > wrapped in braces: $\mathtt{left}\{e, \cm\}$ with dot accessor
 > $\mathtt{left}.\cm$.
 >
-> Naming: steps use "noun + verb" with verbs like "seed, fuse, lift, merge"
-> and the noun is usually a header name, whereas headers use a qualified noun
-> like "NoteSpendable, ArbitraryUnspent, NoteUnspent".
+> Naming: steps use "noun + verb" with verbs like "seed, fuse, lift, merge",
+> and the noun is the header the step **emits**, not the one it reads. So
+> $\mathsf{UnspentFuse}$ fuses into an $\mathtt{ArbitraryUnspent}$, and
+> $\mathsf{EvidenceTreeFuse}$ fuses into an $\mathtt{EvidenceTree}$ although
+> it reads two $\mathtt{EvidenceTreePair}$s. Most fuse steps read and emit the
+> same header, which leaves the rule invisible until one does not. Three steps
+> whose output is a part of what they read are named for the input instead:
+> $\mathsf{QrIntakeSplit}$, $\mathsf{QrSideDescend}$ and
+> $\mathsf{EvidenceTreeOpen}$. Headers use a qualified noun like
+> "NoteSpendable, ArbitraryUnspent, NoteUnspent".
 >
 > Color: User scope is blue ($\Uc$), OSS scope is red ($\Oc$), and shared
 > headers are green ($\Sc$). OSS-generated shared-evidence steps are red.
@@ -1576,10 +1588,10 @@ The wallet bridges those branches only after the OSS proof returns.
 Shared evidence has two durable final forms. Ordinary $\mathtt{AnchorChain}$
 evidence advances stamps within the active epoch. Closed-epoch
 $\mathtt{EvidenceTree}$ evidence authenticates a set of final QR buckets under
-one Merkle root. $\mathtt{Summary}$ and $\mathtt{QrBucket}$ are
-intermediate shared headers used to construct that tree. A query opens one
-tree leaf into a $\mathtt{QrBucketOpening}$; anchor chains do not use QR
-routing.
+one Merkle root. $\mathtt{Summary}$ and $\mathtt{EvidenceTreePair}$ are
+intermediate shared headers on the way to that tree. $\mathtt{QrBucket}$ is both
+the routing network's output and what a query replays out of a tree leaf.
+Anchor chains do not use QR routing.
 
 **Active anchor chains.** An anchor-chain header is simply
 
@@ -1648,14 +1660,16 @@ $\mathsf{QrSummaryIntake}$ turns each completed summary into
 
 $$
 \mathtt{QrIntake}\{e,\anchor_\mathsf{prev},\anchor_\mathsf{end},
-  j,b,R_j,\mathsf{Com}(q_b(X))\}.
+  R_0,j,b,\mathsf{Com}(q_b(X))\}.
 $$
 
 Here $j$ is the routing depth, and $b$ is the integer encoding of the $j$ QR
 profile bits encountered so far, with NQR encoded as $0$ and QR as $1$.
-Appending a side bit updates $b$ to $2b+\mathsf{bit}$; $R_j$ is the next
-discriminant. The OSS keeps these routing headers unpublished until the epoch
-closes, so they do not reveal $R_0$ while users can still choose tachygrams.
+Appending a side bit updates $b$ to $2b+\mathsf{bit}$. Every routing header
+carries the network's first discriminant $R_0$ unchanged, so a header at depth
+$j$ classifies at $R_j=R_0+j$ without having to carry $R_j$ itself. The OSS
+keeps these routing headers unpublished until the epoch closes, so they do not
+reveal $R_0$ while users can still choose tachygrams.
 
 The root profile has $(j,b)=(0,0)$ and the OSS's chosen $R_0$. A stamp not yet
 included in a summary can enter through $\mathsf{QrStampIntakeSeed}$. This has
@@ -1669,7 +1683,7 @@ transition.
 For an empty epoch, $\mathsf{QrEmptyIntakeSeed}$ emits the root intake
 
 $$
-\mathtt{QrIntake}\{e,\sntl_e,\sntl_e,0,0,R_0,
+\mathtt{QrIntake}\{e,\sntl_e,\sntl_e,R_0,0,0,
   \mathsf{Com}(1)\}.
 $$
 
@@ -1705,8 +1719,10 @@ To realize one routing round, $\mathsf{QrSideDescend}$ is invoked once for each
 side of every split. Each invocation requires $j<32$ and appends its chosen bit,
 
 $$
-j'=j+1,\qquad b'=2b+\mathsf{bit},\qquad R_{j+1}=R_j+1.
+j'=j+1,\qquad b'=2b+\mathsf{bit},
 $$
+
+carrying $R_0$ through unchanged, so the child classifies at $R_{j+1}=R_j+1$.
 
 Checking the sibling proves the returned child is **complete** for its class:
 the product relation leaves nowhere else for a matching input root to go. The
@@ -1723,7 +1739,7 @@ construction independently to all $m$ routing buckets produces the round's $2m$
 unmerged children.
 
 $\mathsf{QrIntakeMerge}$ joins two intakes only when they have the same epoch,
-profile, and next discriminant, their anchor ranges are contiguous, and the
+profile, and first discriminant, their anchor ranges are contiguous, and the
 product fits the PCS degree limit. It fixes both input
 polynomials and their product before checking
 
@@ -1747,7 +1763,7 @@ terminal stamp anchor yields $\sntl_{e+1}$, and requires $j\leq32$. It emits the
 sentinel-bounded header
 
 $$
-\mathtt{QrBucket}\{e,\sntl_e,\sntl_{e+1},j,b,R_j,
+\mathtt{QrBucket}\{e,\sntl_e,\sntl_{e+1},R_0,j,b,
   \mathsf{Com}(q_b(X))\}.
 $$
 
@@ -1766,15 +1782,15 @@ flowchart TB
   QrSummaryIntake(["$$\mathsf{QrSummaryIntake}$$"]):::o
   QrStampIntakeSeed(["$$\mathsf{QrStampIntakeSeed}$$"]):::o
   QrEmptyIntakeSeed(["$$\mathsf{QrEmptyIntakeSeed}$$"]):::o
-  root["$$\mathtt{QrIntake}\\ \{e,\anchor_L,\anchor_R,0,0,R_0,\mathsf{Com}(p)\}$$"]:::s
+  root["$$\mathtt{QrIntake}\\ \{e,\anchor_L,\anchor_R,R_0,0,0,\mathsf{Com}(p)\}$$"]:::s
 
   QrIntakeSplit(["$$\mathsf{QrIntakeSplit}$$"]):::o
   sides["$$\mathtt{QrIntakeSides}\\ \{\ldots,\mathsf{Com}(q_0),\mathsf{Com}(q_1)\}$$"]:::s
 
   DescendNqr(["$$\mathsf{QrSideDescend}\\ \NQR_{R_j}\text{ side}$$"]):::o
   DescendQr(["$$\mathsf{QrSideDescend}\\ \QR_{R_j}\text{ side}$$"]):::o
-  child0["$$\mathtt{QrIntake}\\ \{\ldots,j+1,2b,R_{j+1},\mathsf{Com}(q_0)\}$$"]:::s
-  child1["$$\mathtt{QrIntake}\\ \{\ldots,j+1,2b+1,R_{j+1},\mathsf{Com}(q_1)\}$$"]:::s
+  child0["$$\mathtt{QrIntake}\\ \{\ldots,R_0,j+1,2b,\mathsf{Com}(q_0)\}$$"]:::s
+  child1["$$\mathtt{QrIntake}\\ \{\ldots,R_0,j+1,2b+1,\mathsf{Com}(q_1)\}$$"]:::s
   peer0["$$\mathtt{QrIntake}\\ \text{same }2b\text{ profile, adjacent range}$$"]:::s
   peer1["$$\mathtt{QrIntake}\\ \text{same }2b+1\text{ profile, adjacent range}$$"]:::s
 
@@ -1784,8 +1800,8 @@ flowchart TB
   merged1["$$\mathtt{QrIntake}\\ \text{merged }\QR\text{ range}$$"]:::s
   Seal0(["$$\mathsf{QrBucketSeal}$$"]):::o
   Seal1(["$$\mathsf{QrBucketSeal}$$"]):::o
-  bucket0["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},j+1,2b,R_{j+1},\mathsf{Com}(q_{2b})\}$$"]:::s
-  bucket1["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},j+1,2b+1,R_{j+1},\mathsf{Com}(q_{2b+1})\}$$"]:::s
+  bucket0["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},R_0,j+1,2b,\mathsf{Com}(q_{2b})\}$$"]:::s
+  bucket1["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},R_0,j+1,2b+1,\mathsf{Com}(q_{2b+1})\}$$"]:::s
 
   summary --> QrSummaryIntake --> root
   QrStampIntakeSeed --> root
@@ -1799,46 +1815,79 @@ flowchart TB
   peer1 --> Merge1 --> merged1 -->|full epoch| Seal1 --> bucket1
 ```
 
-**Evidence tree.** $\mathsf{EvidenceTreeLeaf}$ consumes one
-$\mathtt{QrBucket}$ proof and hashes the leaf payload
+**Evidence tree.** The hash tree is quaternary, because one Poseidon
+permutation absorbs four children. The proof graph is binary, because a step
+reads at most two predecessor proofs. One node of the hash tree therefore takes
+two steps to build, and $\mathtt{EvidenceTreePair}$ is the header in between: a
+node with two of its four children in place.
+
+The tree uses two Poseidon digests, and they stay apart by length. A leaf digest
+$H_\mathsf{bkt}$ absorbs a QR-bucket domain constant and the bucket header, nine
+field elements in all, because the commitment takes two. A node digest $H$
+absorbs four children and nothing else. Absorption carries no length encoding,
+so the two digests never coincide, and a node never stands where a leaf
+belongs.
+
+$\mathsf{EvidenceTreeLeafPair}$ admits two sealed buckets. It reads two
+$\mathtt{QrBucket}$ proofs and hashes each one's whole header into a leaf
+digest,
 
 $$
-(e,\sntl_e,\sntl_{e+1},R_0,j,b,\mathsf{Com}(q_b(X)))
+\mathsf{root}^\QR_i=H_\mathsf{bkt}(e,\sntl_e,\sntl_{e+1},R_0,j_i,b_i,
+  \mathsf{Com}(q_{b_i}(X))),
 $$
 
-with domain-separated Poseidon. It derives $R_0=R_j-j$ from the bucket's next
-discriminant and emits
+and emits the two digests as one half-node,
+
+$$
+\mathtt{EvidenceTreePair}\{e,\sntl_e,\sntl_{e+1},R_0,
+  \mathsf{root}^\QR_0,\mathsf{root}^\QR_1\}.
+$$
+
+$\mathsf{EvidenceTreePairFuse}$ emits that same header from two subtrees in
+place of two buckets, and hashes nothing: it records that two roots sit side by
+side under one node. $\mathsf{EvidenceTreeFuse}$ then reads two half-nodes and
+hashes their four roots, left pair first, into one node,
 
 $$
 \mathtt{EvidenceTree}\{e,\sntl_e,\sntl_{e+1},R_0,\mathsf{root}^\QR\}.
 $$
 
-$\mathsf{EvidenceTreeFuse}$ recursively folds two tree proofs, requires their
-headers to agree on $(e,\sntl_e,\sntl_{e+1},R_0)$, and hashes their roots into a
-new rate-$4$ Poseidon Merkle node. Every seed or fuse output is already a valid
-$\mathtt{EvidenceTree}$; there is no sealing step or coverage requirement. A
-single seed is a valid one-leaf tree. Since every leaf proof is a sound
-full-epoch $\mathtt{QrBucket}$ proof, the tree only needs to preserve common
-epoch metadata and authenticate whichever leaves it contains. The OSS may
-discard the individual bucket proofs after folding them.
+The pair header has two producers because a node's two children are either two
+buckets or two subtrees. The bottom level of the tree holds buckets, and every
+level above it holds subtrees.
 
-$\mathsf{EvidenceTreeOpen}$ consumes $\mathtt{EvidenceTree}$ and privately
-witnesses one leaf payload and its quaternary Merkle path. It verifies the path
-against $\mathsf{root}^\QR$ and emits
+A tree over $n$ buckets costs $n-1$ steps. That is the fewest possible, because
+every step emits one proof and $n$ proofs must reduce to one.
+$\mathsf{EvidenceTreeLeafPair}$ pays for it in width: two leaf digests, six
+permutations, the most of any step here.
 
-$$
-\mathtt{QrBucketOpening}\{e,\sntl_e,\sntl_{e+1},R_0,j,b,
-  \mathsf{Com}(q_b(X))\}.
-$$
+The tree is a perfect quaternary tree: every node holds four children, and every
+leaf sits at depth $d$. A builder short of four repeats a child, and the repeat
+is the same proof in two slots, so it costs one step and not a subtree. A
+repeated child is a bucket the tree holds twice. No step forbids it, and no
+query notices. The smallest tree holds four leaves. A builder with one bucket
+serves that bucket's own proof instead.
 
-This step performs only leaf authentication. A membership consumer directly
-checks $q_b(x)=0$: every authenticated bucket polynomial divides the full-epoch
-tachygram polynomial, so any root is a tachygram published in that epoch and no
-profile check is needed. A non-membership consumer must additionally derive the
-first $j$ discriminants from $R_0$, check that the QR classifications of $x$
-encode $b$, and then check $q_b(x)\neq0$; every non-residue profile bit also
-requires $x+R_i\neq0$. Separating the Merkle path from profile derivation and
-the polynomial query keeps both steps bounded.
+Every step of the tree holds one invariant:
+
+> every leaf beneath $\mathsf{root}^\QR$ is the $H_\mathsf{bkt}$ digest of a
+> sealed bucket whose own four network fields are the
+> $(e,\sntl_e,\sntl_{e+1},R_0)$ this header carries.
+
+$\mathsf{EvidenceTreeLeafPair}$ establishes it, because it reads two sealed
+bucket proofs and hashes their headers itself. Every other step preserves it.
+$\mathsf{EvidenceTreePairFuse}$ and $\mathsf{EvidenceTreeFuse}$ require their
+two inputs to agree on the four fields and carry those fields to the output, so
+a leaf beneath the new root was a leaf beneath one of the inputs.
+
+The invariant says nothing about *which* buckets are under the root. A sealed bucket already covers its whole epoch on its own, so a
+builder that leaves a bucket out loses only the ability to answer for that
+bucket. Once a bucket sits under a root, the builder keeps the tree proof and
+discards the bucket proof.
+
+The diagram below builds two levels. Four buckets reach one node, and that node
+joins three sibling subtrees under the root.
 
 ```mermaid
 flowchart TB
@@ -1847,18 +1896,123 @@ flowchart TB
 
   bucket0["$$\mathtt{QrBucket}_0$$"]:::s
   bucket1["$$\mathtt{QrBucket}_1$$"]:::s
-  seed0(["$$\mathsf{EvidenceTreeLeaf}$$"]):::o
-  seed1(["$$\mathsf{EvidenceTreeLeaf}$$"]):::o
-  tree0["$$\mathtt{EvidenceTree}_0$$"]:::s
-  tree1["$$\mathtt{EvidenceTree}_1$$"]:::s
-  fuse(["$$\mathsf{EvidenceTreeFuse}$$"]):::o
-  tree["$$\mathtt{EvidenceTree}\\ \{e,\sntl_e,\sntl_{e+1},R_0,\mathsf{root}^\QR\}$$"]:::s
-  open(["$$\mathsf{EvidenceTreeOpen}$$"]):::o
-  opening["$$\mathtt{QrBucketOpening}\\ \{e,\sntl_e,\sntl_{e+1},R_0,j,b,\mathsf{Com}(q_b)\}$$"]:::s
+  bucket2["$$\mathtt{QrBucket}_2$$"]:::s
+  bucket3["$$\mathtt{QrBucket}_3$$"]:::s
+  leafpair0(["$$\mathsf{EvidenceTreeLeafPair}$$"]):::o
+  leafpair1(["$$\mathsf{EvidenceTreeLeafPair}$$"]):::o
+  pair0["$$\mathtt{EvidenceTreePair}_0$$"]:::s
+  pair1["$$\mathtt{EvidenceTreePair}_1$$"]:::s
+  fuse0(["$$\mathsf{EvidenceTreeFuse}$$"]):::o
+  tree0["$$\mathtt{EvidenceTree}_0\\ \text{one node, four buckets}$$"]:::s
+  tree1["$$\mathtt{EvidenceTree}_1\\ \text{sibling subtree}$$"]:::s
+  tree2["$$\mathtt{EvidenceTree}_2\\ \text{sibling subtree}$$"]:::s
+  tree3["$$\mathtt{EvidenceTree}_3\\ \text{sibling subtree}$$"]:::s
+  pairfuse0(["$$\mathsf{EvidenceTreePairFuse}$$"]):::o
+  pairfuse1(["$$\mathsf{EvidenceTreePairFuse}$$"]):::o
+  pair2["$$\mathtt{EvidenceTreePair}_2$$"]:::s
+  pair3["$$\mathtt{EvidenceTreePair}_3$$"]:::s
+  fuse1(["$$\mathsf{EvidenceTreeFuse}$$"]):::o
+  root["$$\mathtt{EvidenceTree}\\ \{e,\sntl_e,\sntl_{e+1},R_0,\mathsf{root}^\QR\}$$"]:::s
 
-  bucket0 --> seed0 --> tree0 --> fuse
-  bucket1 --> seed1 --> tree1 --> fuse
-  fuse --> tree --> open --> opening
+  bucket0 --> leafpair0
+  bucket1 --> leafpair0 --> pair0 --> fuse0
+  bucket2 --> leafpair1
+  bucket3 --> leafpair1 --> pair1 --> fuse0
+  fuse0 --> tree0 --> pairfuse0
+  tree1 --> pairfuse0 --> pair2 --> fuse1
+  tree2 --> pairfuse1
+  tree3 --> pairfuse1 --> pair3 --> fuse1
+  fuse1 --> root
+```
+
+A query walks the tree back down, and the whole path is a private witness.
+$\mathsf{EvidenceTreeDescend}$ reads one tree. Per level it witnesses that
+node's four children and two side bits, and it checks that the four children
+hash to the node it holds. The outer bit selects a half, and the inner bit
+selects within that half. The selected child is the next node. The step emits
+the subtree it reached, again as an $\mathtt{EvidenceTree}$. The invariant
+survives the walk, because every leaf of a subtree of a valid tree is a leaf of
+that tree.
+
+A descent walks four levels. The number is fixed, because a circuit's witness
+has a fixed shape. The depth of the tree must therefore be a multiple of four.
+It is not one in general: the depth is $\lceil\log_4 n\rceil$, which answers to
+the bucket count and not to the descent. A tree three levels short leaves the
+last descent with nothing to read, because below a leaf there is no node.
+
+$\mathsf{EvidenceTreeCap}$ supplies the missing levels. It reads one tree and
+emits a tree whose root is
+$H(\mathsf{root}^\QR,\mathsf{root}^\QR,\mathsf{root}^\QR,\mathsf{root}^\QR)$:
+one new node, with the old root in all four slots. The tree gains a level above
+its root and keeps the leaves it had, so the invariant holds. A descent through
+that level reaches the same child for any side bits, so the level is a no-op
+that a fixed-width descent can still walk.
+
+The two paddings answer different constraints, and a tree can need either alone.
+Repeating a child fills a short level, below, so that every node holds four.
+Capping raises $d$ to a multiple of four, above the root, so that whole descents
+reach a leaf. Neither one builds a bigger tree. A repeat is one proof in two
+slots, and a cap is one node over four copies of one root. Five buckets need
+both: they pad to $16$ leaves,
+which gives $d=2$, and two caps raise $d$ to $4$ for one descent. A tree over
+$4^{13}=2^{26}$ buckets needs no leaf padding at all, because the count is
+already a power of four, and still takes three caps to carry $d=13$ to $16$ for
+four descents. A tree at $d=16$ takes neither.
+
+Capping is also the cheap way to reach a depth. One cap is one permutation,
+once, and every later query shares it. Reaching the same depth from below would
+cost a step for every leaf added, and depth is logarithmic in the leaf count:
+$d=4$ means $256$ leaves, and $d=16$ means $2^{32}$.
+
+The last descent emits a tree of depth zero, whose root is the leaf digest
+itself. $\mathsf{EvidenceTreeOpen}$ reads that tree. It witnesses the profile
+and the tachygram-set commitment, checks them against the leaf digest, and emits
+the bucket itself,
+
+$$
+\mathtt{QrBucket}\{e,\sntl_e,\sntl_{e+1},R_0,j,b,\mathsf{Com}(q_b(X))\}.
+$$
+
+This is the invariant at depth zero: with one leaf beneath the root, "every leaf
+is a sealed bucket of this network" is a statement about that one bucket, and
+the step reads it off. The leaf payload is the bucket header, so what comes out
+is a $\mathtt{QrBucket}$ and every consumer of a sealed bucket accepts it.
+$\mathtt{QrBucket}$ accordingly has two producers, $\mathsf{QrBucketSeal}$ and
+$\mathsf{EvidenceTreeOpen}$, and both carry the same claim.
+$\mathsf{EvidenceTreeDescend}$ is the only step that emits a tree whose root is
+a leaf digest, so every open follows a descent.
+
+Two properties make the replay safe. First, a descent that stops one level early
+reaches a node, and no leaf preimage opens a node digest, so an open cannot
+present a node as a bucket. Second, the digest binds $(j,b)$ to the contents. A
+real bucket's contents under another value's profile would pass a non-membership
+fold and open nonzero, and would prove exclusion for a tachygram that belongs to
+a different bucket.
+
+The path and the profile stay separate concerns. A membership consumer checks
+$q_b(x)=0$ directly: every authenticated bucket polynomial divides the
+full-epoch tachygram polynomial, so any root is a tachygram published in that
+epoch, and the profile plays no part. A non-membership consumer also derives the
+first $j$ discriminants from $R_0$, checks that the QR classifications of $x$
+encode $b$, and then checks $q_b(x)\neq0$. Each non-residue profile bit also
+requires $x+R_i\neq0$. This separation keeps every step bounded.
+
+```mermaid
+flowchart TB
+  classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
+  classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
+
+  tree["$$\mathtt{EvidenceTree}\\ \{e,\sntl_e,\sntl_{e+1},R_0,\mathsf{root}^\QR\}$$"]:::s
+  cap(["$$\mathsf{EvidenceTreeCap}$$"]):::o
+  padded["$$\mathtt{EvidenceTree}\\ \text{padded root}$$"]:::s
+  descend(["$$\mathsf{EvidenceTreeDescend}\\ \text{one per block of levels}$$"]):::o
+  leafTree["$$\mathtt{EvidenceTree}\\ \text{the queried leaf}$$"]:::s
+  open(["$$\mathsf{EvidenceTreeOpen}$$"]):::o
+  bucket["$$\mathtt{QrBucket}\\ \{e,\sntl_e,\sntl_{e+1},R_0,j,b,\mathsf{Com}(q_b)\}$$"]:::s
+
+  tree -->|"depth not a multiple"| cap --> padded --> descend
+  tree -->|otherwise| descend
+  descend --> leafTree --> open --> bucket
 ```
 
 The diagram below summarizes the active anchor-chain and closed-epoch QR
@@ -1977,11 +2131,11 @@ into a bind step and a stamp step for the same reason.
 When a wallet comes back online, it may rebuild or refresh spendability proofs
 for all its unspent notes. Once a note's inclusion epoch $e_\incl$ is in the
 past, spending it requires proving exclusion across every intervening epoch.
-The inclusion branch and exclusion branch remain independent. Each first opens
-its selected bucket from the epoch's $\mathtt{EvidenceTree}$. A membership opening
-against the resulting $\mathtt{QrBucketOpening}$ proves that $\cm$ occurred in
+The inclusion branch and exclusion branch remain independent. Each first replays
+its selected bucket out of the epoch's $\mathtt{EvidenceTree}$. A membership
+opening against the resulting $\mathtt{QrBucket}$ proves that $\cm$ occurred in
 epoch $e_\incl$. Separately, the user-owned
-$\mathsf{NoteUnspentInit}$ consumes only the $\mathtt{QrBucketOpening}$
+$\mathsf{NoteUnspentInit}$ consumes only the $\mathtt{QrBucket}$
 selected by $\nf_{e_\incl}$'s profile. It privately witnesses the note opening
 and $(\ak,\nk)$, then enforces
 
@@ -2030,8 +2184,8 @@ flowchart TB
 
   vfyincl["$$\mathtt{NoteUnspent}\\ \{\cm,e_\incl,e_\incl+1,\sntl_{e_\incl},\sntl_{e_\incl+1}\}$$"]:::u
   inclTree["$$\mathtt{EvidenceTree}_{e_\incl}$$"]:::s
-  inclNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_{e_\incl}$$"]:::s
-  cmBucket["$$\mathtt{QrBucketOpening}\text{ for }\cm$$"]:::s
+  inclNfBucket["$$\mathtt{QrBucket}\text{ for }\nf_{e_\incl}$$"]:::s
+  cmBucket["$$\mathtt{QrBucket}\text{ for }\cm$$"]:::s
   spendable["$$\mathtt{NoteSpendable}\\ \{\cm,e_\incl+1,\sntl_{e_\incl+1}\}$$"]:::u
 
   NoteUnspentInit(["$$\mathsf{NoteUnspentInit}$$"]):::u
@@ -2063,7 +2217,7 @@ flowchart TB
   unspent["$$\mathtt{ArbitraryUnspent}\\ \{s_L,s_L,\sntl_{s_L},\sntl_{s_L},\mathsf{Com}(1)\}$$"]:::o
   unspentprime["$$\mathtt{ArbitraryUnspent}\\ \{s_L,s_R,\sntl_{s_L},\sntl_{s_R},\mathsf{Com}(g_{s_L,s_R})\}$$"]:::o
   laterTree["$$\mathtt{EvidenceTree}_i$$"]:::s
-  laterNfBucket["$$\mathtt{QrBucketOpening}\text{ for }\nf_i$$"]:::s
+  laterNfBucket["$$\mathtt{QrBucket}\text{ for }\nf_i$$"]:::s
   vfylater["$$\mathtt{NoteUnspent}\\ \{\cm,s_L,s_R,\sntl_{s_L},\sntl_{s_R}\}$$"]:::u
   spendableprime["$$\mathtt{NoteSpendable}\\ \{\cm,s_R,\sntl_{s_R}\}$$"]:::u
   spendheader["$$\mathtt{SpendHeader}\\ \{\cm,\nf_e,\nf_{e+1},\anchor,\pk,\cv\}$$"]:::u
@@ -2154,8 +2308,8 @@ $g_{s_L,s_L}(X)=1$. This seed cannot be bound into a spendable proof until at
 least one epoch is appended. Each $\mathsf{UnspentLift}$:
 
 - requires its current right sentinel to equal the input
-  $\mathtt{QrBucketOpening}$'s left sentinel;
-- requires that opening to cover the next epoch $i=s_R$;
+  $\mathtt{QrBucket}$'s left sentinel;
+- requires that bucket to cover the next epoch $i=s_R$;
 - takes the opaque $\nf_{s_R}$ as witness, derives its complete QR profile from
   $(R_0,j)$, matches $b$, and proves
   $q_b(\nf_{s_R})\neq0$ in the same query step; and
@@ -2625,7 +2779,7 @@ notes, a wallet:
 2. independently extends one local $\mathtt{NoteNullifiers}$ header and delegates
    opaque nullifiers and sentinel-bounded epoch ranges to one or more OSSs;
 3. after the inclusion epoch closes, directly binds its derived
-   $\nf_{e_\incl}$ to one $\mathtt{QrBucketOpening}$ through
+   $\nf_{e_\incl}$ to one $\mathtt{QrBucket}$ through
    $\mathsf{NoteUnspentInit}$, then joins that singleton exclusion with the
    separate $\cm$ bucket opening at $\mathsf{SpendableReinit}$; later lifts
    consume ranges beginning at $e_\incl+1$; and

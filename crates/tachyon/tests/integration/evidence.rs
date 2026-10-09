@@ -22,18 +22,10 @@ use crate::{
     },
 };
 
-/// One sealed bucket as a one-leaf [`evidence::EvidenceTree`].
+/// One sealed bucket as the smallest tree that holds it: the bucket repeated
+/// across one node's leaves.
 fn tree_of(rng: &mut StdRng, bucket: QrBucketEntry) -> Pcd<evidence::EvidenceTree> {
-    let (pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            evidence::EvidenceTreeLeaf,
-            (),
-            bucket.pcd,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("EvidenceTreeLeaf");
-    pcd
+    build_evidence_tree(rng, vec![bucket]).pcd
 }
 
 /// Pair two trees as half a node.
@@ -422,7 +414,7 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
 }
 
 /// Admitting two buckets at once checks the same four fields the pair fuse
-/// does, since it stands for two `EvidenceTreeLeaf` steps and a pair fuse.
+/// does, since it admits both buckets as leaves of one pair.
 #[test]
 fn evidence_tree_leaf_pair_rejects_a_bucket_of_another_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);

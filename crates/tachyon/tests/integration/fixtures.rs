@@ -852,16 +852,17 @@ pub(crate) struct EvidenceTreeEntry {
 /// a bucket the tree holds twice; no step forbids it.
 ///
 /// Buckets are admitted two at a time through
-/// [`evidence::EvidenceTreeLeafPair`]. A lone bucket becomes a one-leaf tree
-/// through [`evidence::EvidenceTreeLeaf`].
+/// [`evidence::EvidenceTreeLeafPair`], so the smallest tree this builds holds
+/// [`EVIDENCE_TREE_ARITY`] leaves. A builder holding one bucket would serve
+/// that bucket's own proof instead of a tree.
 pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
     rng: &mut RNG,
     mut buckets: Vec<QrBucketEntry>,
 ) -> EvidenceTreeEntry {
     assert!(!buckets.is_empty(), "a tree holds at least one bucket");
 
-    let mut width = 1;
-    let mut depth = 0;
+    let mut width = EVIDENCE_TREE_ARITY;
+    let mut depth = 1;
     while width < buckets.len() {
         width *= EVIDENCE_TREE_ARITY;
         depth += 1;
@@ -874,49 +875,20 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
         });
     }
 
-    let held = buckets
-        .iter()
+    let (proofs, held): (Vec<_>, Vec<_>) = buckets
+        .into_iter()
         .map(|bucket| {
             let (_epoch, _anchor_start, _anchor_next, _discriminant, profile, contents) =
                 *bucket.pcd.data();
-            (profile, contents, bucket.members.clone())
+            (bucket.pcd, (profile, contents, bucket.members))
         })
-        .collect::<Vec<_>>();
-
-    if buckets.len() == 1 {
-        let only = buckets.first().expect("one bucket");
-        let (pcd, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                evidence::EvidenceTreeLeaf,
-                (),
-                only.pcd.clone(),
-                Proof::trivial().carry::<()>(()),
-            )
-            .expect("EvidenceTreeLeaf");
-        let (profile, contents, members) = held.into_iter().next().expect("one leaf");
-        return EvidenceTreeEntry {
-            pcd,
-            leaves: vec![EvidenceLeaf {
-                profile,
-                contents,
-                members,
-                path: Vec::new(),
-            }],
-        };
-    }
+        .unzip();
 
     let mut pairs = Vec::with_capacity(width / 2);
-    let mut admitted = buckets.into_iter();
+    let mut admitted = proofs.into_iter();
     while let (Some(first), Some(second)) = (admitted.next(), admitted.next()) {
         let (pair, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                evidence::EvidenceTreeLeafPair,
-                (),
-                first.pcd,
-                second.pcd,
-            )
+            .fuse(rng, evidence::EvidenceTreeLeafPair, (), first, second)
             .expect("EvidenceTreeLeafPair");
         pairs.push(pair);
     }

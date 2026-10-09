@@ -1768,7 +1768,7 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
         (profile, contents),
         (
             QrProfile::ROOT,
-            TachygramSetPoly::from_iter(iter::empty()).commit()
+            iter::empty().collect::<TachygramSetPoly>().commit()
         ),
         "and holds nothing"
     );

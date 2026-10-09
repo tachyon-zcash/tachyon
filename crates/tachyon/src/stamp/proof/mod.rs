@@ -6,6 +6,14 @@
 //! `Step::INDEX` runs from zero without gaps, and [`make_app`] registers the
 //! steps in that order; `ApplicationBuilder` rejects any other sequence.
 //! `Header::SUFFIX` runs from zero without gaps too.
+//!
+//! A step is named "noun + verb", where the noun is the header it **emits**,
+//! not the one it reads. Most fuse steps read and emit the same header, which
+//! leaves the rule invisible until one does not: `EvidenceTreeFuse` emits an
+//! `EvidenceTree` and reads two `EvidenceTreePair`s, and `EvidenceTreePairFuse`
+//! emits the pair. Three steps whose output is a part of what they read are
+//! named for the input instead: `QrIntakeSplit`, `QrSideDescend` and
+//! `EvidenceTreeOpen`.
 
 extern crate alloc;
 
@@ -52,7 +60,6 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(spendable::QrSpendableInit)?
         .register(qr::QrEmptyIntakeSeed)?
         .register(pool::UnspentLift)?
-        .register(evidence::EvidenceTreeLeaf)?
         .register(evidence::EvidenceTreePairFuse)?
         .register(evidence::EvidenceTreeFuse)?
         .register(evidence::EvidenceTreeCap)?

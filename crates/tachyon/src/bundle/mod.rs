@@ -680,7 +680,12 @@ impl Bundle<ProofStamp> {
             return Err(VerifyTachygramsError::WrongArity);
         }
 
-        let tg_set = TachygramSetPoly::from_iter(self.stamp.tachygrams.iter().copied());
+        let tg_set = self
+            .stamp
+            .tachygrams
+            .iter()
+            .copied()
+            .collect::<TachygramSetPoly>();
 
         if self.stamp.tachygram_set != tg_set.commit() {
             return Err(VerifyTachygramsError::WrongSet);
