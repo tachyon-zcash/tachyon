@@ -43,7 +43,7 @@ impl Header for NoteSecret {
     /// `(cm, note, mk)`
     type Data = (note::Commitment, Note, NoteMasterKey);
 
-    const SUFFIX: Suffix = Suffix::new(9);
+    const SUFFIX: Suffix = Suffix::new(8);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, note, mk) = *data;
@@ -282,7 +282,7 @@ impl Step for NullifierFuse {
     /// `(left_seq, merged_seq, right_seq)`
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(14);
+    const INDEX: Index = Index::new(12);
 
     fn witness<'source>(
         &self,

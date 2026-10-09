@@ -13,19 +13,18 @@ use ragu_pasta::PoseidonFp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile,
-    Tachygram, TachygramSetCommit, TachygramSetPoly,
+    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
+    QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
-    digest::blake2b,
     effect,
     entropy::ActionEntropy,
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     stamp::{
-        PointerStamp, ProofStamp, StampState,
+        self, PointerStamp, ProofStamp, StampState,
         proof::{
             PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
             stamp::{Stamp, StampMerge},
@@ -123,21 +122,11 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     note: Note,
 ) -> (ProofStamp, action::Plan<effect::Output>) {
     let (rcv, theta, plan) = build_output_plan(rng, note);
-    let (_digests, tachygrams, stamp_anchor, proof) =
-        ProofStamp::prove_output(rng, theta, rcv, note, anchor).expect("prove_output");
-    let stamp = ProofStamp {
-        coverage: blake2b::action_descriptor_digest(
-            &iter::once(plan.descriptor()).collect::<Vec<[u8; 64]>>(),
-        ),
-        anchor: stamp_anchor,
-        tachygram_set: tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>()
-            .commit(),
-        tachygrams,
-        proof,
-    };
+    // An output-only plan never reads the proof authorizing key.
+    let pak = WalletSim::new(shared_sk()).pak;
+    let stamp = stamp::Plan::new(vec![], vec![(plan.descriptor(), theta, note, rcv)], anchor)
+        .prove(rng, &pak, vec![])
+        .expect("prove an output stamp");
     (stamp, plan)
 }
 
@@ -468,41 +457,48 @@ impl PoolSim {
     }
 }
 
-/// Build an [`AnchorChain`] covering blocks `range` in full, rooted at the
-/// block-start anchor of `*range.start()`.
+/// Build an [`AnchorSpan`] covering blocks `range` in full, rooted at the
+/// block-start anchor of `*range.start()`, with the anchors its folds produce.
 ///
-/// One [`AnchorSeed`] per absorbed stamp, fused linearly via [`AnchorFuse`].
-/// A stampless block advances no anchor and so contributes no segment; the
-/// range must therefore cover at least one stamp.
-pub(crate) fn build_anchor_chain_pcd<RNG: CryptoRng>(
+/// One [`AnchorSpanSeed`] per absorbed stamp, fused linearly via
+/// [`AnchorSpanFuse`]. A stampless block advances no anchor and so contributes
+/// no fold; the range must therefore cover at least one stamp.
+pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     range: RangeInclusive<BlockHeight>,
-) -> Pcd<pool::AnchorChain> {
+) -> (Pcd<pool::AnchorSpan>, Vec<Anchor>) {
     let start = *range.start();
     let end = *range.end();
-    assert_eq!(start.epoch(), end.epoch(), "AnchorChain single-epoch range");
+    assert_eq!(start.epoch(), end.epoch(), "AnchorSpan single-epoch range");
     assert!(start <= end);
 
     let mut state = pool.block(start).prev;
-    let mut chain: Option<Pcd<pool::AnchorChain>> = None;
+    let mut span: Option<Pcd<pool::AnchorSpan>> = None;
+    let mut members = Vec::new();
     let mut height = start;
     loop {
         for tgs in &pool.block(height).tachygrams() {
-            let witness = witness::anchor_seed(((), ()), state, height.epoch(), tgs);
+            let witness = witness::anchor_span_seed(((), ()), state, height.epoch(), tgs);
             let next_state = state.next_stamp(witness.1, &witness.2).unwrap();
             let (seed, ()) = PROOF_SYSTEM
-                .seed(rng, pool::AnchorSeed, witness)
-                .expect("AnchorSeed");
-            chain = Some(match chain.take() {
+                .seed(rng, pool::AnchorSpanSeed, witness)
+                .expect("AnchorSpanSeed");
+            span = Some(match span.take() {
                 None => seed,
                 Some(left) => {
+                    let fuse_witness = witness::anchor_span_fuse(
+                        (*left.data(), *seed.data()),
+                        &members,
+                        &[next_state],
+                    );
                     let (fused, ()) = PROOF_SYSTEM
-                        .fuse(rng, pool::AnchorFuse, (), left, seed)
-                        .expect("AnchorFuse");
+                        .fuse(rng, pool::AnchorSpanFuse, fuse_witness, left, seed)
+                        .expect("AnchorSpanFuse");
                     fused
                 },
             });
+            members.push(next_state);
             state = next_state;
         }
         if height >= end {
@@ -511,7 +507,21 @@ pub(crate) fn build_anchor_chain_pcd<RNG: CryptoRng>(
         height = height.next().unwrap();
     }
 
-    chain.expect("AnchorChain range must cover at least one stamp")
+    (
+        span.expect("AnchorSpan range must cover at least one stamp"),
+        members,
+    )
+}
+
+/// [`build_anchor_span_pcd`] in the form a lift takes: the span with its
+/// members polynomial.
+pub(crate) fn build_lift_span<RNG: CryptoRng>(
+    rng: &mut RNG,
+    pool: &PoolSim,
+    range: RangeInclusive<BlockHeight>,
+) -> (Pcd<pool::AnchorSpan>, AnchorSetPoly) {
+    let (span, members) = build_anchor_span_pcd(rng, pool, range);
+    (span, AnchorSetPoly::from_iter(members))
 }
 
 /// Build a [`Summary`](summary::Summary) over the anchor span `(start, end)`,
@@ -1553,7 +1563,7 @@ impl WalletSim {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);
-            spend_pcds.push((self.secret_pcd(rng, note), spendable_pcd));
+            spend_pcds.push((self.secret_pcd(rng, note), spendable_pcd, vec![]));
         }
 
         let output_plans: Vec<action::Plan<effect::Output>> = output_notes

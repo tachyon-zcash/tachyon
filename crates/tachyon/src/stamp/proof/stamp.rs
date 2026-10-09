@@ -7,13 +7,15 @@ use alloc::{vec, vec::Vec};
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use super::{output::OutputHeader, pool::AnchorChain, spend::SpendHeader};
+use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
     entropy::ActionEntropy,
     keys::{ProofAuthorizingKey, private},
     note,
-    primitives::{ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit, effect},
+    primitives::{
+        ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
+    },
     ragu_constraint::{enforce_equal_point, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
 };
@@ -30,11 +32,11 @@ use crate::{
 /// [`StampMerge`] binds its witnessed input sets to the child headers
 /// and enforces each output commitment as the product of its inputs.
 ///
-/// `anchor` is freely witnessed at [`OutputStamp`]; at [`SpendStamp`]
-/// it threads from the left [`SpendHeader`]; at [`StampMerge`]
-/// the step constrains `left.anchor == right.anchor`; at
-/// [`StampLift`] it advances to the right [`AnchorChain`] path's
-/// `anchor_end` after constraining `chain.anchor_start == stamp.anchor`.
+/// `anchor` is a free witness at [`OutputStamp`]. At [`SpendStamp`] it comes
+/// from the left [`SpendHeader`]. At [`StampMerge`] the step requires
+/// `left.anchor == right.anchor`. At [`StampLift`] the step checks that
+/// `stamp.anchor` is the right [`AnchorSpan`]'s `anchor_start` or a member,
+/// and moves it to the span's `anchor_end`.
 #[derive(Debug)]
 pub struct Stamp;
 
@@ -42,7 +44,7 @@ impl Header for Stamp {
     /// `(action_commit, stamp_tg_commit, anchor)`
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(7);
+    const SUFFIX: Suffix = Suffix::new(6);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         (
@@ -78,7 +80,7 @@ impl Step for OutputStamp {
     /// `(theta, anchor, action_set, tachygram_set)`
     type Witness<'source> = (ActionEntropy, Anchor, ActionSetPoly, TachygramSetPoly);
 
-    const INDEX: Index = Index::new(9);
+    const INDEX: Index = Index::new(7);
 
     fn witness<'source>(
         &self,
@@ -156,7 +158,7 @@ impl Step for SpendStamp {
         TachygramSetPoly,
     );
 
-    const INDEX: Index = Index::new(11);
+    const INDEX: Index = Index::new(9);
 
     fn witness<'source>(
         &self,
@@ -219,7 +221,7 @@ impl Step for StampMerge {
         (ActionSetPoly, TachygramSetPoly),
     );
 
-    const INDEX: Index = Index::new(12);
+    const INDEX: Index = Index::new(10);
 
     fn witness<'source>(
         &self,
@@ -288,9 +290,24 @@ impl Step for StampMerge {
     }
 }
 
-/// Advance a stamp's anchor by absorbing an [`AnchorChain`]: the path's
-/// `anchor_start` must equal the stamp's `anchor`, and the new anchor is the
-/// path's `anchor_end`.
+/// Advance a stamp's anchor to the end of an [`AnchorSpan`].
+///
+/// The stamp's `anchor` must be the span's `anchor_start` or one of its
+/// members:
+///
+/// $$
+///   M(\mathsf{anchor}) \cdot (\mathsf{anchor} - \mathsf{anchor\_start}) = 0
+/// $$
+///
+/// The output anchor is always `anchor_end`, because the members polynomial
+/// does not record the order of its members. A stamp already at `anchor_end`
+/// keeps its anchor.
+///
+/// # Soundness
+///
+/// The step opens $M$ at the stamp's anchor, and checks $M$'s commitment
+/// against the header's `members`. A stamp anchored outside the span passes
+/// only if its anchor collides with `anchor_start` or a member.
 #[derive(Debug)]
 pub struct StampLift;
 
@@ -298,24 +315,33 @@ impl Step for StampLift {
     type Aux<'source> = ();
     type Left = Stamp;
     type Output = Stamp;
-    type Right = AnchorChain;
-    type Witness<'source> = ();
+    type Right = AnchorSpan;
+    /// `(members)`
+    type Witness<'source> = (AnchorSetPoly,);
 
-    const INDEX: Index = Index::new(13);
+    const INDEX: Index = Index::new(11);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (): Self::Witness<'source>,
-        (left_action_commit, left_tachygram_commit, stamp_anchor): <Self::Left as Header>::Data,
-        (chain_anchor_start, chain_anchor_end): <Self::Right as Header>::Data,
+        ctx: &mut ragu::StepCtx<'_>,
+        (members,): Self::Witness<'source>,
+        (stamp_action_commit, stamp_tachygram_commit, stamp_anchor): <Self::Left as Header>::Data,
+        (span_anchor_start, span_members, span_anchor_end): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(chain_anchor_start) - Fp::from(stamp_anchor),
-            "StampLift: chain's first anchor must equal stamp anchor",
+        enforce_equal_point(
+            Eq::from(members.commit()),
+            Eq::from(span_members),
+            "StampLift: members do not match header",
         )?;
 
-        let data = (left_action_commit, left_tachygram_commit, chain_anchor_end);
+        let anchor_eval = members.eval(Fp::from(stamp_anchor));
+        enforce_zero(
+            anchor_eval * (Fp::from(stamp_anchor) - Fp::from(span_anchor_start)),
+            "StampLift: stamp anchor is neither the span's start nor a member",
+        )?;
+        ctx.enforce_poly_query(Eq::from(span_members), Fp::from(stamp_anchor), anchor_eval)?;
+
+        let data = (stamp_action_commit, stamp_tachygram_commit, span_anchor_end);
         Ok((data, ()))
     }
 }

@@ -35,7 +35,7 @@ impl Header for NoteSpendable {
     /// a [`NoteUnspent`] segment's near end.
     type Data = (note::Commitment, EpochIndex, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(3);
+    const SUFFIX: Suffix = Suffix::new(2);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, epoch_current, anchor) = *data;
@@ -78,7 +78,7 @@ impl Step for SpendableInit {
     /// `(anchor_prev, creation_set, creation_epoch)`
     type Witness<'source> = (Anchor, TachygramSetPoly, EpochIndex);
 
-    const INDEX: Index = Index::new(6);
+    const INDEX: Index = Index::new(4);
 
     fn witness<'source>(
         &self,
@@ -137,7 +137,7 @@ impl Step for QrSpendableInit {
     /// `(contents)`
     type Witness<'source> = (TachygramSetPoly,);
 
-    const INDEX: Index = Index::new(24);
+    const INDEX: Index = Index::new(22);
 
     fn witness<'source>(
         &self,
@@ -218,7 +218,7 @@ impl Step for SpendableLift {
     type Right = NoteUnspent;
     type Witness<'source> = ();
 
-    const INDEX: Index = Index::new(7);
+    const INDEX: Index = Index::new(5);
 
     fn witness<'source>(
         &self,

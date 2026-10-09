@@ -23,13 +23,13 @@ use crate::{
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
         evidence::{EvidenceTreeDescend, EvidenceTreeOpen},
-        pool::{AnchorSeed, UnspentBind, UnspentFuse, UnspentLift},
+        pool::{AnchorSpanFuse, AnchorSpanSeed, UnspentBind, UnspentFuse, UnspentLift},
         qr::{
             QrBucketSeal, QrEmptyIntakeSeed, QrIntakeMerge, QrIntakeSplit, QrSideDescend,
             QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
         spendable::{QrSpendableInit, SpendableInit},
-        stamp::{OutputStamp, SpendStamp},
+        stamp::{OutputStamp, SpendStamp, StampLift},
         summary::{SummaryAdvance, SummarySeed},
     },
 };
@@ -155,20 +155,49 @@ pub fn spendable_init(
     )
 }
 
-/// Prepare the witness for [`AnchorSeed`]: `(anchor_start, epoch,
+/// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
 /// stamp_commit)`.
 #[must_use]
-pub fn anchor_seed(
-    (_left, _right): (StepLeft<AnchorSeed>, StepRight<AnchorSeed>),
+pub fn anchor_span_seed(
+    (_left, _right): (StepLeft<AnchorSpanSeed>, StepRight<AnchorSpanSeed>),
     anchor_start: Anchor,
     epoch: EpochIndex,
     tgs: &[Tachygram],
-) -> StepWitness<'static, AnchorSeed> {
+) -> StepWitness<'static, AnchorSpanSeed> {
     (
         anchor_start,
         epoch,
         tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
     )
+}
+
+/// Prepare the witness for [`AnchorSpanFuse`]: `(left_members, combined,
+/// right_members)`.
+///
+/// `left_members` and `right_members` are the members polynomials of the two
+/// halves.
+#[must_use]
+pub fn anchor_span_fuse(
+    (_left, _right): (StepLeft<AnchorSpanFuse>, StepRight<AnchorSpanFuse>),
+    left_members: &[Anchor],
+    right_members: &[Anchor],
+) -> StepWitness<'static, AnchorSpanFuse> {
+    (
+        left_members.iter().copied().collect(),
+        left_members.iter().chain(right_members).copied().collect(),
+        right_members.iter().copied().collect(),
+    )
+}
+
+/// Prepare the witness for [`StampLift`]: `(members)`.
+///
+/// `members` is the span's members polynomial.
+#[must_use]
+pub fn stamp_lift(
+    (_stamp, _span): (StepLeft<StampLift>, StepRight<StampLift>),
+    members: &[Anchor],
+) -> StepWitness<'static, StampLift> {
+    (members.iter().copied().collect(),)
 }
 
 /// Prepare the witness for [`SummarySeed`]:

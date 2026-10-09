@@ -25,7 +25,7 @@ impl Header for OutputHeader {
     /// `(cm, pad, cv)`
     type Data = (Tachygram, Tachygram, value::Commitment);
 
-    const SUFFIX: Suffix = Suffix::new(8);
+    const SUFFIX: Suffix = Suffix::new(7);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, pad, cv) = *data;
@@ -54,7 +54,7 @@ impl Step for OutputBind {
     /// `(note, rcv)`.
     type Witness<'source> = (Note, value::Trapdoor);
 
-    const INDEX: Index = Index::new(8);
+    const INDEX: Index = Index::new(6);
 
     fn witness<'source>(
         &self,

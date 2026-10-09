@@ -96,9 +96,12 @@ use crate::{
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
-    primitives::{Anchor, AnchorError, EpochIndex, effect},
+    primitives::{Anchor, AnchorSetPoly, effect},
     reddsa, serialization,
-    stamp::{self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven},
+    stamp::{
+        self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven,
+        proof::pool,
+    },
     value,
 };
 
@@ -283,18 +286,6 @@ pub enum VerifyPointersError {
     /// The adjunct is not in the expected state.
     #[display("stamp on an adjunct does not contain a valid pointer")]
     AdjunctPointerInvalid(AggregateIdError),
-}
-
-/// Errors that can occur while lifting a bundle's stamp onto a later anchor.
-#[derive(Debug, Display, Error)]
-#[non_exhaustive]
-pub enum LiftError {
-    /// A provided anchor input could not advance the anchor.
-    #[display("anchor advance failed: {_0}")]
-    AnchorError(AnchorError),
-    /// The stamp lift itself failed.
-    #[display("stamp lift failed: {_0}")]
-    LiftFailed(ProveError),
 }
 
 /// Errors during bundle verification.
@@ -563,49 +554,28 @@ impl Bundle<ProofStamp> {
         }
     }
 
-    /// Advance the stamp's anchor across the stamps that follow it.
-    ///
-    /// Provide the consensus sequence of proof-stamped bundles immediately
-    /// following this bundle's anchor as `next_bundles`.
-    ///
-    /// If you fail to use the correct sequence according to consensus, you will
-    /// succesesfully lift to an anchor that consensus does not recognize.
+    /// Advance the stamp's anchor along `spans`. Each entry is an anchor span
+    /// and its members polynomial. The first span must contain the stamp's
+    /// anchor, and each later span must contain the previous span's
+    /// `anchor_end`. A span contains an anchor if the anchor is its
+    /// `anchor_start` or one of its members.
     ///
     /// # Errors
     ///
-    /// Returns [`LiftError`] if the adjuncts do not cover the stamp, an
-    /// anchor step is invalid, or a proof-system step fails.
+    /// Returns [`ProveError`] if an action digest cannot be computed, no span
+    /// is provided, or a proof-system step fails.
     pub fn lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         adjuncts: &[&Bundle<dyn StampState>],
-        (epoch, next_bundles): (EpochIndex, &[&Self]),
-    ) -> Result<Self, LiftError> {
-        let seed_witnesses: Vec<(Anchor, EpochIndex, TachygramSetCommit)> = next_bundles
-            .iter()
-            .scan(self.stamp.anchor, |scanning_anchor, &next_bundle| {
-                let prev_anchor = *scanning_anchor;
-                let tachygram_set = next_bundle.stamp.tachygram_set;
-                let next_anchor = prev_anchor
-                    .next_stamp(epoch, &tachygram_set)
-                    .map_err(LiftError::AnchorError);
-
-                Some(next_anchor.map(|anchor| {
-                    *scanning_anchor = anchor;
-                    (prev_anchor, epoch, tachygram_set)
-                }))
-            })
-            .collect::<Result<Vec<_>, LiftError>>()?;
-
+        spans: Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+    ) -> Result<Self, ProveError> {
         let descriptors: BTreeSet<action::Descriptor> = self
             .descriptors()
             .chain(adjuncts.iter().flat_map(|&adj| adj.descriptors()))
             .collect();
 
-        let stamp = self
-            .stamp
-            .lift(rng, &descriptors, seed_witnesses)
-            .map_err(LiftError::LiftFailed)?;
+        let stamp = self.stamp.lift(rng, &descriptors, spans)?;
 
         Ok(Self { stamp, ..self })
     }

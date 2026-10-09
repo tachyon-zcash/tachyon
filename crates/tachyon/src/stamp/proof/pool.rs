@@ -1,14 +1,15 @@
 //! Anchor-bound primitives over consensus state.
 //!
-//! Hosts the nf-free anchor path ([`AnchorChain`]) used by
+//! Hosts the nf-free anchor path ([`AnchorSpan`]) used by
 //! [`super::stamp::StampLift`] to advance a stamp's anchor, and the
 //! multi-stamp / multi-epoch exclusion proof ([`ArbitraryUnspent`]) used by
 //! [`super::spendable::SpendableLift`] to advance a spendable.
 //!
 //! An [`ArbitraryUnspent`] covers whole epochs, `[anchor_start, anchor_next)`:
 //! both bounds are entry anchors, and `anchor_next` belongs to the epoch after
-//! the segment. An [`AnchorChain`] `[anchor_start, anchor_end]` certifies none
-//! of its folds, and both endpoints are members.
+//! the segment. An [`AnchorSpan`] covers `[anchor_start, anchor_end]`, both
+//! endpoints included. Its `members` commit to the anchors in
+//! `(anchor_start, anchor_end]`.
 //!
 //! Anchor advances are single-level: every fold absorbs the containing
 //! block's epoch and one stamp's tachygram-set commitment into the running
@@ -35,53 +36,12 @@ use crate::{
     collections::indexed_multiset,
     note::{self},
     primitives::{
-        Anchor, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot, QrProfile, Tachygram,
-        TachygramSetCommit, TachygramSetPoly,
+        Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
+        QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::enforce_poly_product,
 };
-
-/// Anchor path between two positions. Composable via [`AnchorFuse`].
-///
-/// Sole consumer: [`super::stamp::StampLift`] advances a stamp's anchor.
-/// Extending a spendable's anchor must instead go through
-/// [`ArbitraryUnspent`] so each step proves nf-exclusion.
-///
-/// Structurally intra-epoch: the sole builder ([`AnchorSeed`]) invokes only
-/// [`Anchor::next_stamp`], which binds an epoch. The [`Anchor::next_epoch`]
-/// epoch-link domain is distinct and never a stamp link; it is folded at a
-/// crossing by [`QrBucketSeal`](super::qr::QrBucketSeal).
-///
-/// The within-epoch property pairs with a consensus-side two-epoch
-/// tachygram scan that catches any tachygram already published earlier
-/// in the epoch a stamp is lifted across. See the Tachygrams book chapter.
-///
-/// `anchor_start` at [`AnchorSeed`] has PCD lineage rooted in an unbound
-/// `anchor_start: Anchor` witness, so a standalone path proves nothing about
-/// real chain history. Final binding closes through a consensus-published
-/// stamp's anchor membership at [`super::stamp::StampLift`]'s emitted stamp.
-#[derive(Clone, Debug)]
-pub struct AnchorChain;
-
-impl Header for AnchorChain {
-    /// `(anchor_start, anchor_end)`. `anchor_start` roots in an unbound
-    /// witness at [`AnchorSeed`] and flows to [`super::stamp::StampLift`]
-    /// which must ultimately be checked by consensus. `anchor_end` is always
-    /// computed in-circuit as `anchor_start.next_stamp(epoch, ...)`.
-    type Data = (Anchor, Anchor);
-
-    const SUFFIX: Suffix = Suffix::new(1);
-
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (
-            vec![Fp::from(data.0), Fp::from(data.1)],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
-    }
-}
 
 /// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
 ///
@@ -118,7 +78,7 @@ impl Header for ArbitraryUnspent {
     /// `(anchor_start, epoch_start, elapsed, epoch_next, anchor_next)`
     type Data = (Anchor, EpochIndex, NfSeqCommit, EpochIndex, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(2);
+    const SUFFIX: Suffix = Suffix::new(1);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) = *data;
@@ -146,7 +106,7 @@ impl Header for NoteUnspent {
     /// the rest mirrors the [`ArbitraryUnspent`] without `elapsed`.
     type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
 
-    const SUFFIX: Suffix = Suffix::new(4);
+    const SUFFIX: Suffix = Suffix::new(3);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, anchor_start, epoch_start, epoch_next, anchor_next) = *data;
@@ -165,27 +125,68 @@ impl Header for NoteUnspent {
     }
 }
 
-/// Single-stamp [`AnchorChain`] seed.
+/// An anchor path with a commitment to the anchors inside it.
 ///
-/// Used for forward extension (consumed by `StampLift`'s span builder).
+/// `members` commits to a polynomial with one root for each stamp folded into
+/// the span. The root is the anchor that fold produces. `anchor_end` is a
+/// member and `anchor_start` is not. [`super::stamp::StampLift`] uses spans to
+/// advance a stamp's anchor. A spendable's anchor advances through
+/// [`ArbitraryUnspent`], whose steps prove the note's nullifiers absent.
+///
+/// A span stays within one epoch. [`AnchorSpanSeed`] folds only with
+/// [`Anchor::next_stamp`], which hashes under the `Tachyon-AnchorSt` domain.
+/// Entering the next epoch takes [`Anchor::next_epoch`], which hashes under
+/// `Tachyon-AnchorEp`. Among the proof steps, only
+/// [`QrBucketSeal`](super::qr::QrBucketSeal) computes it. Consensus also
+/// rejects a tachygram published twice within two epochs. That check catches a
+/// tachygram already published earlier in the epoch a stamp is lifted across.
+///
+/// [`AnchorSpanSeed`] takes `anchor_start` as a free witness. A span on its own
+/// is not tied to the published chain. Consensus ties it when it checks the
+/// anchor of the stamp that [`super::stamp::StampLift`] outputs.
+#[derive(Clone, Debug)]
+pub struct AnchorSpan;
+
+impl Header for AnchorSpan {
+    /// `(anchor_start, members, anchor_end)`
+    type Data = (Anchor, AnchorSetCommit, Anchor);
+
+    const SUFFIX: Suffix = Suffix::new(14);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        let (anchor_start, members, anchor_end) = *data;
+        (
+            vec![Fp::from(anchor_start), Fp::from(anchor_end)],
+            Vec::new(),
+            Vec::new(),
+            vec![Eq::from(members)],
+        )
+    }
+}
+
+/// Start an [`AnchorSpan`] from one stamp.
+///
+/// The step folds the stamp into `anchor_start` with [`Anchor::next_stamp`].
+/// The span's only member is the resulting anchor, committed with
+/// [`AnchorSetCommit::singleton`].
 ///
 /// # Soundness
 ///
-/// `epoch` is unconstrained here. Consensus recomputes the anchor chain from
-/// block data with the containing block's epoch, so a segment built on any
-/// other value ends at an anchor that is not a chain member.
+/// `epoch` is a free witness. Consensus computes each fold with the epoch of
+/// the block that contains the stamp. A span built with a different epoch
+/// holds anchors that are not on the published chain.
 #[derive(Debug)]
-pub struct AnchorSeed;
+pub struct AnchorSpanSeed;
 
-impl Step for AnchorSeed {
+impl Step for AnchorSpanSeed {
     type Aux<'source> = ();
     type Left = ();
-    type Output = AnchorChain;
+    type Output = AnchorSpan;
     type Right = ();
     /// `(anchor_start, epoch, stamp_commit)`
     type Witness<'source> = (Anchor, EpochIndex, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(2);
+    const INDEX: Index = Index::new(32);
 
     fn witness<'source>(
         &self,
@@ -198,36 +199,72 @@ impl Step for AnchorSeed {
             .next_stamp(epoch, &stamp_commit)
             .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
 
-        Ok(((anchor_start, anchor_end), ()))
+        Ok((
+            (
+                anchor_start,
+                AnchorSetCommit::singleton(anchor_end),
+                anchor_end,
+            ),
+            (),
+        ))
     }
 }
 
-/// Concatenate two [`AnchorChain`] paths that share a vertex, with
+/// Concatenate two [`AnchorSpan`]s with
 /// `left.anchor_end == right.anchor_start`.
+///
+/// The shared anchor is a member of the left span and not of the right span.
+/// The two member sets are therefore disjoint, and the combined members
+/// polynomial is the product of the two.
+///
+/// # Soundness
+///
+/// The step checks each half's witnessed polynomial against its header's
+/// `members`. The product check's challenge absorbs all three commitments.
+/// `combined` therefore holds exactly the members of both halves.
 #[derive(Debug)]
-pub struct AnchorFuse;
+pub struct AnchorSpanFuse;
 
-impl Step for AnchorFuse {
+impl Step for AnchorSpanFuse {
     type Aux<'source> = ();
-    type Left = AnchorChain;
-    type Output = AnchorChain;
-    type Right = AnchorChain;
-    type Witness<'source> = ();
+    type Left = AnchorSpan;
+    type Output = AnchorSpan;
+    type Right = AnchorSpan;
+    /// `(left_members, combined, right_members)`
+    type Witness<'source> = (AnchorSetPoly, AnchorSetPoly, AnchorSetPoly);
 
-    const INDEX: Index = Index::new(3);
+    const INDEX: Index = Index::new(33);
 
     fn witness<'source>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        _witness: Self::Witness<'source>,
-        (left_anchor_start, left_anchor_end): <Self::Left as Header>::Data,
-        (right_anchor_start, right_anchor_end): <Self::Right as Header>::Data,
+        ctx: &mut ragu::StepCtx<'_>,
+        (left_members, combined, right_members): Self::Witness<'source>,
+        (left_anchor_start, left_members_commit, left_anchor_end): <Self::Left as Header>::Data,
+        (right_anchor_start, right_members_commit, right_anchor_end): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(left_anchor_end) - Fp::from(right_anchor_start),
-            "AnchorFuse: paths do not share a vertex",
+            "AnchorSpanFuse: spans do not share a vertex",
         )?;
-        Ok(((left_anchor_start, right_anchor_end), ()))
+        enforce_equal_point(
+            Eq::from(left_members.commit()),
+            Eq::from(left_members_commit),
+            "AnchorSpanFuse: left members do not match header",
+        )?;
+        enforce_equal_point(
+            Eq::from(right_members.commit()),
+            Eq::from(right_members_commit),
+            "AnchorSpanFuse: right members do not match header",
+        )?;
+        enforce_poly_product(
+            ctx,
+            left_members.as_ref(),
+            right_members.as_ref(),
+            combined.as_ref(),
+            "AnchorSpanFuse: combined is not the union of the halves",
+        )?;
+
+        Ok(((left_anchor_start, combined.commit(), right_anchor_end), ()))
     }
 }
 
@@ -248,7 +285,7 @@ impl Step for UnspentFuse {
     /// `(left_elapsed_seq, combined_elapsed_seq, right_elapsed_seq)`
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(4);
+    const INDEX: Index = Index::new(2);
 
     fn witness<'source>(
         &self,
@@ -335,7 +372,7 @@ impl Step for UnspentLift {
         TachygramSetPoly,
     );
 
-    const INDEX: Index = Index::new(26);
+    const INDEX: Index = Index::new(24);
 
     fn witness<'source>(
         &self,
@@ -463,7 +500,7 @@ impl Step for UnspentBind {
     /// `(elapsed_seq, nf_seq, complement_seq)`
     type Witness<'source> = (NfSeqPoly, NfSeqPoly, NfSeqPoly);
 
-    const INDEX: Index = Index::new(5);
+    const INDEX: Index = Index::new(3);
 
     fn witness<'source>(
         &self,

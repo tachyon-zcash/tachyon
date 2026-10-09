@@ -62,7 +62,7 @@ impl Header for QrIntake {
         TachygramSetCommit,
     );
 
-    const SUFFIX: Suffix = Suffix::new(5);
+    const SUFFIX: Suffix = Suffix::new(4);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_end, discriminant, profile, contents) = *data;
@@ -102,7 +102,7 @@ impl Header for QrIntakeSides {
         TachygramSetCommit,
     );
 
-    const SUFFIX: Suffix = Suffix::new(11);
+    const SUFFIX: Suffix = Suffix::new(10);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_end, discriminant, profile, non_residue, residue) = *data;
@@ -138,7 +138,7 @@ impl Step for QrSummaryIntake {
     /// `(discriminant)`
     type Witness<'source> = (QrDiscriminant,);
 
-    const INDEX: Index = Index::new(17);
+    const INDEX: Index = Index::new(15);
 
     fn witness<'source>(
         &self,
@@ -179,7 +179,7 @@ impl Step for QrStampIntakeSeed {
     /// `(anchor_prev, epoch, discriminant, stamp_commit)`
     type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant, TachygramSetCommit);
 
-    const INDEX: Index = Index::new(23);
+    const INDEX: Index = Index::new(21);
 
     fn witness<'source>(
         &self,
@@ -228,7 +228,7 @@ impl Step for QrEmptyIntakeSeed {
     /// `(anchor, epoch, discriminant)`
     type Witness<'source> = (Anchor, EpochIndex, QrDiscriminant);
 
-    const INDEX: Index = Index::new(25);
+    const INDEX: Index = Index::new(23);
 
     fn witness<'source>(
         &self,
@@ -269,7 +269,7 @@ impl Step for QrIntakeMerge {
     /// `(left_contents, right_contents, merged)`
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
-    const INDEX: Index = Index::new(18);
+    const INDEX: Index = Index::new(16);
 
     fn witness<'source>(
         &self,
@@ -363,7 +363,7 @@ impl Step for QrIntakeSplit {
     /// `(contents, non_residue, residue)`
     type Witness<'source> = (TachygramSetPoly, TachygramSetPoly, TachygramSetPoly);
 
-    const INDEX: Index = Index::new(19);
+    const INDEX: Index = Index::new(17);
 
     fn witness<'source>(
         &self,
@@ -450,7 +450,7 @@ impl Step for QrSideDescend {
     /// `(bit, sibling_contents, interpolant, quotient)`
     type Witness<'source> = (bool, TachygramSetPoly, QrInterpolantPoly, QrQuotientPoly);
 
-    const INDEX: Index = Index::new(20);
+    const INDEX: Index = Index::new(18);
 
     fn witness<'source>(
         &self,
@@ -549,7 +549,7 @@ impl Header for QrBucket {
         TachygramSetCommit,
     );
 
-    const SUFFIX: Suffix = Suffix::new(12);
+    const SUFFIX: Suffix = Suffix::new(11);
 
     fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_start, anchor_next, discriminant, profile, contents) = *data;
@@ -614,7 +614,7 @@ impl Step for QrBucketSeal {
     /// `(anchor_final_prev)`
     type Witness<'source> = (Anchor,);
 
-    const INDEX: Index = Index::new(22);
+    const INDEX: Index = Index::new(20);
 
     fn witness<'source>(
         &self,
@@ -773,7 +773,7 @@ impl Step for QrUnspentInit {
         TachygramSetPoly,
     );
 
-    const INDEX: Index = Index::new(21);
+    const INDEX: Index = Index::new(19);
 
     fn witness<'source>(
         &self,

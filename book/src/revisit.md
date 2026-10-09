@@ -1473,7 +1473,7 @@ the prover knows the secret witness:
 - $\mathsf{Note}:=(\pk,v,\psi,\rcm)$: note opening
 - $(\ak,\nk)$: authorization key and nullifier key
 - $e_\incl$: the note's inclusion epoch
-- authenticated active anchor-chain and closed-epoch QR-bucket evidence
+- authenticated active anchor-span and closed-epoch QR-bucket evidence
   witnessing inclusion and every required past-nullifier exclusion
 - the randomizers $\alpha,\theta,\rcv$
 
@@ -1568,30 +1568,36 @@ decomposition into a tree of sub-statements sound.
 As previewed in the [Tachyon transaction flow](#txflow),
 the wallet proves note-specific facts, the OSS proves absence
 of nullifiers over past epochs, and shared evidence supplies closed-epoch
-evidence trees, authenticated bucket openings, and active anchor-chain segments.
+evidence trees, authenticated bucket openings, and active anchor spans.
 The wallet bridges those branches only after the OSS proof returns.
 
-#### Shared Evidence: Anchor Chains and Evidence Trees {#shared-headers}
+#### Shared Evidence: Anchor Spans and Evidence Trees {#shared-headers}
 
-Shared evidence has two durable final forms. Ordinary $\mathtt{AnchorChain}$
+Shared evidence has two durable final forms. Ordinary $\mathtt{AnchorSpan}$
 evidence advances stamps within the active epoch. Closed-epoch
 $\mathtt{EvidenceTree}$ evidence authenticates a set of final QR buckets under
 one Merkle root. $\mathtt{Summary}$ and $\mathtt{QrBucket}$ are
 intermediate shared headers used to construct that tree. A query opens one
-tree leaf into a $\mathtt{QrBucketOpening}$; anchor chains do not use QR
+tree leaf into a $\mathtt{QrBucketOpening}$; anchor spans do not use QR
 routing.
 
-**Active anchor chains.** An anchor-chain header is simply
+**Active anchor spans.** An anchor-span header is
 
 $$
-\mathtt{AnchorChain}\{\anchor_L,\anchor_R\}.
+\mathtt{AnchorSpan}\{\anchor_L,\mathsf{Com}(M),\anchor_R\},
+\qquad
+M(X)=\prod_{a\in(\anchor_L,\anchor_R]}(X-a),
 $$
 
-$\mathsf{AnchorSeed}$ witnesses one stamp transition, including the epoch and
-the tachygram-accumulator commitment absorbed by that transition, and emits its
-two endpoint anchors. $\mathsf{AnchorFuse}$ takes two headers, requires the left
-endpoint of the second to equal the right endpoint of the first, and emits the
-outer endpoints. Since neither step admits a sentinel transition, a fused chain
+where $M$ has one root for each anchor produced inside the span. $\anchor_R$
+is a root of $M$ and $\anchor_L$ is not. $\mathsf{AnchorSpanSeed}$ witnesses one stamp
+transition, including the epoch and the tachygram-accumulator commitment
+absorbed by that transition, and emits its two endpoint anchors with the
+commitment to $X-\anchor_R$. $\mathsf{AnchorSpanFuse}$ takes two headers,
+requires the left endpoint of the second to equal the right endpoint of the
+first, proves that the combined $M$ is the product of the two halves'
+polynomials, and emits the
+outer endpoints. Since neither step admits a sentinel transition, a fused span
 cannot cross an epoch boundary. These headers are built only for the active
 epoch and are consumed only by $\mathsf{StampLift}$.
 
@@ -1600,10 +1606,10 @@ flowchart LR
   classDef o fill:#fde8ea,stroke:#DC143C,color:#1a1a1a;
   classDef s fill:#e7f3ea,stroke:#228B22,color:#1a1a1a;
 
-  AnchorSeedA(["$$\mathsf{AnchorSeed}$$"]):::o --> a["$$\mathtt{AnchorChain}\\ \{\anchor_0,\anchor_1\}$$"]:::s
-  AnchorSeedB(["$$\mathsf{AnchorSeed}$$"]):::o --> b["$$\mathtt{AnchorChain}\\ \{\anchor_1,\anchor_2\}$$"]:::s
-  a --> AnchorFuse(["$$\mathsf{AnchorFuse}$$"]):::o
-  b --> AnchorFuse --> out["$$\mathtt{AnchorChain}\\ \{\anchor_0,\anchor_2\}$$"]:::s
+  AnchorSpanSeedA(["$$\mathsf{AnchorSpanSeed}$$"]):::o --> a["$$\mathtt{AnchorSpan}\\ \{\anchor_0,\mathsf{Com}(M_a),\anchor_1\}$$"]:::s
+  AnchorSpanSeedB(["$$\mathsf{AnchorSpanSeed}$$"]):::o --> b["$$\mathtt{AnchorSpan}\\ \{\anchor_1,\mathsf{Com}(M_b),\anchor_2\}$$"]:::s
+  a --> AnchorSpanFuse(["$$\mathsf{AnchorSpanFuse}$$"]):::o
+  b --> AnchorSpanFuse --> out["$$\mathtt{AnchorSpan}\\ \{\anchor_0,\mathsf{Com}(M_a M_b),\anchor_2\}$$"]:::s
 ```
 
 **Continuous stamp summaries.** While epoch $e$ is active, an OSS continuously
@@ -1861,8 +1867,8 @@ flowchart TB
   fuse --> tree --> open --> opening
 ```
 
-The diagram below summarizes the active anchor-chain and closed-epoch QR
-headers. $\mathtt{AnchorChain}$ may end at the active tip;
+The diagram below summarizes the active anchor-span and closed-epoch QR
+headers. $\mathtt{AnchorSpan}$ may end at the active tip;
 $\mathtt{EvidenceTree}$ and its bucket openings are available only for complete
 past epochs.
 
@@ -1892,7 +1898,7 @@ flowchart TB
   outputstamp["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor\}$$"]:::u
   stamp["$$\mathtt{Stamp}\\ \{\actacc',\tgacc',\anchor\}$$"]:::u
   stampprime["$$\mathtt{Stamp}\\ \{\actacc,\tgacc,\anchor'\}$$"]:::u
-  anc["$$\mathtt{AnchorChain}\\ \{\anchor,\anchor'\}$$"]:::s
+  anc["$$\mathtt{AnchorSpan}\\ \{\anchor_L,\mathsf{Com}(M),\anchor'\}$$"]:::s
 
   SpendableInit(["$$\mathsf{SpendableInit}$$"]):::u
   SpendBind(["$$\mathsf{SpendBind}$$"]):::u
@@ -1925,15 +1931,22 @@ $\mathsf{SpendableInit}$ takes the creation stamp data as private witness, prove
 $\cm$ occurs among that stamp's tachygrams and is a root of its accumulator, then
 computes the stamp's resulting anchor from that same accumulator. The later
 $\mathsf{StampLift}$ connects this seed-rooted lineage through
-$\mathtt{AnchorChain}$ evidence to a target checked against canonical history. A
+$\mathtt{AnchorSpan}$ evidence to a target checked against canonical history. A
 same-epoch spend requires no past exclusion because the note did not exist before
 that stamp, so this base case satisfies the same conditional
 $\mathtt{NoteSpendable}$ invariant.
-For $\mathsf{StampLift}$, the input stamp anchor must equal
-$\mathtt{AnchorChain}.\anchor_L$ and the output stamp anchor equals
-$\mathtt{AnchorChain}.\anchor_R$. The chain contains only authenticated stamp
-transitions and admits no sentinel transition, so the lift remains within the
-same spending epoch. Sufficient lift is needed to obfuscate the inclusion block
+For $\mathsf{StampLift}$, the input stamp anchor must be
+$\mathtt{AnchorSpan}.\anchor_L$ or a root of its $M$,
+
+$$
+M(\anchor)\cdot(\anchor-\anchor_L)=0,
+$$
+
+and the output stamp anchor equals $\mathtt{AnchorSpan}.\anchor_R$. $M$
+records which anchors are in the span and not their order. The output anchor
+is therefore always $\anchor_R$. The
+span contains only authenticated stamp transitions and admits no sentinel
+transition, so the lift remains within the same spending epoch. Sufficient lift is needed to obfuscate the inclusion block
 for [spend unlinkability](#nf-sec).
 $\mathsf{SpendBind}$ requires the target anchor and carried spending epoch to
 remain aligned. Consensus later checks that the target anchor occurs in
@@ -2015,7 +2028,7 @@ $\mathsf{SpendableReinit}$ consumes the singleton $\mathtt{NoteUnspent}$ and
 the independent $\cm$ bucket opening. It requires the same epoch and sentinel
 endpoints, carries $\cm$ from the verified header, and proves
 $q_{b'}(\cm)=0$ without deriving or checking $\cm$'s profile. It does not reopen
-the note, derive or test a nullifier, or consume anchor-chain evidence. It emits
+the note, derive or test a nullifier, or consume anchor-span evidence. It emits
 the fully established
 
 $$
@@ -2275,7 +2288,7 @@ merging finished stamps from independently proven transactions.
 
 Constituent stamps may carry different anchors in the same epoch. Before
 merging, the aggregator uses $\mathsf{StampLift}$ and shared
-$\mathtt{AnchorChain}$ evidence to move them to a common later anchor. The lift
+$\mathtt{AnchorSpan}$ evidence to move them to a common later anchor. The lift
 must remain within one epoch: crossing a sentinel would change the active
 nullifier window without proving the intervening exclusion. Once aligned,
 $\mathsf{StampMerge}$ checks equal anchors, unions the action and tachygram
@@ -2630,7 +2643,7 @@ notes, a wallet:
    separate $\cm$ bucket opening at $\mathsf{SpendableReinit}$; later lifts
    consume ranges beginning at $e_\incl+1$; and
 4. folds the updated spends and spend-time outputs into a fresh
-   [stamp](#tx), advances it with active $\mathtt{AnchorChain}$ evidence if
+   [stamp](#tx), advances it with active $\mathtt{AnchorSpan}$ evidence if
    needed, then performs authorization.
 
 A same-epoch spend skips steps 2 and 3. If the wallet crosses an epoch without
