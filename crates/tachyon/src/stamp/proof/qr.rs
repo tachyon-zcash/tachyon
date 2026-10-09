@@ -212,10 +212,11 @@ impl Step for QrStampIntakeSeed {
 /// # Soundness
 ///
 /// `anchor` and `epoch` are free witnesses. [`QrBucketSeal`] requires `anchor`
-/// to have epoch-link form into `epoch` and crosses from it, so the sealed
-/// bucket ends on the published entry anchor of `epoch + 1` only if `anchor`
-/// is both the entry and the final anchor of `epoch`: only if the epoch
-/// published no stamp. `discriminant` is a free witness; see
+/// to be a boundary digest into `epoch`, and computes the next boundary digest
+/// from it. The sealed bucket ends on the published entry anchor of
+/// `epoch + 1` only if `anchor` is both the entry anchor and the final anchor
+/// of `epoch`. That holds only when the epoch published no stamp.
+/// `discriminant` is a free witness; see
 /// [`QrDiscriminant`].
 #[derive(Debug)]
 pub struct QrEmptyIntakeSeed;
@@ -530,11 +531,10 @@ impl Step for QrSideDescend {
 
 /// One profile's members over a whole epoch.
 ///
-/// The bucket covers `[anchor_start, anchor_next)`: `anchor_start` is the
-/// entry anchor of `epoch`, and `anchor_next` is the entry anchor of
-/// `epoch + 1`, which belongs to that epoch and is excluded. [`QrBucketSeal`]
-/// gives both bounds epoch-link form, folding `anchor_next` from the output of
-/// the bucket's last stamp fold.
+/// The bucket covers `[anchor_start, anchor_next)`. `anchor_start` is the
+/// entry anchor of `epoch`. `anchor_next` is the entry anchor of `epoch + 1`
+/// and is excluded. Both bounds are boundary digests. [`QrBucketSeal`]
+/// computes `anchor_next` from the anchor after the bucket's last stamp.
 #[derive(Clone, Debug)]
 pub struct QrBucket;
 
@@ -572,35 +572,35 @@ impl Header for QrBucket {
 /// Seal a routed [`QrIntake`] into a [`QrBucket`] that runs boundary to
 /// boundary.
 ///
-/// The intake's `anchor_prev` must be the epoch link of `anchor_final_prev`
-/// into `epoch`, and becomes the bucket's `anchor_start`. The step performs
-/// the boundary digest of the intake's `anchor_end` into `epoch + 1`, and
-/// emits that as the bucket's `anchor_next`.
+/// The intake's `anchor_prev` must be the boundary digest of
+/// `anchor_final_prev` into `epoch`. It becomes the bucket's `anchor_start`.
+/// The step computes the boundary digest of the intake's `anchor_end` into
+/// `epoch + 1`, and outputs it as the bucket's `anchor_next`.
 ///
 /// The intake covers `(anchor_prev, anchor_end]`, the stamp folds of `epoch`.
-/// The bucket covers `[anchor_start, anchor_next)`: the same folds plus the
-/// entry anchor, which belongs to `epoch` and absorbs no tachygrams. Both
-/// bucket bounds are epoch links, the only anchors that certify an epoch
+/// The bucket covers `[anchor_start, anchor_next)`, which adds the entry
+/// anchor. The entry anchor belongs to `epoch` and absorbs no tachygrams. Both
+/// bucket bounds are boundary digests, and only boundary digests mark an epoch
 /// boundary.
 ///
 /// # Soundness
 ///
-/// Only an epoch link produces an anchor in the epoch domain, so an
-/// `anchor_prev` of this form absorbs `epoch`. Whether it is the *entry
-/// anchor* of `epoch` depends on what was published, and this step does not
-/// check it: `anchor_final_prev` is a free witness, and the lineage that
-/// consumes the bucket binds it. [`Anchor::default`] is epoch zero's
-/// entry anchor and follows this rule at an `anchor_final_prev` of zero.
+/// Only a boundary digest hashes under the epoch domain. The check shows that
+/// `anchor_prev` absorbs `epoch`. Whether `anchor_prev` is the entry anchor of
+/// `epoch` depends on what was published, and this step does not check it.
+/// `anchor_final_prev` is a free witness, and the lineage that consumes the
+/// bucket binds it. [`Anchor::default`] is epoch zero's entry anchor, the
+/// boundary digest of zero into epoch zero.
 ///
-/// The crossing is what makes the bucket's whole-epoch claim true. In the
-/// accepted chain, the only anchor of epoch-link form absorbing `epoch + 1` is
-/// the one folded from `final(epoch)`. This step emits
-/// `H_epoch(a, epoch + 1)` for the intake's own `a`, so if `a` is not
-/// `final(epoch)` the result is on no chain, and by preimage resistance
-/// neither is any fold downstream of it. A bucket sealed short of the epoch
-/// therefore yields evidence no lineage can carry to a consensus-checked spend.
-/// A final anchor cannot carry this guarantee: consensus acknowledges every
-/// end-of-block anchor, so a bucket ending on one could stop short.
+/// The crossing makes the bucket cover the whole epoch. In the accepted chain,
+/// the only boundary digest into `epoch + 1` is the one computed from
+/// `final(epoch)`. This step outputs `H_epoch(a, epoch + 1)` for the intake's
+/// own `a`. If `a` is not `final(epoch)`, the result is on no chain. By
+/// preimage resistance, no fold after it is on a chain either. A bucket sealed
+/// before the end of the epoch cannot reach a spend that consensus checks. A
+/// final anchor could not serve as the bucket's end. Consensus acknowledges
+/// every end-of-block anchor, and a bucket ending on one could stop before the
+/// end of the epoch.
 ///
 /// `discriminant` is prover-chosen and unchecked here; see [`QrDiscriminant`].
 #[derive(Debug)]
@@ -626,7 +626,7 @@ impl Step for QrBucketSeal {
         enforce_zero(
             Fp::from(anchor_prev)
                 - poseidon::anchor_next_epoch(Fp::from(anchor_final_prev), Fp::from(epoch)),
-            "QrBucketSeal: intake's first anchor is not an epoch link into its epoch",
+            "QrBucketSeal: intake does not start at its epoch's entry anchor",
         )?;
         let epoch_next = epoch.next().ok_or_else(|| {
             ragu_core::Error::InvalidWitness("QrBucketSeal: crossing past the final epoch".into())

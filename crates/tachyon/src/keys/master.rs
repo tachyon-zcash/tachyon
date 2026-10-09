@@ -43,7 +43,7 @@ impl NoteMasterKey {
     }
 
     /// Derive one derivation window: the nullifiers for
-    /// `[epoch_start, … + NF_DERIVATION_WIDTH)`.
+    /// `[epoch_start, epoch_start + NF_DERIVATION_WIDTH - 1]`.
     ///
     /// `epoch_start` must be group-aligned;
     /// [`NullifierDerive`](crate::stamp::proof::delegation::NullifierDerive)

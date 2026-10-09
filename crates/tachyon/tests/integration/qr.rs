@@ -1474,7 +1474,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
 }
 
 #[test]
-fn qr_bucket_seal_rejects_an_intake_not_opening_on_an_epoch_link() {
+fn qr_bucket_seal_rejects_an_intake_not_starting_at_an_entry_anchor() {
     let rng = &mut StdRng::seed_from_u64(0);
     let mut pool = PoolSim::genesis_with(random_block(rng, 2, 3));
     for _ in 0..3 {
@@ -1504,7 +1504,7 @@ fn qr_bucket_seal_rejects_an_intake_not_opening_on_an_epoch_link() {
     };
     assert_eq!(
         inner.to_string(),
-        "QrBucketSeal: intake's first anchor is not an epoch link into its epoch"
+        "QrBucketSeal: intake does not start at its epoch's entry anchor"
     );
 }
 
@@ -1964,7 +1964,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     assert_eq!(
         *spendable.data(),
         (note.commitment(), epoch_next, unpublished),
-        "the spendable rests on an epoch link the pool never published"
+        "the spendable's anchor is a boundary digest the pool never published"
     );
     assert!(
         pool.stamps_between(Anchor::default(), tip_anchor)

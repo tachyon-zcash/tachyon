@@ -271,7 +271,7 @@ pub fn evidence_tree_node(children: [Fp; EVIDENCE_TREE_ARITY]) -> Fp {
 
 const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
 
-/// Folds `anchor_prev` into `epoch` under the epoch-link domain.
+/// Computes the boundary digest of `anchor_prev` into `epoch`.
 ///
 /// Produces the entry anchor of `epoch` when `anchor_prev` is the final
 /// anchor of the epoch before.

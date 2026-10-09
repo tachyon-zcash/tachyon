@@ -31,7 +31,8 @@ pub enum AnchorError {
 pub struct Anchor(pub Fp);
 
 impl Anchor {
-    /// Advance the anchor by one stamp link, absorbing the containing epoch.
+    /// Advance the anchor by absorbing one stamp and the epoch of the block
+    /// that contains it.
     ///
     /// The containing epoch index may be zero, within the genesis epoch.
     ///
@@ -57,7 +58,7 @@ impl Anchor {
         }
     }
 
-    /// Advance the anchor by one epoch link, absorbing `epoch`.
+    /// Advance the anchor into `epoch` with a boundary digest.
     ///
     /// # Errors
     ///
