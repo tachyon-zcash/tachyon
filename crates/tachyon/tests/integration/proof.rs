@@ -155,9 +155,6 @@ fn same_epoch_honest_spend_accepted() {
     ])
     .commit();
     assert_eq!(stamp.data().1, expected, "publishes {{N_E, N_E+1}}");
-    PROOF_SYSTEM
-        .rerandomize(stamp, rng)
-        .expect("rerandomize honest same-epoch spend");
 }
 
 #[test]
@@ -192,9 +189,7 @@ fn stamp_lift_within_epoch() {
             span,
         )
         .expect("stamp lift");
-    PROOF_SYSTEM
-        .rerandomize(lifted_pcd, rng)
-        .expect("rerandomize lifted stamp");
+    assert_eq!(lifted_pcd.data().2, pool.block(new_height).anchor());
 }
 
 #[test]

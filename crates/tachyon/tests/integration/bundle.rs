@@ -497,21 +497,9 @@ fn double_spend_obvious() {
 
     // Forge the stamp by merging one output stamp with itself: the merge proof
     // commits to the doubled action and tachygram multisets.
-    let (_digests, tachygrams, stamp_anchor, proof) =
-        ProofStamp::prove_output(rng, theta, rcv, note, anchor).expect("prove_output");
-    let output_stamp = ProofStamp {
-        coverage: blake2b::action_descriptor_digest(
-            &vec![descriptor].into_iter().collect::<Vec<[u8; 64]>>(),
-        ),
-        anchor: stamp_anchor,
-        tachygram_set: tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>()
-            .commit(),
-        tachygrams,
-        proof,
-    };
+    let output_stamp = stamp::Plan::new(vec![], vec![(descriptor, theta, note, rcv)], anchor)
+        .prove(rng, &wallet.pak, vec![])
+        .expect("prove an output stamp");
     let evil_pcd = forge_overlapping_merge(
         rng,
         (&output_stamp, &vec![descriptor]),

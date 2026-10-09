@@ -484,7 +484,7 @@ impl Plan {
             ));
         }
 
-        let (descriptors, _digests, tachygrams, anchor, proof) = entries
+        let (descriptors, digests, tachygrams, anchor, merged_proof) = entries
             .into_iter()
             .map(Ok)
             .reduce(|acc, next| {
@@ -521,13 +521,22 @@ impl Plan {
             .copied()
             .collect::<TachygramSetPoly>()
             .commit();
+        let action_set = digests.into_iter().collect::<ActionSetPoly>().commit();
+        let proof = PROOF_SYSTEM
+            .rerandomize(
+                merged_proof.carry::<Stamp>((action_set, tachygram_set, anchor)),
+                rng,
+            )
+            .map_err(ProveError::ProofFailed)?
+            .proof()
+            .clone();
 
         Ok(ProofStamp {
             coverage,
             anchor,
             tachygram_set,
             tachygrams,
-            proof,
+            proof: Box::new(proof),
         })
     }
 }
@@ -576,18 +585,9 @@ pub struct ProofStamp {
     pub proof: Box<ragu::Proof>,
 }
 
-/// Stamp components threaded through the merge fold: the covered actions'
-/// digests, the tachygrams, the shared anchor, and the proof.
-type StampComponents = (
-    BTreeSet<ActionDigest>,
-    BTreeSet<Tachygram>,
-    Anchor,
-    Box<ragu::Proof>,
-);
-
 impl ProofStamp {
-    /// Proves a single output action, returning the stamp components
-    /// `(digests, tachygrams, anchor, proof)`.
+    /// Proves a single output action, returning `(digests, tachygrams,
+    /// anchor, proof)`. The proof is not rerandomized.
     ///
     /// [`output::OutputBind`] settles the tachygram pair, then [`OutputStamp`]
     /// derives `alpha` from `theta` and the bound `cm`, proves the action over
@@ -599,13 +599,25 @@ impl ProofStamp {
     ///
     /// - [`ProveError::ActionDigest`] if the proved action has no digest.
     /// - [`ProveError::ProofFailed`] if a proof-system step fails.
-    pub fn prove_output<RNG: CryptoRng>(
+    #[expect(
+        clippy::type_complexity,
+        reason = "the digests, tachygrams, anchor and proof of one stamp"
+    )]
+    fn prove_output<RNG: CryptoRng>(
         rng: &mut RNG,
         theta: ActionEntropy,
         rcv: value::Trapdoor,
         note: Note,
         anchor: Anchor,
-    ) -> Result<StampComponents, ProveError> {
+    ) -> Result<
+        (
+            BTreeSet<ActionDigest>,
+            BTreeSet<Tachygram>,
+            Anchor,
+            Box<ragu::Proof>,
+        ),
+        ProveError,
+    > {
         let alpha = theta.randomizer::<effect::Output>(note.commitment());
         let digest = ActionDigest::new(
             rcv.commit(-note.value),
@@ -628,21 +640,18 @@ impl ProofStamp {
                 ragu::Proof::trivial().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
-        let rerand = PROOF_SYSTEM
-            .rerandomize(pcd, rng)
-            .map_err(ProveError::ProofFailed)?;
 
         Ok((
             BTreeSet::from_iter([digest]),
             tachygrams,
             anchor,
-            Box::new(rerand.proof().clone()),
+            Box::new(pcd.proof().clone()),
         ))
     }
 
     /// Proves a single spend action from a bound
-    /// [`SpendHeader`](spend::SpendHeader) PCD, returning the stamp
-    /// components `(digests, tachygrams, anchor, proof)`.
+    /// [`SpendHeader`](spend::SpendHeader) PCD, returning `(digests,
+    /// tachygrams, anchor, proof)`. The proof is not rerandomized.
     ///
     /// The nullifier pair `{nf_current, nf_next}` published for data
     /// availability and the value commitment `cv` are read straight off the
@@ -657,12 +666,24 @@ impl ProofStamp {
     ///
     /// - [`ProveError::ActionDigest`] if the proved action has no digest.
     /// - [`ProveError::ProofFailed`] if a proof-system step fails.
-    pub fn prove_spend<RNG: CryptoRng>(
+    #[expect(
+        clippy::type_complexity,
+        reason = "the digests, tachygrams, anchor and proof of one stamp"
+    )]
+    fn prove_spend<RNG: CryptoRng>(
         rng: &mut RNG,
         theta: ActionEntropy,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
         pak: ProofAuthorizingKey,
-    ) -> Result<StampComponents, ProveError> {
+    ) -> Result<
+        (
+            BTreeSet<ActionDigest>,
+            BTreeSet<Tachygram>,
+            Anchor,
+            Box<ragu::Proof>,
+        ),
+        ProveError,
+    > {
         let (cm, nf_current, nf_next, anchor, _pk, cv) = *bind_pcd.data();
         let alpha = theta.randomizer::<effect::Spend>(cm);
         let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha))
@@ -680,20 +701,17 @@ impl ProofStamp {
                 ragu::Proof::trivial().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
-        let rerand = PROOF_SYSTEM
-            .rerandomize(pcd, rng)
-            .map_err(ProveError::ProofFailed)?;
 
         Ok((
             BTreeSet::from_iter([digest]),
             tachygrams,
             anchor,
-            Box::new(rerand.proof().clone()),
+            Box::new(pcd.proof().clone()),
         ))
     }
 
-    /// Proves the merge of two stamps, returning the merged stamp
-    /// components `(digests, tachygrams, anchor, proof)`.
+    /// Proves the merge of two stamps, returning the merged `(digests,
+    /// tachygrams, anchor, proof)`. The proof is not rerandomized.
     ///
     /// Both stamps must share the same anchor (use [`StampLift`] to align
     /// first).
@@ -708,11 +726,33 @@ impl ProofStamp {
     /// # Errors
     ///
     /// Returns [`ragu_core::Error`] if a proof-system step fails.
-    pub fn prove_merge<RNG: CryptoRng>(
+    #[expect(
+        clippy::type_complexity,
+        reason = "the digests, tachygrams, anchor and proof of each stamp"
+    )]
+    fn prove_merge<RNG: CryptoRng>(
         rng: &mut RNG,
-        (left_digests, left_tachygrams, left_anchor, left_proof): StampComponents,
-        (right_digests, right_tachygrams, right_anchor, right_proof): StampComponents,
-    ) -> Result<StampComponents, ragu_core::Error> {
+        (left_digests, left_tachygrams, left_anchor, left_proof): (
+            BTreeSet<ActionDigest>,
+            BTreeSet<Tachygram>,
+            Anchor,
+            Box<ragu::Proof>,
+        ),
+        (right_digests, right_tachygrams, right_anchor, right_proof): (
+            BTreeSet<ActionDigest>,
+            BTreeSet<Tachygram>,
+            Anchor,
+            Box<ragu::Proof>,
+        ),
+    ) -> Result<
+        (
+            BTreeSet<ActionDigest>,
+            BTreeSet<Tachygram>,
+            Anchor,
+            Box<ragu::Proof>,
+        ),
+        ragu_core::Error,
+    > {
         let (left_acts_poly, left_tg_poly) = (
             left_digests.iter().copied().collect::<ActionSetPoly>(),
             left_tachygrams
@@ -759,14 +799,12 @@ impl ProofStamp {
             left_pcd,
             right_pcd,
         )?;
-        let anchor = pcd.data().2;
-        let rerand = PROOF_SYSTEM.rerandomize(pcd, rng)?;
 
         Ok((
             merged_digests,
             tachygrams,
-            anchor,
-            Box::new(rerand.proof().clone()),
+            pcd.data().2,
+            Box::new(pcd.proof().clone()),
         ))
     }
 
@@ -802,16 +840,18 @@ impl ProofStamp {
                 .0;
         }
         let anchor = stamp_pcd.data().2;
-        let rerand = PROOF_SYSTEM
+        let proof = PROOF_SYSTEM
             .rerandomize(stamp_pcd, rng)
-            .map_err(ProveError::ProofFailed)?;
+            .map_err(ProveError::ProofFailed)?
+            .proof()
+            .clone();
 
         Ok(Self {
             coverage: self.coverage,
             anchor,
             tachygram_set: self.tachygram_set,
             tachygrams: self.tachygrams,
-            proof: Box::new(rerand.proof().clone()),
+            proof: Box::new(proof),
         })
     }
 
@@ -866,7 +906,7 @@ impl ProofStamp {
             .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
 
-        let (_merged_digests, tachygrams, anchor, proof) = Self::prove_merge(
+        let (merged_digests, tachygrams, anchor, merged_proof) = Self::prove_merge(
             rng,
             (
                 left_actions_digest,
@@ -895,13 +935,25 @@ impl ProofStamp {
             .copied()
             .collect::<TachygramSetPoly>()
             .commit();
+        let action_set = merged_digests
+            .into_iter()
+            .collect::<ActionSetPoly>()
+            .commit();
+        let proof = PROOF_SYSTEM
+            .rerandomize(
+                merged_proof.carry::<Stamp>((action_set, tachygram_set, anchor)),
+                rng,
+            )
+            .map_err(ProveError::ProofFailed)?
+            .proof()
+            .clone();
 
         Ok(Self {
             coverage,
             anchor,
             tachygram_set,
             tachygrams,
-            proof,
+            proof: Box::new(proof),
         })
     }
 

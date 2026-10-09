@@ -18,14 +18,13 @@ use zcash_tachyon::{
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
-    digest::blake2b,
     effect,
     entropy::ActionEntropy,
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     stamp::{
-        PointerStamp, ProofStamp, StampState,
+        self, PointerStamp, ProofStamp, StampState,
         proof::{
             PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
             stamp::{Stamp, StampMerge},
@@ -123,21 +122,11 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     note: Note,
 ) -> (ProofStamp, action::Plan<effect::Output>) {
     let (rcv, theta, plan) = build_output_plan(rng, note);
-    let (_digests, tachygrams, stamp_anchor, proof) =
-        ProofStamp::prove_output(rng, theta, rcv, note, anchor).expect("prove_output");
-    let stamp = ProofStamp {
-        coverage: blake2b::action_descriptor_digest(
-            &iter::once(plan.descriptor()).collect::<Vec<[u8; 64]>>(),
-        ),
-        anchor: stamp_anchor,
-        tachygram_set: tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>()
-            .commit(),
-        tachygrams,
-        proof,
-    };
+    // An output-only plan never reads the proof authorizing key.
+    let pak = WalletSim::new(shared_sk()).pak;
+    let stamp = stamp::Plan::new(vec![], vec![(plan.descriptor(), theta, note, rcv)], anchor)
+        .prove(rng, &pak, vec![])
+        .expect("prove an output stamp");
     (stamp, plan)
 }
 
