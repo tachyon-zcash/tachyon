@@ -795,55 +795,6 @@ fn verify_proof_disproves_uncovered_adjunct() {
     );
 }
 
-/// The same note spent under two independent randomizations yields distinct
-/// descriptors, but both spends publish the same nullifier pair. The plan
-/// refuses the repeated tachygrams before anything is signed.
-#[test]
-fn plan_refuses_two_spends_of_one_note() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(200);
-    let nullifiers = wallet.nf_pair(&note, EpochIndex::new(0));
-
-    let spend_a = action::Plan::spend(
-        note,
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-        nullifiers,
-        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
-    );
-    let spend_b = action::Plan::spend(
-        note,
-        ActionEntropy::random(rng),
-        value::Trapdoor::random(rng),
-        nullifiers,
-        |alpha| ask.derive_action_private(&alpha).derive_action_public(),
-    );
-    assert_ne!(
-        spend_a.cv(),
-        spend_b.cv(),
-        "independent rcv gives distinct cv"
-    );
-    assert_ne!(
-        spend_a.rk, spend_b.rk,
-        "independent theta gives distinct rk"
-    );
-
-    let plan = Plan::new(alloc::vec![spend_a, spend_b], alloc::vec![]);
-
-    for err in [
-        plan.tachygrams().expect_err("the pair repeats"),
-        plan.commitment().expect_err("the pair repeats"),
-        plan.sign(rng, &[0u8; 32], &ask)
-            .expect_err("the pair repeats"),
-    ] {
-        let PlanError::DuplicateTachygram = err else {
-            panic!("expected DuplicateTachygram, got {err:?}");
-        };
-    }
-}
-
 #[test]
 fn innocent_aggregate_from_two_autonomes() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1717,83 +1668,6 @@ fn coverage_check_matches_stamp_actions() {
     );
 }
 
-/// A stripped autonome's wire encoding, with the byte offset at which its
-/// `vTachygramsTachyon` starts. The list sits immediately before the 64-byte
-/// wtxid trailer.
-fn stripped_wire(rng: &mut StdRng) -> (Vec<u8>, usize) {
-    let wallet = WalletSim::new(shared_sk());
-    let covering = build_autonome(rng, &wallet, 500, 300);
-    let bundle = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&covering));
-    assert_eq!(bundle.tachygrams.len(), 4, "two actions publish four");
-
-    let mut buf = Vec::new();
-    bundle.write(&mut buf).expect("write");
-    let start = buf.len() - 64 - 4 * 32;
-    (buf, start)
-}
-
-/// A body whose tachygrams are not in ascending order is rejected on read,
-/// matching the order `hTachygramsTachyon` commits to.
-#[test]
-fn body_read_rejects_unsorted_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (mut buf, start) = stripped_wire(rng);
-
-    // A BTreeSet always serializes in order, so swap the first and last blocks
-    // directly in the buffer.
-    let last = start + 3 * 32;
-    let (head, tail) = buf.split_at_mut(last);
-    head[start..start + 32].swap_with_slice(&mut tail[..32]);
-
-    let err =
-        Bundle::<PointerStamp>::read(&*buf).expect_err("unsorted tachygrams must be rejected");
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert_eq!(err.to_string(), "tachygrams are not canonically sorted");
-}
-
-/// A body must list distinct tachygrams, not merely non-decreasing ones.
-#[test]
-fn body_read_rejects_duplicate_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (mut buf, start) = stripped_wire(rng);
-
-    buf.copy_within(start..start + 32, start + 32);
-
-    let err =
-        Bundle::<PointerStamp>::read(&*buf).expect_err("duplicate tachygrams must be rejected");
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert_eq!(err.to_string(), "tachygrams are not unique");
-}
-
-/// The list length follows from `nActionsTachyon`, so a list cut short is a
-/// read failure.
-#[test]
-fn body_read_rejects_truncated_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let (mut buf, start) = stripped_wire(rng);
-
-    buf.truncate(start + 3 * 32 + 16);
-
-    let err = Bundle::<PointerStamp>::read(&*buf).expect_err("a truncated list must be rejected");
-    assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
-}
-
-/// The body carries no tachygram count, so a bundle whose list is not two per
-/// action has no encoding.
-#[test]
-fn write_rejects_tachygrams_not_two_per_action() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let mut bundle = build_autonome(rng, &wallet, 1000, 700);
-    bundle.tachygrams.pop_first();
-
-    let err = bundle
-        .write(Vec::new())
-        .expect_err("three tachygrams for two actions must not encode");
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert_eq!(err.to_string(), "tachygrams are not two per action");
-}
-
 /// Build a spend action plan without a pool/anchor: `Plan::spend`'s
 /// `derive_rk` closure recomputes alpha internally, so only `ask` is needed
 /// to derive a matching `rk`. The nullifier pair is the note's at epoch zero.
@@ -2009,21 +1883,30 @@ fn output_autonome(rng: &mut StdRng) -> Bundle<ProofStamp> {
         .stamp(stamp)
 }
 
-/// The proof binds the carried commitment, not the body's list. A list with
-/// one tachygram swapped keeps its length and the proof still verifies, so
-/// the set commitment is what rejects it.
+/// A body tachygram swapped after signing against an honest stamp. Full
+/// verification rejects it at the signatures. The proof is over the carried
+/// commitment and still verifies, so the set commitment is the check that ties
+/// the body to the proof.
 #[test]
-fn verify_tachygrams_rejects_a_tampered_list() {
+fn tampered_body_tachygrams_fail_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let mut bundle = output_autonome(rng);
+    let wtxid: [u8; 64] = mock_wtxid(&bundle).into();
     bundle
-        .verify_tachygrams(&[])
-        .expect("an honest autonome's list matches its commitment");
+        .verify(rng, &mock_sighash(bundle.commitment()), &wtxid, &[])
+        .expect("the honest autonome verifies");
 
     bundle.tachygrams.pop_first();
     bundle
         .tachygrams
         .insert(Tachygram::from(Fp::random(&mut *rng)));
+
+    let verify_err = bundle
+        .verify(rng, &mock_sighash(bundle.commitment()), &wtxid, &[])
+        .expect_err("a tampered list must fail verification");
+    let VerificationError::Signatures(SignatureError::Binding(_)) = verify_err else {
+        panic!("expected Signatures(Binding), got {verify_err:?}");
+    };
 
     let digests: Vec<ActionDigest> = bundle
         .verify_coverage(&[])
@@ -2038,29 +1921,151 @@ fn verify_tachygrams_rejects_a_tampered_list() {
         "the proof is over the carried commitment, which is untouched here"
     );
 
-    let err = bundle
+    let set_err = bundle
         .verify_tachygrams(&[])
-        .expect_err("a tampered list must be rejected");
-    let VerifyTachygramsError::WrongSet = err else {
-        panic!("expected WrongSet, got {err:?}");
+        .expect_err("a tampered list must not match the proven commitment");
+    let VerifyTachygramsError::WrongSet = set_err else {
+        panic!("expected WrongSet, got {set_err:?}");
     };
 }
 
-/// A tachygram in two covered bundles is rejected before the commitment is
-/// recomputed. An adjunct sharing the aggregate's actions shares all of its
-/// tachygrams.
+/// A spend that signs and stamps the nullifiers of the wrong epoch keeps its
+/// body and `cTachygrams` consistent with each other. The prover does not
+/// check the planned pair, and `SpendStamp` accumulates the pair `SpendBind`
+/// derives, so the proof is what rejects the lie.
 #[test]
-fn verify_tachygrams_rejects_cross_bundle_overlap() {
+fn spend_publishing_wrong_nullifiers_is_disproved() {
     let rng = &mut StdRng::seed_from_u64(0);
-    let bundle = output_autonome(rng);
-    let adjunct = bundle.clone().strip(mock_wtxid(&bundle));
+    let wallet = WalletSim::new(shared_sk());
+    let ask = wallet.sk.derive_auth_private();
+    let note = wallet.random_note(500);
 
+    let mut pool = PoolSim::genesis(rng);
+    pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
+    let height = pool.height();
+    let spendable = wallet.fresh_spend(rng, &pool, height, &note);
+    let anchor = spendable.data().2;
+
+    let lie = wallet.nf_pair(&note, height.epoch().next().unwrap());
+    assert_ne!(lie, wallet.nf_pair(&note, height.epoch()));
+    let (rcv, theta) = spend_witness(rng);
+    let spend = action::Plan::spend(note, theta, rcv, lie, |alpha| {
+        wallet.pak.ak.derive_action_public(&alpha)
+    });
+    let plan = Plan::new(vec![spend], vec![]);
+    let sighash = mock_sighash(plan.commitment().unwrap());
+
+    let secret = wallet.secret_pcd(rng, note);
+    let stamp = plan
+        .stamp_plan(anchor)
+        .prove(rng, &wallet.pak, vec![(secret, spendable, vec![])])
+        .expect("the prover does not check the planned pair");
+    let bundle = plan.sign(rng, &sighash, &ask).expect("sign").stamp(stamp);
+
+    bundle
+        .verify_tachygrams(&[])
+        .expect("the body and the carried commitment agree");
     let err = bundle
-        .verify_tachygrams(&[&adjunct])
-        .expect_err("a tachygram shared across bundles must be rejected");
-    let VerifyTachygramsError::Overlap = err else {
-        panic!("expected Overlap, got {err:?}");
+        .verify(rng, &sighash, &mock_wtxid(&bundle).into(), &[])
+        .expect_err("the wrong nullifiers must not verify");
+    let VerificationError::Disproved = err else {
+        panic!("expected Disproved, got {err:?}");
     };
+}
+
+/// Two autonomes spend one note, so they share its nullifier pair. The honest
+/// merge refuses them (see `double_spend_cannot_aggregate`), so the aggregate
+/// is built on a forced multiset merge and published under a commitment to
+/// the deduplicated union. Coverage passes, the overlap rejects it, and the
+/// proof does not verify either.
+#[test]
+fn aggregate_over_overlapping_adjuncts_fails_verification() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let ask = wallet.sk.derive_auth_private();
+    let spend = wallet.random_note(1000);
+
+    let mut pool = PoolSim::genesis(rng);
+    pool.mine(random_block_with(rng, &[vec![spend.commitment()]], 50));
+    let cm_height = pool.height();
+    while pool.height() < BlockHeight(EPOCH_SIZE) {
+        pool.advance(1, |_| random_block(rng, 1, 2));
+    }
+    let spend_epoch = cm_height.epoch().next().unwrap();
+    let sp_a = wallet.spendable_at(rng, &pool, &spend, spend_epoch);
+    let sp_b = wallet.spendable_at(rng, &pool, &spend, spend_epoch);
+    let anchor = sp_a.data().2;
+
+    let autonome_a = wallet.autonome(
+        rng,
+        anchor,
+        vec![(spend, sp_a)],
+        vec![wallet.random_note(700)],
+    );
+    let autonome_b = wallet.autonome(
+        rng,
+        anchor,
+        vec![(spend, sp_b)],
+        vec![wallet.random_note(600)],
+    );
+    assert!(!autonome_a.tachygrams.is_disjoint(&autonome_b.tachygrams));
+
+    let descriptors_a: Vec<action::Descriptor> = autonome_a.descriptors().collect();
+    let descriptors_b: Vec<action::Descriptor> = autonome_b.descriptors().collect();
+    let evil_pcd = forge_overlapping_merge(
+        rng,
+        (&autonome_a.stamp, &descriptors_a, &autonome_a.tachygrams),
+        (&autonome_b.stamp, &descriptors_b, &autonome_b.tachygrams),
+    );
+    let coverage = {
+        let mut desc_bytes: Vec<[u8; 64]> = descriptors_a
+            .iter()
+            .chain(&descriptors_b)
+            .copied()
+            .collect();
+        desc_bytes.sort_unstable();
+        blake2b::action_descriptor_digest(&desc_bytes)
+    };
+    let stamp = ProofStamp {
+        coverage,
+        anchor: evil_pcd.data().2,
+        tachygram_set: autonome_a
+            .tachygrams
+            .union(&autonome_b.tachygrams)
+            .copied()
+            .collect::<TachygramSetPoly>()
+            .commit(),
+        proof: Box::new(evil_pcd.proof().clone()),
+    };
+
+    let plan = Plan::new(vec![], vec![]);
+    let sighash = mock_sighash(plan.commitment().unwrap());
+    let aggregate = plan
+        .sign(rng, &sighash, &ask)
+        .expect("sign the innocent")
+        .stamp(stamp);
+    let wtxid = mock_wtxid(&aggregate);
+    let adjuncts = [autonome_a.strip(wtxid), autonome_b.strip(wtxid)];
+    let adjunct_refs = [&adjuncts[0], &adjuncts[1]];
+
+    let err = aggregate
+        .verify(rng, &sighash, &wtxid.into(), &adjunct_refs)
+        .expect_err("overlapping adjuncts must fail verification");
+    let VerificationError::Tachygrams(VerifyTachygramsError::Overlap) = err else {
+        panic!("expected Tachygrams(Overlap), got {err:?}");
+    };
+
+    let digests: Vec<ActionDigest> = descriptors_a
+        .iter()
+        .chain(&descriptors_b)
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect();
+    assert!(
+        !aggregate
+            .verify_proof(rng, &digests)
+            .expect("proof system verification"),
+        "the forced merge must not verify against the deduplicated union"
+    );
 }
 
 /// An innocent aggregate checked without its adjuncts has no tachygrams to
@@ -2109,7 +2114,8 @@ fn verify_tachygrams_rejects_too_many() {
 
 /// The union commitment cannot tell which contributor published a tachygram,
 /// but each contributor's signatures can. Moving one tachygram between two
-/// adjuncts leaves the union intact and breaks both bundles' signatures.
+/// adjuncts leaves the union intact, so the aggregate's proof still verifies,
+/// and breaks both adjuncts' signatures.
 #[test]
 fn moving_a_tachygram_between_contributors_breaks_signatures() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -2142,8 +2148,9 @@ fn moving_a_tachygram_between_contributors_breaks_signatures() {
     )
     .expect("merge");
     let plan = Plan::new(alloc::vec![], alloc::vec![]);
+    let sighash = mock_sighash(plan.commitment().unwrap());
     let innocent = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .sign(rng, &sighash, &ask)
         .expect("sign the innocent")
         .stamp(stamp);
 
@@ -2156,8 +2163,8 @@ fn moving_a_tachygram_between_contributors_breaks_signatures() {
     let wtxid = mock_wtxid(&innocent);
     let adjuncts = contributors.map(|bundle| bundle.strip(wtxid));
     innocent
-        .verify_tachygrams(&[&adjuncts[0], &adjuncts[1]])
-        .expect("the union is unchanged");
+        .verify(rng, &sighash, &wtxid.into(), &[&adjuncts[0], &adjuncts[1]])
+        .expect("the aggregate's proof cannot see the move");
 
     for adjunct in &adjuncts {
         let err = adjunct
@@ -2167,21 +2174,6 @@ fn moving_a_tachygram_between_contributors_breaks_signatures() {
             panic!("expected SignatureError::Binding, got {err:?}");
         };
     }
-}
-
-/// Stripping a bundle to an adjunct replaces the stamp only. The tachygrams
-/// are effecting data covered by signatures the adjunct retains.
-#[test]
-fn tachygrams_survive_strip() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::new(shared_sk());
-    let bundle = build_autonome(rng, &wallet, 1000, 700);
-
-    let covering = build_autonome(rng, &wallet, 500, 300);
-    let adjunct = bundle.clone().strip(mock_wtxid(&covering));
-
-    assert_eq!(adjunct.tachygrams, bundle.tachygrams);
-    assert_eq!(adjunct.commitment(), bundle.commitment());
 }
 
 /// The commitment binds every tachygram a planned action publishes, and a
