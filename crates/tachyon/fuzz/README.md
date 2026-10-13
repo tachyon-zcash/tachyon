@@ -13,7 +13,7 @@ cargo fuzz run stripped_bundle_read -- -runs=10000 -max_len=32768
 From the repository root, the equivalent form is:
 
 ```sh
-cargo +nightly-2026-04-11 fuzz run bundle_read \
+cargo +nightly-2026-05-23 fuzz run bundle_read \
     --fuzz-dir crates/tachyon/fuzz -- -runs=10000 -max_len=32768
 ```
 
