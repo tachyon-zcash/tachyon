@@ -317,6 +317,8 @@ impl TryFrom<CompactSize> for usize {
 mod tests {
     use alloc::vec::Vec;
 
+    use proptest::{collection, prelude::*, sample::select};
+
     use super::*;
 
     fn sized_value(value: &[u8]) -> Vec<u8> {
@@ -455,6 +457,111 @@ mod tests {
             CompactSize::read(two_byte_with_trailing.as_slice()).unwrap(),
             CompactSize::TwoBytes(u16::from(FLAG_TWO_BYTES)),
         );
+    }
+
+    fn arb_value() -> impl Strategy<Value = u64> {
+        let edges = [
+            u64::from(MAX_ONE_BYTE),
+            u64::from(u16::MAX),
+            u64::from(u32::MAX),
+            u64::from(MAX_COMPACT_SIZE),
+        ];
+        prop_oneof![
+            (select(edges.to_vec()), -1i64..=1)
+                .prop_map(|(edge, offset)| { edge.wrapping_add_signed(offset) }),
+            any::<u64>(),
+            any::<u32>().prop_map(u64::from),
+            any::<u16>().prop_map(u64::from),
+            any::<u8>().prop_map(u64::from),
+        ]
+    }
+
+    fn encode(cs: CompactSize) -> Vec<u8> {
+        let mut buf = Vec::new();
+        cs.write(&mut buf).unwrap();
+        buf
+    }
+
+    /// Every variant that can hold `value`, built without normalization.
+    fn forms_holding(value: u64) -> Vec<CompactSize> {
+        let mut forms = alloc::vec![CompactSize::EightBytes(value)];
+        if let Ok(narrow) = u32::try_from(value) {
+            forms.push(CompactSize::FourBytes(narrow));
+        }
+        if let Ok(narrow) = u16::try_from(value) {
+            forms.push(CompactSize::TwoBytes(narrow));
+        }
+        if let Ok(narrow) = u8::try_from(value) {
+            forms.push(CompactSize::OneByte(narrow));
+        }
+        forms
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn values_round_trip(value in arb_value()) {
+            let cs = CompactSize::from(value);
+            let read = CompactSize::read(encode(cs).as_slice()).unwrap();
+            prop_assert_eq!(read, cs);
+            prop_assert_eq!(u64::from(read), value);
+        }
+
+        #[test]
+        fn the_canonical_form_is_unique(value in arb_value()) {
+            let canonical = CompactSize::from(value);
+            for form in forms_holding(value) {
+                prop_assert_eq!(form.enforce_canon().is_ok(), form == canonical);
+            }
+        }
+
+        #[test]
+        fn typed_constructors_agree_with_from(value in arb_value()) {
+            let canonical = CompactSize::from(value);
+            for form in forms_holding(value) {
+                let constructed = match form {
+                    CompactSize::OneByte(inner) => CompactSize::one_byte(inner),
+                    CompactSize::TwoBytes(inner) => CompactSize::two_bytes(inner),
+                    CompactSize::FourBytes(inner) => CompactSize::four_bytes(inner),
+                    CompactSize::EightBytes(inner) => CompactSize::eight_bytes(inner),
+                };
+                prop_assert_eq!(constructed.ok(), (form == canonical).then_some(canonical));
+            }
+        }
+
+        #[test]
+        fn decoding_then_encoding_returns_the_consumed_bytes(
+            bytes in collection::vec(any::<u8>(), 0..=12),
+        ) {
+            if let Ok(cs) = CompactSize::read(bytes.as_slice()) {
+                prop_assert!(bytes.starts_with(&encode(cs)));
+            }
+        }
+
+        #[test]
+        fn truncated_encodings_are_rejected(value in arb_value()) {
+            let bytes = encode(CompactSize::from(value));
+            for len in 0..bytes.len() {
+                prop_assert!(CompactSize::read(&bytes[..len]).is_err());
+            }
+        }
+
+        #[test]
+        fn valid_means_canonical_and_bounded(value in arb_value()) {
+            for form in forms_holding(value) {
+                prop_assert_eq!(
+                    form.enforce_valid().is_ok(),
+                    form.enforce_canon().is_ok() && value <= u64::from(MAX_COMPACT_SIZE),
+                );
+            }
+        }
+
+        #[test]
+        fn usize_round_trips(value in any::<usize>()) {
+            let cs = CompactSize::try_from(value).unwrap();
+            prop_assert_eq!(usize::try_from(cs).unwrap(), value);
+        }
     }
 
     #[test]

@@ -124,9 +124,80 @@ pub(crate) fn direct_eval(members: impl IntoIterator<Item = (u64, Fp)>, x: Fp) -
 mod tests {
     use alloc::vec::Vec;
 
+    use proptest::{collection, prelude::*};
     use rand::{RngExt as _, SeedableRng as _, rngs::StdRng};
 
     use super::*;
+    use crate::testing::arb_fp;
+
+    fn arb_index() -> impl Strategy<Value = u64> {
+        prop_oneof![
+            1 => Just(0),
+            1 => Just(1),
+            1 => Just(u64::MAX),
+            6 => any::<u64>(),
+        ]
+    }
+
+    fn arb_members() -> impl Strategy<Value = Vec<(u64, Fp)>> {
+        collection::vec((arb_index(), arb_fp()), 0..=8)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn the_encoding_evaluates_as_the_direct_product(members in arb_members(), x in arb_fp()) {
+            prop_assert_eq!(encode(members.iter().copied()).eval(x), direct_eval(members, x));
+        }
+
+        #[test]
+        fn concatenation_multiplies_encodings(
+            left in arb_members(),
+            right in arb_members(),
+            x in arb_fp(),
+        ) {
+            let product = poly_mul(&encode(left.iter().copied()), &encode(right.iter().copied()));
+            let both = left.iter().chain(&right).copied();
+            prop_assert_eq!(encode(both.clone()).eval(x), product.eval(x));
+            prop_assert_eq!(
+                direct_eval(both, x),
+                direct_eval(left, x) * direct_eval(right, x)
+            );
+        }
+
+        #[test]
+        fn member_order_does_not_matter(
+            (members, shuffled) in arb_members()
+                .prop_flat_map(|members| (Just(members.clone()), Just(members).prop_shuffle())),
+            x in arb_fp(),
+        ) {
+            prop_assert_eq!(encode(members).eval(x), encode(shuffled).eval(x));
+        }
+
+        #[test]
+        fn the_empty_multiset_is_one(x in arb_fp()) {
+            prop_assert_eq!(encode([]).eval(x), Fp::ONE);
+            prop_assert_eq!(direct_eval([], x), Fp::ONE);
+        }
+
+        #[test]
+        fn a_single_member_has_no_root(idx in arb_index(), member in arb_fp(), x in arb_fp()) {
+            prop_assert_ne!(direct_eval_single(idx, member, x), Fp::ZERO);
+        }
+
+        #[test]
+        fn distinct_indices_encode_distinctly(
+            idx_a in any::<u32>(),
+            idx_b in any::<u32>(),
+            member in arb_fp(),
+        ) {
+            prop_assume!(idx_a != idx_b);
+            let coeffs_a = Vec::from_iter(encode_single(idx_a.into(), member).iter_coeffs());
+            let coeffs_b = Vec::from_iter(encode_single(idx_b.into(), member).iter_coeffs());
+            prop_assert_ne!(coeffs_a, coeffs_b);
+        }
+    }
 
     #[test]
     fn member_encoding_matches_manual_evaluation() {

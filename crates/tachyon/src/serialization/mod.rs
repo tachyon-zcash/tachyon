@@ -129,3 +129,131 @@ pub(crate) fn write_binding_sig<W: Write>(
     let bytes: [u8; 64] = (*sig).into();
     writer.write_all(&bytes)
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use ff::{Field as _, FromUniformBytes as _};
+    use group::{Curve as _, CurveAffine as _};
+    use pasta_curves::Fq;
+    use proptest::{collection, prelude::*};
+
+    use super::*;
+    use crate::testing::arb_fp;
+
+    fn arb_fq() -> impl Strategy<Value = Fq> {
+        prop_oneof![
+            1 => Just(Fq::ZERO),
+            1 => Just(Fq::ONE),
+            6 => any::<[u8; 64]>().prop_map(|bytes| Fq::from_uniform_bytes(&bytes)),
+        ]
+    }
+
+    fn encoded(write: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write(&mut buf).unwrap();
+        buf
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn compactsizes_round_trip_within_the_bound(value in prop_oneof![0u64..1 << 26, any::<u64>()]) {
+            let bytes = encoded(|buf| write_compactsize(buf, value));
+            let result = read_compactsize(bytes.as_slice());
+            if CompactSize::from(value).enforce_valid().is_ok() {
+                prop_assert_eq!(result.unwrap(), value);
+            } else {
+                prop_assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+            }
+        }
+
+        #[test]
+        fn read_compactsize_rejects_exactly_the_invalid(
+            bytes in collection::vec(any::<u8>(), 1..=9),
+        ) {
+            if let Ok(parsed) = CompactSize::read(bytes.as_slice()) {
+                let result = read_compactsize(bytes.as_slice());
+                if let Ok(valid) = parsed.enforce_valid() {
+                    prop_assert_eq!(result.unwrap(), u64::from(valid));
+                } else {
+                    prop_assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+                }
+            }
+        }
+
+        #[test]
+        fn base_field_elements_round_trip(fp in arb_fp()) {
+            let bytes = encoded(|buf| write_fp(buf, &fp));
+            prop_assert_eq!(read_fp(bytes.as_slice()).unwrap(), fp);
+        }
+
+        #[test]
+        fn base_field_decoding_is_canonical(bytes in any::<[u8; 32]>()) {
+            let decoded = read_fp(bytes.as_slice());
+            prop_assert_eq!(decoded.is_ok(), bool::from(Fp::from_repr(bytes).is_some()));
+            if let Ok(fp) = decoded {
+                prop_assert_eq!(encoded(|buf| write_fp(buf, &fp)), bytes.to_vec());
+            }
+        }
+
+        #[test]
+        fn pallas_points_round_trip(scalar in arb_fq()) {
+            let point = (EpAffine::generator() * scalar).to_affine();
+            let bytes = encoded(|buf| write_ep_affine(buf, &point));
+            prop_assert_eq!(read_ep_affine(bytes.as_slice()).unwrap(), point);
+        }
+
+        #[test]
+        fn pallas_decoding_is_canonical(bytes in any::<[u8; 32]>()) {
+            if let Ok(point) = read_ep_affine(bytes.as_slice()) {
+                prop_assert_eq!(encoded(|buf| write_ep_affine(buf, &point)), bytes.to_vec());
+            }
+        }
+
+        #[test]
+        fn vesta_points_round_trip(scalar in arb_fp()) {
+            let point = (EqAffine::generator() * scalar).to_affine();
+            let bytes = encoded(|buf| write_eq_affine(buf, &point));
+            prop_assert_eq!(read_eq_affine(bytes.as_slice()).unwrap(), point);
+        }
+
+        #[test]
+        fn vesta_decoding_is_canonical(bytes in any::<[u8; 32]>()) {
+            if let Ok(point) = read_eq_affine(bytes.as_slice()) {
+                prop_assert_eq!(encoded(|buf| write_eq_affine(buf, &point)), bytes.to_vec());
+            }
+        }
+
+        #[test]
+        fn action_key_decoding_is_canonical(bytes in any::<[u8; 32]>()) {
+            if let Ok(key) = read_action_vk(bytes.as_slice()) {
+                prop_assert_eq!(encoded(|buf| write_action_vk(buf, &key)), bytes.to_vec());
+            }
+        }
+
+        #[test]
+        fn signatures_round_trip(bytes in any::<[u8; 64]>()) {
+            let action = read_action_sig(bytes.as_slice()).unwrap();
+            prop_assert_eq!(encoded(|buf| write_action_sig(buf, &action)), bytes.to_vec());
+            let binding = read_binding_sig(bytes.as_slice()).unwrap();
+            prop_assert_eq!(encoded(|buf| write_binding_sig(buf, &binding)), bytes.to_vec());
+        }
+
+        #[test]
+        fn truncated_fixed_width_encodings_are_rejected(
+            bytes in any::<[u8; 64]>(),
+            len in 0..32usize,
+        ) {
+            let prefix = &bytes[..len];
+            prop_assert!(read_fp(prefix).is_err());
+            prop_assert!(read_ep_affine(prefix).is_err());
+            prop_assert!(read_eq_affine(prefix).is_err());
+            prop_assert!(read_action_vk(prefix).is_err());
+            prop_assert!(read_action_sig(&bytes[..len + 32]).is_err());
+            prop_assert!(read_binding_sig(&bytes[..len + 32]).is_err());
+        }
+    }
+}

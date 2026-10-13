@@ -29,6 +29,8 @@ mod primitives;
 mod ragu_constraint;
 mod relations;
 mod serialization;
+#[cfg(test)]
+mod testing;
 
 pub use action::{Action, Plan as ActionPlan};
 pub use bundle::{

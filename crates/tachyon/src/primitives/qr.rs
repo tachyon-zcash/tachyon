@@ -158,7 +158,96 @@ impl QrClassRoot {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
+    use proptest::{collection, prelude::*};
+
     use super::*;
+    use crate::testing::arb_fp;
+
+    fn arb_path() -> impl Strategy<Value = Vec<bool>> {
+        collection::vec(any::<bool>(), 0..=QrProfile::MAX_DEPTH)
+    }
+
+    fn profile_of(path: &[bool]) -> QrProfile {
+        path.iter()
+            .fold(QrProfile::ROOT, |profile, &bit| profile.descend(bit))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn discriminants_progress_by_one(start in arb_fp(), depth in 0..u32::BITS) {
+            let discriminant = QrDiscriminant::from(start);
+            prop_assert_eq!(discriminant.at(depth + 1), discriminant.at(depth) + Fp::ONE);
+            prop_assert_eq!(discriminant.at(depth), discriminant.at(0) + Fp::from(u64::from(depth)));
+        }
+
+        #[test]
+        fn along_agrees_with_of(value in arb_fp(), start in arb_fp()) {
+            let discriminant = QrDiscriminant::from(start);
+            for (depth, class) in (0..).zip(QrClassRoot::along(value, discriminant)) {
+                prop_assert_eq!(class, QrClassRoot::of(value, discriminant.at(depth)));
+            }
+        }
+
+        #[test]
+        fn the_root_attests_exactly_one_side(value in arb_fp(), discriminant in arb_fp()) {
+            let QrClassRoot(side, root) = QrClassRoot::of(value, discriminant);
+            let shifted = value + discriminant;
+            prop_assert_eq!(root.square(), qr::class_multiplier(side) * shifted);
+            let opposite = qr::class_multiplier(!side) * shifted;
+            prop_assert!(shifted == Fp::ZERO || bool::from(opposite.sqrt().is_none()));
+        }
+
+        #[test]
+        fn only_the_shifted_value_matters(
+            value in arb_fp(),
+            discriminant in arb_fp(),
+            offset in arb_fp(),
+        ) {
+            prop_assert_eq!(
+                QrClassRoot::of(value, discriminant),
+                QrClassRoot::of(value + offset, discriminant - offset)
+            );
+        }
+
+        #[test]
+        fn the_fixed_point_is_residue_side_with_root_zero(
+            start in arb_fp(),
+            depth in 0..u32::BITS,
+        ) {
+            let discriminant = QrDiscriminant::from(start);
+            let classes = QrClassRoot::along(-discriminant.at(depth), discriminant);
+            prop_assert_eq!(
+                classes.get(usize::try_from(depth).unwrap()),
+                Some(&QrClassRoot(true, Fp::ZERO))
+            );
+        }
+
+        #[test]
+        fn descent_records_the_path(path in arb_path()) {
+            let profile = profile_of(&path);
+            prop_assert_eq!(usize::try_from(profile.depth).unwrap(), path.len());
+            let bits = path.iter().fold(0u64, |acc, &bit| (acc << 1) | u64::from(bit));
+            prop_assert_eq!(u64::from(profile.bits), bits);
+        }
+
+        #[test]
+        fn distinct_paths_give_distinct_profiles(left in arb_path(), right in arb_path()) {
+            prop_assume!(left != right);
+            prop_assert_ne!(profile_of(&left), profile_of(&right));
+        }
+
+        #[test]
+        fn the_depth_mask_selects_positions_below_the_depth(depth in 0..=u32::BITS) {
+            let mask = QrProfile { depth, bits: 0 }.depth_mask();
+            for (position, selected) in (0u32..).zip(mask) {
+                prop_assert_eq!(selected, position < depth);
+            }
+        }
+    }
 
     #[test]
     fn the_root_profile_has_no_bits() {
