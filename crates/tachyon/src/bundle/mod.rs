@@ -343,6 +343,9 @@ pub enum PlanError {
     /// The value balance overflows the representable range.
     #[display("value balance overflow")]
     BalanceOverflow,
+    /// Two planned actions publish the same tachygram.
+    #[display("planned actions publish a tachygram more than once")]
+    DuplicateTachygram,
 }
 
 /// A complete bundle plan, awaiting authorization.
@@ -426,33 +429,52 @@ impl Plan {
     }
 
     /// The tachygrams the planned actions publish, sorted.
-    #[must_use]
-    pub fn tachygrams(&self) -> BTreeSet<Tachygram> {
-        self.iter_actions(|plan| plan.tachygrams, |plan| plan.tachygrams)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError::DuplicateTachygram`] if two planned actions
+    /// publish the same tachygram.
+    pub fn tachygrams(&self) -> Result<BTreeSet<Tachygram>, PlanError> {
+        let mut tachygrams = BTreeSet::new();
+        for tg in self
+            .iter_actions(|plan| plan.tachygrams, |plan| plan.tachygrams)
             .flatten()
-            .collect()
+        {
+            if !tachygrams.insert(tg) {
+                return Err(PlanError::DuplicateTachygram);
+            }
+        }
+        Ok(tachygrams)
     }
 
     /// $\mathsf{hTachygramsTachyon}$: the digest of [`Self::tachygrams`].
-    #[must_use]
-    pub fn tachygram_digest(&self) -> [u8; 32] {
-        let tachygrams: Vec<[u8; 32]> = self.tachygrams().into_iter().collect();
-        blake2b::tachygram_digest(&tachygrams)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError::DuplicateTachygram`] if two planned actions
+    /// publish the same tachygram.
+    pub fn tachygram_digest(&self) -> Result<[u8; 32], PlanError> {
+        let tachygrams: Vec<[u8; 32]> = self.tachygrams()?.into_iter().collect();
+        Ok(blake2b::tachygram_digest(&tachygrams))
     }
 
     /// Compute a digest of all the bundle's effecting data.
     ///
     /// # Errors
     ///
-    /// Fails if the value balance overflows the representable range.
-    pub fn commitment(&self) -> Result<[u8; 32], value::OutOfRange> {
+    /// Returns [`PlanError`] if the value balance overflows the representable
+    /// range or two planned actions publish the same tachygram.
+    pub fn commitment(&self) -> Result<[u8; 32], PlanError> {
         let desc_bytes: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
+        let value_balance = self
+            .value_balance()
+            .map_err(|_err| PlanError::BalanceOverflow)?;
 
         Ok(blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&desc_bytes),
-            self.value_balance()?.into(),
+            value_balance.into(),
             &blake2b::memo_digest(&self.memo),
-            &self.tachygram_digest(),
+            &self.tachygram_digest()?,
         ))
     }
 
@@ -498,14 +520,16 @@ impl Plan {
     ///
     /// # Errors
     ///
-    /// Returns [`PlanError`] if the planned actions do not balance or an
-    /// action cannot be signed.
+    /// Returns [`PlanError`] if the planned actions do not balance, publish a
+    /// tachygram more than once, or an action cannot be signed.
     pub fn sign<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         sighash: &[u8; 32],
         ask: &private::SpendAuthorizingKey,
     ) -> Result<Bundle<Unproven>, PlanError> {
+        self.tachygrams()?;
+
         let mut authorized: BTreeMap<action::Descriptor, action::Signature> = BTreeMap::new();
 
         for plan in &self.spends {
@@ -533,8 +557,8 @@ impl Plan {
     ///
     /// # Errors
     ///
-    /// Returns [`PlanError`] if the planned actions do not balance or a
-    /// descriptor has no supplied signature.
+    /// Returns [`PlanError`] if the planned actions do not balance, publish a
+    /// tachygram more than once, or a descriptor has no supplied signature.
     pub fn apply_signatures<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -544,6 +568,7 @@ impl Plan {
         let value_balance = self
             .value_balance()
             .map_err(|_err| PlanError::BalanceOverflow)?;
+        let tachygrams = self.tachygrams()?;
 
         if self.descriptors() != authorized.keys().copied().collect() {
             return Err(PlanError::ActionSigMismatch);
@@ -557,7 +582,7 @@ impl Plan {
             value_balance,
             binding_sig,
             memo: self.memo.clone(),
-            tachygrams: self.tachygrams(),
+            tachygrams,
             stamp: Unproven,
         })
     }

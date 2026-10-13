@@ -796,11 +796,10 @@ fn verify_proof_disproves_uncovered_adjunct() {
 }
 
 /// The same note spent under two independent randomizations yields distinct
-/// descriptors, so the cheap bundle checks (descriptor-uniqueness, signatures)
-/// pass. It is caught at the proof (shared nullifiers, see
-/// `double_spend_cannot_aggregate`) and by the pool nullifier set, not here.
+/// descriptors, but both spends publish the same nullifier pair. The plan
+/// refuses the repeated tachygrams before anything is signed.
 #[test]
-fn double_spend_secret() {
+fn plan_refuses_two_spends_of_one_note() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
@@ -832,13 +831,17 @@ fn double_spend_secret() {
     );
 
     let plan = Plan::new(alloc::vec![spend_a, spend_b], alloc::vec![]);
-    let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
-        .expect("signing works");
 
-    bundle
-        .verify_signatures(&mock_sighash(bundle.commitment()))
-        .expect("two independently-randomized spends of the same note still verify");
+    for err in [
+        plan.tachygrams().expect_err("the pair repeats"),
+        plan.commitment().expect_err("the pair repeats"),
+        plan.sign(rng, &[0u8; 32], &ask)
+            .expect_err("the pair repeats"),
+    ] {
+        let PlanError::DuplicateTachygram = err else {
+            panic!("expected DuplicateTachygram, got {err:?}");
+        };
+    }
 }
 
 #[test]
@@ -1848,7 +1851,7 @@ fn plan_value_balance_rejects_overflow_above_max_money() {
     assert_eq!(bundle_plan.value_balance(), Err(value::OutOfRange));
     {
         let err = bundle_plan.commitment().unwrap_err();
-        assert_eq!(err, value::OutOfRange);
+        assert_eq!(err, PlanError::BalanceOverflow);
     }
     let sighash = [0u8; 32];
     {
@@ -1871,7 +1874,7 @@ fn plan_value_balance_rejects_overflow_below_negative_max_money() {
     assert_eq!(bundle_plan.value_balance(), Err(value::OutOfRange));
     {
         let err = bundle_plan.commitment().unwrap_err();
-        assert_eq!(err, value::OutOfRange);
+        assert_eq!(err, PlanError::BalanceOverflow);
     }
     let sighash = [0u8; 32];
     {
