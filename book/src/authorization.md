@@ -1,13 +1,14 @@
 # Authorization
 
-A Tachyon bundle requires three layers of authorization: per-action signatures that bind each tachyaction to its tachygram, value commitments that hide individual values while preserving their algebraic sum, and a binding signature that proves the declared balance is correct.
+A Tachyon bundle requires three layers of authorization.
+Per-action signatures bind each tachyaction to its tachygram, value commitments hide individual values while preserving their algebraic sum, and a binding signature proves the declared balance is correct.
 This chapter covers each layer, then shows the complete flow from action creation through consensus.
 
 ## Actions
 
 Each tachyaction requires a fresh randomized key pair.
 
-The planner begins authorization by selecting arbitrary `theta` and a relevant note for each action. The custody device is provided each note and `theta`, and computes from them rather than checking planned values: it derives `cm` from each note, `alpha` from `theta` and `cm`, and `rk` from `alpha`.
+The planner begins authorization by choosing a note, the action's entropy `theta` and a value commitment trapdoor `rcv` for each action. The custody device receives each note, `theta` and `rcv`. It derives `cm` from each note, `alpha` from `theta` and `cm`, `rk` from `alpha`, and `cv` from the note's value and `rcv`. Custody checks none of these against planned values.
 
 ```mermaid
 flowchart TB
@@ -20,11 +21,11 @@ flowchart TB
     hash -->|"Tachyon-Spend"| spend_alpha
     hash -->|"Tachyon-Output"| output_alpha
 
-    spend_alpha -->|"rk = ak + [alpha]G"| plan
-    output_alpha -->|"rk = [alpha]G"| plan
+    spend_alpha -->|"rk = ak + [alpha]G"| descriptor
+    output_alpha -->|"rk = [alpha]G"| descriptor
 
-    plan["action plan { rk, note, theta, rcv, effect }"]
-    plan ===|"bundle digest"| sighash((sighash))
+    descriptor["descriptor { cv, rk }"]
+    descriptor ===|"bundle digest"| sighash((sighash))
 
     spend_alpha -->|"rsk = ask + alpha"| sign
     sighash ==> sign
@@ -59,8 +60,9 @@ The rerandomization of a validating key is equivalent to derivation of a validat
 
 $$ \mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G} $$
 
-So during planning, the planning device obtains `rk` from the validating `ak`.
-Then during authorization, the custody device is able to confirm correctness of `rk`, and sign the spend action with its private `rsk`.
+A device that holds `ak` and `theta` therefore computes the same `rk` without `ask`.
+The planner uses this to know each `rk`, and the sighash, before custody signs. The spend proof derives `rk` the same way.
+Custody derives `rk` and signs the spend action with `rsk`.
 
 ### Output
 
@@ -69,7 +71,7 @@ An output `rsk` is simply equal to `alpha`. No authority needed:
 $$ \mathsf{rsk} = \alpha $$
 $$ \mathsf{rk} = [\alpha]\,\mathcal{G} $$
 
-Then during authorization, the custody device is able to confirm correctness of `rk`, before signing any spends.
+Custody derives `rk` and signs the output action with `rsk`.
 
 ## Bundle commitment
 
@@ -93,7 +95,8 @@ $$
 
 The action digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire order, so the commitment fixes the actions and their order. Hashing the memo to a fixed width is what lets the outer digest absorb a variable-length payload without a length prefix.
 
-The stamp proof binds the same action set by a different construction: a Pedersen commitment to the polynomial whose roots are the Poseidon action digests,
+The stamp proof binds the same action set by a different construction.
+It uses a Pedersen commitment to the polynomial whose roots are the Poseidon action digests,
 
 $$ d_i = \text{Poseidon}_\text{Tachyon-ActionDg}(\mathsf{cv}_i \| \mathsf{rk}_i) $$
 $$ \mathsf{action\_acc} = \text{Commit}\Bigl(\prod_i \bigl(X - d_i\bigr)\Bigr) $$
@@ -106,7 +109,8 @@ The stamp is excluded from the bundle commitment because it is stripped during a
 
 All signatures (action and binding) sign the same transaction-wide sighash.
 The sighash is computed at the transaction layer, incorporating the bundle commitment from each pool (transparent, sapling, orchard, tachyon).
-The tachyon crate contributes its bundle commitment; a transaction-level crate computes the sighash and passes it in as opaque bytes.
+The tachyon crate contributes its bundle commitment.
+A transaction-level crate computes the sighash and passes it in as opaque bytes.
 
 This binds every signature to the complete set of effecting data across all pools.
 The stamp steps derive `alpha` in-circuit from the witnessed `theta` and the `cm` their left header certifies, so `rk` is itself a commitment to `cm`, and the signature transitively binds each action to its tachygram without the tachygram appearing in the action.
@@ -137,11 +141,13 @@ This enables the binding signature scheme to prove value balance without reveali
 
 The binding signature proves that the bundle's value commitments are consistent with the declared `value_balance`.
 
-**Planner** knows every `rcv` and computes `bsk`:
+**Signer** holds every `rcv` and computes `bsk`:
 
 $$\mathsf{bsk} = \sum_i \mathsf{rcv}_i$$
 
-The planner signs the transaction sighash to produce `binding_sig` directly, without custody assistance.
+The planner chose every `rcv` and sent each one to custody, so either device can sign.
+Custody may sign `binding_sig` in the same exchange as the actions.
+Otherwise the planner signs it, before or after custody answers.
 
 **Validators** know the claimed `value_balance` and each published action `cv`. Validators reconstruct the corresponding public key:
 
@@ -162,12 +168,12 @@ If the values don't balance, the $\mathcal{V}$ term survives. So,
 
 ## Simplified Flow
 
-A bundle plan feeds three independent paths that converge in the final bundle.
-Each path consumes the same action plans but produces a different component of the bundle:
+A request feeds three paths that converge in the final bundle.
+Each path produces a different component of the bundle:
 
-- **Authorizing**: custody derives `rsk` per spend action and signs the transaction sighash; output actions are signed by the user device.
-- **Binding**: the bundle commitment (from ordered action digests and `value_balance`) feeds into the transaction sighash, which the binding key signs.
-- **Proving**: each action plan yields a leaf stamp; leaves merge into a single Ragu PCD stamp.
+- **Authorizing**: custody derives each action's `rk` and `cv`, and signs every action over the transaction sighash.
+- **Binding**: the bundle commitment (from the action descriptors, `value_balance` and the memo) feeds the transaction sighash, which the binding key signs. Custody or the planner holds the binding key.
+- **Proving**: each action yields a leaf stamp from its note, `theta` and `rcv`, and the leaves merge into a single Ragu PCD stamp. Proving needs nothing from custody.
 
 ```mermaid
 flowchart LR
@@ -183,21 +189,16 @@ flowchart LR
 
 
     subgraph pczt[partial tx]
-        subgraph bundle_plan["bundle plan"]
-            action_plan@{ shape: st-rect, label: "action plan" }
-            value_balance
+        subgraph request
+            request_action@{ shape: st-rect, label: "request action" }
+            memo
         end
-        other1@{ shape: st-doc, label: "other tx data" } 
+        other1@{ shape: st-doc, label: "other tx data" }
     end
-    pczt ~~~ sighash{sighash}
-    bundle_plan & other1 === sighash 
-
-
-    value_balance --> value_balance_2[value_balance]
 
     subgraph tx[complete tx]
         subgraph bundle["stamped bundle"]
-            value_balance_2[value_balance]
+            value_balance
             action@{ shape: st-rect }
             binding_sig
             stamp
@@ -205,7 +206,26 @@ flowchart LR
         other2@{ shape: st-doc, label: "other tx data" }
     end
 
+    subgraph authorization["authorizing flow"]
+        subgraph custody["custody device"]
+            derive((derive))
+            rsk@{ shape: st-rect }
+            sign_action((("sign")))
+        end
+    end
+    request_action --> derive
+    derive --> descriptor@{ shape: st-rect, label: "descriptor" }
+    derive --> value_balance
+    descriptor & value_balance & memo & other1 === sighash{sighash}
+    derive --- rsk --- sign_action ==> action
+    sighash === sign_action
 
+    subgraph binding["binding flow"]
+        bsk
+        sign_binding_sig(("sign"))
+    end
+    request_action --- bsk --- sign_binding_sig ==> binding_sig
+    sighash === sign_binding_sig
 
     subgraph proving["proving flow"]
         leaf@{ shape: st-rect, label: "leaf" }
@@ -213,29 +233,9 @@ flowchart LR
             merge((merge))
         end
     end
-    action_plan -.- leaf -.- merge -.- stamp
-
-
-    sighash ~~~ binding
-    subgraph binding["binding flow"]
-        bsk 
-        sign_binding_sig(("sign"))
-    end
-    action_plan & value_balance --- bsk --- sign_binding_sig ==> binding_sig
-    sighash === sign_binding_sig
-
-    sighash ~~~ authorization
-    subgraph authorization["authorizing flow"]
-        subgraph custody["custody device"]
-            rsk@{ shape: st-rect }
-            sign_action((("sign")))
-        end
-    end
-    sighash === sign_action
-    action_plan --- rsk --- sign_action ==> action
+    request_action & derive -.- leaf -.- merge -.- stamp
 
     other1 --> other2
-    pczt ~~~ sighash
 ```
 
 Consensus recomputes the actions from the visible bundle and checks them against both the sighash (via the bundle commitment's ordered BLAKE2b digest) and the stamp (via the polynomial commitment in the PCD header).
@@ -244,7 +244,8 @@ A modified action breaks both checks.
 
 ## Detailed Sequence
 
-<!-- todo: this is significantly outdated -->
+The user sends one request to custody.
+Custody derives every value it signs and validates nothing.
 
 ```mermaid
 sequenceDiagram
@@ -257,117 +258,96 @@ activate User
 
 rect rgb(100, 149, 237, 0.1)
     loop per action
-
         note over User: random theta
         note over User: random rcv
-        note over User: cm = Poseidon(pk, psi, rcm, v)
+        note over User: request_action { note, theta, rcv, effect }
+    end
+    note over User: request { request_action[], memo }
+end
+
+create participant Custody@{ type: "boundary" }
+User ->> Custody: request, tx etc
+
+rect rgb(255, 165, 0, 0.1)
+    loop per action
+        note over Custody: cm = Poseidon(pk, psi, rcm, v)
+        note over Custody: alpha = Poseidon(theta, cm)
         alt spend
-            note over User: alpha = Poseidon(theta, cm)
-            note over User: rk = ak + [alpha]G
-            note over User: cv = Pedersen(v, rcv)
+            note over Custody: rk = ak + [alpha]G
+            note over Custody: cv = Pedersen(v, rcv)
         else output
-            note over User: alpha = Poseidon(theta, cm)
-            note over User: rk = [alpha]G
-            note over User: cv = Pedersen(-v, rcv)
+            note over Custody: rk = [alpha]G
+            note over Custody: cv = Pedersen(-v, rcv)
         end
-        note over User: action_plan { rk, note, theta, rcv, effect }
     end
+    note over Custody: value_balance = Sum v_spend - Sum v_output
+    note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
+    note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon)
+    note over Custody: compute sighash
 
-    note over User: bundle_plan { action_plan[], value_balance }
-
-
-end
-
-loop per output action
-    note over User: sig = Sign(alpha, sighash)
-end
-note over User: bsk = Sum rcv_i
-note over User: binding_sig = Sign(bsk, sighash)
-
-
-par Authorizing
-    rect rgb(255, 165, 0, 0.1)
-
-        create participant Custody@{ type: "boundary" }
-
-        User ->> Custody: bundle_plan, binding_sig, output_sigs, tx etc
-
-        loop per action
-            note over Custody: cm = Poseidon(pk, psi, rcm, v)
-            note over Custody: alpha = Poseidon(theta, cm)
-            alt spend
-                note over Custody: cv = Pedersen(v, rcv)
-                note over Custody: rk = ak + [alpha]G
-            else output
-                note over Custody: cv = Pedersen(-v, rcv)
-                note over Custody: rk = [alpha]G
-            end
-        end
-        note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
-        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon)
-        note over Custody: compute sighash
-
-        break
-            note over Custody: validate output_sigs
-            note over Custody: validate binding_sig
-        end
-
-        loop per spend action
-            note over Custody: alpha = Poseidon(theta, cm)
+    loop per action
+        alt spend
             note over Custody: rsk = ask + alpha
-            note over Custody: sig = Sign(rsk, sighash)
+        else output
+            note over Custody: rsk = alpha
         end
-        destroy Custody
-        Custody -->> User: action_sigs, tx sigs
-        note over User: apply signatures
+        note over Custody: sig = Sign(rsk, sighash)
     end
 
-and Proving 
-    rect rgb(138, 43, 226, 0.1)
-        note over User: select anchor
-
-        loop per action
-        critical anchor, action plan { rk, note, theta, rcv, effect }, pak { ak, nk }
-                alt effect == spend
-                    User --> User: rk == ak + [alpha]G
-                    note over User: mk = Poseidon(psi, nk)
-                    note over User: nf_e0 = PRF^nfTachyon(mk, e)
-                    note over User: nf_e1 = PRF^nfTachyon(mk, e+1)
-                    note over User: tg_roots = nf_e0, nf_e1
-                else effect == output
-                    User --> User: rk == [alpha]G
-                    note over User: cm = Poseidon(pk, psi, rcm, v)
-                    note over User: tg_root = cm
-                end
-                note over User: action_root = Poseidon(cv || rk)
-                note over User: action_poly = (X - action_root)
-                note over User: tg_poly = product over tg_roots of (X - tg_root)
-                note over User: pcd: leaf stamp(Commit(action_poly), Commit(tg_poly), anchor)
-            end
-        end
-
-        create participant Stamper
-        User ->> Stamper: leaf stamps, tachygrams
-
-
-        loop while stamps > 1
-            critical left(action_poly, tg_poly, anchor), right(action_poly, tg_poly, anchor)
-                note over Stamper: assert left.anchor == right.anchor
-                note over Stamper: merged_action = left.action_poly * right.action_poly
-                note over Stamper: merged_tg = left.tg_poly * right.tg_poly
-                note over Stamper: pcd: stamp(Commit(merged_action), Commit(merged_tg), anchor)
-            end
-        end
-        destroy Stamper
-        Stamper ->> User: stamp(tachygrams, anchor, proof)
-
-        break
-            note over User: reconstruct polynomials from roots, commit, verify
-        end
+    opt custody signs binding
+        note over Custody: bsk = Sum rcv_i
+        note over Custody: binding_sig = Sign(bsk, sighash)
     end
 end
 
+destroy Custody
+Custody -->> User: actions { cv, rk, sig }, binding_sig?
 
+opt user signs binding
+    note over User: compute sighash
+    note over User: bsk = Sum rcv_i
+    note over User: binding_sig = Sign(bsk, sighash)
+end
+
+rect rgb(138, 43, 226, 0.1)
+    note over User: select anchor
+
+    loop per action
+        critical anchor, action { cv, rk }, note, theta, rcv, pak { ak, nk }
+            alt spend
+                note over User: mk = Poseidon(psi, nk)
+                note over User: nf_e0 = PRF^nfTachyon(mk, e)
+                note over User: nf_e1 = PRF^nfTachyon(mk, e+1)
+                note over User: tg_roots = nf_e0, nf_e1
+            else output
+                note over User: cm = Poseidon(pk, psi, rcm, v)
+                note over User: tg_root = cm
+            end
+            note over User: action_root = Poseidon(cv || rk)
+            note over User: action_poly = (X - action_root)
+            note over User: tg_poly = product over tg_roots of (X - tg_root)
+            note over User: pcd: leaf stamp(Commit(action_poly), Commit(tg_poly), anchor)
+        end
+    end
+
+    create participant Stamper
+    User ->> Stamper: leaf stamps, tachygrams
+
+    loop while stamps > 1
+        critical left(action_poly, tg_poly, anchor), right(action_poly, tg_poly, anchor)
+            note over Stamper: assert left.anchor == right.anchor
+            note over Stamper: merged_action = left.action_poly * right.action_poly
+            note over Stamper: merged_tg = left.tg_poly * right.tg_poly
+            note over Stamper: pcd: stamp(Commit(merged_action), Commit(merged_tg), anchor)
+        end
+    end
+    destroy Stamper
+    Stamper ->> User: stamp(tachygrams, anchor, proof)
+
+    break
+        note over User: reconstruct polynomials from roots, commit, verify
+    end
+end
 
 create participant Consensus
 note over User: transaction { actions[], value_balance, binding_sig, stamp } 
@@ -386,3 +366,13 @@ break
     note over Consensus: verify stamp(action_acc, tachygram_acc, anchor)
 end
 ```
+
+## Signing outside custody
+
+Some signers return only signatures.
+A FROST group and a hardware device that never sees the notes are two examples.
+For these, the planner derives each action's `rk` from `ak` and `theta`, and `cv` from `rcv`.
+It computes the bundle commitment and the sighash, and sends the descriptors and the sighash to the signers.
+The signers return one signature for each action.
+The planner attaches them to the descriptors it derived and signs the binding signature itself.
+A signed descriptor that differs from a derived one is rejected.
