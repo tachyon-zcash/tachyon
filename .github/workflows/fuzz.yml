@@ -20,8 +20,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned toolchain
-        run: rustup toolchain install
+      - name: Install pinned nightly
+        id: nightly
+        uses: ./.github/actions/rust-nightly-setup
 
       - name: Build fuzz targets
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
         run: cargo build --locked --bins
