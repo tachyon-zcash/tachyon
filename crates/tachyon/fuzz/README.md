@@ -26,6 +26,13 @@ stamp trailer. The top-level target has both valid bundle variants so its
 state-byte dispatch reaches both bodies. Keep `-max_len` at least 32768: the
 proof-stamped seed is larger than libFuzzer's 4096-byte default.
 
+Regenerate the valid seeds after a wire-format change, from the repository
+root:
+
+```sh
+just test write_fuzz_seeds -- --ignored
+```
+
 `regression_alloc_near_cap` pins a past finding: a near-`MAX_COMPACT_SIZE`
 action count that once drove a multi-gigabyte preallocation in the reader. The
 readers now grow incrementally and fail fast at EOF, so this input must

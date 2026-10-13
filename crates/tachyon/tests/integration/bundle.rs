@@ -8,6 +8,7 @@ use alloc::{
     vec::Vec,
 };
 use core::cmp::Reverse;
+use std::{fs, path::Path};
 
 use corez::io;
 use ff::Field as _;
@@ -1467,6 +1468,36 @@ fn wire_state_byte_dispatch() {
             stamped_on_adjunct.to_string(),
             "unexpected tachyonBundleState"
         );
+    }
+}
+
+/// Regenerate the serializer-generated fuzz seeds in `fuzz/corpus`.
+#[test]
+#[ignore = "writes fuzz corpus seeds"]
+fn write_fuzz_seeds() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+
+    let stamped = build_autonome(rng, &wallet, 1000, 700);
+    let mut stamped_buf = Vec::new();
+    stamped.write(&mut stamped_buf).expect("write stamped");
+
+    let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
+    let mut adjunct_buf = Vec::new();
+    adjunct.write(&mut adjunct_buf).expect("write adjunct");
+
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/corpus");
+    for (dir, name, bytes) in [
+        ("bundle_read", "valid_proof_stamped", &stamped_buf),
+        ("bundle_read", "valid_pointer_stamped", &adjunct_buf),
+        ("stamped_bundle_read", "valid_proof_stamped", &stamped_buf),
+        (
+            "stripped_bundle_read",
+            "valid_pointer_stamped",
+            &adjunct_buf,
+        ),
+    ] {
+        fs::write(corpus.join(dir).join(name), bytes).expect("write seed");
     }
 }
 
