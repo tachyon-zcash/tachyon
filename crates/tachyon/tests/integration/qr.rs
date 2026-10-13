@@ -1474,7 +1474,7 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
 }
 
 #[test]
-fn qr_bucket_seal_rejects_an_intake_not_starting_at_an_entry_anchor() {
+fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
     let rng = &mut StdRng::seed_from_u64(0);
     let mut pool = PoolSim::genesis_with(random_block(rng, 2, 3));
     for _ in 0..3 {
@@ -1504,7 +1504,7 @@ fn qr_bucket_seal_rejects_an_intake_not_starting_at_an_entry_anchor() {
     };
     assert_eq!(
         inner.to_string(),
-        "QrBucketSeal: intake does not start at its epoch's entry anchor"
+        "QrBucketSeal: witnessed boundary digest does not match intake's first anchor"
     );
 }
 

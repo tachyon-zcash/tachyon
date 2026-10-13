@@ -181,11 +181,10 @@ A `Summary` carries `(epoch, anchor_prev, anchor_end, acc_commit)`: a run of one
 `SummaryAdvance` binds the witnessed accumulator to the header by commit-equality, checks `extended = acc * stamp` at a challenge, and advances `anchor_end` by the same `stamp.commit()`.
 The product of two root polynomials is the root polynomial of the multiset union, and consensus forbids republishing a tachygram within two epochs, so the accumulator is square-free.
 The prover chooses where a summary starts and stops.
-A consumer joins summaries whose anchors are equal.
-The joined chain contains every stamp absorption.
-This holds for any choice of split points.
+A consumer joins two summaries when the first summary's `anchor_end` equals the second summary's `anchor_prev`.
+The joined chain contains every stamp absorption of both summaries.
 
-Summaries root unbound like every seed. The QR evidence built on them closes through the bucket seal's crossing, where consensus anchor membership forces every spliced link.
+Summaries root unbound like every seed. The QR evidence built on them closes through the bucket seal's crossing, where consensus anchor membership forces every stamp absorption.
 
 ### QR epoch evidence
 
@@ -212,16 +211,16 @@ The descent's challenge absorbs the three commitments and a scalar-binding point
 Each descend requires the parent's depth below 32, so $\mathsf{bits} < 2^{32} < p$ and two paths never share a profile.
 A layer splits every intake over capacity, then merges same-profile neighbours while the product fits one polynomial; sibling buckets need not stop at the same depth.
 
-`QrBucketSeal` turns a routed intake into a `QrBucket` that runs boundary to boundary. The intake covers `(anchor_prev, anchor_end]`, the stamp folds of its epoch. The bucket covers `[anchor_start, anchor_next)`: the same folds and the entry anchor, which belongs to the epoch and absorbs no tachygrams. The seal checks that the intake's `anchor_prev` is a boundary digest into the epoch, and uses it as the bucket's `anchor_start`. It computes the boundary digest of the intake's `anchor_end` into the next epoch, and uses the result as the bucket's `anchor_next`,
+`QrBucketSeal` turns a routed intake into a `QrBucket` that runs boundary to boundary. The intake covers stamp absorptions over `(anchor_prev, anchor_end]` within its epoch. The bucket covers `[anchor_start, anchor_next)`. The range includes `anchor_start`. `anchor_start` absorbs no tachygrams. The seal checks that the intake's `anchor_prev` is a boundary digest into the epoch, and uses it as the bucket's `anchor_start`. It computes the boundary digest of the intake's `anchor_end` into the next epoch, and uses the result as the bucket's `anchor_next`,
 
 $$\mathsf{anchor\_start} = H_\mathsf{ep}(\mathsf{anchor\_final\_prev}, \mathsf{epoch}), \qquad \mathsf{anchor\_next} = H_\mathsf{ep}(\mathsf{anchor\_end}, \mathsf{epoch} + 1).$$
 
 Epoch zero's entry anchor is the first rule at $\mathsf{anchor\_final\_prev} = 0$.
 It checks nothing about the discriminant. That is the builder's own $R_0$; every step threads it unchanged and every merge requires it equal.
-The crossing makes the bucket cover the whole epoch.
+The crossing makes a bucket used in a consensus-accepted spend cover the whole epoch.
 In the accepted chain, the only boundary digest into $\mathsf{epoch} + 1$ is the one computed from $\mathsf{final}(\mathsf{epoch})$.
-If the intake stops before the final anchor, the seal computes an anchor that was never published.
-By preimage resistance, no fold after it reaches the published chain.
+If the intake stops before the final anchor, the seal computes an anchor outside the accepted chain.
+A later fold can reach the accepted chain only by producing a Poseidon collision.
 Its bucket cannot support a spend that consensus accepts.
 A final anchor could not carry this guarantee: consensus acknowledges every end-of-block anchor, so a bucket ending on one could stop short. That is why both bucket bounds are entry anchors, and why the end bound is excluded.
 The seal admits every bucket; `EvidenceTreeOpen` only replays one a tree already holds.
