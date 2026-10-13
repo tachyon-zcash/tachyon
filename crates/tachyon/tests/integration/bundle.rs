@@ -119,12 +119,13 @@ fn stripped_bundle_retains_signatures() {
 fn plan_commitment_matches_bundle_commitment() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let ask = wallet.sk.derive_auth_private();
-    let output = request_action(rng, wallet.random_note(200));
-    let request = request(vec![], vec![output]);
+    let note = wallet.random_note(200);
+    let pool = PoolSim::genesis(rng);
+    let request = request(vec![], vec![request_action(rng, note)]);
 
     let planned = request.plan(&wallet.pak.ak).expect("balance in range");
-    let bundle = sign_request(rng, &ask, &request);
+    let (unproven, stamp) = output_bundle_and_stamp(rng, &wallet, &request, pool.anchor());
+    let bundle = unproven.stamp(stamp);
 
     assert_eq!(planned.commitment(), bundle.commitment());
 }
@@ -242,7 +243,7 @@ fn output_signed_by_unrelated_key_fails_verification() {
 /// An external signer signs the planned spend with another wallet's `ask`.
 /// `apply_signatures` accepts the signature, and verification rejects it.
 #[test]
-fn spend_signed_by_wrong_ask_fails_verification() {
+fn actions_signed_by_wrong_rsk_fail_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let wrong_ask = WalletSim::random(rng).sk.derive_auth_private();

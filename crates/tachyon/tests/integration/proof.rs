@@ -169,9 +169,9 @@ fn stamp_lift_within_epoch() {
     let stamp_anchor = pool.block(BlockHeight(1)).anchor();
 
     let note = user.random_note(200);
-    let (stamp, desc) = build_output_stamp(rng, stamp_anchor, note);
+    let (stamp, plan) = build_output_stamp(rng, stamp_anchor, note);
 
-    let action_commit = ActionSetPoly::from_iter([desc.digest().expect("valid plan")]).commit();
+    let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
     let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
 
     pool.advance(EPOCH_SIZE - 2, |_| random_block(rng, 1, 4));
@@ -1948,8 +1948,8 @@ fn output_action_is_bound_to_its_note() {
     let diverted = WalletSim::random(rng).random_note(200);
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
-    let desc = output_descriptor(&custody::RequestAction { note, theta, rcv });
-    let planned = ActionSetPoly::from_iter([desc.digest().expect("valid plan")]).commit();
+    let plan = output_descriptor(&custody::RequestAction { note, theta, rcv });
+    let planned = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
 
     assert_eq!(output_action_commit(rng, note, theta, rcv), planned);
     assert_ne!(output_action_commit(rng, diverted, theta, rcv), planned);
@@ -2000,8 +2000,8 @@ fn spend_action_is_bound_to_its_note() {
 
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
-    let desc = spend_descriptor(&user.pak.ak, &custody::RequestAction { note, theta, rcv });
-    let planned = ActionSetPoly::from_iter([desc.digest().expect("valid plan")]).commit();
+    let plan = spend_descriptor(&user.pak.ak, &custody::RequestAction { note, theta, rcv });
+    let planned = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
 
     let planned_spendable = user.fresh_spend(rng, &pool, height, &note);
     assert_eq!(
