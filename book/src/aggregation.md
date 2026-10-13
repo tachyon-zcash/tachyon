@@ -143,7 +143,7 @@ To make that recognition cheap, the stamp trailer carries `hStampActionsTachyon`
 
 The indicator is authorization data, not effecting data: it rides on the strippable stamp trailer, contributes to `auth_digest`, and is absent from adjuncts. It is not a soundness mechanism. The proof binds the action set regardless; a wrong indicator only harms its author, since mempool actors decline to handle a transaction whose indicator they cannot satisfy, and a subset, superset, or partial overlap simply fails to validate.
 
-Coverage verification uses it as the first of two fast-fail gates. It recomputes the digest over the candidate collection's actions and, on disagreement with the carried `hStampActionsTachyon`, fails before attempting the expensive proof verification. It then checks the tachygram arity, `nTachygrams == 2 * covered actions`, which the fixed per-action ratio makes an exact test: a stamp short of the arity has reused a tachygram across actions, since the published tachygrams are a set.
+Coverage verification uses it as the first of two fast-fail gates. It recomputes the digest over the candidate collection's actions and, on disagreement with the carried `hStampActionsTachyon`, fails before attempting the expensive proof verification. It then checks the covered bundles' tachygrams. Each bundle's body lists two per action, so the union is short of two per covered action exactly when two bundles list the same tachygram, and validation rejects that overlap before recomputing `cTachygrams` from the union.
 
 <!-- TODO
 p2p aggregation gossip is a secondary objective and aggregation has some complex constraints.

@@ -4,7 +4,7 @@ A Tachyon bundle's authorization form changes as it moves through aggregation: s
 
 Tachyon routes the mutable parts through `auth_digest`, leaving `txid` stable:
 
-- `txid` commits to [effecting data](./authorization.md#bundle-commitment) only: the actions, the value balance, and the memo. Stripping, merging, and re-stamping leave `txid` unchanged.
+- `txid` commits to [effecting data](./authorization.md#bundle-commitment) only: the actions, the value balance, the memo, and the bundle's own tachygrams. Stripping, merging, and re-stamping leave `txid` unchanged.
 - `auth_digest` commits to sigs plus the stamp trailer. Each physical auth form yields a distinct `auth_digest` and therefore a distinct `wtxid`.
 
 ## `auth_digest` contribution
@@ -13,7 +13,7 @@ Zcash's transaction-level `auth_digest` commits to authorization data — the ha
 
 Tachyon's bundle contributes on both sides:
 
-- **Effecting data → `txid`.** Tachyon's contribution is the bundle commitment over $\mathsf{hActionsTachyon} \,\|\, \mathsf{valueBalanceTachyon} \,\|\, \mathsf{hMemoTachyon}$.
+- **Effecting data → `txid`.** Tachyon's contribution is the bundle commitment over $\mathsf{hActionsTachyon} \,\|\, \mathsf{valueBalanceTachyon} \,\|\, \mathsf{hMemoTachyon} \,\|\, \mathsf{hTachygramsTachyon}$.
 - **Authorization data → `auth_digest`.** Tachyon's contribution hashes the bundle state byte, the action signatures, the binding signature, and a fixed-width summary of whichever stamp the bundle carries:
 
 $$
@@ -39,11 +39,10 @@ $$
 \mathsf{hStampDataTachyon} =
 \text{BLAKE2b-256}_\text{Tachyon-Stamp}\bigl(
     \mathsf{hStampProofTachyon} \,\|\, \mathsf{anchorTachyon} \,\|\, \mathsf{cTachygrams}
-    \,\|\, \mathsf{vTachygrams}
 \bigr)
 $$
 
-with $\mathsf{hStampProofTachyon} = \text{BLAKE2b-256}_\text{Tachyon-Proof}(\mathsf{proofTachyon})$. Hashing the proof separately keeps the tachygram vector as the only variable-length input.
+with $\mathsf{hStampProofTachyon} = \text{BLAKE2b-256}_\text{Tachyon-Proof}(\mathsf{proofTachyon})$. The tachygrams themselves are in each bundle's body, so the effecting side covers them.
 
 A stripped bundle's summary is the 64-byte `wtxid` of the covering aggregate, used directly. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
 

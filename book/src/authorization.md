@@ -7,7 +7,7 @@ This chapter covers each layer, then shows the complete flow from action creatio
 
 Each tachyaction requires a fresh randomized key pair.
 
-The planner begins authorization by selecting arbitrary `theta` and a relevant note for each action. The custody device is provided each note and `theta`, and computes from them rather than checking planned values: it derives `cm` from each note, `alpha` from `theta` and `cm`, and `rk` from `alpha`.
+The planner begins authorization by selecting arbitrary `theta` and a relevant note for each action. For each spend it also fixes the spend epoch $e$ and derives the spend's nullifier pair $(\mathsf{nf}_e, \mathsf{nf}_{e+1})$ from the note's master key. The custody device is provided each note and `theta`, and computes from them rather than checking planned values: it derives `cm` from each note, `alpha` from `theta` and `cm`, and `rk` from `alpha`.
 
 ```mermaid
 flowchart TB
@@ -23,7 +23,7 @@ flowchart TB
     spend_alpha -->|"rk = ak + [alpha]G"| plan
     output_alpha -->|"rk = [alpha]G"| plan
 
-    plan["action plan { rk, note, theta, rcv, effect }"]
+    plan["action plan { rk, note, tachygrams, theta, rcv, effect }"]
     plan ===|"bundle digest"| sighash((sighash))
 
     spend_alpha -->|"rsk = ask + alpha"| sign
@@ -86,12 +86,18 @@ $$
 $$
 
 $$
+\mathsf{hTachygramsTachyon} =
+    \text{BLAKE2b-256}_\text{Tachyon-TgList}( \mathsf{vTachygramsTachyon} )
+$$
+
+$$
 \text{BLAKE2b-256}_\text{ZTxIdTachyonHash}\bigl(
     \mathsf{hActionsTachyon} \| \mathsf{valueBalanceTachyon} \| \mathsf{hMemoTachyon}
+    \| \mathsf{hTachygramsTachyon}
 \bigr)
 $$
 
-The action digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire order, so the commitment fixes the actions and their order. Hashing the memo to a fixed width is what lets the outer digest absorb a variable-length payload without a length prefix.
+The action digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire order, so the commitment fixes the actions and their order. Hashing the memo to a fixed width is what lets the outer digest absorb a variable-length payload without a length prefix. The tachygram digest hashes the bundle's own tachygrams in ascending order, two per action.
 
 The stamp proof binds the same action set by a different construction: a Pedersen commitment to the polynomial whose roots are the Poseidon action digests,
 
@@ -110,6 +116,10 @@ The tachyon crate contributes its bundle commitment; a transaction-level crate c
 
 This binds every signature to the complete set of effecting data across all pools.
 The stamp steps derive `alpha` in-circuit from the witnessed `theta` and the `cm` their left header certifies, so `rk` is itself a commitment to `cm`, and the signature transitively binds each action to its tachygram without the tachygram appearing in the action.
+
+The sighash covers the bundle's own tachygrams and no other bundle's.
+A spend's tachygrams are its nullifiers at the spend epoch $e$ and at $e+1$, so the plan fixes $e$ before custody signs.
+If the chain enters a later epoch before the proof lands, the user re-signs.
 
 Tachyon also contributes to the transaction-level `auth_digest` that backs `wtxid`. See [Transaction Identifiers](./transaction-identifiers.md) for the formula and how aggregation changes the authorization form.
 
@@ -166,7 +176,7 @@ A bundle plan feeds three independent paths that converge in the final bundle.
 Each path consumes the same action plans but produces a different component of the bundle:
 
 - **Authorizing**: custody derives `rsk` per spend action and signs the transaction sighash; output actions are signed by the user device.
-- **Binding**: the bundle commitment (from ordered action digests and `value_balance`) feeds into the transaction sighash, which the binding key signs.
+- **Binding**: the bundle commitment (from ordered action digests, `value_balance`, the memo and the bundle's tachygrams) feeds into the transaction sighash, which the binding key signs.
 - **Proving**: each action plan yields a leaf stamp; leaves merge into a single Ragu PCD stamp.
 
 ```mermaid
@@ -265,12 +275,14 @@ rect rgb(100, 149, 237, 0.1)
             note over User: alpha = Poseidon(theta, cm)
             note over User: rk = ak + [alpha]G
             note over User: cv = Pedersen(v, rcv)
+            note over User: tachygrams = nf_e, nf_e+1
         else output
             note over User: alpha = Poseidon(theta, cm)
             note over User: rk = [alpha]G
             note over User: cv = Pedersen(-v, rcv)
+            note over User: tachygrams = cm, pad
         end
-        note over User: action_plan { rk, note, theta, rcv, effect }
+        note over User: action_plan { rk, note, tachygrams, theta, rcv, effect }
     end
 
     note over User: bundle_plan { action_plan[], value_balance }
@@ -304,7 +316,8 @@ par Authorizing
             end
         end
         note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
-        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon)
+        note over Custody: hTachygramsTachyon = Blake2b(sorted tachygrams)
+        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon || hTachygramsTachyon)
         note over Custody: compute sighash
 
         break
@@ -327,7 +340,7 @@ and Proving
         note over User: select anchor
 
         loop per action
-        critical anchor, action plan { rk, note, theta, rcv, effect }, pak { ak, nk }
+        critical anchor, action plan { rk, note, tachygrams, theta, rcv, effect }, pak { ak, nk }
                 alt effect == spend
                     User --> User: rk == ak + [alpha]G
                     note over User: mk = Poseidon(psi, nk)
@@ -359,7 +372,7 @@ and Proving
             end
         end
         destroy Stamper
-        Stamper ->> User: stamp(tachygrams, anchor, proof)
+        Stamper ->> User: stamp(cTachygrams, anchor, proof)
 
         break
             note over User: reconstruct polynomials from roots, commit, verify
@@ -370,19 +383,21 @@ end
 
 
 create participant Consensus
-note over User: transaction { actions[], value_balance, binding_sig, stamp } 
+note over User: transaction { actions[], value_balance, tachygrams, binding_sig, stamp } 
 deactivate User
 destroy User
 User ->> Consensus: transaction
 break
     note over Consensus: action_digest_i = Poseidon(cv_i || rk_i)
     note over Consensus: hActionsTachyon = Blake2b(cv_i || rk_i)
-    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon)
+    note over Consensus: hTachygramsTachyon = Blake2b(tachygrams)
+    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon || hTachygramsTachyon)
     note over Consensus: compute sighash
     note over Consensus: check action sigs against sighash
     note over Consensus: check binding sig against sighash
     note over Consensus: action_acc = Commit(poly from action roots)
-    note over Consensus: tachygram_acc = Commit(poly from tachygram roots)
+    note over Consensus: tachygram_acc = Commit(poly from covered bundles' tachygrams)
+    note over Consensus: check tachygram_acc == cTachygrams
     note over Consensus: verify stamp(action_acc, tachygram_acc, anchor)
 end
 ```

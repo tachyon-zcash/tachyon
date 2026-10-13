@@ -42,7 +42,9 @@ It contains:
 
 - `anchor` - a chain [anchor](./anchor.md)
 - `proof` - the recursive proof (which may be aggregated)
-- `tachygrams` - nullifiers and commitments for each action
+- `cTachygrams` - a commitment to the tachygrams of every bundle the proof covers
+
+The tachygrams themselves are in each covered bundle's body.
 
 The proof establishes:
 
@@ -68,8 +70,9 @@ A Tachyon bundle collects tachyactions with authorization data:
 
 - `tachyactions` - the tachyactions
 - `value_balance` - integer net pool effect
+- `tachygrams` - the nullifiers and commitments the tachyactions publish, two per action
 - `binding_sig` - signature over the transaction sighash (same digest as action sigs)
-- `tachystamp` - anchor, proof, tachygrams (may be aggregated)
+- `tachystamp` - anchor, proof, tachygram commitment (may be aggregated)
 
 ```mermaid
 ---
@@ -113,15 +116,16 @@ subgraph shielded_data["tachyon::ShieldedData"]
         end
     end
 
+    tachygram_vec@{shape: procs, label: "tachygram"}
+
     subgraph tachystamp
         anchor@{shape: odd}
         proof@{shape: notch-rect}
-        tachygram_vec@{shape: procs, label: "tachygram"}
 
         anchor ---> proof
-        tachygram_vec ---> proof
     end
 
+    tachygram_vec ---> proof
     rk1 & rk2 & rk3 -.- tachygram_vec
     cv1 & cv2 & cv3 ---> proof
 
@@ -132,6 +136,7 @@ subgraph shielded_data["tachyon::ShieldedData"]
 
     v_balance ===> sig_binding
     tachyaction_vec ===> sig_binding
+    tachygram_vec ===> sig_binding
 end
 ```
 
@@ -148,7 +153,7 @@ The first byte `tachyonBundleState` selects one of three bundle states:
 | value | state | bundle contents |
 | --- | --- | --- |
 | `0b0000_0000` | non-tachyon | no bundle |
-| `0b0000_0001` | stamped | bundle with `hStampActionsTachyon`, anchor, tachygrams, proof |
+| `0b0000_0001` | stamped | bundle with `hStampActionsTachyon`, anchor, `cTachygrams`, proof |
 | `0b0000_0010` | stripped | bundle with the covering aggregate's `wtxid` |
 
 ### Bundle body
@@ -164,10 +169,15 @@ When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundl
 | `bindingSigTachyon` | 64 bytes | binding signature over the tx sighash |
 | `nMemoTachyon` | compactsize | memo length, `0` when absent |
 | `vMemoTachyon` | nMemoTachyon bytes | opaque recipient-directed payload |
+| `vTachygramsTachyon` | 64 * nActionsTachyon | this bundle's tachygrams, sorted and unique |
 
 The memo is effecting data, so the transaction sighash covers it and `auth_digest` does not. A relayer rewrites `auth_digest` while aggregating, so a memo held there could be stripped while the block still committed to the same transaction.
 
 `nMemoTachyon` is public, and `0` reveals that no payload is present. The field is variable-length because Tachyon has no per-action ciphertext to hide a memo inside: an action is `(cv, rk)`, 64 bytes. The payload is also bimodal, carrying key-exchange ciphertexts on first contact and ordinary memo text otherwise, at sizes differing by more than an order of magnitude. A fixed field would have to be sized for the first-contact case and charged on every transaction.
+
+Every action publishes exactly two tachygrams. A spend publishes its present and next nullifier, and an output publishes its note commitment and a padding tachygram. `vTachygramsTachyon` therefore holds $2 \cdot \mathtt{nActionsTachyon}$ 32-byte tachygrams and has no count prefix. They are in ascending byte order with no repeats, and a reader rejects any other order. Sorting hides which tachygrams share an action, and uniform arity keeps the two action kinds indistinguishable.
+
+The tachygrams are effecting data like the memo. The transaction sighash covers them, so they stay with the bundle when it is stripped, and a relayer cannot move one to another bundle without breaking both bundles' signatures.
 
 ### Stamp trailer
 
@@ -177,20 +187,10 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 | --- | --- | --- |
 | `hStampActionsTachyon` | 32 bytes | BLAKE2b-256 digest of the covered action descriptors |
 | `anchorTachyon` | 32 bytes | pool state reference |
-| `cTachygrams` | 32 bytes | commitment to the tachygrams below |
-| `nTachygrams` | compactsize | number of tachygrams |
-| `vTachygrams` | 32 * nTachygrams | tachygrams for this proof |
+| `cTachygrams` | 32 bytes | commitment to the covered bundles' tachygrams |
 | `proofTachyon` | PROOF_SIZE blob | serialized proof of fixed size |
 
-`cTachygrams` is carried rather than derived, so full validation recomputes it from `vTachygrams` and rejects a mismatch. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
-
-Every action contributes exactly two tachygrams, so a well-formed stamp has
-
-$$
-\mathtt{nTachygrams} = 2 \cdot \mathtt{nActionsTachyon}
-$$
-
-for its own actions, and the sum over covered actions once stamps are merged. A spend publishes its present and next nullifier; an output publishes its note commitment and a padding tachygram. Uniform arity is what keeps the two action kinds indistinguishable in the published set.
+`cTachygrams` commits to the union of `vTachygramsTachyon` over the stamped bundle and every adjunct it covers. It is carried rather than derived, so full validation recomputes it from those lists and rejects a mismatch. Validation also rejects a tachygram listed by two covered bundles and an empty union. Anchor advancement then absorbs the carried point instead of rebuilding it, which is what lets a validator extend the chain without touching the tachygrams again.
 
 `hStampActionsTachyon` is an assistive indicator: a BLAKE2b-256 digest, under the `Tachyon-Actions` personalization, over the sorted `cv || rk` descriptors of every action the stamp covers. It is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. The proof binds the same actions by a different construction, a Pedersen commitment to their Poseidon digests, so the trailer field is a second digest of one action set rather than a copy of the proof's. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
 
