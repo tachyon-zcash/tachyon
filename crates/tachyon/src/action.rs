@@ -1,17 +1,15 @@
 //! Tachyon Action descriptions.
 
 use alloc::vec::Vec;
-use core::{cmp, cmp::Ord, marker::PhantomData};
+use core::{cmp, cmp::Ord};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 
 use crate::{
-    entropy::{ActionEntropy, ActionRandomizer},
-    keys::{private, public},
-    note::Note,
-    primitives::{ActionDigest, ActionDigestError, Effect, effect},
+    keys::public,
+    primitives::{ActionDigest, ActionDigestError},
     reddsa, serialization, value,
 };
 
@@ -83,107 +81,6 @@ impl Ord for Descriptor {
                 .to_bytes()
                 .cmp(&EpAffine::from(other.rk).to_bytes())
         })
-    }
-}
-
-/// A planned Tachyon action, not yet authorized.
-#[derive(Clone, Copy, Debug)]
-pub struct Plan<E: Effect> {
-    /// Randomized action verification key.
-    pub rk: public::ActionVerificationKey,
-    /// The note being spent or created.
-    pub note: Note,
-    /// Per-action entropy for alpha derivation.
-    pub theta: ActionEntropy,
-    /// Value commitment trapdoor.
-    pub rcv: value::Trapdoor,
-    /// Effect marker (zero-sized).
-    pub _effect: PhantomData<E>,
-}
-
-impl<E: Effect> PartialEq for Plan<E> {
-    fn eq(&self, other: &Self) -> bool {
-        self.descriptor() == other.descriptor()
-    }
-}
-
-impl<E: Effect> PartialOrd for Plan<E> {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        self.descriptor().partial_cmp(&other.descriptor())
-    }
-}
-
-impl Plan<effect::Spend> {
-    /// Assemble a spend action plan.
-    ///
-    /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$
-    #[must_use]
-    pub fn spend(
-        note: Note,
-        theta: ActionEntropy,
-        rcv: value::Trapdoor,
-        derive_rk: impl FnOnce(ActionRandomizer<effect::Spend>) -> public::ActionVerificationKey,
-    ) -> Self {
-        let cm = note.commitment();
-        let alpha = theta.randomizer::<effect::Spend>(cm);
-
-        Self {
-            rk: derive_rk(alpha),
-            note,
-            theta,
-            rcv,
-            _effect: PhantomData,
-        }
-    }
-}
-
-impl Plan<effect::Output> {
-    /// Assemble an output action plan.
-    ///
-    /// $\mathsf{rk} = [\alpha]\mathcal{G}$.
-    #[must_use]
-    pub fn output(note: Note, theta: ActionEntropy, rcv: value::Trapdoor) -> Self {
-        let cm = note.commitment();
-        let alpha = theta.randomizer::<effect::Output>(cm);
-        let rsk = private::ActionSigningKey::new(&alpha);
-
-        Self {
-            rk: rsk.derive_action_public(),
-            note,
-            theta,
-            rcv,
-            _effect: PhantomData,
-        }
-    }
-}
-
-impl<E: Effect> Plan<E> {
-    /// Derive the value commitment of this action plan.
-    ///
-    /// $$
-    ///   \mathsf{cv} = [\pm v]\mathcal{V} + [\mathsf{rcv}]\mathcal{R}
-    /// $$
-    #[must_use]
-    pub fn cv(&self) -> value::Commitment {
-        E::commit_value(self.rcv, self.note.value)
-    }
-
-    /// Derive the action digest.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
-    pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv(), self.rk)
-    }
-
-    /// Obtain a descriptor for this planned action.
-    #[must_use]
-    pub fn descriptor(&self) -> Descriptor {
-        Descriptor {
-            cv: self.cv(),
-            rk: self.rk,
-        }
     }
 }
 

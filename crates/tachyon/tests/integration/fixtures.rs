@@ -13,18 +13,18 @@ use ragu_pasta::PoseidonFp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
+    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, Effect as _, EpochIndex, EvidenceTreeRoot,
     QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
-    bundle::{self, Bundle},
+    bundle::Bundle,
     constants::EVIDENCE_TREE_ARITY,
-    effect,
+    custody, effect,
     entropy::ActionEntropy,
-    keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
+    keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, SpendValidatingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     stamp::{
-        self, PointerStamp, ProofStamp, StampState,
+        self, PointerStamp, ProofStamp, StampState, Unproven,
         proof::{
             PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
             stamp::{Stamp, StampMerge},
@@ -91,13 +91,12 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
     let wallet = WalletSim::random(rng);
     let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(400);
-    let (_, _, plan) = build_output_plan(rng, note);
-    let bundle_plan = bundle::Plan::new(alloc::vec![], alloc::vec![plan]);
-    let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
-    let unproven = bundle_plan
-        .sign(rng, &sighash, &ask)
-        .expect("sign foreign output");
-    unproven.actions[0]
+    let request = custody::Request {
+        spends: vec![],
+        outputs: vec![request_action(rng, note)],
+        memo: vec![],
+    };
+    sign_request(rng, &ask, &request).actions[0]
 }
 
 pub fn spend_witness<RNG: CryptoRng>(rng: &mut RNG) -> (value::Trapdoor, ActionEntropy) {
@@ -106,28 +105,59 @@ pub fn spend_witness<RNG: CryptoRng>(rng: &mut RNG) -> (value::Trapdoor, ActionE
     (rcv, theta)
 }
 
-pub fn build_output_plan<RNG: CryptoRng>(
+/// One request action for `note`, with fresh `theta` and `rcv`.
+pub fn request_action<RNG: CryptoRng>(rng: &mut RNG, note: Note) -> custody::RequestAction {
+    let (rcv, theta) = spend_witness(rng);
+    custody::RequestAction { note, theta, rcv }
+}
+
+/// Authorize `request` under `ask`, sign the binding in custody, and
+/// assemble the unproven bundle.
+pub fn sign_request<RNG: CryptoRng>(
     rng: &mut RNG,
-    note: Note,
-) -> (value::Trapdoor, ActionEntropy, action::Plan<effect::Output>) {
-    let rcv = value::Trapdoor::random(rng);
-    let theta = ActionEntropy::random(rng);
-    let plan = action::Plan::output(note, theta, rcv);
-    (rcv, theta, plan)
+    ask: &private::SpendAuthorizingKey,
+    request: &custody::Request,
+) -> Bundle<Unproven> {
+    let authorized = request
+        .authorize(rng, ask, |commitment| mock_sighash(*commitment))
+        .expect("authorize request");
+    let binding_sig = request.sign_binding(rng, authorized.sighash());
+    authorized.bundle(binding_sig)
+}
+
+/// The descriptor of `act` as a spend under `ak`, derived without custody.
+pub fn spend_descriptor(
+    ak: &SpendValidatingKey,
+    act: &custody::RequestAction,
+) -> action::Descriptor {
+    action::Descriptor {
+        cv: effect::Spend::commit_value(act.rcv, act.note.value),
+        rk: ak.derive_action_public(&act.theta.randomizer(act.note.commitment())),
+    }
+}
+
+/// The descriptor of `act` as an output, derived without custody.
+pub fn output_descriptor(act: &custody::RequestAction) -> action::Descriptor {
+    action::Descriptor {
+        cv: effect::Output::commit_value(act.rcv, act.note.value),
+        rk: private::ActionSigningKey::new(&act.theta.randomizer(act.note.commitment()))
+            .derive_action_public(),
+    }
 }
 
 pub fn build_output_stamp<RNG: CryptoRng>(
     rng: &mut RNG,
     anchor: Anchor,
     note: Note,
-) -> (ProofStamp, action::Plan<effect::Output>) {
-    let (rcv, theta, plan) = build_output_plan(rng, note);
+) -> (ProofStamp, action::Descriptor) {
+    let act = request_action(rng, note);
+    let descriptor = output_descriptor(&act);
     // An output-only plan never reads the proof authorizing key.
     let pak = WalletSim::new(shared_sk()).pak;
-    let stamp = stamp::Plan::new(vec![], vec![(plan.descriptor(), theta, note, rcv)], anchor)
+    let stamp = stamp::Plan::new(vec![], vec![(descriptor, act.theta, note, act.rcv)], anchor)
         .prove(rng, &pak, vec![])
         .expect("prove an output stamp");
-    (stamp, plan)
+    (stamp, descriptor)
 }
 
 pub fn build_autonome<RNG: CryptoRng>(
@@ -1554,35 +1584,30 @@ impl WalletSim {
     ) -> Bundle<ProofStamp> {
         let ask = self.sk.derive_auth_private();
 
-        let mut spend_plans = Vec::with_capacity(spends.len());
+        let mut spend_actions = Vec::with_capacity(spends.len());
         let mut spend_pcds = Vec::with_capacity(spends.len());
         for (note, spendable_pcd) in spends {
-            let rcv = value::Trapdoor::random(rng);
-            let theta = ActionEntropy::random(rng);
-            let plan = action::Plan::spend(note, theta, rcv, |alpha| {
-                self.pak.ak.derive_action_public(&alpha)
-            });
-            spend_plans.push(plan);
+            spend_actions.push(request_action(rng, note));
             spend_pcds.push((self.secret_pcd(rng, note), spendable_pcd, vec![]));
         }
 
-        let output_plans: Vec<action::Plan<effect::Output>> = output_notes
+        let output_actions = output_notes
             .into_iter()
-            .map(|note| {
-                let rcv = value::Trapdoor::random(rng);
-                let theta = ActionEntropy::random(rng);
-                action::Plan::output(note, theta, rcv)
-            })
+            .map(|note| request_action(rng, note))
             .collect();
 
-        let bundle_plan = bundle::Plan::new(spend_plans, output_plans);
-        let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
-        let unproven = bundle_plan
-            .sign(rng, &sighash, &ask)
-            .expect("sign autonome");
+        let request = custody::Request {
+            spends: spend_actions,
+            outputs: output_actions,
+            memo: vec![],
+        };
+        let authorized = request
+            .authorize(rng, &ask, |commitment| mock_sighash(*commitment))
+            .expect("authorize autonome");
+        let unproven = authorized.bundle(request.sign_binding(rng, authorized.sighash()));
 
-        let stamp_plan = bundle_plan.stamp_plan(anchor);
-        let stamp = stamp_plan
+        let stamp = authorized
+            .stamp_plan(&request, anchor)
             .prove(rng, &self.pak, spend_pcds)
             .expect("prove autonome stamp");
 

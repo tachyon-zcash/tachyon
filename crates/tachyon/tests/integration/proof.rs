@@ -14,8 +14,9 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
     ActionSetCommit, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly,
-    Note, Tachygram, TachygramSetPoly, action,
+    Note, Tachygram, TachygramSetPoly,
     constants::{EPOCH_MAX, EPOCH_SIZE},
+    custody,
     digest::poseidon,
     entropy::ActionEntropy,
     note,
@@ -25,9 +26,10 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, SyncSim, WalletSim, build_anchor_span_pcd, build_output_plan, build_output_stamp,
-    build_unspent_pcd_over_epochs, qr_bucket_segment, random_block, random_block_with,
-    seal_qr_intake, seed_qr_empty_intake, shared_sk, spend_witness,
+    PoolSim, SyncSim, WalletSim, build_anchor_span_pcd, build_output_stamp,
+    build_unspent_pcd_over_epochs, output_descriptor, qr_bucket_segment, random_block,
+    random_block_with, seal_qr_intake, seed_qr_empty_intake, shared_sk, spend_descriptor,
+    spend_witness,
 };
 
 fn mine_cm_block(rng: &mut StdRng, pool: &mut PoolSim, cm: note::Commitment) -> BlockHeight {
@@ -167,9 +169,9 @@ fn stamp_lift_within_epoch() {
     let stamp_anchor = pool.block(BlockHeight(1)).anchor();
 
     let note = user.random_note(200);
-    let (stamp, plan) = build_output_stamp(rng, stamp_anchor, note);
+    let (stamp, desc) = build_output_stamp(rng, stamp_anchor, note);
 
-    let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
+    let action_commit = ActionSetPoly::from_iter([desc.digest().expect("valid plan")]).commit();
     let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
 
     pool.advance(EPOCH_SIZE - 2, |_| random_block(rng, 1, 4));
@@ -1820,7 +1822,7 @@ fn output_bind_publishes_the_note_pair() {
 fn output_stamp_publishes_the_note_pair() {
     let rng = &mut StdRng::seed_from_u64(0);
     let note = WalletSim::new(shared_sk()).random_note(200);
-    let (rcv, theta, _plan) = build_output_plan(rng, note);
+    let (rcv, theta) = spend_witness(rng);
     let anchor = PoolSim::genesis(rng).anchor();
 
     let (bind_pcd, ()) = PROOF_SYSTEM
@@ -1853,7 +1855,7 @@ fn output_stamp_rejects_a_mismatched_stamp_accumulator() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(200);
 
-    let (rcv, theta, _plan) = build_output_plan(rng, note);
+    let (rcv, theta) = spend_witness(rng);
     let (bind_pcd, ()) = PROOF_SYSTEM
         .seed(rng, output::OutputBind, (note, rcv))
         .expect("OutputBind honest");
@@ -1890,7 +1892,7 @@ fn output_stamp_rejects_a_foreign_action_set() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(200);
 
-    let (rcv, theta, _plan) = build_output_plan(rng, note);
+    let (rcv, theta) = spend_witness(rng);
     let (bind_pcd, ()) = PROOF_SYSTEM
         .seed(rng, output::OutputBind, (note, rcv))
         .expect("OutputBind honest");
@@ -1946,8 +1948,8 @@ fn output_action_is_bound_to_its_note() {
     let diverted = WalletSim::random(rng).random_note(200);
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
-    let plan = action::Plan::output(note, theta, rcv);
-    let planned = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
+    let desc = output_descriptor(&custody::RequestAction { note, theta, rcv });
+    let planned = ActionSetPoly::from_iter([desc.digest().expect("valid plan")]).commit();
 
     assert_eq!(output_action_commit(rng, note, theta, rcv), planned);
     assert_ne!(output_action_commit(rng, diverted, theta, rcv), planned);
@@ -1998,10 +2000,8 @@ fn spend_action_is_bound_to_its_note() {
 
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
-    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
-        user.pak.ak.derive_action_public(&alpha)
-    });
-    let planned = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
+    let desc = spend_descriptor(&user.pak.ak, &custody::RequestAction { note, theta, rcv });
+    let planned = ActionSetPoly::from_iter([desc.digest().expect("valid plan")]).commit();
 
     let planned_spendable = user.fresh_spend(rng, &pool, height, &note);
     assert_eq!(

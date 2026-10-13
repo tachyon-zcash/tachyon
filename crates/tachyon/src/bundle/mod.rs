@@ -81,11 +81,8 @@
 //! 64-byte value: the pointer stamp's `wtxid` directly, or
 //! `hStampActionsTachyon || stamp_data_digest` for a proof stamp.
 
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    vec::Vec,
-};
-use core::{cmp::Ordering, ops::Neg as _};
+use alloc::{collections::BTreeSet, vec::Vec};
+use core::cmp::Ordering;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
@@ -95,12 +92,11 @@ use crate::{
     ActionDigest, ActionDigestError, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     digest::blake2b,
-    keys::{private, public},
-    primitives::{Anchor, AnchorSetPoly, effect},
+    keys::public,
+    primitives::AnchorSetPoly,
     reddsa, serialization,
     stamp::{
-        self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven,
-        proof::pool,
+        AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven, proof::pool,
     },
     value,
 };
@@ -313,218 +309,6 @@ pub enum VerificationError {
     /// The proof did not verify.
     #[display("proof did not verify")]
     Disproved,
-}
-
-/// Errors that can occur while signing a bundle plan.
-#[derive(Clone, Copy, Debug, Display, Error, PartialEq, TotalEq)]
-#[non_exhaustive]
-pub enum PlanError {
-    /// The signatures do not match the planned actions.
-    #[display("planned actions do not match signed actions")]
-    ActionSigMismatch,
-    /// The value balance overflows the representable range.
-    #[display("value balance overflow")]
-    BalanceOverflow,
-}
-
-/// A complete bundle plan, awaiting authorization.
-#[derive(Clone, Debug)]
-pub struct Plan {
-    /// Spend action plans.
-    spends: Vec<action::Plan<effect::Spend>>,
-
-    /// Output action plans.
-    outputs: Vec<action::Plan<effect::Output>>,
-
-    /// Opaque recipient-directed payload, empty when absent.
-    memo: Vec<u8>,
-}
-
-impl Plan {
-    /// Create a new bundle plan from assembled action plans, carrying no memo.
-    #[must_use]
-    pub const fn new(
-        spends: Vec<action::Plan<effect::Spend>>,
-        outputs: Vec<action::Plan<effect::Output>>,
-    ) -> Self {
-        Self {
-            spends,
-            outputs,
-            memo: Vec::new(),
-        }
-    }
-
-    /// Attach an opaque recipient-directed payload, replacing any existing one.
-    ///
-    /// The payload is effecting data, so it must be set before
-    /// [`Self::commitment`] is taken for the sighash.
-    #[must_use]
-    pub fn with_memo(self, memo: Vec<u8>) -> Self {
-        Self { memo, ..self }
-    }
-
-    /// Iterate over all actions in the plan, mapping with the provided
-    /// functions. It is equivalent to calling `transform_spend` for each spend
-    /// and `transform_output` for each output.
-    pub fn iter_actions<T>(
-        &self,
-        transform_spend: impl Fn(&action::Plan<effect::Spend>) -> T,
-        transform_output: impl Fn(&action::Plan<effect::Output>) -> T,
-    ) -> impl Iterator<Item = T> {
-        let spend_transform = self.spends.iter().map(transform_spend);
-        let output_transform = self.outputs.iter().map(transform_output);
-        spend_transform.chain(output_transform)
-    }
-
-    /// Collect the descriptors of all actions in the plan, sorted and
-    /// deduplicated.
-    ///
-    /// This is the prover-side set. Contrast [`Bundle::descriptors`], the wire
-    /// multiset that preserves order and duplicates.
-    #[must_use]
-    pub fn descriptors(&self) -> BTreeSet<action::Descriptor> {
-        self.iter_actions(action::Plan::descriptor, action::Plan::descriptor)
-            .collect()
-    }
-
-    /// Derive `value_balance` from note values.
-    ///
-    /// $$
-    ///   \sum_i v_{\text{spend},i} - \sum_j v_{\text{output},j}
-    /// $$
-    ///
-    /// # Errors
-    ///
-    /// Fails if the final balance falls outside `-MAX_MONEY..=MAX_MONEY`.
-    /// Intermediate accumulating states are not constrained.
-    pub fn value_balance(&self) -> Result<value::Balance, value::OutOfRange> {
-        value::Balance::try_from(
-            self.iter_actions(
-                |plan| i128::from(plan.note.value),
-                |plan| i128::from(plan.note.value).neg(),
-            )
-            .sum::<i128>(),
-        )
-    }
-
-    /// Compute a digest of all the bundle's effecting data.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the value balance overflows the representable range.
-    pub fn commitment(&self) -> Result<[u8; 32], value::OutOfRange> {
-        let desc_bytes: Vec<[u8; 64]> = self.descriptors().into_iter().collect();
-
-        Ok(blake2b::bundle_commitment(
-            &blake2b::action_descriptor_digest(&desc_bytes),
-            self.value_balance()?.into(),
-            &blake2b::memo_digest(&self.memo),
-        ))
-    }
-
-    /// Build a [`stamp::Plan`] from this bundle plan.
-    ///
-    /// Collects each action's descriptor and proof witnesses. The returned
-    /// plan is ready to prove with [`stamp::Plan::prove`].
-    #[must_use]
-    pub fn stamp_plan(&self, anchor: Anchor) -> stamp::Plan {
-        let spends = self
-            .spends
-            .iter()
-            .map(|plan| (plan.descriptor(), plan.theta, plan.rcv))
-            .collect();
-
-        let outputs = self
-            .outputs
-            .iter()
-            .map(|plan| (plan.descriptor(), plan.theta, plan.note, plan.rcv))
-            .collect();
-
-        stamp::Plan::new(spends, outputs, anchor)
-    }
-
-    /// Derive the binding signing key, which is the scalar sum of value
-    /// commitment trapdoors.
-    ///
-    /// $\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i$.
-    #[must_use]
-    pub fn derive_bsk_private(&self) -> private::BindingSigningKey {
-        private::BindingSigningKey::from(self.iter_actions(|plan| plan.rcv, |plan| plan.rcv))
-    }
-
-    /// Sign actions with the provided [`private::SpendAuthorizingKey`] and then
-    /// sign the bundle with the [`private::BindingSigningKey`].
-    ///
-    /// Derives each `alpha` from the action's `theta` and the commitment of
-    /// its note.
-    ///
-    /// To confirm correct application, call [`Bundle::verify_signatures`] on
-    /// the return value.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PlanError`] if the planned actions do not balance or an
-    /// action cannot be signed.
-    pub fn sign<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        sighash: &[u8; 32],
-        ask: &private::SpendAuthorizingKey,
-    ) -> Result<Bundle<Unproven>, PlanError> {
-        let mut authorized: BTreeMap<action::Descriptor, action::Signature> = BTreeMap::new();
-
-        for plan in &self.spends {
-            let cm = plan.note.commitment();
-            let alpha = plan.theta.randomizer::<effect::Spend>(cm);
-            let rsk = ask.derive_action_private(&alpha);
-            authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
-        }
-
-        for plan in &self.outputs {
-            let cm = plan.note.commitment();
-            let alpha = plan.theta.randomizer::<effect::Output>(cm);
-            let rsk = private::ActionSigningKey::new(&alpha);
-            authorized.insert(plan.descriptor(), rsk.sign(rng, sighash));
-        }
-
-        self.apply_signatures(rng, sighash, authorized)
-    }
-
-    /// Apply externally-produced action signatures and then sign the bundle
-    /// with the [`private::BindingSigningKey`].
-    ///
-    /// To confirm correct application, call [`Bundle::verify_signatures`] on
-    /// the return value.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PlanError`] if the planned actions do not balance or a
-    /// descriptor has no supplied signature.
-    pub fn apply_signatures<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        sighash: &[u8; 32],
-        authorized: BTreeMap<action::Descriptor, action::Signature>,
-    ) -> Result<Bundle<Unproven>, PlanError> {
-        let value_balance = self
-            .value_balance()
-            .map_err(|_err| PlanError::BalanceOverflow)?;
-
-        if self.descriptors() != authorized.keys().copied().collect() {
-            return Err(PlanError::ActionSigMismatch);
-        }
-        let actions = authorized.into_iter().map(Action::from).collect();
-
-        let binding_sig = self.derive_bsk_private().sign(rng, sighash);
-
-        Ok(Bundle {
-            actions,
-            value_balance,
-            binding_sig,
-            memo: self.memo.clone(),
-            stamp: Unproven,
-        })
-    }
 }
 
 impl Bundle<Unproven> {

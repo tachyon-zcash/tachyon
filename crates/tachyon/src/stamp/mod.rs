@@ -345,8 +345,8 @@ impl ProofStamp {
 /// [`prove`](Self::prove).
 ///
 /// Construct via [`Plan::new`], or via
-/// [`Plan::stamp_plan`](crate::bundle::Plan::stamp_plan) for the typed
-/// single-party path.
+/// [`Authorized::stamp_plan`](crate::custody::Authorized::stamp_plan) from a
+/// custody request.
 #[derive(Clone, Debug)]
 pub struct Plan {
     spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,

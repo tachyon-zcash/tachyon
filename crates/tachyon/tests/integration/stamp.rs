@@ -15,9 +15,9 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan, build_output_stamp,
-    forge_overlapping_merge, random_action, random_block, random_block_with, shared_sk,
-    spend_witness,
+    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_stamp,
+    forge_overlapping_merge, output_descriptor, random_action, random_block, random_block_with,
+    request_action, shared_sk, spend_descriptor,
 };
 
 const WITHIN_EPOCH_ANCHOR_PAIRS: &[(BlockHeight, BlockHeight)] = &[
@@ -38,18 +38,18 @@ fn stamp_merge_iff_matching_anchors() {
         pool.advance(anchor_height_a.0 + 1, |_| random_block(rng, 1, 50));
         let anchor_a = pool.anchor();
         let note_a = user_a.random_note(200);
-        let (stamp_a, plan_a) = build_output_stamp(rng, anchor_a, note_a);
+        let (stamp_a, desc_a) = build_output_stamp(rng, anchor_a, note_a);
 
         let n_between = anchor_height_b.0 - anchor_height_a.0;
         pool.advance(n_between, |_| random_block(rng, 1, 50));
         let anchor_b = pool.anchor();
         let note_b = user_b.random_note(300);
-        let (stamp_b, plan_b) = build_output_stamp(rng, anchor_b, note_b);
+        let (stamp_b, desc_b) = build_output_stamp(rng, anchor_b, note_b);
 
         let result = ProofStamp::merge(
             rng,
-            (stamp_a, BTreeSet::from_iter([plan_a.descriptor()])),
-            (stamp_b, BTreeSet::from_iter([plan_b.descriptor()])),
+            (stamp_a, BTreeSet::from_iter([desc_a])),
+            (stamp_b, BTreeSet::from_iter([desc_b])),
         );
         assert_eq!(
             result.is_ok(),
@@ -85,24 +85,18 @@ fn plan_prove_rejects_invalid_inputs() {
         "same-stamp spendables share an anchor"
     );
 
-    let (rcv_a, theta_a) = spend_witness(rng);
-    let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
-        user.pak.ak.derive_action_public(&alpha)
-    });
+    let act_a = request_action(rng, note_a);
+    let desc_a = spend_descriptor(&user.pak.ak, &act_a);
 
-    let (rcv_b, theta_b) = spend_witness(rng);
-    let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, |alpha| {
-        user.pak.ak.derive_action_public(&alpha)
-    });
+    let act_b = request_action(rng, note_b);
+    let desc_b = spend_descriptor(&user.pak.ak, &act_b);
 
-    let foreign_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
-        other.pak.ak.derive_action_public(&alpha)
-    });
+    let foreign_a = spend_descriptor(&other.pak.ak, &act_a);
 
     let two_spends = || {
         alloc::vec![
-            (plan_a.descriptor(), theta_a, rcv_a),
-            (plan_b.descriptor(), theta_b, rcv_b),
+            (desc_a, act_a.theta, act_a.rcv),
+            (desc_b, act_b.theta, act_b.rcv),
         ]
     };
 
@@ -162,8 +156,8 @@ fn plan_prove_rejects_invalid_inputs() {
             .prove(rng, &user.pak, pcds)
             .expect("swapped spends prove");
         let planned = [
-            plan_a.digest().expect("action digest"),
-            plan_b.digest().expect("action digest"),
+            desc_a.digest().expect("action digest"),
+            desc_b.digest().expect("action digest"),
         ];
         assert!(
             !stamp
@@ -178,7 +172,7 @@ fn plan_prove_rejects_invalid_inputs() {
     // does not verify as the plan's.
     {
         let plan = stamp::Plan::new(
-            alloc::vec![(foreign_a.descriptor(), theta_a, rcv_a)],
+            alloc::vec![(foreign_a, act_a.theta, act_a.rcv)],
             alloc::vec![],
             anchor,
         );
@@ -218,16 +212,15 @@ fn plan_prove_lifts_a_spend_along_spans() {
     let plan_anchor = pool.block(plan_height).anchor();
     assert_ne!(spend_anchor, plan_anchor, "the spend needs a lift");
 
-    let (rcv, theta) = spend_witness(rng);
-    let spend = action::Plan::spend(note, theta, rcv, |alpha| {
-        user.pak.ak.derive_action_public(&alpha)
-    });
-    let (out_rcv, out_theta, output) = build_output_plan(rng, user.random_note(200));
+    let spend_act = request_action(rng, note);
+    let spend = spend_descriptor(&user.pak.ak, &spend_act);
+    let output_act = request_action(rng, user.random_note(200));
+    let output = output_descriptor(&output_act);
     let secret = user.secret_pcd(rng, note);
     let prove = |prove_rng: &mut StdRng, spans| {
         stamp::Plan::new(
-            vec![(spend.descriptor(), theta, rcv)],
-            vec![(output.descriptor(), out_theta, output.note, out_rcv)],
+            vec![(spend, spend_act.theta, spend_act.rcv)],
+            vec![(output, output_act.theta, output_act.note, output_act.rcv)],
             plan_anchor,
         )
         .prove(
@@ -303,17 +296,17 @@ fn merge_populates_covered_actions() {
     let anchor = pool.anchor();
     let note_a = user_a.random_note(200);
     let note_b = user_b.random_note(300);
-    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note_a);
-    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note_b);
+    let (stamp_a, desc_a) = build_output_stamp(rng, anchor, note_a);
+    let (stamp_b, desc_b) = build_output_stamp(rng, anchor, note_b);
 
-    let mut descriptors = Vec::<[u8; 64]>::from_iter([plan_a.descriptor(), plan_b.descriptor()]);
+    let mut descriptors = Vec::<[u8; 64]>::from_iter([desc_a, desc_b]);
     descriptors.sort_unstable();
     let expected = blake2b::action_descriptor_digest(&descriptors);
 
     let merged = ProofStamp::merge(
         rng,
-        (stamp_a, BTreeSet::from_iter([plan_a.descriptor()])),
-        (stamp_b, BTreeSet::from_iter([plan_b.descriptor()])),
+        (stamp_a, BTreeSet::from_iter([desc_a])),
+        (stamp_b, BTreeSet::from_iter([desc_b])),
     )
     .expect("merge");
     // `merge` sorts the concatenated descriptors into canonical order, so the
@@ -336,20 +329,16 @@ fn double_output_cannot_aggregate() {
     // but distinct descriptors (independent trapdoors), so the action sets stay
     // disjoint and the collision isolates to the tachygrams.
     let note = wallet.random_note(200);
-    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note);
-    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note);
+    let (stamp_a, desc_a) = build_output_stamp(rng, anchor, note);
+    let (stamp_b, desc_b) = build_output_stamp(rng, anchor, note);
     assert_eq!(
         stamp_a.tachygrams, stamp_b.tachygrams,
         "reused output commitment must collide"
     );
-    assert_ne!(
-        plan_a.descriptor(),
-        plan_b.descriptor(),
-        "action descriptors stay distinct"
-    );
+    assert_ne!(desc_a, desc_b, "action descriptors stay distinct");
 
-    let descriptors_a = BTreeSet::from_iter([plan_a.descriptor()]);
-    let descriptors_b = BTreeSet::from_iter([plan_b.descriptor()]);
+    let descriptors_a = BTreeSet::from_iter([desc_a]);
+    let descriptors_b = BTreeSet::from_iter([desc_b]);
 
     // The honest merge refuses the overlap on the tachygram-set product relation.
     {
@@ -545,8 +534,8 @@ fn cannot_forge_stamp_covering_duplicated_action() {
 
     // One output stamp counted twice: both contributors share the descriptor.
     let note = wallet.random_note(200);
-    let (output_stamp, plan) = build_output_stamp(rng, anchor, note);
-    let descriptors = BTreeSet::from_iter([plan.descriptor()]);
+    let (output_stamp, output_desc) = build_output_stamp(rng, anchor, note);
+    let descriptors = BTreeSet::from_iter([output_desc]);
 
     // The honest merge refuses the shared action on the action-set product
     // relation (checked before the tachygram product).
@@ -626,8 +615,8 @@ fn verify_cannot_distinguish_a_deduplicated_duplicate() {
     let anchor = pool.anchor();
 
     let note = wallet.random_note(200);
-    let (stamp, plan) = build_output_stamp(rng, anchor, note);
-    let descriptor = plan.descriptor();
+    let (stamp, desc) = build_output_stamp(rng, anchor, note);
+    let descriptor = desc;
 
     // Deduplicated to one action, it matches the single-action proof.
     let single = descriptor.digest().expect("action digest");
@@ -826,7 +815,7 @@ fn read_accepts_distinct_sorted_tachygrams() {
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, _desc) = build_output_stamp(rng, pool.anchor(), note);
 
     let mut buf = Vec::new();
     stamp.write(&mut buf).expect("write");
@@ -840,7 +829,7 @@ fn covered_actions_round_trip() {
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, _desc) = build_output_stamp(rng, pool.anchor(), note);
 
     let mut buf: Vec<u8> = Vec::new();
     stamp.write(&mut buf).expect("write");
@@ -859,7 +848,7 @@ fn honest_stamp_commits_to_its_tachygrams() {
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, _desc) = build_output_stamp(rng, pool.anchor(), note);
 
     assert_eq!(
         TachygramSetPoly::from_iter(stamp.tachygrams.clone()).commit(),
@@ -875,7 +864,7 @@ fn verify_proof_rejects_mismatched_commitment() {
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let note = wallet.random_note(200);
-    let (honest, plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (honest, desc) = build_output_stamp(rng, pool.anchor(), note);
 
     // Publish the real tachygrams under a commitment to a different set.
     let other = Tachygram::from(Fp::random(&mut *rng));
@@ -890,7 +879,7 @@ fn verify_proof_rejects_mismatched_commitment() {
     );
     assert!(
         !forged
-            .verify_proof(rng, [plan.digest().expect("valid plan")])
+            .verify_proof(rng, [desc.digest().expect("valid plan")])
             .expect("verify"),
         "verification must reject an unconfirmed commitment"
     );
@@ -905,7 +894,7 @@ fn proof_alone_does_not_bind_the_published_list() {
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let note = wallet.random_note(200);
-    let (honest, plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (honest, desc) = build_output_stamp(rng, pool.anchor(), note);
 
     // Swap one published tachygram for another, keeping the count and the
     // carried commitment untouched.
@@ -928,7 +917,7 @@ fn proof_alone_does_not_bind_the_published_list() {
 
     assert!(
         tampered
-            .verify_proof(rng, [plan.digest().expect("valid plan")])
+            .verify_proof(rng, [desc.digest().expect("valid plan")])
             .expect("verify"),
         "the proof is over the carried commitment, which is untouched here"
     );
@@ -944,7 +933,7 @@ fn lift_advances_a_stamp_anchor() {
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, _desc) = build_output_stamp(rng, pool.anchor(), note);
     let stamped_at = pool.height();
 
     pool.advance(2, |_| random_block(rng, 1, 4));
@@ -972,9 +961,9 @@ fn lift_then_verify() {
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note = wallet.random_note(200);
-    let (stamp, plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, desc) = build_output_stamp(rng, pool.anchor(), note);
     let stamped_at = pool.height();
-    let digest = plan.digest().expect("valid plan");
+    let digest = desc.digest().expect("valid plan");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
@@ -998,8 +987,8 @@ fn lift_over_descriptors_then_verify() {
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note = wallet.random_note(200);
-    let (stamp, covered_plan) = build_output_stamp(rng, pool.anchor(), note);
-    let covered_descriptors = BTreeSet::from_iter([covered_plan.descriptor()]);
+    let (stamp, covered_desc) = build_output_stamp(rng, pool.anchor(), note);
+    let covered_descriptors = BTreeSet::from_iter([covered_desc]);
     let stamped_at = pool.height();
 
     pool.advance(2, |_| random_block(rng, 1, 4));
@@ -1011,7 +1000,7 @@ fn lift_over_descriptors_then_verify() {
 
     assert!(
         lifted
-            .verify_proof(rng, [covered_plan.digest().expect("valid plan")])
+            .verify_proof(rng, [covered_desc.digest().expect("valid plan")])
             .expect("verify"),
         "a lifted stamp must verify against the actions it covers"
     );
@@ -1027,7 +1016,7 @@ fn lift_rejects_a_foreign_span() {
     pool.advance(3, |_| random_block(rng, 1, 4));
 
     let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, _desc) = build_output_stamp(rng, pool.anchor(), note);
 
     let mut foreign = PoolSim::genesis(rng);
     foreign.advance(3, |_| random_block(rng, 1, 4));
@@ -1053,9 +1042,9 @@ fn lift_rejects_wrong_digests() {
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note = wallet.random_note(200);
-    let (stamp, plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, desc) = build_output_stamp(rng, pool.anchor(), note);
     let stamped_at = pool.height();
-    let digest = plan.digest().expect("valid plan");
+    let digest = desc.digest().expect("valid plan");
     let foreign_digest = random_action(rng).digest().expect("valid action");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
@@ -1082,32 +1071,29 @@ fn merge_after_lift() {
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note_a = user_a.random_note(200);
-    let (stamp_a, plan_a) = build_output_stamp(rng, pool.anchor(), note_a);
+    let (stamp_a, desc_a) = build_output_stamp(rng, pool.anchor(), note_a);
     let height_a = pool.height();
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note_b = user_b.random_note(300);
-    let (stamp_b, plan_b) = build_output_stamp(rng, pool.anchor(), note_b);
+    let (stamp_b, desc_b) = build_output_stamp(rng, pool.anchor(), note_b);
     let height_b = pool.height();
 
-    let (desc_a, desc_b) = (
-        BTreeSet::from_iter([plan_a.descriptor()]),
-        BTreeSet::from_iter([plan_b.descriptor()]),
-    );
+    let (set_a, set_b) = (BTreeSet::from_iter([desc_a]), BTreeSet::from_iter([desc_b]));
 
     ProofStamp::merge(
         rng,
-        (stamp_a.clone(), desc_a.clone()),
-        (stamp_b.clone(), desc_b.clone()),
+        (stamp_a.clone(), set_a.clone()),
+        (stamp_b.clone(), set_b.clone()),
     )
     .expect_err("mismatched anchors must not merge");
 
     let span = build_lift_span(rng, &pool, height_a.next().unwrap()..=height_b);
     let lifted_a = stamp_a
-        .prove_lift(rng, [plan_a.digest().expect("valid plan")], vec![span])
+        .prove_lift(rng, [desc_a.digest().expect("valid plan")], vec![span])
         .expect("lift onto the later anchor");
 
     assert_eq!(lifted_a.anchor, stamp_b.anchor);
-    ProofStamp::merge(rng, (lifted_a, desc_a), (stamp_b, desc_b))
+    ProofStamp::merge(rng, (lifted_a, set_a), (stamp_b, set_b))
         .expect("a lifted stamp merges with one at the anchor it was lifted to");
 }

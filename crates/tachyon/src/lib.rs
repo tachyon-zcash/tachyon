@@ -14,6 +14,7 @@ extern crate alloc;
 pub mod action;
 pub mod bundle;
 pub mod constants;
+pub mod custody;
 pub mod digest;
 pub mod entropy;
 pub mod keys;
@@ -30,10 +31,10 @@ mod ragu_constraint;
 mod relations;
 mod serialization;
 
-pub use action::{Action, Plan as ActionPlan};
+pub use action::Action;
 pub use bundle::{
-    Bundle, Plan as BundlePlan, SignatureError, TachyonBundle, VerificationError,
-    VerifyCoverageError, VerifyPointersError, VerifyTachygramsError,
+    Bundle, SignatureError, TachyonBundle, VerificationError, VerifyCoverageError,
+    VerifyPointersError, VerifyTachygramsError,
 };
 pub use note::Note;
 pub use primitives::*;

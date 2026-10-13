@@ -1,7 +1,6 @@
 //! Compile-time effect markers for spend vs output actions.
 //!
 //! [`Spend`] and [`Output`] are zero-sized marker types that parameterize
-//! [`Plan`](crate::action::Plan),
 //! [`ActionRandomizer`](crate::entropy::ActionRandomizer),
 //! [`ActionSigningKey`](crate::keys::private::ActionSigningKey), and key types
 //! to enforce the spend/output distinction at compile time.
