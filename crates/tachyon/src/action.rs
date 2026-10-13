@@ -5,13 +5,15 @@ use core::{cmp, cmp::Ord, marker::PhantomData};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
-use pasta_curves::{EpAffine, group::GroupEncoding as _};
+use pasta_curves::{EpAffine, Fp, group::GroupEncoding as _};
 
 use crate::{
+    digest::poseidon,
     entropy::{ActionEntropy, ActionRandomizer},
     keys::{private, public},
     note::Note,
-    primitives::{ActionDigest, ActionDigestError, Effect, effect},
+    nullifier::Nullifier,
+    primitives::{ActionDigest, ActionDigestError, Effect, Tachygram, effect},
     reddsa, serialization, value,
 };
 
@@ -93,6 +95,10 @@ pub struct Plan<E: Effect> {
     pub rk: public::ActionVerificationKey,
     /// The note being spent or created.
     pub note: Note,
+    /// The two tachygrams this action publishes: $[\mathsf{cm},
+    /// \mathsf{tg}_\bot]$ for an output, $[\mathsf{nf}_e, \mathsf{nf}_{e+1}]$
+    /// for a spend.
+    pub tachygrams: [Tachygram; 2],
     /// Per-action entropy for alpha derivation.
     pub theta: ActionEntropy,
     /// Value commitment trapdoor.
@@ -117,11 +123,16 @@ impl Plan<effect::Spend> {
     /// Assemble a spend action plan.
     ///
     /// $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$
+    ///
+    /// `nullifiers` is the published pair $[\mathsf{nf}_e, \mathsf{nf}_{e+1}]$,
+    /// which the caller derives from the note's master key at the spend epoch
+    /// $e$.
     #[must_use]
     pub fn spend(
         note: Note,
         theta: ActionEntropy,
         rcv: value::Trapdoor,
+        nullifiers: [Nullifier; 2],
         derive_rk: impl FnOnce(ActionRandomizer<effect::Spend>) -> public::ActionVerificationKey,
     ) -> Self {
         let cm = note.commitment();
@@ -130,6 +141,7 @@ impl Plan<effect::Spend> {
         Self {
             rk: derive_rk(alpha),
             note,
+            tachygrams: nullifiers.map(Tachygram::from),
             theta,
             rcv,
             _effect: PhantomData,
@@ -144,12 +156,19 @@ impl Plan<effect::Output> {
     #[must_use]
     pub fn output(note: Note, theta: ActionEntropy, rcv: value::Trapdoor) -> Self {
         let cm = note.commitment();
+        let pad = poseidon::pad_tachygram(
+            Fp::from(note.rcm),
+            Fp::from(note.pk),
+            u64::from(note.value),
+            Fp::from(note.psi),
+        );
         let alpha = theta.randomizer::<effect::Output>(cm);
         let rsk = private::ActionSigningKey::new(&alpha);
 
         Self {
             rk: rsk.derive_action_public(),
             note,
+            tachygrams: [Tachygram::from(cm), Tachygram::from(pad)],
             theta,
             rcv,
             _effect: PhantomData,

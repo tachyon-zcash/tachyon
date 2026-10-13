@@ -12,12 +12,12 @@
 //!
 //! The first byte `tachyonBundleState` selects one of three bundle states:
 //!
-//! | value         | state         | bundle contents                       |
-//! | ------------- | ------------- | ------------------------------------- |
-//! | `0b0000_0000` | non-tachyon   | no bundle                             |
-//! | `0b0000_0001` | proof stamp   | bundle with anchor, tachygrams, proof |
-//! | `0b0000_0010` | pointer stamp | bundle with aggregate's wtxid         |
-//! | `...`         | *reserved*    | *n/a*                                 |
+//! | value         | state         | bundle contents                                  |
+//! | ------------- | ------------- | ------------------------------------------------ |
+//! | `0b0000_0000` | non-tachyon   | no bundle                                        |
+//! | `0b0000_0001` | proof stamp   | bundle with anchor, tachygram commitment, proof  |
+//! | `0b0000_0010` | pointer stamp | bundle with aggregate's wtxid                    |
+//! | `...`         | *reserved*    | *n/a*                                            |
 //!
 //! Any other byte is invalid. Pointer-stamped innocents and adjuncts share
 //! the same wire layout (both write `0x02` + body + a nonzero 64-byte `wtxid`
@@ -45,12 +45,18 @@
 //! | `bindingSigTachyon`   | 64 bytes             | binding over tx sighash                  |
 //! | `nMemoTachyon`        | compactsize          | memo length, `0` when absent             |
 //! | `vMemoTachyon`        | nMemoTachyon bytes   | opaque recipient-directed payload        |
+//! | `vTachygramsTachyon`  | 64 * nActionsTachyon | this bundle's tachygrams, sorted, unique |
 //!
 //! The memo is effecting data, so it is covered by the transaction sighash
 //! rather than by `auth_digest`. Its length is public, and `nMemoTachyon == 0`
 //! reveals that no payload is present; the payload is variable-length because
 //! it carries key-exchange ciphertexts on first contact and ordinary memo text
 //! otherwise, sizes that differ by more than an order of magnitude.
+//!
+//! `vTachygramsTachyon` holds two 32-byte tachygrams per action, in ascending
+//! byte order with no repeats. Its length follows from `nActionsTachyon`, so it
+//! has no count prefix. It is effecting data, so the signatures bind it and it
+//! survives stripping.
 //!
 //! ### Proof stamp
 //!
@@ -60,13 +66,12 @@
 //! | ---------------------- | -------------------- | ---------------------------------------- |
 //! | `hStampActionsTachyon` | 32 bytes             | BLAKE2b digest of the covered actions    |
 //! | `anchorTachyon`        | 32 bytes             | pool state reference                     |
-//! | `cTachygrams`          | 32 bytes             | commitment to the tachygrams below       |
-//! | `nTachygrams`          | compactsize          | number of tachygrams                     |
-//! | `vTachygrams`          | 32 * nTachygrams     | tachygrams for this proof                |
+//! | `cTachygrams`          | 32 bytes             | commitment to the covered tachygrams     |
 //! | `proofTachyon`         | PROOF_SIZE blob      | serialized proof of fixed size           |
 //!
-//! `cTachygrams` is carried rather than derived, so full validation must
-//! confirm it against `vTachygrams`. Anchor advancement then reads the point
+//! `cTachygrams` commits to the union of the covered bundles'
+//! `vTachygramsTachyon`. It is carried rather than derived, so full validation
+//! must confirm it against those lists. Anchor advancement then reads the point
 //! instead of rebuilding it.
 //!
 //! ## Pointer stamp
@@ -89,6 +94,7 @@ use core::{cmp::Ordering, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
+use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand_core::CryptoRng;
 
 use crate::{
@@ -96,7 +102,7 @@ use crate::{
     action::{self, Action},
     digest::blake2b,
     keys::{private, public},
-    primitives::{Anchor, AnchorSetPoly, effect},
+    primitives::{Anchor, AnchorSetPoly, Tachygram, effect},
     reddsa, serialization,
     stamp::{
         self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven,
@@ -174,6 +180,9 @@ pub struct Bundle<S: BundleState + ?Sized> {
     /// Opaque recipient-directed payload, empty when absent.
     pub memo: Vec<u8>,
 
+    /// The tachygrams this bundle's actions publish, two per action.
+    pub tachygrams: BTreeSet<Tachygram>,
+
     /// Bundle state: `Unproven`, `ProofStamp`, or `PointerStamp`.
     pub stamp: S,
 }
@@ -200,17 +209,20 @@ impl<S: BundleState + ?Sized> Bundle<S> {
     /// This contributes to the transaction sighash. The stamp is excluded
     /// because it is considered authorizing data, and is malleable during
     /// aggregation. The memo is included, so a miner cannot strip the payload
-    /// and leave the block committing to the same transaction.
+    /// and leave the block committing to the same transaction. The tachygrams
+    /// are included, so the signatures bind them.
     ///
     /// The digest binds actions in wire order and is therefore sensitive to
     /// their ordering.
     #[must_use]
     pub fn commitment(&self) -> [u8; 32] {
         let descriptors: Vec<[u8; 64]> = self.descriptors().collect();
+        let tachygrams: Vec<[u8; 32]> = self.tachygrams.iter().copied().collect();
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
             self.value_balance.into(),
             &blake2b::memo_digest(&self.memo),
+            &blake2b::tachygram_digest(&tachygrams),
         )
     }
 
@@ -268,10 +280,16 @@ pub enum VerifyCoverageError {
 #[derive(Clone, Copy, Debug, Display, Error)]
 #[non_exhaustive]
 pub enum VerifyTachygramsError {
-    /// The stamp publishes a number of tachygrams other than two per action.
-    #[display("stamp does not publish two tachygrams per covered action")]
-    WrongArity,
-    /// The stamp's tachygrams do not reproduce the stamp's set commitment.
+    /// A tachygram appears in more than one covered bundle.
+    #[display("a tachygram appears in more than one covered bundle")]
+    Overlap,
+    /// The covered bundles publish no tachygrams.
+    #[display("covered bundles publish no tachygrams")]
+    Empty,
+    /// The covered tachygrams exceed the set polynomial's capacity.
+    #[display("too many tachygrams")]
+    TooMany,
+    /// The covered tachygrams do not reproduce the stamp's set commitment.
     #[display("tachygrams do not reproduce the set commitment")]
     WrongSet,
 }
@@ -407,6 +425,21 @@ impl Plan {
         )
     }
 
+    /// The tachygrams the planned actions publish, sorted.
+    #[must_use]
+    pub fn tachygrams(&self) -> BTreeSet<Tachygram> {
+        self.iter_actions(|plan| plan.tachygrams, |plan| plan.tachygrams)
+            .flatten()
+            .collect()
+    }
+
+    /// $\mathsf{hTachygramsTachyon}$: the digest of [`Self::tachygrams`].
+    #[must_use]
+    pub fn tachygram_digest(&self) -> [u8; 32] {
+        let tachygrams: Vec<[u8; 32]> = self.tachygrams().into_iter().collect();
+        blake2b::tachygram_digest(&tachygrams)
+    }
+
     /// Compute a digest of all the bundle's effecting data.
     ///
     /// # Errors
@@ -419,19 +452,21 @@ impl Plan {
             &blake2b::action_descriptor_digest(&desc_bytes),
             self.value_balance()?.into(),
             &blake2b::memo_digest(&self.memo),
+            &self.tachygram_digest(),
         ))
     }
 
     /// Build a [`stamp::Plan`] from this bundle plan.
     ///
-    /// Collects each action's descriptor and proof witnesses. The returned
-    /// plan is ready to prove with [`stamp::Plan::prove`].
+    /// Collects each action's descriptor and proof witnesses, and each
+    /// spend's planned nullifier pair. The returned plan is ready to prove
+    /// with [`stamp::Plan::prove`].
     #[must_use]
     pub fn stamp_plan(&self, anchor: Anchor) -> stamp::Plan {
         let spends = self
             .spends
             .iter()
-            .map(|plan| (plan.descriptor(), plan.theta, plan.rcv))
+            .map(|plan| (plan.descriptor(), plan.theta, plan.rcv, plan.tachygrams))
             .collect();
 
         let outputs = self
@@ -522,6 +557,7 @@ impl Plan {
             value_balance,
             binding_sig,
             memo: self.memo.clone(),
+            tachygrams: self.tachygrams(),
             stamp: Unproven,
         })
     }
@@ -536,6 +572,7 @@ impl Bundle<Unproven> {
             value_balance: self.value_balance,
             binding_sig: self.binding_sig,
             memo: self.memo,
+            tachygrams: self.tachygrams,
             stamp,
         }
     }
@@ -550,6 +587,7 @@ impl Bundle<ProofStamp> {
             value_balance: self.value_balance,
             binding_sig: self.binding_sig,
             memo: self.memo,
+            tachygrams: self.tachygrams,
             stamp: wtxid,
         }
     }
@@ -633,26 +671,45 @@ impl Bundle<ProofStamp> {
         Ok(unique_descs)
     }
 
-    /// Verify the stamp's published tachygrams: two per covered action, and
-    /// reproducing the carried set commitment. `action_count` is the size of
-    /// the covered set returned by [`Self::verify_coverage`].
+    /// Verify the stamp's set commitment against the union of this bundle's
+    /// tachygrams and those of `adjuncts`.
     ///
     /// # Errors
     ///
-    /// Returns [`VerifyTachygramsError`] if the published count is not two
-    /// per covered action, or if they do not reproduce the carried set
-    /// commitment.
+    /// Returns [`VerifyTachygramsError`] if a tachygram appears in two covered
+    /// bundles, the union is empty or exceeds the set polynomial's capacity,
+    /// or it does not reproduce the carried set commitment.
     pub fn verify_tachygrams(
         &self,
-        action_count: usize,
+        adjuncts: &[&Bundle<PointerStamp>],
     ) -> Result<TachygramSetCommit, VerifyTachygramsError> {
-        if self.stamp.tachygrams.len() != 2 * action_count {
-            return Err(VerifyTachygramsError::WrongArity);
+        let n_tachygrams = self.tachygrams.len()
+            + adjuncts
+                .iter()
+                .map(|&adj| adj.tachygrams.len())
+                .sum::<usize>();
+
+        let union: BTreeSet<Tachygram> = self
+            .tachygrams
+            .iter()
+            .chain(adjuncts.iter().flat_map(|&adj| &adj.tachygrams))
+            .copied()
+            .collect();
+
+        if union.len() != n_tachygrams {
+            return Err(VerifyTachygramsError::Overlap);
         }
 
-        let tg_set = TachygramSetPoly::from_iter(self.stamp.tachygrams.iter().copied());
+        if union.is_empty() {
+            return Err(VerifyTachygramsError::Empty);
+        }
 
-        if self.stamp.tachygram_set != tg_set.commit() {
+        // the polynomial multiset includes a constant term
+        if (union.len() + 1) > ProductionRank::num_coeffs() {
+            return Err(VerifyTachygramsError::TooMany);
+        }
+
+        if self.stamp.tachygram_set != TachygramSetPoly::from_iter(union).commit() {
             return Err(VerifyTachygramsError::WrongSet);
         }
 
@@ -735,7 +792,7 @@ impl Bundle<ProofStamp> {
             .verify_coverage(&adjunct_descs)
             .map_err(VerificationError::Coverage)?;
 
-        self.verify_tachygrams(covered_descs.len())
+        self.verify_tachygrams(adjuncts)
             .map_err(VerificationError::Tachygrams)?;
 
         let covered_digests = covered_descs
@@ -787,8 +844,8 @@ impl<S: StampState> Bundle<S> {
     }
 
     /// Read everything after the `tachyonBundleState` byte: value balance,
-    /// action descriptors, action sigs, binding sig, memo, and the stamp
-    /// trailer.
+    /// action descriptors, action sigs, binding sig, memo, tachygrams, and the
+    /// stamp trailer.
     fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
         let value_balance = {
             let mut bytes = [0u8; size_of::<i64>()];
@@ -851,6 +908,25 @@ impl<S: StampState> Bundle<S> {
             memo.extend_from_slice(&chunk[..take]);
         }
 
+        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
+        for _ in 0..2 * n_actions {
+            let tg = Tachygram::read(&mut reader)?;
+
+            if !tachygrams.insert(tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not unique",
+                ));
+            }
+
+            if tachygrams.last() != Some(&tg) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tachygrams are not canonically sorted",
+                ));
+            }
+        }
+
         let stamp = S::read(&mut reader)?;
 
         Ok(Self {
@@ -858,6 +934,7 @@ impl<S: StampState> Bundle<S> {
             actions,
             binding_sig,
             memo,
+            tachygrams,
             stamp,
         })
     }
@@ -867,9 +944,16 @@ impl<S: StampState> Bundle<S> {
     ///
     /// # Errors
     ///
-    /// Returns an error if writing fails or a count exceeds what a
-    /// compactsize can hold.
+    /// Returns an error if writing fails, a count exceeds what a compactsize
+    /// can hold, or the bundle does not hold two tachygrams per action.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        if self.tachygrams.len() != 2 * self.actions.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "tachygrams are not two per action",
+            ));
+        }
+
         S::state_byte().write(&mut writer)?;
 
         writer.write_all(&i64::from(self.value_balance).to_le_bytes())?;
@@ -898,6 +982,10 @@ impl<S: StampState> Bundle<S> {
 
         serialization::write_compactsize(&mut writer, n_memo)?;
         writer.write_all(&self.memo)?;
+
+        for tg in &self.tachygrams {
+            tg.write(&mut writer)?;
+        }
 
         self.stamp.write(&mut writer)
     }

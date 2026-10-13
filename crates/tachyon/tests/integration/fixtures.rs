@@ -1,6 +1,10 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeMap, vec, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec,
+    vec::Vec,
+};
 use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
 
 use ff::{Field as _, FromUniformBytes as _, PrimeField as _, WithSmallOrderMulGroup as _};
@@ -162,8 +166,16 @@ pub fn build_autonome<RNG: CryptoRng>(
 /// this utility will fuse a `StampMerge` without checking for intersection.
 pub fn forge_overlapping_merge<RNG: CryptoRng>(
     rng: &mut RNG,
-    (stamp_a, descriptors_a): (&ProofStamp, &Vec<action::Descriptor>),
-    (stamp_b, descriptors_b): (&ProofStamp, &Vec<action::Descriptor>),
+    (stamp_a, descriptors_a, tachygrams_a): (
+        &ProofStamp,
+        &Vec<action::Descriptor>,
+        &BTreeSet<Tachygram>,
+    ),
+    (stamp_b, descriptors_b, tachygrams_b): (
+        &ProofStamp,
+        &Vec<action::Descriptor>,
+        &BTreeSet<Tachygram>,
+    ),
 ) -> Pcd<Stamp> {
     let left_acts = descriptors_a
         .iter()
@@ -173,16 +185,8 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .iter()
         .map(|desc| desc.digest().expect("action digest"))
         .collect::<ActionSetPoly>();
-    let left_tg = stamp_a
-        .tachygrams
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>();
-    let right_tg = stamp_b
-        .tachygrams
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>();
+    let left_tg = tachygrams_a.iter().copied().collect::<TachygramSetPoly>();
+    let right_tg = tachygrams_b.iter().copied().collect::<TachygramSetPoly>();
 
     let left_pcd = stamp_a.proof.clone().carry::<Stamp>((
         left_acts.commit(),
@@ -200,10 +204,9 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .chain(descriptors_b.iter())
         .map(|desc| desc.digest().expect("action digest"))
         .collect::<ActionSetPoly>();
-    let merged_tg = stamp_a
-        .tachygrams
+    let merged_tg = tachygrams_a
         .iter()
-        .chain(stamp_b.tachygrams.iter())
+        .chain(tachygrams_b.iter())
         .copied()
         .collect::<TachygramSetPoly>();
 
@@ -433,12 +436,13 @@ impl PoolSim {
         }
     }
 
-    /// Mine a block publishing the stamps of `bundles`, in order.
+    /// Mine a block publishing the stamps of the autonomes `bundles`, in
+    /// order.
     pub fn mine_bundles(&mut self, bundles: &[&Bundle<ProofStamp>]) {
         self.mine(
             bundles
                 .iter()
-                .map(|&bundle| bundle.stamp.tachygrams.iter().copied().collect())
+                .map(|&bundle| bundle.tachygrams.iter().copied().collect())
                 .collect(),
         );
     }
@@ -1309,6 +1313,12 @@ impl WalletSim {
         self.mk(note).derive_nullifier(epoch)
     }
 
+    /// The nullifier pair a spend of `note` at `epoch` publishes.
+    pub fn nf_pair(&self, note: &Note, epoch: EpochIndex) -> [Nullifier; 2] {
+        let next = epoch.next().expect("an epoch follows the spend epoch");
+        [self.nf_at(note, epoch), self.nf_at(note, next)]
+    }
+
     /// The certified `NoteSecret` PCD for this note, cached by `cm`. The
     /// note is witnessed once; every window fuses against the same seed.
     pub fn secret_pcd<RNG: CryptoRng>(
@@ -1559,7 +1569,8 @@ impl WalletSim {
         for (note, spendable_pcd) in spends {
             let rcv = value::Trapdoor::random(rng);
             let theta = ActionEntropy::random(rng);
-            let plan = action::Plan::spend(note, theta, rcv, |alpha| {
+            let nullifiers = self.nf_pair(&note, spendable_pcd.data().1);
+            let plan = action::Plan::spend(note, theta, rcv, nullifiers, |alpha| {
                 self.pak.ak.derive_action_public(&alpha)
             });
             spend_plans.push(plan);

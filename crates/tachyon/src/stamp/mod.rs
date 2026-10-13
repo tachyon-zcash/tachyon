@@ -16,15 +16,13 @@ use core::error;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
-use ff::PrimeField as _;
 use group::{Curve as _, GroupEncoding as _};
-use pasta_curves::{Eq, Fp};
+use pasta_curves::Eq;
 use proof::{
     PROOF_SYSTEM, output,
     stamp::{OutputStamp, SpendStamp, Stamp, StampLift, StampMerge},
 };
 use ragu::PROOF_SIZE_COMPRESSED;
-use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand_core::CryptoRng;
 
 use crate::{
@@ -198,18 +196,10 @@ impl StampState for ProofStamp {
             let proof = self.proof.serialize();
             let anchor: [u8; 32] = self.anchor.0.into();
 
-            // Do NOT sort here: a constructed stamp should already be canonical.
-            let tachygrams: Vec<[u8; 32]> = self
-                .tachygrams
-                .iter()
-                .map(|&tg| Fp::from(tg).to_repr())
-                .collect();
-
             blake2b::stamp_data_digest(
                 blake2b::stamp_proof_digest(proof.as_ref()),
                 anchor,
                 self.tachygram_set.as_ref().to_affine().to_bytes(),
-                &tachygrams,
             )
         };
 
@@ -247,45 +237,9 @@ impl ProofStamp {
 
         let anchor = Anchor::read(&mut reader)?;
 
-        // Parsing does not confirm this against the tachygrams below.
+        // Parsing does not confirm this against the covered bundles' tachygrams.
         let tachygram_set =
             TachygramSetCommit::from(Eq::from(serialization::read_eq_affine(&mut reader)?));
-
-        // `n_tachygrams` is attacker-controlled up to MAX_COMPACT_SIZE (2^25)
-        let n_tachygrams = usize::try_from(serialization::read_compactsize(&mut reader)?)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-
-        // proof stamp should never have an empty set
-        if n_tachygrams == 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "no tachygrams"));
-        }
-
-        // the polynomial multiset includes a constant term
-        if (n_tachygrams + 1) > ProductionRank::num_coeffs() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "too many tachygrams",
-            ));
-        }
-
-        let mut tachygrams: BTreeSet<Tachygram> = BTreeSet::new();
-        for _ in 0..n_tachygrams {
-            let tg = Tachygram::from(serialization::read_fp(&mut reader)?);
-
-            if !tachygrams.insert(tg) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygrams are not unique",
-                ));
-            }
-
-            if tachygrams.last() != Some(&tg) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygrams are not canonically sorted",
-                ));
-            }
-        }
 
         let proof = {
             let mut bytes = vec![0u8; PROOF_SIZE_COMPRESSED];
@@ -305,7 +259,6 @@ impl ProofStamp {
             coverage: covered_actions,
             anchor,
             tachygram_set,
-            tachygrams,
             proof: Box::new(proof),
         })
     }
@@ -320,36 +273,28 @@ impl ProofStamp {
         writer.write_all(&self.coverage)?;
         self.anchor.write(&mut writer)?;
         serialization::write_eq_affine(&mut writer, &self.tachygram_set.as_ref().to_affine())?;
-        serialization::write_compactsize(
-            &mut writer,
-            u64::try_from(self.tachygrams.len()).map_err(|_err| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "tachygram vector length exceeds u64",
-                )
-            })?,
-        )?;
-        for &tg in &self.tachygrams {
-            serialization::write_fp(&mut writer, &Fp::from(tg))?;
-        }
         writer.write_all(self.proof.serialize().as_ref())
     }
 }
 
 /// Everything needed to produce a [`ProofStamp`].
 ///
-/// The statement is each action's descriptor `(cv, rk)` and the `anchor`.
-/// The planned witnesses are each action's `theta` and `rcv`, and each
-/// output's `note`. A spend's note comes from its
-/// [`NoteSecret`](delegation::NoteSecret) PCD at
-/// [`prove`](Self::prove).
+/// The statement is each action's descriptor `(cv, rk)`, each spend's planned
+/// nullifier pair, and the `anchor`. The planned witnesses are each action's
+/// `theta` and `rcv`, and each output's `note`. A spend's note comes from its
+/// [`NoteSecret`](delegation::NoteSecret) PCD at [`prove`](Self::prove).
 ///
 /// Construct via [`Plan::new`], or via
 /// [`Plan::stamp_plan`](crate::bundle::Plan::stamp_plan) for the typed
 /// single-party path.
 #[derive(Clone, Debug)]
 pub struct Plan {
-    spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
+    spends: Vec<(
+        action::Descriptor,
+        ActionEntropy,
+        value::Trapdoor,
+        [Tachygram; 2],
+    )>,
     outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
     anchor: Anchor,
 }
@@ -358,7 +303,12 @@ impl Plan {
     /// Create a stamp plan from paired action descriptors and witnesses.
     #[must_use]
     pub const fn new(
-        spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
+        spends: Vec<(
+            action::Descriptor,
+            ActionEntropy,
+            value::Trapdoor,
+            [Tachygram; 2],
+        )>,
         outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
         anchor: Anchor,
     ) -> Self {
@@ -374,12 +324,13 @@ impl Plan {
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
     /// [`ProofStamp::prove_spend`] proves the action at the spendable's
-    /// anchor. If that anchor differs from the plan's anchor, the spend comes
-    /// with a list of [`AnchorSpan`](pool::AnchorSpan)s and their members
-    /// polynomials. [`StampLift`] moves the spend stamp along each span in
-    /// order. The first span must contain the spendable's anchor, each later
-    /// span must contain the previous span's `anchor_end`, and the last span
-    /// must end at the plan's anchor. For each **output**,
+    /// anchor over the planned pair. If that anchor differs from the plan's
+    /// anchor, the spend comes with a list of
+    /// [`AnchorSpan`](pool::AnchorSpan)s and their members polynomials.
+    /// [`StampLift`] moves the spend stamp along each span in order. The
+    /// first span must contain the spendable's anchor, each later span must
+    /// contain the previous span's `anchor_end`, and the last span must end
+    /// at the plan's anchor. For each **output**,
     /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
     ///
     /// Stamps are recursively merged via [`StampMerge`] into a single stamp,
@@ -426,7 +377,7 @@ impl Plan {
             ));
         }
 
-        for (index, ((desc, theta, rcv), (secret_pcd, spendable_pcd, spans))) in
+        for (index, ((desc, theta, rcv, planned), (secret_pcd, spendable_pcd, spans))) in
             self.spends.into_iter().zip(spend_pcds).enumerate()
         {
             let reached = spans
@@ -445,7 +396,7 @@ impl Plan {
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, spend_anchor, spend_proof) =
-                ProofStamp::prove_spend(rng, theta, bind_pcd, *pak)?;
+                ProofStamp::prove_spend(rng, theta, bind_pcd, *pak, planned)?;
             let mut stamp_pcd = spend_proof.carry::<Stamp>((
                 digests.iter().copied().collect::<ActionSetPoly>().commit(),
                 tachygrams
@@ -535,7 +486,6 @@ impl Plan {
             coverage,
             anchor,
             tachygram_set,
-            tachygrams,
             proof: Box::new(proof),
         })
     }
@@ -556,7 +506,8 @@ pub enum ProveError {
     ProofFailed(ragu_core::Error),
 }
 
-/// A stamp carrying tachygrams, anchor, and a proof for specific actions.
+/// A stamp carrying a tachygram-set commitment, anchor, and a proof for
+/// specific actions.
 ///
 /// The PCD header `(action_acc, tachygram_acc, anchor)` is entirely not stored
 /// here.  The covered actions are present only as reference. A verifier must
@@ -572,13 +523,9 @@ pub struct ProofStamp {
     /// The historic pool state for which this stamp is valid.
     pub anchor: Anchor,
 
-    /// The commitment to this stamp's tachygram set, which may not be
-    /// consistent with [`Self::tachygrams`].
+    /// The commitment $\mathsf{cTachygrams}$ to the union of the covered
+    /// bundles' tachygrams, which may not be consistent with them.
     pub tachygram_set: TachygramSetCommit,
-
-    /// The contents of this stamp's tachygram set, which may not be consistent
-    /// with [`Self::tachygram_set`].
-    pub tachygrams: BTreeSet<Tachygram>,
 
     /// The Ragu proof bytes.
     #[debug(skip)]
@@ -653,12 +600,13 @@ impl ProofStamp {
     /// [`SpendHeader`](spend::SpendHeader) PCD, returning `(digests,
     /// tachygrams, anchor, proof)`. The proof is not rerandomized.
     ///
-    /// The nullifier pair `{nf_current, nf_next}` published for data
-    /// availability and the value commitment `cv` are read straight off the
-    /// bind header (both derived at [`SpendBind`](spend::SpendBind)).
-    /// [`SpendStamp`] derives `alpha` from `theta` and the bound `cm`, proves
-    /// the action `(cv, rk)`, and enforces the stamp accumulator over the
-    /// pair. The spend's `anchor` is taken as the stamp's anchor; chain
+    /// The value commitment `cv` is read straight off the bind header
+    /// (derived at [`SpendBind`](spend::SpendBind)). `planned` is the planned
+    /// nullifier pair, and the returned set holds it. [`SpendStamp`]
+    /// derives `alpha` from `theta` and the bound `cm`, proves the action
+    /// `(cv, rk)`, and enforces the stamp accumulator over the bound pair. A
+    /// planned pair other than the bound one yields a stamp that does not
+    /// verify. The spend's `anchor` is taken as the stamp's anchor; chain
     /// validation lives inside the spendable lineage. `digests` holds the
     /// proved action's digest.
     ///
@@ -675,6 +623,7 @@ impl ProofStamp {
         theta: ActionEntropy,
         bind_pcd: ragu::Pcd<spend::SpendHeader>,
         pak: ProofAuthorizingKey,
+        planned: [Tachygram; 2],
     ) -> Result<
         (
             BTreeSet<ActionDigest>,
@@ -684,13 +633,12 @@ impl ProofStamp {
         ),
         ProveError,
     > {
-        let (cm, nf_current, nf_next, anchor, _pk, cv) = *bind_pcd.data();
+        let (cm, _nf_current, _nf_next, anchor, _pk, cv) = *bind_pcd.data();
         let alpha = theta.randomizer::<effect::Spend>(cm);
         let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha))
             .map_err(ProveError::ActionDigest)?;
 
-        let tachygrams =
-            BTreeSet::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]);
+        let tachygrams = BTreeSet::from(planned);
 
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(
@@ -849,7 +797,6 @@ impl ProofStamp {
             coverage: self.coverage,
             anchor,
             tachygram_set: self.tachygram_set,
-            tachygrams: self.tachygrams,
             proof: Box::new(proof),
         })
     }
@@ -878,9 +825,10 @@ impl ProofStamp {
 
     /// Merges two stamps into one covering stamp.
     ///
-    /// Each side pairs a stamp with the descriptors of its covered actions.
-    /// The action digests for the merge proof and the merged
-    /// `covered_actions` are both derived from the descriptor lists.
+    /// Each side pairs a stamp with the descriptors of its covered actions and
+    /// the tachygrams of its covered bundles. The action digests for the merge
+    /// proof and the merged `covered_actions` are both derived from the
+    /// descriptor lists.
     ///
     /// TODO: confirm desc list against stamp? it's forbidden by the proof
     /// system, but we might want to fail early.
@@ -891,8 +839,16 @@ impl ProofStamp {
     /// proof-system step fails.
     pub fn merge<RNG: CryptoRng>(
         rng: &mut RNG,
-        (left_stamp, left_desc): (Self, BTreeSet<action::Descriptor>),
-        (right_stamp, right_desc): (Self, BTreeSet<action::Descriptor>),
+        (left_stamp, left_desc, left_tachygrams): (
+            Self,
+            BTreeSet<action::Descriptor>,
+            BTreeSet<Tachygram>,
+        ),
+        (right_stamp, right_desc, right_tachygrams): (
+            Self,
+            BTreeSet<action::Descriptor>,
+            BTreeSet<Tachygram>,
+        ),
     ) -> Result<Self, ProveError> {
         let left_actions_digest = left_desc
             .iter()
@@ -909,13 +865,13 @@ impl ProofStamp {
             rng,
             (
                 left_actions_digest,
-                left_stamp.tachygrams,
+                left_tachygrams,
                 left_stamp.anchor,
                 left_stamp.proof,
             ),
             (
                 right_actions_digest,
-                right_stamp.tachygrams,
+                right_tachygrams,
                 right_stamp.anchor,
                 right_stamp.proof,
             ),
@@ -951,7 +907,6 @@ impl ProofStamp {
             coverage,
             anchor,
             tachygram_set,
-            tachygrams,
             proof: Box::new(proof),
         })
     }
@@ -975,8 +930,8 @@ impl ProofStamp {
     /// # Soundness
     ///
     /// The parameter is a multiset: order does not matter, multiplicity does.
-    /// The header is built from [`Self::tachygram_set`], so the published
-    /// [`Self::tachygrams`] are not read here.
+    /// The header is built from [`Self::tachygram_set`], so the covered
+    /// bundles' tachygrams are not read here.
     ///
     /// # Errors
     ///

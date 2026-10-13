@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use core::cmp::Ordering;
 
 use corez::io::{self, Read, Write};
@@ -63,9 +64,15 @@ impl PartialOrd for Tachygram {
 
 impl Ord for Tachygram {
     /// Order by the canonical little-endian byte encoding of the field
-    /// element, matching the byte-lexicographic order the stamp digest
+    /// element, matching the byte-lexicographic order the tachygram digest
     /// commits to. `Fp` has no intrinsic `Ord`.
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.to_repr().as_ref().cmp(other.0.to_repr().as_ref())
+    }
+}
+
+impl FromIterator<Tachygram> for Vec<[u8; 32]> {
+    fn from_iter<I: IntoIterator<Item = Tachygram>>(iter: I) -> Self {
+        iter.into_iter().map(|tg| tg.0.to_repr()).collect()
     }
 }

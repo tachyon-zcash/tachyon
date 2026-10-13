@@ -4,11 +4,9 @@ use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::
 
 use ff::Field as _;
 use pasta_curves::Fp;
-use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetCommit,
-    TachygramSetPoly, action,
+    ActionDigest, BlockHeight, ProofStamp, Tachygram, TachygramSetPoly, action,
     constants::EPOCH_SIZE,
     digest::blake2b,
     stamp::{self, ProveError},
@@ -48,8 +46,16 @@ fn stamp_merge_iff_matching_anchors() {
 
         let result = ProofStamp::merge(
             rng,
-            (stamp_a, BTreeSet::from_iter([plan_a.descriptor()])),
-            (stamp_b, BTreeSet::from_iter([plan_b.descriptor()])),
+            (
+                stamp_a,
+                BTreeSet::from_iter([plan_a.descriptor()]),
+                BTreeSet::from(plan_a.tachygrams),
+            ),
+            (
+                stamp_b,
+                BTreeSet::from_iter([plan_b.descriptor()]),
+                BTreeSet::from(plan_b.tachygrams),
+            ),
         );
         assert_eq!(
             result.is_ok(),
@@ -86,23 +92,25 @@ fn plan_prove_rejects_invalid_inputs() {
     );
 
     let (rcv_a, theta_a) = spend_witness(rng);
-    let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
+    let nullifiers_a = user.nf_pair(&note_a, height.epoch());
+    let plan_a = action::Plan::spend(note_a, theta_a, rcv_a, nullifiers_a, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
     let (rcv_b, theta_b) = spend_witness(rng);
-    let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, |alpha| {
+    let nullifiers_b = user.nf_pair(&note_b, height.epoch());
+    let plan_b = action::Plan::spend(note_b, theta_b, rcv_b, nullifiers_b, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
 
-    let foreign_a = action::Plan::spend(note_a, theta_a, rcv_a, |alpha| {
+    let foreign_a = action::Plan::spend(note_a, theta_a, rcv_a, nullifiers_a, |alpha| {
         other.pak.ak.derive_action_public(&alpha)
     });
 
     let two_spends = || {
         alloc::vec![
-            (plan_a.descriptor(), theta_a, rcv_a),
-            (plan_b.descriptor(), theta_b, rcv_b),
+            (plan_a.descriptor(), theta_a, rcv_a, plan_a.tachygrams),
+            (plan_b.descriptor(), theta_b, rcv_b, plan_b.tachygrams),
         ]
     };
 
@@ -178,7 +186,7 @@ fn plan_prove_rejects_invalid_inputs() {
     // does not verify as the plan's.
     {
         let plan = stamp::Plan::new(
-            alloc::vec![(foreign_a.descriptor(), theta_a, rcv_a)],
+            alloc::vec![(foreign_a.descriptor(), theta_a, rcv_a, foreign_a.tachygrams)],
             alloc::vec![],
             anchor,
         );
@@ -219,14 +227,15 @@ fn plan_prove_lifts_a_spend_along_spans() {
     assert_ne!(spend_anchor, plan_anchor, "the spend needs a lift");
 
     let (rcv, theta) = spend_witness(rng);
-    let spend = action::Plan::spend(note, theta, rcv, |alpha| {
+    let nullifiers = user.nf_pair(&note, cm_height.epoch());
+    let spend = action::Plan::spend(note, theta, rcv, nullifiers, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
     let (out_rcv, out_theta, output) = build_output_plan(rng, user.random_note(200));
     let secret = user.secret_pcd(rng, note);
     let prove = |prove_rng: &mut StdRng, spans| {
         stamp::Plan::new(
-            vec![(spend.descriptor(), theta, rcv)],
+            vec![(spend.descriptor(), theta, rcv, spend.tachygrams)],
             vec![(output.descriptor(), out_theta, output.note, out_rcv)],
             plan_anchor,
         )
@@ -312,8 +321,16 @@ fn merge_populates_covered_actions() {
 
     let merged = ProofStamp::merge(
         rng,
-        (stamp_a, BTreeSet::from_iter([plan_a.descriptor()])),
-        (stamp_b, BTreeSet::from_iter([plan_b.descriptor()])),
+        (
+            stamp_a,
+            BTreeSet::from_iter([plan_a.descriptor()]),
+            BTreeSet::from(plan_a.tachygrams),
+        ),
+        (
+            stamp_b,
+            BTreeSet::from_iter([plan_b.descriptor()]),
+            BTreeSet::from(plan_b.tachygrams),
+        ),
     )
     .expect("merge");
     // `merge` sorts the concatenated descriptors into canonical order, so the
@@ -339,7 +356,7 @@ fn double_output_cannot_aggregate() {
     let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note);
     let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note);
     assert_eq!(
-        stamp_a.tachygrams, stamp_b.tachygrams,
+        plan_a.tachygrams, plan_b.tachygrams,
         "reused output commitment must collide"
     );
     assert_ne!(
@@ -350,13 +367,15 @@ fn double_output_cannot_aggregate() {
 
     let descriptors_a = BTreeSet::from_iter([plan_a.descriptor()]);
     let descriptors_b = BTreeSet::from_iter([plan_b.descriptor()]);
+    let tachygrams_a = BTreeSet::from(plan_a.tachygrams);
+    let tachygrams_b = BTreeSet::from(plan_b.tachygrams);
 
     // The honest merge refuses the overlap on the tachygram-set product relation.
     {
         let merge_err = ProofStamp::merge(
             rng,
-            (stamp_a.clone(), descriptors_a.clone()),
-            (stamp_b.clone(), descriptors_b.clone()),
+            (stamp_a.clone(), descriptors_a.clone(), tachygrams_a.clone()),
+            (stamp_b.clone(), descriptors_b.clone(), tachygrams_b.clone()),
         )
         .expect_err("overlapping tachygrams must not merge");
         let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
@@ -370,35 +389,38 @@ fn double_output_cannot_aggregate() {
 
     let evil_pcd = forge_overlapping_merge(
         rng,
-        (&stamp_a, &Vec::from_iter(descriptors_a.clone())),
-        (&stamp_b, &Vec::from_iter(descriptors_b.clone())),
+        (
+            &stamp_a,
+            &Vec::from_iter(descriptors_a.clone()),
+            &tachygrams_a,
+        ),
+        (
+            &stamp_b,
+            &Vec::from_iter(descriptors_b.clone()),
+            &tachygrams_b,
+        ),
     );
 
     let all_descriptors: Vec<action::Descriptor> =
         descriptors_a.union(&descriptors_b).copied().collect();
 
-    // Publish the forgery as a coherent stamp: canonical deduplicated tachygrams
-    // and the covered-actions digest over the merged descriptors, so `covers`
-    // accepts it and only proof verification rejects it.
+    // Publish the forgery as a coherent stamp: a commitment to the
+    // deduplicated tachygrams and the covered-actions digest over the merged
+    // descriptors, so `covers` accepts it and only proof verification rejects
+    // it.
     let coverage = {
         let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
-    let tachygrams: BTreeSet<Tachygram> = stamp_a
-        .tachygrams
-        .union(&stamp_b.tachygrams)
-        .copied()
-        .collect();
     let stamp = ProofStamp {
         coverage,
         anchor: evil_pcd.data().2,
-        tachygram_set: tachygrams
-            .iter()
+        tachygram_set: tachygrams_a
+            .union(&tachygrams_b)
             .copied()
             .collect::<TachygramSetPoly>()
             .commit(),
-        tachygrams,
         proof: Box::new(evil_pcd.proof().clone()),
     };
     let digests: Vec<ActionDigest> = all_descriptors
@@ -460,8 +482,10 @@ fn double_spend_cannot_aggregate() {
         descriptors_a.is_disjoint(&descriptors_b),
         "independent randomization gives distinct descriptors"
     );
+    let tachygrams_a = autonome_a.tachygrams;
+    let tachygrams_b = autonome_b.tachygrams;
     assert!(
-        !stamp_a.tachygrams.is_disjoint(&stamp_b.tachygrams),
+        !tachygrams_a.is_disjoint(&tachygrams_b),
         "same-note spends share their nullifiers"
     );
 
@@ -469,8 +493,8 @@ fn double_spend_cannot_aggregate() {
     {
         let merge_err = ProofStamp::merge(
             rng,
-            (stamp_a.clone(), descriptors_a.clone()),
-            (stamp_b.clone(), descriptors_b.clone()),
+            (stamp_a.clone(), descriptors_a.clone(), tachygrams_a.clone()),
+            (stamp_b.clone(), descriptors_b.clone(), tachygrams_b.clone()),
         )
         .expect_err("shared nullifiers must not merge");
         let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
@@ -484,35 +508,37 @@ fn double_spend_cannot_aggregate() {
 
     let evil_pcd = forge_overlapping_merge(
         rng,
-        (&stamp_a, &Vec::from_iter(descriptors_a.clone())),
-        (&stamp_b, &Vec::from_iter(descriptors_b.clone())),
+        (
+            &stamp_a,
+            &Vec::from_iter(descriptors_a.clone()),
+            &tachygrams_a,
+        ),
+        (
+            &stamp_b,
+            &Vec::from_iter(descriptors_b.clone()),
+            &tachygrams_b,
+        ),
     );
 
     let all_descriptors: Vec<action::Descriptor> =
         descriptors_a.union(&descriptors_b).copied().collect();
 
     // Publish the forgery as a coherent stamp: the covered-actions digest over
-    // the merged descriptors, and the canonical deduplicated nullifier set that
-    // cannot reconstruct the doubled multiset the proof commits to.
+    // the merged descriptors, and a commitment to the deduplicated nullifier
+    // set that cannot reconstruct the doubled multiset the proof commits to.
     let coverage = {
         let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
-    let tachygrams: BTreeSet<Tachygram> = stamp_a
-        .tachygrams
-        .union(&stamp_b.tachygrams)
-        .copied()
-        .collect();
     let stamp = ProofStamp {
         coverage,
         anchor: evil_pcd.data().2,
-        tachygram_set: tachygrams
-            .iter()
+        tachygram_set: tachygrams_a
+            .union(&tachygrams_b)
             .copied()
             .collect::<TachygramSetPoly>()
             .commit(),
-        tachygrams,
         proof: Box::new(evil_pcd.proof().clone()),
     };
 
@@ -534,8 +560,7 @@ fn double_spend_cannot_aggregate() {
 /// so the doubled action doubles its tachygram: verifying against `[d, d]`
 /// matches the action accumulator while the published deduplicated tachygram
 /// set fails to reconstruct the doubled one, so the proof is `Disproved`. The
-/// wire-level duplicate tachygram is caught by
-/// [`read_rejects_duplicate_tachygrams`].
+/// wire-level duplicate tachygram is caught by the body reader.
 #[test]
 fn cannot_forge_stamp_covering_duplicated_action() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -547,14 +572,23 @@ fn cannot_forge_stamp_covering_duplicated_action() {
     let note = wallet.random_note(200);
     let (output_stamp, plan) = build_output_stamp(rng, anchor, note);
     let descriptors = BTreeSet::from_iter([plan.descriptor()]);
+    let tachygrams = BTreeSet::from(plan.tachygrams);
 
     // The honest merge refuses the shared action on the action-set product
     // relation (checked before the tachygram product).
     {
         let merge_err = ProofStamp::merge(
             rng,
-            (output_stamp.clone(), descriptors.clone()),
-            (output_stamp.clone(), descriptors.clone()),
+            (
+                output_stamp.clone(),
+                descriptors.clone(),
+                tachygrams.clone(),
+            ),
+            (
+                output_stamp.clone(),
+                descriptors.clone(),
+                tachygrams.clone(),
+            ),
         )
         .expect_err("a duplicated action must not merge");
         let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
@@ -568,8 +602,16 @@ fn cannot_forge_stamp_covering_duplicated_action() {
 
     let evil_pcd = forge_overlapping_merge(
         rng,
-        (&output_stamp, &Vec::from_iter(descriptors.clone())),
-        (&output_stamp, &Vec::from_iter(descriptors.clone())),
+        (
+            &output_stamp,
+            &Vec::from_iter(descriptors.clone()),
+            &tachygrams,
+        ),
+        (
+            &output_stamp,
+            &Vec::from_iter(descriptors.clone()),
+            &tachygrams,
+        ),
     );
 
     let all_descriptors: Vec<action::Descriptor> = descriptors
@@ -579,14 +621,13 @@ fn cannot_forge_stamp_covering_duplicated_action() {
         .collect();
 
     // Publish the forgery as a coherent stamp: the covered-actions digest over
-    // the duplicated action, and the canonical deduplicated tachygram set that
-    // cannot reconstruct the doubled multiset the proof commits to.
+    // the duplicated action, and a commitment to the deduplicated tachygram set
+    // that cannot reconstruct the doubled multiset the proof commits to.
     let coverage = {
         let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
         desc_bytes.sort_unstable();
         blake2b::action_descriptor_digest(&desc_bytes)
     };
-    let tachygrams: BTreeSet<Tachygram> = output_stamp.tachygrams.iter().copied().collect();
     let stamp = ProofStamp {
         coverage,
         anchor: evil_pcd.data().2,
@@ -595,7 +636,6 @@ fn cannot_forge_stamp_covering_duplicated_action() {
             .copied()
             .collect::<TachygramSetPoly>()
             .commit(),
-        tachygrams,
         proof: Box::new(evil_pcd.proof().clone()),
     };
 
@@ -733,106 +773,6 @@ fn verify_proof_action_multiset_invariants() {
     }
 }
 
-/// Bundle-validity rule 9 requires a proof stamp's tachygrams to be
-/// distinct, not merely sorted; `read` must reject an adjacent duplicate
-/// even though the sequence is non-decreasing.
-#[test]
-fn read_rejects_duplicate_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-
-    let anchor = Anchor::from(Fp::random(&mut *rng));
-    let tg = Tachygram::from(Fp::random(&mut *rng));
-    let tg_set = [tg, tg];
-
-    let mut buf = Vec::new();
-    {
-        buf.extend_from_slice(&[0u8; 32]); // dummy actions digest
-        anchor.write(&mut buf).expect("write anchor");
-        TachygramSetPoly::from_iter(tg_set)
-            .commit()
-            .write(&mut buf)
-            .expect("write tachygram set commitment");
-
-        CompactSize::from(u64::try_from(tg_set.len()).expect("tachygram count"))
-            .write(&mut buf)
-            .expect("write tachygram count");
-
-        for write_tg in tg_set {
-            write_tg.write(&mut buf).expect("write tachygram");
-        }
-    }
-
-    let err = ProofStamp::read(&*buf).expect_err("duplicate tachygrams must be rejected");
-    assert_eq!(err.to_string(), "tachygrams are not unique");
-}
-
-/// Every covered action publishes tachygrams, so a proof stamp never carries
-/// an empty set. `read` rejects the count before reading any member.
-#[test]
-fn read_rejects_empty_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-
-    let anchor = Anchor::from(Fp::random(&mut *rng));
-
-    let mut buf = Vec::new();
-    {
-        buf.extend_from_slice(&[0u8; 32]); // dummy actions digest
-        anchor.write(&mut buf).expect("write anchor");
-        TachygramSetCommit::default()
-            .write(&mut buf)
-            .expect("write tachygram set commitment");
-
-        CompactSize::from(0u64)
-            .write(&mut buf)
-            .expect("write tachygram count");
-    }
-
-    let err = ProofStamp::read(&*buf).expect_err("an empty tachygram set must be rejected");
-    assert_eq!(err.to_string(), "no tachygrams");
-}
-
-/// The set polynomial carries a constant term alongside its roots, so the
-/// members must number fewer than the rank's coefficients. `read` rejects the
-/// count before reading any member, so the oversized set is never allocated.
-#[test]
-fn read_rejects_too_many_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-
-    let anchor = Anchor::from(Fp::random(&mut *rng));
-    let n_tachygrams = u64::try_from(ProductionRank::num_coeffs()).expect("rank fits u64");
-
-    let mut buf = Vec::new();
-    {
-        buf.extend_from_slice(&[0u8; 32]); // dummy actions digest
-        anchor.write(&mut buf).expect("write anchor");
-        TachygramSetCommit::default()
-            .write(&mut buf)
-            .expect("write tachygram set commitment");
-
-        CompactSize::from(n_tachygrams)
-            .write(&mut buf)
-            .expect("write tachygram count");
-    }
-
-    let err = ProofStamp::read(&*buf).expect_err("an oversized tachygram set must be rejected");
-    assert_eq!(err.to_string(), "too many tachygrams");
-}
-
-/// A strictly increasing tachygram sequence is unaffected by the
-/// distinctness check.
-#[test]
-fn read_accepts_distinct_sorted_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let pool = PoolSim::genesis(rng);
-    let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
-
-    let mut buf = Vec::new();
-    stamp.write(&mut buf).expect("write");
-    ProofStamp::read(&*buf).expect("distinct sorted tachygrams must be accepted");
-}
-
 /// `hStampActionsTachyon` survives a `write`/`read` round-trip.
 #[test]
 fn covered_actions_round_trip() {
@@ -849,20 +789,19 @@ fn covered_actions_round_trip() {
     assert_eq!(decoded.coverage, stamp.coverage);
     assert_eq!(decoded.anchor, stamp.anchor);
     assert_eq!(decoded.tachygram_set, stamp.tachygram_set);
-    assert_eq!(decoded.tachygrams, stamp.tachygrams);
 }
 
-/// An honest stamp's carried commitment matches its published tachygrams.
+/// An honest stamp's carried commitment matches its planned tachygrams.
 #[test]
 fn honest_stamp_commits_to_its_tachygrams() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, plan) = build_output_stamp(rng, pool.anchor(), note);
 
     assert_eq!(
-        TachygramSetPoly::from_iter(stamp.tachygrams.clone()).commit(),
+        TachygramSetPoly::from_iter(plan.tachygrams).commit(),
         stamp.tachygram_set
     );
 }
@@ -885,7 +824,7 @@ fn verify_proof_rejects_mismatched_commitment() {
     };
 
     assert_ne!(
-        TachygramSetPoly::from_iter(forged.tachygrams.clone()).commit(),
+        TachygramSetPoly::from_iter(plan.tachygrams).commit(),
         forged.tachygram_set.clone()
     );
     assert!(
@@ -893,44 +832,6 @@ fn verify_proof_rejects_mismatched_commitment() {
             .verify_proof(rng, [plan.digest().expect("valid plan")])
             .expect("verify"),
         "verification must reject an unconfirmed commitment"
-    );
-}
-
-/// The proof binds `tachygram_set`, not the published `tachygrams`. A stamp
-/// publishing a tampered list under its honest commitment verifies, which is
-/// what `Bundle::verify_tachygrams` is for.
-#[test]
-fn proof_alone_does_not_bind_the_published_list() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let pool = PoolSim::genesis(rng);
-    let note = wallet.random_note(200);
-    let (honest, plan) = build_output_stamp(rng, pool.anchor(), note);
-
-    // Swap one published tachygram for another, keeping the count and the
-    // carried commitment untouched.
-    let mut tampered_list = honest.tachygrams.clone();
-    let dropped = *tampered_list.iter().next().expect("a published tachygram");
-    tampered_list.remove(&dropped);
-    tampered_list.insert(Tachygram::from(Fp::random(&mut *rng)));
-
-    assert_eq!(tampered_list.len(), honest.tachygrams.len());
-
-    let tampered = ProofStamp {
-        tachygrams: tampered_list,
-        ..honest
-    };
-
-    assert_ne!(
-        TachygramSetPoly::from_iter(tampered.tachygrams.clone()).commit(),
-        tampered.tachygram_set.clone()
-    );
-
-    assert!(
-        tampered
-            .verify_proof(rng, [plan.digest().expect("valid plan")])
-            .expect("verify"),
-        "the proof is over the carried commitment, which is untouched here"
     );
 }
 
@@ -959,7 +860,6 @@ fn lift_advances_a_stamp_anchor() {
     assert_eq!(lifted.anchor, pool.block(lifted_to).anchor());
     assert_eq!(lifted.coverage, before.coverage);
     assert_eq!(lifted.tachygram_set, before.tachygram_set);
-    assert_eq!(lifted.tachygrams, before.tachygrams);
 }
 
 /// The header the lift rebuilds is the one the original proof was made
@@ -1094,11 +994,15 @@ fn merge_after_lift() {
         BTreeSet::from_iter([plan_a.descriptor()]),
         BTreeSet::from_iter([plan_b.descriptor()]),
     );
+    let (tachygrams_a, tachygrams_b) = (
+        BTreeSet::from(plan_a.tachygrams),
+        BTreeSet::from(plan_b.tachygrams),
+    );
 
     ProofStamp::merge(
         rng,
-        (stamp_a.clone(), desc_a.clone()),
-        (stamp_b.clone(), desc_b.clone()),
+        (stamp_a.clone(), desc_a.clone(), tachygrams_a.clone()),
+        (stamp_b.clone(), desc_b.clone(), tachygrams_b.clone()),
     )
     .expect_err("mismatched anchors must not merge");
 
@@ -1108,8 +1012,12 @@ fn merge_after_lift() {
         .expect("lift onto the later anchor");
 
     assert_eq!(lifted_a.anchor, stamp_b.anchor);
-    ProofStamp::merge(rng, (lifted_a, desc_a), (stamp_b, desc_b))
-        .expect("a lifted stamp merges with one at the anchor it was lifted to");
+    ProofStamp::merge(
+        rng,
+        (lifted_a, desc_a, tachygrams_a),
+        (stamp_b, desc_b, tachygrams_b),
+    )
+    .expect("a lifted stamp merges with one at the anchor it was lifted to");
 }
 
 /// `merge` requires each side's descriptor list to match the actions its

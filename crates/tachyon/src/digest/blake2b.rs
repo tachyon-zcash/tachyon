@@ -126,6 +126,29 @@ pub fn memo_digest(memo: &[u8]) -> [u8; 32] {
     })
 }
 
+const TACHYGRAM_PERSONALIZATION: &[u8; 14] = b"Tachyon-TgList";
+
+/// Digest of a bundle's tachygrams.
+///
+/// Tachygrams are hashed in the order given, so the digest commits to that
+/// order.
+///
+/// $$
+///   \text{BLAKE2b-256}_\texttt{Tachyon-TgList}(
+///     \mathsf{tg}_i
+///   )
+/// $$
+///
+/// Over a bundle's sorted tachygrams this is `hTachygramsTachyon`.
+#[must_use]
+pub fn tachygram_digest(tachygrams: &[[u8; 32]]) -> [u8; 32] {
+    hasher_256(TACHYGRAM_PERSONALIZATION, |state| {
+        for tachygram in tachygrams {
+            state.update(tachygram);
+        }
+    })
+}
+
 // See https://github.com/zcash/orchard/blob/main/src/bundle/commitments.rs
 const BUNDLE_COMMITMENT_PERSONALIZATION: &[u8; 16] = b"ZTxIdTachyonHash";
 const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
@@ -137,23 +160,27 @@ const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxIdTachyonHash}(
 ///     \mathsf{hActionsTachyon} \Vert \mathsf{vBalanceTachyon} \Vert
-///     \mathsf{hMemoTachyon}
+///     \mathsf{hMemoTachyon} \Vert \mathsf{hTachygramsTachyon}
 ///   )
 /// $$
 ///
 /// The stamp is excluded because it is mutable auth data. The memo is included
 /// because it is effecting: relayers rewrite `auth_digest` during aggregation,
-/// so only the sighash can hold a payload a miner must not strip.
+/// so only the sighash can hold a payload a miner must not strip. The
+/// tachygram digest is included, so the signatures bind the tachygrams the
+/// bundle's actions publish.
 #[must_use]
 pub fn bundle_commitment(
     action_commit: &[u8; 32],
     value_balance: i64,
     memo_digest: &[u8; 32],
+    tachygram_digest: &[u8; 32],
 ) -> [u8; 32] {
     hasher_256(BUNDLE_COMMITMENT_PERSONALIZATION, |state| {
         state.update(action_commit);
         state.update(&value_balance.to_le_bytes());
         state.update(memo_digest);
+        state.update(tachygram_digest);
     })
 }
 
@@ -174,18 +201,13 @@ pub fn stamp_proof_digest(proof: &[u8]) -> [u8; 32] {
     })
 }
 
-/// Digest of a proof stamp's proof, anchor, tachygram-set commitment, and
-/// tachygrams.
-///
-/// Tachygrams are hashed in the order given, so the digest commits to that
-/// order.
+/// Digest of a proof stamp's proof, anchor, and tachygram-set commitment.
 ///
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{Tachyon-Stamp}(
 ///     \mathsf{hStampProofTachyon} \Vert
 ///     \mathsf{anchorTachyon} \Vert
-///     \mathsf{cTachygrams} \Vert
-///     \mathsf{vTachygrams}
+///     \mathsf{cTachygrams}
 ///   )
 /// $$
 #[must_use]
@@ -193,17 +215,11 @@ pub fn stamp_data_digest(
     stamp_proof_digest: [u8; 32],
     anchor: [u8; 32],
     tachygram_set: [u8; 32],
-    tachygrams: &[[u8; 32]],
 ) -> [u8; 32] {
     hasher_256(STAMP_DATA_PERSONALIZATION, |state| {
         state.update(&stamp_proof_digest);
         state.update(&anchor);
         state.update(&tachygram_set);
-
-        // only variable-length component
-        for tg in tachygrams {
-            state.update(tg);
-        }
     })
 }
 

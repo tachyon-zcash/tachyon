@@ -170,7 +170,7 @@ fn stamp_lift_within_epoch() {
     let (stamp, plan) = build_output_stamp(rng, stamp_anchor, note);
 
     let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
-    let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
+    let tachygram_commit = TachygramSetPoly::from_iter(plan.tachygrams).commit();
 
     pool.advance(EPOCH_SIZE - 2, |_| random_block(rng, 1, 4));
     let new_height = pool.height();
@@ -330,7 +330,7 @@ fn anchor_span_fuse_rejects_unjoined_spans() {
 fn output_stamp_pcd(rng: &mut StdRng, user: &WalletSim, stamp_anchor: Anchor) -> Pcd<stamp::Stamp> {
     let (stamp, plan) = build_output_stamp(rng, stamp_anchor, user.random_note(200));
     let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
-    let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
+    let tachygram_commit = TachygramSetPoly::from_iter(plan.tachygrams).commit();
     stamp
         .proof
         .carry((action_commit, tachygram_commit, stamp_anchor))
@@ -1998,7 +1998,8 @@ fn spend_action_is_bound_to_its_note() {
 
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);
-    let plan = action::Plan::spend(note, theta, rcv, |alpha| {
+    let nullifiers = user.nf_pair(&note, height.epoch());
+    let plan = action::Plan::spend(note, theta, rcv, nullifiers, |alpha| {
         user.pak.ak.derive_action_public(&alpha)
     });
     let planned = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
