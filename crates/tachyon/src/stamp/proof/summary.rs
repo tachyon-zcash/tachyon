@@ -2,9 +2,9 @@
 //!
 //! A summary folds each stamp's tachygram set into one set polynomial while
 //! the anchor absorbs the same commitments. Consensus forbids republishing a
-//! tachygram within two epochs, and the accumulator is therefore square-free.
+//! tachygram within two epochs. The accumulator is therefore square-free.
 //! The prover chooses where a summary starts and stops. A consumer joins
-//! summaries whose anchors are equal, and the joined chain contains every stamp
+//! summaries whose anchors are equal. The joined chain contains every stamp
 //! absorption.
 
 extern crate alloc;

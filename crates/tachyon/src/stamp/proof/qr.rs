@@ -578,10 +578,10 @@ impl Header for QrBucket {
 /// `epoch + 1`, and outputs it as the bucket's `anchor_next`.
 ///
 /// The intake covers `(anchor_prev, anchor_end]`, the stamp folds of `epoch`.
-/// The bucket covers `[anchor_start, anchor_next)`, which adds the entry
-/// anchor. The entry anchor belongs to `epoch` and absorbs no tachygrams. Both
-/// bucket bounds are boundary digests, and only boundary digests mark an epoch
-/// boundary.
+/// The bucket covers `[anchor_start, anchor_next)`. This range also contains
+/// the entry anchor. The entry anchor belongs to `epoch` and absorbs no
+/// tachygrams. Both bucket bounds are boundary digests. Only a boundary digest
+/// marks an epoch boundary.
 ///
 /// # Soundness
 ///
@@ -589,8 +589,8 @@ impl Header for QrBucket {
 /// `anchor_prev` absorbs `epoch`. Whether `anchor_prev` is the entry anchor of
 /// `epoch` depends on what was published, and this step does not check it.
 /// `anchor_final_prev` is a free witness, and the lineage that consumes the
-/// bucket binds it. [`Anchor::default`] is epoch zero's entry anchor, the
-/// boundary digest of zero into epoch zero.
+/// bucket binds it. [`Anchor::default`] is the entry anchor of epoch zero. It
+/// is the boundary digest of zero into epoch zero.
 ///
 /// The crossing makes the bucket cover the whole epoch. In the accepted chain,
 /// the only boundary digest into `epoch + 1` is the one computed from

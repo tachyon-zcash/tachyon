@@ -6,7 +6,7 @@ Each stamp and each epoch transition produces a new pool state, but consensus ma
 
 These end-of-block states are anchors.
 
-The anchor advances by two kinds of fold, and both absorb an epoch index. A stamp absorption absorbs the epoch of the block that contains the stamp. A validator reads that epoch from the block height. A boundary digest absorbs the epoch being entered. The two folds hash under different Poseidon domains (`Tachyon-AnchorSt` and `Tachyon-AnchorEp`). Opening a fold shows which kind it is.
+The anchor advances by two kinds of fold. Both absorb an epoch index. A stamp absorption absorbs the epoch of the block that contains the stamp. A validator reads that epoch from the block height. A boundary digest absorbs the epoch being entered. The two folds hash under different Poseidon domains (`Tachyon-AnchorSt` and `Tachyon-AnchorEp`). The domain shows whether a fold is a stamp absorption or a boundary digest.
 
 A block that publishes no stamp leaves the anchor unchanged. An anchor identifies a position in the sequence of published stamps.
 
@@ -30,7 +30,7 @@ $$
 \mathsf{anchor}' = \mathsf{Poseidon}_\mathtt{Tachyon\text{-}AnchorEp}(\mathsf{anchor},\ e+1)
 $$
 
-The two folds differ in their Poseidon domain and in which epoch they absorb. A stamp absorption absorbs the epoch it sits in. A boundary digest absorbs the epoch being entered. A stamp absorption that produced an entry anchor would be a collision between the two domains. This lets a proof tie a lineage to a real epoch boundary.
+The two folds differ in their Poseidon domain and in which epoch they absorb. A stamp absorption absorbs the epoch it sits in. A boundary digest absorbs the epoch being entered. A stamp absorption that produced an entry anchor would be a collision between the two domains. A proof can therefore check that a lineage passes through a published epoch boundary.
 
 Two positions at the boundary have names. The **entry anchor** of $e$ is the first anchor of $e$ in the accepted chain: $H_\mathsf{ep}(\mathsf{final}(e-1), e)$ for $e \geq 1$, and $H_\mathsf{ep}(0, 0)$ for $e = 0$. The **final anchor** of $e$ is the last anchor inside $e$, which equals the entry anchor when $e$ published no stamp. The **crossing** is the single fold $\mathsf{final}(e) \to \mathsf{entry}(e+1)$ joining them.
 

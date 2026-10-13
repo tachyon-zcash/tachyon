@@ -182,7 +182,8 @@ A `Summary` carries `(epoch, anchor_prev, anchor_end, acc_commit)`: a run of one
 The product of two root polynomials is the root polynomial of the multiset union, and consensus forbids republishing a tachygram within two epochs, so the accumulator is square-free.
 The prover chooses where a summary starts and stops.
 A consumer joins summaries whose anchors are equal.
-The joined chain contains every stamp absorption however the summaries are split.
+The joined chain contains every stamp absorption.
+This holds for any choice of split points.
 
 Summaries root unbound like every seed. The QR evidence built on them closes through the bucket seal's crossing, where consensus anchor membership forces every spliced link.
 
