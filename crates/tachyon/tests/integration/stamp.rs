@@ -1080,8 +1080,16 @@ fn mismatched_merge_descriptors_fail_verification() {
     // relation: proving succeeds and the compute is spent.
     let merged = ProofStamp::merge(
         rng,
-        (bundle_a.stamp.clone(), descriptors_a.clone()),
-        (bundle_b.stamp.clone(), foreign_descriptors),
+        (
+            bundle_a.stamp.clone(),
+            descriptors_a.clone(),
+            bundle_a.tachygrams.clone(),
+        ),
+        (
+            bundle_b.stamp.clone(),
+            foreign_descriptors,
+            bundle_b.tachygrams.clone(),
+        ),
     )
     .expect("merge performs no coverage pre-check");
 
@@ -1098,8 +1106,8 @@ fn mismatched_merge_descriptors_fail_verification() {
     // produce a stamp the same verifier accepts.
     let honest = ProofStamp::merge(
         rng,
-        (bundle_a.stamp, descriptors_a),
-        (bundle_b.stamp, descriptors_b),
+        (bundle_a.stamp, descriptors_a, bundle_a.tachygrams),
+        (bundle_b.stamp, descriptors_b, bundle_b.tachygrams),
     )
     .expect("merge");
     assert!(

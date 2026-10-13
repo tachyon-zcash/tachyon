@@ -1929,48 +1929,101 @@ fn tampered_body_tachygrams_fail_verification() {
     };
 }
 
-/// A spend that signs and stamps the nullifiers of the wrong epoch keeps its
-/// body and `cTachygrams` consistent with each other. The prover does not
-/// check the planned pair, and `SpendStamp` accumulates the pair `SpendBind`
-/// derives, so the proof is what rejects the lie.
+/// `prove_spend` publishes the caller's planned pair while `SpendStamp` proves
+/// the pair `SpendBind` derives. One spend keeps its note, `theta` and `rcv`
+/// throughout, so its action descriptor never changes, and the signed body
+/// substitutes the nullifiers of the wrong epoch or of another note. Under the
+/// honest stamp the union check rejects the substitute. Under a stamp proven
+/// over the substitute the body and `cTachygrams` agree, and the proof rejects
+/// it.
 #[test]
-fn spend_publishing_wrong_nullifiers_is_disproved() {
+fn substituted_spend_nullifiers_fail_verification() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(500);
+    let other = wallet.random_note(500);
 
     let mut pool = PoolSim::genesis(rng);
     pool.mine(random_block_with(rng, &[vec![note.commitment()]], 4));
     let height = pool.height();
+    let epoch = height.epoch();
     let spendable = wallet.fresh_spend(rng, &pool, height, &note);
     let anchor = spendable.data().2;
-
-    let lie = wallet.nf_pair(&note, height.epoch().next().unwrap());
-    assert_ne!(lie, wallet.nf_pair(&note, height.epoch()));
-    let (rcv, theta) = spend_witness(rng);
-    let spend = action::Plan::spend(note, theta, rcv, lie, |alpha| {
-        wallet.pak.ak.derive_action_public(&alpha)
-    });
-    let plan = Plan::new(vec![spend], vec![]);
-    let sighash = mock_sighash(plan.commitment().unwrap());
-
     let secret = wallet.secret_pcd(rng, note);
-    let stamp = plan
-        .stamp_plan(anchor)
-        .prove(rng, &wallet.pak, vec![(secret, spendable, vec![])])
-        .expect("the prover does not check the planned pair");
-    let bundle = plan.sign(rng, &sighash, &ask).expect("sign").stamp(stamp);
+    let (rcv, theta) = spend_witness(rng);
 
-    bundle
-        .verify_tachygrams(&[])
-        .expect("the body and the carried commitment agree");
-    let err = bundle
-        .verify(rng, &sighash, &mock_wtxid(&bundle).into(), &[])
-        .expect_err("the wrong nullifiers must not verify");
-    let VerificationError::Disproved = err else {
-        panic!("expected Disproved, got {err:?}");
+    let plan_over = |nullifiers| {
+        let spend = action::Plan::spend(note, theta, rcv, nullifiers, |alpha| {
+            wallet.pak.ak.derive_action_public(&alpha)
+        });
+        Plan::new(vec![spend], vec![])
     };
+
+    let honest_plan = plan_over(wallet.nf_pair(&note, epoch));
+    let honest_stamp = honest_plan
+        .stamp_plan(anchor)
+        .prove(
+            rng,
+            &wallet.pak,
+            vec![(secret.clone(), spendable.clone(), vec![])],
+        )
+        .expect("prove the honest spend");
+    let honest_sighash = mock_sighash(honest_plan.commitment().unwrap());
+    let honest = honest_plan
+        .sign(rng, &honest_sighash, &ask)
+        .expect("sign")
+        .stamp(honest_stamp.clone());
+    honest
+        .verify(rng, &honest_sighash, &mock_wtxid(&honest).into(), &[])
+        .expect("the honest spend verifies");
+
+    for (label, substitute) in [
+        ("wrong epoch", wallet.nf_pair(&note, epoch.next().unwrap())),
+        ("foreign note", wallet.nf_pair(&other, epoch)),
+    ] {
+        let plan = plan_over(substitute);
+        assert_eq!(plan.descriptors(), honest_plan.descriptors(), "{label}");
+        let sighash = mock_sighash(plan.commitment().unwrap());
+
+        let under_honest_stamp = plan
+            .sign(rng, &sighash, &ask)
+            .expect("sign")
+            .stamp(honest_stamp.clone());
+        let set_err = under_honest_stamp
+            .verify(rng, &sighash, &mock_wtxid(&under_honest_stamp).into(), &[])
+            .expect_err(label);
+        let VerificationError::Tachygrams(VerifyTachygramsError::WrongSet) = set_err else {
+            panic!("{label}: expected Tachygrams(WrongSet), got {set_err:?}");
+        };
+
+        let substitute_stamp = plan
+            .stamp_plan(anchor)
+            .prove(
+                rng,
+                &wallet.pak,
+                vec![(secret.clone(), spendable.clone(), vec![])],
+            )
+            .expect("the prover does not check the planned pair");
+        let under_substitute_stamp = plan
+            .sign(rng, &sighash, &ask)
+            .expect("sign")
+            .stamp(substitute_stamp);
+        under_substitute_stamp
+            .verify_tachygrams(&[])
+            .expect("the body and the carried commitment agree");
+        let proof_err = under_substitute_stamp
+            .verify(
+                rng,
+                &sighash,
+                &mock_wtxid(&under_substitute_stamp).into(),
+                &[],
+            )
+            .expect_err(label);
+        let VerificationError::Disproved = proof_err else {
+            panic!("{label}: expected Disproved, got {proof_err:?}");
+        };
+    }
 }
 
 /// Two autonomes spend one note, so they share its nullifier pair. The honest
@@ -2113,67 +2166,102 @@ fn verify_tachygrams_rejects_too_many() {
 }
 
 /// The union commitment cannot tell which contributor published a tachygram,
-/// but each contributor's signatures can. Moving one tachygram between two
-/// adjuncts leaves the union intact, so the aggregate's proof still verifies,
-/// and breaks both adjuncts' signatures.
+/// but each contributor's signatures can. A spend and an output contribute to
+/// an innocent aggregate. Swapping one tachygram between them keeps two per
+/// action, so both stripped bodies still encode and decode, and the union is
+/// unchanged, so the aggregate's proof and set check still verify. Each
+/// contributor's binding signature fails, and the spend's action signature
+/// fails on its own.
 #[test]
-fn moving_a_tachygram_between_contributors_breaks_signatures() {
+fn swapping_tachygrams_between_contributors_breaks_signatures() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let ask = wallet.sk.derive_auth_private();
-    let anchor = PoolSim::genesis(rng).anchor();
+    let spend_note = wallet.random_note(500);
 
-    let mut contributors = [200, 300].map(|value| {
-        let (stamp, output_plan) = build_output_stamp(rng, anchor, wallet.random_note(value));
-        let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan]);
+    let mut pool = PoolSim::genesis(rng);
+    pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 4));
+    let height = pool.height();
+    let spendable = wallet.fresh_spend(rng, &pool, height, &spend_note);
+    let anchor = spendable.data().2;
+
+    let mut spender = wallet.autonome(rng, anchor, vec![(spend_note, spendable)], vec![]);
+    let mut outputter = {
+        let (stamp, output_plan) = build_output_stamp(rng, anchor, wallet.random_note(300));
+        let bundle_plan = Plan::new(vec![], vec![output_plan]);
         let sighash = mock_sighash(bundle_plan.commitment().unwrap());
         bundle_plan
             .sign(rng, &sighash, &ask)
             .expect("sign output bundle")
             .stamp(stamp)
-    });
+    };
 
     let stamp = ProofStamp::merge(
         rng,
         (
-            contributors[0].stamp.clone(),
-            contributors[0].descriptors().collect(),
-            contributors[0].tachygrams.clone(),
+            spender.stamp.clone(),
+            spender.descriptors().collect(),
+            spender.tachygrams.clone(),
         ),
         (
-            contributors[1].stamp.clone(),
-            contributors[1].descriptors().collect(),
-            contributors[1].tachygrams.clone(),
+            outputter.stamp.clone(),
+            outputter.descriptors().collect(),
+            outputter.tachygrams.clone(),
         ),
     )
     .expect("merge");
-    let plan = Plan::new(alloc::vec![], alloc::vec![]);
+    let plan = Plan::new(vec![], vec![]);
     let sighash = mock_sighash(plan.commitment().unwrap());
     let innocent = plan
         .sign(rng, &sighash, &ask)
         .expect("sign the innocent")
         .stamp(stamp);
-
-    let moved = contributors[0]
-        .tachygrams
-        .pop_first()
-        .expect("a contributor publishes tachygrams");
-    contributors[1].tachygrams.insert(moved);
-
     let wtxid = mock_wtxid(&innocent);
-    let adjuncts = contributors.map(|bundle| bundle.strip(wtxid));
-    innocent
-        .verify(rng, &sighash, &wtxid.into(), &[&adjuncts[0], &adjuncts[1]])
-        .expect("the aggregate's proof cannot see the move");
 
-    for adjunct in &adjuncts {
+    let round_trip = |bundle: Bundle<ProofStamp>| {
+        let mut buf = Vec::new();
+        bundle.strip(wtxid).write(&mut buf).expect("write");
+        Bundle::<PointerStamp>::read(&*buf).expect("read")
+    };
+
+    // Control: the honest contributors verify alongside the aggregate.
+    let honest = [round_trip(spender.clone()), round_trip(outputter.clone())];
+    innocent
+        .verify(rng, &sighash, &wtxid.into(), &[&honest[0], &honest[1]])
+        .expect("the honest aggregate verifies");
+    for adjunct in &honest {
+        adjunct
+            .verify_signatures(&mock_sighash(adjunct.commitment()))
+            .expect("honest contributors' signatures verify");
+    }
+
+    let nullifier = Tachygram::from(wallet.nf_pair(&spend_note, height.epoch())[0]);
+    let output_tachygram = *outputter.tachygrams.first().expect("an output publishes");
+    assert!(spender.tachygrams.remove(&nullifier));
+    assert!(outputter.tachygrams.remove(&output_tachygram));
+    spender.tachygrams.insert(output_tachygram);
+    outputter.tachygrams.insert(nullifier);
+
+    let swapped = [round_trip(spender), round_trip(outputter)];
+    assert!(swapped[1].tachygrams.contains(&nullifier));
+    innocent
+        .verify(rng, &sighash, &wtxid.into(), &[&swapped[0], &swapped[1]])
+        .expect("the aggregate's proof and union cannot see the swap");
+
+    for adjunct in &swapped {
         let err = adjunct
             .verify_signatures(&mock_sighash(adjunct.commitment()))
-            .expect_err("a moved tachygram must break the signatures");
+            .expect_err("a swapped tachygram must break the signatures");
         let SignatureError::Binding(_) = err else {
             panic!("expected SignatureError::Binding, got {err:?}");
         };
     }
+
+    let spend_action = swapped[0].actions[0];
+    spend_action
+        .rk
+        .verify(&mock_sighash(swapped[0].commitment()), &spend_action.sig)
+        .expect_err("the spend's action signature must fail on its own");
 }
 
 /// The commitment binds every tachygram a planned action publishes, and a
