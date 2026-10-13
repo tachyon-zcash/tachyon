@@ -26,6 +26,7 @@
   - [Deep Dive](revisit.md)
   - [Nullifier Analysis](nf-analysis.md)
   - [GGM-based Nullifier](ggm.md)
+  - [Dynamic Fee](fee.md)
 
 ## Appendix
 
