@@ -42,7 +42,7 @@ $$
 \bigr)
 $$
 
-with $\mathsf{hStampProofTachyon} = \text{BLAKE2b-256}_\text{Tachyon-Proof}(\mathsf{proofTachyon})$. The tachygrams themselves are in each bundle's body, so the effecting side covers them.
+with $\mathsf{hStampProofTachyon} = \text{BLAKE2b-256}_\text{Tachyon-Proof}(\mathsf{proofTachyon})$.
 
 A stripped bundle's summary is the 64-byte `wtxid` of the covering aggregate, used directly. The personalization `"ZTxAuthTachyHash"` is a placeholder until a Tachyon-ZIP amendment to ZIP-244 fixes it.
 

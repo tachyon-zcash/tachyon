@@ -324,13 +324,12 @@ impl Plan {
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
     /// [`ProofStamp::prove_spend`] proves the action at the spendable's
-    /// anchor over the planned pair. If that anchor differs from the plan's
-    /// anchor, the spend comes with a list of
-    /// [`AnchorSpan`](pool::AnchorSpan)s and their members polynomials.
-    /// [`StampLift`] moves the spend stamp along each span in order. The
-    /// first span must contain the spendable's anchor, each later span must
-    /// contain the previous span's `anchor_end`, and the last span must end
-    /// at the plan's anchor. For each **output**,
+    /// anchor. If that anchor differs from the plan's anchor, the spend comes
+    /// with a list of [`AnchorSpan`](pool::AnchorSpan)s and their members
+    /// polynomials. [`StampLift`] moves the spend stamp along each span in
+    /// order. The first span must contain the spendable's anchor, each later
+    /// span must contain the previous span's `anchor_end`, and the last span
+    /// must end at the plan's anchor. For each **output**,
     /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
     ///
     /// Stamps are recursively merged via [`StampMerge`] into a single stamp,

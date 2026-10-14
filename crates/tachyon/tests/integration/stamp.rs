@@ -404,10 +404,9 @@ fn double_output_cannot_aggregate() {
     let all_descriptors: Vec<action::Descriptor> =
         descriptors_a.union(&descriptors_b).copied().collect();
 
-    // Publish the forgery as a coherent stamp: a commitment to the
-    // deduplicated tachygrams and the covered-actions digest over the merged
-    // descriptors, so `covers` accepts it and only proof verification rejects
-    // it.
+    // Publish the forgery as a coherent stamp: canonical deduplicated tachygrams
+    // and the covered-actions digest over the merged descriptors, so `covers`
+    // accepts it and only proof verification rejects it.
     let coverage = {
         let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
         desc_bytes.sort_unstable();
@@ -524,8 +523,8 @@ fn double_spend_cannot_aggregate() {
         descriptors_a.union(&descriptors_b).copied().collect();
 
     // Publish the forgery as a coherent stamp: the covered-actions digest over
-    // the merged descriptors, and a commitment to the deduplicated nullifier
-    // set that cannot reconstruct the doubled multiset the proof commits to.
+    // the merged descriptors, and the canonical deduplicated nullifier set that
+    // cannot reconstruct the doubled multiset the proof commits to.
     let coverage = {
         let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
         desc_bytes.sort_unstable();
@@ -621,8 +620,8 @@ fn cannot_forge_stamp_covering_duplicated_action() {
         .collect();
 
     // Publish the forgery as a coherent stamp: the covered-actions digest over
-    // the duplicated action, and a commitment to the deduplicated tachygram set
-    // that cannot reconstruct the doubled multiset the proof commits to.
+    // the duplicated action, and the canonical deduplicated tachygram set that
+    // cannot reconstruct the doubled multiset the proof commits to.
     let coverage = {
         let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
         desc_bytes.sort_unstable();
@@ -791,7 +790,7 @@ fn covered_actions_round_trip() {
     assert_eq!(decoded.tachygram_set, stamp.tachygram_set);
 }
 
-/// An honest stamp's carried commitment matches its planned tachygrams.
+/// An honest stamp's carried commitment matches its published tachygrams.
 #[test]
 fn honest_stamp_commits_to_its_tachygrams() {
     let rng = &mut StdRng::seed_from_u64(0);

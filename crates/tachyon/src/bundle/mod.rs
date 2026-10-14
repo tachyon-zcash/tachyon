@@ -480,9 +480,8 @@ impl Plan {
 
     /// Build a [`stamp::Plan`] from this bundle plan.
     ///
-    /// Collects each action's descriptor and proof witnesses, and each
-    /// spend's planned nullifier pair. The returned plan is ready to prove
-    /// with [`stamp::Plan::prove`].
+    /// Collects each action's descriptor and proof witnesses. The returned
+    /// plan is ready to prove with [`stamp::Plan::prove`].
     #[must_use]
     pub fn stamp_plan(&self, anchor: Anchor) -> stamp::Plan {
         let spends = self

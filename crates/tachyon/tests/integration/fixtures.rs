@@ -436,8 +436,7 @@ impl PoolSim {
         }
     }
 
-    /// Mine a block publishing the stamps of the autonomes `bundles`, in
-    /// order.
+    /// Mine a block publishing the stamps of `bundles`, in order.
     pub fn mine_bundles(&mut self, bundles: &[&Bundle<ProofStamp>]) {
         self.mine(
             bundles

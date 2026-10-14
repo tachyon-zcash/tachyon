@@ -32,10 +32,6 @@ $$
 
 Uniform arity is what makes the two action kinds indistinguishable in the published set: an observer counting tachygrams learns the action count and nothing about the split between spends and outputs.
 
-## Provenance
-
-Each tachygram stays in the body of the bundle whose action published it. A stripped bundle keeps its list, so an observer locates every tachygram's bundle without reference to the aggregate that covers it. The sighash covers the list, so nobody but the signer can move a tachygram to another bundle.
-
 ## Tachygram sets
 
 A stamp commits to the tachygrams of every bundle it covers: its own bundle's and those of the adjuncts it covers.
@@ -44,7 +40,7 @@ A stamp's covered actions may be few (a single action, so two tachygrams) or
 many (aggregated actions, two apiece). Ideally, the consensus chain will
 contain aggregated[^aggregation] bundles[^bundle].
 
-The covering proof in a stamp has witnessed a commitment to an unordered set of those tachygrams. Validation rebuilds it from the union of the covered bundles' lists, and rejects a tachygram that two covered bundles both list.
+The covering proof in a stamp has witnessed a commitment to an unordered set of those tachygrams.
 
 $$
 \mathsf{tachygram\_acc}(X) =

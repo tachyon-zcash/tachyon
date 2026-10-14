@@ -44,8 +44,6 @@ It contains:
 - `proof` - the recursive proof (which may be aggregated)
 - `cTachygrams` - a commitment to the tachygrams of every bundle the proof covers
 
-The tachygrams themselves are in each covered bundle's body.
-
 The proof establishes:
 
 - tachygrams either create a new note or destroy an existing note
@@ -176,9 +174,6 @@ The memo is effecting data, so the transaction sighash covers it and `auth_diges
 `nMemoTachyon` is public, and `0` reveals that no payload is present. The field is variable-length because Tachyon has no per-action ciphertext to hide a memo inside: an action is `(cv, rk)`, 64 bytes. The payload is also bimodal, carrying key-exchange ciphertexts on first contact and ordinary memo text otherwise, at sizes differing by more than an order of magnitude. A fixed field would have to be sized for the first-contact case and charged on every transaction.
 
 Every action publishes exactly two tachygrams. A spend publishes its present and next nullifier, and an output publishes its note commitment and a padding tachygram. `vTachygramsTachyon` therefore holds $2 \cdot \mathtt{nActionsTachyon}$ 32-byte tachygrams and has no count prefix. They are in ascending byte order with no repeats, and a reader rejects any other order. Sorting hides which tachygrams share an action, and uniform arity keeps the two action kinds indistinguishable.
-
-The tachygrams are effecting data like the memo. The transaction sighash covers them, so they stay with the bundle when it is stripped, and a relayer cannot move one to another bundle without breaking both bundles' signatures.
-
 ### Stamp trailer
 
 When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp trailer:
