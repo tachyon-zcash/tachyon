@@ -447,17 +447,6 @@ impl Plan {
         Ok(tachygrams)
     }
 
-    /// $\mathsf{hTachygramsTachyon}$: the digest of [`Self::tachygrams`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PlanError::DuplicateTachygram`] if two planned actions
-    /// publish the same tachygram.
-    pub fn tachygram_digest(&self) -> Result<[u8; 32], PlanError> {
-        let tachygrams: Vec<[u8; 32]> = self.tachygrams()?.into_iter().collect();
-        Ok(blake2b::tachygram_digest(&tachygrams))
-    }
-
     /// Compute a digest of all the bundle's effecting data.
     ///
     /// # Errors
@@ -469,12 +458,13 @@ impl Plan {
         let value_balance = self
             .value_balance()
             .map_err(|_err| PlanError::BalanceOverflow)?;
+        let tachygrams: Vec<[u8; 32]> = self.tachygrams()?.into_iter().collect();
 
         Ok(blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&desc_bytes),
             value_balance.into(),
             &blake2b::memo_digest(&self.memo),
-            &self.tachygram_digest()?,
+            &blake2b::tachygram_digest(&tachygrams),
         ))
     }
 

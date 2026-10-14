@@ -1884,8 +1884,9 @@ fn zero_action_bundle_rejects_nonzero_balance() {
     };
 }
 
-/// A tampered body list of the right length still parses, so the set
-/// commitment is what rejects it.
+/// A tampered body list of the right length still parses, and the proof is
+/// over the carried commitment, so it still verifies. The set commitment is
+/// what rejects the list.
 #[test]
 fn verify_tachygrams_rejects_a_tampered_list() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1910,9 +1911,18 @@ fn verify_tachygrams_rejects_a_tampered_list() {
         .tachygrams
         .insert(Tachygram::from(Fp::random(&mut *rng)));
 
-    bundle
+    let digests: Vec<ActionDigest> = bundle
         .verify_coverage(&[])
-        .expect("coverage over the one output action");
+        .expect("coverage over the one output action")
+        .iter()
+        .map(|desc| desc.digest().expect("action digest"))
+        .collect();
+    assert!(
+        bundle
+            .verify_proof(rng, &digests)
+            .expect("proof system verification"),
+        "the proof is over the carried commitment, which is untouched here"
+    );
 
     let err = bundle
         .verify_tachygrams(&[])
