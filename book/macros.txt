@@ -53,3 +53,6 @@
 \Uc:{\textcolor{RoyalBlue}{\mathsf{U}}}
 \Oc:{\textcolor{Crimson}{\mathsf{O}}}
 \root:\mathsf{root}
+\fee:\mathsf{fee}
+\chg:\mathsf{chg}
+\maxfee:{\mathsf{fee}^{\mathsf{max}}}
