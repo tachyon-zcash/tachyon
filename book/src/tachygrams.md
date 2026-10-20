@@ -34,11 +34,10 @@ Uniform arity is what makes the two action kinds indistinguishable in the publis
 
 ## Tachygram sets
 
-A stamp contains the tachygrams of every action it covers.
+An intermediate action stamp, built from actions and merges before the bundle's fee is applied, contains the two tachygrams of every action it covers.
 
-A stamp's covered actions may be few (a single action, so two tachygrams) or
-many (aggregated actions, two apiece). Ideally, the consensus chain will
-contain aggregated[^aggregation] bundles[^bundle].
+A published stamp has every covered bundle's fee applied, so it also contains one [fee change note](./fee.md#fee-change-note) commitment per covered bundle.
+A published stamp covering $N$ actions in $B$ bundles contains $2N + B$ tachygrams: three for an autonome with a single action, and two per action plus one per bundle for an aggregate. Ideally, the consensus chain will contain aggregated[^aggregation] bundles[^bundle].
 
 The covering proof in a stamp has witnessed a commitment to an unordered set of those tachygrams.
 

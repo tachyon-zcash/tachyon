@@ -87,18 +87,20 @@ $$
 
 $$
 \text{BLAKE2b-256}_\text{ZTxIdTachyonHash}\bigl(
-    \mathsf{hActionsTachyon} \| \mathsf{valueBalanceTachyon} \| \mathsf{hMemoTachyon}
+    \mathsf{hActionsTachyon} \| \mathsf{valueBalanceTachyon} \| \mathsf{cvFeeMaxTachyon} \| \mathsf{hMemoTachyon}
 \bigr)
 $$
 
 The action digest hashes every action's $(\mathsf{cv}, \mathsf{rk})$ in wire order, so the commitment fixes the actions and their order. Hashing the memo to a fixed width is what lets the outer digest absorb a variable-length payload without a length prefix.
 
-The stamp proof binds the same action set by a different construction: a Pedersen commitment to the polynomial whose roots are the Poseidon action digests,
+$\mathsf{cvFeeMaxTachyon}$ is the [max fee note](./fee.md)'s value commitment. The fee is authorization data and stays out of the bundle commitment.
+
+The stamp proof binds the same actions by a different construction: a Pedersen commitment to the polynomial whose roots are the Poseidon action digests $d_i$ and the [fee digests](./fee.md#fee-change-note) $d_{\fee,j}$ of the covered bundles,
 
 $$ d_i = \text{Poseidon}_\text{Tachyon-ActionDg}(\mathsf{cv}_i \| \mathsf{rk}_i) $$
-$$ \mathsf{action\_acc} = \text{Commit}\Bigl(\prod_i \bigl(X - d_i\bigr)\Bigr) $$
+$$ \mathsf{action\_acc} = \text{Commit}\Bigl(\prod_i \bigl(X - d_i\bigr) \prod_j \bigl(X - d_{\fee,j}\bigr)\Bigr) $$
 
-which is order-independent, as a set commitment must be to survive [aggregation](./aggregation.md). The two digests are computed over the same actions and are not interchangeable.
+which is order-independent, as a set commitment must be to survive [aggregation](./aggregation.md). The BLAKE2b digest and the action accumulator both fix the actions and are not interchangeable.
 
 The stamp is excluded from the bundle commitment because it is stripped during aggregation.
 
@@ -160,14 +162,22 @@ If the values don't balance, the $\mathcal{V}$ term survives. So,
 - If the sum of committed values doesn't truly equal the public balance, the signer cannot produce a valid signature.
 - If a valid signature was produced and then the committed values or the public balance were modified, the validator can't confirm the valid signature.
 
+Every bundle's [max fee note](./fee.md) adds its value commitment $\cv_\maxfee = [-\mathsf{maxfee}]\,\mathcal{V} + [r]\,\mathcal{R}$ as one more output-signed term. The planner adds $r$ to $\mathsf{bsk}$, and validators add $\cv_\maxfee$ to $\mathsf{bvk}$:
+
+$$\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i \boxplus r$$
+
+$$\mathsf{bvk} = \sum_i \mathsf{cv}_i + \cv_\maxfee - [\mathsf{value\_balance}]\,\mathcal{V}$$
+
+The fee does not enter $\mathsf{bvk}$. The binding signature is made once, before the fee is chosen.
+
 ## Simplified Flow
 
 A bundle plan feeds three independent paths that converge in the final bundle.
 Each path consumes the same action plans but produces a different component of the bundle:
 
 - **Authorizing**: custody derives `rsk` per spend action and signs the transaction sighash; output actions are signed by the user device.
-- **Binding**: the bundle commitment (from ordered action digests and `value_balance`) feeds into the transaction sighash, which the binding key signs.
-- **Proving**: each action plan yields a leaf stamp; leaves merge into a single Ragu PCD stamp.
+- **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
+- **Proving**: each action plan yields a leaf stamp; leaves merge into a single Ragu PCD stamp, and [$\mathsf{StampFee}$](./fee.md#fee-change-note) applies the fee to it.
 
 ```mermaid
 flowchart LR
@@ -185,6 +195,7 @@ flowchart LR
     subgraph pczt[partial tx]
         subgraph bundle_plan["bundle plan"]
             action_plan@{ shape: st-rect, label: "action plan" }
+            max_fee_note["max fee note"]
             value_balance
         end
         other1@{ shape: st-doc, label: "other tx data" } 
@@ -194,12 +205,15 @@ flowchart LR
 
 
     value_balance --> value_balance_2[value_balance]
+    max_fee_note --> cv_maxfee
 
     subgraph tx[complete tx]
         subgraph bundle["stamped bundle"]
             value_balance_2[value_balance]
             action@{ shape: st-rect }
+            cv_maxfee
             binding_sig
+            fee
             stamp
         end
         other2@{ shape: st-doc, label: "other tx data" }
@@ -211,9 +225,11 @@ flowchart LR
         leaf@{ shape: st-rect, label: "leaf" }
         subgraph prover["proving device"]
             merge((merge))
+            stamp_fee((StampFee))
         end
     end
-    action_plan -.- leaf -.- merge -.- stamp
+    action_plan -.- leaf -.- merge -.- stamp_fee -.- stamp
+    max_fee_note -.- stamp_fee -.- fee
 
 
     sighash ~~~ binding
@@ -221,7 +237,7 @@ flowchart LR
         bsk 
         sign_binding_sig(("sign"))
     end
-    action_plan & value_balance --- bsk --- sign_binding_sig ==> binding_sig
+    action_plan & max_fee_note & value_balance --- bsk --- sign_binding_sig ==> binding_sig
     sighash === sign_binding_sig
 
     sighash ~~~ authorization
@@ -273,7 +289,11 @@ rect rgb(100, 149, 237, 0.1)
         note over User: action_plan { rk, note, theta, rcv, effect }
     end
 
-    note over User: bundle_plan { action_plan[], value_balance }
+    note over User: max_fee_note { pk, psi, rcm, maxfee }
+    note over User: r = Poseidon(pk, psi, rcm)
+    note over User: cv_maxfee = Pedersen(-maxfee, r)
+    note over User: value_balance = Sum v_spend - Sum v_output - maxfee
+    note over User: bundle_plan { action_plan[], max_fee_note, value_balance }
 
 
 end
@@ -281,7 +301,7 @@ end
 loop per output action
     note over User: sig = Sign(alpha, sighash)
 end
-note over User: bsk = Sum rcv_i
+note over User: bsk = Sum rcv_i + r
 note over User: binding_sig = Sign(bsk, sighash)
 
 
@@ -303,8 +323,9 @@ par Authorizing
                 note over Custody: rk = [alpha]G
             end
         end
+        note over Custody: cv_maxfee = Pedersen(-maxfee, Poseidon(pk, psi, rcm))
         note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
-        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon)
+        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_maxfee || hMemoTachyon)
         note over Custody: compute sighash
 
         break
@@ -358,8 +379,16 @@ and Proving
                 note over Stamper: pcd: stamp(Commit(merged_action), Commit(merged_tg), anchor)
             end
         end
+        critical stamp(action_poly, tg_poly, anchor), max_fee_note, fee
+            note over Stamper: cv_maxfee = Pedersen(-maxfee, Poseidon(pk, psi, rcm))
+            note over Stamper: fee_digest = Poseidon(x(cv_maxfee), y(cv_maxfee), fee)
+            note over Stamper: cm_chg = Poseidon(rcm, pk, maxfee - fee, psi)
+            note over Stamper: fee_action = action_poly * (X - fee_digest)
+            note over Stamper: fee_tg = tg_poly * (X - cm_chg)
+            note over Stamper: pcd: stamp(Commit(fee_action), Commit(fee_tg), anchor)
+        end
         destroy Stamper
-        Stamper ->> User: stamp(tachygrams, anchor, proof)
+        Stamper ->> User: stamp(tachygrams, anchor, proof), fee
 
         break
             note over User: reconstruct polynomials from roots, commit, verify
@@ -370,18 +399,19 @@ end
 
 
 create participant Consensus
-note over User: transaction { actions[], value_balance, binding_sig, stamp } 
+note over User: transaction { actions[], value_balance, cv_maxfee, binding_sig, fee, stamp } 
 deactivate User
 destroy User
 User ->> Consensus: transaction
 break
     note over Consensus: action_digest_i = Poseidon(cv_i || rk_i)
+    note over Consensus: fee_digest_j = Poseidon(x(cv_maxfee_j), y(cv_maxfee_j), fee_j)
     note over Consensus: hActionsTachyon = Blake2b(cv_i || rk_i)
-    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || hMemoTachyon)
+    note over Consensus: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_maxfee || hMemoTachyon)
     note over Consensus: compute sighash
     note over Consensus: check action sigs against sighash
     note over Consensus: check binding sig against sighash
-    note over Consensus: action_acc = Commit(poly from action roots)
+    note over Consensus: action_acc = Commit(poly from action and fee digest roots)
     note over Consensus: tachygram_acc = Commit(poly from tachygram roots)
     note over Consensus: verify stamp(action_acc, tachygram_acc, anchor)
 end
