@@ -13,11 +13,9 @@ Tachyon notes are simple: a note carries only its recipient, value, and two trap
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | $\mathsf{pk}$ | $\mathbb{F}_p$ | recipient's payment key[^keys] |
-| $v$ | u64 | value in zatoshi, $1 \leq v \leq 2.1 \times 10^{15}$ |
+| $v$ | u64 | value in zatoshi, $0 \leq v \leq 2.1 \times 10^{15}$ |
 | $\psi$ | $\mathbb{F}_p$ | nullifier trapdoor[^nullifiers] |
 | $\mathsf{rcm}$ | $\mathbb{F}_p$ | note commitment trapdoor |
-
-Zero-value notes are forbidden.
 
 ## Commitment
 
