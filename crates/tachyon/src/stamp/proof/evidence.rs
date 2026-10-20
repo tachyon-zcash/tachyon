@@ -109,12 +109,10 @@ impl Header for EvidenceTreePair {
 
 /// Admit two sealed [`QrBucket`]s as one half of a node.
 ///
-/// Six permutations (two leaf digests), more than any other step in this
-/// module. The two sponges absorb the same four network fields and share
-/// nothing. A circuit that cannot afford both would split this into a step per
-/// digest, at the cost of one more step per bucket: this step both admits a
-/// bucket and consumes two proofs, which is what holds a tree over `n` buckets
-/// to `n - 1` steps.
+/// Four permutations (two leaf digests). The two sponges absorb the same four
+/// network fields and share nothing. This step both admits a bucket and
+/// consumes two proofs, which is what holds a tree over `n` buckets to `n - 1`
+/// steps.
 ///
 /// # Soundness
 ///
@@ -406,9 +404,9 @@ impl Step for EvidenceTreeCap {
 /// `node` starts threaded, each level's children are pinned to it by the node
 /// hash, and the emitted root is one of the four children of a node reached
 /// that way. Every leaf beneath a subtree of a valid tree is a leaf of that
-/// tree, so the claim survives the descent. A leaf digest absorbs nine
-/// elements and a node four, so a path cannot stop one level short and present
-/// a node as a bucket.
+/// tree, so the claim survives the descent. A leaf digest uses the
+/// `Tachyon-QrBucket` domain and a node digest uses none, so a path cannot stop
+/// one level short and present a node as a bucket.
 #[derive(Debug)]
 pub struct EvidenceTreeDescend;
 
@@ -478,13 +476,13 @@ impl Step for EvidenceTreeDescend {
 
 /// Replay the [`QrBucket`] a one-leaf [`EvidenceTree`] holds.
 ///
-/// Three permutations (the leaf digest).
+/// Two permutations (the leaf digest).
 ///
 /// # Soundness
 ///
 /// The witnessed profile and contents commitment are pinned jointly to `root`
-/// by the leaf digest. `root` is a leaf digest and not a node: a leaf absorbs
-/// nine elements and a node four, so the two digests never coincide, and a
+/// by the leaf digest. `root` is a leaf digest and not a node: a leaf digest
+/// uses the `Tachyon-QrBucket` domain and a node digest uses none, and a
 /// descent stopped short leaves a node no preimage opens. Preimage resistance
 /// then makes the emitted header one [`QrBucketSeal`](super::qr::QrBucketSeal)
 /// emitted, so this second producer of [`QrBucket`] establishes nothing the

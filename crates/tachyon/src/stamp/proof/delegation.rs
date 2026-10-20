@@ -155,11 +155,11 @@ impl Step for NoteSeed {
 ///
 /// `Left = NoteSeed`. Witnesses the window's start epoch (constrained
 /// group-aligned, $w \bmod r = 0$ for $r$ the sponge rate `PoseidonFp::RATE`)
-/// and the window sequence. Runs one sponge per group over
-/// $(\texttt{Tachyon-NfDerive}, \mathsf{mk}, w)$, each absorbing three elements
-/// and squeezing $r$ nullifiers for one permutation, then binds the sequence to
-/// the window's members by a single opening at a free $z$ against their
-/// natively encoded product.
+/// and the window sequence. Runs one `Tachyon-NfDerive` sponge per group over
+/// $(\mathsf{mk}, w)$, each absorbing two elements and squeezing $r$
+/// nullifiers for one permutation, then binds the sequence to the window's
+/// members by a single opening at a free $z$ against their natively encoded
+/// product.
 ///
 /// # Soundness
 ///

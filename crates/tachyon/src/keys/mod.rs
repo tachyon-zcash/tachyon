@@ -46,7 +46,7 @@
 //! ### Note keys ([`note`])
 //!
 //! - `nk`: Observes when funds are spent (nullifier derivation)
-//! - `pk = Poseidon(domain, ak_x, nk)`: Derived from `pak`, binds spending
+//! - `pk = Poseidon_domain(ak_x, ak_y, nk)`: Derived from `pak`, binds spending
 //!   authority and nullifier key to the note commitment
 //!
 //! ### Proof keys ([`proof`])
@@ -61,14 +61,14 @@
 //! $w = e - (e \bmod \mathsf{RATE})$:
 //!
 //! $$
-//!   \mathsf{mk} = \mathsf{Poseidon}(
-//!     \texttt{Tachyon-NfMaster},\ \psi,\ \mathsf{nk}
+//!   \mathsf{mk} = \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(
+//!     \psi,\ \mathsf{nk}
 //!   )
 //! $$
 //!
 //! $$
 //!   \mathsf{nf}_e = \mathsf{squeeze} _{e - w}\big(
-//!     \mathsf{absorb}(\texttt{Tachyon-NfDerive},\ \mathsf{mk},\ w)
+//!     \mathsf{absorb}_\texttt{Tachyon-NfDerive}(\mathsf{mk},\ w)
 //!   \big)
 //! $$
 //!

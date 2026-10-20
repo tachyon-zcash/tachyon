@@ -42,7 +42,7 @@ impl Header for OutputHeader {
 /// value as
 /// $\mathsf{cv} = \[-v\]\mathcal{V} + \[\mathsf{rcv}\]\mathcal{R}$.
 ///
-/// Four permutations (`cm`, `pad`) and two scalar multiplications (`cv`).
+/// Two permutations (`cm`, `pad`) and two scalar multiplications (`cv`).
 #[derive(Debug)]
 pub struct OutputBind;
 

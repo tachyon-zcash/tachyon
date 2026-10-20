@@ -1838,7 +1838,7 @@ fn qr_empty_intake_seed_over_a_stamped_epoch_leaves_the_chain() {
 fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let rng = &mut StdRng::seed_from_u64(0);
     let user = WalletSim::new(shared_sk());
-    let note = user.random_note(300);
+    let note = user.random_note(400);
     let epoch0 = EpochIndex::new(0);
     let epoch1 = epoch0.next().unwrap();
     let epoch2 = epoch1.next().unwrap();

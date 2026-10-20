@@ -25,7 +25,7 @@ use crate::{digest::poseidon, nullifier};
 ///
 /// - **Nullifier derivation**: detecting when a note has been spent
 /// - **Oblivious sync delegation**: a delegate receives proven value windows.
-///   The master key $\mathsf{mk} = \mathsf{Poseidon}(\texttt{Tachyon-NfMaster},
+///   The master key $\mathsf{mk} = \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(
 ///   \Psi, \mathsf{nk})$ evaluates every epoch.
 ///
 /// `nk` alone does NOT confer spend authority; combined with `ak` it
@@ -57,8 +57,8 @@ impl NullifierKey {
 /// Derived from the proof authorizing key components:
 ///
 /// $$
-///   \mathsf{pk} = \text{Poseidon}(
-///     \texttt{Tachyon-PkDerive},\ \mathsf{ak}_x,\ \mathsf{ak}_y,\ \mathsf{nk}
+///   \mathsf{pk} = \text{Poseidon}_\texttt{Tachyon-PkDerive}(
+///     \mathsf{ak}_x,\ \mathsf{ak}_y,\ \mathsf{nk}
 ///   )
 /// $$
 ///
@@ -89,8 +89,7 @@ impl PaymentKey {
     /// Derive the payment key from `ak` and `nk`:
     ///
     /// $$
-    ///   \mathsf{pk} = \text{Poseidon}(
-    ///     \texttt{Tachyon-PkDerive},
+    ///   \mathsf{pk} = \text{Poseidon}_\texttt{Tachyon-PkDerive}(
     ///     \mathsf{ak}_x,\ \mathsf{ak}_y,\ \mathsf{nk}
     ///   )
     /// $$

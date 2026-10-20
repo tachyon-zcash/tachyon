@@ -99,7 +99,7 @@ impl Header for Stamp {
 /// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
 /// `rk` planned over one note matches another only through a preimage.
 ///
-/// Three permutations (`alpha`, the action digest) and one scalar
+/// Two permutations (`alpha`, the action digest) and one scalar
 /// multiplication (`rk`); opens the action-set and tachygram-set polynomials.
 #[derive(Debug)]
 pub struct OutputAction;
@@ -171,7 +171,7 @@ impl Step for OutputAction {
 /// `theta` is free, but `alpha` is its hash with the certified `cm`, so an
 /// `rk` planned over one note matches another only through a preimage.
 ///
-/// Four permutations (`pk`, `alpha`, the action digest) and one scalar
+/// Three permutations (`pk`, `alpha`, the action digest) and one scalar
 /// multiplication (`rk`); opens the action-set and tachygram-set
 /// polynomials.
 #[derive(Debug)]

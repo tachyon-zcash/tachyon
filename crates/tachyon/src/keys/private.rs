@@ -119,8 +119,7 @@ impl SpendingKey {
     /// Derive the payment key $\mathsf{pk}$ from $\mathsf{sk}$.
     ///
     /// $$
-    ///   \mathsf{pk} = \text{Poseidon}(
-    ///     \texttt{Tachyon-PkDerive},
+    ///   \mathsf{pk} = \text{Poseidon}_\texttt{Tachyon-PkDerive}(
     ///     \mathsf{ak}_x,\ \mathsf{ak}_y,\ \mathsf{nk}
     ///   )
     /// $$
