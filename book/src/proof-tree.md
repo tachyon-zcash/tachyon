@@ -15,7 +15,7 @@ Multiple parties execute the proof tree.
 
 A wallet proves a window of its note's nullifiers were correctly derived[^nullifiers].
 `NoteSeed` witnesses the note's value and trapdoors and the proof-authorizing key `pak`, derives the note's payment key from `pak` (which pins `nk`, and through `nk` the commitment `cm`), derives the master key `mk` and `cm`, and emits a `NoteSecret` carrying `(cm, note, mk)`. `nk` never leaves the step.
-`NullifierDerive` consumes that seed. It witnesses the window's start epoch (constrained group-aligned) and its sequence, runs four sponges over $(\texttt{Tachyon-NfDerive}, \mathsf{mk}, w)$ to squeeze the window's 16 nullifiers natively, and binds the sequence to them with one opening at a free challenge (below). It exports the whole window, so the range it announces is derived rather than witnessed.
+`NullifierDerive` consumes that seed. It witnesses the window's start epoch (constrained group-aligned) and its sequence, runs four $\texttt{Tachyon-NfDerive}$ sponges over $(\mathsf{mk}, w)$ to squeeze the window's 16 nullifiers natively, and binds the sequence to them with one opening at a free challenge (below). It exports the whole window, so the range it announces is derived rather than witnessed.
 `NullifierFuse` concatenates two adjacent nullifier sequences into one, requiring the same `cm` and contiguity (`right.epoch_start == left.epoch_end + 1`).
 The result is a `NoteNullifiers` proving the range `[epoch_start, epoch_end]` commits to the genuine nullifiers of the note identified by `cm`, one factor per covered epoch.
 
@@ -267,7 +267,7 @@ and emitting the two under one half-assembled node.
 Admitting two at a time is what holds a tree over `n` buckets to `n - 1` steps: every step reads at most two proofs and emits one, so `n` proofs reach one root in at least `n - 1`, and only a step that consumes two moves toward that bound.
 A tree therefore starts at four leaves. A builder short of four repeats a bucket, which is a bucket the tree holds twice and no step forbids. A builder holding one bucket needs no tree: it serves that bucket's own proof, and a consumer cannot tell a sealed bucket from a replayed one.
 
-A node has four children, so it fills the sponge rate and takes no domain constant of its own.
+A node has four children, which fill the sponge rate. It takes no domain and starts from the zero state.
 Four children reach one hash through two steps, since a step takes at most two predecessor proofs: `EvidenceTreePairFuse` carries two trees into a half-assembled node, and `EvidenceTreeFuse` hashes two of those halves,
 
 $$\mathsf{root} = H(\ell_0, \ell_1, r_0, r_1).$$
@@ -281,19 +281,19 @@ The builder keeps the buckets' polynomials, the tree, and one proof for the root
 A query walks back down. `EvidenceTreeDescend` witnesses one node's four children per level, checks they hash to the node it holds, and selects among them on two side bits; the levels per step are fixed, so a deeper tree takes a longer chain of descents.
 `EvidenceTreeOpen` then witnesses the leaf's preimage, checks the leaf digest against the root it has reached, and emits the `QrBucket` the leaf stands for. Only a descent emits a tree whose root is a leaf digest, so every open follows one. `QrUnspentInit` and `QrSpendableInit` consume it unchanged.
 Binding the profile into the leaf is what makes the replay safe: a real bucket's contents presented under the tested value's own profile would pass the fold and open nonzero, proving exclusion for a value published in a different bucket.
-A leaf absorbs nine elements and a node four, so no path can stop one level short and present a node as a bucket.
+A leaf digest uses the $\texttt{Tachyon-QrBucket}$ domain and a node digest uses none, so no path can stop one level short and present a node as a bucket.
 
-A leaf digest absorbs nine elements, three permutations at rate four; a node absorbs four, one permutation.
+A leaf digest absorbs eight elements, two permutations at rate four. A node absorbs four, one permutation.
 No evidence step multiplies a point or opens a polynomial:
 
 | Step | Permutations |
 | ---- | ------------ |
-| EvidenceTreeLeafPair | 6 (two leaf digests) |
+| EvidenceTreeLeafPair | 4 (two leaf digests) |
 | EvidenceTreePairFuse | 0 |
 | EvidenceTreeFuse | 1 (node) |
 | EvidenceTreeCap | 1 (node) |
 | EvidenceTreeDescend | 4 (one node per level) |
-| EvidenceTreeOpen | 3 (leaf digest) |
+| EvidenceTreeOpen | 2 (leaf digest) |
 
 The tree claims nothing about which buckets it holds, and nothing asks it to.
 A tree over one bucket is as valid as a tree over a whole network; a builder that omits a bucket can only fail to answer for it, never answer wrongly, since the bucket it does serve carries its own whole-epoch claim.
@@ -368,10 +368,10 @@ The work splits as follows, each stamp step also opening its action-set and tach
 
 | Step | Permutations | Scalar multiplications |
 | ---- | ------------ | ---------------------- |
-| OutputBind | 4 (`cm`, `pad`) | 2 (`cv`) |
-| OutputAction | 3 (`alpha`, action digest) | 1 (`rk`) |
+| OutputBind | 2 (`cm`, `pad`) | 2 (`cv`) |
+| OutputAction | 2 (`alpha`, action digest) | 1 (`rk`) |
 | SpendBind | 2 (nullifier pair) | 2 (`cv`) |
-| SpendAction | 4 (`pk`, `alpha`, action digest) | 1 (`rk`) |
+| SpendAction | 3 (`pk`, `alpha`, action digest) | 1 (`rk`) |
 
 `StampMerge` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 `ActionMerge` applies the same relation to two pre-fee `Actions` inputs.

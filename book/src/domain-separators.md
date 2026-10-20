@@ -65,8 +65,12 @@ These are all Tachyon-specific digests, performed in-circuit.
 | Max fee note blind | `Tachyon-FeeBlind` |
 | Fee digest | `Tachyon-FeeDg` |
 
-An evidence tree node takes no domain constant.
-Its four children fill the sponge rate exactly, and a leaf absorbs nine elements against a node's four, so no node value can stand where a leaf digest is expected.
+Each domain sits in the sponge capacity.
+A hash starts with its rate at zero and its capacity element at $\mathsf{tag}$, the sixteen-byte domain read as a little-endian integer.
+The sponge then absorbs only the hash's data.
+
+An evidence tree node takes no domain and starts from the zero state.
+Absorption carries no length encoding, so a node always absorbs four children.
 A tree short of a full level therefore pads by repeating a child and never by omitting one.
 
 The two alpha domains and the fee digest domain are zero-padded to sixteen bytes.

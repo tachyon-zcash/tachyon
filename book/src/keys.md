@@ -39,7 +39,7 @@ The payment key $\mathsf{pk}$ is then derived from both $\mathsf{ak}$ and $\math
 | Auth | $\mathsf{ask} \to \mathsf{ak}$ | $\mathsf{ask} \to \mathsf{ak}$ | Identical (RedPallas) |
 | Viewing | Full viewing key ($\mathsf{ak}, \mathsf{nk}, \mathsf{rivk}$) | **Removed** | Out-of-band |
 | Incoming | $\mathsf{dk}, \mathsf{ivk}, \mathsf{ovk}$ | **Removed** | Out-of-band |
-| Address | Diversifier $d$, transmission key $\mathsf{pk_d}$ | $\mathsf{pk} = \text{Poseidon}(\mathsf{ak}_x, \mathsf{nk})$ | No diversification; binds to pak |
+| Address | Diversifier $d$, transmission key $\mathsf{pk_d}$ | $\mathsf{pk} = \text{Poseidon}(\mathsf{ak}_x, \mathsf{ak}_y, \mathsf{nk})$ | No diversification; binds to pak |
 | Proof authorization | Not separated | $\mathsf{pak} = (\mathsf{ak}, \mathsf{nk})$ | Authorize proofs for all notes |
 | Per-note delegation | Not separated | $(\mathsf{ak}, \mathsf{mk})$ | Delegate proofs for one note |
 
@@ -93,9 +93,9 @@ An $\mathbb{F}_p$ element used in nullifier derivation.[^nullifiers] With the no
 
 ### Payment key ($\mathsf{pk}$)
 
-$$\mathsf{pk} = \text{Poseidon}(\text{PK\_DOMAIN}, \mathsf{ak}_x, \mathsf{nk})$$
+$$\mathsf{pk} = \mathsf{Poseidon}_\texttt{Tachyon-PkDerive}(\mathsf{ak}_x, \mathsf{ak}_y, \mathsf{nk})$$
 
-where $\mathsf{ak}_x$ is the x-coordinate of the spend validating key. Replaces Orchard's diversified transmission key $\mathsf{pk_d}$ and the entire diversified address system:
+where $(\mathsf{ak}_x, \mathsf{ak}_y)$ are the affine coordinates of the spend validating key. Replaces Orchard's diversified transmission key $\mathsf{pk_d}$ and the entire diversified address system:
 
 > "Tachyon removes the diversifier $d$ because payment addresses are removed. The transmission key $\mathsf{pk_d}$ is substituted with a payment key $\mathsf{pk}$."
 > — "Tachyaction at a Distance" (Bowe 2025)
