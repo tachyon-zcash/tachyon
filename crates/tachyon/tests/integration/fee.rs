@@ -667,6 +667,48 @@ fn innocent_seed_merges_and_strips() {
         .expect("parent verifies with the stripped innocent");
 }
 
+/// An `Actions` proof does not verify as a `Stamp`.
+#[test]
+fn actions_proof_cannot_substitute_for_a_stamp() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let anchor = PoolSim::genesis(rng).anchor();
+    let note = wallet.random_note(500);
+    let (rcv, theta, plan) = build_output_plan(rng, note);
+
+    let (bind_pcd, ()) = PROOF_SYSTEM
+        .seed(rng, output::OutputBind, (note, rcv))
+        .expect("bind the output");
+    let (cm, pad, _cv) = *bind_pcd.data();
+    let (pcd, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            OutputAction,
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
+            bind_pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("prove the output action");
+    assert!(
+        PROOF_SYSTEM
+            .verify(&pcd, &mut *rng)
+            .expect("verify actions")
+    );
+
+    let stamp = ProofStamp {
+        coverage: [0; 32],
+        anchor,
+        tachygram_set: pcd.data().1,
+        tachygrams: BTreeSet::from_iter([cm, pad]),
+        proof: Box::new(pcd.proof().clone()),
+    };
+    assert!(
+        !stamp
+            .verify_proof(rng, [plan.descriptor().digest().unwrap()])
+            .expect("verify substituted header")
+    );
+}
+
 #[test]
 fn fee_seed_rejects_nonzero_value_and_fee() {
     let rng = &mut StdRng::seed_from_u64(0);
