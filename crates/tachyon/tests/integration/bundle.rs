@@ -89,7 +89,7 @@ fn plan_commitment_matches_bundle_commitment() {
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
-        .stamp((stamp, value::Positive::ZERO));
+        .stamp((stamp, value::Balance::ZERO));
 
     assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
 }
@@ -433,7 +433,7 @@ fn zero_action_bundle_is_valid() {
         actions: alloc::vec![],
         value_balance: value::Balance::ZERO,
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        fee_value: value::Positive::ZERO,
+        fee_value: value::Balance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
         stamp: mock_wtxid(&covering),
@@ -514,7 +514,7 @@ fn double_spend_obvious() {
         vec![(descriptor, theta, note, rcv)],
         anchor,
         max_fee,
-        value::Positive::ZERO,
+        value::Balance::ZERO,
     )
     .prove(rng, &wallet.pak, vec![])
     .expect("prove an output stamp");
@@ -548,7 +548,7 @@ fn double_spend_obvious() {
         actions: vec![action, action],
         value_balance,
         fee_max_commitment,
-        fee_value: value::Positive::ZERO,
+        fee_value: value::Balance::ZERO,
         binding_sig,
         memo: Vec::new(),
         stamp,
@@ -637,7 +637,7 @@ fn duplicated_spend_cannot_inflate() {
     let max_fee = wallet.random_note(0);
     let fee_max_commitment = max_fee.fee_blind().commit(-max_fee.value);
     let (honest_stamp, _fee) = Plan::new(alloc::vec![plan], alloc::vec![], max_fee)
-        .stamp_plan(anchor, value::Positive::ZERO)
+        .stamp_plan(anchor, value::Balance::ZERO)
         .prove(rng, &wallet.pak, alloc::vec![(secret, spendable, vec![])])
         .expect("prove the honest single spend");
 
@@ -678,7 +678,7 @@ fn duplicated_spend_cannot_inflate() {
         actions: vec![action, action],
         value_balance,
         fee_max_commitment,
-        fee_value: value::Positive::ZERO,
+        fee_value: value::Balance::ZERO,
         binding_sig,
         memo: Vec::new(),
         stamp: ProofStamp {
@@ -911,10 +911,9 @@ fn innocent_aggregate_from_two_autonomes() {
 
         let fees_a = BTreeSet::from([autonome_a.fee_descriptor()]);
         let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
-        let (seed, fee) =
-            stamp::Plan::new(vec![], vec![], anchor_a, max_fee, value::Positive::ZERO)
-                .prove(rng, &wallet.pak, vec![])
-                .expect("seed");
+        let (seed, fee) = stamp::Plan::new(vec![], vec![], anchor_a, max_fee, value::Balance::ZERO)
+            .prove(rng, &wallet.pak, vec![])
+            .expect("seed");
         let descs = descriptors_a.union(&descriptors_b).copied().collect();
         let fees = fees_a.union(&fees_b).copied().collect();
         let adjuncts = ProofStamp::merge(
@@ -930,7 +929,7 @@ fn innocent_aggregate_from_two_autonomes() {
                 BTreeSet::new(),
                 [fee::Descriptor {
                     max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-                    value: fee.into(),
+                    value: fee,
                 }]
                 .into(),
             ),
@@ -1290,7 +1289,7 @@ fn read_preserves_action_order() {
         actions,
         value_balance,
         fee_max_commitment,
-        fee_value: value::Positive::ZERO,
+        fee_value: value::Balance::ZERO,
         binding_sig,
         memo: Vec::new(),
         stamp: PointerStamp::try_from([0x11u8; 64]).expect("nonzero wtxid"),
@@ -1491,7 +1490,7 @@ fn read_rejects_zero_wtxid() {
             actions: alloc::vec![],
             value_balance: value::Balance::ZERO,
             fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-            fee_value: value::Positive::ZERO,
+            fee_value: value::Balance::ZERO,
             binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
             memo: Vec::new(),
             stamp: wtxid,
@@ -1543,7 +1542,7 @@ fn innocent_round_trips_with_nonzero_wtxid() {
         actions: alloc::vec![],
         value_balance: value::Balance::ZERO,
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        fee_value: value::Positive::ZERO,
+        fee_value: value::Balance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
         stamp: mock_wtxid(&covering),
@@ -1930,7 +1929,7 @@ fn read_rejects_zero_actions_with_nonzero_balance() {
         actions: alloc::vec![],
         value_balance: value::Balance::try_from(1).unwrap(),
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        fee_value: value::Positive::ZERO,
+        fee_value: value::Balance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
         stamp: PointerStamp::try_from([0x42u8; 64]).expect("nonzero id"),
@@ -1973,7 +1972,7 @@ fn zero_action_bundle_rejects_nonzero_balance() {
         actions: alloc::vec![],
         value_balance: value::Balance::try_from(1).unwrap(),
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        fee_value: value::Positive::ZERO,
+        fee_value: value::Balance::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
         stamp: PointerStamp::try_from([1u8; 64]).expect("nonzero id"),
@@ -2012,7 +2011,7 @@ fn verify_tachygrams_rejects_wrong_arity() {
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
-        .stamp((short, value::Positive::ZERO));
+        .stamp((short, value::Balance::ZERO));
 
     let (covered, covered_fees) = bundle
         .verify_coverage(&[], &[])
@@ -2051,7 +2050,7 @@ fn verify_tachygrams_rejects_a_tampered_list() {
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
-        .stamp((tampered, value::Positive::ZERO));
+        .stamp((tampered, value::Balance::ZERO));
 
     let (covered, covered_fees) = bundle
         .verify_coverage(&[], &[])
@@ -2134,7 +2133,7 @@ fn plan_memo_reaches_the_signed_bundle() {
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
-        .stamp((stamp, value::Positive::ZERO));
+        .stamp((stamp, value::Balance::ZERO));
 
     assert_eq!(bundle.memo, memo);
     assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
@@ -2295,7 +2294,7 @@ fn bundle_lift_over_an_aggregate() {
     let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
     let innocent_plan = Plan::new(vec![], vec![], max_fee);
     let (seed, fee) = innocent_plan
-        .stamp_plan(anchor, value::Positive::ZERO)
+        .stamp_plan(anchor, value::Balance::ZERO)
         .prove(rng, &wallet.pak, vec![])
         .expect("seed");
     let descs = descriptors_a.union(&descriptors_b).copied().collect();
@@ -2310,7 +2309,7 @@ fn bundle_lift_over_an_aggregate() {
         actions: vec![],
         value_balance: value::Balance::ZERO,
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        fee_value: value::Positive::ZERO,
+        fee_value: value::Balance::ZERO,
         binding_sig: innocent_plan
             .derive_bsk_private()
             .sign(rng, &mock_sighash(innocent_plan.commitment().unwrap())),
@@ -2322,7 +2321,7 @@ fn bundle_lift_over_an_aggregate() {
                 BTreeSet::new(),
                 [fee::Descriptor {
                     max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-                    value: fee.into(),
+                    value: fee,
                 }]
                 .into(),
             ),

@@ -44,7 +44,7 @@
 //! | `cvFeeMaxTachyon`     | 32 bytes             | max fee note value commitment            |
 //! | `vActionSigsTachyon`  | 64 * nActionsTachyon | authorization per action over tx sighash |
 //! | `bindingSigTachyon`   | 64 bytes             | binding over tx sighash                  |
-//! | `vFeeTachyon`         | LE64                 | fee, at most `MAX_MONEY`                 |
+//! | `vFeeTachyon`         | i64 LE               | fee, in `-MAX_MONEY..=MAX_MONEY`         |
 //! | `nMemoTachyon`        | compactsize          | memo length, `0` when absent             |
 //! | `vMemoTachyon`        | nMemoTachyon bytes   | opaque recipient-directed payload        |
 //!
@@ -179,7 +179,7 @@ pub struct Bundle<S: BundleState + ?Sized> {
     pub fee_max_commitment: value::Commitment,
 
     /// The fee value selected by the proof.
-    pub fee_value: value::Positive,
+    pub fee_value: value::Balance,
 
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
@@ -210,10 +210,10 @@ impl<S: BundleState + ?Sized> Bundle<S> {
 
     /// The bundle's fee descriptor.
     #[must_use]
-    pub fn fee_descriptor(&self) -> fee::Descriptor {
+    pub const fn fee_descriptor(&self) -> fee::Descriptor {
         fee::Descriptor {
             max_commitment: self.fee_max_commitment,
-            value: self.fee_value.into(),
+            value: self.fee_value,
         }
     }
 
@@ -479,9 +479,10 @@ impl Plan {
     ///
     /// # Panics
     ///
-    /// Panics if `fee` exceeds the max fee note's value.
+    /// Panics if the max fee note's value minus `fee` is outside
+    /// `0..=MAX_MONEY`.
     #[must_use]
-    pub fn stamp_plan(&self, anchor: Anchor, fee: value::Positive) -> stamp::Plan {
+    pub fn stamp_plan(&self, anchor: Anchor, fee: value::Balance) -> stamp::Plan {
         let spends = self
             .spends
             .iter()
@@ -581,7 +582,7 @@ impl Plan {
                 .max_fee_note
                 .fee_blind()
                 .commit(-self.max_fee_note.value),
-            fee_value: value::Positive::ZERO,
+            fee_value: value::Balance::ZERO,
             binding_sig,
             memo: self.memo.clone(),
             stamp: Unproven,
@@ -592,7 +593,7 @@ impl Plan {
 impl Bundle<Unproven> {
     /// Attach a proof stamp and its fee, producing a `Bundle<ProofStamp>`.
     #[must_use]
-    pub fn stamp(self, (stamp, fee): (ProofStamp, value::Positive)) -> Bundle<ProofStamp> {
+    pub fn stamp(self, (stamp, fee): (ProofStamp, value::Balance)) -> Bundle<ProofStamp> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
@@ -811,6 +812,10 @@ impl Bundle<ProofStamp> {
     /// - Tachygrams are consistent
     /// - Proof is correct
     ///
+    /// The transaction layer checks each adjunct's signatures, other pools,
+    /// transaction balances, coverage-group funding and block/coinbase
+    /// accounting. A valid stamp alone does not establish funding.
+    ///
     /// If you need more control, call each verify method directly.
     ///
     /// # Errors
@@ -948,9 +953,9 @@ impl<S: StampState> Bundle<S> {
         let binding_sig = Signature::read(&mut reader)?;
 
         let fee_value = {
-            let mut bytes = [0u8; size_of::<u64>()];
+            let mut bytes = [0u8; size_of::<i64>()];
             reader.read_exact(&mut bytes)?;
-            value::Positive::try_from(u64::from_le_bytes(bytes))
+            value::Balance::try_from(i64::from_le_bytes(bytes))
                 .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
         }?;
 
@@ -1015,7 +1020,7 @@ impl<S: StampState> Bundle<S> {
 
         self.binding_sig.write(&mut writer)?;
 
-        writer.write_all(&u64::from(self.fee_value).to_le_bytes())?;
+        writer.write_all(&i64::from(self.fee_value).to_le_bytes())?;
 
         let n_memo = u64::try_from(self.memo.len()).map_err(|_err| {
             io::Error::new(io::ErrorKind::InvalidData, "memo length exceeds u64")

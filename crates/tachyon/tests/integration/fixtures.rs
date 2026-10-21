@@ -172,7 +172,7 @@ pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
         vec![(plan.descriptor(), theta, note, rcv)],
         anchor,
         max_fee_note,
-        value::Positive::ZERO,
+        value::Balance::ZERO,
     )
     .prove(rng, &pak, vec![])
     .expect("prove an output stamp");
@@ -1588,7 +1588,7 @@ impl WalletSim {
     ) -> Bundle<ProofStamp> {
         let (bundle_plan, unproven, spend_pcds) =
             self.signed(rng, spends, output_notes, self.random_note(0));
-        let stamp_plan = bundle_plan.stamp_plan(anchor, value::Positive::ZERO);
+        let stamp_plan = bundle_plan.stamp_plan(anchor, value::Balance::ZERO);
         let stamp = stamp_plan
             .prove(rng, &self.pak, spend_pcds)
             .expect("prove autonome stamp");

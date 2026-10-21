@@ -357,7 +357,7 @@ pub struct Plan {
     outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
     anchor: Anchor,
     max_fee_note: Note,
-    fee: value::Positive,
+    fee: value::Balance,
     fee_change_note: Note,
 }
 
@@ -368,14 +368,15 @@ impl Plan {
     ///
     /// # Panics
     ///
-    /// Panics if the fee exceeds the max fee note's value.
+    /// Panics if the max fee note's value minus the fee is outside
+    /// `0..=MAX_MONEY`.
     #[must_use]
     pub fn new(
         spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
         outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
         anchor: Anchor,
         max_fee_note: Note,
-        fee: value::Positive,
+        fee: value::Balance,
     ) -> Self {
         #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
         let fee_change_note = Note {
@@ -438,13 +439,14 @@ impl Plan {
             ragu::Pcd<spendable::NoteSpendable>,
             Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
         )>,
-    ) -> Result<(ProofStamp, value::Positive), ProveError> {
+    ) -> Result<(ProofStamp, value::Balance), ProveError> {
         if self.spends.is_empty() && self.outputs.is_empty() && spend_pcds.is_empty() {
             let (pcd, ()) = PROOF_SYSTEM
                 .seed(
                     rng,
                     FeeSeed,
-                    witness::fee_seed(((), ()), self.max_fee_note, self.fee, self.anchor),
+                    witness::fee_seed(((), ()), self.max_fee_note, self.fee, self.anchor)
+                        .map_err(ProveError::ProofFailed)?,
                 )
                 .map_err(ProveError::ProofFailed)?;
             let stamp = ProofStamp::with_fee(
@@ -457,7 +459,7 @@ impl Plan {
                         .max_fee_note
                         .fee_blind()
                         .commit(-self.max_fee_note.value),
-                    value: self.fee.into(),
+                    value: self.fee,
                 },
                 self.fee_change_note.commitment().into(),
             )?;
@@ -595,7 +597,8 @@ impl Plan {
                     self.fee,
                     &digests,
                     &tachygrams,
-                ),
+                )
+                .map_err(ProveError::ProofFailed)?,
                 merged_proof.carry::<Actions>(stamp_header),
                 ragu::Proof::trivial().carry::<()>(()),
             )
@@ -610,7 +613,7 @@ impl Plan {
                     .max_fee_note
                     .fee_blind()
                     .commit(-self.max_fee_note.value),
-                value: self.fee.into(),
+                value: self.fee,
             },
             self.fee_change_note.commitment().into(),
         )?;

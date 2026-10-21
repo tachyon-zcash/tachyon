@@ -115,10 +115,10 @@ fn plan_prove_rejects_invalid_inputs() {
         ]
     };
     let max_fee_note = user.random_note(0);
-    let zero = value::Positive::ZERO;
+    let zero = value::Balance::ZERO;
     let fee_digest = fee::Descriptor {
         max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: zero.into(),
+        value: zero,
     }
     .digest()
     .expect("fee digest");
@@ -243,7 +243,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
             vec![(output.descriptor(), out_theta, output.note, out_rcv)],
             plan_anchor,
             max_fee_note,
-            value::Positive::ZERO,
+            value::Balance::ZERO,
         )
         .prove(
             prove_rng,

@@ -30,6 +30,10 @@ fn zat(amount: u64) -> value::Positive {
     value::Positive::try_from(amount).unwrap()
 }
 
+fn fee_value(amount: i64) -> value::Balance {
+    value::Balance::try_from(amount).unwrap()
+}
+
 fn verify_alone(
     rng: &mut StdRng,
     bundle: &Bundle<ProofStamp>,
@@ -91,7 +95,7 @@ fn fee_less_output_bundle(
         &wallet.sk.derive_auth_private(),
     )
     .expect("sign the fee-less bundle")
-    .stamp((stamp, value::Positive::ZERO))
+    .stamp((stamp, value::Balance::ZERO))
 }
 
 fn coverage_of(bundles: &[&Bundle<dyn StampState>]) -> [u8; 32] {
@@ -141,14 +145,15 @@ fn fee_fuse_binds_its_sets() {
             .expect("proof system verification"),
         "the OutputAction proof verifies as Actions"
     );
-    let fee_witness = |fee: u64| {
+    let fee_witness = |fee: i64| {
         witness::fee_fuse(
             (actions_header, ()),
             max_fee_note,
-            zat(fee),
+            fee_value(fee),
             &action_digests,
             &left.stamp.tachygrams,
         )
+        .unwrap()
     };
 
     let valid = fee_witness(120);
@@ -239,7 +244,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let sighash = mock_sighash(signed.commitment());
     let prove = |prove_rng: &mut StdRng, fee| {
         bundle_plan
-            .stamp_plan(anchor, zat(fee))
+            .stamp_plan(anchor, fee_value(fee))
             .prove(prove_rng, &wallet.pak, spend_pcds.clone())
             .map(|proved| signed.clone().stamp(proved))
     };
@@ -263,11 +268,12 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let mut excess_witness = witness::fee_fuse(
         (actions_header, ()),
         max_fee_note,
-        zat(300),
+        fee_value(300),
         &action_digests,
         &actions.stamp.tachygrams,
-    );
-    excess_witness.1 = zat(301).into();
+    )
+    .expect("witness the maximum fee");
+    excess_witness.1 = fee_value(301);
     let excess = PROOF_SYSTEM
         .fuse(
             rng,
@@ -289,10 +295,10 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     assert_eq!(inner.to_string(), "FeeFuse: change is out of range");
 
     let mut auth_digests = BTreeSet::new();
-    for fee in [0u64, 120, 300] {
+    for fee in [0i64, 120, 300] {
         let bundle = prove(rng, fee).expect("prove with the fee");
 
-        assert_eq!(u64::from(bundle.fee_value), fee);
+        assert_eq!(i64::from(bundle.fee_value), fee);
         assert_eq!(bundle.commitment(), signed.commitment(), "fee {fee}");
         assert_eq!(bundle.binding_sig, signed.binding_sig, "fee {fee}");
         assert_eq!(bundle.stamp.tachygrams.len(), 2 * 2 + 1, "fee {fee}");
@@ -320,10 +326,11 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
             witness::fee_fuse(
                 (header, ()),
                 max_fee_note,
-                zat(0),
+                fee_value(0),
                 &digests,
                 &once.stamp.tachygrams,
-            ),
+            )
+            .unwrap(),
             once.stamp.proof.clone().carry::<Actions>(header),
             Proof::trivial().carry::<()>(()),
         )
@@ -377,7 +384,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
 
     let mut aggregate = signed.stamp(
         bundle_plan
-            .stamp_plan(anchor, zat(120))
+            .stamp_plan(anchor, fee_value(120))
             .prove(rng, &wallet.pak, spend_pcds)
             .expect("prove with the fee"),
     );
@@ -499,19 +506,19 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
     );
     let adjunct = adjunct_signed.stamp(
         adjunct_plan
-            .stamp_plan(anchor, zat(40))
+            .stamp_plan(anchor, fee_value(40))
             .prove(rng, &wallet.pak, vec![])
             .expect("prove the adjunct with its fee"),
     );
 
     let (aggregate_stamp, aggregate_fee) = bundle_plan
-        .stamp_plan(anchor, zat(120))
+        .stamp_plan(anchor, fee_value(120))
         .prove(rng, &wallet.pak, spend_pcds)
         .expect("prove the aggregate with its fee");
     let aggregate_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
     let aggregate_fee_descriptors = BTreeSet::from([fee::Descriptor {
         max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: aggregate_fee.into(),
+        value: aggregate_fee,
     }]);
 
     let merged_stamp = ProofStamp::merge(
@@ -562,7 +569,7 @@ fn fee_bearing_aggregates_merge_and_lift() {
             wallet.random_note(100),
         );
         let stamp = plan
-            .stamp_plan(anchor, zat(40))
+            .stamp_plan(anchor, fee_value(40))
             .prove(rng, &wallet.pak, pcds)
             .expect("prove with the fee");
         signed.stamp(stamp)
@@ -612,7 +619,7 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
     let anchor = PoolSim::genesis(rng).anchor();
     let max_fee_note = wallet.random_note(0);
     let (_, signed, _) = wallet.signed(rng, vec![], vec![], max_fee_note);
-    let proved = stamp::Plan::new(vec![], vec![], anchor, max_fee_note, zat(0))
+    let proved = stamp::Plan::new(vec![], vec![], anchor, max_fee_note, fee_value(0))
         .prove(rng, &wallet.pak, vec![])
         .expect("seed");
     let bundle = signed.stamp(proved);
@@ -715,14 +722,14 @@ fn fee_seed_rejects_nonzero_value_and_positive_fee() {
     let wallet = WalletSim::new(shared_sk());
     let anchor = PoolSim::genesis(rng).anchor();
     let max_fee_note = wallet.random_note(0);
-    let valid = witness::fee_seed(((), ()), max_fee_note, zat(0), anchor);
+    let valid = witness::fee_seed(((), ()), max_fee_note, fee_value(0), anchor).unwrap();
     for slot in 0..2 {
         let mut forged = valid.clone();
         let expected = if slot == 0 {
             forged.0.value = zat(1);
             "FeeSeed: maximum fee must be zero"
         } else {
-            forged.1 = zat(1).into();
+            forged.1 = fee_value(1);
             "FeeFuse: change is out of range"
         };
         let err = PROOF_SYSTEM
@@ -769,8 +776,8 @@ fn fee_seed_binds_its_singletons_and_header() {
     let anchor = PoolSim::genesis(rng).anchor();
     let other_anchor = PoolSim::genesis(rng).anchor();
     assert_ne!(anchor, other_anchor);
-    let valid = witness::fee_seed(((), ()), wallet.random_note(0), zat(0), anchor);
-    let other = witness::fee_seed(((), ()), wallet.random_note(0), zat(0), anchor);
+    let valid = witness::fee_seed(((), ()), wallet.random_note(0), fee_value(0), anchor).unwrap();
+    let other = witness::fee_seed(((), ()), wallet.random_note(0), fee_value(0), anchor).unwrap();
 
     let mut fee_actions = valid.clone();
     fee_actions.3 = other.3.clone();

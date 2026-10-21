@@ -547,31 +547,33 @@ pub fn spend_action(
 /// singleton set contains one element: the fee digest or the fee change note's
 /// commitment. The output set polynomials represent the unions.
 ///
+/// # Errors
+///
+/// Returns an invalid witness error if the fee change is out of range.
+///
 /// # Panics
 ///
-/// Panics if the max fee note's `rcm` is zero or the fee exceeds its value.
-#[must_use]
+/// Panics if the max fee note's `rcm` is zero.
 pub fn fee_fuse(
     (_left, _right): (StepLeft<FeeFuse>, StepRight<FeeFuse>),
     max_fee_note: Note,
-    fee: value::Positive,
+    fee: value::Balance,
     action_digests: &BTreeSet<ActionDigest>,
     tachygrams: &BTreeSet<Tachygram>,
-) -> StepWitness<'static, FeeFuse> {
-    #[expect(
-        clippy::expect_used,
-        reason = "a planned max fee commitment is never the identity"
-    )]
+) -> ragu_core::Result<StepWitness<'static, FeeFuse>> {
     let fee_digest = fee::Descriptor {
         max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: fee.into(),
+        value: fee,
     }
     .digest()
-    .expect("fee digest");
-    #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+    .map_err(|_err| {
+        ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
+    })?;
     let fee_change_note = Note {
         value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
-            .expect("fee should not exceed max fee"),
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
+            })?,
         ..max_fee_note
     };
     let fee_change_commitment = Tachygram::from(fee_change_note.commitment());
@@ -581,9 +583,9 @@ pub fn fee_fuse(
     let mut output_tachygrams = tachygrams.clone();
     output_tachygrams.insert(fee_change_commitment);
 
-    (
+    Ok((
         max_fee_note,
-        fee.into(),
+        fee,
         (
             action_digests.iter().copied().collect(),
             tachygrams.iter().copied().collect(),
@@ -596,42 +598,44 @@ pub fn fee_fuse(
             ActionSetPoly::from_iter([fee_digest]),
             TachygramSetPoly::from_iter([fee_change_commitment]),
         ),
-    )
+    ))
 }
 
 /// Prepare the singleton sets for [`FeeSeed`].
 ///
+/// # Errors
+///
+/// Returns an invalid witness error if the fee change is out of range.
+///
 /// # Panics
 ///
-/// Panics if the max fee note's `rcm` is zero or the fee exceeds its value.
-#[must_use]
+/// Panics if the max fee note's `rcm` is zero.
 pub fn fee_seed(
     (_left, _right): (StepLeft<FeeSeed>, StepRight<FeeSeed>),
     max_fee_note: Note,
-    fee: value::Positive,
+    fee: value::Balance,
     anchor: Anchor,
-) -> StepWitness<'static, FeeSeed> {
-    #[expect(
-        clippy::expect_used,
-        reason = "a planned max fee commitment is never the identity"
-    )]
+) -> ragu_core::Result<StepWitness<'static, FeeSeed>> {
     let digest = fee::Descriptor {
         max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: fee.into(),
+        value: fee,
     }
     .digest()
-    .expect("fee digest");
-    #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+    .map_err(|_err| {
+        ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
+    })?;
     let fee_change_note = Note {
         value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
-            .expect("fee should not exceed max fee"),
+            .map_err(|_err| {
+                ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
+            })?,
         ..max_fee_note
     };
-    (
+    Ok((
         max_fee_note,
-        fee.into(),
+        fee,
         anchor,
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([Tachygram::from(fee_change_note.commitment())]),
-    )
+    ))
 }
