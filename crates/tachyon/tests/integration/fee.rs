@@ -141,6 +141,13 @@ fn fee_fuse_binds_its_sets() {
             .expect("proof system verification"),
         "the OutputAction proof verifies as Actions"
     );
+    assert!(
+        !left
+            .stamp
+            .verify_proof(rng, action_digests.iter().copied())
+            .expect("proof system verification"),
+        "an Actions proof does not verify as a Stamp"
+    );
     let fee_witness = |fee: u64| {
         witness::fee_fuse(
             (stamp_header, ()),
