@@ -297,7 +297,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
     }
 }
 
-/// A fee-bearing carrier merges a fee-bearing adjunct and verifies.
+/// A fee-bearing aggregate merges a fee-bearing adjunct and verifies.
 #[test]
 fn fee_applies_over_a_fee_bearing_adjunct() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -320,38 +320,42 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
             .expect("prove the adjunct with its fee"),
     );
 
-    let (carrier_stamp, carrier_fee) = bundle_plan
+    let (aggregate_stamp, aggregate_fee) = bundle_plan
         .stamp_plan(anchor, zat(120))
         .prove(rng, &wallet.pak, spend_pcds)
-        .expect("prove the carrier with its fee");
-    let carrier_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
-    let carrier_fee_descriptors = BTreeSet::from([fee::Descriptor {
+        .expect("prove the aggregate with its fee");
+    let aggregate_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
+    let aggregate_fee_descriptors = BTreeSet::from([fee::Descriptor {
         max_commitment: fee::Plan::new(max_fee_note).max_commitment(),
-        value: carrier_fee,
+        value: aggregate_fee,
     }]);
 
     let merged_stamp = ProofStamp::merge(
         rng,
-        (carrier_stamp, carrier_descriptors, carrier_fee_descriptors),
+        (
+            aggregate_stamp,
+            aggregate_descriptors,
+            aggregate_fee_descriptors,
+        ),
         merge_side(&adjunct, &[]),
     )
-    .expect("merge the carrier's stamp with the adjunct's");
-    let carrier = signed.stamp((merged_stamp, carrier_fee));
+    .expect("merge the aggregate's stamp with the adjunct's");
+    let aggregate = signed.stamp((merged_stamp, aggregate_fee));
 
     assert!(
         adjunct
             .stamp
             .tachygrams
-            .is_subset(&carrier.stamp.tachygrams)
+            .is_subset(&aggregate.stamp.tachygrams)
     );
     assert_eq!(
-        carrier.stamp.tachygrams.len(),
-        2 * (carrier.actions.len() + adjunct.actions.len()) + 2
+        aggregate.stamp.tachygrams.len(),
+        2 * (aggregate.actions.len() + adjunct.actions.len()) + 2
     );
-    let final_id = mock_wtxid(&carrier);
-    carrier
+    let final_id = mock_wtxid(&aggregate);
+    aggregate
         .verify(rng, &sighash, &final_id.into(), &[&adjunct.strip(final_id)])
-        .expect("the carrier verifies against the stripped adjunct");
+        .expect("the aggregate verifies against the stripped adjunct");
 }
 
 #[test]
