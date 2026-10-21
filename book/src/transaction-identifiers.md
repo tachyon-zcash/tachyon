@@ -24,6 +24,10 @@ $$
 \bigr)
 $$
 
+$\mathsf{LE64}(\mathsf{vFeeTachyon})$ is the fee's canonical signed i64
+little-endian encoding. Editing its sign changes the auth digest and the
+proof's reconstructed fee digest, while leaving the txid unchanged.
+
 $\mathsf{tachyonStampState}$ is 64 bytes in both states, so the two are the same width and are told apart by the state byte:
 
 $$

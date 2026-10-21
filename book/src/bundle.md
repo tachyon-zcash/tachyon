@@ -163,11 +163,14 @@ When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundl
 | `cvFeeMaxTachyon` | 32 bytes | [max fee note](./fee.md) value commitment |
 | `vActionSigsTachyon` | 64 * nActionsTachyon | authorization per action over the tx sighash |
 | `bindingSigTachyon` | 64 bytes | binding signature over the tx sighash |
-| `vFeeTachyon` | LE64 | fee, at most `MAX_MONEY` |
+| `vFeeTachyon` | i64 | fee, in $[-\mathsf{MAX\_MONEY},\mathsf{MAX\_MONEY}]$ |
 | `nMemoTachyon` | compactsize | memo length, `0` when absent |
 | `vMemoTachyon` | nMemoTachyon bytes | opaque recipient-directed payload |
 
 `cvFeeMaxTachyon` is effecting data and must be a canonical encoding of a non-identity point. `vFeeTachyon` is authorization data. The bundle contributes `valueBalanceTachyon + vFeeTachyon` to the transaction balance.
+
+A negative fee raises the fee change note to $\maxfee + \claim$, paid to the max fee note's owner.
+[Funding](./fee.md#funding) checks each transaction's balance and its final coverage group.
 
 The memo is effecting data, so the transaction sighash covers it and `auth_digest` does not. A relayer rewrites `auth_digest` while aggregating, so a memo held there could be stripped while the block still committed to the same transaction.
 
@@ -207,6 +210,9 @@ $$
 $$
 
 $\mathsf{hStampActionsTachyon}$ hashes the 64-byte entry $a_i$ of every action the stamp covers. $\mathsf{hStampFeesTachyon}$ hashes the 40-byte coverage entry $f_j$ of every covered bundle's fee descriptor. Each sub-digest takes its entries in bytewise sorted order. The indicator is authorization data that lets observers cheaply identify and correlate transactions without verifying the proof. The proof binds the same action descriptors and fee descriptors by a different construction, a Pedersen commitment to their Poseidon digests, so the trailer field is a second digest of one covered set rather than a copy of the proof's. See [Aggregation → Action set indicator](./aggregation.md#action-set-indicator).
+
+Each fee entry uses the signed i64's little-endian bytes. Sorting compares
+the complete 40-byte entries lexicographically, not fees numerically.
 
 ### Stripped trailer
 

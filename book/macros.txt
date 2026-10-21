@@ -54,5 +54,6 @@
 \Oc:{\textcolor{Crimson}{\mathsf{O}}}
 \root:\mathsf{root}
 \fee:\mathsf{fee}
+\claim:\mathsf{claim}
 \chg:\mathsf{chg}
 \maxfee:{\mathsf{fee}^{\mathsf{max}}}

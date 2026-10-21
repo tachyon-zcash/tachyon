@@ -50,6 +50,21 @@ A based aggregate first proves its own actions and applies its fee with `FeeFuse
 An innocent runs an empty `Plan::prove`: `FeeSeed` proves its zero-action bundle's fee, then `ProofStamp::merge` merges that stamp with the stamps of the bundles it covers.
 Both use `StampMerge`, as does a nested aggregate. A zero-action bundle can also stand alone with its `FeeSeed` stamp.
 
+An aggregator [claims](./fee.md#aggregator-claims) by applying a negative fee
+to its own bundle: `FeeFuse` pays $\maxfee + \claim$, and `FeeSeed`, with
+$\maxfee = 0$, pays $\claim$.
+Authors need not select the eventual aggregator before aggregation. The
+transaction layer checks every adjunct's signatures, each member's balance, and
+the final coverage group's deficits against its claim allowances.
+Funding is independent of intermediate proof construction.
+
+A nested aggregate preserves each earlier claimant's descriptor and payout.
+All stripped descendants name the final top-level `wtxid`. A miner can instead
+rebuild from source stamps, omitting a claimant's body and payout together;
+the rebuilt group's funding is checked anew. Republishing a payout in another
+aggregate still fails the block's tachygram replay check, even if both groups
+pass funding.
+
 The steps are:
 
 1. Select transactions
@@ -151,6 +166,9 @@ An aggregate's stamp proves its own actions together with every covered adjunct'
 To make that recognition cheap, the stamp trailer carries `hStampCoverageTachyon`, an assistive indicator the transaction author provides (see [Bundles → Wire Format](./bundle.md#stamp-trailer)). It is a BLAKE2b-256 digest of two sub-digests: `hStampActionsTachyon` over the sorted `cv || rk` descriptors of every action the stamp covers, and `hStampFeesTachyon` over the sorted `cv_maxfee || LE64(fee)` of every [fee descriptor](./fee.md) it covers. With it, an observer can cheaply tell an autonome from an aggregate and judge whether a collection of adjuncts is complete, without verifying the proof. The proof binds the same actions and fee descriptors as a Pedersen commitment to their Poseidon digests; recomputing the trailer digest is the cheap check, and it is a separate construction over the same set rather than a copy of the one the proof carries.
 
 A stripped adjunct keeps its fee descriptor in the bundle body. The covering verifier collects every covered fee descriptor from the published bundles.
+
+`LE64(fee)` uses signed i64 bytes; fee entries sort lexicographically as
+40-byte strings, including the sign in those bytes.
 
 The indicator is authorization data, not effecting data: it rides on the strippable stamp trailer, contributes to `auth_digest`, and is absent from adjuncts. It is not a soundness mechanism. The proof binds the action set regardless; a wrong indicator only harms its author, since mempool actors decline to handle a transaction whose indicator they cannot satisfy, and a subset, superset, or partial overlap simply fails to validate.
 

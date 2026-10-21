@@ -391,7 +391,11 @@ The work splits as follows, each stamp step also opening its action-set and tach
 `ActionMerge` applies the same relation to two pre-fee `Actions` inputs.
 `FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note).
 `FeeSeed` has no predecessors. It enforces a zero-value max fee note and emits the two fee singleton commitments at a witnessed anchor.
-The unsigned fee and the change range force its fee to zero.
+Its signed fee lies in $[-\mathsf{MAX\_MONEY},0]$; a negative fee pays a claim.
+Both fee steps range-check max fee and change, binding the signed fee by
+$\maxfee=\fee+\mathsf{change}$. Their opening-derived blind binds the payout
+owner through the signed max fee commitment. They prove this local relation;
+[coverage-group funding](./fee.md#funding) belongs to node consensus.
 
 | Step | Index | Left | Right | Output | Opened polynomials |
 | ---- | ----- | ---- | ----- | ------ | ------------------ |
@@ -403,6 +407,29 @@ The unsigned fee and the change range force its fee to zero.
 | FeeSeed | 36 | — | — | Stamp | 2: fee singleton sets |
 | StampMerge | 10 | Stamp | Stamp | Stamp | 6: left, right and merged sets |
 | StampLift | 11 | Stamp | AnchorSpan | Stamp | 1: span members |
+
+### Fee roots
+
+`FeeFuse` binds its left polynomials $A,T$ to the `Actions` header and checks
+$A'=A S_A$, $T'=T S_T$. Both fee steps derive the fee digest $d$ and change
+commitment $m$ from the opening and signed fee. They enforce
+$S_A(x_A)=x_A-d$ and $S_T(x_T)=x_T-m$, with each root challenge hashing its
+singleton commitment. Each product challenge hashes all three operands.
+`FeeSeed` emits just the two singleton commitments. `StampMerge` multiplies
+these factors and `StampLift` preserves them. Consensus reconstructs every
+covered fee digest and rejects duplicate descriptors.
+
+Let $D=8191$ bound a witnessed polynomial's degree, $Q_Z$ bound challenge
+queries, and $Q_H$ bound fee-digest/note-commitment queries, including queries
+before a complete witness exists and the accepted proof's own queries.
+Model the challenge hash and Poseidon domains as independent random oracles.
+A root fixed before its challenge gives a false polynomial relation of
+degree at most $D$, with probability at most $D/p$. A root first returned
+after the challenge must hit one fixed target, with probability $1/p$.
+Each root relation therefore contributes at most $D Q_H Q_Z/p$; each
+product relation contributes at most $2D Q_Z/p$.
+Beyond commitment-binding and recursive-extraction error, `FeeFuse`'s bound
+is $(2D Q_H Q_Z+4D Q_Z)/p$ and `FeeSeed`'s is $2D Q_H Q_Z/p$.
 
 ### Stamp anchor
 
