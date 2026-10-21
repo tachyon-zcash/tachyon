@@ -609,8 +609,8 @@ fn evidence_tree_descend_rejects_children_that_miss_the_node() {
 }
 
 /// A node is not a leaf. Stopping a descent one level short leaves an interior
-/// node on the header. A node digest uses no domain and a leaf digest uses
-/// `Tachyon-QrBucket`.
+/// node on the header. Leaf and node digests use different domains,
+/// `Tachyon-QrBucket` and `Tachyon-EvidNode`.
 #[test]
 fn evidence_tree_open_rejects_a_node_presented_as_a_leaf() {
     let rng = &mut StdRng::seed_from_u64(0);

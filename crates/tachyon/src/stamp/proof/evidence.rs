@@ -404,8 +404,8 @@ impl Step for EvidenceTreeCap {
 /// `node` starts threaded, each level's children are pinned to it by the node
 /// hash, and the emitted root is one of the four children of a node reached
 /// that way. Every leaf beneath a subtree of a valid tree is a leaf of that
-/// tree, so the claim survives the descent. A leaf digest uses the
-/// `Tachyon-QrBucket` domain and a node digest uses none, so a path cannot stop
+/// tree, so the claim survives the descent. Leaf and node digests use different
+/// domains, `Tachyon-QrBucket` and `Tachyon-EvidNode`, so a path cannot stop
 /// one level short and present a node as a bucket.
 #[derive(Debug)]
 pub struct EvidenceTreeDescend;
@@ -481,12 +481,12 @@ impl Step for EvidenceTreeDescend {
 /// # Soundness
 ///
 /// The witnessed profile and contents commitment are pinned jointly to `root`
-/// by the leaf digest. `root` is a leaf digest and not a node: a leaf digest
-/// uses the `Tachyon-QrBucket` domain and a node digest uses none, and a
-/// descent stopped short leaves a node no preimage opens. Preimage resistance
-/// then makes the emitted header one [`QrBucketSeal`](super::qr::QrBucketSeal)
-/// emitted, so this second producer of [`QrBucket`] establishes nothing the
-/// seal did not.
+/// by the leaf digest. `root` is a leaf digest and not a node: leaf and node
+/// digests use different domains, `Tachyon-QrBucket` and `Tachyon-EvidNode`,
+/// and a descent stopped short leaves a node no preimage opens. Preimage
+/// resistance then makes the emitted header one
+/// [`QrBucketSeal`](super::qr::QrBucketSeal) emitted, so this second producer
+/// of [`QrBucket`] establishes nothing the seal did not.
 ///
 /// Only [`EvidenceTreeDescend`] emits a tree whose root is a leaf digest, so
 /// every open follows a descent.

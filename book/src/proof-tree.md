@@ -267,7 +267,7 @@ and emitting the two under one half-assembled node.
 Admitting two at a time is what holds a tree over `n` buckets to `n - 1` steps: every step reads at most two proofs and emits one, so `n` proofs reach one root in at least `n - 1`, and only a step that consumes two moves toward that bound.
 A tree therefore starts at four leaves. A builder short of four repeats a bucket, which is a bucket the tree holds twice and no step forbids. A builder holding one bucket needs no tree: it serves that bucket's own proof, and a consumer cannot tell a sealed bucket from a replayed one.
 
-A node has four children, which fill the sponge rate. It takes no domain and starts from the zero state.
+A node has four children, which fill the sponge rate under the $\texttt{Tachyon-EvidNode}$ capacity.
 Four children reach one hash through two steps, since a step takes at most two predecessor proofs: `EvidenceTreePairFuse` carries two trees into a half-assembled node, and `EvidenceTreeFuse` hashes two of those halves,
 
 $$\mathsf{root} = H(\ell_0, \ell_1, r_0, r_1).$$
@@ -281,7 +281,7 @@ The builder keeps the buckets' polynomials, the tree, and one proof for the root
 A query walks back down. `EvidenceTreeDescend` witnesses one node's four children per level, checks they hash to the node it holds, and selects among them on two side bits; the levels per step are fixed, so a deeper tree takes a longer chain of descents.
 `EvidenceTreeOpen` then witnesses the leaf's preimage, checks the leaf digest against the root it has reached, and emits the `QrBucket` the leaf stands for. Only a descent emits a tree whose root is a leaf digest, so every open follows one. `QrUnspentInit` and `QrSpendableInit` consume it unchanged.
 Binding the profile into the leaf is what makes the replay safe: a real bucket's contents presented under the tested value's own profile would pass the fold and open nonzero, proving exclusion for a value published in a different bucket.
-A leaf digest uses the $\texttt{Tachyon-QrBucket}$ domain and a node digest uses none, so no path can stop one level short and present a node as a bucket.
+Leaf and node digests use different domains, $\texttt{Tachyon-QrBucket}$ and $\texttt{Tachyon-EvidNode}$, so no path can stop one level short and present a node as a bucket.
 
 A leaf digest absorbs eight elements, two permutations at rate four. A node absorbs four, one permutation.
 No evidence step multiplies a point or opens a polynomial:

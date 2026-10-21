@@ -4,8 +4,7 @@
 //!
 //! A tagged hash starts from a zero rate and the capacity element
 //! $\mathsf{tag}$, the 16-byte domain read as a little-endian integer. It
-//! absorbs only its data. [`evidence_tree_node`] is the one untagged hash and
-//! starts from the zero state.
+//! absorbs only its data. Every Tachyon Poseidon hash is tagged this way.
 
 use core::array;
 
@@ -30,21 +29,6 @@ use crate::constants::EVIDENCE_TREE_ARITY;
 /// witness values are always present and no wires are tracked, so absorb and
 /// squeeze compute field values without building constraints.
 type Emu = Emulator<Wireless<Always<()>, Fp>>;
-
-#[expect(
-    clippy::expect_used,
-    reason = "sponge absorb cannot fail in wireless `Always` mode"
-)]
-fn absorb<const L: usize>(
-    emulator: &mut Emu,
-    sponge: &mut Sponge<'static, Emu, PoseidonFp>,
-    input: [Fp; L],
-) {
-    for value in input {
-        let element = Element::constant(emulator, value);
-        sponge.absorb(emulator, &element).expect("infallible");
-    }
-}
 
 #[expect(
     clippy::expect_used,
@@ -74,7 +58,14 @@ fn tagged_sponge<const L: usize>(
         Element::constant(&mut emulator, value)
     }));
     let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(Pasta::baked()));
-    absorb(&mut emulator, &mut sponge, input);
+    #[expect(
+        clippy::expect_used,
+        reason = "sponge absorb cannot fail in wireless `Always` mode"
+    )]
+    for value in input {
+        let element = Element::constant(&mut emulator, value);
+        sponge.absorb(&mut emulator, &element).expect("infallible");
+    }
     (emulator, sponge)
 }
 
@@ -235,6 +226,7 @@ pub fn anchor_next_stamp(anchor_prev: Fp, epoch: Fp, tgs: EqAffine) -> Fp {
 }
 
 const QR_BUCKET_DOMAIN: &[u8; 16] = b"Tachyon-QrBucket";
+const EVIDENCE_NODE_DOMAIN: &[u8; 16] = b"Tachyon-EvidNode";
 
 /// Digests a sealed bucket into the leaf of a evidence tree.
 ///
@@ -269,15 +261,14 @@ pub fn evidence_tree_leaf(
 
 /// Folds four subtree roots into their parent node of a evidence tree.
 ///
-/// The node takes no domain and starts from the zero state. Absorption carries
-/// no length encoding, so a node must always absorb all four children. A tree
-/// short of a full level pads by repeating a child, never by omitting one.
+/// $$
+///   \mathsf{node} = \mathsf{Poseidon}_\texttt{Tachyon-EvidNode}(
+///     c_0,\ c_1,\ c_2,\ c_3
+///   )
+/// $$
 #[must_use]
 pub fn evidence_tree_node(children: [Fp; EVIDENCE_TREE_ARITY]) -> Fp {
-    let mut emulator = Emu::execute();
-    let mut sponge = Sponge::new(&mut emulator, Pasta::circuit_poseidon(Pasta::baked()));
-    absorb(&mut emulator, &mut sponge, children);
-    squeeze(&mut emulator, &mut sponge)
+    hash::<EVIDENCE_TREE_ARITY>(EVIDENCE_NODE_DOMAIN, children)
 }
 
 const ANCHOR_EPOCH_DOMAIN: &[u8; 16] = b"Tachyon-AnchorEp";
