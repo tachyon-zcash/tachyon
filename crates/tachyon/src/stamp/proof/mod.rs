@@ -66,6 +66,7 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(evidence::EvidenceTreeLeafPair)?
         .register(pool::AnchorSpanSeed)?
         .register(pool::AnchorSpanFuse)?
+        .register(stamp::StampFee)?
         .finalize()
 }
 

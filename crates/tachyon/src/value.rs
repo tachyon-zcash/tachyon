@@ -58,6 +58,12 @@ impl Trapdoor {
         Self(Fq::random(rng))
     }
 
+    /// A trapdoor derived from other secret data, such as a max fee note's
+    /// blind.
+    pub(crate) const fn from_scalar(scalar: Fq) -> Self {
+        Self(scalar)
+    }
+
     /// Commit to a given value with this trapdoor.
     ///
     /// $$

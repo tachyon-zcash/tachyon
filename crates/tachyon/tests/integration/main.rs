@@ -24,6 +24,8 @@ mod bundle;
 #[cfg(test)]
 mod evidence;
 #[cfg(test)]
+mod fee;
+#[cfg(test)]
 mod fixtures;
 #[cfg(test)]
 mod proof;

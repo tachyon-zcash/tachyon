@@ -5,15 +5,12 @@ use core::cmp::Eq as CoreTotalEq;
 use derive_more::{Debug, Display};
 use pasta_curves::{EpAffine, group::GroupEncoding as _};
 
-use crate::{
-    action::{self, Action},
-    bundle, reddsa, value,
-};
+use crate::{action, bundle, reddsa, value};
 
 /// The randomized action verification key `rk`: per-action, public.
 ///
 /// This is the only key type that **can verify** action signatures.
-/// Goes into [`Action`]. Terminal type, with no further
+/// Goes into [`crate::Action`]. Terminal type, with no further
 /// derivation.
 ///
 /// Both spend and output actions produce an `rk`
@@ -112,7 +109,8 @@ impl PartialEq for BindingVerificationKey {
 }
 
 impl BindingVerificationKey {
-    /// Derive the binding verification key from public action data.
+    /// Derive the binding verification key from the given value commitments
+    /// and the value balance.
     ///
     /// $$
     ///   \mathsf{bvk} =
@@ -120,12 +118,17 @@ impl BindingVerificationKey {
     ///     \ominus \text{ValueCommit}_0\left(\mathsf{vBalanceTachyon}\right)
     /// $$
     ///
-    /// This is the validator-side derivation similar to Orchard. (§4.14). The
+    /// That is, the sum of the given value commitments minus ValueCommit_0
+    /// of $\mathsf{vBalanceTachyon}$. This is the
+    /// validator-side derivation similar to Orchard. (§4.14). The
     /// result should equal $[\mathsf{bsk}]\mathcal{R}$ when the signer
     /// constructed the bundle correctly.
     #[must_use]
-    pub fn derive(actions: &[Action], value_balance: value::Balance) -> Self {
-        let cv_sum: value::Commitment = actions.iter().map(|action| action.cv).sum();
+    pub fn derive(
+        cvs: impl IntoIterator<Item = value::Commitment>,
+        value_balance: value::Balance,
+    ) -> Self {
+        let cv_sum: value::Commitment = cvs.into_iter().sum();
         let cvb = value::Trapdoor::ZERO.commit(value_balance);
         Self::from(EpAffine::from(cv_sum - cvb))
     }

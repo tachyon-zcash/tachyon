@@ -167,9 +167,13 @@ fn stamp_lift_within_epoch() {
     let stamp_anchor = pool.block(BlockHeight(1)).anchor();
 
     let note = user.random_note(200);
-    let (stamp, plan) = build_output_stamp(rng, stamp_anchor, note);
+    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, stamp_anchor, note);
 
-    let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
+    let action_commit = ActionSetPoly::from_iter([
+        plan.digest().expect("valid plan"),
+        fee_descriptor.digest().expect("fee digest"),
+    ])
+    .commit();
     let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
 
     pool.advance(EPOCH_SIZE - 2, |_| random_block(rng, 1, 4));
@@ -328,8 +332,13 @@ fn anchor_span_fuse_rejects_unjoined_spans() {
 
 /// An output stamp anchored at `stamp_anchor`, carried on its header.
 fn output_stamp_pcd(rng: &mut StdRng, user: &WalletSim, stamp_anchor: Anchor) -> Pcd<stamp::Stamp> {
-    let (stamp, plan) = build_output_stamp(rng, stamp_anchor, user.random_note(200));
-    let action_commit = ActionSetPoly::from_iter([plan.digest().expect("valid plan")]).commit();
+    let (stamp, plan, fee_descriptor) =
+        build_output_stamp(rng, stamp_anchor, user.random_note(200));
+    let action_commit = ActionSetPoly::from_iter([
+        plan.digest().expect("valid plan"),
+        fee_descriptor.digest().expect("fee digest"),
+    ])
+    .commit();
     let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
     stamp
         .proof

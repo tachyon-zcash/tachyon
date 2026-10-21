@@ -21,7 +21,7 @@ use group::{Curve as _, GroupEncoding as _};
 use pasta_curves::{Eq, Fp};
 use proof::{
     PROOF_SYSTEM, output,
-    stamp::{OutputStamp, SpendStamp, Stamp, StampLift, StampMerge},
+    stamp::{OutputStamp, SpendStamp, Stamp, StampFee, StampLift, StampMerge},
 };
 use ragu::PROOF_SIZE_COMPRESSED;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
@@ -33,6 +33,7 @@ use crate::{
     digest::blake2b,
     effect,
     entropy::ActionEntropy,
+    fee,
     keys::{ProofAuthorizingKey, private},
     primitives::{
         ActionDigest, ActionDigestError, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
@@ -338,13 +339,14 @@ impl ProofStamp {
 
 /// Everything needed to produce a [`ProofStamp`].
 ///
-/// The statement is each action's descriptor `(cv, rk)` and the `anchor`.
-/// The planned witnesses are each action's `theta` and `rcv`, and each
-/// output's `note`. A spend's note comes from its
-/// [`NoteSecret`](delegation::NoteSecret) PCD at
-/// [`prove`](Self::prove).
+/// The statement is each action's descriptor `(cv, rk)`, the fee descriptor,
+/// the adjuncts' descriptors, and the `anchor`. The planned witnesses are each
+/// action's `theta` and `rcv`, each output's `note`, and the max fee note with
+/// the `fee` it pays. A spend's note comes from its
+/// [`NoteSecret`](delegation::NoteSecret) PCD at [`prove`](Self::prove).
 ///
-/// Construct via [`Plan::new`], or via
+/// Construct via [`Plan::new`], via [`Plan::innocent`] for an innocent
+/// aggregate, or via
 /// [`Plan::stamp_plan`](crate::bundle::Plan::stamp_plan) for the typed
 /// single-party path.
 #[derive(Clone, Debug)]
@@ -352,20 +354,57 @@ pub struct Plan {
     spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
     outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
     anchor: Anchor,
+    max_fee_note: Note,
+    fee: value::Positive,
+    adjuncts: Vec<(
+        ProofStamp,
+        BTreeSet<action::Descriptor>,
+        BTreeSet<fee::Descriptor>,
+    )>,
 }
 
 impl Plan {
-    /// Create a stamp plan from paired action descriptors and witnesses.
+    /// Create a stamp plan from paired action descriptors and witnesses, the
+    /// max fee note and the fee, with no adjuncts.
     #[must_use]
     pub const fn new(
         spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
         outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
         anchor: Anchor,
+        max_fee_note: Note,
+        fee: value::Positive,
     ) -> Self {
         Self {
             spends,
             outputs,
             anchor,
+            max_fee_note,
+            fee,
+            adjuncts: Vec::new(),
+        }
+    }
+
+    /// Plan an innocent aggregate's stamp: no actions, the `adjuncts` with
+    /// their descriptors, and a zero-value max fee note at a zero fee. The
+    /// anchor is the adjuncts' anchor, which [`StampMerge`] binds to be equal.
+    #[must_use]
+    pub fn innocent(
+        max_fee_note: Note,
+        adjuncts: Vec<(
+            ProofStamp,
+            BTreeSet<action::Descriptor>,
+            BTreeSet<fee::Descriptor>,
+        )>,
+    ) -> Self {
+        Self {
+            spends: Vec::new(),
+            outputs: Vec::new(),
+            anchor: adjuncts
+                .first()
+                .map_or_else(Anchor::default, |adjunct| adjunct.0.anchor),
+            max_fee_note,
+            fee: value::Positive::ZERO,
+            adjuncts,
         }
     }
 
@@ -382,16 +421,22 @@ impl Plan {
     /// must end at the plan's anchor. For each **output**,
     /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
     ///
-    /// Stamps are recursively merged via [`StampMerge`] into a single stamp,
-    /// whose coverage is the planned descriptors.
+    /// The planned stamps, or an innocent plan's adjunct stamps, are
+    /// recursively merged via [`StampMerge`]. [`StampFee`] then applies the
+    /// fee. Returns the stamp with the fee it applied, for
+    /// [`Bundle::stamp`](crate::Bundle::stamp).
     ///
     /// # Errors
     ///
-    /// - [`ProveError::MissingPcd`] if the plan has no actions, the spend PCDs
-    ///   do not match the planned spends, or a spend does not reach the plan's
-    ///   anchor.
-    /// - [`ProveError::ActionDigest`] if a proved action has no digest.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
+    /// - [`ProveError::MissingPcd`] if there are no actions and no adjuncts,
+    ///   the spend PCDs do not match, or a spend does not reach the anchor.
+    /// - [`ProveError::ActionDigest`] if an action digest cannot be computed.
+    /// - [`ProveError::ProofFailed`] if a proof-system step fails, as it does
+    ///   for a fee above the maximum.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the max fee note's blind or `rcm` is zero.
     #[expect(
         clippy::type_complexity,
         reason = "each spend's secret, spendable and anchor spans"
@@ -409,7 +454,7 @@ impl Plan {
             ragu::Pcd<spendable::NoteSpendable>,
             Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
         )>,
-    ) -> Result<ProofStamp, ProveError> {
+    ) -> Result<(ProofStamp, value::Positive), ProveError> {
         // Each entry pairs leaf stamp components with the descriptor of its
         // covered action; merges concatenate both. The covered-actions digest
         // is computed once, on the final stamp.
@@ -484,7 +529,19 @@ impl Plan {
             ));
         }
 
-        let (descriptors, digests, tachygrams, anchor, merged_proof) = entries
+        let mut fee_descriptors = BTreeSet::new();
+        for (stamp, descs, fees) in self.adjuncts {
+            let digests = descs
+                .iter()
+                .map(action::Descriptor::digest)
+                .chain(fees.iter().map(fee::Descriptor::digest))
+                .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
+                .map_err(ProveError::ActionDigest)?;
+            fee_descriptors.extend(fees);
+            entries.push((descs, digests, stamp.tachygrams, stamp.anchor, stamp.proof));
+        }
+
+        let (descriptors, digests, mut tachygrams, anchor, merged_proof) = entries
             .into_iter()
             .map(Ok)
             .reduce(|acc, next| {
@@ -515,29 +572,54 @@ impl Plan {
                 "no proof for no planned actions".into(),
             ))?;
 
-        let coverage = blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors));
-        let tachygram_set = tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>()
-            .commit();
-        let action_set = digests.into_iter().collect::<ActionSetPoly>().commit();
-        let proof = PROOF_SYSTEM
-            .rerandomize(
-                merged_proof.carry::<Stamp>((action_set, tachygram_set, anchor)),
-                rng,
-            )
-            .map_err(ProveError::ProofFailed)?
-            .proof()
-            .clone();
-
-        Ok(ProofStamp {
-            coverage,
+        let stamp_header = (
+            digests.iter().copied().collect::<ActionSetPoly>().commit(),
+            tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>()
+                .commit(),
             anchor,
-            tachygram_set,
-            tachygrams,
-            proof: Box::new(proof),
-        })
+        );
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                StampFee,
+                witness::stamp_fee(
+                    (stamp_header, ()),
+                    self.max_fee_note,
+                    self.fee,
+                    &digests,
+                    &tachygrams,
+                ),
+                merged_proof.carry::<Stamp>(stamp_header),
+                ragu::Proof::trivial().carry::<()>(()),
+            )
+            .map_err(ProveError::ProofFailed)?;
+        let (proof, (_, tachygram_set, _)) = PROOF_SYSTEM
+            .rerandomize(pcd, rng)
+            .map_err(ProveError::ProofFailed)?
+            .into_parts();
+
+        let max_fee = fee::Plan::new(self.max_fee_note);
+        fee_descriptors.insert(max_fee.descriptor(self.fee));
+        tachygrams.insert(max_fee.change_commitment(self.fee));
+
+        Ok((
+            ProofStamp {
+                coverage: blake2b::stamp_coverage_digest(
+                    &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
+                    &blake2b::stamp_fees_digest(&Vec::<[u8; 40]>::from_iter(
+                        fee_descriptors.into_iter().map(<[u8; 40]>::from),
+                    )),
+                ),
+                anchor,
+                tachygram_set,
+                tachygrams,
+                proof: Box::new(proof),
+            },
+            self.fee,
+        ))
     }
 }
 
@@ -563,10 +645,11 @@ pub enum ProveError {
 /// reconstruct the header from public data.
 #[derive(Clone, Debug)]
 pub struct ProofStamp {
-    /// The digest $\mathsf{hStampActionsTachyon}$ of the proof's covered action
-    /// descriptors from this stamp's bundle and all covered bundles.
+    /// The digest $\mathsf{hStampCoverageTachyon}$ of the proof's covered
+    /// action descriptors and fee descriptors from this stamp's bundle and
+    /// all covered bundles.
     ///
-    /// See [`blake2b::action_descriptor_digest`]
+    /// See [`blake2b::stamp_coverage_digest`]
     pub coverage: [u8; 32],
 
     /// The historic pool state for which this stamp is valid.
@@ -854,33 +937,9 @@ impl ProofStamp {
         })
     }
 
-    /// Advances the stamp's anchor along `spans`, computing the action digests
-    /// from the covered descriptors.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProveError`] if an action digest cannot be computed, no span
-    /// is provided, or a proof-system step fails.
-    pub fn lift<RNG: CryptoRng>(
-        self,
-        rng: &mut RNG,
-        descriptors: &BTreeSet<action::Descriptor>,
-        spans: Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
-    ) -> Result<Self, ProveError> {
-        let action_digests = descriptors
-            .iter()
-            .map(action::Descriptor::digest)
-            .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
-            .map_err(ProveError::ActionDigest)?;
-
-        self.prove_lift(rng, action_digests, spans)
-    }
-
     /// Merges two stamps into one covering stamp.
     ///
-    /// Each side pairs a stamp with the descriptors of its covered actions.
-    /// The action digests for the merge proof and the merged
-    /// `covered_actions` are both derived from the descriptor lists.
+    /// Each side pairs a stamp with its covered action and fee descriptors.
     ///
     /// TODO: confirm desc list against stamp? it's forbidden by the proof
     /// system, but we might want to fail early.
@@ -891,17 +950,27 @@ impl ProofStamp {
     /// proof-system step fails.
     pub fn merge<RNG: CryptoRng>(
         rng: &mut RNG,
-        (left_stamp, left_desc): (Self, BTreeSet<action::Descriptor>),
-        (right_stamp, right_desc): (Self, BTreeSet<action::Descriptor>),
+        (left_stamp, left_desc, left_fees): (
+            Self,
+            BTreeSet<action::Descriptor>,
+            BTreeSet<fee::Descriptor>,
+        ),
+        (right_stamp, right_desc, right_fees): (
+            Self,
+            BTreeSet<action::Descriptor>,
+            BTreeSet<fee::Descriptor>,
+        ),
     ) -> Result<Self, ProveError> {
-        let left_actions_digest = left_desc
+        let left_actions_digest: BTreeSet<ActionDigest> = left_desc
             .iter()
             .map(action::Descriptor::digest)
+            .chain(left_fees.iter().map(fee::Descriptor::digest))
             .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
-        let right_actions_digest = right_desc
+        let right_actions_digest: BTreeSet<ActionDigest> = right_desc
             .iter()
             .map(action::Descriptor::digest)
+            .chain(right_fees.iter().map(fee::Descriptor::digest))
             .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
 
@@ -922,11 +991,20 @@ impl ProofStamp {
         )
         .map_err(ProveError::ProofFailed)?;
 
-        let coverage = blake2b::action_descriptor_digest(
-            &left_desc
-                .union(&right_desc)
-                .copied()
-                .collect::<Vec<[u8; 64]>>(),
+        let coverage = blake2b::stamp_coverage_digest(
+            &blake2b::action_descriptor_digest(
+                &left_desc
+                    .union(&right_desc)
+                    .copied()
+                    .collect::<Vec<[u8; 64]>>(),
+            ),
+            &blake2b::stamp_fees_digest(
+                &left_fees
+                    .union(&right_fees)
+                    .copied()
+                    .map(<[u8; 40]>::from)
+                    .collect::<Vec<[u8; 40]>>(),
+            ),
         );
 
         let tachygram_set = tachygrams
@@ -956,17 +1034,29 @@ impl ProofStamp {
         })
     }
 
-    /// Confirm `hStampActionsTachyon` represents the given action descriptors.
+    /// Confirm `hStampCoverageTachyon` represents the given descriptors.
     ///
     /// # Soundness
     ///
-    /// The parameter is a multiset: order does not matter, multiplicity does.
+    /// The parameters are multisets: order does not matter, multiplicity does.
     #[must_use]
-    pub fn is_covering(&self, action_descs: impl IntoIterator<Item = action::Descriptor>) -> bool {
+    pub fn is_covering(
+        &self,
+        action_descs: impl IntoIterator<Item = action::Descriptor>,
+        fee_descriptors: impl IntoIterator<Item = fee::Descriptor>,
+    ) -> bool {
         let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
         desc_bytes.sort_unstable();
-
-        self.coverage == blake2b::action_descriptor_digest(&desc_bytes)
+        let mut fee_descriptor_bytes = fee_descriptors
+            .into_iter()
+            .map(<[u8; 40]>::from)
+            .collect::<Vec<[u8; 40]>>();
+        fee_descriptor_bytes.sort_unstable();
+        self.coverage
+            == blake2b::stamp_coverage_digest(
+                &blake2b::action_descriptor_digest(&desc_bytes),
+                &blake2b::stamp_fees_digest(&fee_descriptor_bytes),
+            )
     }
 
     /// Reconstruct the PCD header and verify the proof. Call

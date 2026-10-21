@@ -97,13 +97,39 @@ const ACTION_DESCRIPTOR_PERSONALIZATION: &[u8; 15] = b"Tachyon-Actions";
 ///
 /// Over a bundle's actions this is `hActionsTachyon`.
 ///
-/// Over a stamp's covered actions this is `hStampActionsTachyon`.
+/// Over a stamp's sorted covered actions this is `hStampActionsTachyon`.
 #[must_use]
 pub fn action_descriptor_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
     hasher_256(ACTION_DESCRIPTOR_PERSONALIZATION, |state| {
         for descriptor in descriptors {
             state.update(descriptor);
         }
+    })
+}
+
+const STAMP_FEES_PERSONALIZATION: &[u8; 12] = b"Tachyon-Fees";
+
+/// `hStampFeesTachyon`, $\text{BLAKE2b-256}_\texttt{Tachyon-Fees}$ over each
+/// $\mathsf{cv}_{\mathsf{maxfee},j} \Vert \mathsf{LE64}(\mathsf{fee}_j)$ in the
+/// order given. The caller sorts the fee descriptors.
+#[must_use]
+pub fn stamp_fees_digest(fee_descriptors: &[[u8; 40]]) -> [u8; 32] {
+    hasher_256(STAMP_FEES_PERSONALIZATION, |state| {
+        for fee_descriptor in fee_descriptors {
+            state.update(fee_descriptor);
+        }
+    })
+}
+
+const STAMP_COVERAGE_PERSONALIZATION: &[u8; 16] = b"Tachyon-Coverage";
+
+/// `hStampCoverageTachyon`, $\text{BLAKE2b-256}_\texttt{Tachyon-Coverage}(
+/// \mathsf{hStampActionsTachyon} \Vert \mathsf{hStampFeesTachyon})$.
+#[must_use]
+pub fn stamp_coverage_digest(actions_digest: &[u8; 32], fees_digest: &[u8; 32]) -> [u8; 32] {
+    hasher_256(STAMP_COVERAGE_PERSONALIZATION, |state| {
+        state.update(actions_digest);
+        state.update(fees_digest);
     })
 }
 
@@ -137,22 +163,25 @@ const AUTH_DIGEST_PERSONALIZATION: &[u8; 16] = b"ZTxAuthTachyHash";
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxIdTachyonHash}(
 ///     \mathsf{hActionsTachyon} \Vert \mathsf{vBalanceTachyon} \Vert
-///     \mathsf{hMemoTachyon}
+///     \mathsf{cvFeeMaxTachyon} \Vert \mathsf{hMemoTachyon}
 ///   )
 /// $$
 ///
-/// The stamp is excluded because it is mutable auth data. The memo is included
-/// because it is effecting: relayers rewrite `auth_digest` during aggregation,
-/// so only the sighash can hold a payload a miner must not strip.
+/// The stamp and the fee are excluded because they are mutable auth data. The
+/// memo is included because it is effecting: relayers rewrite `auth_digest`
+/// during aggregation, so only the sighash can hold a payload a miner must not
+/// strip.
 #[must_use]
 pub fn bundle_commitment(
     action_commit: &[u8; 32],
     value_balance: i64,
+    cv_max_fee: &[u8; 32],
     memo_digest: &[u8; 32],
 ) -> [u8; 32] {
     hasher_256(BUNDLE_COMMITMENT_PERSONALIZATION, |state| {
         state.update(action_commit);
         state.update(&value_balance.to_le_bytes());
+        state.update(cv_max_fee);
         state.update(memo_digest);
     })
 }
@@ -212,7 +241,8 @@ pub fn stamp_data_digest(
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxAuthTachyHash}(
 ///     \mathsf{tachyonBundleState} \Vert \mathsf{vActionSigs} \Vert
-///     \mathsf{bindingSigTachyon} \Vert \mathsf{tachyonStampState}
+///     \mathsf{bindingSigTachyon} \Vert
+///     \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{tachyonStampState}
 ///   )
 /// $$
 ///
@@ -221,13 +251,14 @@ pub fn stamp_data_digest(
 ///
 /// | $\mathsf{tachyonBundleState}$ | Impl | $\mathsf{tachyonStampState}$ |
 /// | ----------------------------- | ---- | ---------------------------- |
-/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{hStampActionsTachyon} \Vert \mathsf{hStampDataTachyon} $ |
+/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampDataTachyon} $ |
 /// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | aggregate's `wtxid` |
 #[must_use]
 pub fn bundle_auth_digest(
     state_header: u8,
     action_sigs: &[[u8; 64]],
     binding_sig: &[u8; 64],
+    fee: u64,
     stamp_contrib: &[u8; 64],
 ) -> [u8; 32] {
     hasher_256(AUTH_DIGEST_PERSONALIZATION, |state| {
@@ -237,6 +268,7 @@ pub fn bundle_auth_digest(
             state.update(sig);
         }
         state.update(binding_sig);
+        state.update(&fee.to_le_bytes());
         state.update(stamp_contrib);
     })
 }
