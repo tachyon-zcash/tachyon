@@ -24,6 +24,26 @@ use crate::{
     value,
 };
 
+/// Non-empty proven action content with no fee in its lineage.
+#[derive(Debug)]
+pub struct Actions;
+
+impl Header for Actions {
+    /// `(action_commit, stamp_tg_commit, anchor)`
+    type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
+
+    const SUFFIX: Suffix = Suffix::new(15);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        (
+            vec![Fp::from(data.2)],
+            Vec::new(),
+            Vec::new(),
+            vec![Eq::from(data.0), Eq::from(data.1)],
+        )
+    }
+}
+
 /// Header for a stamp, representing either a single action or many
 /// transactions.
 ///
@@ -214,6 +234,7 @@ impl Step for SpendStamp {
 }
 
 /// Transaction assembly and aggregation.
+/// Opens the left, right and merged action-set and tachygram-set polynomials.
 #[derive(Debug)]
 pub struct StampMerge;
 
@@ -234,71 +255,106 @@ impl Step for StampMerge {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (
-            (left_action_set, left_tachygram_set),
-            (merged_action_set, merged_tachygram_set),
-            (right_action_set, right_tachygram_set),
-        ): Self::Witness<'source>,
-        (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
-        (right_action_commit, right_tachygram_commit, right_anchor): <Self::Right as Header>::Data,
+        witness: Self::Witness<'source>,
+        left: <Self::Left as Header>::Data,
+        right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // Same-anchor constraint.
-        enforce_zero(
-            Fp::from(left_anchor) - Fp::from(right_anchor),
-            "StampMerge: anchors must match",
-        )?;
-
-        // Bind the witnessed left/right input sets to the public commitments on
-        // the headers.
-        enforce_equal_point(
-            Eq::from(left_action_set.commit()),
-            Eq::from(left_action_commit),
-            "StampMerge: left action accumulator must commit to header commit",
-        )?;
-        enforce_equal_point(
-            Eq::from(right_action_set.commit()),
-            Eq::from(right_action_commit),
-            "StampMerge: right action accumulator must commit to header commit",
-        )?;
-        enforce_equal_point(
-            Eq::from(left_tachygram_set.commit()),
-            Eq::from(left_tachygram_commit),
-            "StampMerge: left tachygram accumulator must commit to header commit",
-        )?;
-        enforce_equal_point(
-            Eq::from(right_tachygram_set.commit()),
-            Eq::from(right_tachygram_commit),
-            "StampMerge: right tachygram accumulator must commit to header commit",
-        )?;
-
-        // Confirm union via product-opening relation.
-        enforce_poly_product(
-            ctx,
-            left_action_set.as_ref(),
-            right_action_set.as_ref(),
-            merged_action_set.as_ref(),
-            "StampMerge: merged action set must be the product of left and right action sets",
-        )?;
-        enforce_poly_product(
-            ctx,
-            left_tachygram_set.as_ref(),
-            right_tachygram_set.as_ref(),
-            merged_tachygram_set.as_ref(),
-            "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
-        )?;
-
-        Ok((
-            (
-                merged_action_set.commit(),
-                merged_tachygram_set.commit(),
-                left_anchor,
-            ),
-            (),
-        ))
+        merge(ctx, witness, left, right)
     }
 }
 
+/// Merges action content. Opens the left, right and merged action-set and
+/// tachygram-set polynomials.
+#[derive(Debug)]
+pub struct ActionMerge;
+
+impl Step for ActionMerge {
+    type Aux<'source> = ();
+    type Left = Actions;
+    type Output = Actions;
+    type Right = Actions;
+    type Witness<'source> = <StampMerge as Step>::Witness<'source>;
+
+    const INDEX: Index = Index::new(34);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        witness: Self::Witness<'source>,
+        left: <Self::Left as Header>::Data,
+        right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        merge(ctx, witness, left, right)
+    }
+}
+
+fn merge(
+    ctx: &mut ragu::StepCtx<'_>,
+    (
+        (left_action_set, left_tachygram_set),
+        (merged_action_set, merged_tachygram_set),
+        (right_action_set, right_tachygram_set),
+    ): <StampMerge as Step>::Witness<'_>,
+    (left_action_commit, left_tachygram_commit, left_anchor): <Stamp as Header>::Data,
+    (right_action_commit, right_tachygram_commit, right_anchor): <Stamp as Header>::Data,
+) -> ragu_core::Result<(<Stamp as Header>::Data, ())> {
+    // Same-anchor constraint.
+    enforce_zero(
+        Fp::from(left_anchor) - Fp::from(right_anchor),
+        "StampMerge: anchors must match",
+    )?;
+
+    // Bind the witnessed left/right input sets to the public commitments on
+    // the headers.
+    enforce_equal_point(
+        Eq::from(left_action_set.commit()),
+        Eq::from(left_action_commit),
+        "StampMerge: left action accumulator must commit to header commit",
+    )?;
+    enforce_equal_point(
+        Eq::from(right_action_set.commit()),
+        Eq::from(right_action_commit),
+        "StampMerge: right action accumulator must commit to header commit",
+    )?;
+    enforce_equal_point(
+        Eq::from(left_tachygram_set.commit()),
+        Eq::from(left_tachygram_commit),
+        "StampMerge: left tachygram accumulator must commit to header commit",
+    )?;
+    enforce_equal_point(
+        Eq::from(right_tachygram_set.commit()),
+        Eq::from(right_tachygram_commit),
+        "StampMerge: right tachygram accumulator must commit to header commit",
+    )?;
+
+    // Confirm union via product-opening relation.
+    enforce_poly_product(
+        ctx,
+        left_action_set.as_ref(),
+        right_action_set.as_ref(),
+        merged_action_set.as_ref(),
+        "StampMerge: merged action set must be the product of left and right action sets",
+    )?;
+    enforce_poly_product(
+        ctx,
+        left_tachygram_set.as_ref(),
+        right_tachygram_set.as_ref(),
+        merged_tachygram_set.as_ref(),
+        "StampMerge: merged tachygram set must be the product of left and right tachygram sets",
+    )?;
+
+    Ok((
+        (
+            merged_action_set.commit(),
+            merged_tachygram_set.commit(),
+            left_anchor,
+        ),
+        (),
+    ))
+}
+
 /// Advance a stamp's anchor to the end of an [`AnchorSpan`].
+/// Opens the span's members polynomial.
 ///
 /// The stamp's `anchor` must be the span's `anchor_start` or one of its
 /// members:
@@ -332,30 +388,64 @@ impl Step for StampLift {
     fn witness<'source>(
         &self,
         ctx: &mut ragu::StepCtx<'_>,
-        (members,): Self::Witness<'source>,
-        (stamp_action_commit, stamp_tachygram_commit, stamp_anchor): <Self::Left as Header>::Data,
-        (span_anchor_start, span_members, span_anchor_end): <Self::Right as Header>::Data,
+        witness: Self::Witness<'source>,
+        left: <Self::Left as Header>::Data,
+        right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
-            Eq::from(members.commit()),
-            Eq::from(span_members),
-            "StampLift: members do not match header",
-        )?;
-
-        let anchor_eval = members.eval(Fp::from(stamp_anchor));
-        enforce_zero(
-            anchor_eval * (Fp::from(stamp_anchor) - Fp::from(span_anchor_start)),
-            "StampLift: stamp anchor is neither the span's start nor a member",
-        )?;
-        ctx.enforce_poly_query(Eq::from(span_members), Fp::from(stamp_anchor), anchor_eval)?;
-
-        let data = (stamp_action_commit, stamp_tachygram_commit, span_anchor_end);
-        Ok((data, ()))
+        lift(ctx, witness, left, right)
     }
+}
+
+/// Advances action content's anchor. Opens the span's members polynomial.
+#[derive(Debug)]
+pub struct ActionLift;
+
+impl Step for ActionLift {
+    type Aux<'source> = ();
+    type Left = Actions;
+    type Output = Actions;
+    type Right = AnchorSpan;
+    type Witness<'source> = (AnchorSetPoly,);
+
+    const INDEX: Index = Index::new(35);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        witness: Self::Witness<'source>,
+        left: <Self::Left as Header>::Data,
+        right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        lift(ctx, witness, left, right)
+    }
+}
+
+fn lift(
+    ctx: &mut ragu::StepCtx<'_>,
+    (members,): (AnchorSetPoly,),
+    (stamp_action_commit, stamp_tachygram_commit, stamp_anchor): <Stamp as Header>::Data,
+    (span_anchor_start, span_members, span_anchor_end): <AnchorSpan as Header>::Data,
+) -> ragu_core::Result<(<Stamp as Header>::Data, ())> {
+    enforce_equal_point(
+        Eq::from(members.commit()),
+        Eq::from(span_members),
+        "StampLift: members do not match header",
+    )?;
+
+    let anchor_eval = members.eval(Fp::from(stamp_anchor));
+    enforce_zero(
+        anchor_eval * (Fp::from(stamp_anchor) - Fp::from(span_anchor_start)),
+        "StampLift: stamp anchor is neither the span's start nor a member",
+    )?;
+    ctx.enforce_poly_query(Eq::from(span_members), Fp::from(stamp_anchor), anchor_eval)?;
+
+    let data = (stamp_action_commit, stamp_tachygram_commit, span_anchor_end);
+    Ok((data, ()))
 }
 
 /// Adds the fee digest to a stamp's action set and the fee change note's
 /// commitment to its tachygram set.
+/// Opens the left, output and fee action-set and tachygram-set polynomials.
 #[derive(Debug)]
 pub struct StampFee;
 
@@ -398,33 +488,7 @@ impl Step for StampFee {
             "StampFee: left tachygram accumulator must commit to header commit",
         )?;
 
-        let max_fee = u64::from(max_fee_note.value);
-        if max_fee > MAX_MONEY {
-            return Err(ragu_core::Error::InvalidWitness(
-                "StampFee: maximum fee exceeds MAX_MONEY".into(),
-            ));
-        }
-
-        // `maxfee` and `fee` are below 2^64, far below the field modulus, so the
-        // field difference lies in [0, MAX_MONEY] exactly when the integer
-        // difference does.
-        let change = max_fee
-            .checked_sub(u64::from(fee))
-            .filter(|&change| change <= MAX_MONEY)
-            .ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("StampFee: change is out of range".into())
-            })?;
-
-        let (pk, psi, rcm) = (
-            Fp::from(max_fee_note.pk),
-            Fp::from(max_fee_note.psi),
-            Fp::from(max_fee_note.rcm),
-        );
-
-        // TODO: a real circuit squeezes r in Fp and needs its bit
-        // decomposition to use it as an Fq scalar (p < q, so no reduction);
-        // mock ragu embeds it natively.
-        let blind = poseidon::fee_blind(pk, psi, rcm);
+        let (blind, fee_change_commitment) = fee_opening(max_fee_note, fee)?;
         #[expect(
             clippy::expect_used,
             reason = "p < q, so every Fp repr is canonical in Fq"
@@ -433,32 +497,13 @@ impl Step for StampFee {
             Option::from(Fq::from_repr(blind.to_repr())).expect("p < q"),
         )
         .commit(-max_fee_note.value);
-        let cv_max_fee_coords = EpAffine::from(cv_max_fee)
-            .coordinates()
-            .into_option()
-            .ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("StampFee: fee commitment is the identity".into())
-            })?;
-        let fee_digest = poseidon::fee_digest(cv_max_fee_coords, u64::from(fee));
-
-        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
-        let fee_change_commitment = enforce_nonzero(
-            poseidon::note_commitment(rcm, pk, change, psi),
-            "StampFee: fee change note commitment is zero",
-        )?;
-
-        enforce_poly_roots(
+        fee_singletons(
             ctx,
-            fee_action_set.as_ref(),
-            &[fee_digest],
-            "StampFee: fee action set does not commit to the fee digest",
-        )?;
-
-        enforce_poly_roots(
-            ctx,
-            fee_tachygram_set.as_ref(),
-            &[fee_change_commitment],
-            "StampFee: fee tachygram set does not commit to the fee change note",
+            cv_max_fee,
+            fee,
+            fee_change_commitment,
+            &fee_action_set,
+            &fee_tachygram_set,
         )?;
 
         enforce_poly_product(
@@ -485,4 +530,129 @@ impl Step for StampFee {
             (),
         ))
     }
+}
+
+/// Proves a zero-action bundle's fee. Opens the fee action-set and
+/// tachygram-set polynomials.
+#[derive(Debug)]
+pub struct FeeSeed;
+
+impl Step for FeeSeed {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = Stamp;
+    type Right = ();
+    /// `(max_fee_note, fee, anchor, fee_action_set, fee_tachygram_set)`
+    type Witness<'source> = (
+        Note,
+        value::Positive,
+        Anchor,
+        ActionSetPoly,
+        TachygramSetPoly,
+    );
+
+    const INDEX: Index = Index::new(36);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (max_fee_note, fee, anchor, fee_action_set, fee_tachygram_set): Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(u64::from(max_fee_note.value)),
+            "FeeSeed: maximum fee must be zero",
+        )?;
+        let (blind, fee_change_commitment) = fee_opening(max_fee_note, fee)?;
+        #[expect(
+            clippy::expect_used,
+            reason = "p < q, so every Fp repr is canonical in Fq"
+        )]
+        let scalar = Option::<Fq>::from(Fq::from_repr(blind.to_repr())).expect("p < q");
+        let cv_max_fee = value::Commitment::from(*value::VALUE_COMMIT_R * scalar);
+        fee_singletons(
+            ctx,
+            cv_max_fee,
+            fee,
+            fee_change_commitment,
+            &fee_action_set,
+            &fee_tachygram_set,
+        )?;
+        Ok((
+            (fee_action_set.commit(), fee_tachygram_set.commit(), anchor),
+            (),
+        ))
+    }
+}
+
+fn fee_opening(max_fee_note: Note, fee: value::Positive) -> ragu_core::Result<(Fp, Fp)> {
+    let max_fee = u64::from(max_fee_note.value);
+    if max_fee > MAX_MONEY {
+        return Err(ragu_core::Error::InvalidWitness(
+            "StampFee: maximum fee exceeds MAX_MONEY".into(),
+        ));
+    }
+
+    // `maxfee` and `fee` are below 2^64, far below the field modulus, so the
+    // field difference lies in [0, MAX_MONEY] exactly when the integer
+    // difference does.
+    let change = max_fee
+        .checked_sub(u64::from(fee))
+        .filter(|&change| change <= MAX_MONEY)
+        .ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("StampFee: change is out of range".into())
+        })?;
+
+    let (pk, psi, rcm) = (
+        Fp::from(max_fee_note.pk),
+        Fp::from(max_fee_note.psi),
+        Fp::from(max_fee_note.rcm),
+    );
+
+    // TODO: a real circuit squeezes r in Fp and needs its bit
+    // decomposition to use it as an Fq scalar (p < q, so no reduction);
+    // mock ragu embeds it natively.
+    let blind = poseidon::fee_blind(pk, psi, rcm);
+    let fee_change_commitment = poseidon::note_commitment(rcm, pk, change, psi);
+    Ok((blind, fee_change_commitment))
+}
+
+fn fee_singletons(
+    ctx: &mut ragu::StepCtx<'_>,
+    cv_max_fee: value::Commitment,
+    fee: value::Positive,
+    fee_change_commitment: Fp,
+    fee_action_set: &ActionSetPoly,
+    fee_tachygram_set: &TachygramSetPoly,
+) -> ragu_core::Result<()> {
+    let cv_max_fee_coords = EpAffine::from(cv_max_fee)
+        .coordinates()
+        .into_option()
+        .ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("StampFee: fee commitment is the identity".into())
+        })?;
+    let fee_digest = poseidon::fee_digest(cv_max_fee_coords, u64::from(fee));
+
+    // A zero root leaves the set polynomial factor `(X - tg)` trivial.
+    enforce_nonzero(
+        fee_change_commitment,
+        "StampFee: fee change note commitment is zero",
+    )?;
+
+    enforce_poly_roots(
+        ctx,
+        fee_action_set.as_ref(),
+        &[fee_digest],
+        "StampFee: fee action set does not commit to the fee digest",
+    )?;
+
+    enforce_poly_roots(
+        ctx,
+        fee_tachygram_set.as_ref(),
+        &[fee_change_commitment],
+        "StampFee: fee tachygram set does not commit to the fee change note",
+    )?;
+
+    Ok(())
 }
