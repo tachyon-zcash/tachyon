@@ -911,15 +911,32 @@ fn innocent_aggregate_from_two_autonomes() {
 
         let fees_a = BTreeSet::from([autonome_a.fee_descriptor()]);
         let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
-        let (stamp, fee) = stamp::Plan::innocent(
-            max_fee,
-            vec![
-                (stamp_a, descriptors_a, fees_a),
-                (stamp_b, descriptors_b, fees_b),
-            ],
+        let (seed, fee) =
+            stamp::Plan::new(vec![], vec![], anchor_a, max_fee, value::Positive::ZERO)
+                .prove(rng, &wallet.pak, vec![])
+                .expect("seed");
+        let descs = descriptors_a.union(&descriptors_b).copied().collect();
+        let fees = fees_a.union(&fees_b).copied().collect();
+        let adjuncts = ProofStamp::merge(
+            rng,
+            (stamp_a, descriptors_a, fees_a),
+            (stamp_b, descriptors_b, fees_b),
         )
-        .prove(rng, &wallet.pak, vec![])
-        .expect("merge");
+        .expect("merge adjuncts");
+        let stamp = ProofStamp::merge(
+            rng,
+            (
+                seed,
+                BTreeSet::new(),
+                [fee::Descriptor {
+                    max_commitment: max_fee.fee_blind().commit(-max_fee.value),
+                    value: fee,
+                }]
+                .into(),
+            ),
+            (adjuncts, descs, fees),
+        )
+        .expect("merge seed");
 
         Bundle {
             actions: alloc::vec![],
@@ -961,6 +978,14 @@ fn innocent_aggregate_from_two_autonomes() {
             .expect("innocent aggregate proof verifies against its adjuncts"),
         "innocent aggregate proof must verify against its adjuncts"
     );
+    innocent
+        .verify(
+            rng,
+            &mock_sighash(innocent.commitment()),
+            &mock_wtxid(&innocent).into(),
+            &adjuncts.iter().collect::<Vec<_>>(),
+        )
+        .expect("innocent verifies against both adjuncts");
 }
 
 #[test]
@@ -2269,6 +2294,18 @@ fn bundle_lift_over_an_aggregate() {
     let fees_a = BTreeSet::from([autonome_a.fee_descriptor()]);
     let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
     let innocent_plan = Plan::new(vec![], vec![], max_fee);
+    let (seed, fee) = innocent_plan
+        .stamp_plan(anchor, value::Positive::ZERO)
+        .prove(rng, &wallet.pak, vec![])
+        .expect("seed");
+    let descs = descriptors_a.union(&descriptors_b).copied().collect();
+    let fees = fees_a.union(&fees_b).copied().collect();
+    let adjunct_stamp = ProofStamp::merge(
+        rng,
+        (autonome_a.stamp.clone(), descriptors_a, fees_a),
+        (autonome_b.stamp.clone(), descriptors_b, fees_b),
+    )
+    .expect("merge adjuncts");
     let innocent = Bundle {
         actions: vec![],
         value_balance: value::Balance::ZERO,
@@ -2278,16 +2315,20 @@ fn bundle_lift_over_an_aggregate() {
             .derive_bsk_private()
             .sign(rng, &mock_sighash(innocent_plan.commitment().unwrap())),
         memo: Vec::new(),
-        stamp: stamp::Plan::innocent(
-            max_fee,
-            vec![
-                (autonome_a.stamp.clone(), descriptors_a, fees_a),
-                (autonome_b.stamp.clone(), descriptors_b, fees_b),
-            ],
+        stamp: ProofStamp::merge(
+            rng,
+            (
+                seed,
+                BTreeSet::new(),
+                [fee::Descriptor {
+                    max_commitment: max_fee.fee_blind().commit(-max_fee.value),
+                    value: fee,
+                }]
+                .into(),
+            ),
+            (adjunct_stamp, descs, fees),
         )
-        .prove(rng, &wallet.pak, vec![])
-        .expect("merge")
-        .0,
+        .expect("merge seed"),
     };
 
     let adjunct_a = autonome_a.strip(mock_wtxid(&innocent));

@@ -115,25 +115,13 @@ fn plan_prove_rejects_invalid_inputs() {
         ]
     };
     let max_fee_note = user.random_note(0);
+    let zero = value::Positive::ZERO;
     let fee_digest = fee::Descriptor {
         max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: value::Positive::ZERO,
+        value: zero,
     }
     .digest()
     .expect("fee digest");
-
-    let zero = value::Positive::ZERO;
-
-    // Empty plan: no actions at all.
-    {
-        let plan = stamp::Plan::new(alloc::vec![], alloc::vec![], anchor, max_fee_note, zero);
-
-        let err = plan.prove(rng, &user.pak, alloc::vec![]).unwrap_err();
-        let ProveError::MissingPcd(reason) = err else {
-            panic!("expected MissingPcd, got {err:?}");
-        };
-        assert_eq!(reason.to_string(), "no proof for no planned actions");
-    }
 
     let secret_a = user.secret_pcd(rng, note_a);
     let secret_b = user.secret_pcd(rng, note_b);

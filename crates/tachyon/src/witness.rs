@@ -20,8 +20,9 @@ use crate::{
     note::{self, Note},
     nullifier::Nullifier,
     primitives::{
-        ActionDigest, ActionSetPoly, Anchor, EpochIndex, EvidenceTreeRoot, NfSeqPoly, QrClassRoot,
-        QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, effect,
+        ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, EpochIndex, EvidenceTreeRoot,
+        NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit,
+        TachygramSetPoly, effect,
     },
     stamp::proof::{
         delegation::{NoteSeed, NullifierDerive, NullifierFuse},
@@ -32,7 +33,7 @@ use crate::{
             QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
         spendable::{QrSpendableInit, SpendableInit},
-        stamp::{OutputStamp, SpendStamp, StampFee, StampLift},
+        stamp::{ActionLift, FeeFuse, FeeSeed, OutputAction, SpendAction, StampLift},
         summary::{SummaryAdvance, SummarySeed},
     },
     value,
@@ -202,6 +203,15 @@ pub fn stamp_lift(
     members: &[Anchor],
 ) -> StepWitness<'static, StampLift> {
     (members.iter().copied().collect(),)
+}
+
+/// Prepare the witness for [`ActionLift`].
+#[must_use]
+pub const fn action_lift(
+    (_actions, _span): (StepLeft<ActionLift>, StepRight<ActionLift>),
+    members: AnchorSetPoly,
+) -> StepWitness<'static, ActionLift> {
+    (members,)
 }
 
 /// Prepare the witness for [`SummarySeed`]:
@@ -459,7 +469,7 @@ pub fn unspent_lift(
     )
 }
 
-/// Prepare the witness for [`OutputStamp`]: `(theta, anchor, action_set,
+/// Prepare the witness for [`OutputAction`]: `(theta, anchor, action_set,
 /// tachygram_set)`.
 ///
 /// Reads the tachygram pair and `cv` off the bind header, derives `alpha`
@@ -470,11 +480,11 @@ pub fn unspent_lift(
 /// Panics when `cv` or `alpha` yields an identity point, leaving the action
 /// undigestible.
 #[must_use]
-pub fn output_stamp(
-    (left, _right): (StepLeft<OutputStamp>, StepRight<OutputStamp>),
+pub fn output_action(
+    (left, _right): (StepLeft<OutputAction>, StepRight<OutputAction>),
     theta: ActionEntropy,
     anchor: Anchor,
-) -> StepWitness<'static, OutputStamp> {
+) -> StepWitness<'static, OutputAction> {
     let (cm, pad, cv) = left;
     let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
 
@@ -496,7 +506,7 @@ pub fn output_stamp(
     )
 }
 
-/// Prepare the witness for [`SpendStamp`]: `(theta, pak, action_set,
+/// Prepare the witness for [`SpendAction`]: `(theta, pak, action_set,
 /// tachygram_set)`.
 ///
 /// Reads `cm`, the nullifier pair and `cv` off the bind header, derives
@@ -507,11 +517,11 @@ pub fn output_stamp(
 ///
 /// Panics when `cv` or `rk` is the identity, leaving the action undigestible.
 #[must_use]
-pub fn spend_stamp(
-    (left, _right): (StepLeft<SpendStamp>, StepRight<SpendStamp>),
+pub fn spend_action(
+    (left, _right): (StepLeft<SpendAction>, StepRight<SpendAction>),
     theta: ActionEntropy,
     pak: ProofAuthorizingKey,
-) -> StepWitness<'static, SpendStamp> {
+) -> StepWitness<'static, SpendAction> {
     let (cm, nf_current, nf_next, _anchor, _pk, cv) = left;
     let alpha = theta.randomizer::<effect::Spend>(cm);
 
@@ -529,11 +539,11 @@ pub fn spend_stamp(
     )
 }
 
-/// Prepare the witness for [`StampFee`]: `(max_fee_note, fee,
+/// Prepare the witness for [`FeeFuse`]: `(max_fee_note, fee,
 /// (left_action_set, left_tachygram_set), (output_action_set,
 /// output_tachygram_set), (fee_action_set, fee_tachygram_set))`.
 ///
-/// `action_digests` and `tachygrams` are the left stamp's sets. Each fee
+/// `action_digests` and `tachygrams` are the left `Actions` sets. Each fee
 /// singleton set contains one element: the fee digest or the fee change note's
 /// commitment. The output set polynomials represent the unions.
 ///
@@ -541,13 +551,13 @@ pub fn spend_stamp(
 ///
 /// Panics if the max fee note's `rcm` is zero or the fee exceeds its value.
 #[must_use]
-pub fn stamp_fee(
-    (_left, _right): (StepLeft<StampFee>, StepRight<StampFee>),
+pub fn fee_fuse(
+    (_left, _right): (StepLeft<FeeFuse>, StepRight<FeeFuse>),
     max_fee_note: Note,
     fee: value::Positive,
     action_digests: &BTreeSet<ActionDigest>,
     tachygrams: &BTreeSet<Tachygram>,
-) -> StepWitness<'static, StampFee> {
+) -> StepWitness<'static, FeeFuse> {
     #[expect(
         clippy::expect_used,
         reason = "a planned max fee commitment is never the identity"
@@ -586,5 +596,42 @@ pub fn stamp_fee(
             ActionSetPoly::from_iter([fee_digest]),
             TachygramSetPoly::from_iter([fee_change_commitment]),
         ),
+    )
+}
+
+/// Prepare the singleton sets for [`FeeSeed`].
+///
+/// # Panics
+///
+/// Panics if the max fee note's `rcm` is zero or the fee exceeds its value.
+#[must_use]
+pub fn fee_seed(
+    (_left, _right): (StepLeft<FeeSeed>, StepRight<FeeSeed>),
+    max_fee_note: Note,
+    fee: value::Positive,
+    anchor: Anchor,
+) -> StepWitness<'static, FeeSeed> {
+    #[expect(
+        clippy::expect_used,
+        reason = "a planned max fee commitment is never the identity"
+    )]
+    let digest = fee::Descriptor {
+        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+        value: fee,
+    }
+    .digest()
+    .expect("fee digest");
+    #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+    let fee_change_note = Note {
+        value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
+            .expect("fee should not exceed max fee"),
+        ..max_fee_note
+    };
+    (
+        max_fee_note,
+        fee,
+        anchor,
+        ActionSetPoly::from_iter([digest]),
+        TachygramSetPoly::from_iter([Tachygram::from(fee_change_note.commitment())]),
     )
 }

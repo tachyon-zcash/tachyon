@@ -11,18 +11,19 @@ use zcash_tachyon::{
     digest::blake2b,
     fee,
     stamp::{
-        self, ProofStamp, ProveError, StampState,
+        ProofStamp, StampState,
         proof::{
             PROOF_SYSTEM, output,
-            stamp::{OutputStamp, Stamp, StampFee},
+            stamp::{Actions, FeeFuse, OutputAction, Stamp},
         },
     },
     value, witness,
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan, mock_sighash,
-    mock_wtxid, random_block_with, shared_sk, stamp_coverage,
+    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan,
+    forge_overlapping_merge, mock_sighash, mock_wtxid, random_block_with, shared_sk,
+    stamp_coverage,
 };
 
 fn zat(amount: u64) -> value::Positive {
@@ -53,8 +54,8 @@ fn merge_side(
     )
 }
 
-/// A signed output-only bundle whose genuine `OutputStamp` stamp has no fee
-/// applied, carrying the coverage of its action alone.
+/// A signed output-only bundle whose stamp is a genuine `OutputAction` proof
+/// with no fee applied, carrying the coverage of its action alone.
 fn fee_less_output_bundle(
     rng: &mut StdRng,
     wallet: &WalletSim,
@@ -69,12 +70,12 @@ fn fee_less_output_bundle(
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            OutputStamp,
-            witness::output_stamp((*bind_pcd.data(), ()), theta, anchor),
+            OutputAction,
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("OutputStamp");
+        .expect("OutputAction");
     let stamp = ProofStamp {
         coverage: stamp_coverage(&Vec::from_iter([output_plan.descriptor()]), &[]),
         anchor,
@@ -110,27 +111,21 @@ fn coverage_of(bundles: &[&Bundle<dyn StampState>]) -> [u8; 32] {
     )
 }
 
-/// `StampFee` binds the left, fee and output sets to its header, and rejects
-/// each substituted set polynomial.
+/// `FeeFuse` over a genuine `OutputAction` proof binds the left, fee and output
+/// sets to its header, and rejects each substituted set polynomial.
 #[test]
-fn stamp_fee_binds_its_sets() {
+fn fee_fuse_binds_its_sets() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let (bundle_plan, signed, spend_pcds, anchor, max_fee_note) =
-        wallet.fee_bundle(rng, 1000, 700, 300);
-    let left = signed.stamp(
-        bundle_plan
-            .stamp_plan(anchor, zat(0))
-            .prove(rng, &wallet.pak, spend_pcds)
-            .expect("prove the left stamp"),
-    );
+    let max_fee_note = wallet.random_note(300);
+    let anchor = PoolSim::genesis(rng).anchor();
+    let left = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
 
     let action_digests: BTreeSet<ActionDigest> = left
         .descriptors()
         .map(|desc| desc.digest().expect("action digest"))
-        .chain([left.fee_descriptor().digest().expect("fee digest")])
         .collect();
-    let stamp_header = (
+    let actions_header = (
         action_digests
             .iter()
             .copied()
@@ -139,10 +134,16 @@ fn stamp_fee_binds_its_sets() {
         left.stamp.tachygram_set,
         anchor,
     );
-    let stamp_pcd = || left.stamp.proof.clone().carry::<Stamp>(stamp_header);
+    let actions_pcd = || left.stamp.proof.clone().carry::<Actions>(actions_header);
+    assert!(
+        PROOF_SYSTEM
+            .verify(&actions_pcd(), &mut *rng)
+            .expect("proof system verification"),
+        "the OutputAction proof verifies as Actions"
+    );
     let fee_witness = |fee: u64| {
-        witness::stamp_fee(
-            (stamp_header, ()),
+        witness::fee_fuse(
+            (actions_header, ()),
             max_fee_note,
             zat(fee),
             &action_digests,
@@ -154,12 +155,12 @@ fn stamp_fee_binds_its_sets() {
     let (fee_pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            StampFee,
+            FeeFuse,
             valid.clone(),
-            stamp_pcd(),
+            actions_pcd(),
             Proof::trivial().carry::<()>(()),
         )
-        .expect("a StampFee stamp");
+        .expect("a FeeFuse stamp");
     let (.., other_output_sets, other_fee_sets) = fee_witness(50);
 
     let mut left_actions = valid.clone();
@@ -177,34 +178,34 @@ fn stamp_fee_binds_its_sets() {
     for (corrupt, expected) in [
         (
             left_actions,
-            "StampFee: left action accumulator must commit to header commit",
+            "FeeFuse: left action accumulator must commit to header commit",
         ),
         (
             left_tachygrams,
-            "StampFee: left tachygram accumulator must commit to header commit",
+            "FeeFuse: left tachygram accumulator must commit to header commit",
         ),
         (
             output_actions,
-            "StampFee: output action set must be the product of left and fee action sets",
+            "FeeFuse: output action set must be the product of left and fee action sets",
         ),
         (
             output_tachygrams,
-            "StampFee: output tachygram set must be the product of left and fee tachygram sets",
+            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
         ),
         (
             fee_actions,
-            "StampFee: fee action set does not commit to the fee digest",
+            "FeeFuse: fee action set does not commit to the fee digest",
         ),
         (
             fee_tachygrams,
-            "StampFee: fee tachygram set does not commit to the fee change note",
+            "FeeFuse: fee tachygram set does not commit to the fee change note",
         ),
     ] {
         let Err(ragu_core::Error::InvalidWitness(inner)) = PROOF_SYSTEM.fuse(
             rng,
-            StampFee,
+            FeeFuse,
             corrupt,
-            stamp_pcd(),
+            actions_pcd(),
             Proof::trivial().carry::<()>(()),
         ) else {
             panic!("expected InvalidWitness: {expected}");
@@ -245,39 +246,39 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
 
     assert_eq!(signed.value_balance, value::Balance::ZERO);
 
-    let zero = prove(rng, 0).expect("prove the feeless base stamp");
-    let action_digests: BTreeSet<ActionDigest> = zero
+    let actions = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
+    let action_digests: BTreeSet<ActionDigest> = actions
         .descriptors()
         .map(|desc| desc.digest().expect("action digest"))
-        .chain([zero.fee_descriptor().digest().expect("fee digest")])
         .collect();
-    let stamp_header = (
+    let actions_header = (
         action_digests
             .iter()
             .copied()
             .collect::<ActionSetPoly>()
             .commit(),
-        zero.stamp.tachygram_set,
+        actions.stamp.tachygram_set,
         anchor,
     );
-    let mut excess_witness = witness::stamp_fee(
-        (stamp_header, ()),
+    let mut excess_witness = witness::fee_fuse(
+        (actions_header, ()),
         max_fee_note,
         zat(300),
         &action_digests,
-        &zero.stamp.tachygrams,
+        &actions.stamp.tachygrams,
     );
     excess_witness.1 = zat(301);
     let excess = PROOF_SYSTEM
         .fuse(
             rng,
-            StampFee,
+            FeeFuse,
             excess_witness,
-            zero.stamp
+            actions
+                .stamp
                 .proof
                 .as_ref()
                 .clone()
-                .carry::<Stamp>(stamp_header),
+                .carry::<Actions>(actions_header),
             Proof::trivial().carry::<()>(()),
         )
         .err()
@@ -285,7 +286,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let ragu_core::Error::InvalidWitness(inner) = excess else {
         panic!("expected InvalidWitness, got {excess:?}");
     };
-    assert_eq!(inner.to_string(), "StampFee: change is out of range");
+    assert_eq!(inner.to_string(), "FeeFuse: change is out of range");
 
     let mut auth_digests = BTreeSet::new();
     for fee in [0u64, 120, 300] {
@@ -302,25 +303,38 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     assert_eq!(auth_digests.len(), 3, "each fee has its own auth_digest");
 
     let once = prove(rng, 120).expect("first fee application");
-
-    let Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(repeated))) =
-        stamp::Plan::innocent(max_fee_note, vec![merge_side(&zero, &[])]).prove(
-            rng,
-            &wallet.pak,
-            vec![],
-        )
-    else {
-        panic!("a repeated fee must not apply");
-    };
-    assert_eq!(
-        repeated.to_string(),
-        "StampFee: output action set must be the product of left and fee action sets"
+    let digests: BTreeSet<_> = once
+        .descriptors()
+        .map(|desc| desc.digest().unwrap())
+        .chain([once.fee_descriptor().digest().unwrap()])
+        .collect();
+    let header = (
+        ActionSetPoly::from_iter(digests.iter().copied()).commit(),
+        once.stamp.tachygram_set,
+        anchor,
     );
-
-    let (twice_stamp, _twice_fee) =
-        stamp::Plan::innocent(max_fee_note, vec![merge_side(&once, &[])])
-            .prove(rng, &wallet.pak, vec![])
-            .expect("a second StampFee applies to the fee-bearing stamp");
+    let (twice_pcd, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            FeeFuse,
+            witness::fee_fuse(
+                (header, ()),
+                max_fee_note,
+                zat(0),
+                &digests,
+                &once.stamp.tachygrams,
+            ),
+            once.stamp.proof.clone().carry::<Actions>(header),
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("mock ragu permits a substituted child header");
+    let mut twice_stamp = once.stamp.clone();
+    twice_stamp.proof = Box::new(twice_pcd.proof().clone());
+    twice_stamp.tachygram_set = twice_pcd.data().1;
+    twice_stamp
+        .tachygrams
+        .insert(max_fee_note.commitment().into());
+    twice_stamp.coverage = [0; 32];
     let mut twice = Bundle {
         stamp: twice_stamp,
         ..once
@@ -339,14 +353,14 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         panic!("expected Tachygrams(WrongArity), got {arity:?}");
     };
 
-    let digests: Vec<ActionDigest> = twice
+    let published_digests: Vec<ActionDigest> = twice
         .descriptors()
         .map(|desc| desc.digest().expect("action digest"))
         .chain([twice.fee_descriptor().digest().expect("fee digest")])
         .collect();
     assert!(
         !twice
-            .verify_proof(rng, &digests)
+            .verify_proof(rng, &published_digests)
             .expect("proof system verification"),
         "the proof covers two fee descriptors against one published"
     );
@@ -376,16 +390,27 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
     .expect("merge the aggregate");
 
     let unapplied = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
-    let over_unapplied = ProofStamp::merge(
+    let unapplied_pcd = forge_overlapping_merge(
         rng,
-        merge_side(&aggregate, &[]),
         (
-            unapplied.stamp.clone(),
-            unapplied.descriptors().collect(),
-            BTreeSet::new(),
+            &aggregate.stamp,
+            &aggregate.descriptors().collect(),
+            &[aggregate.fee_descriptor()],
         ),
-    )
-    .expect("merge the aggregate over a stamp without a fee");
+        (&unapplied.stamp, &unapplied.descriptors().collect(), &[]),
+    );
+    let over_unapplied = ProofStamp {
+        coverage: coverage_of(&[aggregate.as_dyn(), unapplied.as_dyn()]),
+        anchor,
+        tachygram_set: unapplied_pcd.data().1,
+        tachygrams: aggregate
+            .stamp
+            .tachygrams
+            .union(&unapplied.stamp.tachygrams)
+            .copied()
+            .collect(),
+        proof: Box::new(unapplied_pcd.proof().clone()),
+    };
 
     for (stamp, other) in [(over_fee_bearing, fee_bearing), (over_unapplied, unapplied)] {
         aggregate.stamp = stamp;

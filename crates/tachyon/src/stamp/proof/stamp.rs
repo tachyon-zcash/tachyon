@@ -44,24 +44,23 @@ impl Header for Actions {
     }
 }
 
-/// Header for a stamp, representing either a single action or many
-/// transactions.
+/// Header for one or more fee-bearing lineages.
 ///
 /// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
 /// the action-digest and tachygram sets. Each leaf step
-/// ([`OutputStamp`], [`SpendStamp`]) witnesses both set polynomials
+/// ([`OutputAction`], [`SpendAction`]) witnesses both set polynomials
 /// and enforces them against their roots at a Fiat-Shamir challenge.
 /// The action set is enforced against the action the step derives,
 /// the tachygram set against the pair bound on the left bind header.
 /// [`StampMerge`] binds its witnessed input sets to the child headers
 /// and enforces each output commitment as the product of its inputs.
 ///
-/// [`StampFee`] multiplies each set polynomial by a fee singleton set
-/// polynomial.
+/// [`FeeFuse`] multiplies each set polynomial by a fee singleton set
+/// polynomial. [`FeeSeed`] directly produces a stamp with fee singleton sets.
 ///
-/// `anchor` is a free witness at [`OutputStamp`]. At [`SpendStamp`] it comes
-/// from the left [`SpendHeader`]. At [`StampFee`] it comes from the left
-/// [`Stamp`]. At [`StampMerge`] the step requires
+/// `anchor` is a free witness at [`OutputAction`] and [`FeeSeed`]. At
+/// [`SpendAction`] it comes from the left [`SpendHeader`]. At [`FeeFuse`] it
+/// comes from the left [`Actions`]. At [`StampMerge`] the step requires
 /// `left.anchor == right.anchor`. At [`StampLift`] the step checks that
 /// `stamp.anchor` is the right [`AnchorSpan`]'s `anchor_start` or a member,
 /// and moves it to the span's `anchor_end`.
@@ -84,7 +83,7 @@ impl Header for Stamp {
     }
 }
 
-/// Proves an output's action and publishes its stamp.
+/// Proves an output's action as [`Actions`].
 ///
 /// Reads `cm`, `pad` and `cv` off the [`OutputHeader`]
 /// [`OutputBind`](super::output::OutputBind) derived, derives the action
@@ -98,12 +97,12 @@ impl Header for Stamp {
 /// Three permutations (`alpha`, the action digest) and one scalar
 /// multiplication (`rk`); opens the action-set and tachygram-set polynomials.
 #[derive(Debug)]
-pub struct OutputStamp;
+pub struct OutputAction;
 
-impl Step for OutputStamp {
+impl Step for OutputAction {
     type Aux<'source> = ();
     type Left = OutputHeader;
-    type Output = Stamp;
+    type Output = Actions;
     type Right = ();
     /// `(theta, anchor, action_set, tachygram_set)`
     type Witness<'source> = (ActionEntropy, Anchor, ActionSetPoly, TachygramSetPoly);
@@ -125,7 +124,7 @@ impl Step for OutputStamp {
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
-                "OutputStamp: action digest construction failed".into(),
+                "OutputAction: action digest construction failed".into(),
             )
         })?;
 
@@ -136,7 +135,7 @@ impl Step for OutputStamp {
             ctx,
             action_set.as_ref(),
             &[Fp::from(action_digest)],
-            "OutputStamp: action set does not commit to the action",
+            "OutputAction: action set does not commit to the action",
         )?;
 
         // The stamp accumulator commits to exactly the tachygram pair on the
@@ -146,14 +145,14 @@ impl Step for OutputStamp {
             ctx,
             tachygram_set.as_ref(),
             &[Fp::from(cm), Fp::from(pad)],
-            "OutputStamp: tachygram set does not commit to the bound pair",
+            "OutputAction: tachygram set does not commit to the bound pair",
         )?;
 
         Ok(((action_set.commit(), tachygram_set.commit(), anchor), ()))
     }
 }
 
-/// Proves a spend's action and publishes its stamp.
+/// Proves a spend's action as [`Actions`].
 ///
 /// The spent note's `pk` and value commitment `cv` arrive on the
 /// [`SpendHeader`] [`SpendBind`](super::spend::SpendBind) derived. The step
@@ -171,12 +170,12 @@ impl Step for OutputStamp {
 /// multiplication (`rk`); opens the action-set and tachygram-set
 /// polynomials.
 #[derive(Debug)]
-pub struct SpendStamp;
+pub struct SpendAction;
 
-impl Step for SpendStamp {
+impl Step for SpendAction {
     type Aux<'source> = ();
     type Left = SpendHeader;
-    type Output = Stamp;
+    type Output = Actions;
     type Right = ();
     /// `(theta, pak, action_set, tachygram_set)`
     type Witness<'source> = (
@@ -197,7 +196,7 @@ impl Step for SpendStamp {
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
             Fp::from(pk) - Fp::from(pak.derive_payment_key()),
-            "SpendStamp: pak not related to note",
+            "SpendAction: pak not related to note",
         )?;
 
         // TODO: a real circuit squeezes alpha in Fp and needs its bit
@@ -207,7 +206,9 @@ impl Step for SpendStamp {
 
         let rk = pak.ak.derive_action_public(&alpha);
         let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
-            ragu_core::Error::InvalidWitness("SpendStamp: action digest construction failed".into())
+            ragu_core::Error::InvalidWitness(
+                "SpendAction: action digest construction failed".into(),
+            )
         })?;
 
         // The action-set commitment commits to exactly the one action this
@@ -216,7 +217,7 @@ impl Step for SpendStamp {
             ctx,
             action_set.as_ref(),
             &[Fp::from(action_digest)],
-            "SpendStamp: action set does not commit to the action",
+            "SpendAction: action set does not commit to the action",
         )?;
 
         // The stamp accumulator commits to exactly the nullifier pair on the
@@ -226,7 +227,7 @@ impl Step for SpendStamp {
             ctx,
             tachygram_set.as_ref(),
             &[Fp::from(nf_current), Fp::from(nf_next)],
-            "SpendStamp: tachygram set does not commit to the nullifier pair",
+            "SpendAction: tachygram set does not commit to the nullifier pair",
         )?;
 
         Ok(((action_set.commit(), tachygram_set.commit(), anchor), ()))
@@ -443,15 +444,15 @@ fn lift(
     Ok((data, ()))
 }
 
-/// Adds the fee digest to a stamp's action set and the fee change note's
-/// commitment to its tachygram set.
+/// Turns [`Actions`] into a [`Stamp`] by adding the fee digest and fee change
+/// note's commitment to the action and tachygram sets.
 /// Opens the left, output and fee action-set and tachygram-set polynomials.
 #[derive(Debug)]
-pub struct StampFee;
+pub struct FeeFuse;
 
-impl Step for StampFee {
+impl Step for FeeFuse {
     type Aux<'source> = ();
-    type Left = Stamp;
+    type Left = Actions;
     type Output = Stamp;
     type Right = ();
     type Witness<'source> = (
@@ -480,12 +481,12 @@ impl Step for StampFee {
         enforce_equal_point(
             Eq::from(left_action_set.commit()),
             Eq::from(left_action_commit),
-            "StampFee: left action accumulator must commit to header commit",
+            "FeeFuse: left action accumulator must commit to header commit",
         )?;
         enforce_equal_point(
             Eq::from(left_tachygram_set.commit()),
             Eq::from(left_tachygram_commit),
-            "StampFee: left tachygram accumulator must commit to header commit",
+            "FeeFuse: left tachygram accumulator must commit to header commit",
         )?;
 
         let (blind, fee_change_commitment) = fee_opening(max_fee_note, fee)?;
@@ -511,14 +512,14 @@ impl Step for StampFee {
             left_action_set.as_ref(),
             fee_action_set.as_ref(),
             output_action_set.as_ref(),
-            "StampFee: output action set must be the product of left and fee action sets",
+            "FeeFuse: output action set must be the product of left and fee action sets",
         )?;
         enforce_poly_product(
             ctx,
             left_tachygram_set.as_ref(),
             fee_tachygram_set.as_ref(),
             output_tachygram_set.as_ref(),
-            "StampFee: output tachygram set must be the product of left and fee tachygram sets",
+            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
         )?;
 
         Ok((
@@ -590,7 +591,7 @@ fn fee_opening(max_fee_note: Note, fee: value::Positive) -> ragu_core::Result<(F
     let max_fee = u64::from(max_fee_note.value);
     if max_fee > MAX_MONEY {
         return Err(ragu_core::Error::InvalidWitness(
-            "StampFee: maximum fee exceeds MAX_MONEY".into(),
+            "FeeFuse: maximum fee exceeds MAX_MONEY".into(),
         ));
     }
 
@@ -601,7 +602,7 @@ fn fee_opening(max_fee_note: Note, fee: value::Positive) -> ragu_core::Result<(F
         .checked_sub(u64::from(fee))
         .filter(|&change| change <= MAX_MONEY)
         .ok_or_else(|| {
-            ragu_core::Error::InvalidWitness("StampFee: change is out of range".into())
+            ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
         })?;
 
     let (pk, psi, rcm) = (
@@ -630,28 +631,28 @@ fn fee_singletons(
         .coordinates()
         .into_option()
         .ok_or_else(|| {
-            ragu_core::Error::InvalidWitness("StampFee: fee commitment is the identity".into())
+            ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
         })?;
     let fee_digest = poseidon::fee_digest(cv_max_fee_coords, u64::from(fee));
 
     // A zero root leaves the set polynomial factor `(X - tg)` trivial.
     enforce_nonzero(
         fee_change_commitment,
-        "StampFee: fee change note commitment is zero",
+        "FeeFuse: fee change note commitment is zero",
     )?;
 
     enforce_poly_roots(
         ctx,
         fee_action_set.as_ref(),
         &[fee_digest],
-        "StampFee: fee action set does not commit to the fee digest",
+        "FeeFuse: fee action set does not commit to the fee digest",
     )?;
 
     enforce_poly_roots(
         ctx,
         fee_tachygram_set.as_ref(),
         &[fee_change_commitment],
-        "StampFee: fee tachygram set does not commit to the fee change note",
+        "FeeFuse: fee tachygram set does not commit to the fee change note",
     )?;
 
     Ok(())
