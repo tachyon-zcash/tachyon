@@ -24,7 +24,7 @@ use crate::{
 /// Carries the note commitment `cm`, the lineage's nullifier and its
 /// neighbour `(nf_current, nf_next)` derived from the note's master key, the
 /// pool `anchor`, the note's payment key `pk` and the value commitment `cv`.
-/// [`SpendStamp`](super::stamp::SpendStamp) publishes the pair unordered,
+/// [`SpendAction`](super::stamp::SpendAction) publishes the pair unordered,
 /// ties its `ak` to `pk`, and produces `rk`.
 #[derive(Debug)]
 pub struct SpendHeader;

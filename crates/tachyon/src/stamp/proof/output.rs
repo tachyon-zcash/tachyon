@@ -17,7 +17,7 @@ use crate::{
 ///
 /// Carries the note commitment `cm`, the padding tachygram `pad`, and the
 /// value commitment `cv`, all derived from the same note. `rk` is produced
-/// downstream at [`OutputStamp`](super::stamp::OutputStamp).
+/// downstream at [`OutputAction`](super::stamp::OutputAction).
 #[derive(Debug)]
 pub struct OutputHeader;
 

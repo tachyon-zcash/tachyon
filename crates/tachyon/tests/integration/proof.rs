@@ -1,4 +1,4 @@
-//! Proof-step tests: `StampLift`, `SpendBind` / `SpendStamp`, the flat
+//! Proof-step tests: `StampLift`, `SpendBind` / `SpendAction`, the flat
 //! nullifier-derivation chain, `ArbitraryUnspent` composition, and the
 //! `Spendable*` lineage.
 
@@ -122,17 +122,17 @@ fn honest_spend_stamp(
     rng: &mut StdRng,
     user: &WalletSim,
     bind_pcd: Pcd<spend::SpendHeader>,
-) -> Pcd<stamp::Stamp> {
+) -> Pcd<stamp::Actions> {
     let (_rcv, theta) = spend_witness(rng);
     let (stamp, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            stamp::SpendStamp,
-            witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak),
+            stamp::SpendAction,
+            witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("SpendStamp honest");
+        .expect("SpendAction honest");
     stamp
 }
 
@@ -607,7 +607,7 @@ fn spend_bind_honest() {
 }
 
 /// A forged note reaches `SpendBind` only as the secret of another
-/// commitment, and `SpendStamp` requires `pak` to derive the bound note's
+/// commitment, and `SpendAction` requires `pak` to derive the bound note's
 /// `pk`.
 #[test]
 fn spend_rejects_invalid_note() {
@@ -672,8 +672,8 @@ fn spend_rejects_invalid_note() {
     let err = PROOF_SYSTEM
         .fuse(
             rng,
-            stamp::SpendStamp,
-            witness::spend_stamp((*bind_pcd.data(), ()), theta, other.pak),
+            stamp::SpendAction,
+            witness::spend_action((*bind_pcd.data(), ()), theta, other.pak),
             bind_pcd,
             Proof::trivial().carry::<()>(()),
         )
@@ -682,7 +682,7 @@ fn spend_rejects_invalid_note() {
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
-    assert_eq!(inner.to_string(), "SpendStamp: pak not related to note");
+    assert_eq!(inner.to_string(), "SpendAction: pak not related to note");
 }
 
 /// Zero-value notes are valid, so both stamping steps accept them: an output
@@ -710,8 +710,8 @@ fn step_accepts_zero_value_note() {
         PROOF_SYSTEM
             .fuse(
                 rng,
-                stamp::OutputStamp,
-                witness::output_stamp((*bind_pcd.data(), ()), out_theta, out_anchor),
+                stamp::OutputAction,
+                witness::output_action((*bind_pcd.data(), ()), out_theta, out_anchor),
                 bind_pcd,
                 Proof::trivial().carry::<()>(()),
             )
@@ -730,8 +730,8 @@ fn step_accepts_zero_value_note() {
         PROOF_SYSTEM
             .fuse(
                 rng,
-                stamp::SpendStamp,
-                witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak),
+                stamp::SpendAction,
+                witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
                 bind_pcd,
                 Proof::trivial().carry::<()>(()),
             )
@@ -1658,7 +1658,7 @@ fn spend_bind_derives_a_pair_across_a_group_boundary() {
     );
 }
 
-/// `SpendStamp` rejects a tachygram set not committing to the bound nullifier
+/// `SpendAction` rejects a tachygram set not committing to the bound nullifier
 /// pair.
 #[test]
 fn spend_stamp_rejects_a_mismatched_stamp_accumulator() {
@@ -1672,21 +1672,21 @@ fn spend_stamp_rejects_a_mismatched_stamp_accumulator() {
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
 
     let (_rcv, theta) = spend_witness(rng);
-    let (.., action_set, _pair) = witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak);
+    let (.., action_set, _pair) = witness::spend_action((*bind_pcd.data(), ()), theta, user.pak);
     // A foreign tachygram in place of the confirmed pair.
     let forged = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]);
 
     expect_invalid(
         rng,
-        stamp::SpendStamp,
+        stamp::SpendAction,
         (theta, user.pak, action_set, forged),
         bind_pcd,
         Proof::trivial().carry::<()>(()),
-        "SpendStamp: tachygram set does not commit to the nullifier pair",
+        "SpendAction: tachygram set does not commit to the nullifier pair",
     );
 }
 
-/// `SpendStamp` rejects an action set not committing to the action it derives.
+/// `SpendAction` rejects an action set not committing to the action it derives.
 #[test]
 fn spend_stamp_rejects_a_foreign_action_set() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1704,15 +1704,15 @@ fn spend_stamp_rejects_a_foreign_action_set() {
     // either way.
     let (_, foreign_theta) = spend_witness(rng);
     let (.., foreign, tachygram_set) =
-        witness::spend_stamp((*bind_pcd.data(), ()), foreign_theta, user.pak);
+        witness::spend_action((*bind_pcd.data(), ()), foreign_theta, user.pak);
 
     expect_invalid(
         rng,
-        stamp::SpendStamp,
+        stamp::SpendAction,
         (theta, user.pak, foreign, tachygram_set),
         bind_pcd,
         Proof::trivial().carry::<()>(()),
-        "SpendStamp: action set does not commit to the action",
+        "SpendAction: action set does not commit to the action",
     );
 }
 
@@ -1823,7 +1823,7 @@ fn output_bind_publishes_the_note_pair() {
     );
 }
 
-/// `OutputStamp` publishes the pair `OutputBind` derived, at the witnessed
+/// `OutputAction` publishes the pair `OutputBind` derived, at the witnessed
 /// anchor.
 #[test]
 fn output_stamp_publishes_the_note_pair() {
@@ -1838,12 +1838,12 @@ fn output_stamp_publishes_the_note_pair() {
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            stamp::OutputStamp,
-            witness::output_stamp((*bind_pcd.data(), ()), theta, anchor),
+            stamp::OutputAction,
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("OutputStamp honest");
+        .expect("OutputAction honest");
 
     let (_action_commit, tachygram_commit, stamp_anchor) = *pcd.data();
     assert_eq!(
@@ -1854,7 +1854,7 @@ fn output_stamp_publishes_the_note_pair() {
     assert_eq!(stamp_anchor, anchor);
 }
 
-/// `OutputStamp` rejects a tachygram set not committing to the bound
+/// `OutputAction` rejects a tachygram set not committing to the bound
 /// `{cm, pad}` pair.
 #[test]
 fn output_stamp_rejects_a_mismatched_stamp_accumulator() {
@@ -1868,17 +1868,17 @@ fn output_stamp_rejects_a_mismatched_stamp_accumulator() {
         .expect("OutputBind honest");
 
     let anchor = PoolSim::genesis(rng).anchor();
-    let (.., action_set, _pair) = witness::output_stamp((*bind_pcd.data(), ()), theta, anchor);
+    let (.., action_set, _pair) = witness::output_action((*bind_pcd.data(), ()), theta, anchor);
     // A foreign tachygram in place of the bound pair.
     let forged = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]);
 
     expect_invalid(
         rng,
-        stamp::OutputStamp,
+        stamp::OutputAction,
         (theta, anchor, action_set, forged),
         bind_pcd,
         Proof::trivial().carry::<()>(()),
-        "OutputStamp: tachygram set does not commit to the bound pair",
+        "OutputAction: tachygram set does not commit to the bound pair",
     );
 }
 
@@ -1891,7 +1891,7 @@ fn pad_differs_from_commitment() {
     assert_ne!(Tachygram::from(note.commitment()), expected_pad(&note));
 }
 
-/// `OutputStamp` rejects an action set not committing to the action it
+/// `OutputAction` rejects an action set not committing to the action it
 /// derives.
 #[test]
 fn output_stamp_rejects_a_foreign_action_set() {
@@ -1908,15 +1908,15 @@ fn output_stamp_rejects_a_foreign_action_set() {
     // A different `theta` yields a different rk, so a different digest. The
     // tachygram set comes off the bind header, so it is honest either way.
     let (.., foreign, tachygram_set) =
-        witness::output_stamp((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
+        witness::output_action((*bind_pcd.data(), ()), ActionEntropy::random(rng), anchor);
 
     expect_invalid(
         rng,
-        stamp::OutputStamp,
+        stamp::OutputAction,
         (theta, anchor, foreign, tachygram_set),
         bind_pcd,
         Proof::trivial().carry::<()>(()),
-        "OutputStamp: action set does not commit to the action",
+        "OutputAction: action set does not commit to the action",
     );
 }
 
@@ -1935,16 +1935,16 @@ fn output_action_commit(
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            stamp::OutputStamp,
-            witness::output_stamp((*bind_pcd.data(), ()), theta, anchor),
+            stamp::OutputAction,
+            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
             bind_pcd,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("OutputStamp honest");
+        .expect("OutputAction honest");
     pcd.data().0
 }
 
-/// A planned output proves only over its own note. `OutputStamp` derives
+/// A planned output proves only over its own note. `OutputAction` derives
 /// `alpha` from the bound `cm`, so a same-value note to another recipient under
 /// the plan's `theta` and `rcv` yields another `rk`, and the signed action is
 /// not the proved one.
@@ -1979,16 +1979,16 @@ fn spend_action_commit(
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
             rng,
-            stamp::SpendStamp,
-            witness::spend_stamp((*bind_pcd.data(), ()), theta, user.pak),
+            stamp::SpendAction,
+            witness::spend_action((*bind_pcd.data(), ()), theta, user.pak),
             bind_pcd,
             Proof::trivial().carry::<()>(()),
         )
-        .expect("SpendStamp honest");
+        .expect("SpendAction honest");
     pcd.data().0
 }
 
-/// A planned spend proves only over its own note. `SpendStamp` derives `alpha`
+/// A planned spend proves only over its own note. `SpendAction` derives `alpha`
 /// from the bound `cm`, so a same-value note of the same wallet under the
 /// plan's `theta` and `rcv` yields another `rk`.
 #[test]

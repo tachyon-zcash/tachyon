@@ -40,9 +40,9 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(spendable::SpendableInit)?
         .register(spendable::SpendableLift)?
         .register(output::OutputBind)?
-        .register(stamp::OutputStamp)?
+        .register(stamp::OutputAction)?
         .register(spend::SpendBind)?
-        .register(stamp::SpendStamp)?
+        .register(stamp::SpendAction)?
         .register(stamp::StampMerge)?
         .register(stamp::StampLift)?
         .register(delegation::NullifierFuse)?
@@ -66,7 +66,7 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(evidence::EvidenceTreeLeafPair)?
         .register(pool::AnchorSpanSeed)?
         .register(pool::AnchorSpanFuse)?
-        .register(stamp::StampFee)?
+        .register(stamp::FeeFuse)?
         .register(stamp::ActionMerge)?
         .register(stamp::ActionLift)?
         .register(stamp::FeeSeed)?
