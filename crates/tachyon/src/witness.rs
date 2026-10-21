@@ -564,7 +564,7 @@ pub fn fee_fuse(
     )]
     let fee_digest = fee::Descriptor {
         max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: fee,
+        value: fee.into(),
     }
     .digest()
     .expect("fee digest");
@@ -617,7 +617,7 @@ pub fn fee_seed(
     )]
     let digest = fee::Descriptor {
         max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: fee,
+        value: fee.into(),
     }
     .digest()
     .expect("fee digest");

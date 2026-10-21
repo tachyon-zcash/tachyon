@@ -457,7 +457,7 @@ impl Plan {
                         .max_fee_note
                         .fee_blind()
                         .commit(-self.max_fee_note.value),
-                    value: self.fee,
+                    value: self.fee.into(),
                 },
                 self.fee_change_note.commitment().into(),
             )?;
@@ -610,7 +610,7 @@ impl Plan {
                     .max_fee_note
                     .fee_blind()
                     .commit(-self.max_fee_note.value),
-                value: self.fee,
+                value: self.fee.into(),
             },
             self.fee_change_note.commitment().into(),
         )?;

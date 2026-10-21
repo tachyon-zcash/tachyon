@@ -118,7 +118,7 @@ fn plan_prove_rejects_invalid_inputs() {
     let zero = value::Positive::ZERO;
     let fee_digest = fee::Descriptor {
         max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: zero,
+        value: zero.into(),
     }
     .digest()
     .expect("fee digest");
@@ -256,7 +256,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
         output.digest().expect("action digest"),
         fee::Descriptor {
             max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-            value: value::Positive::ZERO,
+            value: value::Balance::ZERO,
         }
         .digest()
         .expect("fee digest"),

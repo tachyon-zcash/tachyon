@@ -18,8 +18,8 @@ pub struct Descriptor {
     /// The max fee commitment.
     pub max_commitment: value::Commitment,
 
-    /// The fee.
-    pub value: value::Positive,
+    /// The fee, negative for a claim.
+    pub value: value::Balance,
 }
 
 impl Descriptor {
@@ -35,7 +35,7 @@ impl Descriptor {
             .ok_or(ActionDigestError::IdentityCv)?;
         Ok(ActionDigest::from(poseidon::fee_digest(
             cv_max_fee,
-            u64::from(self.value),
+            i64::from(self.value),
         )))
     }
 }
@@ -58,7 +58,7 @@ impl From<Descriptor> for [u8; 40] {
     fn from(descriptor: Descriptor) -> Self {
         let mut entry = [0u8; 40];
         entry[..32].copy_from_slice(&EpAffine::from(descriptor.max_commitment).to_bytes());
-        entry[32..].copy_from_slice(&u64::from(descriptor.value).to_le_bytes());
+        entry[32..].copy_from_slice(&i64::from(descriptor.value).to_le_bytes());
         entry
     }
 }

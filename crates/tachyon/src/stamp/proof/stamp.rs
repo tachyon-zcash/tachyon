@@ -633,7 +633,7 @@ fn fee_singletons(
         .ok_or_else(|| {
             ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
         })?;
-    let fee_digest = poseidon::fee_digest(cv_max_fee_coords, u64::from(fee));
+    let fee_digest = poseidon::fee_digest(cv_max_fee_coords, i64::from(fee));
 
     // A zero root leaves the set polynomial factor `(X - tg)` trivial.
     enforce_nonzero(

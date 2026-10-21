@@ -63,12 +63,14 @@ const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
 /// x(\mathsf{cv}_\mathsf{maxfee}), y(\mathsf{cv}_\mathsf{maxfee}),
 /// \mathsf{fee})$.
 #[must_use]
-pub fn fee_digest(cv_max_fee: Coordinates<EpAffine>, fee: u64) -> Fp {
+pub fn fee_digest(cv_max_fee: Coordinates<EpAffine>, fee: i64) -> Fp {
+    let magnitude = Fp::from(fee.unsigned_abs());
+    let signed_fee = if fee < 0 { -magnitude } else { magnitude };
     hash::<4>([
         Fp::from_u128(u128::from_le_bytes(*FEE_DIGEST_DOMAIN)),
         *cv_max_fee.x(),
         *cv_max_fee.y(),
-        Fp::from(fee),
+        signed_fee,
     ])
 }
 

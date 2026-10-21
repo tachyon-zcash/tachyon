@@ -511,7 +511,7 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
     let aggregate_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
     let aggregate_fee_descriptors = BTreeSet::from([fee::Descriptor {
         max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: aggregate_fee,
+        value: aggregate_fee.into(),
     }]);
 
     let merged_stamp = ProofStamp::merge(

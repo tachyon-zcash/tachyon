@@ -258,7 +258,7 @@ pub fn bundle_auth_digest(
     state_header: u8,
     action_sigs: &[[u8; 64]],
     binding_sig: &[u8; 64],
-    fee: u64,
+    fee: i64,
     stamp_contrib: &[u8; 64],
 ) -> [u8; 32] {
     hasher_256(AUTH_DIGEST_PERSONALIZATION, |state| {

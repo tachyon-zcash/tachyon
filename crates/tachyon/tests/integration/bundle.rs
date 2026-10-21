@@ -507,7 +507,7 @@ fn double_spend_obvious() {
     // commits to the doubled action and tachygram multisets.
     let fee_descriptor = fee::Descriptor {
         max_commitment: fee_max_commitment,
-        value: value::Positive::ZERO,
+        value: value::Balance::ZERO,
     };
     let (output_stamp, _fee) = stamp::Plan::new(
         vec![],
@@ -670,7 +670,7 @@ fn duplicated_spend_cannot_inflate() {
             &desc_bytes,
             &[fee::Descriptor {
                 max_commitment: fee_max_commitment,
-                value: value::Positive::ZERO,
+                value: value::Balance::ZERO,
             }],
         )
     };
@@ -930,7 +930,7 @@ fn innocent_aggregate_from_two_autonomes() {
                 BTreeSet::new(),
                 [fee::Descriptor {
                     max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-                    value: fee,
+                    value: fee.into(),
                 }]
                 .into(),
             ),
@@ -2322,7 +2322,7 @@ fn bundle_lift_over_an_aggregate() {
                 BTreeSet::new(),
                 [fee::Descriptor {
                     max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-                    value: fee,
+                    value: fee.into(),
                 }]
                 .into(),
             ),

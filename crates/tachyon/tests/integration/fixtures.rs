@@ -153,7 +153,7 @@ pub fn build_output_stamp<RNG: CryptoRng>(
         plan,
         fee::Descriptor {
             max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-            value: value::Positive::ZERO,
+            value: value::Balance::ZERO,
         },
     )
 }

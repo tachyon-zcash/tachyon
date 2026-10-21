@@ -210,10 +210,10 @@ impl<S: BundleState + ?Sized> Bundle<S> {
 
     /// The bundle's fee descriptor.
     #[must_use]
-    pub const fn fee_descriptor(&self) -> fee::Descriptor {
+    pub fn fee_descriptor(&self) -> fee::Descriptor {
         fee::Descriptor {
             max_commitment: self.fee_max_commitment,
-            value: self.fee_value,
+            value: self.fee_value.into(),
         }
     }
 
