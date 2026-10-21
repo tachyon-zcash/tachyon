@@ -24,6 +24,21 @@ use crate::{
     value,
 };
 
+/// Non-empty proven action content with no fee in its lineage.
+#[derive(Debug)]
+pub struct Actions;
+
+impl Header for Actions {
+    /// `(action_commit, stamp_tg_commit, anchor)`
+    type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
+
+    const SUFFIX: Suffix = Suffix::new(15);
+
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+        Stamp::encode(data)
+    }
+}
+
 /// Header for a stamp, representing either a single action or many
 /// transactions.
 ///
@@ -298,6 +313,91 @@ impl Step for StampMerge {
     }
 }
 
+/// Merges action content.
+#[derive(Debug)]
+pub struct ActionMerge;
+
+impl Step for ActionMerge {
+    type Aux<'source> = ();
+    type Left = Actions;
+    type Output = Actions;
+    type Right = Actions;
+    /// `(left, merged, right)`, each an `(action_set, tachygram_set)` pair.
+    type Witness<'source> = (
+        (ActionSetPoly, TachygramSetPoly),
+        (ActionSetPoly, TachygramSetPoly),
+        (ActionSetPoly, TachygramSetPoly),
+    );
+
+    const INDEX: Index = Index::new(34);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (
+            (left_action_set, left_tachygram_set),
+            (merged_action_set, merged_tachygram_set),
+            (right_action_set, right_tachygram_set),
+        ): Self::Witness<'source>,
+        (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
+        (right_action_commit, right_tachygram_commit, right_anchor): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        // Same-anchor constraint.
+        enforce_zero(
+            Fp::from(left_anchor) - Fp::from(right_anchor),
+            "ActionMerge: anchors must match",
+        )?;
+
+        // Bind the witnessed left/right input sets to the public commitments on
+        // the headers.
+        enforce_equal_point(
+            Eq::from(left_action_set.commit()),
+            Eq::from(left_action_commit),
+            "ActionMerge: left action accumulator must commit to header commit",
+        )?;
+        enforce_equal_point(
+            Eq::from(right_action_set.commit()),
+            Eq::from(right_action_commit),
+            "ActionMerge: right action accumulator must commit to header commit",
+        )?;
+        enforce_equal_point(
+            Eq::from(left_tachygram_set.commit()),
+            Eq::from(left_tachygram_commit),
+            "ActionMerge: left tachygram accumulator must commit to header commit",
+        )?;
+        enforce_equal_point(
+            Eq::from(right_tachygram_set.commit()),
+            Eq::from(right_tachygram_commit),
+            "ActionMerge: right tachygram accumulator must commit to header commit",
+        )?;
+
+        // Confirm union via product-opening relation.
+        enforce_poly_product(
+            ctx,
+            left_action_set.as_ref(),
+            right_action_set.as_ref(),
+            merged_action_set.as_ref(),
+            "ActionMerge: merged action set must be the product of left and right action sets",
+        )?;
+        enforce_poly_product(
+            ctx,
+            left_tachygram_set.as_ref(),
+            right_tachygram_set.as_ref(),
+            merged_tachygram_set.as_ref(),
+            "ActionMerge: merged tachygram set must be the product of left and right tachygram sets",
+        )?;
+
+        Ok((
+            (
+                merged_action_set.commit(),
+                merged_tachygram_set.commit(),
+                left_anchor,
+            ),
+            (),
+        ))
+    }
+}
+
 /// Advance a stamp's anchor to the end of an [`AnchorSpan`].
 ///
 /// The stamp's `anchor` must be the span's `anchor_start` or one of its
@@ -350,6 +450,56 @@ impl Step for StampLift {
         ctx.enforce_poly_query(Eq::from(span_members), Fp::from(stamp_anchor), anchor_eval)?;
 
         let data = (stamp_action_commit, stamp_tachygram_commit, span_anchor_end);
+        Ok((data, ()))
+    }
+}
+
+/// Advances action content's anchor to the end of an [`AnchorSpan`].
+///
+/// The actions' `anchor` must be the span's `anchor_start` or one of its
+/// members.
+#[derive(Debug)]
+pub struct ActionLift;
+
+impl Step for ActionLift {
+    type Aux<'source> = ();
+    type Left = Actions;
+    type Output = Actions;
+    type Right = AnchorSpan;
+    /// `(members)`
+    type Witness<'source> = (AnchorSetPoly,);
+
+    const INDEX: Index = Index::new(35);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (members,): Self::Witness<'source>,
+        (actions_action_commit, actions_tachygram_commit, actions_anchor): <Self::Left as Header>::Data,
+        (span_anchor_start, span_members, span_anchor_end): <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_equal_point(
+            Eq::from(members.commit()),
+            Eq::from(span_members),
+            "ActionLift: members do not match header",
+        )?;
+
+        let anchor_eval = members.eval(Fp::from(actions_anchor));
+        enforce_zero(
+            anchor_eval * (Fp::from(actions_anchor) - Fp::from(span_anchor_start)),
+            "ActionLift: actions anchor is neither the span's start nor a member",
+        )?;
+        ctx.enforce_poly_query(
+            Eq::from(span_members),
+            Fp::from(actions_anchor),
+            anchor_eval,
+        )?;
+
+        let data = (
+            actions_action_commit,
+            actions_tachygram_commit,
+            span_anchor_end,
+        );
         Ok((data, ()))
     }
 }
@@ -482,6 +632,85 @@ impl Step for StampFee {
                 output_tachygram_set.commit(),
                 left_anchor,
             ),
+            (),
+        ))
+    }
+}
+
+/// Proves a zero-action bundle's zero fee.
+#[derive(Debug)]
+pub struct FeeSeed;
+
+impl Step for FeeSeed {
+    type Aux<'source> = ();
+    type Left = ();
+    type Output = Stamp;
+    type Right = ();
+    /// `(max_fee_note, anchor, fee_action_set, fee_tachygram_set)`
+    type Witness<'source> = (Note, Anchor, ActionSetPoly, TachygramSetPoly);
+
+    const INDEX: Index = Index::new(36);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (max_fee_note, anchor, fee_action_set, fee_tachygram_set): Self::Witness<'source>,
+        _left: <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_zero(
+            Fp::from(u64::from(max_fee_note.value)),
+            "FeeSeed: maximum fee must be zero",
+        )?;
+
+        let (pk, psi, rcm) = (
+            Fp::from(max_fee_note.pk),
+            Fp::from(max_fee_note.psi),
+            Fp::from(max_fee_note.rcm),
+        );
+
+        // TODO: a real circuit squeezes r in Fp and needs its bit
+        // decomposition to use it as an Fq scalar (p < q, so no reduction);
+        // mock ragu embeds it natively.
+        let blind = poseidon::fee_blind(pk, psi, rcm);
+        #[expect(
+            clippy::expect_used,
+            reason = "p < q, so every Fp repr is canonical in Fq"
+        )]
+        let cv_max_fee = value::Trapdoor::from_scalar(
+            Option::from(Fq::from_repr(blind.to_repr())).expect("p < q"),
+        )
+        .commit(-max_fee_note.value);
+        let cv_max_fee_coords = EpAffine::from(cv_max_fee)
+            .coordinates()
+            .into_option()
+            .ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("FeeSeed: fee commitment is the identity".into())
+            })?;
+        let fee_digest = poseidon::fee_digest(cv_max_fee_coords, 0);
+
+        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
+        let fee_change_commitment = enforce_nonzero(
+            poseidon::note_commitment(rcm, pk, 0, psi),
+            "FeeSeed: fee change note commitment is zero",
+        )?;
+
+        enforce_poly_roots(
+            ctx,
+            fee_action_set.as_ref(),
+            &[fee_digest],
+            "FeeSeed: fee action set does not commit to the fee digest",
+        )?;
+
+        enforce_poly_roots(
+            ctx,
+            fee_tachygram_set.as_ref(),
+            &[fee_change_commitment],
+            "FeeSeed: fee tachygram set does not commit to the fee change note",
+        )?;
+
+        Ok((
+            (fee_action_set.commit(), fee_tachygram_set.commit(), anchor),
             (),
         ))
     }
