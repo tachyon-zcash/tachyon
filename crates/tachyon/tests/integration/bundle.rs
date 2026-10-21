@@ -23,7 +23,6 @@ use zcash_tachyon::{
     effect,
     entropy::ActionEntropy,
     keys::private,
-    stamp,
     stamp::{PointerStamp, ProofStamp, ProveError},
     value, *,
 };

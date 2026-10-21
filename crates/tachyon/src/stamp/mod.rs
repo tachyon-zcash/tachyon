@@ -961,13 +961,13 @@ impl ProofStamp {
             BTreeSet<fee::Descriptor>,
         ),
     ) -> Result<Self, ProveError> {
-        let left_actions_digest: BTreeSet<ActionDigest> = left_desc
+        let left_actions_digest = left_desc
             .iter()
             .map(action::Descriptor::digest)
             .chain(left_fees.iter().map(fee::Descriptor::digest))
             .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
             .map_err(ProveError::ActionDigest)?;
-        let right_actions_digest: BTreeSet<ActionDigest> = right_desc
+        let right_actions_digest = right_desc
             .iter()
             .map(action::Descriptor::digest)
             .chain(right_fees.iter().map(fee::Descriptor::digest))
@@ -1047,6 +1047,7 @@ impl ProofStamp {
     ) -> bool {
         let mut desc_bytes = action_descs.into_iter().collect::<Vec<[u8; 64]>>();
         desc_bytes.sort_unstable();
+
         let mut fee_descriptor_bytes = fee_descriptors
             .into_iter()
             .map(<[u8; 40]>::from)

@@ -97,7 +97,7 @@ const ACTION_DESCRIPTOR_PERSONALIZATION: &[u8; 15] = b"Tachyon-Actions";
 ///
 /// Over a bundle's actions this is `hActionsTachyon`.
 ///
-/// Over a stamp's sorted covered actions this is `hStampActionsTachyon`.
+/// Over a stamp's covered actions this is `hStampActionsTachyon`.
 #[must_use]
 pub fn action_descriptor_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
     hasher_256(ACTION_DESCRIPTOR_PERSONALIZATION, |state| {

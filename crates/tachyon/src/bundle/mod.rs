@@ -38,7 +38,7 @@
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
 //! | `tachyonBundleState`  | u8                   | `0x01` or `0x02`                         |
-//! | `valueBalanceTachyon` | i64                  | net value of tachyon actions and the max fee note |
+//! | `valueBalanceTachyon` | i64                  | net value of tachyon actions and max fee |
 //! | `nActionsTachyon`     | compactsize          | number of tachyon actions                |
 //! | `vActionsTachyon`     | 64 * nActionsTachyon | (cv: 32 bytes, rk: 32 bytes)             |
 //! | `cvFeeMaxTachyon`     | 32 bytes             | max fee note value commitment            |
@@ -61,14 +61,14 @@
 //!
 //! When `tachyonBundleState == 1`, the bundle carries a proof stamp.
 //!
-//! | Name                   | Format               | Description                              |
-//! | ---------------------- | -------------------- | ---------------------------------------- |
-//! | `hStampCoverageTachyon` | 32 bytes             | BLAKE2b digest of the covered actions and fee descriptors |
-//! | `anchorTachyon`        | 32 bytes             | pool state reference                     |
-//! | `cTachygrams`          | 32 bytes             | commitment to the tachygrams below       |
-//! | `nTachygrams`          | compactsize          | number of tachygrams                     |
-//! | `vTachygrams`          | 32 * nTachygrams     | tachygrams for this proof                |
-//! | `proofTachyon`         | PROOF_SIZE blob      | serialized proof of fixed size           |
+//! | Name                    | Format               | Description                                |
+//! | ----------------------- | -------------------- | ------------------------------------------ |
+//! | `hStampCoverageTachyon` | 32 bytes             | BLAKE2b digest of covered actions and fees |
+//! | `anchorTachyon`         | 32 bytes             | pool state reference                       |
+//! | `cTachygrams`           | 32 bytes             | commitment to the tachygrams below         |
+//! | `nTachygrams`           | compactsize          | number of tachygrams                       |
+//! | `vTachygrams`           | 32 * nTachygrams     | tachygrams for this proof                  |
+//! | `proofTachyon`          | PROOF_SIZE blob      | serialized proof of fixed size             |
 //!
 //! `cTachygrams` is carried rather than derived, so full validation must
 //! confirm it against `vTachygrams`. Anchor advancement then reads the point
@@ -94,8 +94,7 @@ use core::{cmp::Ordering, iter, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
-use group::{CurveAffine as _, GroupEncoding as _};
-use pasta_curves::EpAffine;
+use group::CurveAffine as _;
 use rand_core::CryptoRng;
 
 use crate::{
@@ -176,11 +175,10 @@ pub struct Bundle<S: BundleState + ?Sized> {
     /// Actions (cv, rk, sig).
     pub actions: Vec<Action>,
 
-    /// The max fee note's value commitment, `cvFeeMaxTachyon`.
+    /// The max fee note's value commitment.
     pub fee_max_commitment: value::Commitment,
 
-    /// The fee, `vFeeTachyon`. Signing writes zero; [`Bundle::stamp`] writes
-    /// the applied fee.
+    /// The fee value selected by the proof.
     pub fee_value: value::Positive,
 
     /// Binding signature over the transaction sighash.
@@ -234,7 +232,7 @@ impl<S: BundleState + ?Sized> Bundle<S> {
         blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&descriptors),
             self.value_balance.into(),
-            &EpAffine::from(self.fee_max_commitment).to_bytes(),
+            &self.fee_max_commitment.into(),
             &blake2b::memo_digest(&self.memo),
         )
     }
@@ -290,12 +288,11 @@ pub enum VerifyCoverageError {
     /// The actions are not unique.
     #[display("actions are not unique")]
     DuplicateActions,
-    /// The fee descriptors are not unique.
-    #[display("fee descriptors are not unique")]
+    /// The fees are not unique.
+    #[display("fees are not unique")]
     DuplicateFees,
-    /// The stamp on this bundle does not claim to cover these actions and
-    /// fee descriptors.
-    #[display("stamp on this bundle does not claim to cover these actions and fee descriptors")]
+    /// The stamp on this bundle does not claim to cover these actions and fees.
+    #[display("stamp on this bundle does not claim to cover these actions and fees")]
     StampActionsMismatch,
 }
 
@@ -305,7 +302,7 @@ pub enum VerifyCoverageError {
 pub enum VerifyTachygramsError {
     /// The stamp publishes a number of tachygrams other than two per action
     /// and one per fee descriptor.
-    #[display("stamp does not publish two tachygrams per action and one per fee descriptor")]
+    #[display("stamp does not publish two tachygrams per action and one per fee")]
     WrongArity,
     /// The stamp's tachygrams do not reproduce the stamp's set commitment.
     #[display("tachygrams do not reproduce the set commitment")]
@@ -428,12 +425,12 @@ impl Plan {
             .collect()
     }
 
-    /// Derive `value_balance` from note values, counting the max fee note's
-    /// maximum fee as an output.
+    /// Derive `value_balance` from note values.
     ///
     /// $$
-    ///   \sum_i v_{\text{spend},i} - \sum_j v_{\text{output},j} -
-    ///   \mathsf{maxfee}
+    ///   (\sum_i v_{\text{spend},i}) -
+    ///   (\sum_j v_{\text{output},j}) -
+    ///   v_\text{maxfee}
     /// $$
     ///
     /// # Errors
@@ -462,7 +459,7 @@ impl Plan {
         Ok(blake2b::bundle_commitment(
             &blake2b::action_descriptor_digest(&desc_bytes),
             self.value_balance()?.into(),
-            &EpAffine::from(self.max_fee.max_commitment()).to_bytes(),
+            &self.max_fee.max_commitment().into(),
             &blake2b::memo_digest(&self.memo),
         ))
     }
@@ -834,11 +831,11 @@ impl Bundle<ProofStamp> {
         self.verify_tachygrams(covered_descs.len(), covered_fee_descriptors.len())
             .map_err(VerificationError::Tachygrams)?;
 
-        let covered_digests: Vec<ActionDigest> = covered_descs
+        let covered_digests = covered_descs
             .iter()
             .map(action::Descriptor::digest)
             .chain(covered_fee_descriptors.iter().map(fee::Descriptor::digest))
-            .collect::<Result<_, _>>()
+            .collect::<Result<Vec<ActionDigest>, ActionDigestError>>()
             .map_err(VerificationError::Actions)?;
 
         if self
