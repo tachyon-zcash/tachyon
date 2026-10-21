@@ -67,10 +67,10 @@ $(\pk, \maxfee - \fee, \psi, \rcm)$ takes the max fee note's other fields. Its
 tachygram. A fee equal to $\maxfee$ leaves a zero-valued fee change note, which
 still has its tachygram.
 
-$\mathsf{StampFee}$ transforms a stamp. It adds $d_\fee$ to the stamp's action
+$\mathsf{FeeFuse}$ applies a bundle's fee to its actions. It adds $d_\fee$ to the action
 set and $\cm_\chg$ to its tachygram set:
 
-- Left: $\mathtt{Stamp}$
+- Left: $\mathtt{Actions}$
 - Right: empty
 - Output: $\mathtt{Stamp}$
 - Witness: the max fee note opening, $\fee$, the left set polynomials $A$ and
@@ -101,20 +101,32 @@ T' = T \cdot S_T.
 $$
 
 The output header carries the commitments to $A'$ and $T'$ and the left
-stamp's anchor.
+actions' anchor.
 
-$\mathsf{StampFee}$ proves a local relation, not funding. Funding comes from
+$\mathsf{FeeSeed}$ is a zero-action bundle's fee. It has no predecessors and
+witnesses the max fee note, fee, anchor, $S_A$ and $S_T$. It enforces
+$\maxfee = 0$, computes $\cv_\maxfee = [r]\mathcal{R}$ directly, and checks the
+same opening and singleton relations. The unsigned fee and the change range
+force $\fee = 0$. Its $\mathtt{Stamp}$ carries the singleton commitments and the
+witnessed anchor: $N = 0$, $B = 1$, one tachygram.
+
+The fee steps prove a local relation, not funding. Funding comes from
 the bundle's actions, the binding signature over the signed $\cv_\maxfee$,
 and transaction accounting.
 
-The prover applies $\mathsf{StampFee}$ as the last step of building a bundle's
-stamp. Proving returns the stamp and the applied fee together, and attaching
+The prover applies $\mathsf{FeeFuse}$ after proving a bundle's actions, or
+$\mathsf{FeeSeed}$ when it has none. Proving returns the stamp and the applied fee together, and attaching
 writes that fee into `vFeeTachyon`. Every stamp has its bundle's fee applied.
 **Consensus rebuilds the stamp's action set from the published action
 descriptors and fee descriptors, recomputes the action accumulator, and checks
 the proof against it.** The stamp does not publish the action accumulator. A
 stamp that doesn't cover its bundle's fee descriptor fails, as
-[Coverage](#coverage) details. Changing the fee rebuilds the stamp.
+[Coverage](#coverage) details. To reprice, prove again with the new fee. A
+based aggregate also retains the merged stamp of the bundles it covers and
+reruns one root merge.
+
+$\mathtt{Actions}$ and $\mathtt{Stamp}$ make the pre-fee and post-fee states
+proof-enforced. Coverage comes from the consensus reconstruction above.
 
 ## Coverage
 
@@ -126,15 +138,17 @@ commitment per bundle. A stamp covering $N$ actions in $B$ bundles therefore
 publishes $2N + B$ tachygrams. [Bundles](./bundle.md#stamp-trailer) defines
 `hStampCoverageTachyon`. Consensus rebuilds the coverage and $d_\fee$ from the
 published bundles. An accepted proof therefore covers the signed $\cv_\maxfee$
-at the published fee. A second $\mathsf{StampFee}$ for the same max fee note
-adds a fee descriptor and a fee change note that no published bundle accounts
-for. Merging and lifting carry fee digests and fee change note commitments like
-any other set members. Stripping keeps the fee descriptor in the bundle body.
+at the published fee. $\mathsf{FeeFuse}$ accepts only $\mathtt{Actions}$, so it
+cannot be applied twice to the same lineage. $\mathsf{StampMerge}$ combines
+fee-bearing lineages. Two lineages that each apply the same bundle's fee merge
+into a stamp whose second fee digest and fee change note no published bundle
+accounts for. Merging and lifting carry fee digests and fee change note commitments
+like any other set members. Stripping keeps the fee descriptor in the bundle body.
 
 ## Balance
 
 A bundle contributes $v^{bal} + \fee$ to the transaction balance.
-$\mathsf{StampFee}$ proves that the fee change note keeps $\maxfee - \fee$ in
+The fee steps prove that the fee change note keeps $\maxfee - \fee$ in
 the pool. The pool's net outflow is therefore
 $\sum v_{in} - \sum v_{out} - (\maxfee - \fee) = v^{bal} + \fee$. At the
 transaction level, pool balances sum to a non-negative total fee.

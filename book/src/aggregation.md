@@ -32,6 +32,7 @@ Aggregates may be further named:
   For example, a miner's coin*base* transaction might be an aggregate, and also output miner rewards via Tachyon action.
 
 When stripped, an innocent contributes no actions but still names a covering transaction: its `tachyonAggregateId` is a nonzero reference to the aggregate that absorbed its stamp, never the all-zero `wtxid`.
+It retains its fee descriptor and binding signature.
 
 [^bundle-format]: See [Bundles](./bundle.md) to understand bundle format.
 
@@ -42,19 +43,24 @@ When stripped, an innocent contributes no actions but still names a covering tra
 A proof's wire format is compressed for bandwidth efficiency.
 Aggregators must decompress proofs to a mutable format in order to merge proofs, and then re-compress to broadcast.
 
-Aggregators collect autonomes or existing aggregates and merge their stamps:
+Aggregators collect autonomes or existing aggregates and merge their stamps.
+
+An aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'.
+A based aggregate first proves its own actions and applies its fee with `FeeFuse`.
+An innocent runs an empty `Plan::prove`: `FeeSeed` proves its zero-action bundle's fee, then `ProofStamp::merge` merges that stamp with the stamps of the bundles it covers.
+Both use `StampMerge`, as does a nested aggregate. A zero-action bundle can also stand alone with its `FeeSeed` stamp.
+
+The steps are:
 
 1. Select transactions
 2. Deserialize and validate stamps
-3. Match/update anchors
-4. Merge stamps
+3. Prove the aggregate's own stamp, with `FeeSeed` for an innocent
+4. Match/update anchors
+5. Merge stamps
    - Merge tachygrams (exclusive sets)
    - Merge proofs
-5. For an innocent aggregate, apply its own zero fee with `StampFee`
 6. Serialize and compress the merged stamp
 7. Publish aggregate transaction
-
-An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp plan, `Plan::innocent`, holds the adjuncts' stamps; proving merges them and then runs `StampFee` at a zero fee.
 
 <!-- TODO
 - Explain tachygram set union validation algorithm

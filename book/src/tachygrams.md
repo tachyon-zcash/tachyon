@@ -34,10 +34,10 @@ Uniform arity is what makes the two action kinds indistinguishable in the publis
 
 ## Tachygram sets
 
-An intermediate action stamp, built from actions and merges before the bundle's fee is applied, contains the two tachygrams of every action it covers.
+An intermediate `Actions` proof, built from actions and merges before the bundle's fee is applied, contains the two tachygrams of every action it covers.
 
 A published stamp has every covered bundle's fee applied, so it also contains one [fee change note](./fee.md#fee-change-note) commitment per covered bundle.
-A published stamp covering $N$ actions in $B$ bundles contains $2N + B$ tachygrams: three for an autonome with a single action, and two per action plus one per bundle for an aggregate. Ideally, the consensus chain will contain aggregated[^aggregation] bundles[^bundle].
+A published stamp covering $N$ actions in $B$ bundles contains $2N + B$ tachygrams: three for an autonome with a single action, one for a zero-action bundle's `FeeSeed` stamp, and two per action plus one per bundle for an aggregate. Ideally, the consensus chain will contain aggregated[^aggregation] bundles[^bundle].
 
 The covering proof in a stamp has witnessed a commitment to an unordered set of those tachygrams.
 
@@ -56,7 +56,7 @@ When a stamp is published, consensus checks that every tachygram in the stamp is
 
 The window spans two epochs because a stamp can republish a tachygram in two distinct ways.
 
-A stamp's anchor may have been advanced within its epoch via `StampLift`[^proof-tree], so the stamp could have been built at any earlier height in the same epoch. Consensus therefore scans every block in the anchor's epoch, not just blocks after the anchor.
+A stamp's anchor may have been advanced within its epoch via `ActionLift` or `StampLift`[^proof-tree], so the stamp could have been built at any earlier height in the same epoch. Consensus therefore scans every block in the anchor's epoch, not just blocks after the anchor.
 
 A spend publishes a nullifier for the current epoch and one for the next epoch[^nullifiers-pair]. The next-epoch nullifier published in epoch $e$ is the present-epoch nullifier that any later spend of the same note would have to publish in epoch $e+1$. Including the previous epoch in the check catches that collision.
 
@@ -70,6 +70,6 @@ A spend publishes a nullifier for the current epoch and one for the next epoch[^
 
 [^anchor]: See [Anchor](./anchor.md) for the Poseidon chain that absorbs each stamp's tachygram-set commitment.
 
-[^proof-tree]: See [Proof Tree](./proof-tree.md) for how `StampLift` advances a stamp's anchor within an epoch.
+[^proof-tree]: See [Proof Tree](./proof-tree.md) for how `ActionLift` and `StampLift` advance an anchor within an epoch.
 
 [^nullifiers-pair]: See [Nullifiers](./nullifiers.md) for the present/future nullifier pair published with each spend.
