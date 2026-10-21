@@ -549,7 +549,8 @@ pub fn spend_action(
 ///
 /// # Errors
 ///
-/// Returns an invalid witness error if the fee change is out of range.
+/// Returns an invalid witness error if the fee commitment is the identity or
+/// the fee change is out of range.
 ///
 /// # Panics
 ///
@@ -605,7 +606,8 @@ pub fn fee_fuse(
 ///
 /// # Errors
 ///
-/// Returns an invalid witness error if the fee change is out of range.
+/// Returns an invalid witness error if the fee commitment is the identity or
+/// the fee change is out of range.
 ///
 /// # Panics
 ///

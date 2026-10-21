@@ -775,9 +775,7 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
     assert_eq!(bundle.stamp.tachygrams.len(), 1);
     assert_eq!(bundle.verify_coverage(&[], &[]).unwrap().1.len(), 1);
     verify_alone(rng, &bundle, &sighash).expect("zero-action bundle verifies");
-    let mut bytes = Vec::new();
-    bundle.write(&mut bytes).expect("write");
-    let decoded = Bundle::<ProofStamp>::read(&*bytes).expect("read");
+    let decoded = round_trip(&bundle);
     assert_eq!(decoded.auth_digest(), bundle.auth_digest());
     verify_alone(rng, &decoded, &sighash).expect("decoded seed verifies");
 }
@@ -827,22 +825,7 @@ fn actions_proof_cannot_substitute_for_a_stamp() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = PoolSim::genesis(rng).anchor();
-    let note = wallet.random_note(500);
-    let (rcv, theta, plan) = build_output_plan(rng, note);
-
-    let (bind_pcd, ()) = PROOF_SYSTEM
-        .seed(rng, output::OutputBind, (note, rcv))
-        .expect("bind the output");
-    let (cm, pad, _cv) = *bind_pcd.data();
-    let (pcd, ()) = PROOF_SYSTEM
-        .fuse(
-            rng,
-            OutputAction,
-            witness::output_action((*bind_pcd.data(), ()), theta, anchor),
-            bind_pcd,
-            Proof::trivial().carry::<()>(()),
-        )
-        .expect("prove the output action");
+    let (pcd, descriptor, tachygrams) = output_actions(rng, &wallet, anchor);
     assert!(
         PROOF_SYSTEM
             .verify(&pcd, &mut *rng)
@@ -853,12 +836,12 @@ fn actions_proof_cannot_substitute_for_a_stamp() {
         coverage: [0; 32],
         anchor,
         tachygram_set: pcd.data().1,
-        tachygrams: BTreeSet::from_iter([cm, pad]),
+        tachygrams,
         proof: Box::new(pcd.proof().clone()),
     };
     assert!(
         !stamp
-            .verify_proof(rng, [plan.descriptor().digest().unwrap()])
+            .verify_proof(rng, [descriptor.digest().unwrap()])
             .expect("verify substituted header")
     );
 }
