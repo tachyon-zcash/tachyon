@@ -10,14 +10,15 @@ use zcash_tachyon::{
     ActionDigest, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetCommit,
     TachygramSetPoly, action,
     constants::EPOCH_SIZE,
-    digest::blake2b,
+    fee,
     stamp::{self, ProveError},
+    value,
 };
 
 use crate::fixtures::{
     PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan, build_output_stamp,
-    forge_overlapping_merge, random_action, random_block, random_block_with, shared_sk,
-    spend_witness,
+    fee_digests, forge_overlapping_merge, random_action, random_block, random_block_with,
+    shared_sk, spend_witness, stamp_coverage,
 };
 
 const WITHIN_EPOCH_ANCHOR_PAIRS: &[(BlockHeight, BlockHeight)] = &[
@@ -38,18 +39,26 @@ fn stamp_merge_iff_matching_anchors() {
         pool.advance(anchor_height_a.0 + 1, |_| random_block(rng, 1, 50));
         let anchor_a = pool.anchor();
         let note_a = user_a.random_note(200);
-        let (stamp_a, plan_a) = build_output_stamp(rng, anchor_a, note_a);
+        let (stamp_a, plan_a, fee_a) = build_output_stamp(rng, anchor_a, note_a);
 
         let n_between = anchor_height_b.0 - anchor_height_a.0;
         pool.advance(n_between, |_| random_block(rng, 1, 50));
         let anchor_b = pool.anchor();
         let note_b = user_b.random_note(300);
-        let (stamp_b, plan_b) = build_output_stamp(rng, anchor_b, note_b);
+        let (stamp_b, plan_b, fee_b) = build_output_stamp(rng, anchor_b, note_b);
 
         let result = ProofStamp::merge(
             rng,
-            (stamp_a, BTreeSet::from_iter([plan_a.descriptor()])),
-            (stamp_b, BTreeSet::from_iter([plan_b.descriptor()])),
+            (
+                stamp_a,
+                BTreeSet::from_iter([plan_a.descriptor()]),
+                [fee_a].into(),
+            ),
+            (
+                stamp_b,
+                BTreeSet::from_iter([plan_b.descriptor()]),
+                [fee_b].into(),
+            ),
         );
         assert_eq!(
             result.is_ok(),
@@ -105,10 +114,17 @@ fn plan_prove_rejects_invalid_inputs() {
             (plan_b.descriptor(), theta_b, rcv_b),
         ]
     };
+    let max_fee_note = user.random_note(0);
+    let fee_digest = fee::Plan::new(max_fee_note)
+        .descriptor(value::Positive::ZERO)
+        .digest()
+        .expect("fee digest");
+
+    let zero = value::Positive::ZERO;
 
     // Empty plan: no actions at all.
     {
-        let plan = stamp::Plan::new(alloc::vec![], alloc::vec![], anchor);
+        let plan = stamp::Plan::new(alloc::vec![], alloc::vec![], anchor, max_fee_note, zero);
 
         let err = plan.prove(rng, &user.pak, alloc::vec![]).unwrap_err();
         let ProveError::MissingPcd(reason) = err else {
@@ -124,7 +140,7 @@ fn plan_prove_rejects_invalid_inputs() {
 
     // Too few PCDs: 2 spends, 1 PCD.
     {
-        let plan = stamp::Plan::new(two_spends(), alloc::vec![], anchor);
+        let plan = stamp::Plan::new(two_spends(), alloc::vec![], anchor, max_fee_note, zero);
         let pcds = alloc::vec![bundle_a()];
 
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
@@ -139,7 +155,7 @@ fn plan_prove_rejects_invalid_inputs() {
 
     // Too many PCDs: 2 spends, 3 PCDs.
     {
-        let plan = stamp::Plan::new(two_spends(), alloc::vec![], anchor);
+        let plan = stamp::Plan::new(two_spends(), alloc::vec![], anchor, max_fee_note, zero);
         let pcds = alloc::vec![bundle_a(), bundle_b(), bundle_a()];
 
         let err = plan.prove(rng, &user.pak, pcds).unwrap_err();
@@ -156,14 +172,15 @@ fn plan_prove_rejects_invalid_inputs() {
     // carries another note of the same value, so only `alpha` tells them apart.
     // The swapped actions prove, and the stamp does not verify as the plan's.
     {
-        let plan = stamp::Plan::new(two_spends(), alloc::vec![], anchor);
+        let plan = stamp::Plan::new(two_spends(), alloc::vec![], anchor, max_fee_note, zero);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
-        let stamp = plan
+        let (stamp, _fee) = plan
             .prove(rng, &user.pak, pcds)
             .expect("swapped spends prove");
         let planned = [
             plan_a.digest().expect("action digest"),
             plan_b.digest().expect("action digest"),
+            fee_digest,
         ];
         assert!(
             !stamp
@@ -181,13 +198,18 @@ fn plan_prove_rejects_invalid_inputs() {
             alloc::vec![(foreign_a.descriptor(), theta_a, rcv_a)],
             alloc::vec![],
             anchor,
+            max_fee_note,
+            zero,
         );
-        let stamp = plan
+        let (stamp, _fee) = plan
             .prove(rng, &user.pak, alloc::vec![bundle_a()])
             .expect("foreign spend proves");
         assert!(
             !stamp
-                .verify_proof(rng, [foreign_a.digest().expect("action digest")])
+                .verify_proof(
+                    rng,
+                    [foreign_a.digest().expect("action digest"), fee_digest]
+                )
                 .expect("proof system verification"),
             "a stamp under another ak must not verify as the planned action"
         );
@@ -224,11 +246,14 @@ fn plan_prove_lifts_a_spend_along_spans() {
     });
     let (out_rcv, out_theta, output) = build_output_plan(rng, user.random_note(200));
     let secret = user.secret_pcd(rng, note);
+    let max_fee_note = user.random_note(0);
     let prove = |prove_rng: &mut StdRng, spans| {
         stamp::Plan::new(
             vec![(spend.descriptor(), theta, rcv)],
             vec![(output.descriptor(), out_theta, output.note, out_rcv)],
             plan_anchor,
+            max_fee_note,
+            value::Positive::ZERO,
         )
         .prove(
             prove_rng,
@@ -239,6 +264,10 @@ fn plan_prove_lifts_a_spend_along_spans() {
     let digests = [
         spend.digest().expect("action digest"),
         output.digest().expect("action digest"),
+        fee::Plan::new(max_fee_note)
+            .descriptor(value::Positive::ZERO)
+            .digest()
+            .expect("fee digest"),
     ];
 
     let one = vec![build_lift_span(rng, &pool, cm_height..=plan_height)];
@@ -255,7 +284,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
         ("abutting spans", abutting),
         ("overlapping spans", overlapping),
     ] {
-        let stamp = prove(rng, spans).expect(label);
+        let (stamp, _fee) = prove(rng, spans).expect(label);
         assert_eq!(stamp.anchor, plan_anchor, "{label}");
         assert!(
             stamp
@@ -303,17 +332,25 @@ fn merge_populates_covered_actions() {
     let anchor = pool.anchor();
     let note_a = user_a.random_note(200);
     let note_b = user_b.random_note(300);
-    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note_a);
-    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note_b);
+    let (stamp_a, plan_a, fee_a) = build_output_stamp(rng, anchor, note_a);
+    let (stamp_b, plan_b, fee_b) = build_output_stamp(rng, anchor, note_b);
 
     let mut descriptors = Vec::<[u8; 64]>::from_iter([plan_a.descriptor(), plan_b.descriptor()]);
     descriptors.sort_unstable();
-    let expected = blake2b::action_descriptor_digest(&descriptors);
+    let expected = stamp_coverage(&descriptors, &[fee_a, fee_b]);
 
     let merged = ProofStamp::merge(
         rng,
-        (stamp_a, BTreeSet::from_iter([plan_a.descriptor()])),
-        (stamp_b, BTreeSet::from_iter([plan_b.descriptor()])),
+        (
+            stamp_a,
+            BTreeSet::from_iter([plan_a.descriptor()]),
+            [fee_a].into(),
+        ),
+        (
+            stamp_b,
+            BTreeSet::from_iter([plan_b.descriptor()]),
+            [fee_b].into(),
+        ),
     )
     .expect("merge");
     // `merge` sorts the concatenated descriptors into canonical order, so the
@@ -336,10 +373,11 @@ fn double_output_cannot_aggregate() {
     // but distinct descriptors (independent trapdoors), so the action sets stay
     // disjoint and the collision isolates to the tachygrams.
     let note = wallet.random_note(200);
-    let (stamp_a, plan_a) = build_output_stamp(rng, anchor, note);
-    let (stamp_b, plan_b) = build_output_stamp(rng, anchor, note);
+    let (stamp_a, plan_a, fee_a) = build_output_stamp(rng, anchor, note);
+    let (stamp_b, plan_b, fee_b) = build_output_stamp(rng, anchor, note);
     assert_eq!(
-        stamp_a.tachygrams, stamp_b.tachygrams,
+        stamp_a.tachygrams.intersection(&stamp_b.tachygrams).count(),
+        2,
         "reused output commitment must collide"
     );
     assert_ne!(
@@ -355,8 +393,8 @@ fn double_output_cannot_aggregate() {
     {
         let merge_err = ProofStamp::merge(
             rng,
-            (stamp_a.clone(), descriptors_a.clone()),
-            (stamp_b.clone(), descriptors_b.clone()),
+            (stamp_a.clone(), descriptors_a.clone(), [fee_a].into()),
+            (stamp_b.clone(), descriptors_b.clone(), [fee_b].into()),
         )
         .expect_err("overlapping tachygrams must not merge");
         let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
@@ -370,8 +408,8 @@ fn double_output_cannot_aggregate() {
 
     let evil_pcd = forge_overlapping_merge(
         rng,
-        (&stamp_a, &Vec::from_iter(descriptors_a.clone())),
-        (&stamp_b, &Vec::from_iter(descriptors_b.clone())),
+        (&stamp_a, &Vec::from_iter(descriptors_a.clone()), &[fee_a]),
+        (&stamp_b, &Vec::from_iter(descriptors_b.clone()), &[fee_b]),
     );
 
     let all_descriptors: Vec<action::Descriptor> =
@@ -383,7 +421,7 @@ fn double_output_cannot_aggregate() {
     let coverage = {
         let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
         desc_bytes.sort_unstable();
-        blake2b::action_descriptor_digest(&desc_bytes)
+        stamp_coverage(&desc_bytes, &[fee_a, fee_b])
     };
     let tachygrams: BTreeSet<Tachygram> = stamp_a
         .tachygrams
@@ -404,6 +442,7 @@ fn double_output_cannot_aggregate() {
     let digests: Vec<ActionDigest> = all_descriptors
         .iter()
         .map(|desc| desc.digest().expect("action digest"))
+        .chain(fee_digests([fee_a, fee_b]))
         .collect();
     assert!(
         !stamp
@@ -465,12 +504,13 @@ fn double_spend_cannot_aggregate() {
         "same-note spends share their nullifiers"
     );
 
+    let fees = [autonome_a.fee_descriptor(), autonome_b.fee_descriptor()];
     // The honest merge refuses the overlap on the tachygram-set product relation.
     {
         let merge_err = ProofStamp::merge(
             rng,
-            (stamp_a.clone(), descriptors_a.clone()),
-            (stamp_b.clone(), descriptors_b.clone()),
+            (stamp_a.clone(), descriptors_a.clone(), [fees[0]].into()),
+            (stamp_b.clone(), descriptors_b.clone(), [fees[1]].into()),
         )
         .expect_err("shared nullifiers must not merge");
         let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
@@ -484,8 +524,8 @@ fn double_spend_cannot_aggregate() {
 
     let evil_pcd = forge_overlapping_merge(
         rng,
-        (&stamp_a, &Vec::from_iter(descriptors_a.clone())),
-        (&stamp_b, &Vec::from_iter(descriptors_b.clone())),
+        (&stamp_a, &Vec::from_iter(descriptors_a.clone()), &fees[..1]),
+        (&stamp_b, &Vec::from_iter(descriptors_b.clone()), &fees[1..]),
     );
 
     let all_descriptors: Vec<action::Descriptor> =
@@ -497,7 +537,7 @@ fn double_spend_cannot_aggregate() {
     let coverage = {
         let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
         desc_bytes.sort_unstable();
-        blake2b::action_descriptor_digest(&desc_bytes)
+        stamp_coverage(&desc_bytes, &fees)
     };
     let tachygrams: BTreeSet<Tachygram> = stamp_a
         .tachygrams
@@ -519,6 +559,7 @@ fn double_spend_cannot_aggregate() {
     let digests: Vec<ActionDigest> = all_descriptors
         .iter()
         .map(|desc| desc.digest().expect("action digest"))
+        .chain(fee_digests(fees))
         .collect();
     assert!(
         !stamp
@@ -545,16 +586,17 @@ fn cannot_forge_stamp_covering_duplicated_action() {
 
     // One output stamp counted twice: both contributors share the descriptor.
     let note = wallet.random_note(200);
-    let (output_stamp, plan) = build_output_stamp(rng, anchor, note);
+    let (output_stamp, plan, fee) = build_output_stamp(rng, anchor, note);
     let descriptors = BTreeSet::from_iter([plan.descriptor()]);
+    let fees = BTreeSet::from([fee]);
 
     // The honest merge refuses the shared action on the action-set product
     // relation (checked before the tachygram product).
     {
         let merge_err = ProofStamp::merge(
             rng,
-            (output_stamp.clone(), descriptors.clone()),
-            (output_stamp.clone(), descriptors.clone()),
+            (output_stamp.clone(), descriptors.clone(), fees.clone()),
+            (output_stamp.clone(), descriptors.clone(), fees),
         )
         .expect_err("a duplicated action must not merge");
         let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
@@ -568,8 +610,8 @@ fn cannot_forge_stamp_covering_duplicated_action() {
 
     let evil_pcd = forge_overlapping_merge(
         rng,
-        (&output_stamp, &Vec::from_iter(descriptors.clone())),
-        (&output_stamp, &Vec::from_iter(descriptors.clone())),
+        (&output_stamp, &Vec::from_iter(descriptors.clone()), &[fee]),
+        (&output_stamp, &Vec::from_iter(descriptors.clone()), &[fee]),
     );
 
     let all_descriptors: Vec<action::Descriptor> = descriptors
@@ -584,7 +626,7 @@ fn cannot_forge_stamp_covering_duplicated_action() {
     let coverage = {
         let mut desc_bytes: Vec<[u8; 64]> = all_descriptors.iter().copied().collect();
         desc_bytes.sort_unstable();
-        blake2b::action_descriptor_digest(&desc_bytes)
+        stamp_coverage(&desc_bytes, &[fee])
     };
     let tachygrams: BTreeSet<Tachygram> = output_stamp.tachygrams.iter().copied().collect();
     let stamp = ProofStamp {
@@ -605,6 +647,7 @@ fn cannot_forge_stamp_covering_duplicated_action() {
     let digests: Vec<ActionDigest> = all_descriptors
         .iter()
         .map(|desc| desc.digest().expect("action digest"))
+        .chain(fee_digests([fee, fee]))
         .collect();
     assert!(
         !stamp
@@ -626,14 +669,15 @@ fn verify_cannot_distinguish_a_deduplicated_duplicate() {
     let anchor = pool.anchor();
 
     let note = wallet.random_note(200);
-    let (stamp, plan) = build_output_stamp(rng, anchor, note);
+    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, anchor, note);
     let descriptor = plan.descriptor();
+    let fee_digest = fee_descriptor.digest().expect("fee digest");
 
     // Deduplicated to one action, it matches the single-action proof.
     let single = descriptor.digest().expect("action digest");
     assert!(
         stamp
-            .verify_proof(rng, [single])
+            .verify_proof(rng, [single, fee_digest])
             .expect("proof system verification"),
         "the single covered action verifies"
     );
@@ -641,7 +685,7 @@ fn verify_cannot_distinguish_a_deduplicated_duplicate() {
     // The true multiset is a different action polynomial: (x−d)² ≠ (x−d).
     assert!(
         !stamp
-            .verify_proof(rng, [single, single])
+            .verify_proof(rng, [single, single, fee_digest])
             .expect("proof system verification"),
         "the doubled action must not verify"
     );
@@ -661,21 +705,22 @@ fn verify_proof_action_multiset_invariants() {
         .actions
         .iter()
         .map(|action| action.descriptor().digest().expect("action digest"))
+        .chain([stamped.fee_descriptor().digest().expect("fee digest")])
         .collect();
 
     // Permutation accepts.
     assert!(
         stamped
             .stamp
-            .verify_proof(rng, [digests[1], digests[0]])
+            .verify_proof(rng, digests.iter().rev().copied())
             .expect("proof system verification"),
         "permuted actions must verify"
     );
 
     // Drop rejects.
-    {
+    for index in [0, digests.len() - 1] {
         let mut dropped = digests.clone();
-        dropped.pop();
+        dropped.remove(index);
         assert!(
             !stamped
                 .stamp
@@ -826,21 +871,21 @@ fn read_accepts_distinct_sorted_tachygrams() {
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, _plan, _) = build_output_stamp(rng, pool.anchor(), note);
 
     let mut buf = Vec::new();
     stamp.write(&mut buf).expect("write");
     ProofStamp::read(&*buf).expect("distinct sorted tachygrams must be accepted");
 }
 
-/// `hStampActionsTachyon` survives a `write`/`read` round-trip.
+/// `hStampCoverageTachyon` survives a `write`/`read` round-trip.
 #[test]
 fn covered_actions_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, _plan, _) = build_output_stamp(rng, pool.anchor(), note);
 
     let mut buf: Vec<u8> = Vec::new();
     stamp.write(&mut buf).expect("write");
@@ -859,7 +904,7 @@ fn honest_stamp_commits_to_its_tachygrams() {
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, _plan, _) = build_output_stamp(rng, pool.anchor(), note);
 
     assert_eq!(
         TachygramSetPoly::from_iter(stamp.tachygrams.clone()).commit(),
@@ -875,7 +920,8 @@ fn verify_proof_rejects_mismatched_commitment() {
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let note = wallet.random_note(200);
-    let (honest, plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (honest, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
+    let fee_digest = fee_descriptor.digest().expect("fee digest");
 
     // Publish the real tachygrams under a commitment to a different set.
     let other = Tachygram::from(Fp::random(&mut *rng));
@@ -890,7 +936,7 @@ fn verify_proof_rejects_mismatched_commitment() {
     );
     assert!(
         !forged
-            .verify_proof(rng, [plan.digest().expect("valid plan")])
+            .verify_proof(rng, [plan.digest().expect("valid plan"), fee_digest])
             .expect("verify"),
         "verification must reject an unconfirmed commitment"
     );
@@ -905,7 +951,8 @@ fn proof_alone_does_not_bind_the_published_list() {
     let wallet = WalletSim::random(rng);
     let pool = PoolSim::genesis(rng);
     let note = wallet.random_note(200);
-    let (honest, plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (honest, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
+    let fee_digest = fee_descriptor.digest().expect("fee digest");
 
     // Swap one published tachygram for another, keeping the count and the
     // carried commitment untouched.
@@ -928,7 +975,7 @@ fn proof_alone_does_not_bind_the_published_list() {
 
     assert!(
         tampered
-            .verify_proof(rng, [plan.digest().expect("valid plan")])
+            .verify_proof(rng, [plan.digest().expect("valid plan"), fee_digest])
             .expect("verify"),
         "the proof is over the carried commitment, which is untouched here"
     );
@@ -944,7 +991,7 @@ fn lift_advances_a_stamp_anchor() {
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, _plan, _) = build_output_stamp(rng, pool.anchor(), note);
     let stamped_at = pool.height();
 
     pool.advance(2, |_| random_block(rng, 1, 4));
@@ -972,17 +1019,20 @@ fn lift_then_verify() {
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note = wallet.random_note(200);
-    let (stamp, plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
     let stamped_at = pool.height();
-    let digest = plan.digest().expect("valid plan");
+    let digests = [
+        plan.digest().expect("valid plan"),
+        fee_descriptor.digest().expect("fee digest"),
+    ];
 
     pool.advance(2, |_| random_block(rng, 1, 4));
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
-    let lifted = stamp.prove_lift(rng, [digest], vec![span]).expect("lift");
+    let lifted = stamp.prove_lift(rng, digests, vec![span]).expect("lift");
 
     assert!(
-        lifted.verify_proof(rng, [digest]).expect("verify"),
+        lifted.verify_proof(rng, digests).expect("verify"),
         "a lifted stamp must verify against the actions it covers"
     );
 }
@@ -998,20 +1048,31 @@ fn lift_over_descriptors_then_verify() {
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note = wallet.random_note(200);
-    let (stamp, covered_plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, covered_plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
     let covered_descriptors = BTreeSet::from_iter([covered_plan.descriptor()]);
     let stamped_at = pool.height();
+    let fee_digest = fee_descriptor.digest().expect("fee digest");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
     let lifted = stamp
-        .lift(rng, &covered_descriptors, vec![span])
+        .prove_lift(
+            rng,
+            covered_descriptors
+                .iter()
+                .map(|desc| desc.digest().expect("action digest"))
+                .chain([fee_digest]),
+            vec![span],
+        )
         .expect("lift over the covered descriptors");
 
     assert!(
         lifted
-            .verify_proof(rng, [covered_plan.digest().expect("valid plan")])
+            .verify_proof(
+                rng,
+                [covered_plan.digest().expect("valid plan"), fee_digest]
+            )
             .expect("verify"),
         "a lifted stamp must verify against the actions it covers"
     );
@@ -1027,7 +1088,7 @@ fn lift_rejects_a_foreign_span() {
     pool.advance(3, |_| random_block(rng, 1, 4));
 
     let note = wallet.random_note(200);
-    let (stamp, _plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, _plan, _) = build_output_stamp(rng, pool.anchor(), note);
 
     let mut foreign = PoolSim::genesis(rng);
     foreign.advance(3, |_| random_block(rng, 1, 4));
@@ -1053,20 +1114,23 @@ fn lift_rejects_wrong_digests() {
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note = wallet.random_note(200);
-    let (stamp, plan) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
     let stamped_at = pool.height();
     let digest = plan.digest().expect("valid plan");
     let foreign_digest = random_action(rng).digest().expect("valid action");
+    let fee_digest = fee_descriptor.digest().expect("fee digest");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
     let lifted = stamp
-        .prove_lift(rng, [foreign_digest], vec![span])
+        .prove_lift(rng, [foreign_digest, fee_digest], vec![span])
         .expect("the lift itself cannot see the wrong action set");
 
     assert!(
-        !lifted.verify_proof(rng, [digest]).expect("verify"),
+        !lifted
+            .verify_proof(rng, [digest, fee_digest])
+            .expect("verify"),
         "a stamp lifted under a forged action set must not verify"
     );
 }
@@ -1082,34 +1146,46 @@ fn merge_after_lift() {
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note_a = user_a.random_note(200);
-    let (stamp_a, plan_a) = build_output_stamp(rng, pool.anchor(), note_a);
+    let (stamp_a, plan_a, fee_a) = build_output_stamp(rng, pool.anchor(), note_a);
     let height_a = pool.height();
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note_b = user_b.random_note(300);
-    let (stamp_b, plan_b) = build_output_stamp(rng, pool.anchor(), note_b);
+    let (stamp_b, plan_b, fee_b) = build_output_stamp(rng, pool.anchor(), note_b);
     let height_b = pool.height();
 
     let (desc_a, desc_b) = (
         BTreeSet::from_iter([plan_a.descriptor()]),
         BTreeSet::from_iter([plan_b.descriptor()]),
     );
+    let (fee_set_a, fee_set_b) = (BTreeSet::from([fee_a]), BTreeSet::from([fee_b]));
 
     ProofStamp::merge(
         rng,
-        (stamp_a.clone(), desc_a.clone()),
-        (stamp_b.clone(), desc_b.clone()),
+        (stamp_a.clone(), desc_a.clone(), fee_set_a.clone()),
+        (stamp_b.clone(), desc_b.clone(), fee_set_b.clone()),
     )
     .expect_err("mismatched anchors must not merge");
 
     let span = build_lift_span(rng, &pool, height_a.next().unwrap()..=height_b);
     let lifted_a = stamp_a
-        .prove_lift(rng, [plan_a.digest().expect("valid plan")], vec![span])
+        .prove_lift(
+            rng,
+            [
+                plan_a.digest().expect("valid plan"),
+                fee_a.digest().expect("fee digest"),
+            ],
+            vec![span],
+        )
         .expect("lift onto the later anchor");
 
     assert_eq!(lifted_a.anchor, stamp_b.anchor);
-    ProofStamp::merge(rng, (lifted_a, desc_a), (stamp_b, desc_b))
-        .expect("a lifted stamp merges with one at the anchor it was lifted to");
+    ProofStamp::merge(
+        rng,
+        (lifted_a, desc_a, fee_set_a),
+        (stamp_b, desc_b, fee_set_b),
+    )
+    .expect("a lifted stamp merges with one at the anchor it was lifted to");
 }
 
 /// `merge` requires each side's descriptor list to match the actions its
@@ -1142,11 +1218,11 @@ fn mismatched_merge_descriptors_fail_verification() {
         alloc::vec![],
         alloc::vec![user_b.random_note(300)],
     );
-    let descriptors_a = bundle_a
-        .verify_coverage(&[])
+    let (descriptors_a, fees_a) = bundle_a
+        .verify_coverage(&[], &[])
         .expect("first bundle coverage");
-    let descriptors_b = bundle_b
-        .verify_coverage(&[])
+    let (descriptors_b, fees_b) = bundle_b
+        .verify_coverage(&[], &[])
         .expect("second bundle coverage");
     let foreign = random_action(rng).descriptor();
 
@@ -1154,6 +1230,7 @@ fn mismatched_merge_descriptors_fail_verification() {
         .iter()
         .chain(&descriptors_b)
         .map(|desc| desc.digest().expect("action digest"))
+        .chain(fee_digests(fees_a.iter().chain(&fees_b).copied()))
         .collect();
 
     // `Bundle::verify_coverage` returned the attested input. A caller that
@@ -1164,7 +1241,9 @@ fn mismatched_merge_descriptors_fail_verification() {
         "the foreign descriptor must not overlap the other merge input"
     );
     assert!(
-        !bundle_b.stamp.is_covering(foreign_descriptors.clone()),
+        !bundle_b
+            .stamp
+            .is_covering(foreign_descriptors.clone(), fees_b.iter().copied()),
         "the foreign descriptor must not be covered by the second stamp"
     );
 
@@ -1172,8 +1251,12 @@ fn mismatched_merge_descriptors_fail_verification() {
     // relation: proving succeeds and the compute is spent.
     let merged = ProofStamp::merge(
         rng,
-        (bundle_a.stamp.clone(), descriptors_a.clone()),
-        (bundle_b.stamp.clone(), foreign_descriptors),
+        (
+            bundle_a.stamp.clone(),
+            descriptors_a.clone(),
+            fees_a.clone(),
+        ),
+        (bundle_b.stamp.clone(), foreign_descriptors, fees_b.clone()),
     )
     .expect("merge performs no coverage pre-check");
 
@@ -1190,8 +1273,8 @@ fn mismatched_merge_descriptors_fail_verification() {
     // produce a stamp the same verifier accepts.
     let honest = ProofStamp::merge(
         rng,
-        (bundle_a.stamp, descriptors_a),
-        (bundle_b.stamp, descriptors_b),
+        (bundle_a.stamp, descriptors_a, fees_a),
+        (bundle_b.stamp, descriptors_b, fees_b),
     )
     .expect("merge");
     assert!(

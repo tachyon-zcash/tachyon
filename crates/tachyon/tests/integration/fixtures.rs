@@ -13,18 +13,20 @@ use ragu_pasta::PoseidonFp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
-    ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
+    ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
     QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     action::{self, Action},
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
+    digest::blake2b,
     effect,
     entropy::ActionEntropy,
+    fee,
     keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     stamp::{
-        self, PointerStamp, ProofStamp, StampState,
+        self, PointerStamp, ProofStamp, StampState, Unproven,
         proof::{
             PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
             stamp::{Stamp, StampMerge},
@@ -45,6 +47,42 @@ pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(hash.as_bytes());
     out
+}
+
+/// The spend inputs [`stamp::Plan::prove`] takes: each spend's secret,
+/// spendable and anchor spans.
+pub type SpendInputs = Vec<(
+    Pcd<delegation::NoteSecret>,
+    Pcd<spendable::NoteSpendable>,
+    Vec<(Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+)>;
+
+/// A bundle plan with a zero-value max fee note, for tests that do not price.
+pub fn build_bundle_plan(
+    spends: Vec<action::Plan<effect::Spend>>,
+    outputs: Vec<action::Plan<effect::Output>>,
+) -> bundle::Plan {
+    bundle::Plan::new(
+        spends,
+        outputs,
+        fee::Plan::new(WalletSim::new(shared_sk()).random_note(0)),
+    )
+}
+
+pub fn fee_digests(
+    fees: impl IntoIterator<Item = fee::Descriptor>,
+) -> impl Iterator<Item = ActionDigest> {
+    fees.into_iter()
+        .map(|fee| fee.digest().expect("fee digest"))
+}
+
+pub fn stamp_coverage(descriptors: &[[u8; 64]], fees: &[fee::Descriptor]) -> [u8; 32] {
+    let mut fee_bytes: Vec<[u8; 40]> = fees.iter().copied().map(Into::into).collect();
+    fee_bytes.sort_unstable();
+    blake2b::stamp_coverage_digest(
+        &blake2b::action_descriptor_digest(descriptors),
+        &blake2b::stamp_fees_digest(&fee_bytes),
+    )
 }
 
 pub fn mock_txid(bundle_commitment: [u8; 32]) -> [u8; 32] {
@@ -92,7 +130,7 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
     let ask = wallet.sk.derive_auth_private();
     let note = wallet.random_note(400);
     let (_, _, plan) = build_output_plan(rng, note);
-    let bundle_plan = bundle::Plan::new(alloc::vec![], alloc::vec![plan]);
+    let bundle_plan = build_bundle_plan(alloc::vec![], alloc::vec![plan]);
     let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
     let unproven = bundle_plan
         .sign(rng, &sighash, &ask)
@@ -120,14 +158,30 @@ pub fn build_output_stamp<RNG: CryptoRng>(
     rng: &mut RNG,
     anchor: Anchor,
     note: Note,
-) -> (ProofStamp, action::Plan<effect::Output>) {
+) -> (ProofStamp, action::Plan<effect::Output>, fee::Descriptor) {
+    let (stamp, plan, max_fee) = build_output_stamp_with_fee(rng, anchor, note);
+    (stamp, plan, max_fee.descriptor(value::Positive::ZERO))
+}
+
+pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
+    rng: &mut RNG,
+    anchor: Anchor,
+    note: Note,
+) -> (ProofStamp, action::Plan<effect::Output>, fee::Plan) {
     let (rcv, theta, plan) = build_output_plan(rng, note);
     // An output-only plan never reads the proof authorizing key.
     let pak = WalletSim::new(shared_sk()).pak;
-    let stamp = stamp::Plan::new(vec![], vec![(plan.descriptor(), theta, note, rcv)], anchor)
-        .prove(rng, &pak, vec![])
-        .expect("prove an output stamp");
-    (stamp, plan)
+    let max_fee_note = WalletSim::random(rng).random_note(0);
+    let (stamp, _fee) = stamp::Plan::new(
+        vec![],
+        vec![(plan.descriptor(), theta, note, rcv)],
+        anchor,
+        max_fee_note,
+        value::Positive::ZERO,
+    )
+    .prove(rng, &pak, vec![])
+    .expect("prove an output stamp");
+    (stamp, plan, fee::Plan::new(max_fee_note))
 }
 
 pub fn build_autonome<RNG: CryptoRng>(
@@ -162,16 +216,26 @@ pub fn build_autonome<RNG: CryptoRng>(
 /// this utility will fuse a `StampMerge` without checking for intersection.
 pub fn forge_overlapping_merge<RNG: CryptoRng>(
     rng: &mut RNG,
-    (stamp_a, descriptors_a): (&ProofStamp, &Vec<action::Descriptor>),
-    (stamp_b, descriptors_b): (&ProofStamp, &Vec<action::Descriptor>),
+    (stamp_a, descriptors_a, fee_descriptors_a): (
+        &ProofStamp,
+        &Vec<action::Descriptor>,
+        &[fee::Descriptor],
+    ),
+    (stamp_b, descriptors_b, fee_descriptors_b): (
+        &ProofStamp,
+        &Vec<action::Descriptor>,
+        &[fee::Descriptor],
+    ),
 ) -> Pcd<Stamp> {
     let left_acts = descriptors_a
         .iter()
         .map(|desc| desc.digest().expect("action digest"))
+        .chain(fee_digests(fee_descriptors_a.iter().copied()))
         .collect::<ActionSetPoly>();
     let right_acts = descriptors_b
         .iter()
         .map(|desc| desc.digest().expect("action digest"))
+        .chain(fee_digests(fee_descriptors_b.iter().copied()))
         .collect::<ActionSetPoly>();
     let left_tg = stamp_a
         .tachygrams
@@ -199,6 +263,9 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
         .iter()
         .chain(descriptors_b.iter())
         .map(|desc| desc.digest().expect("action digest"))
+        .chain(fee_digests(
+            fee_descriptors_a.iter().chain(fee_descriptors_b).copied(),
+        ))
         .collect::<ActionSetPoly>();
     let merged_tg = stamp_a
         .tachygrams
@@ -1524,6 +1591,25 @@ impl WalletSim {
         spends: Vec<(Note, Pcd<spendable::NoteSpendable>)>,
         output_notes: Vec<Note>,
     ) -> Bundle<ProofStamp> {
+        let (bundle_plan, signed, spend_pcds) =
+            self.signed(rng, spends, output_notes, self.random_note(0));
+        signed.stamp(
+            bundle_plan
+                .stamp_plan(anchor, value::Positive::ZERO)
+                .prove(rng, &self.pak, spend_pcds)
+                .expect("prove autonome"),
+        )
+    }
+
+    /// Sign a bundle of these actions and the max fee note, returning the
+    /// plan, the signed bundle and the spend inputs to prove it with.
+    pub fn signed<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        spends: Vec<(Note, Pcd<spendable::NoteSpendable>)>,
+        output_notes: Vec<Note>,
+        max_fee_note: Note,
+    ) -> (bundle::Plan, Bundle<Unproven>, SpendInputs) {
         let ask = self.sk.derive_auth_private();
 
         let mut spend_plans = Vec::with_capacity(spends.len());
@@ -1547,18 +1633,51 @@ impl WalletSim {
             })
             .collect();
 
-        let bundle_plan = bundle::Plan::new(spend_plans, output_plans);
+        let bundle_plan =
+            bundle::Plan::new(spend_plans, output_plans, fee::Plan::new(max_fee_note));
         let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
-        let unproven = bundle_plan
+        let signed = bundle_plan
             .sign(rng, &sighash, &ask)
             .expect("sign autonome");
 
-        let stamp_plan = bundle_plan.stamp_plan(anchor);
-        let stamp = stamp_plan
-            .prove(rng, &self.pak, spend_pcds)
-            .expect("prove autonome stamp");
+        (bundle_plan, signed, spend_pcds)
+    }
 
-        unproven.stamp(stamp)
+    /// A signed bundle spending `spend_value` into an output of
+    /// `output_value` and a max fee note of `max_fee`, all owned by this
+    /// wallet, with its plan, its spend inputs, their anchor, the max fee note
+    /// and the pool it spends from.
+    pub fn fee_bundle<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        spend_value: u64,
+        output_value: u64,
+        max_fee: u64,
+    ) -> (
+        bundle::Plan,
+        Bundle<Unproven>,
+        SpendInputs,
+        Anchor,
+        Note,
+        PoolSim,
+    ) {
+        let spend_note = self.random_note(spend_value);
+        let output_note = self.random_note(output_value);
+        let max_fee_note = self.random_note(max_fee);
+
+        let mut pool = PoolSim::genesis(rng);
+        pool.mine(random_block_with(rng, &[vec![spend_note.commitment()]], 50));
+        let height = pool.height();
+        let spendable_pcd = self.fresh_spend(rng, &pool, height, &spend_note);
+        let anchor = spendable_pcd.data().2;
+
+        let (bundle_plan, signed, spend_pcds) = self.signed(
+            rng,
+            vec![(spend_note, spendable_pcd)],
+            vec![output_note],
+            max_fee_note,
+        );
+        (bundle_plan, signed, spend_pcds, anchor, max_fee_note, pool)
     }
 }
 

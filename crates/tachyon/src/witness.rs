@@ -6,6 +6,8 @@
 //! ready to seed or fuse through `PROOF_SYSTEM`. Functions are named after the
 //! step they serve. Steps with an empty `()` witness need no utility.
 
+use alloc::collections::BTreeSet;
+
 use pasta_curves::Fp;
 use ragu::{Header, Step};
 
@@ -13,6 +15,7 @@ use crate::{
     collections,
     constants::EVIDENCE_TREE_ARITY,
     entropy::ActionEntropy,
+    fee,
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     nullifier::Nullifier,
@@ -29,9 +32,10 @@ use crate::{
             QrStampIntakeSeed, QrSummaryIntake, QrUnspentInit,
         },
         spendable::{QrSpendableInit, SpendableInit},
-        stamp::{OutputStamp, SpendStamp, StampLift},
+        stamp::{OutputStamp, SpendStamp, StampFee, StampLift},
         summary::{SummaryAdvance, SummarySeed},
     },
+    value,
 };
 
 type StepLeft<S> = <<S as Step>::Left as Header>::Data;
@@ -522,5 +526,55 @@ pub fn spend_stamp(
         pak,
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]),
+    )
+}
+
+/// Prepare the witness for [`StampFee`]: `(max_fee_note, fee,
+/// (left_action_set, left_tachygram_set), (output_action_set,
+/// output_tachygram_set), (fee_action_set, fee_tachygram_set))`.
+///
+/// `action_digests` and `tachygrams` are the left stamp's sets. Each fee
+/// singleton set contains one element: the fee digest or the fee change note's
+/// commitment. The output set polynomials represent the unions.
+///
+/// # Panics
+///
+/// Panics if the max fee note's blind or `rcm` is zero.
+#[must_use]
+pub fn stamp_fee(
+    (_left, _right): (StepLeft<StampFee>, StepRight<StampFee>),
+    max_fee_note: Note,
+    fee: value::Positive,
+    action_digests: &BTreeSet<ActionDigest>,
+    tachygrams: &BTreeSet<Tachygram>,
+) -> StepWitness<'static, StampFee> {
+    let max_fee = fee::Plan::new(max_fee_note);
+    #[expect(
+        clippy::expect_used,
+        reason = "a planned max fee commitment is never the identity"
+    )]
+    let fee_digest = max_fee.descriptor(fee).digest().expect("fee digest");
+    let fee_change_commitment = max_fee.change_commitment(fee);
+
+    let mut output_action_digests = action_digests.clone();
+    output_action_digests.insert(fee_digest);
+    let mut output_tachygrams = tachygrams.clone();
+    output_tachygrams.insert(fee_change_commitment);
+
+    (
+        max_fee_note,
+        fee,
+        (
+            action_digests.iter().copied().collect(),
+            tachygrams.iter().copied().collect(),
+        ),
+        (
+            output_action_digests.into_iter().collect(),
+            output_tachygrams.into_iter().collect(),
+        ),
+        (
+            ActionSetPoly::from_iter([fee_digest]),
+            TachygramSetPoly::from_iter([fee_change_commitment]),
+        ),
     )
 }

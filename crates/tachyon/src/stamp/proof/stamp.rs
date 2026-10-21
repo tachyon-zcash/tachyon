@@ -4,23 +4,27 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use pasta_curves::{Ep, Eq, Fp, Fq};
+use ff::PrimeField as _;
+use pasta_curves::{Ep, EpAffine, Eq, Fp, Fq, arithmetic::CurveAffine as _};
 use ragu::{Header, Index, Step, Suffix};
 
 use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 use crate::{
     ActionSetPoly, TachygramSetPoly,
+    constants::MAX_MONEY,
+    digest::poseidon,
     entropy::ActionEntropy,
     keys::{ProofAuthorizingKey, private},
-    note,
+    note::{self, Note},
     primitives::{
         ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
     },
-    ragu_constraint::{enforce_equal_point, enforce_zero},
+    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
+    value,
 };
 
-/// Header for a stamp, representing either a single action or many
+/// Header for a stamp, representing either a single covered item or many
 /// transactions.
 ///
 /// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
@@ -32,8 +36,12 @@ use crate::{
 /// [`StampMerge`] binds its witnessed input sets to the child headers
 /// and enforces each output commitment as the product of its inputs.
 ///
+/// [`StampFee`] multiplies each set polynomial by a fee singleton set
+/// polynomial.
+///
 /// `anchor` is a free witness at [`OutputStamp`]. At [`SpendStamp`] it comes
-/// from the left [`SpendHeader`]. At [`StampMerge`] the step requires
+/// from the left [`SpendHeader`]. At [`StampFee`] it comes from the left
+/// [`Stamp`]. At [`StampMerge`] the step requires
 /// `left.anchor == right.anchor`. At [`StampLift`] the step checks that
 /// `stamp.anchor` is the right [`AnchorSpan`]'s `anchor_start` or a member,
 /// and moves it to the span's `anchor_end`.
@@ -343,5 +351,141 @@ impl Step for StampLift {
 
         let data = (stamp_action_commit, stamp_tachygram_commit, span_anchor_end);
         Ok((data, ()))
+    }
+}
+
+/// Adds the fee digest to a stamp's action set and the fee change note's
+/// commitment to its tachygram set.
+#[derive(Debug)]
+pub struct StampFee;
+
+impl Step for StampFee {
+    type Aux<'source> = ();
+    type Left = Stamp;
+    type Output = Stamp;
+    type Right = ();
+    type Witness<'source> = (
+        Note,
+        value::Positive,
+        (ActionSetPoly, TachygramSetPoly),
+        (ActionSetPoly, TachygramSetPoly),
+        (ActionSetPoly, TachygramSetPoly),
+    );
+
+    const INDEX: Index = Index::new(33);
+
+    fn witness<'source>(
+        &self,
+        ctx: &mut ragu::StepCtx<'_>,
+        (
+            max_fee_note,
+            fee,
+            (left_action_set, left_tachygram_set),
+            (output_action_set, output_tachygram_set),
+            (fee_action_set, fee_tachygram_set),
+        ): Self::Witness<'source>,
+        (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
+        _right: <Self::Right as Header>::Data,
+    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
+        enforce_equal_point(
+            Eq::from(left_action_set.commit()),
+            Eq::from(left_action_commit),
+            "StampFee: left action accumulator must commit to header commit",
+        )?;
+        enforce_equal_point(
+            Eq::from(left_tachygram_set.commit()),
+            Eq::from(left_tachygram_commit),
+            "StampFee: left tachygram accumulator must commit to header commit",
+        )?;
+
+        let max_fee = u64::from(max_fee_note.value);
+        if max_fee > MAX_MONEY {
+            return Err(ragu_core::Error::InvalidWitness(
+                "StampFee: maximum fee exceeds MAX_MONEY".into(),
+            ));
+        }
+
+        // `maxfee` and `fee` are below 2^64, far below the field modulus, so the
+        // field difference lies in [0, MAX_MONEY] exactly when the integer
+        // difference does.
+        let change = max_fee
+            .checked_sub(u64::from(fee))
+            .filter(|&change| change <= MAX_MONEY)
+            .ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("StampFee: change is out of range".into())
+            })?;
+
+        let (pk, psi, rcm) = (
+            Fp::from(max_fee_note.pk),
+            Fp::from(max_fee_note.psi),
+            Fp::from(max_fee_note.rcm),
+        );
+
+        // TODO: a real circuit squeezes r in Fp and needs its bit
+        // decomposition to use it as an Fq scalar (p < q, so no reduction);
+        // mock ragu embeds it natively.
+        let blind = enforce_nonzero(
+            poseidon::fee_blind(pk, psi, rcm),
+            "StampFee: max fee note blind is zero",
+        )?;
+        #[expect(
+            clippy::expect_used,
+            reason = "p < q, so every Fp repr is canonical in Fq"
+        )]
+        let cv_max_fee = value::Trapdoor::from_scalar(
+            Option::from(Fq::from_repr(blind.to_repr())).expect("p < q"),
+        )
+        .commit(-max_fee_note.value);
+        let cv_max_fee_coords = EpAffine::from(cv_max_fee)
+            .coordinates()
+            .into_option()
+            .ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("StampFee: fee commitment is the identity".into())
+            })?;
+        let fee_digest = poseidon::fee_digest(cv_max_fee_coords, u64::from(fee));
+
+        // A zero root leaves the set polynomial factor `(X - tg)` trivial.
+        let fee_change_commitment = enforce_nonzero(
+            poseidon::note_commitment(rcm, pk, change, psi),
+            "StampFee: fee change note commitment is zero",
+        )?;
+
+        enforce_poly_roots(
+            ctx,
+            fee_action_set.as_ref(),
+            &[fee_digest],
+            "StampFee: fee action set does not commit to the fee digest",
+        )?;
+
+        enforce_poly_roots(
+            ctx,
+            fee_tachygram_set.as_ref(),
+            &[fee_change_commitment],
+            "StampFee: fee tachygram set does not commit to the fee change note",
+        )?;
+
+        enforce_poly_product(
+            ctx,
+            left_action_set.as_ref(),
+            fee_action_set.as_ref(),
+            output_action_set.as_ref(),
+            "StampFee: output action set must be the product of left and fee action sets",
+        )?;
+        enforce_poly_product(
+            ctx,
+            left_tachygram_set.as_ref(),
+            fee_tachygram_set.as_ref(),
+            output_tachygram_set.as_ref(),
+            "StampFee: output tachygram set must be the product of left and fee tachygram sets",
+        )?;
+
+        Ok((
+            (
+                output_action_set.commit(),
+                output_tachygram_set.commit(),
+                left_anchor,
+            ),
+            (),
+        ))
     }
 }

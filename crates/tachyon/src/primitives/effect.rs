@@ -7,18 +7,9 @@
 //! to enforce the spend/output distinction at compile time.
 
 use ff::PrimeField as _;
-use pasta_curves::{Fp, Fq};
+use pasta_curves::Fq;
 
 use crate::{digest::poseidon, entropy::ActionEntropy, note, value};
-
-/// Embeds a base-field element in the scalar field, which is larger.
-#[expect(
-    clippy::expect_used,
-    reason = "p < q, so every Fp repr is canonical in Fq"
-)]
-fn embed(alpha: Fp) -> Fq {
-    Option::from(Fq::from_repr(alpha.to_repr())).expect("p < q")
-}
 
 mod sealed {
     pub trait Sealed: Copy {}
@@ -46,8 +37,15 @@ pub struct Spend;
 pub struct Output;
 
 impl Effect for Spend {
+    #[expect(
+        clippy::expect_used,
+        reason = "p < q, so every Fp repr is canonical in Fq"
+    )]
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        embed(poseidon::alpha_spend(theta.0, cm.into()))
+        Option::from(Fq::from_repr(
+            poseidon::alpha_spend(theta.0, cm.into()).to_repr(),
+        ))
+        .expect("p < q")
     }
 
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment {
@@ -56,8 +54,15 @@ impl Effect for Spend {
 }
 
 impl Effect for Output {
+    #[expect(
+        clippy::expect_used,
+        reason = "p < q, so every Fp repr is canonical in Fq"
+    )]
     fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
-        embed(poseidon::alpha_output(theta.0, cm.into()))
+        Option::from(Fq::from_repr(
+            poseidon::alpha_output(theta.0, cm.into()).to_repr(),
+        ))
+        .expect("p < q")
     }
 
     fn commit_value(rcv: value::Trapdoor, value: value::Positive) -> value::Commitment {

@@ -16,6 +16,7 @@ pub mod bundle;
 pub mod constants;
 pub mod digest;
 pub mod entropy;
+pub mod fee;
 pub mod keys;
 pub mod note;
 pub mod nullifier;

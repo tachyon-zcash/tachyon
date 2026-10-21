@@ -42,6 +42,36 @@ fn hash<const L: usize>(input: [Fp; L]) -> Fp {
     *squeezed.value().take()
 }
 
+const FEE_BLIND_DOMAIN: &[u8; 16] = b"Tachyon-FeeBlind";
+
+/// A max fee note's value commitment blind,
+/// $r = \mathsf{Poseidon}(\texttt{Tachyon-FeeBlind}, \mathsf{pk}, \psi,
+/// \mathsf{rcm})$.
+#[must_use]
+pub fn fee_blind(pk: Fp, psi: Fp, rcm: Fp) -> Fp {
+    hash::<4>([
+        Fp::from_u128(u128::from_le_bytes(*FEE_BLIND_DOMAIN)),
+        pk,
+        psi,
+        rcm,
+    ])
+}
+
+const FEE_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-FeeDg\0\0\0";
+
+/// A fee digest, $d_\mathsf{fee} = \mathsf{Poseidon}(\texttt{Tachyon-FeeDg},
+/// x(\mathsf{cv}_\mathsf{maxfee}), y(\mathsf{cv}_\mathsf{maxfee}),
+/// \mathsf{fee})$.
+#[must_use]
+pub fn fee_digest(cv_max_fee: Coordinates<EpAffine>, fee: u64) -> Fp {
+    hash::<4>([
+        Fp::from_u128(u128::from_le_bytes(*FEE_DIGEST_DOMAIN)),
+        *cv_max_fee.x(),
+        *cv_max_fee.y(),
+        Fp::from(fee),
+    ])
+}
+
 const ACTION_DIGEST_DOMAIN: &[u8; 16] = b"Tachyon-ActionDg";
 
 /// Derives an action digest from action fields.
