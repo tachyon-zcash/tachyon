@@ -32,6 +32,7 @@ Aggregates may be further named:
   For example, a miner's coin*base* transaction might be an aggregate, and also output miner rewards via Tachyon action.
 
 When stripped, an innocent contributes no actions but still names a covering transaction: its `tachyonAggregateId` is a nonzero reference to the aggregate that absorbed its stamp, never the all-zero `wtxid`.
+It retains its fee descriptor and binding signature.
 
 [^bundle-format]: See [Bundles](./bundle.md) to understand bundle format.
 
@@ -50,11 +51,11 @@ Aggregators collect autonomes or existing aggregates and merge their stamps:
 4. Merge stamps
    - Merge tachygrams (exclusive sets)
    - Merge proofs
-5. For an innocent aggregate, apply its own zero fee with `StampFee`
+5. For an innocent aggregate, prove its own zero fee with `FeeSeed` and merge the others' stamps into it
 6. Serialize and compress the merged stamp
 7. Publish aggregate transaction
 
-An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp plan, `Plan::innocent`, holds the adjuncts' stamps; proving merges them and then runs `StampFee` at a zero fee.
+An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-note), so its stamp covers its own fee descriptor as well as the adjuncts'. Its stamp comes from an empty `Plan::prove`, which runs `FeeSeed`, and then absorbs the adjuncts' stamps with `ProofStamp::merge`.
 
 <!-- TODO
 - Explain tachygram set union validation algorithm

@@ -177,7 +177,7 @@ Each path consumes the same action plans but produces a different component of t
 
 - **Authorizing**: custody derives `rsk` per spend action and signs the transaction sighash; output actions are signed by the user device.
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
-- **Proving**: each action plan yields a leaf stamp; leaves merge into a single Ragu PCD stamp, and [$\mathsf{StampFee}$](./fee.md#fee-change-note) applies the fee to it.
+- **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [$\mathsf{FeeFuse}$](./fee.md#fee-change-note) applies the fee to produce a stamp. A zero-action plan uses $\mathsf{FeeSeed}$.
 
 ```mermaid
 flowchart LR
@@ -224,12 +224,15 @@ flowchart LR
     subgraph proving["proving flow"]
         leaf@{ shape: st-rect, label: "leaf" }
         subgraph prover["proving device"]
-            merge((merge))
-            stamp_fee((StampFee))
+            merge((ActionMerge))
+            actions[Actions]
+            fee_fuse((FeeFuse))
+            fee_seed((FeeSeed))
         end
     end
-    action_plan -.- leaf -.- merge -.- stamp_fee -.- stamp
-    max_fee_note -.- stamp_fee -.- fee
+    action_plan -.- leaf -.- merge -.- actions -.- fee_fuse -.- stamp
+    zero_actions["0 actions"] -.- fee_seed -.- stamp
+    max_fee_note -.- fee_fuse & fee_seed -.- fee
 
 
     sighash ~~~ binding
@@ -363,23 +366,23 @@ and Proving
                 note over User: action_root = Poseidon(cv || rk)
                 note over User: action_poly = (X - action_root)
                 note over User: tg_poly = product over tg_roots of (X - tg_root)
-                note over User: pcd: leaf stamp(Commit(action_poly), Commit(tg_poly), anchor)
+                note over User: pcd: actions(Commit(action_poly), Commit(tg_poly), anchor)
             end
         end
 
         create participant Stamper
-        User ->> Stamper: leaf stamps, tachygrams
+        User ->> Stamper: leaf actions, tachygrams
 
 
-        loop while stamps > 1
+        loop while actions > 1
             critical left(action_poly, tg_poly, anchor), right(action_poly, tg_poly, anchor)
                 note over Stamper: assert left.anchor == right.anchor
                 note over Stamper: merged_action = left.action_poly * right.action_poly
                 note over Stamper: merged_tg = left.tg_poly * right.tg_poly
-                note over Stamper: pcd: stamp(Commit(merged_action), Commit(merged_tg), anchor)
+                note over Stamper: pcd: actions(Commit(merged_action), Commit(merged_tg), anchor)
             end
         end
-        critical stamp(action_poly, tg_poly, anchor), max_fee_note, fee
+        critical actions(action_poly, tg_poly, anchor), max_fee_note, fee
             note over Stamper: cv_maxfee = Pedersen(-maxfee, Poseidon(pk, psi, rcm))
             note over Stamper: fee_digest = Poseidon(x(cv_maxfee), y(cv_maxfee), fee)
             note over Stamper: cm_chg = Poseidon(rcm, pk, maxfee - fee, psi)
