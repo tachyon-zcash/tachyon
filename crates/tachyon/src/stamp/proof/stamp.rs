@@ -457,7 +457,7 @@ impl Step for FeeFuse {
     type Right = ();
     type Witness<'source> = (
         Note,
-        value::Positive,
+        value::Balance,
         (ActionSetPoly, TachygramSetPoly),
         (ActionSetPoly, TachygramSetPoly),
         (ActionSetPoly, TachygramSetPoly),
@@ -546,7 +546,7 @@ impl Step for FeeSeed {
     /// `(max_fee_note, fee, anchor, fee_action_set, fee_tachygram_set)`
     type Witness<'source> = (
         Note,
-        value::Positive,
+        value::Balance,
         Anchor,
         ActionSetPoly,
         TachygramSetPoly,
@@ -587,19 +587,19 @@ impl Step for FeeSeed {
     }
 }
 
-fn fee_opening(max_fee_note: Note, fee: value::Positive) -> ragu_core::Result<(Fp, Fp)> {
-    let max_fee = u64::from(max_fee_note.value);
-    if max_fee > MAX_MONEY {
+fn fee_opening(max_fee_note: Note, fee: value::Balance) -> ragu_core::Result<(Fp, Fp)> {
+    let max_fee = i64::from(max_fee_note.value);
+    if !(0..=MAX_MONEY.cast_signed()).contains(&max_fee) {
         return Err(ragu_core::Error::InvalidWitness(
             "FeeFuse: maximum fee exceeds MAX_MONEY".into(),
         ));
     }
 
-    // `maxfee` and `fee` are below 2^64, far below the field modulus, so the
-    // field difference lies in [0, MAX_MONEY] exactly when the integer
-    // difference does.
+    // maxfee = fee + change has integer meaning: maxfee and change are in
+    // [0, MAX_MONEY], fee is signed, and 3 * MAX_MONEY < p.
     let change = max_fee
-        .checked_sub(u64::from(fee))
+        .checked_sub(i64::from(fee))
+        .and_then(|change| u64::try_from(change).ok())
         .filter(|&change| change <= MAX_MONEY)
         .ok_or_else(|| {
             ragu_core::Error::InvalidWitness("FeeFuse: change is out of range".into())
@@ -622,7 +622,7 @@ fn fee_opening(max_fee_note: Note, fee: value::Positive) -> ragu_core::Result<(F
 fn fee_singletons(
     ctx: &mut ragu::StepCtx<'_>,
     cv_max_fee: value::Commitment,
-    fee: value::Positive,
+    fee: value::Balance,
     fee_change_commitment: Fp,
     fee_action_set: &ActionSetPoly,
     fee_tachygram_set: &TachygramSetPoly,

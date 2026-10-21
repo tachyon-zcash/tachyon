@@ -267,7 +267,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         &action_digests,
         &actions.stamp.tachygrams,
     );
-    excess_witness.1 = zat(301);
+    excess_witness.1 = zat(301).into();
     let excess = PROOF_SYSTEM
         .fuse(
             rng,
@@ -710,7 +710,7 @@ fn actions_proof_cannot_substitute_for_a_stamp() {
 }
 
 #[test]
-fn fee_seed_rejects_nonzero_value_and_fee() {
+fn fee_seed_rejects_nonzero_value_and_positive_fee() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
     let anchor = PoolSim::genesis(rng).anchor();
@@ -722,7 +722,7 @@ fn fee_seed_rejects_nonzero_value_and_fee() {
             forged.0.value = zat(1);
             "FeeSeed: maximum fee must be zero"
         } else {
-            forged.1 = zat(1);
+            forged.1 = zat(1).into();
             "FeeFuse: change is out of range"
         };
         let err = PROOF_SYSTEM
@@ -734,6 +734,30 @@ fn fee_seed_rejects_nonzero_value_and_fee() {
         };
         assert_eq!(inner.to_string(), expected);
     }
+
+    let claim = value::Balance::try_from(-9).unwrap();
+    let descriptor = fee::Descriptor {
+        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+        value: claim,
+    };
+    let payout = Note {
+        value: zat(9),
+        ..max_fee_note
+    };
+    let (pcd, ()) = PROOF_SYSTEM
+        .seed(
+            rng,
+            FeeSeed,
+            (
+                max_fee_note,
+                claim,
+                anchor,
+                ActionSetPoly::from_iter([descriptor.digest().unwrap()]),
+                TachygramSetPoly::from_iter([payout.commitment().into()]),
+            ),
+        )
+        .expect("negative fee seed");
+    assert!(PROOF_SYSTEM.verify(&pcd, rng).unwrap());
 }
 
 /// `FeeSeed` binds each singleton set to the fee digest or the fee change

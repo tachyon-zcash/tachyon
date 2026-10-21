@@ -583,7 +583,7 @@ pub fn fee_fuse(
 
     (
         max_fee_note,
-        fee,
+        fee.into(),
         (
             action_digests.iter().copied().collect(),
             tachygrams.iter().copied().collect(),
@@ -629,7 +629,7 @@ pub fn fee_seed(
     };
     (
         max_fee_note,
-        fee,
+        fee.into(),
         anchor,
         ActionSetPoly::from_iter([digest]),
         TachygramSetPoly::from_iter([Tachygram::from(fee_change_note.commitment())]),
