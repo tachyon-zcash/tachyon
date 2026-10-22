@@ -342,8 +342,8 @@ impl ProofStamp {
 /// The statement is each action's descriptor `(cv, rk)`, the fee descriptor,
 /// the adjuncts' descriptors, and the `anchor`. The planned witnesses are each
 /// action's `theta` and `rcv`, each output's `note`, and the max fee note with
-/// the `fee` it pays. A spend's note comes from its
-/// [`NoteSecret`](delegation::NoteSecret) PCD at [`prove`](Self::prove).
+/// the `fee` it pays and the derived fee change note. A spend's note comes from
+/// its [`delegation::NoteSecret`] PCD at [`Self::prove`].
 ///
 /// Construct via [`Plan::new`], via [`Plan::innocent`] for an innocent
 /// aggregate, or via
@@ -356,6 +356,7 @@ pub struct Plan {
     anchor: Anchor,
     max_fee_note: Note,
     fee: value::Positive,
+    fee_change_note: Note,
     adjuncts: Vec<(
         ProofStamp,
         BTreeSet<action::Descriptor>,
@@ -365,21 +366,33 @@ pub struct Plan {
 
 impl Plan {
     /// Create a stamp plan from paired action descriptors and witnesses, the
-    /// max fee note and the fee, with no adjuncts.
+    /// max fee note and the fee, with no adjuncts. Derives and stores the fee
+    /// change note.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the fee exceeds the max fee note's value.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
         outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
         anchor: Anchor,
         max_fee_note: Note,
         fee: value::Positive,
     ) -> Self {
+        #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+        let fee_change_note = Note {
+            value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
+                .expect("fee should not exceed max fee"),
+            ..max_fee_note
+        };
         Self {
             spends,
             outputs,
             anchor,
             max_fee_note,
             fee,
+            fee_change_note,
             adjuncts: Vec::new(),
         }
     }
@@ -387,6 +400,7 @@ impl Plan {
     /// Plan an innocent aggregate's stamp: no actions, the `adjuncts` with
     /// their descriptors, and a zero-value max fee note at a zero fee. The
     /// anchor is the adjuncts' anchor, which [`StampMerge`] binds to be equal.
+    /// At zero fee, the fee change note is the max fee note itself.
     #[must_use]
     pub fn innocent(
         max_fee_note: Note,
@@ -404,6 +418,7 @@ impl Plan {
                 .map_or_else(Anchor::default, |adjunct| adjunct.0.anchor),
             max_fee_note,
             fee: value::Positive::ZERO,
+            fee_change_note: max_fee_note,
             adjuncts,
         }
     }
@@ -421,22 +436,23 @@ impl Plan {
     /// must end at the plan's anchor. For each **output**,
     /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
     ///
-    /// The planned stamps, or an innocent plan's adjunct stamps, are
-    /// recursively merged via [`StampMerge`]. [`StampFee`] then applies the
-    /// fee. Returns the stamp with the fee it applied, for
-    /// [`Bundle::stamp`](crate::Bundle::stamp).
+    /// Stamps, including an innocent plan's adjuncts, are recursively merged
+    /// via [`StampMerge`] into a single stamp, whose coverage is the planned
+    /// descriptors. [`StampFee`] then applies the fee. Returns the stamp with
+    /// the fee it applied, for [`super::Bundle::stamp`].
     ///
     /// # Errors
     ///
-    /// - [`ProveError::MissingPcd`] if there are no actions and no adjuncts,
-    ///   the spend PCDs do not match, or a spend does not reach the anchor.
-    /// - [`ProveError::ActionDigest`] if an action digest cannot be computed.
-    /// - [`ProveError::ProofFailed`] if a proof-system step fails, as it does
-    ///   for a fee above the maximum.
+    /// - [`ProveError::MissingPcd`] if the plan has no actions and no adjuncts,
+    ///   the spend PCDs do not match the planned spends, or a spend does not
+    ///   reach the plan's anchor.
+    /// - [`ProveError::ActionDigest`] if a proved action has no digest, or an
+    ///   adjunct's action or fee digest cannot be computed.
+    /// - [`ProveError::ProofFailed`] if a proof-system step fails.
     ///
     /// # Panics
     ///
-    /// Panics if the max fee note's blind or `rcm` is zero.
+    /// Panics if the max fee note's `rcm` is zero.
     #[expect(
         clippy::type_complexity,
         reason = "each spend's secret, spendable and anchor spans"
@@ -601,9 +617,14 @@ impl Plan {
             .map_err(ProveError::ProofFailed)?
             .into_parts();
 
-        let max_fee = fee::Plan::new(self.max_fee_note);
-        fee_descriptors.insert(max_fee.descriptor(self.fee));
-        tachygrams.insert(max_fee.change_commitment(self.fee));
+        fee_descriptors.insert(fee::Descriptor {
+            max_commitment: self
+                .max_fee_note
+                .fee_blind()
+                .commit(-self.max_fee_note.value),
+            value: self.fee,
+        });
+        tachygrams.insert(self.fee_change_note.commitment().into());
 
         Ok((
             ProofStamp {
@@ -937,9 +958,35 @@ impl ProofStamp {
         })
     }
 
+    /// Advances the stamp's anchor along `spans`, computing the action digests
+    /// from the covered descriptors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError`] if an action digest cannot be computed, no span
+    /// is provided, or a proof-system step fails.
+    pub fn lift<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        descriptors: &BTreeSet<action::Descriptor>,
+        fee_descriptors: &BTreeSet<fee::Descriptor>,
+        spans: Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+    ) -> Result<Self, ProveError> {
+        let action_digests = descriptors
+            .iter()
+            .map(action::Descriptor::digest)
+            .chain(fee_descriptors.iter().map(fee::Descriptor::digest))
+            .collect::<Result<BTreeSet<ActionDigest>, ActionDigestError>>()
+            .map_err(ProveError::ActionDigest)?;
+
+        self.prove_lift(rng, action_digests, spans)
+    }
+
     /// Merges two stamps into one covering stamp.
     ///
     /// Each side pairs a stamp with its covered action and fee descriptors.
+    /// The action digests for the merge proof and the merged
+    /// `covered_actions` are both derived from the descriptor lists.
     ///
     /// TODO: confirm desc list against stamp? it's forbidden by the proof
     /// system, but we might want to fail early.

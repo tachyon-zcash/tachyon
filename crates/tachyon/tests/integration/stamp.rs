@@ -115,10 +115,12 @@ fn plan_prove_rejects_invalid_inputs() {
         ]
     };
     let max_fee_note = user.random_note(0);
-    let fee_digest = fee::Plan::new(max_fee_note)
-        .descriptor(value::Positive::ZERO)
-        .digest()
-        .expect("fee digest");
+    let fee_digest = fee::Descriptor {
+        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+        value: value::Positive::ZERO,
+    }
+    .digest()
+    .expect("fee digest");
 
     let zero = value::Positive::ZERO;
 
@@ -264,10 +266,12 @@ fn plan_prove_lifts_a_spend_along_spans() {
     let digests = [
         spend.digest().expect("action digest"),
         output.digest().expect("action digest"),
-        fee::Plan::new(max_fee_note)
-            .descriptor(value::Positive::ZERO)
-            .digest()
-            .expect("fee digest"),
+        fee::Descriptor {
+            max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+            value: value::Positive::ZERO,
+        }
+        .digest()
+        .expect("fee digest"),
     ];
 
     let one = vec![build_lift_span(rng, &pool, cm_height..=plan_height)];
@@ -1021,18 +1025,20 @@ fn lift_then_verify() {
     let note = wallet.random_note(200);
     let (stamp, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
     let stamped_at = pool.height();
-    let digests = [
-        plan.digest().expect("valid plan"),
-        fee_descriptor.digest().expect("fee digest"),
-    ];
+    let digest = plan.digest().expect("valid plan");
+    let fee_digest = fee_descriptor.digest().expect("fee digest");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
-    let lifted = stamp.prove_lift(rng, digests, vec![span]).expect("lift");
+    let lifted = stamp
+        .prove_lift(rng, [digest, fee_digest], vec![span])
+        .expect("lift");
 
     assert!(
-        lifted.verify_proof(rng, digests).expect("verify"),
+        lifted
+            .verify_proof(rng, [digest, fee_digest])
+            .expect("verify"),
         "a lifted stamp must verify against the actions it covers"
     );
 }
@@ -1050,6 +1056,7 @@ fn lift_over_descriptors_then_verify() {
     let note = wallet.random_note(200);
     let (stamp, covered_plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
     let covered_descriptors = BTreeSet::from_iter([covered_plan.descriptor()]);
+    let fee_descriptors = BTreeSet::from_iter([fee_descriptor]);
     let stamped_at = pool.height();
     let fee_digest = fee_descriptor.digest().expect("fee digest");
 
@@ -1057,14 +1064,7 @@ fn lift_over_descriptors_then_verify() {
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
     let lifted = stamp
-        .prove_lift(
-            rng,
-            covered_descriptors
-                .iter()
-                .map(|desc| desc.digest().expect("action digest"))
-                .chain([fee_digest]),
-            vec![span],
-        )
+        .lift(rng, &covered_descriptors, &fee_descriptors, vec![span])
         .expect("lift over the covered descriptors");
 
     assert!(

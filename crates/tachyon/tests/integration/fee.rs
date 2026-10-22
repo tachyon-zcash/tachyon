@@ -75,7 +75,7 @@ fn coverage_of(bundles: &[&Bundle<dyn StampState>]) -> [u8; 32] {
 fn stamp_fee_binds_its_sets() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let (bundle_plan, signed, spend_pcds, anchor, max_fee_note, _pool) =
+    let (bundle_plan, signed, spend_pcds, anchor, max_fee_note) =
         wallet.fee_bundle(rng, 1000, 700, 300);
     let left = signed.stamp(
         bundle_plan
@@ -138,12 +138,11 @@ fn stamp_fee_binds_its_sets() {
     }
 }
 
-/// A signed bundle reprices up to the max fee, and a fee applies once.
 #[test]
-fn fee_reprices_and_applies_once() {
+fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let (bundle_plan, signed, spend_pcds, anchor, max_fee_note, _pool) =
+    let (bundle_plan, signed, spend_pcds, anchor, max_fee_note) =
         wallet.fee_bundle(rng, 1000, 700, 300);
     let sighash = mock_sighash(signed.commitment());
     let prove = |prove_rng: &mut StdRng, fee| {
@@ -155,9 +154,45 @@ fn fee_reprices_and_applies_once() {
 
     assert_eq!(signed.value_balance, value::Balance::ZERO);
 
-    let excess = prove(rng, 301).expect_err("a fee above the maximum must not apply");
-    let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = excess else {
-        panic!("expected ProofFailed(InvalidWitness), got {excess:?}");
+    let zero = prove(rng, 0).expect("prove the feeless base stamp");
+    let action_digests: BTreeSet<ActionDigest> = zero
+        .descriptors()
+        .map(|desc| desc.digest().expect("action digest"))
+        .chain([zero.fee_descriptor().digest().expect("fee digest")])
+        .collect();
+    let stamp_header = (
+        action_digests
+            .iter()
+            .copied()
+            .collect::<ActionSetPoly>()
+            .commit(),
+        zero.stamp.tachygram_set,
+        anchor,
+    );
+    let mut excess_witness = witness::stamp_fee(
+        (stamp_header, ()),
+        max_fee_note,
+        zat(300),
+        &action_digests,
+        &zero.stamp.tachygrams,
+    );
+    excess_witness.1 = zat(301);
+    let excess = PROOF_SYSTEM
+        .fuse(
+            rng,
+            StampFee,
+            excess_witness,
+            zero.stamp
+                .proof
+                .as_ref()
+                .clone()
+                .carry::<Stamp>(stamp_header),
+            Proof::trivial().carry::<()>(()),
+        )
+        .err()
+        .expect("a fee above the maximum must not apply");
+    let ragu_core::Error::InvalidWitness(inner) = excess else {
+        panic!("expected InvalidWitness, got {excess:?}");
     };
     assert_eq!(inner.to_string(), "StampFee: change is out of range");
 
@@ -175,7 +210,6 @@ fn fee_reprices_and_applies_once() {
     }
     assert_eq!(auth_digests.len(), 3, "each fee has its own auth_digest");
 
-    let zero = prove(rng, 0).expect("prove the feeless base stamp");
     let once = prove(rng, 120).expect("first fee application");
 
     let Err(ProveError::ProofFailed(ragu_core::Error::InvalidWitness(repeated))) =
@@ -232,7 +266,7 @@ fn fee_reprices_and_applies_once() {
 fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let (bundle_plan, signed, spend_pcds, anchor, max_fee_note, _pool) =
+    let (bundle_plan, signed, spend_pcds, anchor, max_fee_note) =
         wallet.fee_bundle(rng, 1000, 700, 300);
     let sighash = mock_sighash(signed.commitment());
 
@@ -252,7 +286,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
 
     let (unapplied_stamp, output_plan, _) =
         build_output_stamp(rng, anchor, wallet.random_note(500));
-    let unapplied_plan = bundle::Plan::new(vec![], vec![output_plan], fee::Plan::new(max_fee_note));
+    let unapplied_plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
     let unapplied_signed = unapplied_plan
         .sign(
             rng,
@@ -302,7 +336,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
 fn fee_applies_over_a_fee_bearing_adjunct() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let (bundle_plan, signed, spend_pcds, anchor, max_fee_note, _pool) =
+    let (bundle_plan, signed, spend_pcds, anchor, max_fee_note) =
         wallet.fee_bundle(rng, 1000, 700, 300);
     let sighash = mock_sighash(signed.commitment());
 
@@ -326,7 +360,7 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
         .expect("prove the aggregate with its fee");
     let aggregate_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
     let aggregate_fee_descriptors = BTreeSet::from([fee::Descriptor {
-        max_commitment: fee::Plan::new(max_fee_note).max_commitment(),
+        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
         value: aggregate_fee,
     }]);
 

@@ -1,99 +1,21 @@
-//! Max fee notes and fee descriptors.
+//! Fees and fee descriptors.
 
 use core::cmp;
 
 use derive_more::{Debug, Eq as TotalEq, PartialEq};
-use ff::{Field as _, PrimeField as _};
 use group::GroupEncoding as _;
-use pasta_curves::{EpAffine, Fp, Fq, arithmetic::CurveAffine as _};
+use pasta_curves::{EpAffine, arithmetic::CurveAffine as _};
 
 use crate::{
-    Note,
     digest::poseidon,
-    primitives::{ActionDigest, ActionDigestError, Tachygram},
+    primitives::{ActionDigest, ActionDigestError},
     value,
 };
 
-/// A planned max fee note, not yet authorized.
-#[derive(Clone, Copy, Debug)]
-pub struct Plan {
-    /// The max fee note, whose value is the maximum fee.
-    pub note: Note,
-}
-
-impl Plan {
-    /// Assemble a max fee note plan.
-    #[must_use]
-    pub const fn new(note: Note) -> Self {
-        Self { note }
-    }
-
-    /// Derive the max fee note's blind $r$.
-    #[expect(
-        clippy::expect_used,
-        reason = "p < q, so every Fp repr is canonical in Fq"
-    )]
-    pub(crate) fn blind(&self) -> value::Trapdoor {
-        value::Trapdoor::from_scalar(
-            Option::from(Fq::from_repr(
-                poseidon::fee_blind(
-                    Fp::from(self.note.pk),
-                    Fp::from(self.note.psi),
-                    Fp::from(self.note.rcm),
-                )
-                .to_repr(),
-            ))
-            .expect("p < q"),
-        )
-    }
-
-    /// Derive the max fee note's value commitment.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the blind is zero.
-    #[must_use]
-    pub fn max_commitment(&self) -> value::Commitment {
-        let trapdoor = self.blind();
-        assert_ne!(
-            Fq::from(trapdoor),
-            Fq::ZERO,
-            "max fee note blind should not be zero"
-        );
-        trapdoor.commit(-self.note.value)
-    }
-
-    /// Obtain the fee descriptor for this max fee note at `fee`.
-    #[must_use]
-    pub fn descriptor(&self, fee: value::Positive) -> Descriptor {
-        Descriptor {
-            max_commitment: self.max_commitment(),
-            value: fee,
-        }
-    }
-
-    /// Derive the commitment `cmChange` of the fee change note that `fee`
-    /// leaves of the max fee note.
-    pub(crate) fn change_commitment(&self, fee: value::Positive) -> Tachygram {
-        #[expect(
-            clippy::expect_used,
-            reason = "the saturated change never exceeds the max fee note's value"
-        )]
-        let fee_change_note = Note {
-            value: value::Positive::try_from(
-                u64::from(self.note.value).saturating_sub(u64::from(fee)),
-            )
-            .expect("change within the max fee note's value"),
-            ..self.note
-        };
-        Tachygram::from(fee_change_note.commitment())
-    }
-}
-
-/// A bundle's fee descriptor: the max fee note's value commitment and the fee.
+/// A bundle's fee descriptor: the max fee commitment and the fee value.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Descriptor {
-    /// The max fee note's value commitment.
+    /// The max fee commitment.
     pub max_commitment: value::Commitment,
 
     /// The fee.

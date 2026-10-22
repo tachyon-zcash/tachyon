@@ -34,8 +34,8 @@
 //! Ragu circuits and is TBD.
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::Field as _;
-use pasta_curves::Fp;
+use ff::{Field as _, PrimeField as _};
+use pasta_curves::{Fp, Fq};
 use rand_core::CryptoRng;
 
 use crate::{digest::poseidon, keys::PaymentKey, nullifier, primitives::Tachygram, value};
@@ -74,6 +74,18 @@ pub struct Note {
 }
 
 impl Note {
+    /// Derive a max fee blind $r$ from note fields.
+    #[must_use]
+    #[expect(
+        clippy::expect_used,
+        clippy::missing_panics_doc,
+        reason = "p < q, so every Fp repr is canonical in Fq"
+    )]
+    pub fn fee_blind(&self) -> value::Trapdoor {
+        let blind = poseidon::fee_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
+        value::Trapdoor::from_scalar(Option::from(Fq::from_repr(blind.to_repr())).expect("p < q"))
+    }
+
     /// Computes the note commitment `cm`.
     ///
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$
