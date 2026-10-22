@@ -114,8 +114,9 @@ the bundle's actions, the binding signature over the signed $\cv_\maxfee$,
 and transaction accounting.
 
 The prover applies $\mathsf{FeeFuse}$ after proving a bundle's actions, or
-$\mathsf{FeeSeed}$ when it has none. Proving returns the stamp and the applied fee together, and attaching
-writes that fee into `vFeeTachyon`. Every stamp has its bundle's fee applied.
+$\mathsf{FeeSeed}$ when it has none. The proved stamp carries the applied fee
+and writes it into `vFeeTachyon` in its trailer. Every stamp has its bundle's
+fee applied.
 **Consensus rebuilds the stamp's action set from the published action
 descriptors and fee descriptors, recomputes the action accumulator, and checks
 the proof against it.** The stamp does not publish the action accumulator. A
@@ -134,8 +135,9 @@ publishes $2N + B$ tachygrams. [Bundles](./bundle.md#stamp-trailer) defines
 published bundles. An accepted proof therefore covers the signed $\cv_\maxfee$
 at the published fee. $\mathsf{FeeFuse}$ accepts only $\mathtt{Actions}$, so it
 cannot be applied twice to the same lineage. Merging and lifting carry fee
-digests and fee change note commitments like any other set members. Stripping
-keeps the fee descriptor in the bundle body.
+digests and fee change note commitments like any other set members. A merge
+keeps the receiving stamp's fee. Stripping carries the fee into the stripped
+trailer.
 
 ## Balance
 

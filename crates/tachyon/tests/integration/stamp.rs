@@ -47,13 +47,9 @@ fn stamp_merge_iff_matching_anchors() {
         let note_b = user_b.random_note(300);
         let (stamp_b, plan_b, fee_b) = build_output_stamp(rng, anchor_b, note_b);
 
-        let result = ProofStamp::merge(
+        let result = stamp_a.merge(
             rng,
-            (
-                stamp_a,
-                BTreeSet::from_iter([plan_a.descriptor()]),
-                [fee_a].into(),
-            ),
+            (BTreeSet::from_iter([plan_a.descriptor()]), [fee_a].into()),
             (
                 stamp_b,
                 BTreeSet::from_iter([plan_b.descriptor()]),
@@ -165,7 +161,7 @@ fn plan_prove_rejects_invalid_inputs() {
     {
         let plan = stamp::Plan::new(two_spends(), alloc::vec![], anchor, max_fee_note, zero);
         let pcds = alloc::vec![bundle_b(), bundle_a()];
-        let (stamp, _fee) = plan
+        let stamp = plan
             .prove(rng, &user.pak, pcds)
             .expect("swapped spends prove");
         let planned = [
@@ -192,7 +188,7 @@ fn plan_prove_rejects_invalid_inputs() {
             max_fee_note,
             zero,
         );
-        let (stamp, _fee) = plan
+        let stamp = plan
             .prove(rng, &user.pak, alloc::vec![bundle_a()])
             .expect("foreign spend proves");
         assert!(
@@ -277,7 +273,7 @@ fn plan_prove_lifts_a_spend_along_spans() {
         ("abutting spans", abutting),
         ("overlapping spans", overlapping),
     ] {
-        let (stamp, _fee) = prove(rng, spans).expect(label);
+        let stamp = prove(rng, spans).expect(label);
         assert_eq!(stamp.anchor, plan_anchor, "{label}");
         assert!(
             stamp
@@ -315,7 +311,8 @@ fn plan_prove_lifts_a_spend_along_spans() {
 }
 
 /// `merge` populates `covered_actions` with the covered-actions digest of
-/// the merged descriptor list, order-independently.
+/// the merged descriptor list, order-independently, and keeps the receiver's
+/// fee.
 #[test]
 fn merge_populates_covered_actions() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -332,23 +329,22 @@ fn merge_populates_covered_actions() {
     descriptors.sort_unstable();
     let expected = stamp_coverage(&descriptors, &[fee_a, fee_b]);
 
-    let merged = ProofStamp::merge(
-        rng,
-        (
-            stamp_a,
-            BTreeSet::from_iter([plan_a.descriptor()]),
-            [fee_a].into(),
-        ),
-        (
-            stamp_b,
-            BTreeSet::from_iter([plan_b.descriptor()]),
-            [fee_b].into(),
-        ),
-    )
-    .expect("merge");
+    let receiver_fee = stamp_a.fee;
+    let merged = stamp_a
+        .merge(
+            rng,
+            (BTreeSet::from_iter([plan_a.descriptor()]), [fee_a].into()),
+            (
+                stamp_b,
+                BTreeSet::from_iter([plan_b.descriptor()]),
+                [fee_b].into(),
+            ),
+        )
+        .expect("merge");
     // `merge` sorts the concatenated descriptors into canonical order, so the
     // covered-actions digest is independent of the order they were passed in.
     assert_eq!(merged.coverage, expected);
+    assert_eq!(merged.fee, receiver_fee);
 }
 
 /// Reusing a note as an output collides on both of its tachygrams, since the
@@ -384,12 +380,14 @@ fn double_output_cannot_aggregate() {
 
     // The honest merge refuses the overlap on the tachygram-set product relation.
     {
-        let merge_err = ProofStamp::merge(
-            rng,
-            (stamp_a.clone(), descriptors_a.clone(), [fee_a].into()),
-            (stamp_b.clone(), descriptors_b.clone(), [fee_b].into()),
-        )
-        .expect_err("overlapping tachygrams must not merge");
+        let merge_err = stamp_a
+            .clone()
+            .merge(
+                rng,
+                (descriptors_a.clone(), [fee_a].into()),
+                (stamp_b.clone(), descriptors_b.clone(), [fee_b].into()),
+            )
+            .expect_err("overlapping tachygrams must not merge");
         let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
             panic!("expected ProofFailed(InvalidWitness), got {merge_err:?}");
         };
@@ -431,6 +429,7 @@ fn double_output_cannot_aggregate() {
             .commit(),
         tachygrams,
         proof: Box::new(evil_pcd.proof().clone()),
+        fee: stamp_a.fee,
     };
     let digests: Vec<ActionDigest> = all_descriptors
         .iter()
@@ -500,12 +499,14 @@ fn double_spend_cannot_aggregate() {
     let fees = [autonome_a.fee_descriptor(), autonome_b.fee_descriptor()];
     // The honest merge refuses the overlap on the tachygram-set product relation.
     {
-        let merge_err = ProofStamp::merge(
-            rng,
-            (stamp_a.clone(), descriptors_a.clone(), [fees[0]].into()),
-            (stamp_b.clone(), descriptors_b.clone(), [fees[1]].into()),
-        )
-        .expect_err("shared nullifiers must not merge");
+        let merge_err = stamp_a
+            .clone()
+            .merge(
+                rng,
+                (descriptors_a.clone(), [fees[0]].into()),
+                (stamp_b.clone(), descriptors_b.clone(), [fees[1]].into()),
+            )
+            .expect_err("shared nullifiers must not merge");
         let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
             panic!("expected ProofFailed(InvalidWitness), got {merge_err:?}");
         };
@@ -547,6 +548,7 @@ fn double_spend_cannot_aggregate() {
             .commit(),
         tachygrams,
         proof: Box::new(evil_pcd.proof().clone()),
+        fee: stamp_a.fee,
     };
 
     let digests: Vec<ActionDigest> = all_descriptors
@@ -586,12 +588,14 @@ fn cannot_forge_stamp_covering_duplicated_action() {
     // The honest merge refuses the shared action on the action-set product
     // relation (checked before the tachygram product).
     {
-        let merge_err = ProofStamp::merge(
-            rng,
-            (output_stamp.clone(), descriptors.clone(), fees.clone()),
-            (output_stamp.clone(), descriptors.clone(), fees),
-        )
-        .expect_err("a duplicated action must not merge");
+        let merge_err = output_stamp
+            .clone()
+            .merge(
+                rng,
+                (descriptors.clone(), fees.clone()),
+                (output_stamp.clone(), descriptors.clone(), fees),
+            )
+            .expect_err("a duplicated action must not merge");
         let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = merge_err else {
             panic!("expected ProofFailed(InvalidWitness), got {merge_err:?}");
         };
@@ -632,6 +636,7 @@ fn cannot_forge_stamp_covering_duplicated_action() {
             .commit(),
         tachygrams,
         proof: Box::new(evil_pcd.proof().clone()),
+        fee: output_stamp.fee,
     };
 
     // Verifying against the doubled descriptors makes the action accumulator
@@ -784,6 +789,7 @@ fn read_rejects_duplicate_tachygrams() {
 
     let mut buf = Vec::new();
     {
+        buf.extend_from_slice(&0u64.to_le_bytes()); // fee
         buf.extend_from_slice(&[0u8; 32]); // dummy actions digest
         anchor.write(&mut buf).expect("write anchor");
         TachygramSetPoly::from_iter(tg_set)
@@ -814,6 +820,7 @@ fn read_rejects_empty_tachygrams() {
 
     let mut buf = Vec::new();
     {
+        buf.extend_from_slice(&0u64.to_le_bytes()); // fee
         buf.extend_from_slice(&[0u8; 32]); // dummy actions digest
         anchor.write(&mut buf).expect("write anchor");
         TachygramSetCommit::default()
@@ -841,6 +848,7 @@ fn read_rejects_too_many_tachygrams() {
 
     let mut buf = Vec::new();
     {
+        buf.extend_from_slice(&0u64.to_le_bytes()); // fee
         buf.extend_from_slice(&[0u8; 32]); // dummy actions digest
         anchor.write(&mut buf).expect("write anchor");
         TachygramSetCommit::default()
@@ -871,7 +879,7 @@ fn read_accepts_distinct_sorted_tachygrams() {
     ProofStamp::read(&*buf).expect("distinct sorted tachygrams must be accepted");
 }
 
-/// `hStampCoverageTachyon` survives a `write`/`read` round-trip.
+/// `hStampCoverageTachyon` and the fee survive a `write`/`read` round-trip.
 #[test]
 fn covered_actions_round_trip() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -884,6 +892,7 @@ fn covered_actions_round_trip() {
     stamp.write(&mut buf).expect("write");
     let decoded = ProofStamp::read(&*buf).expect("read");
 
+    assert_eq!(decoded.fee, stamp.fee);
     assert_eq!(decoded.coverage, stamp.coverage);
     assert_eq!(decoded.anchor, stamp.anchor);
     assert_eq!(decoded.tachygram_set, stamp.tachygram_set);
@@ -984,7 +993,7 @@ fn lift_advances_a_stamp_anchor() {
 
     pool.advance(3, |_| random_block(rng, 1, 4));
     let note = wallet.random_note(200);
-    let (stamp, _plan, _) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
     let stamped_at = pool.height();
 
     pool.advance(2, |_| random_block(rng, 1, 4));
@@ -993,7 +1002,12 @@ fn lift_advances_a_stamp_anchor() {
 
     let before = stamp.clone();
     let lifted = stamp
-        .prove_lift(rng, [], vec![span])
+        .lift(
+            rng,
+            &BTreeSet::from([plan.descriptor()]),
+            &BTreeSet::from([fee_descriptor]),
+            vec![span],
+        )
         .expect("lift over a within-epoch segment");
 
     assert_eq!(lifted.anchor, pool.block(lifted_to).anchor());
@@ -1021,7 +1035,12 @@ fn lift_then_verify() {
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
     let lifted = stamp
-        .prove_lift(rng, [digest, fee_digest], vec![span])
+        .lift(
+            rng,
+            &BTreeSet::from([plan.descriptor()]),
+            &BTreeSet::from([fee_descriptor]),
+            vec![span],
+        )
         .expect("lift");
 
     assert!(
@@ -1033,8 +1052,8 @@ fn lift_then_verify() {
 }
 
 /// A stamp covers the actions of the plan it was proven for, so lifting it
-/// over their descriptors reaches the same action set the digest-taking core
-/// is given directly, and the result verifies against their digests.
+/// over their descriptors rebuilds the action set it was proven against, and
+/// the result verifies against their digests.
 #[test]
 fn lift_over_descriptors_then_verify() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1077,13 +1096,20 @@ fn lift_rejects_a_foreign_span() {
     pool.advance(3, |_| random_block(rng, 1, 4));
 
     let note = wallet.random_note(200);
-    let (stamp, _plan, _) = build_output_stamp(rng, pool.anchor(), note);
+    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
 
     let mut foreign = PoolSim::genesis(rng);
     foreign.advance(3, |_| random_block(rng, 1, 4));
     let span = build_lift_span(rng, &foreign, BlockHeight(1)..=foreign.height());
 
-    let err = stamp.prove_lift(rng, [], vec![span]).unwrap_err();
+    let err = stamp
+        .lift(
+            rng,
+            &BTreeSet::from([plan.descriptor()]),
+            &BTreeSet::from([fee_descriptor]),
+            vec![span],
+        )
+        .unwrap_err();
     let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1094,7 +1120,7 @@ fn lift_rejects_a_foreign_span() {
 }
 
 /// A lift takes the caller's word for the covered action set, so a wrong
-/// digest list is caught at verification rather than at prove time.
+/// descriptor list is caught at verification rather than at prove time.
 #[test]
 fn lift_rejects_wrong_digests() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -1106,14 +1132,19 @@ fn lift_rejects_wrong_digests() {
     let (stamp, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
     let stamped_at = pool.height();
     let digest = plan.digest().expect("valid plan");
-    let foreign_digest = random_action(rng).digest().expect("valid action");
+    let foreign = random_action(rng).descriptor();
     let fee_digest = fee_descriptor.digest().expect("fee digest");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
     let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
 
     let lifted = stamp
-        .prove_lift(rng, [foreign_digest, fee_digest], vec![span])
+        .lift(
+            rng,
+            &BTreeSet::from([foreign]),
+            &BTreeSet::from([fee_descriptor]),
+            vec![span],
+        )
         .expect("the lift itself cannot see the wrong action set");
 
     assert!(
@@ -1149,32 +1180,24 @@ fn merge_after_lift() {
     );
     let (fee_set_a, fee_set_b) = (BTreeSet::from([fee_a]), BTreeSet::from([fee_b]));
 
-    ProofStamp::merge(
-        rng,
-        (stamp_a.clone(), desc_a.clone(), fee_set_a.clone()),
-        (stamp_b.clone(), desc_b.clone(), fee_set_b.clone()),
-    )
-    .expect_err("mismatched anchors must not merge");
+    stamp_a
+        .clone()
+        .merge(
+            rng,
+            (desc_a.clone(), fee_set_a.clone()),
+            (stamp_b.clone(), desc_b.clone(), fee_set_b.clone()),
+        )
+        .expect_err("mismatched anchors must not merge");
 
     let span = build_lift_span(rng, &pool, height_a.next().unwrap()..=height_b);
     let lifted_a = stamp_a
-        .prove_lift(
-            rng,
-            [
-                plan_a.digest().expect("valid plan"),
-                fee_a.digest().expect("fee digest"),
-            ],
-            vec![span],
-        )
+        .lift(rng, &desc_a, &fee_set_a, vec![span])
         .expect("lift onto the later anchor");
 
     assert_eq!(lifted_a.anchor, stamp_b.anchor);
-    ProofStamp::merge(
-        rng,
-        (lifted_a, desc_a, fee_set_a),
-        (stamp_b, desc_b, fee_set_b),
-    )
-    .expect("a lifted stamp merges with one at the anchor it was lifted to");
+    lifted_a
+        .merge(rng, (desc_a, fee_set_a), (stamp_b, desc_b, fee_set_b))
+        .expect("a lifted stamp merges with one at the anchor it was lifted to");
 }
 
 /// `merge` requires each side's descriptor list to match the actions its
@@ -1238,16 +1261,15 @@ fn mismatched_merge_descriptors_fail_verification() {
 
     // The merge itself does not pre-check, and the mismatch violates no step
     // relation: proving succeeds and the compute is spent.
-    let merged = ProofStamp::merge(
-        rng,
-        (
-            bundle_a.stamp.clone(),
-            descriptors_a.clone(),
-            fees_a.clone(),
-        ),
-        (bundle_b.stamp.clone(), foreign_descriptors, fees_b.clone()),
-    )
-    .expect("merge performs no coverage pre-check");
+    let merged = bundle_a
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            (descriptors_a.clone(), fees_a.clone()),
+            (bundle_b.stamp.clone(), foreign_descriptors, fees_b.clone()),
+        )
+        .expect("merge performs no coverage pre-check");
 
     // An honest verifier reconstructs the header from the true covered
     // actions, which the mismatched proof does not attest.
@@ -1260,12 +1282,14 @@ fn mismatched_merge_descriptors_fail_verification() {
 
     // Control: the same stamps merged under their attested descriptors
     // produce a stamp the same verifier accepts.
-    let honest = ProofStamp::merge(
-        rng,
-        (bundle_a.stamp, descriptors_a, fees_a),
-        (bundle_b.stamp, descriptors_b, fees_b),
-    )
-    .expect("merge");
+    let honest = bundle_a
+        .stamp
+        .merge(
+            rng,
+            (descriptors_a, fees_a),
+            (bundle_b.stamp, descriptors_b, fees_b),
+        )
+        .expect("merge");
     assert!(
         honest
             .verify_proof(rng, digests)

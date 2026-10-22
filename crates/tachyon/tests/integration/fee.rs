@@ -82,6 +82,7 @@ fn fee_less_output_bundle(
         tachygram_set: pcd.data().1,
         tachygrams: BTreeSet::from([cm, pad]),
         proof: Box::new(pcd.proof().clone()),
+        fee: value::Positive::ZERO,
     };
 
     let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
@@ -91,7 +92,7 @@ fn fee_less_output_bundle(
         &wallet.sk.derive_auth_private(),
     )
     .expect("sign the fee-less bundle")
-    .stamp((stamp, value::Positive::ZERO))
+    .stamp(stamp)
 }
 
 fn coverage_of(bundles: &[&Bundle<dyn StampState>]) -> [u8; 32] {
@@ -298,7 +299,7 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     for fee in [0u64, 120, 300] {
         let bundle = prove(rng, fee).expect("prove with the fee");
 
-        assert_eq!(u64::from(bundle.fee_value), fee);
+        assert_eq!(u64::from(bundle.stamp.fee), fee);
         assert_eq!(bundle.commitment(), signed.commitment(), "fee {fee}");
         assert_eq!(bundle.binding_sig, signed.binding_sig, "fee {fee}");
         assert_eq!(bundle.stamp.tachygrams.len(), 2 * 2 + 1, "fee {fee}");
@@ -388,12 +389,14 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
             .expect("prove with the fee"),
     );
     let fee_bearing = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(500)]);
-    let over_fee_bearing = ProofStamp::merge(
-        rng,
-        merge_side(&aggregate, &[]),
-        merge_side(&fee_bearing, &[]),
-    )
-    .expect("merge the aggregate");
+    let (aggregate_stamp, aggregate_desc, aggregate_fees) = merge_side(&aggregate, &[]);
+    let over_fee_bearing = aggregate_stamp
+        .merge(
+            rng,
+            (aggregate_desc, aggregate_fees),
+            merge_side(&fee_bearing, &[]),
+        )
+        .expect("merge the aggregate");
 
     let unapplied = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
     let unapplied_pcd = forge_overlapping_merge(
@@ -416,13 +419,14 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
             .copied()
             .collect(),
         proof: Box::new(unapplied_pcd.proof().clone()),
+        fee: aggregate.stamp.fee,
     };
 
     for (stamp, other) in [(over_fee_bearing, fee_bearing), (over_unapplied, unapplied)] {
         aggregate.stamp = stamp;
         let mut adjunct = other.strip(mock_wtxid(&aggregate));
         adjunct.fee_max_commitment = aggregate.fee_max_commitment;
-        adjunct.fee_value = aggregate.fee_value;
+        adjunct.stamp.fee = aggregate.stamp.fee;
 
         let err = aggregate
             .verify(rng, &sighash, &mock_wtxid(&aggregate).into(), &[&adjunct])
@@ -432,7 +436,7 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
         };
 
         aggregate.stamp.coverage = coverage_of(&[aggregate.as_dyn(), adjunct.as_dyn()]);
-        adjunct.stamp = mock_wtxid(&aggregate);
+        adjunct.stamp.wtxid = mock_wtxid(&aggregate);
 
         let forged = aggregate
             .verify(rng, &sighash, &mock_wtxid(&aggregate).into(), &[&adjunct])
@@ -510,28 +514,26 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
             .expect("prove the adjunct with its fee"),
     );
 
-    let (aggregate_stamp, aggregate_fee) = bundle_plan
+    let aggregate_stamp = bundle_plan
         .stamp_plan(anchor, zat(120))
         .prove(rng, &wallet.pak, spend_pcds)
         .expect("prove the aggregate with its fee");
     let aggregate_descriptors: BTreeSet<action::Descriptor> = signed.descriptors().collect();
     let aggregate_fee_descriptors = BTreeSet::from([fee::Descriptor {
         max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
-        value: aggregate_fee,
+        value: aggregate_stamp.fee,
     }]);
 
-    let merged_stamp = ProofStamp::merge(
-        rng,
-        (
-            aggregate_stamp,
-            aggregate_descriptors,
-            aggregate_fee_descriptors,
-        ),
-        merge_side(&adjunct, &[]),
-    )
-    .expect("merge the aggregate's stamp with the adjunct's");
-    let aggregate = signed.stamp((merged_stamp, aggregate_fee));
+    let merged_stamp = aggregate_stamp
+        .merge(
+            rng,
+            (aggregate_descriptors, aggregate_fee_descriptors),
+            merge_side(&adjunct, &[]),
+        )
+        .expect("merge the aggregate's stamp with the adjunct's");
+    let aggregate = signed.stamp(merged_stamp);
 
+    assert_eq!(aggregate.stamp.fee, zat(120), "the receiver keeps its fee");
     assert!(
         adjunct
             .stamp
@@ -543,8 +545,10 @@ fn fee_applies_over_a_fee_bearing_adjunct() {
         2 * (aggregate.actions.len() + adjunct.actions.len()) + 2
     );
     let final_id = mock_wtxid(&aggregate);
+    let stripped = adjunct.strip(final_id);
+    assert_eq!(stripped.stamp.fee, zat(40), "the adjunct keeps its fee");
     aggregate
-        .verify(rng, &sighash, &final_id.into(), &[&adjunct.strip(final_id)])
+        .verify(rng, &sighash, &final_id.into(), &[&stripped])
         .expect("the aggregate verifies against the stripped adjunct");
 }
 
@@ -576,15 +580,19 @@ fn fee_bearing_aggregates_merge_and_lift() {
     let sighash = mock_sighash(left.commitment());
 
     for (bundle, auto) in [(&mut left, &left_auto), (&mut right, &right_auto)] {
-        bundle.stamp = ProofStamp::merge(rng, merge_side(bundle, &[]), merge_side(auto, &[]))
+        let (stamp, desc, fees) = merge_side(bundle, &[]);
+        bundle.stamp = stamp
+            .merge(rng, (desc, fees), merge_side(auto, &[]))
             .expect("aggregate");
     }
-    left.stamp = ProofStamp::merge(
-        rng,
-        merge_side(&left, &[left_auto.as_dyn()]),
-        merge_side(&right, &[right_auto.as_dyn()]),
-    )
-    .expect("merge two aggregates");
+    let (left_stamp, left_desc, left_fees) = merge_side(&left, &[left_auto.as_dyn()]);
+    left.stamp = left_stamp
+        .merge(
+            rng,
+            (left_desc, left_fees),
+            merge_side(&right, &[right_auto.as_dyn()]),
+        )
+        .expect("merge two aggregates");
 
     pool.mine_bundles(&[&build_autonome(rng, &wallet, 400, 300)]);
     let span = build_lift_span(rng, &pool, pool.height()..=pool.height());
@@ -638,7 +646,13 @@ fn innocent_seed_merges_and_strips() {
     let anchor = PoolSim::genesis(rng).anchor();
     let mut innocent = wallet.autonome(rng, anchor, vec![], vec![]);
     let adjunct = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(100)]);
-    innocent.stamp = ProofStamp::merge(rng, merge_side(&innocent, &[]), merge_side(&adjunct, &[]))
+    let (innocent_stamp, innocent_desc, innocent_fees) = merge_side(&innocent, &[]);
+    innocent.stamp = innocent_stamp
+        .merge(
+            rng,
+            (innocent_desc, innocent_fees),
+            merge_side(&adjunct, &[]),
+        )
         .expect("merge seed and adjunct");
     let id = mock_wtxid(&innocent);
     innocent
@@ -651,12 +665,14 @@ fn innocent_seed_merges_and_strips() {
         .expect("innocent verifies");
 
     let mut parent = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(200)]);
-    parent.stamp = ProofStamp::merge(
-        rng,
-        merge_side(&parent, &[]),
-        merge_side(&innocent, &[adjunct.as_dyn()]),
-    )
-    .expect("merge innocent into parent");
+    let (parent_stamp, parent_desc, parent_fees) = merge_side(&parent, &[]);
+    parent.stamp = parent_stamp
+        .merge(
+            rng,
+            (parent_desc, parent_fees),
+            merge_side(&innocent, &[adjunct.as_dyn()]),
+        )
+        .expect("merge innocent into parent");
     let parent_id = mock_wtxid(&parent);
     let stripped_innocent = innocent.strip(parent_id);
     assert_eq!(stripped_innocent.actions.len(), 0);

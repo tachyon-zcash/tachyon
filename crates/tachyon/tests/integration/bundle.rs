@@ -22,7 +22,7 @@ use zcash_tachyon::{
     effect,
     entropy::ActionEntropy,
     keys::private,
-    stamp::{PointerStamp, ProofStamp, ProveError},
+    stamp::{AggregateId, PointerStamp, ProofStamp, ProveError},
     value, *,
 };
 
@@ -89,7 +89,7 @@ fn plan_commitment_matches_bundle_commitment() {
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
-        .stamp((stamp, value::Positive::ZERO));
+        .stamp(stamp);
 
     assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
 }
@@ -433,10 +433,12 @@ fn zero_action_bundle_is_valid() {
         actions: alloc::vec![],
         value_balance: value::Balance::ZERO,
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        fee_value: value::Positive::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
-        stamp: mock_wtxid(&covering),
+        stamp: PointerStamp {
+            wtxid: mock_wtxid(&covering),
+            fee: value::Positive::ZERO,
+        },
     };
 
     bundle.verify_signatures(&sighash).unwrap();
@@ -509,7 +511,7 @@ fn double_spend_obvious() {
         max_commitment: fee_max_commitment,
         value: value::Positive::ZERO,
     };
-    let (output_stamp, _fee) = stamp::Plan::new(
+    let output_stamp = stamp::Plan::new(
         vec![],
         vec![(descriptor, theta, note, rcv)],
         anchor,
@@ -542,13 +544,13 @@ fn double_spend_obvious() {
             .commit(),
         tachygrams: output_stamp.tachygrams.iter().copied().collect(),
         proof: Box::new(evil_pcd.proof().clone()),
+        fee: output_stamp.fee,
     };
 
     let bundle = Bundle {
         actions: vec![action, action],
         value_balance,
         fee_max_commitment,
-        fee_value: value::Positive::ZERO,
         binding_sig,
         memo: Vec::new(),
         stamp,
@@ -636,7 +638,7 @@ fn duplicated_spend_cannot_inflate() {
     let secret = wallet.secret_pcd(rng, note);
     let max_fee = wallet.random_note(0);
     let fee_max_commitment = max_fee.fee_blind().commit(-max_fee.value);
-    let (honest_stamp, _fee) = Plan::new(alloc::vec![plan], alloc::vec![], max_fee)
+    let honest_stamp = Plan::new(alloc::vec![plan], alloc::vec![], max_fee)
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, &wallet.pak, alloc::vec![(secret, spendable, vec![])])
         .expect("prove the honest single spend");
@@ -678,7 +680,6 @@ fn duplicated_spend_cannot_inflate() {
         actions: vec![action, action],
         value_balance,
         fee_max_commitment,
-        fee_value: value::Positive::ZERO,
         binding_sig,
         memo: Vec::new(),
         stamp: ProofStamp {
@@ -687,6 +688,7 @@ fn duplicated_spend_cannot_inflate() {
             tachygram_set: honest_stamp.tachygram_set,
             tachygrams: honest_stamp.tachygrams,
             proof: honest_stamp.proof,
+            fee: honest_stamp.fee,
         },
     };
 
@@ -911,38 +913,37 @@ fn innocent_aggregate_from_two_autonomes() {
 
         let fees_a = BTreeSet::from([autonome_a.fee_descriptor()]);
         let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
-        let (seed, fee) =
-            stamp::Plan::new(vec![], vec![], anchor_a, max_fee, value::Positive::ZERO)
-                .prove(rng, &wallet.pak, vec![])
-                .expect("seed");
+        let seed = stamp::Plan::new(vec![], vec![], anchor_a, max_fee, value::Positive::ZERO)
+            .prove(rng, &wallet.pak, vec![])
+            .expect("seed");
         let descs = descriptors_a.union(&descriptors_b).copied().collect();
         let fees = fees_a.union(&fees_b).copied().collect();
-        let adjuncts = ProofStamp::merge(
-            rng,
-            (stamp_a, descriptors_a, fees_a),
-            (stamp_b, descriptors_b, fees_b),
-        )
-        .expect("merge adjuncts");
-        let stamp = ProofStamp::merge(
-            rng,
-            (
-                seed,
-                BTreeSet::new(),
-                [fee::Descriptor {
-                    max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-                    value: fee,
-                }]
-                .into(),
-            ),
-            (adjuncts, descs, fees),
-        )
-        .expect("merge seed");
+        let adjuncts = stamp_a
+            .merge(
+                rng,
+                (descriptors_a, fees_a),
+                (stamp_b, descriptors_b, fees_b),
+            )
+            .expect("merge adjuncts");
+        let stamp = seed
+            .merge(
+                rng,
+                (
+                    BTreeSet::new(),
+                    [fee::Descriptor {
+                        max_commitment: max_fee.fee_blind().commit(-max_fee.value),
+                        value: value::Positive::ZERO,
+                    }]
+                    .into(),
+                ),
+                (adjuncts, descs, fees),
+            )
+            .expect("merge seed");
 
         Bundle {
             actions: alloc::vec![],
             value_balance: value::Balance::ZERO,
             fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-            fee_value: fee,
             binding_sig: innocent_plan
                 .derive_bsk_private()
                 .sign(rng, &innocent_sighash),
@@ -1062,20 +1063,23 @@ fn based_aggregate_with_two_adjuncts() {
     let fees_a = BTreeSet::from([autonome_a.fee_descriptor()]);
     let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
     let innocent_fees = fees_a.union(&fees_b).copied().collect();
-    let innocent_stamp = ProofStamp::merge(
-        rng,
-        (stamp_a, descriptors_a, fees_a),
-        (stamp_b, descriptors_b, fees_b),
-    )
-    .expect("innocent merge");
+    let innocent_stamp = stamp_a
+        .merge(
+            rng,
+            (descriptors_a, fees_a),
+            (stamp_b, descriptors_b, fees_b),
+        )
+        .expect("innocent merge");
 
     let based_fees = BTreeSet::from([becomes_based.fee_descriptor()]);
-    let based_stamp = ProofStamp::merge(
-        rng,
-        (becomes_based.stamp, based_descriptors, based_fees),
-        (innocent_stamp, innocent_descriptors, innocent_fees),
-    )
-    .expect("based merge");
+    let based_stamp = becomes_based
+        .stamp
+        .merge(
+            rng,
+            (based_descriptors, based_fees),
+            (innocent_stamp, innocent_descriptors, innocent_fees),
+        )
+        .expect("based merge");
 
     becomes_based.stamp = based_stamp;
 
@@ -1290,10 +1294,12 @@ fn read_preserves_action_order() {
         actions,
         value_balance,
         fee_max_commitment,
-        fee_value: value::Positive::ZERO,
         binding_sig,
         memo: Vec::new(),
-        stamp: PointerStamp::try_from([0x11u8; 64]).expect("nonzero wtxid"),
+        stamp: PointerStamp {
+            wtxid: AggregateId::try_from([0x11u8; 64]).expect("nonzero wtxid"),
+            fee: value::Positive::ZERO,
+        },
     };
 
     let mut buf = Vec::new();
@@ -1323,7 +1329,7 @@ fn stripped_read_write_round_trip() {
 
     assert_eq!(stripped.commitment(), deserialized.commitment());
     assert_eq!(stripped.auth_digest(), deserialized.auth_digest());
-    assert_eq!(deserialized.stamp, wtxid);
+    assert_eq!(deserialized.stamp.wtxid, wtxid);
 }
 
 #[test]
@@ -1355,7 +1361,7 @@ fn tachyon_bundle_conversions() {
 
         assert_eq!(stripped.commitment(), back.commitment());
         assert_eq!(stripped.auth_digest(), back.auth_digest());
-        assert_eq!(back.stamp, wtxid);
+        assert_eq!(back.stamp.wtxid, wtxid);
     }
 
     // Err: TryFrom rejects the wrong variant in both directions.
@@ -1411,7 +1417,7 @@ fn tachyon_bundle_wire_round_trip() {
 
 #[test]
 fn aggregate_id_try_from_rejects_zero() {
-    PointerStamp::try_from([0u8; 64]).unwrap_err();
+    AggregateId::try_from([0u8; 64]).unwrap_err();
 }
 
 #[test]
@@ -1491,10 +1497,12 @@ fn read_rejects_zero_wtxid() {
             actions: alloc::vec![],
             value_balance: value::Balance::ZERO,
             fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-            fee_value: value::Positive::ZERO,
             binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
             memo: Vec::new(),
-            stamp: wtxid,
+            stamp: PointerStamp {
+                wtxid,
+                fee: value::Positive::ZERO,
+            },
         };
         assert_eq!(bundle.actions, []);
         bundle
@@ -1543,10 +1551,12 @@ fn innocent_round_trips_with_nonzero_wtxid() {
         actions: alloc::vec![],
         value_balance: value::Balance::ZERO,
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        fee_value: value::Positive::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
-        stamp: mock_wtxid(&covering),
+        stamp: PointerStamp {
+            wtxid: mock_wtxid(&covering),
+            fee: value::Positive::ZERO,
+        },
     };
 
     let mut buf = Vec::new();
@@ -1578,8 +1588,8 @@ fn auth_digest_invariants() {
         assert_ne!(stamped.auth_digest(), stripped.auth_digest());
     }
 
-    // wtxid binds: distinct wtxids on otherwise-identical stripped bundles
-    // produce distinct digests.
+    // wtxid and fee bind: distinct wtxids or fees on otherwise-identical
+    // stripped bundles produce distinct digests.
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::new(shared_sk());
@@ -1594,6 +1604,11 @@ fn auth_digest_invariants() {
         let stripped_bb = autonome.strip(mock_wtxid(&covering_b));
         let digest_bb = stripped_bb.auth_digest();
         assert_ne!(digest_aa, digest_bb);
+
+        let mut stripped_fee = stripped_aa;
+        stripped_fee.stamp.fee = value::Positive::try_from(u64::from(stripped_fee.stamp.fee) + 1)
+            .expect("test fee in range");
+        assert_ne!(digest_aa, stripped_fee.auth_digest());
     }
 
     // TachyonBundle dispatch matches the concrete-variant methods, for both
@@ -1615,7 +1630,8 @@ fn auth_digest_invariants() {
     }
 
     // The proof stamp's digest commits its contents: perturbing the carried
-    // covered-actions digest or the tachygram set changes the auth_digest.
+    // covered-actions digest, the fee or the tachygram set changes the
+    // auth_digest.
     {
         let rng = &mut StdRng::seed_from_u64(0);
         let wallet = WalletSim::new(shared_sk());
@@ -1628,6 +1644,12 @@ fn auth_digest_invariants() {
         // the commitment does not reach into the stamp: only auth_digest moves.
         assert_eq!(baseline_commitment, altered_actions.commitment());
         assert_ne!(baseline, altered_actions.auth_digest());
+
+        let mut altered_fee = stamped.clone();
+        altered_fee.stamp.fee =
+            value::Positive::try_from(u64::from(stamped.stamp.fee) + 1).expect("test fee in range");
+        assert_eq!(baseline_commitment, altered_fee.commitment());
+        assert_ne!(baseline, altered_fee.auth_digest());
 
         let mut extra_tachygram = stamped;
         extra_tachygram
@@ -1715,19 +1737,22 @@ fn coverage_check_matches_stamp_actions() {
 
     let innocent_descriptors: BTreeSet<action::Descriptor> =
         descriptors_a.union(&descriptors_b).copied().collect();
-    let innocent_stamp = ProofStamp::merge(
-        rng,
-        (stamp_a, descriptors_a, fees_a),
-        (stamp_b, descriptors_b, fees_b),
-    )
-    .expect("innocent merge");
+    let innocent_stamp = stamp_a
+        .merge(
+            rng,
+            (descriptors_a, fees_a),
+            (stamp_b, descriptors_b, fees_b),
+        )
+        .expect("innocent merge");
 
-    let based_stamp = ProofStamp::merge(
-        rng,
-        (becomes_based.stamp, based_descriptors, based_fees),
-        (innocent_stamp, innocent_descriptors, innocent_fees),
-    )
-    .expect("based merge");
+    let based_stamp = becomes_based
+        .stamp
+        .merge(
+            rng,
+            (based_descriptors, based_fees),
+            (innocent_stamp, innocent_descriptors, innocent_fees),
+        )
+        .expect("based merge");
     becomes_based.stamp = based_stamp;
 
     let adjunct_a = autonome_a.strip(mock_wtxid(&becomes_based));
@@ -1930,10 +1955,12 @@ fn read_rejects_zero_actions_with_nonzero_balance() {
         actions: alloc::vec![],
         value_balance: value::Balance::try_from(1).unwrap(),
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        fee_value: value::Positive::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
-        stamp: PointerStamp::try_from([0x42u8; 64]).expect("nonzero id"),
+        stamp: PointerStamp {
+            wtxid: AggregateId::try_from([0x42u8; 64]).expect("nonzero id"),
+            fee: value::Positive::ZERO,
+        },
     };
 
     let mut buf = Vec::new();
@@ -1973,10 +2000,12 @@ fn zero_action_bundle_rejects_nonzero_balance() {
         actions: alloc::vec![],
         value_balance: value::Balance::try_from(1).unwrap(),
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        fee_value: value::Positive::ZERO,
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
-        stamp: PointerStamp::try_from([1u8; 64]).expect("nonzero id"),
+        stamp: PointerStamp {
+            wtxid: AggregateId::try_from([1u8; 64]).expect("nonzero id"),
+            fee: value::Positive::ZERO,
+        },
     };
 
     let err = bundle.verify_signatures(&sighash).unwrap_err();
@@ -2012,7 +2041,7 @@ fn verify_tachygrams_rejects_wrong_arity() {
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
-        .stamp((short, value::Positive::ZERO));
+        .stamp(short);
 
     let (covered, covered_fees) = bundle
         .verify_coverage(&[], &[])
@@ -2051,7 +2080,7 @@ fn verify_tachygrams_rejects_a_tampered_list() {
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
-        .stamp((tampered, value::Positive::ZERO));
+        .stamp(tampered);
 
     let (covered, covered_fees) = bundle
         .verify_coverage(&[], &[])
@@ -2134,7 +2163,7 @@ fn plan_memo_reaches_the_signed_bundle() {
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
-        .stamp((stamp, value::Positive::ZERO));
+        .stamp(stamp);
 
     assert_eq!(bundle.memo, memo);
     assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
@@ -2294,41 +2323,43 @@ fn bundle_lift_over_an_aggregate() {
     let fees_a = BTreeSet::from([autonome_a.fee_descriptor()]);
     let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
     let innocent_plan = Plan::new(vec![], vec![], max_fee);
-    let (seed, fee) = innocent_plan
+    let seed = innocent_plan
         .stamp_plan(anchor, value::Positive::ZERO)
         .prove(rng, &wallet.pak, vec![])
         .expect("seed");
     let descs = descriptors_a.union(&descriptors_b).copied().collect();
     let fees = fees_a.union(&fees_b).copied().collect();
-    let adjunct_stamp = ProofStamp::merge(
-        rng,
-        (autonome_a.stamp.clone(), descriptors_a, fees_a),
-        (autonome_b.stamp.clone(), descriptors_b, fees_b),
-    )
-    .expect("merge adjuncts");
+    let adjunct_stamp = autonome_a
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            (descriptors_a, fees_a),
+            (autonome_b.stamp.clone(), descriptors_b, fees_b),
+        )
+        .expect("merge adjuncts");
     let innocent = Bundle {
         actions: vec![],
         value_balance: value::Balance::ZERO,
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        fee_value: value::Positive::ZERO,
         binding_sig: innocent_plan
             .derive_bsk_private()
             .sign(rng, &mock_sighash(innocent_plan.commitment().unwrap())),
         memo: Vec::new(),
-        stamp: ProofStamp::merge(
-            rng,
-            (
-                seed,
-                BTreeSet::new(),
-                [fee::Descriptor {
-                    max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-                    value: fee,
-                }]
-                .into(),
-            ),
-            (adjunct_stamp, descs, fees),
-        )
-        .expect("merge seed"),
+        stamp: seed
+            .merge(
+                rng,
+                (
+                    BTreeSet::new(),
+                    [fee::Descriptor {
+                        max_commitment: max_fee.fee_blind().commit(-max_fee.value),
+                        value: value::Positive::ZERO,
+                    }]
+                    .into(),
+                ),
+                (adjunct_stamp, descs, fees),
+            )
+            .expect("merge seed"),
     };
 
     let adjunct_a = autonome_a.strip(mock_wtxid(&innocent));

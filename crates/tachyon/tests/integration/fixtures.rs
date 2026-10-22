@@ -26,7 +26,7 @@ use zcash_tachyon::{
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
     stamp::{
-        self, PointerStamp, ProofStamp, StampState, Unproven,
+        self, AggregateId, ProofStamp, StampState, Unproven,
         proof::{
             PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
             stamp::{Stamp, StampMerge},
@@ -105,12 +105,12 @@ pub fn mock_auth_digest(bundle_auth_digest: [u8; 32]) -> [u8; 32] {
 /// takes the sighash and the covering wtxid as independent inputs. Deriving the
 /// txid half from a separate transform lets tests catch any regression that
 /// conflates the two.
-pub fn mock_wtxid<S: StampState + 'static>(bundle: &Bundle<S>) -> PointerStamp {
+pub fn mock_wtxid<S: StampState + 'static>(bundle: &Bundle<S>) -> AggregateId {
     let mut wtxid = [0u8; 64];
     wtxid[..32].copy_from_slice(&mock_txid(bundle.commitment()));
     wtxid[32..].copy_from_slice(&mock_auth_digest(bundle.auth_digest()));
 
-    PointerStamp::try_from(wtxid).expect("nonzero wtxid")
+    AggregateId::try_from(wtxid).expect("nonzero wtxid")
 }
 
 pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
@@ -167,7 +167,7 @@ pub fn build_output_stamp_with_fee<RNG: CryptoRng>(
     // An output-only plan never reads the proof authorizing key.
     let pak = WalletSim::new(shared_sk()).pak;
     let max_fee_note = WalletSim::random(rng).random_note(0);
-    let (stamp, _fee) = stamp::Plan::new(
+    let stamp = stamp::Plan::new(
         vec![],
         vec![(plan.descriptor(), theta, note, rcv)],
         anchor,

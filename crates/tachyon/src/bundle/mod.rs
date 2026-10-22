@@ -44,7 +44,6 @@
 //! | `cvFeeMaxTachyon`     | 32 bytes             | max fee note value commitment            |
 //! | `vActionSigsTachyon`  | 64 * nActionsTachyon | authorization per action over tx sighash |
 //! | `bindingSigTachyon`   | 64 bytes             | binding over tx sighash                  |
-//! | `vFeeTachyon`         | LE64                 | fee, at most `MAX_MONEY`                 |
 //! | `nMemoTachyon`        | compactsize          | memo length, `0` when absent             |
 //! | `vMemoTachyon`        | nMemoTachyon bytes   | opaque recipient-directed payload        |
 //!
@@ -63,6 +62,7 @@
 //!
 //! | Name                    | Format               | Description                                |
 //! | ----------------------- | -------------------- | ------------------------------------------ |
+//! | `vFeeTachyon`           | LE64                 | fee, at most `MAX_MONEY`                   |
 //! | `hStampCoverageTachyon` | 32 bytes             | BLAKE2b digest of covered actions and fees |
 //! | `anchorTachyon`         | 32 bytes             | pool state reference                       |
 //! | `cTachygrams`           | 32 bytes             | commitment to the tachygrams below         |
@@ -80,11 +80,13 @@
 //!
 //! | Name                  | Format               | Description                              |
 //! | --------------------- | -------------------- | ---------------------------------------- |
+//! | `vFeeTachyon`         | LE64                 | fee, at most `MAX_MONEY`                 |
 //! | `tachyonAggregateId`  | 64 bytes             | wtxid of the relevant aggregate          |
 //!
 //! The transaction `auth_digest` contribution commits either stamp as a
-//! 64-byte value: the pointer stamp's `wtxid` directly, or
-//! `hStampCoverageTachyon || stamp_data_digest` for a proof stamp.
+//! 72-byte value led by the fee: a proof stamp as
+//! `LE64(vFeeTachyon) || hStampCoverageTachyon || hStampDataTachyon`, and a
+//! pointer stamp as `LE64(vFeeTachyon) || tachyonAggregateId`.
 
 use alloc::{
     collections::{BTreeMap, BTreeSet},
@@ -106,8 +108,8 @@ use crate::{
     primitives::{Anchor, AnchorSetPoly, effect},
     reddsa, serialization,
     stamp::{
-        self, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven,
-        proof::pool,
+        self, AggregateId, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState,
+        Unproven, proof::pool,
     },
     value,
 };
@@ -178,9 +180,6 @@ pub struct Bundle<S: BundleState + ?Sized> {
     /// The max fee note's value commitment.
     pub fee_max_commitment: value::Commitment,
 
-    /// The fee value selected by the proof.
-    pub fee_value: value::Positive,
-
     /// Binding signature over the transaction sighash.
     pub binding_sig: Signature,
 
@@ -210,10 +209,13 @@ impl<S: BundleState + ?Sized> Bundle<S> {
 
     /// The bundle's fee descriptor.
     #[must_use]
-    pub const fn fee_descriptor(&self) -> fee::Descriptor {
+    pub fn fee_descriptor(&self) -> fee::Descriptor
+    where
+        S: StampState,
+    {
         fee::Descriptor {
             max_commitment: self.fee_max_commitment,
-            value: self.fee_value,
+            value: self.stamp.fee(),
         }
     }
 
@@ -581,7 +583,6 @@ impl Plan {
                 .max_fee_note
                 .fee_blind()
                 .commit(-self.max_fee_note.value),
-            fee_value: value::Positive::ZERO,
             binding_sig,
             memo: self.memo.clone(),
             stamp: Unproven,
@@ -590,14 +591,13 @@ impl Plan {
 }
 
 impl Bundle<Unproven> {
-    /// Attach a proof stamp and its fee, producing a `Bundle<ProofStamp>`.
+    /// Attach a proof stamp, producing a `Bundle<ProofStamp>`.
     #[must_use]
-    pub fn stamp(self, (stamp, fee): (ProofStamp, value::Positive)) -> Bundle<ProofStamp> {
+    pub fn stamp(self, stamp: ProofStamp) -> Bundle<ProofStamp> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
             fee_max_commitment: self.fee_max_commitment,
-            fee_value: fee,
             binding_sig: self.binding_sig,
             memo: self.memo,
             stamp,
@@ -608,15 +608,17 @@ impl Bundle<Unproven> {
 impl Bundle<ProofStamp> {
     /// Replace the stamp with a wtxid pointer to a covering aggregate.
     #[must_use]
-    pub fn strip(self, wtxid: PointerStamp) -> Bundle<PointerStamp> {
+    pub fn strip(self, wtxid: AggregateId) -> Bundle<PointerStamp> {
         Bundle {
             actions: self.actions,
             value_balance: self.value_balance,
             fee_max_commitment: self.fee_max_commitment,
-            fee_value: self.fee_value,
             binding_sig: self.binding_sig,
             memo: self.memo,
-            stamp: wtxid,
+            stamp: PointerStamp {
+                wtxid,
+                fee: self.stamp.fee,
+            },
         }
     }
 
@@ -767,13 +769,13 @@ impl Bundle<ProofStamp> {
         wtxid: &[u8; 64],
         adjuncts: &[&Bundle<PointerStamp>],
     ) -> Result<(Vec<action::Descriptor>, Vec<fee::Descriptor>), VerifyPointersError> {
-        if let Err(agg_id_err) = PointerStamp::try_from(*wtxid) {
+        if let Err(agg_id_err) = AggregateId::try_from(*wtxid) {
             return Err(VerifyPointersError::AdjunctPointerInvalid(agg_id_err));
         }
 
         if adjuncts
             .iter()
-            .any(|&adj| adj.stamp.stamp_digest() != *wtxid)
+            .any(|&adj| <[u8; 64]>::from(adj.stamp.wtxid) != *wtxid)
         {
             return Err(VerifyPointersError::AdjunctPointerMismatch);
         }
@@ -889,7 +891,7 @@ impl<S: StampState> Bundle<S> {
 
     /// Read everything after the `tachyonBundleState` byte: value balance,
     /// action descriptors, the max fee note's value commitment, action sigs,
-    /// binding sig, fee, memo, and the stamp trailer.
+    /// binding sig, memo, and the stamp trailer.
     fn read_body<R: Read>(mut reader: R) -> io::Result<Self> {
         let value_balance = {
             let mut bytes = [0u8; size_of::<i64>()];
@@ -947,13 +949,6 @@ impl<S: StampState> Bundle<S> {
 
         let binding_sig = Signature::read(&mut reader)?;
 
-        let fee_value = {
-            let mut bytes = [0u8; size_of::<u64>()];
-            reader.read_exact(&mut bytes)?;
-            value::Positive::try_from(u64::from_le_bytes(bytes))
-                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
-        }?;
-
         // `n_memo` is attacker-controlled up to MAX_COMPACT_SIZE (2^25), so do
         // not pre-allocate, on the same reasoning as `n_actions` above.
         let n_memo =
@@ -976,7 +971,6 @@ impl<S: StampState> Bundle<S> {
             value_balance,
             actions,
             fee_max_commitment,
-            fee_value,
             binding_sig,
             memo,
             stamp,
@@ -1015,8 +1009,6 @@ impl<S: StampState> Bundle<S> {
 
         self.binding_sig.write(&mut writer)?;
 
-        writer.write_all(&u64::from(self.fee_value).to_le_bytes())?;
-
         let n_memo = u64::try_from(self.memo.len()).map_err(|_err| {
             io::Error::new(io::ErrorKind::InvalidData, "memo length exceeds u64")
         })?;
@@ -1029,9 +1021,10 @@ impl<S: StampState> Bundle<S> {
 
     /// Tachyon's contribution to the transaction `auth_digest`.
     ///
-    /// Commits the action signatures, the binding signature, the fee, and the
-    /// stamp's digest. See [`blake2b::bundle_auth_digest`]. The memo is absent
-    /// here because it is effecting data, committed by [`Self::commitment`].
+    /// Commits the action signatures, the binding signature, and the stamp's
+    /// digest, which covers the fee. See [`blake2b::bundle_auth_digest`]. The
+    /// memo is absent here because it is effecting data, committed by
+    /// [`Self::commitment`].
     #[must_use]
     pub fn auth_digest(&self) -> [u8; 32] {
         let action_sigs: Vec<[u8; 64]> = self.actions.iter().map(|act| act.sig).collect();
@@ -1041,7 +1034,6 @@ impl<S: StampState> Bundle<S> {
             S::state_byte().into(),
             &action_sigs,
             &binding_sig,
-            self.fee_value.into(),
             &self.stamp.stamp_digest(),
         )
     }

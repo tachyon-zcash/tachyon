@@ -77,7 +77,18 @@ pub struct Unproven;
 ///
 /// The all-zero wtxid (which refers to no aggregate) is rejected.
 #[derive(Clone, Copy, Debug, Into, PartialEq, TotalEq)]
-pub struct PointerStamp([u8; 64]);
+pub struct AggregateId([u8; 64]);
+
+/// A pointer to the covering aggregate, and the fee of the bundle that
+/// carries this stamp.
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct PointerStamp {
+    /// The covering aggregate's wtxid.
+    pub wtxid: AggregateId,
+
+    /// The fee of the bundle that carries this stamp.
+    pub fee: value::Positive,
+}
 
 #[derive(Clone, Copy, Debug, Display, Error)]
 /// Errors that can occur when handling an aggregate id.
@@ -87,7 +98,7 @@ pub enum AggregateIdError {
     Zero,
 }
 
-impl TryFrom<(&[u8; 32], &[u8; 32])> for PointerStamp {
+impl TryFrom<(&[u8; 32], &[u8; 32])> for AggregateId {
     type Error = AggregateIdError;
 
     fn try_from((sighash, auth_digest): (&[u8; 32], &[u8; 32])) -> Result<Self, Self::Error> {
@@ -98,7 +109,7 @@ impl TryFrom<(&[u8; 32], &[u8; 32])> for PointerStamp {
     }
 }
 
-impl TryFrom<[u8; 64]> for PointerStamp {
+impl TryFrom<[u8; 64]> for AggregateId {
     type Error = AggregateIdError;
 
     fn try_from(wtxid: [u8; 64]) -> Result<Self, Self::Error> {
@@ -112,11 +123,16 @@ impl TryFrom<[u8; 64]> for PointerStamp {
 /// Bundle states that carry a stamp: [`ProofStamp`] or [`PointerStamp`].
 /// The intermediate [`Unproven`] state has no stamp.
 pub trait StampState: BundleState {
-    /// A stamp's 64-byte `tachyonStampState`.
+    /// A stamp's 72-byte `tachyonStampState`.
     ///
-    /// For a [`ProofStamp`], this is a digest of the stamp data.
-    /// For a [`PointerStamp`], this is the wtxid directly.
-    fn stamp_digest(&self) -> [u8; 64];
+    /// For a [`ProofStamp`], this is
+    /// `LE64(vFeeTachyon) || hStampCoverageTachyon || hStampDataTachyon`.
+    /// For a [`PointerStamp`], this is `LE64(vFeeTachyon) ||
+    /// tachyonAggregateId`.
+    fn stamp_digest(&self) -> [u8; 72];
+
+    /// The fee of the bundle that carries this stamp.
+    fn fee(&self) -> value::Positive;
 
     /// The `tachyonBundleState` wire byte for this state.
     fn state_byte() -> StateByte
@@ -144,8 +160,16 @@ pub trait StampState: BundleState {
 }
 
 impl StampState for PointerStamp {
-    fn stamp_digest(&self) -> [u8; 64] {
-        self.0
+    fn stamp_digest(&self) -> [u8; 72] {
+        let mut stamp_digest = [0u8; 72];
+        stamp_digest[..8].copy_from_slice(&u64::from(self.fee).to_le_bytes());
+        stamp_digest[8..].copy_from_slice(&self.wtxid.0);
+
+        stamp_digest
+    }
+
+    fn fee(&self) -> value::Positive {
+        self.fee
     }
 
     fn state_byte() -> StateByte {
@@ -162,42 +186,54 @@ impl StampState for PointerStamp {
 }
 
 impl PointerStamp {
-    /// Read an aggregate id from the consensus wire format.
+    /// Read a fee and an aggregate id from the consensus wire format.
     ///
     /// # Errors
     ///
-    /// Returns an error if reading fails or the wtxid is all-zero, which
-    /// refers to no aggregate.
+    /// Returns an error if reading fails, the fee exceeds `MAX_MONEY`, or the
+    /// wtxid is all-zero, which refers to no aggregate.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let fee = {
+            let mut bytes = [0u8; size_of::<u64>()];
+            reader.read_exact(&mut bytes)?;
+            value::Positive::try_from(u64::from_le_bytes(bytes))
+                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
+        }?;
+
         let mut wtxid = [0u8; 64];
         reader.read_exact(&mut wtxid)?;
-        Self::try_from(wtxid).map_err(|_err| {
+        let aggregate = AggregateId::try_from(wtxid).map_err(|_err| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "aggregate id is zero and refers to no aggregate",
             )
+        })?;
+        Ok(Self {
+            wtxid: aggregate,
+            fee,
         })
     }
 
-    /// Write an aggregate id to the consensus wire format.
+    /// Write a fee and an aggregate id to the consensus wire format.
     ///
     /// # Errors
     ///
     /// Returns an error if writing fails or the wtxid is all-zero, which
     /// refers to no aggregate.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        if self.0 == [0u8; 64] {
+        if self.wtxid.0 == [0u8; 64] {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "aggregate id is zero and refers to no aggregate",
             ));
         }
-        writer.write_all(&self.0)
+        writer.write_all(&u64::from(self.fee).to_le_bytes())?;
+        writer.write_all(&self.wtxid.0)
     }
 }
 
 impl StampState for ProofStamp {
-    fn stamp_digest(&self) -> [u8; 64] {
+    fn stamp_digest(&self) -> [u8; 72] {
         let stamp_data_digest: [u8; 32] = {
             let proof = self.proof.serialize();
             let anchor: [u8; 32] = self.anchor.0.into();
@@ -217,11 +253,16 @@ impl StampState for ProofStamp {
             )
         };
 
-        let mut stamp_digest = [0u8; 64];
-        stamp_digest[..32].copy_from_slice(&self.coverage);
-        stamp_digest[32..].copy_from_slice(&stamp_data_digest);
+        let mut stamp_digest = [0u8; 72];
+        stamp_digest[..8].copy_from_slice(&u64::from(self.fee).to_le_bytes());
+        stamp_digest[8..40].copy_from_slice(&self.coverage);
+        stamp_digest[40..].copy_from_slice(&stamp_data_digest);
 
         stamp_digest
+    }
+
+    fn fee(&self) -> value::Positive {
+        self.fee
     }
 
     fn state_byte() -> StateByte {
@@ -246,6 +287,13 @@ impl ProofStamp {
     /// Returns an error if reading fails or any component is not a canonical
     /// encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
+        let fee = {
+            let mut bytes = [0u8; size_of::<u64>()];
+            reader.read_exact(&mut bytes)?;
+            value::Positive::try_from(u64::from_le_bytes(bytes))
+                .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "fee out of range"))
+        }?;
+
         let mut covered_actions = [0u8; 32];
         reader.read_exact(&mut covered_actions)?;
 
@@ -311,6 +359,7 @@ impl ProofStamp {
             tachygram_set,
             tachygrams,
             proof: Box::new(proof),
+            fee,
         })
     }
 
@@ -321,6 +370,7 @@ impl ProofStamp {
     ///
     /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_all(&u64::from(self.fee).to_le_bytes())?;
         writer.write_all(&self.coverage)?;
         self.anchor.write(&mut writer)?;
         serialization::write_eq_affine(&mut writer, &self.tachygram_set.as_ref().to_affine())?;
@@ -438,7 +488,7 @@ impl Plan {
             ragu::Pcd<spendable::NoteSpendable>,
             Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
         )>,
-    ) -> Result<(ProofStamp, value::Positive), ProveError> {
+    ) -> Result<ProofStamp, ProveError> {
         let fee_descriptor = fee::Descriptor {
             max_commitment: self
                 .max_fee_note
@@ -634,19 +684,17 @@ impl Plan {
             .map_err(ProveError::ProofFailed)?
             .into_parts();
         tachygrams.insert(change);
-        Ok((
-            ProofStamp {
-                coverage: blake2b::stamp_coverage_digest(
-                    &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
-                    &blake2b::stamp_fees_digest(&[fee_descriptor.into()]),
-                ),
-                anchor,
-                tachygram_set,
-                tachygrams,
-                proof: Box::new(proof),
-            },
-            self.fee,
-        ))
+        Ok(ProofStamp {
+            coverage: blake2b::stamp_coverage_digest(
+                &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
+                &blake2b::stamp_fees_digest(&[fee_descriptor.into()]),
+            ),
+            anchor,
+            tachygram_set,
+            tachygrams,
+            proof: Box::new(proof),
+            fee: self.fee,
+        })
     }
 }
 
@@ -693,6 +741,9 @@ pub struct ProofStamp {
     /// The Ragu proof bytes.
     #[debug(skip)]
     pub proof: Box<ragu::Proof>,
+
+    /// The fee of the bundle that carries this stamp.
+    pub fee: value::Positive,
 }
 
 impl ProofStamp {
@@ -926,7 +977,7 @@ impl ProofStamp {
     ///
     /// - [`ProveError::MissingPcd`] if no span is provided.
     /// - [`ProveError::ProofFailed`] if a proof-system step fails.
-    pub fn prove_lift<RNG: CryptoRng>(
+    fn prove_lift<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
         action_digests: impl IntoIterator<Item = ActionDigest>,
@@ -961,11 +1012,12 @@ impl ProofStamp {
             tachygram_set: self.tachygram_set,
             tachygrams: self.tachygrams,
             proof: Box::new(proof),
+            fee: self.fee,
         })
     }
 
     /// Advances the stamp's anchor along `spans`, computing the action digests
-    /// from the covered descriptors.
+    /// from the covered descriptors. The lifted stamp keeps this stamp's fee.
     ///
     /// # Errors
     ///
@@ -994,17 +1046,20 @@ impl ProofStamp {
     /// The action digests for the merge proof and the merged
     /// `covered_actions` are both derived from the descriptor lists.
     ///
+    /// The merged stamp stays with this stamp's bundle and keeps this stamp's
+    /// fee, and the other stamp's bundle is stripped.
+    ///
+    /// TODO: confirm desc list against stamp? it's forbidden by the proof
+    /// system, but we might want to fail early.
+    ///
     /// # Errors
     ///
     /// Returns [`ProveError`] if an action digest cannot be computed or a
     /// proof-system step fails.
     pub fn merge<RNG: CryptoRng>(
+        self,
         rng: &mut RNG,
-        (left_stamp, left_desc, left_fees): (
-            Self,
-            BTreeSet<action::Descriptor>,
-            BTreeSet<fee::Descriptor>,
-        ),
+        (left_desc, left_fees): (BTreeSet<action::Descriptor>, BTreeSet<fee::Descriptor>),
         (right_stamp, right_desc, right_fees): (
             Self,
             BTreeSet<action::Descriptor>,
@@ -1028,9 +1083,9 @@ impl ProofStamp {
             rng,
             (
                 left_actions_digest,
-                left_stamp.tachygrams,
-                left_stamp.anchor,
-                left_stamp.proof,
+                self.tachygrams,
+                self.anchor,
+                self.proof,
             ),
             (
                 right_actions_digest,
@@ -1081,6 +1136,7 @@ impl ProofStamp {
             tachygram_set,
             tachygrams,
             proof: Box::new(proof),
+            fee: self.fee,
         })
     }
 

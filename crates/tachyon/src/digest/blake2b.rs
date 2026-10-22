@@ -241,8 +241,7 @@ pub fn stamp_data_digest(
 /// $$
 ///   \text{BLAKE2b-256}_\texttt{ZTxAuthTachyHash}(
 ///     \mathsf{tachyonBundleState} \Vert \mathsf{vActionSigs} \Vert
-///     \mathsf{bindingSigTachyon} \Vert
-///     \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{tachyonStampState}
+///     \mathsf{bindingSigTachyon} \Vert \mathsf{tachyonStampState}
 ///   )
 /// $$
 ///
@@ -251,15 +250,14 @@ pub fn stamp_data_digest(
 ///
 /// | $\mathsf{tachyonBundleState}$ | Impl | $\mathsf{tachyonStampState}$ |
 /// | ----------------------------- | ---- | ---------------------------- |
-/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampDataTachyon} $ |
-/// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | aggregate's `wtxid` |
+/// | `0x01` | [`ProofStamp`](crate::stamp::ProofStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{hStampCoverageTachyon} \Vert \mathsf{hStampDataTachyon} $ |
+/// | `0x02` | [`PointerStamp`](crate::stamp::PointerStamp) | $ \mathsf{LE64}(\mathsf{vFeeTachyon}) \Vert \mathsf{tachyonAggregateId} $ |
 #[must_use]
 pub fn bundle_auth_digest(
     state_header: u8,
     action_sigs: &[[u8; 64]],
     binding_sig: &[u8; 64],
-    fee: u64,
-    stamp_contrib: &[u8; 64],
+    stamp_contrib: &[u8; 72],
 ) -> [u8; 32] {
     hasher_256(AUTH_DIGEST_PERSONALIZATION, |state| {
         state.update(&[state_header]);
@@ -268,7 +266,6 @@ pub fn bundle_auth_digest(
             state.update(sig);
         }
         state.update(binding_sig);
-        state.update(&fee.to_le_bytes());
         state.update(stamp_contrib);
     })
 }

@@ -163,11 +163,10 @@ When `tachyonBundleState` is not `0x00`, the state byte is followed by the bundl
 | `cvFeeMaxTachyon` | 32 bytes | [max fee note](./fee.md) value commitment |
 | `vActionSigsTachyon` | 64 * nActionsTachyon | authorization per action over the tx sighash |
 | `bindingSigTachyon` | 64 bytes | binding signature over the tx sighash |
-| `vFeeTachyon` | LE64 | fee, at most `MAX_MONEY` |
 | `nMemoTachyon` | compactsize | memo length, `0` when absent |
 | `vMemoTachyon` | nMemoTachyon bytes | opaque recipient-directed payload |
 
-`cvFeeMaxTachyon` is effecting data and must be a canonical encoding of a non-identity point. `vFeeTachyon` is authorization data. The bundle contributes `valueBalanceTachyon + vFeeTachyon` to the transaction balance.
+`cvFeeMaxTachyon` is effecting data and must be a canonical encoding of a non-identity point. The bundle contributes `valueBalanceTachyon + vFeeTachyon` to the transaction balance, where `vFeeTachyon` is the fee its trailer carries.
 
 The memo is effecting data, so the transaction sighash covers it and `auth_digest` does not. A relayer rewrites `auth_digest` while aggregating, so a memo held there could be stripped while the block still committed to the same transaction.
 
@@ -179,6 +178,7 @@ When `tachyonBundleState == 0x01`, the bundle body is followed by a stamp traile
 
 | Name | Format | Description |
 | --- | --- | --- |
+| `vFeeTachyon` | LE64 | fee, at most `MAX_MONEY` |
 | `hStampCoverageTachyon` | 32 bytes | BLAKE2b-256 digest of the covered action descriptors and fee descriptors |
 | `anchorTachyon` | 32 bytes | pool state reference |
 | `cTachygrams` | 32 bytes | commitment to the tachygrams below |
@@ -214,6 +214,7 @@ When `tachyonBundleState == 0x02`, the bundle body is followed by a stripped tra
 
 | Name | Format | Description |
 | --- | --- | --- |
+| `vFeeTachyon` | LE64 | fee, at most `MAX_MONEY` |
 | `tachyonAggregateId` | 64 bytes | nonzero `wtxid` of the covering aggregate |
 
 Every stripped bundle names a covering aggregate, so `tachyonAggregateId` is always nonzero. This holds even for a stripped innocent (an aggregate with no Tachyon actions of its own): the all-zero `wtxid`, which refers to no aggregate, is rejected on read.
