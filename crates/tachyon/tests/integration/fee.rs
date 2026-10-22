@@ -11,10 +11,10 @@ use zcash_tachyon::{
     digest::blake2b,
     fee,
     stamp::{
-        ProofStamp, StampState,
+        self, ProofStamp, StampState,
         proof::{
             PROOF_SYSTEM, output,
-            stamp::{Actions, FeeFuse, OutputAction, Stamp},
+            stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
         },
     },
     value, witness,
@@ -603,4 +603,145 @@ fn fee_bearing_aggregates_merge_and_lift() {
             ],
         )
         .expect("the final aggregate verifies against every covered bundle");
+}
+
+#[test]
+fn zero_action_fee_seed_round_trips_and_verifies() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let anchor = PoolSim::genesis(rng).anchor();
+    let max_fee_note = wallet.random_note(0);
+    let (_, signed, _) = wallet.signed(rng, vec![], vec![], max_fee_note);
+    let proved = stamp::Plan::new(vec![], vec![], anchor, max_fee_note, zat(0))
+        .prove(rng, &wallet.pak, vec![])
+        .expect("seed");
+    let bundle = signed.stamp(proved);
+    let sighash = mock_sighash(bundle.commitment());
+    assert_eq!(bundle.actions.len(), 0);
+    assert_eq!(bundle.stamp.tachygrams.len(), 1);
+    assert_eq!(bundle.verify_coverage(&[], &[]).unwrap().1.len(), 1);
+    verify_alone(rng, &bundle, &sighash).expect("zero-action bundle verifies");
+    let mut bytes = Vec::new();
+    bundle.write(&mut bytes).expect("write");
+    let decoded = Bundle::<ProofStamp>::read(&*bytes).expect("read");
+    assert_eq!(decoded.auth_digest(), bundle.auth_digest());
+    verify_alone(rng, &decoded, &sighash).expect("decoded seed verifies");
+}
+
+#[test]
+fn innocent_seed_merges_and_strips() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let anchor = PoolSim::genesis(rng).anchor();
+    let mut innocent = wallet.autonome(rng, anchor, vec![], vec![]);
+    let adjunct = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(100)]);
+    innocent.stamp = ProofStamp::merge(rng, merge_side(&innocent, &[]), merge_side(&adjunct, &[]))
+        .expect("merge seed and adjunct");
+    let id = mock_wtxid(&innocent);
+    innocent
+        .verify(
+            rng,
+            &mock_sighash(innocent.commitment()),
+            &id.into(),
+            &[&adjunct.clone().strip(id)],
+        )
+        .expect("innocent verifies");
+
+    let mut parent = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(200)]);
+    parent.stamp = ProofStamp::merge(
+        rng,
+        merge_side(&parent, &[]),
+        merge_side(&innocent, &[adjunct.as_dyn()]),
+    )
+    .expect("merge innocent into parent");
+    let parent_id = mock_wtxid(&parent);
+    let stripped_innocent = innocent.strip(parent_id);
+    assert_eq!(stripped_innocent.actions.len(), 0);
+    parent
+        .verify(
+            rng,
+            &mock_sighash(parent.commitment()),
+            &parent_id.into(),
+            &[&adjunct.strip(parent_id), &stripped_innocent],
+        )
+        .expect("parent verifies with the stripped innocent");
+}
+
+#[test]
+fn fee_seed_rejects_nonzero_value_and_fee() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let anchor = PoolSim::genesis(rng).anchor();
+    let max_fee_note = wallet.random_note(0);
+    let valid = witness::fee_seed(((), ()), max_fee_note, zat(0), anchor);
+    for slot in 0..2 {
+        let mut forged = valid.clone();
+        let expected = if slot == 0 {
+            forged.0.value = zat(1);
+            "FeeSeed: maximum fee must be zero"
+        } else {
+            forged.1 = zat(1);
+            "FeeFuse: change is out of range"
+        };
+        let err = PROOF_SYSTEM
+            .seed(rng, FeeSeed, forged)
+            .err()
+            .expect("invalid seed");
+        let ragu_core::Error::InvalidWitness(inner) = err else {
+            panic!("expected InvalidWitness, got {err:?}");
+        };
+        assert_eq!(inner.to_string(), expected);
+    }
+}
+
+/// `FeeSeed` binds each singleton set to the fee digest or the fee change
+/// note, and its output header to those sets and the witnessed anchor.
+#[test]
+fn fee_seed_binds_its_singletons_and_header() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let anchor = PoolSim::genesis(rng).anchor();
+    let other_anchor = PoolSim::genesis(rng).anchor();
+    assert_ne!(anchor, other_anchor);
+    let valid = witness::fee_seed(((), ()), wallet.random_note(0), zat(0), anchor);
+    let other = witness::fee_seed(((), ()), wallet.random_note(0), zat(0), anchor);
+
+    let mut fee_actions = valid.clone();
+    fee_actions.3 = other.3.clone();
+    let mut fee_tachygrams = valid.clone();
+    fee_tachygrams.4 = other.4.clone();
+    for (corrupt, expected) in [
+        (
+            fee_actions,
+            "FeeFuse: fee action set does not commit to the fee digest",
+        ),
+        (
+            fee_tachygrams,
+            "FeeFuse: fee tachygram set does not commit to the fee change note",
+        ),
+    ] {
+        let Err(ragu_core::Error::InvalidWitness(inner)) = PROOF_SYSTEM.seed(rng, FeeSeed, corrupt)
+        else {
+            panic!("expected InvalidWitness: {expected}");
+        };
+        assert_eq!(inner.to_string(), expected);
+    }
+
+    let (seed_pcd, ()) = PROOF_SYSTEM
+        .seed(rng, FeeSeed, valid.clone())
+        .expect("a FeeSeed stamp");
+    for (header, expected) in [
+        ((valid.3.commit(), valid.4.commit(), anchor), true),
+        ((other.3.commit(), valid.4.commit(), anchor), false),
+        ((valid.3.commit(), other.4.commit(), anchor), false),
+        ((valid.3.commit(), valid.4.commit(), other_anchor), false),
+    ] {
+        let pcd = seed_pcd.proof().clone().carry::<Stamp>(header);
+        assert_eq!(
+            PROOF_SYSTEM
+                .verify(&pcd, &mut *rng)
+                .expect("proof system verification"),
+            expected,
+        );
+    }
 }
