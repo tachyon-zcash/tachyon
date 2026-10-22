@@ -25,30 +25,39 @@ use ragu_primitives::{
 
 use crate::constants::EVIDENCE_TREE_ARITY;
 
-/// The wireless emulator that evaluates the real in-circuit sponge natively:
-/// witness values are always present and no wires are tracked, so absorb and
-/// squeeze compute field values without building constraints.
-type Emu = Emulator<Wireless<Always<()>, Fp>>;
-
 #[expect(
     clippy::expect_used,
     reason = "sponge squeeze cannot fail in wireless `Always` mode"
 )]
-fn squeeze(emulator: &mut Emu, sponge: &mut Sponge<'static, Emu, PoseidonFp>) -> Fp {
+fn squeeze(
+    emulator: &mut Emulator<Wireless<Always<()>, Fp>>,
+    sponge: &mut Sponge<'static, Emulator<Wireless<Always<()>, Fp>>, PoseidonFp>,
+) -> Fp {
     let squeezed = sponge.squeeze(emulator).expect("infallible");
     *squeezed.value().take()
 }
 
 /// Opens the sponge of `domain` with capacity element $\mathsf{tag}$ over a
 /// zero rate, then absorbs `input`.
+///
+/// The sponge runs on a wireless emulator: witness values are always present
+/// and no wires are tracked, so absorb and squeeze compute field values without
+/// building constraints.
+#[expect(
+    clippy::type_complexity,
+    reason = "the returned sponge uses the concrete wireless emulator type"
+)]
 fn tagged_sponge<const L: usize>(
     domain: &[u8; 16],
     input: [Fp; L],
-) -> (Emu, Sponge<'static, Emu, PoseidonFp>) {
+) -> (
+    Emulator<Wireless<Always<()>, Fp>>,
+    Sponge<'static, Emulator<Wireless<Always<()>, Fp>>, PoseidonFp>,
+) {
     const { assert!(L > 0, "a tagged hash must absorb at least one element") };
     let capacity = Fp::from_u128(u128::from_le_bytes(*domain));
 
-    let mut emulator = Emu::execute();
+    let mut emulator = Emulator::execute();
     let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
         let value = if index == PoseidonFp::RATE {
             capacity

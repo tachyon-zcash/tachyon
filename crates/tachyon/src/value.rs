@@ -2,6 +2,8 @@
 
 use core::{cmp, ops};
 
+pub use ValueCommitment as Commitment;
+pub use ValueTrapdoor as Trapdoor;
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
 use ff::Field as _;
 use group::{Curve as _, GroupEncoding as _};
@@ -11,20 +13,167 @@ use rand_core::CryptoRng;
 
 use crate::constants::MAX_MONEY;
 
-/// Alias for [`ValueTrapdoor`].
-pub type Trapdoor = ValueTrapdoor;
-
-/// Alias for [`ValueCommitment`].
-pub type Commitment = ValueCommitment;
-
 /// An integer bounded to `-MAX_MONEY..=MAX_MONEY`.
-pub type Balance = Value<{ -MAX_MONEY.cast_signed() }, { MAX_MONEY.cast_signed() }>;
+#[derive(Clone, Copy, Debug, Default, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
+#[debug("{_0:?}")]
+#[into(i64, i128, Fq, Value<{ -MAX_MONEY.cast_signed() }, { MAX_MONEY.cast_signed() }>)]
+pub struct Balance(Value<{ -MAX_MONEY.cast_signed() }, { MAX_MONEY.cast_signed() }>);
 
 /// A non-negative integer not greater than `MAX_MONEY`.
-pub type Positive = Value<0, { MAX_MONEY.cast_signed() }>;
+#[derive(Clone, Copy, Debug, Default, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
+#[debug("{_0:?}")]
+#[into(i64, i128, u64, Fq, Value<0, { MAX_MONEY.cast_signed() }>)]
+pub struct Positive(Value<0, { MAX_MONEY.cast_signed() }>);
 
 /// A non-positive integer not less than `-MAX_MONEY`.
-pub type Negative = Value<{ -MAX_MONEY.cast_signed() }, 0>;
+#[derive(Clone, Copy, Debug, Default, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
+#[debug("{_0:?}")]
+#[into(i64, i128, Fq, Value<{ -MAX_MONEY.cast_signed() }, 0>)]
+pub struct Negative(Value<{ -MAX_MONEY.cast_signed() }, 0>);
+
+impl Balance {
+    /// The largest balance, `MAX_MONEY`.
+    pub const MAX: Self = Self(Value::MAX);
+    /// The smallest balance, `-MAX_MONEY`.
+    pub const MIN: Self = Self(Value::MIN);
+    /// The balance with no net value transfer.
+    pub const ZERO: Self = Self(Value::ZERO);
+
+    /// Negate into the range whose bounds are the negated, reversed input
+    /// bounds.
+    #[must_use]
+    pub const fn negate<const NEG_MAX: i64, const NEG_MIN: i64>(self) -> Value<NEG_MAX, NEG_MIN> {
+        self.0.negate()
+    }
+}
+
+impl Positive {
+    /// The largest amount, `MAX_MONEY`.
+    pub const MAX: Self = Self(Value::MAX);
+    /// The smallest amount, zero.
+    pub const MIN: Self = Self(Value::MIN);
+    /// The zero amount.
+    pub const ZERO: Self = Self(Value::ZERO);
+
+    /// Negate into the range whose bounds are the negated, reversed input
+    /// bounds.
+    #[must_use]
+    pub const fn negate<const NEG_MAX: i64, const NEG_MIN: i64>(self) -> Value<NEG_MAX, NEG_MIN> {
+        self.0.negate()
+    }
+}
+
+impl Negative {
+    /// The largest non-positive amount, zero.
+    pub const MAX: Self = Self(Value::MAX);
+    /// The smallest non-positive amount, `-MAX_MONEY`.
+    pub const MIN: Self = Self(Value::MIN);
+    /// The zero amount.
+    pub const ZERO: Self = Self(Value::ZERO);
+
+    /// Negate into the range whose bounds are the negated, reversed input
+    /// bounds.
+    #[must_use]
+    pub const fn negate<const NEG_MAX: i64, const NEG_MIN: i64>(self) -> Value<NEG_MAX, NEG_MIN> {
+        self.0.negate()
+    }
+}
+
+impl TryFrom<i64> for Balance {
+    type Error = OutOfRange;
+
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
+
+impl TryFrom<u64> for Balance {
+    type Error = OutOfRange;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
+
+impl TryFrom<i32> for Balance {
+    type Error = OutOfRange;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
+
+impl TryFrom<i128> for Balance {
+    type Error = OutOfRange;
+
+    fn try_from(value: i128) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
+
+impl TryFrom<i64> for Positive {
+    type Error = OutOfRange;
+
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
+
+impl TryFrom<u64> for Positive {
+    type Error = OutOfRange;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
+
+impl TryFrom<i32> for Positive {
+    type Error = OutOfRange;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
+
+impl TryFrom<i128> for Positive {
+    type Error = OutOfRange;
+
+    fn try_from(value: i128) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
+
+impl TryFrom<i64> for Negative {
+    type Error = OutOfRange;
+
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
+
+impl TryFrom<u64> for Negative {
+    type Error = OutOfRange;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
+
+impl TryFrom<i32> for Negative {
+    type Error = OutOfRange;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
+
+impl TryFrom<i128> for Negative {
+    type Error = OutOfRange;
+
+    fn try_from(value: i128) -> Result<Self, Self::Error> {
+        Value::try_from(value).map(Self)
+    }
+}
 
 /// Shared with Orchard (§5.4.8.3).
 const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
@@ -73,8 +222,11 @@ impl Trapdoor {
     /// where $\mathcal{V}$, $\mathcal{R}$ are generator points shared with
     /// Orchard (§5.4.8.3).
     #[must_use]
-    pub fn commit<const MIN: i64, const MAX: i64>(self, value: Value<MIN, MAX>) -> Commitment {
-        let commit_value = *VALUE_COMMIT_V * Fq::from(value);
+    pub fn commit<const MIN: i64, const MAX: i64>(
+        self,
+        value: impl Into<Value<MIN, MAX>>,
+    ) -> Commitment {
+        let commit_value = *VALUE_COMMIT_V * Fq::from(value.into());
         let commit_trapdoor = *VALUE_COMMIT_R * self.0;
         ValueCommitment(commit_value + commit_trapdoor)
     }
@@ -111,20 +263,18 @@ impl From<Commitment> for [u8; 32] {
 }
 
 /// A value bounded to `MIN..=MAX` (inclusive), backed by `i64`.
-///
-/// This could be replaced with `ranged_integers` if it was stable.
 #[derive(Clone, Copy, Debug, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 pub struct Value<const MIN: i64, const MAX: i64>(i64);
 
 impl From<Negative> for Balance {
     fn from(value: Negative) -> Self {
-        Self(value.0)
+        Self(Value(value.0.0))
     }
 }
 
 impl From<Positive> for Balance {
     fn from(value: Positive) -> Self {
-        Self(value.0)
+        Self(Value(value.0.0))
     }
 }
 
@@ -239,7 +389,7 @@ impl ops::Neg for Balance {
     type Output = Self;
 
     fn neg(self) -> Self {
-        self.negate()
+        Self(self.0.negate())
     }
 }
 
@@ -247,7 +397,7 @@ impl ops::Neg for Negative {
     type Output = Positive;
 
     fn neg(self) -> Self::Output {
-        self.negate()
+        Positive(self.0.negate())
     }
 }
 
@@ -255,7 +405,7 @@ impl ops::Neg for Positive {
     type Output = Negative;
 
     fn neg(self) -> Self::Output {
-        self.negate()
+        Negative(self.0.negate())
     }
 }
 
@@ -264,6 +414,91 @@ mod tests {
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
+
+    #[test]
+    fn monetary_types_round_trip_through_bounded_values() {
+        let balance_value: Value<{ -MAX_MONEY.cast_signed() }, { MAX_MONEY.cast_signed() }> =
+            Balance::MIN.into();
+        let positive_value: Value<0, { MAX_MONEY.cast_signed() }> = Positive::MAX.into();
+        let negative_value: Value<{ -MAX_MONEY.cast_signed() }, 0> = Negative::MIN.into();
+        assert_eq!(Balance::from(balance_value), Balance::MIN);
+        assert_eq!(Positive::from(positive_value), Positive::MAX);
+        assert_eq!(Negative::from(negative_value), Negative::MIN);
+    }
+
+    #[test]
+    fn monetary_types_expose_const_generic_negation() {
+        const BALANCE: Value<{ -MAX_MONEY.cast_signed() }, { MAX_MONEY.cast_signed() }> =
+            Balance::MAX.negate();
+        const NEGATIVE: Value<{ -MAX_MONEY.cast_signed() }, 0> = Positive::MAX.negate();
+        const POSITIVE: Value<0, { MAX_MONEY.cast_signed() }> = Negative::MIN.negate();
+        assert_eq!(Balance::from(BALANCE), Balance::MIN);
+        assert_eq!(Negative::from(NEGATIVE), Negative::MIN);
+        assert_eq!(Positive::from(POSITIVE), Positive::MAX);
+    }
+
+    #[test]
+    fn monetary_debug_formats_the_bounded_value() {
+        let balance = Balance::try_from(-7).expect("fixture value is within monetary bounds");
+        let positive = Positive::try_from(7).expect("fixture value is within monetary bounds");
+        let negative = Negative::try_from(-7).expect("fixture value is within monetary bounds");
+        assert_eq!(alloc::format!("{balance:?}"), "Value(-7)");
+        assert_eq!(alloc::format!("{positive:?}"), "Value(7)");
+        assert_eq!(alloc::format!("{negative:?}"), "Value(-7)");
+        assert_eq!(
+            alloc::format!("{balance:#?}"),
+            alloc::format!("{:#?}", balance.0)
+        );
+        assert_eq!(
+            alloc::format!("{positive:#?}"),
+            alloc::format!("{:#?}", positive.0)
+        );
+        assert_eq!(
+            alloc::format!("{negative:#?}"),
+            alloc::format!("{:#?}", negative.0)
+        );
+    }
+
+    #[test]
+    fn monetary_bounds_reject_values_outside_each_range() {
+        let maximum = i64::try_from(MAX_MONEY).expect("MAX_MONEY fits in i64");
+        assert_eq!(Balance::try_from(maximum), Ok(Balance::MAX));
+        assert_eq!(Balance::try_from(-maximum), Ok(Balance::MIN));
+        assert_eq!(Positive::try_from(MAX_MONEY), Ok(Positive::MAX));
+        assert_eq!(Negative::try_from(-maximum), Ok(Negative::MIN));
+        assert_eq!(Positive::try_from(-1), Err(OutOfRange));
+        assert_eq!(Negative::try_from(1), Err(OutOfRange));
+        assert_eq!(Balance::try_from(maximum + 1), Err(OutOfRange));
+        assert_eq!(Balance::try_from(-maximum - 1), Err(OutOfRange));
+        assert_eq!(Positive::try_from(MAX_MONEY + 1), Err(OutOfRange));
+        assert_eq!(Negative::try_from(-maximum - 1), Err(OutOfRange));
+        assert_eq!(Balance::try_from(u64::MAX), Err(OutOfRange));
+        assert_eq!(Positive::try_from(i128::MAX), Err(OutOfRange));
+        assert_eq!(Negative::try_from(i128::MIN), Err(OutOfRange));
+    }
+
+    #[test]
+    fn monetary_conversions_preserve_signed_commitments() {
+        for amount in [0, 1, MAX_MONEY] {
+            let positive = Positive::try_from(amount).expect("amount is within monetary bounds");
+            let negative = -positive;
+            let balance = Balance::from(positive);
+            assert_eq!(u64::from(positive), amount);
+            assert_eq!(i128::from(negative), -i128::from(amount));
+            assert_eq!(Balance::from(negative), -balance);
+            assert_eq!(-negative, positive);
+            assert_eq!(Fq::from(negative), -Fq::from(positive));
+            assert_eq!(
+                Trapdoor::ZERO.commit(positive),
+                Trapdoor::ZERO.commit(balance)
+            );
+            assert_eq!(
+                Trapdoor::ZERO.commit(positive) + Trapdoor::ZERO.commit(negative),
+                Commitment::default(),
+                "opposite values cancel with zero blinding"
+            );
+        }
+    }
 
     #[test]
     fn balance_zero_is_identity() {
@@ -276,11 +511,15 @@ mod tests {
     fn commit_homomorphic_binding_property() {
         let rng = &mut StdRng::seed_from_u64(0);
         let rcv_a = Trapdoor::random(rng);
-        let cv_a = rcv_a.commit(Balance::try_from(100).unwrap());
+        let cv_a =
+            rcv_a.commit(Balance::try_from(100).expect("fixture value is within monetary bounds"));
         let rcv_b = Trapdoor::random(rng);
-        let cv_b = rcv_b.commit(Balance::try_from(200).unwrap());
+        let cv_b =
+            rcv_b.commit(Balance::try_from(200).expect("fixture value is within monetary bounds"));
 
-        let remainder = cv_a + cv_b - Trapdoor::ZERO.commit(Balance::try_from(300).unwrap());
+        let remainder = cv_a + cv_b
+            - Trapdoor::ZERO
+                .commit(Balance::try_from(300).expect("fixture value is within monetary bounds"));
 
         let rcv_sum: Fq = Into::<Fq>::into(rcv_a) + Into::<Fq>::into(rcv_b);
 
@@ -295,7 +534,8 @@ mod tests {
 
     #[test]
     fn debug_value_commitment_redacts_point() {
-        let cv = Trapdoor::ZERO.commit(Balance::try_from(100).unwrap());
+        let cv = Trapdoor::ZERO
+            .commit(Balance::try_from(100).expect("fixture value is within monetary bounds"));
         assert_eq!(alloc::format!("{cv:?}"), "ValueCommitment(..)");
     }
 }
