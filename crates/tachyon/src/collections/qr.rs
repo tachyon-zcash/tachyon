@@ -65,16 +65,17 @@ pub fn classify(value: Fp, discriminant: Fp) -> (bool, Fp) {
     (false, root.expect("non-residue branch has a root"))
 }
 
-/// One side's points $(x_i, y_i)$, each $y_i$ the root of $x_i$ on that side.
-pub(crate) type ClassificationPoints = Vec<(Fp, Fp)>;
-
 /// Split values by side at `discriminant`, returning the residue-side then
-/// the non-residue-side points.
+/// the non-residue-side points $(x_i, y_i)$, each $y_i$ a root on its side.
 #[must_use]
+#[expect(
+    clippy::type_complexity,
+    reason = "the two sides contain interpolation points"
+)]
 pub(crate) fn split(
     values: impl IntoIterator<Item = Fp>,
     discriminant: Fp,
-) -> (ClassificationPoints, ClassificationPoints) {
+) -> (Vec<(Fp, Fp)>, Vec<(Fp, Fp)>) {
     let mut residue = Vec::new();
     let mut non_residue = Vec::new();
     for value in values {
@@ -173,7 +174,7 @@ mod tests {
         let repr = half.to_repr();
         let mut limbs = [0u64; 4];
         for (limb, bytes) in limbs.iter_mut().zip(repr.as_ref().chunks(8)) {
-            *limb = u64::from_le_bytes(bytes.try_into().unwrap());
+            *limb = u64::from_le_bytes(bytes.try_into().expect("each limb contains eight bytes"));
         }
         limbs
     }
@@ -310,9 +311,10 @@ mod tests {
                 .take((2 * count) + 2)
                 .collect();
             let (residue, non_residue) = split(values, discriminant);
-            let (u1, h1) = decomposition(&residue, class_multiplier(true), discriminant).unwrap();
-            let (u2, h2) =
-                decomposition(&non_residue, class_multiplier(false), discriminant).unwrap();
+            let (u1, h1) = decomposition(&residue, class_multiplier(true), discriminant)
+                .expect("distinct points lie on their classified side");
+            let (u2, h2) = decomposition(&non_residue, class_multiplier(false), discriminant)
+                .expect("distinct points lie on their classified side");
             verify_side(&residue, class_multiplier(true), discriminant, &u1, &h1);
             verify_side(
                 &non_residue,
@@ -336,7 +338,8 @@ mod tests {
             (&residue, class_multiplier(true)),
             (&non_residue, class_multiplier(false)),
         ] {
-            let (u, h) = decomposition(points, class, discriminant).unwrap();
+            let (u, h) = decomposition(points, class, discriminant)
+                .expect("distinct points lie on their classified side");
             let q = multiset::encode(abscissas_of(points));
             // The full coefficient compare is quadratic in B; evaluation at
             // random points verifies the identity in linear time instead.
@@ -358,7 +361,7 @@ mod tests {
             .take(16)
             .collect();
         let (mut residue, mut non_residue) = split(values, discriminant);
-        residue.push(non_residue.pop().unwrap());
+        residue.push(non_residue.pop().expect("fixture contains a non-residue"));
         assert!(decomposition(&residue, class_multiplier(true), discriminant).is_none());
     }
 
@@ -397,8 +400,10 @@ mod tests {
             Fp::ZERO,
             "the non-residue side must open nonzero at -R"
         );
-        let (u1, h1) = decomposition(&residue, class_multiplier(true), discriminant).unwrap();
-        let (u2, h2) = decomposition(&non_residue, class_multiplier(false), discriminant).unwrap();
+        let (u1, h1) = decomposition(&residue, class_multiplier(true), discriminant)
+            .expect("distinct points lie on their classified side");
+        let (u2, h2) = decomposition(&non_residue, class_multiplier(false), discriminant)
+            .expect("distinct points lie on their classified side");
         verify_side(&residue, class_multiplier(true), discriminant, &u1, &h1);
         verify_side(
             &non_residue,
@@ -414,7 +419,8 @@ mod tests {
         let rng = &mut StdRng::seed_from_u64(35);
         let discriminant = Fp::random(&mut *rng);
         let points = [(-discriminant, Fp::ZERO)];
-        let (u, h) = decomposition(&points, class_multiplier(true), discriminant).unwrap();
+        let (u, h) = decomposition(&points, class_multiplier(true), discriminant)
+            .expect("distinct points lie on their classified side");
         assert_eq!(dense(&u), [discriminant, Fp::ONE]);
         verify_side(&points, class_multiplier(true), discriminant, &u, &h);
     }
@@ -436,8 +442,10 @@ mod tests {
                 non_residue.push((discriminant, root));
             }
         }
-        let (u1, h1) = decomposition(&residue, class_multiplier(true), value).unwrap();
-        let (u2, h2) = decomposition(&non_residue, class_multiplier(false), value).unwrap();
+        let (u1, h1) = decomposition(&residue, class_multiplier(true), value)
+            .expect("distinct points lie on their classified side");
+        let (u2, h2) = decomposition(&non_residue, class_multiplier(false), value)
+            .expect("distinct points lie on their classified side");
         verify_side(&residue, class_multiplier(true), value, &u1, &h1);
         verify_side(&non_residue, class_multiplier(false), value, &u2, &h2);
         for &(discriminant, _) in &residue {

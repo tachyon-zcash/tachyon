@@ -9,13 +9,8 @@ use ragu::{Header, Index, Step, Suffix};
 
 use super::{delegation::NoteSecret, spendable::NoteSpendable};
 use crate::{
-    constants::MAX_MONEY,
-    keys::PaymentKey,
-    note,
-    nullifier::Nullifier,
-    primitives::Anchor,
-    ragu_constraint::{enforce_nonzero, enforce_zero},
-    value,
+    constants::MAX_MONEY, keys::PaymentKey, note, nullifier::Nullifier, primitives::Anchor,
+    ragu_constraint, value,
 };
 
 /// Header binding a spend to its lineage note, epoch nullifier pair and value
@@ -103,7 +98,7 @@ impl Step for SpendBind {
         (spendable_cm, spendable_epoch_current, anchor): <Self::Left as Header>::Data,
         (secret_cm, note, mk): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(secret_cm) - Fp::from(spendable_cm),
             "SpendBind: secret does not match note",
         )?;
@@ -124,11 +119,14 @@ impl Step for SpendBind {
         let nf_next = mk.derive_nullifier(epoch_next);
 
         // A zero nullifier would collide with the note's own cm tachygram.
-        enforce_nonzero(
+        ragu_constraint::enforce_nonzero(
             Fp::from(nf_current),
             "SpendBind: current-epoch nullifier is zero",
         )?;
-        enforce_nonzero(Fp::from(nf_next), "SpendBind: next-epoch nullifier is zero")?;
+        ragu_constraint::enforce_nonzero(
+            Fp::from(nf_next),
+            "SpendBind: next-epoch nullifier is zero",
+        )?;
 
         Ok((
             (

@@ -403,10 +403,14 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
         rng,
         (
             &aggregate.stamp,
-            &aggregate.descriptors().collect(),
+            &aggregate.descriptors().collect::<Vec<_>>(),
             &[aggregate.fee_descriptor()],
         ),
-        (&unapplied.stamp, &unapplied.descriptors().collect(), &[]),
+        (
+            &unapplied.stamp,
+            &unapplied.descriptors().collect::<Vec<_>>(),
+            &[],
+        ),
     );
     let over_unapplied = ProofStamp {
         coverage: coverage_of(&[aggregate.as_dyn(), unapplied.as_dyn()]),

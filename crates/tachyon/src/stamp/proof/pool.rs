@@ -30,7 +30,7 @@ use ragu_pasta::Pasta;
 
 use super::{
     delegation::NoteNullifiers,
-    qr::{QrBucket, enforce_value_profile},
+    qr::{self, QrBucket},
 };
 use crate::{
     collections::indexed_multiset,
@@ -39,8 +39,8 @@ use crate::{
         Anchor, AnchorSetCommit, AnchorSetPoly, EpochIndex, NfSeqCommit, NfSeqPoly, QrClassRoot,
         QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
-    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::enforce_poly_product,
+    ragu_constraint,
+    relations::enforce,
 };
 
 /// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
@@ -242,21 +242,21 @@ impl Step for AnchorSpanFuse {
         (left_anchor_start, left_members_commit, left_anchor_end): <Self::Left as Header>::Data,
         (right_anchor_start, right_members_commit, right_anchor_end): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(left_anchor_end) - Fp::from(right_anchor_start),
             "AnchorSpanFuse: spans do not share a vertex",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(left_members.commit()),
             Eq::from(left_members_commit),
             "AnchorSpanFuse: left members do not match header",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(right_members.commit()),
             Eq::from(right_members_commit),
             "AnchorSpanFuse: right members do not match header",
         )?;
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             left_members.as_ref(),
             right_members.as_ref(),
@@ -294,25 +294,25 @@ impl Step for UnspentFuse {
         (left_anchor_start, left_epoch_start, left_elapsed, left_epoch_next, left_anchor_next): <Self::Left as Header>::Data,
         (right_anchor_start, right_epoch_start, right_elapsed, right_epoch_next, right_anchor_next): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(left_elapsed_seq.commit()),
             Eq::from(left_elapsed),
             "UnspentFuse: left polynomial does not match header",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(right_elapsed_seq.commit()),
             Eq::from(right_elapsed),
             "UnspentFuse: right polynomial does not match header",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(left_anchor_next) - Fp::from(right_anchor_start),
             "UnspentFuse: left.anchor_next must equal right.anchor_start",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(right_epoch_start) - Fp::from(left_epoch_next),
             "UnspentFuse: halves do not meet at one epoch",
         )?;
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             left_elapsed_seq.as_ref(),
             right_elapsed_seq.as_ref(),
@@ -394,26 +394,26 @@ impl Step for UnspentLift {
             contents_commit,
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_start),
             "UnspentLift: the bucket does not start where the segment ends",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch),
             "UnspentLift: the bucket is not the segment's next epoch",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(contents.commit()),
             Eq::from(contents_commit),
             "UnspentLift: contents do not match the bucket",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(elapsed_seq.commit()),
             Eq::from(unspent_elapsed),
             "UnspentLift: elapsed does not match header",
         )?;
-        enforce_nonzero(Fp::from(value), "UnspentLift: tested value is zero")?;
-        enforce_value_profile(value, discriminant, profile, &classes, &mask)?;
+        ragu_constraint::enforce_nonzero(Fp::from(value), "UnspentLift: tested value is zero")?;
+        qr::enforce_value_profile(value, discriminant, profile, &classes, &mask)?;
 
         let epoch_next = bucket_epoch.next().ok_or_else(|| {
             ragu_core::Error::InvalidWitness("UnspentLift: bucket has no next epoch".into())
@@ -435,7 +435,7 @@ impl Step for UnspentLift {
         let extended_at_z = extended_seq.eval(z);
         ctx.enforce_poly_query(elapsed_seq.commit().into(), z, elapsed_at_z)?;
         ctx.enforce_poly_query(extended_seq.commit().into(), z, extended_at_z)?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             extended_at_z
                 - (elapsed_at_z
                     * indexed_multiset::direct_eval([(u64::from(bucket_epoch), value.into())], z)),
@@ -444,7 +444,7 @@ impl Step for UnspentLift {
 
         let contents_at_value = contents.eval(value.into());
         ctx.enforce_poly_query(contents_commit.into(), value.into(), contents_at_value)?;
-        enforce_nonzero(
+        ragu_constraint::enforce_nonzero(
             contents_at_value,
             "UnspentLift: found nullifier in the bucket",
         )?;
@@ -526,12 +526,12 @@ impl Step for UnspentBind {
             ));
         }
 
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             elapsed_seq.commit().into(),
             Eq::from(unspent_elapsed),
             "UnspentBind: elapsed polynomial does not match header",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(nf_seq.commit()),
             Eq::from(nf_commit),
             "UnspentBind: covering sequence does not match header",
@@ -539,7 +539,7 @@ impl Step for UnspentBind {
 
         // The divisibility bind: `nf_seq = elapsed · complement`, so every
         // elapsed member is a genuine derived pair.
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             elapsed_seq.as_ref(),
             complement_seq.as_ref(),

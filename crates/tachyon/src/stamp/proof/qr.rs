@@ -38,8 +38,8 @@ use crate::{
         Anchor, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrInterpolantPoly, QrProfile,
         QrQuotientPoly, Tachygram, TachygramSetCommit, TachygramSetPoly,
     },
-    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::enforce_poly_product,
+    ragu_constraint,
+    relations::enforce,
 };
 
 /// Tachygrams under routing. Every member of `contents` takes `profile`, and
@@ -292,37 +292,37 @@ impl Step for QrIntakeMerge {
             right_commit,
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(left_epoch) - Fp::from(right_epoch),
             "QrIntakeMerge: inputs cover different epochs",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(left_discriminant) - Fp::from(right_discriminant),
             "QrIntakeMerge: inputs derive from different discriminants",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(u64::from(left_profile.depth)) - Fp::from(u64::from(right_profile.depth)),
             "QrIntakeMerge: inputs sit at different depths",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(u64::from(left_profile.bits)) - Fp::from(u64::from(right_profile.bits)),
             "QrIntakeMerge: inputs sit at different profiles",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(left_anchor_end) - Fp::from(right_anchor_prev),
             "QrIntakeMerge: left.anchor_end must equal right.anchor_prev",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(left_contents.commit()),
             Eq::from(left_commit),
             "QrIntakeMerge: left contents do not match header",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(right_contents.commit()),
             Eq::from(right_commit),
             "QrIntakeMerge: right contents do not match header",
         )?;
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             left_contents.as_ref(),
             right_contents.as_ref(),
@@ -372,12 +372,12 @@ impl Step for QrIntakeSplit {
         (epoch, anchor_prev, anchor_end, discriminant, profile, contents_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(contents.commit()),
             Eq::from(contents_commit),
             "QrIntakeSplit: contents do not match header",
         )?;
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             non_residue.as_ref(),
             residue.as_ref(),
@@ -392,7 +392,7 @@ impl Step for QrIntakeSplit {
             exceptional,
             non_residue_at_exceptional,
         )?;
-        enforce_nonzero(
+        ragu_constraint::enforce_nonzero(
             non_residue_at_exceptional,
             "QrIntakeSplit: exceptional value claimed the non-residue class",
         )?;
@@ -475,7 +475,7 @@ impl Step for QrSideDescend {
         let sibling_commit = sibling_contents.commit();
         let sibling = Eq::from(residue)
             + ((Eq::from(non_residue) - Eq::from(residue)) * Fp::from(u64::from(bit)));
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(sibling_commit),
             sibling,
             "QrSideDescend: sibling does not match the header",
@@ -509,7 +509,7 @@ impl Step for QrSideDescend {
         let class_residual = interpolant_at_z.square() - (sibling_at_z * quotient_at_z);
         let sibling_multiplier =
             Fp::ONE + ((QUADRATIC_NON_RESIDUE - Fp::ONE) * Fp::from(u64::from(bit)));
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             class_residual - (sibling_multiplier * shifted),
             "QrSideDescend: the sibling fails its class decomposition",
         )?;
@@ -622,7 +622,7 @@ impl Step for QrBucketSeal {
         (epoch, anchor_prev, anchor_end, discriminant, profile, contents): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(anchor_prev)
                 - poseidon::anchor_next_epoch(Fp::from(anchor_final_prev), Fp::from(epoch)),
             "QrBucketSeal: witnessed boundary digest does not match intake's first anchor",
@@ -667,14 +667,14 @@ pub(super) fn enforce_value_profile(
     let mut depth_acc = Fp::ZERO;
     let mut index_acc = Fp::ZERO;
     let mut bits_acc = Fp::ZERO;
-    for (&QrClassRoot(side, root), &selected) in classes.iter().zip(mask) {
+    for (&QrClassRoot { side, root }, &selected) in classes.iter().zip(mask) {
         let side_fp = Fp::from(u64::from(side));
         let multiplier = QUADRATIC_NON_RESIDUE - ((QUADRATIC_NON_RESIDUE - Fp::ONE) * side_fp);
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             root.square() - (multiplier * shifted),
             "QR profile: root does not square to the claimed class",
         )?;
-        enforce_nonzero(
+        ragu_constraint::enforce_nonzero(
             (shifted * (Fp::ONE - side_fp)) + side_fp,
             "QR profile: exceptional discriminant claimed the non-residue class",
         )?;
@@ -686,15 +686,15 @@ pub(super) fn enforce_value_profile(
         shifted += Fp::ONE;
         position_fp += Fp::ONE;
     }
-    enforce_zero(
+    ragu_constraint::enforce_zero(
         depth_acc - Fp::from(u64::from(profile.depth)),
         "QR profile: depth mask does not match the bucket's depth",
     )?;
-    enforce_zero(
+    ragu_constraint::enforce_zero(
         index_acc.double() - (depth_acc * (depth_acc - Fp::ONE)),
         "QR profile: depth mask is not a prefix",
     )?;
-    enforce_zero(
+    ragu_constraint::enforce_zero(
         bits_acc - Fp::from(u64::from(profile.bits)),
         "QR profile: value does not take the bucket's profile",
     )?;
@@ -788,12 +788,12 @@ impl Step for QrUnspentInit {
         ): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(contents.commit()),
             Eq::from(contents_commit),
             "QrUnspentInit: contents do not match the bucket",
         )?;
-        enforce_nonzero(Fp::from(value), "QrUnspentInit: tested value is zero")?;
+        ragu_constraint::enforce_nonzero(Fp::from(value), "QrUnspentInit: tested value is zero")?;
         enforce_value_profile(value, discriminant, profile, &classes, &mask)?;
 
         let epoch_next = bucket_epoch.next().ok_or_else(|| {
@@ -815,14 +815,14 @@ impl Step for QrUnspentInit {
 
         let member_at_z =
             indexed_multiset::direct_eval([(u64::from(bucket_epoch), value.into())], z);
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             sequence_at_z - member_at_z,
             "QrUnspentInit: sequence does not match the tested pair",
         )?;
 
         let contents_at_value = contents.eval(value.into());
         ctx.enforce_poly_query(contents_commit.into(), value.into(), contents_at_value)?;
-        enforce_nonzero(
+        ragu_constraint::enforce_nonzero(
             contents_at_value,
             "QrUnspentInit: found nullifier in the bucket",
         )?;

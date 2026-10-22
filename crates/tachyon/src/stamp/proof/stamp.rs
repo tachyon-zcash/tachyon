@@ -19,8 +19,8 @@ use crate::{
     primitives::{
         ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
     },
-    ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
-    relations::enforce::{enforce_poly_product, enforce_poly_roots},
+    ragu_constraint,
+    relations::enforce,
     value,
 };
 
@@ -127,7 +127,7 @@ impl Step for OutputAction {
         let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
 
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
-        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
+        let action_digest = ActionDigest::try_new(cv, rk).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "OutputAction: action digest construction failed".into(),
             )
@@ -136,7 +136,7 @@ impl Step for OutputAction {
         // The action-set commitment commits to exactly the one action this
         // step derives. `cv` carries the note's value; `rk` derives from
         // `alpha`, and so from `cm`.
-        enforce_poly_roots(
+        enforce::enforce_poly_roots(
             ctx,
             action_set.as_ref(),
             &[Fp::from(action_digest)],
@@ -146,7 +146,7 @@ impl Step for OutputAction {
         // The stamp accumulator commits to exactly the tachygram pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
-        enforce_poly_roots(
+        enforce::enforce_poly_roots(
             ctx,
             tachygram_set.as_ref(),
             &[Fp::from(cm), Fp::from(pad)],
@@ -199,7 +199,7 @@ impl Step for SpendAction {
         (cm, nf_current, nf_next, anchor, pk, cv): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(pk) - Fp::from(pak.derive_payment_key()),
             "SpendAction: pak not related to note",
         )?;
@@ -210,7 +210,7 @@ impl Step for SpendAction {
         let alpha = theta.randomizer::<effect::Spend>(cm);
 
         let rk = pak.ak.derive_action_public(&alpha);
-        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
+        let action_digest = ActionDigest::try_new(cv, rk).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "SpendAction: action digest construction failed".into(),
             )
@@ -218,7 +218,7 @@ impl Step for SpendAction {
 
         // The action-set commitment commits to exactly the one action this
         // step derives; the root is in-circuit from the certified note.
-        enforce_poly_roots(
+        enforce::enforce_poly_roots(
             ctx,
             action_set.as_ref(),
             &[Fp::from(action_digest)],
@@ -228,7 +228,7 @@ impl Step for SpendAction {
         // The stamp accumulator commits to exactly the nullifier pair on the
         // bind header, both roots fixed by the recursive verification of the
         // left PCD.
-        enforce_poly_roots(
+        enforce::enforce_poly_roots(
             ctx,
             tachygram_set.as_ref(),
             &[Fp::from(nf_current), Fp::from(nf_next)],
@@ -269,43 +269,43 @@ impl Step for StampMerge {
         (right_action_commit, right_tachygram_commit, right_anchor): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Same-anchor constraint.
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(left_anchor) - Fp::from(right_anchor),
             "StampMerge: anchors must match",
         )?;
 
         // Bind the witnessed left/right input sets to the public commitments on
         // the headers.
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(left_action_set.commit()),
             Eq::from(left_action_commit),
             "StampMerge: left action accumulator must commit to header commit",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(right_action_set.commit()),
             Eq::from(right_action_commit),
             "StampMerge: right action accumulator must commit to header commit",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(left_tachygram_set.commit()),
             Eq::from(left_tachygram_commit),
             "StampMerge: left tachygram accumulator must commit to header commit",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(right_tachygram_set.commit()),
             Eq::from(right_tachygram_commit),
             "StampMerge: right tachygram accumulator must commit to header commit",
         )?;
 
         // Confirm union via product-opening relation.
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             left_action_set.as_ref(),
             right_action_set.as_ref(),
             merged_action_set.as_ref(),
             "StampMerge: merged action set must be the product of left and right action sets",
         )?;
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             left_tachygram_set.as_ref(),
             right_tachygram_set.as_ref(),
@@ -354,43 +354,43 @@ impl Step for ActionMerge {
         (right_action_commit, right_tachygram_commit, right_anchor): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Same-anchor constraint.
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(left_anchor) - Fp::from(right_anchor),
             "ActionMerge: anchors must match",
         )?;
 
         // Bind the witnessed left/right input sets to the public commitments on
         // the headers.
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(left_action_set.commit()),
             Eq::from(left_action_commit),
             "ActionMerge: left action accumulator must commit to header commit",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(right_action_set.commit()),
             Eq::from(right_action_commit),
             "ActionMerge: right action accumulator must commit to header commit",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(left_tachygram_set.commit()),
             Eq::from(left_tachygram_commit),
             "ActionMerge: left tachygram accumulator must commit to header commit",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(right_tachygram_set.commit()),
             Eq::from(right_tachygram_commit),
             "ActionMerge: right tachygram accumulator must commit to header commit",
         )?;
 
         // Confirm union via product-opening relation.
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             left_action_set.as_ref(),
             right_action_set.as_ref(),
             merged_action_set.as_ref(),
             "ActionMerge: merged action set must be the product of left and right action sets",
         )?;
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             left_tachygram_set.as_ref(),
             right_tachygram_set.as_ref(),
@@ -447,14 +447,14 @@ impl Step for StampLift {
         (stamp_action_commit, stamp_tachygram_commit, stamp_anchor): <Self::Left as Header>::Data,
         (span_anchor_start, span_members, span_anchor_end): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(members.commit()),
             Eq::from(span_members),
             "StampLift: members do not match header",
         )?;
 
         let anchor_eval = members.eval(Fp::from(stamp_anchor));
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             anchor_eval * (Fp::from(stamp_anchor) - Fp::from(span_anchor_start)),
             "StampLift: stamp anchor is neither the span's start nor a member",
         )?;
@@ -489,14 +489,14 @@ impl Step for ActionLift {
         (actions_action_commit, actions_tachygram_commit, actions_anchor): <Self::Left as Header>::Data,
         (span_anchor_start, span_members, span_anchor_end): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(members.commit()),
             Eq::from(span_members),
             "ActionLift: members do not match header",
         )?;
 
         let anchor_eval = members.eval(Fp::from(actions_anchor));
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             anchor_eval * (Fp::from(actions_anchor) - Fp::from(span_anchor_start)),
             "ActionLift: actions anchor is neither the span's start nor a member",
         )?;
@@ -548,12 +548,12 @@ impl Step for FeeFuse {
         (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(left_action_set.commit()),
             Eq::from(left_action_commit),
             "FeeFuse: left action accumulator must commit to header commit",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(left_tachygram_set.commit()),
             Eq::from(left_tachygram_commit),
             "FeeFuse: left tachygram accumulator must commit to header commit",
@@ -603,33 +603,33 @@ impl Step for FeeFuse {
         let fee_digest = poseidon::fee_digest(cv_max_fee_coords, u64::from(fee));
 
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
-        let fee_change_commitment = enforce_nonzero(
+        let fee_change_commitment = ragu_constraint::enforce_nonzero(
             poseidon::note_commitment(rcm, pk, change, psi),
             "FeeFuse: fee change note commitment is zero",
         )?;
 
-        enforce_poly_roots(
+        enforce::enforce_poly_roots(
             ctx,
             fee_action_set.as_ref(),
             &[fee_digest],
             "FeeFuse: fee action set does not commit to the fee digest",
         )?;
 
-        enforce_poly_roots(
+        enforce::enforce_poly_roots(
             ctx,
             fee_tachygram_set.as_ref(),
             &[fee_change_commitment],
             "FeeFuse: fee tachygram set does not commit to the fee change note",
         )?;
 
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             left_action_set.as_ref(),
             fee_action_set.as_ref(),
             output_action_set.as_ref(),
             "FeeFuse: output action set must be the product of left and fee action sets",
         )?;
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             left_tachygram_set.as_ref(),
             fee_tachygram_set.as_ref(),
@@ -669,7 +669,7 @@ impl Step for FeeSeed {
         _left: <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(u64::from(max_fee_note.value)),
             "FeeSeed: maximum fee must be zero",
         )?;
@@ -701,19 +701,19 @@ impl Step for FeeSeed {
         let fee_digest = poseidon::fee_digest(cv_max_fee_coords, 0);
 
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
-        let fee_change_commitment = enforce_nonzero(
+        let fee_change_commitment = ragu_constraint::enforce_nonzero(
             poseidon::note_commitment(rcm, pk, 0, psi),
             "FeeSeed: fee change note commitment is zero",
         )?;
 
-        enforce_poly_roots(
+        enforce::enforce_poly_roots(
             ctx,
             fee_action_set.as_ref(),
             &[fee_digest],
             "FeeSeed: fee action set does not commit to the fee digest",
         )?;
 
-        enforce_poly_roots(
+        enforce::enforce_poly_roots(
             ctx,
             fee_tachygram_set.as_ref(),
             &[fee_change_commitment],

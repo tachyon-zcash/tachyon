@@ -77,7 +77,7 @@ use pasta_curves::Fp;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_pasta::fp;
 
-use super::poly_mul;
+use crate::collections;
 
 const NON_RESIDUE: Fp = fp!(0x02);
 
@@ -109,7 +109,7 @@ pub(crate) fn encode(
 ) -> Polynomial<Fp, ProductionRank> {
     members.into_iter().fold(
         Polynomial::from_coeffs([Fp::ONE].to_vec()),
-        |acc, (idx, m)| poly_mul(&acc, &encode_single(idx, m)),
+        |acc, (idx, m)| collections::poly_mul(&acc, &encode_single(idx, m)),
     )
 }
 
@@ -152,7 +152,7 @@ mod tests {
         let manual_poly = {
             let m_ix = Polynomial::from_coeffs([member, Fp::from(idx) + Fp::ONE].to_vec());
 
-            let m_ix_cube = poly_mul(&poly_mul(&m_ix, &m_ix), &m_ix);
+            let m_ix_cube = collections::poly_mul(&collections::poly_mul(&m_ix, &m_ix), &m_ix);
 
             {
                 let mut coeffs = m_ix_cube.iter_coeffs().collect::<Vec<_>>();

@@ -4,7 +4,7 @@
 //! Combined with a note commitment it deterministically derives an
 //! [`ActionRandomizer`].
 
-use core::{any::type_name, marker::PhantomData};
+use core::{any, marker::PhantomData};
 
 use derive_more::{Debug, Into};
 use ff::{Field as _, PrimeField as _};
@@ -66,7 +66,7 @@ mod sealed {
 ///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$.
 /// - [`ActionRandomizer<Output>`]: $\mathsf{rsk} = \alpha$.
 #[derive(Clone, Copy, Debug, Into)]
-#[debug("ActionRandomizer<{}>", type_name::<S>())]
+#[debug("ActionRandomizer<{}>", any::type_name::<S>())]
 pub struct ActionRandomizer<S: sealed::RandomizerState>(
     pub(crate) Fq,
     #[into(skip)] pub(crate) PhantomData<S>,

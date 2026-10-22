@@ -24,8 +24,8 @@ use crate::{
     note::{self, Note},
     nullifier::{self, NF_DERIVATION_WIDTH},
     primitives::{EpochIndex, NfSeqCommit, NfSeqPoly},
-    ragu_constraint::{enforce_equal_point, enforce_zero},
-    relations::enforce::enforce_poly_product,
+    ragu_constraint,
+    relations::enforce,
     value,
 };
 
@@ -203,7 +203,7 @@ impl Step for NullifierDerive {
             clippy::integer_division_remainder_used,
             reason = "the group width is a small constant"
         )]
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(u64::from(epoch_start) % (PoseidonFp::RATE as u64)),
             "NullifierDerive: epoch_start is not group-aligned",
         )?;
@@ -242,7 +242,7 @@ impl Step for NullifierDerive {
         let window_at_z =
             indexed_multiset::direct_eval((epoch_start.into()..).zip(nullifiers.map(Fp::from)), z);
 
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             seq_at_z - window_at_z,
             "NullifierDerive: sequence does not match the derived window",
         )?;
@@ -291,26 +291,26 @@ impl Step for NullifierFuse {
         (left_cm, left_epoch_start, left_nf_commit, left_epoch_end): <Self::Left as Header>::Data,
         (right_cm, right_epoch_start, right_nf_commit, right_epoch_end): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(left_cm) - Fp::from(right_cm),
             "NullifierFuse: note commitments differ",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(right_epoch_start) - Fp::from(left_epoch_end) - Fp::ONE,
             "NullifierFuse: ranges not contiguous",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(left_seq.commit()),
             Eq::from(left_nf_commit),
             "NullifierFuse: left polynomial does not match header",
         )?;
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(right_seq.commit()),
             Eq::from(right_nf_commit),
             "NullifierFuse: right polynomial does not match header",
         )?;
         let merged_nf_commit = merged_seq.commit();
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             left_seq.as_ref(),
             right_seq.as_ref(),

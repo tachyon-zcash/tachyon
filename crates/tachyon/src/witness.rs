@@ -38,21 +38,18 @@ use crate::{
     value,
 };
 
-type StepLeft<S> = <<S as Step>::Left as Header>::Data;
-
-type StepRight<S> = <<S as Step>::Right as Header>::Data;
-
-type StepWitness<'src, S> = <S as Step>::Witness<'src>;
-
 /// Prepare the witness for [`NoteSeed`]: `(value, psi, rcm, pak)`.
 ///
 /// `note.pk` is not read; the step derives the payment key from `pak`.
 #[must_use]
 pub const fn note_seed(
-    (_left, _right): (StepLeft<NoteSeed>, StepRight<NoteSeed>),
+    (_left, _right): (
+        <<NoteSeed as Step>::Left as Header>::Data,
+        <<NoteSeed as Step>::Right as Header>::Data,
+    ),
     note: Note,
     pak: ProofAuthorizingKey,
-) -> StepWitness<'static, NoteSeed> {
+) -> <NoteSeed as Step>::Witness<'static> {
     (note.value, note.psi, note.rcm, pak)
 }
 
@@ -63,9 +60,12 @@ pub const fn note_seed(
 /// windows via [`NullifierFuse`].
 #[must_use]
 pub fn nullifier_derive(
-    (left, _right): (StepLeft<NullifierDerive>, StepRight<NullifierDerive>),
+    (left, _right): (
+        <<NullifierDerive as Step>::Left as Header>::Data,
+        <<NullifierDerive as Step>::Right as Header>::Data,
+    ),
     epoch_start: EpochIndex,
-) -> StepWitness<'static, NullifierDerive> {
+) -> <NullifierDerive as Step>::Witness<'static> {
     let (_cm, _note, mk) = left;
     (
         epoch_start,
@@ -77,10 +77,13 @@ pub fn nullifier_derive(
 /// `(left_seq, merged_seq, right_seq)`.
 #[must_use]
 pub fn nullifier_fuse(
-    (left, right): (StepLeft<NullifierFuse>, StepRight<NullifierFuse>),
+    (left, right): (
+        <<NullifierFuse as Step>::Left as Header>::Data,
+        <<NullifierFuse as Step>::Right as Header>::Data,
+    ),
     left_nfs: &[Nullifier],
     right_nfs: &[Nullifier],
-) -> StepWitness<'static, NullifierFuse> {
+) -> <NullifierFuse as Step>::Witness<'static> {
     let (_, left_epoch_start, ..) = left;
     let (_, right_epoch_start, ..) = right;
     let merged = [left_nfs, right_nfs].concat();
@@ -98,10 +101,13 @@ pub fn nullifier_fuse(
 /// covered epoch.
 #[must_use]
 pub fn unspent_fuse(
-    (left, right): (StepLeft<UnspentFuse>, StepRight<UnspentFuse>),
+    (left, right): (
+        <<UnspentFuse as Step>::Left as Header>::Data,
+        <<UnspentFuse as Step>::Right as Header>::Data,
+    ),
     left_elapsed: &[Nullifier],
     right_elapsed: &[Nullifier],
-) -> StepWitness<'static, UnspentFuse> {
+) -> <UnspentFuse as Step>::Witness<'static> {
     let (_, left_epoch_start, ..) = left;
     let (_, right_epoch_start, ..) = right;
     let combined = [left_elapsed, right_elapsed].concat();
@@ -119,16 +125,23 @@ pub fn unspent_fuse(
 /// is the complete covering sequence, one member per epoch of the
 /// derivation header's range; the complement is the window's runs on both
 /// sides of the unspent's span, multiplied.
+///
+/// # Panics
+///
+/// Panics if the unspent's start or elapsed span lies outside `window`.
 #[must_use]
 #[expect(
     clippy::as_conversions,
     reason = "the derivation header's range covers the window"
 )]
 pub fn unspent_bind(
-    (unspent, deriv): (StepLeft<UnspentBind>, StepRight<UnspentBind>),
+    (unspent, deriv): (
+        <<UnspentBind as Step>::Left as Header>::Data,
+        <<UnspentBind as Step>::Right as Header>::Data,
+    ),
     window: &[Nullifier],
     elapsed: &[Nullifier],
-) -> StepWitness<'static, UnspentBind> {
+) -> <UnspentBind as Step>::Witness<'static> {
     let (_, epoch_start, _, epoch_next, _) = unspent;
     let (_, nullifiers_epoch_start, ..) = deriv;
     let lo = u32::from(epoch_start - nullifiers_epoch_start) as usize;
@@ -147,11 +160,14 @@ pub fn unspent_bind(
 /// `(anchor_prev, creation_set, creation_epoch)`.
 #[must_use]
 pub fn spendable_init(
-    (_left, _right): (StepLeft<SpendableInit>, StepRight<SpendableInit>),
+    (_left, _right): (
+        <<SpendableInit as Step>::Left as Header>::Data,
+        <<SpendableInit as Step>::Right as Header>::Data,
+    ),
     anchor_prev: Anchor,
     creation_tgs: &[Tachygram],
     creation_epoch: EpochIndex,
-) -> StepWitness<'static, SpendableInit> {
+) -> <SpendableInit as Step>::Witness<'static> {
     (
         anchor_prev,
         creation_tgs.iter().copied().collect::<TachygramSetPoly>(),
@@ -163,11 +179,14 @@ pub fn spendable_init(
 /// stamp_commit)`.
 #[must_use]
 pub fn anchor_span_seed(
-    (_left, _right): (StepLeft<AnchorSpanSeed>, StepRight<AnchorSpanSeed>),
+    (_left, _right): (
+        <<AnchorSpanSeed as Step>::Left as Header>::Data,
+        <<AnchorSpanSeed as Step>::Right as Header>::Data,
+    ),
     anchor_start: Anchor,
     epoch: EpochIndex,
     tgs: &[Tachygram],
-) -> StepWitness<'static, AnchorSpanSeed> {
+) -> <AnchorSpanSeed as Step>::Witness<'static> {
     (
         anchor_start,
         epoch,
@@ -182,10 +201,13 @@ pub fn anchor_span_seed(
 /// halves.
 #[must_use]
 pub fn anchor_span_fuse(
-    (_left, _right): (StepLeft<AnchorSpanFuse>, StepRight<AnchorSpanFuse>),
+    (_left, _right): (
+        <<AnchorSpanFuse as Step>::Left as Header>::Data,
+        <<AnchorSpanFuse as Step>::Right as Header>::Data,
+    ),
     left_members: &[Anchor],
     right_members: &[Anchor],
-) -> StepWitness<'static, AnchorSpanFuse> {
+) -> <AnchorSpanFuse as Step>::Witness<'static> {
     (
         left_members.iter().copied().collect(),
         left_members.iter().chain(right_members).copied().collect(),
@@ -198,9 +220,12 @@ pub fn anchor_span_fuse(
 /// `members` is the span's members polynomial.
 #[must_use]
 pub fn stamp_lift(
-    (_stamp, _span): (StepLeft<StampLift>, StepRight<StampLift>),
+    (_stamp, _span): (
+        <<StampLift as Step>::Left as Header>::Data,
+        <<StampLift as Step>::Right as Header>::Data,
+    ),
     members: &[Anchor],
-) -> StepWitness<'static, StampLift> {
+) -> <StampLift as Step>::Witness<'static> {
     (members.iter().copied().collect(),)
 }
 
@@ -208,11 +233,14 @@ pub fn stamp_lift(
 /// `(anchor_prev, epoch, stamp_commit)`.
 #[must_use]
 pub fn summary_seed(
-    (_left, _right): (StepLeft<SummarySeed>, StepRight<SummarySeed>),
+    (_left, _right): (
+        <<SummarySeed as Step>::Left as Header>::Data,
+        <<SummarySeed as Step>::Right as Header>::Data,
+    ),
     anchor_prev: Anchor,
     epoch: EpochIndex,
     tgs: &[Tachygram],
-) -> StepWitness<'static, SummarySeed> {
+) -> <SummarySeed as Step>::Witness<'static> {
     (
         anchor_prev,
         epoch,
@@ -223,10 +251,13 @@ pub fn summary_seed(
 /// Prepare the witness for [`SummaryAdvance`]: `(acc, extended, stamp)`.
 #[must_use]
 pub fn summary_advance(
-    (_left, _right): (StepLeft<SummaryAdvance>, StepRight<SummaryAdvance>),
+    (_left, _right): (
+        <<SummaryAdvance as Step>::Left as Header>::Data,
+        <<SummaryAdvance as Step>::Right as Header>::Data,
+    ),
     acc_tgs: &[Tachygram],
     stamp_tgs: &[Tachygram],
-) -> StepWitness<'static, SummaryAdvance> {
+) -> <SummaryAdvance as Step>::Witness<'static> {
     let extended = acc_tgs
         .iter()
         .chain(stamp_tgs.iter())
@@ -242,18 +273,24 @@ pub fn summary_advance(
 /// Prepare the witness for [`QrSpendableInit`]: `(contents)`.
 #[must_use]
 pub fn qr_spendable_init(
-    (_unspent, _bucket): (StepLeft<QrSpendableInit>, StepRight<QrSpendableInit>),
+    (_unspent, _bucket): (
+        <<QrSpendableInit as Step>::Left as Header>::Data,
+        <<QrSpendableInit as Step>::Right as Header>::Data,
+    ),
     bucket_members: &[Tachygram],
-) -> StepWitness<'static, QrSpendableInit> {
+) -> <QrSpendableInit as Step>::Witness<'static> {
     (bucket_members.iter().copied().collect(),)
 }
 
 /// Prepare the witness for [`QrSummaryIntake`]: `(discriminant)`.
 #[must_use]
 pub const fn qr_summary_intake(
-    (_left, _right): (StepLeft<QrSummaryIntake>, StepRight<QrSummaryIntake>),
+    (_left, _right): (
+        <<QrSummaryIntake as Step>::Left as Header>::Data,
+        <<QrSummaryIntake as Step>::Right as Header>::Data,
+    ),
     discriminant: QrDiscriminant,
-) -> StepWitness<'static, QrSummaryIntake> {
+) -> <QrSummaryIntake as Step>::Witness<'static> {
     (discriminant,)
 }
 
@@ -261,12 +298,15 @@ pub const fn qr_summary_intake(
 /// discriminant, stamp_commit)`.
 #[must_use]
 pub fn qr_stamp_intake_seed(
-    (_left, _right): (StepLeft<QrStampIntakeSeed>, StepRight<QrStampIntakeSeed>),
+    (_left, _right): (
+        <<QrStampIntakeSeed as Step>::Left as Header>::Data,
+        <<QrStampIntakeSeed as Step>::Right as Header>::Data,
+    ),
     anchor_prev: Anchor,
     epoch: EpochIndex,
     discriminant: QrDiscriminant,
     tgs: &[Tachygram],
-) -> StepWitness<'static, QrStampIntakeSeed> {
+) -> <QrStampIntakeSeed as Step>::Witness<'static> {
     (
         anchor_prev,
         epoch,
@@ -279,11 +319,14 @@ pub fn qr_stamp_intake_seed(
 /// discriminant)`.
 #[must_use]
 pub const fn qr_empty_intake_seed(
-    (_left, _right): (StepLeft<QrEmptyIntakeSeed>, StepRight<QrEmptyIntakeSeed>),
+    (_left, _right): (
+        <<QrEmptyIntakeSeed as Step>::Left as Header>::Data,
+        <<QrEmptyIntakeSeed as Step>::Right as Header>::Data,
+    ),
     anchor: Anchor,
     epoch: EpochIndex,
     discriminant: QrDiscriminant,
-) -> StepWitness<'static, QrEmptyIntakeSeed> {
+) -> <QrEmptyIntakeSeed as Step>::Witness<'static> {
     (anchor, epoch, discriminant)
 }
 
@@ -291,10 +334,13 @@ pub const fn qr_empty_intake_seed(
 /// right_contents, merged)`.
 #[must_use]
 pub fn qr_intake_merge(
-    (_left, _right): (StepLeft<QrIntakeMerge>, StepRight<QrIntakeMerge>),
+    (_left, _right): (
+        <<QrIntakeMerge as Step>::Left as Header>::Data,
+        <<QrIntakeMerge as Step>::Right as Header>::Data,
+    ),
     left_tgs: &[Tachygram],
     right_tgs: &[Tachygram],
-) -> StepWitness<'static, QrIntakeMerge> {
+) -> <QrIntakeMerge as Step>::Witness<'static> {
     (
         left_tgs.iter().copied().collect::<TachygramSetPoly>(),
         right_tgs.iter().copied().collect::<TachygramSetPoly>(),
@@ -310,9 +356,12 @@ pub fn qr_intake_merge(
 /// residue)`.
 #[must_use]
 pub fn qr_intake_split(
-    (intake, _right): (StepLeft<QrIntakeSplit>, StepRight<QrIntakeSplit>),
+    (intake, _right): (
+        <<QrIntakeSplit as Step>::Left as Header>::Data,
+        <<QrIntakeSplit as Step>::Right as Header>::Data,
+    ),
     members: &[Tachygram],
-) -> StepWitness<'static, QrIntakeSplit> {
+) -> <QrIntakeSplit as Step>::Witness<'static> {
     let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _contents) = intake;
     let (residue, non_residue) = collections::qr::split(
         members.iter().copied().map(Fp::from),
@@ -345,10 +394,13 @@ pub fn qr_intake_split(
 /// unreachable.
 #[must_use]
 pub fn qr_side_descend(
-    (sides, _right): (StepLeft<QrSideDescend>, StepRight<QrSideDescend>),
+    (sides, _right): (
+        <<QrSideDescend as Step>::Left as Header>::Data,
+        <<QrSideDescend as Step>::Right as Header>::Data,
+    ),
     members: &[Tachygram],
     side: bool,
-) -> StepWitness<'static, QrSideDescend> {
+) -> <QrSideDescend as Step>::Witness<'static> {
     let (_epoch, _anchor_prev, _anchor_end, discriminant, profile, _non_residue, _residue) = sides;
     let (residue, non_residue) = collections::qr::split(
         members.iter().copied().map(Fp::from),
@@ -379,9 +431,12 @@ pub fn qr_side_descend(
 /// the zero anchor for epoch zero.
 #[must_use]
 pub const fn qr_bucket_seal(
-    (_left, _right): (StepLeft<QrBucketSeal>, StepRight<QrBucketSeal>),
+    (_left, _right): (
+        <<QrBucketSeal as Step>::Left as Header>::Data,
+        <<QrBucketSeal as Step>::Right as Header>::Data,
+    ),
     anchor_final_prev: Anchor,
-) -> StepWitness<'static, QrBucketSeal> {
+) -> <QrBucketSeal as Step>::Witness<'static> {
     (anchor_final_prev,)
 }
 
@@ -394,10 +449,13 @@ pub const fn qr_bucket_seal(
 /// [`QrProfile::MAX_DEPTH`](crate::primitives::QrProfile::MAX_DEPTH).
 #[must_use]
 pub fn qr_unspent_init(
-    (bucket, _right): (StepLeft<QrUnspentInit>, StepRight<QrUnspentInit>),
+    (bucket, _right): (
+        <<QrUnspentInit as Step>::Left as Header>::Data,
+        <<QrUnspentInit as Step>::Right as Header>::Data,
+    ),
     value: Tachygram,
     bucket_members: &[Tachygram],
-) -> StepWitness<'static, QrUnspentInit> {
+) -> <QrUnspentInit as Step>::Witness<'static> {
     let (epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
     (
         value,
@@ -414,11 +472,11 @@ pub fn qr_unspent_init(
 #[must_use]
 pub const fn evidence_tree_descend(
     (_tree, _right): (
-        StepLeft<EvidenceTreeDescend>,
-        StepRight<EvidenceTreeDescend>,
+        <<EvidenceTreeDescend as Step>::Left as Header>::Data,
+        <<EvidenceTreeDescend as Step>::Right as Header>::Data,
     ),
     path: [([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY]); EvidenceTreeDescend::LEVELS],
-) -> StepWitness<'static, EvidenceTreeDescend> {
+) -> <EvidenceTreeDescend as Step>::Witness<'static> {
     (path,)
 }
 
@@ -427,10 +485,13 @@ pub const fn evidence_tree_descend(
 /// The pair is the preimage of the leaf the tree has descended to.
 #[must_use]
 pub const fn evidence_tree_open(
-    (_tree, _right): (StepLeft<EvidenceTreeOpen>, StepRight<EvidenceTreeOpen>),
+    (_tree, _right): (
+        <<EvidenceTreeOpen as Step>::Left as Header>::Data,
+        <<EvidenceTreeOpen as Step>::Right as Header>::Data,
+    ),
     profile: QrProfile,
     contents: TachygramSetCommit,
-) -> StepWitness<'static, EvidenceTreeOpen> {
+) -> <EvidenceTreeOpen as Step>::Witness<'static> {
     (profile, contents)
 }
 
@@ -439,13 +500,20 @@ pub const fn evidence_tree_open(
 ///
 /// `elapsed` is the segment's member list, one per covered epoch; `value`
 /// becomes the member at the bucket's epoch.
+///
+/// # Panics
+///
+/// Panics if the bucket's profile depth exceeds [`QrProfile::MAX_DEPTH`].
 #[must_use]
 pub fn unspent_lift(
-    (unspent, bucket): (StepLeft<UnspentLift>, StepRight<UnspentLift>),
+    (unspent, bucket): (
+        <<UnspentLift as Step>::Left as Header>::Data,
+        <<UnspentLift as Step>::Right as Header>::Data,
+    ),
     value: Tachygram,
     elapsed: &[Nullifier],
     bucket_members: &[Tachygram],
-) -> StepWitness<'static, UnspentLift> {
+) -> <UnspentLift as Step>::Witness<'static> {
     let (_, epoch_start, ..) = unspent;
     let (epoch, _anchor_start, _anchor_next, discriminant, profile, _contents) = bucket;
     let elapsed_seq = NfSeqPoly::new(epoch_start, elapsed);
@@ -471,10 +539,13 @@ pub fn unspent_lift(
 /// undigestible.
 #[must_use]
 pub fn output_action(
-    (left, _right): (StepLeft<OutputAction>, StepRight<OutputAction>),
+    (left, _right): (
+        <<OutputAction as Step>::Left as Header>::Data,
+        <<OutputAction as Step>::Right as Header>::Data,
+    ),
     theta: ActionEntropy,
     anchor: Anchor,
-) -> StepWitness<'static, OutputAction> {
+) -> <OutputAction as Step>::Witness<'static> {
     let (cm, pad, cv) = left;
     let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
 
@@ -482,7 +553,7 @@ pub fn output_action(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
     )]
-    let digest = ActionDigest::new(
+    let digest = ActionDigest::try_new(
         cv,
         private::ActionSigningKey::new(&alpha).derive_action_public(),
     )
@@ -508,10 +579,13 @@ pub fn output_action(
 /// Panics when `cv` or `rk` is the identity, leaving the action undigestible.
 #[must_use]
 pub fn spend_action(
-    (left, _right): (StepLeft<SpendAction>, StepRight<SpendAction>),
+    (left, _right): (
+        <<SpendAction as Step>::Left as Header>::Data,
+        <<SpendAction as Step>::Right as Header>::Data,
+    ),
     theta: ActionEntropy,
     pak: ProofAuthorizingKey,
-) -> StepWitness<'static, SpendAction> {
+) -> <SpendAction as Step>::Witness<'static> {
     let (cm, nf_current, nf_next, _anchor, _pk, cv) = left;
     let alpha = theta.randomizer::<effect::Spend>(cm);
 
@@ -519,7 +593,8 @@ pub fn spend_action(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
     )]
-    let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha)).expect("action digest");
+    let digest =
+        ActionDigest::try_new(cv, pak.ak.derive_action_public(&alpha)).expect("action digest");
 
     (
         theta,
@@ -542,12 +617,15 @@ pub fn spend_action(
 /// Panics if the max fee note's `rcm` is zero or the fee exceeds its value.
 #[must_use]
 pub fn fee_fuse(
-    (_left, _right): (StepLeft<FeeFuse>, StepRight<FeeFuse>),
+    (_left, _right): (
+        <<FeeFuse as Step>::Left as Header>::Data,
+        <<FeeFuse as Step>::Right as Header>::Data,
+    ),
     max_fee_note: Note,
     fee: value::Positive,
     action_digests: &BTreeSet<ActionDigest>,
     tachygrams: &BTreeSet<Tachygram>,
-) -> StepWitness<'static, FeeFuse> {
+) -> <FeeFuse as Step>::Witness<'static> {
     #[expect(
         clippy::expect_used,
         reason = "a planned max fee commitment is never the identity"
@@ -597,10 +675,13 @@ pub fn fee_fuse(
 /// Panics if the max fee note's value is nonzero or its `rcm` is zero.
 #[must_use]
 pub fn fee_seed(
-    (_left, _right): (StepLeft<FeeSeed>, StepRight<FeeSeed>),
+    (_left, _right): (
+        <<FeeSeed as Step>::Left as Header>::Data,
+        <<FeeSeed as Step>::Right as Header>::Data,
+    ),
     max_fee_note: Note,
     anchor: Anchor,
-) -> StepWitness<'static, FeeSeed> {
+) -> <FeeSeed as Step>::Witness<'static> {
     assert_eq!(
         u64::from(max_fee_note.value),
         0,

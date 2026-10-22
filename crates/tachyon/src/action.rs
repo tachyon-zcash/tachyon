@@ -38,7 +38,7 @@ impl Descriptor {
     ///
     /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv, self.rk)
+        ActionDigest::try_new(self.cv, self.rk)
     }
 
     /// Read an action descriptor from the consensus wire format.
@@ -174,7 +174,7 @@ impl<E: Effect> Plan<E> {
     ///
     /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv(), self.rk)
+        ActionDigest::try_new(self.cv(), self.rk)
     }
 
     /// Obtain a descriptor for this planned action.
@@ -225,7 +225,7 @@ impl Action {
     ///
     /// Returns [`ActionDigestError`] if `cv` or `rk` is the identity point.
     pub fn digest(&self) -> Result<ActionDigest, ActionDigestError> {
-        ActionDigest::new(self.cv, self.rk)
+        ActionDigest::try_new(self.cv, self.rk)
     }
 
     /// Obtain a descriptor for this action.

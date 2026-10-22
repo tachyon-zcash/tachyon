@@ -42,7 +42,9 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         (
             epoch,
             start,
-            start.next_stamp(epoch, &commit_a).unwrap(),
+            start
+                .next_stamp(epoch, &commit_a)
+                .expect("fixture commitment is non-identity"),
             commit_a
         ),
         "the seed's accumulator is the stamp's own commitment"
@@ -71,9 +73,9 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .commit();
     let expected_end = start
         .next_stamp(epoch, &commit_a)
-        .unwrap()
+        .expect("fixture commitment is non-identity")
         .next_stamp(epoch, &commit_b)
-        .unwrap();
+        .expect("fixture commitment is non-identity");
     assert_eq!(
         *advanced.data(),
         (epoch, start, expected_end, union),
@@ -127,7 +129,7 @@ fn summary_seed_rejects_empty_stamp() {
             witness::summary_seed(((), ()), start, EpochIndex::new(3), &[]),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -160,7 +162,7 @@ fn summary_advance_rejects_wrong_accumulator() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -200,7 +202,7 @@ fn summary_advance_rejects_forged_extension() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -224,7 +226,12 @@ fn summary_seed_on_a_foreign_epoch_leaves_the_chain() {
         .seed(
             rng,
             summary::SummarySeed,
-            witness::summary_seed(((), ()), first.prev, EpochIndex::new(1), &first.stamps[0].1),
+            witness::summary_seed(
+                ((), ()),
+                first.prev,
+                EpochIndex::new(1),
+                &first.stamps[0].tachygrams,
+            ),
         )
         .expect("SummarySeed");
     let (_, _, anchor_end, _) = *seeded.data();
@@ -232,7 +239,8 @@ fn summary_seed_on_a_foreign_epoch_leaves_the_chain() {
     for height in 0..=pool.height().0 {
         let block = pool.block(BlockHeight(height));
         assert_ne!(anchor_end, block.prev);
-        for &(_, _, _, anchor) in &block.stamps {
+        for stamp in &block.stamps {
+            let anchor = stamp.anchor_next;
             assert_ne!(anchor_end, anchor, "the fold left the published chain");
         }
     }

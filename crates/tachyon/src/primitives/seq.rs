@@ -10,7 +10,7 @@ use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
 use ragu_pasta::Pasta;
 
 use crate::{
-    collections::{indexed_multiset, poly_mul},
+    collections::{self, indexed_multiset},
     nullifier::Nullifier,
     primitives::EpochIndex,
 };
@@ -62,6 +62,6 @@ impl Mul for NfSeqPoly {
     ///
     /// If the product exceeds the polynomial coefficient cap.
     fn mul(self, rhs: Self) -> Self {
-        Self(poly_mul(&self.0, &rhs.0))
+        Self(collections::poly_mul(&self.0, &rhs.0))
     }
 }

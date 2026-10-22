@@ -25,20 +25,18 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_qr_branch, build_qr_partition,
-    build_summary_pcd, build_unspent_pcd_over_epochs, cube_root_twin, epoch_bucket, indexed_factor,
-    qr_bucket_segment, qr_profile_of, random_block, random_block_with, seal_qr_intake,
-    seed_qr_empty_intake, seed_qr_stamp_intake, shared_sk, split_qr_intake, unpinned_challenge,
+    PoolSim, QrBucketEntry, QrIntakeEntry, StampEntry, WalletSim, build_qr_branch,
+    build_qr_partition, build_summary_pcd, build_unspent_pcd_over_epochs, cube_root_twin,
+    epoch_bucket, indexed_factor, qr_bucket_segment, qr_profile_of, random_block,
+    random_block_with, seal_qr_intake, seed_qr_empty_intake, seed_qr_stamp_intake, shared_sk,
+    split_qr_intake, unpinned_challenge,
 };
-
-/// The witness of [`qr::QrUnspentInit`].
-type UnspentInitWitness = <qr::QrUnspentInit as Step>::Witness<'static>;
 
 /// Run [`qr::QrUnspentInit`] over `bucket`.
 fn fuse_unspent_init(
     rng: &mut StdRng,
     bucket: Pcd<qr::QrBucket>,
-    witness: UnspentInitWitness,
+    witness: <qr::QrUnspentInit as Step>::Witness<'static>,
 ) -> ragu_core::Result<Pcd<ArbitraryUnspent>> {
     PROOF_SYSTEM
         .fuse(
@@ -51,15 +49,12 @@ fn fuse_unspent_init(
         .map(|(unspent, ())| unspent)
 }
 
-/// The witness of [`UnspentLift`].
-type UnspentLiftWitness = <UnspentLift as Step>::Witness<'static>;
-
 /// Run [`UnspentLift`] over `segment` and `bucket`.
 fn fuse_unspent_lift(
     rng: &mut StdRng,
     segment: Pcd<ArbitraryUnspent>,
     bucket: &QrBucketEntry,
-    witness: UnspentLiftWitness,
+    witness: <UnspentLift as Step>::Witness<'static>,
 ) -> ragu_core::Result<Pcd<ArbitraryUnspent>> {
     PROOF_SYSTEM
         .fuse(rng, UnspentLift, witness, segment, bucket.pcd.clone())
@@ -207,7 +202,12 @@ fn qr_stamp_intake_seed_roots_an_intake_on_one_stamp() {
     let pool = PoolSim::genesis_with(random_block(rng, 3, 1));
     let block = pool.block(BlockHeight(0));
     let entry = block.stamps.first().expect("one stamp");
-    let (anchor_prev, members, commit, anchor_end) = entry.clone();
+    let StampEntry {
+        anchor_prev,
+        tachygrams: members,
+        commitment: commit,
+        anchor_next: anchor_end,
+    } = entry.clone();
     let (summary, _) = build_summary_pcd(rng, &pool, (anchor_prev, anchor_end));
 
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
@@ -260,7 +260,7 @@ fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
             ),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -325,7 +325,7 @@ fn qr_intake_split_partitions_the_contents_by_class() {
                         .collect::<TachygramSetPoly>()
                         .commit()
                 )
-                .unwrap(),
+                .expect("fixture commitment is non-identity"),
             discriminant,
             QrProfile::ROOT,
             non_residue
@@ -378,7 +378,7 @@ fn qr_intake_split_rejects_a_forged_partition() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -437,7 +437,7 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -528,7 +528,7 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
                 Proof::trivial().carry::<()>(()),
             )
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         assert_eq!(
             invalid_witness(err),
             "QrIntakeSplit: exceptional value claimed the non-residue class"
@@ -651,7 +651,7 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -711,7 +711,7 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
                 Proof::trivial().carry::<()>(()),
             )
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         assert_eq!(
             invalid_witness(err),
             "QrSideDescend: the sibling fails its class decomposition"
@@ -769,7 +769,7 @@ fn qr_side_descend_rejects_a_foreign_quotient() {
                 Proof::trivial().carry::<()>(()),
             )
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         assert_eq!(
             invalid_witness(err),
             "QrSideDescend: the sibling fails its class decomposition"
@@ -846,7 +846,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrSideDescend: the sibling fails its class decomposition"
@@ -978,7 +978,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrSideDescend: the sibling fails its class decomposition"
@@ -1048,7 +1048,7 @@ fn qr_side_descend_refuses_a_full_register() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1177,7 +1177,7 @@ fn qr_intake_merge_rejects_a_gap() {
     let err = PROOF_SYSTEM
         .fuse(rng, qr::QrIntakeMerge, witness, left, right)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1263,7 +1263,7 @@ fn qr_intake_merge_rejects_different_profiles() {
     let err = PROOF_SYSTEM
         .fuse(rng, qr::QrIntakeMerge, witness, deeper, right)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1459,7 +1459,13 @@ fn qr_bucket_seal_seals_a_fully_routed_intake() {
         (
             epoch,
             anchor_prev,
-            final_anchor.next_epoch(epoch.next().unwrap()).unwrap(),
+            final_anchor
+                .next_epoch(
+                    epoch
+                        .next()
+                        .expect("fixture epoch is below the protocol maximum")
+                )
+                .expect("fixture epoch is within protocol bounds"),
             discriminant,
             profile,
             contents
@@ -1498,7 +1504,7 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1542,7 +1548,9 @@ fn qr_bucket_seal_accepts_an_extent_short_of_the_epoch() {
     assert_eq!(
         (bucket.pcd.data().2, bucket.pcd.data().3),
         (
-            anchor_end.next_epoch(EpochIndex::new(1)).unwrap(),
+            anchor_end
+                .next_epoch(EpochIndex::new(1))
+                .expect("fixture epoch is within protocol bounds"),
             discriminant
         ),
         "the seal performs the boundary digest of the short extent and keeps its first discriminant"
@@ -1593,7 +1601,9 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
     let final_anchor = pool.block(pool.height()).anchor();
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let epoch = BlockHeight(0).epoch();
-    let epoch_next = epoch.next().unwrap();
+    let epoch_next = epoch
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let nf = Nullifier::from(Fp::random(&mut *rng));
 
     let routed = build_qr_partition(
@@ -1629,7 +1639,9 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
     );
     assert_eq!(
         anchor_next,
-        final_anchor.next_epoch(epoch_next).unwrap(),
+        final_anchor
+            .next_epoch(epoch_next)
+            .expect("fixture epoch is within protocol bounds"),
         "and stops before the next epoch's entry anchor"
     );
     assert_eq!(
@@ -1651,8 +1663,12 @@ fn qr_unspent_init_accepts_an_absent_nullifier_against_its_bucket() {
 fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
-    let epoch2 = epoch1.next().unwrap();
+    let epoch1 = epoch0
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
+    let epoch2 = epoch1
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     // Fill epoch zero and open epoch one, one stamp per block.
     pool.advance(epoch1.first_block().0 + 1, |_| random_block(rng, 1, 1));
@@ -1686,7 +1702,9 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     };
     let left = segment(bucket0, nf0);
     let right = segment(bucket1, nf1);
-    let entry1 = final0.next_epoch(epoch1).unwrap();
+    let entry1 = final0
+        .next_epoch(epoch1)
+        .expect("fixture epoch is within protocol bounds");
     assert_eq!(
         left.data().4,
         entry1,
@@ -1711,7 +1729,12 @@ fn qr_unspent_segments_of_consecutive_epochs_fuse_directly() {
     let (anchor_start, epoch_start, elapsed, epoch_next, anchor_next) = *fused.data();
     assert_eq!(anchor_start, Anchor::default());
     assert_eq!((epoch_start, epoch_next), (epoch0, epoch2));
-    assert_eq!(anchor_next, final1.next_epoch(epoch2).unwrap());
+    assert_eq!(
+        anchor_next,
+        final1
+            .next_epoch(epoch2)
+            .expect("fixture epoch is within protocol bounds")
+    );
     assert_eq!(
         elapsed,
         NfSeqPoly::new(epoch0, &[nf0, nf1]).commit(),
@@ -1739,8 +1762,12 @@ fn empty_bucket(
 fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
-    let epoch2 = epoch1.next().unwrap();
+    let epoch1 = epoch0
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
+    let epoch2 = epoch1
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     // Fill epoch zero, leave epoch one empty, and open epoch two.
     pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
@@ -1825,7 +1852,13 @@ fn qr_empty_intake_seed_over_a_stamped_epoch_leaves_the_chain() {
     let bucket = empty_bucket(rng, Anchor::default(), epoch, Anchor::from(Fp::ZERO));
     assert_ne!(
         bucket.pcd.data().2,
-        final_anchor.next_epoch(epoch.next().unwrap()).unwrap(),
+        final_anchor
+            .next_epoch(
+                epoch
+                    .next()
+                    .expect("fixture epoch is below the protocol maximum")
+            )
+            .expect("fixture epoch is within protocol bounds"),
         "the bucket ends on a crossing the pool never published"
     );
 }
@@ -1840,8 +1873,12 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(400);
     let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
-    let epoch2 = epoch1.next().unwrap();
+    let epoch1 = epoch0
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
+    let epoch2 = epoch1
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     // Fill epochs zero and one and open epoch two, one stamp per block.
     pool.advance(epoch2.first_block().0, |_| random_block(rng, 1, 1));
@@ -1876,7 +1913,9 @@ fn qr_spendable_init_starts_a_spendable_that_reaches_spend_bind() {
     let (_, _, anchor_next, ..) = *bucket.pcd.data();
     assert_eq!(
         anchor_next,
-        span.1.next_epoch(epoch1).unwrap(),
+        span.1
+            .next_epoch(epoch1)
+            .expect("fixture epoch is within protocol bounds"),
         "the bucket stops before epoch one's entry anchor"
     );
     let unspent = qr_epoch_unspent(rng, &user, &note, &nf_bucket);
@@ -1944,8 +1983,12 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
         Fp::from(Tachygram::from(note.commitment())),
         Anchor::from(Fp::ZERO),
     );
-    let epoch_next = epoch.next().unwrap();
-    let unpublished = short_anchor.next_epoch(epoch_next).unwrap();
+    let epoch_next = epoch
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
+    let unpublished = short_anchor
+        .next_epoch(epoch_next)
+        .expect("fixture epoch is within protocol bounds");
     assert_eq!(
         bucket.pcd.data().2,
         unpublished,
@@ -1969,7 +2012,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     assert!(
         pool.stamps_between(Anchor::default(), tip_anchor)
             .iter()
-            .all(|entry| entry.3 != unpublished),
+            .all(|entry| entry.anchor_next != unpublished),
         "no published anchor equals the short extent's crossing"
     );
 
@@ -1982,7 +2025,12 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
         rng,
         &pool,
         |covered| user.nf_at(&note, covered),
-        (epoch_next, epoch_next.next().unwrap()),
+        (
+            epoch_next,
+            epoch_next
+                .next()
+                .expect("fixture epoch is below the protocol maximum"),
+        ),
     );
     let bound_next = user.unspent_bind(rng, next, &note);
     assert_ne!(
@@ -1993,7 +2041,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     let err = PROOF_SYSTEM
         .fuse(rng, spendable::SpendableLift, (), spendable, bound_next)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "SpendableLift: unspent not adjacent to spendable",
@@ -2031,7 +2079,7 @@ fn qr_spendable_init_rejects_an_absent_commitment() {
             bucket.pcd,
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -2082,7 +2130,7 @@ fn qr_spendable_init_rejects_a_bucket_whose_span_differs_from_the_segment() {
             short.pcd,
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -2100,7 +2148,9 @@ fn qr_spendable_init_rejects_a_bucket_of_another_epoch() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
+    let epoch1 = epoch0
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let final0 = pool.block(epoch0.last_block()).anchor();
@@ -2138,7 +2188,7 @@ fn qr_spendable_init_rejects_a_bucket_of_another_epoch() {
             later.pcd,
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrSpendableInit: segment does not start in the bucket's epoch"
@@ -2153,7 +2203,9 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
+    let epoch1 = epoch0
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let final0 = pool.block(epoch0.last_block()).anchor();
@@ -2210,7 +2262,7 @@ fn qr_spendable_init_rejects_a_bucket_opening_elsewhere() {
             elsewhere.pcd,
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrSpendableInit: segment does not open where the bucket does"
@@ -2244,7 +2296,9 @@ fn qr_unspent_init_rejects_a_published_nullifier() {
     let bucket = seal_qr_intake(rng, intake, Anchor::from(Fp::ZERO));
 
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, bucket.pcd, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrUnspentInit: found nullifier in the bucket"
@@ -2278,7 +2332,9 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
     let bucket = seal_qr_intake(rng, foreign, Anchor::from(Fp::ZERO));
 
     let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, bucket.pcd, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QR profile: value does not take the bucket's profile"
@@ -2287,7 +2343,13 @@ fn qr_unspent_init_rejects_a_foreign_bucket() {
 
 /// A fresh nullifier, its depth-two bucket over a small epoch, and the honest
 /// witness, which is checked to pass before any test tampers with it.
-fn honest_unspent_init(rng: &mut StdRng) -> (Nullifier, QrBucketEntry, UnspentInitWitness) {
+fn honest_unspent_init(
+    rng: &mut StdRng,
+) -> (
+    Nullifier,
+    QrBucketEntry,
+    <qr::QrUnspentInit as Step>::Witness<'static>,
+) {
     let (pool, final_anchor) = small_epoch(rng);
     let nf = Nullifier::from(Fp::random(&mut *rng));
     let bucket = qr_bucket_for(
@@ -2310,12 +2372,14 @@ fn qr_unspent_init_rejects_a_root_off_its_class() {
     let (_nf, bucket, mut witness) = honest_unspent_init(rng);
 
     let (_, ref mut roots, ..) = witness;
-    let QrClassRoot(_, ref mut root) = roots[0];
+    let QrClassRoot { ref mut root, .. } = roots[0];
     let off = *root + Fp::ONE;
     assert_ne!(off.square(), root.square());
     *root = off;
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, bucket.pcd, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QR profile: root does not square to the claimed class"
@@ -2335,10 +2399,13 @@ fn qr_unspent_init_tests_sides_past_the_bucket_depth() {
     let shifted = Fp::from(nf) + discriminant.at(position);
     assert_ne!(shifted, Fp::ZERO);
     let (_, ref mut roots, ..) = witness;
-    let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
+    let QrClassRoot { ref mut side, .. } =
+        roots[usize::try_from(position).expect("profile depth fits in usize")];
     *side = !*side;
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, bucket.pcd, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QR profile: root does not square to the claimed class"
@@ -2378,16 +2445,22 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
         witness::qr_unspent_init((*bucket.pcd.data(), ()), nf.into(), &bucket.members);
     let (_, honest_roots, ..) = witness;
     assert_eq!(
-        honest_roots[usize::try_from(position).unwrap()],
-        QrClassRoot(true, Fp::ZERO)
+        honest_roots[usize::try_from(position).expect("profile depth fits in usize")],
+        QrClassRoot {
+            side: true,
+            root: Fp::ZERO
+        }
     );
     fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone())
         .expect("the fixed point passes on the residue side");
 
     let (_, ref mut roots, ..) = witness;
-    let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
+    let QrClassRoot { ref mut side, .. } =
+        roots[usize::try_from(position).expect("profile depth fits in usize")];
     *side = false;
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, bucket.pcd, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QR profile: exceptional discriminant claimed the non-residue class"
@@ -2402,7 +2475,9 @@ fn qr_unspent_init_rejects_a_non_prefix_mask() {
     let (_, _, ref mut depth_mask, ..) = witness;
     *depth_mask = array::from_fn(|position| position == 0 || position == 2);
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, bucket.pcd, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QR profile: depth mask is not a prefix"
@@ -2417,7 +2492,9 @@ fn qr_unspent_init_rejects_a_mask_of_the_wrong_depth() {
     let (_, _, ref mut depth_mask, ..) = witness;
     *depth_mask = QrProfile { depth: 3, bits: 0 }.depth_mask();
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, bucket.pcd, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QR profile: depth mask does not match the bucket's depth"
@@ -2460,7 +2537,9 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
 
     let mut data = *intake.pcd.data();
     data.0 = final_epoch;
-    data.1 = anchor_final_prev.next_epoch(final_epoch).unwrap();
+    data.1 = anchor_final_prev
+        .next_epoch(final_epoch)
+        .expect("fixture epoch is within protocol bounds");
     let forged = intake.pcd.proof().clone().carry::<qr::QrIntake>(data);
     let witness = witness::qr_bucket_seal((data, ()), anchor_final_prev);
     let err = PROOF_SYSTEM
@@ -2472,7 +2551,7 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrBucketSeal: crossing past the final epoch"
@@ -2490,7 +2569,9 @@ fn qr_unspent_init_refuses_a_bucket_in_the_final_epoch() {
         *epoch = EpochIndex::new(EPOCH_MAX);
     });
     let witness = witness::qr_unspent_init((*forged.data(), ()), nf.into(), &bucket.members);
-    let err = fuse_unspent_init(rng, forged, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, forged, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrUnspentInit: bucket has no next epoch"
@@ -2510,7 +2591,7 @@ fn qr_unspent_init_rejects_a_bucket_past_the_maximum_depth() {
     *depth_mask = [true; QrProfile::MAX_DEPTH];
     let err = fuse_unspent_init(rng, forged, witness.clone())
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QR profile: depth mask does not match the bucket's depth"
@@ -2521,7 +2602,9 @@ fn qr_unspent_init_rejects_a_bucket_past_the_maximum_depth() {
     });
     let (_, _, ref mut saturated_mask, ..) = witness;
     *saturated_mask = [true; QrProfile::MAX_DEPTH];
-    let saturated_err = fuse_unspent_init(rng, saturated, witness).err().unwrap();
+    let saturated_err = fuse_unspent_init(rng, saturated, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(saturated_err),
         "QR profile: depth mask does not match the bucket's depth"
@@ -2539,7 +2622,9 @@ fn qr_unspent_init_rejects_a_malformed_profile() {
     let mut shallow = witness.clone();
     let (_, _, ref mut depth_mask, ..) = shallow;
     *depth_mask = QrProfile::ROOT.depth_mask();
-    let err = fuse_unspent_init(rng, forged, shallow).err().unwrap();
+    let err = fuse_unspent_init(rng, forged, shallow)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QR profile: value does not take the bucket's profile"
@@ -2548,7 +2633,9 @@ fn qr_unspent_init_rejects_a_malformed_profile() {
     let overflowing = recarry_bucket(&bucket, |&mut (_, _, _, _, ref mut profile, ..)| {
         profile.bits |= 1 << 2;
     });
-    let overflowing_err = fuse_unspent_init(rng, overflowing, witness).err().unwrap();
+    let overflowing_err = fuse_unspent_init(rng, overflowing, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(overflowing_err),
         "QR profile: value does not take the bucket's profile"
@@ -2565,7 +2652,9 @@ fn qr_unspent_init_rejects_a_zero_value() {
         Tachygram::from(Fp::ZERO),
         &bucket.members,
     );
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, bucket.pcd, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(invalid_witness(err), "QrUnspentInit: tested value is zero");
 }
 
@@ -2580,7 +2669,9 @@ fn qr_unspent_init_rejects_a_sequence_naming_another_value() {
     let (_, _, _, ref mut sequence, _) = witness;
     *sequence = NfSeqPoly::new(epoch, &[other]);
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, bucket.pcd, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrUnspentInit: sequence does not match the tested pair"
@@ -2619,7 +2710,9 @@ fn qr_unspent_init_rejects_a_twin_value() {
     witness.0 = Tachygram::from(twin);
     witness.1 = QrClassRoot::along(twin, discriminant);
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, bucket.pcd, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrUnspentInit: sequence does not match the tested pair"
@@ -2637,7 +2730,9 @@ fn qr_unspent_init_rejects_foreign_contents() {
     let (.., ref mut contents) = witness;
     *contents = foreign;
 
-    let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
+    let err = fuse_unspent_init(rng, bucket.pcd, witness)
+        .err()
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrUnspentInit: contents do not match the bucket"
@@ -2653,7 +2748,9 @@ fn qr_unspent_init_accepts_ragged_depths() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let epoch = BlockHeight(0).epoch();
-    let epoch_next = epoch.next().unwrap();
+    let epoch_next = epoch
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
     let shallow_value = Fp::random(&mut *rng);
     let shallow_side = qr::classify(shallow_value, discriminant.at(0)).0;
@@ -2702,7 +2799,9 @@ fn qr_unspent_init_accepts_ragged_depths() {
                 epoch,
                 NfSeqPoly::new(epoch, &[nf]).commit(),
                 epoch_next,
-                final_anchor.next_epoch(epoch_next).unwrap()
+                final_anchor
+                    .next_epoch(epoch_next)
+                    .expect("fixture epoch is within protocol bounds")
             ),
             "the segment is the bucket's extent, ending on the crossing, at depth {depth}"
         );
@@ -2716,7 +2815,9 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (pool, final_anchor) = small_epoch(rng);
     let epoch = BlockHeight(0).epoch();
-    let epoch_next = epoch.next().unwrap();
+    let epoch_next = epoch
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let nf = Nullifier::from(Fp::random(&mut *rng));
 
     for depth in [0, 1, 31, u32::BITS] {
@@ -2742,7 +2843,9 @@ fn qr_unspent_init_accepts_buckets_at_every_depth() {
                 epoch,
                 NfSeqPoly::new(epoch, &[nf]).commit(),
                 epoch_next,
-                final_anchor.next_epoch(epoch_next).unwrap()
+                final_anchor
+                    .next_epoch(epoch_next)
+                    .expect("fixture epoch is within protocol bounds")
             ),
             "the segment is the bucket's extent, ending on the crossing, at depth {depth}"
         );
@@ -2793,7 +2896,7 @@ fn qr_intake_merge_rejects_different_discriminants() {
     let err = PROOF_SYSTEM
         .fuse(rng, qr::QrIntakeMerge, witness, left, right)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrIntakeMerge: inputs derive from different discriminants"
@@ -2821,7 +2924,14 @@ fn qr_intake_merge_rejects_different_epochs() {
         .seed(
             rng,
             summary::SummarySeed,
-            witness::summary_seed(((), ()), junction, epoch.next().unwrap(), &right_members),
+            witness::summary_seed(
+                ((), ()),
+                junction,
+                epoch
+                    .next()
+                    .expect("fixture epoch is below the protocol maximum"),
+                &right_members,
+            ),
         )
         .expect("SummarySeed");
 
@@ -2844,7 +2954,7 @@ fn qr_intake_merge_rejects_different_epochs() {
     let err = PROOF_SYSTEM
         .fuse(rng, qr::QrIntakeMerge, witness, left, right)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "QrIntakeMerge: inputs cover different epochs"
@@ -3050,7 +3160,7 @@ fn unspent_lift_rejects_invalid_extensions() {
     for (label, lift_bucket, lift, expected) in cases {
         let err = fuse_unspent_lift(rng, segment.clone(), lift_bucket, lift)
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         assert_eq!(invalid_witness(err), expected, "{label}");
     }
 }
