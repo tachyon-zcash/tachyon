@@ -3,7 +3,6 @@
 //! The Tachyon shielded transaction protocol.
 
 #![no_std]
-#![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(clippy::pub_use, reason = "exporting items for consumers")]
 
 #[cfg(feature = "std")]
@@ -38,7 +37,7 @@ pub use bundle::{
 };
 pub use note::Note;
 pub use primitives::*;
-pub use serialization::compactsize::{CompactSize, CompactSizeError};
+pub use serialization::compact_size::{CompactSize, CompactSizeError};
 pub use stamp::{
     AggregateId, AggregateIdError, Plan as StampPlan, PointerStamp, ProofStamp, Unproven,
 };

@@ -84,13 +84,13 @@
 pub mod private;
 pub mod public;
 
-mod master;
 mod note;
+mod note_master_key;
 mod proof;
 
 // Re-exports: public API surface.
-pub use master::NoteMasterKey;
 pub use note::{NullifierKey, PaymentKey};
+pub use note_master_key::NoteMasterKey;
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]
@@ -152,7 +152,8 @@ mod tests {
         let ak = ask.derive_auth_public();
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: value::Positive::try_from(1000u64).unwrap(),
+            value: value::Positive::try_from(1000u64)
+                .expect("fixture value is within monetary bounds"),
             psi: nullifier::Trapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };
