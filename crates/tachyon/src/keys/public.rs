@@ -10,8 +10,6 @@ use crate::{action, bundle, reddsa, value};
 /// The randomized action verification key `rk`: per-action, public.
 ///
 /// This is the only key type that **can verify** action signatures.
-/// Goes into [`crate::Action`]. Terminal type, with no further
-/// derivation.
 ///
 /// Both spend and output actions produce an `rk`
 /// ("Tachyaction at a Distance", Bowe 2025):
@@ -109,8 +107,7 @@ impl PartialEq for BindingVerificationKey {
 }
 
 impl BindingVerificationKey {
-    /// Derive the binding verification key from the given value commitments
-    /// and the value balance.
+    /// Derive the binding verification key from public value commitments.
     ///
     /// $$
     ///   \mathsf{bvk} =
@@ -118,9 +115,7 @@ impl BindingVerificationKey {
     ///     \ominus \text{ValueCommit}_0\left(\mathsf{vBalanceTachyon}\right)
     /// $$
     ///
-    /// That is, the sum of the given value commitments minus ValueCommit_0
-    /// of $\mathsf{vBalanceTachyon}$. This is the
-    /// validator-side derivation similar to Orchard. (§4.14). The
+    /// This is the validator-side derivation similar to Orchard. (§4.14). The
     /// result should equal $[\mathsf{bsk}]\mathcal{R}$ when the signer
     /// constructed the bundle correctly.
     #[must_use]

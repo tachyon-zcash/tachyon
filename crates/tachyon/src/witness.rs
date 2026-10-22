@@ -539,7 +539,7 @@ pub fn spend_stamp(
 ///
 /// # Panics
 ///
-/// Panics if the max fee note's blind or `rcm` is zero.
+/// Panics if the max fee note's `rcm` is zero or the fee exceeds its value.
 #[must_use]
 pub fn stamp_fee(
     (_left, _right): (StepLeft<StampFee>, StepRight<StampFee>),
@@ -548,13 +548,23 @@ pub fn stamp_fee(
     action_digests: &BTreeSet<ActionDigest>,
     tachygrams: &BTreeSet<Tachygram>,
 ) -> StepWitness<'static, StampFee> {
-    let max_fee = fee::Plan::new(max_fee_note);
     #[expect(
         clippy::expect_used,
         reason = "a planned max fee commitment is never the identity"
     )]
-    let fee_digest = max_fee.descriptor(fee).digest().expect("fee digest");
-    let fee_change_commitment = max_fee.change_commitment(fee);
+    let fee_digest = fee::Descriptor {
+        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+        value: fee,
+    }
+    .digest()
+    .expect("fee digest");
+    #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+    let fee_change_note = Note {
+        value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
+            .expect("fee should not exceed max fee"),
+        ..max_fee_note
+    };
+    let fee_change_commitment = Tachygram::from(fee_change_note.commitment());
 
     let mut output_action_digests = action_digests.clone();
     output_action_digests.insert(fee_digest);

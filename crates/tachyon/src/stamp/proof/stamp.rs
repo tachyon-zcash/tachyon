@@ -24,7 +24,7 @@ use crate::{
     value,
 };
 
-/// Header for a stamp, representing either a single covered item or many
+/// Header for a stamp, representing either a single action or many
 /// transactions.
 ///
 /// `action_commit` and `stamp_tg_commit` are Pedersen commitments to
@@ -424,10 +424,7 @@ impl Step for StampFee {
         // TODO: a real circuit squeezes r in Fp and needs its bit
         // decomposition to use it as an Fq scalar (p < q, so no reduction);
         // mock ragu embeds it natively.
-        let blind = enforce_nonzero(
-            poseidon::fee_blind(pk, psi, rcm),
-            "StampFee: max fee note blind is zero",
-        )?;
+        let blind = poseidon::fee_blind(pk, psi, rcm);
         #[expect(
             clippy::expect_used,
             reason = "p < q, so every Fp repr is canonical in Fq"
