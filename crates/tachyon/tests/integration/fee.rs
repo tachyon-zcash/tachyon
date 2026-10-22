@@ -27,7 +27,7 @@ use crate::fixtures::{
 };
 
 fn zat(amount: u64) -> value::Positive {
-    value::Positive::try_from(amount).unwrap()
+    value::Positive::try_from(amount).expect("fixture value is within monetary bounds")
 }
 
 fn verify_alone(
@@ -312,8 +312,11 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
     let once = prove(rng, 120).expect("first fee application");
     let digests: BTreeSet<_> = once
         .descriptors()
-        .map(|desc| desc.digest().unwrap())
-        .chain([once.fee_descriptor().digest().unwrap()])
+        .map(|desc| desc.digest().expect("fixture actions have valid digests"))
+        .chain([once
+            .fee_descriptor()
+            .digest()
+            .expect("fixture commitment is non-identity")])
         .collect();
     let header = (
         ActionSetPoly::from_iter(digests.iter().copied()).commit(),
@@ -633,7 +636,14 @@ fn zero_action_fee_seed_round_trips_and_verifies() {
     let sighash = mock_sighash(bundle.commitment());
     assert_eq!(bundle.actions.len(), 0);
     assert_eq!(bundle.stamp.tachygrams.len(), 1);
-    assert_eq!(bundle.verify_coverage(&[], &[]).unwrap().1.len(), 1);
+    assert_eq!(
+        bundle
+            .verify_coverage(&[], &[])
+            .expect("autonome coverage")
+            .1
+            .len(),
+        1
+    );
     verify_alone(rng, &bundle, &sighash).expect("zero-action bundle verifies");
     let mut bytes = Vec::new();
     bundle.write(&mut bytes).expect("write");

@@ -63,11 +63,19 @@ fn assert_both_joins_reject(
         pair_trees(rng, right.clone(), right.clone()).expect("one tree twice is a pair");
 
     assert_eq!(
-        invalid_witness(pair_trees(rng, left, right).err().unwrap()),
+        invalid_witness(
+            pair_trees(rng, left, right)
+                .err()
+                .expect("invalid witnesses must be rejected")
+        ),
         format!("EvidenceTreePairFuse: {complaint}")
     );
     assert_eq!(
-        invalid_witness(fuse_trees(rng, left_pair, right_pair).err().unwrap()),
+        invalid_witness(
+            fuse_trees(rng, left_pair, right_pair)
+                .err()
+                .expect("invalid witnesses must be rejected")
+        ),
         format!("EvidenceTreeFuse: {complaint}")
     );
 }
@@ -148,7 +156,9 @@ fn evidence_tree_replays_the_bucket_each_leaf_holds() {
         (
             EpochIndex::new(0),
             Anchor::default(),
-            final_anchor.next_epoch(EpochIndex::new(1)).unwrap(),
+            final_anchor
+                .next_epoch(EpochIndex::new(1))
+                .expect("fixture epoch is within protocol bounds"),
             discriminant
         ),
         "the root carries the network every leaf belongs to"
@@ -215,7 +225,9 @@ fn a_replayed_bucket_starts_a_segment_that_binds_to_the_note() {
     let user = WalletSim::new(shared_sk());
     let note = user.random_note(300);
     let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
+    let epoch1 = epoch0
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let mut pool = PoolSim::genesis_with(vec![vec![Tachygram::from(note.commitment())]]);
     pool.advance(epoch0.last_block().0, |_| random_block(rng, 1, 1));
 
@@ -251,7 +263,9 @@ fn a_replayed_bucket_starts_a_segment_that_binds_to_the_note() {
 fn evidence_tree_pair_fuse_rejects_a_bucket_of_another_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
+    let epoch1 = epoch0
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let final0 = pool.block(epoch0.last_block()).anchor();
@@ -364,7 +378,9 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_closes_elsewhere() {
 fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
+    let epoch1 = epoch0
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let final0 = pool.block(epoch0.last_block()).anchor();
@@ -419,7 +435,9 @@ fn evidence_tree_pair_fuse_rejects_an_extent_that_opens_elsewhere() {
 fn evidence_tree_leaf_pair_rejects_a_bucket_of_another_epoch() {
     let rng = &mut StdRng::seed_from_u64(0);
     let epoch0 = EpochIndex::new(0);
-    let epoch1 = epoch0.next().unwrap();
+    let epoch1 = epoch0
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
     pool.advance(epoch1.last_block().0, |_| random_block(rng, 1, 1));
     let final0 = pool.block(epoch0.last_block()).anchor();
@@ -456,7 +474,7 @@ fn evidence_tree_leaf_pair_rejects_a_bucket_of_another_epoch() {
             bucket1.pcd,
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "EvidenceTreeLeafPair: inputs cover different epochs"
@@ -550,7 +568,7 @@ fn evidence_tree_open_rejects_a_forged_leaf() {
     for (profile, contents) in forgeries {
         let err = open_leaf(rng, tree.pcd.clone(), leaf, profile, contents)
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         assert_eq!(
             invalid_witness(err),
             "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
@@ -601,7 +619,7 @@ fn evidence_tree_descend_rejects_children_that_miss_the_node() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "EvidenceTreeDescend: children do not hash to the node"
@@ -641,7 +659,7 @@ fn evidence_tree_open_rejects_a_node_presented_as_a_leaf() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     assert_eq!(
         invalid_witness(err),
         "EvidenceTreeOpen: witnessed bucket is not the tree's leaf"
