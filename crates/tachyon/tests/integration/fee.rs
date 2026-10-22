@@ -6,23 +6,23 @@ use core::iter;
 use ragu::Proof;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
-    ActionDigest, ActionSetPoly, Bundle, Note, VerificationError, VerifyCoverageError,
-    VerifyTachygramsError, action, bundle,
+    ActionDigest, ActionSetPoly, Anchor, Bundle, Note, Tachygram, TachygramSetPoly,
+    VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle,
     digest::blake2b,
     fee,
     stamp::{
         self, ProofStamp, ProveError, StampState,
         proof::{
-            PROOF_SYSTEM,
-            stamp::{Stamp, StampFee},
+            PROOF_SYSTEM, output,
+            stamp::{OutputStamp, Stamp, StampFee},
         },
     },
     value, witness,
 };
 
 use crate::fixtures::{
-    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_stamp, mock_sighash,
-    mock_wtxid, random_block_with, shared_sk,
+    PoolSim, WalletSim, build_autonome, build_lift_span, build_output_plan, mock_sighash,
+    mock_wtxid, random_block_with, shared_sk, stamp_coverage,
 };
 
 fn zat(amount: u64) -> value::Positive {
@@ -53,6 +53,46 @@ fn merge_side(
     )
 }
 
+/// A signed output-only bundle whose genuine `OutputStamp` stamp has no fee
+/// applied, carrying the coverage of its action alone.
+fn fee_less_output_bundle(
+    rng: &mut StdRng,
+    wallet: &WalletSim,
+    anchor: Anchor,
+    max_fee_note: Note,
+) -> Bundle<ProofStamp> {
+    let (rcv, theta, output_plan) = build_output_plan(rng, wallet.random_note(500));
+    let (bind_pcd, ()) = PROOF_SYSTEM
+        .seed(rng, output::OutputBind, (output_plan.note, rcv))
+        .expect("OutputBind");
+    let (cm, pad, _cv) = *bind_pcd.data();
+    let (pcd, ()) = PROOF_SYSTEM
+        .fuse(
+            rng,
+            OutputStamp,
+            witness::output_stamp((*bind_pcd.data(), ()), theta, anchor),
+            bind_pcd,
+            Proof::trivial().carry::<()>(()),
+        )
+        .expect("OutputStamp");
+    let stamp = ProofStamp {
+        coverage: stamp_coverage(&Vec::from_iter([output_plan.descriptor()]), &[]),
+        anchor,
+        tachygram_set: pcd.data().1,
+        tachygrams: BTreeSet::from([cm, pad]),
+        proof: Box::new(pcd.proof().clone()),
+    };
+
+    let plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
+    plan.sign(
+        rng,
+        &mock_sighash(plan.commitment().expect("bundle commitment")),
+        &wallet.sk.derive_auth_private(),
+    )
+    .expect("sign the fee-less bundle")
+    .stamp((stamp, value::Positive::ZERO))
+}
+
 fn coverage_of(bundles: &[&Bundle<dyn StampState>]) -> [u8; 32] {
     let mut descriptors: Vec<[u8; 64]> = bundles
         .iter()
@@ -70,7 +110,8 @@ fn coverage_of(bundles: &[&Bundle<dyn StampState>]) -> [u8; 32] {
     )
 }
 
-/// `StampFee` binds the left, fee and output sets to its header.
+/// `StampFee` binds the left, fee and output sets to its header, and rejects
+/// each substituted set polynomial.
 #[test]
 fn stamp_fee_binds_its_sets() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -119,7 +160,57 @@ fn stamp_fee_binds_its_sets() {
             Proof::trivial().carry::<()>(()),
         )
         .expect("a StampFee stamp");
-    let (.., other_output_sets, _) = fee_witness(50);
+    let (.., other_output_sets, other_fee_sets) = fee_witness(50);
+
+    let mut left_actions = valid.clone();
+    left_actions.2.0 = valid.3.0.clone();
+    let mut left_tachygrams = valid.clone();
+    left_tachygrams.2.1 = valid.3.1.clone();
+    let mut output_actions = valid.clone();
+    output_actions.3.0 = other_output_sets.0.clone();
+    let mut output_tachygrams = valid.clone();
+    output_tachygrams.3.1 = other_output_sets.1.clone();
+    let mut fee_actions = valid.clone();
+    fee_actions.4.0 = other_fee_sets.0;
+    let mut fee_tachygrams = valid.clone();
+    fee_tachygrams.4.1 = other_fee_sets.1;
+    for (corrupt, expected) in [
+        (
+            left_actions,
+            "StampFee: left action accumulator must commit to header commit",
+        ),
+        (
+            left_tachygrams,
+            "StampFee: left tachygram accumulator must commit to header commit",
+        ),
+        (
+            output_actions,
+            "StampFee: output action set must be the product of left and fee action sets",
+        ),
+        (
+            output_tachygrams,
+            "StampFee: output tachygram set must be the product of left and fee tachygram sets",
+        ),
+        (
+            fee_actions,
+            "StampFee: fee action set does not commit to the fee digest",
+        ),
+        (
+            fee_tachygrams,
+            "StampFee: fee tachygram set does not commit to the fee change note",
+        ),
+    ] {
+        let Err(ragu_core::Error::InvalidWitness(inner)) = PROOF_SYSTEM.fuse(
+            rng,
+            StampFee,
+            corrupt,
+            stamp_pcd(),
+            Proof::trivial().carry::<()>(()),
+        ) else {
+            panic!("expected InvalidWitness: {expected}");
+        };
+        assert_eq!(inner.to_string(), expected);
+    }
 
     for (action_commit, tachygram_commit, expected) in [
         (valid.3.0.commit(), valid.3.1.commit(), true),
@@ -284,27 +375,17 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
     )
     .expect("merge the aggregate");
 
-    let (unapplied_stamp, output_plan, _) =
-        build_output_stamp(rng, anchor, wallet.random_note(500));
-    let unapplied_plan = bundle::Plan::new(vec![], vec![output_plan], max_fee_note);
-    let unapplied_signed = unapplied_plan
-        .sign(
-            rng,
-            &mock_sighash(unapplied_plan.commitment().unwrap()),
-            &wallet.sk.derive_auth_private(),
-        )
-        .expect("sign the unapplied bundle");
+    let unapplied = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
     let over_unapplied = ProofStamp::merge(
         rng,
         merge_side(&aggregate, &[]),
         (
-            unapplied_stamp.clone(),
-            unapplied_signed.descriptors().collect(),
+            unapplied.stamp.clone(),
+            unapplied.descriptors().collect(),
             BTreeSet::new(),
         ),
     )
     .expect("merge the aggregate over a stamp without a fee");
-    let unapplied = unapplied_signed.stamp((unapplied_stamp, value::Positive::ZERO));
 
     for (stamp, other) in [(over_fee_bearing, fee_bearing), (over_unapplied, unapplied)] {
         aggregate.stamp = stamp;
@@ -329,6 +410,50 @@ fn verify_rejects_a_fee_descriptor_shared_by_two_covered_bundles() {
             panic!("expected Coverage(DuplicateFees), got {forged:?}");
         };
     }
+}
+
+/// A bundle whose stamp omits its fee fails verification at coverage, at
+/// tachygram arity once the coverage is forged, and at the proof once the fee
+/// change note is forged into the tachygrams.
+#[test]
+fn verify_rejects_a_stamp_without_its_fee() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+    let max_fee_note = wallet.random_note(300);
+    let anchor = PoolSim::genesis(rng).anchor();
+    let mut fee_less = fee_less_output_bundle(rng, &wallet, anchor, max_fee_note);
+    let sighash = mock_sighash(fee_less.commitment());
+
+    let mismatch =
+        verify_alone(rng, &fee_less, &sighash).expect_err("a stamp without its fee must fail");
+    let VerificationError::Coverage(VerifyCoverageError::StampActionsMismatch) = mismatch else {
+        panic!("expected Coverage(StampActionsMismatch), got {mismatch:?}");
+    };
+
+    fee_less.stamp.coverage = coverage_of(&[fee_less.as_dyn()]);
+    let arity = verify_alone(rng, &fee_less, &sighash)
+        .expect_err("a stamp without a fee change note must fail");
+    let VerificationError::Tachygrams(VerifyTachygramsError::WrongArity) = arity else {
+        panic!("expected Tachygrams(WrongArity), got {arity:?}");
+    };
+
+    // At a zero fee the fee change note is the max fee note itself.
+    fee_less
+        .stamp
+        .tachygrams
+        .insert(Tachygram::from(max_fee_note.commitment()));
+    fee_less.stamp.tachygram_set = fee_less
+        .stamp
+        .tachygrams
+        .iter()
+        .copied()
+        .collect::<TachygramSetPoly>()
+        .commit();
+    let disproved = verify_alone(rng, &fee_less, &sighash)
+        .expect_err("a proof without the fee must not verify");
+    let VerificationError::Disproved = disproved else {
+        panic!("expected Disproved, got {disproved:?}");
+    };
 }
 
 /// A fee-bearing aggregate merges a fee-bearing adjunct and verifies.
