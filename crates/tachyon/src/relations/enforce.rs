@@ -166,3 +166,56 @@ pub(crate) fn enforce_poly_roots<const N: usize>(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use core::array;
+
+    use ff::Field as _;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use super::*;
+    use crate::collections::multiset;
+
+    /// The linear-factor identity holds at a random point for a set extended
+    /// by its root, and fails for a wrong root, product or multiplicand.
+    #[test]
+    fn linear_factor_holds_only_for_the_extended_set() {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let members: [Fp; 3] = array::from_fn(|_| Fp::random(&mut *rng));
+        let root = Fp::random(&mut *rng);
+        let other = Fp::random(&mut *rng);
+        let z = Fp::random(&mut *rng);
+        let holds = |multiplicand: &Polynomial<Fp, ProductionRank>,
+                     factor_root: Fp,
+                     product: &Polynomial<Fp, ProductionRank>| {
+            product.eval(z) == multiplicand.eval(z) * (z - factor_root)
+        };
+
+        let multiplicand = multiset::encode(members);
+        let product = multiset::encode(members.into_iter().chain([root]));
+        assert!(holds(&multiplicand, root, &product));
+
+        assert!(!holds(&multiplicand, other, &product), "wrong root");
+        assert!(
+            !holds(
+                &multiplicand,
+                root,
+                &multiset::encode(members.into_iter().chain([other]))
+            ),
+            "product extended by another root"
+        );
+        assert!(
+            !holds(&multiplicand, root, &multiplicand),
+            "product without the root"
+        );
+        assert!(
+            !holds(
+                &multiset::encode(members[1..].iter().copied().chain([other])),
+                root,
+                &product
+            ),
+            "wrong multiplicand"
+        );
+    }
+}
