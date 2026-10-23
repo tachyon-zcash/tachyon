@@ -531,11 +531,11 @@ pub fn spend_stamp(
 
 /// Prepare the witness for [`StampFee`]: `(max_fee_note, fee,
 /// (left_action_set, left_tachygram_set), (output_action_set,
-/// output_tachygram_set))`.
+/// output_tachygram_set), (fee_action_set, fee_tachygram_set))`.
 ///
-/// `action_digests` and `tachygrams` are the left stamp's sets. The output
-/// action set adds the fee digest, and the output tachygram set adds the fee
-/// change note's commitment.
+/// `action_digests` and `tachygrams` are the left stamp's sets. Each fee
+/// singleton set contains one element: the fee digest or the fee change note's
+/// commitment. The output set polynomials represent the unions.
 ///
 /// # Panics
 ///
@@ -581,6 +581,10 @@ pub fn stamp_fee(
         (
             output_action_digests.into_iter().collect(),
             output_tachygrams.into_iter().collect(),
+        ),
+        (
+            ActionSetPoly::from_iter([fee_digest]),
+            TachygramSetPoly::from_iter([fee_change_commitment]),
         ),
     )
 }

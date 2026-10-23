@@ -630,12 +630,9 @@ impl Plan {
             ProofStamp {
                 coverage: blake2b::stamp_coverage_digest(
                     &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
-                    &blake2b::stamp_fees_digest(
-                        &fee_descriptors
-                            .into_iter()
-                            .map(<[u8; 40]>::from)
-                            .collect::<Vec<[u8; 40]>>(),
-                    ),
+                    &blake2b::stamp_fees_digest(&Vec::<[u8; 40]>::from_iter(
+                        fee_descriptors.into_iter().map(<[u8; 40]>::from),
+                    )),
                 ),
                 anchor,
                 tachygram_set,

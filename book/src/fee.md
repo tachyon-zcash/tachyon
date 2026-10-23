@@ -74,7 +74,8 @@ set and $\cm_\chg$ to its tachygram set:
 - Right: empty
 - Output: $\mathtt{Stamp}$
 - Witness: the max fee note opening, $\fee$, the left set polynomials $A$ and
-  $T$, and the output set polynomials $A'$ and $T'$
+  $T$, the output set polynomials $A'$ and $T'$, and the fee singleton set
+  polynomials $S_A$ and $S_T$
 
 The step derives $r$ and $\cv_\maxfee$ from the opening, and rejects an
 identity $\cv_\maxfee$. It checks $\maxfee \leq \mathsf{MAX\_MONEY}$ and
@@ -87,18 +88,13 @@ $$
 
 where $x$ and $y$ are the affine coordinates of $\cv_\maxfee$.
 
-It builds the fee singleton set polynomials
+It checks the commitments to $A$ and $T$ against the left header, and enforces
 
 $$
 S_A = X - d_\fee,
 \qquad
-S_T = X - \cm_\chg
-$$
-
-from those roots, checks the commitments to $A$ and $T$ against the left
-header, and enforces
-
-$$
+S_T = X - \cm_\chg,
+\qquad
 A' = A \cdot S_A,
 \qquad
 T' = T \cdot S_T.

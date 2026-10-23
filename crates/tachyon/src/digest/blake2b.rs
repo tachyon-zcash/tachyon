@@ -109,9 +109,7 @@ pub fn action_descriptor_digest(descriptors: &[[u8; 64]]) -> [u8; 32] {
 
 const STAMP_FEES_PERSONALIZATION: &[u8; 12] = b"Tachyon-Fees";
 
-/// `hStampFeesTachyon`, the digest of a stamp's covered fee descriptors.
-///
-/// $\text{BLAKE2b-256}_\texttt{Tachyon-Fees}$ over each
+/// `hStampFeesTachyon`, $\text{BLAKE2b-256}_\texttt{Tachyon-Fees}$ over each
 /// $\mathsf{cv}_{\mathsf{maxfee},j} \Vert \mathsf{LE64}(\mathsf{fee}_j)$ in the
 /// order given. The caller sorts the fee descriptors.
 #[must_use]
