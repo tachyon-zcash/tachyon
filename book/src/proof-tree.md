@@ -375,7 +375,7 @@ The work splits as follows, each stamp step also opening its action-set and tach
 
 `StampMerge` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 `ActionMerge` applies the same relation to two pre-fee `Actions` inputs.
-`FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note).
+`FeeFuse` transforms `Actions` into a `Stamp` with a linear-factor relation: it derives the fee digest and the fee change note commitment in the step, and enforces that the output action set polynomial is the left one times $(X - d_\fee)$ and the output tachygram set polynomial is the left one times $(X - \cm_\chg)$, as in [Dynamic Fee](./fee.md#fee-change-note).
 
 ### Stamp anchor
 
@@ -585,7 +585,7 @@ flowchart LR
 | SpendAction | SpendHeader | — | theta, pak, action_set, tachygram_set | Actions |
 | ActionMerge | Actions | Actions | (action_set, tachygram_set) × left, merged, right | Actions |
 | ActionLift | Actions | AnchorSpan | members | Actions |
-| FeeFuse | Actions | — | max fee note opening, fee, (action_set, tachygram_set) × left, output, fee | Stamp |
+| FeeFuse | Actions | — | max fee note opening, fee, (action_set, tachygram_set) × left, output | Stamp |
 | FeeSeed | — | — | max fee note opening, anchor, fee action_set, fee tachygram_set | Stamp |
 | StampMerge | Stamp | Stamp | (action_set, tachygram_set) × left, merged, right | Stamp |
 | StampLift | Stamp | AnchorSpan | members | Stamp |

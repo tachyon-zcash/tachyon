@@ -84,6 +84,47 @@ pub(crate) fn enforce_poly_product(
     Ok(())
 }
 
+/// Faithful linear factor: confirm `product = multiplicand · (X − root)` among
+/// two committed polynomials by opening both at a Fiat-Shamir challenge and
+/// evaluating the factor in cheap field operations.
+///
+/// `product` is prover-supplied and the relation works only from the two
+/// commitments and their openings at `z` -- it does not multiply the inputs.
+/// The point-wise identity `product(z) = multiplicand(z)·(z − root)` at a
+/// random `z` confirms the relation: with both operands committed and absorbed
+/// into `z`, the difference `product − multiplicand·(X − root)` is a fixed
+/// polynomial pinned to zero by Schwartz-Zippel.
+///
+/// # Caller obligation (soundness)
+///
+/// `multiplicand` and `product` are committed and absorbed into `z`; the
+/// module-level binding obligation applies to both. `root` is a raw scalar and
+/// is *not* absorbed: as for [`enforce_poly_roots`], it must already be pinned,
+/// and the call site states its pin.
+pub(crate) fn enforce_poly_linear_factor(
+    ctx: &mut StepCtx<'_>,
+    multiplicand: &Polynomial<Fp, ProductionRank>,
+    root: Fp,
+    product: &Polynomial<Fp, ProductionRank>,
+    err: &'static str,
+) -> Result<()> {
+    let generators = Pasta::host_generators(Pasta::baked());
+    let multiplicand_com = multiplicand.commit(generators);
+    let product_com = product.commit(generators);
+    let z = ctx.derive_challenge(&[multiplicand_com, product_com])?;
+
+    let multiplicand_at_z = multiplicand.eval(z);
+    let product_at_z = product.eval(z);
+    if product_at_z != multiplicand_at_z * (z - root) {
+        return Err(Error::InvalidWitness(err.into()));
+    }
+
+    ctx.enforce_poly_query(multiplicand_com, z, multiplicand_at_z)?;
+    ctx.enforce_poly_query(product_com, z, product_at_z)?;
+
+    Ok(())
+}
+
 /// Faithful root accumulator: confirm `accumulator = ∏ᵢ (X − rootᵢ)` over the
 /// given roots by opening the accumulator at a Fiat-Shamir challenge and
 /// comparing against the product of the root factors, computed in cheap field
@@ -124,4 +165,57 @@ pub(crate) fn enforce_poly_roots<const N: usize>(
     ctx.enforce_poly_query(accumulator_com, z, accumulator_at_z)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use core::array;
+
+    use ff::Field as _;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use super::*;
+    use crate::collections::multiset;
+
+    /// The linear-factor identity holds at a random point for a set extended
+    /// by its root, and fails for a wrong root, product or multiplicand.
+    #[test]
+    fn linear_factor_holds_only_for_the_extended_set() {
+        let rng = &mut StdRng::seed_from_u64(0);
+        let members: [Fp; 3] = array::from_fn(|_| Fp::random(&mut *rng));
+        let root = Fp::random(&mut *rng);
+        let other = Fp::random(&mut *rng);
+        let z = Fp::random(&mut *rng);
+        let holds = |multiplicand: &Polynomial<Fp, ProductionRank>,
+                     factor_root: Fp,
+                     product: &Polynomial<Fp, ProductionRank>| {
+            product.eval(z) == multiplicand.eval(z) * (z - factor_root)
+        };
+
+        let multiplicand = multiset::encode(members);
+        let product = multiset::encode(members.into_iter().chain([root]));
+        assert!(holds(&multiplicand, root, &product));
+
+        assert!(!holds(&multiplicand, other, &product), "wrong root");
+        assert!(
+            !holds(
+                &multiplicand,
+                root,
+                &multiset::encode(members.into_iter().chain([other]))
+            ),
+            "product extended by another root"
+        );
+        assert!(
+            !holds(&multiplicand, root, &multiplicand),
+            "product without the root"
+        );
+        assert!(
+            !holds(
+                &multiset::encode(members[1..].iter().copied().chain([other])),
+                root,
+                &product
+            ),
+            "wrong multiplicand"
+        );
+    }
 }
