@@ -9,6 +9,7 @@ _katex := "--html-in-header " + justfile_directory() / "crates/tachyon/katex-hea
 
 fmt:
     cargo +{{_nightly}} fmt --all
+    cargo +{{_nightly}} fmt --all --manifest-path {{_fuzz_dir}}/Cargo.toml
 
 lint: doc
     cargo clippy --workspace --lib --no-default-features # no_std
@@ -37,8 +38,8 @@ fuzz-build:
 # fuzz TARGET from its committed corpus, keeping new finds out of the tree;
 # ARGS go to libFuzzer, e.g. `just fuzz bundle_read -runs=10000`
 fuzz TARGET *ARGS: fuzz-build
-    mkdir -p {{_fuzz_dir}}/target/corpus/{{TARGET}}
-    {{_fuzz_dir}}/target/"$(rustc +{{_nightly}} -vV | sed -n 's/^host: //p')"/release/{{TARGET}} -max_len=32768 {{ARGS}} {{_fuzz_dir}}/target/corpus/{{TARGET}} {{_fuzz_dir}}/corpus/{{TARGET}}
+    mkdir -p {{_fuzz_dir}}/target/corpus/{{TARGET}} {{_fuzz_dir}}/artifacts/{{TARGET}}
+    {{_fuzz_dir}}/target/"$(rustc +{{_nightly}} -vV | sed -n 's/^host: //p')"/release/{{TARGET}} -max_len=32768 -artifact_prefix={{_fuzz_dir}}/artifacts/{{TARGET}}/ {{ARGS}} {{_fuzz_dir}}/target/corpus/{{TARGET}} {{_fuzz_dir}}/corpus/{{TARGET}}
 
 _install_binstall:
     cargo-binstall -V || cargo install cargo-binstall
