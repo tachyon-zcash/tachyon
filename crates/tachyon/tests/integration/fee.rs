@@ -112,8 +112,9 @@ fn coverage_of(bundles: &[&Bundle<dyn StampState>]) -> [u8; 32] {
     )
 }
 
-/// `FeeFuse` binds the left, fee and output sets to its header, and rejects
-/// each substituted set polynomial.
+/// `FeeFuse` binds the left and output sets to its header, and rejects each
+/// substituted set polynomial and a fee whose derived roots the output sets
+/// do not contain.
 #[test]
 fn fee_fuse_binds_its_sets() {
     let rng = &mut StdRng::seed_from_u64(0);
@@ -169,7 +170,7 @@ fn fee_fuse_binds_its_sets() {
             Proof::trivial().carry::<()>(()),
         )
         .expect("a FeeFuse stamp");
-    let (.., other_output_sets, other_fee_sets) = fee_witness(50);
+    let (_, other_fee, _, other_output_sets) = fee_witness(50);
 
     let mut left_actions = valid.clone();
     left_actions.2.0 = valid.3.0.clone();
@@ -179,10 +180,11 @@ fn fee_fuse_binds_its_sets() {
     output_actions.3.0 = other_output_sets.0.clone();
     let mut output_tachygrams = valid.clone();
     output_tachygrams.3.1 = other_output_sets.1.clone();
-    let mut fee_actions = valid.clone();
-    fee_actions.4.0 = other_fee_sets.0;
-    let mut fee_tachygrams = valid.clone();
-    fee_tachygrams.4.1 = other_fee_sets.1;
+    let mut fee_digest_root = valid.clone();
+    fee_digest_root.1 = other_fee;
+    let mut fee_change_root = valid.clone();
+    fee_change_root.1 = other_fee;
+    fee_change_root.3.0 = other_output_sets.0.clone();
     for (corrupt, expected) in [
         (
             left_actions,
@@ -194,19 +196,19 @@ fn fee_fuse_binds_its_sets() {
         ),
         (
             output_actions,
-            "FeeFuse: output action set must be the product of left and fee action sets",
+            "FeeFuse: output action set is not the left action set with the fee digest",
         ),
         (
             output_tachygrams,
-            "FeeFuse: output tachygram set must be the product of left and fee tachygram sets",
+            "FeeFuse: output tachygram set is not the left tachygram set with the fee change note",
         ),
         (
-            fee_actions,
-            "FeeFuse: fee action set does not commit to the fee digest",
+            fee_digest_root,
+            "FeeFuse: output action set is not the left action set with the fee digest",
         ),
         (
-            fee_tachygrams,
-            "FeeFuse: fee tachygram set does not commit to the fee change note",
+            fee_change_root,
+            "FeeFuse: output tachygram set is not the left tachygram set with the fee change note",
         ),
     ] {
         let Err(ragu_core::Error::InvalidWitness(inner)) = PROOF_SYSTEM.fuse(

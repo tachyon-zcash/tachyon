@@ -84,6 +84,47 @@ pub(crate) fn enforce_poly_product(
     Ok(())
 }
 
+/// Faithful linear factor: confirm `product = multiplicand · (X − root)` among
+/// two committed polynomials by opening both at a Fiat-Shamir challenge and
+/// evaluating the factor in cheap field operations.
+///
+/// `product` is prover-supplied and the relation works only from the two
+/// commitments and their openings at `z` -- it does not multiply the inputs.
+/// The point-wise identity `product(z) = multiplicand(z)·(z − root)` at a
+/// random `z` confirms the relation: with both operands committed and absorbed
+/// into `z`, the difference `product − multiplicand·(X − root)` is a fixed
+/// polynomial pinned to zero by Schwartz-Zippel.
+///
+/// # Caller obligation (soundness)
+///
+/// `multiplicand` and `product` are committed and absorbed into `z`; the
+/// module-level binding obligation applies to both. `root` is a raw scalar and
+/// is *not* absorbed: as for [`enforce_poly_roots`], it must already be pinned,
+/// and the call site states its pin.
+pub(crate) fn enforce_poly_linear_factor(
+    ctx: &mut StepCtx<'_>,
+    multiplicand: &Polynomial<Fp, ProductionRank>,
+    root: Fp,
+    product: &Polynomial<Fp, ProductionRank>,
+    err: &'static str,
+) -> Result<()> {
+    let generators = Pasta::host_generators(Pasta::baked());
+    let multiplicand_com = multiplicand.commit(generators);
+    let product_com = product.commit(generators);
+    let z = ctx.derive_challenge(&[multiplicand_com, product_com])?;
+
+    let multiplicand_at_z = multiplicand.eval(z);
+    let product_at_z = product.eval(z);
+    if product_at_z != multiplicand_at_z * (z - root) {
+        return Err(Error::InvalidWitness(err.into()));
+    }
+
+    ctx.enforce_poly_query(multiplicand_com, z, multiplicand_at_z)?;
+    ctx.enforce_poly_query(product_com, z, product_at_z)?;
+
+    Ok(())
+}
+
 /// Faithful root accumulator: confirm `accumulator = ∏ᵢ (X − rootᵢ)` over the
 /// given roots by opening the accumulator at a Fiat-Shamir challenge and
 /// comparing against the product of the root factors, computed in cheap field
