@@ -531,11 +531,10 @@ pub fn spend_action(
 
 /// Prepare the witness for [`FeeFuse`]: `(max_fee_note, fee,
 /// (left_action_set, left_tachygram_set), (output_action_set,
-/// output_tachygram_set), (fee_action_set, fee_tachygram_set))`.
+/// output_tachygram_set))`.
 ///
-/// `action_digests` and `tachygrams` are the left `Actions` sets. Each fee
-/// singleton set contains one element: the fee digest or the fee change note's
-/// commitment. The output set polynomials represent the unions.
+/// `action_digests` and `tachygrams` are the left `Actions` sets. The output
+/// sets add the fee digest and the fee change note's commitment to them.
 ///
 /// # Panics
 ///
@@ -581,10 +580,6 @@ pub fn fee_fuse(
         (
             output_action_digests.into_iter().collect(),
             output_tachygrams.into_iter().collect(),
-        ),
-        (
-            ActionSetPoly::from_iter([fee_digest]),
-            TachygramSetPoly::from_iter([fee_change_commitment]),
         ),
     )
 }

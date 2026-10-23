@@ -74,8 +74,7 @@ set and $\cm_\chg$ to its tachygram set:
 - Right: empty
 - Output: $\mathtt{Stamp}$
 - Witness: the max fee note opening, $\fee$, the left set polynomials $A$ and
-  $T$, the output set polynomials $A'$ and $T'$, and the fee singleton set
-  polynomials $S_A$ and $S_T$
+  $T$, and the output set polynomials $A'$ and $T'$
 
 The step derives $r$ and $\cv_\maxfee$ from the opening, and rejects an
 identity $\cv_\maxfee$. It checks $\maxfee \leq \mathsf{MAX\_MONEY}$ and
@@ -91,23 +90,32 @@ where $x$ and $y$ are the affine coordinates of $\cv_\maxfee$.
 It checks the commitments to $A$ and $T$ against the left header, and enforces
 
 $$
-S_A = X - d_\fee,
+A' = A \cdot (X - d_\fee),
 \qquad
-S_T = X - \cm_\chg,
-\qquad
-A' = A \cdot S_A,
-\qquad
-T' = T \cdot S_T.
+T' = T \cdot (X - \cm_\chg).
 $$
+
+Each identity is checked at a challenge drawn from the commitments to its two
+polynomials. The roots $d_\fee$ and $\cm_\chg$ are not drawn into the
+challenge. Each is a Poseidon output over the witnessed opening and $\fee$, so
+a root chosen to satisfy the identity needs a Poseidon preimage.
 
 The output header carries the commitments to $A'$ and $T'$ and the left
 actions' anchor.
 
 $\mathsf{FeeSeed}$ proves a zero-action bundle's zero fee. It has no
-predecessors and witnesses the max fee note opening, the anchor, $S_A$ and
-$S_T$. It enforces $\maxfee = 0$ and checks the singleton relations at
-$\fee = 0$, so the fee change note is the max fee note itself. Its
-$\mathtt{Stamp}$ carries the singleton commitments and the witnessed anchor.
+predecessors and witnesses the max fee note opening, the anchor, and the fee
+singleton set polynomials $S_A$ and $S_T$. It enforces $\maxfee = 0$ and, at
+$\fee = 0$,
+
+$$
+S_A = X - d_\fee,
+\qquad
+S_T = X - \cm_\chg,
+$$
+
+so the fee change note is the max fee note itself. Its $\mathtt{Stamp}$
+carries the singleton commitments and the witnessed anchor.
 
 The fee steps prove a local relation, not funding. Funding comes from
 the bundle's actions, the binding signature over the signed $\cv_\maxfee$,

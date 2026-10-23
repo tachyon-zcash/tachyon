@@ -384,8 +384,7 @@ Every stamp's action set polynomial is a product of linear factors, one per leaf
 Unique factorization makes the division exact: the divisor's leaves are a sub-multiset of the dividend's.
 Once consensus checks the published [anchor](./anchor.md), every spend leaf beneath it derived its nullifier pair at that anchor's epoch, and the tachygram quotient holds exactly the remaining leaves' tachygrams.
 Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand, and merging in a complement first lets division remove any leaf multiset the stamps in hand combine to express.
-`FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note).
-
+`FeeFuse` transforms `Actions` into a `Stamp` with a linear-factor relation: it derives the fee digest and the fee change note commitment in the step, and enforces that the output action set polynomial is the left one times $(X - d_\fee)$ and the output tachygram set polynomial is the left one times $(X - \cm_\chg)$, as in [Dynamic Fee](./fee.md#fee-change-note).
 ### Stamp anchor
 
 `OutputAction` and `FeeSeed` take an anchor as direct witness: neither has prior chain state to thread from.
@@ -594,7 +593,7 @@ flowchart LR
 | SpendAction | SpendHeader | — | theta, pak, action_set, tachygram_set | Actions |
 | ActionMerge | Actions | Actions | (action_set, tachygram_set) × left, merged, right | Actions |
 | ActionLift | Actions | AnchorSpan | members | Actions |
-| FeeFuse | Actions | — | max fee note opening, fee, (action_set, tachygram_set) × left, output, fee | Stamp |
+| FeeFuse | Actions | — | max fee note opening, fee, (action_set, tachygram_set) × left, output | Stamp |
 | FeeSeed | — | — | max fee note opening, anchor, fee action_set, fee tachygram_set | Stamp |
 | StampMerge | Stamp | Stamp | (action_set, tachygram_set) × left, merged, right | Stamp |
 | StampLift | Stamp | AnchorSpan | members | Stamp |
