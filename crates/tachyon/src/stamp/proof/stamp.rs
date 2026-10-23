@@ -17,7 +17,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     note::{self, Note},
     primitives::{
-        ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, TachygramSetCommit, effect,
+        ActionDigest, ActionSetCommit, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit, effect,
     },
     ragu_constraint::{enforce_equal_point, enforce_nonzero, enforce_zero},
     relations::enforce::{enforce_poly_product, enforce_poly_roots},
@@ -364,10 +364,11 @@ impl Step for StampFee {
     type Left = Stamp;
     type Output = Stamp;
     type Right = ();
+    /// `(max_fee_note, fee, (left_action_set, left_tachygram_set),
+    /// (output_action_set, output_tachygram_set))`
     type Witness<'source> = (
         Note,
         value::Positive,
-        (ActionSetPoly, TachygramSetPoly),
         (ActionSetPoly, TachygramSetPoly),
         (ActionSetPoly, TachygramSetPoly),
     );
@@ -382,7 +383,6 @@ impl Step for StampFee {
             fee,
             (left_action_set, left_tachygram_set),
             (output_action_set, output_tachygram_set),
-            (fee_action_set, fee_tachygram_set),
         ): Self::Witness<'source>,
         (left_action_commit, left_tachygram_commit, left_anchor): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
@@ -447,20 +447,15 @@ impl Step for StampFee {
             "StampFee: fee change note commitment is zero",
         )?;
 
-        enforce_poly_roots(
-            ctx,
-            fee_action_set.as_ref(),
-            &[fee_digest],
-            "StampFee: fee action set does not commit to the fee digest",
-        )?;
+        // The fee singleton sets are built from the roots derived above, not
+        // witnessed.
+        let fee_action_set = ActionSetPoly::from_iter([ActionDigest::from(fee_digest)]);
+        let fee_tachygram_set =
+            TachygramSetPoly::from_iter([Tachygram::from(fee_change_commitment)]);
 
-        enforce_poly_roots(
-            ctx,
-            fee_tachygram_set.as_ref(),
-            &[fee_change_commitment],
-            "StampFee: fee tachygram set does not commit to the fee change note",
-        )?;
-
+        // TODO: each fee set is a single linear factor, so a dedicated relation
+        // checking `output(z) = left(z) * (z - root)` would avoid committing
+        // and opening the fee sets. Revisit when moving off mock ragu.
         enforce_poly_product(
             ctx,
             left_action_set.as_ref(),

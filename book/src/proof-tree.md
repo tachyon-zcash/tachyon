@@ -422,7 +422,7 @@ flowchart TB
     w_output[/rcv, theta, anchor/]
     s_output[OutputStamp]
     s_merge[StampMerge]
-    w_fee[/max fee note, fee, fee sets/]
+    w_fee[/max fee note, fee/]
     s_fee[StampFee]
   end
 
