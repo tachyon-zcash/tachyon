@@ -1479,25 +1479,141 @@ fn write_fuzz_seeds() {
     let wallet = WalletSim::new(shared_sk());
 
     let stamped = build_autonome(rng, &wallet, 1000, 700);
-    let mut stamped_buf = Vec::new();
-    stamped.write(&mut stamped_buf).expect("write stamped");
-
     let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
-    let mut adjunct_buf = Vec::new();
-    adjunct.write(&mut adjunct_buf).expect("write adjunct");
+
+    // An aggregate covering one adjunct, so the verifier target has a seed
+    // that passes the pointer and coverage checks with an adjunct present.
+    let anchor = PoolSim::genesis(rng).anchor();
+    let mut aggregate = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(200)]);
+    let to_cover = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
+    aggregate.stamp = aggregate
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            (
+                aggregate.descriptors().collect(),
+                BTreeSet::from([aggregate.fee_descriptor()]),
+            ),
+            (
+                to_cover.stamp.clone(),
+                to_cover.descriptors().collect(),
+                BTreeSet::from([to_cover.fee_descriptor()]),
+            ),
+        )
+        .expect("merge the covered bundle");
+    let covered = to_cover.strip(mock_wtxid(&aggregate));
+
+    let encode = |write: &dyn Fn(&mut Vec<u8>) -> io::Result<()>| {
+        let mut buf = Vec::new();
+        write(&mut buf).expect("write seed");
+        buf
+    };
+    let component = |selector: u8, write: &dyn Fn(&mut Vec<u8>) -> io::Result<()>| {
+        let mut buf = vec![selector];
+        write(&mut buf).expect("write seed");
+        buf
+    };
+    let stamped_buf = encode(&|buf| stamped.write(buf));
+    let adjunct_buf = encode(&|buf| adjunct.write(buf));
+    let action = stamped.actions[0];
+    let action_set = ActionSetPoly::from_iter([action.digest().expect("action digest")]).commit();
 
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/corpus");
-    for (dir, name, bytes) in [
-        ("bundle_read", "valid_proof_stamped", &stamped_buf),
-        ("bundle_read", "valid_pointer_stamped", &adjunct_buf),
-        ("stamped_bundle_read", "valid_proof_stamped", &stamped_buf),
+    for (target, name, bytes) in [
+        ("bundle_read", "valid_proof_stamped", stamped_buf.clone()),
+        ("bundle_read", "valid_pointer_stamped", adjunct_buf.clone()),
         (
-            "stripped_bundle_read",
-            "valid_pointer_stamped",
-            &adjunct_buf,
+            "stamped_bundle_read",
+            "valid_proof_stamped",
+            stamped_buf.clone(),
+        ),
+        ("stripped_bundle_read", "valid_pointer_stamped", adjunct_buf),
+        (
+            "proof_stamp_read",
+            "valid_proof_stamp",
+            encode(&|buf| stamped.stamp.write(buf)),
+        ),
+        (
+            "pointer_stamp_read",
+            "valid_pointer_stamp",
+            encode(&|buf| adjunct.stamp.write(buf)),
+        ),
+        (
+            "compact_size_read",
+            "one_byte",
+            encode(&|buf| CompactSize::from(0xFCu64).write(buf)),
+        ),
+        (
+            "compact_size_read",
+            "two_bytes",
+            encode(&|buf| CompactSize::from(0xFDu64).write(buf)),
+        ),
+        (
+            "compact_size_read",
+            "four_bytes",
+            encode(&|buf| CompactSize::from(0x0200_0000u64).write(buf)),
+        ),
+        (
+            "compact_size_read",
+            "eight_bytes",
+            encode(&|buf| CompactSize::from(u64::MAX).write(buf)),
+        ),
+        (
+            "component_read",
+            "action_descriptor",
+            component(0, &|buf| action.descriptor().write(buf)),
+        ),
+        (
+            "component_read",
+            "action_signature",
+            component(1, &|buf| action.sig.write(buf)),
+        ),
+        (
+            "component_read",
+            "binding_signature",
+            component(2, &|buf| stamped.binding_sig.write(buf)),
+        ),
+        (
+            "component_read",
+            "anchor",
+            component(3, &|buf| stamped.stamp.anchor.write(buf)),
+        ),
+        (
+            "component_read",
+            "tachygram",
+            component(4, &|buf| {
+                stamped
+                    .stamp
+                    .tachygrams
+                    .first()
+                    .expect("a published tachygram")
+                    .write(buf)
+            }),
+        ),
+        (
+            "component_read",
+            "tachygram_set",
+            component(5, &|buf| stamped.stamp.tachygram_set.write(buf)),
+        ),
+        (
+            "component_read",
+            "action_set",
+            component(6, &|buf| action_set.write(buf)),
+        ),
+        ("verify_pipeline", "autonome", stamped_buf),
+        (
+            "verify_pipeline",
+            "aggregate_with_adjunct",
+            encode(&|buf| {
+                aggregate.write(&mut *buf)?;
+                covered.write(buf)
+            }),
         ),
     ] {
-        fs::write(corpus.join(dir).join(name), bytes).expect("write seed");
+        let dir = corpus.join(target);
+        fs::create_dir_all(&dir).expect("create corpus directory");
+        fs::write(dir.join(name), bytes).expect("write seed");
     }
 }
 

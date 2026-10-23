@@ -1,33 +1,52 @@
 # Tachyon Fuzz Targets
 
-Install `cargo-fuzz`, then run from this directory. The local toolchain file
-pins a nightly new enough for the workspace MSRV:
+Every target feeds untrusted bytes to a public reader and checks two things.
+Liveness: the input decodes or returns `io::Error`, and never panics, aborts or
+hangs. Canonicality: an accepted input is the one encoding of the value it
+decodes to, so writing the value back reproduces the bytes the reader
+consumed, and the value holds the invariants the writer relies on. The proof
+blob is the exception: it is ragu's encoding, and mock ragu ignores the
+padding after the proof's fields, so the comparison stops short of it.
+
+| Target                 | Reader                                       |
+| ---------------------- | -------------------------------------------- |
+| `bundle_read`          | `TachyonBundle::read`, dispatching on state  |
+| `stamped_bundle_read`  | `Bundle::<ProofStamp>::read`                 |
+| `stripped_bundle_read` | `Bundle::<PointerStamp>::read`               |
+| `proof_stamp_read`     | `ProofStamp::read`                           |
+| `pointer_stamp_read`   | `PointerStamp::read`                         |
+| `compact_size_read`    | `CompactSize::read` and its consensus checks |
+| `component_read`       | the fixed-width field and signature readers  |
+| `verify_pipeline`      | a parsed aggregate and up to four adjuncts through every pre-proof check and digest |
+
+## Running
+
+From the repository root, without installing anything beyond the pinned
+nightly:
 
 ```sh
-cd crates/tachyon/fuzz
-cargo fuzz run bundle_read -- -runs=10000 -max_len=32768
-cargo fuzz run stamped_bundle_read -- -runs=10000 -max_len=32768
-cargo fuzz run stripped_bundle_read -- -runs=10000 -max_len=32768
+just fuzz bundle_read -max_total_time=60
 ```
 
-From the repository root, the equivalent form is:
+`just fuzz-build` compiles every target with the same libFuzzer
+instrumentation `cargo-fuzz` applies. `just fuzz TARGET` runs one target from
+its committed corpus, writes new finds under `target/corpus/TARGET` and crash
+artifacts under `artifacts/TARGET`, and passes any further arguments to
+libFuzzer. With `cargo-fuzz` installed, `cargo fuzz run TARGET -- -max_len=32768`
+from this directory works as well; the local toolchain file pins a nightly new
+enough for the workspace MSRV.
 
-```sh
-cargo +nightly-2026-05-23 fuzz run bundle_read \
-    --fuzz-dir crates/tachyon/fuzz -- -runs=10000 -max_len=32768
-```
+Keep `-max_len` at least 32768: the proof-stamped seeds are larger than
+libFuzzer's 4096-byte default. The recipe sets it.
 
-These targets fuzz public wire-format readers and assert liveness only:
-arbitrary bytes must decode or return `io::Error`, not panic, abort, or hang.
-Semantic rejection rules belong in unit/regression tests.
+## Corpus
 
-Each typed target has a valid serializer-generated seed that reaches its full
-stamp trailer. The top-level target has both valid bundle variants so its
-state-byte dispatch reaches both bodies. Keep `-max_len` at least 32768: the
-proof-stamped seed is larger than libFuzzer's 4096-byte default.
-
-Regenerate the valid seeds after a wire-format change, from the repository
-root:
+Each target has serializer-built seeds that reach its deepest accepting path:
+both bundle variants for the dispatcher, a full stamp trailer for the typed
+and stamp readers, every compact size form, one seed per component reader, and
+for `verify_pipeline` an autonome alone and an aggregate followed by the
+adjunct it covers. Regenerate them after a wire-format change, from the
+repository root:
 
 ```sh
 just test write_fuzz_seeds -- --ignored
