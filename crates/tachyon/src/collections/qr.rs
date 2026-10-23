@@ -161,11 +161,22 @@ mod tests {
     use core::iter;
 
     use ff::PrimeField as _;
+    use proptest::prelude::*;
     use ragu_circuits::polynomials::Rank as _;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::collections::multiset;
+    use crate::{collections::multiset, testing::check};
+
+    /// `count` random values and a discriminant, drawn from `seed`.
+    fn values_at(seed: u64, count: usize) -> (Vec<Fp>, Fp) {
+        let rng = &mut StdRng::seed_from_u64(seed);
+        let discriminant = Fp::random(&mut *rng);
+        let values = iter::repeat_with(|| Fp::random(&mut *rng))
+            .take(count)
+            .collect();
+        (values, discriminant)
+    }
 
     /// $(p - 1) / 2$ as `pow_vartime` limbs, computed from field constants.
     fn half_order() -> [u64; 4] {
@@ -194,62 +205,48 @@ mod tests {
         assert_eq!(chi(Fp::from(3)), Fp::ONE);
     }
 
+    /// The side is the Euler criterion of $x + R$, and the root squares to
+    /// that side's class times $x + R$, and to nothing on the other side
+    /// unless $x = -R$, which takes the residue side with root zero.
     #[test]
-    fn classification_matches_the_legendre_symbol() {
-        let rng = &mut StdRng::seed_from_u64(21);
-        for _ in 0..64 {
-            let discriminant = Fp::random(&mut *rng);
-            let x = Fp::random(&mut *rng);
+    fn classification_matches_the_euler_criterion() {
+        check(256, any::<u64>(), |seed| {
+            let (values, discriminant) = values_at(seed, 1);
+            let x = values[0];
             let (bit, root) = classify(x, discriminant);
-            assert_eq!(bit, chi(x + discriminant) != -Fp::ONE);
-            assert_eq!(root.square(), class_multiplier(bit) * (x + discriminant));
-        }
-    }
-
-    #[test]
-    fn the_exceptional_value_is_pinned_to_the_residue_side() {
-        let rng = &mut StdRng::seed_from_u64(22);
-        let discriminant = Fp::random(&mut *rng);
-        assert_eq!(classify(-discriminant, discriminant), (true, Fp::ZERO));
-    }
-
-    #[test]
-    fn a_value_takes_exactly_one_side() {
-        let rng = &mut StdRng::seed_from_u64(28);
-        let discriminant = Fp::random(&mut *rng);
-        for _ in 0..32 {
-            let x = Fp::random(&mut *rng);
-            let (bit, root) = classify(x, discriminant);
+            prop_assert_eq!(bit, chi(x + discriminant) != -Fp::ONE);
+            prop_assert_eq!(root.square(), class_multiplier(bit) * (x + discriminant));
             let opposite = class_multiplier(!bit) * (x + discriminant);
-            assert!(
-                Option::<Fp>::from(opposite.sqrt()).is_none() || x == -discriminant,
+            prop_assert!(
+                Option::<Fp>::from(opposite.sqrt()).is_none(),
                 "a non-exceptional value classified on both sides"
             );
-            assert_eq!(root.square(), class_multiplier(bit) * (x + discriminant));
-        }
+            prop_assert_eq!(classify(-discriminant, discriminant), (true, Fp::ZERO));
+            Ok(())
+        });
     }
 
+    /// A split files every value once, each on its own side with a root for
+    /// that side.
     #[test]
     fn splits_are_exhaustive_and_disjoint() {
-        let rng = &mut StdRng::seed_from_u64(30);
-        let discriminant = Fp::random(&mut *rng);
-        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-            .take(64)
-            .collect();
-
-        let (residue, non_residue) = split(values.iter().copied(), discriminant);
-        assert_eq!(residue.len() + non_residue.len(), values.len());
-        for &(value, root) in &residue {
-            assert_ne!(chi(value + discriminant), -Fp::ONE);
-            assert_eq!(root.square(), value + discriminant);
-        }
-        for &(value, root) in &non_residue {
-            assert_eq!(chi(value + discriminant), -Fp::ONE);
-            assert_eq!(
-                root.square(),
-                QUADRATIC_NON_RESIDUE * (value + discriminant)
-            );
-        }
+        check(256, (any::<u64>(), 0usize..=48), |(seed, count)| {
+            let (values, discriminant) = values_at(seed, count);
+            let (residue, non_residue) = split(values.iter().copied(), discriminant);
+            prop_assert_eq!(residue.len() + non_residue.len(), values.len());
+            for &(value, root) in &residue {
+                prop_assert_ne!(chi(value + discriminant), -Fp::ONE);
+                prop_assert_eq!(root.square(), value + discriminant);
+            }
+            for &(value, root) in &non_residue {
+                prop_assert_eq!(chi(value + discriminant), -Fp::ONE);
+                prop_assert_eq!(
+                    root.square(),
+                    QUADRATIC_NON_RESIDUE * (value + discriminant)
+                );
+            }
+            Ok(())
+        });
     }
 
     /// Collects a polynomial's coefficients with the sparse capacity padding
@@ -288,40 +285,32 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_set_encoding_is_monic() {
-        let rng = &mut StdRng::seed_from_u64(33);
-        for count in [0, 1, 5] {
-            let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-                .take(count)
-                .collect();
-            let encoded = dense(&multiset::encode(values));
-            assert_eq!(encoded.len(), count + 1);
-            assert_eq!(encoded.last(), Some(&Fp::ONE));
-        }
-    }
-
+    /// Both sides of any split decompose, an exceptional value among them or
+    /// not, and the exceptional value lands residue-side with root zero
+    /// where the non-residue side opens nonzero.
     #[test]
     fn the_decomposition_holds_on_both_sides() {
-        let rng = &mut StdRng::seed_from_u64(23);
-        for count in [0, 1, 2, 7] {
-            let discriminant = Fp::random(&mut *rng);
-            let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-                .take((2 * count) + 2)
-                .collect();
+        let strategy = (any::<u64>(), 0usize..=24, any::<bool>());
+        check(256, strategy, |(seed, count, exceptional)| {
+            let (mut values, discriminant) = values_at(seed, count);
+            if exceptional {
+                values.push(-discriminant);
+            }
             let (residue, non_residue) = split(values, discriminant);
-            let (u1, h1) = decomposition(&residue, class_multiplier(true), discriminant).unwrap();
-            let (u2, h2) =
-                decomposition(&non_residue, class_multiplier(false), discriminant).unwrap();
-            verify_side(&residue, class_multiplier(true), discriminant, &u1, &h1);
-            verify_side(
-                &non_residue,
-                class_multiplier(false),
-                discriminant,
-                &u2,
-                &h2,
-            );
-        }
+            if exceptional {
+                prop_assert!(residue.contains(&(-discriminant, Fp::ZERO)));
+                prop_assert_ne!(
+                    multiset::encode(abscissas_of(&non_residue)).eval(-discriminant),
+                    Fp::ZERO
+                );
+            }
+            for (points, side) in [(&residue, true), (&non_residue, false)] {
+                let class = class_multiplier(side);
+                let (u, h) = decomposition(points, class, discriminant).unwrap();
+                verify_side(points, class, discriminant, &u, &h);
+            }
+            Ok(())
+        });
     }
 
     #[test]
@@ -350,104 +339,79 @@ mod tests {
         }
     }
 
+    /// A value of the other side filed among a side's points, or a repeated
+    /// abscissa, leaves the division with a remainder.
     #[test]
-    fn a_misfiled_value_has_no_decomposition() {
-        let rng = &mut StdRng::seed_from_u64(31);
-        let discriminant = Fp::random(&mut *rng);
-        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-            .take(16)
-            .collect();
-        let (mut residue, mut non_residue) = split(values, discriminant);
-        residue.push(non_residue.pop().unwrap());
-        assert!(decomposition(&residue, class_multiplier(true), discriminant).is_none());
-    }
+    fn a_misfiled_or_repeated_value_has_no_decomposition() {
+        let strategy = (any::<u64>(), 2usize..=24, any::<bool>());
+        check(256, strategy, |(seed, count, onto_residue)| {
+            let (values, discriminant) = values_at(seed, count);
+            let repeated = values[0];
+            let (mut residue, mut non_residue) = split(values, discriminant);
 
-    #[test]
-    fn a_repeated_value_has_no_decomposition() {
-        let rng = &mut StdRng::seed_from_u64(32);
-        let discriminant = Fp::random(&mut *rng);
-        let value = Fp::random(&mut *rng);
-        let (residue, non_residue) = split([value, value], discriminant);
-        let (points, class) = if residue.is_empty() {
-            (&non_residue, class_multiplier(false))
-        } else {
-            (&residue, class_multiplier(true))
-        };
-        assert_eq!(points.len(), 2);
-        assert!(decomposition(points, class, discriminant).is_none());
-    }
+            let (side, root) = classify(repeated, discriminant);
+            let mut with_repeat = if side {
+                residue.clone()
+            } else {
+                non_residue.clone()
+            };
+            with_repeat.push((repeated, root));
+            prop_assert!(
+                decomposition(&with_repeat, class_multiplier(side), discriminant).is_none()
+            );
 
-    #[test]
-    fn an_exceptional_value_lands_residue_side_with_root_zero() {
-        let rng = &mut StdRng::seed_from_u64(34);
-        let discriminant = Fp::random(&mut *rng);
-        let values: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-            .take(16)
-            .chain(iter::once(-discriminant))
-            .collect();
-
-        let (residue, non_residue) = split(values, discriminant);
-        assert!(
-            residue.contains(&(-discriminant, Fp::ZERO)),
-            "the exceptional value must land on the residue side"
-        );
-        let q2 = multiset::encode(abscissas_of(&non_residue));
-        assert_ne!(
-            q2.eval(-discriminant),
-            Fp::ZERO,
-            "the non-residue side must open nonzero at -R"
-        );
-        let (u1, h1) = decomposition(&residue, class_multiplier(true), discriminant).unwrap();
-        let (u2, h2) = decomposition(&non_residue, class_multiplier(false), discriminant).unwrap();
-        verify_side(&residue, class_multiplier(true), discriminant, &u1, &h1);
-        verify_side(
-            &non_residue,
-            class_multiplier(false),
-            discriminant,
-            &u2,
-            &h2,
-        );
+            prop_assume!(!residue.is_empty() && !non_residue.is_empty());
+            let (points, class) = if onto_residue {
+                residue.push(non_residue.pop().unwrap());
+                (residue, class_multiplier(true))
+            } else {
+                non_residue.push(residue.pop().unwrap());
+                (non_residue, class_multiplier(false))
+            };
+            prop_assert!(decomposition(&points, class, discriminant).is_none());
+            Ok(())
+        });
     }
 
     #[test]
     fn an_all_zero_side_takes_the_vanishing_polynomial() {
-        let rng = &mut StdRng::seed_from_u64(35);
-        let discriminant = Fp::random(&mut *rng);
-        let points = [(-discriminant, Fp::ZERO)];
-        let (u, h) = decomposition(&points, class_multiplier(true), discriminant).unwrap();
-        assert_eq!(dense(&u), [discriminant, Fp::ONE]);
-        verify_side(&points, class_multiplier(true), discriminant, &u, &h);
+        check(256, any::<u64>(), |seed| {
+            let (_, discriminant) = values_at(seed, 0);
+            let points = [(-discriminant, Fp::ZERO)];
+            let (u, h) = decomposition(&points, class_multiplier(true), discriminant).unwrap();
+            prop_assert_eq!(dense(&u), [discriminant, Fp::ONE]);
+            verify_side(&points, class_multiplier(true), discriminant, &u, &h);
+            Ok(())
+        });
     }
 
+    /// Read over one value against many discriminants, each side's
+    /// interpolant squares to that side's class times the shifted value at
+    /// every discriminant it holds.
     #[test]
     fn the_decomposition_reads_as_a_profile_over_discriminants() {
-        let rng = &mut StdRng::seed_from_u64(50);
-        let value = Fp::random(&mut *rng);
-        let discriminants: Vec<Fp> = iter::repeat_with(|| Fp::random(&mut *rng))
-            .take(9)
-            .collect();
-        let mut residue = Vec::new();
-        let mut non_residue = Vec::new();
-        for &discriminant in &discriminants {
-            let (bit, root) = classify(value, discriminant);
-            if bit {
-                residue.push((discriminant, root));
-            } else {
-                non_residue.push((discriminant, root));
+        check(256, (any::<u64>(), 0usize..=16), |(seed, count)| {
+            let (discriminants, value) = values_at(seed, count);
+            let (residue, non_residue): (Vec<_>, Vec<_>) = discriminants
+                .iter()
+                .map(|&discriminant| (discriminant, classify(value, discriminant)))
+                .partition(|&(_, (bit, _))| bit);
+            for (side, entries) in [(true, residue), (false, non_residue)] {
+                let points: Vec<(Fp, Fp)> = entries
+                    .iter()
+                    .map(|&(discriminant, (_, root))| (discriminant, root))
+                    .collect();
+                let class = class_multiplier(side);
+                let (u, h) = decomposition(&points, class, value).unwrap();
+                verify_side(&points, class, value, &u, &h);
+                for &(discriminant, _) in &points {
+                    prop_assert_eq!(
+                        u.eval(discriminant).square(),
+                        class * (value + discriminant)
+                    );
+                }
             }
-        }
-        let (u1, h1) = decomposition(&residue, class_multiplier(true), value).unwrap();
-        let (u2, h2) = decomposition(&non_residue, class_multiplier(false), value).unwrap();
-        verify_side(&residue, class_multiplier(true), value, &u1, &h1);
-        verify_side(&non_residue, class_multiplier(false), value, &u2, &h2);
-        for &(discriminant, _) in &residue {
-            assert_eq!(u1.eval(discriminant).square(), value + discriminant);
-        }
-        for &(discriminant, _) in &non_residue {
-            assert_eq!(
-                u2.eval(discriminant).square(),
-                QUADRATIC_NON_RESIDUE * (value + discriminant)
-            );
-        }
+            Ok(())
+        });
     }
 }

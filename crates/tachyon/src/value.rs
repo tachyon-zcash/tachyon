@@ -261,41 +261,104 @@ impl ops::Neg for Positive {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
+    use crate::{constants::MAX_MONEY, testing::check};
 
-    #[test]
-    fn balance_zero_is_identity() {
-        assert_eq!(Trapdoor::ZERO.commit(Balance::ZERO), Commitment::default());
+    /// A signed amount around and beyond `±MAX_MONEY`.
+    fn amount() -> impl Strategy<Value = i64> {
+        let max = MAX_MONEY.cast_signed();
+        prop_oneof![
+            -max..=max,
+            Just(max),
+            Just(-max),
+            Just(max + 1),
+            Just(-max - 1),
+            Just(0),
+            any::<i64>(),
+        ]
     }
 
-    /// The binding property: `cv_a + cv_b - balance(a+b) = [rcv_a + rcv_b]R`.
-    /// The V-components cancel, leaving only the R-component.
+    /// Any in-range signed amount.
+    fn balance() -> impl Strategy<Value = i64> {
+        -MAX_MONEY.cast_signed()..=MAX_MONEY.cast_signed()
+    }
+
+    /// Each range type holds exactly its bounds, from any integer width.
     #[test]
-    fn commit_homomorphic_binding_property() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let rcv_a = Trapdoor::random(rng);
-        let cv_a = rcv_a.commit(Balance::try_from(100).unwrap());
-        let rcv_b = Trapdoor::random(rng);
-        let cv_b = rcv_b.commit(Balance::try_from(200).unwrap());
+    fn a_value_type_holds_exactly_its_range() {
+        check(256, (amount(), any::<u64>()), |(value, wide)| {
+            let max = MAX_MONEY.cast_signed();
+            prop_assert_eq!(
+                Balance::try_from(value).is_ok(),
+                (-max..=max).contains(&value)
+            );
+            prop_assert_eq!(
+                Positive::try_from(value).is_ok(),
+                (0..=max).contains(&value)
+            );
+            prop_assert_eq!(
+                Negative::try_from(value).is_ok(),
+                (-max..=0).contains(&value)
+            );
+            prop_assert_eq!(
+                Balance::try_from(i128::from(value)),
+                Balance::try_from(value)
+            );
+            prop_assert_eq!(Positive::try_from(wide).is_ok(), wide <= MAX_MONEY);
+            Ok(())
+        });
+    }
 
-        let remainder = cv_a + cv_b - Trapdoor::ZERO.commit(Balance::try_from(300).unwrap());
+    /// Negation stays in range and the scalar of a value and of its negation
+    /// cancel.
+    #[test]
+    fn negation_mirrors_the_scalar() {
+        check(256, balance(), |value| {
+            let amount = Balance::try_from(value).unwrap();
+            prop_assert_eq!(i128::from(-amount), -i128::from(value));
+            prop_assert_eq!(-(-amount), amount);
+            prop_assert_eq!(Fq::from(amount) + Fq::from(-amount), Fq::ZERO);
+            Ok(())
+        });
+    }
 
-        let rcv_sum: Fq = Into::<Fq>::into(rcv_a) + Into::<Fq>::into(rcv_b);
-
-        assert_eq!(remainder, ValueCommitment(*VALUE_COMMIT_R * rcv_sum));
+    /// The binding property: $\mathsf{cv}_a + \mathsf{cv}_b$ less a
+    /// trapdoor-free commitment to $a + b$ leaves $[\mathsf{rcv}_a +
+    /// \mathsf{rcv}_b]\mathcal{R}$, the value components cancelling.
+    #[test]
+    fn commitments_are_homomorphic() {
+        check(
+            256,
+            (any::<u64>(), balance(), balance()),
+            |(seed, left, right)| {
+                let sum = Balance::try_from(i128::from(left) + i128::from(right));
+                prop_assume!(sum.is_ok());
+                let rng = &mut StdRng::seed_from_u64(seed);
+                let (rcv_left, rcv_right) = (Trapdoor::random(rng), Trapdoor::random(rng));
+                let remainder = rcv_left.commit(Balance::try_from(left).unwrap())
+                    + rcv_right.commit(Balance::try_from(right).unwrap())
+                    - Trapdoor::ZERO.commit(sum.unwrap());
+                prop_assert_eq!(
+                    remainder,
+                    ValueCommitment(*VALUE_COMMIT_R * (Fq::from(rcv_left) + Fq::from(rcv_right)))
+                );
+                prop_assert_eq!(Trapdoor::ZERO.commit(Balance::ZERO), Commitment::default());
+                Ok(())
+            },
+        );
     }
 
     #[test]
-    fn debug_value_trapdoor_redacts_scalar() {
-        let rcv = ValueTrapdoor(Fq::from(0xFACEu64));
-        assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)");
-    }
-
-    #[test]
-    fn debug_value_commitment_redacts_point() {
-        let cv = Trapdoor::ZERO.commit(Balance::try_from(100).unwrap());
-        assert_eq!(alloc::format!("{cv:?}"), "ValueCommitment(..)");
+    fn debug_redacts_trapdoors_and_commitments() {
+        check(256, (any::<u64>(), 0..=MAX_MONEY), |(seed, value)| {
+            let rcv = Trapdoor::random(&mut StdRng::seed_from_u64(seed));
+            let cv = rcv.commit(Positive::try_from(value).unwrap());
+            prop_assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)");
+            prop_assert_eq!(alloc::format!("{cv:?}"), "ValueCommitment(..)");
+            Ok(())
+        });
     }
 }

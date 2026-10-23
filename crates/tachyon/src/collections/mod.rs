@@ -94,3 +94,92 @@ pub(crate) fn interpolate(points: &[(Fp, Fp)]) -> Option<Vec<Fp>> {
     coeffs.resize(points.len(), Fp::ZERO);
     Some(coeffs)
 }
+
+#[cfg(test)]
+mod tests {
+    use core::iter;
+
+    use proptest::prelude::*;
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use super::*;
+    use crate::testing::check;
+
+    /// `count` random field elements drawn from `seed`.
+    fn elements(seed: u64, count: usize) -> Vec<Fp> {
+        let rng = &mut StdRng::seed_from_u64(seed);
+        iter::repeat_with(|| Fp::random(&mut *rng))
+            .take(count)
+            .collect()
+    }
+
+    /// `count` points with random abscissas and values, drawn from `seed`.
+    fn points(seed: u64, count: usize) -> Vec<(Fp, Fp)> {
+        elements(seed, count)
+            .into_iter()
+            .zip(elements(!seed, count))
+            .collect()
+    }
+
+    /// The set encoding is monic of degree the member count, vanishes at
+    /// every member, and evaluates to the product of the root factors.
+    #[test]
+    fn set_encoding_is_monic_over_its_members() {
+        check(256, (any::<u64>(), 0usize..=16), |(seed, count)| {
+            let members = elements(seed, count);
+            let x = elements(!seed, 1)[0];
+            let encoded = multiset::encode(members.iter().copied());
+            let mut coeffs = encoded.iter_coeffs().collect::<Vec<_>>();
+            trim(&mut coeffs);
+            prop_assert_eq!(coeffs.len(), count + 1);
+            prop_assert_eq!(coeffs.last(), Some(&Fp::ONE));
+            prop_assert_eq!(
+                encoded.eval(x),
+                members.iter().map(|&member| x - member).product::<Fp>()
+            );
+            for &member in &members {
+                prop_assert_eq!(encoded.eval(member), Fp::ZERO);
+            }
+            Ok(())
+        });
+    }
+
+    /// The product of two nonzero polynomials evaluates as the product of
+    /// their evaluations. The zero polynomial is no set encoding: `trim`
+    /// keeps its padding, so its product overflows the rank.
+    #[test]
+    fn poly_mul_evaluates_as_the_product() {
+        let strategy = (any::<u64>(), 1usize..=12, 1usize..=12);
+        check(256, strategy, |(seed, left_len, right_len)| {
+            let left = Polynomial::from_coeffs(elements(seed, left_len));
+            let right = Polynomial::from_coeffs(elements(!seed, right_len));
+            let x = elements(seed ^ 1, 1)[0];
+            prop_assert_eq!(
+                poly_mul(&left, &right).eval(x),
+                left.eval(x) * right.eval(x)
+            );
+            Ok(())
+        });
+    }
+
+    /// The interpolant has one coefficient per point and passes through
+    /// every point; a repeated abscissa has none.
+    #[test]
+    fn interpolation_passes_through_its_points() {
+        check(256, (any::<u64>(), 0usize..=16), |(seed, count)| {
+            let mut points = points(seed, count);
+            let coeffs = interpolate(&points).unwrap();
+            prop_assert_eq!(coeffs.len(), count.max(1));
+            let interpolant = Polynomial::<Fp, ProductionRank>::from_coeffs(coeffs);
+            for &(at, value) in &points {
+                prop_assert_eq!(interpolant.eval(at), value);
+            }
+
+            if let Some(&(at, _)) = points.first() {
+                points.push((at, elements(seed ^ 1, 1)[0]));
+                prop_assert!(interpolate(&points).is_none());
+            }
+            Ok(())
+        });
+    }
+}

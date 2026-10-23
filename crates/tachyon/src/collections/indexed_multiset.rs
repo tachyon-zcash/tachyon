@@ -124,59 +124,87 @@ pub(crate) fn direct_eval(members: impl IntoIterator<Item = (u64, Fp)>, x: Fp) -
 mod tests {
     use alloc::vec::Vec;
 
-    use rand::{RngExt as _, SeedableRng as _, rngs::StdRng};
+    use proptest::{collection::vec, prelude::*, sample::Index};
+    use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
+    use crate::testing::check;
 
-    #[test]
-    fn member_encoding_matches_manual_evaluation() {
-        let rng = &mut StdRng::seed_from_u64(3);
-        for _ in 0..8 {
-            let idx = u64::from(rng.random_range(0..u32::MAX));
-            let member = Fp::random(&mut *rng);
-            let x = Fp::random(&mut *rng);
-            assert_eq!(
-                encode_single(idx, member).eval(x),
-                direct_eval([(idx, member)], x)
-            );
-        }
+    /// Members at the given indices, drawn from `seed`.
+    fn members_at(seed: u64, indices: &[u64]) -> Vec<(u64, Fp)> {
+        let rng = &mut StdRng::seed_from_u64(seed);
+        indices
+            .iter()
+            .map(|&idx| (idx, Fp::random(&mut *rng)))
+            .collect()
     }
 
+    /// The expanded coefficients are $(m + (i+1)X)^3 - c$, built by cubing
+    /// the linear factor.
     #[test]
-    fn member_encoding_matches_manual_construction() {
-        let rng = &mut StdRng::seed_from_u64(6);
-        let idx = u64::from(rng.random_range(0..u32::MAX));
-        let member = Fp::random(&mut *rng);
-        let x = Fp::random(&mut *rng);
+    fn member_encoding_is_the_cubed_linear_factor() {
+        check(
+            256,
+            (any::<u64>(), 0..u64::from(u32::MAX)),
+            |(seed, idx)| {
+                let rng = &mut StdRng::seed_from_u64(seed);
+                let member = Fp::random(&mut *rng);
+                let x = Fp::random(&mut *rng);
 
-        let manual_poly = {
-            let m_ix = Polynomial::from_coeffs([member, Fp::from(idx) + Fp::ONE].to_vec());
-
-            let m_ix_cube = poly_mul(&poly_mul(&m_ix, &m_ix), &m_ix);
-
-            {
-                let mut coeffs = m_ix_cube.iter_coeffs().collect::<Vec<_>>();
+                let linear = Polynomial::from_coeffs([member, Fp::from(idx) + Fp::ONE].to_vec());
+                let mut coeffs = poly_mul(&poly_mul(&linear, &linear), &linear)
+                    .iter_coeffs()
+                    .collect::<Vec<_>>();
                 coeffs[0] -= NON_RESIDUE;
-                Polynomial::<Fp, ProductionRank>::from_coeffs(coeffs)
-            }
-        };
+                let cubed = Polynomial::<Fp, ProductionRank>::from_coeffs(coeffs);
 
-        assert_eq!(encode_single(idx, member).eval(x), manual_poly.eval(x));
+                prop_assert_eq!(encode_single(idx, member).eval(x), cubed.eval(x));
+                prop_assert_eq!(
+                    encode_single(idx, member).eval(x),
+                    direct_eval([(idx, member)], x)
+                );
+                Ok(())
+            },
+        );
     }
 
+    /// Evaluating without building the polynomial agrees with the encoding,
+    /// for any members at any indices, repeats included.
     #[test]
-    fn sequence_evaluation_matches_the_encoding() {
-        let rng = &mut StdRng::seed_from_u64(12);
-        for len in 0..6u64 {
-            let start_idx = u64::from(rng.random_range(0..u32::MAX));
-            let members: Vec<(u64, Fp)> = (start_idx..start_idx + len)
-                .map(|idx| (idx, Fp::random(&mut *rng)))
-                .collect();
-            let x = Fp::random(&mut *rng);
-            assert_eq!(
+    fn direct_evaluation_matches_the_encoding() {
+        let strategy = (any::<u64>(), vec(0..u64::from(u32::MAX), 0..=8));
+        check(256, strategy, |(seed, indices)| {
+            let members = members_at(seed, &indices);
+            let x = Fp::random(&mut StdRng::seed_from_u64(!seed));
+            prop_assert_eq!(
                 direct_eval(members.iter().copied(), x),
                 encode(members).eval(x)
             );
-        }
+            Ok(())
+        });
+    }
+
+    /// A larger multiset is the product of any split of its members, in any
+    /// order.
+    #[test]
+    fn encoding_composes_by_product() {
+        let strategy = (
+            any::<u64>(),
+            vec(0..u64::from(u32::MAX), 0..=8),
+            any::<Index>(),
+        );
+        check(256, strategy, |(seed, indices, split)| {
+            let mut members = members_at(seed, &indices);
+            let x = Fp::random(&mut StdRng::seed_from_u64(!seed));
+            let whole = encode(members.iter().copied()).eval(x);
+
+            let right = members.split_off(split.index(members.len() + 1));
+            prop_assert_eq!(
+                whole,
+                encode(right.iter().copied()).eval(x) * encode(members.iter().copied()).eval(x)
+            );
+            prop_assert_eq!(whole, encode(right.into_iter().chain(members)).eval(x));
+            Ok(())
+        });
     }
 }

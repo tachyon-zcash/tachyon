@@ -121,54 +121,63 @@ pub struct Commitment(Tachygram);
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::{constants::MAX_MONEY, value};
+    use crate::{constants::MAX_MONEY, testing::check, value};
 
+    /// The commitment binds every field: another trapdoor, key, value or
+    /// nullifier trapdoor gives another commitment. The pad hashes the same
+    /// fields under its own domain and never coincides.
     #[test]
-    fn positive_value_accepts_max() {
-        value::Positive::try_from(MAX_MONEY).unwrap();
-    }
-
-    #[test]
-    fn positive_value_rejects_over_max() {
-        assert_eq!(
-            value::Positive::try_from(MAX_MONEY + 1),
-            Err(value::OutOfRange)
-        );
-    }
-
-    #[test]
-    fn positive_value_accepts_zero() {
-        value::Positive::try_from(0u64).unwrap();
-    }
-
-    #[test]
-    fn positive_value_rejects_negative() {
-        assert_eq!(value::Positive::try_from(-1i64), Err(value::OutOfRange));
-    }
-
-    /// Different trapdoors produce different commitments.
-    #[test]
-    fn distinct_rcm_distinct_commitments() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let pk = PaymentKey::from(Fp::random(&mut *rng));
-        let psi = nullifier::Trapdoor::random(rng);
-
-        let note1 = Note {
-            pk,
-            value: value::Positive::try_from(100u64).unwrap(),
-            psi,
-            rcm: CommitmentTrapdoor::random(rng),
-        };
-        let note2 = Note {
-            pk,
-            value: value::Positive::try_from(100u64).unwrap(),
-            psi,
-            rcm: CommitmentTrapdoor::random(rng),
-        };
-
-        assert_ne!(note1.commitment(), note2.commitment());
+    fn the_commitment_binds_every_field() {
+        let strategy = (any::<u64>(), 0..=MAX_MONEY, 0..=MAX_MONEY);
+        check(256, strategy, |(seed, amount, other_amount)| {
+            let rng = &mut StdRng::seed_from_u64(seed);
+            let note = Note {
+                pk: PaymentKey::from(Fp::random(&mut *rng)),
+                value: value::Positive::try_from(amount).unwrap(),
+                psi: nullifier::Trapdoor::random(rng),
+                rcm: CommitmentTrapdoor::random(rng),
+            };
+            let cm = note.commitment();
+            let other_value = value::Positive::try_from(other_amount).unwrap();
+            for (changed, other) in [
+                (
+                    true,
+                    Note {
+                        rcm: CommitmentTrapdoor::random(rng),
+                        ..note
+                    },
+                ),
+                (
+                    true,
+                    Note {
+                        pk: PaymentKey::from(Fp::random(&mut *rng)),
+                        ..note
+                    },
+                ),
+                (
+                    true,
+                    Note {
+                        psi: nullifier::Trapdoor::random(rng),
+                        ..note
+                    },
+                ),
+                (
+                    amount != other_amount,
+                    Note {
+                        value: other_value,
+                        ..note
+                    },
+                ),
+            ] {
+                prop_assert_eq!(other.commitment() != cm, changed);
+            }
+            let pad = poseidon::pad_tachygram(note.rcm.0, note.pk.into(), amount, note.psi.into());
+            prop_assert_ne!(Fp::from(cm), pad);
+            Ok(())
+        });
     }
 }

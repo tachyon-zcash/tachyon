@@ -158,96 +158,102 @@ impl QrClassRoot {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
+    use proptest::{collection::vec, option, prelude::*};
+    use rand::{SeedableRng as _, rngs::StdRng};
+
     use super::*;
+    use crate::testing::check;
 
+    /// The profile reached by taking `path`'s sides from the root.
+    fn profile_of(path: &[bool]) -> QrProfile {
+        path.iter()
+            .fold(QrProfile::ROOT, |profile, &side| profile.descend(side))
+    }
+
+    /// The depth counts the splits and the bits record their sides,
+    /// outermost first from the high end, up to the maximum depth; two
+    /// paths share a profile only if they are the same path.
     #[test]
-    fn the_root_profile_has_no_bits() {
-        assert_eq!(QrProfile::ROOT.depth, 0);
-        assert_eq!(QrProfile::ROOT.bits, 0);
+    fn a_profile_records_its_splits_outermost_first() {
+        let path = || vec(any::<bool>(), 0..=QrProfile::MAX_DEPTH);
+        check(256, (path(), path()), |(left, right)| {
+            let profile = profile_of(&left);
+            prop_assert_eq!(profile.depth, u32::try_from(left.len()).unwrap());
+            prop_assert_eq!(
+                profile.bits,
+                left.iter()
+                    .fold(0u32, |bits, &side| (bits << 1) | u32::from(side))
+            );
+            prop_assert_eq!(profile == profile_of(&right), left == right);
+            Ok(())
+        });
     }
 
     #[test]
-    fn the_bits_record_the_splits_outermost_first() {
-        let low = QrProfile::ROOT.descend(false).descend(false).descend(true);
-        assert_eq!(low.depth, 3);
-        assert_eq!(low.bits, 0b001);
-        let high = QrProfile::ROOT.descend(true).descend(false).descend(false);
-        assert_eq!(high.bits, 0b100);
+    fn the_discriminants_progress_by_one() {
+        check(256, (any::<u64>(), any::<u32>()), |(seed, depth)| {
+            let first = QrDiscriminant::from(Fp::random(&mut StdRng::seed_from_u64(seed)));
+            prop_assert_eq!(
+                first.at(depth),
+                Fp::from(first) + Fp::from(u64::from(depth))
+            );
+            Ok(())
+        });
+    }
+
+    /// Along the progression, each root squares to its side's class times
+    /// the value shifted by that depth's discriminant, and the value that
+    /// cancels a discriminant takes the residue side with root zero there.
+    #[test]
+    fn class_roots_square_to_the_shifted_value() {
+        let strategy = (any::<u64>(), option::of(0..u32::BITS));
+        check(256, strategy, |(seed, fixed_point)| {
+            let rng = &mut StdRng::seed_from_u64(seed);
+            let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+            let value = fixed_point.map_or_else(
+                || Fp::random(&mut *rng),
+                |position| -discriminant.at(position),
+            );
+            let classes = QrClassRoot::along(value, discriminant);
+            for (depth, &QrClassRoot(side, root)) in (0..).zip(&classes) {
+                prop_assert_eq!(
+                    root.square(),
+                    qr::class_multiplier(side) * (value + discriminant.at(depth))
+                );
+            }
+            if let Some(position) = fixed_point {
+                prop_assert_eq!(
+                    classes[usize::try_from(position).unwrap()],
+                    QrClassRoot(true, Fp::ZERO)
+                );
+            }
+            Ok(())
+        });
     }
 
     #[test]
-    fn distinct_split_histories_yield_distinct_profiles() {
-        let deep_zeroes = QrProfile::ROOT.descend(false).descend(false);
-        let shallow_zero = QrProfile::ROOT.descend(false);
-        assert_ne!(deep_zeroes, shallow_zero);
-        assert_ne!(deep_zeroes, QrProfile::ROOT);
+    fn the_depth_mask_is_a_prefix_of_the_depth() {
+        check(256, (0..=u32::BITS, any::<u32>()), |(depth, bits)| {
+            let mask = QrProfile { depth, bits }.depth_mask();
+            let selected: Vec<usize> = (0..)
+                .zip(mask)
+                .filter(|&(_, on)| on)
+                .map(|(position, _)| position)
+                .collect();
+            prop_assert_eq!(
+                selected,
+                (0..usize::try_from(depth).unwrap()).collect::<Vec<_>>()
+            );
+            Ok(())
+        });
     }
 
     #[test]
     #[should_panic(expected = "profile has no bit left for another side")]
     fn descending_past_the_maximum_depth_panics() {
-        let mut profile = QrProfile::ROOT;
-        for _ in 0..=QrProfile::MAX_DEPTH {
-            profile = profile.descend(true);
-        }
-    }
-
-    #[test]
-    fn the_profile_reaches_the_maximum_depth() {
-        let mut profile = QrProfile::ROOT;
-        for _ in 0..QrProfile::MAX_DEPTH {
-            profile = profile.descend(true);
-        }
-        assert_eq!(profile.depth, u32::BITS);
-        assert_eq!(profile.bits, u32::MAX);
-    }
-
-    #[test]
-    fn the_discriminants_progress_by_one() {
-        let first = QrDiscriminant::from(Fp::from(7));
-        assert_eq!(first.at(0), Fp::from(7));
-        assert_eq!(first.at(1), Fp::from(8));
-        assert_eq!(first.at(u32::BITS), Fp::from(7 + 32));
-        assert_eq!(QrDiscriminant::from(-Fp::ONE).at(1), Fp::ZERO);
-    }
-
-    #[test]
-    fn class_roots_square_to_the_shifted_value() {
-        let discriminant = QrDiscriminant::from(Fp::from(11));
-        for value in [Fp::from(3), Fp::from(1_000_003), -Fp::from(9)] {
-            for (depth, QrClassRoot(side, root)) in
-                (0..).zip(QrClassRoot::along(value, discriminant))
-            {
-                let shifted = value + discriminant.at(depth);
-                assert_eq!(root.square(), qr::class_multiplier(side) * shifted);
-            }
-        }
-    }
-
-    #[test]
-    fn the_fixed_point_takes_the_residue_side_with_root_zero() {
-        let discriminant = QrDiscriminant::from(Fp::from(13));
-        let position = 5;
-        let value = -discriminant.at(position);
-        let classes = QrClassRoot::along(value, discriminant);
-        assert_eq!(
-            classes[usize::try_from(position).unwrap()],
-            QrClassRoot(true, Fp::ZERO)
-        );
-    }
-
-    #[test]
-    fn the_depth_mask_is_a_prefix_of_the_depth() {
-        for depth in [0, 1, 31, 32] {
-            let mask = QrProfile { depth, bits: 0 }.depth_mask();
-            let ones = mask.iter().filter(|&&selected| selected).count();
-            assert_eq!(ones, usize::try_from(depth).unwrap());
-            assert!(
-                mask.iter()
-                    .zip(mask.iter().skip(1))
-                    .all(|(&earlier, &later)| earlier || !later)
-            );
-        }
+        let _profile = profile_of(&[true; QrProfile::MAX_DEPTH + 1]);
     }
 
     #[test]

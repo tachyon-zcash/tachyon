@@ -67,21 +67,32 @@ impl BlockHeight {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
-    use crate::constants::BLOCK_MAX;
+    use crate::{constants::BLOCK_MAX, testing::check};
 
+    /// `next` and `prev` step by one and stop at the final and genesis
+    /// blocks.
     #[test]
-    fn next_stops_at_the_final_block() {
-        assert_eq!(
-            BlockHeight(BLOCK_MAX - 1).next(),
-            Some(BlockHeight(BLOCK_MAX))
-        );
-        assert_eq!(BlockHeight(BLOCK_MAX).next(), None);
-    }
-
-    #[test]
-    fn prev_stops_at_the_genesis_block() {
-        assert_eq!(BlockHeight(1).prev(), Some(BlockHeight(0)));
-        assert_eq!(BlockHeight(0).prev(), None);
+    fn heights_step_by_one() {
+        let heights = prop_oneof![
+            any::<u32>(),
+            Just(0),
+            Just(1),
+            Just(BLOCK_MAX - 1),
+            Just(BLOCK_MAX)
+        ];
+        check(256, heights, |height| {
+            prop_assert_eq!(
+                BlockHeight(height).next(),
+                height.checked_add(1).map(BlockHeight)
+            );
+            prop_assert_eq!(
+                BlockHeight(height).prev(),
+                height.checked_sub(1).map(BlockHeight)
+            );
+            Ok(())
+        });
     }
 }

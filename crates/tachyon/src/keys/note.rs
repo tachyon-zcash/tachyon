@@ -116,10 +116,11 @@ impl PaymentKey {
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
+    use proptest::prelude::*;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
-    use crate::{primitives::EpochIndex, reddsa};
+    use crate::{constants::EPOCH_MAX, primitives::EpochIndex, reddsa, testing::check};
 
     /// reddsa accepts the identity as a verification key, but it has no affine
     /// coordinates to absorb.
@@ -135,36 +136,50 @@ mod tests {
         let _derived = PaymentKey::derive(&ak, &nk);
     }
 
+    /// mk is a function of (nk, psi), and another psi gives another mk.
     #[test]
-    fn derive_note_private_deterministic() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let nk = NullifierKey(Fp::random(&mut *rng));
-        let psi = nullifier::Trapdoor::random(rng);
-        let mk1 = nk.derive_note_private(psi);
-        let mk2 = nk.derive_note_private(psi);
-        assert_eq!(mk1, mk2);
+    fn master_key_is_a_function_of_nk_and_psi() {
+        check(256, any::<u64>(), |seed| {
+            let rng = &mut StdRng::seed_from_u64(seed);
+            let nk = NullifierKey(Fp::random(&mut *rng));
+            let psi = nullifier::Trapdoor::random(rng);
+            let other = nullifier::Trapdoor::random(rng);
+            prop_assert_eq!(nk.derive_note_private(psi), nk.derive_note_private(psi));
+            prop_assert_ne!(nk.derive_note_private(psi), nk.derive_note_private(other));
+            Ok(())
+        });
+    }
+
+    /// Distinct epochs take distinct nullifiers, within a sponge group and
+    /// across groups.
+    #[test]
+    fn distinct_epochs_take_distinct_nullifiers() {
+        let strategy = (any::<u64>(), 0..=EPOCH_MAX, 0..=EPOCH_MAX);
+        check(256, strategy, |(seed, first, second)| {
+            prop_assume!(first != second);
+            let rng = &mut StdRng::seed_from_u64(seed);
+            let psi = nullifier::Trapdoor::random(rng);
+            let mk = NullifierKey(Fp::random(&mut *rng)).derive_note_private(psi);
+            prop_assert_ne!(
+                mk.derive_nullifier(EpochIndex::new(first)),
+                mk.derive_nullifier(EpochIndex::new(second))
+            );
+            Ok(())
+        });
     }
 
     #[test]
-    fn different_psi_different_mk() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let nk = NullifierKey(Fp::random(&mut *rng));
-        let psi1 = nullifier::Trapdoor::random(rng);
-        let psi2 = nullifier::Trapdoor::random(rng);
-        let mk1 = nk.derive_note_private(psi1);
-        let mk2 = nk.derive_note_private(psi2);
-        assert_ne!(mk1, mk2);
-    }
-
-    #[test]
-    fn different_epochs_different_nullifiers() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let nk = NullifierKey(Fp::random(&mut *rng));
-        let psi = nullifier::Trapdoor::random(rng);
-        let mk = nk.derive_note_private(psi);
-        assert_ne!(
-            mk.derive_nullifier(EpochIndex::new(0u32)),
-            mk.derive_nullifier(EpochIndex::new(1u32)),
-        );
+    fn debug_redacts_the_nullifier_trapdoor() {
+        check(256, any::<u64>(), |seed| {
+            let rng = &mut StdRng::seed_from_u64(seed);
+            let [left, right] = [
+                nullifier::Trapdoor::random(rng),
+                nullifier::Trapdoor::random(rng),
+            ]
+            .map(|psi| alloc::format!("{psi:?}"));
+            prop_assert!(left.contains("Trapdoor"));
+            prop_assert_eq!(left, right);
+            Ok(())
+        });
     }
 }
