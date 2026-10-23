@@ -34,4 +34,6 @@ mod qr;
 #[cfg(test)]
 mod stamp;
 #[cfg(test)]
-mod summary;
+mod steps;
+#[cfg(test)]
+mod strategies;
