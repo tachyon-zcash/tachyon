@@ -5,16 +5,25 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build fuzz targets
+  fuzz:
+    name: Fuzz targets
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: crates/tachyon/fuzz
+    env:
+      # cargo-fuzz's libFuzzer instrumentation; keep in step with the justfile.
+      # The explicit `--target` below keeps it off build scripts.
+      RUSTFLAGS: "--cfg fuzzing -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4 -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table -Cllvm-args=-sanitizer-coverage-trace-compares -Cdebug-assertions -Coverflow-checks"
+      TARGET_TRIPLE: x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -23,8 +32,37 @@ jobs:
       - name: Install pinned nightly
         id: nightly
         uses: ./.github/actions/rust-nightly-setup
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
+        run: cargo fmt --all -- --check
 
       - name: Build fuzz targets
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
-        run: cargo build --locked --bins
+        run: cargo build --release --locked --bins --target "$TARGET_TRIPLE"
+
+      # Each target runs from its committed corpus for a bounded time. New finds
+      # go to a scratch directory listed first, so the committed seeds stay
+      # read-only; a crash fails the step and leaves its input in `artifacts`.
+      - name: Run fuzz targets
+        run: |
+          for source in fuzz_targets/*.rs; do
+            target="$(basename "$source" .rs)"
+            mkdir -p "target/corpus/$target" "artifacts/$target"
+            "target/$TARGET_TRIPLE/release/$target" \
+              -max_len=32768 -max_total_time=30 \
+              -artifact_prefix="artifacts/$target/" \
+              "target/corpus/$target" "corpus/$target"
+          done
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-artifacts
+          path: crates/tachyon/fuzz/artifacts
+          if-no-files-found: ignore
