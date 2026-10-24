@@ -24,6 +24,8 @@ mod bundle;
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
+mod fuzz_seeds;
+#[cfg(test)]
 mod stamp;
 #[cfg(test)]
 mod steps;

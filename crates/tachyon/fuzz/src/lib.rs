@@ -13,7 +13,7 @@
 //! zeros. The comparison stops short of the proof and leaves its canonicality
 //! to ragu.
 
-use std::{hint, io};
+use std::{env, hint, io};
 
 use zcash_tachyon::{
     Bundle,
@@ -23,7 +23,8 @@ use zcash_tachyon::{
 
 /// Read a value off the front of `data`. When it decodes, assert `write`
 /// reproduces the consumed bytes, all but the last `opaque_tail(&value)` of
-/// them, and return the value with the unread tail of `data`.
+/// them, and return the value with the unread tail of `data`. With
+/// `DEBUG_INPUT` set in the environment, print the reader's error on reject.
 ///
 /// # Panics
 ///
@@ -36,7 +37,15 @@ pub fn read_canonical<'data, T>(
     opaque_tail: impl FnOnce(&T) -> usize,
 ) -> Option<(T, &'data [u8])> {
     let mut rest = data;
-    let decoded = read(&mut rest).ok()?;
+    let decoded = match read(&mut rest) {
+        Ok(decoded) => decoded,
+        Err(err) => {
+            if env::var_os("DEBUG_INPUT").is_some() {
+                eprintln!("rejected: {err}");
+            }
+            return None;
+        },
+    };
     let consumed = &data[..data.len() - rest.len()];
 
     let mut encoded = Vec::new();

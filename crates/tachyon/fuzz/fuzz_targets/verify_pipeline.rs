@@ -7,8 +7,8 @@
 //! adjuncts. Every check that consumes their parsed fields runs: signatures,
 //! pointers, coverage, tachygram arity and set, the action and fee digests,
 //! the anchor folds over the stamp's set commitment, and the stamp digest.
-//! Each check may reject; none may panic. Proof verification itself is left
-//! out, since it needs a random source the fuzz crate does not depend on.
+//! Each check may reject; none may panic. Proof verification is exercised by
+//! `verify_reject`, on edits to an honest base.
 
 use std::hint;
 
