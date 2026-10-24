@@ -2,11 +2,11 @@
 
 use derive_more::Debug;
 
-use super::{
-    note::{NullifierKey, PaymentKey},
-    public,
-};
-use crate::{entropy::ActionRandomizer, primitives::effect, reddsa};
+use super::note::{NullifierKey, PaymentKey};
+use super::public;
+use crate::entropy::ActionRandomizer;
+use crate::primitives::effect;
+use crate::reddsa;
 
 /// The proof authorizing key (`ak` + `nk`).
 ///

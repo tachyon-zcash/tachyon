@@ -6,14 +6,13 @@ use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::{Eq, Fp};
 use ragu_arithmetic::Cycle as _;
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::sparse::Polynomial;
 use ragu_pasta::Pasta;
 
-use crate::{
-    collections::{indexed_multiset, poly_mul},
-    nullifier::Nullifier,
-    primitives::EpochIndex,
-};
+use crate::collections::{self, indexed_multiset};
+use crate::nullifier::Nullifier;
+use crate::primitives::EpochIndex;
 
 /// Pedersen commitment to a nullifier sequence.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
@@ -62,6 +61,6 @@ impl Mul for NfSeqPoly {
     ///
     /// If the product exceeds the polynomial coefficient cap.
     fn mul(self, rhs: Self) -> Self {
-        Self(poly_mul(&self.0, &rhs.0))
+        Self(collections::poly_mul(&self.0, &rhs.0))
     }
 }

@@ -28,7 +28,8 @@ use alloc::vec::Vec;
 use ff::Field as _;
 use pasta_curves::Fp;
 use ragu_arithmetic as arithmetic;
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::sparse::Polynomial;
 
 /// The least quadratic non-residue of the Pallas base field. Distinct from
 /// the cubic non-residue the sequence encoding uses.
@@ -202,10 +203,11 @@ mod tests {
 
     use ff::PrimeField as _;
     use ragu_circuits::polynomials::Rank as _;
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::SeedableRng as _;
+    use rand::rngs::StdRng;
 
     use super::*;
-    use crate::collections::multiset;
+    use crate::collections::{self, multiset};
 
     /// $(p - 1) / 2$ as `pow_vartime` limbs, computed from field constants.
     fn half_order() -> [u64; 4] {
@@ -315,13 +317,13 @@ mod tests {
         h: &Polynomial<Fp, ProductionRank>,
     ) {
         let q = multiset::encode(abscissas_of(points));
-        let mut lhs = dense(&super::super::poly_mul(u, u));
+        let mut lhs = dense(&collections::poly_mul(u, u));
         if lhs.len() < 2 {
             lhs.resize(2, Fp::ZERO);
         }
         lhs[0] -= class * shift;
         lhs[1] -= class;
-        let rhs = dense(&super::super::poly_mul(&q, h));
+        let rhs = dense(&collections::poly_mul(&q, h));
         assert_eq!(dense(&Polynomial::from_coeffs(lhs)), rhs);
         for &(abscissa, root) in points {
             assert_eq!(u.eval(abscissa), root);

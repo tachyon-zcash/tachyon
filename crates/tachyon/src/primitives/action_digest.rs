@@ -1,7 +1,9 @@
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
-use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
+use pasta_curves::{EpAffine, Fp};
 
-use crate::{digest::poseidon, keys::public, value};
+use crate::digest::poseidon;
+use crate::keys::public;
+use crate::value;
 
 /// Poseidon digest of a single action's $(\mathsf{cv}, \mathsf{rk})$ pair.
 ///
@@ -34,12 +36,12 @@ impl ActionDigest {
         cv: value::Commitment,
         rk: public::ActionVerificationKey,
     ) -> Result<Self, ActionDigestError> {
-        let cv_coords = EpAffine::from(cv)
-            .coordinates()
+        use pasta_curves::arithmetic::CurveAffine;
+
+        let cv_coords = CurveAffine::coordinates(&EpAffine::from(cv))
             .into_option()
             .ok_or(ActionDigestError::IdentityCv)?;
-        let rk_coords = EpAffine::from(rk)
-            .coordinates()
+        let rk_coords = CurveAffine::coordinates(&EpAffine::from(rk))
             .into_option()
             .ok_or(ActionDigestError::IdentityRk)?;
         Ok(Self(poseidon::action_digest(cv_coords, rk_coords)))
@@ -48,17 +50,15 @@ impl ActionDigest {
 
 #[cfg(test)]
 mod tests {
-    use rand::{CryptoRng, SeedableRng as _, rngs::StdRng};
+    use rand::rngs::StdRng;
+    use rand::{CryptoRng, SeedableRng as _};
 
     use super::*;
-    use crate::{
-        entropy::ActionEntropy,
-        keys::private,
-        note::{self, Note},
-        nullifier,
-        primitives::effect,
-        value,
-    };
+    use crate::entropy::ActionEntropy;
+    use crate::keys::private;
+    use crate::note::{self, Note};
+    use crate::primitives::effect;
+    use crate::{nullifier, value};
 
     fn make_action_parts<RNG: CryptoRng>(
         rng: &mut RNG,

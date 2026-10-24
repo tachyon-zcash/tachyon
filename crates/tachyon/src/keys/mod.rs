@@ -84,29 +84,27 @@
 pub mod private;
 pub mod public;
 
-mod note_master_key;
 mod note;
+mod note_master_key;
 mod proof;
 
 // Re-exports: public API surface.
-pub use note_master_key::NoteMasterKey;
 pub use note::{NullifierKey, PaymentKey};
+pub use note_master_key::NoteMasterKey;
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]
 mod tests {
     use ff::{Field as _, PrimeField as _};
     use pasta_curves::Fp;
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::SeedableRng as _;
+    use rand::rngs::StdRng;
 
-    use crate::{
-        entropy::ActionEntropy,
-        keys::{NoteMasterKey, NullifierKey, PaymentKey, private},
-        note::{self, Note},
-        nullifier,
-        primitives::{EpochIndex, effect},
-        value,
-    };
+    use crate::entropy::ActionEntropy;
+    use crate::keys::{NoteMasterKey, NullifierKey, PaymentKey, private};
+    use crate::note::{self, Note};
+    use crate::primitives::{EpochIndex, effect};
+    use crate::{nullifier, value};
 
     /// ask, nk, pk derived from the same sk must all be different.
     /// pk derives from (ak, nk) via Poseidon, not directly from sk.

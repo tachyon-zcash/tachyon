@@ -6,7 +6,8 @@ use lazy_static::lazy_static;
 use pasta_curves::{Eq, Fp};
 
 use super::{EpochIndex, TachygramSetCommit};
-use crate::{digest::poseidon, serialization};
+use crate::digest::poseidon;
+use crate::serialization;
 
 lazy_static! {
     static ref ANCHOR_GENESIS: Fp = poseidon::anchor_next_epoch(Fp::ZERO, Fp::ZERO);
@@ -103,7 +104,8 @@ impl Default for Anchor {
 #[cfg(test)]
 mod tests {
     use pasta_curves::Eq;
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::SeedableRng as _;
+    use rand::rngs::StdRng;
 
     use super::*;
     use crate::{Tachygram, TachygramSetPoly};

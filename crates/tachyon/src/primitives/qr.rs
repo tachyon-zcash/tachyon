@@ -4,7 +4,8 @@ use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ff::Field as _;
 use pasta_curves::{Eq, Fp};
 use ragu_arithmetic::Cycle as _;
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::sparse::Polynomial;
 use ragu_pasta::Pasta;
 
 use crate::collections::qr;

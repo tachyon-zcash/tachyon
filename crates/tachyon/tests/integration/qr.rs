@@ -3,25 +3,24 @@
 
 extern crate alloc;
 
-use alloc::{string::ToString as _, vec, vec::Vec};
+use alloc::string::ToString as _;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::{array, iter};
 
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::Fp;
 use ragu::{Pcd, Proof, Step};
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
+use zcash_tachyon::constants::{EPOCH_MAX, EPOCH_SIZE};
+use zcash_tachyon::note::Note;
+use zcash_tachyon::nullifier::Nullifier;
+use zcash_tachyon::stamp::proof::pool::{ArbitraryUnspent, NoteUnspent, UnspentFuse, UnspentLift};
+use zcash_tachyon::stamp::proof::{PROOF_SYSTEM, qr, spend, spendable, summary};
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, QrDiscriminant, QrProfile, Tachygram,
-    TachygramSetPoly,
-    constants::{EPOCH_MAX, EPOCH_SIZE},
-    note::Note,
-    nullifier::Nullifier,
-    stamp::proof::{
-        PROOF_SYSTEM,
-        pool::{ArbitraryUnspent, NoteUnspent, UnspentFuse, UnspentLift},
-        qr, spend, spendable, summary,
-    },
-    value, witness,
+    TachygramSetPoly, value, witness,
 };
 
 use crate::fixtures::{

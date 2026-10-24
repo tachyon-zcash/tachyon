@@ -40,7 +40,8 @@
 use pasta_curves::Fp;
 use ragu::StepCtx;
 use ragu_arithmetic::Cycle as _;
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::sparse::Polynomial;
 use ragu_core::{Error, Result};
 use ragu_pasta::Pasta;
 

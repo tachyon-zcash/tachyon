@@ -9,19 +9,15 @@
 use core::array;
 
 use ff::{Field as _, PrimeField as _};
-use group::{CurveAffine as _, GroupEncoding as _};
-use pasta_curves::{EpAffine, EqAffine, Fp, arithmetic::Coordinates};
-use ragu_arithmetic::{Cycle as _, PoseidonPermutation as _};
-use ragu_core::{
-    drivers::emulator::{Emulator, Wireless},
-    maybe::{Always, Maybe as _},
-};
+use pasta_curves::arithmetic::Coordinates;
+use pasta_curves::{EpAffine, EqAffine, Fp};
+use ragu_arithmetic::PoseidonPermutation as _;
+use ragu_core::drivers::emulator::{Emulator, Wireless};
+use ragu_core::maybe::Always;
 use ragu_pasta::{Pasta, PoseidonFp};
-use ragu_primitives::{
-    Element,
-    poseidon::{Sponge, SpongeState},
-    vec::FixedVec,
-};
+use ragu_primitives::Element;
+use ragu_primitives::poseidon::{Sponge, SpongeState};
+use ragu_primitives::vec::FixedVec;
 
 use crate::constants::EVIDENCE_TREE_ARITY;
 
@@ -35,8 +31,10 @@ type Emu = Emulator<Wireless<Always<()>, Fp>>;
     reason = "sponge squeeze cannot fail in wireless `Always` mode"
 )]
 fn squeeze(emulator: &mut Emu, sponge: &mut Sponge<'static, Emu, PoseidonFp>) -> Fp {
+    use ragu_core::maybe::Maybe;
+
     let squeezed = sponge.squeeze(emulator).expect("infallible");
-    *squeezed.value().take()
+    *Maybe::take(squeezed.value())
 }
 
 /// Opens the sponge of `domain` with capacity element $\mathsf{tag}$ over a
@@ -45,6 +43,8 @@ fn tagged_sponge<const L: usize>(
     domain: &[u8; 16],
     input: [Fp; L],
 ) -> (Emu, Sponge<'static, Emu, PoseidonFp>) {
+    use ragu_arithmetic::Cycle;
+
     const { assert!(L > 0, "a tagged hash must absorb at least one element") };
     let capacity = Fp::from_u128(u128::from_le_bytes(*domain));
 
@@ -57,7 +57,7 @@ fn tagged_sponge<const L: usize>(
         };
         Element::constant(&mut emulator, value)
     }));
-    let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(Pasta::baked()));
+    let mut sponge = Sponge::resume(state, <Pasta as Cycle>::circuit_poseidon(Pasta::baked()));
     #[expect(
         clippy::expect_used,
         reason = "sponge absorb cannot fail in wireless `Always` mode"
@@ -198,12 +198,14 @@ pub fn nullifier_group(mk: Fp, epoch_start: Fp) -> [Fp; PoseidonFp::RATE] {
 /// Panics if `point` is the identity.
 #[expect(clippy::expect_used, reason = "constant-size decomposition")]
 fn point_limbs(point: EqAffine) -> (Fp, Fp) {
+    use group::{CurveAffine, GroupEncoding};
+
     assert!(
-        !bool::from(point.is_identity()),
+        !bool::from(CurveAffine::is_identity(&point)),
         "commitment must not be the identity point"
     );
 
-    let encoding = point.to_bytes();
+    let encoding = GroupEncoding::to_bytes(&point);
     let (lo, hi) = encoding.split_at(16);
     (
         Fp::from_u128(u128::from_le_bytes(lo.try_into().expect("16 bytes"))),

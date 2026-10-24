@@ -7,17 +7,12 @@ use ff::{Field as _, FromUniformBytes as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
 use rand_core::CryptoRng;
 
-use super::{
-    note::{NullifierKey, PaymentKey},
-    proof, public,
-};
-use crate::{
-    action, bundle,
-    digest::blake2b,
-    entropy::ActionRandomizer,
-    primitives::{Effect, effect},
-    reddsa, value,
-};
+use super::note::{NullifierKey, PaymentKey};
+use super::{proof, public};
+use crate::digest::blake2b;
+use crate::entropy::ActionRandomizer;
+use crate::primitives::{Effect, effect};
+use crate::{action, bundle, reddsa, value};
 
 /// A Tachyon spending key: raw 32-byte entropy.
 ///

@@ -9,7 +9,9 @@
 use ff::PrimeField as _;
 use pasta_curves::{Fp, Fq};
 
-use crate::{digest::poseidon, entropy::ActionEntropy, note, value};
+use crate::digest::poseidon;
+use crate::entropy::ActionEntropy;
+use crate::{note, value};
 
 /// Embeds a base-field element in the scalar field, which is larger.
 #[expect(

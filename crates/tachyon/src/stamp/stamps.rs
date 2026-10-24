@@ -8,7 +8,10 @@
 
 extern crate alloc;
 
-use alloc::{boxed::Box, collections::BTreeSet, format, vec, vec::Vec};
+use alloc::boxed::Box;
+use alloc::collections::BTreeSet;
+use alloc::vec::Vec;
+use alloc::{format, vec};
 use core::error;
 
 use corez::io::{self, Read, Write};
@@ -16,31 +19,25 @@ use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
 use ff::PrimeField as _;
 use group::{Curve as _, GroupEncoding as _};
 use pasta_curves::{Eq, Fp};
-use super::proof::{
-    PROOF_SYSTEM, output,
-    stamp::{
-        ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
-        StampLift, StampMerge,
-    },
-};
 use ragu::PROOF_SIZE_COMPRESSED;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand_core::CryptoRng;
 
+use super::proof::stamp::{
+    ActionLift, ActionMerge, Actions, FeeFuse, FeeSeed, OutputAction, SpendAction, Stamp,
+    StampLift, StampMerge,
+};
+use super::proof::{PROOF_SYSTEM, output};
+use crate::bundle::{BundleState, StateByte};
+use crate::digest::blake2b;
+use crate::entropy::ActionEntropy;
+use crate::keys::{ProofAuthorizingKey, private};
+use crate::primitives::{
+    ActionDigest, ActionDigestError, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
+};
+use crate::stamp::proof::{delegation, pool, spend, spendable};
 use crate::{
-    ActionSetPoly, Note, TachygramSetPoly, action,
-    bundle::{BundleState, StateByte},
-    digest::blake2b,
-    effect,
-    entropy::ActionEntropy,
-    fee,
-    keys::{ProofAuthorizingKey, private},
-    primitives::{
-        ActionDigest, ActionDigestError, Anchor, AnchorSetPoly, Tachygram, TachygramSetCommit,
-    },
-    serialization,
-    stamp::proof::{delegation, pool, spend, spendable},
-    value, witness,
+    ActionSetPoly, Note, TachygramSetPoly, action, effect, fee, serialization, value, witness,
 };
 
 /// Marker for a bundle that has not yet been proven.
@@ -595,7 +592,13 @@ impl Plan {
                 .map_err(ProveError::ProofFailed)?;
             let digests = BTreeSet::from_iter([digest]);
             let proof = Box::new(pcd.proof().clone());
-            entries.push((BTreeSet::from_iter([desc]), digests, tachygrams, self.anchor, proof));
+            entries.push((
+                BTreeSet::from_iter([desc]),
+                digests,
+                tachygrams,
+                self.anchor,
+                proof,
+            ));
         }
 
         let (pcd, descriptors, mut tachygrams) = match entries
@@ -841,7 +844,10 @@ impl ProofStamp {
     ///
     /// Returns [`ProveError`] if an action digest cannot be computed or a
     /// proof-system step fails.
-    #[expect(clippy::too_many_lines, reason = "merges two stamps and computes their coverage")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "merges two stamps and computes their coverage"
+    )]
     pub fn merge<RNG: CryptoRng>(
         self,
         rng: &mut RNG,

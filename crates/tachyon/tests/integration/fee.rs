@@ -1,23 +1,21 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeSet, string::ToString as _, vec};
+use alloc::collections::BTreeSet;
+use alloc::string::ToString as _;
+use alloc::vec;
 use core::iter;
 
 use ragu::Proof;
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
+use zcash_tachyon::digest::blake2b;
+use zcash_tachyon::stamp::proof::stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp};
+use zcash_tachyon::stamp::proof::{PROOF_SYSTEM, output};
+use zcash_tachyon::stamp::{ProofStamp, StampState};
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, Anchor, Bundle, Note, Tachygram, TachygramSetPoly,
-    VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle,
-    digest::blake2b,
-    fee,
-    stamp::{
-        ProofStamp, StampState,
-        proof::{
-            PROOF_SYSTEM, output,
-            stamp::{Actions, FeeFuse, FeeSeed, OutputAction, Stamp},
-        },
-    },
-    value, witness,
+    VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle, fee, value,
+    witness,
 };
 
 use crate::fixtures::{

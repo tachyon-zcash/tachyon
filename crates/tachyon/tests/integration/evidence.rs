@@ -3,23 +3,21 @@
 use ff::Field as _;
 use pasta_curves::Fp;
 use ragu::{Pcd, Proof};
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
+use zcash_tachyon::constants::EVIDENCE_TREE_ARITY;
+use zcash_tachyon::stamp::proof::{PROOF_SYSTEM, evidence, qr};
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, Tachygram,
-    TachygramSetCommit,
-    constants::EVIDENCE_TREE_ARITY,
-    stamp::proof::{PROOF_SYSTEM, evidence, qr},
-    witness,
+    TachygramSetCommit, witness,
 };
 
-use crate::{
-    fixtures::{
-        EvidenceLeaf, PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_evidence_tree,
-        build_qr_partition, open_evidence_tree, random_block, seal_qr_intake, shared_sk,
-    },
-    qr::{
-        EPOCH_MEMBERS, invalid_witness, qr_bucket_at, qr_bucket_for, qr_epoch_unspent, small_epoch,
-    },
+use crate::fixtures::{
+    EvidenceLeaf, PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_evidence_tree,
+    build_qr_partition, open_evidence_tree, random_block, seal_qr_intake, shared_sk,
+};
+use crate::qr::{
+    EPOCH_MEMBERS, invalid_witness, qr_bucket_at, qr_bucket_for, qr_epoch_unspent, small_epoch,
 };
 
 /// One sealed bucket as the smallest tree that holds it: the bucket repeated

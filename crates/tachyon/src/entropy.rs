@@ -4,14 +4,16 @@
 //! Combined with a note commitment it deterministically derives an
 //! [`ActionRandomizer`].
 
-use core::{any::type_name, marker::PhantomData};
+use core::any;
+use core::marker::PhantomData;
 
 use derive_more::{Debug, Into};
 use ff::{Field as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
 use rand_core::CryptoRng;
 
-use crate::{note, primitives::Effect};
+use crate::note;
+use crate::primitives::Effect;
 
 /// Per-action entropy $\theta$ chosen by the signer (e.g. hardware wallet).
 ///
@@ -66,7 +68,7 @@ mod sealed {
 ///   $\mathsf{rk} = \mathsf{ak} + [\alpha]\mathcal{G}$.
 /// - [`ActionRandomizer<Output>`]: $\mathsf{rsk} = \alpha$.
 #[derive(Clone, Copy, Debug, Into)]
-#[debug("ActionRandomizer<{}>", type_name::<S>())]
+#[debug("ActionRandomizer<{}>", any::type_name::<S>())]
 pub struct ActionRandomizer<S: sealed::RandomizerState>(
     pub(crate) Fq,
     #[into(skip)] pub(crate) PhantomData<S>,
@@ -74,10 +76,13 @@ pub struct ActionRandomizer<S: sealed::RandomizerState>(
 
 #[cfg(test)]
 mod tests {
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::SeedableRng as _;
+    use rand::rngs::StdRng;
 
     use super::*;
-    use crate::{digest::poseidon, note, primitives::effect};
+    use crate::digest::poseidon;
+    use crate::note;
+    use crate::primitives::effect;
 
     /// Distinct Poseidon domains must yield distinct alpha scalars for the
     /// same (theta, cm).

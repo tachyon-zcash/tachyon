@@ -38,7 +38,10 @@ use ff::{Field as _, PrimeField as _};
 use pasta_curves::{Fp, Fq};
 use rand_core::CryptoRng;
 
-use crate::{digest::poseidon, keys::PaymentKey, nullifier, primitives::Tachygram, value};
+use crate::digest::poseidon;
+use crate::keys::PaymentKey;
+use crate::primitives::Tachygram;
+use crate::{nullifier, value};
 
 /// Note commitment trapdoor ($rcm$): randomness that blinds the note
 /// commitment.
@@ -121,10 +124,12 @@ pub struct Commitment(Tachygram);
 
 #[cfg(test)]
 mod tests {
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::SeedableRng as _;
+    use rand::rngs::StdRng;
 
     use super::*;
-    use crate::{constants::MAX_MONEY, value};
+    use crate::constants::MAX_MONEY;
+    use crate::value;
 
     #[test]
     fn positive_value_accepts_max() {

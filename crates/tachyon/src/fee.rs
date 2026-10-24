@@ -1,16 +1,15 @@
 //! Fees and fee descriptors.
 
-use core::cmp;
+use core::cmp::Ordering;
 
 use derive_more::{Debug, Eq as TotalEq, PartialEq};
 use group::GroupEncoding as _;
-use pasta_curves::{EpAffine, arithmetic::CurveAffine as _};
+use pasta_curves::EpAffine;
+use pasta_curves::arithmetic::CurveAffine as _;
 
-use crate::{
-    digest::poseidon,
-    primitives::{ActionDigest, ActionDigestError},
-    value,
-};
+use crate::digest::poseidon;
+use crate::primitives::{ActionDigest, ActionDigestError};
+use crate::value;
 
 /// A bundle's fee descriptor: the max fee commitment and the fee value.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
@@ -41,14 +40,14 @@ impl Descriptor {
 }
 
 impl PartialOrd for Descriptor {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Descriptor {
     /// Orders fee descriptors by their coverage entries.
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         <[u8; 40]>::from(*self).cmp(&<[u8; 40]>::from(*other))
     }
 }

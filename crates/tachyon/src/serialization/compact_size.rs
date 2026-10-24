@@ -6,7 +6,8 @@
 //! drift; if `zcash_encoding` is ever pulled into this workspace as a path
 //! dep we can switch back.
 
-use core::{num::TryFromIntError, ops::RangeInclusive};
+use core::num::TryFromIntError;
+use core::ops::RangeInclusive;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, PartialEq};

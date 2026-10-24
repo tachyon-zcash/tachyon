@@ -88,30 +88,29 @@
 //! `LE64(vFeeTachyon) || hStampCoverageTachyon || hStampDataTachyon`, and a
 //! pointer stamp as `LE64(vFeeTachyon) || tachyonAggregateId`.
 
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    vec::Vec,
-};
-use core::{cmp::Ordering, iter, ops::Neg as _};
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::vec::Vec;
+use core::cmp::Ordering;
+use core::iter;
+use core::ops::Neg as _;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
 use group::CurveAffine as _;
 use rand_core::CryptoRng;
 
+use crate::action::{self, Action};
+use crate::digest::blake2b;
+use crate::keys::{private, public};
+use crate::primitives::{Anchor, AnchorSetPoly, effect};
+use crate::reddsa::{self, BindingAuth};
+use crate::stamp::proof::pool;
+use crate::stamp::{
+    self, AggregateId, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState, Unproven,
+};
 use crate::{
-    ActionDigest, ActionDigestError, Note, TachygramSetCommit, TachygramSetPoly,
-    action::{self, Action},
-    digest::blake2b,
-    fee,
-    keys::{private, public},
-    primitives::{Anchor, AnchorSetPoly, effect},
-    reddsa, serialization,
-    stamp::{
-        self, AggregateId, AggregateIdError, PointerStamp, ProofStamp, ProveError, StampState,
-        Unproven, proof::pool,
-    },
-    value,
+    ActionDigest, ActionDigestError, Note, TachygramSetCommit, TachygramSetPoly, fee,
+    serialization, value,
 };
 
 /// The `tachyonBundleState` wire byte. See the module-level wire format
@@ -1212,7 +1211,7 @@ impl TachyonBundle {
 /// digest computed at the transaction layer. The validator verifies
 /// `binding_sig` against it under $\mathsf{bvk}$.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
-pub struct Signature(pub(crate) reddsa::Signature<reddsa::BindingAuth>);
+pub struct Signature(pub(crate) reddsa::Signature<BindingAuth>);
 
 impl Signature {
     /// Read a binding signature from the consensus wire format.
@@ -1223,7 +1222,7 @@ impl Signature {
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut bytes = [0u8; 64];
         reader.read_exact(&mut bytes)?;
-        Ok(Self(reddsa::Signature::<reddsa::BindingAuth>::from(bytes)))
+        Ok(Self(reddsa::Signature::<BindingAuth>::from(bytes)))
     }
 
     /// Write a binding signature to the consensus wire format.

@@ -4,24 +4,27 @@
 
 extern crate alloc;
 
-use alloc::{string::ToString as _, vec, vec::Vec};
+use alloc::string::ToString as _;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::{array, iter};
 
 use ff::Field as _;
 use pasta_curves::Fp;
 use ragu::{Pcd, Proof};
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 use rand_core::CryptoRng;
+use zcash_tachyon::constants::{EPOCH_MAX, EPOCH_SIZE};
+use zcash_tachyon::digest::poseidon;
+use zcash_tachyon::entropy::ActionEntropy;
+use zcash_tachyon::nullifier::{self, NF_DERIVATION_WIDTH, Nullifier};
+use zcash_tachyon::stamp::proof::{
+    PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp,
+};
 use zcash_tachyon::{
     ActionSetCommit, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly,
-    Note, Tachygram, TachygramSetPoly, action,
-    constants::{EPOCH_MAX, EPOCH_SIZE},
-    digest::poseidon,
-    entropy::ActionEntropy,
-    note,
-    nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    stamp::proof::{PROOF_SYSTEM, delegation, output, pool, spend, spendable, stamp},
-    value, witness,
+    Note, Tachygram, TachygramSetPoly, action, note, value, witness,
 };
 
 use crate::fixtures::{

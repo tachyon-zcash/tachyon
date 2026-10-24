@@ -2,10 +2,13 @@
 
 use derive_more::{AsRef, Debug, From, Into};
 use group::GroupEncoding as _;
-use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
+use pasta_curves::arithmetic::CurveAffine as _;
+use pasta_curves::{EpAffine, Fp};
 
-use super::{note_master_key::NoteMasterKey, proof::SpendValidatingKey};
-use crate::{digest::poseidon, nullifier};
+use super::note_master_key::NoteMasterKey;
+use super::proof::SpendValidatingKey;
+use crate::digest::poseidon;
+use crate::nullifier;
 
 /// A Tachyon nullifier deriving key.
 ///
@@ -116,10 +119,12 @@ impl PaymentKey {
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::SeedableRng as _;
+    use rand::rngs::StdRng;
 
     use super::*;
-    use crate::{primitives::EpochIndex, reddsa};
+    use crate::primitives::EpochIndex;
+    use crate::reddsa;
 
     /// reddsa accepts the identity as a verification key, but it has no affine
     /// coordinates to absorb.

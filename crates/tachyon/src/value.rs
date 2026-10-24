@@ -1,12 +1,14 @@
 //! Value commitments and bounded value types.
 
-use core::{cmp, ops};
+use core::cmp::Ordering;
+use core::ops::Neg;
 
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
 use ff::Field as _;
 use group::GroupEncoding as _;
 use lazy_static::lazy_static;
-use pasta_curves::{Ep, EpAffine, Fq, arithmetic::CurveExt as _};
+use pasta_curves::arithmetic::CurveExt as _;
+use pasta_curves::{Ep, EpAffine, Fq};
 use rand_core::CryptoRng;
 
 use crate::constants::MAX_MONEY;
@@ -213,14 +215,14 @@ impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for Fq {
     /// exponent in a value commitment.
     fn from(value: Value<MIN, MAX>) -> Self {
         match value.0.cmp(&0) {
-            cmp::Ordering::Equal => Self::ZERO,
-            cmp::Ordering::Greater => Self::from(value.0.unsigned_abs()),
-            cmp::Ordering::Less => Self::from(value.0.unsigned_abs()).neg(),
+            Ordering::Equal => Self::ZERO,
+            Ordering::Greater => Self::from(value.0.unsigned_abs()),
+            Ordering::Less => Self::from(value.0.unsigned_abs()).neg(),
         }
     }
 }
 
-impl ops::Neg for Balance {
+impl Neg for Balance {
     type Output = Self;
 
     fn neg(self) -> Self {
@@ -228,7 +230,7 @@ impl ops::Neg for Balance {
     }
 }
 
-impl ops::Neg for Negative {
+impl Neg for Negative {
     type Output = Positive;
 
     fn neg(self) -> Self::Output {
@@ -236,7 +238,7 @@ impl ops::Neg for Negative {
     }
 }
 
-impl ops::Neg for Positive {
+impl Neg for Positive {
     type Output = Negative;
 
     fn neg(self) -> Self::Output {
@@ -246,7 +248,8 @@ impl ops::Neg for Positive {
 
 #[cfg(test)]
 mod tests {
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::SeedableRng as _;
+    use rand::rngs::StdRng;
 
     use super::*;
 

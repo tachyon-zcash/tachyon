@@ -1,19 +1,20 @@
 //! Tachyon Action descriptions.
 
 use alloc::vec::Vec;
-use core::{cmp, cmp::Ord, marker::PhantomData};
+use core::cmp::{Ord, Ordering};
+use core::marker::PhantomData;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
-use pasta_curves::{EpAffine, group::GroupEncoding as _};
+use pasta_curves::EpAffine;
+use pasta_curves::group::GroupEncoding as _;
 
-use crate::{
-    entropy::{ActionEntropy, ActionRandomizer},
-    keys::{private, public},
-    note::Note,
-    primitives::{ActionDigest, ActionDigestError, Effect, effect},
-    reddsa, serialization, value,
-};
+use crate::entropy::{ActionEntropy, ActionRandomizer};
+use crate::keys::{private, public};
+use crate::note::Note;
+use crate::primitives::{ActionDigest, ActionDigestError, Effect, effect};
+use crate::reddsa::{self, ActionAuth, VerificationKey};
+use crate::{serialization, value};
 
 /// The simple fields of an action, without the signature.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
@@ -52,7 +53,7 @@ impl Descriptor {
         let mut bytes = [0u8; 32];
         reader.read_exact(&mut bytes)?;
         let rk = public::ActionVerificationKey(
-            reddsa::VerificationKey::<reddsa::ActionAuth>::try_from(bytes).map_err(|_err| {
+            VerificationKey::<ActionAuth>::try_from(bytes).map_err(|_err| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     "invalid action verification key",
@@ -75,13 +76,13 @@ impl Descriptor {
 }
 
 impl PartialOrd for Descriptor {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Descriptor {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         {
             EpAffine::from(self.cv)
                 .to_bytes()
@@ -117,7 +118,7 @@ impl<E: Effect> PartialEq for Plan<E> {
 }
 
 impl<E: Effect> PartialOrd for Plan<E> {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.descriptor().partial_cmp(&other.descriptor())
     }
 }
@@ -248,13 +249,13 @@ impl Action {
 }
 
 impl PartialOrd for Action {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Action {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         self.descriptor()
             .cmp(&other.descriptor())
             .then(self.sig.cmp(&other.sig))
@@ -270,19 +271,19 @@ impl From<Action> for Descriptor {
     }
 }
 
-/// A spend authorization signature (RedPallas over reddsa::ActionAuth).
+/// A spend authorization signature (RedPallas over ActionAuth).
 #[derive(Clone, Copy, Debug, Display, PartialEq, TotalEq)]
 #[display("Signature({:?})", self.0)]
-pub struct Signature(pub(crate) reddsa::Signature<reddsa::ActionAuth>);
+pub struct Signature(pub(crate) reddsa::Signature<ActionAuth>);
 
 impl PartialOrd for Signature {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Signature {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         let bytes: [u8; 64] = self.0.into();
         let other_bytes: [u8; 64] = other.0.into();
         bytes.cmp(&other_bytes)
@@ -298,7 +299,7 @@ impl Signature {
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let mut bytes = [0u8; 64];
         reader.read_exact(&mut bytes)?;
-        Ok(Self(reddsa::Signature::<reddsa::ActionAuth>::from(bytes)))
+        Ok(Self(reddsa::Signature::<ActionAuth>::from(bytes)))
     }
 
     /// Write an action signature in the consensus wire format.

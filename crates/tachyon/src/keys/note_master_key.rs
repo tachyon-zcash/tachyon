@@ -7,11 +7,9 @@ use pasta_curves::Fp;
 use ragu_arithmetic::PoseidonPermutation as _;
 use ragu_pasta::PoseidonFp;
 
-use crate::{
-    digest::poseidon,
-    nullifier::{NF_DERIVATION_WIDTH, Nullifier},
-    primitives::EpochIndex,
-};
+use crate::digest::poseidon;
+use crate::nullifier::{NF_DERIVATION_WIDTH, Nullifier};
+use crate::primitives::EpochIndex;
 
 /// Per-note master key.
 ///

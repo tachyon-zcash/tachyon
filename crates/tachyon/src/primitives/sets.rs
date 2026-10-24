@@ -5,11 +5,13 @@ use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use group::Curve as _;
 use pasta_curves::{Eq, Fp};
 use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::sparse::Polynomial;
 use ragu_pasta::Pasta;
 
 use super::{ActionDigest, Anchor, Tachygram};
-use crate::{collections::multiset, serialization};
+use crate::collections::multiset;
+use crate::serialization;
 
 /// Pedersen commitment to a stamp's tachygram set.
 #[derive(AsRef, Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
@@ -178,7 +180,8 @@ impl FromIterator<Tachygram> for TachygramSetPoly {
 #[cfg(test)]
 mod tests {
     use ff::Field as _;
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::SeedableRng as _;
+    use rand::rngs::StdRng;
 
     use super::*;
 

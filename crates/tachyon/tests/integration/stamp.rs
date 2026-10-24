@@ -1,18 +1,21 @@
 extern crate alloc;
 
-use alloc::{boxed::Box, collections::BTreeSet, string::ToString as _, vec, vec::Vec};
+use alloc::boxed::Box;
+use alloc::collections::BTreeSet;
+use alloc::string::ToString as _;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use ff::Field as _;
 use pasta_curves::Fp;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
+use zcash_tachyon::constants::EPOCH_SIZE;
+use zcash_tachyon::stamp::{self, ProveError};
 use zcash_tachyon::{
     ActionDigest, Anchor, BlockHeight, CompactSize, ProofStamp, Tachygram, TachygramSetCommit,
-    TachygramSetPoly, action,
-    constants::EPOCH_SIZE,
-    fee,
-    stamp::{self, ProveError},
-    value,
+    TachygramSetPoly, action, fee, value,
 };
 
 use crate::fixtures::{

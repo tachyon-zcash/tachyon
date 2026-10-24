@@ -10,17 +10,17 @@
 
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec;
+use alloc::vec::Vec;
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
-use crate::{
-    note,
-    primitives::{Anchor, EpochIndex, TachygramSetPoly},
-    ragu_constraint::{enforce_equal_point, enforce_zero},
-};
+use super::delegation::NoteNullifiers;
+use super::pool::NoteUnspent;
+use super::qr::QrBucket;
+use crate::primitives::{Anchor, EpochIndex, TachygramSetPoly};
+use crate::{note, ragu_constraint};
 
 /// Wallet's spendable position, certified up to this point in every
 /// coordinate.
@@ -90,7 +90,7 @@ impl Step for SpendableInit {
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_in_set = creation_set.eval(cm.into());
         ctx.enforce_poly_query(creation_set.commit().into(), cm.into(), cm_in_set)?;
-        enforce_zero(cm_in_set, "SpendableInit: commitment not in set")?;
+        ragu_constraint::enforce_zero(cm_in_set, "SpendableInit: commitment not in set")?;
         let creation_commit = creation_set.commit();
 
         // The anchor immediately after the creation stamp, computed in-circuit
@@ -152,20 +152,20 @@ impl Step for QrSpendableInit {
         ): <Self::Left as Header>::Data,
         (bucket_epoch, bucket_anchor_start, bucket_anchor_next, _, _, bucket_commit): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(contents.commit()),
             Eq::from(bucket_commit),
             "QrSpendableInit: contents do not match the bucket",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(unspent_epoch_start) - Fp::from(bucket_epoch),
             "QrSpendableInit: segment does not start in the bucket's epoch",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(unspent_anchor_start) - Fp::from(bucket_anchor_start),
             "QrSpendableInit: segment does not open where the bucket does",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_next),
             "QrSpendableInit: segment does not close where the bucket does",
         )?;
@@ -173,7 +173,7 @@ impl Step for QrSpendableInit {
             ragu_core::Error::InvalidWitness("QrSpendableInit: bucket has no next epoch".into())
         })?;
         // Defensive: the anchor equality already rejects a wrong epoch label.
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch_next),
             "QrSpendableInit: segment does not end in the epoch after the bucket's",
         )?;
@@ -181,7 +181,7 @@ impl Step for QrSpendableInit {
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
         let cm_in_bucket = contents.eval(cm.into());
         ctx.enforce_poly_query(bucket_commit.into(), cm.into(), cm_in_bucket)?;
-        enforce_zero(cm_in_bucket, "QrSpendableInit: commitment not in bucket")?;
+        ragu_constraint::enforce_zero(cm_in_bucket, "QrSpendableInit: commitment not in bucket")?;
 
         Ok(((cm, unspent_epoch_next, unspent_anchor_next), ()))
     }
@@ -233,15 +233,15 @@ impl Step for SpendableLift {
             unspent_anchor_next,
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(unspent_cm) - Fp::from(spendable_cm),
             "SpendableLift: unspent cm does not match spendable",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(unspent_epoch_start) - Fp::from(spendable_epoch_current),
             "SpendableLift: segment does not start at the lineage epoch",
         )?;
-        enforce_zero(
+        ragu_constraint::enforce_zero(
             Fp::from(unspent_anchor_start) - Fp::from(spendable_anchor),
             "SpendableLift: unspent not adjacent to spendable",
         )?;

@@ -9,16 +9,15 @@
 
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec;
+use alloc::vec::Vec;
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use crate::{
-    primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
-    ragu_constraint::enforce_equal_point,
-    relations::enforce::enforce_poly_product,
-};
+use crate::primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly};
+use crate::ragu_constraint;
+use crate::relations::enforce;
 
 /// One summarized run of an epoch's stamps.
 ///
@@ -104,12 +103,12 @@ impl Step for SummaryAdvance {
         (summary_epoch, summary_anchor_prev, summary_anchor_end, summary_acc_commit): <Self::Left as Header>::Data,
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_equal_point(
+        ragu_constraint::enforce_equal_point(
             Eq::from(acc.commit()),
             Eq::from(summary_acc_commit),
             "SummaryAdvance: accumulator does not match header",
         )?;
-        enforce_poly_product(
+        enforce::enforce_poly_product(
             ctx,
             acc.as_ref(),
             stamp.as_ref(),

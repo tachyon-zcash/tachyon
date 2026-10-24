@@ -5,7 +5,8 @@ use alloc::vec::Vec;
 use ff::Field as _;
 use pasta_curves::Fp;
 use ragu_arithmetic as arithmetic;
-use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::sparse::Polynomial;
 
 fn trim(coeffs: &mut Vec<Fp>) {
     if let Some(last_nonzero_idx) = coeffs.iter().rposition(|co| co != &Fp::ZERO) {

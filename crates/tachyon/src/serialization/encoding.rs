@@ -6,7 +6,8 @@
 
 use corez::io::{self, Read, Write};
 use ff::PrimeField as _;
-use pasta_curves::{EpAffine, EqAffine, Fp, group::GroupEncoding as _};
+use pasta_curves::group::GroupEncoding as _;
+use pasta_curves::{EpAffine, EqAffine, Fp};
 
 use crate::serialization::compact_size::{CompactSize, CompactSizeError};
 

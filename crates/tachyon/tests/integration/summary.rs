@@ -8,12 +8,10 @@ use core::array;
 use ff::Field as _;
 use pasta_curves::Fp;
 use ragu::Proof;
-use rand::{SeedableRng as _, rngs::StdRng};
-use zcash_tachyon::{
-    Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetPoly,
-    stamp::proof::{PROOF_SYSTEM, summary},
-    witness,
-};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
+use zcash_tachyon::stamp::proof::{PROOF_SYSTEM, summary};
+use zcash_tachyon::{Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetPoly, witness};
 
 use crate::fixtures::{PoolSim, build_summary_pcd, random_block};
 

@@ -1,7 +1,11 @@
 extern crate alloc;
 
-use alloc::{collections::BTreeMap, vec, vec::Vec};
-use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
+use alloc::collections::BTreeMap;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cell::RefCell;
+use core::ops::RangeInclusive;
+use core::{iter, mem};
 
 use ff::{Field as _, FromUniformBytes as _, PrimeField as _, WithSmallOrderMulGroup as _};
 use group::GroupEncoding as _;
@@ -10,30 +14,26 @@ use ragu::{Pcd, Proof};
 use ragu_arithmetic::PoseidonPermutation as _;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_pasta::PoseidonFp;
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
 use rand_core::CryptoRng;
+use zcash_tachyon::action::{self, Action};
+use zcash_tachyon::bundle::{self, Bundle};
+use zcash_tachyon::constants::EVIDENCE_TREE_ARITY;
+use zcash_tachyon::digest::blake2b;
+use zcash_tachyon::entropy::ActionEntropy;
+use zcash_tachyon::keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private};
+use zcash_tachyon::note::{self, Note};
+use zcash_tachyon::nullifier::{self, NF_DERIVATION_WIDTH, Nullifier};
+use zcash_tachyon::stamp::proof::stamp::{Stamp, StampMerge};
+use zcash_tachyon::stamp::proof::{
+    PROOF_SYSTEM, delegation, evidence, pool, qr, spendable, summary,
+};
+use zcash_tachyon::stamp::{self, AggregateId, ProofStamp, StampState, Unproven};
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
-    QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
-    action::{self, Action},
-    bundle::{self, Bundle},
-    constants::EVIDENCE_TREE_ARITY,
-    digest::blake2b,
-    effect,
-    entropy::ActionEntropy,
-    fee,
-    keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private},
-    note::{self, Note},
-    nullifier::{self, NF_DERIVATION_WIDTH, Nullifier},
-    stamp::{
-        self, AggregateId, ProofStamp, StampState, Unproven,
-        proof::{
-            PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
-            stamp::{Stamp, StampMerge},
-            summary,
-        },
-    },
-    value, witness,
+    QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, effect, fee, value,
+    witness,
 };
 
 pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {

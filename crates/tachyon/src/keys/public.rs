@@ -3,7 +3,8 @@
 use core::cmp::Eq as CoreTotalEq;
 
 use derive_more::{Debug, Display};
-use pasta_curves::{EpAffine, group::GroupEncoding as _};
+use pasta_curves::EpAffine;
+use pasta_curves::group::GroupEncoding as _;
 
 use crate::{action, bundle, reddsa, value};
 

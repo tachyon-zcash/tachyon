@@ -1,29 +1,26 @@
 extern crate alloc;
 
-use alloc::{
-    boxed::Box,
-    collections::{BTreeMap, BTreeSet},
-    string::ToString as _,
-    vec,
-    vec::Vec,
-};
+use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::ToString as _;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::cmp::Reverse;
 
 use corez::io;
 use ff::Field as _;
 use pasta_curves::Fp;
 use ragu::PROOF_SIZE_COMPRESSED;
-use rand::{SeedableRng as _, rngs::StdRng};
+use rand::SeedableRng as _;
+use rand::rngs::StdRng;
+use zcash_tachyon::bundle::{Plan, PlanError, Signature};
+use zcash_tachyon::constants::{EPOCH_SIZE, MAX_MONEY};
+use zcash_tachyon::digest::blake2b;
+use zcash_tachyon::entropy::ActionEntropy;
+use zcash_tachyon::keys::private;
+use zcash_tachyon::stamp::{AggregateId, PointerStamp, ProofStamp, ProveError};
 use zcash_tachyon::{
-    BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action,
-    bundle::{Plan, PlanError, Signature},
-    constants::{EPOCH_SIZE, MAX_MONEY},
-    digest::blake2b,
-    effect,
-    entropy::ActionEntropy,
-    keys::private,
-    stamp::{AggregateId, PointerStamp, ProofStamp, ProveError},
-    value, *,
+    BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action, effect, value, *,
 };
 
 use crate::fixtures::{

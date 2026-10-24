@@ -2,15 +2,16 @@
 
 extern crate alloc;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec;
+use alloc::vec::Vec;
 
 use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
 
-use crate::{
-    Tachygram, constants::MAX_MONEY, digest::poseidon, note::Note,
-    ragu_constraint::enforce_nonzero, value,
-};
+use crate::constants::MAX_MONEY;
+use crate::digest::poseidon;
+use crate::note::Note;
+use crate::{Tachygram, ragu_constraint, value};
 
 /// Header binding an output's tachygram pair and value to one note
 /// (wallet-only).
@@ -84,8 +85,8 @@ impl Step for OutputBind {
 
         // Two zero tachygrams collide whatever they were meant to be, and a
         // zero root leaves the accumulator factor `(X - tg)` trivial.
-        enforce_nonzero(Fp::from(cm), "OutputBind: note commitment is zero")?;
-        enforce_nonzero(Fp::from(pad), "OutputBind: padding tachygram is zero")?;
+        ragu_constraint::enforce_nonzero(Fp::from(cm), "OutputBind: note commitment is zero")?;
+        ragu_constraint::enforce_nonzero(Fp::from(pad), "OutputBind: padding tachygram is zero")?;
 
         Ok(((cm, pad, rcv.commit(-note.value)), ()))
     }
