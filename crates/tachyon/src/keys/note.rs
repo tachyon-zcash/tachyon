@@ -4,7 +4,7 @@ use derive_more::{AsRef, Debug, From, Into};
 use group::GroupEncoding as _;
 use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
 
-use super::{master::NoteMasterKey, proof::SpendValidatingKey};
+use super::{note_master_key::NoteMasterKey, proof::SpendValidatingKey};
 use crate::{digest::poseidon, nullifier};
 
 /// A Tachyon nullifier deriving key.

@@ -84,12 +84,12 @@
 pub mod private;
 pub mod public;
 
-mod master;
+mod note_master_key;
 mod note;
 mod proof;
 
 // Re-exports: public API surface.
-pub use master::NoteMasterKey;
+pub use note_master_key::NoteMasterKey;
 pub use note::{NullifierKey, PaymentKey};
 pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
