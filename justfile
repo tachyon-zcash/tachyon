@@ -17,6 +17,18 @@ lint: doc
 test *ARGS:
     cargo test --workspace --all-features {{ARGS}}
 
+# line coverage of the test suite, written to lcov.info
+coverage *ARGS:
+    cargo llvm-cov clean --workspace
+    cargo llvm-cov --no-report --release --workspace --locked --lib {{ARGS}}
+    cargo llvm-cov --no-report --release --workspace --locked --all-features {{ARGS}}
+    cargo llvm-cov report --lcov --output-path lcov.info
+    cargo llvm-cov report --summary-only
+
+# line coverage of the test suite, as an HTML report
+coverage-html *ARGS: coverage
+    cargo llvm-cov report --html --output-dir coverage-html
+
 doc *ARGS:
     RUSTDOCFLAGS="{{_katex}}" cargo doc --workspace --no-deps --document-private-items {{ARGS}}
 
