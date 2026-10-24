@@ -16,6 +16,7 @@ jobs:
   fuzz:
     name: Fuzz targets
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: crates/tachyon/fuzz
@@ -47,22 +48,43 @@ jobs:
 
       # Each target runs from its committed corpus for a bounded time. New finds
       # go to a scratch directory listed first, so the committed seeds stay
-      # read-only; a crash fails the step and leaves its input in `artifacts`.
+      # read-only. A failing target leaves its input in `artifacts` and its log
+      # in `logs`; the loop runs every target before failing the step.
       - name: Run fuzz targets
         run: |
+          mkdir -p logs
+          failed=()
           for source in fuzz_targets/*.rs; do
             target="$(basename "$source" .rs)"
             mkdir -p "target/corpus/$target" "artifacts/$target"
+            status=0
             "target/$TARGET_TRIPLE/release/$target" \
-              -max_len=32768 -max_total_time=30 \
+              -max_len=32768 -max_total_time=30 -timeout=10 -rss_limit_mb=2048 \
               -artifact_prefix="artifacts/$target/" \
-              "target/corpus/$target" "corpus/$target"
+              "target/corpus/$target" "corpus/$target" \
+              > "logs/$target.log" 2>&1 || status=$?
+            {
+              echo "### \`$target\`: exit $status"
+              echo '```'
+              tail -n 20 "logs/$target.log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "$status" -ne 0 ]; then
+              failed+=("$target")
+            fi
           done
+          if [ "${#failed[@]}" -ne 0 ]; then
+            echo "::error::fuzz targets failed: ${failed[*]}"
+            exit 1
+          fi
 
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fuzz-artifacts
-          path: crates/tachyon/fuzz/artifacts
+          path: |
+            crates/tachyon/fuzz/artifacts
+            crates/tachyon/fuzz/logs
           if-no-files-found: ignore
+          retention-days: 30

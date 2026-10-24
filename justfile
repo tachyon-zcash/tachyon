@@ -39,7 +39,7 @@ fuzz-build:
 # ARGS go to libFuzzer, e.g. `just fuzz bundle_read -runs=10000`
 fuzz TARGET *ARGS: fuzz-build
     mkdir -p {{_fuzz_dir}}/target/corpus/{{TARGET}} {{_fuzz_dir}}/artifacts/{{TARGET}}
-    {{_fuzz_dir}}/target/"$(rustc +{{_nightly}} -vV | sed -n 's/^host: //p')"/release/{{TARGET}} -max_len=32768 -artifact_prefix={{_fuzz_dir}}/artifacts/{{TARGET}}/ {{ARGS}} {{_fuzz_dir}}/target/corpus/{{TARGET}} {{_fuzz_dir}}/corpus/{{TARGET}}
+    {{_fuzz_dir}}/target/"$(rustc +{{_nightly}} -vV | sed -n 's/^host: //p')"/release/{{TARGET}} -max_len=32768 -timeout=10 -rss_limit_mb=2048 -artifact_prefix={{_fuzz_dir}}/artifacts/{{TARGET}}/ {{ARGS}} {{_fuzz_dir}}/target/corpus/{{TARGET}} {{_fuzz_dir}}/corpus/{{TARGET}}
 
 _install_binstall:
     cargo-binstall -V || cargo install cargo-binstall
