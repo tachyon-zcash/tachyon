@@ -4,7 +4,7 @@ use core::{cmp, ops};
 
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
 use ff::Field as _;
-use group::{Curve as _, GroupEncoding as _};
+use group::GroupEncoding as _;
 use lazy_static::lazy_static;
 use pasta_curves::{Ep, EpAffine, Fq, arithmetic::CurveExt as _};
 use rand_core::CryptoRng;
@@ -89,20 +89,10 @@ impl Trapdoor {
 /// where $\mathcal{V}$, $\mathcal{R}$ are generator points
 /// shared with Orchard (§5.4.8.3).
 #[derive(Add, Clone, Copy, Debug, Default, From, Into, PartialEq, Sub, Sum, TotalEq)]
+#[from(Ep, EpAffine)]
+#[into(Ep, EpAffine)]
 #[expect(clippy::module_name_repetitions, reason = "deliberate name")]
 pub struct ValueCommitment(#[debug(skip)] Ep);
-
-impl From<EpAffine> for Commitment {
-    fn from(value: EpAffine) -> Self {
-        Self(value.into())
-    }
-}
-
-impl From<Commitment> for EpAffine {
-    fn from(value: Commitment) -> Self {
-        value.0.to_affine()
-    }
-}
 
 impl From<Commitment> for [u8; 32] {
     fn from(value: Commitment) -> Self {
@@ -114,6 +104,7 @@ impl From<Commitment> for [u8; 32] {
 ///
 /// This could be replaced with `ranged_integers` if it was stable.
 #[derive(Clone, Copy, Debug, Into, Ord, PartialEq, PartialOrd, TotalEq)]
+#[into(i64, i128)]
 pub struct Value<const MIN: i64, const MAX: i64>(i64);
 
 impl From<Negative> for Balance {
@@ -208,12 +199,6 @@ impl<const MIN: i64, const MAX: i64> TryFrom<i128> for Value<MIN, MAX> {
 
     fn try_from(value: i128) -> Result<Self, Self::Error> {
         Self::try_from(i64::try_from(value).map_err(|_err| OutOfRange)?)
-    }
-}
-
-impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for i128 {
-    fn from(value: Value<MIN, MAX>) -> Self {
-        Self::from(value.0)
     }
 }
 
