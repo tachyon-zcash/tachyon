@@ -53,7 +53,36 @@ DEBUG_INPUT=1 target/"$(rustc -vV | sed -n 's/^host: //p')"/release/bundle_read 
 ```
 
 Keep `-max_len` at least 32768: the proof-stamped seeds are larger than
-libFuzzer's 4096-byte default. The recipe sets it.
+libFuzzer's 4096-byte default. The recipe sets it, along with the CI limits:
+a 10 s per-input timeout and a 2 GB RSS limit.
+
+`just fuzz-cmin TARGET` minimizes the local finds under `target/corpus/TARGET`
+into a scratch directory and replaces them only if the merge succeeds. The
+committed corpus is never minimized.
+
+## CI
+
+`fuzz.yml` runs on every pull request: it builds every target and runs each
+one for 30 s from its committed corpus. Every target runs even after one
+fails, and the job fails at the end. Each target's log tail lands in the job
+summary, and failing inputs and logs upload as the `fuzz-artifacts` artifact.
+
+`fuzz-cron.yml` runs a campaign twice a week, or on dispatch with a `duration`
+in seconds. Each target fuzzes for an hour with the same limits, except that
+the `verify*` targets get a 30 s per-input timeout. The target's corpus
+persists in the Actions cache between campaigns and is minimized at the end of
+each one. Each target uploads `fuzz-corpus-TARGET` (90 days),
+`fuzz-artifacts-TARGET` (30 days) and `fuzz-logs-TARGET`.
+
+`rust.yml` runs the seed guard in `tests/integration/fuzz_seeds.rs` on every
+pull request. It fails when a wire or verifier change leaves the
+serializer-built seeds unable to reach the paths they were written for.
+
+To keep a crash found by a campaign, download its `fuzz-artifacts-TARGET`
+artifact, minimize the input with
+`target/<host>/release/TARGET -minimize_crash=1 -runs=10000 crash-<sha>`, and
+commit the result as `corpus/TARGET/regression_<name>` with the fix, so every
+later run replays it.
 
 ## Corpus
 

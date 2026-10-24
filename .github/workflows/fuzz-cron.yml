@@ -1,0 +1,155 @@
+name: Fuzz campaign
+
+on:
+  schedule:
+    - cron: "17 3 * * 0,3"
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: Seconds to fuzz each target
+        required: false
+        default: "3600"
+
+# Campaigns share each target's cached corpus, so they run one at a time.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  list:
+    name: List fuzz targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: List fuzz_targets/*.rs
+        id: list
+        run: |
+          targets="$(
+            for source in crates/tachyon/fuzz/fuzz_targets/*.rs; do
+              basename "$source" .rs
+            done | jq -Rnc '[inputs]'
+          )"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    needs: list
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.list.outputs.targets) }}
+    defaults:
+      run:
+        working-directory: crates/tachyon/fuzz
+    env:
+      # cargo-fuzz's libFuzzer instrumentation; keep in step with fuzz.yml.
+      RUSTFLAGS: "--cfg fuzzing -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4 -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table -Cllvm-args=-sanitizer-coverage-trace-compares -Cdebug-assertions -Coverflow-checks"
+      TARGET_TRIPLE: x86_64-unknown-linux-gnu
+      TARGET: ${{ matrix.target }}
+      DURATION: ${{ inputs.duration || '3600' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned nightly
+        id: nightly
+        uses: ./.github/actions/rust-nightly-setup
+
+      - name: Build ${{ matrix.target }}
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
+        run: cargo build --release --locked --bin "$TARGET" --target "$TARGET_TRIPLE"
+
+      - name: Restore corpus
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: crates/tachyon/fuzz/target/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      # New finds go to the cached corpus listed first; the committed seeds stay
+      # read-only. The verifier targets run proofs, so they get a longer
+      # per-input timeout.
+      - name: Fuzz
+        run: |
+          case "$TARGET" in
+            verify*) input_timeout=30 ;;
+            *) input_timeout=10 ;;
+          esac
+          mkdir -p "target/corpus/$TARGET" "artifacts/$TARGET" logs
+          status=0
+          "target/$TARGET_TRIPLE/release/$TARGET" \
+            -max_len=32768 -max_total_time="$DURATION" \
+            -timeout="$input_timeout" -rss_limit_mb=2048 \
+            -artifact_prefix="artifacts/$TARGET/" \
+            "target/corpus/$TARGET" "corpus/$TARGET" \
+            > "logs/$TARGET.log" 2>&1 || status=$?
+          {
+            echo "### \`$TARGET\`: exit $status"
+            echo '```'
+            tail -n 40 "logs/$TARGET.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      # Minimize into a scratch directory and replace the cached corpus only if
+      # the merge finishes. The committed corpus is never minimized.
+      - name: Minimize corpus
+        if: always()
+        run: |
+          rm -rf "target/cmin/$TARGET"
+          mkdir -p "target/cmin/$TARGET" logs
+          if timeout 15m "target/$TARGET_TRIPLE/release/$TARGET" \
+            -merge=1 -max_len=32768 -timeout=30 -rss_limit_mb=2048 \
+            "target/cmin/$TARGET" "target/corpus/$TARGET" \
+            > "logs/$TARGET-cmin.log" 2>&1; then
+            rm -rf "target/corpus/$TARGET"
+            mv "target/cmin/$TARGET" "target/corpus/$TARGET"
+          else
+            echo "::warning::corpus minimization failed for $TARGET; keeping the unminimized corpus"
+          fi
+
+      - name: Save corpus
+        if: always()
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: crates/tachyon/fuzz/target/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+
+      - name: Upload corpus
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: crates/tachyon/fuzz/target/corpus/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload crash artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: crates/tachyon/fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-logs-${{ matrix.target }}
+          path: crates/tachyon/fuzz/logs
+          if-no-files-found: ignore
+          retention-days: 90

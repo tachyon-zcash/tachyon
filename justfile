@@ -41,6 +41,15 @@ fuzz TARGET *ARGS: fuzz-build
     mkdir -p {{_fuzz_dir}}/target/corpus/{{TARGET}} {{_fuzz_dir}}/artifacts/{{TARGET}}
     {{_fuzz_dir}}/target/"$(rustc +{{_nightly}} -vV | sed -n 's/^host: //p')"/release/{{TARGET}} -max_len=32768 -timeout=10 -rss_limit_mb=2048 -artifact_prefix={{_fuzz_dir}}/artifacts/{{TARGET}}/ {{ARGS}} {{_fuzz_dir}}/target/corpus/{{TARGET}} {{_fuzz_dir}}/corpus/{{TARGET}}
 
+# minimize TARGET's local finds under target/corpus, replacing them only if the
+# merge succeeds; the committed corpus is never minimized
+fuzz-cmin TARGET: fuzz-build
+    rm -rf {{_fuzz_dir}}/target/cmin/{{TARGET}}
+    mkdir -p {{_fuzz_dir}}/target/cmin/{{TARGET}} {{_fuzz_dir}}/target/corpus/{{TARGET}}
+    {{_fuzz_dir}}/target/"$(rustc +{{_nightly}} -vV | sed -n 's/^host: //p')"/release/{{TARGET}} -merge=1 -max_len=32768 -timeout=30 -rss_limit_mb=2048 {{_fuzz_dir}}/target/cmin/{{TARGET}} {{_fuzz_dir}}/target/corpus/{{TARGET}}
+    rm -rf {{_fuzz_dir}}/target/corpus/{{TARGET}}
+    mv {{_fuzz_dir}}/target/cmin/{{TARGET}} {{_fuzz_dir}}/target/corpus/{{TARGET}}
+
 _install_binstall:
     cargo-binstall -V || cargo install cargo-binstall
 
