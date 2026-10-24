@@ -74,6 +74,16 @@ persists in the Actions cache between campaigns and is minimized at the end of
 each one. Each target uploads `fuzz-corpus-TARGET` (90 days),
 `fuzz-artifacts-TARGET` (30 days) and `fuzz-logs-TARGET`.
 
+After the campaign, a coverage job rebuilds the targets with `cargo llvm-cov`
+instrumentation on `zcash_tachyon` alone and replays each one with `-runs=0`
+over its committed seeds and this campaign's corpus. It writes one union
+report: the line totals go to the job summary, and `lcov.info` and
+`summary.json` upload as the 90-day `fuzz-coverage` artifact. The job fails if
+no file under `crates/tachyon/src/` is covered, or if a target's campaign
+corpus is missing. Locally, `just fuzz-coverage [TARGET]` replays the
+committed and local corpora into `coverage/`; it needs `cargo-llvm-cov`, and
+this directory's toolchain file brings `llvm-tools-preview`.
+
 `rust.yml` runs the seed guard in `tests/integration/fuzz_seeds.rs` on every
 pull request. It fails when a wire or verifier change leaves the
 serializer-built seeds unable to reach the paths they were written for.

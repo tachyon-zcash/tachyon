@@ -153,3 +153,99 @@ jobs:
           path: crates/tachyon/fuzz/logs
           if-no-files-found: ignore
           retention-days: 90
+
+  # Line coverage of the production crate, replaying every target over its
+  # committed seeds and this campaign's corpus into one union report.
+  coverage:
+    name: Fuzz coverage
+    needs: [list, fuzz]
+    if: always() && needs.list.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: crates/tachyon/fuzz
+    env:
+      TARGETS: ${{ needs.list.outputs.targets }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned nightly
+        id: nightly
+        uses: ./.github/actions/rust-nightly-setup
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2.79.7
+        with:
+          tool: cargo-llvm-cov@0.9.1
+
+      - name: Download campaign corpora
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: fuzz-corpus-*
+          path: crates/tachyon/fuzz/target/campaign
+
+      # The show-env flow instruments `zcash_tachyon` only. Each process writes
+      # its own `%p`-named profile, and the build drops the sancov flags but
+      # keeps `--cfg fuzzing`.
+      - name: Replay corpora
+        id: replay
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
+        run: |
+          source <(cargo llvm-cov show-env --sh --dep-coverage zcash_tachyon)
+          export RUSTFLAGS="${RUSTFLAGS:-} --cfg fuzzing"
+          cargo llvm-cov clean --workspace
+          cargo build --release --locked --bins
+          missing=()
+          for target in $(jq -r '.[]' <<< "$TARGETS"); do
+            corpora=("corpus/$target")
+            campaign="target/campaign/fuzz-corpus-$target"
+            if [ -d "$campaign" ]; then
+              corpora+=("$campaign")
+            else
+              missing+=("$target")
+            fi
+            "target/release/$target" -runs=0 -max_len=32768 -rss_limit_mb=2048 "${corpora[@]}"
+          done
+          echo "missing=${missing[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Report
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov report --release --dep-coverage zcash_tachyon \
+            --lcov --output-path coverage/lcov.info
+          cargo llvm-cov report --release --dep-coverage zcash_tachyon \
+            --json --summary-only --output-path coverage/summary.json
+          jq -r '.data[0].totals.lines
+            | "### Fuzz line coverage\n\n\(.covered) of \(.count) lines (\(.percent | floor)%)"' \
+            coverage/summary.json >> "$GITHUB_STEP_SUMMARY"
+          # An instrumentation or filter mistake shows up as no covered
+          # production files rather than as a failure.
+          jq -e '[.data[0].files[]
+            | select((.filename | contains("crates/tachyon/src/")) and .summary.lines.covered > 0)]
+            | length > 0' coverage/summary.json > /dev/null
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-coverage
+          path: crates/tachyon/fuzz/coverage
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Require every campaign corpus
+        if: steps.replay.outputs.missing != ''
+        env:
+          MISSING: ${{ steps.replay.outputs.missing }}
+        run: |
+          echo "::error::no campaign corpus for: $MISSING"
+          exit 1

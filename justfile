@@ -50,6 +50,29 @@ fuzz-cmin TARGET: fuzz-build
     rm -rf {{_fuzz_dir}}/target/corpus/{{TARGET}}
     mv {{_fuzz_dir}}/target/cmin/{{TARGET}} {{_fuzz_dir}}/target/corpus/{{TARGET}}
 
+# line coverage of zcash_tachyon from replaying TARGET's committed and local
+# corpora, or every target's, written to crates/tachyon/fuzz/coverage; needs
+# cargo-llvm-cov and the fuzz toolchain's llvm-tools-preview
+fuzz-coverage TARGET="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{_fuzz_dir}}
+    source <(cargo llvm-cov show-env --sh --dep-coverage zcash_tachyon)
+    export RUSTFLAGS="${RUSTFLAGS:-} --cfg fuzzing"
+    cargo llvm-cov clean --workspace
+    cargo build --release --locked --bins
+    targets="{{TARGET}}"
+    if [ -z "$targets" ]; then
+        targets="$(for source in fuzz_targets/*.rs; do basename "$source" .rs; done)"
+    fi
+    for target in $targets; do
+        mkdir -p "target/corpus/$target"
+        "target/release/$target" -runs=0 -max_len=32768 -rss_limit_mb=2048 "corpus/$target" "target/corpus/$target"
+    done
+    mkdir -p coverage
+    cargo llvm-cov report --release --dep-coverage zcash_tachyon --lcov --output-path coverage/lcov.info
+    cargo llvm-cov report --release --dep-coverage zcash_tachyon
+
 _install_binstall:
     cargo-binstall -V || cargo install cargo-binstall
 
