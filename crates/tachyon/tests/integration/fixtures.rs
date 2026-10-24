@@ -1104,6 +1104,83 @@ pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32)
     profile
 }
 
+/// The sealed bucket holding `value` at `depth` levels over the anchor span
+/// `(start, final_anchor)`, routed at `discriminant` and sealed on
+/// `anchor_final_prev`.
+pub(crate) fn qr_bucket_at<RNG: CryptoRng>(
+    rng: &mut RNG,
+    pool: &PoolSim,
+    (start, final_anchor): (Anchor, Anchor),
+    (discriminant, capacity, depth): (QrDiscriminant, usize, u32),
+    value: Fp,
+    anchor_final_prev: Anchor,
+) -> QrBucketEntry {
+    let mut branch = build_qr_branch(
+        rng,
+        pool,
+        (start, final_anchor),
+        discriminant,
+        capacity,
+        value,
+        depth,
+    );
+    assert_eq!(branch.len(), 1, "the value's profile fits one intake");
+    let intake = branch.pop().expect("one intake");
+    assert_eq!(
+        intake.pcd.data().4,
+        qr_profile_of(value, discriminant, depth)
+    );
+    seal_qr_intake(rng, intake, anchor_final_prev)
+}
+
+/// The note's QR segment over a bucket's epoch, out over the crossing, bound
+/// to the note.
+pub(crate) fn qr_epoch_unspent<RNG: CryptoRng>(
+    rng: &mut RNG,
+    wallet: &WalletSim,
+    note: &Note,
+    bucket: &QrBucketEntry,
+) -> Pcd<pool::NoteUnspent> {
+    let arbitrary = qr_bucket_segment(rng, bucket, |epoch| wallet.nf_at(note, epoch));
+    wallet.unspent_bind(rng, arbitrary, note)
+}
+
+/// The segment of an empty bucket for `epoch`, sealed on a random predecessor
+/// no pool published: an [`ArbitraryUnspent`](pool::ArbitraryUnspent) at an
+/// arbitrary epoch without building the epochs before it.
+pub(crate) fn detached_segment<RNG: CryptoRng>(
+    rng: &mut RNG,
+    epoch: EpochIndex,
+    nf: impl Fn(EpochIndex) -> Nullifier,
+) -> Pcd<pool::ArbitraryUnspent> {
+    let anchor_final_prev = Anchor::from(Fp::random(&mut *rng));
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let entry = anchor_final_prev
+        .next_epoch(epoch)
+        .expect("a detached epoch is not epoch zero");
+    let intake = seed_qr_empty_intake(rng, entry, epoch, discriminant);
+    let bucket = seal_qr_intake(rng, intake, anchor_final_prev);
+    qr_bucket_segment(rng, &bucket, nf)
+}
+
+/// Mine through `through`'s first block, publishing one stamp in the last
+/// block of every epoch but `silent`, so each closed epoch's bucket is small.
+pub(crate) fn mine_sparse<RNG: CryptoRng>(
+    rng: &mut RNG,
+    pool: &mut PoolSim,
+    through: EpochIndex,
+    silent: Option<EpochIndex>,
+) {
+    while pool.height() < through.first_block() {
+        let next = BlockHeight(pool.height().0 + 1);
+        if next.is_last_in_epoch() && silent != Some(next.epoch()) {
+            pool.mine(random_block(rng, 1, 1));
+        } else {
+            pool.mine(Vec::new());
+        }
+    }
+}
+
 /// Root an empty intake over a stampless epoch at its entry anchor.
 pub(crate) fn seed_qr_empty_intake<RNG: CryptoRng>(
     rng: &mut RNG,

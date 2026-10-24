@@ -4,4 +4,6 @@
 
 mod delegation;
 mod output;
+mod pool;
+mod spend;
 mod summary;
