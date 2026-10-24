@@ -112,6 +112,18 @@ pub fn mock_wtxid<S: StampState + 'static>(bundle: &Bundle<S>) -> AggregateId {
     AggregateId::try_from(wtxid).expect("nonzero wtxid")
 }
 
+/// A signed output action of a fresh wallet, part of no bundle under test.
+pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> action::Action {
+    let wallet = WalletSim::random(rng);
+    let (_, _, plan) = build_output_plan(rng, wallet.random_note(400));
+    let bundle_plan = bundle::Plan::new(vec![], vec![plan], wallet.random_note(0));
+    let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
+    bundle_plan
+        .sign(rng, &sighash, &wallet.sk.derive_auth_private())
+        .expect("sign a foreign output")
+        .actions[0]
+}
+
 pub fn spend_witness<RNG: CryptoRng>(rng: &mut RNG) -> (value::Trapdoor, ActionEntropy) {
     let rcv = value::Trapdoor::random(rng);
     let theta = ActionEntropy::random(rng);

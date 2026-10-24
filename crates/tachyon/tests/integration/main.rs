@@ -35,3 +35,5 @@ mod stamp;
 mod steps;
 #[cfg(test)]
 mod strategies;
+#[cfg(test)]
+mod wire;
