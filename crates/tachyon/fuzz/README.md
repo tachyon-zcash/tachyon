@@ -10,7 +10,7 @@ padding after the proof's fields, so the comparison stops short of it.
 
 | Target                 | Reader                                       |
 | ---------------------- | -------------------------------------------- |
-| `bundle_read`          | `TachyonBundle::read`, dispatching on state  |
+| `bundle_read`          | `TachyonBundle::read`, dispatching on state, against the typed reader the state selects |
 | `stamped_bundle_read`  | `Bundle::<ProofStamp>::read`                 |
 | `stripped_bundle_read` | `Bundle::<PointerStamp>::read`               |
 | `proof_stamp_read`     | `ProofStamp::read`                           |
