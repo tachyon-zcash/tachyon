@@ -1221,8 +1221,9 @@ impl Signature {
     ///
     /// Returns an error if reading fails.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let sig = serialization::read_binding_sig(&mut reader)?;
-        Ok(Self(sig))
+        let mut bytes = [0u8; 64];
+        reader.read_exact(&mut bytes)?;
+        Ok(Self(reddsa::Signature::<reddsa::BindingAuth>::from(bytes)))
     }
 
     /// Write a binding signature to the consensus wire format.
@@ -1231,7 +1232,7 @@ impl Signature {
     ///
     /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        serialization::write_binding_sig(&mut writer, &self.0)?;
-        Ok(())
+        let bytes: [u8; 64] = self.0.into();
+        writer.write_all(&bytes)
     }
 }

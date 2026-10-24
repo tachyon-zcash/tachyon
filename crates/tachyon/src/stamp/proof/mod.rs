@@ -3,8 +3,9 @@
 //! Registers all PCD step types and provides accumulator helpers for
 //! stamp construction and verification.
 //!
-//! `Step::INDEX` runs from zero without gaps, and [`make_app`] registers the
-//! steps in that order; `ApplicationBuilder` rejects any other sequence.
+//! `Step::INDEX` runs from zero without gaps, and the [`PROOF_SYSTEM`]
+//! initializer registers the steps in that order; `ApplicationBuilder` rejects
+//! any other sequence.
 //! `Header::SUFFIX` runs from zero without gaps too.
 //!
 //! A step is named "noun + verb", where the noun is the header it **emits**,
@@ -31,48 +32,6 @@ use lazy_static::lazy_static;
 pub use ragu::Proof;
 use ragu::{Application, ApplicationBuilder};
 
-fn make_app() -> Result<Application, ragu_core::Error> {
-    ApplicationBuilder::new()
-        .register(delegation::NoteSeed)?
-        .register(delegation::NullifierDerive)?
-        .register(pool::UnspentFuse)?
-        .register(pool::UnspentBind)?
-        .register(spendable::SpendableInit)?
-        .register(spendable::SpendableLift)?
-        .register(output::OutputBind)?
-        .register(stamp::OutputAction)?
-        .register(spend::SpendBind)?
-        .register(stamp::SpendAction)?
-        .register(stamp::StampMerge)?
-        .register(stamp::StampLift)?
-        .register(delegation::NullifierFuse)?
-        .register(summary::SummarySeed)?
-        .register(summary::SummaryAdvance)?
-        .register(qr::QrSummaryIntake)?
-        .register(qr::QrIntakeMerge)?
-        .register(qr::QrIntakeSplit)?
-        .register(qr::QrSideDescend)?
-        .register(qr::QrUnspentInit)?
-        .register(qr::QrBucketSeal)?
-        .register(qr::QrStampIntakeSeed)?
-        .register(spendable::QrSpendableInit)?
-        .register(qr::QrEmptyIntakeSeed)?
-        .register(pool::UnspentLift)?
-        .register(evidence::EvidenceTreePairFuse)?
-        .register(evidence::EvidenceTreeFuse)?
-        .register(evidence::EvidenceTreeCap)?
-        .register(evidence::EvidenceTreeDescend)?
-        .register(evidence::EvidenceTreeOpen)?
-        .register(evidence::EvidenceTreeLeafPair)?
-        .register(pool::AnchorSpanSeed)?
-        .register(pool::AnchorSpanFuse)?
-        .register(stamp::FeeFuse)?
-        .register(stamp::ActionMerge)?
-        .register(stamp::ActionLift)?
-        .register(stamp::FeeSeed)?
-        .finalize()
-}
-
 lazy_static! {
     /// A static ref to the mock ragu application.
     pub static ref PROOF_SYSTEM: Application = {
@@ -80,6 +39,45 @@ lazy_static! {
             clippy::expect_used,
             reason = "hardcoded step ordering must register cleanly"
         )]
-        make_app().expect("registration of fixed step list must succeed")
+        ApplicationBuilder::new()
+            .register(delegation::NoteSeed).expect("registration of fixed step list must succeed")
+            .register(delegation::NullifierDerive).expect("registration of fixed step list must succeed")
+            .register(pool::UnspentFuse).expect("registration of fixed step list must succeed")
+            .register(pool::UnspentBind).expect("registration of fixed step list must succeed")
+            .register(spendable::SpendableInit).expect("registration of fixed step list must succeed")
+            .register(spendable::SpendableLift).expect("registration of fixed step list must succeed")
+            .register(output::OutputBind).expect("registration of fixed step list must succeed")
+            .register(stamp::OutputAction).expect("registration of fixed step list must succeed")
+            .register(spend::SpendBind).expect("registration of fixed step list must succeed")
+            .register(stamp::SpendAction).expect("registration of fixed step list must succeed")
+            .register(stamp::StampMerge).expect("registration of fixed step list must succeed")
+            .register(stamp::StampLift).expect("registration of fixed step list must succeed")
+            .register(delegation::NullifierFuse).expect("registration of fixed step list must succeed")
+            .register(summary::SummarySeed).expect("registration of fixed step list must succeed")
+            .register(summary::SummaryAdvance).expect("registration of fixed step list must succeed")
+            .register(qr::QrSummaryIntake).expect("registration of fixed step list must succeed")
+            .register(qr::QrIntakeMerge).expect("registration of fixed step list must succeed")
+            .register(qr::QrIntakeSplit).expect("registration of fixed step list must succeed")
+            .register(qr::QrSideDescend).expect("registration of fixed step list must succeed")
+            .register(qr::QrUnspentInit).expect("registration of fixed step list must succeed")
+            .register(qr::QrBucketSeal).expect("registration of fixed step list must succeed")
+            .register(qr::QrStampIntakeSeed).expect("registration of fixed step list must succeed")
+            .register(spendable::QrSpendableInit).expect("registration of fixed step list must succeed")
+            .register(qr::QrEmptyIntakeSeed).expect("registration of fixed step list must succeed")
+            .register(pool::UnspentLift).expect("registration of fixed step list must succeed")
+            .register(evidence::EvidenceTreePairFuse).expect("registration of fixed step list must succeed")
+            .register(evidence::EvidenceTreeFuse).expect("registration of fixed step list must succeed")
+            .register(evidence::EvidenceTreeCap).expect("registration of fixed step list must succeed")
+            .register(evidence::EvidenceTreeDescend).expect("registration of fixed step list must succeed")
+            .register(evidence::EvidenceTreeOpen).expect("registration of fixed step list must succeed")
+            .register(evidence::EvidenceTreeLeafPair).expect("registration of fixed step list must succeed")
+            .register(pool::AnchorSpanSeed).expect("registration of fixed step list must succeed")
+            .register(pool::AnchorSpanFuse).expect("registration of fixed step list must succeed")
+            .register(stamp::FeeFuse).expect("registration of fixed step list must succeed")
+            .register(stamp::ActionMerge).expect("registration of fixed step list must succeed")
+            .register(stamp::ActionLift).expect("registration of fixed step list must succeed")
+            .register(stamp::FeeSeed).expect("registration of fixed step list must succeed")
+            .finalize()
+            .expect("registration of fixed step list must succeed")
     };
 }

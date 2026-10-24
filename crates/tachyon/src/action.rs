@@ -49,7 +49,16 @@ impl Descriptor {
     /// canonical encoding.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
         let cv = value::Commitment::from(serialization::read_ep_affine(&mut reader)?);
-        let rk = public::ActionVerificationKey(serialization::read_action_vk(&mut reader)?);
+        let mut bytes = [0u8; 32];
+        reader.read_exact(&mut bytes)?;
+        let rk = public::ActionVerificationKey(
+            reddsa::VerificationKey::<reddsa::ActionAuth>::try_from(bytes).map_err(|_err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid action verification key",
+                )
+            })?,
+        );
         Ok(Self { cv, rk })
     }
 
@@ -60,8 +69,8 @@ impl Descriptor {
     /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
         serialization::write_ep_affine(&mut writer, &self.cv.into())?;
-        serialization::write_action_vk(&mut writer, &self.rk.0)?;
-        Ok(())
+        let bytes: [u8; 32] = self.rk.0.into();
+        writer.write_all(&bytes)
     }
 }
 
@@ -287,8 +296,9 @@ impl Signature {
     ///
     /// Returns an error if reading fails.
     pub fn read<R: Read>(mut reader: R) -> io::Result<Self> {
-        let sig = serialization::read_action_sig(&mut reader)?;
-        Ok(Self(sig))
+        let mut bytes = [0u8; 64];
+        reader.read_exact(&mut bytes)?;
+        Ok(Self(reddsa::Signature::<reddsa::ActionAuth>::from(bytes)))
     }
 
     /// Write an action signature in the consensus wire format.
@@ -297,8 +307,8 @@ impl Signature {
     ///
     /// Returns an error if writing fails.
     pub fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        serialization::write_action_sig(&mut writer, &self.0)?;
-        Ok(())
+        let bytes: [u8; 64] = self.0.into();
+        writer.write_all(&bytes)
     }
 }
 
