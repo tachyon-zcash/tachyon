@@ -1,6 +1,7 @@
 //! The serializer-built fuzz seeds in `fuzz/corpus` still reach the paths they
 //! were written for: each decodes completely through its target's reader, and
-//! the `verify_pipeline` aggregates verify. The hand-written `regression_*`,
+//! the `verify_pipeline` aggregates verify, the second under the sighash in
+//! `fuzz/fixtures` that `verify_reject` reads. The hand-written `regression_*`,
 //! `noncanonical_*` and `state_*` seeds are outside this check.
 
 use std::{fs, path::Path};
@@ -137,12 +138,16 @@ fn verify_pipeline_seeds_verify() {
         adjunct.stamp.wtxid, wtxid,
         "the adjunct points to the aggregate"
     );
+    let sighash = mock_sighash(aggregate.commitment());
     aggregate
-        .verify(
-            rng,
-            &mock_sighash(aggregate.commitment()),
-            &wtxid.into(),
-            &[&adjunct],
-        )
+        .verify(rng, &sighash, &wtxid.into(), &[&adjunct])
         .expect("the aggregate verifies against its adjunct");
+
+    let sidecar =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/fixtures/aggregate_with_adjunct.sighash");
+    assert_eq!(
+        fs::read(&sidecar).unwrap_or_else(|err| panic!("read {}: {err}", sidecar.display())),
+        sighash,
+        "the sighash sidecar is the aggregate's"
+    );
 }

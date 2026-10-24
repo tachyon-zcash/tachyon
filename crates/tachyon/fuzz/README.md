@@ -18,6 +18,14 @@ padding after the proof's fields, so the comparison stops short of it.
 | `compact_size_read`    | `CompactSize::read` and its consensus checks |
 | `component_read`       | the fixed-width field and signature readers  |
 | `verify_pipeline`      | a parsed aggregate and up to four adjuncts through every pre-proof check and digest |
+| `verify_reject`        | `Bundle::verify` on one edit to an honest aggregate and its adjunct |
+
+The input to `verify_reject` is an edit, not wire bytes. It chooses a field, an
+index and a mask, and the edit must be rejected at the stage that binds the field
+(signatures, pointers, coverage, tachygram arity or tachygram set). Anchor and
+proof edits run for liveness only, since mock ragu decides them. Before
+fuzzing, the honest base must verify and one fixed edit of every other field
+must be rejected at its stage.
 
 ## Running
 
@@ -53,8 +61,11 @@ Each target has serializer-built seeds that reach its deepest accepting path:
 both bundle variants for the dispatcher, a full stamp trailer for the typed
 and stamp readers, every compact size form, one seed per component reader, and
 for `verify_pipeline` an autonome alone and an aggregate followed by the
-adjunct it covers. Regenerate them after a wire-format change, from the
-repository root:
+adjunct it covers. `verify_reject` has only an empty seed: its base is the
+`verify_pipeline/aggregate_with_adjunct` seed, verified under the sighash in
+`fixtures/aggregate_with_adjunct.sighash`, which the fuzz crate cannot
+recompute. Regenerate the seeds and the sidecar after a wire-format change,
+from the repository root:
 
 ```sh
 just test write_fuzz_seeds -- --ignored

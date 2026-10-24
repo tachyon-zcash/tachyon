@@ -1615,6 +1615,16 @@ fn write_fuzz_seeds() {
         fs::create_dir_all(&dir).expect("create corpus directory");
         fs::write(dir.join(name), bytes).expect("write seed");
     }
+
+    // `verify_reject` verifies the aggregate under the sighash it was signed
+    // over, which the fuzz crate cannot recompute.
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/fixtures");
+    fs::create_dir_all(&fixtures).expect("create fixtures directory");
+    fs::write(
+        fixtures.join("aggregate_with_adjunct.sighash"),
+        mock_sighash(aggregate.commitment()),
+    )
+    .expect("write sighash");
 }
 
 #[test]

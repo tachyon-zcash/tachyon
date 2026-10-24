@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+rand = { version = "0.10", default-features = false, features = ["std_rng"] }
 
 [dependencies.zcash_tachyon]
 path = ".."
@@ -73,6 +74,13 @@ bench = false
 [[bin]]
 name = "verify_pipeline"
 path = "fuzz_targets/verify_pipeline.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verify_reject"
+path = "fuzz_targets/verify_reject.rs"
 test = false
 doc = false
 bench = false

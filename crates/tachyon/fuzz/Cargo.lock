@@ -972,6 +972,7 @@ name = "zcash_tachyon-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "rand",
  "zcash_tachyon",
 ]
 
