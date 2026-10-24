@@ -1,0 +1,73 @@
+name: Test coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'rustfmt.toml'
+      - 'clippy.toml'
+      - '.cargo/config.toml'
+      - 'crates/tachyon/katex-header.html'
+      - '.github/workflows/coverage.yml'
+      - '.github/actions/**'
+
+# Cancel in-progress runs when a new commit is pushed to the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Advisory reporting only: this job is outside `ci-required`, has no coverage
+# floor, and leaves no PR comment. It publishes a merged line-coverage report
+# (default-features unit tests + all-features suite) to the job summary and as
+# a downloadable `lcov.info` artifact.
+jobs:
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cargo-tools: cargo-llvm-cov@0.9.1
+          cache-suffix: coverage
+
+      # The same two runs as `rust.yml`'s ubuntu test job and the `just
+      # coverage` recipe. Both write into one merged profile set; the report
+      # commands below render their union.
+      - name: Clean coverage artifacts
+        run: cargo llvm-cov clean --workspace
+
+      - name: Run unit tests with coverage (default features)
+        run: cargo llvm-cov --no-report --release --workspace --locked --lib
+
+      - name: Run tests with coverage (all features)
+        run: cargo llvm-cov --no-report --release --workspace --locked --all-features
+
+      - name: Generate lcov report
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Write summary to the job summary
+        run: |
+          echo '## Test coverage (ubuntu, release)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report --summary-only >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload lcov report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-lcov
+          path: lcov.info
+          retention-days: 30
