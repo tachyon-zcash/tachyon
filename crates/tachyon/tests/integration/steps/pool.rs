@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 use ff::Field as _;
 use pasta_curves::Fp;
 use proptest::{collection::vec, option, prelude::*, sample::Index};
-use ragu::{Header, Pcd};
+use ragu::Pcd;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     Anchor, AnchorSetPoly, BlockHeight, EpochIndex, NfSeqPoly, QrClassRoot, Tachygram,
@@ -27,17 +27,10 @@ use zcash_tachyon::{
 use crate::{
     fixtures::{
         PoolSim, WalletSim, build_anchor_span_pcd, build_unspent_pcd_over_epochs, detached_segment,
-        epoch_bucket, mine_sparse, random_block, shared_sk,
+        epoch_bucket, mine_sparse, random_block, recarry, shared_sk,
     },
     strategies::{assert_rejections, check, tachygrams},
 };
-
-/// `proof`'s carried header with `alter` applied.
-fn recarry<H: Header<Data: Copy>>(pcd: &Pcd<H>, alter: impl FnOnce(&mut H::Data)) -> Pcd<H> {
-    let mut data = *pcd.data();
-    alter(&mut data);
-    pcd.proof().clone().carry::<H>(data)
-}
 
 /// A span over any run of blocks of one epoch starts at the run's entry
 /// anchor, ends at its final anchor, and holds exactly the anchors its folds

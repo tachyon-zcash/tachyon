@@ -6,7 +6,7 @@ use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
 use ff::{Field as _, FromUniformBytes as _, PrimeField as _, WithSmallOrderMulGroup as _};
 use group::GroupEncoding as _;
 use pasta_curves::{Eq, Fp};
-use ragu::{Pcd, Proof};
+use ragu::{Header, Pcd, Proof};
 use ragu_arithmetic::PoseidonPermutation as _;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_pasta::PoseidonFp;
@@ -517,6 +517,31 @@ impl PoolSim {
     }
 }
 
+/// Four blocks of epoch zero, two stamps of three tachygrams each; with the
+/// last block's anchor.
+pub(crate) fn small_epoch<RNG: CryptoRng>(rng: &mut RNG) -> (PoolSim, Anchor) {
+    let mut pool = PoolSim::genesis_with(random_block(rng, 3, 2));
+    for _ in 0..3 {
+        pool.mine(random_block(rng, 3, 2));
+    }
+    let end = pool.anchor();
+    (pool, end)
+}
+
+/// `pcd`'s proof carrying its header with `alter` applied.
+///
+/// Mock ragu does not authenticate a header against its proof, so the
+/// consuming step's own constraint is what rejects the altered header; a
+/// real proof would not carry it at all.
+pub(crate) fn recarry<H: Header<Data: Copy>>(
+    pcd: &Pcd<H>,
+    alter: impl FnOnce(&mut H::Data),
+) -> Pcd<H> {
+    let mut data = *pcd.data();
+    alter(&mut data);
+    pcd.proof().clone().carry::<H>(data)
+}
+
 /// Build an [`AnchorSpan`] covering blocks `range` in full, rooted at the
 /// block-start anchor of `*range.start()`, with the anchors its folds produce.
 ///
@@ -637,12 +662,14 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
 }
 
 /// An intake with the members its contents commit.
+#[derive(Clone)]
 pub(crate) struct QrIntakeEntry {
     pub pcd: Pcd<qr::QrIntake>,
     pub members: Vec<Tachygram>,
 }
 
 /// A sealed bucket with the members its contents commit.
+#[derive(Clone)]
 pub(crate) struct QrBucketEntry {
     pub pcd: Pcd<qr::QrBucket>,
     pub members: Vec<Tachygram>,
@@ -938,11 +965,8 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
         depth += 1;
     }
     while buckets.len() < width {
-        let last = buckets.last().expect("nonempty tree");
-        buckets.push(QrBucketEntry {
-            pcd: last.pcd.clone(),
-            members: last.members.clone(),
-        });
+        let last = buckets.last().expect("nonempty tree").clone();
+        buckets.push(last);
     }
 
     let (proofs, held): (Vec<_>, Vec<_>) = buckets
@@ -1053,12 +1077,12 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
     EvidenceTreeEntry { pcd: root, leaves }
 }
 
-/// Descend `tree` along one leaf's path and replay the bucket it holds.
-pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
+/// Descend `tree` along one leaf's path to the leaf.
+pub(crate) fn descend_evidence_tree<RNG: CryptoRng>(
     rng: &mut RNG,
     tree: Pcd<evidence::EvidenceTree>,
     leaf: &EvidenceLeaf,
-) -> QrBucketEntry {
+) -> Pcd<evidence::EvidenceTree> {
     let mut node = tree;
     for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
         let path =
@@ -1075,7 +1099,16 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
             .expect("EvidenceTreeDescend");
         node = pcd;
     }
+    node
+}
 
+/// Descend `tree` along one leaf's path and replay the bucket it holds.
+pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
+    rng: &mut RNG,
+    tree: Pcd<evidence::EvidenceTree>,
+    leaf: &EvidenceLeaf,
+) -> QrBucketEntry {
+    let node = descend_evidence_tree(rng, tree, leaf);
     let witness = witness::evidence_tree_open((*node.data(), ()), leaf.profile, leaf.contents);
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
