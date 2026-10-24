@@ -124,12 +124,12 @@ fn verify_pipeline_seeds_verify() {
         )
         .expect("the autonome verifies");
 
-    let bytes = seed("verify_pipeline", "aggregate_with_adjunct");
-    let mut rest = bytes.as_slice();
-    let aggregate = Bundle::<ProofStamp>::read(&mut rest).expect("the aggregate decodes");
-    let adjunct = Bundle::<PointerStamp>::read(&mut rest).expect("the adjunct decodes");
+    let pair_bytes = seed("verify_pipeline", "aggregate_with_adjunct");
+    let mut pair_rest = pair_bytes.as_slice();
+    let aggregate = Bundle::<ProofStamp>::read(&mut pair_rest).expect("the aggregate decodes");
+    let adjunct = Bundle::<PointerStamp>::read(&mut pair_rest).expect("the adjunct decodes");
     assert_eq!(
-        rest,
+        pair_rest,
         [],
         "verify_pipeline/aggregate_with_adjunct has no trailing bytes"
     );
