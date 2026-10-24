@@ -103,8 +103,8 @@ impl From<Commitment> for [u8; 32] {
 }
 
 /// A value bounded to `MIN..=MAX` (inclusive), backed by `i64`.
-///
-/// This could be replaced with `ranged_integers` if it was stable.
+
+// This could be replaced with `ranged_integers` if it was stable.
 #[derive(Clone, Copy, Debug, Into, Ord, PartialEq, PartialOrd, TotalEq)]
 #[into(i64, i128)]
 pub struct Value<const MIN: i64, const MAX: i64>(i64);

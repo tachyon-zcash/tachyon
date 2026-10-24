@@ -57,6 +57,11 @@ pub const fn note_seed(
 /// Reads `mk` off the seed header and lays the whole window out as the
 /// sequence. `epoch_start` must be group-aligned. A longer span fuses
 /// windows via [`NullifierFuse`].
+///
+/// # Panics
+///
+/// Panics in debug builds if `epoch_start` is not group-aligned, or if the
+/// derivation window would run past [`EPOCH_MAX`](crate::constants::EPOCH_MAX).
 #[must_use]
 pub fn nullifier_derive(
     (left, _right): (StepLeft<NullifierDerive>, StepRight<NullifierDerive>),
@@ -115,6 +120,12 @@ pub fn unspent_fuse(
 /// is the complete covering sequence, one member per epoch of the
 /// derivation header's range; the complement is the window's runs on both
 /// sides of the unspent's span, multiplied.
+///
+/// # Panics
+///
+/// Panics if the unspent's start or elapsed span lies outside `window`, or if
+/// constructing or multiplying the sequence polynomials exceeds the
+/// polynomial coefficient cap.
 #[must_use]
 #[expect(
     clippy::as_conversions,
@@ -435,6 +446,12 @@ pub const fn evidence_tree_open(
 ///
 /// `elapsed` is the segment's member list, one per covered epoch; `value`
 /// becomes the member at the bucket's epoch.
+///
+/// # Panics
+///
+/// Panics if the bucket's profile depth exceeds [`QrProfile::MAX_DEPTH`], or
+/// if constructing or multiplying the sequence polynomials exceeds the
+/// polynomial coefficient cap.
 #[must_use]
 pub fn unspent_lift(
     (unspent, bucket): (StepLeft<UnspentLift>, StepRight<UnspentLift>),
