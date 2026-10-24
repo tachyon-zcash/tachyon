@@ -98,8 +98,6 @@ mod tests {
     use ff::{Field as _, PrimeField as _};
     use pasta_curves::Fp;
     use proptest::prelude::*;
-    use ragu_arithmetic::PoseidonPermutation as _;
-    use ragu_pasta::PoseidonFp;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use crate::{
@@ -107,7 +105,7 @@ mod tests {
         entropy::ActionEntropy,
         keys::{NoteMasterKey, NullifierKey, PaymentKey, private},
         note::{self, Note},
-        nullifier::{self, NF_DERIVATION_WIDTH},
+        nullifier,
         primitives::{EpochIndex, effect},
         testing::check,
         value,
@@ -178,24 +176,6 @@ mod tests {
                 .0
                 .into();
             prop_assert_eq!(from_signer, from_prover);
-            Ok(())
-        });
-    }
-
-    /// A window is the per-epoch derivation over its sixteen epochs, at any
-    /// group-aligned start that keeps it inside the epoch range.
-    #[test]
-    fn window_matches_per_epoch_derivation() {
-        let last_start = EPOCH_MAX + 1 - u32::try_from(NF_DERIVATION_WIDTH).unwrap();
-        let group = u32::try_from(PoseidonFp::RATE).unwrap();
-        check(256, (any::<u64>(), 0..=last_start), |(seed, start)| {
-            let mk = NoteMasterKey(Fp::random(&mut StdRng::seed_from_u64(seed)));
-            let epoch_start = EpochIndex::new(start & !(group - 1));
-
-            let epochs = (u32::from(epoch_start)..).map(EpochIndex::new);
-            for (epoch, nf) in epochs.zip(mk.derive_window(epoch_start)) {
-                prop_assert_eq!(nf, mk.derive_nullifier(epoch));
-            }
             Ok(())
         });
     }

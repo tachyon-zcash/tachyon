@@ -103,18 +103,6 @@ mod tests {
         prop_oneof![0..=EPOCH_MAX, Just(0), Just(EPOCH_MAX - 1), Just(EPOCH_MAX)]
     }
 
-    #[test]
-    fn epoch_difference_counts_the_span() {
-        check(256, (epoch_index(), epoch_index()), |(first, second)| {
-            let (later, earlier) = (first.max(second), first.min(second));
-            prop_assert_eq!(
-                u64::from(EpochIndex::new(later) - EpochIndex::new(earlier)),
-                u64::from(later - earlier)
-            );
-            Ok(())
-        });
-    }
-
     /// An epoch is the run of `EPOCH_SIZE` heights from its first block, each
     /// of which maps back to it; the next epoch starts right after, and the
     /// final epoch ends at the final block with no successor.

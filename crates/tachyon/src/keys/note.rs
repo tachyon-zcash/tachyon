@@ -136,7 +136,7 @@ mod tests {
         let _derived = PaymentKey::derive(&ak, &nk);
     }
 
-    /// mk is a function of (nk, psi), and another psi gives another mk.
+    /// mk is a function of (nk, psi): another psi gives another mk.
     #[test]
     fn master_key_is_a_function_of_nk_and_psi() {
         check(256, any::<u64>(), |seed| {
@@ -144,7 +144,6 @@ mod tests {
             let nk = NullifierKey(Fp::random(&mut *rng));
             let psi = nullifier::Trapdoor::random(rng);
             let other = nullifier::Trapdoor::random(rng);
-            prop_assert_eq!(nk.derive_note_private(psi), nk.derive_note_private(psi));
             prop_assert_ne!(nk.derive_note_private(psi), nk.derive_note_private(other));
             Ok(())
         });

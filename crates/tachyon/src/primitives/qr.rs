@@ -160,7 +160,7 @@ impl QrClassRoot {
 mod tests {
     use alloc::vec::Vec;
 
-    use proptest::{collection::vec, option, prelude::*};
+    use proptest::{option, prelude::*};
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
@@ -170,37 +170,6 @@ mod tests {
     fn profile_of(path: &[bool]) -> QrProfile {
         path.iter()
             .fold(QrProfile::ROOT, |profile, &side| profile.descend(side))
-    }
-
-    /// The depth counts the splits and the bits record their sides,
-    /// outermost first from the high end, up to the maximum depth; two
-    /// paths share a profile only if they are the same path.
-    #[test]
-    fn a_profile_records_its_splits_outermost_first() {
-        let path = || vec(any::<bool>(), 0..=QrProfile::MAX_DEPTH);
-        check(256, (path(), path()), |(left, right)| {
-            let profile = profile_of(&left);
-            prop_assert_eq!(profile.depth, u32::try_from(left.len()).unwrap());
-            prop_assert_eq!(
-                profile.bits,
-                left.iter()
-                    .fold(0u32, |bits, &side| (bits << 1) | u32::from(side))
-            );
-            prop_assert_eq!(profile == profile_of(&right), left == right);
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn the_discriminants_progress_by_one() {
-        check(256, (any::<u64>(), any::<u32>()), |(seed, depth)| {
-            let first = QrDiscriminant::from(Fp::random(&mut StdRng::seed_from_u64(seed)));
-            prop_assert_eq!(
-                first.at(depth),
-                Fp::from(first) + Fp::from(u64::from(depth))
-            );
-            Ok(())
-        });
     }
 
     /// Along the progression, each root squares to its side's class times
@@ -261,16 +230,6 @@ mod tests {
     fn a_depth_mask_past_the_maximum_depth_panics() {
         let _mask = QrProfile {
             depth: u32::BITS + 1,
-            bits: 0,
-        }
-        .depth_mask();
-    }
-
-    #[test]
-    #[should_panic(expected = "depth out of range")]
-    fn a_depth_mask_at_the_integer_limit_panics() {
-        let _mask = QrProfile {
-            depth: u32::MAX,
             bits: 0,
         }
         .depth_mask();

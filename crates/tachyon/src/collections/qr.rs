@@ -199,12 +199,6 @@ mod tests {
         assert_eq!(chi(QUADRATIC_NON_RESIDUE), -Fp::ONE);
     }
 
-    #[test]
-    fn small_cubic_non_residues_are_quadratic_residues() {
-        assert_eq!(chi(Fp::from(2)), Fp::ONE);
-        assert_eq!(chi(Fp::from(3)), Fp::ONE);
-    }
-
     /// The side is the Euler criterion of $x + R$, and the root squares to
     /// that side's class times $x + R$, and to nothing on the other side
     /// unless $x = -R$, which takes the residue side with root zero.

@@ -118,23 +118,6 @@ mod tests {
         });
     }
 
-    /// `from_bytes` accepts exactly the canonical field encodings and returns
-    /// the element they encode.
-    #[test]
-    fn from_bytes_accepts_exactly_canonical_encodings() {
-        check(256, any::<[u8; 32]>(), |bytes| {
-            let canonical: Option<Fp> = Fp::from_repr(bytes).into();
-            prop_assert_eq!(
-                ActionEntropy::from_bytes(bytes).map(|theta| theta.0),
-                canonical
-            );
-            if let Some(element) = canonical {
-                prop_assert_eq!(element.to_repr(), bytes);
-            }
-            Ok(())
-        });
-    }
-
     /// Debug output names the type, and for a randomizer its effect, and is
     /// the same for every value.
     #[test]

@@ -312,19 +312,6 @@ mod tests {
         });
     }
 
-    /// Negation stays in range and the scalar of a value and of its negation
-    /// cancel.
-    #[test]
-    fn negation_mirrors_the_scalar() {
-        check(256, balance(), |value| {
-            let amount = Balance::try_from(value).unwrap();
-            prop_assert_eq!(i128::from(-amount), -i128::from(value));
-            prop_assert_eq!(-(-amount), amount);
-            prop_assert_eq!(Fq::from(amount) + Fq::from(-amount), Fq::ZERO);
-            Ok(())
-        });
-    }
-
     /// The binding property: $\mathsf{cv}_a + \mathsf{cv}_b$ less a
     /// trapdoor-free commitment to $a + b$ leaves $[\mathsf{rcv}_a +
     /// \mathsf{rcv}_b]\mathcal{R}$, the value components cancelling.

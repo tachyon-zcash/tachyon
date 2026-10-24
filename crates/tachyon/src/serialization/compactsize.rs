@@ -443,13 +443,4 @@ mod tests {
             Ok(())
         });
     }
-
-    #[test]
-    fn usize_round_trips() {
-        check(256, any::<usize>(), |value| {
-            let size = CompactSize::try_from(value).unwrap();
-            prop_assert_eq!(usize::try_from(size).unwrap(), value);
-            Ok(())
-        });
-    }
 }

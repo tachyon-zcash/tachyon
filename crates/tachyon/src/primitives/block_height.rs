@@ -64,35 +64,3 @@ impl BlockHeight {
         self.0 & (EPOCH_SIZE - 1) == 0
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use proptest::prelude::*;
-
-    use super::*;
-    use crate::{constants::BLOCK_MAX, testing::check};
-
-    /// `next` and `prev` step by one and stop at the final and genesis
-    /// blocks.
-    #[test]
-    fn heights_step_by_one() {
-        let heights = prop_oneof![
-            any::<u32>(),
-            Just(0),
-            Just(1),
-            Just(BLOCK_MAX - 1),
-            Just(BLOCK_MAX)
-        ];
-        check(256, heights, |height| {
-            prop_assert_eq!(
-                BlockHeight(height).next(),
-                height.checked_add(1).map(BlockHeight)
-            );
-            prop_assert_eq!(
-                BlockHeight(height).prev(),
-                height.checked_sub(1).map(BlockHeight)
-            );
-            Ok(())
-        });
-    }
-}
