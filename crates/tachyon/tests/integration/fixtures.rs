@@ -6,7 +6,7 @@ use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
 use ff::{Field as _, FromUniformBytes as _, PrimeField as _, WithSmallOrderMulGroup as _};
 use group::GroupEncoding as _;
 use pasta_curves::{Eq, Fp};
-use ragu::{Pcd, Proof};
+use ragu::{Header, Pcd, Proof};
 use ragu_arithmetic::PoseidonPermutation as _;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_pasta::PoseidonFp;
@@ -14,8 +14,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
-    QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
-    action::{self, Action},
+    QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, action,
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
     digest::blake2b,
@@ -47,14 +46,6 @@ pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(hash.as_bytes());
     out
-}
-
-/// A bundle plan with a zero-value max fee note, for tests that do not price.
-pub fn build_bundle_plan(
-    spends: Vec<action::Plan<effect::Spend>>,
-    outputs: Vec<action::Plan<effect::Output>>,
-) -> bundle::Plan {
-    bundle::Plan::new(spends, outputs, WalletSim::new(shared_sk()).random_note(0))
 }
 
 pub fn fee_digests(
@@ -113,23 +104,16 @@ pub fn mock_wtxid<S: StampState + 'static>(bundle: &Bundle<S>) -> AggregateId {
     AggregateId::try_from(wtxid).expect("nonzero wtxid")
 }
 
-pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
+/// A signed output action of a fresh wallet, part of no bundle under test.
+pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> action::Action {
     let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(400);
-    let (_, _, plan) = build_output_plan(rng, note);
-    let bundle_plan = build_bundle_plan(alloc::vec![], alloc::vec![plan]);
+    let (_, _, plan) = build_output_plan(rng, wallet.random_note(400));
+    let bundle_plan = bundle::Plan::new(vec![], vec![plan], wallet.random_note(0));
     let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
-    let unproven = bundle_plan
-        .sign(rng, &sighash, &ask)
-        .expect("sign foreign output");
-    unproven.actions[0]
-}
-
-pub fn spend_witness<RNG: CryptoRng>(rng: &mut RNG) -> (value::Trapdoor, ActionEntropy) {
-    let rcv = value::Trapdoor::random(rng);
-    let theta = ActionEntropy::random(rng);
-    (rcv, theta)
+    bundle_plan
+        .sign(rng, &sighash, &wallet.sk.derive_auth_private())
+        .expect("sign a foreign output")
+        .actions[0]
 }
 
 pub fn build_output_plan<RNG: CryptoRng>(
@@ -484,27 +468,6 @@ impl PoolSim {
         self.anchor_index[&anchor].0.epoch()
     }
 
-    pub fn advance(
-        &mut self,
-        count: u32,
-        mut block_factory: impl FnMut(&Self) -> Vec<Vec<Tachygram>>,
-    ) {
-        for _ in 0..count {
-            let block = block_factory(self);
-            self.mine(block);
-        }
-    }
-
-    /// Mine a block publishing the stamps of `bundles`, in order.
-    pub fn mine_bundles(&mut self, bundles: &[&Bundle<ProofStamp>]) {
-        self.mine(
-            bundles
-                .iter()
-                .map(|&bundle| bundle.stamp.tachygrams.iter().copied().collect())
-                .collect(),
-        );
-    }
-
     pub fn mine(&mut self, stamps: Vec<Vec<Tachygram>>) {
         let new_height = BlockHeight::from(self.history.len());
         let old_tip = self.anchor();
@@ -517,6 +480,31 @@ impl PoolSim {
         };
         self.push_block(prev, stamps);
     }
+}
+
+/// Four blocks of epoch zero, two stamps of three tachygrams each; with the
+/// last block's anchor.
+pub(crate) fn small_epoch<RNG: CryptoRng>(rng: &mut RNG) -> (PoolSim, Anchor) {
+    let mut pool = PoolSim::genesis_with(random_block(rng, 3, 2));
+    for _ in 0..3 {
+        pool.mine(random_block(rng, 3, 2));
+    }
+    let end = pool.anchor();
+    (pool, end)
+}
+
+/// `pcd`'s proof carrying its header with `alter` applied.
+///
+/// Mock ragu does not authenticate a header against its proof, so the
+/// consuming step's own constraint is what rejects the altered header; a
+/// real proof would not carry it at all.
+pub(crate) fn recarry<H: Header<Data: Copy>>(
+    pcd: &Pcd<H>,
+    alter: impl FnOnce(&mut H::Data),
+) -> Pcd<H> {
+    let mut data = *pcd.data();
+    alter(&mut data);
+    pcd.proof().clone().carry::<H>(data)
 }
 
 /// Build an [`AnchorSpan`] covering blocks `range` in full, rooted at the
@@ -639,12 +627,14 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
 }
 
 /// An intake with the members its contents commit.
+#[derive(Clone)]
 pub(crate) struct QrIntakeEntry {
     pub pcd: Pcd<qr::QrIntake>,
     pub members: Vec<Tachygram>,
 }
 
 /// A sealed bucket with the members its contents commit.
+#[derive(Clone)]
 pub(crate) struct QrBucketEntry {
     pub pcd: Pcd<qr::QrBucket>,
     pub members: Vec<Tachygram>,
@@ -940,11 +930,8 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
         depth += 1;
     }
     while buckets.len() < width {
-        let last = buckets.last().expect("nonempty tree");
-        buckets.push(QrBucketEntry {
-            pcd: last.pcd.clone(),
-            members: last.members.clone(),
-        });
+        let last = buckets.last().expect("nonempty tree").clone();
+        buckets.push(last);
     }
 
     let (proofs, held): (Vec<_>, Vec<_>) = buckets
@@ -1055,12 +1042,12 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
     EvidenceTreeEntry { pcd: root, leaves }
 }
 
-/// Descend `tree` along one leaf's path and replay the bucket it holds.
-pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
+/// Descend `tree` along one leaf's path to the leaf.
+pub(crate) fn descend_evidence_tree<RNG: CryptoRng>(
     rng: &mut RNG,
     tree: Pcd<evidence::EvidenceTree>,
     leaf: &EvidenceLeaf,
-) -> QrBucketEntry {
+) -> Pcd<evidence::EvidenceTree> {
     let mut node = tree;
     for chunk in leaf.path.chunks(evidence::EvidenceTreeDescend::LEVELS) {
         let path =
@@ -1077,7 +1064,16 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
             .expect("EvidenceTreeDescend");
         node = pcd;
     }
+    node
+}
 
+/// Descend `tree` along one leaf's path and replay the bucket it holds.
+pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
+    rng: &mut RNG,
+    tree: Pcd<evidence::EvidenceTree>,
+    leaf: &EvidenceLeaf,
+) -> QrBucketEntry {
+    let node = descend_evidence_tree(rng, tree, leaf);
     let witness = witness::evidence_tree_open((*node.data(), ()), leaf.profile, leaf.contents);
     let (pcd, ()) = PROOF_SYSTEM
         .fuse(
@@ -1102,6 +1098,83 @@ pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32)
         profile = profile.descend(qr::classify(value, discriminant.at(level)).0);
     }
     profile
+}
+
+/// The sealed bucket holding `value` at `depth` levels over the anchor span
+/// `(start, final_anchor)`, routed at `discriminant` and sealed on
+/// `anchor_final_prev`.
+pub(crate) fn qr_bucket_at<RNG: CryptoRng>(
+    rng: &mut RNG,
+    pool: &PoolSim,
+    (start, final_anchor): (Anchor, Anchor),
+    (discriminant, capacity, depth): (QrDiscriminant, usize, u32),
+    value: Fp,
+    anchor_final_prev: Anchor,
+) -> QrBucketEntry {
+    let mut branch = build_qr_branch(
+        rng,
+        pool,
+        (start, final_anchor),
+        discriminant,
+        capacity,
+        value,
+        depth,
+    );
+    assert_eq!(branch.len(), 1, "the value's profile fits one intake");
+    let intake = branch.pop().expect("one intake");
+    assert_eq!(
+        intake.pcd.data().4,
+        qr_profile_of(value, discriminant, depth)
+    );
+    seal_qr_intake(rng, intake, anchor_final_prev)
+}
+
+/// The note's QR segment over a bucket's epoch, out over the crossing, bound
+/// to the note.
+pub(crate) fn qr_epoch_unspent<RNG: CryptoRng>(
+    rng: &mut RNG,
+    wallet: &WalletSim,
+    note: &Note,
+    bucket: &QrBucketEntry,
+) -> Pcd<pool::NoteUnspent> {
+    let arbitrary = qr_bucket_segment(rng, bucket, |epoch| wallet.nf_at(note, epoch));
+    wallet.unspent_bind(rng, arbitrary, note)
+}
+
+/// The segment of an empty bucket for `epoch`, sealed on a random predecessor
+/// no pool published: an [`ArbitraryUnspent`](pool::ArbitraryUnspent) at an
+/// arbitrary epoch without building the epochs before it.
+pub(crate) fn detached_segment<RNG: CryptoRng>(
+    rng: &mut RNG,
+    epoch: EpochIndex,
+    nf: impl Fn(EpochIndex) -> Nullifier,
+) -> Pcd<pool::ArbitraryUnspent> {
+    let anchor_final_prev = Anchor::from(Fp::random(&mut *rng));
+    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let entry = anchor_final_prev
+        .next_epoch(epoch)
+        .expect("a detached epoch is not epoch zero");
+    let intake = seed_qr_empty_intake(rng, entry, epoch, discriminant);
+    let bucket = seal_qr_intake(rng, intake, anchor_final_prev);
+    qr_bucket_segment(rng, &bucket, nf)
+}
+
+/// Mine through `through`'s first block, publishing one stamp in the last
+/// block of every epoch but `silent`, so each closed epoch's bucket is small.
+pub(crate) fn mine_sparse<RNG: CryptoRng>(
+    rng: &mut RNG,
+    pool: &mut PoolSim,
+    through: EpochIndex,
+    silent: Option<EpochIndex>,
+) {
+    while pool.height() < through.first_block() {
+        let next = BlockHeight(pool.height().0 + 1);
+        if next.is_last_in_epoch() && silent != Some(next.epoch()) {
+            pool.mine(random_block(rng, 1, 1));
+        } else {
+            pool.mine(Vec::new());
+        }
+    }
 }
 
 /// Root an empty intake over a stampless epoch at its entry anchor.
@@ -1683,96 +1756,6 @@ impl WalletSim {
             max_fee_note,
         );
         (bundle_plan, signed, spend_pcds, anchor, max_fee_note)
-    }
-}
-
-pub struct SyncSim {
-    entries: Vec<SyncEntry>,
-}
-
-/// A delegation: one nullifier per epoch from `epoch_start`, and the epoch the
-/// next segment opens on.
-struct SyncEntry {
-    handle: usize,
-    nfs: Vec<Nullifier>,
-    epoch_start: EpochIndex,
-    epoch_cursor: EpochIndex,
-}
-
-impl SyncSim {
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
-    }
-
-    /// Accept `nfs`, one nullifier per epoch from `epoch_start`, the epoch a
-    /// spendable rests in.
-    pub fn accept_delegation(
-        &mut self,
-        handle: usize,
-        nfs: Vec<Nullifier>,
-        epoch_start: EpochIndex,
-    ) {
-        let entry = SyncEntry {
-            handle,
-            nfs,
-            epoch_start,
-            epoch_cursor: epoch_start,
-        };
-        if let Some(slot) = self
-            .entries
-            .iter_mut()
-            .find(|stored| stored.handle == handle)
-        {
-            *slot = entry;
-        } else {
-            self.entries.push(entry);
-        }
-    }
-
-    /// The epochs the delegation has covered so far.
-    pub fn consumed(&self, handle: usize) -> u32 {
-        let entry = self.entry(handle);
-        u32::from(entry.epoch_cursor) - u32::from(entry.epoch_start)
-    }
-
-    /// The next segment, over the whole epochs `[cursor, epoch_next)`.
-    pub fn build_next_unspent<RNG: CryptoRng>(
-        &mut self,
-        rng: &mut RNG,
-        handle: usize,
-        pool: &PoolSim,
-        epoch_next: EpochIndex,
-    ) -> Pcd<pool::ArbitraryUnspent> {
-        let idx = self
-            .entries
-            .iter()
-            .position(|entry| entry.handle == handle)
-            .expect("no delegation for handle");
-        let entry = &self.entries[idx];
-        let nf = |epoch: EpochIndex| {
-            entry.nfs[usize::try_from(u32::from(epoch) - u32::from(entry.epoch_start))
-                .expect("fits usize")]
-        };
-        let unspent =
-            build_unspent_pcd_over_epochs(rng, pool, nf, (entry.epoch_cursor, epoch_next));
-        self.entries[idx].epoch_cursor = epoch_next;
-        unspent
-    }
-
-    fn entry(&self, handle: usize) -> &SyncEntry {
-        self.entries
-            .iter()
-            .find(|entry| entry.handle == handle)
-            .expect("no delegation for handle")
-    }
-}
-
-impl Default for SyncSim {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

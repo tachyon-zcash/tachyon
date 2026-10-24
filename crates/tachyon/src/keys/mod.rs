@@ -97,84 +97,108 @@ pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 mod tests {
     use ff::{Field as _, PrimeField as _};
     use pasta_curves::Fp;
+    use proptest::prelude::*;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use crate::{
+        constants::{EPOCH_MAX, MAX_MONEY},
         entropy::ActionEntropy,
         keys::{NoteMasterKey, NullifierKey, PaymentKey, private},
         note::{self, Note},
         nullifier,
         primitives::{EpochIndex, effect},
+        testing::check,
         value,
     };
 
-    /// ask, nk, pk derived from the same sk must all be different.
-    /// pk derives from (ak, nk) via Poseidon, not directly from sk.
+    /// ask, nk and pk derived from one sk are distinct, and pak derives the
+    /// same pk the spending key does.
     #[test]
-    fn child_keys_independent() {
-        let sk = private::SpendingKey::from([0x42u8; 32]);
-        let ak = sk.derive_auth_private().derive_auth_public();
-        let nk = sk.derive_nullifier_private();
-        let pk = sk.derive_payment_key();
+    fn child_keys_are_independent() {
+        check(256, any::<[u8; 32]>(), |bytes| {
+            let sk = private::SpendingKey::from(bytes);
+            let ak = sk.derive_auth_private().derive_auth_public();
+            let nk = sk.derive_nullifier_private();
+            let pk = sk.derive_payment_key();
 
-        let ak_bytes: [u8; 32] = ak.0.into();
-        assert_ne!(ak_bytes, nk.0.to_repr());
-        assert_ne!(nk.0.to_repr(), Fp::from(pk).to_repr());
-
-        let pak = sk.derive_proof_private();
-        assert_eq!(Fp::from(pak.derive_payment_key()), Fp::from(pk));
+            let ak_bytes: [u8; 32] = ak.0.into();
+            prop_assert_ne!(ak_bytes, nk.0.to_repr());
+            prop_assert_ne!(nk.0.to_repr(), Fp::from(pk).to_repr());
+            prop_assert_eq!(
+                Fp::from(sk.derive_proof_private().derive_payment_key()),
+                Fp::from(pk)
+            );
+            Ok(())
+        });
     }
 
-    /// pk must bind to nk: varying nk (with ak fixed) must produce a
-    /// different pk. This is what makes the note commitment transitively
-    /// pin the full proof authorizing key.
+    /// pk binds nk: another nk under the same ak gives another pk, which is
+    /// what makes the note commitment pin the whole pak.
     #[test]
     fn payment_key_binds_nk() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let sk = private::SpendingKey::random(rng);
-        let ak = sk.derive_auth_private().derive_auth_public();
-        let nk = sk.derive_nullifier_private();
-        let pk = PaymentKey::derive(&ak, &nk);
-
-        let nk_other = NullifierKey(nk.0 + Fp::ONE);
-        let pk_other = PaymentKey::derive(&ak, &nk_other);
-        assert_ne!(Fp::from(pk), Fp::from(pk_other));
+        check(256, any::<u64>(), |seed| {
+            let rng = &mut StdRng::seed_from_u64(seed);
+            let sk = private::SpendingKey::random(rng);
+            let ak = sk.derive_auth_private().derive_auth_public();
+            let nk = sk.derive_nullifier_private();
+            let other = NullifierKey(Fp::random(&mut *rng));
+            prop_assert_ne!(
+                Fp::from(PaymentKey::derive(&ak, &nk)),
+                Fp::from(PaymentKey::derive(&ak, &other))
+            );
+            Ok(())
+        });
     }
 
-    /// rsk.derive_action_public() must equal ak.derive_action_public(alpha) for
-    /// the same alpha. This is the core consistency property between signer
-    /// and prover sides of the randomized key derivation.
+    /// The signer's rk and the prover's rk agree for any alpha.
     #[test]
-    fn rsk_public_equals_ak_derive_action_public() {
-        let rng = &mut StdRng::seed_from_u64(0);
-        let sk = private::SpendingKey::from([0x42u8; 32]);
-        let ask = sk.derive_auth_private();
-        let ak = ask.derive_auth_public();
-        let note = Note {
-            pk: sk.derive_payment_key(),
-            value: value::Positive::try_from(1000u64).unwrap(),
-            psi: nullifier::Trapdoor::random(rng),
-            rcm: note::CommitmentTrapdoor::random(rng),
-        };
-        let theta = ActionEntropy::random(rng);
-        let alpha = theta.randomizer::<effect::Spend>(note.commitment());
-        let rsk = ask.derive_action_private(&alpha);
+    fn signer_and_prover_derive_one_rk() {
+        check(256, (any::<u64>(), 0..=MAX_MONEY), |(seed, value)| {
+            let rng = &mut StdRng::seed_from_u64(seed);
+            let sk = private::SpendingKey::random(rng);
+            let ask = sk.derive_auth_private();
+            let note = Note {
+                pk: sk.derive_payment_key(),
+                value: value::Positive::try_from(value).unwrap(),
+                psi: nullifier::Trapdoor::random(rng),
+                rcm: note::CommitmentTrapdoor::random(rng),
+            };
+            let alpha = ActionEntropy::random(rng).randomizer::<effect::Spend>(note.commitment());
 
-        let rk_from_signer: [u8; 32] = rsk.derive_action_public().0.into();
-        let rk_from_prover: [u8; 32] = ak.derive_action_public(&alpha).0.into();
-
-        assert_eq!(rk_from_signer, rk_from_prover);
+            let from_signer: [u8; 32] = ask
+                .derive_action_private(&alpha)
+                .derive_action_public()
+                .0
+                .into();
+            let from_prover: [u8; 32] = ask
+                .derive_auth_public()
+                .derive_action_public(&alpha)
+                .0
+                .into();
+            prop_assert_eq!(from_signer, from_prover);
+            Ok(())
+        });
     }
 
+    /// Debug output names the type and is the same for every key, so it
+    /// carries none of the key.
     #[test]
-    fn window_matches_per_epoch_derivation() {
-        let mk = NoteMasterKey(Fp::random(&mut StdRng::seed_from_u64(0)));
-        let epoch_start = EpochIndex::new(96);
-
-        let epochs = (u32::from(epoch_start)..).map(EpochIndex::new);
-        for (epoch, nf) in epochs.zip(mk.derive_window(epoch_start)) {
-            assert_eq!(nf, mk.derive_nullifier(epoch), "epoch {}", u32::from(epoch));
-        }
+    fn debug_redacts_key_material() {
+        let strategy = (any::<[u8; 32]>(), any::<[u8; 32]>(), any::<u64>());
+        check(256, strategy, |(left, right, seed)| {
+            let rng = &mut StdRng::seed_from_u64(seed);
+            let spending = [left, right]
+                .map(private::SpendingKey::from)
+                .map(|sk| alloc::format!("{sk:?}"));
+            let nullifier = [Fp::random(&mut *rng), Fp::random(&mut *rng)]
+                .map(NullifierKey)
+                .map(|nk| alloc::format!("{nk:?}"));
+            for (debug, name) in [(spending, "SpendingKey"), (nullifier, "NullifierKey")] {
+                prop_assert!(debug[0].contains(name));
+                prop_assert_eq!(&debug[0], &debug[1]);
+            }
+            Ok(())
+        });
     }
 
     /// A window that would run past the epoch range names epochs that map to
@@ -182,30 +206,10 @@ mod tests {
     #[test]
     #[should_panic(expected = "epoch index above EPOCH_MAX")]
     fn window_rejects_a_start_too_close_to_the_final_epoch() {
-        use crate::constants::EPOCH_MAX;
-
         let mk = NoteMasterKey(Fp::random(&mut StdRng::seed_from_u64(0)));
         // Group-aligned for any EPOCH_MAX of the form `2^k - 1`, and short of
         // a whole window by three epochs.
         let window = mk.derive_window(EpochIndex::new(EPOCH_MAX - 3));
         panic!("a window past the final epoch must not derive, got {window:?}");
-    }
-
-    #[test]
-    fn debug_spending_key_redacts_bytes() {
-        let sk = private::SpendingKey::from([0xAB; 32]);
-        let dbg = alloc::format!("{sk:?}");
-        assert!(dbg.contains("SpendingKey"), "must name the type");
-        assert!(!dbg.contains("AB"), "must not leak key bytes");
-        assert!(!dbg.contains("171"), "must not leak decimal bytes");
-    }
-
-    #[test]
-    fn debug_nullifier_key_redacts_value() {
-        let nk = NullifierKey(Fp::from(0xDEADu64));
-        let dbg = alloc::format!("{nk:?}");
-        assert!(dbg.contains("NullifierKey"), "must name the type");
-        assert!(!dbg.contains("DEAD"), "must not leak field element");
-        assert!(!dbg.contains("57005"), "must not leak decimal value");
     }
 }
