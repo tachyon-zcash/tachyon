@@ -48,14 +48,6 @@ pub fn mock_sighash(bundle_digest: [u8; 32]) -> [u8; 32] {
     out
 }
 
-/// A bundle plan with a zero-value max fee note, for tests that do not price.
-pub fn build_bundle_plan(
-    spends: Vec<action::Plan<effect::Spend>>,
-    outputs: Vec<action::Plan<effect::Output>>,
-) -> bundle::Plan {
-    bundle::Plan::new(spends, outputs, WalletSim::new(shared_sk()).random_note(0))
-}
-
 pub fn fee_digests(
     fees: impl IntoIterator<Item = fee::Descriptor>,
 ) -> impl Iterator<Item = ActionDigest> {
@@ -122,12 +114,6 @@ pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> action::Action {
         .sign(rng, &sighash, &wallet.sk.derive_auth_private())
         .expect("sign a foreign output")
         .actions[0]
-}
-
-pub fn spend_witness<RNG: CryptoRng>(rng: &mut RNG) -> (value::Trapdoor, ActionEntropy) {
-    let rcv = value::Trapdoor::random(rng);
-    let theta = ActionEntropy::random(rng);
-    (rcv, theta)
 }
 
 pub fn build_output_plan<RNG: CryptoRng>(
@@ -491,16 +477,6 @@ impl PoolSim {
             let block = block_factory(self);
             self.mine(block);
         }
-    }
-
-    /// Mine a block publishing the stamps of `bundles`, in order.
-    pub fn mine_bundles(&mut self, bundles: &[&Bundle<ProofStamp>]) {
-        self.mine(
-            bundles
-                .iter()
-                .map(|&bundle| bundle.stamp.tachygrams.iter().copied().collect())
-                .collect(),
-        );
     }
 
     pub fn mine(&mut self, stamps: Vec<Vec<Tachygram>>) {

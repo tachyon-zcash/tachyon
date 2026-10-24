@@ -22,8 +22,6 @@
 #[cfg(test)]
 mod bundle;
 #[cfg(test)]
-mod fee;
-#[cfg(test)]
 mod fixtures;
 #[cfg(test)]
 mod stamp;
