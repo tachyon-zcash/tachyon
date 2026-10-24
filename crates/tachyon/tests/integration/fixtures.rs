@@ -14,8 +14,7 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
-    QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
-    action::{self, Action},
+    QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly, action,
     bundle::{self, Bundle},
     constants::EVIDENCE_TREE_ARITY,
     digest::blake2b,
@@ -111,19 +110,6 @@ pub fn mock_wtxid<S: StampState + 'static>(bundle: &Bundle<S>) -> AggregateId {
     wtxid[32..].copy_from_slice(&mock_auth_digest(bundle.auth_digest()));
 
     AggregateId::try_from(wtxid).expect("nonzero wtxid")
-}
-
-pub fn random_action<RNG: CryptoRng>(rng: &mut RNG) -> Action {
-    let wallet = WalletSim::random(rng);
-    let ask = wallet.sk.derive_auth_private();
-    let note = wallet.random_note(400);
-    let (_, _, plan) = build_output_plan(rng, note);
-    let bundle_plan = build_bundle_plan(alloc::vec![], alloc::vec![plan]);
-    let sighash = mock_sighash(bundle_plan.commitment().expect("fixture commitment"));
-    let unproven = bundle_plan
-        .sign(rng, &sighash, &ask)
-        .expect("sign foreign output");
-    unproven.actions[0]
 }
 
 pub fn spend_witness<RNG: CryptoRng>(rng: &mut RNG) -> (value::Trapdoor, ActionEntropy) {
