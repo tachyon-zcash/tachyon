@@ -226,113 +226,111 @@ fn anchor_span_fuse_rejects_corruptions() {
 #[test]
 fn unspent_segments_compose() {
     let strategy = (any::<u64>(), 1u32..=2, 1u32..=2, option::of(0u32..=3));
-    check(6, strategy, |(seed, left_epochs, right_epochs, silent_index)| {
-        let rng = &mut StdRng::seed_from_u64(seed);
-        let wallet = WalletSim::new(shared_sk());
-        let note = wallet.random_note(500);
-        let nf = |epoch| wallet.nf_at(&note, epoch);
-        let (start, middle) = (EpochIndex::new(0), EpochIndex::new(left_epochs));
-        let end = EpochIndex::new(left_epochs + right_epochs);
-        let silent = silent_index
-            .map(EpochIndex::new)
-            .filter(|&epoch| epoch < end);
-        let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
-        mine_sparse(rng, &mut pool, end.next().unwrap(), silent);
+    check(
+        6,
+        strategy,
+        |(seed, left_epochs, right_epochs, silent_index)| {
+            let rng = &mut StdRng::seed_from_u64(seed);
+            let wallet = WalletSim::new(shared_sk());
+            let note = wallet.random_note(500);
+            let nf = |epoch| wallet.nf_at(&note, epoch);
+            let (start, middle) = (EpochIndex::new(0), EpochIndex::new(left_epochs));
+            let end = EpochIndex::new(left_epochs + right_epochs);
+            let silent = silent_index
+                .map(EpochIndex::new)
+                .filter(|&epoch| epoch < end);
+            let mut pool = PoolSim::genesis_with(random_block(rng, 1, 1));
+            mine_sparse(rng, &mut pool, end.next().unwrap(), silent);
 
-        let left = build_unspent_pcd_over_epochs(rng, &pool, nf, (start, middle));
-        let right = build_unspent_pcd_over_epochs(rng, &pool, nf, (middle, end));
-        let members = |from: EpochIndex, to: EpochIndex| -> Vec<Nullifier> {
-            (u32::from(from)..u32::from(to))
-                .map(|epoch| nf(EpochIndex::new(epoch)))
-                .collect()
-        };
-        let fuse_witness = witness::unspent_fuse(
-            (*left.data(), *right.data()),
-            &members(start, middle),
-            &members(middle, end),
-        );
-        let (fused, ()) = PROOF_SYSTEM
-            .fuse(rng, pool::UnspentFuse, fuse_witness, left.clone(), right)
-            .expect("UnspentFuse");
-        let entry = |epoch: EpochIndex| pool.block(epoch.first_block()).prev;
-        prop_assert_eq!(
-            *fused.data(),
-            (
-                entry(start),
-                start,
-                NfSeqPoly::new(start, &members(start, end)).commit(),
-                end,
-                entry(end)
-            )
-        );
+            let left = build_unspent_pcd_over_epochs(rng, &pool, nf, (start, middle));
+            let right = build_unspent_pcd_over_epochs(rng, &pool, nf, (middle, end));
+            let members = |from: EpochIndex, to: EpochIndex| -> Vec<Nullifier> {
+                (u32::from(from)..u32::from(to))
+                    .map(|epoch| nf(EpochIndex::new(epoch)))
+                    .collect()
+            };
+            let fuse_witness = witness::unspent_fuse(
+                (*left.data(), *right.data()),
+                &members(start, middle),
+                &members(middle, end),
+            );
+            let (fused, ()) = PROOF_SYSTEM
+                .fuse(rng, pool::UnspentFuse, fuse_witness, left.clone(), right)
+                .expect("UnspentFuse");
+            let entry = |epoch: EpochIndex| pool.block(epoch.first_block()).prev;
+            prop_assert_eq!(
+                *fused.data(),
+                (
+                    entry(start),
+                    start,
+                    NfSeqPoly::new(start, &members(start, end)).commit(),
+                    end,
+                    entry(end)
+                )
+            );
 
-        let bucket = epoch_bucket(rng, &pool, middle);
-        let lift_witness = witness::unspent_lift(
-            (*left.data(), *bucket.pcd.data()),
-            Tachygram::from(nf(middle)),
-            &members(start, middle),
-            &bucket.members,
-        );
-        let (lifted, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                pool::UnspentLift,
-                lift_witness,
-                left,
-                bucket.pcd,
-            )
-            .expect("UnspentLift");
-        let after = middle.next().unwrap();
-        prop_assert_eq!(
-            *lifted.data(),
-            (
-                entry(start),
-                start,
-                NfSeqPoly::new(start, &members(start, after)).commit(),
-                after,
-                entry(after)
-            )
-        );
+            let bucket = epoch_bucket(rng, &pool, middle);
+            let lift_witness = witness::unspent_lift(
+                (*left.data(), *bucket.pcd.data()),
+                Tachygram::from(nf(middle)),
+                &members(start, middle),
+                &bucket.members,
+            );
+            let (lifted, ()) = PROOF_SYSTEM
+                .fuse(rng, pool::UnspentLift, lift_witness, left, bucket.pcd)
+                .expect("UnspentLift");
+            let after = middle.next().unwrap();
+            prop_assert_eq!(
+                *lifted.data(),
+                (
+                    entry(start),
+                    start,
+                    NfSeqPoly::new(start, &members(start, after)).commit(),
+                    after,
+                    entry(after)
+                )
+            );
 
-        let bound = wallet.unspent_bind(rng, fused, &note);
-        prop_assert_eq!(
-            *bound.data(),
-            (note.commitment(), entry(start), start, end, entry(end))
-        );
+            let bound = wallet.unspent_bind(rng, fused, &note);
+            prop_assert_eq!(
+                *bound.data(),
+                (note.commitment(), entry(start), start, end, entry(end))
+            );
 
-        let penultimate = EpochIndex::new(EPOCH_MAX - 1);
-        let last_segment = detached_segment(rng, penultimate, nf);
-        let (anchor_start, _, _, _, anchor_next) = *last_segment.data();
-        let last_window_start =
-            EpochIndex::new(EPOCH_MAX + 1 - u32::try_from(NF_DERIVATION_WIDTH).unwrap());
-        let last_window =
-            wallet.derivation_pcd(rng, note, last_window_start, EpochIndex::new(EPOCH_MAX));
-        let last_witness = witness::unspent_bind(
-            (*last_segment.data(), *last_window.data()),
-            &wallet.covering_window(&note, &last_window),
-            &[nf(penultimate)],
-        );
-        let (last_bound, ()) = PROOF_SYSTEM
-            .fuse(
-                rng,
-                pool::UnspentBind,
-                last_witness,
-                last_segment,
-                last_window,
-            )
-            .expect("UnspentBind at the last window");
-        prop_assert_eq!(
-            *last_bound.data(),
-            (
-                note.commitment(),
-                anchor_start,
-                penultimate,
-                EpochIndex::new(EPOCH_MAX),
-                anchor_next
-            )
-        );
-        Ok(())
-    });
+            let penultimate = EpochIndex::new(EPOCH_MAX - 1);
+            let last_segment = detached_segment(rng, penultimate, nf);
+            let (anchor_start, _, _, _, anchor_next) = *last_segment.data();
+            let last_window_start =
+                EpochIndex::new(EPOCH_MAX + 1 - u32::try_from(NF_DERIVATION_WIDTH).unwrap());
+            let last_window =
+                wallet.derivation_pcd(rng, note, last_window_start, EpochIndex::new(EPOCH_MAX));
+            let last_witness = witness::unspent_bind(
+                (*last_segment.data(), *last_window.data()),
+                &wallet.covering_window(&note, &last_window),
+                &[nf(penultimate)],
+            );
+            let (last_bound, ()) = PROOF_SYSTEM
+                .fuse(
+                    rng,
+                    pool::UnspentBind,
+                    last_witness,
+                    last_segment,
+                    last_window,
+                )
+                .expect("UnspentBind at the last window");
+            prop_assert_eq!(
+                *last_bound.data(),
+                (
+                    note.commitment(),
+                    anchor_start,
+                    penultimate,
+                    EpochIndex::new(EPOCH_MAX),
+                    anchor_next
+                )
+            );
+            Ok(())
+        },
+    );
 }
 
 /// `UnspentFuse` refuses halves that do not meet, halves other than the

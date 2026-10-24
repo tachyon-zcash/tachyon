@@ -1086,39 +1086,6 @@ fn lift_over_descriptors_then_verify() {
     );
 }
 
-/// A span from an unrelated chain neither starts at nor holds the stamp's
-/// anchor.
-#[test]
-fn lift_rejects_a_foreign_span() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let mut pool = PoolSim::genesis(rng);
-    pool.advance(3, |_| random_block(rng, 1, 4));
-
-    let note = wallet.random_note(200);
-    let (stamp, plan, fee_descriptor) = build_output_stamp(rng, pool.anchor(), note);
-
-    let mut foreign = PoolSim::genesis(rng);
-    foreign.advance(3, |_| random_block(rng, 1, 4));
-    let span = build_lift_span(rng, &foreign, BlockHeight(1)..=foreign.height());
-
-    let err = stamp
-        .lift(
-            rng,
-            &BTreeSet::from([plan.descriptor()]),
-            &BTreeSet::from([fee_descriptor]),
-            vec![span],
-        )
-        .unwrap_err();
-    let ProveError::ProofFailed(ragu_core::Error::InvalidWitness(inner)) = err else {
-        panic!("expected InvalidWitness, got {err:?}");
-    };
-    assert_eq!(
-        inner.to_string(),
-        "StampLift: stamp anchor is neither the span's start nor a member"
-    );
-}
-
 /// A lift takes the caller's word for the covered action set, so a wrong
 /// descriptor list is caught at verification rather than at prove time.
 #[test]

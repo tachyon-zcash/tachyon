@@ -28,8 +28,6 @@ mod fee;
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
-mod proof;
-#[cfg(test)]
 mod qr;
 #[cfg(test)]
 mod stamp;
