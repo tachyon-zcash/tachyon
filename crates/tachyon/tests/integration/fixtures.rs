@@ -468,17 +468,6 @@ impl PoolSim {
         self.anchor_index[&anchor].0.epoch()
     }
 
-    pub fn advance(
-        &mut self,
-        count: u32,
-        mut block_factory: impl FnMut(&Self) -> Vec<Vec<Tachygram>>,
-    ) {
-        for _ in 0..count {
-            let block = block_factory(self);
-            self.mine(block);
-        }
-    }
-
     pub fn mine(&mut self, stamps: Vec<Vec<Tachygram>>) {
         let new_height = BlockHeight::from(self.history.len());
         let old_tip = self.anchor();
