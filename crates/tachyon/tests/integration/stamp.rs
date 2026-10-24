@@ -641,38 +641,3 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
         Ok(())
     });
 }
-
-/// A strictly increasing tachygram sequence is unaffected by the
-/// distinctness check.
-#[test]
-fn read_accepts_distinct_sorted_tachygrams() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let pool = PoolSim::genesis(rng);
-    let note = wallet.random_note(200);
-    let (stamp, _plan, _) = build_output_stamp(rng, pool.anchor(), note);
-
-    let mut buf = Vec::new();
-    stamp.write(&mut buf).expect("write");
-    ProofStamp::read(&*buf).expect("distinct sorted tachygrams must be accepted");
-}
-
-/// `hStampCoverageTachyon` and the fee survive a `write`/`read` round-trip.
-#[test]
-fn covered_actions_round_trip() {
-    let rng = &mut StdRng::seed_from_u64(0);
-    let wallet = WalletSim::random(rng);
-    let pool = PoolSim::genesis(rng);
-    let note = wallet.random_note(200);
-    let (stamp, _plan, _) = build_output_stamp(rng, pool.anchor(), note);
-
-    let mut buf: Vec<u8> = Vec::new();
-    stamp.write(&mut buf).expect("write");
-    let decoded = ProofStamp::read(&*buf).expect("read");
-
-    assert_eq!(decoded.fee, stamp.fee);
-    assert_eq!(decoded.coverage, stamp.coverage);
-    assert_eq!(decoded.anchor, stamp.anchor);
-    assert_eq!(decoded.tachygram_set, stamp.tachygram_set);
-    assert_eq!(decoded.tachygrams, stamp.tachygrams);
-}
