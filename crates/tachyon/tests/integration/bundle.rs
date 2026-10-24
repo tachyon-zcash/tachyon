@@ -8,6 +8,7 @@ use alloc::{
     vec::Vec,
 };
 use core::cmp::Reverse;
+use std::{fs, path::Path};
 
 use corez::io;
 use ff::Field as _;
@@ -16,7 +17,7 @@ use ragu::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action,
-    bundle::{Plan, PlanError, Signature},
+    bundle::{Plan, PlanError, Signature, StateByte},
     constants::{EPOCH_SIZE, MAX_MONEY},
     digest::blake2b,
     effect,
@@ -1467,6 +1468,181 @@ fn wire_state_byte_dispatch() {
             stamped_on_adjunct.to_string(),
             "unexpected tachyonBundleState"
         );
+    }
+}
+
+/// Regenerate the serializer-generated fuzz seeds in `fuzz/corpus`.
+#[test]
+#[ignore = "writes fuzz corpus seeds"]
+fn write_fuzz_seeds() {
+    let rng = &mut StdRng::seed_from_u64(0);
+    let wallet = WalletSim::new(shared_sk());
+
+    let stamped = build_autonome(rng, &wallet, 1000, 700);
+    let adjunct = build_autonome(rng, &wallet, 1000, 700).strip(mock_wtxid(&stamped));
+
+    // An aggregate covering one adjunct, so the verifier target has a seed
+    // that passes the pointer and coverage checks with an adjunct present.
+    let anchor = PoolSim::genesis(rng).anchor();
+    let mut aggregate = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(200)]);
+    let to_cover = wallet.autonome(rng, anchor, vec![], vec![wallet.random_note(300)]);
+    aggregate.stamp = aggregate
+        .stamp
+        .clone()
+        .merge(
+            rng,
+            (
+                aggregate.descriptors().collect(),
+                BTreeSet::from([aggregate.fee_descriptor()]),
+            ),
+            (
+                to_cover.stamp.clone(),
+                to_cover.descriptors().collect(),
+                BTreeSet::from([to_cover.fee_descriptor()]),
+            ),
+        )
+        .expect("merge the covered bundle");
+    let covered = to_cover.strip(mock_wtxid(&aggregate));
+
+    let encode = |write: &dyn Fn(&mut Vec<u8>) -> io::Result<()>| {
+        let mut buf = Vec::new();
+        write(&mut buf).expect("write seed");
+        buf
+    };
+    let component = |selector: u8, write: &dyn Fn(&mut Vec<u8>) -> io::Result<()>| {
+        let mut buf = vec![selector];
+        write(&mut buf).expect("write seed");
+        buf
+    };
+    let stamped_buf = encode(&|buf| stamped.write(buf));
+    let adjunct_buf = encode(&|buf| adjunct.write(buf));
+    let action = stamped.actions[0];
+    let action_set = ActionSetPoly::from_iter([action.digest().expect("action digest")]).commit();
+
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/corpus");
+    for (target, name, bytes) in [
+        ("bundle_read", "valid_proof_stamped", stamped_buf.clone()),
+        ("bundle_read", "valid_pointer_stamped", adjunct_buf.clone()),
+        (
+            "stamped_bundle_read",
+            "valid_proof_stamped",
+            stamped_buf.clone(),
+        ),
+        ("stripped_bundle_read", "valid_pointer_stamped", adjunct_buf),
+        (
+            "proof_stamp_read",
+            "valid_proof_stamp",
+            encode(&|buf| stamped.stamp.write(buf)),
+        ),
+        (
+            "pointer_stamp_read",
+            "valid_pointer_stamp",
+            encode(&|buf| adjunct.stamp.write(buf)),
+        ),
+        (
+            "compact_size_read",
+            "one_byte",
+            encode(&|buf| CompactSize::from(0xFCu64).write(buf)),
+        ),
+        (
+            "compact_size_read",
+            "two_bytes",
+            encode(&|buf| CompactSize::from(0xFDu64).write(buf)),
+        ),
+        (
+            "compact_size_read",
+            "four_bytes",
+            encode(&|buf| CompactSize::from(0x0200_0000u64).write(buf)),
+        ),
+        (
+            "compact_size_read",
+            "eight_bytes",
+            encode(&|buf| CompactSize::from(u64::MAX).write(buf)),
+        ),
+        (
+            "component_read",
+            "action_descriptor",
+            component(0, &|buf| action.descriptor().write(buf)),
+        ),
+        (
+            "component_read",
+            "action_signature",
+            component(1, &|buf| action.sig.write(buf)),
+        ),
+        (
+            "component_read",
+            "binding_signature",
+            component(2, &|buf| stamped.binding_sig.write(buf)),
+        ),
+        (
+            "component_read",
+            "anchor",
+            component(3, &|buf| stamped.stamp.anchor.write(buf)),
+        ),
+        (
+            "component_read",
+            "tachygram",
+            component(4, &|buf| {
+                stamped
+                    .stamp
+                    .tachygrams
+                    .first()
+                    .expect("a published tachygram")
+                    .write(buf)
+            }),
+        ),
+        (
+            "component_read",
+            "tachygram_set",
+            component(5, &|buf| stamped.stamp.tachygram_set.write(buf)),
+        ),
+        (
+            "component_read",
+            "action_set",
+            component(6, &|buf| action_set.write(buf)),
+        ),
+        ("verify_pipeline", "autonome", stamped_buf),
+        (
+            "verify_pipeline",
+            "aggregate_with_adjunct",
+            encode(&|buf| {
+                aggregate.write(&mut *buf)?;
+                covered.write(buf)
+            }),
+        ),
+    ] {
+        let dir = corpus.join(target);
+        fs::create_dir_all(&dir).expect("create corpus directory");
+        fs::write(dir.join(name), bytes).expect("write seed");
+    }
+
+    // `verify_reject` verifies the aggregate under the sighash it was signed
+    // over, which the fuzz crate cannot recompute.
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/fixtures");
+    fs::create_dir_all(&fixtures).expect("create fixtures directory");
+    fs::write(
+        fixtures.join("aggregate_with_adjunct.sighash"),
+        mock_sighash(aggregate.commitment()),
+    )
+    .expect("write sighash");
+}
+
+#[test]
+fn read_rejects_noncanonical_action_count() {
+    // 5 fits in CompactSize's one-byte form, so the two-byte encoding is
+    // non-canonical. The reader must reject it before consuming an action.
+    let mut buf = alloc::vec![u8::from(StateByte::ProofStamped)];
+    buf.extend_from_slice(&0i64.to_le_bytes());
+    buf.extend_from_slice(&[0xFD, 0x05, 0x00]);
+
+    for err in [
+        Bundle::<ProofStamp>::read(&*buf)
+            .expect_err("proof-stamped reader must reject a non-canonical action count"),
+        TachyonBundle::read(&*buf)
+            .expect_err("bundle dispatcher must reject a non-canonical action count"),
+    ] {
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(err.to_string(), "non-canonical compact size");
     }
 }
 
