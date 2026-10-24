@@ -213,12 +213,12 @@ pub fn forge_overlapping_merge<RNG: CryptoRng>(
     rng: &mut RNG,
     (stamp_a, descriptors_a, fee_descriptors_a): (
         &ProofStamp,
-        &Vec<action::Descriptor>,
+        &[action::Descriptor],
         &[fee::Descriptor],
     ),
     (stamp_b, descriptors_b, fee_descriptors_b): (
         &ProofStamp,
-        &Vec<action::Descriptor>,
+        &[action::Descriptor],
         &[fee::Descriptor],
     ),
 ) -> Pcd<Stamp> {
@@ -322,7 +322,13 @@ pub fn random_block_with<RNG: CryptoRng>(
 
 /// A published stamp: the anchor its link opens at, its tachygrams, their
 /// commitment, and the anchor its link closes at.
-pub type StampEntry = (Anchor, Vec<Tachygram>, TachygramSetCommit, Anchor);
+#[derive(Clone, Debug)]
+pub struct StampEntry {
+    pub anchor_prev: Anchor,
+    pub tachygrams: Vec<Tachygram>,
+    pub commitment: TachygramSetCommit,
+    pub anchor_next: Anchor,
+}
 
 #[derive(Clone, Debug)]
 pub struct PoolSimBlock {
@@ -344,7 +350,12 @@ impl PoolSimBlock {
                 let commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
                 let stamp_after = anchor.next_stamp(epoch, &commit).unwrap();
                 anchor = stamp_after;
-                (stamp_prev, tgs, commit, stamp_after)
+                StampEntry {
+                    anchor_prev: stamp_prev,
+                    tachygrams: tgs,
+                    commitment: commit,
+                    anchor_next: stamp_after,
+                }
             })
             .collect();
         Self {
@@ -356,18 +367,20 @@ impl PoolSimBlock {
     /// The block's final anchor: its last stamp's, or its entry anchor
     /// unchanged when the block published no stamp.
     pub fn anchor(&self) -> Anchor {
-        match self.stamps.last() {
-            Some(&(_, _, _, anchor)) => anchor,
-            None => self.prev,
-        }
+        self.stamps
+            .last()
+            .map_or(self.prev, |stamp| stamp.anchor_next)
     }
 
     pub fn tachygrams(&self) -> Vec<Vec<Tachygram>> {
-        self.stamps.iter().map(|stamps| stamps.1.clone()).collect()
+        self.stamps
+            .iter()
+            .map(|stamp| stamp.tachygrams.clone())
+            .collect()
     }
 
     pub fn stamp_commits(&self) -> Vec<TachygramSetCommit> {
-        self.stamps.iter().map(|stamps| stamps.2).collect()
+        self.stamps.iter().map(|stamp| stamp.commitment).collect()
     }
 }
 
@@ -407,8 +420,9 @@ impl PoolSim {
         if height.is_first_in_epoch() {
             self.anchor_index.insert(prev, (height, 0));
         }
-        for (position, &(_prev_anchor, _, _, anchor)) in block.stamps.iter().enumerate() {
-            self.anchor_index.insert(anchor, (height, position + 1));
+        for (position, stamp) in block.stamps.iter().enumerate() {
+            self.anchor_index
+                .insert(stamp.anchor_next, (height, position + 1));
         }
         self.history.push(block);
     }
@@ -453,11 +467,17 @@ impl PoolSim {
         let (first, rest) = entries
             .split_first()
             .expect("anchor span must cover at least one stamp");
-        assert_eq!(first.0, start, "the span opens at its start anchor");
-        let mut cursor = first.3;
+        assert_eq!(
+            first.anchor_prev, start,
+            "the span opens at its start anchor"
+        );
+        let mut cursor = first.anchor_next;
         for entry in rest {
-            assert_eq!(entry.0, cursor, "the span's stamps chain without a gap");
-            cursor = entry.3;
+            assert_eq!(
+                entry.anchor_prev, cursor,
+                "the span's stamps chain without a gap"
+            );
+            cursor = entry.anchor_next;
         }
         assert_eq!(cursor, end, "the span closes at its end anchor");
 
@@ -473,7 +493,7 @@ impl PoolSim {
                 block
                     .stamps
                     .iter()
-                    .any(|stamp| stamp.1.contains(&tachygram))
+                    .any(|stamp| stamp.tachygrams.contains(&tachygram))
             })
             .expect("the tachygram was published");
         BlockHeight::from(height).epoch()
@@ -600,7 +620,7 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
     (start, end): (Anchor, Anchor),
 ) -> (Pcd<summary::Summary>, Vec<Tachygram>) {
     let entries = pool.stamps_between(start, end);
-    let members: usize = entries.iter().map(|entry| entry.1.len()).sum();
+    let members: usize = entries.iter().map(|entry| entry.tachygrams.len()).sum();
     assert!(
         members < (1 << ProductionRank::RANK),
         "span exceeds one summary"
@@ -614,23 +634,23 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
         .seed(
             rng,
             summary::SummarySeed,
-            witness::summary_seed(((), ()), start, epoch, &first.1),
+            witness::summary_seed(((), ()), start, epoch, &first.tachygrams),
         )
         .expect("SummarySeed");
 
-    let mut acc = first.1.clone();
+    let mut acc = first.tachygrams.clone();
     let mut pcd = seeded;
     for entry in rest {
         let (advanced, ()) = PROOF_SYSTEM
             .fuse(
                 rng,
                 summary::SummaryAdvance,
-                witness::summary_advance((*pcd.data(), ()), &acc, &entry.1),
+                witness::summary_advance((*pcd.data(), ()), &acc, &entry.tachygrams),
                 pcd,
                 Proof::trivial().carry::<()>(()),
             )
             .expect("SummaryAdvance");
-        acc.extend(entry.1.iter().copied());
+        acc.extend(entry.tachygrams.iter().copied());
         pcd = advanced;
     }
     assert_eq!(pcd.data().2, end, "the summary closes at the span's end");
@@ -681,7 +701,7 @@ pub(crate) fn seed_qr_stamp_intake<RNG: CryptoRng>(
     stamp: &StampEntry,
     discriminant: QrDiscriminant,
 ) -> QrIntakeEntry {
-    let (entry, members) = (stamp.0, stamp.1.clone());
+    let (entry, members) = (stamp.anchor_prev, stamp.tachygrams.clone());
     let epoch = pool.epoch_at(entry);
     let witness = witness::qr_stamp_intake_seed(((), ()), entry, epoch, discriminant, &members);
     let (pcd, ()) = PROOF_SYSTEM
@@ -709,7 +729,7 @@ fn build_qr_roots<RNG: CryptoRng>(
     let mut open: Vec<&StampEntry> = Vec::new();
     let mut held = 0;
     for entry in pool.stamps_between(start, end) {
-        let size = entry.1.len();
+        let size = entry.tachygrams.len();
         if !open.is_empty() && (held + size) > capacity {
             runs.push(mem::take(&mut open));
             held = 0;
@@ -731,11 +751,12 @@ fn build_qr_roots<RNG: CryptoRng>(
             run.first().expect("nonempty run"),
             run.last().expect("nonempty run"),
         );
-        if run.len() == 1 && first.1.len() > capacity {
+        if run.len() == 1 && first.tachygrams.len() > capacity {
             roots.push(seed_qr_stamp_intake(rng, pool, first, discriminant));
             continue;
         }
-        let (summary, members) = build_summary_pcd(rng, pool, (first.0, last.3));
+        let (summary, members) =
+            build_summary_pcd(rng, pool, (first.anchor_prev, last.anchor_next));
         let witness = witness::qr_summary_intake((*summary.data(), ()), discriminant);
         let (pcd, ()) = PROOF_SYSTEM
             .fuse(

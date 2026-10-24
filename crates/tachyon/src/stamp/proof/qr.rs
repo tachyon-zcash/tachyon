@@ -668,7 +668,7 @@ pub(super) fn enforce_value_profile(
     let mut depth_acc = Fp::ZERO;
     let mut index_acc = Fp::ZERO;
     let mut bits_acc = Fp::ZERO;
-    for (&QrClassRoot(side, root), &selected) in classes.iter().zip(mask) {
+    for (&QrClassRoot { side, root }, &selected) in classes.iter().zip(mask) {
         let side_fp = Fp::from(u64::from(side));
         let multiplier = QUADRATIC_NON_RESIDUE - ((QUADRATIC_NON_RESIDUE - Fp::ONE) * side_fp);
         ragu_constraint::enforce_zero(

@@ -24,10 +24,11 @@ use zcash_tachyon::{
 };
 
 use crate::fixtures::{
-    PoolSim, QrBucketEntry, QrIntakeEntry, WalletSim, build_qr_branch, build_qr_partition,
-    build_summary_pcd, build_unspent_pcd_over_epochs, cube_root_twin, epoch_bucket, indexed_factor,
-    qr_bucket_segment, qr_profile_of, random_block, random_block_with, seal_qr_intake,
-    seed_qr_empty_intake, seed_qr_stamp_intake, shared_sk, split_qr_intake, unpinned_challenge,
+    PoolSim, QrBucketEntry, QrIntakeEntry, StampEntry, WalletSim, build_qr_branch,
+    build_qr_partition, build_summary_pcd, build_unspent_pcd_over_epochs, cube_root_twin,
+    epoch_bucket, indexed_factor, qr_bucket_segment, qr_profile_of, random_block,
+    random_block_with, seal_qr_intake, seed_qr_empty_intake, seed_qr_stamp_intake, shared_sk,
+    split_qr_intake, unpinned_challenge,
 };
 
 /// The witness of [`qr::QrUnspentInit`].
@@ -206,7 +207,12 @@ fn qr_stamp_intake_seed_roots_an_intake_on_one_stamp() {
     let pool = PoolSim::genesis_with(random_block(rng, 3, 1));
     let block = pool.block(BlockHeight(0));
     let entry = block.stamps.first().expect("one stamp");
-    let (anchor_prev, members, commit, anchor_end) = entry.clone();
+    let StampEntry {
+        anchor_prev,
+        tachygrams: members,
+        commitment: commit,
+        anchor_next: anchor_end,
+    } = entry.clone();
     let (summary, _) = build_summary_pcd(rng, &pool, (anchor_prev, anchor_end));
 
     let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
@@ -1968,7 +1974,7 @@ fn qr_short_bucket_yields_evidence_no_suffix_can_extend() {
     assert!(
         pool.stamps_between(Anchor::default(), tip_anchor)
             .iter()
-            .all(|entry| entry.3 != unpublished),
+            .all(|entry| entry.anchor_next != unpublished),
         "no published anchor equals the short extent's crossing"
     );
 
@@ -2309,7 +2315,7 @@ fn qr_unspent_init_rejects_a_root_off_its_class() {
     let (_nf, bucket, mut witness) = honest_unspent_init(rng);
 
     let (_, ref mut roots, ..) = witness;
-    let QrClassRoot(_, ref mut root) = roots[0];
+    let QrClassRoot { ref mut root, .. } = roots[0];
     let off = *root + Fp::ONE;
     assert_ne!(off.square(), root.square());
     *root = off;
@@ -2334,7 +2340,7 @@ fn qr_unspent_init_tests_sides_past_the_bucket_depth() {
     let shifted = Fp::from(nf) + discriminant.at(position);
     assert_ne!(shifted, Fp::ZERO);
     let (_, ref mut roots, ..) = witness;
-    let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
+    let QrClassRoot { ref mut side, .. } = roots[usize::try_from(position).unwrap()];
     *side = !*side;
 
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
@@ -2378,13 +2384,16 @@ fn qr_unspent_init_rejects_the_fixed_point_on_the_non_residue_side() {
     let (_, honest_roots, ..) = witness;
     assert_eq!(
         honest_roots[usize::try_from(position).unwrap()],
-        QrClassRoot(true, Fp::ZERO)
+        QrClassRoot {
+            side: true,
+            root: Fp::ZERO,
+        }
     );
     fuse_unspent_init(rng, bucket.pcd.clone(), witness.clone())
         .expect("the fixed point passes on the residue side");
 
     let (_, ref mut roots, ..) = witness;
-    let QrClassRoot(ref mut side, _) = roots[usize::try_from(position).unwrap()];
+    let QrClassRoot { ref mut side, .. } = roots[usize::try_from(position).unwrap()];
     *side = false;
     let err = fuse_unspent_init(rng, bucket.pcd, witness).err().unwrap();
     assert_eq!(

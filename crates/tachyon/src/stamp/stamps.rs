@@ -508,9 +508,8 @@ impl Plan {
             ));
         }
 
-        for (index, ((desc, theta, rcv), (secret_pcd, spendable_pcd, spans))) in
-            self.spends.into_iter().zip(spend_pcds).enumerate()
-        {
+        let indexed_spends = self.spends.into_iter().zip(spend_pcds).enumerate();
+        for (index, ((desc, theta, rcv), (secret_pcd, spendable_pcd, spans))) in indexed_spends {
             let reached = spans
                 .last()
                 .map_or_else(|| spendable_pcd.data().2, |last| last.0.data().2);
@@ -528,7 +527,7 @@ impl Plan {
 
             let (cm, nf_current, nf_next, spend_anchor, _pk, cv) = *bind_pcd.data();
             let alpha = theta.randomizer::<effect::Spend>(cm);
-            let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha))
+            let digest = ActionDigest::try_new(cv, pak.ak.derive_action_public(&alpha))
                 .map_err(ProveError::ActionDigest)?;
             let tachygrams =
                 BTreeSet::from_iter([Tachygram::from(nf_current), Tachygram::from(nf_next)]);
@@ -571,7 +570,7 @@ impl Plan {
 
         for (desc, theta, note, rcv) in self.outputs {
             let alpha = theta.randomizer::<effect::Output>(note.commitment());
-            let digest = ActionDigest::new(
+            let digest = ActionDigest::try_new(
                 rcv.commit(-note.value),
                 private::ActionSigningKey::new(&alpha).derive_action_public(),
             )

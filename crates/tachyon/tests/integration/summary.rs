@@ -13,7 +13,7 @@ use rand::rngs::StdRng;
 use zcash_tachyon::stamp::proof::{PROOF_SYSTEM, summary};
 use zcash_tachyon::{Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetPoly, witness};
 
-use crate::fixtures::{PoolSim, build_summary_pcd, random_block};
+use crate::fixtures::{PoolSim, StampEntry, build_summary_pcd, random_block};
 
 #[test]
 fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
@@ -222,7 +222,12 @@ fn summary_seed_on_a_foreign_epoch_leaves_the_chain() {
         .seed(
             rng,
             summary::SummarySeed,
-            witness::summary_seed(((), ()), first.prev, EpochIndex::new(1), &first.stamps[0].1),
+            witness::summary_seed(
+                ((), ()),
+                first.prev,
+                EpochIndex::new(1),
+                &first.stamps[0].tachygrams,
+            ),
         )
         .expect("SummarySeed");
     let (_, _, anchor_end, _) = *seeded.data();
@@ -230,7 +235,11 @@ fn summary_seed_on_a_foreign_epoch_leaves_the_chain() {
     for height in 0..=pool.height().0 {
         let block = pool.block(BlockHeight(height));
         assert_ne!(anchor_end, block.prev);
-        for &(_, _, _, anchor) in &block.stamps {
+        for &StampEntry {
+            anchor_next: anchor,
+            ..
+        } in &block.stamps
+        {
             assert_ne!(anchor_end, anchor, "the fold left the published chain");
         }
     }

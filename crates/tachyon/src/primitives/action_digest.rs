@@ -32,7 +32,7 @@ impl ActionDigest {
     ///
     /// Returns [`ActionDigestError`] if either point is the identity, which
     /// has no affine coordinates to absorb.
-    pub fn new(
+    pub fn try_new(
         cv: value::Commitment,
         rk: public::ActionVerificationKey,
     ) -> Result<Self, ActionDigestError> {
@@ -87,8 +87,8 @@ mod tests {
         let (cv_b, rk_b) = make_action_parts(rng, 700);
 
         assert_ne!(
-            ActionDigest::new(cv_a, rk_a).unwrap(),
-            ActionDigest::new(cv_b, rk_b).unwrap()
+            ActionDigest::try_new(cv_a, rk_a).unwrap(),
+            ActionDigest::try_new(cv_b, rk_b).unwrap()
         );
     }
 
@@ -99,7 +99,7 @@ mod tests {
         let (_, rk) = make_action_parts(rng, 500);
         let cv = value::Commitment::default();
         assert!(matches!(
-            ActionDigest::new(cv, rk),
+            ActionDigest::try_new(cv, rk),
             Err(ActionDigestError::IdentityCv)
         ));
     }
@@ -112,7 +112,7 @@ mod tests {
         let rk =
             public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());
         assert!(matches!(
-            ActionDigest::new(cv, rk),
+            ActionDigest::try_new(cv, rk),
             Err(ActionDigestError::IdentityRk)
         ));
     }

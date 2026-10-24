@@ -127,7 +127,7 @@ impl Step for OutputAction {
         let alpha = theta.randomizer::<effect::Output>(note::Commitment::from(Fp::from(cm)));
 
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
-        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
+        let action_digest = ActionDigest::try_new(cv, rk).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "OutputAction: action digest construction failed".into(),
             )
@@ -210,7 +210,7 @@ impl Step for SpendAction {
         let alpha = theta.randomizer::<effect::Spend>(cm);
 
         let rk = pak.ak.derive_action_public(&alpha);
-        let action_digest = ActionDigest::new(cv, rk).map_err(|_err| {
+        let action_digest = ActionDigest::try_new(cv, rk).map_err(|_err| {
             ragu_core::Error::InvalidWitness(
                 "SpendAction: action digest construction failed".into(),
             )

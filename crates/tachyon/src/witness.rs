@@ -478,7 +478,7 @@ pub fn output_action(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
     )]
-    let digest = ActionDigest::new(
+    let digest = ActionDigest::try_new(
         cv,
         private::ActionSigningKey::new(&alpha).derive_action_public(),
     )
@@ -515,7 +515,8 @@ pub fn spend_action(
         clippy::expect_used,
         reason = "identity cv or rk is a degenerate input"
     )]
-    let digest = ActionDigest::new(cv, pak.ak.derive_action_public(&alpha)).expect("action digest");
+    let digest =
+        ActionDigest::try_new(cv, pak.ak.derive_action_public(&alpha)).expect("action digest");
 
     (
         theta,

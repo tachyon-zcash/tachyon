@@ -214,7 +214,8 @@ mod tests {
         let half = -Fp::ONE * Fp::TWO_INV;
         let repr = half.to_repr();
         let mut limbs = [0u64; 4];
-        for (limb, bytes) in limbs.iter_mut().zip(repr.as_ref().chunks(8)) {
+        let limb_chunks = limbs.iter_mut().zip(repr.as_ref().chunks(8));
+        for (limb, bytes) in limb_chunks {
             *limb = u64::from_le_bytes(bytes.try_into().unwrap());
         }
         limbs
