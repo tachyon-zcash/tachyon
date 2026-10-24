@@ -36,6 +36,14 @@ libFuzzer. With `cargo-fuzz` installed, `cargo fuzz run TARGET -- -max_len=32768
 from this directory works as well; the local toolchain file pins a nightly new
 enough for the workspace MSRV.
 
+To see why a reader rejects an input, replay the input file through the built
+target with `DEBUG_INPUT` set, which prints the reader's `io::Error`. From this
+directory:
+
+```sh
+DEBUG_INPUT=1 target/"$(rustc -vV | sed -n 's/^host: //p')"/release/bundle_read corpus/bundle_read/state_ff
+```
+
 Keep `-max_len` at least 32768: the proof-stamped seeds are larger than
 libFuzzer's 4096-byte default. The recipe sets it.
 
