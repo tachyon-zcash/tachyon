@@ -236,7 +236,7 @@ mod tests {
         let value = -discriminant.at(position);
         let classes = QrClassRoot::along(value, discriminant);
         assert_eq!(
-            classes[usize::try_from(position).unwrap()],
+            classes[usize::try_from(position).expect("profile depth fits in usize")],
             QrClassRoot {
                 side: true,
                 root: Fp::ZERO,
@@ -249,7 +249,10 @@ mod tests {
         for depth in [0, 1, 31, 32] {
             let mask = QrProfile { depth, bits: 0 }.depth_mask();
             let ones = mask.iter().filter(|&&selected| selected).count();
-            assert_eq!(ones, usize::try_from(depth).unwrap());
+            assert_eq!(
+                ones,
+                usize::try_from(depth).expect("profile depth fits in usize")
+            );
             assert!(
                 mask.iter()
                     .zip(mask.iter().skip(1))

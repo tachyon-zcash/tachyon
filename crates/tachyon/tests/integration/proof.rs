@@ -14,7 +14,6 @@ use pasta_curves::Fp;
 use ragu::{Pcd, Proof};
 use rand::SeedableRng as _;
 use rand::rngs::StdRng;
-use rand_core::CryptoRng;
 use zcash_tachyon::constants::{EPOCH_MAX, EPOCH_SIZE};
 use zcash_tachyon::digest::poseidon;
 use zcash_tachyon::entropy::ActionEntropy;
@@ -80,31 +79,14 @@ fn detached_segment(
     let discriminant = zcash_tachyon::QrDiscriminant::from(Fp::random(&mut *rng));
     let intake = seed_qr_empty_intake(
         rng,
-        anchor_final_prev.next_epoch(epoch).unwrap(),
+        anchor_final_prev
+            .next_epoch(epoch)
+            .expect("fixture epoch is within protocol bounds"),
         epoch,
         discriminant,
     );
     let bucket = seal_qr_intake(rng, intake, anchor_final_prev);
     qr_bucket_segment(rng, &bucket, nf)
-}
-
-fn mine_cm_in_epoch_one<RNG: CryptoRng>(
-    rng: &mut RNG,
-    pool: &mut PoolSim,
-    cm: note::Commitment,
-) -> BlockHeight {
-    // Height EPOCH_SIZE is epoch 1's first block, carrying the real B_1 fold.
-    while pool.height().0 < EPOCH_SIZE {
-        pool.mine(random_block(rng, 1, 3));
-    }
-    pool.mine(random_block_with(rng, &[alloc::vec![cm]], 4));
-    let cm_height = pool.height();
-    assert_eq!(
-        cm_height.epoch(),
-        EpochIndex::new(1),
-        "cm-block is in epoch 1"
-    );
-    cm_height
 }
 
 fn honest_spend_bind(
@@ -145,7 +127,16 @@ fn same_epoch_honest_spend_accepted() {
     let user = WalletSim::new(shared_sk());
     let mut pool = PoolSim::genesis(rng);
     let note = user.random_note(500);
-    let cm_height = mine_cm_in_epoch_one(rng, &mut pool, note.commitment());
+    while pool.height().0 < EPOCH_SIZE {
+        pool.mine(random_block(rng, 1, 3));
+    }
+    pool.mine(random_block_with(rng, &[alloc::vec![note.commitment()]], 4));
+    let cm_height = pool.height();
+    assert_eq!(
+        cm_height.epoch(),
+        EpochIndex::new(1),
+        "cm-block is in epoch 1"
+    );
     let epoch = cm_height.epoch();
 
     let spendable = user.spendable_init(rng, &note, &pool, cm_height);
@@ -154,7 +145,13 @@ fn same_epoch_honest_spend_accepted() {
 
     let expected = TachygramSetPoly::from_iter([
         user.nf_at(&note, epoch).into(),
-        user.nf_at(&note, epoch.next().unwrap()).into(),
+        user.nf_at(
+            &note,
+            epoch
+                .next()
+                .expect("fixture epoch is below the protocol maximum"),
+        )
+        .into(),
     ])
     .commit();
     assert_eq!(stamp.data().1, expected, "publishes {{N_E, N_E+1}}");
@@ -222,7 +219,7 @@ fn spendable_init_rejects_tg_absent() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -235,7 +232,9 @@ fn unspent_fuse_rejects_invalid_compositions() {
     let mut pool = PoolSim::genesis(rng);
     mine_through(rng, &mut pool, EpochIndex::new(2).last_block());
     let nf: [Nullifier; 3] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
-    let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
+    let at = |epoch: EpochIndex| {
+        nf[usize::try_from(u32::from(epoch)).expect("fixture epoch fits in usize")]
+    };
 
     // Anchor discontinuity: the right segment skips epoch one.
     let left =
@@ -246,7 +245,7 @@ fn unspent_fuse_rejects_invalid_compositions() {
     let err = PROOF_SYSTEM
         .fuse(rng, pool::UnspentFuse, w, left, right)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -286,14 +285,14 @@ fn anchor_span_fuse_rejects_unjoined_spans() {
             witness::anchor_span_seed(((), ()), bogus_start, BlockHeight(1).epoch(), &stamps[0]);
         let right_members = [bogus_start
             .next_stamp(seed_witness.1, &seed_witness.2)
-            .unwrap()];
+            .expect("fixture commitment is non-identity")];
         let (right, ()) = PROOF_SYSTEM
             .seed(rng, pool::AnchorSpanSeed, seed_witness)
             .expect("AnchorSpanSeed");
 
         let err = fuse_spans(rng, (left, &left_members), (right, &right_members))
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
@@ -322,7 +321,7 @@ fn anchor_span_fuse_rejects_unjoined_spans() {
 
         let err = fuse_spans(rng, (left, &left_members), (right, &right_members))
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
@@ -331,21 +330,6 @@ fn anchor_span_fuse_rejects_unjoined_spans() {
             "AnchorSpanFuse: spans do not share a vertex"
         );
     }
-}
-
-/// An output stamp anchored at `stamp_anchor`, carried on its header.
-fn output_stamp_pcd(rng: &mut StdRng, user: &WalletSim, stamp_anchor: Anchor) -> Pcd<stamp::Stamp> {
-    let (stamp, plan, fee_descriptor) =
-        build_output_stamp(rng, stamp_anchor, user.random_note(200));
-    let action_commit = ActionSetPoly::from_iter([
-        plan.digest().expect("valid plan"),
-        fee_descriptor.digest().expect("fee digest"),
-    ])
-    .commit();
-    let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
-    stamp
-        .proof
-        .carry((action_commit, tachygram_commit, stamp_anchor))
 }
 
 /// Lift an output stamp anchored at `stamp_anchor` along `span`, witnessing
@@ -357,7 +341,19 @@ fn lift_output_stamp(
     span: &Pcd<pool::AnchorSpan>,
     members: &[Anchor],
 ) -> ragu_core::Result<Pcd<stamp::Stamp>> {
-    let stamp_pcd = output_stamp_pcd(rng, user, stamp_anchor);
+    let (stamp, plan, fee_descriptor) =
+        build_output_stamp(rng, stamp_anchor, user.random_note(200));
+    let plan_digest = plan
+        .digest()
+        .map_err(|err| ragu_core::Error::InvalidWitness(Box::new(err)))?;
+    let fee_digest = fee_descriptor
+        .digest()
+        .map_err(|err| ragu_core::Error::InvalidWitness(Box::new(err)))?;
+    let action_commit = ActionSetPoly::from_iter([plan_digest, fee_digest]).commit();
+    let tachygram_commit = TachygramSetPoly::from_iter(stamp.tachygrams).commit();
+    let stamp_pcd = stamp
+        .proof
+        .carry((action_commit, tachygram_commit, stamp_anchor));
 
     PROOF_SYSTEM
         .fuse(
@@ -424,7 +420,7 @@ fn stamp_lift_rejects_invalid_lifts() {
     let fork_set = TachygramSetPoly::from_iter([Tachygram::from(Fp::random(&mut *rng))]).commit();
     let fork = anchor_start
         .next_stamp(BlockHeight(1).epoch(), &fork_set)
-        .unwrap();
+        .expect("fixture commitment is non-identity");
     let foreign_members: Vec<Anchor> = members.iter().copied().chain([fork]).collect();
 
     let cases = [
@@ -445,7 +441,7 @@ fn stamp_lift_rejects_invalid_lifts() {
     for (label, stamp_anchor, witnessed, expected) in cases {
         let err = lift_output_stamp(rng, &user, stamp_anchor, &span, &witnessed)
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("{label}: expected InvalidWitness, got {err:?}");
         };
@@ -476,7 +472,7 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
                 right.clone(),
             )
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
@@ -496,7 +492,7 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
             .data()
             .2
             .next_stamp(BlockHeight(2).epoch(), &fork_set)
-            .unwrap();
+            .expect("fixture commitment is non-identity");
         let forged = AnchorSetPoly::from_iter(
             left_members
                 .iter()
@@ -513,7 +509,7 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
                 right.clone(),
             )
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
@@ -538,7 +534,7 @@ fn anchor_span_fuse_rejects_invalid_compositions() {
                 left,
             )
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
@@ -606,7 +602,15 @@ fn spend_bind_honest() {
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable_pcd);
     let (_cm, nf_current, nf_next, _anchor, _pk, _cv) = *bind_pcd.data();
     assert_eq!(nf_current, user.nf_at(&note, spend_epoch));
-    assert_eq!(nf_next, user.nf_at(&note, spend_epoch.next().unwrap()));
+    assert_eq!(
+        nf_next,
+        user.nf_at(
+            &note,
+            spend_epoch
+                .next()
+                .expect("fixture epoch is below the protocol maximum")
+        )
+    );
 }
 
 /// A forged note reaches `SpendBind` only as the secret of another
@@ -659,7 +663,7 @@ fn spend_rejects_invalid_note() {
                 secret_pcd,
             )
             .err()
-            .unwrap();
+            .expect("invalid witnesses must be rejected");
         let ragu_core::Error::InvalidWitness(inner) = err else {
             panic!("expected InvalidWitness, got {err:?}");
         };
@@ -681,7 +685,7 @@ fn spend_rejects_invalid_note() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -801,7 +805,14 @@ fn spend_stamp_assembles_tachygrams() {
     let (_actions, tg_commit, _anchor) = *stamp_pcd.data();
     let expected = TachygramSetPoly::from_iter([
         Tachygram::from(user.nf_at(&note, spend_epoch)),
-        Tachygram::from(user.nf_at(&note, spend_epoch.next().unwrap())),
+        Tachygram::from(
+            user.nf_at(
+                &note,
+                spend_epoch
+                    .next()
+                    .expect("fixture epoch is below the protocol maximum"),
+            ),
+        ),
     ])
     .commit();
     assert_eq!(tg_commit, expected);
@@ -895,7 +906,9 @@ fn multi_epoch_fuse_setup(
     let mut pool = PoolSim::genesis(rng);
     mine_through(rng, &mut pool, EpochIndex::new(3).last_block());
     let nf: [Nullifier; 4] = array::from_fn(|_| Nullifier::from(Fp::random(&mut *rng)));
-    let at = |epoch: EpochIndex| nf[usize::try_from(u32::from(epoch)).unwrap()];
+    let at = |epoch: EpochIndex| {
+        nf[usize::try_from(u32::from(epoch)).expect("fixture epoch fits in usize")]
+    };
     let left =
         build_unspent_pcd_over_epochs(rng, &pool, at, (EpochIndex::new(0), EpochIndex::new(2)));
     let right =
@@ -955,7 +968,7 @@ fn unspent_fuse_rejects_wrong_left_seq() {
             right,
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -982,7 +995,7 @@ fn unspent_fuse_rejects_wrong_right_seq() {
             right,
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1010,7 +1023,7 @@ fn unspent_fuse_rejects_wrong_combined() {
             right,
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1097,7 +1110,7 @@ fn unspent_bind_rejects_a_forged_member() {
     let err = PROOF_SYSTEM
         .fuse(rng, pool::UnspentBind, witness, unspent, range)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1173,7 +1186,7 @@ fn unspent_bind_rejects_elapsed_mismatch() {
             range,
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1206,7 +1219,7 @@ fn unspent_bind_rejects_uncovered_start() {
     let err = PROOF_SYSTEM
         .fuse(rng, pool::UnspentBind, witness, unspent, range)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1242,7 +1255,7 @@ fn unspent_bind_rejects_uncovered_end() {
     let err = PROOF_SYSTEM
         .fuse(rng, pool::UnspentBind, witness, unspent, range)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1279,7 +1292,7 @@ fn spendable_lift_rejects_wrong_cm() {
     let err = PROOF_SYSTEM
         .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1306,7 +1319,7 @@ fn spendable_lift_rejects_non_adjacent_unspent() {
     let err = PROOF_SYSTEM
         .fuse(rng, spendable::SpendableLift, (), spendable, unspent)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1330,7 +1343,7 @@ fn expect_invalid<H: ragu::Header, S>(
     let err = PROOF_SYSTEM
         .fuse(rng, step, witness, left, right)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1479,7 +1492,7 @@ fn nullifier_derive_rejects_a_window_past_the_final_epoch() {
             Proof::trivial().carry::<()>(()),
         )
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1568,7 +1581,7 @@ fn nullifier_fuse_rejects_non_contiguous() {
     let err = PROOF_SYSTEM
         .fuse(rng, delegation::NullifierFuse, witness, range_a, range_b)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1594,7 +1607,7 @@ fn nullifier_fuse_rejects_wrong_cm() {
     let err = PROOF_SYSTEM
         .fuse(rng, delegation::NullifierFuse, witness, range_a, range_b)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -1618,7 +1631,7 @@ fn spend_bind_rejects_a_secret_for_another_note() {
     let err = PROOF_SYSTEM
         .fuse(rng, spend::SpendBind, (rcv,), spendable, foreign)
         .err()
-        .unwrap();
+        .expect("invalid witnesses must be rejected");
     let ragu_core::Error::InvalidWitness(inner) = err else {
         panic!("expected InvalidWitness, got {err:?}");
     };
@@ -2280,7 +2293,15 @@ fn one_window_serves_init_and_matches_the_bind() {
 
     let bind_pcd = honest_spend_bind(rng, &user, &note, spendable);
     assert_eq!(bind_pcd.data().1, user.nf_at(&note, epoch));
-    assert_eq!(bind_pcd.data().2, user.nf_at(&note, epoch.next().unwrap()));
+    assert_eq!(
+        bind_pcd.data().2,
+        user.nf_at(
+            &note,
+            epoch
+                .next()
+                .expect("fixture epoch is below the protocol maximum")
+        )
+    );
 }
 
 /// A bucket-started spendable lifts across an epoch and binds to a spend.

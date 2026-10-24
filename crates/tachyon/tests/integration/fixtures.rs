@@ -22,7 +22,7 @@ use zcash_tachyon::bundle::{self, Bundle};
 use zcash_tachyon::constants::EVIDENCE_TREE_ARITY;
 use zcash_tachyon::digest::blake2b;
 use zcash_tachyon::entropy::ActionEntropy;
-use zcash_tachyon::keys::{NoteMasterKey, PaymentKey, ProofAuthorizingKey, private};
+use zcash_tachyon::keys::{NoteMasterKey, ProofAuthorizingKey, private};
 use zcash_tachyon::note::{self, Note};
 use zcash_tachyon::nullifier::{self, NF_DERIVATION_WIDTH, Nullifier};
 use zcash_tachyon::stamp::proof::stamp::{Stamp, StampMerge};
@@ -348,7 +348,9 @@ impl PoolSimBlock {
             .map(|tgs| {
                 let stamp_prev = anchor;
                 let commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
-                let stamp_after = anchor.next_stamp(epoch, &commit).unwrap();
+                let stamp_after = anchor
+                    .next_stamp(epoch, &commit)
+                    .expect("fixture commitment is non-identity");
                 anchor = stamp_after;
                 StampEntry {
                     anchor_prev: stamp_prev,
@@ -531,7 +533,9 @@ impl PoolSim {
         // Epoch-first blocks are preceded by an entry anchor lift;
         // intra-epoch blocks advance directly from the previous block's anchor.
         let prev = if new_height.is_first_in_epoch() {
-            old_tip.next_epoch(new_height.epoch()).unwrap()
+            old_tip
+                .next_epoch(new_height.epoch())
+                .expect("fixture epoch is within protocol bounds")
         } else {
             old_tip
         };
@@ -562,7 +566,9 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
     loop {
         for tgs in &pool.block(height).tachygrams() {
             let witness = witness::anchor_span_seed(((), ()), state, height.epoch(), tgs);
-            let next_state = state.next_stamp(witness.1, &witness.2).unwrap();
+            let next_state = state
+                .next_stamp(witness.1, &witness.2)
+                .expect("fixture commitment is non-identity");
             let (seed, ()) = PROOF_SYSTEM
                 .seed(rng, pool::AnchorSpanSeed, witness)
                 .expect("AnchorSpanSeed");
@@ -586,7 +592,9 @@ pub(crate) fn build_anchor_span_pcd<RNG: CryptoRng>(
         if height >= end {
             break;
         }
-        height = height.next().unwrap();
+        height = height
+            .next()
+            .expect("fixture height is below the protocol maximum");
     }
 
     (
@@ -718,7 +726,7 @@ pub(crate) fn seed_qr_stamp_intake<RNG: CryptoRng>(
 /// `capacity` is rooted on its own through
 /// [`QrStampIntakeSeed`](qr::QrStampIntakeSeed), skipping the summary steps.
 /// Chunking counts members, and is indifferent to block boundaries.
-fn build_qr_roots<RNG: CryptoRng>(
+pub(crate) fn build_qr_roots<RNG: CryptoRng>(
     rng: &mut RNG,
     pool: &PoolSim,
     (start, end): (Anchor, Anchor),
@@ -778,7 +786,7 @@ fn build_qr_roots<RNG: CryptoRng>(
 /// A layer holds its intakes grouped by profile and span-ordered within each
 /// group, so neighbours that share a profile are exactly the pairs whose spans
 /// meet.
-fn merge_qr_run<RNG: CryptoRng>(
+pub(crate) fn merge_qr_run<RNG: CryptoRng>(
     rng: &mut RNG,
     intakes: Vec<QrIntakeEntry>,
     capacity: usize,
@@ -890,34 +898,6 @@ pub(crate) fn build_qr_partition<RNG: CryptoRng>(
         }
         layer = merge_qr_run(rng, residue, capacity);
         layer.extend(merge_qr_run(rng, non_residue, capacity));
-    }
-    layer
-}
-
-/// Route the anchor span `(start, end)`'s tachygrams to `depth` along
-/// `value`'s own path, over intakes holding at most `capacity` members each.
-///
-/// Each layer splits every intake on the path, keeps `value`'s side, and
-/// merges same-profile neighbours as far as `capacity` allows. The work grows
-/// with the depth, not with the number of profiles.
-pub(crate) fn build_qr_branch<RNG: CryptoRng>(
-    rng: &mut RNG,
-    pool: &PoolSim,
-    (start, end): (Anchor, Anchor),
-    discriminant: QrDiscriminant,
-    capacity: usize,
-    value: Fp,
-    depth: u32,
-) -> Vec<QrIntakeEntry> {
-    let mut layer = build_qr_roots(rng, pool, (start, end), discriminant, capacity);
-    for level in 0..depth {
-        let side = qr::classify(value, discriminant.at(level)).0;
-        let mut kept = Vec::with_capacity(layer.len());
-        for intake in layer {
-            let (non_residue, residue) = split_qr_intake(rng, intake);
-            kept.push(if side { residue } else { non_residue });
-        }
-        layer = merge_qr_run(rng, kept, capacity);
     }
     layer
 }
@@ -1272,21 +1252,6 @@ pub(crate) fn shared_sk() -> private::SpendingKey {
     private::SpendingKey::random(&mut StdRng::seed_from_u64(0x7AC0_05EED))
 }
 
-/// A `StdRng` seed derived as `BLAKE2b(pk, value)`, so each `(pk, value)` pair
-/// gets a distinct, fully value-dependent note-material stream. Test-only.
-fn note_stream_seed(pk: PaymentKey, value: u64) -> [u8; 32] {
-    let digest = blake2b_simd::Params::new()
-        .hash_length(32)
-        .personal(b"Tachyon-NoteRnd")
-        .to_state()
-        .update(&Fp::from(pk).to_repr())
-        .update(&value.to_le_bytes())
-        .finalize();
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(digest.as_bytes());
-    seed
-}
-
 pub struct WalletSim {
     pub sk: private::SpendingKey,
     pub pak: ProofAuthorizingKey,
@@ -1330,9 +1295,18 @@ impl WalletSim {
     pub fn random_note(&self, value_amount: u64) -> Note {
         let pk = self.sk.derive_payment_key();
         let mut streams = self.notes.borrow_mut();
-        let notes = streams
-            .entry(value_amount)
-            .or_insert_with(|| StdRng::from_seed(note_stream_seed(pk, value_amount)));
+        let notes = streams.entry(value_amount).or_insert_with(|| {
+            let digest = blake2b_simd::Params::new()
+                .hash_length(32)
+                .personal(b"Tachyon-NoteRnd")
+                .to_state()
+                .update(&Fp::from(pk).to_repr())
+                .update(&value_amount.to_le_bytes())
+                .finalize();
+            let mut seed = [0u8; 32];
+            seed.copy_from_slice(digest.as_bytes());
+            StdRng::from_seed(seed)
+        });
         Note {
             pk,
             value: value::Positive::try_from(value_amount).expect("fixture value in range"),
@@ -1474,11 +1448,14 @@ impl WalletSim {
                 .expect("cm not found in any stamp at the cm-block");
 
             // Anchor immediately before the cm-stamp (the cm-block prefix fold).
-            let anchor_prev = stamp_commits[..cm_idx]
-                .iter()
-                .fold(pool.block(init_height).prev, |anchor, commit| {
-                    anchor.next_stamp(init_height.epoch(), commit).unwrap()
-                });
+            let anchor_prev = stamp_commits[..cm_idx].iter().fold(
+                pool.block(init_height).prev,
+                |anchor, commit| {
+                    anchor
+                        .next_stamp(init_height.epoch(), commit)
+                        .expect("fixture commitment is non-identity")
+                },
+            );
 
             (anchor_prev, stamps[cm_idx].clone())
         };
@@ -1755,7 +1732,11 @@ impl SyncSim {
 
     /// The epochs the delegation has covered so far.
     pub fn consumed(&self, handle: usize) -> u32 {
-        let entry = self.entry(handle);
+        let entry = self
+            .entries
+            .iter()
+            .find(|entry| entry.handle == handle)
+            .expect("no delegation for handle");
         u32::from(entry.epoch_cursor) - u32::from(entry.epoch_start)
     }
 
@@ -1781,13 +1762,6 @@ impl SyncSim {
             build_unspent_pcd_over_epochs(rng, pool, nf, (entry.epoch_cursor, epoch_next));
         self.entries[idx].epoch_cursor = epoch_next;
         unspent
-    }
-
-    fn entry(&self, handle: usize) -> &SyncEntry {
-        self.entries
-            .iter()
-            .find(|entry| entry.handle == handle)
-            .expect("no delegation for handle")
     }
 }
 

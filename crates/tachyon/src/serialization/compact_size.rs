@@ -369,9 +369,13 @@ mod tests {
         for (value, expected_variant, expected_bytes) in cases {
             let cs = CompactSize::from(value);
             assert_eq!(cs, expected_variant);
-            cs.write(&mut buf).unwrap();
+            cs.write(&mut buf).expect("writing to a Vec is infallible");
             assert_eq!(buf, expected_bytes);
-            assert_eq!(CompactSize::read(buf.as_slice()).unwrap(), expected_variant);
+            assert_eq!(
+                CompactSize::read(buf.as_slice())
+                    .expect("fixture encoding is complete and canonical"),
+                expected_variant
+            );
             buf.clear();
         }
     }
@@ -380,20 +384,23 @@ mod tests {
     /// direction.
     #[test]
     fn constructors_enforce_canonical_form() {
-        CompactSize::one_byte(0).unwrap();
-        CompactSize::one_byte(MAX_ONE_BYTE).unwrap();
+        CompactSize::one_byte(0).expect("fixture encoding is complete and canonical");
+        CompactSize::one_byte(MAX_ONE_BYTE).expect("fixture encoding is complete and canonical");
         CompactSize::one_byte(FLAG_TWO_BYTES).unwrap_err();
 
         CompactSize::two_bytes(u16::from(MAX_ONE_BYTE)).unwrap_err();
-        CompactSize::two_bytes(u16::from(FLAG_TWO_BYTES)).unwrap();
-        CompactSize::two_bytes(u16::MAX).unwrap();
+        CompactSize::two_bytes(u16::from(FLAG_TWO_BYTES))
+            .expect("fixture encoding is complete and canonical");
+        CompactSize::two_bytes(u16::MAX).expect("fixture encoding is complete and canonical");
 
         CompactSize::four_bytes(u32::from(u16::MAX)).unwrap_err();
-        CompactSize::four_bytes(u32::from(u16::MAX) + 1).unwrap();
-        CompactSize::four_bytes(u32::MAX).unwrap();
+        CompactSize::four_bytes(u32::from(u16::MAX) + 1)
+            .expect("fixture encoding is complete and canonical");
+        CompactSize::four_bytes(u32::MAX).expect("fixture encoding is complete and canonical");
 
         CompactSize::eight_bytes(u64::from(u32::MAX)).unwrap_err();
-        CompactSize::eight_bytes(u64::from(u32::MAX) + 1).unwrap();
+        CompactSize::eight_bytes(u64::from(u32::MAX) + 1)
+            .expect("fixture encoding is complete and canonical");
     }
 
     /// `enforce_max` rejects values above the consensus bound
@@ -409,7 +416,7 @@ mod tests {
             .unwrap_err();
         CompactSize::FourBytes(MAX_COMPACT_SIZE)
             .enforce_max()
-            .unwrap();
+            .expect("the consensus maximum is valid");
     }
 
     /// `enforce_canon` rejects values stored in an over-long form per Zcash
@@ -444,7 +451,8 @@ mod tests {
     fn read_ignores_trailing_bytes() {
         let one_byte_with_trailing = [0x00, 0xDE, 0xAD, 0xBE, 0xEF];
         assert_eq!(
-            CompactSize::read(one_byte_with_trailing.as_slice()).unwrap(),
+            CompactSize::read(one_byte_with_trailing.as_slice())
+                .expect("fixture encoding is complete and canonical"),
             CompactSize::OneByte(0),
         );
         let two_byte_with_trailing = [
@@ -453,7 +461,8 @@ mod tests {
         ]
         .concat();
         assert_eq!(
-            CompactSize::read(two_byte_with_trailing.as_slice()).unwrap(),
+            CompactSize::read(two_byte_with_trailing.as_slice())
+                .expect("fixture encoding is complete and canonical"),
             CompactSize::TwoBytes(u16::from(FLAG_TWO_BYTES)),
         );
     }
@@ -466,8 +475,8 @@ mod tests {
             usize::from(FLAG_TWO_BYTES),
             usize::from(u16::MAX) + 1,
         ] {
-            let cs = CompactSize::try_from(n).unwrap();
-            assert_eq!(usize::try_from(cs).unwrap(), n);
+            let cs = CompactSize::try_from(n).expect("fixture values are within consensus bounds");
+            assert_eq!(usize::try_from(cs).expect("value originated as usize"), n);
         }
     }
 }

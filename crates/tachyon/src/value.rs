@@ -264,11 +264,15 @@ mod tests {
     fn commit_homomorphic_binding_property() {
         let rng = &mut StdRng::seed_from_u64(0);
         let rcv_a = Trapdoor::random(rng);
-        let cv_a = rcv_a.commit(Balance::try_from(100).unwrap());
+        let cv_a =
+            rcv_a.commit(Balance::try_from(100).expect("fixture value is within monetary bounds"));
         let rcv_b = Trapdoor::random(rng);
-        let cv_b = rcv_b.commit(Balance::try_from(200).unwrap());
+        let cv_b =
+            rcv_b.commit(Balance::try_from(200).expect("fixture value is within monetary bounds"));
 
-        let remainder = cv_a + cv_b - Trapdoor::ZERO.commit(Balance::try_from(300).unwrap());
+        let remainder = cv_a + cv_b
+            - Trapdoor::ZERO
+                .commit(Balance::try_from(300).expect("fixture value is within monetary bounds"));
 
         let rcv_sum: Fq = Into::<Fq>::into(rcv_a) + Into::<Fq>::into(rcv_b);
 
@@ -283,7 +287,8 @@ mod tests {
 
     #[test]
     fn debug_value_commitment_redacts_point() {
-        let cv = Trapdoor::ZERO.commit(Balance::try_from(100).unwrap());
+        let cv = Trapdoor::ZERO
+            .commit(Balance::try_from(100).expect("fixture value is within monetary bounds"));
         assert_eq!(alloc::format!("{cv:?}"), "ValueCommitment(..)");
     }
 }

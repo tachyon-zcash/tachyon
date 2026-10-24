@@ -41,7 +41,7 @@ fn plan_value_balance_sums_spends_and_outputs() {
 
     assert_eq!(
         bundle_plan.value_balance(),
-        Ok(value::Balance::try_from(100).unwrap())
+        Ok(value::Balance::try_from(100).expect("fixture value is within monetary bounds"))
     );
 }
 
@@ -52,7 +52,8 @@ fn wrong_value_balance_fails_verification() {
     let mut bundle = build_autonome(rng, &wallet, 1000, 700);
     let sighash = mock_sighash(bundle.commitment());
 
-    bundle.value_balance = value::Balance::try_from(999).unwrap();
+    bundle.value_balance =
+        value::Balance::try_from(999).expect("fixture value is within monetary bounds");
     let err = bundle.verify_signatures(&sighash).unwrap_err();
     let SignatureError::Binding(_) = err else {
         panic!("expected SignatureError::Binding, got {err:?}");
@@ -68,7 +69,9 @@ fn stripped_bundle_retains_signatures() {
 
     let covering = build_autonome(rng, &wallet, 500, 300);
     let adjunct = bundle.strip(mock_wtxid(&covering));
-    adjunct.verify_signatures(&sighash).unwrap();
+    adjunct
+        .verify_signatures(&sighash)
+        .expect("fixture signatures verify against their sighash");
 }
 
 #[test]
@@ -81,14 +84,23 @@ fn plan_commitment_matches_bundle_commitment() {
     let (stamp, output_plan, max_fee) = build_output_stamp_with_fee(rng, pool.anchor(), note);
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee);
-    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+    let sighash = mock_sighash(
+        bundle_plan
+            .commitment()
+            .expect("fixture actions have valid digests"),
+    );
 
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
         .stamp(stamp);
 
-    assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
+    assert_eq!(
+        bundle_plan
+            .commitment()
+            .expect("fixture actions have valid digests"),
+        bundle.commitment()
+    );
 }
 
 /// `sign` signs an honest plan, and its signatures verify.
@@ -102,7 +114,14 @@ fn sign_signs_an_honest_plan() {
     let plan = build_bundle_plan(alloc::vec![spend], alloc::vec![output]);
 
     let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .sign(
+            rng,
+            &mock_sighash(
+                plan.commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+            &ask,
+        )
         .expect("honest plan signs");
     bundle
         .verify_signatures(&mock_sighash(bundle.commitment()))
@@ -136,7 +155,14 @@ fn actions_signed_despite_wrong_rk_fail_verification() {
     let plan = build_bundle_plan(alloc::vec![spend], alloc::vec![output]);
 
     let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .sign(
+            rng,
+            &mock_sighash(
+                plan.commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+            &ask,
+        )
         .expect("signing works");
 
     // We've applied a signature from the unrelated key
@@ -145,8 +171,13 @@ fn actions_signed_despite_wrong_rk_fail_verification() {
         .randomizer::<effect::Output>(unrelated.note.commitment());
     assert!(!bundle.actions.iter().any(|action| {
         action.sig
-            == private::ActionSigningKey::new(&unrelated_alpha)
-                .sign(rng, &mock_sighash(plan.commitment().unwrap()))
+            == private::ActionSigningKey::new(&unrelated_alpha).sign(
+                rng,
+                &mock_sighash(
+                    plan.commitment()
+                        .expect("fixture actions have valid digests"),
+                ),
+            )
     }));
 
     // so it fails verification
@@ -176,7 +207,14 @@ fn actions_signed_by_wrong_rsk_fail_verification() {
     let plan = build_bundle_plan(alloc::vec![spend], alloc::vec![output]);
 
     let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &wrong_ask)
+        .sign(
+            rng,
+            &mock_sighash(
+                plan.commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+            &wrong_ask,
+        )
         .expect("signing works");
 
     // The signature the spend's matching key would have produced.
@@ -215,30 +253,48 @@ fn apply_signatures_rejects_wrong_sig_count() {
         let alpha = spend_a
             .theta
             .randomizer::<effect::Spend>(spend_a.note.commitment());
-        ask.derive_action_private(&alpha)
-            .sign(rng, &mock_sighash(plan.commitment().unwrap()))
+        ask.derive_action_private(&alpha).sign(
+            rng,
+            &mock_sighash(
+                plan.commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+        )
     };
 
     let sig_b = {
         let alpha = spend_b
             .theta
             .randomizer::<effect::Spend>(spend_b.note.commitment());
-        ask.derive_action_private(&alpha)
-            .sign(rng, &mock_sighash(plan.commitment().unwrap()))
+        ask.derive_action_private(&alpha).sign(
+            rng,
+            &mock_sighash(
+                plan.commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+        )
     };
 
     let sig_c = {
         let alpha = spend_c
             .theta
             .randomizer::<effect::Spend>(spend_c.note.commitment());
-        ask.derive_action_private(&alpha)
-            .sign(rng, &mock_sighash(plan.commitment().unwrap()))
+        ask.derive_action_private(&alpha).sign(
+            rng,
+            &mock_sighash(
+                plan.commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+        )
     };
 
     let too_few = plan
         .apply_signatures(
             rng,
-            &mock_sighash(plan.commitment().unwrap()),
+            &mock_sighash(
+                plan.commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
             BTreeMap::from([(spend_a.descriptor(), sig_a)]),
         )
         .unwrap_err();
@@ -247,7 +303,10 @@ fn apply_signatures_rejects_wrong_sig_count() {
     let too_many = plan
         .apply_signatures(
             rng,
-            &mock_sighash(plan.commitment().unwrap()),
+            &mock_sighash(
+                plan.commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
             BTreeMap::from([
                 (spend_a.descriptor(), sig_a),
                 (spend_b.descriptor(), sig_b),
@@ -271,7 +330,14 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
     // `sign` produces genuinely valid signatures, already in
     // `self.descriptors()`'s canonical order.
     let mut sigs: Vec<action::Signature> = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .sign(
+            rng,
+            &mock_sighash(
+                plan.commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+            &ask,
+        )
         .expect("signing works")
         .actions
         .into_iter()
@@ -283,7 +349,14 @@ fn apply_signatures_with_shuffled_sigs_fails_verification() {
     let authorized = plan.descriptors().into_iter().zip(sigs).collect();
 
     let bundle = plan
-        .apply_signatures(rng, &mock_sighash(plan.commitment().unwrap()), authorized)
+        .apply_signatures(
+            rng,
+            &mock_sighash(
+                plan.commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+            authorized,
+        )
         .expect("assembly succeeds regardless of sig order");
 
     // but the mismatched pairing fails verification.
@@ -308,7 +381,7 @@ fn permuted_actions_change_commitment() {
     // it's a good bundle
     original
         .verify_signatures(&mock_sighash(original.commitment()))
-        .unwrap();
+        .expect("fixture signatures verify against their sighash");
 
     let mut permuted = original.clone();
     permuted.actions.swap(0, 1);
@@ -339,10 +412,11 @@ fn tampered_value_balance_fails_verification() {
     // it's a good bundle
     original
         .verify_signatures(&mock_sighash(original.commitment()))
-        .unwrap();
+        .expect("fixture signatures verify against their sighash");
 
     let mut tampered = original.clone();
-    tampered.value_balance = value::Balance::try_from(999).unwrap();
+    tampered.value_balance =
+        value::Balance::try_from(999).expect("fixture value is within monetary bounds");
 
     // it fails verification against the new commitment.
     let bind_err = tampered
@@ -375,34 +449,78 @@ fn sign_and_apply_signatures_handle_one_sided_and_empty_plans() {
         alloc::vec![],
     );
     spend_plan
-        .sign(rng, &mock_sighash(spend_plan.commitment().unwrap()), &ask)
+        .sign(
+            rng,
+            &mock_sighash(
+                spend_plan
+                    .commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+            &ask,
+        )
         .expect("spends-only plan signs")
-        .verify_signatures(&mock_sighash(spend_plan.commitment().unwrap()))
+        .verify_signatures(&mock_sighash(
+            spend_plan
+                .commitment()
+                .expect("fixture actions have valid digests"),
+        ))
         .expect("spends-only bundle verifies");
 
     let note = wallet.random_note(200);
     let (_rcv, _theta, output) = build_output_plan(rng, note);
     let output_plan = build_bundle_plan(alloc::vec![], alloc::vec![output]);
     output_plan
-        .sign(rng, &mock_sighash(output_plan.commitment().unwrap()), &ask)
+        .sign(
+            rng,
+            &mock_sighash(
+                output_plan
+                    .commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+            &ask,
+        )
         .expect("outputs-only plan signs")
-        .verify_signatures(&mock_sighash(output_plan.commitment().unwrap()))
+        .verify_signatures(&mock_sighash(
+            output_plan
+                .commitment()
+                .expect("fixture actions have valid digests"),
+        ))
         .expect("outputs-only bundle verifies");
 
     let empty_plan = build_bundle_plan(alloc::vec![], alloc::vec![]);
     empty_plan
-        .sign(rng, &mock_sighash(empty_plan.commitment().unwrap()), &ask)
+        .sign(
+            rng,
+            &mock_sighash(
+                empty_plan
+                    .commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+            &ask,
+        )
         .expect("empty plan signs")
-        .verify_signatures(&mock_sighash(empty_plan.commitment().unwrap()))
+        .verify_signatures(&mock_sighash(
+            empty_plan
+                .commitment()
+                .expect("fixture actions have valid digests"),
+        ))
         .expect("empty bundle via sign verifies");
     empty_plan
         .apply_signatures(
             rng,
-            &mock_sighash(empty_plan.commitment().unwrap()),
+            &mock_sighash(
+                empty_plan
+                    .commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
             BTreeMap::new(),
         )
         .expect("apply_signatures accepts zero sigs for an empty plan")
-        .verify_signatures(&mock_sighash(empty_plan.commitment().unwrap()))
+        .verify_signatures(&mock_sighash(
+            empty_plan
+                .commitment()
+                .expect("fixture actions have valid digests"),
+        ))
         .expect("empty bundle via apply_signatures verifies");
 }
 
@@ -411,7 +529,9 @@ fn no_bundle_commitment_differs_from_empty_bundle() {
     let empty_plan = build_bundle_plan(alloc::vec![], alloc::vec![]);
     assert_ne!(
         *blake2b::COMMIT_NO_BUNDLE,
-        empty_plan.commitment().unwrap(),
+        empty_plan
+            .commitment()
+            .expect("fixture actions have valid digests"),
         "absent bundle must differ from empty bundle"
     );
 }
@@ -424,7 +544,10 @@ fn zero_action_bundle_is_valid() {
 
     let max_fee = wallet.random_note(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
-    let sighash = mock_sighash(plan.commitment().unwrap());
+    let sighash = mock_sighash(
+        plan.commitment()
+            .expect("fixture actions have valid digests"),
+    );
 
     let bundle = Bundle {
         actions: alloc::vec![],
@@ -438,7 +561,9 @@ fn zero_action_bundle_is_valid() {
         },
     };
 
-    bundle.verify_signatures(&sighash).unwrap();
+    bundle
+        .verify_signatures(&sighash)
+        .expect("fixture signatures verify against their sighash");
 }
 
 #[test]
@@ -519,8 +644,8 @@ fn double_spend_obvious() {
     .expect("prove an output stamp");
     let evil_pcd = forge_overlapping_merge(
         rng,
-        (&output_stamp, &vec![descriptor], &[fee_descriptor]),
-        (&output_stamp, &vec![descriptor], &[fee_descriptor]),
+        (&output_stamp, &[descriptor], &[fee_descriptor]),
+        (&output_stamp, &[descriptor], &[fee_descriptor]),
     );
     let coverage = {
         let mut desc_bytes: Vec<[u8; 64]> = vec![descriptor, descriptor].into_iter().collect();
@@ -621,7 +746,15 @@ fn duplicated_spend_cannot_inflate() {
     while pool.height() < BlockHeight(EPOCH_SIZE) {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
-    let spendable = wallet.spendable_at(rng, &pool, &note, cm_height.epoch().next().unwrap());
+    let spendable = wallet.spendable_at(
+        rng,
+        &pool,
+        &note,
+        cm_height
+            .epoch()
+            .next()
+            .expect("fixture epoch is below the protocol maximum"),
+    );
     let anchor = spendable.data().2;
 
     // Build one honest spend with a trapdoor and randomizer we control, so the
@@ -848,7 +981,14 @@ fn double_spend_secret() {
 
     let plan = build_bundle_plan(alloc::vec![spend_a, spend_b], alloc::vec![]);
     let bundle = plan
-        .sign(rng, &mock_sighash(plan.commitment().unwrap()), &ask)
+        .sign(
+            rng,
+            &mock_sighash(
+                plan.commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+            &ask,
+        )
         .expect("signing works");
 
     bundle
@@ -877,8 +1017,24 @@ fn innocent_aggregate_from_two_autonomes() {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
 
-    let sp_a = wallet.spendable_at(rng, &pool, &spend_a, cm_height.epoch().next().unwrap());
-    let sp_b = wallet.spendable_at(rng, &pool, &spend_b, cm_height.epoch().next().unwrap());
+    let sp_a = wallet.spendable_at(
+        rng,
+        &pool,
+        &spend_a,
+        cm_height
+            .epoch()
+            .next()
+            .expect("fixture epoch is below the protocol maximum"),
+    );
+    let sp_b = wallet.spendable_at(
+        rng,
+        &pool,
+        &spend_b,
+        cm_height
+            .epoch()
+            .next()
+            .expect("fixture epoch is below the protocol maximum"),
+    );
     let anchor_a = sp_a.data().2;
     let anchor_b = sp_b.data().2;
     assert_eq!(anchor_a, anchor_b, "lifts land on a common anchor");
@@ -906,7 +1062,11 @@ fn innocent_aggregate_from_two_autonomes() {
     let innocent = {
         let max_fee = wallet.random_note(0);
         let innocent_plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
-        let innocent_sighash = mock_sighash(innocent_plan.commitment().unwrap());
+        let innocent_sighash = mock_sighash(
+            innocent_plan
+                .commitment()
+                .expect("fixture actions have valid digests"),
+        );
 
         let fees_a = BTreeSet::from([autonome_a.fee_descriptor()]);
         let fees_b = BTreeSet::from([autonome_b.fee_descriptor()]);
@@ -1013,7 +1173,10 @@ fn based_aggregate_with_two_adjuncts() {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
 
-    let spend_epoch = cm_height.epoch().next().unwrap();
+    let spend_epoch = cm_height
+        .epoch()
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let based_sp = wallet.spendable_at(rng, &pool, &based_spend, spend_epoch);
     let a_sp = wallet.spendable_at(rng, &pool, &a_spend, spend_epoch);
     let b_sp = wallet.spendable_at(rng, &pool, &b_spend, spend_epoch);
@@ -1489,7 +1652,10 @@ fn read_rejects_zero_wtxid() {
     let innocent = {
         let max_fee = wallet.random_note(0);
         let plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
-        let sighash = mock_sighash(plan.commitment().unwrap());
+        let sighash = mock_sighash(
+            plan.commitment()
+                .expect("fixture actions have valid digests"),
+        );
         let bundle = Bundle {
             actions: alloc::vec![],
             value_balance: value::Balance::ZERO,
@@ -1542,7 +1708,10 @@ fn innocent_round_trips_with_nonzero_wtxid() {
 
     let max_fee = wallet.random_note(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
-    let sighash = mock_sighash(plan.commitment().unwrap());
+    let sighash = mock_sighash(
+        plan.commitment()
+            .expect("fixture actions have valid digests"),
+    );
 
     let innocent = Bundle {
         actions: alloc::vec![],
@@ -1690,7 +1859,10 @@ fn coverage_check_matches_stamp_actions() {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
 
-    let spend_epoch = cm_height.epoch().next().unwrap();
+    let spend_epoch = cm_height
+        .epoch()
+        .next()
+        .expect("fixture epoch is below the protocol maximum");
     let based_sp = wallet.spendable_at(rng, &pool, &based_spend, spend_epoch);
     let a_sp = wallet.spendable_at(rng, &pool, &a_spend, spend_epoch);
     let b_sp = wallet.spendable_at(rng, &pool, &b_spend, spend_epoch);
@@ -1830,7 +2002,10 @@ fn plan_value_balance_accepts_boundary_max_money() {
 
     assert_eq!(
         bundle_plan.value_balance(),
-        Ok(value::Balance::try_from(i64::try_from(MAX_MONEY).unwrap()).unwrap())
+        Ok(
+            value::Balance::try_from(i64::try_from(MAX_MONEY).expect("MAX_MONEY fits in i64"))
+                .expect("maximum balance is in range")
+        )
     );
 }
 
@@ -1844,7 +2019,10 @@ fn plan_value_balance_accepts_boundary_negative_max_money() {
 
     assert_eq!(
         bundle_plan.value_balance(),
-        Ok(value::Balance::try_from(-i64::try_from(MAX_MONEY).unwrap()).unwrap())
+        Ok(
+            value::Balance::try_from(-i64::try_from(MAX_MONEY).expect("MAX_MONEY fits in i64"))
+                .expect("minimum balance is in range")
+        )
     );
 }
 
@@ -1896,10 +2074,11 @@ fn plan_value_balance_rejects_overflow_below_negative_max_money() {
 fn read_accepts_value_balance_at_max_money_boundaries() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let max_money = i64::try_from(MAX_MONEY).unwrap();
+    let max_money = i64::try_from(MAX_MONEY).expect("MAX_MONEY fits in i64");
 
     for value_balance in [max_money, -max_money] {
-        let vb = value::Balance::try_from(value_balance).unwrap();
+        let vb = value::Balance::try_from(value_balance)
+            .expect("fixture value is within monetary bounds");
         let mut bundle = build_autonome(rng, &wallet, 1000, 700);
         bundle.value_balance = vb;
 
@@ -1920,7 +2099,7 @@ fn read_accepts_value_balance_at_max_money_boundaries() {
 fn read_rejects_value_balance_out_of_range() {
     let rng = &mut StdRng::seed_from_u64(0);
     let wallet = WalletSim::new(shared_sk());
-    let max_money = i64::try_from(MAX_MONEY).unwrap();
+    let max_money = i64::try_from(MAX_MONEY).expect("MAX_MONEY fits in i64");
 
     for value_balance in [max_money + 1, -max_money - 1, i64::MAX, i64::MIN] {
         let bundle = build_autonome(rng, &wallet, 1000, 700);
@@ -1946,11 +2125,15 @@ fn read_rejects_zero_actions_with_nonzero_balance() {
     let rng = &mut StdRng::seed_from_u64(0);
     let max_fee = WalletSim::new(shared_sk()).random_note(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
-    let sighash = mock_sighash(plan.commitment().unwrap());
+    let sighash = mock_sighash(
+        plan.commitment()
+            .expect("fixture actions have valid digests"),
+    );
 
     let bundle = Bundle {
         actions: alloc::vec![],
-        value_balance: value::Balance::try_from(1).unwrap(),
+        value_balance: value::Balance::try_from(1)
+            .expect("fixture value is within monetary bounds"),
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
@@ -1991,11 +2174,15 @@ fn zero_action_bundle_rejects_nonzero_balance() {
     let rng = &mut StdRng::seed_from_u64(0);
     let max_fee = WalletSim::new(shared_sk()).random_note(0);
     let plan = Plan::new(alloc::vec![], alloc::vec![], max_fee);
-    let sighash = mock_sighash(plan.commitment().unwrap());
+    let sighash = mock_sighash(
+        plan.commitment()
+            .expect("fixture actions have valid digests"),
+    );
 
     let bundle = Bundle {
         actions: alloc::vec![],
-        value_balance: value::Balance::try_from(1).unwrap(),
+        value_balance: value::Balance::try_from(1)
+            .expect("fixture value is within monetary bounds"),
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
         binding_sig: plan.derive_bsk_private().sign(rng, &sighash),
         memo: Vec::new(),
@@ -2034,7 +2221,11 @@ fn verify_tachygrams_rejects_wrong_arity() {
     short.tachygrams.remove(&dropped);
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee);
-    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+    let sighash = mock_sighash(
+        bundle_plan
+            .commitment()
+            .expect("fixture actions have valid digests"),
+    );
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
@@ -2073,7 +2264,11 @@ fn verify_tachygrams_rejects_a_tampered_list() {
         .insert(Tachygram::from(Fp::random(&mut *rng)));
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee);
-    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+    let sighash = mock_sighash(
+        bundle_plan
+            .commitment()
+            .expect("fixture actions have valid digests"),
+    );
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
         .expect("sign output bundle")
@@ -2155,7 +2350,11 @@ fn plan_memo_reaches_the_signed_bundle() {
     let memo = vec![0x7Fu8; 900];
     let bundle_plan =
         Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee).with_memo(memo.clone());
-    let sighash = mock_sighash(bundle_plan.commitment().unwrap());
+    let sighash = mock_sighash(
+        bundle_plan
+            .commitment()
+            .expect("fixture actions have valid digests"),
+    );
 
     let bundle = bundle_plan
         .sign(rng, &sighash, &ask)
@@ -2163,8 +2362,15 @@ fn plan_memo_reaches_the_signed_bundle() {
         .stamp(stamp);
 
     assert_eq!(bundle.memo, memo);
-    assert_eq!(bundle_plan.commitment().unwrap(), bundle.commitment());
-    bundle.verify_signatures(&sighash).unwrap();
+    assert_eq!(
+        bundle_plan
+            .commitment()
+            .expect("fixture actions have valid digests"),
+        bundle.commitment()
+    );
+    bundle
+        .verify_signatures(&sighash)
+        .expect("fixture signatures verify against their sighash");
 }
 
 /// Stripping a bundle to an adjunct replaces the stamp only. The memo is
@@ -2304,8 +2510,24 @@ fn bundle_lift_over_an_aggregate() {
         pool.advance(1, |_| random_block(rng, 1, 2));
     }
 
-    let sp_a = wallet.spendable_at(rng, &pool, &spend_a, cm_height.epoch().next().unwrap());
-    let sp_b = wallet.spendable_at(rng, &pool, &spend_b, cm_height.epoch().next().unwrap());
+    let sp_a = wallet.spendable_at(
+        rng,
+        &pool,
+        &spend_a,
+        cm_height
+            .epoch()
+            .next()
+            .expect("fixture epoch is below the protocol maximum"),
+    );
+    let sp_b = wallet.spendable_at(
+        rng,
+        &pool,
+        &spend_b,
+        cm_height
+            .epoch()
+            .next()
+            .expect("fixture epoch is below the protocol maximum"),
+    );
     let anchor = sp_a.data().2;
 
     let autonome_a = wallet.autonome(rng, anchor, vec![(spend_a, sp_a)], vec![output_a]);
@@ -2339,9 +2561,14 @@ fn bundle_lift_over_an_aggregate() {
         actions: vec![],
         value_balance: value::Balance::ZERO,
         fee_max_commitment: max_fee.fee_blind().commit(-max_fee.value),
-        binding_sig: innocent_plan
-            .derive_bsk_private()
-            .sign(rng, &mock_sighash(innocent_plan.commitment().unwrap())),
+        binding_sig: innocent_plan.derive_bsk_private().sign(
+            rng,
+            &mock_sighash(
+                innocent_plan
+                    .commitment()
+                    .expect("fixture actions have valid digests"),
+            ),
+        ),
         memo: Vec::new(),
         stamp: seed
             .merge(

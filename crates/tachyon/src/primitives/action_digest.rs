@@ -67,7 +67,7 @@ mod tests {
         let sk = private::SpendingKey::random(rng);
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: value::Positive::try_from(val).unwrap(),
+            value: value::Positive::try_from(val).expect("fixture value is within monetary bounds"),
             psi: nullifier::Trapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };
@@ -87,8 +87,8 @@ mod tests {
         let (cv_b, rk_b) = make_action_parts(rng, 700);
 
         assert_ne!(
-            ActionDigest::try_new(cv_a, rk_a).unwrap(),
-            ActionDigest::try_new(cv_b, rk_b).unwrap()
+            ActionDigest::try_new(cv_a, rk_a).expect("fixture points are non-identity"),
+            ActionDigest::try_new(cv_b, rk_b).expect("fixture points are non-identity")
         );
     }
 
@@ -109,8 +109,10 @@ mod tests {
     fn digest_rejects_identity_rk() {
         let rng = &mut StdRng::seed_from_u64(0);
         let (cv, _) = make_action_parts(rng, 500);
-        let rk =
-            public::ActionVerificationKey(reddsa::VerificationKey::try_from([0u8; 32]).unwrap());
+        let rk = public::ActionVerificationKey(
+            reddsa::VerificationKey::try_from([0u8; 32])
+                .expect("identity encoding is a valid RedPallas verification key"),
+        );
         assert!(matches!(
             ActionDigest::try_new(cv, rk),
             Err(ActionDigestError::IdentityRk)

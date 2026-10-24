@@ -150,7 +150,8 @@ mod tests {
         let ak = ask.derive_auth_public();
         let note = Note {
             pk: sk.derive_payment_key(),
-            value: value::Positive::try_from(1000u64).unwrap(),
+            value: value::Positive::try_from(1000u64)
+                .expect("fixture value is within monetary bounds"),
             psi: nullifier::Trapdoor::random(rng),
             rcm: note::CommitmentTrapdoor::random(rng),
         };

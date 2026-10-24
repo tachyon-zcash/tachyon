@@ -118,15 +118,15 @@ mod tests {
 
         let forward = Anchor::default()
             .next_stamp(EpochIndex::new(7), &first)
-            .unwrap()
+            .expect("fixture commitment is non-identity")
             .next_stamp(EpochIndex::new(7), &second)
-            .unwrap();
+            .expect("fixture commitment is non-identity");
 
         let reverse = Anchor::default()
             .next_stamp(EpochIndex::new(7), &second)
-            .unwrap()
+            .expect("fixture commitment is non-identity")
             .next_stamp(EpochIndex::new(7), &first)
-            .unwrap();
+            .expect("fixture commitment is non-identity");
 
         assert_ne!(forward, reverse);
     }

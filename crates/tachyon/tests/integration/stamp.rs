@@ -223,7 +223,9 @@ fn plan_prove_lifts_a_spend_along_spans() {
     pool.advance(2, |_| random_block(rng, 1, 2));
     let plan_height = pool.height();
     assert_eq!(cm_height.epoch(), plan_height.epoch(), "one epoch");
-    let middle = cm_height.next().unwrap();
+    let middle = cm_height
+        .next()
+        .expect("fixture height is below the protocol maximum");
 
     let spendable = user.fresh_spend(rng, &pool, cm_height, &note);
     let spend_anchor = spendable.data().2;
@@ -469,8 +471,24 @@ fn double_spend_cannot_aggregate() {
     }
 
     // Two spendable lineages for the SAME note produce identical nullifiers.
-    let sp_a = wallet.spendable_at(rng, &pool, &spend, cm_height.epoch().next().unwrap());
-    let sp_b = wallet.spendable_at(rng, &pool, &spend, cm_height.epoch().next().unwrap());
+    let sp_a = wallet.spendable_at(
+        rng,
+        &pool,
+        &spend,
+        cm_height
+            .epoch()
+            .next()
+            .expect("fixture epoch is below the protocol maximum"),
+    );
+    let sp_b = wallet.spendable_at(
+        rng,
+        &pool,
+        &spend,
+        cm_height
+            .epoch()
+            .next()
+            .expect("fixture epoch is below the protocol maximum"),
+    );
     let anchor = sp_a.data().2;
     assert_eq!(anchor, sp_b.data().2, "same-note lifts share an anchor");
 
@@ -1001,7 +1019,13 @@ fn lift_advances_a_stamp_anchor() {
 
     pool.advance(2, |_| random_block(rng, 1, 4));
     let lifted_to = pool.height();
-    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=lifted_to);
+    let span = build_lift_span(
+        rng,
+        &pool,
+        stamped_at
+            .next()
+            .expect("fixture height is below the protocol maximum")..=lifted_to,
+    );
 
     let before = stamp.clone();
     let lifted = stamp
@@ -1035,7 +1059,13 @@ fn lift_then_verify() {
     let fee_digest = fee_descriptor.digest().expect("fee digest");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
-    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
+    let span = build_lift_span(
+        rng,
+        &pool,
+        stamped_at
+            .next()
+            .expect("fixture height is below the protocol maximum")..=pool.height(),
+    );
 
     let lifted = stamp
         .lift(
@@ -1072,7 +1102,13 @@ fn lift_over_descriptors_then_verify() {
     let fee_digest = fee_descriptor.digest().expect("fee digest");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
-    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
+    let span = build_lift_span(
+        rng,
+        &pool,
+        stamped_at
+            .next()
+            .expect("fixture height is below the protocol maximum")..=pool.height(),
+    );
 
     let lifted = stamp
         .lift(rng, &covered_descriptors, &fee_descriptors, vec![span])
@@ -1139,7 +1175,13 @@ fn lift_rejects_wrong_digests() {
     let fee_digest = fee_descriptor.digest().expect("fee digest");
 
     pool.advance(2, |_| random_block(rng, 1, 4));
-    let span = build_lift_span(rng, &pool, stamped_at.next().unwrap()..=pool.height());
+    let span = build_lift_span(
+        rng,
+        &pool,
+        stamped_at
+            .next()
+            .expect("fixture height is below the protocol maximum")..=pool.height(),
+    );
 
     let lifted = stamp
         .lift(
@@ -1192,7 +1234,13 @@ fn merge_after_lift() {
         )
         .expect_err("mismatched anchors must not merge");
 
-    let span = build_lift_span(rng, &pool, height_a.next().unwrap()..=height_b);
+    let span = build_lift_span(
+        rng,
+        &pool,
+        height_a
+            .next()
+            .expect("fixture height is below the protocol maximum")..=height_b,
+    );
     let lifted_a = stamp_a
         .lift(rng, &desc_a, &fee_set_a, vec![span])
         .expect("lift onto the later anchor");

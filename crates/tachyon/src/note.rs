@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn positive_value_accepts_max() {
-        value::Positive::try_from(MAX_MONEY).unwrap();
+        value::Positive::try_from(MAX_MONEY).expect("fixture value is within monetary bounds");
     }
 
     #[test]
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn positive_value_accepts_zero() {
-        value::Positive::try_from(0u64).unwrap();
+        value::Positive::try_from(0u64).expect("fixture value is within monetary bounds");
     }
 
     #[test]
@@ -163,13 +163,15 @@ mod tests {
 
         let note1 = Note {
             pk,
-            value: value::Positive::try_from(100u64).unwrap(),
+            value: value::Positive::try_from(100u64)
+                .expect("fixture value is within monetary bounds"),
             psi,
             rcm: CommitmentTrapdoor::random(rng),
         };
         let note2 = Note {
             pk,
-            value: value::Positive::try_from(100u64).unwrap(),
+            value: value::Positive::try_from(100u64)
+                .expect("fixture value is within monetary bounds"),
             psi,
             rcm: CommitmentTrapdoor::random(rng),
         };
