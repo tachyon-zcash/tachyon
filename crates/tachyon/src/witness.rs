@@ -8,8 +8,8 @@
 
 use alloc::collections::BTreeSet;
 
-use pasta_curves::Fp;
 use ragu::{Header, Step};
+use udon::field::Fp;
 
 use crate::{
     collections,

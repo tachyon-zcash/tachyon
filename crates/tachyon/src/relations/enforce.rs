@@ -37,12 +37,12 @@
 //! operand). A refactor that recomputed or separately witnessed the evals could
 //! let the checked value diverge from the opened one and break soundness.
 
-use pasta_curves::Fp;
 use ragu::StepCtx;
-use ragu_arithmetic::Cycle as _;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_core::{Error, Result};
-use ragu_pasta::Pasta;
+use ragu_core::{Cycle as _, Error, Result, pasta::Pasta};
+use udon::field::{Fp, Reduced};
+
+use crate::pasta;
 
 /// Faithful polynomial product: confirm `product = multiplicand · multiplier`
 /// among three committed polynomials by opening all three at a Fiat-Shamir
@@ -62,12 +62,12 @@ use ragu_pasta::Pasta;
 /// `multiplier`, and `product` -- is the only precondition.
 pub(crate) fn enforce_poly_product(
     ctx: &mut StepCtx<'_>,
-    multiplicand: &Polynomial<Fp, ProductionRank>,
-    multiplier: &Polynomial<Fp, ProductionRank>,
-    product: &Polynomial<Fp, ProductionRank>,
+    multiplicand: &Polynomial<pasta::Fp, ProductionRank>,
+    multiplier: &Polynomial<pasta::Fp, ProductionRank>,
+    product: &Polynomial<pasta::Fp, ProductionRank>,
     err: &'static str,
 ) -> Result<()> {
-    let generators = Pasta::host_generators(Pasta::baked());
+    let generators = Pasta::host_generators(pasta::baked());
     let multiplicand_com = multiplicand.commit(generators);
     let multiplier_com = multiplier.commit(generators);
     let product_com = product.commit(generators);
@@ -108,15 +108,18 @@ pub(crate) fn enforce_poly_product(
 /// `N` fixes the root count at compile time.
 pub(crate) fn enforce_poly_roots<const N: usize>(
     ctx: &mut StepCtx<'_>,
-    accumulator: &Polynomial<Fp, ProductionRank>,
-    roots: &[Fp; N],
+    accumulator: &Polynomial<pasta::Fp, ProductionRank>,
+    roots: &[Fp<Reduced>; N],
     err: &'static str,
 ) -> Result<()> {
-    let accumulator_com = accumulator.commit(Pasta::host_generators(Pasta::baked()));
+    let accumulator_com = accumulator.commit(Pasta::host_generators(pasta::baked()));
     let z = ctx.derive_challenge(&[accumulator_com])?;
 
     let accumulator_at_z = accumulator.eval(z);
-    let factors_at_z: Fp = roots.iter().map(|&root| z - root).product();
+    let factors_at_z: pasta::Fp = roots
+        .iter()
+        .map(|root| z - pasta::Fp::new(root.into_loose()))
+        .product();
     if accumulator_at_z != factors_at_z {
         return Err(Error::InvalidWitness(err.into()));
     }

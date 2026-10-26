@@ -11,11 +11,12 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use ff::Field as _;
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::PoseidonPermutation as _;
-use ragu_pasta::PoseidonFp;
+use ragu_core::{
+    PoseidonPermutation as _,
+    pasta::{self, Ep, Eq, PoseidonFp},
+};
+use udon::field::Fp;
 
 use crate::{
     collections::indexed_multiset,
@@ -45,16 +46,16 @@ impl Header for NoteSecret {
 
     const SUFFIX: Suffix = Suffix::new(8);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, note, mk) = *data;
         (
             vec![
-                Fp::from(cm),
-                Fp::from(note.rcm),
-                Fp::from(note.pk),
-                Fp::from(u64::from(note.value)),
-                Fp::from(note.psi),
-                mk.0,
+                pasta::Fp::new(Fp::from(cm).into_loose()),
+                pasta::Fp::new(Fp::from(note.rcm).into_loose()),
+                pasta::Fp::new(Fp::from(note.pk).into_loose()),
+                pasta::Fp::from(u64::from(note.value)),
+                pasta::Fp::new(Fp::from(note.psi).into_loose()),
+                pasta::Fp::new(mk.0.into_loose()),
             ],
             Vec::new(),
             Vec::new(),
@@ -88,10 +89,14 @@ impl Header for NoteNullifiers {
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, epoch_start, nf_commit, epoch_end) = *data;
         (
-            vec![Fp::from(cm), Fp::from(epoch_start), Fp::from(epoch_end)],
+            vec![
+                pasta::Fp::new(Fp::from(cm).into_loose()),
+                pasta::Fp::new(Fp::from(epoch_start).into_loose()),
+                pasta::Fp::new(Fp::from(epoch_end).into_loose()),
+            ],
             Vec::new(),
             Vec::new(),
             vec![Eq::from(nf_commit)],
@@ -204,7 +209,7 @@ impl Step for NullifierDerive {
             reason = "the group width is a small constant"
         )]
         enforce_zero(
-            Fp::from(u64::from(epoch_start) % (PoseidonFp::RATE as u64)),
+            Fp::from_u64(u64::from(epoch_start) % (PoseidonFp::RATE as u64)),
             "NullifierDerive: epoch_start is not group-aligned",
         )?;
 
@@ -233,9 +238,16 @@ impl Step for NullifierDerive {
         // `z`: a fresh transcript challenge over the sequence commitment. The
         // polynomial is fixed before it exists, so the single opening below
         // is not vacuous.
-        let z = ctx.derive_challenge(&[seq.commit().into()])?;
+        let z = ctx
+            .derive_challenge(&[seq.commit().into()])?
+            .into_inner()
+            .reduce();
         let seq_at_z = seq.eval(z);
-        ctx.enforce_poly_query(seq.commit().into(), z, seq_at_z)?;
+        ctx.enforce_poly_query(
+            seq.commit().into(),
+            z.into_loose().into(),
+            seq_at_z.into_loose().into(),
+        )?;
 
         // The window's members at `z`, encoded natively from the
         // sponge-derived nullifiers and their epochs.
@@ -243,7 +255,7 @@ impl Step for NullifierDerive {
             indexed_multiset::direct_eval((epoch_start.into()..).zip(nullifiers.map(Fp::from)), z);
 
         enforce_zero(
-            seq_at_z - window_at_z,
+            seq_at_z.sub(&window_at_z),
             "NullifierDerive: sequence does not match the derived window",
         )?;
 
@@ -292,11 +304,13 @@ impl Step for NullifierFuse {
         (right_cm, right_epoch_start, right_nf_commit, right_epoch_end): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(left_cm) - Fp::from(right_cm),
+            Fp::from(left_cm).sub(&Fp::from(right_cm)),
             "NullifierFuse: note commitments differ",
         )?;
         enforce_zero(
-            Fp::from(right_epoch_start) - Fp::from(left_epoch_end) - Fp::ONE,
+            Fp::from(right_epoch_start)
+                .sub(&Fp::from(left_epoch_end))
+                .sub(&<Fp>::ONE),
             "NullifierFuse: ranges not contiguous",
         )?;
         enforce_equal_point(

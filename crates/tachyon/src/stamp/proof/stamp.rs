@@ -4,9 +4,9 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use ff::PrimeField as _;
-use pasta_curves::{Ep, EpAffine, Eq, Fp, Fq, arithmetic::CurveAffine as _};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_core::pasta::{self, Ep, EpAffine, Eq};
+use udon::field::{Fp, Fq};
 
 use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 use crate::{
@@ -49,7 +49,7 @@ impl Header for Actions {
 
     const SUFFIX: Suffix = Suffix::new(15);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         Stamp::encode(data)
     }
 }
@@ -78,9 +78,9 @@ impl Header for Stamp {
 
     const SUFFIX: Suffix = Suffix::new(6);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         (
-            vec![Fp::from(data.2)],
+            vec![pasta::Fp::new(Fp::from(data.2).into_loose())],
             Vec::new(),
             Vec::new(),
             vec![Eq::from(data.0), Eq::from(data.1)],
@@ -200,7 +200,7 @@ impl Step for SpendAction {
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(pk) - Fp::from(pak.derive_payment_key()),
+            Fp::from(pk).sub(&Fp::from(pak.derive_payment_key())),
             "SpendAction: pak not related to note",
         )?;
 
@@ -270,7 +270,7 @@ impl Step for StampMerge {
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Same-anchor constraint.
         enforce_zero(
-            Fp::from(left_anchor) - Fp::from(right_anchor),
+            Fp::from(left_anchor).sub(&Fp::from(right_anchor)),
             "StampMerge: anchors must match",
         )?;
 
@@ -355,7 +355,7 @@ impl Step for ActionMerge {
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Same-anchor constraint.
         enforce_zero(
-            Fp::from(left_anchor) - Fp::from(right_anchor),
+            Fp::from(left_anchor).sub(&Fp::from(right_anchor)),
             "ActionMerge: anchors must match",
         )?;
 
@@ -455,10 +455,14 @@ impl Step for StampLift {
 
         let anchor_eval = members.eval(Fp::from(stamp_anchor));
         enforce_zero(
-            anchor_eval * (Fp::from(stamp_anchor) - Fp::from(span_anchor_start)),
+            anchor_eval.mul(&Fp::from(stamp_anchor).sub(&Fp::from(span_anchor_start))),
             "StampLift: stamp anchor is neither the span's start nor a member",
         )?;
-        ctx.enforce_poly_query(Eq::from(span_members), Fp::from(stamp_anchor), anchor_eval)?;
+        ctx.enforce_poly_query(
+            Eq::from(span_members),
+            Fp::from(stamp_anchor).into_loose().into(),
+            anchor_eval.into_loose().into(),
+        )?;
 
         let data = (stamp_action_commit, stamp_tachygram_commit, span_anchor_end);
         Ok((data, ()))
@@ -497,13 +501,13 @@ impl Step for ActionLift {
 
         let anchor_eval = members.eval(Fp::from(actions_anchor));
         enforce_zero(
-            anchor_eval * (Fp::from(actions_anchor) - Fp::from(span_anchor_start)),
+            anchor_eval.mul(&Fp::from(actions_anchor).sub(&Fp::from(span_anchor_start))),
             "ActionLift: actions anchor is neither the span's start nor a member",
         )?;
         ctx.enforce_poly_query(
             Eq::from(span_members),
-            Fp::from(actions_anchor),
-            anchor_eval,
+            Fp::from(actions_anchor).into_loose().into(),
+            anchor_eval.into_loose().into(),
         )?;
 
         let data = (
@@ -590,17 +594,16 @@ impl Step for FeeFuse {
             clippy::expect_used,
             reason = "p < q, so every Fp repr is canonical in Fq"
         )]
-        let cv_max_fee = value::Trapdoor::from_scalar(
-            Option::from(Fq::from_repr(blind.to_repr())).expect("p < q"),
-        )
-        .commit(-max_fee_note.value);
-        let cv_max_fee_coords = EpAffine::from(cv_max_fee)
-            .coordinates()
-            .into_option()
+        let cv_max_fee =
+            value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+                .commit(-max_fee_note.value);
+        let cv_max_fee_affine = *EpAffine::from(cv_max_fee)
+            .as_inner()
+            .as_affine()
             .ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
             })?;
-        let fee_digest = poseidon::fee_digest(cv_max_fee_coords, u64::from(fee));
+        let fee_digest = poseidon::fee_digest(cv_max_fee_affine, u64::from(fee));
 
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         let fee_change_commitment = enforce_nonzero(
@@ -670,7 +673,7 @@ impl Step for FeeSeed {
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(u64::from(max_fee_note.value)),
+            Fp::from_u64(u64::from(max_fee_note.value)),
             "FeeSeed: maximum fee must be zero",
         )?;
 
@@ -688,17 +691,16 @@ impl Step for FeeSeed {
             clippy::expect_used,
             reason = "p < q, so every Fp repr is canonical in Fq"
         )]
-        let cv_max_fee = value::Trapdoor::from_scalar(
-            Option::from(Fq::from_repr(blind.to_repr())).expect("p < q"),
-        )
-        .commit(-max_fee_note.value);
-        let cv_max_fee_coords = EpAffine::from(cv_max_fee)
-            .coordinates()
-            .into_option()
+        let cv_max_fee =
+            value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+                .commit(-max_fee_note.value);
+        let cv_max_fee_affine = *EpAffine::from(cv_max_fee)
+            .as_inner()
+            .as_affine()
             .ok_or_else(|| {
                 ragu_core::Error::InvalidWitness("FeeSeed: fee commitment is the identity".into())
             })?;
-        let fee_digest = poseidon::fee_digest(cv_max_fee_coords, 0);
+        let fee_digest = poseidon::fee_digest(cv_max_fee_affine, 0);
 
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
         let fee_change_commitment = enforce_nonzero(
@@ -795,7 +797,7 @@ impl Step for StampUnmerge {
         (right_action_commit, right_tachygram_commit, right_anchor): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(left_anchor) - Fp::from(right_anchor),
+            Fp::from(left_anchor).sub(&Fp::from(right_anchor)),
             "StampUnmerge: anchors must match",
         )?;
 

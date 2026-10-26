@@ -11,8 +11,9 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_core::pasta::{self, Ep, Eq};
+use udon::field::Fp;
 
 use crate::{
     primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
@@ -36,10 +37,14 @@ impl Header for Summary {
 
     const SUFFIX: Suffix = Suffix::new(9);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_prev, anchor_end, acc_commit) = *data;
         (
-            vec![Fp::from(epoch), Fp::from(anchor_prev), Fp::from(anchor_end)],
+            vec![
+                pasta::Fp::new(Fp::from(epoch).into_loose()),
+                pasta::Fp::new(Fp::from(anchor_prev).into_loose()),
+                pasta::Fp::new(Fp::from(anchor_end).into_loose()),
+            ],
             Vec::new(),
             Vec::new(),
             vec![Eq::from(acc_commit)],

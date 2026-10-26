@@ -12,8 +12,9 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_core::pasta::{self, Ep, Eq};
+use udon::field::Fp;
 
 use super::{delegation::NoteNullifiers, pool::NoteUnspent, qr::QrBucket};
 use crate::{
@@ -37,10 +38,14 @@ impl Header for NoteSpendable {
 
     const SUFFIX: Suffix = Suffix::new(2);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, epoch_current, anchor) = *data;
         (
-            vec![Fp::from(cm), Fp::from(epoch_current), Fp::from(anchor)],
+            vec![
+                pasta::Fp::new(Fp::from(cm).into_loose()),
+                pasta::Fp::new(Fp::from(epoch_current).into_loose()),
+                pasta::Fp::new(Fp::from(anchor).into_loose()),
+            ],
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -89,8 +94,15 @@ impl Step for SpendableInit {
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         // Inclusion: cm ∈ set ⇔ the set polynomial vanishes at cm.
         let cm_in_set = creation_set.eval(cm.into());
-        ctx.enforce_poly_query(creation_set.commit().into(), cm.into(), cm_in_set)?;
-        enforce_zero(cm_in_set, "SpendableInit: commitment not in set")?;
+        ctx.enforce_poly_query(
+            creation_set.commit().into(),
+            Fp::from(cm).into_loose().into(),
+            cm_in_set.into_loose().into(),
+        )?;
+        enforce_zero(
+            cm_in_set.into_loose(),
+            "SpendableInit: commitment not in set",
+        )?;
         let creation_commit = creation_set.commit();
 
         // The anchor immediately after the creation stamp, computed in-circuit
@@ -158,15 +170,15 @@ impl Step for QrSpendableInit {
             "QrSpendableInit: contents do not match the bucket",
         )?;
         enforce_zero(
-            Fp::from(unspent_epoch_start) - Fp::from(bucket_epoch),
+            Fp::from(unspent_epoch_start).sub(&Fp::from(bucket_epoch)),
             "QrSpendableInit: segment does not start in the bucket's epoch",
         )?;
         enforce_zero(
-            Fp::from(unspent_anchor_start) - Fp::from(bucket_anchor_start),
+            Fp::from(unspent_anchor_start).sub(&Fp::from(bucket_anchor_start)),
             "QrSpendableInit: segment does not open where the bucket does",
         )?;
         enforce_zero(
-            Fp::from(unspent_anchor_next) - Fp::from(bucket_anchor_next),
+            Fp::from(unspent_anchor_next).sub(&Fp::from(bucket_anchor_next)),
             "QrSpendableInit: segment does not close where the bucket does",
         )?;
         let bucket_epoch_next = bucket_epoch.next().ok_or_else(|| {
@@ -174,14 +186,21 @@ impl Step for QrSpendableInit {
         })?;
         // Defensive: the anchor equality already rejects a wrong epoch label.
         enforce_zero(
-            Fp::from(unspent_epoch_next) - Fp::from(bucket_epoch_next),
+            Fp::from(unspent_epoch_next).sub(&Fp::from(bucket_epoch_next)),
             "QrSpendableInit: segment does not end in the epoch after the bucket's",
         )?;
 
         // Inclusion: cm ∈ bucket ⇔ the contents vanish at cm.
         let cm_in_bucket = contents.eval(cm.into());
-        ctx.enforce_poly_query(bucket_commit.into(), cm.into(), cm_in_bucket)?;
-        enforce_zero(cm_in_bucket, "QrSpendableInit: commitment not in bucket")?;
+        ctx.enforce_poly_query(
+            bucket_commit.into(),
+            Fp::from(cm).into_loose().into(),
+            cm_in_bucket.into_loose().into(),
+        )?;
+        enforce_zero(
+            cm_in_bucket.into_loose(),
+            "QrSpendableInit: commitment not in bucket",
+        )?;
 
         Ok(((cm, unspent_epoch_next, unspent_anchor_next), ()))
     }
@@ -234,15 +253,15 @@ impl Step for SpendableLift {
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(unspent_cm) - Fp::from(spendable_cm),
+            Fp::from(unspent_cm).sub(&Fp::from(spendable_cm)),
             "SpendableLift: unspent cm does not match spendable",
         )?;
         enforce_zero(
-            Fp::from(unspent_epoch_start) - Fp::from(spendable_epoch_current),
+            Fp::from(unspent_epoch_start).sub(&Fp::from(spendable_epoch_current)),
             "SpendableLift: segment does not start at the lineage epoch",
         )?;
         enforce_zero(
-            Fp::from(unspent_anchor_start) - Fp::from(spendable_anchor),
+            Fp::from(unspent_anchor_start).sub(&Fp::from(spendable_anchor)),
             "SpendableLift: unspent not adjacent to spendable",
         )?;
         Ok(((spendable_cm, unspent_epoch_next, unspent_anchor_next), ()))

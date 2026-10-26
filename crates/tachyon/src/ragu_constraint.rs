@@ -5,15 +5,20 @@
 //! message. The wireless emulator is cheaper but never checks constraint
 //! satisfaction, so it cannot reject an invalid witness.
 
-use group::Curve as _;
-use pasta_curves::{Eq, EqAffine, Fp, Fq};
-use ragu_core::{Error, Result};
+use ragu_core::{
+    Error, Result,
+    pasta::{self, Eq, EqAffine},
+};
 use ragu_primitives::{Element, GadgetExt as _, Point, Simulator};
+use udon::{
+    curve::Projective as _,
+    field::{Fp, Reduced},
+};
 
 /// Enforces `value == 0`.
 pub(crate) fn enforce_zero(value: Fp, err: &'static str) -> Result<()> {
-    let mut driver = Simulator::<Fp>::new();
-    let element = Element::constant(&mut driver, value);
+    let mut driver = Simulator::<pasta::Fp>::new();
+    let element = Element::constant(&mut driver, value.into());
 
     element
         .enforce_zero(&mut driver)
@@ -21,9 +26,9 @@ pub(crate) fn enforce_zero(value: Fp, err: &'static str) -> Result<()> {
 }
 
 /// Enforces `value != 0`, returning `value`.
-pub(crate) fn enforce_nonzero(value: Fp, err: &'static str) -> Result<Fp> {
-    let mut driver = Simulator::<Fp>::new();
-    let element = Element::constant(&mut driver, value);
+pub(crate) fn enforce_nonzero(value: Fp<Reduced>, err: &'static str) -> Result<Fp<Reduced>> {
+    let mut driver = Simulator::<pasta::Fp>::new();
+    let element = Element::constant(&mut driver, value.into_loose().into());
 
     element
         .enforce_nonzero(&mut driver)
@@ -37,7 +42,7 @@ pub(crate) fn enforce_nonzero(value: Fp, err: &'static str) -> Result<Fp> {
 /// nested-curve view of the comparison. An identity input fails ahead of the
 /// equality check, since ragu cannot witness it as a [`Point`].
 pub(crate) fn enforce_equal_point(left: Eq, right: Eq, err: &'static str) -> Result<()> {
-    let mut driver = Simulator::<Fq>::new();
+    let mut driver = Simulator::<pasta::Fq>::new();
     let left_point = Point::<'_, _, EqAffine>::constant(&mut driver, left.to_affine())?;
     let right_point = Point::<'_, _, EqAffine>::constant(&mut driver, right.to_affine())?;
 

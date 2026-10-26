@@ -4,8 +4,9 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_core::pasta::{self, Ep, Eq};
+use udon::field::Fp;
 
 use crate::{
     Tachygram, constants::MAX_MONEY, digest::poseidon, note::Note,
@@ -27,10 +28,13 @@ impl Header for OutputHeader {
 
     const SUFFIX: Suffix = Suffix::new(7);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (cm, pad, cv) = *data;
         (
-            vec![Fp::from(cm), Fp::from(pad)],
+            vec![
+                pasta::Fp::new(Fp::from(cm).into_loose()),
+                pasta::Fp::new(Fp::from(pad).into_loose()),
+            ],
             Vec::new(),
             vec![Ep::from(cv)],
             Vec::new(),

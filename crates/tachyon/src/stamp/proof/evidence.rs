@@ -16,9 +16,9 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use group::Curve as _;
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_core::pasta::{self, Ep, Eq};
+use udon::{curve::Projective as _, field::Fp};
 
 use super::qr::QrBucket;
 use crate::{
@@ -50,15 +50,15 @@ impl Header for EvidenceTree {
 
     const SUFFIX: Suffix = Suffix::new(12);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_start, anchor_next, discriminant, root) = *data;
         (
             vec![
-                Fp::from(epoch),
-                Fp::from(anchor_start),
-                Fp::from(anchor_next),
-                Fp::from(discriminant),
-                Fp::from(root),
+                pasta::Fp::new(Fp::from(epoch).into_loose()),
+                pasta::Fp::new(Fp::from(anchor_start).into_loose()),
+                pasta::Fp::new(Fp::from(anchor_next).into_loose()),
+                pasta::Fp::new(Fp::from(discriminant).into_loose()),
+                pasta::Fp::new(Fp::from(root).into_loose()),
             ],
             Vec::new(),
             Vec::new(),
@@ -89,16 +89,16 @@ impl Header for EvidenceTreePair {
 
     const SUFFIX: Suffix = Suffix::new(13);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
+    fn encode(data: &Self::Data) -> (Vec<pasta::Fp>, Vec<pasta::Fq>, Vec<Ep>, Vec<Eq>) {
         let (epoch, anchor_start, anchor_next, discriminant, first, second) = *data;
         (
             vec![
-                Fp::from(epoch),
-                Fp::from(anchor_start),
-                Fp::from(anchor_next),
-                Fp::from(discriminant),
-                Fp::from(first),
-                Fp::from(second),
+                pasta::Fp::new(Fp::from(epoch).into_loose()),
+                pasta::Fp::new(Fp::from(anchor_start).into_loose()),
+                pasta::Fp::new(Fp::from(anchor_next).into_loose()),
+                pasta::Fp::new(Fp::from(discriminant).into_loose()),
+                pasta::Fp::new(Fp::from(first).into_loose()),
+                pasta::Fp::new(Fp::from(second).into_loose()),
             ],
             Vec::new(),
             Vec::new(),
@@ -153,19 +153,19 @@ impl Step for EvidenceTreeLeafPair {
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(left_epoch) - Fp::from(right_epoch),
+            Fp::from(left_epoch).sub(&Fp::from(right_epoch)),
             "EvidenceTreeLeafPair: inputs cover different epochs",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
+            Fp::from(left_anchor_start).sub(&Fp::from(right_anchor_start)),
             "EvidenceTreeLeafPair: inputs open at different anchors",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
+            Fp::from(left_anchor_next).sub(&Fp::from(right_anchor_next)),
             "EvidenceTreeLeafPair: inputs close at different anchors",
         )?;
         enforce_zero(
-            Fp::from(left_discriminant) - Fp::from(right_discriminant),
+            Fp::from(left_discriminant).sub(&Fp::from(right_discriminant)),
             "EvidenceTreeLeafPair: inputs derive from different discriminants",
         )?;
 
@@ -174,8 +174,8 @@ impl Step for EvidenceTreeLeafPair {
             Fp::from(left_anchor_start),
             Fp::from(left_anchor_next),
             Fp::from(left_discriminant),
-            Fp::from(u64::from(left_profile.depth)),
-            Fp::from(u64::from(left_profile.bits)),
+            Fp::from_u64(u64::from(left_profile.depth)),
+            Fp::from_u64(u64::from(left_profile.bits)),
             Eq::from(left_contents).to_affine(),
         ));
         let second = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
@@ -183,8 +183,8 @@ impl Step for EvidenceTreeLeafPair {
             Fp::from(right_anchor_start),
             Fp::from(right_anchor_next),
             Fp::from(right_discriminant),
-            Fp::from(u64::from(right_profile.depth)),
-            Fp::from(u64::from(right_profile.bits)),
+            Fp::from_u64(u64::from(right_profile.depth)),
+            Fp::from_u64(u64::from(right_profile.bits)),
             Eq::from(right_contents).to_affine(),
         ));
 
@@ -236,19 +236,19 @@ impl Step for EvidenceTreePairFuse {
         (right_epoch, right_anchor_start, right_anchor_next, right_discriminant, right_root): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(left_epoch) - Fp::from(right_epoch),
+            Fp::from(left_epoch).sub(&Fp::from(right_epoch)),
             "EvidenceTreePairFuse: inputs cover different epochs",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
+            Fp::from(left_anchor_start).sub(&Fp::from(right_anchor_start)),
             "EvidenceTreePairFuse: inputs open at different anchors",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
+            Fp::from(left_anchor_next).sub(&Fp::from(right_anchor_next)),
             "EvidenceTreePairFuse: inputs close at different anchors",
         )?;
         enforce_zero(
-            Fp::from(left_discriminant) - Fp::from(right_discriminant),
+            Fp::from(left_discriminant).sub(&Fp::from(right_discriminant)),
             "EvidenceTreePairFuse: inputs derive from different discriminants",
         )?;
 
@@ -312,19 +312,19 @@ impl Step for EvidenceTreeFuse {
         ): <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(left_epoch) - Fp::from(right_epoch),
+            Fp::from(left_epoch).sub(&Fp::from(right_epoch)),
             "EvidenceTreeFuse: inputs cover different epochs",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
+            Fp::from(left_anchor_start).sub(&Fp::from(right_anchor_start)),
             "EvidenceTreeFuse: inputs open at different anchors",
         )?;
         enforce_zero(
-            Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
+            Fp::from(left_anchor_next).sub(&Fp::from(right_anchor_next)),
             "EvidenceTreeFuse: inputs close at different anchors",
         )?;
         enforce_zero(
-            Fp::from(left_discriminant) - Fp::from(right_discriminant),
+            Fp::from(left_discriminant).sub(&Fp::from(right_discriminant)),
             "EvidenceTreeFuse: inputs derive from different discriminants",
         )?;
 
@@ -450,15 +450,17 @@ impl Step for EvidenceTreeDescend {
         for ([outer, inner], children) in path {
             let [first, second, third, fourth] = children.map(Fp::from);
             enforce_zero(
-                node - poseidon::evidence_tree_node([first, second, third, fourth]),
+                node.sub(&poseidon::evidence_tree_node([
+                    first, second, third, fourth,
+                ])),
                 "EvidenceTreeDescend: children do not hash to the node",
             )?;
 
-            let outer_side = Fp::from(u64::from(outer));
-            let inner_side = Fp::from(u64::from(inner));
-            let lower = first + inner_side * (second - first);
-            let upper = third + inner_side * (fourth - third);
-            node = lower + outer_side * (upper - lower);
+            let outer_side = <Fp>::from_u64(u64::from(outer));
+            let inner_side = <Fp>::from_u64(u64::from(inner));
+            let lower = first.add(&inner_side.mul(&second.sub(&first)));
+            let upper = third.add(&inner_side.mul(&fourth.sub(&third)));
+            node = lower.add(&outer_side.mul(&upper.sub(&lower))).reduce();
         }
 
         Ok((
@@ -516,16 +518,15 @@ impl Step for EvidenceTreeOpen {
         _right: <Self::Right as Header>::Data,
     ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
         enforce_zero(
-            Fp::from(root)
-                - poseidon::evidence_tree_leaf(
-                    Fp::from(epoch),
-                    Fp::from(anchor_start),
-                    Fp::from(anchor_next),
-                    Fp::from(discriminant),
-                    Fp::from(u64::from(profile.depth)),
-                    Fp::from(u64::from(profile.bits)),
-                    Eq::from(contents).to_affine(),
-                ),
+            Fp::from(root).sub(&poseidon::evidence_tree_leaf(
+                Fp::from(epoch),
+                Fp::from(anchor_start),
+                Fp::from(anchor_next),
+                Fp::from(discriminant),
+                Fp::from_u64(u64::from(profile.depth)),
+                Fp::from_u64(u64::from(profile.bits)),
+                Eq::from(contents).to_affine(),
+            )),
             "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
         )?;
 
