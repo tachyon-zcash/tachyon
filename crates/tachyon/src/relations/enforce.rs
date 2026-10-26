@@ -37,12 +37,13 @@
 //! operand). A refactor that recomputed or separately witnessed the evals could
 //! let the checked value diverge from the opened one and break soundness.
 
-use pasta_curves::Fp;
 use ragu::StepCtx;
-use ragu_arithmetic::Cycle as _;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_core::{Error, Result};
-use ragu_pasta::Pasta;
+use ragu_core::{
+    Cycle as _, Error, Result,
+    pasta::{Fp, Pasta},
+};
+use ragu_pcd::pasta::baked;
 
 /// Faithful polynomial product: confirm `product = multiplicand · multiplier`
 /// among three committed polynomials by opening all three at a Fiat-Shamir
@@ -67,7 +68,7 @@ pub(crate) fn enforce_poly_product(
     product: &Polynomial<Fp, ProductionRank>,
     err: &'static str,
 ) -> Result<()> {
-    let generators = Pasta::host_generators(Pasta::baked());
+    let generators = Pasta::host_generators(baked());
     let multiplicand_com = multiplicand.commit(generators);
     let multiplier_com = multiplier.commit(generators);
     let product_com = product.commit(generators);
@@ -112,7 +113,7 @@ pub(crate) fn enforce_poly_roots<const N: usize>(
     roots: &[Fp; N],
     err: &'static str,
 ) -> Result<()> {
-    let accumulator_com = accumulator.commit(Pasta::host_generators(Pasta::baked()));
+    let accumulator_com = accumulator.commit(Pasta::host_generators(baked()));
     let z = ctx.derive_challenge(&[accumulator_com])?;
 
     let accumulator_at_z = accumulator.eval(z);

@@ -16,9 +16,9 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use group::Curve as _;
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_core::pasta::{Ep, Eq, Fp, Fq};
+use udon::curve::Projective as _;
 
 use super::qr::QrBucket;
 use crate::{

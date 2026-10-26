@@ -16,9 +16,6 @@ use core::error;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, Into, PartialEq};
-use ff::PrimeField as _;
-use group::{Curve as _, GroupEncoding as _};
-use pasta_curves::{Eq, Fp};
 use proof::{
     PROOF_SYSTEM, output,
     stamp::{
@@ -28,7 +25,12 @@ use proof::{
 };
 use ragu::PROOF_SIZE_COMPRESSED;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
+use ragu_core::pasta::{Eq, Fp};
 use rand_core::CryptoRng;
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field as _,
+};
 
 use crate::{
     ActionSetPoly, Note, TachygramSetPoly, action,
@@ -236,13 +238,13 @@ impl StampState for ProofStamp {
     fn stamp_digest(&self) -> [u8; 72] {
         let stamp_data_digest: [u8; 32] = {
             let proof = self.proof.serialize();
-            let anchor: [u8; 32] = self.anchor.0.into();
+            let anchor: [u8; 32] = self.anchor.0.to_bytes();
 
             // Do NOT sort here: a constructed stamp should already be canonical.
             let tachygrams: Vec<[u8; 32]> = self
                 .tachygrams
                 .iter()
-                .map(|&tg| Fp::from(tg).to_repr())
+                .map(|&tg| Fp::from(tg).to_bytes())
                 .collect();
 
             blake2b::stamp_data_digest(
@@ -672,7 +674,7 @@ impl Plan {
                             &tachygrams,
                         ),
                         merged_proof.carry::<Actions>(stamp_header),
-                        ragu::Proof::trivial().carry::<()>(()),
+                        ragu::Proof::bootstrap().carry::<()>(()),
                     )
                     .map_err(ProveError::ProofFailed)?;
                 (pcd, descriptors, tachygrams)
@@ -798,7 +800,7 @@ impl ProofStamp {
                 OutputAction,
                 witness::output_action((*bind_pcd.data(), ()), theta, anchor),
                 bind_pcd,
-                ragu::Proof::trivial().carry::<()>(()),
+                ragu::Proof::bootstrap().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
 
@@ -859,7 +861,7 @@ impl ProofStamp {
                 SpendAction,
                 witness::spend_action((*bind_pcd.data(), ()), theta, pak),
                 bind_pcd,
-                ragu::Proof::trivial().carry::<()>(()),
+                ragu::Proof::bootstrap().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
 

@@ -11,11 +11,12 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use ff::Field as _;
-use pasta_curves::{Ep, Eq, Fp, Fq};
 use ragu::{Header, Index, Step, Suffix};
-use ragu_arithmetic::PoseidonPermutation as _;
-use ragu_pasta::PoseidonFp;
+use ragu_core::{
+    PoseidonPermutation as _,
+    pasta::{Ep, Eq, Fp, Fq, PoseidonFp},
+};
+use udon::field::Field as _;
 
 use crate::{
     collections::indexed_multiset,

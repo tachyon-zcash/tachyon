@@ -4,9 +4,9 @@ extern crate alloc;
 
 use alloc::{vec, vec::Vec};
 
-use ff::PrimeField as _;
-use pasta_curves::{Ep, EpAffine, Eq, Fp, Fq, arithmetic::CurveAffine as _};
 use ragu::{Header, Index, Step, Suffix};
+use ragu_core::pasta::{Ep, EpAffine, Eq, Fp, Fq};
+use udon::{curve::Affine as _, field::Field as _};
 
 use super::{output::OutputHeader, pool::AnchorSpan, spend::SpendHeader};
 use crate::{
@@ -590,16 +590,12 @@ impl Step for FeeFuse {
             clippy::expect_used,
             reason = "p < q, so every Fp repr is canonical in Fq"
         )]
-        let cv_max_fee = value::Trapdoor::from_scalar(
-            Option::from(Fq::from_repr(blind.to_repr())).expect("p < q"),
-        )
-        .commit(-max_fee_note.value);
-        let cv_max_fee_coords = EpAffine::from(cv_max_fee)
-            .coordinates()
-            .into_option()
-            .ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
-            })?;
+        let cv_max_fee =
+            value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+                .commit(-max_fee_note.value);
+        let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("FeeFuse: fee commitment is the identity".into())
+        })?;
         let fee_digest = poseidon::fee_digest(cv_max_fee_coords, u64::from(fee));
 
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
@@ -688,16 +684,12 @@ impl Step for FeeSeed {
             clippy::expect_used,
             reason = "p < q, so every Fp repr is canonical in Fq"
         )]
-        let cv_max_fee = value::Trapdoor::from_scalar(
-            Option::from(Fq::from_repr(blind.to_repr())).expect("p < q"),
-        )
-        .commit(-max_fee_note.value);
-        let cv_max_fee_coords = EpAffine::from(cv_max_fee)
-            .coordinates()
-            .into_option()
-            .ok_or_else(|| {
-                ragu_core::Error::InvalidWitness("FeeSeed: fee commitment is the identity".into())
-            })?;
+        let cv_max_fee =
+            value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
+                .commit(-max_fee_note.value);
+        let cv_max_fee_coords = EpAffine::from(cv_max_fee).coordinates().ok_or_else(|| {
+            ragu_core::Error::InvalidWitness("FeeSeed: fee commitment is the identity".into())
+        })?;
         let fee_digest = poseidon::fee_digest(cv_max_fee_coords, 0);
 
         // A zero root leaves the set polynomial factor `(X - tg)` trivial.
