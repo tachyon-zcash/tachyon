@@ -1,13 +1,17 @@
 //! Value commitments and bounded value types.
 
-use core::{cmp, ops};
+use core::ops;
 
 use derive_more::{Add, Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq, Sub, Sum};
-use ff::Field as _;
-use group::{Curve as _, GroupEncoding as _};
+use group::GroupEncoding as _;
 use lazy_static::lazy_static;
-use pasta_curves::{Ep, EpAffine, Fq, arithmetic::CurveExt as _};
+use pasta_curves::{arithmetic::CurveExt as _, pallas::Point};
+use ragu_core::pasta::{self, Ep, EpAffine};
 use rand_core::CryptoRng;
+use udon::{
+    curve::{Affine as _, AffineAdapter, Pallas, Projective as _, ProjectiveAdapter},
+    field::{Fq, Reduced, random},
+};
 
 use crate::constants::MAX_MONEY;
 
@@ -31,10 +35,20 @@ const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
 
 lazy_static! {
     /// Generator $\mathcal{V}$ for value commitments.
-    static ref VALUE_COMMIT_V: Ep = Ep::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"v");
+    static ref VALUE_COMMIT_V: Ep = {
+        #[expect(clippy::expect_used, reason = "the fixed generator has a canonical encoding")]
+        EpAffine::from_bytes(Point::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"v").to_bytes())
+            .expect("valid Orchard generator")
+            .to_projective()
+    };
 
     /// Generator $\mathcal{R}$ for value commitments and binding signatures.
-    static ref VALUE_COMMIT_R: Ep = Ep::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"r");
+    static ref VALUE_COMMIT_R: Ep = {
+        #[expect(clippy::expect_used, reason = "the fixed generator has a canonical encoding")]
+        EpAffine::from_bytes(Point::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"r").to_bytes())
+            .expect("valid Orchard generator")
+            .to_projective()
+    };
 }
 
 /// Entropy for a value commitment.
@@ -47,7 +61,7 @@ lazy_static! {
 /// ($\mathbb{F}_q$, Pallas scalar field).
 #[derive(Clone, Copy, Debug, Default, Into)]
 #[expect(clippy::module_name_repetitions, reason = "deliberate name")]
-pub struct ValueTrapdoor(#[debug(skip)] Fq);
+pub struct ValueTrapdoor(#[debug(skip)] Fq<Reduced>);
 
 impl Trapdoor {
     /// The zero trapdoor.
@@ -55,12 +69,12 @@ impl Trapdoor {
 
     /// Generate a random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Fq::random(rng))
+        Self(random(|bytes| rng.fill_bytes(bytes)).reduce())
     }
 
     /// A trapdoor derived from other secret data, such as a max fee note's
     /// blind.
-    pub(crate) const fn from_scalar(scalar: Fq) -> Self {
+    pub(crate) const fn from_scalar(scalar: Fq<Reduced>) -> Self {
         Self(scalar)
     }
 
@@ -74,8 +88,8 @@ impl Trapdoor {
     /// Orchard (§5.4.8.3).
     #[must_use]
     pub fn commit<const MIN: i64, const MAX: i64>(self, value: Value<MIN, MAX>) -> Commitment {
-        let commit_value = *VALUE_COMMIT_V * Fq::from(value);
-        let commit_trapdoor = *VALUE_COMMIT_R * self.0;
+        let commit_value = *VALUE_COMMIT_V * pasta::Fq::new(Fq::from(value).into_loose());
+        let commit_trapdoor = *VALUE_COMMIT_R * pasta::Fq::new(self.0.into_loose());
         ValueCommitment(commit_value + commit_trapdoor)
     }
 }
@@ -90,15 +104,15 @@ impl Trapdoor {
 /// shared with Orchard (§5.4.8.3).
 #[derive(Add, Clone, Copy, Debug, Default, From, Into, PartialEq, Sub, Sum, TotalEq)]
 #[expect(clippy::module_name_repetitions, reason = "deliberate name")]
-pub struct ValueCommitment(#[debug(skip)] Ep);
+pub struct ValueCommitment(#[debug(skip)] ProjectiveAdapter<Pallas>);
 
-impl From<EpAffine> for Commitment {
-    fn from(value: EpAffine) -> Self {
+impl From<AffineAdapter<Pallas>> for Commitment {
+    fn from(value: AffineAdapter<Pallas>) -> Self {
         Self(value.into())
     }
 }
 
-impl From<Commitment> for EpAffine {
+impl From<Commitment> for AffineAdapter<Pallas> {
     fn from(value: Commitment) -> Self {
         value.0.to_affine()
     }
@@ -223,15 +237,11 @@ impl<const MAX: i64> From<Value<0, MAX>> for u64 {
     }
 }
 
-impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for Fq {
+impl<const MIN: i64, const MAX: i64> From<Value<MIN, MAX>> for Fq<Reduced> {
     /// Signed value as a Pallas scalar, for use as the `V`-component
     /// exponent in a value commitment.
     fn from(value: Value<MIN, MAX>) -> Self {
-        match value.0.cmp(&0) {
-            cmp::Ordering::Equal => Self::ZERO,
-            cmp::Ordering::Greater => Self::from(value.0.unsigned_abs()),
-            cmp::Ordering::Less => Self::from(value.0.unsigned_abs()).neg(),
-        }
+        Self::from_i64(value.0)
     }
 }
 
@@ -282,14 +292,17 @@ mod tests {
 
         let remainder = cv_a + cv_b - Trapdoor::ZERO.commit(Balance::try_from(300).unwrap());
 
-        let rcv_sum: Fq = Into::<Fq>::into(rcv_a) + Into::<Fq>::into(rcv_b);
+        let rcv_sum = Into::<Fq<Reduced>>::into(rcv_a).add(&Into::<Fq<Reduced>>::into(rcv_b));
 
-        assert_eq!(remainder, ValueCommitment(*VALUE_COMMIT_R * rcv_sum));
+        assert_eq!(
+            remainder,
+            ValueCommitment(*VALUE_COMMIT_R * pasta::Fq::new(rcv_sum))
+        );
     }
 
     #[test]
     fn debug_value_trapdoor_redacts_scalar() {
-        let rcv = ValueTrapdoor(Fq::from(0xFACEu64));
+        let rcv = ValueTrapdoor(Fq::from_u64(0xFACE));
         assert_eq!(alloc::format!("{rcv:?}"), "ValueTrapdoor(..)");
     }
 

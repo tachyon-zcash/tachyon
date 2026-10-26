@@ -95,9 +95,8 @@ pub use proof::{ProofAuthorizingKey, SpendValidatingKey};
 
 #[cfg(test)]
 mod tests {
-    use ff::{Field as _, PrimeField as _};
-    use pasta_curves::Fp;
     use rand::{SeedableRng as _, rngs::StdRng};
+    use udon::field::Fp;
 
     use crate::{
         entropy::ActionEntropy,
@@ -118,8 +117,8 @@ mod tests {
         let pk = sk.derive_payment_key();
 
         let ak_bytes: [u8; 32] = ak.0.into();
-        assert_ne!(ak_bytes, nk.0.to_repr());
-        assert_ne!(nk.0.to_repr(), Fp::from(pk).to_repr());
+        assert_ne!(ak_bytes, nk.0.to_bytes());
+        assert_ne!(nk.0.to_bytes(), Fp::from(pk).to_bytes());
 
         let pak = sk.derive_proof_private();
         assert_eq!(Fp::from(pak.derive_payment_key()), Fp::from(pk));
@@ -136,7 +135,7 @@ mod tests {
         let nk = sk.derive_nullifier_private();
         let pk = PaymentKey::derive(&ak, &nk);
 
-        let nk_other = NullifierKey(nk.0 + Fp::ONE);
+        let nk_other = NullifierKey(nk.0.add(&<Fp>::ONE).reduce());
         let pk_other = PaymentKey::derive(&ak, &nk_other);
         assert_ne!(Fp::from(pk), Fp::from(pk_other));
     }
@@ -168,7 +167,7 @@ mod tests {
 
     #[test]
     fn window_matches_per_epoch_derivation() {
-        let mk = NoteMasterKey(Fp::random(&mut StdRng::seed_from_u64(0)));
+        let mk = NoteMasterKey::random(&mut StdRng::seed_from_u64(0));
         let epoch_start = EpochIndex::new(96);
 
         let epochs = (u32::from(epoch_start)..).map(EpochIndex::new);
@@ -184,7 +183,7 @@ mod tests {
     fn window_rejects_a_start_too_close_to_the_final_epoch() {
         use crate::constants::EPOCH_MAX;
 
-        let mk = NoteMasterKey(Fp::random(&mut StdRng::seed_from_u64(0)));
+        let mk = NoteMasterKey::random(&mut StdRng::seed_from_u64(0));
         // Group-aligned for any EPOCH_MAX of the form `2^k - 1`, and short of
         // a whole window by three epochs.
         let window = mk.derive_window(EpochIndex::new(EPOCH_MAX - 3));
@@ -202,7 +201,7 @@ mod tests {
 
     #[test]
     fn debug_nullifier_key_redacts_value() {
-        let nk = NullifierKey(Fp::from(0xDEADu64));
+        let nk = NullifierKey(Fp::from_u64(0xDEAD));
         let dbg = alloc::format!("{nk:?}");
         assert!(dbg.contains("NullifierKey"), "must name the type");
         assert!(!dbg.contains("DEAD"), "must not leak field element");

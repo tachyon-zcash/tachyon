@@ -1,9 +1,8 @@
 //! Nullifiers and nullifier operations.
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::Field as _;
-use pasta_curves::Fp;
 use rand_core::CryptoRng;
+use udon::field::{Fp, Reduced, random};
 
 use crate::primitives::Tachygram;
 
@@ -22,8 +21,8 @@ pub const NF_DERIVATION_WIDTH: usize = 16;
 /// - Have an epoch component for sync delegation
 /// - Are prunable by validators after a window of blocks
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-#[from(Fp, Tachygram)]
-#[into(Fp, Tachygram)]
+#[from(Fp<Reduced>, Tachygram)]
+#[into(Fp<Reduced>, Tachygram)]
 pub struct Nullifier(Tachygram);
 
 /// Nullifier trapdoor ($\psi$), per-note randomness for nullifier derivation.
@@ -32,12 +31,12 @@ pub struct Nullifier(Tachygram);
 /// \mathsf{Poseidon}_\texttt{Tachyon-NfMaster}(\psi, \mathsf{nk})$, which
 /// evaluates every epoch. Delegation carries proven value windows.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct Trapdoor(#[debug(skip)] Fp);
+pub struct Trapdoor(#[debug(skip)] Fp<Reduced>);
 
 impl Trapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Fp::random(rng))
+        Self(random(|bytes| rng.fill_bytes(bytes)).reduce())
     }
 }
 
@@ -47,7 +46,7 @@ mod tests {
 
     #[test]
     fn debug_nullifier_trapdoor_redacts_value() {
-        let psi = Trapdoor::from(Fp::from(0xCAFEu64));
+        let psi = Trapdoor::from(Fp::from_u64(0xCAFE));
         let dbg = alloc::format!("{psi:?}");
         assert!(dbg.contains("Trapdoor"), "must name the type");
         assert!(!dbg.contains("CAFE"), "must not leak field element");

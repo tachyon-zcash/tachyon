@@ -3,9 +3,9 @@
 use core::marker::PhantomData;
 
 use derive_more::{Debug, From};
-use ff::{Field as _, FromUniformBytes as _, PrimeField as _};
-use pasta_curves::{Fp, Fq};
+use ff::PrimeField as _;
 use rand_core::CryptoRng;
+use udon::field::{Fp, Fq, Reduced};
 
 use super::{
     note::{NullifierKey, PaymentKey},
@@ -87,23 +87,23 @@ impl SpendingKey {
     )]
     pub fn derive_auth_private(&self) -> SpendAuthorizingKey {
         // Derive ask scalar from sk via PRF (Orchard §4.2.3).
-        let mut ask = Fq::from_uniform_bytes(&blake2b::prf_expand_ask(&self.0));
+        let mut ask = <Fq<Reduced>>::from_wide_bytes_reduced(&blake2b::prf_expand_ask(&self.0));
 
         // Sign normalization (§5.4.7.1): ak must have tilde_y = 0.
         // Compute ak = [ask]G via reddsa (basepoint is sealed) and check
         // the y-sign bit (byte 31, bit 7 of the compressed encoding).
         let ak: [u8; 32] = reddsa::VerificationKey::from(
-            &reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask.to_repr())
+            &reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask.to_bytes())
                 .expect("PRF-derived ask should be a valid RedPallas scalar"),
         )
         .into();
         if ak[31] >> 7u8 == 1u8 {
-            ask = -ask;
+            ask = ask.neg().reduce();
         }
 
         // Build the final key from the sign-normalized scalar.
         SpendAuthorizingKey(
-            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask.to_repr())
+            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(ask.to_bytes())
                 .expect("sign-normalized ask should be a valid RedPallas scalar"),
         )
     }
@@ -113,7 +113,9 @@ impl SpendingKey {
     /// `nk = ToBase(PRF^expand_sk([0x22]))`, BLAKE2b-512 reduced to Fp.
     #[must_use]
     pub fn derive_nullifier_private(&self) -> NullifierKey {
-        NullifierKey(Fp::from_uniform_bytes(&blake2b::prf_expand_nk(&self.0)))
+        NullifierKey(Fp::from_wide_bytes_reduced(&blake2b::prf_expand_nk(
+            &self.0,
+        )))
     }
 
     /// Derive the payment key $\mathsf{pk}$ from $\mathsf{sk}$.
@@ -182,12 +184,21 @@ impl SpendAuthorizingKey {
     ///
     /// Only accepts [`ActionRandomizer<Spend>`]; passing an output
     /// randomizer is a compile error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a canonical Udon scalar fails to decode in the RedPallas
+    /// field.
     #[must_use]
     pub fn derive_action_private(
         &self,
         alpha: &ActionRandomizer<effect::Spend>,
     ) -> ActionSigningKey<effect::Spend> {
-        ActionSigningKey(self.0.randomize(&alpha.0), PhantomData)
+        #[expect(clippy::expect_used, reason = "the randomizer is a canonical scalar")]
+        let scalar = pasta_curves::Fq::from_repr(alpha.0.to_bytes())
+            .into_option()
+            .expect("canonical randomizer encoding is a scalar");
+        ActionSigningKey(self.0.randomize(&scalar), PhantomData)
     }
 }
 
@@ -234,7 +245,7 @@ impl ActionSigningKey<effect::Output> {
     pub fn new(alpha: &ActionRandomizer<effect::Output>) -> Self {
         #[expect(clippy::expect_used, reason = "specified behavior")]
         Self(
-            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(alpha.0.to_repr())
+            reddsa::SigningKey::<reddsa::ActionAuth>::try_from(alpha.0.to_bytes())
                 .expect("output randomizer should be a valid RedPallas signing key"),
             PhantomData,
         )
@@ -271,16 +282,16 @@ impl<I: IntoIterator<Item = value::Trapdoor>> From<I> for BindingSigningKey {
     /// Every Pallas scalar field element, including zero, is a valid binding
     /// signing key. See Zcash protocol §4.14.
     fn from(trapdoors: I) -> Self {
-        let sum: Fq = trapdoors
+        let sum = trapdoors
             .into_iter()
-            .fold(Fq::ZERO, |acc, rcv| acc + Fq::from(rcv));
+            .fold(<Fq>::ZERO, |acc, rcv| acc.add(&Fq::from(rcv)));
 
         #[expect(
             clippy::expect_used,
             reason = "all Fq are valid RedPallas signing keys"
         )]
         Self(
-            reddsa::SigningKey::<reddsa::BindingAuth>::try_from(sum.to_repr())
+            reddsa::SigningKey::<reddsa::BindingAuth>::try_from(sum.to_bytes())
                 .expect("all Fq are valid RedPallas signing keys"),
         )
     }
