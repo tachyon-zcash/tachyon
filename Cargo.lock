@@ -487,10 +487,12 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 [[package]]
 name = "ragu"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=0725b5244371c37e9c19a80b0f660ce11ac5f74a#0725b5244371c37e9c19a80b0f660ce11ac5f74a"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=22238470531877e09e62b5970be6276bfc1064d0#22238470531877e09e62b5970be6276bfc1064d0"
 dependencies = [
  "blake2b_simd",
+ "ragu_circuits",
  "ragu_core",
+ "ragu_primitives",
  "rand",
  "zakura-udon",
 ]
@@ -498,16 +500,29 @@ dependencies = [
 [[package]]
 name = "ragu_acceleration"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=0725b5244371c37e9c19a80b0f660ce11ac5f74a#0725b5244371c37e9c19a80b0f660ce11ac5f74a"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=22238470531877e09e62b5970be6276bfc1064d0#22238470531877e09e62b5970be6276bfc1064d0"
 dependencies = [
  "ragu_backend",
  "zakura-udon",
 ]
 
 [[package]]
+name = "ragu_arithmetic"
+version = "0.0.0"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9#0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9"
+dependencies = [
+ "ff",
+ "group",
+ "ragu_macros 0.0.0 (git+https://github.com/tachyon-zcash/ragu?rev=0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9)",
+ "rand",
+ "tachyon-maybe-rayon",
+ "zakura-pasta-curves",
+]
+
+[[package]]
 name = "ragu_backend"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=0725b5244371c37e9c19a80b0f660ce11ac5f74a#0725b5244371c37e9c19a80b0f660ce11ac5f74a"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=22238470531877e09e62b5970be6276bfc1064d0#22238470531877e09e62b5970be6276bfc1064d0"
 dependencies = [
  "ragu_circuits",
  "ragu_core",
@@ -517,7 +532,7 @@ dependencies = [
 [[package]]
 name = "ragu_circuits"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=0725b5244371c37e9c19a80b0f660ce11ac5f74a#0725b5244371c37e9c19a80b0f660ce11ac5f74a"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=22238470531877e09e62b5970be6276bfc1064d0#22238470531877e09e62b5970be6276bfc1064d0"
 dependencies = [
  "blake2b_simd",
  "ragu_core",
@@ -530,9 +545,9 @@ dependencies = [
 [[package]]
 name = "ragu_core"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=0725b5244371c37e9c19a80b0f660ce11ac5f74a#0725b5244371c37e9c19a80b0f660ce11ac5f74a"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=22238470531877e09e62b5970be6276bfc1064d0#22238470531877e09e62b5970be6276bfc1064d0"
 dependencies = [
- "ragu_macros",
+ "ragu_macros 0.0.0 (git+https://github.com/tachyon-zcash/ragu?rev=22238470531877e09e62b5970be6276bfc1064d0)",
  "tachyon-maybe-rayon",
  "thiserror",
  "zakura-udon",
@@ -541,7 +556,7 @@ dependencies = [
 [[package]]
 name = "ragu_macros"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=0725b5244371c37e9c19a80b0f660ce11ac5f74a#0725b5244371c37e9c19a80b0f660ce11ac5f74a"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9#0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -552,9 +567,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "ragu_macros"
+version = "0.0.0"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=22238470531877e09e62b5970be6276bfc1064d0#22238470531877e09e62b5970be6276bfc1064d0"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ragu_pasta"
+version = "0.0.0"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9#0881656dc3d9f47d3d9eaaf692b15dd8938d9bf9"
+dependencies = [
+ "lazy_static",
+ "ragu_arithmetic",
+]
+
+[[package]]
 name = "ragu_pcd"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=0725b5244371c37e9c19a80b0f660ce11ac5f74a#0725b5244371c37e9c19a80b0f660ce11ac5f74a"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=22238470531877e09e62b5970be6276bfc1064d0#22238470531877e09e62b5970be6276bfc1064d0"
 dependencies = [
  "lazy_static",
  "ragu_acceleration",
@@ -572,10 +609,10 @@ dependencies = [
 [[package]]
 name = "ragu_primitives"
 version = "0.0.0"
-source = "git+https://github.com/tachyon-zcash/ragu?rev=0725b5244371c37e9c19a80b0f660ce11ac5f74a#0725b5244371c37e9c19a80b0f660ce11ac5f74a"
+source = "git+https://github.com/tachyon-zcash/ragu?rev=22238470531877e09e62b5970be6276bfc1064d0#22238470531877e09e62b5970be6276bfc1064d0"
 dependencies = [
  "ragu_core",
- "ragu_macros",
+ "ragu_macros 0.0.0 (git+https://github.com/tachyon-zcash/ragu?rev=22238470531877e09e62b5970be6276bfc1064d0)",
  "thiserror",
  "zakura-udon",
 ]
@@ -941,8 +978,10 @@ dependencies = [
  "group",
  "lazy_static",
  "ragu",
+ "ragu_arithmetic",
  "ragu_circuits",
  "ragu_core",
+ "ragu_pasta",
  "ragu_pcd",
  "ragu_primitives",
  "rand",
