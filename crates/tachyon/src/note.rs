@@ -34,7 +34,7 @@
 //! Ragu circuits and is TBD.
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use ragu_core::pasta::{Fp, Fq};
+use ragu::pasta::{Fp, Fq};
 use rand_core::CryptoRng;
 use udon::field::{Field as _, FieldAdapter, PallasBase};
 

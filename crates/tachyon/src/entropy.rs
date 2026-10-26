@@ -7,7 +7,7 @@
 use core::{any::type_name, marker::PhantomData};
 
 use derive_more::{Debug, Into};
-use ragu_core::pasta::Fp;
+use ragu::pasta::Fp;
 use rand_core::CryptoRng;
 use udon::field::{Field as _, FieldAdapter, PallasScalar};
 
@@ -74,7 +74,7 @@ pub struct ActionRandomizer<S: sealed::RandomizerState>(
 
 #[cfg(test)]
 mod tests {
-    use ragu_core::pasta::Fq;
+    use ragu::pasta::Fq;
     use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
     use super::*;

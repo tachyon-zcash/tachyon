@@ -5,7 +5,7 @@
 //! (`Fq`), and Pallas affine curve points (`EpAffine`).
 
 use corez::io::{self, Read, Write};
-use ragu_core::pasta::{EpAffine, EqAffine, Fp};
+use ragu::pasta::{EpAffine, EqAffine, Fp};
 use udon::{curve::Affine as _, field::Field as _};
 
 pub(crate) mod compactsize;
@@ -128,4 +128,92 @@ pub(crate) fn write_binding_sig<W: Write>(
 ) -> io::Result<()> {
     let bytes: [u8; 64] = (*sig).into();
     writer.write_all(&bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use ff::PrimeField as _;
+    use group::{Curve as _, Group as _, GroupEncoding as _};
+    use pasta_curves::{
+        EpAffine as LegacyEpAffine, EqAffine as LegacyEqAffine, Fp as LegacyFp, pallas, vesta,
+    };
+
+    use super::*;
+
+    #[test]
+    fn field_and_compressed_point_bytes_match_the_legacy_boundaries() {
+        let legacy_field = LegacyFp::from(0x1234_5678u64);
+        let legacy_field_bytes = legacy_field.to_repr();
+        let current_field = Fp::from_bytes(legacy_field_bytes)
+            .expect("legacy canonical field bytes decode in Udon");
+        assert_eq!(current_field.to_bytes(), legacy_field_bytes);
+        assert_eq!(read_fp(&legacy_field_bytes[..]).unwrap(), current_field);
+        let mut written_field = Vec::new();
+        write_fp(&mut written_field, &current_field).unwrap();
+        assert_eq!(written_field, legacy_field_bytes.as_ref());
+        assert!(LegacyFp::from_repr([0xff; 32]).into_option().is_none());
+        assert_eq!(
+            read_fp(&[0xff; 32][..]).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+
+        let pallas_generator = pallas::Point::generator();
+        let pallas_points = [
+            pallas_generator.to_affine(),
+            (-pallas_generator).to_affine(),
+        ];
+        let mut saw_pallas_sign = false;
+        for legacy_point in pallas_points {
+            let bytes = legacy_point.to_bytes();
+            saw_pallas_sign |= bytes.last().is_some_and(|last| last & 0x80 != 0);
+            let legacy_round_trip = LegacyEpAffine::from_bytes(&bytes)
+                .into_option()
+                .expect("legacy compressed Pallas point round-trips");
+            assert_eq!(legacy_round_trip.to_bytes(), bytes);
+            let current_point = read_ep_affine(&bytes[..]).unwrap();
+            assert_eq!(current_point.to_bytes(), bytes);
+            let mut written_point = Vec::new();
+            write_ep_affine(&mut written_point, &current_point).unwrap();
+            assert_eq!(written_point, bytes.as_ref());
+        }
+        assert!(saw_pallas_sign, "the point fixtures exercise the sign bit");
+        assert!(
+            LegacyEpAffine::from_bytes(&[0xff; 32])
+                .into_option()
+                .is_none()
+        );
+        assert_eq!(
+            read_ep_affine(&[0xff; 32][..]).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+
+        let vesta_generator = vesta::Point::generator();
+        let vesta_points = [vesta_generator.to_affine(), (-vesta_generator).to_affine()];
+        let mut saw_vesta_sign = false;
+        for legacy_point in vesta_points {
+            let bytes = legacy_point.to_bytes();
+            saw_vesta_sign |= bytes.last().is_some_and(|last| last & 0x80 != 0);
+            let legacy_round_trip = LegacyEqAffine::from_bytes(&bytes)
+                .into_option()
+                .expect("legacy compressed Vesta point round-trips");
+            assert_eq!(legacy_round_trip.to_bytes(), bytes);
+            let current_point = read_eq_affine(&bytes[..]).unwrap();
+            assert_eq!(current_point.to_bytes(), bytes);
+            let mut written_point = Vec::new();
+            write_eq_affine(&mut written_point, &current_point).unwrap();
+            assert_eq!(written_point, bytes.as_ref());
+        }
+        assert!(saw_vesta_sign, "the point fixtures exercise the sign bit");
+        assert!(
+            LegacyEqAffine::from_bytes(&[0xff; 32])
+                .into_option()
+                .is_none()
+        );
+        assert_eq!(
+            read_eq_affine(&[0xff; 32][..]).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
 }

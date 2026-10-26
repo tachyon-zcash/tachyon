@@ -5,7 +5,7 @@ use core::{cmp, cmp::Ord, marker::PhantomData};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, PartialEq};
-use ragu_core::pasta::EpAffine;
+use ragu::pasta::EpAffine;
 use udon::curve::Affine as _;
 
 use crate::{

@@ -9,6 +9,7 @@
 
 extern crate alloc;
 
+pub mod headers;
 pub mod proof;
 
 use alloc::{boxed::Box, collections::BTreeSet, format, vec, vec::Vec};
@@ -23,9 +24,11 @@ use proof::{
         StampLift, StampMerge,
     },
 };
-use ragu::PROOF_SIZE_COMPRESSED;
+use ragu::{
+    PROOF_SIZE_COMPRESSED,
+    pasta::{Eq, Fp},
+};
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use ragu_core::pasta::{Eq, Fp};
 use rand_core::CryptoRng;
 use udon::{
     curve::{Affine as _, Projective as _},
@@ -674,7 +677,7 @@ impl Plan {
                             &tachygrams,
                         ),
                         merged_proof.carry::<Actions>(stamp_header),
-                        ragu::Proof::bootstrap().carry::<()>(()),
+                        ragu::Proof::bootstrap::<{ proof::HEADER_SIZE }>().carry::<()>(()),
                     )
                     .map_err(ProveError::ProofFailed)?;
                 (pcd, descriptors, tachygrams)
@@ -800,7 +803,7 @@ impl ProofStamp {
                 OutputAction,
                 witness::output_action((*bind_pcd.data(), ()), theta, anchor),
                 bind_pcd,
-                ragu::Proof::bootstrap().carry::<()>(()),
+                ragu::Proof::bootstrap::<{ proof::HEADER_SIZE }>().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
 
@@ -861,7 +864,7 @@ impl ProofStamp {
                 SpendAction,
                 witness::spend_action((*bind_pcd.data(), ()), theta, pak),
                 bind_pcd,
-                ragu::Proof::bootstrap().carry::<()>(()),
+                ragu::Proof::bootstrap::<{ proof::HEADER_SIZE }>().carry::<()>(()),
             )
             .map_err(ProveError::ProofFailed)?;
 

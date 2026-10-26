@@ -5,13 +5,12 @@ extern crate alloc;
 use alloc::string::ToString as _;
 use core::array;
 
-use ragu::Proof;
-use ragu_core::pasta::Fp;
+use ragu::{Proof, pasta::Fp};
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::field::Field as _;
 use zcash_tachyon::{
     Anchor, BlockHeight, EpochIndex, Tachygram, TachygramSetPoly,
-    stamp::proof::{PROOF_SYSTEM, summary},
+    stamp::proof::{HEADER_SIZE, PROOF_SYSTEM, summary},
     witness,
 };
 
@@ -54,7 +53,7 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
             summary::SummaryAdvance,
             witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b),
             seeded,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("SummaryAdvance");
 
@@ -157,7 +156,7 @@ fn summary_advance_rejects_wrong_accumulator() {
             summary::SummaryAdvance,
             witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
             seeded,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -197,7 +196,7 @@ fn summary_advance_rejects_forged_extension() {
             summary::SummaryAdvance,
             (acc, forged, stamp),
             seeded,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()
         .unwrap();

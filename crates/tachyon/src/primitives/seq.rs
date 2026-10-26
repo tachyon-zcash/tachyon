@@ -70,3 +70,60 @@ impl Mul for NfSeqPoly {
         Self(poly_mul(&self.0, &rhs.0))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ff::PrimeField as _;
+    use group::{Curve as _, Group as _, GroupEncoding as _};
+    use pasta_curves::{Fp as LegacyFp, vesta::Point as LegacyVesta};
+    use ragu::{FixedGenerators as _, pasta::Pasta};
+    use ragu_arithmetic::{Cycle as _, FixedGenerators as _};
+    use ragu_pasta::Pasta as LegacyPasta;
+    use udon::curve::{Affine as _, Projective as _};
+
+    use super::*;
+    use crate::nullifier::Nullifier;
+
+    #[test]
+    fn sequence_commitment_matches_the_legacy_generator_provider() {
+        let legacy_generators = LegacyPasta::host_generators(LegacyPasta::baked());
+        let current_generators = Pasta::host_generators(baked());
+        let legacy_first = *legacy_generators
+            .g()
+            .first()
+            .expect("host generators exist");
+        let current_first = *current_generators
+            .g()
+            .first()
+            .expect("host generators exist");
+        assert_eq!(legacy_first.to_bytes(), current_first.to_bytes());
+
+        let sequence = NfSeqPoly::new(
+            EpochIndex::new(0),
+            &[
+                Nullifier::from(Fp::from(17)),
+                Nullifier::from(Fp::from(23)),
+                Nullifier::from(Fp::from(41)),
+            ],
+        );
+        let legacy_commitment = sequence
+            .as_ref()
+            .iter_coeffs()
+            .zip(legacy_generators.g())
+            .fold(
+                LegacyVesta::identity(),
+                |commitment, (coefficient, generator)| {
+                    let scalar = LegacyFp::from_repr(coefficient.to_bytes())
+                        .into_option()
+                        .expect("canonical coefficient bytes decode in the legacy scalar field");
+                    commitment + (*generator * scalar)
+                },
+            );
+        let current_commitment: ProjectiveAdapter<Vesta> = sequence.commit().into();
+
+        assert_eq!(
+            legacy_commitment.to_affine().to_bytes(),
+            current_commitment.to_affine().to_bytes()
+        );
+    }
+}

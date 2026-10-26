@@ -1,7 +1,7 @@
 use core::cmp;
 
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
-use ragu_core::pasta::EpAffine;
+use ragu::pasta::EpAffine;
 use udon::{
     curve::Affine as _,
     field::{FieldAdapter, PallasBase},
@@ -67,7 +67,11 @@ impl ActionDigest {
 
 #[cfg(test)]
 mod tests {
+    use ff::{Field as _, PrimeField as _};
+    use pasta_curves::Fp as LegacyFp;
+    use ragu::pasta::Fp;
     use rand::{CryptoRng, SeedableRng as _, rngs::StdRng};
+    use udon::field::Field as _;
 
     use super::*;
     use crate::{
@@ -96,6 +100,28 @@ mod tests {
         let alpha = theta.randomizer::<effect::Output>(note.commitment());
         let rk = private::ActionSigningKey::new(&alpha).derive_action_public();
         (cv, rk)
+    }
+
+    #[test]
+    fn action_digest_order_matches_legacy_field_order() {
+        let legacy_values = [
+            LegacyFp::ZERO,
+            LegacyFp::ONE,
+            LegacyFp::from(256),
+            -LegacyFp::ONE,
+        ];
+        for left in legacy_values {
+            for right in legacy_values {
+                let current_left = Fp::from_bytes(left.to_repr())
+                    .expect("canonical legacy digest bytes decode in Udon");
+                let current_right = Fp::from_bytes(right.to_repr())
+                    .expect("canonical legacy digest bytes decode in Udon");
+                assert_eq!(
+                    ActionDigest::from(current_left).cmp(&ActionDigest::from(current_right)),
+                    left.cmp(&right)
+                );
+            }
+        }
     }
 
     /// Different (cv, rk) pairs produce different digests.

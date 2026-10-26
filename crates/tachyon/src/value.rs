@@ -284,6 +284,30 @@ mod tests {
         assert_eq!(Trapdoor::ZERO.commit(Balance::ZERO), Commitment::default());
     }
 
+    #[test]
+    fn value_commitment_matches_legacy_orchard_generators_and_scalar_bytes() {
+        use ff::PrimeField as _;
+        use group::Curve as _;
+        use pasta_curves::Fq as LegacyFq;
+
+        const LEGACY_VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
+
+        let trapdoor = Trapdoor::from_scalar(Fq::from(29));
+        let value = Balance::try_from(-11).unwrap();
+        let current_bytes: [u8; 32] = trapdoor.commit(value).into();
+        let legacy_randomness = LegacyFq::from_repr(trapdoor.0.to_bytes())
+            .into_option()
+            .expect("canonical Udon randomness bytes decode in legacy Fq");
+        let legacy_value = -LegacyFq::from(11u64);
+        let legacy_value_generator = Point::hash_to_curve(LEGACY_VALUE_COMMITMENT_DOMAIN)(b"v");
+        let legacy_randomness_generator =
+            Point::hash_to_curve(LEGACY_VALUE_COMMITMENT_DOMAIN)(b"r");
+        let legacy_commitment =
+            legacy_value_generator * legacy_value + legacy_randomness_generator * legacy_randomness;
+
+        assert_eq!(legacy_commitment.to_affine().to_bytes(), current_bytes);
+    }
+
     /// The binding property: `cv_a + cv_b - balance(a+b) = [rcv_a + rcv_b]R`.
     /// The V-components cancel, leaving only the R-component.
     #[test]

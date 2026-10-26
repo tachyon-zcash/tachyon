@@ -3,7 +3,7 @@ use core::cmp::Ordering;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
 #[cfg(test)]
-use ragu_core::pasta::Fp;
+use ragu::pasta::Fp;
 #[cfg(test)]
 use rand_core::CryptoRng;
 use udon::field::{Field as _, FieldAdapter, PallasBase};

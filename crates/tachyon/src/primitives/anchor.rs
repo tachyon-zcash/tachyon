@@ -3,7 +3,7 @@ use core::cmp;
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
 use lazy_static::lazy_static;
-use ragu_core::pasta::{Eq, Fp};
+use ragu::pasta::{Eq, Fp};
 use udon::{
     curve::Projective as _,
     field::{Field as _, FieldAdapter, PallasBase},
@@ -121,11 +121,35 @@ impl Default for Anchor {
 
 #[cfg(test)]
 mod tests {
-    use ragu_core::pasta::Eq;
+    use ff::{Field as _, PrimeField as _};
+    use pasta_curves::Fp as LegacyFp;
+    use ragu::pasta::Eq;
     use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
     use super::*;
     use crate::{Tachygram, TachygramSetPoly};
+
+    #[test]
+    fn anchor_order_matches_legacy_field_order() {
+        let legacy_values = [
+            LegacyFp::ZERO,
+            LegacyFp::ONE,
+            LegacyFp::from(256),
+            -LegacyFp::ONE,
+        ];
+        for left in legacy_values {
+            for right in legacy_values {
+                let current_left = Fp::from_bytes(left.to_repr())
+                    .expect("canonical legacy anchor bytes decode in Udon");
+                let current_right = Fp::from_bytes(right.to_repr())
+                    .expect("canonical legacy anchor bytes decode in Udon");
+                assert_eq!(
+                    Anchor(current_left).cmp(&Anchor(current_right)),
+                    left.cmp(&right)
+                );
+            }
+        }
+    }
 
     #[test]
     fn order_matters() {

@@ -13,99 +13,25 @@
 //! takes unchanged.
 
 extern crate alloc;
-
-use alloc::{vec, vec::Vec};
-
-use ragu::{Header, Index, Step, Suffix};
-use ragu_core::pasta::{Ep, Eq, Fp, Fq};
+use ragu::{
+    Encoded, Header, Index, Step, StepCtx,
+    pasta::{Eq, Fp},
+};
+use ragu_core::{
+    drivers::{Driver, DriverValue},
+    gadgets::Bound,
+    maybe::Maybe as _,
+};
 use udon::curve::Projective as _;
 
 use super::qr::QrBucket;
+pub use crate::stamp::headers::evidence::{EvidenceTree, EvidenceTreePair};
 use crate::{
     constants::EVIDENCE_TREE_ARITY,
     digest::poseidon,
-    primitives::{
-        Anchor, EpochIndex, EvidenceTreeRoot, QrDiscriminant, QrProfile, TachygramSetCommit,
-    },
+    primitives::{EvidenceTreeRoot, QrProfile, TachygramSetCommit},
     ragu_constraint::enforce_zero,
 };
-
-/// A Poseidon Merkle root over one network's sealed buckets.
-///
-/// Every leaf under `root` is the [`poseidon::evidence_tree_leaf`] of a bucket
-/// whose own `(epoch, anchor_start, anchor_next, discriminant)` are the four
-/// this header carries. A one-leaf tree's root is that leaf's digest, and
-/// [`EvidenceTreeDescend`] is what produces one.
-///
-/// The tree claims nothing about which buckets it holds. A tree holding one
-/// bucket four times is as valid as a tree over a whole network, and a builder
-/// that omits a bucket can only fail to answer for it. Each bucket's exclusion
-/// claim already covers the whole epoch.
-#[derive(Clone, Debug)]
-pub struct EvidenceTree;
-
-impl Header for EvidenceTree {
-    /// `(epoch, anchor_start, anchor_next, discriminant, root)`
-    type Data = (EpochIndex, Anchor, Anchor, QrDiscriminant, EvidenceTreeRoot);
-
-    const SUFFIX: Suffix = Suffix::new(12);
-
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (epoch, anchor_start, anchor_next, discriminant, root) = *data;
-        (
-            vec![
-                Fp::from(epoch),
-                Fp::from(anchor_start),
-                Fp::from(anchor_next),
-                Fp::from(discriminant),
-                Fp::from(root),
-            ],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
-    }
-}
-
-/// Two sibling subtree roots of one network: half of a node.
-///
-/// A [`EVIDENCE_TREE_ARITY`]-child node reaches one hash through two steps,
-/// since a [`Step`] takes at most two predecessor proofs. This header is a node
-/// half-assembled: the left and right children of one side, under the four
-/// network fields both already agree on.
-#[derive(Clone, Debug)]
-pub struct EvidenceTreePair;
-
-impl Header for EvidenceTreePair {
-    /// `(epoch, anchor_start, anchor_next, discriminant, first, second)`
-    type Data = (
-        EpochIndex,
-        Anchor,
-        Anchor,
-        QrDiscriminant,
-        EvidenceTreeRoot,
-        EvidenceTreeRoot,
-    );
-
-    const SUFFIX: Suffix = Suffix::new(13);
-
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        let (epoch, anchor_start, anchor_next, discriminant, first, second) = *data;
-        (
-            vec![
-                Fp::from(epoch),
-                Fp::from(anchor_start),
-                Fp::from(anchor_next),
-                Fp::from(discriminant),
-                Fp::from(first),
-                Fp::from(second),
-            ],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
-    }
-}
 
 /// Admit two sealed [`QrBucket`]s as one half of a node.
 ///
@@ -127,78 +53,103 @@ impl Step for EvidenceTreeLeafPair {
     type Left = QrBucket;
     type Output = EvidenceTreePair;
     type Right = QrBucket;
+    type Shared = ();
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(30);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (): Self::Witness<'source>,
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
+        right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> ragu_core::Result<(
         (
-            left_epoch,
-            left_anchor_start,
-            left_anchor_next,
-            left_discriminant,
-            left_profile,
-            left_contents,
-        ): <Self::Left as Header>::Data,
-        (
-            right_epoch,
-            right_anchor_start,
-            right_anchor_next,
-            right_discriminant,
-            right_profile,
-            right_contents,
-        ): <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(left_epoch) - Fp::from(right_epoch),
-            "EvidenceTreeLeafPair: inputs cover different epochs",
-        )?;
-        enforce_zero(
-            Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
-            "EvidenceTreeLeafPair: inputs open at different anchors",
-        )?;
-        enforce_zero(
-            Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
-            "EvidenceTreeLeafPair: inputs close at different anchors",
-        )?;
-        enforce_zero(
-            Fp::from(left_discriminant) - Fp::from(right_discriminant),
-            "EvidenceTreeLeafPair: inputs derive from different discriminants",
-        )?;
-
-        let first = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
-            Fp::from(left_epoch),
-            Fp::from(left_anchor_start),
-            Fp::from(left_anchor_next),
-            Fp::from(left_discriminant),
-            Fp::from(u64::from(left_profile.depth)),
-            Fp::from(u64::from(left_profile.bits)),
-            Eq::from(left_contents).to_affine(),
-        ));
-        let second = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
-            Fp::from(right_epoch),
-            Fp::from(right_anchor_start),
-            Fp::from(right_anchor_next),
-            Fp::from(right_discriminant),
-            Fp::from(u64::from(right_profile.depth)),
-            Fp::from(u64::from(right_profile.bits)),
-            Eq::from(right_contents).to_affine(),
-        ));
-
-        Ok((
-            (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        Bound<'dr, D, Self::Shared>,
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded =
+            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let () = witness.take();
+            let (
                 left_epoch,
                 left_anchor_start,
                 left_anchor_next,
                 left_discriminant,
-                first,
-                second,
-            ),
-            (),
-        ))
+                left_profile,
+                left_contents,
+            ) = left.take();
+            let (
+                right_epoch,
+                right_anchor_start,
+                right_anchor_next,
+                right_discriminant,
+                right_profile,
+                right_contents,
+            ) = right.take();
+            enforce_zero(
+                Fp::from(left_epoch) - Fp::from(right_epoch),
+                "EvidenceTreeLeafPair: inputs cover different epochs",
+            )?;
+            enforce_zero(
+                Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
+                "EvidenceTreeLeafPair: inputs open at different anchors",
+            )?;
+            enforce_zero(
+                Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
+                "EvidenceTreeLeafPair: inputs close at different anchors",
+            )?;
+            enforce_zero(
+                Fp::from(left_discriminant) - Fp::from(right_discriminant),
+                "EvidenceTreeLeafPair: inputs derive from different discriminants",
+            )?;
+
+            let first = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
+                Fp::from(left_epoch),
+                Fp::from(left_anchor_start),
+                Fp::from(left_anchor_next),
+                Fp::from(left_discriminant),
+                Fp::from(u64::from(left_profile.depth)),
+                Fp::from(u64::from(left_profile.bits)),
+                Eq::from(left_contents).to_affine(),
+            ));
+            let second = EvidenceTreeRoot(poseidon::evidence_tree_leaf(
+                Fp::from(right_epoch),
+                Fp::from(right_anchor_start),
+                Fp::from(right_anchor_next),
+                Fp::from(right_discriminant),
+                Fp::from(u64::from(right_profile.depth)),
+                Fp::from(u64::from(right_profile.bits)),
+                Eq::from(right_contents).to_affine(),
+            ));
+
+            Ok((
+                (
+                    left_epoch,
+                    left_anchor_start,
+                    left_anchor_next,
+                    left_discriminant,
+                    first,
+                    second,
+                ),
+                (),
+            ))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
     }
 }
 
@@ -224,45 +175,77 @@ impl Step for EvidenceTreePairFuse {
     type Left = EvidenceTree;
     type Output = EvidenceTreePair;
     type Right = EvidenceTree;
+    type Shared = ();
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(25);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (): Self::Witness<'source>,
-        (left_epoch, left_anchor_start, left_anchor_next, left_discriminant, left_root): <Self::Left as Header>::Data,
-        (right_epoch, right_anchor_start, right_anchor_next, right_discriminant, right_root): <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(left_epoch) - Fp::from(right_epoch),
-            "EvidenceTreePairFuse: inputs cover different epochs",
-        )?;
-        enforce_zero(
-            Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
-            "EvidenceTreePairFuse: inputs open at different anchors",
-        )?;
-        enforce_zero(
-            Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
-            "EvidenceTreePairFuse: inputs close at different anchors",
-        )?;
-        enforce_zero(
-            Fp::from(left_discriminant) - Fp::from(right_discriminant),
-            "EvidenceTreePairFuse: inputs derive from different discriminants",
-        )?;
-
-        Ok((
-            (
-                left_epoch,
-                left_anchor_start,
-                left_anchor_next,
-                left_discriminant,
-                left_root,
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
+        right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        Bound<'dr, D, Self::Shared>,
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded =
+            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let () = witness.take();
+            let (left_epoch, left_anchor_start, left_anchor_next, left_discriminant, left_root) =
+                left.take();
+            let (
+                right_epoch,
+                right_anchor_start,
+                right_anchor_next,
+                right_discriminant,
                 right_root,
-            ),
-            (),
-        ))
+            ) = right.take();
+            enforce_zero(
+                Fp::from(left_epoch) - Fp::from(right_epoch),
+                "EvidenceTreePairFuse: inputs cover different epochs",
+            )?;
+            enforce_zero(
+                Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
+                "EvidenceTreePairFuse: inputs open at different anchors",
+            )?;
+            enforce_zero(
+                Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
+                "EvidenceTreePairFuse: inputs close at different anchors",
+            )?;
+            enforce_zero(
+                Fp::from(left_discriminant) - Fp::from(right_discriminant),
+                "EvidenceTreePairFuse: inputs derive from different discriminants",
+            )?;
+
+            Ok((
+                (
+                    left_epoch,
+                    left_anchor_start,
+                    left_anchor_next,
+                    left_discriminant,
+                    left_root,
+                    right_root,
+                ),
+                (),
+            ))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
     }
 }
 
@@ -286,65 +269,90 @@ impl Step for EvidenceTreeFuse {
     type Left = EvidenceTreePair;
     type Output = EvidenceTree;
     type Right = EvidenceTreePair;
+    type Shared = ();
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(26);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (): Self::Witness<'source>,
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
+        right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> ragu_core::Result<(
         (
-            left_epoch,
-            left_anchor_start,
-            left_anchor_next,
-            left_discriminant,
-            left_first,
-            left_second,
-        ): <Self::Left as Header>::Data,
-        (
-            right_epoch,
-            right_anchor_start,
-            right_anchor_next,
-            right_discriminant,
-            right_first,
-            right_second,
-        ): <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(left_epoch) - Fp::from(right_epoch),
-            "EvidenceTreeFuse: inputs cover different epochs",
-        )?;
-        enforce_zero(
-            Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
-            "EvidenceTreeFuse: inputs open at different anchors",
-        )?;
-        enforce_zero(
-            Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
-            "EvidenceTreeFuse: inputs close at different anchors",
-        )?;
-        enforce_zero(
-            Fp::from(left_discriminant) - Fp::from(right_discriminant),
-            "EvidenceTreeFuse: inputs derive from different discriminants",
-        )?;
-
-        let root = EvidenceTreeRoot(poseidon::evidence_tree_node([
-            Fp::from(left_first),
-            Fp::from(left_second),
-            Fp::from(right_first),
-            Fp::from(right_second),
-        ]));
-
-        Ok((
-            (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        Bound<'dr, D, Self::Shared>,
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded =
+            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let () = witness.take();
+            let (
                 left_epoch,
                 left_anchor_start,
                 left_anchor_next,
                 left_discriminant,
-                root,
-            ),
-            (),
-        ))
+                left_first,
+                left_second,
+            ) = left.take();
+            let (
+                right_epoch,
+                right_anchor_start,
+                right_anchor_next,
+                right_discriminant,
+                right_first,
+                right_second,
+            ) = right.take();
+            enforce_zero(
+                Fp::from(left_epoch) - Fp::from(right_epoch),
+                "EvidenceTreeFuse: inputs cover different epochs",
+            )?;
+            enforce_zero(
+                Fp::from(left_anchor_start) - Fp::from(right_anchor_start),
+                "EvidenceTreeFuse: inputs open at different anchors",
+            )?;
+            enforce_zero(
+                Fp::from(left_anchor_next) - Fp::from(right_anchor_next),
+                "EvidenceTreeFuse: inputs close at different anchors",
+            )?;
+            enforce_zero(
+                Fp::from(left_discriminant) - Fp::from(right_discriminant),
+                "EvidenceTreeFuse: inputs derive from different discriminants",
+            )?;
+
+            let root = EvidenceTreeRoot(poseidon::evidence_tree_node([
+                Fp::from(left_first),
+                Fp::from(left_second),
+                Fp::from(right_first),
+                Fp::from(right_second),
+            ]));
+
+            Ok((
+                (
+                    left_epoch,
+                    left_anchor_start,
+                    left_anchor_next,
+                    left_discriminant,
+                    root,
+                ),
+                (),
+            ))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
     }
 }
 
@@ -371,22 +379,47 @@ impl Step for EvidenceTreeCap {
     type Left = EvidenceTree;
     type Output = EvidenceTree;
     type Right = ();
+    type Shared = ();
     type Witness<'source> = ();
 
     const INDEX: Index = Index::new(27);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (): Self::Witness<'source>,
-        (epoch, anchor_start, anchor_next, discriminant, root): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        let raised = EvidenceTreeRoot(poseidon::evidence_tree_node(
-            [Fp::from(root); EVIDENCE_TREE_ARITY],
-        ));
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
+        right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        Bound<'dr, D, Self::Shared>,
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded =
+            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let () = witness.take();
+            let (epoch, anchor_start, anchor_next, discriminant, root) = left.take();
+            let () = right.take();
+            let raised = EvidenceTreeRoot(poseidon::evidence_tree_node(
+                [Fp::from(root); EVIDENCE_TREE_ARITY],
+            ));
 
-        Ok(((epoch, anchor_start, anchor_next, discriminant, raised), ()))
+            Ok(((epoch, anchor_start, anchor_next, discriminant, raised), ()))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
     }
 }
 
@@ -430,47 +463,72 @@ impl Step for EvidenceTreeDescend {
     type Left = EvidenceTree;
     type Output = EvidenceTree;
     type Right = ();
+    type Shared = ();
     /// `(path)`
     type Witness<'source> = ([([bool; 2], [EvidenceTreeRoot; EVIDENCE_TREE_ARITY]); Self::LEVELS],);
 
     const INDEX: Index = Index::new(28);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (path,): Self::Witness<'source>,
-        (epoch, anchor_start, anchor_next, discriminant, root): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        // TODO: a real circuit must constrain each side bit to a boolean. The
-        // selection below is exact for boolean bits and is the bilinear surface
-        // through the four children otherwise, so free field elements would
-        // reach values that are no child of the node.
-        let mut node = Fp::from(root);
-        for ([outer, inner], children) in path {
-            let [first, second, third, fourth] = children.map(Fp::from);
-            enforce_zero(
-                node - poseidon::evidence_tree_node([first, second, third, fourth]),
-                "EvidenceTreeDescend: children do not hash to the node",
-            )?;
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
+        right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        Bound<'dr, D, Self::Shared>,
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded =
+            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let (path,) = witness.take();
+            let (epoch, anchor_start, anchor_next, discriminant, root) = left.take();
+            let () = right.take();
+            // TODO: a real circuit must constrain each side bit to a boolean. The
+            // selection below is exact for boolean bits and is the bilinear surface
+            // through the four children otherwise, so free field elements would
+            // reach values that are no child of the node.
+            let mut node = Fp::from(root);
+            for ([outer, inner], children) in path {
+                let [first, second, third, fourth] = children.map(Fp::from);
+                enforce_zero(
+                    node - poseidon::evidence_tree_node([first, second, third, fourth]),
+                    "EvidenceTreeDescend: children do not hash to the node",
+                )?;
 
-            let outer_side = Fp::from(u64::from(outer));
-            let inner_side = Fp::from(u64::from(inner));
-            let lower = first + inner_side * (second - first);
-            let upper = third + inner_side * (fourth - third);
-            node = lower + outer_side * (upper - lower);
-        }
+                let outer_side = Fp::from(u64::from(outer));
+                let inner_side = Fp::from(u64::from(inner));
+                let lower = first + inner_side * (second - first);
+                let upper = third + inner_side * (fourth - third);
+                node = lower + outer_side * (upper - lower);
+            }
 
-        Ok((
-            (
-                epoch,
-                anchor_start,
-                anchor_next,
-                discriminant,
-                EvidenceTreeRoot(node),
-            ),
-            (),
-        ))
+            Ok((
+                (
+                    epoch,
+                    anchor_start,
+                    anchor_next,
+                    discriminant,
+                    EvidenceTreeRoot(node),
+                ),
+                (),
+            ))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
     }
 }
 
@@ -503,42 +561,67 @@ impl Step for EvidenceTreeOpen {
     type Left = EvidenceTree;
     type Output = QrBucket;
     type Right = ();
+    type Shared = ();
     /// `(profile, contents)`
     type Witness<'source> = (QrProfile, TachygramSetCommit);
 
     const INDEX: Index = Index::new(29);
 
-    fn witness<'source>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        _ctx: &mut ragu::StepCtx<'_>,
-        (profile, contents): Self::Witness<'source>,
-        (epoch, anchor_start, anchor_next, discriminant, root): <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> ragu_core::Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        enforce_zero(
-            Fp::from(root)
-                - poseidon::evidence_tree_leaf(
-                    Fp::from(epoch),
-                    Fp::from(anchor_start),
-                    Fp::from(anchor_next),
-                    Fp::from(discriminant),
-                    Fp::from(u64::from(profile.depth)),
-                    Fp::from(u64::from(profile.bits)),
-                    Eq::from(contents).to_affine(),
-                ),
-            "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
-        )?;
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
+        right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> ragu_core::Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        Bound<'dr, D, Self::Shared>,
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let left_encoded =
+            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
+        let right_encoded =
+            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+        let output = D::try_just(|| {
+            let (profile, contents) = witness.take();
+            let (epoch, anchor_start, anchor_next, discriminant, root) = left.take();
+            let () = right.take();
+            enforce_zero(
+                Fp::from(root)
+                    - poseidon::evidence_tree_leaf(
+                        Fp::from(epoch),
+                        Fp::from(anchor_start),
+                        Fp::from(anchor_next),
+                        Fp::from(discriminant),
+                        Fp::from(u64::from(profile.depth)),
+                        Fp::from(u64::from(profile.bits)),
+                        Eq::from(contents).to_affine(),
+                    ),
+                "EvidenceTreeOpen: witnessed bucket is not the tree's leaf",
+            )?;
 
-        Ok((
-            (
-                epoch,
-                anchor_start,
-                anchor_next,
-                discriminant,
-                profile,
-                contents,
-            ),
-            (),
-        ))
+            Ok((
+                (
+                    epoch,
+                    anchor_start,
+                    anchor_next,
+                    discriminant,
+                    profile,
+                    contents,
+                ),
+                (),
+            ))
+        })?;
+        let (data, aux) = output.cast();
+        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
+        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
     }
 }

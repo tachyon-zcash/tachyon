@@ -5,10 +5,8 @@
 //! message. The wireless emulator is cheaper but never checks constraint
 //! satisfaction, so it cannot reject an invalid witness.
 
-use ragu_core::{
-    Error, Result,
-    pasta::{Eq, EqAffine, Fp, Fq},
-};
+use ragu::pasta::{Eq, EqAffine, Fp, Fq};
+use ragu_core::{Error, Result};
 use ragu_primitives::{Element, GadgetExt as _, Point, Simulator};
 use udon::curve::Projective as _;
 
