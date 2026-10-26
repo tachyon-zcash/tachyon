@@ -6,8 +6,7 @@
 //! [`ActionSigningKey`](crate::keys::private::ActionSigningKey), and key types
 //! to enforce the spend/output distinction at compile time.
 
-use ff::PrimeField as _;
-use pasta_curves::{Fp, Fq};
+use udon::field::{Fp, Fq, Reduced};
 
 use crate::{digest::poseidon, entropy::ActionEntropy, note, value};
 
@@ -16,8 +15,8 @@ use crate::{digest::poseidon, entropy::ActionEntropy, note, value};
     clippy::expect_used,
     reason = "p < q, so every Fp repr is canonical in Fq"
 )]
-fn embed(alpha: Fp) -> Fq {
-    Option::from(Fq::from_repr(alpha.to_repr())).expect("p < q")
+fn embed(alpha: Fp<Reduced>) -> Fq<Reduced> {
+    Fq::from_bytes(alpha.to_bytes()).expect("p < q")
 }
 
 mod sealed {
@@ -30,7 +29,7 @@ mod sealed {
 pub trait Effect: sealed::Sealed {
     /// Derive this effect's $\alpha$ scalar from per-action entropy and a note
     /// commitment.
-    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq;
+    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq<Reduced>;
 
     /// Commit to this effect's signed value contribution using the given
     /// trapdoor.
@@ -46,7 +45,7 @@ pub struct Spend;
 pub struct Output;
 
 impl Effect for Spend {
-    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
+    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq<Reduced> {
         embed(poseidon::alpha_spend(theta.0, cm.into()))
     }
 
@@ -56,7 +55,7 @@ impl Effect for Spend {
 }
 
 impl Effect for Output {
-    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq {
+    fn derive_alpha(theta: ActionEntropy, cm: note::Commitment) -> Fq<Reduced> {
         embed(poseidon::alpha_output(theta.0, cm.into()))
     }
 

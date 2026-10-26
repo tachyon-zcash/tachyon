@@ -72,71 +72,83 @@
 
 extern crate alloc;
 
-use ff::Field as _;
-use pasta_curves::Fp;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_pasta::fp;
+use ragu_core::pasta;
+use udon::field::{Fp, Reduced};
 
 use super::poly_mul;
 
-const NON_RESIDUE: Fp = fp!(0x02);
+const NON_RESIDUE: Fp =
+    udon::fp_hex!("0x0000000000000000000000000000000000000000000000000000000000000002");
 
 #[must_use]
-fn encode_single(idx: u64, m: Fp) -> Polynomial<Fp, ProductionRank> {
-    let i = Fp::from(idx) + Fp::ONE;
+fn encode_single(idx: u64, m: Fp<Reduced>) -> Polynomial<pasta::Fp, ProductionRank> {
+    let i = <Fp>::from_u64(idx).add(&<Fp>::ONE);
     // writing out expanded coefficients for $F(X) = (iX + m)^3 - c$ is
     // cheaper than constructing a linear $f(X) = iX + m$ and then cubing it.
     Polynomial::from_coeffs(
         [
-            m.pow([3]) - NON_RESIDUE,
-            fp!(3) * i * m.square(),
-            fp!(3) * i.square() * m,
-            i.pow([3]),
+            m.pow_u64(3).sub(&NON_RESIDUE),
+            i.mul(&m.square()).triple(),
+            i.square().mul(&m).triple(),
+            i.pow_u64(3),
         ]
+        .map(pasta::Fp::new)
         .to_vec(),
     )
 }
 
 #[must_use]
-fn direct_eval_single(idx: u64, m: Fp, x: Fp) -> Fp {
-    let i = Fp::from(idx) + Fp::ONE;
-    ((i * x) + m).pow([3]) - NON_RESIDUE
+fn direct_eval_single(idx: u64, m: Fp<Reduced>, x: Fp<Reduced>) -> Fp {
+    let i = <Fp>::from_u64(idx).add(&<Fp>::ONE);
+    i.mul(&x).add(&m).pow_u64(3).sub(&NON_RESIDUE)
 }
 
 /// Encode the provided indexed members.
 pub(crate) fn encode(
-    members: impl IntoIterator<Item = (u64, Fp)>,
-) -> Polynomial<Fp, ProductionRank> {
+    members: impl IntoIterator<Item = (u64, Fp<Reduced>)>,
+) -> Polynomial<pasta::Fp, ProductionRank> {
     members.into_iter().fold(
-        Polynomial::from_coeffs([Fp::ONE].to_vec()),
+        Polynomial::from_coeffs([<Fp>::ONE.into()].to_vec()),
         |acc, (idx, m)| poly_mul(&acc, &encode_single(idx, m)),
     )
 }
 
 /// Evaluate the indexed multiset without building the polynomial.
-pub(crate) fn direct_eval(members: impl IntoIterator<Item = (u64, Fp)>, x: Fp) -> Fp {
+pub(crate) fn direct_eval(
+    members: impl IntoIterator<Item = (u64, Fp<Reduced>)>,
+    x: Fp<Reduced>,
+) -> Fp<Reduced> {
     members
         .into_iter()
-        .fold(Fp::ONE, |acc, (idx, m)| acc * direct_eval_single(idx, m, x))
+        .fold(<Fp>::ONE, |acc, (idx, m)| {
+            acc.mul(&direct_eval_single(idx, m, x))
+        })
+        .reduce()
 }
 
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
 
-    use rand::{RngExt as _, SeedableRng as _, rngs::StdRng};
+    use rand::{Rng as _, RngExt as _, SeedableRng as _, rngs::StdRng};
+    use udon::field::random;
 
     use super::*;
+
+    fn eval_at(poly: &Polynomial<pasta::Fp, ProductionRank>, at: Fp<Reduced>) -> Fp<Reduced> {
+        poly.eval(at.into_loose().into()).into_inner().reduce()
+    }
 
     #[test]
     fn member_encoding_matches_manual_evaluation() {
         let rng = &mut StdRng::seed_from_u64(3);
         for _ in 0..8 {
             let idx = u64::from(rng.random_range(0..u32::MAX));
-            let member = Fp::random(&mut *rng);
-            let x = Fp::random(&mut *rng);
+            let member = random(|bytes| rng.fill_bytes(bytes)).reduce();
+            let x = random(|bytes| rng.fill_bytes(bytes)).reduce();
             assert_eq!(
-                encode_single(idx, member).eval(x),
+                eval_at(&encode_single(idx, member), x),
                 direct_eval([(idx, member)], x)
             );
         }
@@ -146,22 +158,31 @@ mod tests {
     fn member_encoding_matches_manual_construction() {
         let rng = &mut StdRng::seed_from_u64(6);
         let idx = u64::from(rng.random_range(0..u32::MAX));
-        let member = Fp::random(&mut *rng);
-        let x = Fp::random(&mut *rng);
+        let member = random(|bytes| rng.fill_bytes(bytes)).reduce();
+        let x = random(|bytes| rng.fill_bytes(bytes)).reduce();
 
         let manual_poly = {
-            let m_ix = Polynomial::from_coeffs([member, Fp::from(idx) + Fp::ONE].to_vec());
+            let m_ix = Polynomial::from_coeffs(
+                [
+                    member.into_loose().into(),
+                    <Fp>::from_u64(idx).add(&<Fp>::ONE).into(),
+                ]
+                .to_vec(),
+            );
 
             let m_ix_cube = poly_mul(&poly_mul(&m_ix, &m_ix), &m_ix);
 
             {
                 let mut coeffs = m_ix_cube.iter_coeffs().collect::<Vec<_>>();
-                coeffs[0] -= NON_RESIDUE;
-                Polynomial::<Fp, ProductionRank>::from_coeffs(coeffs)
+                coeffs[0] -= pasta::Fp::new(NON_RESIDUE);
+                Polynomial::<pasta::Fp, ProductionRank>::from_coeffs(coeffs)
             }
         };
 
-        assert_eq!(encode_single(idx, member).eval(x), manual_poly.eval(x));
+        assert_eq!(
+            eval_at(&encode_single(idx, member), x),
+            eval_at(&manual_poly, x)
+        );
     }
 
     #[test]
@@ -169,13 +190,13 @@ mod tests {
         let rng = &mut StdRng::seed_from_u64(12);
         for len in 0..6u64 {
             let start_idx = u64::from(rng.random_range(0..u32::MAX));
-            let members: Vec<(u64, Fp)> = (start_idx..start_idx + len)
-                .map(|idx| (idx, Fp::random(&mut *rng)))
+            let members: Vec<(u64, Fp<Reduced>)> = (start_idx..start_idx + len)
+                .map(|idx| (idx, random(|bytes| rng.fill_bytes(bytes)).reduce()))
                 .collect();
-            let x = Fp::random(&mut *rng);
+            let x = random(|bytes| rng.fill_bytes(bytes)).reduce();
             assert_eq!(
                 direct_eval(members.iter().copied(), x),
-                encode(members).eval(x)
+                eval_at(&encode(members), x)
             );
         }
     }

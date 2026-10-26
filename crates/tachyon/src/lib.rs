@@ -26,6 +26,7 @@ pub mod value;
 pub mod witness;
 
 mod collections;
+mod pasta;
 mod primitives;
 mod ragu_constraint;
 mod relations;

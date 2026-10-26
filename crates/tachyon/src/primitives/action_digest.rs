@@ -1,5 +1,6 @@
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
-use pasta_curves::{EpAffine, Fp, arithmetic::CurveAffine as _};
+use ragu_core::pasta::EpAffine;
+use udon::field::{Fp, Reduced};
 
 use crate::{digest::poseidon, keys::public, value};
 
@@ -10,7 +11,7 @@ use crate::{digest::poseidon, keys::public, value};
 /// polynomial commitment, not on this type. A fee digest
 /// $d_\mathsf{fee}$ joins the same action set.
 #[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
-pub struct ActionDigest(Fp);
+pub struct ActionDigest(Fp<Reduced>);
 
 /// Errors from action digest computation.
 #[derive(Clone, Copy, Debug, Display, Error)]
@@ -34,15 +35,15 @@ impl ActionDigest {
         cv: value::Commitment,
         rk: public::ActionVerificationKey,
     ) -> Result<Self, ActionDigestError> {
-        let cv_coords = EpAffine::from(cv)
-            .coordinates()
-            .into_option()
+        let cv_affine = *EpAffine::from(cv)
+            .as_inner()
+            .as_affine()
             .ok_or(ActionDigestError::IdentityCv)?;
-        let rk_coords = EpAffine::from(rk)
-            .coordinates()
-            .into_option()
+        let rk_affine = *EpAffine::from(rk)
+            .as_inner()
+            .as_affine()
             .ok_or(ActionDigestError::IdentityRk)?;
-        Ok(Self(poseidon::action_digest(cv_coords, rk_coords)))
+        Ok(Self(poseidon::action_digest(cv_affine, rk_affine)))
     }
 }
 

@@ -1,15 +1,18 @@
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, Into, PartialEq};
-use ff::Field as _;
-use group::{Curve as _, Group as _};
 use lazy_static::lazy_static;
-use pasta_curves::{Eq, Fp};
+use ragu_core::pasta::Eq;
+use rand_core::CryptoRng;
+use udon::{
+    curve::Projective as _,
+    field::{Fp, Reduced, random},
+};
 
 use super::{EpochIndex, TachygramSetCommit};
 use crate::{digest::poseidon, serialization};
 
 lazy_static! {
-    static ref ANCHOR_GENESIS: Fp = poseidon::anchor_next_epoch(Fp::ZERO, Fp::ZERO);
+    static ref ANCHOR_GENESIS: Fp<Reduced> = poseidon::anchor_next_epoch(Fp::ZERO, Fp::ZERO);
 }
 
 /// Errors that can occur when advancing an anchor.
@@ -28,9 +31,14 @@ pub enum AnchorError {
 
 /// Running anchor over the consensus state.
 #[derive(Clone, Copy, Debug, From, Into, Ord, PartialEq, PartialOrd, TotalEq)]
-pub struct Anchor(pub Fp);
+pub struct Anchor(pub Fp<Reduced>);
 
 impl Anchor {
+    /// Sample a uniformly random anchor.
+    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
+        Self(random(|bytes| rng.fill_bytes(bytes)).reduce())
+    }
+
     /// Advance the anchor by absorbing one stamp and the epoch of the block
     /// that contains it.
     ///
@@ -102,7 +110,7 @@ impl Default for Anchor {
 
 #[cfg(test)]
 mod tests {
-    use pasta_curves::Eq;
+    use ragu_core::pasta::Eq;
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use super::*;
@@ -135,7 +143,7 @@ mod tests {
 
         // The identity commitment is not a valid set
         {
-            let anchor = Anchor(Fp::random(&mut *rng));
+            let anchor = Anchor::random(rng);
             let zero_set = TachygramSetCommit::from(Eq::identity());
 
             let Err(AnchorError::NextStampZero) = anchor.next_stamp(EpochIndex::new(7), &zero_set)
@@ -146,7 +154,7 @@ mod tests {
 
         // An empty set commits to a constant polynomial
         {
-            let anchor = Anchor(Fp::random(&mut *rng));
+            let anchor = Anchor::random(rng);
             let one_set = TachygramSetCommit::default();
 
             let Err(AnchorError::NextStampEmpty) = anchor.next_stamp(EpochIndex::new(1), &one_set)
@@ -160,7 +168,7 @@ mod tests {
     fn next_epoch_rejects_epoch_zero() {
         let rng = &mut StdRng::seed_from_u64(0);
 
-        let anchor = Anchor(Fp::random(rng));
+        let anchor = Anchor::random(rng);
 
         let Err(AnchorError::NextEpochZero) = anchor.next_epoch(EpochIndex::new(0)) else {
             panic!("should not be able to advance to epoch zero");
