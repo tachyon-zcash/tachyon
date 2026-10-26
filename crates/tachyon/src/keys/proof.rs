@@ -79,17 +79,17 @@ impl SpendValidatingKey {
     ///
     /// # Panics
     ///
-    /// Panics if a canonical Udon scalar fails to decode in the RedPallas
-    /// field.
+    /// Panics only if a canonical Udon Fq representation does not decode as
+    /// the same legacy reddsa scalar field element.
     #[must_use]
+    #[expect(clippy::expect_used, reason = "the randomizer is a canonical Fq value")]
     pub fn derive_action_public(
         &self,
         alpha: &ActionRandomizer<effect::Spend>,
     ) -> public::ActionVerificationKey {
-        #[expect(clippy::expect_used, reason = "the randomizer is a canonical scalar")]
-        let scalar = pasta_curves::Fq::from_repr(alpha.0.to_bytes())
+        let alpha_scalar = pasta_curves::Fq::from_repr(alpha.0.to_bytes())
             .into_option()
             .expect("canonical randomizer encoding is a scalar");
-        public::ActionVerificationKey(self.0.randomize(&scalar))
+        public::ActionVerificationKey(self.0.randomize(&alpha_scalar))
     }
 }

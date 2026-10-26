@@ -2,8 +2,8 @@ use core::iter;
 
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
+use ragu::{Cycle as _, FixedGenerators as _, pasta::Pasta};
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
-use ragu_core::{Cycle as _, FixedGenerators as _, pasta::Pasta};
 use udon::curve::Projective as _;
 
 use super::{ActionDigest, Anchor, Tachygram};

@@ -3,7 +3,7 @@
 use core::array;
 
 use derive_more::{Debug, Eq as TotalEq, Into, PartialEq};
-use ragu_core::{PoseidonPermutation as _, pasta::PoseidonFp};
+use ragu::{PoseidonPermutation as _, pasta::PoseidonFp};
 #[cfg(test)]
 use rand_core::CryptoRng;
 #[cfg(test)]

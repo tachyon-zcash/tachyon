@@ -17,7 +17,7 @@ use zcash_tachyon::{
     nullifier::Nullifier,
     pasta::Fp,
     stamp::proof::{
-        PROOF_SYSTEM,
+        HEADER_SIZE, PROOF_SYSTEM,
         pool::{ArbitraryUnspent, NoteUnspent, UnspentFuse, UnspentLift},
         qr, spend, spendable, summary,
     },
@@ -46,7 +46,7 @@ fn fuse_unspent_init(
             qr::QrUnspentInit,
             witness,
             bucket,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .map(|(unspent, ())| unspent)
 }
@@ -183,7 +183,7 @@ fn qr_summary_intake_starts_a_root_from_a_summary() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
 
@@ -232,7 +232,7 @@ fn qr_stamp_intake_seed_roots_an_intake_on_one_stamp() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
     assert_eq!(
@@ -288,7 +288,7 @@ fn qr_intake_split_partitions_the_contents_by_class() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
 
@@ -307,7 +307,7 @@ fn qr_intake_split_partitions_the_contents_by_class() {
             qr::QrIntakeSplit,
             witness::qr_intake_split((*root.data(), ()), &members),
             root,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
 
@@ -364,7 +364,7 @@ fn qr_intake_split_rejects_a_forged_partition() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
 
@@ -375,7 +375,7 @@ fn qr_intake_split_rejects_a_forged_partition() {
             qr::QrIntakeSplit,
             (contents, non_residue.clone(), non_residue),
             root,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -413,7 +413,7 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
 
@@ -434,7 +434,7 @@ fn qr_intake_split_rejects_the_exceptional_value_on_the_non_residue_side() {
                 residue.iter().copied().collect(),
             ),
             root,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -481,7 +481,7 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
                 qr::QrSummaryIntake,
                 witness::qr_summary_intake((*summary.data(), ()), discriminant),
                 summary,
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .expect("QrSummaryIntake");
 
@@ -502,7 +502,7 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
                 qr::QrIntakeSplit,
                 witness::qr_intake_split((*intake.pcd.data(), ()), &intake.members),
                 intake.pcd.clone(),
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .expect("honest QrIntakeSplit accepts the exceptional value");
 
@@ -525,7 +525,7 @@ fn qr_intake_split_checks_the_exceptional_value_at_its_depth() {
                     residue.iter().copied().collect(),
                 ),
                 intake.pcd,
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .err()
             .unwrap();
@@ -557,7 +557,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
     let (_, _, anchor_end, ..) = *root.data();
@@ -567,7 +567,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
             qr::QrIntakeSplit,
             witness::qr_intake_split((*root.data(), ()), &members),
             root,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
 
@@ -583,7 +583,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                 qr::QrSideDescend,
                 witness::qr_side_descend((*split.data(), ()), &members, side),
                 split.clone(),
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .expect("QrSideDescend");
         assert_eq!(
@@ -626,7 +626,7 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
     let (split, ()) = PROOF_SYSTEM
@@ -635,7 +635,7 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
             qr::QrIntakeSplit,
             witness::qr_intake_split((*root.data(), ()), &members),
             root,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
 
@@ -648,7 +648,7 @@ fn qr_side_descend_rejects_a_foreign_sibling() {
             qr::QrSideDescend,
             (true, foreign_sibling, interpolant, quotient),
             split,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -684,7 +684,7 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
     let (split, ()) = PROOF_SYSTEM
@@ -693,7 +693,7 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
             qr::QrIntakeSplit,
             witness::qr_intake_split((*root.data(), ()), &members),
             root,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
 
@@ -708,7 +708,7 @@ fn qr_side_descend_rejects_a_foreign_interpolant() {
                 qr::QrSideDescend,
                 (bit, sibling_contents, foreign_interpolant, quotient),
                 split.clone(),
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .err()
             .unwrap();
@@ -742,7 +742,7 @@ fn qr_side_descend_rejects_a_foreign_quotient() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
     let (split, ()) = PROOF_SYSTEM
@@ -751,7 +751,7 @@ fn qr_side_descend_rejects_a_foreign_quotient() {
             qr::QrIntakeSplit,
             witness::qr_intake_split((*root.data(), ()), &members),
             root,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
 
@@ -766,7 +766,7 @@ fn qr_side_descend_rejects_a_foreign_quotient() {
                 qr::QrSideDescend,
                 (bit, sibling_contents, interpolant, foreign_quotient),
                 split.clone(),
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .err()
             .unwrap();
@@ -798,7 +798,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
 
@@ -823,7 +823,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
                 short_residue.iter().copied().collect(),
             ),
             root,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
 
@@ -843,7 +843,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
                 quotient,
             ),
             sides.clone(),
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -865,7 +865,7 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
             qr::QrSideDescend,
             witness::qr_side_descend((*sides.data(), ()), &members_without_smuggled, false),
             sides,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSideDescend");
     let (.., child_profile, child_contents) = *child.data();
@@ -907,7 +907,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*honest_summary.data(), ()), honest_discriminant),
             honest_summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
     let (honest_split, ()) = PROOF_SYSTEM
@@ -916,7 +916,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             qr::QrIntakeSplit,
             witness::qr_intake_split((*honest_root.data(), ()), &members),
             honest_root,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
     let (_, _, interpolant, quotient) =
@@ -951,7 +951,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), solved),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
     let (contents, ..) = witness::qr_intake_split((*root.data(), ()), &members);
@@ -965,7 +965,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
                 sibling.clone(),
             ),
             root,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("the split's product does not read the discriminant");
 
@@ -975,7 +975,7 @@ fn qr_side_descend_rejects_a_discriminant_solved_after_the_challenge() {
             qr::QrSideDescend,
             (false, sibling, interpolant, quotient),
             sides,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -1006,7 +1006,7 @@ fn qr_side_descend_refuses_a_full_register() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*summary.data(), ()), discriminant),
             summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
 
@@ -1035,7 +1035,7 @@ fn qr_side_descend_refuses_a_full_register() {
             qr::QrIntakeSplit,
             split_witness,
             intake.pcd,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
     let descend_witness = witness::qr_side_descend((*sides.data(), ()), &intake.members, true);
@@ -1045,7 +1045,7 @@ fn qr_side_descend_refuses_a_full_register() {
             qr::QrSideDescend,
             descend_witness,
             sides,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -1090,7 +1090,7 @@ fn qr_intake_merge_joins_two_spans() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*left_summary.data(), ()), discriminant),
             left_summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
     let (right, ()) = PROOF_SYSTEM
@@ -1099,7 +1099,7 @@ fn qr_intake_merge_joins_two_spans() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*right_summary.data(), ()), discriminant),
             right_summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
 
@@ -1159,7 +1159,7 @@ fn qr_intake_merge_rejects_a_gap() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*left_summary.data(), ()), discriminant),
             left_summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
     let (right, ()) = PROOF_SYSTEM
@@ -1168,7 +1168,7 @@ fn qr_intake_merge_rejects_a_gap() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*right_summary.data(), ()), discriminant),
             right_summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
 
@@ -1218,7 +1218,7 @@ fn qr_intake_merge_rejects_different_profiles() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*left_summary.data(), ()), discriminant),
             left_summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
     let (right, ()) = PROOF_SYSTEM
@@ -1227,7 +1227,7 @@ fn qr_intake_merge_rejects_different_profiles() {
             qr::QrSummaryIntake,
             witness::qr_summary_intake((*right_summary.data(), ()), discriminant),
             right_summary,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSummaryIntake");
 
@@ -1237,7 +1237,7 @@ fn qr_intake_merge_rejects_different_profiles() {
             qr::QrIntakeSplit,
             witness::qr_intake_split((*left_root.data(), ()), &left_members),
             left_root,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
     let (deeper, ()) = PROOF_SYSTEM
@@ -1246,7 +1246,7 @@ fn qr_intake_merge_rejects_different_profiles() {
             qr::QrSideDescend,
             witness::qr_side_descend((*split.data(), ()), &left_members, true),
             split,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrSideDescend");
 
@@ -1495,7 +1495,7 @@ fn qr_bucket_seal_rejects_a_stamp_absorption_as_intake_start() {
             qr::QrBucketSeal,
             witness,
             intake.pcd,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -2469,7 +2469,7 @@ fn qr_bucket_seal_refuses_the_final_epoch() {
             qr::QrBucketSeal,
             witness,
             forged,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()
         .unwrap();
@@ -2781,7 +2781,7 @@ fn qr_intake_merge_rejects_different_discriminants() {
                 qr::QrSummaryIntake,
                 witness::qr_summary_intake((*summary.data(), ()), discriminant),
                 summary,
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .expect("QrSummaryIntake");
         root
@@ -2832,7 +2832,7 @@ fn qr_intake_merge_rejects_different_epochs() {
                 qr::QrSummaryIntake,
                 witness::qr_summary_intake((*summary.data(), ()), discriminant),
                 summary,
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .expect("QrSummaryIntake");
         root

@@ -3,12 +3,17 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
 
-use ragu::{Pcd, Proof};
+use ragu::{
+    Cycle as _, Pcd, PoseidonPermutation as _, Proof,
+    pasta::{Eq, Pasta, PoseidonFp},
+};
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use ragu_core::{
-    PoseidonPermutation as _,
-    pasta::{Eq, PoseidonFp},
+    drivers::emulator::{Emulator, Wireless},
+    maybe::{Always, Maybe as _},
 };
+use ragu_pcd::pasta;
+use ragu_primitives::{Element, poseidon::Sponge};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
 use udon::{
@@ -32,7 +37,7 @@ use zcash_tachyon::{
     stamp::{
         self, AggregateId, ProofStamp, StampState, Unproven,
         proof::{
-            PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
+            HEADER_SIZE, PROOF_SYSTEM, delegation, evidence, pool, qr, spendable,
             stamp::{Stamp, StampMerge},
             summary,
         },
@@ -630,7 +635,7 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
                 summary::SummaryAdvance,
                 witness::summary_advance((*pcd.data(), ()), &acc, &entry.1),
                 pcd,
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .expect("SummaryAdvance");
         acc.extend(entry.1.iter().copied());
@@ -667,7 +672,7 @@ pub(crate) fn seal_qr_intake<RNG: CryptoRng>(
             qr::QrBucketSeal,
             witness,
             intake.pcd,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrBucketSeal");
     QrBucketEntry {
@@ -746,7 +751,7 @@ fn build_qr_roots<RNG: CryptoRng>(
                 qr::QrSummaryIntake,
                 witness,
                 summary,
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .expect("QrSummaryIntake");
         roots.push(QrIntakeEntry { pcd, members });
@@ -816,7 +821,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
             qr::QrIntakeSplit,
             split_witness,
             intake.pcd,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
 
@@ -836,7 +841,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
                 qr::QrSideDescend,
                 descend_witness,
                 sides.clone(),
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .expect("QrSideDescend");
         QrIntakeEntry { pcd, members }
@@ -1018,7 +1023,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
                 evidence::EvidenceTreeCap,
                 (),
                 root,
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .expect("EvidenceTreeCap");
         root = pcd;
@@ -1075,7 +1080,7 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
                 evidence::EvidenceTreeDescend,
                 witness,
                 node,
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .expect("EvidenceTreeDescend");
         node = pcd;
@@ -1088,7 +1093,7 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
             evidence::EvidenceTreeOpen,
             witness,
             node,
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("EvidenceTreeOpen");
     QrBucketEntry {
@@ -1175,7 +1180,7 @@ pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
             qr::QrUnspentInit,
             witness,
             bucket.pcd.clone(),
-            Proof::bootstrap().carry::<()>(()),
+            Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .expect("QrUnspentInit");
     segment
@@ -1403,7 +1408,7 @@ impl WalletSim {
                     delegation::NullifierDerive,
                     witness::nullifier_derive((*secret.data(), ()), chunk_start),
                     secret.clone(),
-                    Proof::bootstrap().carry::<()>(()),
+                    Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
                 )
                 .expect("NullifierDerive");
             merged = Some(match merged {
@@ -1472,7 +1477,7 @@ impl WalletSim {
                 spendable::SpendableInit,
                 witness::spendable_init((*deriv.data(), ()), anchor_prev, &creation_tgs, epoch),
                 deriv,
-                Proof::bootstrap().carry::<()>(()),
+                Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
             )
             .expect("SpendableInit");
         spendable
@@ -1782,16 +1787,32 @@ impl Default for SyncSim {
 /// The mock's Fiat-Shamir challenge over `commitments` alone: the `z` a
 /// prover knows before choosing a free scalar the challenge does not absorb.
 pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
-    let mut state = blake2b_simd::Params::new()
-        .hash_length(64)
-        .personal(b"MkRagu_Challng_\0")
-        .to_state();
+    let mut emulator = Emulator::<Wireless<Always<()>, _>>::execute();
+    let mut sponge = Sponge::new(&mut emulator, Pasta::circuit_poseidon(pasta::baked()));
+    let domain = Element::constant(
+        &mut emulator,
+        Fp::from_u128(u128::from(u64::from_le_bytes(*b"raguchal"))),
+    );
+    sponge
+        .absorb(&mut emulator, &domain)
+        .expect("sponge absorb succeeds");
     for com in commitments {
-        state.update(com.to_affine().to_bytes().as_ref());
+        let encoding = com.to_affine().to_bytes();
+        for bytes in encoding.chunks(16) {
+            let limb = Fp::from_u128(u128::from_le_bytes(
+                bytes.try_into().expect("a commitment limb is 16 bytes"),
+            ));
+            let element = Element::constant(&mut emulator, limb);
+            sponge
+                .absorb(&mut emulator, &element)
+                .expect("sponge absorb succeeds");
+        }
     }
-    let mut wide = [0u8; 64];
-    wide.copy_from_slice(state.finalize().as_bytes());
-    Fp::from_uniform_bytes(&wide)
+    *sponge
+        .squeeze(&mut emulator)
+        .expect("sponge squeeze succeeds")
+        .value()
+        .take()
 }
 
 /// Another member at `epoch` whose indexed factor
