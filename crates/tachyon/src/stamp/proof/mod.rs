@@ -70,6 +70,7 @@ fn make_app() -> Result<Application, ragu_core::Error> {
         .register(stamp::ActionMerge)?
         .register(stamp::ActionLift)?
         .register(stamp::FeeSeed)?
+        .register(stamp::StampUnmerge)?
         .finalize()
 }
 
