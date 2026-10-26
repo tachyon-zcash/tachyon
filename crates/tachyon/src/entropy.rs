@@ -7,9 +7,9 @@
 use core::{any::type_name, marker::PhantomData};
 
 use derive_more::{Debug, Into};
-use ff::{Field as _, PrimeField as _};
-use pasta_curves::{Fp, Fq};
+use ragu_core::pasta::Fp;
 use rand_core::CryptoRng;
+use udon::field::{Field as _, FieldAdapter, PallasScalar};
 
 use crate::{note, primitives::Effect};
 
@@ -35,12 +35,12 @@ impl ActionEntropy {
     /// Parse action entropy from its canonical 32-byte encoding.
     #[must_use]
     pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
-        Option::from(Fp::from_repr(bytes)).map(Self)
+        Fp::from_bytes(bytes).map(Self)
     }
 
     /// Sample fresh per-action entropy.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Fp::random(rng))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Derive the action randomizer $\alpha$ for effect `E`.
@@ -68,13 +68,14 @@ mod sealed {
 #[derive(Clone, Copy, Debug, Into)]
 #[debug("ActionRandomizer<{}>", type_name::<S>())]
 pub struct ActionRandomizer<S: sealed::RandomizerState>(
-    pub(crate) Fq,
+    pub(crate) FieldAdapter<PallasScalar>,
     #[into(skip)] pub(crate) PhantomData<S>,
 );
 
 #[cfg(test)]
 mod tests {
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use ragu_core::pasta::Fq;
+    use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
     use super::*;
     use crate::{digest::poseidon, note, primitives::effect};
@@ -85,7 +86,7 @@ mod tests {
     fn spend_and_output_randomizers_differ() {
         let mut rng = StdRng::seed_from_u64(100);
         let theta = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::from(Fp::random(&mut rng));
+        let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
         let spend_alpha: Fq = theta.randomizer::<effect::Spend>(cm).into();
         let output_alpha: Fq = theta.randomizer::<effect::Output>(cm).into();
@@ -98,7 +99,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(101);
         let theta_a = ActionEntropy::random(&mut rng);
         let theta_b = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::from(Fp::random(&mut rng));
+        let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
         // Deterministic: same theta twice
         let first: Fq = theta_a.randomizer::<effect::Spend>(cm).into();
@@ -116,25 +117,25 @@ mod tests {
     fn randomizer_embeds_the_poseidon_output() {
         let mut rng = StdRng::seed_from_u64(102);
         let theta = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::from(Fp::random(&mut rng));
+        let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
 
         let spend: Fq = theta.randomizer::<effect::Spend>(cm).into();
         let output: Fq = theta.randomizer::<effect::Output>(cm).into();
 
         assert_eq!(
-            spend.to_repr(),
-            poseidon::alpha_spend(theta.0, cm.into()).to_repr()
+            spend.to_bytes(),
+            poseidon::alpha_spend(theta.0, cm.into()).to_bytes()
         );
         assert_eq!(
-            output.to_repr(),
-            poseidon::alpha_output(theta.0, cm.into()).to_repr()
+            output.to_bytes(),
+            poseidon::alpha_output(theta.0, cm.into()).to_bytes()
         );
     }
 
     #[test]
     fn from_bytes_round_trips_canonical_encodings() {
         let theta = ActionEntropy::random(&mut StdRng::seed_from_u64(103));
-        let Some(parsed) = ActionEntropy::from_bytes(theta.0.to_repr()) else {
+        let Some(parsed) = ActionEntropy::from_bytes(theta.0.to_bytes()) else {
             panic!("canonical encoding must parse");
         };
         assert_eq!(parsed.0, theta.0);
@@ -162,7 +163,7 @@ mod tests {
     fn debug_randomizer_redacts_scalar() {
         let mut rng = StdRng::seed_from_u64(200);
         let theta = ActionEntropy::random(&mut rng);
-        let cm = note::Commitment::from(Fp::random(&mut rng));
+        let cm = note::Commitment::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
         let alpha = theta.randomizer::<effect::Spend>(cm);
         let dbg = alloc::format!("{alpha:?}");
         assert!(dbg.contains("ActionRandomizer"), "must name the type");

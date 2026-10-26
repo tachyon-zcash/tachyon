@@ -34,9 +34,9 @@
 //! Ragu circuits and is TBD.
 
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::{Field as _, PrimeField as _};
-use pasta_curves::{Fp, Fq};
+use ragu_core::pasta::{Fp, Fq};
 use rand_core::CryptoRng;
+use udon::field::{Field as _, FieldAdapter, PallasBase};
 
 use crate::{digest::poseidon, keys::PaymentKey, nullifier, primitives::Tachygram, value};
 
@@ -45,12 +45,12 @@ use crate::{digest::poseidon, keys::PaymentKey, nullifier, primitives::Tachygram
 ///
 /// Can be derived from a shared secret negotiated out-of-band.
 #[derive(Clone, Copy, Debug, From, Into)]
-pub struct CommitmentTrapdoor(#[debug(skip)] Fp);
+pub struct CommitmentTrapdoor(#[debug(skip)] FieldAdapter<PallasBase>);
 
 impl CommitmentTrapdoor {
     /// Generate a fresh random trapdoor.
     pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        Self(Fp::random(rng))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 }
 
@@ -83,7 +83,7 @@ impl Note {
     )]
     pub fn fee_blind(&self) -> value::Trapdoor {
         let blind = poseidon::fee_blind(Fp::from(self.pk), Fp::from(self.psi), Fp::from(self.rcm));
-        value::Trapdoor::from_scalar(Option::from(Fq::from_repr(blind.to_repr())).expect("p < q"))
+        value::Trapdoor::from_scalar(Fq::from_bytes(blind.to_bytes()).expect("p < q"))
     }
 
     /// Computes the note commitment `cm`.
@@ -115,13 +115,13 @@ impl Note {
 /// Produced by committing to the note fields. An output publishes `cm` as a
 /// tachygram; a spend keeps it as a private witness.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-#[from(Fp, Tachygram)]
-#[into(Fp, Tachygram)]
+#[from(FieldAdapter<PallasBase>, Tachygram)]
+#[into(FieldAdapter<PallasBase>, Tachygram)]
 pub struct Commitment(Tachygram);
 
 #[cfg(test)]
 mod tests {
-    use rand::{SeedableRng as _, rngs::StdRng};
+    use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
     use super::*;
     use crate::{constants::MAX_MONEY, value};
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn distinct_rcm_distinct_commitments() {
         let rng = &mut StdRng::seed_from_u64(0);
-        let pk = PaymentKey::from(Fp::random(&mut *rng));
+        let pk = PaymentKey::from(Fp::random(|bytes| rng.fill_bytes(bytes)));
         let psi = nullifier::Trapdoor::random(rng);
 
         let note1 = Note {
