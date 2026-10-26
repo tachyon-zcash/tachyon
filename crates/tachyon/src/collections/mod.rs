@@ -2,14 +2,15 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ff::Field as _;
-use pasta_curves::Fp;
-use ragu_arithmetic as arithmetic;
 use ragu_circuits::polynomials::{ProductionRank, sparse::Polynomial};
+use ragu_core::pasta::Fp;
+use udon::field::Field as _;
 
 pub(crate) mod indexed_multiset;
 pub(crate) mod multiset;
 pub(crate) mod qr;
+
+mod arithmetic;
 
 fn trim(coeffs: &mut Vec<Fp>) {
     if let Some(last_nonzero_idx) = coeffs.iter().rposition(|co| co != &Fp::ZERO) {
@@ -82,7 +83,7 @@ pub(crate) fn interpolate(points: &[(Fp, Fp)]) -> Option<Vec<Fp>> {
     let weighted: Vec<(Fp, Fp)> = points
         .iter()
         .map(|&(at, value)| {
-            let weight = Option::<Fp>::from(normalizers.eval(at).invert())?;
+            let weight = normalizers.eval(at).invert()?;
             Some((at, weight * value))
         })
         .collect::<Option<Vec<_>>>()?;

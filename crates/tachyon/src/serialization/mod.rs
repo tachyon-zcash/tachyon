@@ -5,8 +5,8 @@
 //! (`Fq`), and Pallas affine curve points (`EpAffine`).
 
 use corez::io::{self, Read, Write};
-use ff::PrimeField as _;
-use pasta_curves::{EpAffine, EqAffine, Fp, group::GroupEncoding as _};
+use ragu_core::pasta::{EpAffine, EqAffine, Fp};
+use udon::{curve::Affine as _, field::Field as _};
 
 pub(crate) mod compactsize;
 
@@ -38,20 +38,20 @@ pub(crate) fn write_compactsize<W: Write>(mut writer: W, value: u64) -> io::Resu
 pub(crate) fn read_fp<R: Read>(mut reader: R) -> io::Result<Fp> {
     let mut bytes = [0u8; 32];
     reader.read_exact(&mut bytes)?;
-    Option::from(Fp::from_repr(bytes))
+    Fp::from_bytes(bytes)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid Fp encoding"))
 }
 
 /// Write a Pallas base field element (`Fp`) as 32 bytes.
 pub(crate) fn write_fp<W: Write>(mut writer: W, fp: &Fp) -> io::Result<()> {
-    writer.write_all(&fp.to_repr())
+    writer.write_all(&fp.to_bytes())
 }
 
 /// Read a Pallas affine curve point (`EpAffine`) from 32 compressed bytes.
 pub(crate) fn read_ep_affine<R: Read>(mut reader: R) -> io::Result<EpAffine> {
     let mut bytes = [0u8; 32];
     reader.read_exact(&mut bytes)?;
-    Option::from(EpAffine::from_bytes(&bytes))
+    EpAffine::from_bytes(bytes)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid curve point encoding"))
 }
 
@@ -64,7 +64,7 @@ pub(crate) fn write_ep_affine<W: Write>(mut writer: W, point: &EpAffine) -> io::
 pub(crate) fn read_eq_affine<R: Read>(mut reader: R) -> io::Result<EqAffine> {
     let mut bytes = [0u8; 32];
     reader.read_exact(&mut bytes)?;
-    Option::from(EqAffine::from_bytes(&bytes))
+    EqAffine::from_bytes(bytes)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid curve point encoding"))
 }
 

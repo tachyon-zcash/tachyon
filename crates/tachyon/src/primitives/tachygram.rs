@@ -2,10 +2,11 @@ use core::cmp::Ordering;
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Eq as TotalEq, From, Into, PartialEq};
-use ff::PrimeField as _;
-use pasta_curves::Fp;
+#[cfg(test)]
+use ragu_core::pasta::Fp;
 #[cfg(test)]
 use rand_core::CryptoRng;
+use udon::field::{Field as _, FieldAdapter, PallasBase};
 
 use crate::serialization;
 
@@ -23,14 +24,12 @@ use crate::serialization;
 /// any block of the current or immediately preceding epoch. See the
 /// Tachygrams book chapter for why the window spans two epochs.
 #[derive(Clone, Copy, Debug, From, Into, PartialEq, TotalEq)]
-pub struct Tachygram(Fp);
+pub struct Tachygram(FieldAdapter<PallasBase>);
 
 impl Tachygram {
     #[cfg(test)]
     pub(crate) fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
-        use ff::Field as _;
-
-        Self(Fp::random(rng))
+        Self(Fp::random(|bytes| rng.fill_bytes(bytes)))
     }
 
     /// Read as a field element from the consensus wire format.
@@ -66,6 +65,6 @@ impl Ord for Tachygram {
     /// element, matching the byte-lexicographic order the stamp digest
     /// commits to. `Fp` has no intrinsic `Ord`.
     fn cmp(&self, other: &Self) -> Ordering {
-        self.0.to_repr().as_ref().cmp(other.0.to_repr().as_ref())
+        self.0.to_bytes().as_ref().cmp(other.0.to_bytes().as_ref())
     }
 }
