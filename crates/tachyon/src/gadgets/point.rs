@@ -18,6 +18,10 @@ use udon::field::Field;
 /// Header point coordinates with an explicit internal infinity flag.
 #[derive(Gadget, Debug)]
 #[debug("CurvePoint(..)")]
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "the semantic gadget name is explicit at call sites"
+)]
 pub struct CurvePoint<'dr, D: Driver<'dr>> {
     pub(crate) x: Element<'dr, D>,
     pub(crate) y: Element<'dr, D>,

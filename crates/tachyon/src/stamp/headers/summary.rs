@@ -42,31 +42,33 @@ impl Header for Summary {
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
-        data: DriverValue<D, Self::Data>,
+        witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         Ok(SummaryOutput {
             epoch: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             anchor_prev: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.1)),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             anchor_end: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             acc_commit: HostCommitment::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Eq::from(fields.3).to_affine()),
+                witness
+                    .as_ref()
+                    .map(|fields| Eq::from(fields.3).to_affine()),
             )?
             .into(),
         })

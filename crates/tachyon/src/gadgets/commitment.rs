@@ -19,6 +19,10 @@ use udon::{curve::Affine as _, field::Field};
 /// The compressed host-curve commitment representation used by Ragu handles.
 #[derive(Gadget, Debug)]
 #[debug("HostCommitment(..)")]
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "the semantic gadget name is explicit at call sites"
+)]
 pub struct HostCommitment<'dr, D: Driver<'dr>> {
     pub(crate) limbs: [Element<'dr, D>; 2],
 }
@@ -42,7 +46,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> HostCommitment<'dr, D> {
         clippy::expect_used,
         reason = "compressed point limbs contain exactly 16 bytes"
     )]
-    pub fn alloc<A: Allocator<'dr, D>>(
+    pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         point: DriverValue<D, EqAffine>,

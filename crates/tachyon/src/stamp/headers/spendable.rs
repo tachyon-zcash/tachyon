@@ -34,25 +34,25 @@ impl Header for NoteSpendable {
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
-        data: DriverValue<D, Self::Data>,
+        witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         Ok(NoteSpendableOutput {
             cm: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             epoch_current: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.1)),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             anchor: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
         })

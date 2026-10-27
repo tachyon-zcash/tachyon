@@ -55,43 +55,43 @@ impl Header for SpendHeader {
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
-        data: DriverValue<D, Self::Data>,
+        witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         Ok(SpendHeaderOutput {
             cm: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.0)),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             nf_current: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.1)),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             nf_next: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.2)),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             anchor: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.3)),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?
             .into(),
             pk: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.4)),
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
             )?
             .into(),
             cv: CurvePoint::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| EpAffine::from(fields.5)),
+                witness.as_ref().map(|fields| EpAffine::from(fields.5)),
             )?
             .into(),
         })
