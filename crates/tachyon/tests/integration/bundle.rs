@@ -10,9 +10,8 @@ use alloc::{
 use core::cmp::Reverse;
 
 use corez::io;
-use ff::Field as _;
-use pasta_curves::Fp;
 use ragu::PROOF_SIZE_COMPRESSED;
+use ragu_core::pasta::Fp;
 use rand::{SeedableRng as _, rngs::StdRng};
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action,
@@ -29,7 +28,7 @@ use zcash_tachyon::{
 use crate::fixtures::{
     PoolSim, WalletSim, build_autonome, build_bundle_plan, build_lift_span, build_output_plan,
     build_output_stamp_with_fee, fee_digests, forge_overlapping_merge, mock_sighash, mock_wtxid,
-    random_block, random_block_with, shared_sk, spend_witness, stamp_coverage,
+    random_block, random_block_with, random_fp, shared_sk, spend_witness, stamp_coverage,
 };
 
 #[test]
@@ -2071,9 +2070,7 @@ fn verify_tachygrams_rejects_a_tampered_list() {
     let mut tampered = stamp;
     let dropped = *tampered.tachygrams.iter().next().expect("nonempty");
     tampered.tachygrams.remove(&dropped);
-    tampered
-        .tachygrams
-        .insert(Tachygram::from(Fp::random(&mut *rng)));
+    tampered.tachygrams.insert(Tachygram::from(random_fp(rng)));
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee);
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
