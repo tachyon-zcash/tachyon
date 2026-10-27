@@ -1,12 +1,12 @@
 //! Semantic headers for qr steps.
-use ragu::{Header, Suffix, pasta::Eq};
+use ragu::{Header, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, allocator::Allocator};
-use udon::{curve::Projective as _, field::Fp};
+use udon::curve::Projective as _;
 
 use crate::{
     gadgets::{
@@ -16,7 +16,7 @@ use crate::{
         profile::{QrDiscriminantGadget, QrProfileGadget},
         sets::TachygramSetCommitGadget,
     },
-    pasta,
+    pasta::{Eq, Fp},
     primitives::{Anchor, EpochIndex, QrDiscriminant, QrProfile, TachygramSetCommit},
 };
 /// Tachygrams under routing. Every member of `contents` takes `profile`, and
@@ -43,11 +43,11 @@ impl Header for QrIntake {
         QrProfile,
         TachygramSetCommit,
     );
-    type Output = Kind![pasta::Fp; QrIntakeOutput<'_, _>];
+    type Output = Kind![Fp; QrIntakeOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(4);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -56,33 +56,25 @@ impl Header for QrIntake {
             epoch: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             anchor_prev: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.1).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             anchor_end: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             discriminant: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.3).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?
             .into(),
             profile: QrProfileGadget {
@@ -91,14 +83,14 @@ impl Header for QrIntake {
                     allocator,
                     witness
                         .as_ref()
-                        .map(|fields| pasta::Fp::from(u64::from(fields.4.depth))),
+                        .map(|fields| Fp::from(u64::from(fields.4.depth))),
                 )?,
                 bits: Element::alloc(
                     dr,
                     allocator,
                     witness
                         .as_ref()
-                        .map(|fields| pasta::Fp::from(u64::from(fields.4.bits))),
+                        .map(|fields| Fp::from(u64::from(fields.4.bits))),
                 )?,
             },
             contents: HostCommitment::alloc(
@@ -138,11 +130,11 @@ impl Header for QrIntakeSides {
         TachygramSetCommit,
         TachygramSetCommit,
     );
-    type Output = Kind![pasta::Fp; QrIntakeSidesOutput<'_, _>];
+    type Output = Kind![Fp; QrIntakeSidesOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(10);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -151,33 +143,25 @@ impl Header for QrIntakeSides {
             epoch: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             anchor_prev: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.1).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             anchor_end: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             discriminant: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.3).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?
             .into(),
             profile: QrProfileGadget {
@@ -186,14 +170,14 @@ impl Header for QrIntakeSides {
                     allocator,
                     witness
                         .as_ref()
-                        .map(|fields| pasta::Fp::from(u64::from(fields.4.depth))),
+                        .map(|fields| Fp::from(u64::from(fields.4.depth))),
                 )?,
                 bits: Element::alloc(
                     dr,
                     allocator,
                     witness
                         .as_ref()
-                        .map(|fields| pasta::Fp::from(u64::from(fields.4.bits))),
+                        .map(|fields| Fp::from(u64::from(fields.4.bits))),
                 )?,
             },
             non_residue: HostCommitment::alloc(
@@ -245,11 +229,11 @@ impl Header for QrBucket {
         QrProfile,
         TachygramSetCommit,
     );
-    type Output = Kind![pasta::Fp; QrBucketOutput<'_, _>];
+    type Output = Kind![Fp; QrBucketOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(11);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -258,33 +242,25 @@ impl Header for QrBucket {
             epoch: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.1).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             discriminant: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.3).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?
             .into(),
             profile: QrProfileGadget {
@@ -293,14 +269,14 @@ impl Header for QrBucket {
                     allocator,
                     witness
                         .as_ref()
-                        .map(|fields| pasta::Fp::from(u64::from(fields.4.depth))),
+                        .map(|fields| Fp::from(u64::from(fields.4.depth))),
                 )?,
                 bits: Element::alloc(
                     dr,
                     allocator,
                     witness
                         .as_ref()
-                        .map(|fields| pasta::Fp::from(u64::from(fields.4.bits))),
+                        .map(|fields| Fp::from(u64::from(fields.4.bits))),
                 )?,
             },
             contents: HostCommitment::alloc(

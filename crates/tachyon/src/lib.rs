@@ -29,7 +29,6 @@ pub mod witness;
 mod collections;
 pub mod gadgets;
 mod primitives;
-mod ragu_constraint;
 mod relations;
 mod serialization;
 

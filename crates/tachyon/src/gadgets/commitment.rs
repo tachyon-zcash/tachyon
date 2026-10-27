@@ -14,12 +14,9 @@ use ragu_primitives::{
     allocator::Allocator,
     io::{Buffer, Write},
 };
-use udon::{
-    curve::Affine as _,
-    field::{Field, Fp},
-};
+use udon::{curve::Affine as _, field::Field};
 
-use crate::pasta;
+use crate::pasta::Fp;
 
 /// The compressed host-curve commitment representation used by Ragu handles.
 #[derive(Gadget, Debug)]
@@ -45,7 +42,7 @@ impl<F: Field> Write<F> for HostCommitment<'static, PhantomData<F>> {
     }
 }
 
-impl<'dr, D: Driver<'dr, F = pasta::Fp>> HostCommitment<'dr, D> {
+impl<'dr, D: Driver<'dr, F = Fp>> HostCommitment<'dr, D> {
     /// Allocate the same two compressed limbs as a host polynomial handle.
     #[expect(
         clippy::expect_used,
@@ -60,8 +57,8 @@ impl<'dr, D: Driver<'dr, F = pasta::Fp>> HostCommitment<'dr, D> {
             let bytes = candidate.to_bytes();
             let (low, high) = bytes.split_at(16);
             [
-                <Fp>::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))).into(),
-                <Fp>::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))).into(),
+                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
+                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
             ]
         });
         let low = Element::alloc(dr, allocator, limbs.as_ref().map(|&[low, _]| low))?;

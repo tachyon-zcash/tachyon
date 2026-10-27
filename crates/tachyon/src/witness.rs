@@ -7,6 +7,7 @@
 //! step they serve. Steps with an empty `()` witness need no utility.
 
 use alloc::collections::BTreeSet;
+use core::iter;
 
 use ragu::{Header, Step};
 
@@ -160,7 +161,11 @@ pub fn spendable_init(
 }
 
 /// Prepare the witness for [`AnchorSpanSeed`]: `(anchor_start, epoch,
-/// stamp_commit)`.
+/// stamp_commit, members)`.
+///
+/// # Panics
+///
+/// Panics if the stamp is empty or its commitment is the identity.
 #[must_use]
 pub fn anchor_span_seed(
     (_left, _right): (StepLeft<AnchorSpanSeed>, StepRight<AnchorSpanSeed>),
@@ -168,11 +173,12 @@ pub fn anchor_span_seed(
     epoch: EpochIndex,
     tgs: &[Tachygram],
 ) -> StepWitness<'static, AnchorSpanSeed> {
-    (
-        anchor_start,
-        epoch,
-        tgs.iter().copied().collect::<TachygramSetPoly>().commit(),
-    )
+    let stamp_commit = tgs.iter().copied().collect::<TachygramSetPoly>().commit();
+    #[expect(clippy::expect_used, reason = "builder requires a nonempty stamp")]
+    let end = anchor_start
+        .next_stamp(epoch, &stamp_commit)
+        .expect("valid stamp fold");
+    (anchor_start, epoch, stamp_commit, iter::once(end).collect())
 }
 
 /// Prepare the witness for [`AnchorSpanFuse`]: `(left_members, combined,

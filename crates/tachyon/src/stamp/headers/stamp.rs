@@ -1,12 +1,12 @@
 //! Semantic headers for stamp steps.
-use ragu::{Header, Suffix, pasta::Eq};
+use ragu::{Header, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, allocator::Allocator};
-use udon::{curve::Projective as _, field::Fp};
+use udon::curve::Projective as _;
 
 use crate::{
     gadgets::{
@@ -14,7 +14,7 @@ use crate::{
         commitment::HostCommitment,
         sets::{ActionSetCommitGadget, TachygramSetCommitGadget},
     },
-    pasta,
+    pasta::{Eq, Fp},
     primitives::{ActionSetCommit, Anchor, TachygramSetCommit},
 };
 /// Non-empty proven action content with no fee in its lineage.
@@ -51,11 +51,11 @@ output_gadget!(ActionsOutput, "ActionsOutput(..)", {
 
 impl Header for Actions {
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
-    type Output = Kind![pasta::Fp; ActionsOutput<'_, _>];
+    type Output = Kind![Fp; ActionsOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(15);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -64,9 +64,7 @@ impl Header for Actions {
             anchor: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             action_commit: HostCommitment::alloc(
@@ -123,11 +121,11 @@ output_gadget!(StampOutput, "StampOutput(..)", {
 
 impl Header for Stamp {
     type Data = (ActionSetCommit, TachygramSetCommit, Anchor);
-    type Output = Kind![pasta::Fp; StampOutput<'_, _>];
+    type Output = Kind![Fp; StampOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(6);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -136,9 +134,7 @@ impl Header for Stamp {
             anchor: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             action_commit: HostCommitment::alloc(

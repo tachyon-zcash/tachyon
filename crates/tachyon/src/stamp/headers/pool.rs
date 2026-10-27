@@ -1,12 +1,12 @@
 //! Semantic headers for pool steps.
-use ragu::{Header, Suffix, pasta::Eq};
+use ragu::{Header, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, allocator::Allocator};
-use udon::{curve::Projective as _, field::Fp};
+use udon::curve::Projective as _;
 
 use crate::{
     gadgets::{
@@ -16,7 +16,8 @@ use crate::{
         note::NoteCommitmentGadget,
         sets::{AnchorSetCommitGadget, NfSeqCommitGadget},
     },
-    note, pasta,
+    note,
+    pasta::{Eq, Fp},
     primitives::{Anchor, AnchorSetCommit, EpochIndex, NfSeqCommit},
 };
 /// Multi-stamp / multi-epoch nf-exclusion proof over arbitrary values.
@@ -69,11 +70,11 @@ output_gadget!(ArbitraryUnspentOutput, "ArbitraryUnspentOutput(..)", {
 
 impl Header for ArbitraryUnspent {
     type Data = (Anchor, EpochIndex, NfSeqCommit, EpochIndex, Anchor);
-    type Output = Kind![pasta::Fp; ArbitraryUnspentOutput<'_, _>];
+    type Output = Kind![Fp; ArbitraryUnspentOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(1);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -82,33 +83,25 @@ impl Header for ArbitraryUnspent {
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             epoch_start: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.1).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             epoch_next: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.3).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?
             .into(),
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.4).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
             )?
             .into(),
             elapsed: HostCommitment::alloc(
@@ -139,11 +132,11 @@ output_gadget!(NoteUnspentOutput, "NoteUnspentOutput(..)", {
 
 impl Header for NoteUnspent {
     type Data = (note::Commitment, Anchor, EpochIndex, EpochIndex, Anchor);
-    type Output = Kind![pasta::Fp; NoteUnspentOutput<'_, _>];
+    type Output = Kind![Fp; NoteUnspentOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(3);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -152,41 +145,31 @@ impl Header for NoteUnspent {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.1).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             epoch_start: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             epoch_next: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.3).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?
             .into(),
             anchor_next: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.4).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
             )?
             .into(),
         })
@@ -227,11 +210,11 @@ output_gadget!(AnchorSpanOutput, "AnchorSpanOutput(..)", {
 
 impl Header for AnchorSpan {
     type Data = (Anchor, AnchorSetCommit, Anchor);
-    type Output = Kind![pasta::Fp; AnchorSpanOutput<'_, _>];
+    type Output = Kind![Fp; AnchorSpanOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(14);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -240,17 +223,13 @@ impl Header for AnchorSpan {
             anchor_start: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             anchor_end: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             members: HostCommitment::alloc(

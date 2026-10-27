@@ -32,15 +32,30 @@
 use alloc::vec::Vec;
 
 use ragu::{PolyHandle, StepCtx, pasta::Pasta};
-use ragu_core::{
-    Error, Result,
-    drivers::{Driver, DriverValue},
-    maybe::Maybe as _,
-};
+use ragu_core::{Error, Result, drivers::Driver, maybe::Maybe as _};
 use ragu_primitives::{Element, GadgetExt as _};
-use udon::{curve::Affine as _, field::Field as _};
+use udon::field::Field as _;
 
-use crate::pasta::{EqAffine, Fp};
+use crate::pasta::Fp;
+
+/// Compute one indexed-multiset factor `(member + index * z)^3 - 2` on the
+/// caller's driver. `member` and `index` must already be pinned by the caller.
+pub(crate) fn indexed_member_factor<'dr, D>(
+    dr: &mut D,
+    member: &Element<'dr, D>,
+    index: &Element<'dr, D>,
+    z: &Element<'dr, D>,
+) -> Result<Element<'dr, D>>
+where
+    D: Driver<'dr, F = Fp>,
+{
+    let index_times_z = index.mul(dr, z)?;
+    let shifted = member.add(dr, &index_times_z);
+    let square = shifted.square(dr)?;
+    let cube = square.mul(dr, &shifted)?;
+    let two = Element::constant(dr, Fp::from(2));
+    Ok(cube.sub(dr, &two))
+}
 
 /// Enforce `product(z) = multiplicand(z) * multiplier(z)` for three witnessed
 /// polynomial handles at their joint Fiat–Shamir challenge.
@@ -107,39 +122,20 @@ where
 pub(crate) fn bind_poly_handle<'dr, D>(
     ctx: &mut StepCtx<'_, 'dr, D>,
     handle: &PolyHandle<'dr, D, Pasta>,
-    commitment: DriverValue<D, EqAffine>,
+    commitment: &[Element<'dr, D>; 2],
     err: &'static str,
 ) -> Result<()>
 where
     D: Driver<'dr, F = Fp>,
 {
     let [handle_lo, handle_hi] = poly_handle_limbs(ctx.dr, handle)?;
-    let expected_limbs = D::try_just(|| {
-        let encoding = commitment.take().to_bytes();
-        let (lo, hi) = encoding.split_at(16);
-        let limb = |encoded_limb: &[u8]| -> Result<Fp> {
-            let limb_bytes: [u8; 16] = encoded_limb.try_into().map_err(|_err| {
-                Error::InvalidWitness("a compressed point limb must contain 16 bytes".into())
-            })?;
-            Ok(Fp::from_u128(u128::from_le_bytes(limb_bytes)))
-        };
-        Ok([limb(lo)?, limb(hi)?])
-    })?;
-    let expected_lo = Element::alloc(
-        ctx.dr,
-        &mut (),
-        expected_limbs.as_ref().map(|limbs| limbs[0]),
-    )?;
-    let expected_hi = Element::alloc(
-        ctx.dr,
-        &mut (),
-        expected_limbs.as_ref().map(|limbs| limbs[1]),
-    )?;
+    let expected_lo = &commitment[0];
+    let expected_hi = &commitment[1];
     handle_lo
-        .enforce_equal(ctx.dr, &expected_lo)
+        .enforce_equal(ctx.dr, expected_lo)
         .map_err(|_err| Error::InvalidWitness(err.into()))?;
     handle_hi
-        .enforce_equal(ctx.dr, &expected_hi)
+        .enforce_equal(ctx.dr, expected_hi)
         .map_err(|_err| Error::InvalidWitness(err.into()))?;
     Ok(())
 }
@@ -197,4 +193,64 @@ where
     ctx.enforce_poly_query(accumulator, z, accumulator_at_z)?;
 
     Ok(())
+}
+
+/// Enforce componentwise equality of fixed-size field tuples.
+pub(crate) fn enforce_equal_fields<'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+    dr: &mut D,
+    left: &[Element<'dr, D>; N],
+    right: &[Element<'dr, D>; N],
+    errors: [&'static str; N],
+) -> Result<()> {
+    for ((left_field, right_field), message) in left.iter().zip(right.iter()).zip(errors) {
+        left_field
+            .enforce_equal(dr, right_field)
+            .map_err(|_err| Error::InvalidWitness(message.into()))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu::primitives::{Element, Simulator};
+    use ragu_primitives::GadgetExt as _;
+    use udon::field::Field as _;
+
+    use super::indexed_member_factor;
+    use crate::pasta::Fp;
+
+    #[test]
+    fn indexed_member_factor_emits_and_checks_driver_arithmetic() {
+        let member_value = Fp::from(19u64);
+        let index_value = Fp::from(7u64);
+        let challenge_value = Fp::from(13u64);
+        let expected_value =
+            (member_value + index_value * challenge_value).pow_u64(3) - Fp::from(2u64);
+
+        let driver = Simulator::<Fp>::simulate((), |dr, _| {
+            let member_element = Element::constant(dr, member_value);
+            let index_element = Element::constant(dr, index_value);
+            let challenge_element = Element::constant(dr, challenge_value);
+            let factor =
+                indexed_member_factor(dr, &member_element, &index_element, &challenge_element)?;
+            let expected_element = Element::constant(dr, expected_value);
+            factor.enforce_equal(dr, &expected_element)
+        })
+        .expect("the indexed factor satisfies its fixed polynomial identity");
+        assert!(driver.num_gates() >= 3);
+
+        let mismatch = Simulator::<Fp>::simulate((), |dr, _| {
+            let member_element = Element::constant(dr, member_value);
+            let index_element = Element::constant(dr, index_value);
+            let challenge_element = Element::constant(dr, challenge_value);
+            let factor =
+                indexed_member_factor(dr, &member_element, &index_element, &challenge_element)?;
+            let wrong = Element::constant(dr, expected_value + Fp::ONE);
+            factor.enforce_equal(dr, &wrong)
+        });
+        assert!(
+            mismatch.is_err(),
+            "a different factor must violate equality"
+        );
+    }
 }

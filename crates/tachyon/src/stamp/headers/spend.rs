@@ -1,19 +1,19 @@
 //! Semantic headers for spend steps.
-use ragu::{Header, Suffix, pasta::EpAffine};
+use ragu::{Header, Suffix};
 use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, allocator::Allocator};
-use udon::field::Fp;
 
 use crate::{
     gadgets::{
         anchor::AnchorGadget, keys::PaymentKeyGadget, note::NoteCommitmentGadget,
         nullifier::NullifierGadget, point::CurvePoint, value::ValueCommitmentGadget,
     },
-    keys, note, nullifier, pasta,
+    keys, note, nullifier,
+    pasta::{EpAffine, Fp},
     primitives::Anchor,
     value,
 };
@@ -46,11 +46,11 @@ impl Header for SpendHeader {
         keys::PaymentKey,
         value::Commitment,
     );
-    type Output = Kind![pasta::Fp; SpendHeaderOutput<'_, _>];
+    type Output = Kind![Fp; SpendHeaderOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(5);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -59,41 +59,31 @@ impl Header for SpendHeader {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             nf_current: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.1).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             nf_next: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
             anchor: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.3).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.3)),
             )?
             .into(),
             pk: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.4).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.4)),
             )?
             .into(),
             cv: CurvePoint::alloc(

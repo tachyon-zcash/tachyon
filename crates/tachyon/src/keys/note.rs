@@ -38,7 +38,7 @@ use crate::{
 /// `nk` alone does NOT confer spend authority; combined with `ak` it
 /// forms the proof authorizing key `pak`, enabling proof construction
 /// and nullifier derivation without signing capability.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Into)]
 pub struct NullifierKey(#[debug(skip)] pub(super) Fp);
 
 impl NullifierKey {

@@ -6,11 +6,11 @@ use ragu_core::{
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, allocator::Allocator};
-use udon::field::Fp;
 
 use crate::{
     gadgets::{anchor::AnchorGadget, epoch::EpochIndexGadget, note::NoteCommitmentGadget},
-    note, pasta,
+    note,
+    pasta::Fp,
     primitives::{Anchor, EpochIndex},
 };
 /// Wallet's spendable position, certified up to this point in every
@@ -28,11 +28,11 @@ output_gadget!(NoteSpendableOutput, "NoteSpendableOutput(..)", {
 
 impl Header for NoteSpendable {
     type Data = (note::Commitment, EpochIndex, Anchor);
-    type Output = Kind![pasta::Fp; NoteSpendableOutput<'_, _>];
+    type Output = Kind![Fp; NoteSpendableOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(2);
 
-    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
@@ -41,25 +41,19 @@ impl Header for NoteSpendable {
             cm: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.0).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.0)),
             )?
             .into(),
             epoch_current: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.1).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.1)),
             )?
             .into(),
             anchor: Element::alloc(
                 dr,
                 allocator,
-                witness
-                    .as_ref()
-                    .map(|fields| Fp::from(fields.2).into_loose().into()),
+                witness.as_ref().map(|fields| Fp::from(fields.2)),
             )?
             .into(),
         })
