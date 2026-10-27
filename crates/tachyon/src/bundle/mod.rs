@@ -833,8 +833,41 @@ impl Bundle<ProofStamp> {
             .verify_pointers(wtxid, adjuncts)
             .map_err(VerificationError::Pointers)?;
 
+        self.verify_covering(rng, &adjunct_descs, &adjunct_fee_descriptors)
+    }
+
+    /// Verify everything about this bundle as an autonome, covering only its
+    /// own actions and fee descriptor.
+    ///
+    /// - Signatures are valid
+    /// - Tachygrams are consistent
+    /// - Proof is correct
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerificationError`] if any of those checks fails, or if the
+    /// proof is disproved.
+    pub fn verify_autonome<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        sighash: &[u8; 32],
+    ) -> Result<(), VerificationError> {
+        self.verify_signatures(sighash)
+            .map_err(VerificationError::Signatures)?;
+
+        self.verify_covering(rng, &[], &[])
+    }
+
+    /// Verify the stamp's coverage, tachygrams and proof over this bundle's
+    /// own actions and fee descriptor and the given adjunct ones.
+    fn verify_covering<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        adjunct_descs: &[action::Descriptor],
+        adjunct_fee_descriptors: &[fee::Descriptor],
+    ) -> Result<(), VerificationError> {
         let (covered_descs, covered_fee_descriptors) = self
-            .verify_coverage(&adjunct_descs, &adjunct_fee_descriptors)
+            .verify_coverage(adjunct_descs, adjunct_fee_descriptors)
             .map_err(VerificationError::Coverage)?;
 
         self.verify_tachygrams(covered_descs.len(), covered_fee_descriptors.len())
