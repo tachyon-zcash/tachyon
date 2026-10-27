@@ -69,6 +69,7 @@ An output operation also takes two steps, `OutputBind` and `OutputAction`.
 
 A transaction with multiple spend and output actions composes them with `ActionMerge`.
 The output is `Actions` whose multisets are the union of the two inputs' at the shared anchor.
+The inputs need not come from one prover. An output's steps witness no key, and `Actions` from different provers at one anchor merge the same way, so a [partially created transaction](./authorization.md#partially-created-transactions) can collect them before `FeeFuse`.
 If a spend's lineage is at an earlier anchor of the same epoch, the wallet first runs `ActionLift` along one or more `AnchorSpan`s to move the actions to the transaction's anchor.
 After the merges, `FeeFuse` applies the bundle's fee to those actions, adding the fee digest to the action set and the [fee change note](./fee.md#fee-change-note) commitment to the tachygram set, and emits a `Stamp`.
 A bundle with no actions uses `FeeSeed` instead.
@@ -394,7 +395,7 @@ Consensus verifies the published anchor against the chain before accepting the s
 
 ### Rerandomization at trust boundaries
 
-Every stamp-producing operation rerandomizes its proof before releasing it: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize the PCD they built. This is obligatory rather than cosmetic.
+Every operation that releases an `Actions` or `Stamp` proof rerandomizes it first: `Plan::prove`, `ActionsPlan::prove`, `ActionsProof::merge`, `ActionsProof::fee`, `ProofStamp::seed`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize the PCD they built. This is obligatory rather than cosmetic.
 
 A PCD proof is a commitment to its own witness data. Two proofs built from overlapping private inputs are correlated as group elements, even when their public headers reveal nothing. The proof a wallet holds after `SpendBind` and the proof it publishes in a stamp share a lineage, so an observer holding both could link them, and an aggregator that merges two stamps sees both inputs directly.
 

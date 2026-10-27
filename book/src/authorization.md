@@ -7,7 +7,7 @@ This chapter covers each layer, then shows the complete flow from action creatio
 
 Each tachyaction requires a fresh randomized key pair.
 
-The planner begins authorization by selecting arbitrary `theta` and a relevant note for each action. The custody device is provided each note and `theta`, and computes from them rather than checking planned values: it derives `cm` from each note, `alpha` from `theta` and `cm`, and `rk` from `alpha`.
+Authorization begins with a relevant note and arbitrary `theta` and `rcv` for each action. Either the planner or the custody device chooses `theta` and `rcv`, and whichever does so first fixes them. The custody device is provided each note, and computes from the notes, `theta` and `rcv` rather than checking planned values: it derives `cm` from each note, `alpha` from `theta` and `cm`, `rk` from `alpha`, and `cv` from `rcv`.
 
 ```mermaid
 flowchart TB
@@ -59,8 +59,8 @@ The rerandomization of a validating key is equivalent to derivation of a validat
 
 $$ \mathsf{rk} = \mathsf{ak} + [\alpha]\,\mathcal{G} $$
 
-So during planning, the planning device obtains `rk` from the validating `ak`.
-Then during authorization, the custody device is able to confirm correctness of `rk`, and sign the spend action with its private `rsk`.
+So a planning device can obtain `rk` from the validating `ak`.
+The custody device derives `rk` itself, and signs the spend action with its private `rsk`.
 
 ### Output
 
@@ -69,7 +69,7 @@ An output `rsk` is simply equal to `alpha`. No authority needed:
 $$ \mathsf{rsk} = \alpha $$
 $$ \mathsf{rk} = [\alpha]\,\mathcal{G} $$
 
-Then during authorization, the custody device is able to confirm correctness of `rk`, before signing any spends.
+Any device that knows `theta` and the note can sign an output action. The custody device derives `rk` and signs the output action with `rsk`.
 
 ## Bundle commitment
 
@@ -143,7 +143,7 @@ The binding signature proves that the bundle's value commitments are consistent 
 
 $$\mathsf{bsk} = \sum_i \mathsf{rcv}_i$$
 
-The planner signs the transaction sighash to produce `binding_sig` directly, without custody assistance.
+The planner signs the transaction sighash to produce `binding_sig` directly, without custody assistance. Custody also learns every `rcv`, so custody may sign `binding_sig` instead.
 
 **Validators** know the claimed `value_balance` and each published action `cv`. Validators reconstruct the corresponding public key:
 
@@ -162,7 +162,7 @@ If the values don't balance, the $\mathcal{V}$ term survives. So,
 - If the sum of committed values doesn't truly equal the public balance, the signer cannot produce a valid signature.
 - If a valid signature was produced and then the committed values or the public balance were modified, the validator can't confirm the valid signature.
 
-Every bundle's [max fee note](./fee.md) adds its value commitment $\cv_\maxfee = [-\mathsf{maxfee}]\,\mathcal{V} + [r]\,\mathcal{R}$ as one more output-signed term. The planner adds $r$ to $\mathsf{bsk}$, and validators add $\cv_\maxfee$ to $\mathsf{bvk}$:
+Every bundle's [max fee note](./fee.md) adds its value commitment $\cv_\maxfee = [-\mathsf{maxfee}]\,\mathcal{V} + [r]\,\mathcal{R}$ as one more output-signed term. The binding signer adds $r$ to $\mathsf{bsk}$, and validators add $\cv_\maxfee$ to $\mathsf{bvk}$:
 
 $$\mathsf{bsk} = \boxplus_i \mathsf{rcv}_i \boxplus r$$
 
@@ -175,7 +175,7 @@ The fee does not enter $\mathsf{bvk}$. The binding signature is made once, befor
 A bundle plan feeds three independent paths that converge in the final bundle.
 Each path consumes the same action plans but produces a different component of the bundle:
 
-- **Authorizing**: custody derives `rsk` per spend action and signs the transaction sighash; output actions are signed by the user device.
+- **Authorizing**: custody derives `rsk` per action and signs the transaction sighash. An output action may instead be signed by any device holding its `theta`.
 - **Binding**: the [bundle commitment](#bundle-commitment) feeds into the transaction sighash, which the binding key signs.
 - **Proving**: each action plan yields `Actions`; leaves merge into one `Actions` PCD, and [$\mathsf{FeeFuse}$](./fee.md#fee-change-note) applies the fee to produce a stamp. A zero-action plan uses $\mathsf{FeeSeed}$.
 
@@ -261,105 +261,88 @@ Consensus recomputes the actions from the visible bundle and checks them against
 
 A modified action breaks both checks.
 
-## Detailed Sequence
+## Partially Created Transactions
 
-<!-- todo: this is significantly outdated -->
+A partially created transaction (PCZT) carries a Tachyon bundle between devices before it is complete. Each field a role writes is optional, and a role fills absent fields without overwriting present ones.
+
+- **Effects.** The planner or the custody device fixes each action's `theta` and `rcv`, and derives `cv`, `rk` and $\cv_\maxfee$. Every later signer and prover uses those values.
+- **Signing.** Custody signs the spends it owns and every unsigned output. A spend owned by another key carries that key's `ak`, so every custody derives the same `rk`. An output or max fee note owned by custody takes custody's own payment key.
+- **Binding.** Whoever holds every `rcv` and the max fee note signs `binding_sig`.
+- **Proving.** Each spend is proved by a holder of its `pak`, and each output by anyone holding its note, `theta` and `rcv`. `Actions` proofs over disjoint sets of actions at one anchor merge with [`ActionMerge`](./proof-tree.md#spending), and [$\mathsf{FeeFuse}$](./fee.md#fee-change-note) applies the fee once. A bundle with no actions uses $\mathsf{FeeSeed}$.
+- **Combining.** Copies of one partial bundle combine field by field, and two different values for one field conflict.
+- **Extraction.** The finished bundle is verified against the sighash before it is released: signatures, coverage, tachygrams and proof.
+
+## Detailed Sequence
 
 ```mermaid
 sequenceDiagram
 
 actor User
 
-activate User
-
     note over User: select/create notes { pk, psi, rcm, v }
+    note over User: max_fee_note { pk, psi, rcm, maxfee }
+    note over User: value_balance = Sum v_spend - Sum v_output - maxfee
 
-rect rgb(100, 149, 237, 0.1)
+opt planner fixes effects
     loop per action
-
         note over User: random theta
         note over User: random rcv
-        note over User: cm = Poseidon(pk, psi, rcm, v)
+    end
+end
+
+rect rgb(255, 165, 0, 0.1)
+
+    create participant Custody@{ type: "boundary" }
+
+    User ->> Custody: notes, theta and rcv if chosen, max_fee_note, memo, tx effects
+
+    loop per action
+        note over Custody: random theta and rcv if absent
+        note over Custody: cm = Poseidon(pk, psi, rcm, v)
         alt spend
-            note over User: alpha = Poseidon(theta, cm)
-            note over User: rk = ak + [alpha]G
-            note over User: cv = Pedersen(v, rcv)
+            note over Custody: alpha = Poseidon(theta, cm)
+            note over Custody: rk = ak + [alpha]G
+            note over Custody: cv = Pedersen(v, rcv)
         else output
-            note over User: alpha = Poseidon(theta, cm)
-            note over User: rk = [alpha]G
-            note over User: cv = Pedersen(-v, rcv)
+            note over Custody: alpha = Poseidon(theta, cm)
+            note over Custody: rk = [alpha]G
+            note over Custody: cv = Pedersen(-v, rcv)
         end
-        note over User: action_plan { rk, note, theta, rcv, effect }
     end
+    note over Custody: cv_maxfee = Pedersen(-maxfee, Poseidon(pk, psi, rcm))
+    note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
+    note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_maxfee || hMemoTachyon)
+    note over Custody: compute sighash
 
-    note over User: max_fee_note { pk, psi, rcm, maxfee }
-    note over User: r = Poseidon(pk, psi, rcm)
-    note over User: cv_maxfee = Pedersen(-maxfee, r)
-    note over User: value_balance = Sum v_spend - Sum v_output - maxfee
-    note over User: bundle_plan { action_plan[], max_fee_note, value_balance }
-
-
+    loop per owned spend action
+        note over Custody: rsk = ask + alpha
+        note over Custody: sig = Sign(rsk, sighash)
+    end
+    loop per output action
+        note over Custody: sig = Sign(alpha, sighash)
+    end
+    destroy Custody
+    Custody -->> User: theta, rcv, cv, rk, action_sigs, tx sigs
 end
 
-loop per output action
-    note over User: sig = Sign(alpha, sighash)
-end
-note over User: bsk = Sum rcv_i + r
-note over User: binding_sig = Sign(bsk, sighash)
+par Binding
+    note over User: bsk = Sum rcv_i + r
+    note over User: binding_sig = Sign(bsk, sighash)
 
-
-par Authorizing
-    rect rgb(255, 165, 0, 0.1)
-
-        create participant Custody@{ type: "boundary" }
-
-        User ->> Custody: bundle_plan, binding_sig, output_sigs, tx etc
-
-        loop per action
-            note over Custody: cm = Poseidon(pk, psi, rcm, v)
-            note over Custody: alpha = Poseidon(theta, cm)
-            alt spend
-                note over Custody: cv = Pedersen(v, rcv)
-                note over Custody: rk = ak + [alpha]G
-            else output
-                note over Custody: cv = Pedersen(-v, rcv)
-                note over Custody: rk = [alpha]G
-            end
-        end
-        note over Custody: cv_maxfee = Pedersen(-maxfee, Poseidon(pk, psi, rcm))
-        note over Custody: hActionsTachyon = Blake2b(cv_i || rk_i)
-        note over Custody: bundle_commitment = Blake2b(hActionsTachyon || value_balance || cv_maxfee || hMemoTachyon)
-        note over Custody: compute sighash
-
-        break
-            note over Custody: validate output_sigs
-            note over Custody: validate binding_sig
-        end
-
-        loop per spend action
-            note over Custody: alpha = Poseidon(theta, cm)
-            note over Custody: rsk = ask + alpha
-            note over Custody: sig = Sign(rsk, sighash)
-        end
-        destroy Custody
-        Custody -->> User: action_sigs, tx sigs
-        note over User: apply signatures
-    end
-
-and Proving 
+and Proving
     rect rgb(138, 43, 226, 0.1)
         note over User: select anchor
 
         loop per action
-        critical anchor, action plan { rk, note, theta, rcv, effect }, pak { ak, nk }
-                alt effect == spend
-                    User --> User: rk == ak + [alpha]G
+        critical anchor, note, theta, rcv, pak { ak, nk }
+                alt spend
+                    note over User: rk = ak + [alpha]G
                     note over User: mk = Poseidon(psi, nk)
                     note over User: nf_e0 = PRF^nfTachyon(mk, e)
                     note over User: nf_e1 = PRF^nfTachyon(mk, e+1)
                     note over User: tg_roots = nf_e0, nf_e1
-                else effect == output
-                    User --> User: rk == [alpha]G
+                else output
+                    note over User: rk = [alpha]G
                     note over User: cm = Poseidon(pk, psi, rcm, v)
                     note over User: tg_root = cm
                 end
@@ -403,7 +386,6 @@ end
 
 create participant Consensus
 note over User: transaction { actions[], value_balance, cv_maxfee, binding_sig, fee, stamp } 
-deactivate User
 destroy User
 User ->> Consensus: transaction
 break
