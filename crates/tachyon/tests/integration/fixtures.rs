@@ -3,15 +3,18 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{cell::RefCell, iter, mem, ops::RangeInclusive};
 
-use ff::{Field as _, FromUniformBytes as _, PrimeField as _, WithSmallOrderMulGroup as _};
-use group::GroupEncoding as _;
-use pasta_curves::{Eq, Fp};
 use ragu::{Pcd, Proof};
-use ragu_arithmetic::PoseidonPermutation as _;
 use ragu_circuits::polynomials::{ProductionRank, Rank as _};
-use ragu_pasta::PoseidonFp;
+use ragu_core::{
+    PoseidonPermutation as _,
+    pasta::{Eq, PoseidonFp},
+};
 use rand::{SeedableRng as _, rngs::StdRng};
 use rand_core::CryptoRng;
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::{Fp, Reduced},
+};
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, Anchor, AnchorSetPoly, BlockHeight, EpochIndex, EvidenceTreeRoot,
     QrDiscriminant, QrProfile, Tachygram, TachygramSetCommit, TachygramSetPoly,
@@ -292,7 +295,7 @@ pub fn random_block<RNG: CryptoRng>(
     n_stamps: usize,
 ) -> Vec<Vec<Tachygram>> {
     iter::repeat_with(|| {
-        iter::repeat_with(|| Tachygram::from(Fp::random(&mut *rng)))
+        iter::repeat_with(|| Tachygram::random(rng))
             .take(stamp_size)
             .collect()
     })
@@ -314,8 +317,7 @@ pub fn random_block_with<RNG: CryptoRng>(
         .map(|cms| cms.iter().map(|&cm| Tachygram::from(cm)).collect())
         .collect();
     stamps.extend(
-        iter::repeat_with(|| alloc::vec![Tachygram::from(Fp::random(&mut *rng))])
-            .take(n_stamps - stamps_cms.len()),
+        iter::repeat_with(|| alloc::vec![Tachygram::random(rng)]).take(n_stamps - stamps_cms.len()),
     );
     stamps
 }
@@ -627,7 +629,7 @@ pub(crate) fn build_summary_pcd<RNG: CryptoRng>(
                 summary::SummaryAdvance,
                 witness::summary_advance((*pcd.data(), ()), &acc, &entry.1),
                 pcd,
-                Proof::trivial().carry::<()>(()),
+                Proof::bootstrap().carry::<()>(()),
             )
             .expect("SummaryAdvance");
         acc.extend(entry.1.iter().copied());
@@ -664,7 +666,7 @@ pub(crate) fn seal_qr_intake<RNG: CryptoRng>(
             qr::QrBucketSeal,
             witness,
             intake.pcd,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("QrBucketSeal");
     QrBucketEntry {
@@ -743,7 +745,7 @@ fn build_qr_roots<RNG: CryptoRng>(
                 qr::QrSummaryIntake,
                 witness,
                 summary,
-                Proof::trivial().carry::<()>(()),
+                Proof::bootstrap().carry::<()>(()),
             )
             .expect("QrSummaryIntake");
         roots.push(QrIntakeEntry { pcd, members });
@@ -813,7 +815,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
             qr::QrIntakeSplit,
             split_witness,
             intake.pcd,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("QrIntakeSplit");
 
@@ -833,7 +835,7 @@ pub(crate) fn split_qr_intake<RNG: CryptoRng>(
                 qr::QrSideDescend,
                 descend_witness,
                 sides.clone(),
-                Proof::trivial().carry::<()>(()),
+                Proof::bootstrap().carry::<()>(()),
             )
             .expect("QrSideDescend");
         QrIntakeEntry { pcd, members }
@@ -885,7 +887,7 @@ pub(crate) fn build_qr_branch<RNG: CryptoRng>(
     (start, end): (Anchor, Anchor),
     discriminant: QrDiscriminant,
     capacity: usize,
-    value: Fp,
+    value: Fp<Reduced>,
     depth: u32,
 ) -> Vec<QrIntakeEntry> {
     let mut layer = build_qr_roots(rng, pool, (start, end), discriminant, capacity);
@@ -1015,7 +1017,7 @@ pub(crate) fn build_evidence_tree<RNG: CryptoRng>(
                 evidence::EvidenceTreeCap,
                 (),
                 root,
-                Proof::trivial().carry::<()>(()),
+                Proof::bootstrap().carry::<()>(()),
             )
             .expect("EvidenceTreeCap");
         root = pcd;
@@ -1072,7 +1074,7 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
                 evidence::EvidenceTreeDescend,
                 witness,
                 node,
-                Proof::trivial().carry::<()>(()),
+                Proof::bootstrap().carry::<()>(()),
             )
             .expect("EvidenceTreeDescend");
         node = pcd;
@@ -1085,7 +1087,7 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
             evidence::EvidenceTreeOpen,
             witness,
             node,
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("EvidenceTreeOpen");
     QrBucketEntry {
@@ -1096,7 +1098,11 @@ pub(crate) fn open_evidence_tree<RNG: CryptoRng>(
 
 /// The profile a value takes at `depth` levels of the progression from
 /// `discriminant`.
-pub(crate) fn qr_profile_of(value: Fp, discriminant: QrDiscriminant, depth: u32) -> QrProfile {
+pub(crate) fn qr_profile_of(
+    value: Fp<Reduced>,
+    discriminant: QrDiscriminant,
+    depth: u32,
+) -> QrProfile {
     let mut profile = QrProfile::ROOT;
     for level in 0..depth {
         profile = profile.descend(qr::classify(value, discriminant.at(level)).0);
@@ -1138,7 +1144,7 @@ pub(crate) fn epoch_bucket<RNG: CryptoRng>(
         || Anchor::from(Fp::ZERO),
         |prev| pool.block(EpochIndex::new(prev).last_block()).anchor(),
     );
-    let discriminant = QrDiscriminant::from(Fp::random(&mut *rng));
+    let discriminant = QrDiscriminant::random(rng);
     let intake = if entry == final_anchor {
         seed_qr_empty_intake(rng, entry, epoch, discriminant)
     } else {
@@ -1172,7 +1178,7 @@ pub(crate) fn qr_bucket_segment<RNG: CryptoRng>(
             qr::QrUnspentInit,
             witness,
             bucket.pcd.clone(),
-            Proof::trivial().carry::<()>(()),
+            Proof::bootstrap().carry::<()>(()),
         )
         .expect("QrUnspentInit");
     segment
@@ -1258,7 +1264,7 @@ fn note_stream_seed(pk: PaymentKey, value: u64) -> [u8; 32] {
         .hash_length(32)
         .personal(b"Tachyon-NoteRnd")
         .to_state()
-        .update(&Fp::from(pk).to_repr())
+        .update(&Fp::from(pk).to_bytes())
         .update(&value.to_le_bytes())
         .finalize();
     let mut seed = [0u8; 32];
@@ -1400,7 +1406,7 @@ impl WalletSim {
                     delegation::NullifierDerive,
                     witness::nullifier_derive((*secret.data(), ()), chunk_start),
                     secret.clone(),
-                    Proof::trivial().carry::<()>(()),
+                    Proof::bootstrap().carry::<()>(()),
                 )
                 .expect("NullifierDerive");
             merged = Some(match merged {
@@ -1469,7 +1475,7 @@ impl WalletSim {
                 spendable::SpendableInit,
                 witness::spendable_init((*deriv.data(), ()), anchor_prev, &creation_tgs, epoch),
                 deriv,
-                Proof::trivial().carry::<()>(()),
+                Proof::bootstrap().carry::<()>(()),
             )
             .expect("SpendableInit");
         spendable
@@ -1778,28 +1784,32 @@ impl Default for SyncSim {
 
 /// The mock's Fiat-Shamir challenge over `commitments` alone: the `z` a
 /// prover knows before choosing a free scalar the challenge does not absorb.
-pub fn unpinned_challenge(commitments: &[Eq]) -> Fp {
+pub fn unpinned_challenge(commitments: &[Eq]) -> Fp<Reduced> {
     let mut state = blake2b_simd::Params::new()
         .hash_length(64)
         .personal(b"MkRagu_Challng_\0")
         .to_state();
     for com in commitments {
-        state.update(com.to_bytes().as_ref());
+        state.update(com.to_affine().to_bytes().as_ref());
     }
     let mut wide = [0u8; 64];
     wide.copy_from_slice(state.finalize().as_bytes());
-    Fp::from_uniform_bytes(&wide)
+    Fp::from_wide_bytes_reduced(&wide)
 }
 
 /// Another member at `epoch` whose indexed factor
 /// $(m + (i+1)X)^3 - 2$ agrees with `member`'s at `z`.
-pub fn cube_root_twin(epoch: EpochIndex, member: Fp, z: Fp) -> Fp {
-    let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
-    (Fp::ZETA * (member + shift)) - shift
+pub fn cube_root_twin(epoch: EpochIndex, member: Fp<Reduced>, z: Fp<Reduced>) -> Fp<Reduced> {
+    let shift = <Fp>::from_u64(u64::from(epoch)).add(&<Fp>::ONE).mul(&z);
+    <Fp>::ZETA.mul(&member.add(&shift)).sub(&shift).reduce()
 }
 
 /// The indexed factor of `member` at `epoch`, evaluated at `z`.
-pub fn indexed_factor(epoch: EpochIndex, member: Fp, z: Fp) -> Fp {
-    let shift = (Fp::from(u64::from(epoch)) + Fp::ONE) * z;
-    (member + shift).pow([3]) - Fp::from(2)
+pub fn indexed_factor(epoch: EpochIndex, member: Fp<Reduced>, z: Fp<Reduced>) -> Fp<Reduced> {
+    let shift = <Fp>::from_u64(u64::from(epoch)).add(&<Fp>::ONE).mul(&z);
+    member
+        .add(&shift)
+        .pow_u64(3)
+        .sub(&<Fp>::from_u64(2))
+        .reduce()
 }

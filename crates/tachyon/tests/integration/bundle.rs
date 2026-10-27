@@ -10,10 +10,9 @@ use alloc::{
 use core::cmp::Reverse;
 
 use corez::io;
-use ff::Field as _;
-use pasta_curves::Fp;
 use ragu::PROOF_SIZE_COMPRESSED;
 use rand::{SeedableRng as _, rngs::StdRng};
+use udon::field::Fp;
 use zcash_tachyon::{
     BlockHeight, SignatureError, Tachygram, TachygramSetPoly, action,
     bundle::{Plan, PlanError, Signature},
@@ -1655,7 +1654,7 @@ fn auth_digest_invariants() {
         extra_tachygram
             .stamp
             .tachygrams
-            .insert(Tachygram::from(Fp::from(7u64)));
+            .insert(Tachygram::from(Fp::from_u64(7)));
         // Tachygrams must stay canonically sorted for the stamp digest.
         assert_eq!(baseline_commitment, extra_tachygram.commitment());
         assert_ne!(baseline, extra_tachygram.auth_digest());
@@ -2071,9 +2070,7 @@ fn verify_tachygrams_rejects_a_tampered_list() {
     let mut tampered = stamp;
     let dropped = *tampered.tachygrams.iter().next().expect("nonempty");
     tampered.tachygrams.remove(&dropped);
-    tampered
-        .tachygrams
-        .insert(Tachygram::from(Fp::random(&mut *rng)));
+    tampered.tachygrams.insert(Tachygram::random(rng));
 
     let bundle_plan = Plan::new(alloc::vec![], alloc::vec![output_plan], max_fee);
     let sighash = mock_sighash(bundle_plan.commitment().unwrap());
