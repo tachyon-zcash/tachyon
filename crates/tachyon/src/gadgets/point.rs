@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use derive_more::Debug;
-use ragu::pasta::{EpAffine, Fp};
+use ragu::pasta::EpAffine;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
@@ -14,10 +14,17 @@ use ragu_primitives::{
     allocator::Allocator,
     io::{Buffer, Write},
 };
-use udon::field::Field;
+use udon::field::{Field, Fp};
+
+use crate::pasta;
+
 /// Header point coordinates with an explicit internal infinity flag.
 #[derive(Gadget, Debug)]
 #[debug("CurvePoint(..)")]
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "the semantic gadget name is explicit at call sites"
+)]
 pub struct CurvePoint<'dr, D: Driver<'dr>> {
     pub(crate) x: Element<'dr, D>,
     pub(crate) y: Element<'dr, D>,
@@ -36,7 +43,7 @@ impl<F: Field> Write<F> for CurvePoint<'static, PhantomData<F>> {
     }
 }
 
-impl<'dr, D: Driver<'dr, F = Fp>> CurvePoint<'dr, D> {
+impl<'dr, D: Driver<'dr, F = pasta::Fp>> CurvePoint<'dr, D> {
     pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -48,7 +55,7 @@ impl<'dr, D: Driver<'dr, F = Fp>> CurvePoint<'dr, D> {
         let [x, y]: [Element<'dr, D>; 2] = coordinates
             .try_into()
             .map_err(|_err| Error::InvalidWitness("point must write two coordinates".into()))?;
-        let one = Element::constant(dr, Fp::ONE);
+        let one = Element::constant(dr, <Fp>::ONE.into());
         let infinity = one.is_zero(dr, allocator)?;
         Ok(Self { x, y, infinity })
     }

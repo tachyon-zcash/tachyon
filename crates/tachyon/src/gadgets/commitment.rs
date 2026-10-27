@@ -2,7 +2,7 @@
 use core::marker::PhantomData;
 
 use derive_more::Debug;
-use ragu::pasta::{EqAffine, Fp};
+use ragu::pasta::EqAffine;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -14,11 +14,20 @@ use ragu_primitives::{
     allocator::Allocator,
     io::{Buffer, Write},
 };
-use udon::{curve::Affine as _, field::Field};
+use udon::{
+    curve::Affine as _,
+    field::{Field, Fp},
+};
+
+use crate::pasta;
 
 /// The compressed host-curve commitment representation used by Ragu handles.
 #[derive(Gadget, Debug)]
 #[debug("HostCommitment(..)")]
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "the semantic gadget name is explicit at call sites"
+)]
 pub struct HostCommitment<'dr, D: Driver<'dr>> {
     pub(crate) limbs: [Element<'dr, D>; 2],
 }
@@ -36,13 +45,13 @@ impl<F: Field> Write<F> for HostCommitment<'static, PhantomData<F>> {
     }
 }
 
-impl<'dr, D: Driver<'dr, F = Fp>> HostCommitment<'dr, D> {
+impl<'dr, D: Driver<'dr, F = pasta::Fp>> HostCommitment<'dr, D> {
     /// Allocate the same two compressed limbs as a host polynomial handle.
     #[expect(
         clippy::expect_used,
         reason = "compressed point limbs contain exactly 16 bytes"
     )]
-    pub fn alloc<A: Allocator<'dr, D>>(
+    pub(crate) fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         point: DriverValue<D, EqAffine>,
@@ -51,8 +60,8 @@ impl<'dr, D: Driver<'dr, F = Fp>> HostCommitment<'dr, D> {
             let bytes = candidate.to_bytes();
             let (low, high) = bytes.split_at(16);
             [
-                Fp::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))),
-                Fp::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))),
+                <Fp>::from_u128(u128::from_le_bytes(low.try_into().expect("16 byte limb"))).into(),
+                <Fp>::from_u128(u128::from_le_bytes(high.try_into().expect("16 byte limb"))).into(),
             ]
         });
         let low = Element::alloc(dr, allocator, limbs.as_ref().map(|&[low, _]| low))?;

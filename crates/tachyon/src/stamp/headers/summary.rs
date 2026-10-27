@@ -1,21 +1,19 @@
 //! Semantic headers for summary steps.
-use ragu::{
-    Header, Suffix,
-    pasta::{Eq, Fp},
-};
+use ragu::{Header, Suffix, pasta::Eq};
 use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe as _,
 };
 use ragu_primitives::{Element, allocator::Allocator};
-use udon::curve::Projective as _;
+use udon::{curve::Projective as _, field::Fp};
 
 use crate::{
     gadgets::{
         anchor::AnchorGadget, commitment::HostCommitment, epoch::EpochIndexGadget,
         sets::TachygramSetCommitGadget,
     },
+    pasta,
     primitives::{Anchor, EpochIndex, TachygramSetCommit},
 };
 /// One summarized run of an epoch's stamps.
@@ -35,38 +33,46 @@ output_gadget!(SummaryOutput, "SummaryOutput(..)", {
 
 impl Header for Summary {
     type Data = (EpochIndex, Anchor, Anchor, TachygramSetCommit);
-    type Output = Kind![Fp; SummaryOutput<'_, _>];
+    type Output = Kind![pasta::Fp; SummaryOutput<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(9);
 
-    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+    fn encode<'dr, D: Driver<'dr, F = pasta::Fp>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
-        data: DriverValue<D, Self::Data>,
+        witness: DriverValue<D, Self::Data>,
     ) -> ragu_core::Result<Bound<'dr, D, Self::Output>> {
         Ok(SummaryOutput {
             epoch: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.0)),
+                witness
+                    .as_ref()
+                    .map(|fields| Fp::from(fields.0).into_loose().into()),
             )?
             .into(),
             anchor_prev: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.1)),
+                witness
+                    .as_ref()
+                    .map(|fields| Fp::from(fields.1).into_loose().into()),
             )?
             .into(),
             anchor_end: Element::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Fp::from(fields.2)),
+                witness
+                    .as_ref()
+                    .map(|fields| Fp::from(fields.2).into_loose().into()),
             )?
             .into(),
             acc_commit: HostCommitment::alloc(
                 dr,
                 allocator,
-                data.as_ref().map(|fields| Eq::from(fields.3).to_affine()),
+                witness
+                    .as_ref()
+                    .map(|fields| Eq::from(fields.3).to_affine()),
             )?
             .into(),
         })
