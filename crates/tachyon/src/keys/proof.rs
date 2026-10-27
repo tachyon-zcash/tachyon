@@ -60,6 +60,15 @@ pub struct SpendValidatingKey(
     #[debug(skip)] pub(crate) reddsa::VerificationKey<reddsa::ActionAuth>,
 );
 
+impl Eq for SpendValidatingKey {}
+impl PartialEq for SpendValidatingKey {
+    fn eq(&self, other: &Self) -> bool {
+        let bytes: [u8; 32] = self.0.into();
+        let other_bytes: [u8; 32] = other.0.into();
+        bytes == other_bytes
+    }
+}
+
 impl SpendValidatingKey {
     /// Derive the per-action public (verification) key: $\mathsf{rk} =
     /// \mathsf{ak} + [\alpha]\mathcal{G}$.
