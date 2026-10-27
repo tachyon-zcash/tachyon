@@ -31,7 +31,7 @@ use ragu_circuits::polynomials::{ProductionRank, Rank as _};
 use rand_core::CryptoRng;
 
 use crate::{
-    ActionSetPoly, Note, TachygramSetPoly, action,
+    ActionSetCommit, ActionSetPoly, Note, TachygramSetPoly, action,
     bundle::{BundleState, StateByte},
     digest::blake2b,
     effect,
@@ -394,26 +394,23 @@ impl ProofStamp {
 ///
 /// The statement is each action's descriptor `(cv, rk)`, the fee descriptor,
 /// and the `anchor`. The planned witnesses are each action's `theta` and
-/// `rcv`, each output's `note`, and the max fee note with the `fee` it pays
-/// and the derived fee change note. A spend's note comes from its
-/// [`delegation::NoteSecret`] PCD at [`Self::prove`].
+/// `rcv`, each output's `note`, and the max fee note with the `fee` it pays.
+/// A spend's note comes from its [`delegation::NoteSecret`] PCD at
+/// [`Self::prove`].
 ///
 /// Construct via [`Plan::new`] or via
 /// [`Plan::stamp_plan`](crate::bundle::Plan::stamp_plan) for the typed
 /// single-party path.
 #[derive(Clone, Debug)]
 pub struct Plan {
-    spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
-    outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
-    anchor: Anchor,
+    actions: ActionsPlan,
     max_fee_note: Note,
     fee: value::Positive,
-    fee_change_note: Note,
 }
 
 impl Plan {
     /// Create a stamp plan from paired action descriptors and witnesses, the
-    /// max fee note and the fee. Derives and stores the fee change note.
+    /// max fee note and the fee.
     ///
     /// # Panics
     ///
@@ -426,23 +423,89 @@ impl Plan {
         max_fee_note: Note,
         fee: value::Positive,
     ) -> Self {
-        #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
-        let fee_change_note = Note {
-            value: value::Positive::try_from(i128::from(max_fee_note.value) - i128::from(fee))
-                .expect("fee should not exceed max fee"),
-            ..max_fee_note
-        };
+        assert!(fee <= max_fee_note.value, "fee should not exceed max fee");
         Self {
-            spends,
-            outputs,
-            anchor,
+            actions: ActionsPlan::new(spends, outputs, anchor),
             max_fee_note,
             fee,
-            fee_change_note,
         }
     }
 
     /// Prove a single [`ProofStamp`] for this plan.
+    ///
+    /// [`ActionsPlan::prove`] proves the planned actions, and
+    /// [`ActionsProof::fee`] applies the fee. A plan with no actions is
+    /// proved by [`ProofStamp::seed`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`ActionsPlan::prove`], and
+    /// [`ProveError::MissingPcd`] if a plan with no actions is given spend
+    /// PCDs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the max fee note's `rcm` is zero, or if the plan has no
+    /// actions and the max fee note's value is nonzero.
+    #[expect(
+        clippy::type_complexity,
+        reason = "each spend's secret, spendable and anchor spans"
+    )]
+    pub fn prove<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        pak: &ProofAuthorizingKey,
+        spend_pcds: Vec<(
+            ragu::Pcd<delegation::NoteSecret>,
+            ragu::Pcd<spendable::NoteSpendable>,
+            Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
+        )>,
+    ) -> Result<ProofStamp, ProveError> {
+        if self.actions.spends.is_empty() && self.actions.outputs.is_empty() {
+            if !spend_pcds.is_empty() {
+                return Err(ProveError::MissingPcd(
+                    format!("cannot prove no spends with {} inputs", spend_pcds.len()).into(),
+                ));
+            }
+            return ProofStamp::seed(rng, self.max_fee_note, self.actions.anchor);
+        }
+
+        self.actions
+            .prove(rng, Some(pak), spend_pcds)?
+            .fee(rng, self.max_fee_note, self.fee)
+    }
+}
+
+/// Everything needed to prove a set of actions with no fee, as an
+/// [`ActionsProof`].
+///
+/// The statement is each action's descriptor `(cv, rk)` and the `anchor`. The
+/// planned witnesses are each action's `theta` and `rcv`, and each output's
+/// `note`. A spend's note comes from its [`delegation::NoteSecret`] PCD at
+/// [`Self::prove`].
+#[derive(Clone, Debug)]
+pub struct ActionsPlan {
+    spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
+    outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
+    anchor: Anchor,
+}
+
+impl ActionsPlan {
+    /// Create an actions plan from paired action descriptors and witnesses.
+    #[must_use]
+    pub const fn new(
+        spends: Vec<(action::Descriptor, ActionEntropy, value::Trapdoor)>,
+        outputs: Vec<(action::Descriptor, ActionEntropy, Note, value::Trapdoor)>,
+        anchor: Anchor,
+    ) -> Self {
+        Self {
+            spends,
+            outputs,
+            anchor,
+        }
+    }
+
+    /// Prove the planned actions as one rerandomized [`ActionsProof`].
     ///
     /// `spend_pcds` pairs with the planned spends by position. For each
     /// **spend**, [`spend::SpendBind`] derives the live nullifier pair and
@@ -456,52 +519,33 @@ impl Plan {
     /// [`ProofStamp::prove_output`] proves the action at the plan's anchor.
     ///
     /// The planned actions are recursively merged via [`ActionMerge`] into a
-    /// single proof, whose coverage is the planned descriptors. [`FeeFuse`]
-    /// then applies the fee, or [`FeeSeed`] proves it for a plan with no
-    /// actions.
+    /// single proof, whose coverage is the planned descriptors. `pak` is read
+    /// only by spends.
     ///
     /// # Errors
     ///
     /// - [`ProveError::MissingPcd`] if the spend PCDs do not match the planned
     ///   spends, or a spend does not reach the plan's anchor.
+    /// - [`ProveError::MissingKey`] if the plan has spends and no `pak`.
+    /// - [`ProveError::NoActions`] if the plan has no actions.
     /// - [`ProveError::ActionDigest`] if a proved action has no digest.
     /// - [`ProveError::ProofFailed`] if a proof-system step fails.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the max fee note's `rcm` is zero, or if the plan has no
-    /// actions and the max fee note's value is nonzero.
     #[expect(
         clippy::type_complexity,
         reason = "each spend's secret, spendable and anchor spans"
     )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "proves, lifts and merges every planned action"
-    )]
     pub fn prove<RNG: CryptoRng>(
         self,
         rng: &mut RNG,
-        pak: &ProofAuthorizingKey,
+        pak: Option<&ProofAuthorizingKey>,
         spend_pcds: Vec<(
             ragu::Pcd<delegation::NoteSecret>,
             ragu::Pcd<spendable::NoteSpendable>,
             Vec<(ragu::Pcd<pool::AnchorSpan>, AnchorSetPoly)>,
         )>,
-    ) -> Result<ProofStamp, ProveError> {
-        let fee_descriptor = fee::Descriptor {
-            max_commitment: self
-                .max_fee_note
-                .fee_blind()
-                .commit(-self.max_fee_note.value),
-            value: self.fee,
-        };
-        let change = Tachygram::from(self.fee_change_note.commitment());
-
-        // Each entry pairs leaf stamp components with the descriptor of its
-        // covered action; merges concatenate both. The covered-actions digest
-        // is computed once, on the final stamp.
-        let mut entries = Vec::with_capacity(self.spends.len() + self.outputs.len());
+    ) -> Result<ActionsProof, ProveError> {
+        let mut entries: Vec<ActionsProof> =
+            Vec::with_capacity(self.spends.len() + self.outputs.len());
 
         if self.spends.len() != spend_pcds.len() {
             return Err(ProveError::MissingPcd(
@@ -533,7 +577,7 @@ impl Plan {
                 .map_err(ProveError::ProofFailed)?;
 
             let (digests, tachygrams, spend_anchor, spend_proof) =
-                ProofStamp::prove_spend(rng, theta, bind_pcd, *pak)?;
+                ProofStamp::prove_spend(rng, theta, bind_pcd, *pak.ok_or(ProveError::MissingKey)?)?;
             let mut stamp_pcd = spend_proof.carry::<Actions>((
                 digests.iter().copied().collect::<ActionSetPoly>().commit(),
                 tachygrams
@@ -551,149 +595,269 @@ impl Plan {
             }
 
             let (proof, (_, _, anchor)) = stamp_pcd.into_parts();
-            entries.push((
-                BTreeSet::from_iter([desc]),
+            entries.push(ActionsProof {
+                descriptors: BTreeSet::from_iter([desc]),
                 digests,
                 tachygrams,
                 anchor,
-                Box::new(proof),
-            ));
+                proof: Box::new(proof),
+            });
         }
 
         for (desc, theta, note, rcv) in self.outputs {
             let (digests, tachygrams, anchor, proof) =
                 ProofStamp::prove_output(rng, theta, rcv, note, self.anchor)?;
-            entries.push((
-                BTreeSet::from_iter([desc]),
+            entries.push(ActionsProof {
+                descriptors: BTreeSet::from_iter([desc]),
                 digests,
                 tachygrams,
                 anchor,
                 proof,
-            ));
+            });
         }
 
-        let (pcd, descriptors, mut tachygrams) = match entries
+        entries
             .into_iter()
             .map(Ok)
-            .reduce(|acc, next| {
-                let (left_desc, left_digests, left_tachygrams, left_anchor, left_proof) = acc?;
-                let (right_desc, right_digests, right_tachygrams, right_anchor, right_proof) =
-                    next?;
+            .reduce(|left, right| left?.fuse_merge(rng, right?))
+            .ok_or(ProveError::NoActions)??
+            .rerandomize(rng)
+    }
+}
 
-                let (left_acts_poly, left_tg_poly) = (
-                    left_digests.iter().copied().collect::<ActionSetPoly>(),
-                    left_tachygrams
-                        .iter()
-                        .copied()
-                        .collect::<TachygramSetPoly>(),
-                );
-                let (right_acts_poly, right_tg_poly) = (
-                    right_digests.iter().copied().collect::<ActionSetPoly>(),
-                    right_tachygrams
-                        .iter()
-                        .copied()
-                        .collect::<TachygramSetPoly>(),
-                );
+/// Proven actions with no fee applied, as the data that rebuilds an
+/// [`Actions`] PCD.
+///
+/// The header `(action_commit, stamp_tg_commit, anchor)` is not stored. The
+/// action set is rebuilt from [`Self::digests`] and the tachygram set from
+/// [`Self::tachygrams`].
+#[derive(Clone, Debug)]
+pub struct ActionsProof {
+    /// The descriptors of the covered actions, the stamp's coverage.
+    pub descriptors: BTreeSet<action::Descriptor>,
 
-                let left_pcd = left_proof.carry::<Actions>((
-                    left_acts_poly.commit(),
-                    left_tg_poly.commit(),
-                    left_anchor,
-                ));
-                let right_pcd = right_proof.carry::<Actions>((
-                    right_acts_poly.commit(),
-                    right_tg_poly.commit(),
-                    right_anchor,
-                ));
+    /// The digests of the proven actions. Honest proving derives them from
+    /// [`Self::descriptors`].
+    pub digests: BTreeSet<ActionDigest>,
 
-                let merged_digests: BTreeSet<ActionDigest> =
-                    left_digests.union(&right_digests).copied().collect();
-                let merged_tachygrams: BTreeSet<Tachygram> =
-                    left_tachygrams.union(&right_tachygrams).copied().collect();
+    /// The tachygrams of the proven actions.
+    pub tachygrams: BTreeSet<Tachygram>,
 
-                let (pcd, ()) = PROOF_SYSTEM
-                    .fuse(
-                        rng,
-                        ActionMerge,
-                        (
-                            (left_acts_poly, left_tg_poly),
-                            (
-                                ActionSetPoly::from_iter(merged_digests.clone()),
-                                TachygramSetPoly::from_iter(merged_tachygrams.clone()),
-                            ),
-                            (right_acts_poly, right_tg_poly),
-                        ),
-                        left_pcd,
-                        right_pcd,
-                    )
-                    .map_err(ProveError::ProofFailed)?;
+    /// The anchor the actions are proven at.
+    pub anchor: Anchor,
 
-                let merged_descs = left_desc.union(&right_desc).copied().collect();
+    /// The Ragu proof.
+    #[debug(skip)]
+    pub proof: Box<ragu::Proof>,
+}
 
-                Ok((
-                    merged_descs,
-                    merged_digests,
-                    merged_tachygrams,
-                    pcd.data().2,
-                    Box::new(pcd.proof().clone()),
-                ))
-            })
-            .transpose()?
-        {
-            None => {
-                let (pcd, ()) = PROOF_SYSTEM
-                    .seed(
-                        rng,
-                        FeeSeed,
-                        witness::fee_seed(((), ()), self.max_fee_note, self.anchor),
-                    )
-                    .map_err(ProveError::ProofFailed)?;
-                (pcd, BTreeSet::new(), BTreeSet::new())
-            },
-            Some((descriptors, digests, tachygrams, anchor, merged_proof)) => {
-                let stamp_header = (
-                    digests.iter().copied().collect::<ActionSetPoly>().commit(),
-                    tachygrams
-                        .iter()
-                        .copied()
-                        .collect::<TachygramSetPoly>()
-                        .commit(),
-                    anchor,
-                );
-                let (pcd, ()) = PROOF_SYSTEM
-                    .fuse(
-                        rng,
-                        FeeFuse,
-                        witness::fee_fuse(
-                            (stamp_header, ()),
-                            self.max_fee_note,
-                            self.fee,
-                            &digests,
-                            &tachygrams,
-                        ),
-                        merged_proof.carry::<Actions>(stamp_header),
-                        ragu::Proof::trivial().carry::<()>(()),
-                    )
-                    .map_err(ProveError::ProofFailed)?;
-                (pcd, descriptors, tachygrams)
-            },
+impl ActionsProof {
+    /// The [`Actions`] header of these actions.
+    fn header(&self) -> (ActionSetCommit, TachygramSetCommit, Anchor) {
+        (
+            self.digests
+                .iter()
+                .copied()
+                .collect::<ActionSetPoly>()
+                .commit(),
+            self.tachygrams
+                .iter()
+                .copied()
+                .collect::<TachygramSetPoly>()
+                .commit(),
+            self.anchor,
+        )
+    }
+
+    /// Merges two proven action sets at one anchor via [`ActionMerge`]. The
+    /// proof is not rerandomized.
+    fn fuse_merge<RNG: CryptoRng>(self, rng: &mut RNG, right: Self) -> Result<Self, ProveError> {
+        let left_header = self.header();
+        let right_header = right.header();
+
+        let descriptors = self
+            .descriptors
+            .union(&right.descriptors)
+            .copied()
+            .collect();
+        let digests: BTreeSet<ActionDigest> = self.digests.union(&right.digests).copied().collect();
+        let tachygrams: BTreeSet<Tachygram> =
+            self.tachygrams.union(&right.tachygrams).copied().collect();
+
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                ActionMerge,
+                (
+                    (
+                        self.digests.into_iter().collect::<ActionSetPoly>(),
+                        self.tachygrams.into_iter().collect::<TachygramSetPoly>(),
+                    ),
+                    (
+                        ActionSetPoly::from_iter(digests.clone()),
+                        TachygramSetPoly::from_iter(tachygrams.clone()),
+                    ),
+                    (
+                        right.digests.into_iter().collect::<ActionSetPoly>(),
+                        right.tachygrams.into_iter().collect::<TachygramSetPoly>(),
+                    ),
+                ),
+                self.proof.carry::<Actions>(left_header),
+                right.proof.carry::<Actions>(right_header),
+            )
+            .map_err(ProveError::ProofFailed)?;
+
+        Ok(Self {
+            descriptors,
+            digests,
+            tachygrams,
+            anchor: pcd.data().2,
+            proof: Box::new(pcd.proof().clone()),
+        })
+    }
+
+    /// Replaces the proof with an unrelated one that verifies against the
+    /// same header.
+    fn rerandomize<RNG: CryptoRng>(self, rng: &mut RNG) -> Result<Self, ProveError> {
+        let header = self.header();
+        let proof = PROOF_SYSTEM
+            .rerandomize(self.proof.carry::<Actions>(header), rng)
+            .map_err(ProveError::ProofFailed)?
+            .proof()
+            .clone();
+        Ok(Self {
+            proof: Box::new(proof),
+            ..self
+        })
+    }
+
+    /// Merges two proven action sets at one anchor via [`ActionMerge`] into
+    /// one rerandomized [`ActionsProof`] covering both.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError::ProofFailed`] if a proof-system step fails.
+    pub fn merge<RNG: CryptoRng>(self, rng: &mut RNG, right: Self) -> Result<Self, ProveError> {
+        self.fuse_merge(rng, right)?.rerandomize(rng)
+    }
+
+    /// Applies the bundle's fee via [`FeeFuse`], producing a rerandomized
+    /// [`ProofStamp`] that covers these actions and the max fee note's fee
+    /// descriptor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError::ProofFailed`] if a proof-system step fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the fee exceeds the max fee note's value, or if the max fee
+    /// note's `rcm` is zero.
+    pub fn fee<RNG: CryptoRng>(
+        self,
+        rng: &mut RNG,
+        max_fee_note: Note,
+        fee: value::Positive,
+    ) -> Result<ProofStamp, ProveError> {
+        let header = self.header();
+        let (pcd, ()) = PROOF_SYSTEM
+            .fuse(
+                rng,
+                FeeFuse,
+                witness::fee_fuse(
+                    (header, ()),
+                    max_fee_note,
+                    fee,
+                    &self.digests,
+                    &self.tachygrams,
+                ),
+                self.proof.carry::<Actions>(header),
+                ragu::Proof::trivial().carry::<()>(()),
+            )
+            .map_err(ProveError::ProofFailed)?;
+
+        ProofStamp::finish(
+            rng,
+            pcd,
+            &self.descriptors,
+            self.tachygrams,
+            max_fee_note,
+            fee,
+        )
+    }
+}
+
+impl ProofStamp {
+    /// Proves a zero-action bundle's stamp via [`FeeSeed`], at a zero fee.
+    /// The stamp covers only the max fee note's fee descriptor and is
+    /// rerandomized.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProveError::ProofFailed`] if a proof-system step fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the max fee note's value is nonzero, or if its `rcm` is zero.
+    pub fn seed<RNG: CryptoRng>(
+        rng: &mut RNG,
+        max_fee_note: Note,
+        anchor: Anchor,
+    ) -> Result<Self, ProveError> {
+        let (pcd, ()) = PROOF_SYSTEM
+            .seed(
+                rng,
+                FeeSeed,
+                witness::fee_seed(((), ()), max_fee_note, anchor),
+            )
+            .map_err(ProveError::ProofFailed)?;
+
+        Self::finish(
+            rng,
+            pcd,
+            &BTreeSet::new(),
+            BTreeSet::new(),
+            max_fee_note,
+            value::Positive::ZERO,
+        )
+    }
+
+    /// Rerandomizes a fee-applied stamp PCD and assembles its stamp, adding
+    /// the fee change note's commitment to the tachygrams.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the fee exceeds the max fee note's value, or if the max fee
+    /// note's `rcm` is zero.
+    fn finish<RNG: CryptoRng>(
+        rng: &mut RNG,
+        pcd: ragu::Pcd<Stamp>,
+        descriptors: &BTreeSet<action::Descriptor>,
+        mut tachygrams: BTreeSet<Tachygram>,
+        max_fee_note: Note,
+        fee: value::Positive,
+    ) -> Result<Self, ProveError> {
+        let fee_descriptor = fee::Descriptor {
+            max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+            value: fee,
         };
-
         let (proof, (_, tachygram_set, anchor)) = PROOF_SYSTEM
             .rerandomize(pcd, rng)
             .map_err(ProveError::ProofFailed)?
             .into_parts();
-        tachygrams.insert(change);
-        Ok(ProofStamp {
+        tachygrams.insert(Tachygram::from(max_fee_note.fee_change(fee).commitment()));
+        Ok(Self {
             coverage: blake2b::stamp_coverage_digest(
-                &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(descriptors)),
+                &blake2b::action_descriptor_digest(&Vec::<[u8; 64]>::from_iter(
+                    descriptors.iter().copied(),
+                )),
                 &blake2b::stamp_fees_digest(&[fee_descriptor.into()]),
             ),
             anchor,
             tachygram_set,
             tachygrams,
             proof: Box::new(proof),
-            fee: self.fee,
+            fee,
         })
     }
 }
@@ -711,6 +875,12 @@ pub enum ProveError {
     /// Proof creation failed; carries the underlying step-level error.
     #[display("proof failed: {_0}")]
     ProofFailed(ragu_core::Error),
+    /// Spends were planned with no proof authorizing key.
+    #[display("spends need a proof authorizing key")]
+    MissingKey,
+    /// The plan has no actions to prove.
+    #[display("no actions to prove")]
+    NoActions,
 }
 
 /// A stamp carrying tachygrams, anchor, and a proof for specific actions.

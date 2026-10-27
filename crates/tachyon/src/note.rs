@@ -86,6 +86,22 @@ impl Note {
         value::Trapdoor::from_scalar(Option::from(Fq::from_repr(blind.to_repr())).expect("p < q"))
     }
 
+    /// Derive the fee change note of this max fee note at `fee`: the same
+    /// note, worth this note's value less `fee`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the fee exceeds this note's value.
+    #[must_use]
+    pub(crate) fn fee_change(&self, fee: value::Positive) -> Self {
+        #[expect(clippy::expect_used, reason = "the fee must not exceed the maximum")]
+        Self {
+            value: value::Positive::try_from(i128::from(self.value) - i128::from(fee))
+                .expect("fee should not exceed max fee"),
+            ..*self
+        }
+    }
+
     /// Computes the note commitment `cm`.
     ///
     /// Commits to $(pk, v, \psi)$ with randomness $rcm$
