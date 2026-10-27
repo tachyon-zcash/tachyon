@@ -89,6 +89,8 @@ The aggregator runs `StampLift` on each input, along spans that contain that inp
 `StampMerge` then fuses the aligned stamps pairwise into a single `Stamp` whose multisets are the union of all the inputs'.
 The merged stamp stays with one receiving bundle and keeps that bundle's fee, and the bundles it covers are stripped to point at the receiver.
 An innocent aggregate is itself a bundle with its own max fee note, so the aggregator proves its zero fee with `FeeSeed` and merges that stamp with the aligned stamps.
+`StampUnmerge` divides one stamp by another at the same anchor, removing the divisor's leaves from the dividend.
+An aggregator uses it when a block includes some of its contributors while the aggregate is still being built: it divides the aggregate by the included contributors' stamps and keeps building from the quotient.
 The aggregated stamp has the same shape as any other, so it is itself eligible for further aggregation; aggregators stack to fold many published transactions into one stamp, and miners typically integrate the aggregator role into block production.
 
 ### Fee states and flows
@@ -105,7 +107,7 @@ The sync service holds the per-epoch nullifier values the wallet shared and pool
 It builds summaries (`SummarySeed`, `SummaryAdvance`), routes each epoch's tachygrams into QR evidence (`QrSummaryIntake`, `QrStampIntakeSeed`, `QrEmptyIntakeSeed`, `QrIntakeSplit`, `QrSideDescend`, `QrIntakeMerge`, `QrBucketSeal`), folds the sealed buckets into one tree and opens it per query (`EvidenceTreeLeafPair`, `EvidenceTreePairFuse`, `EvidenceTreeFuse`, `EvidenceTreeCap`, `EvidenceTreeDescend`, `EvidenceTreeOpen`), and produces the `ArbitraryUnspent` segments that carry the spendable forward (`QrUnspentInit` over one bucket, `UnspentLift` one epoch at a time, `UnspentFuse` across segments), then hands the composed segment to the wallet to bind and lift over; it never sees a note, `cm`, `psi`, or `mk`.
 
 The aggregator works with published `Stamp`s.
-It aligns anchors with `StampLift` along spans (`AnchorSpanSeed`, `AnchorSpanFuse`), fuses with `StampMerge`, and proves an innocent aggregate's zero fee with `FeeSeed`.
+It aligns anchors with `StampLift` along spans (`AnchorSpanSeed`, `AnchorSpanFuse`), fuses with `StampMerge`, removes contributors with `StampUnmerge`, and proves an innocent aggregate's zero fee with `FeeSeed`.
 
 | step | wallet | sync service | aggregator |
 | ---- | ------ | ------------ | ---------- |
@@ -146,6 +148,7 @@ It aligns anchors with `StampLift` along spans (`AnchorSpanSeed`, `AnchorSpanFus
 | FeeSeed | yes | no | yes |
 | StampMerge | yes | no | yes |
 | StampLift | yes | possible | yes |
+| StampUnmerge | no | no | yes |
 
 ## Soundness
 
@@ -375,17 +378,21 @@ The work splits as follows, each stamp step also opening its action-set and tach
 
 `StampMerge` fuses two stamps by checking anchor equality and confirming each output set is the union of the two inputs': it witnesses the merged sets and enforces, for each, that the merged set polynomial is the product of the input set polynomials.
 `ActionMerge` applies the same relation to two pre-fee `Actions` inputs.
+`StampUnmerge` checks anchor equality, witnesses the quotient sets, and enforces, for each set, that the dividend's set polynomial is the product of the divisor's and the quotient's.
+Every stamp's action set polynomial is a product of linear factors, one per leaf digest, and its tachygram set polynomial is the product over exactly those leaves' tachygrams.
+Unique factorization makes the division exact: the divisor's leaves are a sub-multiset of the dividend's, and the tachygram quotient holds exactly the remaining leaves' tachygrams.
+Removal is no finer than the stamps the aggregator kept. A divisor is a stamp PCD in hand, so the contributors inside an opaque sub-aggregate cannot be removed separately.
 `FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note).
 
 ### Stamp anchor
 
 `OutputAction` and `FeeSeed` take an anchor as direct witness: neither has prior chain state to thread from.
-The other steps thread the anchor from a validated spendable through `SpendBind`/`SpendAction`, thread it from the left actions (`FeeFuse`), equality-constrain the two inputs' anchors (`ActionMerge`, `StampMerge`), or move the content to the end of an `AnchorSpan` that contains its anchor (`ActionLift`, `StampLift`).
+The other steps thread the anchor from a validated spendable through `SpendBind`/`SpendAction`, thread it from the left actions (`FeeFuse`), equality-constrain the two inputs' anchors (`ActionMerge`, `StampMerge`, `StampUnmerge`), or move the content to the end of an `AnchorSpan` that contains its anchor (`ActionLift`, `StampLift`).
 Consensus verifies the published anchor against the chain before accepting the stamp.
 
 ### Rerandomization at trust boundaries
 
-Every stamp-producing operation rerandomizes its proof before releasing it: `Plan::prove`, `ProofStamp::merge` and `ProofStamp::lift` each rerandomize the PCD they built. This is obligatory rather than cosmetic.
+Every stamp-producing operation rerandomizes its proof before releasing it: `Plan::prove`, `ProofStamp::merge`, `ProofStamp::unmerge` and `ProofStamp::lift` each rerandomize the PCD they built. This is obligatory rather than cosmetic.
 
 A PCD proof is a commitment to its own witness data. Two proofs built from overlapping private inputs are correlated as group elements, even when their public headers reveal nothing. The proof a wallet holds after `SpendBind` and the proof it publishes in a stamp share a lineage, so an observer holding both could link them, and an aggregator that merges two stamps sees both inputs directly.
 
@@ -589,6 +596,7 @@ flowchart LR
 | FeeSeed | — | — | max fee note opening, anchor, fee action_set, fee tachygram_set | Stamp |
 | StampMerge | Stamp | Stamp | (action_set, tachygram_set) × left, merged, right | Stamp |
 | StampLift | Stamp | AnchorSpan | members | Stamp |
+| StampUnmerge | Stamp | Stamp | (action_set, tachygram_set) × dividend, quotient, divisor | Stamp |
 
 [^nullifiers]: See [Nullifiers](./nullifiers.md) for the nullifier sponge, the scalar `psi` seed, and the delegated absence sequence.
 [^tachygrams]: See [Tachygrams](./tachygrams.md) for the per-stamp multiset polynomial and its Pedersen commitment.
