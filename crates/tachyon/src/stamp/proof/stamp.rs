@@ -746,17 +746,22 @@ impl Step for FeeSeed {
 /// Both columns are products of linear factors, so unique factorization in
 /// $\mathbb{F}_p\[X\]$ places the divisor's digest multiset inside the
 /// dividend's. Repeated roots subtract by multiplicity. A digest determines
-/// its tachygrams at a fixed epoch, and equal anchors force equal epochs, so
-/// the tachygram quotient is exactly the removed leaves' tachygrams.
+/// its tachygrams at a fixed epoch. The epoch closes through consensus anchor
+/// membership: the output threads the dividend's anchor, a span folds only
+/// under the `Tachyon-AnchorSt` domain, and
+/// [`SpendableInit`](super::spendable::SpendableInit) absorbs the creation
+/// epoch. Once consensus checks the published anchor, every spend leaf beneath
+/// it derived its nullifier pair at that anchor's epoch, and the tachygram
+/// quotient is exactly the removed leaves' tachygrams.
 ///
 /// This rests on Poseidon collision resistance, Pedersen binding, discrete
 /// log, and Poseidon preimage resistance composed through a discrete-log
 /// relation. [`NoteSeed`](super::delegation::NoteSeed) derives `pk` and
 /// [`SpendAction`] checks it, which closes that relation in-circuit.
 ///
-/// Removal is no finer than the operands the prover kept. A divisor is a
-/// stamp PCD in hand, so the contributors of an opaque sub-aggregate cannot be
-/// removed separately.
+/// Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in
+/// hand, and merging in a complement first lets division remove any leaf
+/// multiset the stamps in hand combine to express.
 ///
 /// Six committed polynomials and six openings, two product challenges, four
 /// commit-equalities and one scalar equality.

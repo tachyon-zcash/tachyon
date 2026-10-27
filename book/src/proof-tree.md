@@ -380,8 +380,9 @@ The work splits as follows, each stamp step also opening its action-set and tach
 `ActionMerge` applies the same relation to two pre-fee `Actions` inputs.
 `StampUnmerge` checks anchor equality, witnesses the quotient sets, and enforces, for each set, that the dividend's set polynomial is the product of the divisor's and the quotient's.
 Every stamp's action set polynomial is a product of linear factors, one per leaf digest, and its tachygram set polynomial is the product over exactly those leaves' tachygrams.
-Unique factorization makes the division exact: the divisor's leaves are a sub-multiset of the dividend's, and the tachygram quotient holds exactly the remaining leaves' tachygrams.
-Removal is no finer than the stamps the aggregator kept. A divisor is a stamp PCD in hand, so the contributors inside an opaque sub-aggregate cannot be removed separately.
+Unique factorization makes the division exact: the divisor's leaves are a sub-multiset of the dividend's.
+Once consensus checks the published [anchor](./anchor.md), every spend leaf beneath it derived its nullifier pair at that anchor's epoch, and the tachygram quotient holds exactly the remaining leaves' tachygrams.
+Sub-aggregate boundaries do not bound removal. A divisor is a stamp PCD in hand, and merging in a complement first lets division remove any leaf multiset the stamps in hand combine to express.
 `FeeFuse` transforms `Actions` into a `Stamp` with the same product relation, multiplying each set polynomial by a fee singleton set polynomial as in [Dynamic Fee](./fee.md#fee-change-note).
 
 ### Stamp anchor
