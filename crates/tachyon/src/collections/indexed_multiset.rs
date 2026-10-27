@@ -99,6 +99,7 @@ fn encode_single(idx: u64, m: Fp) -> Polynomial<Fp, ProductionRank> {
 }
 
 #[must_use]
+#[cfg(test)]
 fn direct_eval_single(idx: u64, m: Fp, x: Fp) -> Fp {
     let i = Fp::from(idx) + Fp::ONE;
     ((i * x) + m).pow_u64(3) - NON_RESIDUE
@@ -115,6 +116,7 @@ pub(crate) fn encode(
 }
 
 /// Evaluate the indexed multiset without building the polynomial.
+#[cfg(test)]
 pub(crate) fn direct_eval(members: impl IntoIterator<Item = (u64, Fp)>, x: Fp) -> Fp {
     members
         .into_iter()

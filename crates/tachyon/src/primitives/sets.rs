@@ -114,7 +114,7 @@ pub struct ActionSetPoly(Polynomial<Fp, ProductionRank>);
 
 /// Witness polynomial for an anchor span's member set (members encoded as
 /// roots).
-#[derive(AsRef, Clone, Debug, Into)]
+#[derive(AsRef, Clone, Debug, From, Into)]
 pub struct AnchorSetPoly(Polynomial<Fp, ProductionRank>);
 
 impl AnchorSetPoly {

@@ -8,6 +8,7 @@
 //! absorption.
 
 extern crate alloc;
+
 use ragu::{
     Encoded, Header, Index, Step, StepCtx,
     pasta::{Eq, Fp},
@@ -17,13 +18,12 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe as _,
 };
+use ragu_primitives::Element;
 use udon::curve::Projective as _;
 
-pub use crate::stamp::headers::summary::Summary;
 use crate::{
     primitives::{Anchor, EpochIndex, TachygramSetCommit, TachygramSetPoly},
-    ragu_constraint::enforce_equal_point,
-    relations::enforce::{bind_poly_handle, enforce_poly_product},
+    relations::enforce::{bind_poly_handle, enforce_poly_product, poly_handle_limbs},
 };
 
 /// Start a summary from one stamp. The step performs the same fold as
@@ -67,20 +67,48 @@ impl Step for SummarySeed {
     where
         Self: 'dr,
     {
-        let left_encoded =
-            Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
-        let output = D::try_just(|| {
+        let left_encoded = Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left)?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right)?;
+        let previous = Element::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.0)),
+        )?;
+        let epoch_element = Element::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Fp::from(data.1)),
+        )?;
+        let limbs = crate::gadgets::commitment::HostCommitment::alloc(
+            ctx.dr,
+            &mut (),
+            witness.as_ref().map(|data| Eq::from(data.2).to_affine()),
+        )
+        .map(|encoding| encoding.limbs)?;
+        let anchor = crate::gadgets::anchor::AnchorGadget::from(previous.clone())
+            .next_stamp(ctx.dr, epoch_element.clone(), limbs.clone())
+            .map(|anchor| anchor.element)?;
+        let output = D::just(|| {
             let (anchor_prev, epoch, stamp_commit) = witness.take();
-            let anchor_end = anchor_prev
-                .next_stamp(epoch, &stamp_commit)
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-            Ok(((epoch, anchor_prev, anchor_end, stamp_commit), ()))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+            (
+                epoch,
+                anchor_prev,
+                Anchor::from(*anchor.value().take()),
+                stamp_commit,
+            )
+        });
+        let fields = crate::stamp::headers::summary::SummaryOutput {
+            epoch: (epoch_element).into(),
+            anchor_prev: (previous).into(),
+            anchor_end: (anchor).into(),
+            acc_commit: (crate::gadgets::commitment::HostCommitment { limbs }).into(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            (),
+            output,
+            D::unit(),
+        ))
     }
 }
 
@@ -121,8 +149,7 @@ impl Step for SummaryAdvance {
     {
         let left_encoded =
             Encoded::<D, Self::Left, HEADER_SIZE>::new(ctx.dr, &mut (), left.clone())?;
-        let right_encoded =
-            Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right.clone())?;
+        let right_encoded = Encoded::<D, Self::Right, HEADER_SIZE>::new(ctx.dr, &mut (), right)?;
         let acc_handle = ctx.witness_polynomial(
             witness
                 .as_ref()
@@ -141,7 +168,7 @@ impl Step for SummaryAdvance {
         bind_poly_handle(
             ctx,
             &acc_handle,
-            left.as_ref().map(|data| Eq::from(data.3).to_affine()),
+            &left_encoded.as_gadget().acc_commit.encoding.limbs,
             "SummaryAdvance: accumulator does not match header",
         )?;
         enforce_poly_product(
@@ -151,31 +178,38 @@ impl Step for SummaryAdvance {
             &extended_handle,
             "SummaryAdvance: extended accumulator must fold the stamp",
         )?;
-        let output = D::try_just(|| {
-            let (acc, extended, stamp) = witness.take();
-            let (summary_epoch, summary_anchor_prev, summary_anchor_end, summary_acc_commit) =
-                left.take();
-            right.take();
-            enforce_equal_point(
-                Eq::from(acc.commit()),
-                Eq::from(summary_acc_commit),
-                "SummaryAdvance: accumulator does not match header",
-            )?;
-            let anchor_end = summary_anchor_end
-                .next_stamp(summary_epoch, &stamp.commit())
-                .map_err(|_e| ragu_core::Error::InvalidWitness("invalid anchor step".into()))?;
-            Ok((
-                (
-                    summary_epoch,
-                    summary_anchor_prev,
-                    anchor_end,
-                    extended.commit(),
-                ),
-                (),
-            ))
-        })?;
-        let (data, aux) = output.cast();
-        let encoded = Encoded::<D, Self::Output, HEADER_SIZE>::new(ctx.dr, &mut (), data.clone())?;
-        Ok(((left_encoded, right_encoded, encoded), (), data, aux))
+        let previous = left_encoded.as_gadget().anchor_end.element.clone();
+        let epoch_element = left_encoded.as_gadget().epoch.element.clone();
+        let limbs = poly_handle_limbs(ctx.dr, &stamp_handle)?;
+        let anchor = crate::gadgets::anchor::AnchorGadget::from(previous)
+            .next_stamp(ctx.dr, epoch_element, limbs)
+            .map(|anchor| anchor.element)?;
+        let output = D::just(|| {
+            let (_, extended, _) = witness.take();
+            let (summary_epoch, summary_anchor_prev, ..) = left.take();
+            (
+                summary_epoch,
+                summary_anchor_prev,
+                Anchor::from(*anchor.value().take()),
+                extended.commit(),
+            )
+        });
+        let fields = crate::stamp::headers::summary::SummaryOutput {
+            epoch: (left_encoded.as_gadget().epoch.element.clone()).into(),
+            anchor_prev: (left_encoded.as_gadget().anchor_prev.element.clone()).into(),
+            anchor_end: (anchor).into(),
+            acc_commit: (crate::gadgets::commitment::HostCommitment {
+                limbs: poly_handle_limbs(ctx.dr, &extended_handle)?,
+            })
+            .into(),
+        };
+        Ok((
+            (left_encoded, right_encoded, Encoded::from_gadget(fields)),
+            (),
+            output,
+            D::unit(),
+        ))
     }
 }
+
+pub use crate::stamp::headers::summary::Summary;

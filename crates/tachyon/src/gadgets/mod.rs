@@ -17,6 +17,7 @@ macro_rules! scalar_gadget {
 }
 
 pub mod anchor;
+pub(crate) mod arithmetic;
 pub mod commitment;
 pub mod epoch;
 pub mod evidence;

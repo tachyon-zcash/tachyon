@@ -3,8 +3,22 @@ extern crate alloc;
 use alloc::{collections::BTreeSet, string::ToString as _, vec};
 use core::iter;
 
-use ragu::Proof;
+use ragu::{
+    Cycle as _, PoseidonPermutation as _, Proof,
+    pasta::{Fp, Pasta, PoseidonFp},
+};
+use ragu_core::{
+    drivers::emulator::{Emulator, Wireless},
+    maybe::{Always, Maybe as _},
+};
+use ragu_pcd::pasta::baked;
+use ragu_primitives::{
+    Element,
+    poseidon::{Sponge, SpongeState},
+    vec::FixedVec,
+};
 use rand::{SeedableRng as _, rngs::StdRng};
+use udon::field::Field as _;
 use zcash_tachyon::{
     ActionDigest, ActionSetPoly, Anchor, Bundle, Note, Tachygram, TachygramSetPoly,
     VerificationError, VerifyCoverageError, VerifyTachygramsError, action, bundle,
@@ -275,16 +289,77 @@ fn fee_is_chosen_after_signing_up_to_the_max_and_applies_once() {
         &zero.stamp.tachygrams,
     );
     excess_witness.1 = zat(301);
+    // Bypass bounded change-note builders. Every polynomial is consistent with
+    // the field subtraction 300 - 301 = -1, so only the integer range rejects.
+    let mut emulator = Emulator::<Wireless<Always<()>, Fp>>::execute();
+    let state = SpongeState::from_elements(FixedVec::from_fn(|index| {
+        Element::constant(
+            &mut emulator,
+            if index == PoseidonFp::RATE {
+                Fp::from_u128(u128::from_le_bytes(*b"Tachyon-CmDerive"))
+            } else {
+                Fp::ZERO
+            },
+        )
+    }));
+    let mut sponge = Sponge::resume(state, Pasta::circuit_poseidon(baked()));
+    for input in [
+        Fp::from(max_fee_note.rcm),
+        Fp::from(max_fee_note.pk),
+        -Fp::ONE,
+        Fp::from(max_fee_note.psi),
+    ] {
+        let element = Element::constant(&mut emulator, input);
+        sponge
+            .absorb(&mut emulator, &element)
+            .expect("native assignment hash");
+    }
+    let negative_change = *sponge
+        .squeeze(&mut emulator)
+        .expect("native assignment hash")
+        .value()
+        .take();
+    assert_ne!(negative_change, Fp::ZERO);
+    let forged_digest = fee::Descriptor {
+        max_commitment: max_fee_note.fee_blind().commit(-max_fee_note.value),
+        value: zat(301),
+    }
+    .digest()
+    .expect("nonidentity max-fee commitment");
+    excess_witness.4 = (
+        iter::once(forged_digest).collect(),
+        iter::once(Tachygram::from(negative_change)).collect(),
+    );
+    excess_witness.3 = (
+        action_digests
+            .iter()
+            .copied()
+            .chain(iter::once(forged_digest))
+            .collect(),
+        zero.stamp
+            .tachygrams
+            .iter()
+            .copied()
+            .chain(iter::once(Tachygram::from(negative_change)))
+            .collect(),
+    );
+    let action_parent = zero
+        .stamp
+        .proof
+        .as_ref()
+        .clone()
+        .carry::<Actions>(stamp_header);
+    assert!(
+        PROOF_SYSTEM
+            .verify(&action_parent, &mut *rng)
+            .expect("genuine Actions child")
+    );
     let excess = PROOF_SYSTEM
         .fuse(
             rng,
             FeeFuse,
             excess_witness,
-            zero.stamp
-                .proof
-                .as_ref()
-                .clone()
-                .carry::<Actions>(stamp_header),
+            action_parent,
             Proof::bootstrap::<HEADER_SIZE>().carry::<()>(()),
         )
         .err()

@@ -35,7 +35,7 @@ const VALUE_COMMITMENT_DOMAIN: &str = "z.cash:Orchard-cv";
 
 lazy_static! {
     /// Generator $\mathcal{V}$ for value commitments.
-    static ref VALUE_COMMIT_V: Ep = {
+    pub(crate) static ref VALUE_COMMIT_V: Ep = {
         #[expect(clippy::expect_used, reason = "the fixed generator has a canonical encoding")]
         EpAffine::from_bytes(Point::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"v").to_bytes())
             .expect("valid Orchard generator")
@@ -43,7 +43,7 @@ lazy_static! {
     };
 
     /// Generator $\mathcal{R}$ for value commitments and binding signatures.
-    static ref VALUE_COMMIT_R: Ep = {
+    pub(crate) static ref VALUE_COMMIT_R: Ep = {
         #[expect(clippy::expect_used, reason = "the fixed generator has a canonical encoding")]
         EpAffine::from_bytes(Point::hash_to_curve(VALUE_COMMITMENT_DOMAIN)(b"r").to_bytes())
             .expect("valid Orchard generator")
