@@ -54,13 +54,13 @@ jobs:
         run: cargo llvm-cov --no-report --release --workspace --locked --features test-epoch-size
 
       - name: Generate lcov report
-        run: cargo llvm-cov report --lcov --output-path lcov.info
+        run: cargo llvm-cov report --release --lcov --output-path lcov.info
 
       - name: Write summary to the job summary
         run: |
           echo '## Test coverage (ubuntu, release)' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cargo llvm-cov report --summary-only >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report --release --summary-only >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload lcov report
