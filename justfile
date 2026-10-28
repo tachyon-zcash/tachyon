@@ -7,6 +7,10 @@ _nightly := "nightly-2026-05-23"
 
 _katex := "--html-in-header " + justfile_directory() / "crates/tachyon/katex-header.html"
 
+# kache remaps the cargo registry to `/kache/.cargo`, outside the default
+# cargo-llvm-cov excludes
+_cov_ignore := "--ignore-filename-regex '/[.]cargo/registry/'"
+
 fmt:
     cargo +{{_nightly}} fmt --all
 
@@ -21,12 +25,12 @@ test *ARGS:
 coverage *ARGS:
     cargo llvm-cov clean --workspace
     cargo llvm-cov --no-report --release --workspace --locked --features test-epoch-size {{ARGS}}
-    cargo llvm-cov report --release --lcov --output-path lcov.info
-    cargo llvm-cov report --release --summary-only
+    cargo llvm-cov report --release {{_cov_ignore}} --lcov --output-path lcov.info
+    cargo llvm-cov report --release {{_cov_ignore}} --summary-only
 
-# line coverage of the test suite, as an HTML report
+# line coverage of the test suite, as an HTML report in coverage-html/html
 coverage-html *ARGS: (coverage ARGS)
-    cargo llvm-cov report --release --html --output-dir coverage-html
+    cargo llvm-cov report --release {{_cov_ignore}} --html --output-dir coverage-html
 
 doc *ARGS:
     RUSTDOCFLAGS="{{_katex}}" cargo doc --workspace --no-deps --document-private-items {{ARGS}}
