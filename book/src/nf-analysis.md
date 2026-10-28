@@ -1,5 +1,8 @@
 # Nullifier Analysis
 
+> This analysis selected the Poseidon-based derivation (Attempt 3). The
+> derivation as implemented is described in [Nullifiers](./nullifiers.md).
+
 > TL;DR:
 > our [conclusion](#conclusion) recommends [Attempt 3](#attempt3) which
 > directly use Poseidon permutation to derive $\mathsf{Rate}=4$ nullifers per
@@ -29,7 +32,7 @@ whose outputs are indistinguishable from random bytes. Such an $\nf_e$ binds to
 both the spending authority (via $\nk$) and the underlying note (via its per-note
 trapdoor $\psi$), while remaining unlinkable across epochs to anyone without $\nk$.
 
-We proposed a [**GGM-based nullifier**](./revisit.md#nf-ggm) whose derivation
+We proposed a [**GGM-based nullifier**](./ggm.md#nf-ggm) whose derivation
 requires walking a tree where descending one level involves a Poseidon hash.
 The construction details are irrelevant thus skipped here.
 The main takeaway is: a single nullifier derivation (full tree walk) already
@@ -49,14 +52,14 @@ focus on multiplication constraints. Step capacity for Poseidon is $7$ ([see
 here](https://github.com/tachyon-zcash/ragu/pull/720)) as per-permutation gate
 cost is $288$.
     
-With a [mixed-arity optimization](./revisit.md#mixed-arity) of the tree, where
+With a [mixed-arity optimization](./ggm.md#mixed-arity) of the tree, where
 the arity is higher towards the root and binary towards the leaf, we can cut
 down the depth to 7, thus fit a full derivation in a single step. $\blacksquare$
     
 </details>
 
 Ideally, we want to **fit more (at least two) nullifier derivations in a single
-step**. For example, the [`NfDerive` step](./revisit.md#steps) derives both
+step**. For example, the `NfDerive` step derives both
 $\nf_e$ and $\nf_{e+1}$ for the spending epoch $e$ in a single step.
 Therefore, the challenge is to find alternative nullifier constructions with
 lower circuit complexity.
@@ -149,8 +152,8 @@ accumulate them as he syncs spendability proofs. These accumulated nullifiers
 would be proven correct when OSS hands back the spendability proof to the user
 who can fuse it with proof of nullifier derivations.
 
-[^ggm-partial]: In the original GGM-based nullifier, the [`DelegateCert`
-    step](./revisit.md#steps) proves integrity of the internal node whose value
+[^ggm-partial]: In the original GGM-based nullifier, the `DelegateCert`
+    step proves integrity of the internal node whose value
     is the delegation key.
 
 ### Attempt 1b: Constrained Sampling

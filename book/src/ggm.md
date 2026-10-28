@@ -1,7 +1,8 @@
 # GGM-based Nullifier
 
-> Archive of the GGM-based nullifier design.
-> We have moved away from it and embraced [Polynomial-based nullifier](./nf-analysis.md).
+> Archive of the GGM-based nullifier design. We have moved away from it; see
+> [Nullifier Analysis](./nf-analysis.md) for the alternatives and
+> [Nullifiers](./nullifiers.md) for the derivation as implemented.
 
 A natural abstraction for the first constraint is the *constrained PRF*
 [[BW13]](https://eprint.iacr.org/2013/352.pdf): from the master key one can
@@ -112,61 +113,3 @@ the delegated key material is variable-size.
 > delegation, where a delegated subtree should span as few surplus epochs as
 > possible. High arity at the top and arity-2 at the bottom buys both at once: a
 > shallow circuit and tight delegation ranges.
-
-#### Nullifier Security {#nf-sec}
-
-We now examine how the evolving nullifier upholds the security properties [carved
-out](#decouple) for the shielded protocol. Readers can safely skip this
-section and come back later since the analysis refers to concepts introduced
-in later sections.
-
-**Balance.** Only the holder of $\nk$ can compute any $\nf_e$, since the GGM
-seed $\PRF_\nk(\psi)$ requires it. The spend circuit pins both $\nf_e$ and
-$\nf_{e+1}$ to a deterministic function of the note and epoch, so a note has
-exactly one valid nullifier per epoch and no freedom to mint a fresh value that
-dodges a past spend. Double-spending is then ruled out by two complementary
-checks that [leave no gap](#consensus-rule). The [spendability proof](#spendability)
-certifies the nullifier absent throughout pruned history up to its anchor, and
-consensus rescans the recent window (the current epoch and the one before) that
-the proof does not reach. Publishing both $\nf_e$ and $\nf_{e+1}$ extends this
-across the epoch boundary, so a note cannot be spent twice even as $e$ advances.
-
-**Note Privacy.** The adversary is a keyless third party reading the whole
-on-chain transaction, including any in-band memo. The shielded footprint, namely
-the commitment $\cm$ (hidden by $\rcm$), the spend's revealed nullifiers
-(pseudorandom by GGM PRF security), the rerandomized $\rk$, and the hiding $\cv$,
-reveals none of $\pk$, $v$, $\psi$. The in-band memo is payment-protocol data
-that the shielded protocol carries opaquely and never parses (committed only to
-`da_digest`), so its secrecy rests on the payment protocol's encryption, not on
-the shielded core.
-
-**Note Privacy (OOB).** Here the note plaintext travels out of band rather than
-as an in-band ciphertext, so the adversary of concern is the sender, who learns
-$\pk, v, \psi, \rcm$ but never the recipient's $\nk$. Because every $\nf_e$ hangs
-off the secret seed $\PRF_\nk(\psi)$, knowledge of the note plaintext alone does
-not let the sender, or anyone it colludes with, recognize the recipient's
-eventual spend on chain or link it back to the note it sent.
-
-**Spend Unlinkability.** Across epochs the $\{\nf_e\}$ of a fixed note are
-mutually pseudorandom to anyone lacking $\nk$, by GGM PRF security, and this
-holds even for the pair $\nf_e, \nf_{e+1}$ revealed together at spend. An OSS
-[delegated](#nf-ggm) a prefix key for a range $[e_1, e_2)$ can refresh exclusion
-proofs there, but the tree's forward-only structure prevents it from reaching
-any leaf beyond the range, in particular the spend leaf, since
-[syncing stops at $e-1$](#txflow). To an attacker holding only the on-chain
-$\cm$, the spend is unlinkable to it, since the two draw on disjoint randomness
-($\rcm$ versus the GGM seed). The stronger flavor of spend unlinkability, under
-incoming viewing key access, falls to the payment protocol, since Tachyon's
-shielded core has no $\ivk$.
-
-**Faerie-gold via the wallet.** In Orchard, Faerie-gold resistance comes from
-binding each new note's $\rho$ to the unique nullifier of an input note.
-Tachyon's [tachygram accumulator](#acc) does not assign notes a canonical
-position, so the shielded protocol cannot enforce that binding. A malicious
-sender could in principle pick colliding $\psi$ values across two notes sent
-to the same recipient, where only one of them is spendable. We push detection
-to the recipient's wallet: upon receiving a note, the wallet computes the note's
-nullifier at a fixed reference epoch and rejects the note if it collides with any
-other note it currently holds. Since a wallet's note set is small, the check is cheap;
-the knowledge that compliant wallets will reject such collisions is enough to
-deter the attack.
