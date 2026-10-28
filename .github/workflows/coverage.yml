@@ -54,7 +54,7 @@ jobs:
         run: cargo llvm-cov --release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --workspace --locked --features test-epoch-size
 
       - name: Generate lcov report
-        run: cargo llvm-cov report --release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --lcov --output-path lcov.info
+        run: cargo llvm-cov report --release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --lcov --skip-functions --output-path lcov.info
 
       - name: Generate HTML report
         run: cargo llvm-cov report --release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --html
