@@ -10,7 +10,9 @@ _katex := "--html-in-header " + justfile_directory() / "crates/tachyon/katex-hea
 # keep in step with .github/workflows/coverage.yml, which fails when lcov.info
 # differs from the committed one. `--remap-path-prefix` makes its paths
 # workspace-relative. kache remaps the cargo registry to `/kache/.cargo`,
-# outside the default cargo-llvm-cov excludes.
+# outside the default cargo-llvm-cov excludes. lcov.info takes
+# `--skip-functions`: its function records are keyed by mangled symbols, whose
+# crate hashes change with the toolchain and target.
 _cov := "--release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/'"
 
 fmt:
@@ -26,7 +28,7 @@ test *ARGS:
 # line coverage of the test suite
 coverage *ARGS:
     cargo llvm-cov {{_cov}} --workspace --locked --features test-epoch-size {{ARGS}}
-    cargo llvm-cov report {{_cov}} --lcov --output-path lcov.info
+    cargo llvm-cov report {{_cov}} --lcov --skip-functions --output-path lcov.info
 
 # line coverage of the test suite, as an HTML report
 coverage-html *ARGS: (coverage ARGS)
