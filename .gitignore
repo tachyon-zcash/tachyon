@@ -1,5 +1,3 @@
 target
 .vscode
 .claude
-lcov.info
-coverage-html
