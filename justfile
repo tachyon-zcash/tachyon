@@ -20,6 +20,7 @@ test *ARGS:
 # line coverage of the test suite
 coverage *ARGS:
     cargo llvm-cov --release --workspace --locked --features test-epoch-size {{ARGS}}
+    cargo llvm-cov report --release --lcov --output-path lcov.info
 
 # line coverage of the test suite, as an HTML report
 coverage-html *ARGS: (coverage ARGS)
