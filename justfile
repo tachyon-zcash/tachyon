@@ -21,12 +21,12 @@ test *ARGS:
 coverage *ARGS:
     cargo llvm-cov clean --workspace
     cargo llvm-cov --no-report --release --workspace --locked --features test-epoch-size {{ARGS}}
-    cargo llvm-cov report --lcov --output-path lcov.info
-    cargo llvm-cov report --summary-only
+    cargo llvm-cov report --release --lcov --output-path lcov.info
+    cargo llvm-cov report --release --summary-only
 
 # line coverage of the test suite, as an HTML report
-coverage-html *ARGS: coverage
-    cargo llvm-cov report --html --output-dir coverage-html
+coverage-html *ARGS: (coverage ARGS)
+    cargo llvm-cov report --release --html --output-dir coverage-html
 
 doc *ARGS:
     RUSTDOCFLAGS="{{_katex}}" cargo doc --workspace --no-deps --document-private-items {{ARGS}}
