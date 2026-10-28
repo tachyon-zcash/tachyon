@@ -26,7 +26,7 @@ permissions:
 
 # Advisory reporting only: this job is outside `ci-required`, has no coverage
 # floor, and leaves no PR comment. It publishes a line-coverage report of the
-# test suite to the job summary and as a downloadable `lcov.info` artifact.
+# test suite to the job summary and as a downloadable HTML artifact.
 jobs:
   coverage:
     name: coverage
@@ -42,30 +42,27 @@ jobs:
           cargo-tools: cargo-llvm-cov@0.9.1
           cache-suffix: coverage
 
-      # The same single run as the `just coverage` recipe, mirroring
-      # `rust.yml`'s release all-features test job. `test-epoch-size` shrinks
-      # `EPOCH_SIZE` from 4096 to 64 so the instrumented run stays tractable;
-      # the production-epoch check stays in `rust.yml`'s default-features
-      # unit-test job.
-      - name: Clean coverage artifacts
-        run: cargo llvm-cov clean --workspace
-
+      # The same runs as the `just coverage` and `just coverage-html` recipes,
+      # mirroring `rust.yml`'s release all-features test job.
+      # `test-epoch-size` shrinks `EPOCH_SIZE` from 4096 to 64 so the
+      # instrumented run stays tractable; the production-epoch check stays in
+      # `rust.yml`'s default-features unit-test job.
       - name: Run tests with coverage (release, test-epoch-size)
-        run: cargo llvm-cov --no-report --release --workspace --locked --features test-epoch-size
+        run: cargo llvm-cov --release --workspace --locked --features test-epoch-size
 
-      - name: Generate lcov report
-        run: cargo llvm-cov report --release --lcov --output-path lcov.info
+      - name: Generate HTML report
+        run: cargo llvm-cov report --release --html
 
       - name: Write summary to the job summary
         run: |
           echo '## Test coverage (ubuntu, release)' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cargo llvm-cov report --release --summary-only >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report --release >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload lcov report
+      - name: Upload HTML report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-lcov
-          path: lcov.info
+          name: coverage-html
+          path: target/llvm-cov/html
           retention-days: 30
