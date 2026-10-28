@@ -62,7 +62,7 @@ An innocent aggregate is a bundle with its own [max fee note](./fee.md#max-fee-n
 - Define aggregation limits
 -->
 
-### Strip to produce Adjuncts
+### Strip to produce Adjuncts {#strip-to-produce-adjuncts}
 
 Miners obtain the broadcast aggregates, or by vertically integrating as aggregators.
 

@@ -1,5 +1,9 @@
 # A Deep Dive on Tachyon
 
+> This essay was written while the proof tree was being settled and has not
+> tracked every change since. The maintained chapters are authoritative where
+> they differ.
+
 Although Tachyon’s central contribution is its use of prunable nullifiers to
 scale Zcash without compromising privacy, we begin from a different vantage point.
 Rather than diving directly into how evolving nullifiers work, we first examine a
