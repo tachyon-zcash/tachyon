@@ -7,6 +7,12 @@ _nightly := "nightly-2026-05-23"
 
 _katex := "--html-in-header " + justfile_directory() / "crates/tachyon/katex-header.html"
 
+# keep in step with .github/workflows/coverage.yml, which fails when lcov.info
+# differs from the committed one. `--remap-path-prefix` makes its paths
+# workspace-relative. kache remaps the cargo registry to `/kache/.cargo`,
+# outside the default cargo-llvm-cov excludes.
+_cov := "--release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/'"
+
 fmt:
     cargo +{{_nightly}} fmt --all
 
@@ -19,12 +25,12 @@ test *ARGS:
 
 # line coverage of the test suite
 coverage *ARGS:
-    cargo llvm-cov --release --workspace --locked --features test-epoch-size {{ARGS}}
-    cargo llvm-cov report --release --lcov --output-path lcov.info
+    cargo llvm-cov {{_cov}} --workspace --locked --features test-epoch-size {{ARGS}}
+    cargo llvm-cov report {{_cov}} --lcov --output-path lcov.info
 
 # line coverage of the test suite, as an HTML report
 coverage-html *ARGS: (coverage ARGS)
-    cargo llvm-cov report --release --html
+    cargo llvm-cov report {{_cov}} --html
 
 doc *ARGS:
     RUSTDOCFLAGS="{{_katex}}" cargo doc --workspace --no-deps --document-private-items {{ARGS}}

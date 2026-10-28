@@ -13,6 +13,8 @@ on:
       - 'clippy.toml'
       - '.cargo/config.toml'
       - 'crates/tachyon/katex-header.html'
+      - 'lcov.info'
+      - 'justfile'
       - '.github/workflows/coverage.yml'
       - '.github/actions/**'
 
@@ -24,9 +26,10 @@ concurrency:
 permissions:
   contents: read
 
-# Advisory reporting only: this job is outside `ci-required`, has no coverage
-# floor, and leaves no PR comment. It publishes a line-coverage report of the
-# test suite to the job summary and as a downloadable HTML artifact.
+# Fails when the regenerated `lcov.info` differs from the committed one: the
+# test suite must produce the same coverage, hit counts included, on every run.
+# This job is outside `ci-required` and has no coverage floor. It also
+# publishes the report to the job summary and as a downloadable HTML artifact.
 jobs:
   coverage:
     name: coverage
@@ -43,21 +46,24 @@ jobs:
           cache-suffix: coverage
 
       # The same runs as the `just coverage` and `just coverage-html` recipes,
-      # mirroring `rust.yml`'s release all-features test job.
-      # `test-epoch-size` shrinks `EPOCH_SIZE` from 4096 to 64 so the
-      # instrumented run stays tractable; the production-epoch check stays in
-      # `rust.yml`'s default-features unit-test job.
+      # with the justfile's `_cov` flags, mirroring `rust.yml`'s release
+      # all-features test job. `test-epoch-size` shrinks `EPOCH_SIZE` from 4096
+      # to 64 so the instrumented run stays tractable; the production-epoch
+      # check stays in `rust.yml`'s default-features unit-test job.
       - name: Run tests with coverage (release, test-epoch-size)
-        run: cargo llvm-cov --release --workspace --locked --features test-epoch-size
+        run: cargo llvm-cov --release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --workspace --locked --features test-epoch-size
+
+      - name: Generate lcov report
+        run: cargo llvm-cov report --release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --lcov --output-path lcov.info
 
       - name: Generate HTML report
-        run: cargo llvm-cov report --release --html
+        run: cargo llvm-cov report --release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' --html
 
       - name: Write summary to the job summary
         run: |
           echo '## Test coverage (ubuntu, release)' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cargo llvm-cov report --release >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report --release --remap-path-prefix --ignore-filename-regex '/[.]cargo/registry/' >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload HTML report
@@ -66,3 +72,6 @@ jobs:
           name: coverage-html
           path: target/llvm-cov/html
           retention-days: 30
+
+      - name: Check lcov.info matches the committed report
+        run: git diff --exit-code lcov.info
