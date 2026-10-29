@@ -18,9 +18,9 @@ namespace Tachyon
 
 open Polynomial AnchorBreaks
 
-variable {F C A Δ Φ : Type*} [Field F] [DecidableEq F] {IsFee : F → Prop} {epoch : A → ℕ}
-  {R : ℕ → F → Multiset F} {actionDigest : Δ → F} {feeDigest : Φ → F}
-  {m : Model F[X] C A ℕ} {ValidBucket : QrBucket F A → Prop} {Query : QrBucket F A → F → Type*}
+variable {F C A P Δ Φ : Type*} [Field F] [DecidableEq F] [MulOneClass P] [OpeningSemantics P F]
+  {IsFee : F → Prop} {epoch : A → ℕ} {R : ℕ → F → Multiset F} {actionDigest : Δ → F}
+  {feeDigest : Φ → F} {m : Model P C A ℕ} {ValidBucket : QrBucket F A → Prop} {Query : QrBucket F A → F → Type*}
   {Q : Sort*} {noteNf : F → ℕ → F} {sp₁ sp₂ : NoteSpendable F A}
   {chain l₁ l₂ : List (Chain.Stamp F A)} {acceptedAnchor : ℕ → A → Prop} {descs₁ descs₂ : List Δ}
   {fee₁ fee₂ : Φ} {adjunctFees₁ adjunctFees₂ : List Φ} {stamp₁ stamp₂ : PublishedStamp F A}
@@ -29,7 +29,7 @@ variable {F C A Δ Φ : Type*} [Field F] [DecidableEq F] {IsFee : F → Prop} {e
 /-- A double spend across two verified bundles on a valid chain, from traced spendables of one note,
 computes a collision scoped to the two node traces and the spendables' anchor preimages, or the
 oracle's break on one of the second lineage's queries. -/
-noncomputable def doubleSpendBreak [DecidableEq F[X]] [DecidableEq C] [DecidableEq A]
+def doubleSpendBreak [DecidableEq P] [DecidableEq C] [DecidableEq A]
     (oracle : ∀ b v, Query b v → Profiled.QueryComplete chain b v ⊕' Q)
     (hchain : Chain.Valid epoch acceptedAnchor chain)
     (h₁ : BundleVerified IsFee epoch R actionDigest feeDigest descs₁ fee₁ adjunctFees₁ stamp₁)
@@ -66,7 +66,7 @@ noncomputable def doubleSpendBreak [DecidableEq F[X]] [DecidableEq C] [Decidable
 
 /-- With no collision among the two node traces and the spendables' anchor preimages, and an oracle
 that never breaks, two verified bundles on a valid chain cannot both spend one note. -/
-theorem no_double_spend_of_no_collisions [DecidableEq F[X]] [DecidableEq C] [DecidableEq A]
+theorem no_double_spend_of_no_collisions [DecidableEq P] [DecidableEq C] [DecidableEq A]
     (oracle : ∀ b v, Query b v → Profiled.QueryComplete chain b v ⊕' Q) (hQ : Q → False)
     (hchain : Chain.Valid epoch acceptedAnchor chain)
     (h₁ : BundleVerified IsFee epoch R actionDigest feeDigest descs₁ fee₁ adjunctFees₁ stamp₁)
