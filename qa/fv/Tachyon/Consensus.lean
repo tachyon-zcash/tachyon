@@ -1,5 +1,6 @@
 import Tachyon.Consensus.Bundle
 import Tachyon.Consensus.Chain
+import Tachyon.Spendable
 
 /-!
 # No double spend
@@ -20,7 +21,8 @@ fails the window. One anchored later crosses the first's publication epoch and f
 `no_double_spend` states the argument over abstract epochs. `no_double_spend_of_valid` takes recency
 and the window from `Chain.Valid`, leaving the lineage as a hypothesis. `no_double_spend_of_bundles`
 takes each stamp's nullifier pair from bundle verification. `BundleVerified.no_double_spend` covers
-two spends in one bundle.
+two spends in one bundle. `no_double_spend_of_spendable` takes the lineage from a derivable
+`NoteSpendable` whose buckets hold their whole epochs.
 
 `ActionsDerivable.liftStep` and `StampDerivable.liftStep` discharge the lift constructors' epoch
 hypothesis for a `Chain.StampLiftStep` along a derivable span that ends at a chain node.
@@ -143,6 +145,30 @@ theorem no_double_spend_of_bundles {chain l₁ l₂ : List (Chain.Stamp F A)}
       (Multiset.mem_coe.mpr (List.mem_append_left _ (List.mem_map_of_mem hδ₁))))
     (hspend₂ ▸ h₂.leaf_published
       (Multiset.mem_coe.mpr (List.mem_append_left _ (List.mem_map_of_mem hδ₂)))) hlineage hstart
+
+open Polynomial in
+/-- Two verified bundles on a valid chain, the first earlier in chain order, cannot both spend the
+note `sp.cm` when the second spends from a derivable `NoteSpendable` `sp` at its anchor's epoch, its
+lineage starts from `start`, and every valid bucket holds its whole epoch. -/
+theorem no_double_spend_of_spendable {ValidBucket : QrBucket F A → Prop} {noteNf : F → ℕ → F}
+    {nextStamp : A → ℕ → F[X] → A} {sp : NoteSpendable F A} {chain l₁ l₂ : List (Chain.Stamp F A)}
+    {acceptedAnchor : ℕ → A → Prop} {descs₁ descs₂ : List Δ} {fee₁ fee₂ : Φ}
+    {adjunctFees₁ adjunctFees₂ : List Φ} {stamp₁ stamp₂ : PublishedStamp F A} {p₁ p₂ start : ℕ}
+    {δ₁ δ₂ : Δ} (hchain : Chain.Valid epoch acceptedAnchor chain)
+    (h₁ : BundleVerified IsFee epoch R actionDigest feeDigest descs₁ fee₁ adjunctFees₁ stamp₁)
+    (h₂ : BundleVerified IsFee epoch R actionDigest feeDigest descs₂ fee₂ adjunctFees₂ stamp₂)
+    (hsplit : chain = l₁ ++ ⟨stamp₁.anchor, stamp₁.tachygrams, p₁⟩ :: l₂)
+    (hs₂ : ⟨stamp₂.anchor, stamp₂.tachygrams, p₂⟩ ∈ l₂)
+    (hδ₁ : δ₁ ∈ descs₁) (hδ₂ : δ₂ ∈ descs₂)
+    (hspend₁ : R (epoch stamp₁.anchor) (actionDigest δ₁) =
+      {noteNf sp.cm (epoch stamp₁.anchor), noteNf sp.cm (epoch stamp₁.anchor + 1)})
+    (hspend₂ : R (epoch stamp₂.anchor) (actionDigest δ₂) =
+      {noteNf sp.cm (epoch stamp₂.anchor), noteNf sp.cm (epoch stamp₂.anchor + 1)})
+    (hcomplete : ∀ ⦃b : QrBucket F A⦄, ValidBucket b → CompleteBucket chain b)
+    (hsp : SpendableDerivable ValidBucket noteNf nextStamp start sp)
+    (hepoch : sp.epoch_current = epoch stamp₂.anchor) (hstart : start ≤ p₁) : False :=
+  no_double_spend_of_bundles hchain h₁ h₂ hsplit hs₂ hδ₁ hδ₂ hspend₁ hspend₂
+    (hepoch ▸ (hsp.lineage hcomplete).2) hstart
 
 end Bundles
 

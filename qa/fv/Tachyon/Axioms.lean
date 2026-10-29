@@ -97,6 +97,24 @@ info: 'Tachyon.no_double_spend_of_bundles' depends on axioms: [propext, Classica
 #print axioms Tachyon.no_double_spend_of_bundles
 
 /--
+info: 'Tachyon.no_double_spend_of_spendable' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.no_double_spend_of_spendable
+
+/--
+info: 'Tachyon.SpendableDerivable.lineage' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.SpendableDerivable.lineage
+
+/--
+info: 'Tachyon.spendableInit_cannot_lift' depends on axioms: [propext, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.spendableInit_cannot_lift
+
+/--
 info: 'Tachyon.ActionsDerivable.liftStep' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
