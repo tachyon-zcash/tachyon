@@ -168,11 +168,12 @@ variable {Δ Φ : Type*} {actionDigest : Δ → F} {feeDigest : Φ → F}
   {ValidBucket : QrBucket F F → Prop} {Query : QrBucket F F → F → Type*} {Q : Sort*}
   {noteNf : F → ℕ → F} {chain l₁ l₂ : List (Chain.Stamp F F)} {acceptedAnchor : ℕ → F → Prop}
   {descs₁ descs₂ : List Δ} {fee₁ fee₂ : Φ} {adjunctFees₁ adjunctFees₂ : List Φ}
-  {stamp₁ stamp₂ : PublishedStamp F F} {p₁ p₂ : ℕ} {δ₁ δ₂ : Δ}
+  {stamp₁ stamp₂ : PublishedStamp F F} {p₁ p₂ : ℕ} {δ₁ δ₂ : Δ} {header₁ header₂ : Stamp F F}
 
 /-- Two verified bundles on a valid chain whose stamp traces each hold a positive leaf spending one
 note, with the published anchors traced on the chain, compute an observed collision or the query
-oracle's break. -/
+oracle's break. Each trace's header need only share the published anchor: the published nullifier
+pairs come from bundle verification, so no set polynomial is built here. -/
 def doubleSpendBreakOfTraces (oracle : ∀ b v, Query b v → Profiled.QueryComplete chain b v ⊕' Q)
     (hchain : Chain.Valid epoch acceptedAnchor chain)
     (h₁ : BundleVerified IsFee epoch R actionDigest feeDigest descs₁ fee₁ adjunctFees₁ stamp₁)
@@ -180,14 +181,11 @@ def doubleSpendBreakOfTraces (oracle : ∀ b v, Query b v → Profiled.QueryComp
     (hsplit : chain = l₁ ++ ⟨stamp₁.anchor, stamp₁.tachygrams, p₁⟩ :: l₂)
     (hs₂ : ⟨stamp₂.anchor, stamp₂.tachygrams, p₂⟩ ∈ l₂)
     (hδ₁ : δ₁ ∈ descs₁) (hδ₂ : δ₂ ∈ descs₂)
-    (T₁ : StampTrace IsFee epoch R Leaf (SpanLift m)
-      ⟨setPoly (coveredDigests actionDigest feeDigest descs₁ (fee₁ :: adjunctFees₁)),
-        stamp₁.tachygramSet, stamp₁.anchor⟩)
-    (T₂ : StampTrace IsFee epoch R Leaf (SpanLift m)
-      ⟨setPoly (coveredDigests actionDigest feeDigest descs₂ (fee₂ :: adjunctFees₂)),
-        stamp₂.tachygramSet, stamp₂.anchor⟩)
-    (N₁ : NodeTrace m (epoch stamp₁.anchor) stamp₁.anchor)
-    (N₂ : NodeTrace m (epoch stamp₂.anchor) stamp₂.anchor)
+    (T₁ : StampTrace IsFee epoch R Leaf (SpanLift m) header₁)
+    (T₂ : StampTrace IsFee epoch R Leaf (SpanLift m) header₂)
+    (hanchor₁ : header₁.anchor = stamp₁.anchor) (hanchor₂ : header₂.anchor = stamp₂.anchor)
+    (N₁ : NodeTrace m (epoch stamp₁.anchor) header₁.anchor)
+    (N₂ : NodeTrace m (epoch stamp₂.anchor) header₂.anchor)
     (x₁ : Σ l : LeafRecord Leaf, NodeTrace m (epoch stamp₁.anchor) l.anchor ⊕' ObservedBreak m)
     (x₂ : Σ l : LeafRecord Leaf, NodeTrace m (epoch stamp₂.anchor) l.anchor ⊕' ObservedBreak m)
     (hx₁ : x₁ ∈ T₁.positiveNodes N₁) (hx₂ : x₂ ∈ T₂.positiveNodes N₂)
@@ -202,12 +200,14 @@ def doubleSpendBreakOfTraces (oracle : ∀ b v, Query b v → Profiled.QueryComp
   | .inl node₁, .inl node₂ =>
       have hepoch₁ : epoch x₁.1.anchor = epoch stamp₁.anchor := by
         obtain ⟨_, -, -, hanchor⟩ := T₁.spec
-        exact hanchor x₁.1 (List.mem_append_left _
-          (T₁.positiveNodes_fst N₁ ▸ List.mem_map.mpr ⟨x₁, hx₁, rfl⟩))
+        exact (hanchor x₁.1 (List.mem_append_left _
+          (T₁.positiveNodes_fst N₁ ▸ List.mem_map.mpr ⟨x₁, hx₁, rfl⟩))).trans
+          (congrArg epoch hanchor₁)
       have hepoch₂ : epoch x₂.1.anchor = epoch stamp₂.anchor := by
         obtain ⟨_, -, -, hanchor⟩ := T₂.spec
-        exact hanchor x₂.1 (List.mem_append_left _
-          (T₂.positiveNodes_fst N₂ ▸ List.mem_map.mpr ⟨x₂, hx₂, rfl⟩))
+        exact (hanchor x₂.1 (List.mem_append_left _
+          (T₂.positiveNodes_fst N₂ ▸ List.mem_map.mpr ⟨x₂, hx₂, rfl⟩))).trans
+          (congrArg epoch hanchor₂)
       match doubleSpendBreak oracle hchain h₁ h₂ hsplit hs₂ hδ₁ hδ₂ spend₁.trace spend₂.trace hcm
           (cast (congrArg (NodeTrace m _) spend₁.anchor_eq.symm) node₁)
           (cast (congrArg (NodeTrace m _) spend₂.anchor_eq.symm) node₂)
