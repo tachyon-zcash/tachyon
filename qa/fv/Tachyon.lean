@@ -13,3 +13,4 @@ import Tachyon.Consensus
 import Tachyon.RoutedSpendBinding
 import Tachyon.Value
 import Tachyon.FeeAccounting
+import Tachyon.RemovalClosure
