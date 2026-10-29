@@ -7,16 +7,40 @@ The headline theorems depend only on Lean's standard axioms, and in particular o
 -/
 
 /--
-info: 'Tachyon.Derivable.leafGenerated' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Tachyon.ActionsDerivable.leafGenerated' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
-#print axioms Tachyon.Derivable.leafGenerated
+#print axioms Tachyon.ActionsDerivable.leafGenerated
 
 /--
-info: 'Tachyon.Derivable.published' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Tachyon.ActionsDerivable.feeFuse_leaves' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
-#print axioms Tachyon.Derivable.published
+#print axioms Tachyon.ActionsDerivable.feeFuse_leaves
+
+/--
+info: 'Tachyon.StampDerivable.leafGenerated' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.StampDerivable.leafGenerated
+
+/--
+info: 'Tachyon.StampDerivable.published' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.StampDerivable.published
+
+/--
+info: 'Tachyon.unmerge_strips_fee' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.unmerge_strips_fee
+
+/--
+info: 'Tachyon.BundleVerified.fee_published' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.BundleVerified.fee_published
 
 /--
 info: 'Tachyon.unmerge_needs_pairing' depends on axioms: [propext, Classical.choice, Quot.sound]
