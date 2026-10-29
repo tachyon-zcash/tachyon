@@ -26,8 +26,8 @@ two spends in one bundle. `no_double_spend_of_spendable` takes the lineage from 
 takes both nullifier pairs and the second lineage's epoch from traced spendables, returning a scoped
 collision instead of assuming hash injectivity.
 
-`ActionsDerivable.liftStep` and `StampDerivable.liftStep` discharge the lift constructors' epoch
-hypothesis for a `Chain.StampLiftStep` along a derivable span that ends at a chain node.
+`ActionsDerivable.liftOrBreak` and `StampDerivable.liftOrBreak` (`LiftTraces.lean`) discharge the
+lift constructors' epoch hypothesis along a traced span, or return a scoped collision.
 
 The second spend's lineage must start no later than the first's publication. A lineage starting
 from a later publication of the same `cm` spends a second paid note, not the first one again.
@@ -173,39 +173,5 @@ theorem no_double_spend_of_spendable {ValidBucket : QrBucket F A → Prop} {note
     (hepoch ▸ (hsp.lineage hcomplete).2) hstart
 
 end Bundles
-
-section Lift
-
-open Polynomial
-
-variable {E : Type*} [Field F] {IsFee : F → Prop} {epoch : F → E} {R : E → F → Multiset F}
-  {genesis : F} {e₀ : E} {nextStamp : F → E → F[X] → F} {nextEpoch : F → E → F}
-  {s s' : Stamp F F} {span : Chain.AnchorSpan F} {e : E}
-
-/-- `ActionLift` along a derivable span ending at a chain node yields a derivable `Actions`
-header, for an epoch labelling that agrees with the chain. -/
-theorem ActionsDerivable.liftStep (hlaw : Chain.HashLaw genesis e₀ nextStamp nextEpoch)
-    (hepoch : ∀ {e : E} {a : F}, Chain.Node genesis e₀ nextStamp nextEpoch e a → epoch a = e)
-    (hs : ActionsDerivable IsFee epoch R s) (hspan : Chain.SpanDerivable nextStamp span)
-    (hlift : Chain.StampLiftStep s span s')
-    (hend : Chain.Node genesis e₀ nextStamp nextEpoch e s'.anchor) :
-    ActionsDerivable IsFee epoch R s' := by
-  have hsame := hlift.epoch_eq hlaw hepoch hspan hend
-  obtain ⟨-, rfl⟩ := hlift
-  exact ActionsDerivable.lift span.anchor_end hs hsame
-
-/-- `StampLift` along a derivable span ending at a chain node yields a derivable `Stamp` header,
-for an epoch labelling that agrees with the chain. -/
-theorem StampDerivable.liftStep (hlaw : Chain.HashLaw genesis e₀ nextStamp nextEpoch)
-    (hepoch : ∀ {e : E} {a : F}, Chain.Node genesis e₀ nextStamp nextEpoch e a → epoch a = e)
-    (hs : StampDerivable IsFee epoch R s) (hspan : Chain.SpanDerivable nextStamp span)
-    (hlift : Chain.StampLiftStep s span s')
-    (hend : Chain.Node genesis e₀ nextStamp nextEpoch e s'.anchor) :
-    StampDerivable IsFee epoch R s' := by
-  have hsame := hlift.epoch_eq hlaw hepoch hspan hend
-  obtain ⟨-, rfl⟩ := hlift
-  exact StampDerivable.lift span.anchor_end hs hsame
-
-end Lift
 
 end Tachyon

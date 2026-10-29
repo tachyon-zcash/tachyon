@@ -115,16 +115,22 @@ info: 'Tachyon.spendableInit_cannot_lift' depends on axioms: [propext, Quot.soun
 #print axioms Tachyon.spendableInit_cannot_lift
 
 /--
-info: 'Tachyon.ActionsDerivable.liftStep' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Tachyon.ActionsDerivable.liftOrBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
-#print axioms Tachyon.ActionsDerivable.liftStep
+#print axioms Tachyon.ActionsDerivable.liftOrBreak
 
 /--
-info: 'Tachyon.StampDerivable.liftStep' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Tachyon.StampDerivable.liftOrBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
-#print axioms Tachyon.StampDerivable.liftStep
+#print axioms Tachyon.StampDerivable.liftOrBreak
+
+/--
+info: 'Tachyon.StampDerivable.lift_of_no_collisions' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.StampDerivable.lift_of_no_collisions
 
 /--
 info: 'Tachyon.card_product_check_le' depends on axioms: [propext, Classical.choice, Quot.sound]
