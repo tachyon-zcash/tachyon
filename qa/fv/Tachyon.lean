@@ -8,4 +8,5 @@ import Tachyon.ProvenanceTraces
 import Tachyon.Consensus.Bundle
 import Tachyon.Consensus.Chain
 import Tachyon.Spendable
+import Tachyon.SpendBinding
 import Tachyon.Consensus

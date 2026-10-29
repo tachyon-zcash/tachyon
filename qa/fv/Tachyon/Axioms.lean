@@ -161,3 +161,21 @@ info: 'Tachyon.Chain.Valid.nodup_two_epochs' depends on axioms: [propext, Quot.s
 -/
 #guard_msgs in
 #print axioms Tachyon.Chain.Valid.nodup_two_epochs
+
+/--
+info: 'Tachyon.SpendableDerivable.anchor_epoch' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.SpendableDerivable.anchor_epoch
+
+/--
+info: 'Tachyon.SpendableDerivable.spend_pair' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.SpendableDerivable.spend_pair
+
+/--
+info: 'Tachyon.no_double_spend_of_spend_binding' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.no_double_spend_of_spend_binding
