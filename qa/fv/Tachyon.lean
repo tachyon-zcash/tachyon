@@ -1,3 +1,5 @@
+import Tachyon.Foundation.DiscreteLogRelation
+import Tachyon.Binding
 import Tachyon.SetPoly
 import Tachyon.Idealization
 import Tachyon.Stamp

@@ -187,22 +187,28 @@ info: 'Tachyon.no_double_spend_of_routed_spend_binding' depends on axioms: [prop
 #print axioms Tachyon.no_double_spend_of_routed_spend_binding
 
 /--
-info: 'Tachyon.balance_or_log' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Tachyon.balanceOrRelation' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
-#print axioms Tachyon.balance_or_log
+#print axioms Tachyon.balanceOrRelation
 
 /--
-info: 'Tachyon.int_balance_or_log' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Tachyon.intBalanceOrRelation' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
-#print axioms Tachyon.int_balance_or_log
+#print axioms Tachyon.intBalanceOrRelation
 
 /--
-info: 'Tachyon.fee_accounting_or_log' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Tachyon.feeAccountingOrRelation' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
-#print axioms Tachyon.fee_accounting_or_log
+#print axioms Tachyon.feeAccountingOrRelation
+
+/--
+info: 'Tachyon.NontrivialDLRelation.ofPolyCollision' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.NontrivialDLRelation.ofPolyCollision
 
 /--
 info: 'Tachyon.StampDerivable.unmerge_generated' depends on axioms: [propext, Classical.choice, Quot.sound]
