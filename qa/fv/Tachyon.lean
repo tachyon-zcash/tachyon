@@ -1,4 +1,5 @@
 import Tachyon.SetPoly
+import Tachyon.Idealization
 import Tachyon.Stamp
 import Tachyon.Merge
 import Tachyon.Unmerge
