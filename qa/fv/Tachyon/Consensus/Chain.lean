@@ -26,8 +26,8 @@ This module models the chain-level consensus rules alongside the stamp proof tre
    When a lifted stamp's `anchor_end` is verified by consensus to lie on the chain, every anchor in
    the span (both `anchor_start` and the roots of `members`) lies on the chain in the same epoch
    (`SpanDerivable.node_epoch`, `StampLiftStep.node_same_epoch`, `StampLiftStep.epoch_eq`).
-   This discharges the `epoch a = epoch s.anchor` hypothesis of `Derivable.lift` in
-   `Tachyon/ProofTree.lean`.
+   This discharges the `epoch a = epoch s.anchor` hypothesis of `ActionsDerivable.lift` and
+   `StampDerivable.lift` in `Tachyon/ProofTree.lean`.
 
 4. **Anchor recency and two-epoch tachygram window (`book/src/tachygrams.md`, `nullifiers.md`)**:
    Consensus checks that every published stamp (`Chain.Stamp`) has a non-empty, duplicate-free
@@ -241,9 +241,9 @@ theorem StampLiftStep.node_same_epoch
   · rw [sub_eq_zero.mp hstart_eq]
     exact hstart
 
-/-- Corollary in the form consumed by `Derivable.lift` (`Tachyon/ProofTree.lean`): for any epoch
-labeling `epoch : F → E` that agrees with `Chain.Node`, a `StampLiftStep` ending at a chain node
-preserves `epoch`. -/
+/-- Corollary in the form consumed by `ActionsDerivable.lift` and `StampDerivable.lift`
+(`Tachyon/ProofTree.lean`): for any epoch labeling `epoch : F → E` that agrees with `Chain.Node`,
+a `StampLiftStep` ending at a chain node preserves `epoch`. -/
 theorem StampLiftStep.epoch_eq
     (hlaw : HashLaw genesisF e₀ nextStampF nextEpochF)
     {epoch : F → E}
