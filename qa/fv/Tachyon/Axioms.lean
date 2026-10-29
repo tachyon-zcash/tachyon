@@ -187,6 +187,18 @@ info: 'Tachyon.SpendableTrace.lineageOrBreak' depends on axioms: [propext, Class
 #print axioms Tachyon.SpendableTrace.lineageOrBreak
 
 /--
+info: 'Tachyon.StampTrace.positiveNodes_fst' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.StampTrace.positiveNodes_fst
+
+/--
+info: 'Tachyon.doubleSpendBreakOfTraces' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.doubleSpendBreakOfTraces
+
+/--
 info: 'Tachyon.doubleSpendBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in

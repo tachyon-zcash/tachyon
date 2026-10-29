@@ -14,10 +14,10 @@ anchor in the stamp's epoch (`StampTrace.findLeaf`).
 
 namespace Tachyon
 
-universe u v w x
+universe u v w x y
 
 variable {F : Type u} {A : Type v} {E : Type w} [Field F] {IsFee : F → Prop} {epoch : A → E}
-  {R : E → F → Multiset F} {Leaf : F → A → Type x}
+  {R : E → F → Multiset F} {Leaf : F → A → Type x} {Lift : Stamp F A → A → Type y}
 
 /-- A leaf occurrence: its digest, its anchor, and its provenance. -/
 structure LeafRecord (Leaf : F → A → Type x) where
@@ -27,76 +27,76 @@ structure LeafRecord (Leaf : F → A → Type x) where
 
 /-- `ActionsDerivable` as data, with each leaf's provenance. -/
 inductive ActionsTrace (IsFee : F → Prop) (epoch : A → E) (R : E → F → Multiset F)
-    (Leaf : F → A → Type x) : Stamp F A → Type (max u v x)
+    (Leaf : F → A → Type x) (Lift : Stamp F A → A → Type y) : Stamp F A → Type (max u v x y)
   | action (d : F) (a : A) (provenance : Leaf d a) :
-      ¬ IsFee d → ActionsTrace IsFee epoch R Leaf ⟨setPoly {d}, setPoly (R (epoch a) d), a⟩
+      ¬ IsFee d → ActionsTrace IsFee epoch R Leaf Lift ⟨setPoly {d}, setPoly (R (epoch a) d), a⟩
   | merge {left right merged : Stamp F A} :
-      ActionsTrace IsFee epoch R Leaf left → ActionsTrace IsFee epoch R Leaf right →
-        Merge left right merged → ActionsTrace IsFee epoch R Leaf merged
+      ActionsTrace IsFee epoch R Leaf Lift left → ActionsTrace IsFee epoch R Leaf Lift right →
+        Merge left right merged → ActionsTrace IsFee epoch R Leaf Lift merged
   | lift {s : Stamp F A} (a : A) :
-      ActionsTrace IsFee epoch R Leaf s → epoch a = epoch s.anchor →
-        ActionsTrace IsFee epoch R Leaf { s with anchor := a }
+      ActionsTrace IsFee epoch R Leaf Lift s → epoch a = epoch s.anchor → Lift s a →
+        ActionsTrace IsFee epoch R Leaf Lift { s with anchor := a }
 
 /-- `StampDerivable` as data, with each leaf's provenance. -/
 inductive StampTrace (IsFee : F → Prop) (epoch : A → E) (R : E → F → Multiset F)
-    (Leaf : F → A → Type x) : Stamp F A → Type (max u v x)
+    (Leaf : F → A → Type x) (Lift : Stamp F A → A → Type y) : Stamp F A → Type (max u v x y)
   | feeFuse {left : Stamp F A} (f : F) (provenance : Leaf f left.anchor) :
-      ActionsTrace IsFee epoch R Leaf left → IsFee f →
-        StampTrace IsFee epoch R Leaf
+      ActionsTrace IsFee epoch R Leaf Lift left → IsFee f →
+        StampTrace IsFee epoch R Leaf Lift
           ⟨left.actions * setPoly {f}, left.tachygrams * setPoly (R (epoch left.anchor) f),
             left.anchor⟩
   | feeSeed (f : F) (a : A) (provenance : Leaf f a) :
-      IsFee f → StampTrace IsFee epoch R Leaf ⟨setPoly {f}, setPoly (R (epoch a) f), a⟩
+      IsFee f → StampTrace IsFee epoch R Leaf Lift ⟨setPoly {f}, setPoly (R (epoch a) f), a⟩
   | merge {left right merged : Stamp F A} :
-      StampTrace IsFee epoch R Leaf left → StampTrace IsFee epoch R Leaf right →
-        Merge left right merged → StampTrace IsFee epoch R Leaf merged
+      StampTrace IsFee epoch R Leaf Lift left → StampTrace IsFee epoch R Leaf Lift right →
+        Merge left right merged → StampTrace IsFee epoch R Leaf Lift merged
   | unmerge {dividend divisor quotient : Stamp F A} :
-      StampTrace IsFee epoch R Leaf dividend → StampTrace IsFee epoch R Leaf divisor →
-        Unmerge dividend divisor quotient → StampTrace IsFee epoch R Leaf quotient
+      StampTrace IsFee epoch R Leaf Lift dividend → StampTrace IsFee epoch R Leaf Lift divisor →
+        Unmerge dividend divisor quotient → StampTrace IsFee epoch R Leaf Lift quotient
   | lift {s : Stamp F A} (a : A) :
-      StampTrace IsFee epoch R Leaf s → epoch a = epoch s.anchor →
-        StampTrace IsFee epoch R Leaf { s with anchor := a }
+      StampTrace IsFee epoch R Leaf Lift s → epoch a = epoch s.anchor → Lift s a →
+        StampTrace IsFee epoch R Leaf Lift { s with anchor := a }
 
 theorem ActionsTrace.forget {s : Stamp F A} :
-    ActionsTrace IsFee epoch R Leaf s → ActionsDerivable IsFee epoch R s
+    ActionsTrace IsFee epoch R Leaf Lift s → ActionsDerivable IsFee epoch R s
   | .action d a _ hd => .action d a hd
   | .merge left right hm => .merge left.forget right.forget hm
-  | .lift a t hepoch => .lift a t.forget hepoch
+  | .lift a t hepoch _ => .lift a t.forget hepoch
 
 theorem StampTrace.forget {s : Stamp F A} :
-    StampTrace IsFee epoch R Leaf s → StampDerivable IsFee epoch R s
+    StampTrace IsFee epoch R Leaf Lift s → StampDerivable IsFee epoch R s
   | .feeFuse f _ left hf => .feeFuse f left.forget hf
   | .feeSeed f a _ hf => .feeSeed f a hf
   | .merge left right hm => .merge left.forget right.forget hm
   | .unmerge dividend divisor hu => .unmerge dividend.forget divisor.forget hu
-  | .lift a t hepoch => .lift a t.forget hepoch
+  | .lift a t hepoch _ => .lift a t.forget hepoch
 
 /-- The trace's leaf occurrences. -/
 def ActionsTrace.leaves {s : Stamp F A} :
-    ActionsTrace IsFee epoch R Leaf s → List (LeafRecord Leaf)
+    ActionsTrace IsFee epoch R Leaf Lift s → List (LeafRecord Leaf)
   | .action d a provenance _ => [⟨d, a, provenance⟩]
   | .merge left right _ => left.leaves ++ right.leaves
-  | .lift _ t _ => t.leaves
+  | .lift _ t _ _ => t.leaves
 
 mutual
 
 /-- The trace's positive leaf occurrences. -/
 def StampTrace.positive {s : Stamp F A} :
-    StampTrace IsFee epoch R Leaf s → List (LeafRecord Leaf)
+    StampTrace IsFee epoch R Leaf Lift s → List (LeafRecord Leaf)
   | .feeFuse (left := left) f provenance actions _ => actions.leaves ++ [⟨f, left.anchor, provenance⟩]
   | .feeSeed f a provenance _ => [⟨f, a, provenance⟩]
   | .merge left right _ => left.positive ++ right.positive
   | .unmerge dividend divisor _ => dividend.positive ++ divisor.negative
-  | .lift _ t _ => t.positive
+  | .lift _ t _ _ => t.positive
 
 /-- The trace's negative leaf occurrences: leaves divided out by `StampUnmerge`. -/
 def StampTrace.negative {s : Stamp F A} :
-    StampTrace IsFee epoch R Leaf s → List (LeafRecord Leaf)
+    StampTrace IsFee epoch R Leaf Lift s → List (LeafRecord Leaf)
   | .feeFuse .. => []
   | .feeSeed .. => []
   | .merge left right _ => left.negative ++ right.negative
   | .unmerge dividend divisor _ => dividend.negative ++ divisor.positive
-  | .lift _ t _ => t.negative
+  | .lift _ t _ _ => t.negative
 
 end
 
@@ -111,7 +111,7 @@ theorem leafDigests_append (l₁ l₂ : List (LeafRecord Leaf)) :
 
 /-- An actions trace is generated by its leaves' digests, and every leaf is anchored in the
 header's epoch. -/
-theorem ActionsTrace.spec {s : Stamp F A} (t : ActionsTrace IsFee epoch R Leaf s) :
+theorem ActionsTrace.spec {s : Stamp F A} (t : ActionsTrace IsFee epoch R Leaf Lift s) :
     GeneratedBy (R (epoch s.anchor)) (leafDigests t.leaves) s ∧
       ∀ l ∈ t.leaves, epoch l.anchor = epoch s.anchor := by
   induction t with
@@ -128,7 +128,7 @@ theorem ActionsTrace.spec {s : Stamp F A} (t : ActionsTrace IsFee epoch R Leaf s
       · rw [ActionsTrace.leaves, List.mem_append] at hl'
         rw [hm.merged_anchor]
         exact hl'.elim (hlanchor l) (hranchor l)
-  | lift a _ hepoch ih =>
+  | lift a _ hepoch _ ih =>
       obtain ⟨hs, hanchor⟩ := ih
       exact ⟨by rw [ActionsTrace.leaves, hepoch]; exact hs,
         fun l hl => (hanchor l hl).trans hepoch.symm⟩
@@ -137,7 +137,7 @@ variable [DecidableEq F]
 
 /-- A stamp trace is generated by some digest multiset `D` with `D + negative = positive`, and
 every leaf occurrence is anchored in the stamp's epoch. -/
-theorem StampTrace.spec {s : Stamp F A} (t : StampTrace IsFee epoch R Leaf s) :
+theorem StampTrace.spec {s : Stamp F A} (t : StampTrace IsFee epoch R Leaf Lift s) :
     ∃ D, GeneratedBy (R (epoch s.anchor)) D s ∧
       D + leafDigests t.negative = leafDigests t.positive ∧
       ∀ l ∈ t.positive ++ t.negative, epoch l.anchor = epoch s.anchor := by
@@ -194,13 +194,13 @@ theorem StampTrace.spec {s : Stamp F A} (t : StampTrace IsFee epoch R Leaf s) :
         · exact hanchor₂ l (List.mem_append_right _ hl')
         · exact hanchor₁ l (List.mem_append_right _ hl')
         · exact hanchor₂ l (List.mem_append_left _ hl')
-  | lift a _ hepoch ih =>
+  | lift a _ hepoch _ ih =>
       obtain ⟨D, hs, hsum, hanchor⟩ := ih
       exact ⟨D, by rw [hepoch]; exact hs, hsum, fun l hl => (hanchor l hl).trans hepoch.symm⟩
 
 /-- Every digest a stamp covers is found among its positive leaf occurrences, with its provenance
 and an anchor in the stamp's epoch. -/
-def StampTrace.findLeaf {s : Stamp F A} (t : StampTrace IsFee epoch R Leaf s)
+def StampTrace.findLeaf {s : Stamp F A} (t : StampTrace IsFee epoch R Leaf Lift s)
     {covered : Multiset F} (hcovered : s.actions = setPoly covered) {d : F} (hd : d ∈ covered) :
     {l : LeafRecord Leaf // l ∈ t.positive ∧ l.digest = d ∧ epoch l.anchor = epoch s.anchor} :=
   match hfind : t.positive.find? (fun l => decide (l.digest = d)) with

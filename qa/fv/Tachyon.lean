@@ -13,6 +13,7 @@ import Tachyon.Spendable
 import Tachyon.SpendBinding
 import Tachyon.SpendableTraces
 import Tachyon.LiftTraces
+import Tachyon.SpendProvenance
 import Tachyon.Consensus
 import Tachyon.RoutedSpendBinding
 import Tachyon.Value
