@@ -197,3 +197,9 @@ info: 'Tachyon.int_balance_or_log' depends on axioms: [propext, Classical.choice
 -/
 #guard_msgs in
 #print axioms Tachyon.int_balance_or_log
+
+/--
+info: 'Tachyon.fee_accounting_or_log' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.fee_accounting_or_log

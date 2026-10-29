@@ -12,3 +12,4 @@ import Tachyon.SpendBinding
 import Tachyon.Consensus
 import Tachyon.RoutedSpendBinding
 import Tachyon.Value
+import Tachyon.FeeAccounting
