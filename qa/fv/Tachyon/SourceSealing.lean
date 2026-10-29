@@ -3,6 +3,10 @@ import Tachyon.ProfiledSpendable
 /-!
 # Epoch source completeness from the sealed anchor endpoint
 
+This file is the symbolic `HashLaw` reference proof. `SourceBreakReduction`
+and `SourceQueryBreaks` give the concrete finite-trace reductions, returning
+the result or explicit colliding inputs without the global law.
+
 A root intake or summary starts from a free anchor, multiplies the same stamp
 polynomials that it absorbs into the running anchor, and may concatenate runs.
 `Run` abstracts that common mechanism before QR profile routing. It permits an

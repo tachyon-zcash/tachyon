@@ -317,7 +317,9 @@ variable {nextStamp : A → ℕ → F[X] → A}
 /-- Why `SpendableInit` can only spend in its creation epoch (`spendable.rs:198-201`):
 `QrBucketSeal` requires every bucket's `anchor_start` to be a `nextEpoch` boundary digest, whereas
 `SpendableInit` emits a `nextStamp` fold. Under `Chain.HashLaw`, `SpendableLift`'s anchor-adjacency
-check `nu.anchor_start = sp.anchor` is impossible on a `SpendableInit` output. -/
+check `nu.anchor_start = sp.anchor` is impossible on a `SpendableInit` output.
+This lemma is in the symbolic `HashLaw` model, not a concrete finite-hash
+instantiation; data-valued finite-trace reductions return collision witnesses. -/
 theorem spendableInit_cannot_lift {genesis : A} {e₀ : ℕ} {nextEpoch : A → ℕ → A}
     (hlaw : Chain.HashLaw genesis e₀ nextStamp nextEpoch)
     (hseal : ∀ ⦃b : QrBucket F A⦄, ValidBucket b → ∃ prev, b.anchor_start = nextEpoch prev b.epoch)

@@ -6,6 +6,12 @@ import Tachyon.Stamp
 
 This module models the chain-level consensus rules alongside the stamp proof tree:
 
+The `HashLaw`-based results are a **symbolic collision-free reference model**.
+The global law cannot instantiate finite anchor hashes (`HashModelBoundary.lean`).
+Concrete finite-execution reductions return computed collision witnesses instead;
+see `AnchorBreaks`, `SourceBreakReduction`, `AnchorTraces` and `SpanTraces`.
+The publication-window and recency results below do not require `HashLaw`.
+
 1. **Anchor chain (`book/src/anchor.md`, `crates/tachyon/src/primitives/anchor.rs`)**:
    The pool anchor evolves by two domain-separated Poseidon folds:
    - `nextStamp` (`Tachyon-AnchorSt`), absorbing the current anchor, the containing block's epoch,
@@ -50,7 +56,9 @@ variable [Field F]
 
 /-! ## Anchor chain and hash laws -/
 
-/-- Collision-resistance and domain-separation laws for the two Poseidon anchor folds
+/-- Symbolic global injectivity and domain separation for the two anchor folds.
+These are not literal assumptions about finite Poseidon outputs: use the
+computed-break reductions for finite executions (`HashModelBoundary.lean`).
 `Tachyon-AnchorSt` (`nextStamp`) and `Tachyon-AnchorEp` (`nextEpoch`), rooted at `genesis`
 (`H_ep(0, 0)` at epoch `e₀`). -/
 structure HashLaw (genesis : A) (e₀ : E)
