@@ -24,8 +24,11 @@ selected from classical existence. The generic `AnchorBreaks`, source and span
 reducers accept a runtime opening type and compile without `noncomputable`.
 Keeping this specialization avoids silently changing the existing trace API;
 a fully executable end-to-end specialization needs a separate runtime-opening
-interpretation phase. This is a documented representation-driven departure
-from ragu's directly executable algebraic-witness examples.
+interpretation phase. `RuntimeQueryIntegration.doubleSpendRuntimeBreak` now
+provides that generic compiled variant, using the same runtime opening type
+and interpretation at every layer. This retained polynomial specialization
+documents the earlier representation-driven departure from ragu's directly
+executable algebraic-witness examples.
 -/
 
 namespace Tachyon
