@@ -11,3 +11,4 @@ import Tachyon.Spendable
 import Tachyon.SpendBinding
 import Tachyon.Consensus
 import Tachyon.RoutedSpendBinding
+import Tachyon.Value

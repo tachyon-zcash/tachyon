@@ -185,3 +185,15 @@ info: 'Tachyon.no_double_spend_of_routed_spend_binding' depends on axioms: [prop
 -/
 #guard_msgs in
 #print axioms Tachyon.no_double_spend_of_routed_spend_binding
+
+/--
+info: 'Tachyon.balance_or_log' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.balance_or_log
+
+/--
+info: 'Tachyon.int_balance_or_log' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.int_balance_or_log
