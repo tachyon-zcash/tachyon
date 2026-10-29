@@ -179,3 +179,9 @@ info: 'Tachyon.no_double_spend_of_spend_binding' depends on axioms: [propext, Cl
 -/
 #guard_msgs in
 #print axioms Tachyon.no_double_spend_of_spend_binding
+
+/--
+info: 'Tachyon.no_double_spend_of_routed_spend_binding' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.no_double_spend_of_routed_spend_binding
