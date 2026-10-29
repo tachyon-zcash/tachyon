@@ -85,6 +85,18 @@ info: 'Tachyon.no_double_spend_of_valid' depends on axioms: [propext, Classical.
 #print axioms Tachyon.no_double_spend_of_valid
 
 /--
+info: 'Tachyon.BundleVerified.no_double_spend' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.BundleVerified.no_double_spend
+
+/--
+info: 'Tachyon.no_double_spend_of_bundles' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.no_double_spend_of_bundles
+
+/--
 info: 'Tachyon.Chain.Node.epoch_unique' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in

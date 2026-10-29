@@ -66,12 +66,41 @@ theorem BundleVerified.leaves_disjoint
   rw [h.tachygrams_eq] at hnodup
   exact (Multiset.nodup_bind.mp hnodup).2
 
+/-- A verified bundle publishes every covered leaf's tachygrams. -/
+theorem BundleVerified.leaf_published
+    (h : BundleVerified IsFee epoch R actionDigest feeDigest descs fee adjunctFees stamp) {d : F}
+    (hd : d ∈ coveredDigests actionDigest feeDigest descs (fee :: adjunctFees)) :
+    R (epoch stamp.anchor) d ≤ (stamp.tachygrams : Multiset F) := by
+  rw [h.tachygrams_eq]
+  exact Multiset.le_bind _ hd
+
 /-- A verified bundle publishes its own fee leaf's tachygrams. Coverage supplies the fee:
 `StampUnmerge` can derive fee-free stamps (`unmerge_strips_fee`). -/
 theorem BundleVerified.fee_published
     (h : BundleVerified IsFee epoch R actionDigest feeDigest descs fee adjunctFees stamp) :
-    R (epoch stamp.anchor) (feeDigest fee) ≤ (stamp.tachygrams : Multiset F) := by
-  rw [h.tachygrams_eq]
-  exact Multiset.le_bind _ (by simp [coveredDigests])
+    R (epoch stamp.anchor) (feeDigest fee) ≤ (stamp.tachygrams : Multiset F) :=
+  h.leaf_published (by simp [coveredDigests])
+
+/-- Two action descriptors at distinct positions of a verified bundle share no tachygram. -/
+theorem BundleVerified.descs_disjoint
+    (h : BundleVerified IsFee epoch R actionDigest feeDigest descs fee adjunctFees stamp)
+    {l₁ l₂ : List Δ} {δ₁ δ₂ : Δ} (hsplit : descs = l₁ ++ δ₁ :: l₂) (hδ₂ : δ₂ ∈ l₂) :
+    Disjoint (R (epoch stamp.anchor) (actionDigest δ₁))
+      (R (epoch stamp.anchor) (actionDigest δ₂)) := by
+  have hsub : List.Sublist [actionDigest δ₁, actionDigest δ₂]
+      (descs.map actionDigest ++ (fee :: adjunctFees).map feeDigest) := by
+    rw [hsplit, List.map_append, List.map_cons, List.append_assoc]
+    exact (((List.singleton_sublist.mpr (List.mem_map_of_mem hδ₂)).cons_cons _).trans
+      (List.sublist_append_left _ _)).trans (List.sublist_append_right _ _)
+  obtain ⟨rest, hrest⟩ := Multiset.le_iff_exists_add.mp (Multiset.coe_le.mpr hsub.subperm)
+  have hnodup : (stamp.tachygrams : Multiset F).Nodup := Multiset.coe_nodup.mpr h.tachygrams_nodup
+  rw [h.tachygrams_eq, coveredDigests, hrest, Multiset.add_bind] at hnodup
+  have hpair := (Multiset.nodup_add.mp hnodup).1
+  rw [show (([actionDigest δ₁, actionDigest δ₂] : List F) : Multiset F).bind
+      (R (epoch stamp.anchor)) =
+      R (epoch stamp.anchor) (actionDigest δ₁) + R (epoch stamp.anchor) (actionDigest δ₂) by
+    simp only [← Multiset.cons_coe, Multiset.coe_nil, Multiset.cons_bind, Multiset.zero_bind,
+      add_zero]] at hpair
+  exact (Multiset.nodup_add.mp hpair).2.2
 
 end Tachyon

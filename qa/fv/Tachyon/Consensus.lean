@@ -18,7 +18,9 @@ A second spend anchored within one epoch of the first's publication shares a nul
 fails the window. One anchored later crosses the first's publication epoch and fails its lineage.
 
 `no_double_spend` states the argument over abstract epochs. `no_double_spend_of_valid` takes recency
-and the window from `Chain.Valid`, leaving the lineage as a hypothesis.
+and the window from `Chain.Valid`, leaving the lineage as a hypothesis. `no_double_spend_of_bundles`
+takes each stamp's nullifier pair from bundle verification. `BundleVerified.no_double_spend` covers
+two spends in one bundle.
 
 The second spend's lineage must start no later than the first's publication. A lineage starting
 from a later publication of the same `cm` spends a second paid note, not the first one again.
@@ -94,5 +96,51 @@ theorem no_double_spend_of_valid {A : Type*} {epoch : A → ℕ} {acceptedAnchor
     (second := ⟨epoch s₂.anchor, s₂.epoch, start⟩)
     (hchain.accepted s₁ hs₁mem).recency (hchain.accepted s₂ (by simp [hsplit, hs₂])).recency
     (Chain.published_of_le hs₁mem hpair₁) horder hwindow hlineage hstart
+
+section Bundles
+
+variable {A Δ Φ : Type*} [Field F] [DecidableEq F] {IsFee : F → Prop} {epoch : A → ℕ}
+  {R : ℕ → F → Multiset F} {actionDigest : Δ → F} {feeDigest : Φ → F} {nf : ℕ → F}
+
+/-- One verified bundle cannot cover two spends of the note with nullifiers `nf`. `R` derives a
+spend's nullifier pair at its anchor's epoch. -/
+theorem BundleVerified.no_double_spend {descs l₁ l₂ : List Δ} {fee : Φ} {adjunctFees : List Φ}
+    {stamp : PublishedStamp F A} {δ₁ δ₂ : Δ}
+    (h : BundleVerified IsFee epoch R actionDigest feeDigest descs fee adjunctFees stamp)
+    (hsplit : descs = l₁ ++ δ₁ :: l₂) (hδ₂ : δ₂ ∈ l₂)
+    (hspend₁ : R (epoch stamp.anchor) (actionDigest δ₁) =
+      {nf (epoch stamp.anchor), nf (epoch stamp.anchor + 1)})
+    (hspend₂ : R (epoch stamp.anchor) (actionDigest δ₂) =
+      {nf (epoch stamp.anchor), nf (epoch stamp.anchor + 1)}) : False := by
+  have hdisjoint := h.descs_disjoint hsplit hδ₂
+  rw [hspend₁, hspend₂] at hdisjoint
+  exact Multiset.disjoint_left.mp hdisjoint (Multiset.mem_cons_self _ _)
+    (Multiset.mem_cons_self _ _)
+
+/-- Two verified bundles on a valid chain, the first earlier in chain order, cannot both spend the
+note with nullifiers `nf`, given the second spend's lineage from `start`. Each bundle's stamp enters
+the chain at its publication epoch. -/
+theorem no_double_spend_of_bundles {chain l₁ l₂ : List (Chain.Stamp F A)}
+    {acceptedAnchor : ℕ → A → Prop} {descs₁ descs₂ : List Δ} {fee₁ fee₂ : Φ}
+    {adjunctFees₁ adjunctFees₂ : List Φ} {stamp₁ stamp₂ : PublishedStamp F A} {p₁ p₂ start : ℕ}
+    {δ₁ δ₂ : Δ} (hchain : Chain.Valid epoch acceptedAnchor chain)
+    (h₁ : BundleVerified IsFee epoch R actionDigest feeDigest descs₁ fee₁ adjunctFees₁ stamp₁)
+    (h₂ : BundleVerified IsFee epoch R actionDigest feeDigest descs₂ fee₂ adjunctFees₂ stamp₂)
+    (hsplit : chain = l₁ ++ ⟨stamp₁.anchor, stamp₁.tachygrams, p₁⟩ :: l₂)
+    (hs₂ : ⟨stamp₂.anchor, stamp₂.tachygrams, p₂⟩ ∈ l₂)
+    (hδ₁ : δ₁ ∈ descs₁) (hδ₂ : δ₂ ∈ descs₂)
+    (hspend₁ : R (epoch stamp₁.anchor) (actionDigest δ₁) =
+      {nf (epoch stamp₁.anchor), nf (epoch stamp₁.anchor + 1)})
+    (hspend₂ : R (epoch stamp₂.anchor) (actionDigest δ₂) =
+      {nf (epoch stamp₂.anchor), nf (epoch stamp₂.anchor + 1)})
+    (hlineage : ∀ x, start ≤ x → x < epoch stamp₂.anchor → ¬ Chain.published chain x (nf x))
+    (hstart : start ≤ p₁) : False :=
+  no_double_spend_of_valid hchain hsplit hs₂
+    (hspend₁ ▸ h₁.leaf_published
+      (Multiset.mem_coe.mpr (List.mem_append_left _ (List.mem_map_of_mem hδ₁))))
+    (hspend₂ ▸ h₂.leaf_published
+      (Multiset.mem_coe.mpr (List.mem_append_left _ (List.mem_map_of_mem hδ₂)))) hlineage hstart
+
+end Bundles
 
 end Tachyon
