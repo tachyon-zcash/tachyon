@@ -163,28 +163,28 @@ info: 'Tachyon.Chain.Valid.nodup_two_epochs' depends on axioms: [propext, Quot.s
 #print axioms Tachyon.Chain.Valid.nodup_two_epochs
 
 /--
-info: 'Tachyon.SpendableDerivable.anchor_epoch' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Tachyon.SpendableTrace.anchorEpochOrBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
-#print axioms Tachyon.SpendableDerivable.anchor_epoch
+#print axioms Tachyon.SpendableTrace.anchorEpochOrBreak
 
 /--
-info: 'Tachyon.SpendableDerivable.spend_pair' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Tachyon.SpendableTrace.spendPairOrBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
-#print axioms Tachyon.SpendableDerivable.spend_pair
+#print axioms Tachyon.SpendableTrace.spendPairOrBreak
 
 /--
-info: 'Tachyon.no_double_spend_of_spend_binding' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Tachyon.doubleSpendBreak' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
-#print axioms Tachyon.no_double_spend_of_spend_binding
+#print axioms Tachyon.doubleSpendBreak
 
 /--
-info: 'Tachyon.no_double_spend_of_routed_spend_binding' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'Tachyon.no_double_spend_of_no_collisions' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
-#print axioms Tachyon.no_double_spend_of_routed_spend_binding
+#print axioms Tachyon.no_double_spend_of_no_collisions
 
 /--
 info: 'Tachyon.balanceOrRelation' depends on axioms: [propext, Classical.choice, Quot.sound]

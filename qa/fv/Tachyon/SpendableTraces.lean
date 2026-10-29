@@ -1,0 +1,185 @@
+import Tachyon.AnchorTraces
+import Tachyon.SpendBinding
+
+/-!
+# Spendable traces
+
+`SpendableDerivable` and the unspent predicates it consumes are propositions, so a reduction cannot
+case on them to compute a collision. `UnspentTrace`, `NoteUnspentTrace` and `SpendableTrace` carry
+the same derivations as data, with each bucket's sealing predecessor explicit (`SealedBucket`):
+`QrBucketSeal` ends a bucket on the boundary digest into the epoch after it. Each `forget` recovers
+the proposition, in the safe direction from data to proof.
+
+Every `SpendableTrace` exposes the tagged hash input its anchor is the output of (`anchorInput`):
+the stamp absorption `SpendableInit` folds, or the closing boundary digest of the last bucket for
+`QrSpendableInit` and `SpendableLift`. Its label is the lineage's `epoch_current`, so decoding the
+anchor's epoch against a chain `NodeTrace` returns `epoch_current` or a scoped collision
+(`SpendableTrace.anchorEpochOrBreak`), with no global injectivity assumed.
+-/
+
+namespace Tachyon
+
+open Polynomial AnchorBreaks
+
+universe u v w
+
+variable {F : Type u} {C : Type v} {A : Type w} [Field F] {m : Model F[X] C A ℕ}
+  {ValidBucket : QrBucket F A → Prop} {nf : F → ℕ → F}
+
+/-- A `QrBucket` with its sealing predecessor as data: the bucket ends on the boundary digest into
+the epoch after it. -/
+structure SealedBucket (m : Model F[X] C A ℕ) where
+  bucket : QrBucket F A
+  previous : A
+  sealing : bucket.anchor_next = m.epochHash previous (bucket.epoch + 1)
+
+/-- The boundary-digest preimage a sealed bucket ends on. -/
+def SealedBucket.closing (b : SealedBucket m) : Input C A ℕ :=
+  .epoch b.previous (b.bucket.epoch + 1)
+
+theorem SealedBucket.closing_eval (b : SealedBucket m) : m.eval b.closing = b.bucket.anchor_next :=
+  b.sealing.symm
+
+/-- `QrUnspentInit`, `UnspentLift` and `UnspentFuse` as data, over sealed buckets. -/
+inductive UnspentTrace (m : Model F[X] C A ℕ) (ValidBucket : QrBucket F A → Prop) :
+    ArbitraryUnspent F A → Type (max u w)
+  | init (b : SealedBucket m) (v : F) :
+      ValidBucket b.bucket → v ≠ 0 → b.bucket.contents.eval v ≠ 0 →
+      UnspentTrace m ValidBucket
+        ⟨b.bucket.anchor_start, b.bucket.epoch, {(b.bucket.epoch, v)}, b.bucket.epoch + 1,
+          b.bucket.anchor_next⟩
+  | lift {u : ArbitraryUnspent F A} (previous : UnspentTrace m ValidBucket u) (b : SealedBucket m)
+      (v : F) {extended : Multiset (ℕ × F)} :
+      ValidBucket b.bucket → u.anchor_next = b.bucket.anchor_start →
+      u.epoch_next = b.bucket.epoch → v ≠ 0 → b.bucket.contents.eval v ≠ 0 →
+      extended = u.elapsed + {(b.bucket.epoch, v)} →
+      UnspentTrace m ValidBucket
+        ⟨u.anchor_start, u.epoch_start, extended, b.bucket.epoch + 1, b.bucket.anchor_next⟩
+  | fuse {left right : ArbitraryUnspent F A} {combined : Multiset (ℕ × F)}
+      (leftTrace : UnspentTrace m ValidBucket left)
+      (rightTrace : UnspentTrace m ValidBucket right) :
+      left.anchor_next = right.anchor_start → right.epoch_start = left.epoch_next →
+      combined = left.elapsed + right.elapsed →
+      UnspentTrace m ValidBucket
+        ⟨left.anchor_start, left.epoch_start, combined, right.epoch_next, right.anchor_next⟩
+
+theorem UnspentTrace.forget {u : ArbitraryUnspent F A} :
+    UnspentTrace m ValidBucket u → ArbitraryUnspentDerivable ValidBucket u
+  | .init b v hb hv hne => .init b.bucket v hb hv hne
+  | .lift previous b v hb hanchor hepoch hv hne hext =>
+      .lift b.bucket v previous.forget hb hanchor hepoch hv hne hext
+  | .fuse leftTrace rightTrace hjoin hepoch hcombined =>
+      .fuse leftTrace.forget rightTrace.forget hjoin hepoch hcombined
+
+/-- The boundary-digest preimage the segment ends on: its last bucket's closing. -/
+def UnspentTrace.closing {u : ArbitraryUnspent F A} : UnspentTrace m ValidBucket u → Input C A ℕ
+  | .init b .. => b.closing
+  | .lift _ b .. => b.closing
+  | .fuse _ rightTrace .. => rightTrace.closing
+
+theorem UnspentTrace.closing_eval {u : ArbitraryUnspent F A} :
+    (t : UnspentTrace m ValidBucket u) → m.eval t.closing = u.anchor_next
+  | .init b .. => b.closing_eval
+  | .lift _ b .. => b.closing_eval
+  | .fuse _ rightTrace .. => rightTrace.closing_eval
+
+theorem UnspentTrace.closing_label {u : ArbitraryUnspent F A} :
+    (t : UnspentTrace m ValidBucket u) → t.closing.label = u.epoch_next
+  | .init .. => rfl
+  | .lift .. => rfl
+  | .fuse _ rightTrace .. => rightTrace.closing_label
+
+/-- `UnspentBind` as data over an `UnspentTrace`. -/
+inductive NoteUnspentTrace (m : Model F[X] C A ℕ) (ValidBucket : QrBucket F A → Prop)
+    (nf : F → ℕ → F) : NoteUnspent F A → Type (max u w)
+  | bind {u : ArbitraryUnspent F A} {n : NoteNullifiers F} (complement : Multiset (ℕ × F))
+      (unspent : UnspentTrace m ValidBucket u) :
+      NullifiersDerivable nf n → n.seq = u.elapsed + complement →
+      NoteUnspentTrace m ValidBucket nf ⟨n.cm, u.anchor_start, u.epoch_start, u.epoch_next,
+        u.anchor_next⟩
+
+theorem NoteUnspentTrace.forget {nu : NoteUnspent F A} :
+    NoteUnspentTrace m ValidBucket nf nu → NoteUnspentDerivable ValidBucket nf nu
+  | .bind complement unspent hn hdiv => .bind complement unspent.forget hn hdiv
+
+def NoteUnspentTrace.closing {nu : NoteUnspent F A} :
+    NoteUnspentTrace m ValidBucket nf nu → Input C A ℕ
+  | .bind _ unspent .. => unspent.closing
+
+theorem NoteUnspentTrace.closing_eval {nu : NoteUnspent F A} :
+    (t : NoteUnspentTrace m ValidBucket nf nu) → m.eval t.closing = nu.anchor_next
+  | .bind _ unspent .. => unspent.closing_eval
+
+theorem NoteUnspentTrace.closing_label {nu : NoteUnspent F A} :
+    (t : NoteUnspentTrace m ValidBucket nf nu) → t.closing.label = nu.epoch_next
+  | .bind _ unspent .. => unspent.closing_label
+
+/-- `SpendableInit`, `QrSpendableInit` and `SpendableLift` as data, indexed by the epoch the
+lineage starts from. -/
+inductive SpendableTrace (m : Model F[X] C A ℕ) (ValidBucket : QrBucket F A → Prop)
+    (nf : F → ℕ → F) : ℕ → NoteSpendable F A → Type (max u w)
+  | init {n : NoteNullifiers F} (previous : A) (contents : F[X]) (e : ℕ) :
+      NullifiersDerivable nf n → contents.eval n.cm = 0 → contents ≠ 1 →
+      SpendableTrace m ValidBucket nf e ⟨n.cm, e, m.nextStamp previous e contents⟩
+  | qrInit {nu : NoteUnspent F A} (b : SealedBucket m)
+      (unspent : NoteUnspentTrace m ValidBucket nf nu) :
+      ValidBucket b.bucket → nu.epoch_start = b.bucket.epoch →
+      nu.anchor_start = b.bucket.anchor_start → nu.anchor_next = b.bucket.anchor_next →
+      nu.epoch_next = b.bucket.epoch + 1 → b.bucket.contents.eval nu.cm = 0 →
+      SpendableTrace m ValidBucket nf b.bucket.epoch ⟨nu.cm, nu.epoch_next, nu.anchor_next⟩
+  | lift {start : ℕ} {sp : NoteSpendable F A} {nu : NoteUnspent F A}
+      (previous : SpendableTrace m ValidBucket nf start sp)
+      (unspent : NoteUnspentTrace m ValidBucket nf nu) :
+      nu.cm = sp.cm → nu.epoch_start = sp.epoch_current → nu.anchor_start = sp.anchor →
+      SpendableTrace m ValidBucket nf start ⟨sp.cm, nu.epoch_next, nu.anchor_next⟩
+
+theorem SpendableTrace.forget {start : ℕ} {sp : NoteSpendable F A} :
+    SpendableTrace m ValidBucket nf start sp →
+      Tachyon.SpendableDerivable ValidBucket nf m.nextStamp start sp
+  | .init previous contents e hn hroot hne => .init previous contents e hn hroot hne
+  | .qrInit b unspent hb hepoch hstart hnext hepochNext hroot =>
+      .qrInit b.bucket unspent.forget hb hepoch hstart hnext hepochNext hroot
+  | .lift previous unspent hcm hepoch hanchor => .lift previous.forget unspent.forget hcm hepoch hanchor
+
+/-- The tagged hash preimage the spendable's anchor is the output of. -/
+def SpendableTrace.anchorInput {start : ℕ} {sp : NoteSpendable F A} :
+    SpendableTrace m ValidBucket nf start sp → Input C A ℕ
+  | .init previous contents e .. => m.stampInput previous e contents
+  | .qrInit b .. => b.closing
+  | .lift _ unspent .. => unspent.closing
+
+theorem SpendableTrace.anchorInput_eval {start : ℕ} {sp : NoteSpendable F A} :
+    (t : SpendableTrace m ValidBucket nf start sp) → m.eval t.anchorInput = sp.anchor
+  | .init .. => rfl
+  | .qrInit b _ _ _ _ hnext _ _ => b.closing_eval.trans hnext.symm
+  | .lift _ unspent .. => unspent.closing_eval
+
+theorem SpendableTrace.anchorInput_label {start : ℕ} {sp : NoteSpendable F A} :
+    (t : SpendableTrace m ValidBucket nf start sp) → t.anchorInput.label = sp.epoch_current
+  | .init .. => rfl
+  | .qrInit _ _ _ _ _ _ hepochNext _ => hepochNext.symm
+  | .lift _ unspent .. => unspent.closing_label
+
+variable [DecidableEq F[X]] [DecidableEq C] [DecidableEq A]
+
+/-- A spendable anchored at a traced chain node of epoch `e` has `epoch_current = e`, or the two
+preimages of its anchor compute a collision within the node trace's scope. Noncomputable only
+because `F[X]`'s `One` instance is; the break is assembled from the traces, not chosen. -/
+noncomputable def SpendableTrace.anchorEpochOrBreak {start e : ℕ} {sp : NoteSpendable F A}
+    (t : SpendableTrace m ValidBucket nf start sp) (node : NodeTrace m e sp.anchor) :
+    (sp.epoch_current = e) ⊕' ScopedBreak m node.openings (t.anchorInput :: node.inputs) :=
+  mapOutcome (inputLabelOrBreak m t.anchorInput node t.anchorInput_eval)
+    fun hlabel => t.anchorInput_label.symm.trans hlabel
+
+/-- A spend leaf from a spendable anchored at a traced chain node of epoch `e`, covered by a stamp
+at that epoch, publishes the note's nullifier pair at `e`, or computes a scoped collision. -/
+noncomputable def SpendableTrace.spendPairOrBreak {start e : ℕ} {sp : NoteSpendable F A}
+    {R : ℕ → F → Multiset F} {d : F} (t : SpendableTrace m ValidBucket nf start sp)
+    (node : NodeTrace m e sp.anchor) (haction : SpendAction R e (spendBind nf sp) d) :
+    (R e d = {nf sp.cm e, nf sp.cm (e + 1)}) ⊕'
+      ScopedBreak m node.openings (t.anchorInput :: node.inputs) :=
+  mapOutcome (t.anchorEpochOrBreak node) fun hcurrent => by
+    rw [SpendAction, spendBind, hcurrent] at haction
+    exact haction
+
+end Tachyon

@@ -1,6 +1,6 @@
 import Tachyon.Consensus.Bundle
 import Tachyon.Consensus.Chain
-import Tachyon.SpendBinding
+import Tachyon.Spendable
 
 /-!
 # No double spend
@@ -22,9 +22,9 @@ fails the window. One anchored later crosses the first's publication epoch and f
 and the window from `Chain.Valid`, leaving the lineage as a hypothesis. `no_double_spend_of_bundles`
 takes each stamp's nullifier pair from bundle verification. `BundleVerified.no_double_spend` covers
 two spends in one bundle. `no_double_spend_of_spendable` takes the lineage from a derivable
-`NoteSpendable` whose buckets hold their whole epochs. `no_double_spend_of_spend_binding` takes both
-nullifier pairs and the second lineage's epoch from `SpendBind` and `SpendAction` over derivable
-`NoteSpendable`s anchored at chain nodes in their stamps' epochs.
+`NoteSpendable` whose buckets hold their whole epochs. `doubleSpendBreak` (`RoutedSpendBinding.lean`)
+takes both nullifier pairs and the second lineage's epoch from traced spendables, returning a scoped
+collision instead of assuming hash injectivity.
 
 `ActionsDerivable.liftStep` and `StampDerivable.liftStep` discharge the lift constructors' epoch
 hypothesis for a `Chain.StampLiftStep` along a derivable span that ends at a chain node.
@@ -171,42 +171,6 @@ theorem no_double_spend_of_spendable {ValidBucket : QrBucket F A → Prop} {note
     (hepoch : sp.epoch_current = epoch stamp₂.anchor) (hstart : start ≤ p₁) : False :=
   no_double_spend_of_bundles hchain h₁ h₂ hsplit hs₂ hδ₁ hδ₂ hspend₁ hspend₂
     (hepoch ▸ (hsp.lineage hcomplete).2) hstart
-
-open Polynomial in
-/-- Two verified bundles on a valid chain, the first earlier in chain order, cannot both spend one
-note when each spend leaf comes from `SpendBind` and `SpendAction` over a derivable `NoteSpendable`
-of that note anchored at a chain node in its stamp's anchor epoch, the second lineage starts from
-`start`, and every valid bucket holds its whole epoch and ends on a boundary digest. -/
-theorem no_double_spend_of_spend_binding {ValidBucket : QrBucket F A → Prop}
-    {noteNf : F → ℕ → F} {nextStamp : A → ℕ → F[X] → A} {genesis : A} {e₀ : ℕ}
-    {nextEpoch : A → ℕ → A} {sp₁ sp₂ : NoteSpendable F A} {chain l₁ l₂ : List (Chain.Stamp F A)}
-    {acceptedAnchor : ℕ → A → Prop} {descs₁ descs₂ : List Δ} {fee₁ fee₂ : Φ}
-    {adjunctFees₁ adjunctFees₂ : List Φ} {stamp₁ stamp₂ : PublishedStamp F A}
-    {p₁ p₂ start₁ start : ℕ} {δ₁ δ₂ : Δ}
-    (hlaw : Chain.HashLaw genesis e₀ nextStamp nextEpoch)
-    (hseal : ∀ ⦃b : QrBucket F A⦄, ValidBucket b →
-      ∃ prev, b.anchor_next = nextEpoch prev (b.epoch + 1))
-    (hepoch : ∀ {e : ℕ} {a : A}, Chain.Node genesis e₀ nextStamp nextEpoch e a → epoch a = e)
-    (hcomplete : ∀ ⦃b : QrBucket F A⦄, ValidBucket b → CompleteBucket chain b)
-    (hchain : Chain.Valid epoch acceptedAnchor chain)
-    (h₁ : BundleVerified IsFee epoch R actionDigest feeDigest descs₁ fee₁ adjunctFees₁ stamp₁)
-    (h₂ : BundleVerified IsFee epoch R actionDigest feeDigest descs₂ fee₂ adjunctFees₂ stamp₂)
-    (hsplit : chain = l₁ ++ ⟨stamp₁.anchor, stamp₁.tachygrams, p₁⟩ :: l₂)
-    (hs₂ : ⟨stamp₂.anchor, stamp₂.tachygrams, p₂⟩ ∈ l₂)
-    (hδ₁ : δ₁ ∈ descs₁) (hδ₂ : δ₂ ∈ descs₂)
-    (hsp₁ : SpendableDerivable ValidBucket noteNf nextStamp start₁ sp₁)
-    (hsp₂ : SpendableDerivable ValidBucket noteNf nextStamp start sp₂) (hcm : sp₁.cm = sp₂.cm)
-    (hnode₁ : Chain.Node genesis e₀ nextStamp nextEpoch (epoch stamp₁.anchor) sp₁.anchor)
-    (hnode₂ : Chain.Node genesis e₀ nextStamp nextEpoch (epoch stamp₂.anchor) sp₂.anchor)
-    (haction₁ : SpendAction epoch R (spendBind noteNf sp₁) (actionDigest δ₁))
-    (haction₂ : SpendAction epoch R (spendBind noteNf sp₂) (actionDigest δ₂))
-    (hstart : start ≤ p₁) : False := by
-  have hpair₁ := hsp₁.spend_pair hlaw hseal hepoch hnode₁ haction₁
-  have hpair₂ := hsp₂.spend_pair hlaw hseal hepoch hnode₂ haction₂
-  rw [hepoch hnode₁, hcm] at hpair₁
-  rw [hepoch hnode₂] at hpair₂
-  exact no_double_spend_of_spendable hchain h₁ h₂ hsplit hs₂ hδ₁ hδ₂ hpair₁ hpair₂ hcomplete hsp₂
-    (hsp₂.anchor_epoch hlaw hseal hnode₂) hstart
 
 end Bundles
 
