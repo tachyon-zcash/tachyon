@@ -97,6 +97,18 @@ info: 'Tachyon.no_double_spend_of_bundles' depends on axioms: [propext, Classica
 #print axioms Tachyon.no_double_spend_of_bundles
 
 /--
+info: 'Tachyon.ActionsDerivable.liftStep' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.ActionsDerivable.liftStep
+
+/--
+info: 'Tachyon.StampDerivable.liftStep' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.StampDerivable.liftStep
+
+/--
 info: 'Tachyon.Chain.Node.epoch_unique' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
