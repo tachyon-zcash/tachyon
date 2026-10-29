@@ -1,4 +1,5 @@
 import Tachyon.Consensus.Bundle
+import Tachyon.Consensus.Chain
 
 /-!
 # No double spend
@@ -15,6 +16,9 @@ rules and one proof-tree fact rule out a second spend of the same note:
 
 A second spend anchored within one epoch of the first's publication shares a nullifier with it and
 fails the window. One anchored later crosses the first's publication epoch and fails its lineage.
+
+`no_double_spend` states the argument over abstract epochs. `no_double_spend_of_valid` takes recency
+and the window from `Chain.Valid`, leaving the lineage as a hypothesis.
 
 The second spend's lineage must start no later than the first's publication. A lineage starting
 from a later publication of the same `cm` spends a second paid note, not the first one again.
@@ -73,5 +77,22 @@ theorem no_double_spend {published : ℕ → F → Prop} {nf : ℕ → F} {first
     · exact Multiset.disjoint_left.mp hdisjoint
         (show nf (first.anchor + 1) ∈ first.pair nf by simp [SpendRecord.pair])
         (by simp [SpendRecord.pair, he])
+
+/-- On a valid chain, two stamps that each publish a spend of the note with nullifiers `nf`, the
+first earlier in chain order, contradict the second spend's lineage starting from `start`. -/
+theorem no_double_spend_of_valid {A : Type*} {epoch : A → ℕ} {acceptedAnchor : ℕ → A → Prop}
+    {chain l₁ l₂ : List (Chain.Stamp F A)} {s₁ s₂ : Chain.Stamp F A} {nf : ℕ → F} {start : ℕ}
+    (hchain : Chain.Valid epoch acceptedAnchor chain)
+    (hsplit : chain = l₁ ++ s₁ :: l₂) (hs₂ : s₂ ∈ l₂)
+    (hpair₁ : {nf (epoch s₁.anchor), nf (epoch s₁.anchor + 1)} ≤ (s₁.tachygrams : Multiset F))
+    (hpair₂ : {nf (epoch s₂.anchor), nf (epoch s₂.anchor + 1)} ≤ (s₂.tachygrams : Multiset F))
+    (hlineage : ∀ x, start ≤ x → x < epoch s₂.anchor → ¬ Chain.published chain x (nf x))
+    (hstart : start ≤ s₁.epoch) : False := by
+  have hs₁mem : s₁ ∈ chain := by simp [hsplit]
+  obtain ⟨horder, hwindow⟩ := hchain.disjoint_of_le_window hsplit hs₂ hpair₁ hpair₂
+  exact no_double_spend (first := ⟨epoch s₁.anchor, s₁.epoch, start⟩)
+    (second := ⟨epoch s₂.anchor, s₂.epoch, start⟩)
+    (hchain.accepted s₁ hs₁mem).recency (hchain.accepted s₂ (by simp [hsplit, hs₂])).recency
+    (Chain.published_of_le hs₁mem hpair₁) horder hwindow hlineage hstart
 
 end Tachyon
