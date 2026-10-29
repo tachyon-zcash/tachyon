@@ -35,3 +35,9 @@ info: 'Tachyon.BundleVerified.leaves_disjoint' depends on axioms: [propext, Clas
 -/
 #guard_msgs in
 #print axioms Tachyon.BundleVerified.leaves_disjoint
+
+/--
+info: 'Tachyon.no_double_spend' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Tachyon.no_double_spend
